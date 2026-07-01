@@ -8,8 +8,12 @@ export PATH="/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 REPO="$HOME/code/tasks"
 cd "$REPO" || exit 1
 
-# Nothing staged, modified, or untracked -> no-op.
-[ -z "$(git status --porcelain)" ] && exit 0
+# Commit local changes if the tree is dirty.
+if [ -n "$(git status --porcelain)" ]; then
+  git add -A
+  git commit -q -m "Auto-commit $(date '+%Y-%m-%d %H:%M')"
+fi
 
-git add -A
-git commit -q -m "Auto-commit $(date '+%Y-%m-%d %H:%M')"
+# Push any unpushed commits to the private GitHub backup. Never fail the job on a
+# push error (e.g. offline) — it'll catch up on the next run.
+git push -q origin main 2>/dev/null || true
