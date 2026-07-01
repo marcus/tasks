@@ -53,4 +53,27 @@ class TestAnsi < Minitest::Test
     lines = A.wrap(Tui::Ansi.bold("styled text"), 20)
     assert_equal ["styled text"], lines
   end
+
+  def test_wrap_handles_binary_encoded_utf8
+    # subprocess reads arrive as ASCII-8BIT; multibyte content must not raise
+    binary = "moved “Book flight” → 07-03 ✓".b
+    lines = A.wrap(binary, 20)
+    assert lines.all? { |l| l.encoding == Encoding::UTF_8 }
+    assert_includes lines.join(" "), "→ 07-03 ✓"
+  end
+
+  def test_wrap_scrubs_invalid_utf8
+    # a multibyte char split across a read boundary leaves invalid bytes
+    truncated = "task done ✓".b[0..-2] # chop one byte off the ✓
+    lines = A.wrap(truncated, 20)
+    assert lines.all?(&:valid_encoding?)
+    assert_includes lines.first, "task done"
+  end
+
+  def test_vtrunc_binary_wrapped_line_roundtrip
+    # the exact crash path: wrap output fed to vtrunc alongside UTF-8 borders
+    line = A.wrap("é" * 50, 40).first
+    out = A.vtrunc(line, 10)
+    assert_equal 10, A.vislen(out)
+  end
 end

@@ -99,7 +99,8 @@ module Tui
       f = []
       if @claude.running?
         f << A.dim(" #{SPINNER[@tick % SPINNER.size]} claude is working… (esc cancels)")
-        A.strip(@claude.output).split("\n").last(3).each { |t| f << A.dim("   #{t}") }
+        # scrub: a streaming chunk can end mid-multibyte-char
+        A.strip(@claude.output.scrub("�")).split("\n").last(3).each { |t| f << A.dim("   #{t}") }
         f << :rule
       elsif @resp_open && @resp
         visible = @resp[@resp_scroll, RESP_MAX] || []

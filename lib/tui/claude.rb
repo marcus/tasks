@@ -34,7 +34,9 @@ module Tui
     # Drain available output. Returns :running or :done.
     def pump
       return :done unless @io
-      @output << @io.read_nonblock(65_536)
+      # read_nonblock returns BINARY; force UTF-8 so downstream string ops
+      # (wrap/truncate against UTF-8 literals) don't raise CompatibilityError
+      @output << @io.read_nonblock(65_536).force_encoding("UTF-8")
       :running
     rescue IO::WaitReadable
       :running

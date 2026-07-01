@@ -46,7 +46,12 @@ module Tui
     end
 
     # Word-wrap plain text to width w. Returns an array of lines.
+    # Normalizes encoding defensively — subprocess output can arrive as
+    # BINARY, and a split multibyte char would make it invalid UTF-8.
     def wrap(text, w)
+      unless text.encoding == Encoding::UTF_8 && text.valid_encoding?
+        text = text.dup.force_encoding("UTF-8").scrub("�")
+      end
       strip(text).split("\n", -1).flat_map do |line|
         line = line.rstrip
         next [""] if line.empty?
