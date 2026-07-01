@@ -1,0 +1,11 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# tasks-tui — interactive TUI over gtd.org.
+# Realtime views, single-key actions, and an always-on Claude prompt.
+
+require_relative "../lib/tui/app"
+
+abort "tasks-tui needs an interactive terminal" unless $stdout.tty? && $stdin.tty?
+
+Tui::App.new(root: File.expand_path("..", __dir__)).run

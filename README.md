@@ -9,6 +9,9 @@ Covey Important/Urgent matrix. Ruby tooling on top.
 gtd.org            The one file that matters — all tasks live here.
 docs/conventions.md  The format + methodology spec (read this).
 bin/tasks          Ruby CLI for querying gtd.org (stdlib only, no gems needed).
+bin/tasks-tui      Interactive TUI: live views, single-key actions, Claude prompt.
+lib/tui/           TUI modules (store, views, frame, claude runner, app loop).
+test/              Minitest suite — run with `ruby test/all.rb`.
 ```
 
 ## Quick start
@@ -57,6 +60,28 @@ tasks -p "close the Drew review task and push the Denver flight deadline to next
 ```
 
 `AGENTS.md` documents the org format and conventions so the agent stays consistent.
+
+## TUI
+
+`bin/tasks-tui` is a full-screen interactive view over the same file (stdlib only,
+like everything else). The views update live when `gtd.org` changes — whether you,
+Claude, or another process edited it.
+
+```
+1-4        switch view: Agenda · Next · Quadrants · Inbox
+↑↓ / jk    select a task
+c          mark selected task DONE
+d          reschedule — accepts fri, +3, 07-15, 2026-07-15, today, tomorrow
+x          archive sweep (move DONE/CANCELLED to archive.org)
+tab or :   focus the Claude prompt — natural-language CRUD on your tasks
+esc        dismiss Claude's response / cancel a running request / close popup
+pgup/pgdn  scroll a long Claude response (footer grows, then collapses on esc)
+q          quit
+```
+
+Claude runs asynchronously via the local `claude` CLI (same as `tasks -p`), so
+the UI stays responsive while it works; its answer appears in an expanding
+footer pane and the views refresh with whatever it changed.
 
 ## Auto-commit
 
