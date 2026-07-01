@@ -14,13 +14,18 @@
 #   bin/tasks list|l [...]    list tasks grouped by state, with filters:
 #     scope:   --open/-o (default) --done/-d --archived/-x --all/-a
 #     filters: @context  /text  +tag  -A|-B|-C  (compose freely)
+#   bin/tasks -p "..."        hand a natural-language request to Claude (Sonnet),
+#                             which acts on your tasks and reports what changed
 #
 # Stdlib only — no bundler required. Parses gtd.org with simple line matching.
 
 require "date"
+require "shellwords"
 
-ORG     = File.expand_path("../gtd.org", __dir__)
-ARCHIVE = File.expand_path("../archive.org", __dir__)
+ROOT    = File.expand_path("..", __dir__)
+ORG     = File.join(ROOT, "gtd.org")
+ARCHIVE = File.join(ROOT, "archive.org")
+AGENTS  = File.join(ROOT, "AGENTS.md")
 
 Item = Struct.new(
   :state, :priority, :title, :tags, :scheduled, :deadline, :line, :source, keyword_init: true
@@ -283,8 +288,32 @@ def cmd_list(args)
   end
 end
 
+# Hand a natural-language prompt to Claude (Sonnet) with AGENTS.md as context.
+# Runs the local `claude` CLI headless; auto-applies, then shows the file diff.
+def cmd_prompt(prompt)
+  abort %(usage: tasks -p "do something with my tasks") if prompt.nil? || prompt.strip.empty?
+  abort "claude CLI not found on PATH" unless system("command -v claude >/dev/null 2>&1")
+  sys_prompt = File.exist?(AGENTS) ? File.read(AGENTS, encoding: "UTF-8") : ""
+  ok = system(
+    "claude", "-p", prompt.strip,
+    "--model", "sonnet",
+    "--append-system-prompt", sys_prompt,
+    "--output-format", "text",
+    chdir: ROOT
+  )
+  warn "\n(claude exited non-zero)" unless ok
+  diff = `git -C #{ROOT.shellescape} diff --stat -- gtd.org archive.org`
+  unless diff.strip.empty?
+    puts "\n#{bold("Changes to task files:")}"
+    system("git", "-C", ROOT, "--no-pager", "diff", "--", "gtd.org", "archive.org")
+  end
+end
+
+require "shellwords"
+
 items = parse
 case ARGV[0]
+when "-p", "--prompt" then cmd_prompt(ARGV[1..].join(" ")); exit
 when "next", "n"      then cmd_next(items)
 when "quadrants", "q" then cmd_quadrants(items)
 when "agenda", "a"    then cmd_agenda(items)
@@ -294,6 +323,6 @@ when "done", "d"      then cmd_done(ARGV[1..].join(" "))
 when "archive", "x"   then cmd_archive
 when "list", "l"      then cmd_list(ARGV[1..])
 else
-  warn %(usage: tasks {agenda|a|next|n|quadrants|q|inbox|i|capture|c "..."|done|d "..."|archive|x|list|l [...]})
+  warn %(usage: tasks {agenda|a|next|n|quadrants|q|inbox|i|capture|c "..."|done|d "..."|archive|x|list|l [...]|-p "..."})
   exit 1
 end
