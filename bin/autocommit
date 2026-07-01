@@ -1,0 +1,15 @@
+#!/bin/sh
+# Auto-commit the tasks repo if (and only if) something changed.
+# Invoked by launchd (see ~/Library/LaunchAgents/com.marcus.tasks-autocommit.plist).
+# launchd runs with a minimal environment, so set an explicit PATH.
+
+export PATH="/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+REPO="$HOME/code/tasks"
+cd "$REPO" || exit 1
+
+# Nothing staged, modified, or untracked -> no-op.
+[ -z "$(git status --porcelain)" ] && exit 0
+
+git add -A
+git commit -q -m "Auto-commit $(date '+%Y-%m-%d %H:%M')"

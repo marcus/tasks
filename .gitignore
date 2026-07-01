@@ -9,3 +9,6 @@ vendor/bundle/
 *~
 \#*\#
 .\#*
+
+# launchd auto-commit log
+.autocommit.log
