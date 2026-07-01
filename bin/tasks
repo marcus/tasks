@@ -299,6 +299,7 @@ def cmd_prompt(prompt)
     "--model", "sonnet",
     "--append-system-prompt", sys_prompt,
     "--output-format", "text",
+    "--dangerously-skip-permissions",
     chdir: ROOT
   )
   warn "\n(claude exited non-zero)" unless ok

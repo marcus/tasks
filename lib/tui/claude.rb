@@ -23,7 +23,10 @@ module Tui
     def start(prompt)
       @output = +""
       r, w = IO.pipe
-      args = ["claude", "-p", prompt, "--model", "sonnet", "--output-format", "text"]
+      # --dangerously-skip-permissions: headless run can't answer permission
+      # prompts, and the whole point is letting the agent edit gtd.org freely
+      args = ["claude", "-p", prompt, "--model", "sonnet", "--output-format", "text",
+              "--dangerously-skip-permissions"]
       args += ["--append-system-prompt", File.read(@agents, encoding: "UTF-8")] if File.exist?(@agents)
       @pid = Process.spawn(*args, in: File::NULL, out: w, err: w, chdir: @root)
       w.close
