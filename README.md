@@ -14,22 +14,49 @@ bin/tasks          Ruby CLI for querying gtd.org (stdlib only, no gems needed).
 ## Quick start
 
 ```sh
-tasks agenda            # what's due / scheduled, soonest first
-tasks next              # next actions grouped by context (@computer, @email, …)
-tasks quadrants         # Covey Important/Urgent 2x2
-tasks inbox             # unprocessed captures
-tasks capture "..."     # append a new item to the Inbox
-tasks done "..."        # mark a matching open item DONE
-tasks archive           # sweep DONE/CANCELLED items into archive.org
+tasks agenda            # (a) what's due / scheduled, soonest first
+tasks next              # (n) next actions grouped by context (@computer, @email, …)
+tasks quadrants         # (q) Covey Important/Urgent 2x2
+tasks inbox             # (i) unprocessed captures
+tasks list              # (l) all tasks grouped by state, with filters (see below)
+tasks capture "..."     # (c) append a new item to the Inbox
+tasks done "..."        # (d) mark a matching open item DONE
+tasks archive           # (x) sweep DONE/CANCELLED items into archive.org
+tasks -p "..."          # hand a request to Claude — it acts and reports back
 ```
 
-`tasks` is aliased to `bin/tasks` in `~/.zshrc`.
+Every command has the single-letter alias shown in parentheses (`tasks n`, `tasks x`, …).
+`tasks` itself is aliased to `bin/tasks` in `~/.zshrc`.
+
+### Filtering with `list`
+
+```sh
+tasks list                     # open items only (default)
+tasks list -d                  # done items still in gtd.org
+tasks list -x                  # archived items
+tasks list -a                  # everything, both files
+tasks list @computer -A /denver  # compose: context, priority, text — all at once
+```
+
+Scope flags: `--open/-o` (default) `--done/-d` `--archived/-x` `--all/-a`.
+Filter sigils: `@context`  `/text` (or a bare word)  `+tag`  `-A|-B|-C` (priority).
 
 ## Working with Claude
 
 Claude can read and edit `gtd.org` directly — add captures to the Inbox, process
 items into lists, suggest next actions, and surface what matters. The plain-text
 format means every change is a reviewable git diff.
+
+**From the terminal**, `tasks -p "..."` hands a natural-language request to the
+local `claude` CLI (Sonnet) with `AGENTS.md` as context. It acts on your tasks
+right where you're working, auto-applies changes, and prints a git diff of the
+task files plus a one-line summary of what it did:
+
+```sh
+tasks -p "close the Drew review task and push the Denver flight deadline to next Friday"
+```
+
+`AGENTS.md` documents the org format and conventions so the agent stays consistent.
 
 ## Auto-commit
 
