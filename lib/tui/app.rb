@@ -153,7 +153,10 @@ module Tui
 
     def read_keys
       data = begin
-        $stdin.read_nonblock(128).force_encoding("UTF-8")
+        # force UTF-8; a 128-byte read can split a multibyte char (e.g. a
+        # pasted em-dash), so scrub dangling bytes before they reach the
+        # [[:print:]] test and raise on the invalid sequence.
+        $stdin.read_nonblock(128).force_encoding("UTF-8").scrub("")
       rescue IO::WaitReadable, EOFError
         return
       end
@@ -295,6 +298,7 @@ module Tui
       @input = +""
       @mode = :list
       return if text.empty?
+      return flash("claude is still working — esc to cancel") if @claude.running?
       return flash("claude CLI not found on PATH") unless Claude.available?
       @resp_open = false
       @claude.start(text)
