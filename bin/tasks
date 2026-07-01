@@ -3,12 +3,17 @@
 
 # tasks — a tiny CLI over gtd.org
 #
-# Usage:
-#   bin/tasks agenda        show items with SCHEDULED/DEADLINE, soonest first
-#   bin/tasks next          list NEXT actions grouped by context
-#   bin/tasks quadrants     Covey Important/Urgent 2x2
-#   bin/tasks inbox         show unprocessed INBOX items
-#   bin/tasks capture "..." append a new item to the Inbox
+# Usage (each command has a single-letter alias):
+#   bin/tasks agenda|a        show items with SCHEDULED/DEADLINE, soonest first
+#   bin/tasks next|n          list NEXT actions grouped by context
+#   bin/tasks quadrants|q     Covey Important/Urgent 2x2
+#   bin/tasks inbox|i         show unprocessed INBOX items
+#   bin/tasks capture|c "..." append a new item to the Inbox
+#   bin/tasks done|d "..."    mark a matching open item DONE
+#   bin/tasks archive|x       move DONE/CANCELLED items to archive.org
+#   bin/tasks list|l [...]    list tasks grouped by state, with filters:
+#     scope:   --open/-o (default) --done/-d --archived/-x --all/-a
+#     filters: @context  /text  +tag  -A|-B|-C  (compose freely)
 #
 # Stdlib only — no bundler required. Parses gtd.org with simple line matching.
 
@@ -18,27 +23,31 @@ ORG     = File.expand_path("../gtd.org", __dir__)
 ARCHIVE = File.expand_path("../archive.org", __dir__)
 
 Item = Struct.new(
-  :state, :priority, :title, :tags, :scheduled, :deadline, :line, keyword_init: true
+  :state, :priority, :title, :tags, :scheduled, :deadline, :line, :source, keyword_init: true
 )
 
 HEADLINE = /^\*+\s+(INBOX|TODO|NEXT|WAITING|DONE|CANCELLED)\s+(?:\[#([ABC])\]\s+)?(.*?)\s*(:[\w@:]+:)?\s*$/
 STAMP    = /(SCHEDULED|DEADLINE):\s*<(\d{4}-\d{2}-\d{2})/
 
-def parse
+def parse(files = [ORG])
   items = []
-  current = nil
-  File.foreach(ORG, encoding: "UTF-8").with_index(1) do |line, lineno|
-    if (m = line.match(HEADLINE))
-      current = Item.new(
-        state: m[1], priority: m[2], title: m[3].strip,
-        tags: (m[4] || "").split(":").reject(&:empty?),
-        scheduled: nil, deadline: nil, line: lineno
-      )
-      items << current
-    elsif current && (s = line.match(STAMP))
-      d = Date.parse(s[2])
-      current.scheduled = d if s[1] == "SCHEDULED"
-      current.deadline  = d if s[1] == "DEADLINE"
+  files.each do |file|
+    next unless File.exist?(file)
+    src = file == ARCHIVE ? :archive : :org
+    current = nil
+    File.foreach(file, encoding: "UTF-8").with_index(1) do |line, lineno|
+      if (m = line.match(HEADLINE))
+        current = Item.new(
+          state: m[1], priority: m[2], title: m[3].strip,
+          tags: (m[4] || "").split(":").reject(&:empty?),
+          scheduled: nil, deadline: nil, line: lineno, source: src
+        )
+        items << current
+      elsif current && (s = line.match(STAMP))
+        d = Date.parse(s[2])
+        current.scheduled = d if s[1] == "SCHEDULED"
+        current.deadline  = d if s[1] == "DEADLINE"
+      end
     end
   end
   items
@@ -54,9 +63,28 @@ def headline_level(line) = line.match(/^(\*+)\s+/)&.captures&.first&.length
 def headline_state(line) = line[/^\*+\s+(INBOX|TODO|NEXT|WAITING|DONE|CANCELLED)\b/, 1]
 
 def color(str, code) = $stdout.tty? ? "\e[#{code}m#{str}\e[0m" : str
-def bold(s)  = color(s, 1)
-def dim(s)   = color(s, 90)
-def red(s)   = color(s, 31)
+def bold(s)   = color(s, 1)
+def dim(s)    = color(s, 90)
+def red(s)    = color(s, 31)
+def yellow(s) = color(s, 33)
+
+# Color a deadline by how close it is: red = overdue/today, yellow = next 2 days,
+# cyan = this week, dim = further out.
+def due_color(days)
+  if    days <= 0 then 31
+  elsif days <= 2 then 33
+  elsif days <= 7 then 36
+  else                 90
+  end
+end
+
+# Short, colored deadline for `next`, e.g. "7/1" (no leading zeros).
+def short_due(item)
+  return "" unless item.deadline
+  days  = (item.deadline - Date.today).to_i
+  label = "#{item.deadline.month}/#{item.deadline.day}"
+  color(label, due_color(days))
+end
 
 def fmt(item)
   pri = item.priority ? "[#{item.priority}] " : ""
@@ -74,7 +102,10 @@ def cmd_next(items)
   end
   by_ctx.sort.each do |ctx, list|
     puts bold(ctx)
-    list.sort_by { |i| i.priority || "Z" }.each { |i| puts "  #{fmt(i)}" }
+    list.sort_by { |i| i.priority || "Z" }.each do |i|
+      due = short_due(i)
+      puts "  #{fmt(i)}#{due.empty? ? "" : "  #{due}"}"
+    end
     puts
   end
 end
@@ -102,7 +133,7 @@ def cmd_agenda(items)
     kind = i.deadline ? "DUE " : "STRT"
     days = (d - Date.today).to_i
     when_s = days.negative? ? "#{-days}d ago" : days.zero? ? "today" : "in #{days}d"
-    stamp = "#{d} #{kind} (#{when_s})"
+    stamp = "#{d.strftime("%m-%d")} #{kind} (#{when_s})"
     stamp = red(stamp) if days <= 2
     puts "#{stamp}  #{fmt(i)}"
   end
@@ -185,16 +216,84 @@ def cmd_archive
   puts "Archived #{moved.size} item#{moved.size == 1 ? "" : "s"} to archive.org."
 end
 
+STATE_ORDER = %w[INBOX TODO NEXT WAITING DONE CANCELLED].freeze
+
+# Parse `list` args into a scope symbol plus filters, then print grouped output.
+def cmd_list(args)
+  scope    = :open
+  contexts_f = []
+  tags_f     = []
+  priority_f = nil
+  text_f     = []
+  args.each do |a|
+    case a
+    when "--open", "-o"     then scope = :open
+    when "--done", "-d"     then scope = :done
+    when "--archived", "-x" then scope = :archived
+    when "--all", "-a"      then scope = :all
+    when /\A-([ABC])\z/     then priority_f = $1
+    when /\A@/              then contexts_f << a
+    when /\A\+(.+)/         then tags_f << $1
+    when /\A\//             then text_f << a[1..]
+    when /\A-/              then abort "unknown flag: #{a}"
+    else                        text_f << a # bare word = text search
+    end
+  end
+
+  files =
+    case scope
+    when :archived then [ARCHIVE]
+    when :all      then [ORG, ARCHIVE]
+    else                [ORG]
+    end
+  items = parse(files)
+  states =
+    case scope
+    when :open then OPEN_STATES
+    when :done then DONE_STATES
+    else            STATE_ORDER
+    end
+
+  q = text_f.join(" ").downcase
+  sel = items.select do |i|
+    states.include?(i.state) &&
+      (scope != :done || i.source == :org) &&
+      (priority_f.nil? || i.priority == priority_f) &&
+      contexts_f.all? { |c| i.tags.include?(c) } &&
+      tags_f.all?     { |t| i.tags.include?(t) } &&
+      (q.empty? || i.title.downcase.include?(q))
+  end
+
+  if sel.empty?
+    puts "No matching tasks."
+    return
+  end
+
+  by_state = sel.group_by(&:state)
+  STATE_ORDER.each do |st|
+    list = by_state[st]
+    next unless list
+    puts bold(st)
+    list.sort_by { |i| i.priority || "Z" }.each do |i|
+      due = short_due(i)
+      arch = i.source == :archive ? dim("  (archived)") : ""
+      puts "  #{fmt(i)}#{due.empty? ? "" : "  #{due}"}#{arch}"
+    end
+    puts
+  end
+end
+
 items = parse
 case ARGV[0]
-when "next"      then cmd_next(items)
-when "quadrants" then cmd_quadrants(items)
-when "agenda"    then cmd_agenda(items)
-when "inbox"     then cmd_inbox(items)
-when "capture"   then cmd_capture(ARGV[1..].join(" "))
-when "done"      then cmd_done(ARGV[1..].join(" "))
-when "archive"   then cmd_archive
+when "next", "n"      then cmd_next(items)
+when "quadrants", "q" then cmd_quadrants(items)
+when "agenda", "a"    then cmd_agenda(items)
+when "inbox", "i"     then cmd_inbox(items)
+when "capture", "c"   then cmd_capture(ARGV[1..].join(" "))
+when "done", "d"      then cmd_done(ARGV[1..].join(" "))
+when "archive", "x"   then cmd_archive
+when "list", "l"      then cmd_list(ARGV[1..])
 else
-  warn %(usage: tasks {agenda|next|quadrants|inbox|capture "..."|done "..."|archive})
+  warn %(usage: tasks {agenda|a|next|n|quadrants|q|inbox|i|capture|c "..."|done|d "..."|archive|x|list|l [...]})
   exit 1
 end
