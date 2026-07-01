@@ -4,16 +4,18 @@
 # tasks — a tiny CLI over gtd.org
 #
 # Usage:
-#   bin/tasks agenda      show items with SCHEDULED/DEADLINE, soonest first
-#   bin/tasks next        list NEXT actions grouped by context
-#   bin/tasks quadrants   Covey Important/Urgent 2x2
-#   bin/tasks inbox       show unprocessed INBOX items
+#   bin/tasks agenda        show items with SCHEDULED/DEADLINE, soonest first
+#   bin/tasks next          list NEXT actions grouped by context
+#   bin/tasks quadrants     Covey Important/Urgent 2x2
+#   bin/tasks inbox         show unprocessed INBOX items
+#   bin/tasks capture "..." append a new item to the Inbox
 #
 # Stdlib only — no bundler required. Parses gtd.org with simple line matching.
 
 require "date"
 
-ORG = File.expand_path("../gtd.org", __dir__)
+ORG     = File.expand_path("../gtd.org", __dir__)
+ARCHIVE = File.expand_path("../archive.org", __dir__)
 
 Item = Struct.new(
   :state, :priority, :title, :tags, :scheduled, :deadline, :line, keyword_init: true
@@ -105,13 +107,28 @@ def cmd_inbox(items)
   inbox.empty? ? (puts "Inbox empty. ✨") : inbox.each { |i| puts "  #{fmt(i)}" }
 end
 
+def cmd_capture(text)
+  abort %(usage: tasks capture "...") if text.nil? || text.strip.empty?
+  text = text.dup.force_encoding("UTF-8")
+  lines = File.readlines(ORG, encoding: "UTF-8")
+  inbox_idx = lines.index { |l| l =~ /^\* Inbox\b/ }
+  abort "No '* Inbox' heading found in #{ORG}" unless inbox_idx
+  # Insert just before the next top-level heading (end of the Inbox section).
+  insert_idx = ((inbox_idx + 1)...lines.length).find { |i| lines[i] =~ /^\* / } || lines.length
+  entry = "** INBOX #{text.strip}\n   Captured [#{Date.today}].\n\n"
+  lines.insert(insert_idx, entry)
+  File.write(ORG, lines.join)
+  puts "Captured to Inbox: #{text.strip}"
+end
+
 items = parse
 case ARGV[0]
 when "next"      then cmd_next(items)
 when "quadrants" then cmd_quadrants(items)
 when "agenda"    then cmd_agenda(items)
 when "inbox"     then cmd_inbox(items)
+when "capture"   then cmd_capture(ARGV[1..].join(" "))
 else
-  warn "usage: tasks {agenda|next|quadrants|inbox}"
+  warn %(usage: tasks {agenda|next|quadrants|inbox|capture "..."})
   exit 1
 end
