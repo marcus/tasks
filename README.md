@@ -34,8 +34,11 @@ format means every change is a reviewable git diff.
 ## Auto-commit
 
 A launchd agent (`com.marcus.tasks-autocommit`) runs `bin/autocommit` daily at
-21:00, committing only if something changed. Missed runs (Mac asleep) fire on next
-wake. Local repo only — no remote yet.
+21:00: commits if the tree changed, then pushes any unpushed commits to the private
+GitHub backup (`origin`, `github.com/marcus/tasks`). Missed runs (Mac asleep) fire on
+next wake. Push errors (e.g. offline) never fail the job — they catch up next run.
+
+**Restore from backup:** `git clone git@github.com:marcus/tasks.git`
 
 ## Roadmap / ideas
 
