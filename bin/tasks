@@ -1,0 +1,117 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# tasks — a tiny CLI over gtd.org
+#
+# Usage:
+#   bin/tasks agenda      show items with SCHEDULED/DEADLINE, soonest first
+#   bin/tasks next        list NEXT actions grouped by context
+#   bin/tasks quadrants   Covey Important/Urgent 2x2
+#   bin/tasks inbox       show unprocessed INBOX items
+#
+# Stdlib only — no bundler required. Parses gtd.org with simple line matching.
+
+require "date"
+
+ORG = File.expand_path("../gtd.org", __dir__)
+
+Item = Struct.new(
+  :state, :priority, :title, :tags, :scheduled, :deadline, :line, keyword_init: true
+)
+
+HEADLINE = /^\*+\s+(INBOX|TODO|NEXT|WAITING|DONE|CANCELLED)\s+(?:\[#([ABC])\]\s+)?(.*?)\s*(:[\w@:]+:)?\s*$/
+STAMP    = /(SCHEDULED|DEADLINE):\s*<(\d{4}-\d{2}-\d{2})/
+
+def parse
+  items = []
+  current = nil
+  File.foreach(ORG, encoding: "UTF-8").with_index(1) do |line, lineno|
+    if (m = line.match(HEADLINE))
+      current = Item.new(
+        state: m[1], priority: m[2], title: m[3].strip,
+        tags: (m[4] || "").split(":").reject(&:empty?),
+        scheduled: nil, deadline: nil, line: lineno
+      )
+      items << current
+    elsif current && (s = line.match(STAMP))
+      d = Date.parse(s[2])
+      current.scheduled = d if s[1] == "SCHEDULED"
+      current.deadline  = d if s[1] == "DEADLINE"
+    end
+  end
+  items
+end
+
+def contexts(item) = item.tags.select { |t| t.start_with?("@") }
+def open?(item)     = %w[INBOX TODO NEXT WAITING].include?(item.state)
+
+def color(str, code) = $stdout.tty? ? "\e[#{code}m#{str}\e[0m" : str
+def bold(s)  = color(s, 1)
+def dim(s)   = color(s, 90)
+def red(s)   = color(s, 31)
+
+def fmt(item)
+  pri = item.priority ? "[#{item.priority}] " : ""
+  ctx = contexts(item)
+  tag = ctx.empty? ? "" : dim("  #{ctx.join(" ")}")
+  "#{pri}#{item.title}#{tag}"
+end
+
+def cmd_next(items)
+  nexts = items.select { |i| i.state == "NEXT" }
+  by_ctx = Hash.new { |h, k| h[k] = [] }
+  nexts.each do |i|
+    ctxs = contexts(i)
+    (ctxs.empty? ? ["(no context)"] : ctxs).each { |c| by_ctx[c] << i }
+  end
+  by_ctx.sort.each do |ctx, list|
+    puts bold(ctx)
+    list.sort_by { |i| i.priority || "Z" }.each { |i| puts "  #{fmt(i)}" }
+    puts
+  end
+end
+
+def cmd_quadrants(items)
+  open_items = items.select { |i| open?(i) }
+  q = {
+    "Q1 · Important + Urgent  (do now)"        => ->(i) { i.tags.include?("important") && i.tags.include?("urgent") },
+    "Q2 · Important, Not Urgent  (schedule)"   => ->(i) { i.tags.include?("important") && !i.tags.include?("urgent") },
+    "Q3 · Urgent, Not Important  (delegate)"   => ->(i) { !i.tags.include?("important") && i.tags.include?("urgent") },
+    "Q4 · Neither  (eliminate)"                => ->(i) { !i.tags.include?("important") && !i.tags.include?("urgent") },
+  }
+  q.each do |label, test|
+    puts bold(label)
+    matched = open_items.select(&test)
+    matched.empty? ? (puts "  —") : matched.each { |i| puts "  #{fmt(i)}" }
+    puts
+  end
+end
+
+def cmd_agenda(items)
+  dated = items.select { |i| open?(i) && (i.scheduled || i.deadline) }
+  dated.sort_by { |i| i.deadline || i.scheduled }.each do |i|
+    d = i.deadline || i.scheduled
+    kind = i.deadline ? "DUE " : "STRT"
+    days = (d - Date.today).to_i
+    when_s = days.negative? ? "#{-days}d ago" : days.zero? ? "today" : "in #{days}d"
+    stamp = "#{d} #{kind} (#{when_s})"
+    stamp = red(stamp) if days <= 2
+    puts "#{stamp}  #{fmt(i)}"
+  end
+end
+
+def cmd_inbox(items)
+  inbox = items.select { |i| i.state == "INBOX" }
+  inbox.empty? ? (puts "Inbox empty. ✨") : inbox.each { |i| puts "  #{fmt(i)}" }
+end
+
+items = parse
+case ARGV[0]
+when "next"      then cmd_next(items)
+when "quadrants" then cmd_quadrants(items)
+when "agenda"    then cmd_agenda(items)
+when "inbox"     then cmd_inbox(items)
+else
+  warn "usage: tasks {agenda|next|quadrants|inbox}"
+  exit 1
+end

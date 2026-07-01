@@ -1,0 +1,11 @@
+# Ruby
+*.gem
+.bundle/
+vendor/bundle/
+
+# Editor / OS
+.DS_Store
+*.swp
+*~
+\#*\#
+.\#*
