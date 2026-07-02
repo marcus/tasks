@@ -211,6 +211,8 @@ module Tui
       when "K"             then raise_priority
       when "J"             then lower_priority
       when "p"             then paste_ref
+      when "u"             then undo_last
+      when "\x12"          then redo_last
       end
     end
 
@@ -280,6 +282,22 @@ module Tui
       rows
       @sel = @rows.each_index.find { |i| @rows[i].item&.line == line } || @sel
       clamp_selection
+    end
+
+    def undo_last  = history_op(:undo!, "undid")
+    def redo_last  = history_op(:redo!, "redid")
+
+    def history_op(op, verb)
+      kind, label = @store.public_send(op)
+      case kind
+      when :empty    then flash("nothing to #{verb == "undid" ? "undo" : "redo"}")
+      when :conflict then flash("file changed externally — can't #{op.to_s.chomp("!")} “#{label}”")
+      else
+        flash("#{verb}: #{label}")
+        rows
+        clamp_selection
+        show_detail if @modal_kind == :detail
+      end
     end
 
     def paste_ref

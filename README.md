@@ -68,13 +68,19 @@ like everything else). The views update live when `gtd.org` changes — whether 
 Claude, or another process edited it.
 
 ```
-1-4        switch view: Agenda · Next · Quadrants · Inbox
-↑↓ / jk    select a task
+1-4 / ←→   switch view: Agenda · Next · Quadrants · Inbox (arrows cycle)
+↑↓ / jk    select a task (also flips tasks inside a detail modal)
+return     task detail modal
+?          keyboard shortcuts modal
 c          mark selected task DONE
 d          reschedule — accepts fri, +3, 07-15, 2026-07-15, today, tomorrow
+J / K      lower / raise priority (A ↔ B ↔ C ↔ none)
+u / ctrl-r undo / redo TUI changes (in-memory, refuses after external edits)
+y / Y      yank task ref / full task as markdown to the clipboard
+p          paste a quoted task ref into the Claude prompt
 x          archive sweep (move DONE/CANCELLED to archive.org)
 tab or :   focus the Claude prompt — natural-language CRUD on your tasks
-esc        dismiss Claude's response / cancel a running request / close popup
+esc        dismiss Claude's response / cancel a running request / close modal
 pgup/pgdn  scroll a long Claude response (footer grows, then collapses on esc)
 q          quit
 ```

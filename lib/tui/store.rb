@@ -23,11 +23,15 @@ module Tui
 
     attr_reader :org, :archive
 
+    UNDO_LIMIT = 50 # in-memory only; history does not survive a restart
+
     def initialize(org:, archive:)
       @org = org
       @archive = archive
       @mtime = nil
       @cache = nil
+      @undo_stack = []
+      @redo_stack = []
     end
 
     def items
@@ -65,9 +69,87 @@ module Tui
       out
     end
 
+    # -- undo/redo -------------------------------------------------------------
+    #
+    # Every TUI mutation snapshots both files before and after the write.
+    # undo!/redo! restore snapshots, but only when the current file content
+    # matches what the mutation left behind — an out-of-band edit (Claude,
+    # another process) makes the entry unsafe and it is refused, not forced.
+
+    # Returns [:ok, label] | [:empty] | [:conflict, label]
+    def undo!
+      entry = @undo_stack.last
+      return [:empty] unless entry
+      return [:conflict, entry[:label]] unless snapshot == entry[:after]
+      @undo_stack.pop
+      restore(entry[:before])
+      @redo_stack << entry
+      [:ok, entry[:label]]
+    end
+
+    def redo!
+      entry = @redo_stack.last
+      return [:empty] unless entry
+      return [:conflict, entry[:label]] unless snapshot == entry[:before]
+      @redo_stack.pop
+      restore(entry[:after])
+      @undo_stack << entry
+      [:ok, entry[:label]]
+    end
+
+    # -- mutations ---------------------------------------------------------------
+
     # Mark an item DONE in place. Returns true, or false if the file shifted
     # under us (stale line number) — caller should reload and retry.
     def complete!(item)
+      with_history("complete: #{item.title}") { complete_impl(item) }
+    end
+
+    def set_priority!(item, pri)
+      label = pri ? "priority [##{pri}]: #{item.title}" : "clear priority: #{item.title}"
+      with_history(label) { set_priority_impl(item, pri) }
+    end
+
+    def reschedule!(item, date)
+      with_history("reschedule → #{date.iso8601}: #{item.title}") { reschedule_impl(item, date) }
+    end
+
+    def archive_swept!
+      with_history("archive sweep") { archive_swept_impl }
+    end
+
+    private
+
+    def snapshot
+      {
+        org: File.read(@org, encoding: "UTF-8"),
+        archive: File.exist?(@archive) ? File.read(@archive, encoding: "UTF-8") : nil,
+      }
+    end
+
+    def restore(snap)
+      File.write(@org, snap[:org])
+      if snap[:archive].nil?
+        File.delete(@archive) if File.exist?(@archive)
+      else
+        File.write(@archive, snap[:archive])
+      end
+      reload!
+    end
+
+    # Record history only when the mutation actually wrote (truthy, nonzero).
+    def with_history(label)
+      before = snapshot
+      result = yield
+      if result && result != 0
+        @undo_stack << { label: label, before: before, after: snapshot }
+        @undo_stack.shift while @undo_stack.size > UNDO_LIMIT
+        @redo_stack.clear
+      end
+      result
+    end
+
+    def complete_impl(item)
       lines = File.readlines(@org, encoding: "UTF-8")
       i = item.line - 1
       return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
@@ -80,7 +162,7 @@ module Tui
 
     # Set the [#A]/[#B]/[#C] cookie on the headline, or remove it (pri: nil).
     # Same staleness contract as complete!.
-    def set_priority!(item, pri)
+    def set_priority_impl(item, pri)
       lines = File.readlines(@org, encoding: "UTF-8")
       i = item.line - 1
       return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
@@ -94,7 +176,7 @@ module Tui
     # Update the item's DEADLINE (or SCHEDULED, if that's all it has) to
     # `date`. Items with neither get a DEADLINE added. Same staleness
     # contract as complete!.
-    def reschedule!(item, date)
+    def reschedule_impl(item, date)
       lines = File.readlines(@org, encoding: "UTF-8")
       i = item.line - 1
       return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
@@ -128,7 +210,7 @@ module Tui
     end
 
     # Move all DONE/CANCELLED blocks to the archive file. Returns the count.
-    def archive_swept!
+    def archive_swept_impl
       lines = File.readlines(@org, encoding: "UTF-8")
       kept  = []
       moved = []

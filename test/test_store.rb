@@ -175,6 +175,100 @@ class TestStore < Minitest::Test
     end
   end
 
+  def test_undo_with_empty_history
+    with_store do |store, _o, _a|
+      assert_equal [:empty], store.undo!
+      assert_equal [:empty], store.redo!
+    end
+  end
+
+  def test_undo_and_redo_roundtrip_a_complete
+    with_store do |store, org, _a|
+      before = File.read(org)
+      store.complete!(find_item(store, "Book flight"))
+      after = File.read(org)
+
+      kind, label = store.undo!
+      assert_equal :ok, kind
+      assert_includes label, "complete: Book flight"
+      assert_equal before, File.read(org)
+      assert_equal "NEXT", find_item(store, "Book flight").state
+
+      kind, = store.redo!
+      assert_equal :ok, kind
+      assert_equal after, File.read(org)
+      assert_equal "DONE", find_item(store, "Book flight").state
+    end
+  end
+
+  def test_undo_stacks_multiple_mutations_in_order
+    with_store do |store, org, _a|
+      original = File.read(org)
+      store.set_priority!(find_item(store, "Book flight"), "B")
+      store.reschedule!(find_item(store, "Book flight"), Date.new(2026, 7, 20))
+      store.undo! # reschedule
+      assert_match(/2026-07-02/, File.read(org))
+      assert_match(/\[#B\] Book flight/, File.read(org))
+      store.undo! # priority
+      assert_equal original, File.read(org)
+    end
+  end
+
+  def test_new_mutation_clears_redo
+    with_store do |store, _o, _a|
+      store.set_priority!(find_item(store, "Book flight"), "B")
+      store.undo!
+      store.set_priority!(find_item(store, "Book flight"), "C")
+      assert_equal [:empty], store.redo!
+    end
+  end
+
+  def test_undo_refuses_after_external_edit
+    with_store do |store, org, _a|
+      store.complete!(find_item(store, "Book flight"))
+      File.write(org, File.read(org) + "** TODO claude added this\n")
+      kind, label = store.undo!
+      assert_equal :conflict, kind
+      assert_includes label, "Book flight"
+      assert_match(/claude added this/, File.read(org), "conflict must not clobber the file")
+    end
+  end
+
+  def test_undo_archive_sweep_restores_both_files
+    with_store do |store, org, archive|
+      org_before = File.read(org)
+      refute File.exist?(archive)
+      store.archive_swept!
+      assert File.exist?(archive)
+
+      kind, = store.undo!
+      assert_equal :ok, kind
+      assert_equal org_before, File.read(org)
+      refute File.exist?(archive), "archive file created by the sweep is removed"
+      assert_equal 7, store.items.size
+    end
+  end
+
+  def test_failed_mutation_records_no_history
+    with_store do |store, _o, _a|
+      stale = find_item(store, "Book flight").dup
+      stale.line = 1
+      refute store.complete!(stale)
+      assert_equal [:empty], store.undo!
+    end
+  end
+
+  def test_undo_history_is_capped
+    with_store do |store, _o, _a|
+      55.times do |i|
+        store.set_priority!(find_item(store, "Book flight"), %w[A B C][i % 3])
+      end
+      undone = 0
+      undone += 1 while store.undo!.first == :ok
+      assert_equal Tui::Store::UNDO_LIMIT, undone
+    end
+  end
+
   def test_archive_with_nothing_to_do
     with_store do |store, _org, archive|
       store.archive_swept!

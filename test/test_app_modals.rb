@@ -155,6 +155,54 @@ class TestAppModals < Minitest::Test
     end
   end
 
+  def test_undo_redo_roundtrip_with_flashes
+    with_app do |app|
+      app.send(:handle_key, "J")
+      assert_equal "B", app.send(:current_item).priority
+
+      app.send(:handle_key, "u")
+      assert_equal "A", app.send(:current_item).priority
+      assert_match(/undid: priority/, app.instance_variable_get(:@flash))
+
+      app.send(:handle_key, "\x12")
+      assert_equal "B", app.send(:current_item).priority
+      assert_match(/redid: priority/, app.instance_variable_get(:@flash))
+    end
+  end
+
+  def test_undo_with_nothing_flashes
+    with_app do |app|
+      app.send(:handle_key, "u")
+      assert_match(/nothing to undo/, app.instance_variable_get(:@flash))
+      app.send(:handle_key, "\x12")
+      assert_match(/nothing to redo/, app.instance_variable_get(:@flash))
+    end
+  end
+
+  def test_undo_inside_detail_modal_refreshes_content
+    with_app do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "J")
+      assert_match(/priority\s+\[#B\]/, modal_text(app))
+      app.send(:handle_key, "u")
+      assert_equal :modal, mode(app)
+      assert_match(/priority\s+\[#A\]/, modal_text(app), "modal shows undone state")
+    end
+  end
+
+  def test_undo_of_complete_restores_task_to_view
+    with_app do |app|
+      title = selected_title(app)
+      count = app.instance_variable_get(:@rows).size
+      app.send(:handle_key, "c") # complete: task leaves the agenda
+      app.send(:rows)
+      assert_equal count - 1, app.instance_variable_get(:@rows).size
+      app.send(:handle_key, "u")
+      titles = app.instance_variable_get(:@rows).map { |r| r.item&.title }
+      assert_includes titles, title
+    end
+  end
+
   def test_p_from_modal_closes_it_and_appends_to_existing_input
     with_app do |app|
       app.instance_variable_get(:@input) << "complete"
