@@ -10,6 +10,10 @@ description: How to add or change commands in the tasks CLI (bin/tasks + lib/tas
 ```
 bin/tasks           thin dispatch + human output. No business logic.
 lib/tasks/store.rb  Tasks::Store — the model layer. ALL writes go through it.
+lib/tasks/config.rb Tasks::Config.resolve — where gtd.org/archive.org live
+                    (TASKS_ORG/TASKS_ARCHIVE > TASKS_DIR > ~/.config/tasks/config
+                    > repo root). CLI and TUI both resolve through it; tests
+                    pin sandboxes with Config.for_dir.
 lib/tasks/dates.rb  Tasks::Dates.parse_when — fuzzy date parsing.
 lib/tasks/check.rb  Tasks::Check.check — structural linter, the safety net.
 lib/tui/            the TUI; consumes the same Store via compat shims.

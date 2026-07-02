@@ -31,6 +31,22 @@ tasks -p "..."          # hand a request to Claude — it acts and reports back
 Every command has the single-letter alias shown in parentheses (`tasks n`, `tasks x`, …).
 `tasks` itself is aliased to `bin/tasks` in `~/.zshrc`.
 
+## Where your tasks live
+
+By default `gtd.org` and `archive.org` sit in the repo root, but the data is
+separable from the code — point the tooling anywhere:
+
+```sh
+mkdir -p ~/.config/tasks
+echo "dir = ~/tasks" > ~/.config/tasks/config
+tasks config          # shows the resolved paths and where each came from
+```
+
+Resolution order (both CLI and TUI): `TASKS_ORG`/`TASKS_ARCHIVE` env vars,
+then `TASKS_DIR`, then the config file (`dir = …`, or per-file `org = …` /
+`archive = …`), then the repo root. Env vars make one-off sandboxes easy:
+`TASKS_ORG=/tmp/scratch.org tasks capture "test"`.
+
 ### Filtering with `list`
 
 ```sh

@@ -28,18 +28,23 @@
 #     filters: @context  /text  +tag  -A|-B|-C  (compose freely)
 #   bin/tasks -p "..."        hand a natural-language request to Claude (Sonnet),
 #                             which acts on your tasks and reports what changed
+#   bin/tasks config          show where gtd.org/archive.org resolve and why
 #   bin/tasks help|-h         full command reference
 #
 # Stdlib only — no bundler required. Parses gtd.org with simple line matching.
+# Task files default to the repo root; point them elsewhere with TASKS_DIR
+# (or TASKS_ORG/TASKS_ARCHIVE) env vars or ~/.config/tasks/config.
 
 require "date"
 require "shellwords"
 
 ROOT    = File.expand_path("..", __dir__)
-# TASKS_ORG/TASKS_ARCHIVE let tests (and alternate task files) point the CLI at
-# a sandbox copy instead of the repo's gtd.org. Default to the repo files.
-ORG     = ENV.fetch("TASKS_ORG") { File.join(ROOT, "gtd.org") }
-ARCHIVE = ENV.fetch("TASKS_ARCHIVE") { File.join(ROOT, "archive.org") }
+# Task files are configurable (env vars, ~/.config/tasks/config) so the data
+# can live outside this repo. See lib/tasks/config.rb for precedence.
+require_relative "../lib/tasks/config"
+PATHS   = Tasks::Config.resolve(default_dir: ROOT)
+ORG     = PATHS.org
+ARCHIVE = PATHS.archive
 AGENTS  = File.join(ROOT, "AGENTS.md")
 
 # The model layer owns parsing and every mutation; the CLI adds dispatch,
@@ -619,19 +624,40 @@ def cmd_prompt(prompt)
   abort %(usage: tasks -p "do something with my tasks") if prompt.nil? || prompt.strip.empty?
   abort "claude CLI not found on PATH" unless system("command -v claude >/dev/null 2>&1")
   sys_prompt = File.exist?(AGENTS) ? File.read(AGENTS, encoding: "UTF-8") : ""
+  sys_prompt = "#{sys_prompt}\n\n#{PATHS.claude_context(cli_root: ROOT)}"
+  data_dir = File.dirname(ORG)
   ok = system(
     "claude", "-p", prompt.strip,
     "--model", "sonnet",
     "--append-system-prompt", sys_prompt,
     "--output-format", "text",
     "--dangerously-skip-permissions",
-    chdir: ROOT
+    chdir: data_dir
   )
   warn "\n(claude exited non-zero)" unless ok
-  diff = `git -C #{ROOT.shellescape} diff --stat -- gtd.org archive.org`
+  # Show what changed — only possible when the task files sit in a git repo.
+  in_git = system("git", "-C", data_dir, "rev-parse", "--is-inside-work-tree",
+                  out: File::NULL, err: File::NULL)
+  return unless in_git
+  diff = `git -C #{data_dir.shellescape} diff --stat -- #{ORG.shellescape} #{ARCHIVE.shellescape}`
   unless diff.strip.empty?
     puts "\n#{bold("Changes to task files:")}"
-    system("git", "-C", ROOT, "--no-pager", "diff", "--", "gtd.org", "archive.org")
+    system("git", "-C", data_dir, "--no-pager", "diff", "--", ORG, ARCHIVE)
+  end
+end
+
+# Where the task files resolve to, and why — for debugging a config setup.
+def cmd_config(args)
+  if args.include?("--json")
+    require "json"
+    puts({ org: ORG, archive: ARCHIVE,
+           sources: PATHS.sources,
+           config_file: PATHS.config_file,
+           config_file_exists: File.file?(PATHS.config_file) }.to_json)
+  else
+    puts "org:      #{ORG}  #{dim("(#{PATHS.sources[:org]})")}"
+    puts "archive:  #{ARCHIVE}  #{dim("(#{PATHS.sources[:archive]})")}"
+    puts "config:   #{PATHS.config_file}#{File.file?(PATHS.config_file) ? "" : dim(" (not present)")}"
   end
 end
 
@@ -669,8 +695,12 @@ HELP = <<~USAGE
 
   Lifecycle:
     archive   x              sweep DONE/CANCELLED to archive.org
+    config                   show resolved file paths and their sources
     -p "..."                 hand a natural-language request to Claude
     help      -h             this message
+
+  Files: default to the repo; override with TASKS_DIR (or TASKS_ORG/TASKS_ARCHIVE)
+  env vars, or ~/.config/tasks/config (dir = / org = / archive = lines).
 
   Dates: 2026-07-15 · 07-15 · 7/15 · fri · today · tomorrow · +3
   Refs:  a case-insensitive title substring, or L<line>.
@@ -703,6 +733,7 @@ when "show", "s"      then cmd_show(ARGV[1..])
 when "archive", "x"   then cmd_archive
 when "list", "l"      then cmd_list(ARGV[1..])
 when "check", "k"     then cmd_check(ARGV[1..])
+when "config"         then cmd_config(ARGV[1..])
 when "help", "-h", "--help" then cmd_help
 else
   warn "unknown command: #{ARGV[0].inspect}\n\n" if ARGV[0]

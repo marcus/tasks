@@ -21,7 +21,7 @@ class TestApp < Minitest::Test
   def app_with(claude:, input:)
     Dir.mktmpdir do |dir|
       File.write(File.join(dir, "gtd.org"), FIXTURE_ORG)
-      app = Tui::App.new(root: dir)
+      app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir))
       app.instance_variable_set(:@claude, claude)
       app.instance_variable_set(:@input, +input)
       yield app

@@ -10,6 +10,10 @@ passed to `tasks -p`. Today's date is available from the system.
   Metadata lines below a headline: `DEADLINE: <YYYY-MM-DD>`,
   `SCHEDULED: <YYYY-MM-DD>`, `CLOSED: [YYYY-MM-DD]`.
 - `archive.org` — completed/cancelled history. Don't edit by hand.
+- The files may live outside the CLI's repo. Absolute paths for this run
+  (the CLI and both files) are appended below this prompt under
+  "File locations for this run" — use those for direct reads/edits, and the
+  absolute CLI path if `bin/tasks` isn't in your working directory.
 
 ## How to act
 - Read state first with `bin/tasks list -a` (or targeted filters).

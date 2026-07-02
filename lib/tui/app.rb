@@ -12,6 +12,7 @@ require_relative "shortcuts"
 require_relative "modals"
 require_relative "clipboard"
 require_relative "export"
+require_relative "../tasks/config"
 
 module Tui
   # The event loop: raw-mode keyboard input, gtd.org watching, and the
@@ -27,9 +28,13 @@ module Tui
     PROMPT_MAX  = 5    # prompt input grows to at most this many lines
     MODELS      = %w[sonnet opus haiku].freeze
 
-    def initialize(root:)
-      @store  = Store.new(org: File.join(root, "gtd.org"), archive: File.join(root, "archive.org"))
-      @claude = Claude.new(root: root, agents_path: File.join(root, "AGENTS.md"))
+    # paths: injectable so tests can pin a sandbox dir; defaults to the
+    # user's configured task files (env vars / ~/.config/tasks/config / root).
+    def initialize(root:, paths: Tasks::Config.resolve(default_dir: root))
+      @store  = Store.new(org: paths.org, archive: paths.archive)
+      @claude = Claude.new(root: File.dirname(paths.org),
+                           agents_path: File.join(root, "AGENTS.md"),
+                           extra_prompt: paths.claude_context(cli_root: root))
       @view   = :agenda
       @sel    = 0
       @mode   = :list      # :list | :prompt | :date | :modal

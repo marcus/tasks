@@ -18,8 +18,20 @@ an agent would plausibly reach for them (`done`/`complete`/`close` are the
 same command); the canonical name is listed first. Unknown `--flags` are an
 error (exit 1), never silently treated as positional args.
 
-**Sandboxing.** `TASKS_ORG` / `TASKS_ARCHIVE` env vars point the CLI at
-alternate files — used by the test suite and for safe manual experiments.
+**File locations.** The task files don't have to live in this repo — the code
+and your data are separable (so the project can be shared without the tasks).
+Both the CLI and the TUI resolve `gtd.org`/`archive.org` through
+`lib/tasks/config.rb`, highest precedence first:
+
+1. `TASKS_ORG` / `TASKS_ARCHIVE` env vars (per-file; used by the test suite
+   and for safe manual experiments).
+2. `TASKS_DIR` env var — a directory containing `gtd.org` and `archive.org`.
+3. Config file `~/.config/tasks/config` (or `$XDG_CONFIG_HOME/tasks/config`),
+   `key = value` lines: `dir = ~/tasks`, or per-file `org = …` / `archive = …`.
+   `~` expands; `#` comments and blank lines ignored.
+4. Default: the repo root (current behavior).
+
+`tasks config` prints the resolved paths and where each came from.
 
 **Task refs.** Mutations take a `<ref>` — a case-insensitive substring of the
 task title. Resolution rules:
@@ -96,6 +108,7 @@ already sorted the way the text view sorts:
 | `delete <ref> --force` | `rm` | 🚧 | Hard-remove a block (no archive). Refuses without `--force`; suggest `cancel` instead. |
 | `undo` | | 🚧 | Revert the last CLI mutation (file-backed journal, shared with the TUI's in-memory one is out of scope). Until then: `git diff` / `git checkout -- gtd.org`. |
 | `-p "prompt"` | | ✅ | Natural-language request via headless Claude. |
+| `config [--json]` | | ✅ | Print resolved file paths (org, archive, config file) and the source of each (`TASKS_ORG env`, `TASKS_DIR env`, `config file`, `default`). |
 | `help` | `-h`, `--help` | ✅ | Grouped command reference. Also printed (to stderr, exit 1) on an unknown/absent command. |
 
 Ideas beyond this spec live in `docs/ideas.md`.

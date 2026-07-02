@@ -19,7 +19,12 @@ bin/tasks agenda           # dated items, soonest first
 bin/tasks inbox            # unprocessed captures
 bin/tasks show "<ref>"     # one task in full (fields + notes); --json
 bin/tasks check            # is the file structurally sound? (exit 1 = no)
+bin/tasks config           # where gtd.org/archive.org actually resolve; --json
 ```
+
+The task files may live outside this repo (env vars or `~/.config/tasks/config`
+can relocate them). If you need the file's path — e.g. before a direct edit —
+get it from `bin/tasks config`, don't assume the repo root.
 
 All read commands accept `--json` (flat array, same sort as the text view) —
 prefer it when you need to reason over tasks rather than display them.

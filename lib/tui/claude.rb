@@ -6,9 +6,12 @@ module Tui
   class Claude
     attr_reader :output, :io
 
-    def initialize(root:, agents_path:)
+    # extra_prompt: appended after AGENTS.md — used to hand the agent absolute
+    # file locations when the task files live outside the repo.
+    def initialize(root:, agents_path:, extra_prompt: nil)
       @root = root
       @agents = agents_path
+      @extra_prompt = extra_prompt
       @output = +""
       @pid = nil
       @io = nil
@@ -34,7 +37,9 @@ module Tui
       # prompts, and the whole point is letting the agent edit gtd.org freely
       args = ["claude", "-p", prompt, "--model", model, "--output-format", "text",
               "--dangerously-skip-permissions"]
-      args += ["--append-system-prompt", File.read(@agents, encoding: "UTF-8")] if File.exist?(@agents)
+      sys = File.exist?(@agents) ? File.read(@agents, encoding: "UTF-8") : +""
+      sys = [sys, @extra_prompt].reject { |s| s.to_s.empty? }.join("\n\n")
+      args += ["--append-system-prompt", sys] unless sys.empty?
       args
     end
 
