@@ -340,6 +340,19 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  def test_add_note_accepts_binary_tagged_utf8
+    # ARGV under a non-UTF-8 locale (LANG unset) arrives tagged ASCII-8BIT even
+    # though the bytes are UTF-8. Appending such a note must not raise
+    # Encoding::CompatibilityError when joined into the UTF-8 file lines.
+    with_store do |store, org, _a|
+      note = "follow up — see thread".dup.force_encoding("ASCII-8BIT")
+      assert store.add_note!(find_item(store, "Review PR"), note)
+      assert_includes store.block(find_item(store, "Review PR")).map(&:strip),
+                      "follow up — see thread"
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
   # -- move! ------------------------------------------------------------------
 
   def test_move_relocates_block_under_target_section
@@ -400,6 +413,17 @@ class TestCliMutations < Minitest::Test
       assert line.is_a?(Integer) && line.positive?
       fresh = store.items.find { |i| i.title == "call the plumber" }
       assert_equal "INBOX", fresh.state
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_capture_accepts_binary_tagged_utf8
+    # Same non-UTF-8-locale regression as notes: a capture title with a
+    # multibyte char must survive being written into the UTF-8 file.
+    with_store do |store, org, _a|
+      text = "Draft — Q3 proposal".dup.force_encoding("ASCII-8BIT")
+      assert store.capture!(text)
+      assert_match(/Draft — Q3 proposal/, File.read(org, encoding: "UTF-8"))
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -613,15 +637,18 @@ class TestCliMutations < Minitest::Test
   BIN = File.expand_path("../bin/tasks", __dir__)
 
   # Run bin/tasks in a sandbox; returns [stdout, stderr, status].
-  def run_cli(*args, content: FIXTURE_ORG)
+  def run_cli(*args, content: FIXTURE_ORG, env: {})
     Dir.mktmpdir do |dir|
       org = File.join(dir, "gtd.org")
       archive = File.join(dir, "archive.org")
       File.write(org, content)
-      env = { "TASKS_ORG" => org, "TASKS_ARCHIVE" => archive }
+      env = { "TASKS_ORG" => org, "TASKS_ARCHIVE" => archive }.merge(env)
       require "open3"
       out, err, st = Open3.capture3(env, "ruby", BIN, *args)
-      yield org, out, err, st
+      # The CLI emits UTF-8; capture3 tags output with the runner's locale,
+      # which is US-ASCII when LANG is unset. Re-tag so assertions matching
+      # multibyte output don't raise "invalid byte sequence in US-ASCII".
+      yield org, out.force_encoding("UTF-8"), err.force_encoding("UTF-8"), st
     end
   end
 
@@ -630,6 +657,16 @@ class TestCliMutations < Minitest::Test
       assert st.success?
       assert_match(/DEADLINE: <2026-07-15/, File.read(org))
       assert_match(/DONE|NEXT/, out) # prints the resulting headline
+    end
+  end
+
+  def test_cli_note_with_em_dash_under_non_utf8_locale
+    # End-to-end regression: under a C locale the shell hands Ruby ASCII-8BIT
+    # ARGV, so a note with an em-dash used to crash on the UTF-8 file write.
+    run_cli("note", "Review PR", "follow up — see thread",
+            env: { "LC_ALL" => "C", "LANG" => "", "LC_CTYPE" => "" }) do |org, _out, err, st|
+      assert st.success?, "note crashed: #{err}"
+      assert_match(/follow up — see thread/, File.read(org, encoding: "UTF-8"))
     end
   end
 

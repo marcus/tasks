@@ -141,17 +141,21 @@ module Tasks
     # Replace the headline's title text, leaving state/priority/tags/dates
     # untouched. Same staleness contract as complete!.
     def retitle!(item, new_title)
+      new_title = utf8(new_title)
       with_history("retitle → #{new_title}: #{item.title}") { retitle_impl(item, new_title) }
     end
 
     # Add and/or remove tags (contexts are tags that start with "@"), idempotent
     # per tag. Same staleness contract as complete!.
     def set_tags!(item, add: [], remove: [])
+      add    = add.map { |t| utf8(t) }
+      remove = remove.map { |t| utf8(t) }
       with_history("tags: #{item.title}") { set_tags_impl(item, add, remove) }
     end
 
     # Append a body line at the end of the item's block. Same staleness contract.
     def add_note!(item, text)
+      text = utf8(text)
       with_history("note: #{item.title}") { add_note_impl(item, text) }
     end
 
@@ -168,6 +172,8 @@ module Tasks
     # doesn't exist. A capture with a date is already "processed"; callers pass
     # state: "TODO" in that case.
     def capture!(text, due: nil, scheduled: nil, priority: nil, tags: [], state: "INBOX", project: nil)
+      text = utf8(text)
+      tags = tags.map { |t| utf8(t) }
       with_history("capture: #{text}") { capture_impl(text, due, scheduled, priority, tags, state, project) }
     end
 
@@ -176,6 +182,17 @@ module Tasks
     end
 
     private
+
+    # User-supplied text (ARGV, TUI input) is tagged with the process locale,
+    # which is ASCII-8BIT/BINARY when LANG is unset. The bytes are UTF-8 — the
+    # terminal emits UTF-8 — so re-tag them; otherwise joining a BINARY string
+    # into the UTF-8 file lines raises Encoding::CompatibilityError. Genuinely
+    # invalid bytes are left as-is so they fail loudly rather than corrupt gtd.org.
+    def utf8(str)
+      return str if str.nil? || str.encoding == Encoding::UTF_8
+      recoded = str.dup.force_encoding(Encoding::UTF_8)
+      recoded.valid_encoding? ? recoded : str
+    end
 
     def snapshot
       {

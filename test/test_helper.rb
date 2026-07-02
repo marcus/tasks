@@ -4,6 +4,34 @@ require "minitest/autorun"
 require "tmpdir"
 require "date"
 
+# Minitest 6 dropped minitest/mock (and Object#stub); this project is
+# stdlib-only, so vendor the classic Minitest 5 stub — the one feature the
+# TUI tests use — to temporarily swap a method for the duration of a block.
+class Object
+  def stub(name, val_or_callable, *block_args, **block_kwargs)
+    metaclass = class << self; self; end
+
+    if respond_to?(name) && !methods.map(&:to_s).include?(name.to_s)
+      metaclass.send(:define_method, name) { |*args, **kwargs, &blk| super(*args, **kwargs, &blk) }
+    end
+
+    metaclass.send(:alias_method, "__stub__#{name}", name)
+    metaclass.send(:define_method, name) do |*args, **kwargs, &blk|
+      if val_or_callable.respond_to?(:call)
+        val_or_callable.call(*args, **kwargs, &blk)
+      else
+        val_or_callable
+      end
+    end
+
+    yield self
+  ensure
+    metaclass.send(:undef_method, name)
+    metaclass.send(:alias_method, name, "__stub__#{name}")
+    metaclass.send(:undef_method, "__stub__#{name}")
+  end
+end
+
 $LOAD_PATH.unshift File.expand_path("../lib", __dir__)
 
 require "tui/ansi"
