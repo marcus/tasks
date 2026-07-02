@@ -10,6 +10,8 @@ require_relative "frame"
 require_relative "claude"
 require_relative "shortcuts"
 require_relative "modals"
+require_relative "clipboard"
+require_relative "export"
 
 module Tui
   # The event loop: raw-mode keyboard input, gtd.org watching, and the
@@ -204,6 +206,8 @@ module Tui
       when "\e[B", "j"     then modal_move(1)
       when "\e[5~"         then scroll_modal(-5)
       when "\e[6~"         then scroll_modal(5)
+      when "y"             then yank_ref
+      when "Y"             then yank_markdown
       end
     end
 
@@ -244,6 +248,25 @@ module Tui
     def resp_up        = scroll_resp(-5)
     def resp_down      = scroll_resp(5)
     def quit           = @quit = true
+
+    def yank_ref
+      yank { |item, _block| Export.reference(item) }
+    end
+
+    def yank_markdown
+      yank { |item, block| Export.markdown(item, block) }
+    end
+
+    def yank
+      item = current_item
+      return flash("nothing selected") unless item
+      text = yield(item, @store.block(item))
+      if Clipboard.copy(text)
+        flash("yanked: “#{item.title}”")
+      else
+        flash("no clipboard tool found (pbcopy/wl-copy/xclip/xsel)")
+      end
+    end
 
     def open_help
       open_modal(Modals.help, kind: :help)

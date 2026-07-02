@@ -18,6 +18,8 @@ module Tui
       Entry.new(seqs: ["c"],          keys: "c",       desc: "complete selected task",           action: :complete_selected),
       Entry.new(seqs: ["d"],          keys: "d",       desc: "reschedule — fri · +3 · 07-15",    action: :open_date_popup),
       Entry.new(seqs: ["x"],          keys: "x",       desc: "archive DONE/CANCELLED items",     action: :archive_sweep),
+      Entry.new(seqs: ["y"],          keys: "y",       desc: "yank task ref (paste to claude)",  action: :yank_ref),
+      Entry.new(seqs: ["Y"],          keys: "Y",       desc: "yank task as markdown",            action: :yank_markdown),
       Entry.new(seqs: ["\t", ":"],    keys: "tab / :", desc: "ask claude — CRUD anything",       action: :focus_prompt),
       Entry.new(seqs: ["\e[5~"],      keys: "pgup",    desc: "scroll claude response up",        action: :resp_up),
       Entry.new(seqs: ["\e[6~"],      keys: "pgdn",    desc: "scroll claude response down",      action: :resp_down),

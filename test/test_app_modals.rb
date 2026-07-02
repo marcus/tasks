@@ -87,4 +87,29 @@ class TestAppModals < Minitest::Test
       assert_equal :modal, mode(app)
     end
   end
+
+  def test_yank_works_in_list_and_modal_mode
+    with_app do |app|
+      copied = []
+      Tui::Clipboard.stub(:copy, ->(text, **) { copied << text; true }) do
+        app.send(:handle_key, "y")                      # list mode: ref
+        app.send(:handle_key, "\r")                     # open detail modal
+        app.send(:handle_key, "Y")                      # modal mode: markdown
+        assert_equal :modal, mode(app), "yank must not close the modal"
+      end
+      assert_equal 2, copied.size
+      assert_equal selected_title(app), copied[0]
+      assert_includes copied[1], "## #{selected_title(app)}"
+      assert_includes copied[1], "- state:"
+    end
+  end
+
+  def test_yank_with_no_clipboard_tool_flashes_error
+    with_app do |app|
+      Tui::Clipboard.stub(:copy, false) do
+        app.send(:handle_key, "y")
+      end
+      assert_match(/no clipboard tool/, app.instance_variable_get(:@flash))
+    end
+  end
 end
