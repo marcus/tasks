@@ -12,7 +12,7 @@ class TestAppModals < Minitest::Test
     Dir.mktmpdir do |dir|
       File.write(File.join(dir, "gtd.org"), FIXTURE_ORG)
       app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir),
-                         entries: default_llm_entries)
+                         llm_config: default_llm_config)
       app.send(:rows) # populate @rows like the paint loop does
       app.send(:clamp_selection)
       yield app
@@ -392,6 +392,32 @@ class TestAppModals < Minitest::Test
       agent = app.instance_variable_get(:@agent)
       assert_instance_of LLM::Agent::Hermes, agent,
                          "cycling to the hermes entry swaps in its adapter"
+    end
+  end
+
+  def test_model_only_change_keeps_same_agent_instance
+    with_app do |app|
+      before = app.instance_variable_get(:@agent) # claude-cli:sonnet
+      app.send(:handle_key, "M")                   # → claude-cli:opus (same provider)
+      assert_equal "opus", app.send(:current_entry).model
+      assert_same before, app.instance_variable_get(:@agent),
+                  "a model-only switch must not rebuild the adapter"
+    end
+  end
+
+  def test_provider_switch_is_deferred_while_a_run_is_in_flight
+    with_app do |app|
+      # stand in a running agent so the switcher must not swap it out
+      running = Object.new
+      def running.running? = true
+      def running.io = nil
+      app.instance_variable_set(:@agent, running)
+      app.instance_variable_set(:@agent_provider, "claude-cli")
+
+      app.send(:handle_key, "M") until app.send(:current_entry).provider == "hermes"
+      assert_same running, app.instance_variable_get(:@agent),
+                  "must never drop a running agent's io from IO.select"
+      assert_equal "claude-cli", app.instance_variable_get(:@agent_provider)
     end
   end
 

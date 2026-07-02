@@ -627,6 +627,9 @@ def cmd_prompt(args)
 
   entry = LLM.default_entry(provider: provider, model: model)
   agent = LLM.build(entry, root: data_dir, system: sys_prompt)
+rescue ArgumentError => e
+  abort e.message
+else
   unless agent.available?
     abort "agent '#{entry.provider}' not available — check the CLI is installed and any local model server is running"
   end

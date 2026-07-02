@@ -70,12 +70,24 @@ module LLM
   # hermes's own default model, not a claude tier left in config.
   def default_entry(provider: nil, model: nil, config: Config.load, reg: nil)
     reg ||= registry(config)
-    pname = [provider, config.provider].compact.find { |p| reg.key?(p) } || reg.keys.first
+    explicit = nonblank(provider)
+    # An explicit provider (a CLI --provider flag) that isn't registered is a
+    # user error — reject it rather than silently running the default backend.
+    # A stale config provider falls back quietly so a typo can't brick the tool.
+    if explicit && !reg.key?(explicit)
+      raise ArgumentError, "unknown LLM provider: #{explicit.inspect} (known: #{reg.keys.join(", ")})"
+    end
+
+    pname = explicit || valid_key(config.provider, reg) || reg.keys.first
     spec = reg.fetch(pname)
     mname = nonblank(model)
-    mname ||= nonblank(config.model) if provider.nil?
+    mname ||= nonblank(config.model) if explicit.nil? # config.model pairs with config.provider
     mname ||= spec.models.first
     Entry.new(provider: pname, model: mname)
+  end
+
+  def valid_key(name, reg)
+    (k = nonblank(name)) && reg.key?(k) ? k : nil
   end
 
   def nonblank(str) = (s = str.to_s.strip).empty? ? nil : s

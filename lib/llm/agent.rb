@@ -58,8 +58,11 @@ module LLM
     def start(prompt, model:, stream: true)
       @output = +""
       r, w = IO.pipe
+      # pgroup: true puts the child in its own process group so #cancel can TERM
+      # the whole tree — these harnesses spawn tool subprocesses that would
+      # otherwise be orphaned when we kill just the leader.
       @pid = Process.spawn(*command(prompt, model: model, stream: stream),
-                           in: File::NULL, out: w, err: w, chdir: @root)
+                           in: File::NULL, out: w, err: w, chdir: @root, pgroup: true)
       w.close
       @io = r
       self
@@ -79,7 +82,8 @@ module LLM
     end
 
     def cancel
-      Process.kill("TERM", @pid) if @pid
+      # Negative pid = signal the whole process group started in #start.
+      Process.kill("TERM", -@pid) if @pid
       finish
     rescue Errno::ESRCH
       finish

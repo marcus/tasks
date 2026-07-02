@@ -161,6 +161,32 @@ class TestLLM < Minitest::Test
     assert_equal "claude-cli:sonnet", LLM.default_entry(config: empty_config).to_s
   end
 
+  def test_default_entry_raises_on_explicit_unknown_provider
+    err = assert_raises(ArgumentError) do
+      LLM.default_entry(provider: "hremes", config: empty_config) # typo
+    end
+    assert_match(/unknown LLM provider/, err.message)
+    assert_match(/claude-cli/, err.message) # lists what's known
+  end
+
+  def test_default_entry_tolerates_unknown_config_provider
+    # a stale/typo'd config provider must not brick the tool — fall back quietly
+    cfg = LLM::Config.new(provider: "gone", model: nil, providers: {})
+    assert_equal "claude-cli:sonnet", LLM.default_entry(config: cfg).to_s
+  end
+
+  # -- run_sync streaming default --------------------------------------------
+
+  def test_run_sync_defaults_to_non_streaming
+    agent = A::Hermes.new(root: "/tmp")
+    seen = nil
+    # capture the stream flag and run a harmless real command instead of hermes
+    agent.stub(:command, ->(_p, model:, stream:) { seen = stream; ["true"] }) do
+      assert agent.run_sync("hi", model: "m")
+    end
+    assert_equal false, seen, "sync CLI wants the final answer, not a transcript"
+  end
+
   def test_build_returns_configured_adapter_with_settings
     cfg = LLM::Config.new(provider: nil, model: nil,
                           providers: { "hermes" => { command: "/opt/hermes",

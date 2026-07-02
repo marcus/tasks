@@ -42,11 +42,11 @@ require "tui/frame"
 require "llm/registry"
 
 module LLMTestHelpers
-  # The built-in provider/model entries, assembled with an EMPTY config so App
-  # tests are hermetic — they never read the developer's real
-  # ~/.config/tasks/config (which App.new does by default in production).
-  def default_llm_entries
-    LLM.entries(LLM::Config.new(provider: nil, model: nil, providers: {}))
+  # An EMPTY LLM config so App tests are hermetic — they never read the
+  # developer's real ~/.config/tasks/config (which App.new does by default in
+  # production). Yields the built-in provider/model defaults.
+  def default_llm_config
+    LLM::Config.new(provider: nil, model: nil, providers: {})
   end
 end
 Minitest::Test.include(LLMTestHelpers)

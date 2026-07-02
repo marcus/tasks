@@ -26,6 +26,7 @@ module LLM
     #   --yolo                  bypass approval prompts — required headless, the
     #                           analogue of claude's --dangerously-skip-permissions
     #   --accept-hooks          auto-approve config.yaml shell hooks (no TTY)
+    # Start/pump/cancel (incl. process-group TERM) are inherited from Agent.
     class Hermes < Agent
       DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
       # Hermes' conventional local-Ollama provider name; overridable via config,
@@ -63,9 +64,12 @@ module LLM
 
       private
 
+      # Short timeouts: this runs synchronously from the TUI's submit path, so a
+      # dead endpoint must fail fast rather than stall the event loop. /api/tags
+      # answers instantly when Ollama is up (it just lists local models).
       def ollama_up?
         uri = URI.join(@ollama_url, "/api/tags")
-        Net::HTTP.start(uri.host, uri.port, open_timeout: 1, read_timeout: 1) do |http|
+        Net::HTTP.start(uri.host, uri.port, open_timeout: 0.5, read_timeout: 0.5) do |http|
           http.get(uri.request_uri).is_a?(Net::HTTPSuccess)
         end
       rescue StandardError

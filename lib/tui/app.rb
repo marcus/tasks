@@ -37,20 +37,22 @@ module Tui
         .reject { |s| s.to_s.strip.empty? }.join("\n\n")
     end
 
-    # paths:   injectable so tests can pin a sandbox dir; defaults to the
-    #          user's configured task files (env vars / ~/.config/tasks/config).
-    # entries: the (provider, model) switcher list; defaults to the config-
-    #          assembled set. Injectable so tests are hermetic — they pin the
-    #          built-in defaults instead of reading the user's real LLM config.
+    # paths:      injectable so tests can pin a sandbox dir; defaults to the
+    #             user's configured task files (env / ~/.config/tasks/config).
+    # llm_config: the resolved LLM config (provider/model defaults + per-provider
+    #             settings). Read once here and threaded through the switcher, so
+    #             both the entry list and each rebuilt agent agree. Injectable so
+    #             tests are hermetic instead of reading the developer's real config.
     def initialize(root:, paths: Tasks::Config.resolve(default_dir: root),
-                   entries: LLM.entries)
+                   llm_config: LLM::Config.load)
       @store  = Store.new(org: paths.org, archive: paths.archive)
       @urgent_days = paths.urgent_days # deadline window for the quadrants view
       # The (provider, model) switcher cycles these; the live agent is rebuilt
       # lazily when the selected provider changes (see ensure_agent_for_current!).
       @agent_root = File.dirname(paths.org)
       @sys_prompt = App.agent_system(paths: paths, cli_root: root)
-      @entries    = entries
+      @llm_config = llm_config
+      @entries    = LLM.entries(llm_config)
       @entry_idx  = 0
       @agent = build_agent(current_entry)
       @agent_provider = current_entry.provider
@@ -79,7 +81,7 @@ module Tui
     def current_entry = @entries[@entry_idx]
 
     def build_agent(entry)
-      LLM.build(entry, root: @agent_root, system: @sys_prompt)
+      LLM.build(entry, root: @agent_root, system: @sys_prompt, config: @llm_config)
     end
 
     # Rebuild the live agent when the selected provider has changed. Never swaps
@@ -169,7 +171,7 @@ module Tui
     def footer(w)
       f = []
       if @agent.running?
-        f << A.dim(" #{SPINNER[@tick % SPINNER.size]} claude is working… (esc cancels)")
+        f << A.dim(" #{SPINNER[@tick % SPINNER.size]} #{@agent_provider} is working… (esc cancels)")
         # scrub: a streaming chunk can end mid-multibyte-char
         A.strip(@agent.output.scrub("�")).split("\n").last(3).each { |t| f << A.dim("   #{t}") }
         f << :rule
@@ -195,7 +197,7 @@ module Tui
     # request stays readable; beyond that, the earliest lines scroll off.
     def prompt_lines(w)
       unless @mode == :prompt
-        hint = @agent.running? ? A.dim("…") : A.dim("tab to ask claude — reschedule, capture, edit anything…")
+        hint = @agent.running? ? A.dim("…") : A.dim("tab to ask the agent — reschedule, capture, edit anything…")
         return [" #{A.bold(A.cyan("❯ "))}#{hint}"]
       end
       # char-slice rather than word-wrap: the input must render verbatim
