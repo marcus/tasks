@@ -10,7 +10,7 @@
 #   bin/tasks inbox|i         show unprocessed INBOX items
 #   bin/tasks capture|c "..." append a new item (flags: --due/--scheduled/
 #                             --priority/--tag/--context/--state/--project)
-#   bin/tasks done|d "..."    mark a matching open item DONE
+#   bin/tasks done|d <ref>    mark a matching open item DONE (complete/close)
 #   bin/tasks due <ref> <date>       set/replace an item's DEADLINE
 #   bin/tasks schedule <ref> <date>  set/replace an item's SCHEDULED
 #   bin/tasks undate <ref> [--kind deadline|scheduled]  remove date stamp(s)
@@ -81,9 +81,6 @@ def open?(item)     = OPEN_STATES.include?(item.state)
 
 OPEN_STATES = %w[INBOX TODO NEXT WAITING].freeze
 DONE_STATES = %w[DONE CANCELLED].freeze
-
-def headline_level(line) = line.match(/^(\*+)\s+/)&.captures&.first&.length
-def headline_state(line) = line[/^\*+\s+(INBOX|TODO|NEXT|WAITING|DONE|CANCELLED)\b/, 1]
 
 def color(str, code) = $stdout.tty? ? "\e[#{code}m#{str}\e[0m" : str
 def bold(s)   = color(s, 1)
@@ -228,26 +225,19 @@ def cmd_capture(args)
   report_touched(line, json: json)
 end
 
-def cmd_done(query)
-  abort %(usage: tasks done "text") if query.nil? || query.strip.empty?
-  q = query.dup.force_encoding("UTF-8").strip.downcase
-  lines = File.readlines(ORG, encoding: "UTF-8")
-  matches = lines.each_index.select do |i|
-    st = headline_state(lines[i])
-    st && OPEN_STATES.include?(st) && lines[i].downcase.include?(q)
+def cmd_done(args)
+  flags, rest = take_flags(args, "--dry-run", "--json")
+  ref = rest.join(" ")
+  abort %(usage: tasks done "<ref>") if ref.strip.empty?
+
+  item = resolve_ref(ref) # open tasks only — a DONE task can't be done again
+  if flags["--dry-run"]
+    puts "would mark DONE: #{item_headline(item)}"
+    return
   end
-  abort "No open item matches: #{query}" if matches.empty?
-  if matches.size > 1
-    warn "Multiple matches — be more specific:"
-    matches.each { |i| warn "  #{lines[i].strip}" }
-    exit 1
-  end
-  i = matches.first
-  lines[i] = lines[i].sub(/^(\*+\s+)(INBOX|TODO|NEXT|WAITING)\b/, '\1DONE')
-  lines.insert(i + 1, "   CLOSED: [#{Date.today}]\n")
-  File.write(ORG, lines.join)
-  puts "Marked DONE: #{lines[i].strip}"
-  puts "Run `tasks archive` to move it out of gtd.org."
+  abort "failed to complete (file changed underfoot?)" unless store.complete!(item)
+  report_touched(item.line, json: flags["--json"])
+  puts "Run `tasks archive` to move it out of gtd.org." unless flags["--json"]
 end
 
 # --- Store-backed mutations (due / state / priority) ------------------------
@@ -535,39 +525,12 @@ def cmd_move(args)
 end
 
 def cmd_archive
-  lines = File.readlines(ORG, encoding: "UTF-8")
-  kept = []
-  moved = []
-  i = 0
-  while i < lines.length
-    st = headline_state(lines[i])
-    if st && DONE_STATES.include?(st)
-      level = headline_level(lines[i])
-      block = [lines[i]]
-      j = i + 1
-      while j < lines.length
-        lvl = headline_level(lines[j])
-        break if lvl && lvl <= level # stop at next sibling/higher heading
-        block << lines[j]
-        j += 1
-      end
-      moved << block.join.rstrip + "\n"
-      i = j
-    else
-      kept << lines[i]
-      i += 1
-    end
-  end
-  if moved.empty?
+  n = store.archive_swept!
+  if n.zero?
     puts "Nothing to archive (no DONE/CANCELLED items)."
-    return
+  else
+    puts "Archived #{n} item#{n == 1 ? "" : "s"} to archive.org."
   end
-  File.write(ORG, kept.join)
-  arch = File.read(ARCHIVE, encoding: "UTF-8")
-  arch << "\n" unless arch.end_with?("\n")
-  arch << "\n# Archived #{Date.today}\n" << moved.join("\n") << "\n"
-  File.write(ARCHIVE, arch)
-  puts "Archived #{moved.size} item#{moved.size == 1 ? "" : "s"} to archive.org."
 end
 
 STATE_ORDER = %w[INBOX TODO NEXT WAITING DONE CANCELLED].freeze
@@ -690,7 +653,7 @@ when "quadrants", "q" then cmd_quadrants(parse)
 when "agenda", "a"    then cmd_agenda(parse)
 when "inbox", "i"     then cmd_inbox(parse)
 when "capture", "add", "c" then cmd_capture(ARGV[1..])
-when "done", "d"      then cmd_done(ARGV[1..].join(" "))
+when "done", "complete", "close", "d" then cmd_done(ARGV[1..])
 when "due", "deadline", "reschedule" then cmd_due(ARGV[1..])
 when "schedule"       then cmd_schedule(ARGV[1..])
 when "undate"         then cmd_undate(ARGV[1..])

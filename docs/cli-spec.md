@@ -74,7 +74,7 @@ JSON list shape (`--json` on list/agenda/next/quadrants/inbox):
 
 | Command | Alias/synonyms | Status | Description |
 |---|---|---|---|
-| `done <ref>` | `complete`, `close`, `d` | ✅ | Mark DONE + `CLOSED:` stamp. (Currently exits 1, not 2, on ref failure; migrating.) |
+| `done <ref>` | `complete`, `close`, `d` | ✅ | Mark DONE + `CLOSED:` stamp. |
 | `cancel <ref>` | `drop` | ✅ | Mark CANCELLED + `CLOSED:` stamp. |
 | `state <ref> <STATE>` | `mv` | ✅ | Any state transition (INBOX/TODO/NEXT/WAITING/DONE/CANCELLED). Enforces: entering DONE/CANCELLED adds `CLOSED:`; leaving them removes it. Resolves refs across open *and* closed tasks so you can reopen a DONE item. |
 | `due <ref> <date>` | `deadline`, `reschedule` | ✅ | Set/replace DEADLINE. INBOX items promote to TODO. |

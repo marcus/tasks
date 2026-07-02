@@ -441,6 +441,62 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  def test_cli_done_marks_done_with_closed_stamp
+    run_cli("done", "Book flight") do |org, out, _err, st|
+      assert st.success?
+      content = File.read(org)
+      assert_match(/^\*\* DONE \[#A\] Book flight/, content)
+      assert_match(/CLOSED: \[#{Date.today}\]/, content)
+      assert_match(/DONE.*Book flight/, out)
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_done_ambiguous_exits_2_not_1
+    run_cli("done", "e") do |_org, _out, err, st|
+      assert_equal 2, st.exitstatus, "spec: ref failures exit 2"
+      assert_match(/ambiguous/, err)
+    end
+  end
+
+  def test_cli_done_synonyms
+    %w[complete close].each do |syn|
+      run_cli(syn, "Book flight") do |org, _out, _err, st|
+        assert st.success?, "#{syn} should alias done"
+        assert_match(/^\*\* DONE \[#A\] Book flight/, File.read(org))
+      end
+    end
+  end
+
+  def test_cli_done_dry_run_writes_nothing
+    run_cli("done", "Book flight", "--dry-run") do |org, out, _err, st|
+      assert st.success?
+      assert_equal FIXTURE_ORG, File.read(org)
+      assert_match(/would mark DONE/, out)
+    end
+  end
+
+  def test_cli_archive_sweeps_to_archive_file
+    run_cli("archive") do |org, out, _err, st|
+      assert st.success?
+      refute_match(/Old finished thing/, File.read(org))
+      archive = File.join(File.dirname(org), "archive.org")
+      assert_match(/Old finished thing/, File.read(archive))
+      assert_match(/Archived 1 item/, out)
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_archive_nothing_to_do
+    no_done = FIXTURE_ORG.lines.reject.with_index { |l, i|
+      l.include?("Old finished") || l.include?("CLOSED: [2026-06-20]")
+    }.join
+    run_cli("archive", content: no_done) do |_org, out, _err, st|
+      assert st.success?
+      assert_match(/Nothing to archive/, out)
+    end
+  end
+
   def test_cli_capture_missing_flag_value_exits_1
     run_cli("capture", "buy milk", "--due") do |org, _out, err, st|
       assert_equal 1, st.exitstatus
