@@ -68,7 +68,7 @@ JSON list shape (`--json` on list/agenda/next/quadrants/inbox):
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `capture "text"` | `add`, `c` | ✅ | New INBOX item. 🚧 flags: `--due <date>`, `--scheduled <date>`, `--priority A\|B\|C`, `--tag t` (repeatable), `--context @x`, `--state TODO`, `--project "Heading"` — a capture with a date or state lands already-processed under the given project heading (default: Inbox). |
+| `capture "text"` | `add`, `c` | ✅ | New INBOX item. Flags: `--due <date>`, `--scheduled <date>`, `--priority A\|B\|C`, `--tag t` (repeatable), `--context @x` (repeatable), `--state STATE`, `--project "Heading"`, plus `--dry-run`/`--json`. A capture with a date lands already-processed as TODO (override with `--state`); `--project` files it under that top-level heading (default: Inbox). |
 
 ## Update (all take `<ref>`, all support `--dry-run`)
 
@@ -81,10 +81,10 @@ JSON list shape (`--json` on list/agenda/next/quadrants/inbox):
 | `schedule <ref> <date>` | | ✅ | Set/replace SCHEDULED. Same INBOX promotion. |
 | `undate <ref>` | | ✅ | Remove SCHEDULED and/or DEADLINE (`--kind deadline\|scheduled` to pick one). |
 | `priority <ref> <A\|B\|C\|none>` | `pri` | ✅ | Set or clear the priority cookie. |
-| `retitle <ref> "new title"` | `rename` | 🚧 | Replace the headline title; tags/priority/state untouched. |
-| `tag <ref> +foo -bar @ctx -@old` | | 🚧 | Add/remove tags and contexts in one call. |
-| `note <ref> "text"` | | 🚧 | Append a body line under the task. |
-| `move <ref> "Section"` | | 🚧 | Relocate the whole block under another top-level heading (e.g. out of `* Inbox` into `* Work`). |
+| `retitle <ref> "new title"` | `rename` | ✅ | Replace the headline title; tags/priority/state untouched. |
+| `tag <ref> +foo -bar @ctx -@old` | | ✅ | Add/remove tags and contexts in one call. `+t`/`@ctx` add, `-t`/`-@ctx` remove. |
+| `note <ref> "text"` | | ✅ | Append a body line under the task. |
+| `move <ref> "Section"` | | ✅ | Relocate the whole block under another top-level heading (e.g. out of `* Inbox` into `* Work`). Section matched case-insensitively (exact, then substring). |
 
 ## Lifecycle / meta
 

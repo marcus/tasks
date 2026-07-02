@@ -138,6 +138,39 @@ module Tasks
       with_history(label) { undate_impl(item, kind) }
     end
 
+    # Replace the headline's title text, leaving state/priority/tags/dates
+    # untouched. Same staleness contract as complete!.
+    def retitle!(item, new_title)
+      with_history("retitle → #{new_title}: #{item.title}") { retitle_impl(item, new_title) }
+    end
+
+    # Add and/or remove tags (contexts are tags that start with "@"), idempotent
+    # per tag. Same staleness contract as complete!.
+    def set_tags!(item, add: [], remove: [])
+      with_history("tags: #{item.title}") { set_tags_impl(item, add, remove) }
+    end
+
+    # Append a body line at the end of the item's block. Same staleness contract.
+    def add_note!(item, text)
+      with_history("note: #{item.title}") { add_note_impl(item, text) }
+    end
+
+    # Relocate the item's whole block under top-level section `section` (matched
+    # case-insensitively, exact then substring). Returns the moved headline's
+    # new 1-based line number, or false if the block is stale or no such
+    # section exists.
+    def move!(item, section)
+      with_history("move → #{section}: #{item.title}") { move_impl(item, section) }
+    end
+
+    # Create a new item under top-level section `project` (default "Inbox").
+    # Returns the new headline's 1-based line number, or false if the section
+    # doesn't exist. A capture with a date is already "processed"; callers pass
+    # state: "TODO" in that case.
+    def capture!(text, due: nil, scheduled: nil, priority: nil, tags: [], state: "INBOX", project: nil)
+      with_history("capture: #{text}") { capture_impl(text, due, scheduled, priority, tags, state, project) }
+    end
+
     def archive_swept!
       with_history("archive sweep") { archive_swept_impl }
     end
@@ -278,6 +311,120 @@ module Tasks
       File.write(@org, lines.join)
       reload!
       true
+    end
+
+    # Split a headline line into [stars, state, priority, title, tags_array].
+    def headline_parts(line)
+      m = line.match(HEADLINE)
+      [line[/^\*+/], m[1], m[2], m[3].strip, (m[4] || "").split(":").reject(&:empty?)]
+    end
+
+    # Rebuild a headline line (with trailing newline) from its parts.
+    def build_headline(stars, state, priority, title, tags)
+      s = +"#{stars} #{state} "
+      s << "[##{priority}] " if priority
+      s << title
+      s << " :#{tags.join(":")}:" unless tags.empty?
+      s << "\n"
+      s
+    end
+
+    # Downcased title of a section heading line (its text after the stars).
+    def heading_title(line) = line.sub(/^\*+\s+/, "").strip.downcase
+
+    # Index of the top-level ("* ") section matching `name` — exact, then
+    # substring — or nil.
+    def find_section(lines, name)
+      want = name.strip.downcase
+      lines.index { |l| l =~ /^\* / && heading_title(l) == want } ||
+        lines.index { |l| l =~ /^\* / && heading_title(l).include?(want) }
+    end
+
+    # 0-based index just past the last content line of the block whose headline
+    # is at line index `i` — the insertion point for appended body lines. Skips
+    # trailing blank lines that separate this block from the next heading.
+    def block_end_index(lines, i)
+      level = lines[i][/^\*+/].length
+      j = i + 1
+      while j < lines.length
+        lvl = lines[j][/^(\*+)\s/, 1]&.length
+        break if lvl && lvl <= level
+        j += 1
+      end
+      j -= 1 while j > i + 1 && lines[j - 1].strip.empty?
+      j
+    end
+
+    def retitle_impl(item, new_title)
+      lines = File.readlines(@org, encoding: "UTF-8")
+      i = item.line - 1
+      return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
+      stars, state, pri, _title, tags = headline_parts(lines[i])
+      lines[i] = build_headline(stars, state, pri, new_title.strip, tags)
+      File.write(@org, lines.join)
+      reload!
+      true
+    end
+
+    def set_tags_impl(item, add, remove)
+      lines = File.readlines(@org, encoding: "UTF-8")
+      i = item.line - 1
+      return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
+      stars, state, pri, title, tags = headline_parts(lines[i])
+      tags = tags.reject { |t| remove.include?(t) }
+      add.each { |t| tags << t unless tags.include?(t) }
+      lines[i] = build_headline(stars, state, pri, title, tags)
+      File.write(@org, lines.join)
+      reload!
+      true
+    end
+
+    def add_note_impl(item, text)
+      lines = File.readlines(@org, encoding: "UTF-8")
+      i = item.line - 1
+      return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
+      lines.insert(block_end_index(lines, i), "   #{text.strip}\n")
+      File.write(@org, lines.join)
+      reload!
+      true
+    end
+
+    def move_impl(item, section)
+      lines = File.readlines(@org, encoding: "UTF-8")
+      i = item.line - 1
+      return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
+      block_end = block_end_index(lines, i)
+      block = lines[i...block_end]
+      block[-1] = "#{block[-1].chomp}\n" if block[-1] && !block[-1].end_with?("\n")
+      rest = lines[0...i] + lines[block_end..]
+
+      target = find_section(rest, section)
+      return false unless target
+      insert_at = ((target + 1)...rest.length).find { |k| rest[k] =~ /^\* / } || rest.length
+      insert_at -= 1 while insert_at > target + 1 && rest[insert_at - 1].strip.empty?
+      rest.insert(insert_at, *block)
+      File.write(@org, rest.join)
+      reload!
+      insert_at + 1
+    end
+
+    def capture_impl(text, due, scheduled, priority, tags, state, project)
+      lines = File.readlines(@org, encoding: "UTF-8")
+      idx = find_section(lines, project || "Inbox")
+      return false unless idx
+      stars = "*" * (lines[idx][/^\*+/].length + 1)
+
+      entry = [build_headline(stars, state, priority, text.strip, tags)]
+      entry << "   SCHEDULED: <#{scheduled.iso8601} #{scheduled.strftime("%a")}>\n" if scheduled
+      entry << "   DEADLINE: <#{due.iso8601} #{due.strftime("%a")}>\n" if due
+      entry << "   Captured [#{Date.today}].\n"
+
+      insert_at = ((idx + 1)...lines.length).find { |k| lines[k] =~ /^\* / } || lines.length
+      insert_at -= 1 while insert_at > idx + 1 && lines[insert_at - 1].strip.empty?
+      lines.insert(insert_at, *entry)
+      File.write(@org, lines.join)
+      reload!
+      insert_at + 1
     end
 
     def set_state_impl(item, new_state)

@@ -15,19 +15,24 @@ passed to `tasks -p`. Today's date is available from the system.
 - Read state first with `bin/tasks list -a` (or targeted filters).
 - Prefer the CLI for operations it supports; it keeps formatting correct:
   - complete a task:  `bin/tasks done "<fuzzy title>"`
-  - add a task:       `bin/tasks capture "<text>"`
+  - add a task:       `bin/tasks capture "<text>"` (flags: --due/--scheduled/
+                      --priority/--tag/--context/--state/--project)
   - set a deadline:   `bin/tasks due "<ref>" <date>`  (fri, +3, 07-15, …)
   - set scheduled:    `bin/tasks schedule "<ref>" <date>`
   - remove dates:     `bin/tasks undate "<ref>" [--kind deadline|scheduled]`
   - change state:     `bin/tasks state "<ref>" <STATE>`
   - cancel a task:    `bin/tasks cancel "<ref>"`
   - set priority:     `bin/tasks priority "<ref>" <A|B|C|none>`
+  - retitle a task:   `bin/tasks retitle "<ref>" "<new title>"`
+  - edit tags:        `bin/tasks tag "<ref>" +tag -tag @ctx -@ctx`
+  - add a note:       `bin/tasks note "<ref>" "<text>"`
+  - move a task:      `bin/tasks move "<ref>" "<Section>"`
   - inspect a task:   `bin/tasks show "<ref>" [--json]`
   - archive done:     `bin/tasks archive`
   - validate file:    `bin/tasks check` (exit 1 = structural errors)
   (full command set + roadmap: `docs/cli-spec.md`)
-- Edit `gtd.org` directly for anything the CLI lacks: tags, retitling,
-  notes, moving between sections.
+- Edit `gtd.org` directly only for what the CLI still lacks (e.g. hard-delete,
+  rewriting an existing body line, restructuring section headings).
 - After ANY direct edit to `gtd.org`, run `bin/tasks check` and fix
   whatever it reports before finishing.
 - Match tasks by fuzzy title. If a prompt is ambiguous (multiple matches),

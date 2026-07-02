@@ -24,7 +24,7 @@ bin/tasks check            # is the file structurally sound? (exit 1 = no)
 ## Mutate
 
 ```sh
-bin/tasks capture "text"             # new INBOX item
+bin/tasks capture "text"             # new INBOX item (see flags below)
 bin/tasks done "<ref>"               # mark DONE + CLOSED stamp
 bin/tasks cancel "<ref>"             # mark CANCELLED + CLOSED stamp
 bin/tasks due "<ref>" fri            # set/replace DEADLINE (INBOX → TODO)
@@ -32,8 +32,17 @@ bin/tasks schedule "<ref>" +3        # set/replace SCHEDULED (INBOX → TODO)
 bin/tasks undate "<ref>"             # remove date stamps; --kind deadline|scheduled
 bin/tasks state "<ref>" WAITING      # any state; DONE/CANCELLED manage CLOSED
 bin/tasks priority "<ref>" A         # A|B|C|none
+bin/tasks retitle "<ref>" "new"      # replace the title; tags/state untouched
+bin/tasks tag "<ref>" +foo -bar @ctx # add/remove tags & contexts (-@ctx removes)
+bin/tasks note "<ref>" "text"        # append a body line under the task
+bin/tasks move "<ref>" "Section"     # relocate the block under a top-level heading
 bin/tasks archive                    # sweep DONE/CANCELLED to archive.org
 ```
+
+`capture` flags: `--due <date>`, `--scheduled <date>`, `--priority A|B|C`,
+`--tag t` (repeatable), `--context @x` (repeatable), `--state STATE`,
+`--project "Heading"`. A date makes it land as TODO (override with `--state`);
+`--project` files it under that section (default Inbox).
 
 Mutations accept `--dry-run` (print, don't write), `--json` (structured
 result), and dates in any form: `fri`, `+3`, `07-15`, `2026-07-15`, `today`.
@@ -44,10 +53,12 @@ headline line. Zero or multiple matches exit 2 and list candidates as
 Don't guess between candidates; if the user's request is genuinely ambiguous,
 stop and ask, listing the matches.
 
-## Direct edits (for what the CLI lacks yet)
+## Direct edits (rare — for what the CLI still lacks)
 
-When you must edit `gtd.org` directly (tags, retitle, notes, moving between
-sections — until their commands land):
+The CLI now covers capture, completion, cancel, state, dates, priority,
+retitle, tags, notes, and moving between sections. Reach for a direct edit
+only for something with no command yet (e.g. hard-deleting a block, editing an
+existing body line, or restructuring section headings). When you must:
 
 1. Read `docs/conventions.md` for the format. Key shapes:
    - `** STATE [#A] Title  :tag:@context:` — STATE ∈ INBOX/TODO/NEXT/WAITING/DONE/CANCELLED
