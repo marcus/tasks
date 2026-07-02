@@ -6,7 +6,8 @@ Covey Important/Urgent matrix. Ruby tooling on top.
 ## Layout
 
 ```
-gtd.org            The one file that matters — all tasks live here.
+gtd.org            The one file that matters — you provide this (see below).
+examples/gtd.org   A tiny sample; copy it to get started.
 docs/conventions.md  The format + methodology spec (read this).
 bin/tasks          Ruby CLI for querying gtd.org (stdlib only, no gems needed).
 bin/tasks-tui      Interactive TUI: live views, single-key actions, Claude prompt.
@@ -33,14 +34,18 @@ Every command has the single-letter alias shown in parentheses (`tasks n`, `task
 
 ## Where your tasks live
 
-By default `gtd.org` and `archive.org` sit in the repo root, but the data is
-separable from the code — point the tooling anywhere:
+Your tasks live in a `gtd.org` (plus `archive.org`) that you own — keep it
+wherever you like; the data is fully separable from the code. Point the tooling
+at it:
 
 ```sh
+mkdir -p ~/tasks && cp examples/gtd.org ~/tasks/gtd.org   # seed from the sample
 mkdir -p ~/.config/tasks
 echo "dir = ~/tasks" > ~/.config/tasks/config
 tasks config          # shows the resolved paths and where each came from
 ```
+
+If you set nothing, the tooling falls back to the repo root.
 
 Resolution order (both CLI and TUI): `TASKS_ORG`/`TASKS_ARCHIVE` env vars,
 then `TASKS_DIR`, then the config file (`dir = …`, or per-file `org = …` /
@@ -105,15 +110,6 @@ q          quit
 Claude runs asynchronously via the local `claude` CLI (same as `tasks -p`), so
 the UI stays responsive while it works; its answer appears in an expanding
 footer pane and the views refresh with whatever it changed.
-
-## Auto-commit
-
-A launchd agent (`com.marcus.tasks-autocommit`) runs `bin/autocommit` daily at
-21:00: commits if the tree changed, then pushes any unpushed commits to the private
-GitHub backup (`origin`, `github.com/marcus/tasks`). Missed runs (Mac asleep) fire on
-next wake. Push errors (e.g. offline) never fail the job — they catch up next run.
-
-**Restore from backup:** `git clone git@github.com:marcus/tasks.git`
 
 ## Roadmap / ideas
 

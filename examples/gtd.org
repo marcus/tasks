@@ -1,0 +1,26 @@
+#+TITLE: Example — GTD
+#+STARTUP: overview
+#+TODO: INBOX(i) TODO(t) NEXT(n) WAITING(w) | DONE(d) CANCELLED(c)
+
+* Inbox
+  Capture here first. Process into the lists below during review.
+** INBOX [#B] Skim the new API docs and note anything worth trying   :@computer:
+   Captured [2026-01-15].
+
+* Tasks
+** NEXT [#A] Draft the Q1 planning outline   :@computer:important:
+   SCHEDULED: <2026-01-16>
+   Start with goals, then break into projects.
+** TODO [#B] Reply to the vendor about the renewal quote   :@email:
+   DEADLINE: <2026-01-20>
+** WAITING Sign-off on the budget from finance   :@waiting:
+   Pinged 2026-01-14; nudge if no answer by Fri.
+
+* Projects
+** Launch the personal site
+   Goal: a simple site up by end of month.
+*** NEXT Pick a static-site generator   :@computer:important:
+*** TODO Write the landing-page copy   :@computer:
+
+* Someday / Maybe
+** TODO Learn to make sourdough   :@home:
