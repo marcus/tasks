@@ -10,8 +10,9 @@ gtd.org            The one file that matters — you provide this (see below).
 examples/gtd.org   A tiny sample; copy it to get started.
 docs/conventions.md  The format + methodology spec (read this).
 bin/tasks          Ruby CLI for querying gtd.org (stdlib only, no gems needed).
-bin/tasks-tui      Interactive TUI: live views, single-key actions, Claude prompt.
-lib/tui/           TUI modules (store, views, frame, claude runner, app loop).
+bin/tasks-tui      Interactive TUI: live views, single-key actions, agent prompt.
+lib/tui/           TUI modules (store, views, frame, app loop).
+lib/llm/           LLM agent adapters (Claude CLI, Hermes) behind one protocol.
 test/              Minitest suite — run with `ruby test/all.rb`.
 ```
 
@@ -26,7 +27,7 @@ tasks list              # (l) all tasks grouped by state, with filters (see belo
 tasks capture "..."     # (c) append a new item to the Inbox
 tasks done "..."        # (d) mark a matching open item DONE
 tasks archive           # (x) sweep DONE/CANCELLED items into archive.org
-tasks -p "..."          # hand a request to Claude — it acts and reports back
+tasks -p "..."          # hand a request to an LLM agent — it acts and reports back
 ```
 
 Every command has the single-letter alias shown in parentheses (`tasks n`, `tasks x`, …).
@@ -65,22 +66,27 @@ tasks list @computer -A /denver  # compose: context, priority, text — all at o
 Scope flags: `--open/-o` (default) `--done/-d` `--archived/-x` `--all/-a`.
 Filter sigils: `@context`  `/text` (or a bare word)  `+tag`  `-A|-B|-C` (priority).
 
-## Working with Claude
+## Working with an agent
 
-Claude can read and edit `gtd.org` directly — add captures to the Inbox, process
-items into lists, suggest next actions, and surface what matters. The plain-text
-format means every change is a reviewable git diff.
+An LLM agent can read and edit `gtd.org` directly — add captures to the Inbox,
+process items into lists, suggest next actions, and surface what matters. The
+plain-text format means every change is a reviewable git diff.
 
-**From the terminal**, `tasks -p "..."` hands a natural-language request to the
-local `claude` CLI (Sonnet) with `AGENTS.md` as context. It acts on your tasks
-right where you're working, auto-applies changes, and prints a git diff of the
-task files plus a one-line summary of what it did:
+**From the terminal**, `tasks -p "..."` hands a natural-language request to an
+autonomous agent with `AGENTS.md` as context. It acts on your tasks right where
+you're working, auto-applies changes, and prints a git diff of the task files
+plus a one-line summary of what it did:
 
 ```sh
 tasks -p "close the Drew review task and push the Denver flight deadline to next Friday"
+tasks -p --provider hermes "capture: renew passport"   # a local Ollama-backed harness
 ```
 
-`AGENTS.md` documents the org format and conventions so the agent stays consistent.
+The agent is a pluggable **harness**: by default the local `claude` CLI, but any
+configured backend — e.g. the [Hermes agent](https://hermes-agent.nousresearch.com)
+driving a local Ollama model — works the same way. Pick the default and add
+models in `~/.config/tasks/config`; see `docs/cli-spec.md` (LLM agent settings).
+`AGENTS.md` documents the org format and conventions so any agent stays consistent.
 
 ## TUI
 
@@ -99,17 +105,19 @@ J / K      lower / raise priority (A ↔ B ↔ C ↔ none)
 /          filter tasks by text (live; enter keeps it, esc clears, / edits)
 u / ctrl-r undo / redo TUI changes (in-memory, refuses after external edits)
 y / Y      yank task ref / full task as markdown to the clipboard
-p          paste a quoted task ref into the Claude prompt
+p          paste a quoted task ref into the agent prompt
 x          archive sweep (move DONE/CANCELLED to archive.org)
-tab or :   focus the Claude prompt — natural-language CRUD on your tasks
-esc        dismiss Claude's response / cancel a running request / close modal
-pgup/pgdn  scroll a long Claude response (footer grows, then collapses on esc)
+M          cycle the agent/model (provider:model shown in the header)
+tab or :   focus the agent prompt — natural-language CRUD on your tasks
+esc        dismiss the response / cancel a running request / close modal
+pgup/pgdn  scroll a long response (footer grows, then collapses on esc)
 q          quit
 ```
 
-Claude runs asynchronously via the local `claude` CLI (same as `tasks -p`), so
-the UI stays responsive while it works; its answer appears in an expanding
-footer pane and the views refresh with whatever it changed.
+The agent runs asynchronously (the local `claude` CLI by default, same as
+`tasks -p`, or any configured harness), so the UI stays responsive while it
+works; its answer appears in an expanding footer pane and the views refresh with
+whatever it changed. `M` switches backend/model between requests.
 
 ## Roadmap / ideas
 

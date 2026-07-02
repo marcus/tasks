@@ -1,8 +1,17 @@
 # Plan: LLM integration behind an adapter pattern
 
-Status: proposed
+Status: implemented (phases 1–3; phase 4 / Claude Agent SDK deferred)
 Author: Marcus (drafted with Claude)
 Date: 2026-07-01 (rev. 2026-07-02: agent-harness-only direction; Hermes first)
+
+Implementation note (2026-07-02): shipped in `lib/llm/` — `Agent` protocol +
+shared CLI machinery, `Agent::ClaudeCli`, `Agent::Hermes`, `Registry`, `Config`.
+Both call sites (`tasks -p`, the TUI switcher) run through it; the switcher
+cycles the flattened `(provider, model)` list and rebuilds the agent on provider
+change. Config keys land in `~/.config/tasks/config` (see `docs/cli-spec.md`).
+Phase 4 (Claude Agent SDK) is left as a drop-in extension point — a new adapter
+class + one `Registry::DEFAULTS` line — since it adds an optional dependency and
+nothing in phases 1–3 needs it.
 
 ## Why
 
@@ -314,20 +323,21 @@ pointed at a local model, giving a second harness-over-Ollama option.
 ## Phasing
 
 Each phase ships independently and leaves the tool fully working.
+Phases 1–3 are ✅ done (2026-07-02); phase 4 is deferred.
 
-1. **Extract, no behavior change.** Create `lib/llm/`, define `Agent` protocol,
+1. ✅ **Extract, no behavior change.** Create `lib/llm/`, define `Agent` protocol,
    move `Tui::Claude`'s spawn logic into `LLM::Agent::ClaudeCli`. Point both
    `Tui::Claude` (now a thin wrapper or deleted) and `cmd_prompt` at it. Verify
    the TUI ask and `tasks -p` behave identically.
-2. **Config + registry + provider-aware switcher.** Add LLM config keys, the
+2. ✅ **Config + registry + provider-aware switcher.** Add LLM config keys, the
    registry/factory, and rework the TUI switcher to `(provider, model)` entries.
    Still only `claude-cli` registered → still no behavior change, but the
    plumbing is in place.
-3. **Hermes agent adapter.** Add `Agent::HermesAgent` (spawn `hermes`, map
+3. ✅ **Hermes agent adapter.** Add `Agent::HermesAgent` (spawn `hermes`, map
    context + `cwd`, `available?` checks PATH + Ollama), register the `hermes`
    provider, and wire the CLI ask then the TUI switcher entry. This is the first
    user-visible new backend. Acceptance: parity with `claude-cli`.
-4. **Claude Agent SDK adapter.** Add `Agent::ClaudeAgentSdk` (SDK transport,
+4. ⏳ **Claude Agent SDK adapter.** Add `Agent::ClaudeAgentSdk` (SDK transport,
    optional/lazy dependency), register it, document how to enable it in config.
    opencode / pi remain unscheduled follow-ons on the same protocol.
 

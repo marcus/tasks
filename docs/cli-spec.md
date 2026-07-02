@@ -37,6 +37,29 @@ env var, default 3.
 
 `tasks config` prints the resolved paths, `urgent_days`, and where each came from.
 
+### LLM agent settings
+
+`-p` and the TUI hand your request to an **agent** — an autonomous harness
+(the local `claude` CLI, the Hermes agent, …) that acts on `gtd.org` itself
+through this CLI. Which harness and model are chosen from the same config file;
+all keys optional, unknown keys ignored:
+
+```
+llm_provider = hermes            # default harness (default: claude-cli)
+llm_model    = gemma4:e4b        # default model within that provider
+claude-cli_models = sonnet,opus,haiku   # override a provider's model list
+hermes_models     = gemma4:e4b,gemma4:12b-mlx
+hermes_command    = hermes       # override the binary a provider spawns
+hermes_provider   = ollama-launch # Hermes inference provider (passed as --provider)
+ollama_url        = http://127.0.0.1:11434  # endpoint Hermes' availability probe hits
+```
+
+Built-in providers are `claude-cli` (models `sonnet/opus/haiku`) and `hermes`
+(model `gemma4:e4b`, driving a local Ollama model via Hermes' own config). The
+TUI's `M` key cycles the flattened `(provider, model)` list; the header shows
+`provider:model`. Adding a new harness is one adapter class in `lib/llm/` plus a
+`Registry::DEFAULTS` entry — see `docs/plans/llm-adapter-pattern.md`.
+
 **Task refs.** Mutations take a `<ref>` — a case-insensitive substring of the
 task title. Resolution rules:
 
@@ -111,7 +134,7 @@ already sorted the way the text view sorts:
 | `archive` | `x` | ✅ | Sweep DONE/CANCELLED blocks to archive.org. |
 | `delete <ref> --force` | `rm` | 🚧 | Hard-remove a block (no archive). Refuses without `--force`; suggest `cancel` instead. |
 | `undo` | | 🚧 | Revert the last CLI mutation (file-backed journal, shared with the TUI's in-memory one is out of scope). Until then: `git diff` / `git checkout -- gtd.org`. |
-| `-p "prompt"` | | ✅ | Natural-language request via headless Claude. |
+| `-p [--provider N] [--model N] "prompt"` | | ✅ | Natural-language request via a headless LLM agent (Claude CLI by default, or any configured harness). Leading `--provider`/`--model` override the config default for one run; see [LLM agent settings](#llm-agent-settings). |
 | `config [--json]` | | ✅ | Print resolved file paths (org, archive, config file), `urgent_days`, and the source of each (`TASKS_ORG env`, `TASKS_DIR env`, `TASKS_URGENT_DAYS env`, `config file`, `default`). |
 | `help` | `-h`, `--help` | ✅ | Grouped command reference. Also printed (to stderr, exit 1) on an unknown/absent command. |
 
