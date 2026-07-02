@@ -178,15 +178,17 @@ def cmd_capture(args)
   dry = json = false
   positional = []
   i = 0
+  # fetch a flag's value or abort — a forgotten value must never fail silently
+  need = ->(flag) { args[i += 1] or abort "missing value for #{flag}" }
   while i < args.length
     case (a = args[i])
-    when "--due", "--deadline"    then due = args[i += 1]
-    when "--scheduled", "--sched" then scheduled = args[i += 1]
-    when "--priority", "--pri"    then priority = args[i += 1]
-    when "--tag"                  then tags << args[i += 1]
-    when "--context", "--ctx"     then contexts << args[i += 1]
-    when "--state"                then state = args[i += 1]
-    when "--project"              then project = args[i += 1]
+    when "--due", "--deadline"    then due = need.(a)
+    when "--scheduled", "--sched" then scheduled = need.(a)
+    when "--priority", "--pri"    then priority = need.(a)
+    when "--tag"                  then tags << need.(a)
+    when "--context", "--ctx"     then contexts << need.(a)
+    when "--state"                then state = need.(a)
+    when "--project"              then project = need.(a)
     when "--dry-run"              then dry = true
     when "--json"                 then json = true
     when /\A--/                   then abort "unknown flag: #{a}"

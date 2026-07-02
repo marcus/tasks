@@ -441,6 +441,14 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  def test_cli_capture_missing_flag_value_exits_1
+    run_cli("capture", "buy milk", "--due") do |org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/missing value for --due/, err)
+      refute_match(/buy milk/, File.read(org), "nothing captured")
+    end
+  end
+
   # -- CLI end-to-end (shell out to bin/tasks) --------------------------------
 
   BIN = File.expand_path("../bin/tasks", __dir__)

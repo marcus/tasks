@@ -75,6 +75,7 @@ return     task detail modal
 c          mark selected task DONE
 d          reschedule — accepts fri, +3, 07-15, 2026-07-15, today, tomorrow
 J / K      lower / raise priority (A ↔ B ↔ C ↔ none)
+/          filter tasks by text (live; enter keeps it, esc clears, / edits)
 u / ctrl-r undo / redo TUI changes (in-memory, refuses after external edits)
 y / Y      yank task ref / full task as markdown to the clipboard
 p          paste a quoted task ref into the Claude prompt

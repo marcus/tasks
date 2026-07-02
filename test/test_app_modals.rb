@@ -215,6 +215,86 @@ class TestAppModals < Minitest::Test
     end
   end
 
+  def test_slash_filters_live_while_typing
+    with_app do |app|
+      all = app.instance_variable_get(:@rows).count(&:item)
+      app.send(:handle_key, "/")
+      assert_equal :filter, mode(app)
+      "flight".chars.each { |c| app.send(:handle_key, c) }
+      app.send(:rows)
+      titles = app.instance_variable_get(:@rows).select(&:item).map { |r| r.item.title }
+      assert_equal ["Book flight in Concur"], titles
+      assert_operator all, :>, 1
+    end
+  end
+
+  def test_filter_is_case_insensitive
+    with_app do |app|
+      app.send(:handle_key, "/")
+      "FLIGHT".chars.each { |c| app.send(:handle_key, c) }
+      app.send(:rows)
+      assert_equal 1, app.instance_variable_get(:@rows).count(&:item)
+    end
+  end
+
+  def test_enter_commits_filter_and_it_survives_view_switch
+    with_app do |app|
+      app.send(:handle_key, "/")
+      "flight".chars.each { |c| app.send(:handle_key, c) }
+      app.send(:handle_key, "\r")
+      assert_equal :list, mode(app)
+      assert_equal "flight", app.instance_variable_get(:@filter)
+
+      app.send(:handle_key, "2") # Next view
+      titles = app.instance_variable_get(:@rows).select(&:item).map { |r| r.item.title }
+      assert_equal ["Book flight in Concur"], titles
+    end
+  end
+
+  def test_esc_while_typing_clears_filter
+    with_app do |app|
+      all = app.instance_variable_get(:@rows).count(&:item)
+      app.send(:handle_key, "/")
+      "flight".chars.each { |c| app.send(:handle_key, c) }
+      app.send(:handle_key, "\e")
+      assert_equal :list, mode(app)
+      assert_nil app.instance_variable_get(:@filter)
+      app.send(:rows)
+      assert_equal all, app.instance_variable_get(:@rows).count(&:item)
+    end
+  end
+
+  def test_esc_in_list_mode_clears_committed_filter
+    with_app do |app|
+      app.send(:handle_key, "/")
+      "flight".chars.each { |c| app.send(:handle_key, c) }
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\e")
+      assert_nil app.instance_variable_get(:@filter)
+      assert_match(/filter cleared/, app.instance_variable_get(:@flash))
+    end
+  end
+
+  def test_slash_with_active_filter_edits_it
+    with_app do |app|
+      app.send(:handle_key, "/")
+      "flight".chars.each { |c| app.send(:handle_key, c) }
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "/")
+      assert_equal "flight", app.instance_variable_get(:@filter_input)
+    end
+  end
+
+  def test_no_match_filter_shows_empty_view_not_crash
+    with_app do |app|
+      app.send(:handle_key, "/")
+      "zzzznope".chars.each { |c| app.send(:handle_key, c) }
+      rows = app.send(:rows)
+      assert_equal 0, rows.count(&:item)
+      app.send(:clamp_selection) # must not raise on empty selectables
+    end
+  end
+
   def test_prompt_expands_up_to_five_lines_when_input_wraps
     with_app do |app|
       app.send(:handle_key, "\t") # focus prompt

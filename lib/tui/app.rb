@@ -37,6 +37,8 @@ module Tui
       @modal_kind = nil    # :help | :detail
       @modal_scroll = 0
       @input  = +""        # prompt buffer
+      @filter = nil        # committed filter string (nil = off)
+      @filter_input = +""  # filter buffer while typing
       @date_input = +""    # reschedule buffer
       @date_error = nil
       @resp   = nil        # wrapped response lines
@@ -98,7 +100,19 @@ module Tui
     end
 
     def rows
-      @rows = Views.rows(@view, @store.items)
+      items = @store.items
+      if (q = active_filter)
+        q = q.downcase
+        items = items.select { |i| i.title.downcase.include?(q) }
+      end
+      @rows = Views.rows(@view, items)
+    end
+
+    # The filter narrowing the views right now: the live buffer while
+    # typing, the committed filter otherwise.
+    def active_filter
+      s = @mode == :filter ? @filter_input : @filter
+      s.nil? || s.strip.empty? ? nil : s
     end
 
     def header(w)
@@ -125,6 +139,12 @@ module Tui
         f << :rule
       end
       f << " #{@flash}" if @flash
+      if @mode == :filter
+        f << " #{A.bold(A.cyan("/ "))}#{@filter_input}#{A.invert(" ")}#{A.dim("  enter keeps · esc clears")}"
+      elsif @filter
+        n = (@rows || []).count(&:item)
+        f << A.dim(" / #{@filter} · #{n} match#{n == 1 ? "" : "es"} · esc clears · / edits")
+      end
       f.concat(prompt_lines(w))
       f
     end
@@ -201,8 +221,25 @@ module Tui
       when :prompt then prompt_key(k)
       when :date   then date_key(k)
       when :modal  then modal_key(k)
+      when :filter then filter_key(k)
       else              list_key(k)
       end
+    end
+
+    def filter_key(k)
+      case k
+      when "\e"       then @filter = nil; @mode = :list # esc clears entirely
+      when "\r", "\n" then commit_filter
+      when "", "\b" then @filter_input.chop!
+      when ""   then @quit = true
+      else
+        @filter_input << k if k =~ /[[:print:]]/
+      end
+    end
+
+    def commit_filter
+      @filter = @filter_input.strip.empty? ? nil : @filter_input.strip
+      @mode = :list
     end
 
     # List-mode keys live in Shortcuts (which also feeds the ? modal) —
@@ -298,6 +335,11 @@ module Tui
       rows
       @sel = @rows.each_index.find { |i| @rows[i].item&.line == line } || @sel
       clamp_selection
+    end
+
+    def start_filter
+      @filter_input = @filter ? @filter.dup : +"" # `/` with a filter active edits it
+      @mode = :filter
     end
 
     def toggle_model
@@ -516,6 +558,9 @@ module Tui
         flash("cancelled")
       elsif @resp_open
         @resp_open = false
+      elsif @filter
+        @filter = nil
+        flash("filter cleared")
       end
     end
 
