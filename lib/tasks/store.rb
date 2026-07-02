@@ -115,6 +115,21 @@ module Tasks
       with_history("reschedule → #{date.iso8601}: #{item.title}") { reschedule_impl(item, date) }
     end
 
+    # Set a specific date stamp (kind: :deadline or :scheduled), replacing an
+    # existing one of that kind or adding it. INBOX items promote to TODO.
+    # Backs the CLI `due` and `schedule` commands (the TUI uses reschedule!,
+    # which picks whichever stamp the item already has).
+    def set_date!(item, date, kind:)
+      key = kind == :scheduled ? "SCHEDULED" : "DEADLINE"
+      with_history("#{key.downcase} → #{date.iso8601}: #{item.title}") { set_date_impl(item, date, key) }
+    end
+
+    # Transition an item to any state. Entering DONE/CANCELLED adds a CLOSED:
+    # stamp (unless one is already present); leaving them removes it.
+    def set_state!(item, state)
+      with_history("state → #{state}: #{item.title}") { set_state_impl(item, state) }
+    end
+
     def archive_swept!
       with_history("archive sweep") { archive_swept_impl }
     end
@@ -217,6 +232,70 @@ module Tasks
       File.write(@org, lines.join)
       reload!
       true
+    end
+
+    # Set/replace a specific stamp (key: "DEADLINE" or "SCHEDULED"). Mirrors
+    # reschedule_impl but forces the stamp kind rather than inferring it.
+    def set_date_impl(item, date, key)
+      lines = File.readlines(@org, encoding: "UTF-8")
+      i = item.line - 1
+      return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
+
+      stamp = "#{key}: <#{date.iso8601} #{date.strftime("%a")}>"
+      level = lines[i][/^\*+/].length
+
+      j = i + 1
+      stamp_at = nil
+      while j < lines.length
+        lvl = lines[j][/^(\*+)\s/, 1]&.length
+        break if lvl && lvl <= level
+        stamp_at = j if lines[j].include?("#{key}:")
+        j += 1
+      end
+
+      if stamp_at
+        lines[stamp_at] = lines[stamp_at].sub(/#{key}:\s*<[^>]*>/, stamp)
+      else
+        lines.insert(i + 1, "   #{stamp}\n")
+      end
+      # A dated task has been processed — promote it out of the inbox.
+      lines[i] = lines[i].sub(/^(\*+\s+)INBOX\b/, '\1TODO') if item.state == "INBOX"
+      File.write(@org, lines.join)
+      reload!
+      true
+    end
+
+    def set_state_impl(item, new_state)
+      lines = File.readlines(@org, encoding: "UTF-8")
+      i = item.line - 1
+      return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
+
+      old_state = item.state
+      lines[i] = lines[i].sub(/^(\*+\s+)(INBOX|TODO|NEXT|WAITING|DONE|CANCELLED)\b/, "\\1#{new_state}")
+
+      if DONE_STATES.include?(new_state) && !DONE_STATES.include?(old_state)
+        lines.insert(i + 1, "   CLOSED: [#{Date.today}]\n") unless closed_line_index(lines, i)
+      elsif DONE_STATES.include?(old_state) && !DONE_STATES.include?(new_state)
+        (c = closed_line_index(lines, i)) && lines.delete_at(c)
+      end
+
+      File.write(@org, lines.join)
+      reload!
+      true
+    end
+
+    # Line index of the CLOSED: stamp within the block whose headline is at
+    # line index `i`, or nil. Stops at the next same-or-higher-level headline.
+    def closed_line_index(lines, i)
+      level = lines[i][/^\*+/].length
+      j = i + 1
+      while j < lines.length
+        lvl = lines[j][/^(\*+)\s/, 1]&.length
+        break if lvl && lvl <= level
+        return j if lines[j] =~ /CLOSED:\s*\[/
+        j += 1
+      end
+      nil
     end
 
     # Move all DONE/CANCELLED blocks to the archive file. Returns the count.

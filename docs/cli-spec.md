@@ -72,11 +72,11 @@ JSON list shape (`--json` on list/agenda/next/quadrants/inbox):
 |---|---|---|---|
 | `done <ref>` | `complete`, `close`, `d` | ✅ | Mark DONE + `CLOSED:` stamp. (Currently exits 1, not 2, on ref failure; migrating.) |
 | `cancel <ref>` | `drop` | 🚧 | Mark CANCELLED + `CLOSED:` stamp. |
-| `state <ref> <STATE>` | `mv` | 🚧 | Any state transition (INBOX/TODO/NEXT/WAITING/DONE/CANCELLED). Enforces: entering DONE/CANCELLED adds `CLOSED:`; leaving them removes it. |
-| `due <ref> <date>` | `deadline`, `reschedule` | 🚧 | Set/replace DEADLINE. INBOX items promote to TODO. |
+| `state <ref> <STATE>` | `mv` | ✅ | Any state transition (INBOX/TODO/NEXT/WAITING/DONE/CANCELLED). Enforces: entering DONE/CANCELLED adds `CLOSED:`; leaving them removes it. Resolves refs across open *and* closed tasks so you can reopen a DONE item. |
+| `due <ref> <date>` | `deadline`, `reschedule` | ✅ | Set/replace DEADLINE. INBOX items promote to TODO. |
 | `schedule <ref> <date>` | | 🚧 | Set/replace SCHEDULED. Same INBOX promotion. |
 | `undate <ref>` | | 🚧 | Remove SCHEDULED and/or DEADLINE (`--kind deadline\|scheduled` to pick one). |
-| `priority <ref> <A\|B\|C\|none>` | `pri` | 🚧 | Set or clear the priority cookie. |
+| `priority <ref> <A\|B\|C\|none>` | `pri` | ✅ | Set or clear the priority cookie. |
 | `retitle <ref> "new title"` | `rename` | 🚧 | Replace the headline title; tags/priority/state untouched. |
 | `tag <ref> +foo -bar @ctx -@old` | | 🚧 | Add/remove tags and contexts in one call. |
 | `note <ref> "text"` | | 🚧 | Append a body line under the task. |

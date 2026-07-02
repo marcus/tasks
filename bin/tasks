@@ -10,6 +10,9 @@
 #   bin/tasks inbox|i         show unprocessed INBOX items
 #   bin/tasks capture|c "..." append a new item to the Inbox
 #   bin/tasks done|d "..."    mark a matching open item DONE
+#   bin/tasks due <ref> <date>       set/replace an item's DEADLINE
+#   bin/tasks state <ref> <STATE>    transition an item to any state
+#   bin/tasks priority <ref> <A|B|C|none>  set or clear the priority cookie
 #   bin/tasks archive|x       move DONE/CANCELLED items to archive.org
 #   bin/tasks list|l [...]    list tasks grouped by state, with filters:
 #     scope:   --open/-o (default) --done/-d --archived/-x --all/-a
@@ -23,8 +26,10 @@ require "date"
 require "shellwords"
 
 ROOT    = File.expand_path("..", __dir__)
-ORG     = File.join(ROOT, "gtd.org")
-ARCHIVE = File.join(ROOT, "archive.org")
+# TASKS_ORG/TASKS_ARCHIVE let tests (and alternate task files) point the CLI at
+# a sandbox copy instead of the repo's gtd.org. Default to the repo files.
+ORG     = ENV.fetch("TASKS_ORG") { File.join(ROOT, "gtd.org") }
+ARCHIVE = ENV.fetch("TASKS_ARCHIVE") { File.join(ROOT, "archive.org") }
 AGENTS  = File.join(ROOT, "AGENTS.md")
 
 Item = Struct.new(
@@ -189,6 +194,136 @@ def cmd_done(query)
   puts "Run `tasks archive` to move it out of gtd.org."
 end
 
+# --- Store-backed mutations (due / state / priority) ------------------------
+#
+# These go through Tasks::Store#with_history, which validates the file after
+# every write and rolls back on structural error. Ref resolution matches a
+# case-insensitive substring of an open task's title, or an exact `L<line>`.
+
+def store
+  @store ||= begin
+    require_relative "../lib/tasks/store"
+    Tasks::Store.new(org: ORG, archive: ARCHIVE)
+  end
+end
+
+# Pull known boolean flags out of args, returning [flags_hash, positional].
+def take_flags(args, *known)
+  flags = {}
+  rest = []
+  args.each { |a| known.include?(a) ? (flags[a] = true) : (rest << a) }
+  [flags, rest]
+end
+
+def item_headline(item)
+  File.readlines(ORG, encoding: "UTF-8")[item.line - 1]&.chomp || fmt(item)
+end
+
+def item_json(item)
+  {
+    state: item.state, priority: item.priority, title: item.title,
+    tags: item.tags.reject { |t| t.start_with?("@") },
+    contexts: contexts(item),
+    scheduled: item.scheduled&.iso8601, deadline: item.deadline&.iso8601,
+    line: item.line, headline: item_headline(item),
+  }
+end
+
+# Resolve <ref> to exactly one open item (or exit 2). `L<line>` targets an
+# exact headline line. --include-done widens the search to closed items.
+def resolve_ref(ref, include_done: false)
+  abort "missing <ref>" if ref.nil? || ref.strip.empty?
+  items = store.items
+  items = items.select { |i| OPEN_STATES.include?(i.state) } unless include_done
+
+  if (m = ref.match(/\AL(\d+)\z/i))
+    item = items.find { |i| i.line == m[1].to_i }
+    unless item
+      warn "no #{include_done ? "" : "open "}task with a headline on line #{m[1]}"
+      exit 2
+    end
+    return item
+  end
+
+  q = ref.dup.force_encoding("UTF-8").strip.downcase
+  matches = items.select { |i| i.title.downcase.include?(q) }
+  if matches.empty?
+    warn "no match: #{ref}"
+    exit 2
+  elsif matches.size > 1
+    warn "ambiguous: #{ref} — matches #{matches.size} tasks:"
+    matches.each { |i| warn "  L#{i.line}: #{item_headline(i)}" }
+    exit 2
+  end
+  matches.first
+end
+
+# After a mutation, print (or JSON-emit) the touched task's new headline.
+def report_touched(title, json:)
+  store.reload!
+  item = store.items.find { |i| i.title == title }
+  if json
+    require "json"
+    puts({ touched: item ? [item_json(item)] : [] }.to_json)
+  elsif item
+    puts item_headline(item)
+  end
+end
+
+def cmd_due(args)
+  require_relative "../lib/tasks/dates"
+  flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
+  ref = rest.shift
+  date_str = rest.join(" ")
+  abort %(usage: tasks due <ref> <date>) if ref.nil? || date_str.strip.empty?
+  date = Tasks::Dates.parse_when(date_str)
+  abort "unrecognized date: #{date_str}" unless date
+
+  item = resolve_ref(ref, include_done: flags["--include-done"])
+  if flags["--dry-run"]
+    puts "would set DEADLINE <#{date.iso8601} #{date.strftime("%a")}> on: #{item_headline(item)}"
+    return
+  end
+  abort "failed to set deadline (file changed underfoot?)" unless store.set_date!(item, date, kind: :deadline)
+  report_touched(item.title, json: flags["--json"])
+end
+
+def cmd_priority(args)
+  flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
+  ref = rest.shift
+  pri_arg = rest.join(" ").strip
+  abort %(usage: tasks priority <ref> <A|B|C|none>) if ref.nil? || pri_arg.empty?
+  pri = pri_arg.upcase
+  pri = nil if %w[NONE CLEAR -].include?(pri)
+  abort "priority must be A, B, C, or none" unless pri.nil? || %w[A B C].include?(pri)
+
+  item = resolve_ref(ref, include_done: flags["--include-done"])
+  if flags["--dry-run"]
+    puts "would set priority #{pri ? "[##{pri}]" : "(none)"} on: #{item_headline(item)}"
+    return
+  end
+  abort "failed to set priority (file changed underfoot?)" unless store.set_priority!(item, pri)
+  report_touched(item.title, json: flags["--json"])
+end
+
+def cmd_state(args)
+  flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
+  ref = rest.shift
+  state_arg = rest.join(" ").strip.upcase
+  valid = OPEN_STATES + DONE_STATES
+  abort %(usage: tasks state <ref> <#{valid.join("|")}>) if ref.nil? || state_arg.empty?
+  abort "unknown state: #{state_arg} (want one of #{valid.join(", ")})" unless valid.include?(state_arg)
+
+  # Transitioning *out* of a closed state needs to find the (closed) item.
+  item = resolve_ref(ref, include_done: true)
+  if flags["--dry-run"]
+    puts "would set state #{state_arg} on: #{item_headline(item)}"
+    return
+  end
+  abort "failed to set state (file changed underfoot?)" unless store.set_state!(item, state_arg)
+  report_touched(item.title, json: flags["--json"])
+end
+
 def cmd_archive
   lines = File.readlines(ORG, encoding: "UTF-8")
   kept = []
@@ -346,10 +481,13 @@ when "agenda", "a"    then cmd_agenda(parse)
 when "inbox", "i"     then cmd_inbox(parse)
 when "capture", "c"   then cmd_capture(ARGV[1..].join(" "))
 when "done", "d"      then cmd_done(ARGV[1..].join(" "))
+when "due", "deadline", "reschedule" then cmd_due(ARGV[1..])
+when "state", "mv"    then cmd_state(ARGV[1..])
+when "priority", "pri" then cmd_priority(ARGV[1..])
 when "archive", "x"   then cmd_archive
 when "list", "l"      then cmd_list(ARGV[1..])
 when "check", "k"     then cmd_check(ARGV[1..])
 else
-  warn %(usage: tasks {agenda|a|next|n|quadrants|q|inbox|i|capture|c "..."|done|d "..."|archive|x|list|l [...]|check|k [--json]|-p "..."})
+  warn %(usage: tasks {agenda|a|next|n|quadrants|q|inbox|i|capture|c "..."|done|d "..."|due <ref> <date>|state <ref> <STATE>|priority <ref> <A|B|C|none>|archive|x|list|l [...]|check|k [--json]|-p "..."})
   exit 1
 end
