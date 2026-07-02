@@ -75,6 +75,36 @@ class TestAnsi < Minitest::Test
     assert_includes lines.first, "task done"
   end
 
+  def test_vislen_counts_emoji_as_two_cells
+    assert_equal 2, A.vislen("✨")
+    assert_equal 15, A.vislen("Inbox empty. ✨")
+  end
+
+  def test_vislen_text_presentation_symbols_stay_one_cell
+    # ⚠ and ✓ render text-presentation (one cell) without a U+FE0F selector
+    assert_equal 1, A.vislen("⚠")
+    assert_equal 1, A.vislen("✓")
+    assert_equal 1, A.vislen("▸")
+  end
+
+  def test_vislen_emoji_variation_selector_forces_wide
+    assert_equal 2, A.vislen("⚠️")
+  end
+
+  def test_vpad_accounts_for_emoji_width
+    # the empty-inbox bug: padding must reserve two cells for the emoji so the
+    # line does not overflow its box and wrap to a new terminal row
+    padded = A.vpad(A.dim("Inbox empty. ✨"), 20)
+    assert_equal 20, A.vislen(padded)
+  end
+
+  def test_vtrunc_does_not_split_wide_char
+    out = A.vtrunc("ab✨cd", 4)
+    # never exceeds the budget, and never emits a half of the 2-cell ✨
+    assert_operator A.vislen(out), :<=, 4
+    refute_includes A.strip(out), "✨"
+  end
+
   def test_vtrunc_binary_wrapped_line_roundtrip
     # the exact crash path: wrap output fed to vtrunc alongside UTF-8 borders
     line = A.wrap("é" * 50, 40).first
