@@ -24,6 +24,8 @@ module Tui
     SPINNER     = %w[⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏].freeze
     RESP_MAX    = 10   # footer response pane grows to at most this many lines
     RESP_HINT   = "pgup/pgdn scroll · esc dismiss"
+    PROMPT_MAX  = 5    # prompt input grows to at most this many lines
+    MODELS      = %w[sonnet opus].freeze
 
     def initialize(root:)
       @store  = Store.new(org: File.join(root, "gtd.org"), archive: File.join(root, "archive.org"))
@@ -42,6 +44,7 @@ module Tui
       @resp_scroll = 0
       @flash = nil
       @flash_until = nil
+      @model = MODELS.first
       @tick = 0
       @quit = false
     end
@@ -98,7 +101,7 @@ module Tui
       tabs = Views::TABS.map do |label, key|
         key == @view ? A.invert(A.bold(" #{label} ")) : A.dim(" #{label} ")
       end.join(" ")
-      count = A.dim("#{@store.items.count(&:open?)} open · ? help")
+      count = A.dim("#{@store.items.count(&:open?)} open · #{A.cyan(@model)}#{A.dim(" · ? help")}")
       gap = [w - A.vislen(tabs) - A.vislen(count) - 2, 1].max
       " #{tabs}#{" " * gap}#{count} "
     end
@@ -118,17 +121,22 @@ module Tui
         f << :rule
       end
       f << " #{@flash}" if @flash
-      f << prompt_line
+      f.concat(prompt_lines(w))
       f
     end
 
-    def prompt_line
-      if @mode == :prompt
-        " #{A.bold(A.cyan("❯ "))}#{@input}#{A.invert(" ")}"
-      elsif @claude.running?
-        " #{A.bold(A.cyan("❯ "))}#{A.dim("…")}"
-      else
-        " #{A.bold(A.cyan("❯ "))}#{A.dim("tab to ask claude — reschedule, capture, edit anything…")}"
+    # The prompt grows to PROMPT_MAX lines as the input wraps, so a wordy
+    # request stays readable; beyond that, the earliest lines scroll off.
+    def prompt_lines(w)
+      unless @mode == :prompt
+        hint = @claude.running? ? A.dim("…") : A.dim("tab to ask claude — reschedule, capture, edit anything…")
+        return [" #{A.bold(A.cyan("❯ "))}#{hint}"]
+      end
+      wrapped = A.wrap(@input, w - 5).last(PROMPT_MAX)
+      wrapped.each_with_index.map do |l, i|
+        prefix = i.zero? ? " #{A.bold(A.cyan("❯ "))}" : "   "
+        cursor = i == wrapped.size - 1 ? A.invert(" ") : ""
+        "#{prefix}#{l}#{cursor}"
       end
     end
 
@@ -282,6 +290,11 @@ module Tui
       rows
       @sel = @rows.each_index.find { |i| @rows[i].item&.line == line } || @sel
       clamp_selection
+    end
+
+    def toggle_model
+      @model = MODELS[(MODELS.index(@model) + 1) % MODELS.size]
+      flash("model: #{@model}#{@claude.running? ? " (applies to the next request)" : ""}")
     end
 
     def undo_last  = history_op(:undo!, "undid")
@@ -469,7 +482,7 @@ module Tui
       return flash("claude is still working — esc to cancel") if @claude.running?
       return flash("claude CLI not found on PATH") unless Claude.available?
       @resp_open = false
-      @claude.start(text)
+      @claude.start(text, model: @model)
     end
 
     def pump_claude

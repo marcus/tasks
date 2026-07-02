@@ -66,7 +66,9 @@ module Tui
           end
         end
         out << cur.rstrip unless cur.strip.empty?
-        out.empty? ? [""] : out
+        out = [""] if out.empty?
+        # hard-break any single token longer than the width
+        out.flat_map { |l| l.length <= w ? [l] : l.chars.each_slice(w).map(&:join) }
       end
     end
   end

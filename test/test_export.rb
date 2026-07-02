@@ -3,6 +3,7 @@
 require_relative "test_helper"
 require "tui/export"
 require "tui/clipboard"
+require "tui/claude"
 
 class TestExport < Minitest::Test
   E = Tui::Export
@@ -57,5 +58,21 @@ class TestExport < Minitest::Test
   def test_clipboard_copy_fails_gracefully_without_tool
     refute Tui::Clipboard.copy("x", cmd: nil)
     refute Tui::Clipboard.copy("x", cmd: ["definitely-not-a-real-cmd-xyz"])
+  end
+
+  def test_claude_command_includes_model_and_permissions_flag
+    Dir.mktmpdir do |dir|
+      c = Tui::Claude.new(root: dir, agents_path: File.join(dir, "AGENTS.md"))
+      cmd = c.command("do the thing", model: "opus")
+      assert_equal %w[claude -p], cmd[0, 2]
+      assert_includes cmd, "do the thing"
+      assert_equal "opus", cmd[cmd.index("--model") + 1]
+      assert_includes cmd, "--dangerously-skip-permissions"
+      refute_includes cmd, "--append-system-prompt" # no AGENTS.md in this dir
+
+      File.write(File.join(dir, "AGENTS.md"), "conventions here")
+      cmd = c.command("x", model: "sonnet")
+      assert_equal "conventions here", cmd[cmd.index("--append-system-prompt") + 1]
+    end
   end
 end

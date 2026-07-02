@@ -23,6 +23,7 @@ module Tui
       Entry.new(seqs: ["y"],          keys: "y",       desc: "yank task ref (paste to claude)",  action: :yank_ref),
       Entry.new(seqs: ["Y"],          keys: "Y",       desc: "yank task as markdown",            action: :yank_markdown),
       Entry.new(seqs: ["p"],          keys: "p",       desc: "paste task ref into the prompt",   action: :paste_ref),
+      Entry.new(seqs: ["M"],          keys: "M",       desc: "toggle claude model (sonnet/opus)", action: :toggle_model),
       Entry.new(seqs: ["u"],          keys: "u",       desc: "undo last change",                 action: :undo_last),
       Entry.new(seqs: ["\x12"],       keys: "ctrl-r",  desc: "redo",                             action: :redo_last),
       Entry.new(seqs: ["\t", ":"],    keys: "tab / :", desc: "ask claude — CRUD anything",       action: :focus_prompt),

@@ -54,6 +54,11 @@ class TestAnsi < Minitest::Test
     assert_equal ["styled text"], lines
   end
 
+  def test_wrap_hard_breaks_overlong_words
+    lines = A.wrap("x" * 25, 10)
+    assert_equal ["x" * 10, "x" * 10, "x" * 5], lines
+  end
+
   def test_wrap_handles_binary_encoded_utf8
     # subprocess reads arrive as ASCII-8BIT; multibyte content must not raise
     binary = "moved “Book flight” → 07-03 ✓".b

@@ -214,4 +214,54 @@ class TestAppModals < Minitest::Test
       assert_equal "complete \"#{title}\" ", app.instance_variable_get(:@input)
     end
   end
+
+  def test_prompt_expands_up_to_five_lines_when_input_wraps
+    with_app do |app|
+      app.send(:handle_key, "\t") # focus prompt
+      app.instance_variable_get(:@input) << ("please reschedule everything " * 20)
+      plines = app.send(:prompt_lines, 60)
+      assert_equal 5, plines.size, "long input caps at 5 lines"
+      assert_includes plines.first, "❯"
+      assert_includes plines.last, "\e[7m", "cursor on the last line"
+
+      app.instance_variable_set(:@input, +"short message")
+      assert_equal 1, app.send(:prompt_lines, 60).size
+
+      app.instance_variable_set(:@input, +("word " * 15)) # ~75 chars: 2 lines at w=60
+      assert_equal 2, app.send(:prompt_lines, 60).size
+    end
+  end
+
+  def test_prompt_single_hint_line_when_not_focused
+    with_app do |app|
+      assert_equal 1, app.send(:prompt_lines, 60).size
+    end
+  end
+
+  def test_model_toggle_cycles_and_shows_in_header
+    with_app do |app|
+      assert_includes Tui::Ansi.strip(app.send(:header, 80)), "sonnet"
+      app.send(:handle_key, "M")
+      assert_includes Tui::Ansi.strip(app.send(:header, 80)), "opus"
+      assert_match(/model: opus/, app.instance_variable_get(:@flash))
+      app.send(:handle_key, "M")
+      assert_includes Tui::Ansi.strip(app.send(:header, 80)), "sonnet"
+    end
+  end
+
+  def test_submit_passes_current_model_to_claude
+    with_app do |app|
+      started = nil
+      claude = app.instance_variable_get(:@claude)
+      claude.stub(:start, ->(text, model:) { started = [text, model] }) do
+        Tui::Claude.stub(:available?, true) do
+          app.send(:handle_key, "M") # → opus
+          app.send(:handle_key, "\t")
+          app.instance_variable_get(:@input) << "hello"
+          app.send(:handle_key, "\r")
+        end
+      end
+      assert_equal ["hello", "opus"], started
+    end
+  end
 end

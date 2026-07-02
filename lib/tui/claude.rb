@@ -20,18 +20,22 @@ module Tui
 
     def running? = !@pid.nil?
 
-    def start(prompt)
+    def start(prompt, model: "sonnet")
       @output = +""
       r, w = IO.pipe
-      # --dangerously-skip-permissions: headless run can't answer permission
-      # prompts, and the whole point is letting the agent edit gtd.org freely
-      args = ["claude", "-p", prompt, "--model", "sonnet", "--output-format", "text",
-              "--dangerously-skip-permissions"]
-      args += ["--append-system-prompt", File.read(@agents, encoding: "UTF-8")] if File.exist?(@agents)
-      @pid = Process.spawn(*args, in: File::NULL, out: w, err: w, chdir: @root)
+      @pid = Process.spawn(*command(prompt, model: model), in: File::NULL, out: w, err: w, chdir: @root)
       w.close
       @io = r
       self
+    end
+
+    def command(prompt, model:)
+      # --dangerously-skip-permissions: headless run can't answer permission
+      # prompts, and the whole point is letting the agent edit gtd.org freely
+      args = ["claude", "-p", prompt, "--model", model, "--output-format", "text",
+              "--dangerously-skip-permissions"]
+      args += ["--append-system-prompt", File.read(@agents, encoding: "UTF-8")] if File.exist?(@agents)
+      args
     end
 
     # Drain available output. Returns :running or :done.
