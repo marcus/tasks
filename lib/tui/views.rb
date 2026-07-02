@@ -33,7 +33,8 @@ module Tui
 
     def agenda(items, today: Date.today)
       dated = items.select { |i| i.open? && (i.scheduled || i.deadline) }
-      dated.sort_by { |i| i.deadline || i.scheduled }.map do |i|
+      # same date → priority order (A first, none last)
+      dated.sort_by { |i| [i.deadline || i.scheduled, i.priority || "Z"] }.map do |i|
         d    = i.deadline || i.scheduled
         kind = i.deadline ? "DUE " : "STRT"
         days = (d - today).to_i

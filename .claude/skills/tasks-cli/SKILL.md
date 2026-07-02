@@ -17,6 +17,7 @@ Edit the file directly only for operations the CLI doesn't cover yet
 bin/tasks list -a          # everything incl. archive; filters: @ctx +tag /text -A
 bin/tasks agenda           # dated items, soonest first
 bin/tasks inbox            # unprocessed captures
+bin/tasks show "<ref>"     # one task in full (fields + notes); --json
 bin/tasks check            # is the file structurally sound? (exit 1 = no)
 ```
 
@@ -25,7 +26,10 @@ bin/tasks check            # is the file structurally sound? (exit 1 = no)
 ```sh
 bin/tasks capture "text"             # new INBOX item
 bin/tasks done "<ref>"               # mark DONE + CLOSED stamp
+bin/tasks cancel "<ref>"             # mark CANCELLED + CLOSED stamp
 bin/tasks due "<ref>" fri            # set/replace DEADLINE (INBOX → TODO)
+bin/tasks schedule "<ref>" +3        # set/replace SCHEDULED (INBOX → TODO)
+bin/tasks undate "<ref>"             # remove date stamps; --kind deadline|scheduled
 bin/tasks state "<ref>" WAITING      # any state; DONE/CANCELLED manage CLOSED
 bin/tasks priority "<ref>" A         # A|B|C|none
 bin/tasks archive                    # sweep DONE/CANCELLED to archive.org
@@ -42,8 +46,8 @@ stop and ask, listing the matches.
 
 ## Direct edits (for what the CLI lacks yet)
 
-When you must edit `gtd.org` directly (schedule/undate, tags, retitle, notes,
-move between sections — until their commands land):
+When you must edit `gtd.org` directly (tags, retitle, notes, moving between
+sections — until their commands land):
 
 1. Read `docs/conventions.md` for the format. Key shapes:
    - `** STATE [#A] Title  :tag:@context:` — STATE ∈ INBOX/TODO/NEXT/WAITING/DONE/CANCELLED

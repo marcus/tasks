@@ -264,7 +264,9 @@ module Tasks
       while j < lines.length
         lvl = lines[j][/^(\*+)\s/, 1]&.length
         break if lvl && lvl <= level
-        if keys.any? { |k| lines[j].include?("#{k}:") }
+        # anchored: only delete actual stamp lines, never a prose note that
+        # happens to mention "DEADLINE:" mid-sentence
+        if keys.any? { |k| lines[j] =~ /^\s*#{k}:/ }
           lines.delete_at(j)
           removed = true
         else

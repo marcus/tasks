@@ -123,6 +123,22 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  def test_undate_never_deletes_prose_mentioning_a_stamp_keyword
+    with_store do |store, org, _a|
+      # a body note that mentions "DEADLINE:" mid-sentence must survive
+      lines = File.readlines(org)
+      idx = lines.index { |l| l.include?("DEADLINE: <2026-07-02") }
+      lines.insert(idx + 1, "   Waiting on the DEADLINE: confirmation from legal.\n")
+      File.write(org, lines.join)
+      store.reload!
+
+      assert store.undate!(find_item(store, "Book flight"), kind: :deadline)
+      content = File.read(org)
+      refute_match(/DEADLINE: <2026-07-02/, content)
+      assert_match(/Waiting on the DEADLINE: confirmation/, content)
+    end
+  end
+
   def test_undate_is_undoable
     with_store do |store, org, _a|
       before = File.read(org)

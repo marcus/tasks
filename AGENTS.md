@@ -17,13 +17,17 @@ passed to `tasks -p`. Today's date is available from the system.
   - complete a task:  `bin/tasks done "<fuzzy title>"`
   - add a task:       `bin/tasks capture "<text>"`
   - set a deadline:   `bin/tasks due "<ref>" <date>`  (fri, +3, 07-15, …)
+  - set scheduled:    `bin/tasks schedule "<ref>" <date>`
+  - remove dates:     `bin/tasks undate "<ref>" [--kind deadline|scheduled]`
   - change state:     `bin/tasks state "<ref>" <STATE>`
+  - cancel a task:    `bin/tasks cancel "<ref>"`
   - set priority:     `bin/tasks priority "<ref>" <A|B|C|none>`
+  - inspect a task:   `bin/tasks show "<ref>" [--json]`
   - archive done:     `bin/tasks archive`
   - validate file:    `bin/tasks check` (exit 1 = structural errors)
   (full command set + roadmap: `docs/cli-spec.md`)
-- Edit `gtd.org` directly for anything the CLI lacks: scheduled dates,
-  tags, retitling, notes, moving between sections.
+- Edit `gtd.org` directly for anything the CLI lacks: tags, retitling,
+  notes, moving between sections.
 - After ANY direct edit to `gtd.org`, run `bin/tasks check` and fix
   whatever it reports before finishing.
 - Match tasks by fuzzy title. If a prompt is ambiguous (multiple matches),

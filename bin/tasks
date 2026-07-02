@@ -146,7 +146,8 @@ end
 
 def cmd_agenda(items)
   dated = items.select { |i| open?(i) && (i.scheduled || i.deadline) }
-  dated.sort_by { |i| i.deadline || i.scheduled }.each do |i|
+  # same date -> priority order (A first, none last)
+  dated.sort_by { |i| [i.deadline || i.scheduled, i.priority || "Z"] }.each do |i|
     d = i.deadline || i.scheduled
     kind = i.deadline ? "DUE " : "STRT"
     days = (d - Date.today).to_i
@@ -284,23 +285,28 @@ def report_touched(line, json:)
   end
 end
 
-def cmd_due(args)
+# Shared implementation for `due` (DEADLINE) and `schedule` (SCHEDULED).
+def cmd_set_date(args, kind:, usage:)
   require_relative "../lib/tasks/dates"
+  key = kind == :scheduled ? "SCHEDULED" : "DEADLINE"
   flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
   ref = rest.shift
   date_str = rest.join(" ")
-  abort %(usage: tasks due <ref> <date>) if ref.nil? || date_str.strip.empty?
+  abort %(usage: #{usage}) if ref.nil? || date_str.strip.empty?
   date = Tasks::Dates.parse_when(date_str)
   abort "unrecognized date: #{date_str}" unless date
 
   item = resolve_ref(ref, include_done: flags["--include-done"])
   if flags["--dry-run"]
-    puts "would set DEADLINE <#{date.iso8601} #{date.strftime("%a")}> on: #{item_headline(item)}"
+    puts "would set #{key} <#{date.iso8601} #{date.strftime("%a")}> on: #{item_headline(item)}"
     return
   end
-  abort "failed to set deadline (file changed underfoot?)" unless store.set_date!(item, date, kind: :deadline)
+  abort "failed to set #{key.downcase} (file changed underfoot?)" unless store.set_date!(item, date, kind: kind)
   report_touched(item.line, json: flags["--json"])
 end
+
+def cmd_due(args)      = cmd_set_date(args, kind: :deadline,  usage: "tasks due <ref> <date>")
+def cmd_schedule(args) = cmd_set_date(args, kind: :scheduled, usage: "tasks schedule <ref> <date>")
 
 def cmd_priority(args)
   flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
@@ -317,24 +323,6 @@ def cmd_priority(args)
     return
   end
   abort "failed to set priority (file changed underfoot?)" unless store.set_priority!(item, pri)
-  report_touched(item.line, json: flags["--json"])
-end
-
-def cmd_schedule(args)
-  require_relative "../lib/tasks/dates"
-  flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
-  ref = rest.shift
-  date_str = rest.join(" ")
-  abort %(usage: tasks schedule <ref> <date>) if ref.nil? || date_str.strip.empty?
-  date = Tasks::Dates.parse_when(date_str)
-  abort "unrecognized date: #{date_str}" unless date
-
-  item = resolve_ref(ref, include_done: flags["--include-done"])
-  if flags["--dry-run"]
-    puts "would set SCHEDULED <#{date.iso8601} #{date.strftime("%a")}> on: #{item_headline(item)}"
-    return
-  end
-  abort "failed to set scheduled date (file changed underfoot?)" unless store.set_date!(item, date, kind: :scheduled)
   report_touched(item.line, json: flags["--json"])
 end
 

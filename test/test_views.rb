@@ -13,6 +13,30 @@ class TestViews < Minitest::Test
 
   def texts(rs) = rs.map { |r| A.strip(r.text) }
 
+  def test_agenda_same_date_sorts_by_priority
+    org = <<~ORG
+      * Work
+      ** NEXT [#B] beta task tomorrow
+         DEADLINE: <2026-07-02>
+      ** NEXT [#A] alpha task tomorrow
+         DEADLINE: <2026-07-02>
+      ** NEXT no-priority task tomorrow
+         DEADLINE: <2026-07-02>
+      ** NEXT [#C] later but urgent-ish
+         DEADLINE: <2026-07-05>
+    ORG
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "gtd.org")
+      File.write(path, org)
+      store = Tui::Store.new(org: path, archive: File.join(dir, "archive.org"))
+      titles = V.agenda(store.items, today: TODAY).map { |r| A.strip(r.text) }
+      assert_operator titles.index { |t| t.include?("alpha") }, :<, titles.index { |t| t.include?("beta") }
+      assert_operator titles.index { |t| t.include?("beta") }, :<, titles.index { |t| t.include?("no-priority") }
+      # date still dominates: C-priority on a later date sorts below all of them
+      assert_equal 3, titles.index { |t| t.include?("later but") }
+    end
+  end
+
   def test_agenda_sorted_soonest_first_and_selectable
     rs = rows(:agenda)
     assert_equal 2, rs.size # flight (deadline) + self-eval (scheduled)
