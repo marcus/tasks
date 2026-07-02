@@ -41,46 +41,15 @@ ORG     = ENV.fetch("TASKS_ORG") { File.join(ROOT, "gtd.org") }
 ARCHIVE = ENV.fetch("TASKS_ARCHIVE") { File.join(ROOT, "archive.org") }
 AGENTS  = File.join(ROOT, "AGENTS.md")
 
-Item = Struct.new(
-  :state, :priority, :title, :tags, :scheduled, :deadline, :line, :source, keyword_init: true
-)
-
-HEADLINE = /^\*+\s+(INBOX|TODO|NEXT|WAITING|DONE|CANCELLED)\s+(?:\[#([ABC])\]\s+)?(.*?)\s*(:[\w@:]+:)?\s*$/
-STAMP    = /(SCHEDULED|DEADLINE):\s*<(\d{4}-\d{2}-\d{2})/
-
-def parse(files = [ORG])
-  items = []
-  files.each do |file|
-    next unless File.exist?(file)
-    src = file == ARCHIVE ? :archive : :org
-    current = nil
-    File.foreach(file, encoding: "UTF-8").with_index(1) do |line, lineno|
-      if (m = line.match(HEADLINE))
-        current = Item.new(
-          state: m[1], priority: m[2], title: m[3].strip,
-          tags: (m[4] || "").split(":").reject(&:empty?),
-          scheduled: nil, deadline: nil, line: lineno, source: src
-        )
-        items << current
-      elsif current && (s = line.match(STAMP))
-        begin
-          d = Date.parse(s[2])
-          current.scheduled = d if s[1] == "SCHEDULED"
-          current.deadline  = d if s[1] == "DEADLINE"
-        rescue Date::Error
-          # impossible date (e.g. <2026-13-06>) — skip; `tasks check` reports it
-        end
-      end
-    end
-  end
-  items
-end
+# The model layer owns parsing and every mutation; the CLI adds dispatch,
+# ref resolution, and output. (Tasks::Item, Store::HEADLINE etc. live there.)
+require_relative "../lib/tasks/store"
 
 def contexts(item) = item.tags.select { |t| t.start_with?("@") }
 def open?(item)     = OPEN_STATES.include?(item.state)
 
-OPEN_STATES = %w[INBOX TODO NEXT WAITING].freeze
-DONE_STATES = %w[DONE CANCELLED].freeze
+OPEN_STATES = Tasks::Store::OPEN_STATES
+DONE_STATES = Tasks::Store::DONE_STATES
 
 def color(str, code) = $stdout.tty? ? "\e[#{code}m#{str}\e[0m" : str
 def bold(s)   = color(s, 1)
@@ -247,10 +216,7 @@ end
 # case-insensitive substring of an open task's title, or an exact `L<line>`.
 
 def store
-  @store ||= begin
-    require_relative "../lib/tasks/store"
-    Tasks::Store.new(org: ORG, archive: ARCHIVE)
-  end
+  @store ||= Tasks::Store.new(org: ORG, archive: ARCHIVE)
 end
 
 # Pull known boolean flags out of args, returning [flags_hash, positional].
@@ -557,13 +523,12 @@ def cmd_list(args)
     end
   end
 
-  files =
+  items =
     case scope
-    when :archived then [ARCHIVE]
-    when :all      then [ORG, ARCHIVE]
-    else                [ORG]
+    when :archived then store.archive_items
+    when :all      then store.items + store.archive_items
+    else                store.items
     end
-  items = parse(files)
   states =
     case scope
     when :open then OPEN_STATES
@@ -602,7 +567,6 @@ end
 
 # Validate gtd.org structure. Exit 0 clean, 1 errors found.
 def cmd_check(args)
-  require_relative "../lib/tasks/check"
   res = Tasks::Check.check(ORG)
   if args.include?("--json")
     require "json"
@@ -611,7 +575,7 @@ def cmd_check(args)
     res.errors.each   { |line, msg| puts "#{red("error")}  line #{line}: #{msg}" }
     res.warnings.each { |line, msg| puts "#{yellow("warn")}   line #{line}: #{msg}" }
     if res.ok?
-      n = parse.size
+      n = store.items.size
       puts "ok — #{n} task#{n == 1 ? "" : "s"} parsed, no structural errors#{res.warnings.empty? ? "" : " (#{res.warnings.size} warning#{res.warnings.size == 1 ? "" : "s"})"}"
     else
       puts "#{res.errors.size} error(s), #{res.warnings.size} warning(s)"
@@ -644,14 +608,14 @@ end
 
 require "shellwords"
 
-# parse lazily: `check` must be able to run (and report) on a file that the
-# parser would choke on, and mutation commands read the file themselves
+# each branch reads via the store on demand — `check` must be able to run
+# (and report) on a file the parser would choke on
 case ARGV[0]
 when "-p", "--prompt" then cmd_prompt(ARGV[1..].join(" ")); exit
-when "next", "n"      then cmd_next(parse)
-when "quadrants", "q" then cmd_quadrants(parse)
-when "agenda", "a"    then cmd_agenda(parse)
-when "inbox", "i"     then cmd_inbox(parse)
+when "next", "n"      then cmd_next(store.items)
+when "quadrants", "q" then cmd_quadrants(store.items)
+when "agenda", "a"    then cmd_agenda(store.items)
+when "inbox", "i"     then cmd_inbox(store.items)
 when "capture", "add", "c" then cmd_capture(ARGV[1..])
 when "done", "complete", "close", "d" then cmd_done(ARGV[1..])
 when "due", "deadline", "reschedule" then cmd_due(ARGV[1..])

@@ -496,17 +496,28 @@ module Tasks
       moved.size
     end
 
+    public
+
+    # Items parsed from the archive file (source: :archive). Not cached —
+    # the archive is read rarely (`list -x/-a`) and appended rarely.
+    def archive_items
+      parse_file(@archive, source: :archive)
+    end
+
     private
 
-    def parse
+    def parse = parse_file(@org, source: :org)
+
+    def parse_file(path, source:)
       items = []
+      return items unless File.exist?(path)
       current = nil
-      File.foreach(@org, encoding: "UTF-8").with_index(1) do |line, lineno|
+      File.foreach(path, encoding: "UTF-8").with_index(1) do |line, lineno|
         if (m = line.match(HEADLINE))
           current = Item.new(
             state: m[1], priority: m[2], title: m[3].strip,
             tags: (m[4] || "").split(":").reject(&:empty?),
-            line: lineno, source: :org
+            line: lineno, source: source
           )
           items << current
         elsif current && (s = line.match(STAMP))
