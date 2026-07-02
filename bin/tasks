@@ -82,8 +82,23 @@ def fmt(item)
   "#{pri}#{item.title}#{tag}"
 end
 
-def cmd_next(items)
+# Emit items as the standard JSON array (docs/cli-spec.md) and return true
+# when --json was requested; read commands call this first.
+def emit_json?(items, args, extra: nil)
+  return false unless args.include?("--json")
+  require "json"
+  rows = items.map do |i|
+    h = item_json(i)
+    h.merge!(extra.call(i)) if extra
+    h
+  end
+  puts JSON.generate(rows)
+  true
+end
+
+def cmd_next(items, args = [])
   nexts = items.select { |i| i.state == "NEXT" }
+  return if emit_json?(nexts.sort_by { |i| i.priority || "Z" }, args)
   by_ctx = Hash.new { |h, k| h[k] = [] }
   nexts.each do |i|
     ctxs = contexts(i)
@@ -99,8 +114,14 @@ def cmd_next(items)
   end
 end
 
-def cmd_quadrants(items)
+def cmd_quadrants(items, args = [])
   open_items = items.select { |i| open?(i) }
+  quadrant_of = lambda do |i|
+    imp = i.tags.include?("important")
+    urg = i.tags.include?("urgent")
+    imp && urg ? "Q1" : imp ? "Q2" : urg ? "Q3" : "Q4"
+  end
+  return if emit_json?(open_items, args, extra: ->(i) { { quadrant: quadrant_of.(i) } })
   q = {
     "Q1 · Important + Urgent  (do now)"        => ->(i) { i.tags.include?("important") && i.tags.include?("urgent") },
     "Q2 · Important, Not Urgent  (schedule)"   => ->(i) { i.tags.include?("important") && !i.tags.include?("urgent") },
@@ -115,10 +136,11 @@ def cmd_quadrants(items)
   end
 end
 
-def cmd_agenda(items)
+def cmd_agenda(items, args = [])
   dated = items.select { |i| open?(i) && (i.scheduled || i.deadline) }
-  # same date -> priority order (A first, none last)
-  dated.sort_by { |i| [i.deadline || i.scheduled, i.priority || "Z"] }.each do |i|
+  dated = dated.sort_by { |i| [i.deadline || i.scheduled, i.priority || "Z"] }
+  return if emit_json?(dated, args)
+  dated.each do |i|
     d = i.deadline || i.scheduled
     kind = i.deadline ? "DUE " : "STRT"
     days = (d - Date.today).to_i
@@ -129,8 +151,9 @@ def cmd_agenda(items)
   end
 end
 
-def cmd_inbox(items)
+def cmd_inbox(items, args = [])
   inbox = items.select { |i| i.state == "INBOX" }
+  return if emit_json?(inbox, args)
   inbox.empty? ? (puts "Inbox empty. ✨") : inbox.each { |i| puts "  #{fmt(i)}" }
 end
 
@@ -236,7 +259,8 @@ def take_flags(args, *known)
 end
 
 def item_headline(item)
-  File.readlines(ORG, encoding: "UTF-8")[item.line - 1]&.chomp || fmt(item)
+  path = item.source == :archive ? ARCHIVE : ORG
+  File.readlines(path, encoding: "UTF-8")[item.line - 1]&.chomp || fmt(item)
 end
 
 def item_json(item)
@@ -245,7 +269,7 @@ def item_json(item)
     tags: item.tags.reject { |t| t.start_with?("@") },
     contexts: contexts(item),
     scheduled: item.scheduled&.iso8601, deadline: item.deadline&.iso8601,
-    line: item.line, headline: item_headline(item),
+    line: item.line, source: item.source, headline: item_headline(item),
   }
 end
 
@@ -504,6 +528,7 @@ STATE_ORDER = %w[INBOX TODO NEXT WAITING DONE CANCELLED].freeze
 # Parse `list` args into a scope symbol plus filters, then print grouped output.
 def cmd_list(args)
   scope    = :open
+  json     = false
   contexts_f = []
   tags_f     = []
   priority_f = nil
@@ -514,6 +539,7 @@ def cmd_list(args)
     when "--done", "-d"     then scope = :done
     when "--archived", "-x" then scope = :archived
     when "--all", "-a"      then scope = :all
+    when "--json"           then json = true
     when /\A-([ABC])\z/     then priority_f = $1
     when /\A@/              then contexts_f << a
     when /\A\+(.+)/         then tags_f << $1
@@ -545,6 +571,8 @@ def cmd_list(args)
       tags_f.all?     { |t| i.tags.include?(t) } &&
       (q.empty? || i.title.downcase.include?(q))
   end
+
+  return if emit_json?(sel, [json ? "--json" : nil].compact)
 
   if sel.empty?
     puts "No matching tasks."
@@ -612,10 +640,10 @@ require "shellwords"
 # (and report) on a file the parser would choke on
 case ARGV[0]
 when "-p", "--prompt" then cmd_prompt(ARGV[1..].join(" ")); exit
-when "next", "n"      then cmd_next(store.items)
-when "quadrants", "q" then cmd_quadrants(store.items)
-when "agenda", "a"    then cmd_agenda(store.items)
-when "inbox", "i"     then cmd_inbox(store.items)
+when "next", "n"      then cmd_next(store.items, ARGV[1..])
+when "quadrants", "q" then cmd_quadrants(store.items, ARGV[1..])
+when "agenda", "a"    then cmd_agenda(store.items, ARGV[1..])
+when "inbox", "i"     then cmd_inbox(store.items, ARGV[1..])
 when "capture", "add", "c" then cmd_capture(ARGV[1..])
 when "done", "complete", "close", "d" then cmd_done(ARGV[1..])
 when "due", "deadline", "reschedule" then cmd_due(ARGV[1..])

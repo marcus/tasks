@@ -21,6 +21,9 @@ bin/tasks show "<ref>"     # one task in full (fields + notes); --json
 bin/tasks check            # is the file structurally sound? (exit 1 = no)
 ```
 
+All read commands accept `--json` (flat array, same sort as the text view) —
+prefer it when you need to reason over tasks rather than display them.
+
 ## Mutate
 
 ```sh

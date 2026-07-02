@@ -53,16 +53,18 @@ would change and writes nothing.
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `list [filters]` | `l` | ✅ | All tasks grouped by state. Filters compose: `@context`, `+tag`, `/text` or bare word, `-A/-B/-C`, scope `--open/-o` (default) `--done/-d` `--archived/-x` `--all/-a`. 🚧 `--json` |
-| `agenda` | `a` | ✅ | Dated items, soonest first. 🚧 `--json` |
-| `next` | `n` | ✅ | NEXT actions by context. 🚧 `--json` |
-| `quadrants` | `q` | ✅ | Covey 2×2 by `important`/`urgent` tags. 🚧 `--json` |
-| `inbox` | `i` | ✅ | Unprocessed INBOX items. 🚧 `--json` |
+| `list [filters]` | `l` | ✅ | All tasks grouped by state. Filters compose: `@context`, `+tag`, `/text` or bare word, `-A/-B/-C`, scope `--open/-o` (default) `--done/-d` `--archived/-x` `--all/-a`. `--json` |
+| `agenda` | `a` | ✅ | Dated items, soonest first. `--json` |
+| `next` | `n` | ✅ | NEXT actions by context. `--json` |
+| `quadrants` | `q` | ✅ | Covey 2×2 by `important`/`urgent` tags. `--json` |
+| `inbox` | `i` | ✅ | Unprocessed INBOX items. `--json` |
 | `show <ref>` | `s` | ✅ | One task in full: headline fields + body/notes. `--json` shape: `{state, priority, title, tags, contexts, scheduled, deadline, closed, line, notes: [..]}` |
 | `check [--json]` | `k` | ✅ | Validate gtd.org structure. Exit 1 if errors. Run after any direct file edit. |
 
-JSON list shape (`--json` on list/agenda/next/quadrants/inbox):
-`[{"state": "NEXT", "priority": "A", "title": "…", "tags": [..], "contexts": [..], "scheduled": null, "deadline": "2026-07-02", "line": 17}]`
+JSON list shape (`--json` on list/agenda/next/quadrants/inbox) — a flat array,
+already sorted the way the text view sorts:
+`[{"state": "NEXT", "priority": "A", "title": "…", "tags": [..], "contexts": [..], "scheduled": null, "deadline": "2026-07-02", "line": 17, "source": "org", "headline": "** NEXT …"}]`
+`quadrants --json` adds `"quadrant": "Q1".."Q4"` per item. Empty result → `[]`.
 
 ## Create
 

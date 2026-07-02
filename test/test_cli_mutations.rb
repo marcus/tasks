@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require "json"
+require "open3"
 
 # Store-layer coverage for the CLI's due/state/priority mutations, plus
 # end-to-end CLI tests (arg parsing, ref resolution, exit codes) that shell
@@ -494,6 +496,74 @@ class TestCliMutations < Minitest::Test
     run_cli("archive", content: no_done) do |_org, out, _err, st|
       assert st.success?
       assert_match(/Nothing to archive/, out)
+    end
+  end
+
+  # -- read commands --json ----------------------------------------------------
+
+  def test_cli_list_json_shape_and_filters
+    run_cli("list", "@computer", "--json") do |_org, out, _err, st|
+      assert st.success?
+      rows = JSON.parse(out)
+      refute_empty rows
+      rows.each { |r| assert_includes r["contexts"], "@computer" }
+      row = rows.first
+      %w[state priority title tags contexts scheduled deadline line source headline].each do |k|
+        assert row.key?(k), "missing key #{k}"
+      end
+      assert_equal "org", row["source"]
+    end
+  end
+
+  def test_cli_list_json_empty_result_is_empty_array
+    run_cli("list", "zzznope", "--json") do |_org, out, _err, st|
+      assert st.success?
+      assert_equal [], JSON.parse(out)
+    end
+  end
+
+  def test_cli_list_json_includes_archived_with_source
+    run_cli("archive") do |org, _out, _err, _st|
+      env = { "TASKS_ORG" => org, "TASKS_ARCHIVE" => File.join(File.dirname(org), "archive.org") }
+      out, _err, st = Open3.capture3(env, "ruby", BIN, "list", "-a", "--json")
+      assert st.success?
+      sources = JSON.parse(out).map { |r| r["source"] }.uniq.sort
+      assert_equal %w[archive org], sources
+    end
+  end
+
+  def test_cli_agenda_json_sorted_by_date_then_priority
+    run_cli("agenda", "--json") do |_org, out, _err, st|
+      assert st.success?
+      rows = JSON.parse(out)
+      keys = rows.map { |r| [(r["deadline"] || r["scheduled"]), r["priority"] || "Z"] }
+      assert_equal keys.sort, keys, "agenda JSON must be date-then-priority sorted"
+    end
+  end
+
+  def test_cli_quadrants_json_adds_quadrant_field
+    run_cli("quadrants", "--json") do |_org, out, _err, st|
+      assert st.success?
+      rows = JSON.parse(out)
+      flight = rows.find { |r| r["title"].include?("Book flight") }
+      assert_equal "Q1", flight["quadrant"] # important + urgent
+      plants = rows.find { |r| r["title"].include?("Water the plants") }
+      assert_equal "Q4", plants["quadrant"]
+    end
+  end
+
+  def test_cli_inbox_and_next_json
+    run_cli("inbox", "--json") do |_org, out, _err, st|
+      assert st.success?
+      rows = JSON.parse(out)
+      assert_equal ["INBOX"], rows.map { |r| r["state"] }.uniq
+    end
+    run_cli("next", "--json") do |_org, out, _err, st|
+      assert st.success?
+      rows = JSON.parse(out)
+      assert_equal ["NEXT"], rows.map { |r| r["state"] }.uniq
+      pris = rows.map { |r| r["priority"] || "Z" }
+      assert_equal pris.sort, pris, "next JSON sorted by priority"
     end
   end
 
