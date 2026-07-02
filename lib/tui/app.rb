@@ -208,6 +208,9 @@ module Tui
       when "\e[6~"         then scroll_modal(5)
       when "y"             then yank_ref
       when "Y"             then yank_markdown
+      when "K"             then raise_priority
+      when "J"             then lower_priority
+      when "p"             then paste_ref
       end
     end
 
@@ -248,6 +251,45 @@ module Tui
     def resp_up        = scroll_resp(-5)
     def resp_down      = scroll_resp(5)
     def quit           = @quit = true
+
+    # Priority ladder: A is highest, nil (no cookie) lowest.
+    PRIORITY_ORDER = ["A", "B", "C", nil].freeze
+
+    def raise_priority = bump_priority(-1)
+    def lower_priority = bump_priority(1)
+
+    def bump_priority(delta)
+      item = current_item
+      return flash("nothing selected") unless item
+      idx = PRIORITY_ORDER.index(item.priority)
+      new_pri = PRIORITY_ORDER[(idx + delta).clamp(0, PRIORITY_ORDER.size - 1)]
+      return if new_pri == item.priority # already at the end of the ladder
+      if @store.set_priority!(item, new_pri)
+        flash(new_pri ? "priority: [##{new_pri}] #{item.title}" : "priority cleared: #{item.title}")
+        reselect(item.line)
+        show_detail if @modal_kind == :detail
+      else
+        @store.reload!
+        flash("file changed underneath — try again")
+      end
+    end
+
+    # After a mutation, views may re-sort; follow the task by its file line
+    # (stable for in-place edits) instead of the old row position.
+    def reselect(line)
+      rows
+      @sel = @rows.each_index.find { |i| @rows[i].item&.line == line } || @sel
+      clamp_selection
+    end
+
+    def paste_ref
+      item = current_item
+      return flash("nothing selected") unless item
+      close_modal if @modal
+      @input << " " unless @input.empty? || @input.end_with?(" ")
+      @input << "\"#{Export.reference(item)}\" "
+      @mode = :prompt
+    end
 
     def yank_ref
       yank { |item, _block| Export.reference(item) }

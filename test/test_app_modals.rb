@@ -112,4 +112,58 @@ class TestAppModals < Minitest::Test
       assert_match(/no clipboard tool/, app.instance_variable_get(:@flash))
     end
   end
+
+  def test_priority_bump_down_and_up
+    with_app do |app|
+      title = selected_title(app)
+      assert_equal "A", app.send(:current_item).priority
+      app.send(:handle_key, "J")
+      assert_equal "B", app.send(:current_item).priority
+      assert_equal title, selected_title(app), "selection follows the task after re-sort"
+      app.send(:handle_key, "K")
+      assert_equal "A", app.send(:current_item).priority
+      app.send(:handle_key, "K") # already at A — no-op
+      assert_equal "A", app.send(:current_item).priority
+    end
+  end
+
+  def test_priority_lowers_to_none_and_stops
+    with_app do |app|
+      3.times { app.send(:handle_key, "J") } # A → B → C → none
+      assert_nil app.send(:current_item).priority
+      app.send(:handle_key, "J") # no-op at the bottom
+      assert_nil app.send(:current_item).priority
+    end
+  end
+
+  def test_priority_bump_works_in_detail_modal
+    with_app do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "J")
+      assert_equal :modal, mode(app)
+      assert_equal "B", app.send(:current_item).priority
+      assert_match(/priority\s+\[#B\]/, modal_text(app), "modal content refreshed")
+    end
+  end
+
+  def test_p_pastes_quoted_ref_into_prompt
+    with_app do |app|
+      title = selected_title(app)
+      app.send(:handle_key, "p")
+      assert_equal :prompt, mode(app)
+      assert_equal "\"#{title}\" ", app.instance_variable_get(:@input)
+    end
+  end
+
+  def test_p_from_modal_closes_it_and_appends_to_existing_input
+    with_app do |app|
+      app.instance_variable_get(:@input) << "complete"
+      app.send(:handle_key, "\r")
+      title = selected_title(app)
+      app.send(:handle_key, "p")
+      assert_equal :prompt, mode(app)
+      assert_nil modal(app)
+      assert_equal "complete \"#{title}\" ", app.instance_variable_get(:@input)
+    end
+  end
 end

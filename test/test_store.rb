@@ -113,6 +113,41 @@ class TestStore < Minitest::Test
     end
   end
 
+  def test_set_priority_replaces_existing_cookie
+    with_store do |store, org, _a|
+      flight = find_item(store, "Book flight")
+      assert store.set_priority!(flight, "B")
+      assert_match(/^\*\* NEXT \[#B\] Book flight in Concur :@computer:important:urgent:$/, File.read(org))
+      assert_equal "B", find_item(store, "Book flight").priority
+    end
+  end
+
+  def test_set_priority_adds_cookie_to_unprioritized_item
+    with_store do |store, org, _a|
+      plants = find_item(store, "Water the plants")
+      assert store.set_priority!(plants, "C")
+      assert_match(/^\*\* NEXT \[#C\] Water the plants/, File.read(org))
+    end
+  end
+
+  def test_set_priority_nil_removes_cookie
+    with_store do |store, org, _a|
+      flight = find_item(store, "Book flight")
+      assert store.set_priority!(flight, nil)
+      assert_match(/^\*\* NEXT Book flight in Concur/, File.read(org))
+      assert_nil find_item(store, "Book flight").priority
+    end
+  end
+
+  def test_set_priority_rejects_stale_line_numbers
+    with_store do |store, org, _a|
+      stale = find_item(store, "Book flight").dup
+      stale.line = 1
+      refute store.set_priority!(stale, "B")
+      assert_match(/\[#A\] Book flight/, File.read(org))
+    end
+  end
+
   def test_block_returns_headline_and_body
     with_store do |store, _o, _a|
       waiting = find_item(store, "Travel desk")

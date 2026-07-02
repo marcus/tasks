@@ -78,6 +78,19 @@ module Tui
       true
     end
 
+    # Set the [#A]/[#B]/[#C] cookie on the headline, or remove it (pri: nil).
+    # Same staleness contract as complete!.
+    def set_priority!(item, pri)
+      lines = File.readlines(@org, encoding: "UTF-8")
+      i = item.line - 1
+      return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
+      cookie = pri ? "[##{pri}] " : ""
+      lines[i] = lines[i].sub(/^(\*+\s+#{item.state}\s+)(?:\[#[ABC]\]\s+)?/, "\\1#{cookie}")
+      File.write(@org, lines.join)
+      reload!
+      true
+    end
+
     # Update the item's DEADLINE (or SCHEDULED, if that's all it has) to
     # `date`. Items with neither get a DEADLINE added. Same staleness
     # contract as complete!.
