@@ -17,8 +17,12 @@ passed to `tasks -p`. Today's date is available from the system.
   - complete a task:  `bin/tasks done "<fuzzy title>"`
   - add a task:       `bin/tasks capture "<text>"`
   - archive done:     `bin/tasks archive`
+  - validate file:    `bin/tasks check` (exit 1 = structural errors)
+  (full command set + roadmap: `docs/cli-spec.md`)
 - Edit `gtd.org` directly for anything the CLI lacks: changing a
   deadline/scheduled date, priority, tags, or retitling.
+- After ANY direct edit to `gtd.org`, run `bin/tasks check` and fix
+  whatever it reports before finishing.
 - Match tasks by fuzzy title. If a prompt is ambiguous (multiple matches),
   don't guess — say which ones matched and stop.
 - When you give an `INBOX` item a `SCHEDULED`/`DEADLINE` date, also change

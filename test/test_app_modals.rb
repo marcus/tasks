@@ -232,6 +232,17 @@ class TestAppModals < Minitest::Test
     end
   end
 
+  def test_prompt_renders_trailing_space_immediately
+    with_app do |app|
+      app.send(:handle_key, "\t")
+      app.instance_variable_get(:@input) << "hello "
+      line = app.send(:prompt_lines, 60).last
+      assert_includes Tui::Ansi.strip(line), "hello █".sub("█", " "), # trailing space present
+                      "trailing space must render"
+      assert_match(/hello \e\[7m/, line, "cursor sits after the space")
+    end
+  end
+
   def test_prompt_single_hint_line_when_not_focused
     with_app do |app|
       assert_equal 1, app.send(:prompt_lines, 60).size

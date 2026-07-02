@@ -1,0 +1,104 @@
+# tasks CLI — agent interface specification
+
+The `tasks` CLI is the API for `gtd.org`. Humans use it too, but the primary
+audience is LLM agents: every mutation an agent would otherwise make by
+editing the file should have a command, so direct file edits become the rare
+exception rather than the norm. Commands go through the shared model layer
+(`lib/tasks/store.rb`), which enforces conventions (e.g. dating an INBOX item
+promotes it to TODO) and validates the file after every write.
+
+Status legend: ✅ implemented · 🚧 planned (spec is authoritative for behavior
+when it lands; agents should fall back to direct edits + `tasks check` for 🚧).
+
+## Global conventions
+
+**Invocation.** `bin/tasks <command> [args] [flags]` from the repo root (or the
+`tasks` alias). Every command has a short alias. Synonyms are accepted where
+an agent would plausibly reach for them (`done`/`complete`/`close` are the
+same command); the canonical name is listed first.
+
+**Task refs.** Mutations take a `<ref>` — a case-insensitive substring of the
+task title. Resolution rules:
+
+- Exactly one open task matches → act on it.
+- Zero matches → exit 2, message `no match: <ref>`.
+- Multiple matches → exit 2, listing each candidate as `L<line>: <headline>`.
+  The agent retries with a longer substring or an exact `L<line>` ref.
+- `L<line>` (e.g. `L42`) targets the task whose headline is on that file line —
+  precise, but only valid until the file changes. Prefer titles.
+- By default refs match **open** tasks only; `--include-done` widens.
+
+**Dates.** Anywhere a date is accepted: `2026-07-15`, `07-15`, `7/15`,
+`fri`/`friday`, `today`, `tomorrow`, `+3` (days from today). Same parser as
+the TUI (`lib/tasks/dates.rb`). Bare month-day in the past rolls forward a year.
+
+**Output.** Human-readable by default. Read commands and mutations accept
+`--json`; shapes below. Mutations always print (or return in JSON) the full
+new headline of every task they touched, so the agent can verify the result
+without a follow-up read.
+
+**Exit codes.** `0` success · `1` error (bad args, validation failure,
+file corrupt) · `2` ref resolution failure (no match / ambiguous). Code 2 is
+distinct so agents can branch: refine the ref rather than abort.
+
+**Safety.** Every mutation validates the file afterward and rolls back if it
+would introduce a structural error. `--dry-run` on any mutation prints what
+would change and writes nothing.
+
+## Read commands
+
+| Command | Alias | Status | Description |
+|---|---|---|---|
+| `list [filters]` | `l` | ✅ | All tasks grouped by state. Filters compose: `@context`, `+tag`, `/text` or bare word, `-A/-B/-C`, scope `--open/-o` (default) `--done/-d` `--archived/-x` `--all/-a`. 🚧 `--json` |
+| `agenda` | `a` | ✅ | Dated items, soonest first. 🚧 `--json` |
+| `next` | `n` | ✅ | NEXT actions by context. 🚧 `--json` |
+| `quadrants` | `q` | ✅ | Covey 2×2 by `important`/`urgent` tags. 🚧 `--json` |
+| `inbox` | `i` | ✅ | Unprocessed INBOX items. 🚧 `--json` |
+| `show <ref>` | `s` | 🚧 | One task in full: headline fields + body/notes. `--json` shape: `{state, priority, title, tags, contexts, scheduled, deadline, closed, line, notes: [..]}` |
+| `check [--json]` | `k` | ✅ | Validate gtd.org structure. Exit 1 if errors. Run after any direct file edit. |
+
+JSON list shape (`--json` on list/agenda/next/quadrants/inbox):
+`[{"state": "NEXT", "priority": "A", "title": "…", "tags": [..], "contexts": [..], "scheduled": null, "deadline": "2026-07-02", "line": 17}]`
+
+## Create
+
+| Command | Alias | Status | Description |
+|---|---|---|---|
+| `capture "text"` | `add`, `c` | ✅ | New INBOX item. 🚧 flags: `--due <date>`, `--scheduled <date>`, `--priority A\|B\|C`, `--tag t` (repeatable), `--context @x`, `--state TODO`, `--project "Heading"` — a capture with a date or state lands already-processed under the given project heading (default: Inbox). |
+
+## Update (all take `<ref>`, all support `--dry-run`)
+
+| Command | Alias/synonyms | Status | Description |
+|---|---|---|---|
+| `done <ref>` | `complete`, `close`, `d` | ✅ | Mark DONE + `CLOSED:` stamp. (Currently exits 1, not 2, on ref failure; migrating.) |
+| `cancel <ref>` | `drop` | 🚧 | Mark CANCELLED + `CLOSED:` stamp. |
+| `state <ref> <STATE>` | `mv` | 🚧 | Any state transition (INBOX/TODO/NEXT/WAITING/DONE/CANCELLED). Enforces: entering DONE/CANCELLED adds `CLOSED:`; leaving them removes it. |
+| `due <ref> <date>` | `deadline`, `reschedule` | 🚧 | Set/replace DEADLINE. INBOX items promote to TODO. |
+| `schedule <ref> <date>` | | 🚧 | Set/replace SCHEDULED. Same INBOX promotion. |
+| `undate <ref>` | | 🚧 | Remove SCHEDULED and/or DEADLINE (`--kind deadline\|scheduled` to pick one). |
+| `priority <ref> <A\|B\|C\|none>` | `pri` | 🚧 | Set or clear the priority cookie. |
+| `retitle <ref> "new title"` | `rename` | 🚧 | Replace the headline title; tags/priority/state untouched. |
+| `tag <ref> +foo -bar @ctx -@old` | | 🚧 | Add/remove tags and contexts in one call. |
+| `note <ref> "text"` | | 🚧 | Append a body line under the task. |
+| `move <ref> "Section"` | | 🚧 | Relocate the whole block under another top-level heading (e.g. out of `* Inbox` into `* Work`). |
+
+## Lifecycle / meta
+
+| Command | Alias | Status | Description |
+|---|---|---|---|
+| `archive` | `x` | ✅ | Sweep DONE/CANCELLED blocks to archive.org. |
+| `delete <ref> --force` | `rm` | 🚧 | Hard-remove a block (no archive). Refuses without `--force`; suggest `cancel` instead. |
+| `undo` | | 🚧 | Revert the last CLI mutation (file-backed journal, shared with the TUI's in-memory one is out of scope). Until then: `git diff` / `git checkout -- gtd.org`. |
+| `-p "prompt"` | | ✅ | Natural-language request via headless Claude. |
+
+## Design rules for new commands
+
+1. **Spec first**: add/adjust the row here before implementing.
+2. Thin dispatch in `bin/tasks`; logic in `lib/tasks/` (usually a `Store` method).
+3. Mutations go through `Store#with_history` — never `File.write` directly.
+   That buys the post-write `check` rollback and (future) undo journal.
+4. Accept synonyms liberally, print the canonical name in output.
+5. Every mutation's output includes the resulting headline(s).
+6. Tests required: happy path, ref-not-found, ref-ambiguous, and
+   `Tasks::Check.check` clean after every mutating test (the test helper's
+   fixture makes this a one-liner).

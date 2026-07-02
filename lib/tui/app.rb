@@ -71,7 +71,11 @@ module Tui
       (ready&.first || []).each do |io|
         io == $stdin ? read_keys : pump_claude
       end
-      @store.reload! if @store.changed? # picks up Claude edits + external edits
+      if @store.changed? # picks up Claude edits + external edits
+        @store.reload!
+        res = Tasks::Check.check(@store.org)
+        flash(A.red("⚠ gtd.org: #{res.errors.size} format error(s) — run `tasks check`")) unless res.ok?
+      end
       clamp_selection
     end
 
@@ -132,7 +136,11 @@ module Tui
         hint = @claude.running? ? A.dim("…") : A.dim("tab to ask claude — reschedule, capture, edit anything…")
         return [" #{A.bold(A.cyan("❯ "))}#{hint}"]
       end
-      wrapped = A.wrap(@input, w - 5).last(PROMPT_MAX)
+      # char-slice rather than word-wrap: the input must render verbatim
+      # (word-wrap rstrips, which hid a trailing space until the next char)
+      wrapped = @input.chars.each_slice(w - 5).map(&:join)
+      wrapped = [""] if wrapped.empty?
+      wrapped = wrapped.last(PROMPT_MAX)
       wrapped.each_with_index.map do |l, i|
         prefix = i.zero? ? " #{A.bold(A.cyan("❯ "))}" : "   "
         cursor = i == wrapped.size - 1 ? A.invert(" ") : ""
