@@ -478,6 +478,39 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  # -- list/next date tags -------------------------------------------------------
+
+  def test_cli_list_tags_scheduled_start_with_tilde
+    # self-eval has only a SCHEDULED date; it should surface as "~M/D" (start),
+    # while a DEADLINE item shows the bare "M/D" (due).
+    run_cli("list") do |_org, out, _err, st|
+      assert st.success?
+      assert_match(/self-eval.*~7\/3/, out, "scheduled-only shows a ~-prefixed start date")
+      assert_match(/Book flight.* 7\/2/, out, "deadline shows a bare due date")
+      refute_match(/Book flight.*~7\/2/, out, "a deadline is never tilde-prefixed")
+    end
+  end
+
+  # -- help ----------------------------------------------------------------------
+
+  def test_cli_help_prints_reference
+    run_cli("help") do |_org, out, _err, st|
+      assert st.success?
+      assert_match(/capture/, out)
+      assert_match(/archive/, out)
+      assert_match(/Full spec: docs\/cli-spec\.md/, out)
+    end
+  end
+
+  def test_cli_unknown_command_exits_1_with_help
+    run_cli("bogus") do |_org, out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/unknown command: "bogus"/, err)
+      assert_match(/agenda/, err) # falls back to the full reference
+      assert_empty out
+    end
+  end
+
   def test_cli_archive_sweeps_to_archive_file
     run_cli("archive") do |org, out, _err, st|
       assert st.success?

@@ -101,6 +101,9 @@ next wake. Push errors (e.g. offline) never fail the job — they catch up next 
 
 ## Roadmap / ideas
 
+Near-term:
+
 - Weekly-review helper (empty inbox, flag projects with no NEXT).
-- Add a remote for off-machine backup.
 - Optional gem-based version if we outgrow stdlib parsing.
+
+The full backlog of feature ideas lives in [`docs/ideas.md`](docs/ideas.md).

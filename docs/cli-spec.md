@@ -96,6 +96,9 @@ already sorted the way the text view sorts:
 | `delete <ref> --force` | `rm` | 🚧 | Hard-remove a block (no archive). Refuses without `--force`; suggest `cancel` instead. |
 | `undo` | | 🚧 | Revert the last CLI mutation (file-backed journal, shared with the TUI's in-memory one is out of scope). Until then: `git diff` / `git checkout -- gtd.org`. |
 | `-p "prompt"` | | ✅ | Natural-language request via headless Claude. |
+| `help` | `-h`, `--help` | ✅ | Grouped command reference. Also printed (to stderr, exit 1) on an unknown/absent command. |
+
+Ideas beyond this spec live in `docs/ideas.md`.
 
 ## Design rules for new commands
 

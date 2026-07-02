@@ -28,6 +28,7 @@
 #     filters: @context  /text  +tag  -A|-B|-C  (compose freely)
 #   bin/tasks -p "..."        hand a natural-language request to Claude (Sonnet),
 #                             which acts on your tasks and reports what changed
+#   bin/tasks help|-h         full command reference
 #
 # Stdlib only — no bundler required. Parses gtd.org with simple line matching.
 
@@ -67,11 +68,16 @@ def due_color(days)
   end
 end
 
-# Short, colored deadline for `next`, e.g. "7/1" (no leading zeros).
+# Short, colored date tag for `next`/`list`, e.g. "7/1" (no leading zeros).
+# Prefers the DEADLINE; falls back to the SCHEDULED start date, marked with a
+# leading "~" to distinguish "start" from "due". Empty when the item has
+# neither. Colored by proximity (see due_color).
 def short_due(item)
-  return "" unless item.deadline
-  days  = (item.deadline - Date.today).to_i
-  label = "#{item.deadline.month}/#{item.deadline.day}"
+  date = item.deadline || item.scheduled
+  return "" unless date
+  days  = (date - Date.today).to_i
+  label = "#{date.month}/#{date.day}"
+  label = "~#{label}" unless item.deadline # scheduled = soft start date
   color(label, due_color(days))
 end
 
@@ -217,19 +223,39 @@ def cmd_capture(args)
   report_touched(line, json: json)
 end
 
-def cmd_done(args)
-  flags, rest = take_flags(args, "--dry-run", "--json")
-  ref = rest.join(" ")
-  abort %(usage: tasks done "<ref>") if ref.strip.empty?
+# Core of the state-transition verbs. `state` passes the target as a
+# positional arg; its sugar `done`/`cancel` hardcode DONE/CANCELLED. All three
+# resolve the ref, honor --dry-run/--json, and route the write through the same
+# Store#set_state! (which stamps/clears CLOSED). `resolve_closed:` widens ref
+# resolution to closed tasks — always for `state` (so you can reopen a DONE
+# item), on demand elsewhere via --include-done.
+def change_state(args, usage:, resolve_closed:, to: nil, dry_verb: nil, archive_hint: false)
+  flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
+  ref = rest.shift
+  target = to || rest.join(" ").strip.upcase
+  abort %(usage: #{usage}) if ref.nil? || ref.strip.empty? || target.empty?
+  valid = OPEN_STATES + DONE_STATES
+  abort "unknown state: #{target} (want one of #{valid.join(", ")})" unless valid.include?(target)
 
-  item = resolve_ref(ref) # open tasks only — a DONE task can't be done again
+  item = resolve_ref(ref, include_done: resolve_closed || flags["--include-done"])
   if flags["--dry-run"]
-    puts "would mark DONE: #{item_headline(item)}"
+    puts "would #{dry_verb || "set state #{target} on"}: #{item_headline(item)}"
     return
   end
-  abort "failed to complete (file changed underfoot?)" unless store.complete!(item)
+  abort "failed to set state (file changed underfoot?)" unless store.set_state!(item, target)
   report_touched(item.line, json: flags["--json"])
-  puts "Run `tasks archive` to move it out of gtd.org." unless flags["--json"]
+  puts "Run `tasks archive` to move it out of gtd.org." if archive_hint && !flags["--json"]
+end
+
+# `done` and `cancel` are sugar for the DONE/CANCELLED transitions; they resolve
+# open tasks only (a closed task needs `state` to reopen or re-close it).
+def cmd_done(args)
+  change_state(args, to: "DONE", usage: %(tasks done "<ref>"),
+               resolve_closed: false, dry_verb: "mark DONE", archive_hint: true)
+end
+
+def cmd_cancel(args)
+  change_state(args, to: "CANCELLED", usage: "tasks cancel <ref>", resolve_closed: false)
 end
 
 # --- Store-backed mutations (due / state / priority) ------------------------
@@ -383,20 +409,6 @@ def cmd_undate(args)
   report_touched(item.line, json: flags["--json"])
 end
 
-def cmd_cancel(args)
-  flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
-  ref = rest.shift
-  abort %(usage: tasks cancel <ref>) if ref.nil? || ref.strip.empty?
-
-  item = resolve_ref(ref, include_done: flags["--include-done"])
-  if flags["--dry-run"]
-    puts "would set state CANCELLED on: #{item_headline(item)}"
-    return
-  end
-  abort "failed to cancel (file changed underfoot?)" unless store.set_state!(item, "CANCELLED")
-  report_touched(item.line, json: flags["--json"])
-end
-
 def cmd_show(args)
   flags, rest = take_flags(args, "--json", "--include-done")
   ref = rest.shift
@@ -423,21 +435,10 @@ def cmd_show(args)
 end
 
 def cmd_state(args)
-  flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
-  ref = rest.shift
-  state_arg = rest.join(" ").strip.upcase
-  valid = OPEN_STATES + DONE_STATES
-  abort %(usage: tasks state <ref> <#{valid.join("|")}>) if ref.nil? || state_arg.empty?
-  abort "unknown state: #{state_arg} (want one of #{valid.join(", ")})" unless valid.include?(state_arg)
-
-  # Transitioning *out* of a closed state needs to find the (closed) item.
-  item = resolve_ref(ref, include_done: true)
-  if flags["--dry-run"]
-    puts "would set state #{state_arg} on: #{item_headline(item)}"
-    return
-  end
-  abort "failed to set state (file changed underfoot?)" unless store.set_state!(item, state_arg)
-  report_touched(item.line, json: flags["--json"])
+  usage = "tasks state <ref> <#{(OPEN_STATES + DONE_STATES).join("|")}>"
+  # resolve_closed: true — a state change may need to find (and reopen) a
+  # closed item, e.g. `state <ref> TODO`.
+  change_state(args, usage: usage, resolve_closed: true)
 end
 
 def cmd_retitle(args)
@@ -636,6 +637,48 @@ end
 
 require "shellwords"
 
+HELP = <<~USAGE
+  tasks — a plain-text GTD CLI over gtd.org. Every command has a short alias.
+
+  Read:
+    agenda    a              dated items, soonest first
+    next      n              NEXT actions grouped by context
+    quadrants q              Covey Important/Urgent 2x2
+    inbox     i              unprocessed INBOX items
+    list      l [filters]    tasks by state. Filters: @context /text +tag -A|-B|-C
+                             Scope: --open/-o (default) --done/-d --archived/-x --all/-a
+    show      s <ref>        one task in full (headline + notes)
+    check     k              validate gtd.org structure
+
+  Capture:
+    capture   c "text"       new item. Flags: --due --scheduled --priority
+                             --tag --context --state --project
+
+  Update (take <ref>; support --dry-run/--json/--include-done):
+    done      d <ref>        mark DONE               (aka complete, close)
+    cancel      <ref>        mark CANCELLED          (aka drop)
+    state     mv <ref> <STATE>       any state transition
+    due          <ref> <date>        set/replace DEADLINE   (aka deadline, reschedule)
+    schedule     <ref> <date>        set/replace SCHEDULED
+    undate       <ref> [--kind deadline|scheduled]   remove date stamp(s)
+    priority pri <ref> <A|B|C|none>  set or clear the priority cookie
+    retitle rename <ref> "title"     replace the headline title
+    tag          <ref> +t -t @ctx -@ctx   add/remove tags and contexts
+    note         <ref> "text"        append a body line
+    move         <ref> "Section"     relocate the block under a heading
+
+  Lifecycle:
+    archive   x              sweep DONE/CANCELLED to archive.org
+    -p "..."                 hand a natural-language request to Claude
+    help      -h             this message
+
+  Dates: 2026-07-15 · 07-15 · 7/15 · fri · today · tomorrow · +3
+  Refs:  a case-insensitive title substring, or L<line>.
+  Full spec: docs/cli-spec.md
+USAGE
+
+def cmd_help(io = $stdout) = io.puts(HELP)
+
 # each branch reads via the store on demand — `check` must be able to run
 # (and report) on a file the parser would choke on
 case ARGV[0]
@@ -660,7 +703,9 @@ when "show", "s"      then cmd_show(ARGV[1..])
 when "archive", "x"   then cmd_archive
 when "list", "l"      then cmd_list(ARGV[1..])
 when "check", "k"     then cmd_check(ARGV[1..])
+when "help", "-h", "--help" then cmd_help
 else
-  warn %(usage: tasks {agenda|a|next|n|quadrants|q|inbox|i|capture|c "..."|done|d "..."|due <ref> <date>|schedule <ref> <date>|undate <ref> [--kind deadline|scheduled]|state <ref> <STATE>|cancel|drop <ref>|priority <ref> <A|B|C|none>|retitle <ref> "..."|tag <ref> +t -t @c|note <ref> "..."|move <ref> "Section"|show|s <ref>|archive|x|list|l [...]|check|k [--json]|-p "..."})
+  warn "unknown command: #{ARGV[0].inspect}\n\n" if ARGV[0]
+  cmd_help($stderr)
   exit 1
 end
