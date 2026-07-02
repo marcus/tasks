@@ -20,8 +20,8 @@ class TestCheck < Minitest::Test
     assert_empty res.warnings
   end
 
-  def test_real_gtd_org_is_clean
-    res = C.check(File.expand_path("../gtd.org", __dir__))
+  def test_example_gtd_org_is_clean
+    res = C.check(File.expand_path("../examples/gtd.org", __dir__))
     assert res.ok?, res.errors.inspect
   end
 
