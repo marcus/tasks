@@ -17,7 +17,7 @@ module Tui
   class App
     A = Ansi
 
-    MAX_WIDTH   = 120
+    MIN_WIDTH   = 40   # floor for degenerate ptys and tiny splits; no max — full width
     TICK        = 0.25 # seconds; also the file-watch poll interval
     SPINNER     = %w[⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏].freeze
     RESP_MAX    = 10   # footer response pane grows to at most this many lines
@@ -30,6 +30,7 @@ module Tui
       @sel    = 0
       @mode   = :list      # :list | :prompt | :date | :modal
       @modal  = nil        # { title:, lines: } while a modal is open
+      @modal_kind = nil    # :help | :detail
       @modal_scroll = 0
       @input  = +""        # prompt buffer
       @date_input = +""    # reschedule buffer
@@ -74,7 +75,7 @@ module Tui
     def paint
       height, cols = IO.console&.winsize || [24, 80]
       height = [height, 10].max               # degenerate ptys report 0x0
-      width  = [[cols, MAX_WIDTH].min, 40].max
+      width  = [cols, MIN_WIDTH].max
       foot = footer(width - 2)
       lines = Frame.build(
         width: width, height: height,
@@ -199,8 +200,8 @@ module Tui
       case k
       when "\e", "q", "\r", "\n", "?" then close_modal
       when ""        then @quit = true
-      when "\e[A", "k"     then scroll_modal(-1)
-      when "\e[B", "j"     then scroll_modal(1)
+      when "\e[A", "k"     then modal_move(-1)
+      when "\e[B", "j"     then modal_move(1)
       when "\e[5~"         then scroll_modal(-5)
       when "\e[6~"         then scroll_modal(5)
       end
@@ -245,26 +246,43 @@ module Tui
     def quit           = @quit = true
 
     def open_help
-      open_modal(Modals.help)
+      open_modal(Modals.help, kind: :help)
     end
 
     def open_detail
+      return flash("nothing selected") unless current_item
+      show_detail
+    end
+
+    # Build (or rebuild, when the selection moves) the detail modal for the
+    # current item. Keeps :modal mode.
+    def show_detail
       item = current_item
-      return flash("nothing selected") unless item
-      width = [[(IO.console&.winsize || [24, 80])[1], MAX_WIDTH].min, 40].max
-      open_modal(Modals.detail(item, @store.block(item), width))
+      return close_modal unless item
+      width = [(IO.console&.winsize || [24, 80])[1], MIN_WIDTH].max
+      open_modal(Modals.detail(item, @store.block(item), width), kind: :detail)
     end
 
     # -- modal -----------------------------------------------------------------
 
-    def open_modal(modal)
+    # In a task detail modal, ↑↓ walk the task list and the modal follows
+    # the selection. Other modals (help) keep ↑↓ as scroll.
+    def modal_move(delta)
+      return scroll_modal(delta) unless @modal_kind == :detail
+      move(delta)
+      show_detail
+    end
+
+    def open_modal(modal, kind:)
       @modal = modal
+      @modal_kind = kind
       @modal_scroll = 0
       @mode = :modal
     end
 
     def close_modal
       @modal = nil
+      @modal_kind = nil
       @mode = :list
     end
 
@@ -373,7 +391,7 @@ module Tui
 
     def pump_claude
       return unless @claude.pump == :done
-      width = [[(IO.console&.winsize || [24, 80])[1], MAX_WIDTH].min, 40].max
+      width = [(IO.console&.winsize || [24, 80])[1], MIN_WIDTH].max
       @resp = A.wrap(@claude.output.strip, width - 8)
       @resp = [A.dim("(no output)")] if @resp.all? { |l| l.strip.empty? }
       @resp_open = true

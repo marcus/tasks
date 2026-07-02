@@ -1,0 +1,90 @@
+# frozen_string_literal: true
+
+require_relative "test_helper"
+require "tui/app"
+
+# Exercises App's modal-mode key handling through its private interface —
+# the pieces a pty smoke test can't assert on.
+class TestAppModals < Minitest::Test
+  A = Tui::Ansi
+
+  def with_app
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, "gtd.org"), FIXTURE_ORG)
+      app = Tui::App.new(root: dir)
+      app.send(:rows) # populate @rows like the paint loop does
+      app.send(:clamp_selection)
+      yield app
+    end
+  end
+
+  def mode(app)  = app.instance_variable_get(:@mode)
+  def modal(app) = app.instance_variable_get(:@modal)
+  def modal_text(app) = modal(app)[:lines].map { |l| A.strip(l) }.join("\n")
+  def selected_title(app) = app.send(:current_item).title
+
+  def test_enter_opens_detail_modal_for_selection
+    with_app do |app|
+      app.send(:handle_key, "\r")
+      assert_equal :modal, mode(app)
+      assert_includes modal_text(app), selected_title(app)
+    end
+  end
+
+  def test_arrows_walk_tasks_while_detail_modal_open
+    with_app do |app|
+      app.send(:handle_key, "\r")
+      before = selected_title(app)
+      app.send(:handle_key, "\e[B")
+      assert_equal :modal, mode(app), "modal stays open"
+      refute_equal before, selected_title(app), "selection moved"
+      assert_includes modal_text(app), selected_title(app), "modal follows selection"
+      app.send(:handle_key, "\e[A")
+      assert_equal before, selected_title(app)
+    end
+  end
+
+  def test_arrows_scroll_help_modal_without_moving_selection
+    with_app do |app|
+      before = selected_title(app)
+      app.send(:handle_key, "?")
+      assert_equal :modal, mode(app)
+      app.send(:handle_key, "\e[B")
+      assert_equal before, selected_title(app), "help modal must not move selection"
+      assert_equal 1, app.instance_variable_get(:@modal_scroll)
+    end
+  end
+
+  def test_esc_closes_modal_and_returns_to_list
+    with_app do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\e")
+      assert_equal :list, mode(app)
+      assert_nil modal(app)
+      assert_nil app.instance_variable_get(:@modal_kind)
+    end
+  end
+
+  def test_left_right_cycle_views_in_list_mode
+    with_app do |app|
+      views = []
+      4.times do
+        views << app.instance_variable_get(:@view)
+        app.send(:handle_key, "\e[C")
+      end
+      assert_equal %i[agenda next quadrants inbox], views
+      assert_equal :agenda, app.instance_variable_get(:@view), "wraps around"
+      app.send(:handle_key, "\e[D")
+      assert_equal :inbox, app.instance_variable_get(:@view), "left wraps backward"
+    end
+  end
+
+  def test_arrows_do_not_cycle_views_while_modal_open
+    with_app do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\e[C") # right arrow: no binding in modal mode
+      assert_equal :agenda, app.instance_variable_get(:@view)
+      assert_equal :modal, mode(app)
+    end
+  end
+end
