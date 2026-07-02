@@ -15,7 +15,8 @@ module Tui
     # selected: row index to highlight (or nil)
     # footer:   array of interior lines; the symbol :rule draws a divider
     # popup:    { lines: [...], row: Integer, col: Integer } overlaid on body
-    def build(width:, height:, header:, rows:, selected: nil, footer: [], popup: nil)
+    # modal:    { title:, lines: [...] } drawn as a centered box over the body
+    def build(width:, height:, header:, rows:, selected: nil, footer: [], popup: nil, modal: nil)
       w = width - 2
       # top border + header + rule + body + rule + footer + bottom border
       body_h = [height - 5 - footer.size, 1].max
@@ -35,6 +36,7 @@ module Tui
       body.fill("", body.size...body_h)
 
       overlay!(body, popup, w - 2) if popup
+      overlay_modal!(body, modal, w - 2) if modal
 
       lines = []
       lines << "┌#{"─" * w}┐"
@@ -49,16 +51,35 @@ module Tui
       lines
     end
 
-    # Paste popup lines over the body starting at popup[:row]/[:col].
-    # Styling under the popup is dropped (plain-text base) — fine for a
-    # transient overlay.
+    # Paste popup lines over the body starting at popup[:row]/[:col],
+    # preserving the (plain-text) base content on either side. Styling
+    # under the popup is dropped — fine for a transient overlay.
     def overlay!(body, popup, w)
       popup[:lines].each_with_index do |pl, k|
         r = popup[:row] + k
         next if r.negative? || r >= body.size
         base = A.strip(body[r]).ljust(w)
-        body[r] = A.vtrunc(base[0, popup[:col]] + pl, w)
+        rest = base[popup[:col] + A.vislen(pl)..] || ""
+        body[r] = A.vtrunc(base[0, popup[:col]] + pl + rest, w)
       end
+    end
+
+    # Box up modal content and center it over the body via overlay!.
+    def overlay_modal!(body, modal, w)
+      inner = modal[:lines].map { |l| A.vtrunc(l, w - 8) }
+      bw = [
+        [(inner.map { |l| A.vislen(l) }.max || 0), A.vislen(modal[:title]) + 6, 30].max + 4,
+        w - 2,
+      ].min
+      title = " #{modal[:title]} "
+      box = ["┌─#{title}#{"─" * [bw - 4 - A.vislen(title), 0].max}─┐"]
+      inner.each { |l| box << "│ #{A.vpad(l, bw - 4)} │" }
+      box << "└#{"─" * (bw - 2)}┘"
+      overlay!(body, {
+        lines: box,
+        row: [(body.size - box.size) / 2, 0].max,
+        col: [(w - bw) / 2, 0].max,
+      }, w)
     end
   end
 end

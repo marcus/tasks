@@ -62,6 +62,35 @@ class TestFrame < Minitest::Test
     assert_equal 60, A.vislen(lines[4])
   end
 
+  def test_popup_preserves_base_content_on_both_sides
+    rows = [Row.new("left-side middle-part right-side-content", Object.new)]
+    popup = { lines: ["[P]"], row: 0, col: 12 }
+    body_row = A.strip(build(rows: rows, popup: popup)[3])
+    assert_includes body_row, "left-side"
+    assert_includes body_row, "[P]"
+    assert_includes body_row, "right-side-content"
+  end
+
+  def test_modal_draws_centered_box_with_title
+    modal = { title: "task", lines: ["alpha", "beta gamma"] }
+    lines = build(modal: modal)
+    joined = lines.map { |l| A.strip(l) }.join("\n")
+    assert_includes joined, "┌─ task "
+    assert_includes joined, "alpha"
+    assert_includes joined, "beta gamma"
+    assert_includes joined, "└"
+    lines.each { |l| assert_equal 60, A.vislen(l) }
+    # centered: box border starts past the left margin
+    box_line = lines.find { |l| A.strip(l).include?("┌─ task") }
+    assert A.strip(box_line).index("┌") > 5
+  end
+
+  def test_modal_wider_than_frame_is_clamped
+    modal = { title: "wide", lines: ["z" * 200] }
+    lines = build(modal: modal)
+    lines.each { |l| assert_equal 60, A.vislen(l) }
+  end
+
   def test_empty_rows_render_blank_body
     lines = build(rows: [])
     assert_equal 15, lines.size

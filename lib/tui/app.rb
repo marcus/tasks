@@ -8,6 +8,8 @@ require_relative "store"
 require_relative "views"
 require_relative "frame"
 require_relative "claude"
+require_relative "shortcuts"
+require_relative "modals"
 
 module Tui
   # The event loop: raw-mode keyboard input, gtd.org watching, and the
@@ -19,15 +21,16 @@ module Tui
     TICK        = 0.25 # seconds; also the file-watch poll interval
     SPINNER     = %w[⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏].freeze
     RESP_MAX    = 10   # footer response pane grows to at most this many lines
-    KEYBAR      = " ↑↓ select · c complete · d date · x archive · 1-4 views · tab prompt · q quit"
-    KEYBAR_RESP = " pgup/pgdn scroll · esc dismiss · other keys as usual"
+    RESP_HINT   = "pgup/pgdn scroll · esc dismiss"
 
     def initialize(root:)
       @store  = Store.new(org: File.join(root, "gtd.org"), archive: File.join(root, "archive.org"))
       @claude = Claude.new(root: root, agents_path: File.join(root, "AGENTS.md"))
       @view   = :agenda
       @sel    = 0
-      @mode   = :list      # :list | :prompt | :date
+      @mode   = :list      # :list | :prompt | :date | :modal
+      @modal  = nil        # { title:, lines: } while a modal is open
+      @modal_scroll = 0
       @input  = +""        # prompt buffer
       @date_input = +""    # reschedule buffer
       @date_error = nil
@@ -72,12 +75,14 @@ module Tui
       height, cols = IO.console&.winsize || [24, 80]
       height = [height, 10].max               # degenerate ptys report 0x0
       width  = [[cols, MAX_WIDTH].min, 40].max
+      foot = footer(width - 2)
       lines = Frame.build(
         width: width, height: height,
         header: header(width - 2),
-        rows: rows, selected: @mode == :list || @mode == :date ? @sel : nil,
-        footer: footer(width - 2),
-        popup: @mode == :date ? date_popup : nil
+        rows: rows, selected: @mode == :prompt ? nil : @sel,
+        footer: foot,
+        popup: @mode == :date ? date_popup : nil,
+        modal: @modal && scrolled_modal(height - 5 - foot.size)
       )
       print "\e[H" + lines.join("\e[K\r\n") + "\e[K"
     end
@@ -90,7 +95,7 @@ module Tui
       tabs = Views::TABS.map do |label, key|
         key == @view ? A.invert(A.bold(" #{label} ")) : A.dim(" #{label} ")
       end.join(" ")
-      count = A.dim("#{@store.items.count(&:open?)} open")
+      count = A.dim("#{@store.items.count(&:open?)} open · ? help")
       gap = [w - A.vislen(tabs) - A.vislen(count) - 2, 1].max
       " #{tabs}#{" " * gap}#{count} "
     end
@@ -105,11 +110,11 @@ module Tui
       elsif @resp_open && @resp
         visible = @resp[@resp_scroll, RESP_MAX] || []
         visible.each { |l| f << "   #{l}" }
-        scroll_hint = @resp.size > RESP_MAX ? "#{@resp_scroll + visible.size}/#{@resp.size} · #{KEYBAR_RESP.strip}" : "esc dismiss"
+        scroll_hint = @resp.size > RESP_MAX ? "#{@resp_scroll + visible.size}/#{@resp.size} · #{RESP_HINT}" : "esc dismiss"
         f << A.dim("   ── #{scroll_hint} ──")
         f << :rule
       end
-      f << (@flash ? " #{@flash}" : A.dim(KEYBAR))
+      f << " #{@flash}" if @flash
       f << prompt_line
       f
     end
@@ -176,23 +181,28 @@ module Tui
       case @mode
       when :prompt then prompt_key(k)
       when :date   then date_key(k)
+      when :modal  then modal_key(k)
       else              list_key(k)
       end
     end
 
+    # List-mode keys live in Shortcuts (which also feeds the ? modal) —
+    # this just dispatches. Actions that need the key take one argument.
     def list_key(k)
+      entry = Shortcuts.find(k)
+      return unless entry
+      m = method(entry.action)
+      m.arity.zero? ? m.call : m.call(k)
+    end
+
+    def modal_key(k)
       case k
-      when "q", ""  then @quit = true
-      when "\e[A", "k"    then move(-1)
-      when "\e[B", "j"    then move(1)
-      when "\e[5~"        then scroll_resp(-5)
-      when "\e[6~"        then scroll_resp(5)
-      when "\e"           then dismiss_or_cancel
-      when "\t", ":"      then @mode = :prompt
-      when "1".."4"       then switch_view(k.to_i)
-      when "c"            then complete_selected
-      when "d"            then open_date_popup
-      when "x"            then archive_sweep
+      when "\e", "q", "\r", "\n", "?" then close_modal
+      when ""        then @quit = true
+      when "\e[A", "k"     then scroll_modal(-1)
+      when "\e[B", "j"     then scroll_modal(1)
+      when "\e[5~"         then scroll_modal(-5)
+      when "\e[6~"         then scroll_modal(5)
       end
     end
 
@@ -222,6 +232,58 @@ module Tui
       end
     end
 
+    # -- shortcut actions (dispatched from Shortcuts::LIST) --------------------
+
+    def select_prev    = move(-1)
+    def select_next    = move(1)
+    def prev_view      = cycle_view(-1)
+    def next_view      = cycle_view(1)
+    def jump_view(k)   = switch_view(k.to_i)
+    def focus_prompt   = @mode = :prompt
+    def resp_up        = scroll_resp(-5)
+    def resp_down      = scroll_resp(5)
+    def quit           = @quit = true
+
+    def open_help
+      open_modal(Modals.help)
+    end
+
+    def open_detail
+      item = current_item
+      return flash("nothing selected") unless item
+      width = [[(IO.console&.winsize || [24, 80])[1], MAX_WIDTH].min, 40].max
+      open_modal(Modals.detail(item, @store.block(item), width))
+    end
+
+    # -- modal -----------------------------------------------------------------
+
+    def open_modal(modal)
+      @modal = modal
+      @modal_scroll = 0
+      @mode = :modal
+    end
+
+    def close_modal
+      @modal = nil
+      @mode = :list
+    end
+
+    def scroll_modal(delta)
+      @modal_scroll = [@modal_scroll + delta, 0].max # upper bound applied at paint
+    end
+
+    # Slice the modal content to what fits in the body, with scroll markers.
+    def scrolled_modal(body_h)
+      lines = @modal[:lines]
+      avail = [body_h - 2, 3].max
+      return @modal if lines.size <= avail
+      max_scroll = lines.size - avail
+      @modal_scroll = @modal_scroll.clamp(0, max_scroll)
+      visible = lines[@modal_scroll, avail]
+      marker = A.dim("── #{@modal_scroll + visible.size}/#{lines.size} · ↑↓ scroll ──")
+      { title: @modal[:title], lines: visible + [marker] }
+    end
+
     # -- actions ---------------------------------------------------------------
 
     def selectable_indexes = @rows.each_index.select { |i| @rows[i].item }
@@ -246,6 +308,11 @@ module Tui
       @sel = 0
       rows
       clamp_selection
+    end
+
+    def cycle_view(delta)
+      keys = Views::TABS.map(&:last)
+      switch_view(((keys.index(@view) + delta) % keys.size) + 1)
     end
 
     def complete_selected

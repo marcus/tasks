@@ -47,6 +47,24 @@ module Tui
       self
     end
 
+    # Raw file lines of an item: its headline plus body, up to the next
+    # same-or-higher-level headline. Empty array on stale line numbers.
+    def block(item)
+      lines = File.readlines(@org, encoding: "UTF-8")
+      i = item.line - 1
+      return [] unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
+      level = lines[i][/^\*+/].length
+      out = [lines[i].chomp]
+      j = i + 1
+      while j < lines.length
+        lvl = lines[j][/^(\*+)\s/, 1]&.length
+        break if lvl && lvl <= level
+        out << lines[j].chomp
+        j += 1
+      end
+      out
+    end
+
     # Mark an item DONE in place. Returns true, or false if the file shifted
     # under us (stale line number) — caller should reload and retry.
     def complete!(item)

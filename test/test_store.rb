@@ -113,6 +113,33 @@ class TestStore < Minitest::Test
     end
   end
 
+  def test_block_returns_headline_and_body
+    with_store do |store, _o, _a|
+      waiting = find_item(store, "Travel desk")
+      block = store.block(waiting)
+      assert_equal 2, block.size
+      assert_includes block[0], "WAITING Travel desk reply"
+      assert_includes block[1], "Some note line."
+    end
+  end
+
+  def test_block_stops_at_next_headline
+    with_store do |store, _o, _a|
+      flight = find_item(store, "Book flight")
+      block = store.block(flight)
+      assert_equal 2, block.size # headline + DEADLINE stamp
+      refute block.any? { |l| l.include?("Review PR") }
+    end
+  end
+
+  def test_block_rejects_stale_line_numbers
+    with_store do |store, _o, _a|
+      stale = find_item(store, "Book flight").dup
+      stale.line = 1
+      assert_empty store.block(stale)
+    end
+  end
+
   def test_archive_with_nothing_to_do
     with_store do |store, _org, archive|
       store.archive_swept!
