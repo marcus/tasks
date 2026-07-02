@@ -196,46 +196,19 @@ module Tasks
     end
 
     # Update the item's DEADLINE (or SCHEDULED, if that's all it has) to
-    # `date`. Items with neither get a DEADLINE added. Same staleness
-    # contract as complete!.
+    # `date`. Items with neither get a DEADLINE added. Delegates to
+    # set_date_impl with the inferred stamp kind.
     def reschedule_impl(item, date)
-      lines = File.readlines(@org, encoding: "UTF-8")
-      i = item.line - 1
-      return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
-
-      # update the deadline if there is one; else the scheduled date;
-      # items with neither get a deadline
-      key   = if item.deadline     then "DEADLINE"
-              elsif item.scheduled then "SCHEDULED"
-              else                      "DEADLINE"
-              end
-      stamp = "#{key}: <#{date.iso8601} #{date.strftime("%a")}>"
-      level = lines[i][/^\*+/].length
-
-      j = i + 1
-      stamp_at = nil
-      while j < lines.length
-        lvl = lines[j][/^(\*+)\s/, 1]&.length
-        break if lvl && lvl <= level
-        stamp_at = j if lines[j].include?("#{key}:")
-        j += 1
-      end
-
-      if stamp_at
-        lines[stamp_at] = lines[stamp_at].sub(/#{key}:\s*<[^>]*>/, stamp)
-      else
-        lines.insert(i + 1, "   #{stamp}\n")
-      end
-      # A dated task has been processed by definition — promote it out of
-      # the inbox (see docs/conventions.md).
-      lines[i] = lines[i].sub(/^(\*+\s+)INBOX\b/, '\1TODO') if item.state == "INBOX"
-      File.write(@org, lines.join)
-      reload!
-      true
+      key = if item.deadline     then "DEADLINE"
+            elsif item.scheduled then "SCHEDULED"
+            else                      "DEADLINE"
+            end
+      set_date_impl(item, date, key)
     end
 
-    # Set/replace a specific stamp (key: "DEADLINE" or "SCHEDULED"). Mirrors
-    # reschedule_impl but forces the stamp kind rather than inferring it.
+    # Set/replace a specific stamp (key: "DEADLINE" or "SCHEDULED"), adding
+    # it if absent. Sole date-write path — reschedule_impl infers the kind
+    # and delegates here. Same staleness contract as complete!.
     def set_date_impl(item, date, key)
       lines = File.readlines(@org, encoding: "UTF-8")
       i = item.line - 1

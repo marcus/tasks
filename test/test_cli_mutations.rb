@@ -141,11 +141,11 @@ class TestCliMutations < Minitest::Test
   BIN = File.expand_path("../bin/tasks", __dir__)
 
   # Run bin/tasks in a sandbox; returns [stdout, stderr, status].
-  def run_cli(*args)
+  def run_cli(*args, content: FIXTURE_ORG)
     Dir.mktmpdir do |dir|
       org = File.join(dir, "gtd.org")
       archive = File.join(dir, "archive.org")
-      File.write(org, FIXTURE_ORG)
+      File.write(org, content)
       env = { "TASKS_ORG" => org, "TASKS_ARCHIVE" => archive }
       require "open3"
       out, err, st = Open3.capture3(env, "ruby", BIN, *args)
@@ -186,12 +186,28 @@ class TestCliMutations < Minitest::Test
   end
 
   def test_cli_ref_ambiguous_exits_2
-    # "NEXT" appears in several titles? No — use a shared substring. Both
-    # "Review PR backlog" and "Book flight" share no word, but "the" appears
-    # in "Water the plants" and "Travel desk"? Use a real shared token.
+    # "e" appears in nearly every fixture title — guaranteed multi-match
     run_cli("priority", "e", "A") do |_org, _out, err, st|
       assert_equal 2, st.exitstatus
       assert_match(/ambiguous/, err)
+    end
+  end
+
+  def test_cli_unknown_flag_exits_1
+    run_cli("due", "Book flight", "today", "--dryrun") do |org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/unknown flag: --dryrun/, err)
+      assert_equal FIXTURE_ORG, File.read(org), "nothing written"
+    end
+  end
+
+  def test_cli_duplicate_titles_report_the_right_task
+    dup_org = "* W\n** TODO pay the bill :@home:\n** NEXT pay the bill :@computer:\n"
+    # L3 targets the NEXT copy; the reported headline must be that one
+    run_cli("priority", "L3", "A", content: dup_org) do |org, out, _err, st|
+      assert st.success?
+      assert_match(/NEXT \[#A\] pay the bill/, out)
+      assert_match(/^\*\* TODO pay the bill/, File.read(org), "TODO copy untouched")
     end
   end
 

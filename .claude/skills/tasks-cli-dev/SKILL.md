@@ -33,9 +33,15 @@ would no longer parse. Never bypass it with a raw `File.write`.
      (`lines[i].match?(HEADLINE) && lines[i].include?(item.title)` → `false` if stale)
    - wrap the write in `with_history("label: #{item.title}")`
    - `reload!` before returning
-3. **Ref resolution** in bin/tasks: match `<ref>` case-insensitively against
-   open item titles; `L<line>` targets an exact headline line. 0 matches or
-   >1 matches → print candidates as `L<line>: <headline>`, exit 2.
+3. **Reuse the shared CLI helpers** in bin/tasks — do not reinvent them:
+   - `resolve_ref(ref, include_done:)` — title-substring or `L<line>` → one
+     item, exit 2 on no-match/ambiguous
+   - `take_flags(args, "--dry-run", ...)` — flag extraction; unknown `--*`
+     flags abort (add new flags to the known list, never let them fall
+     through as positionals)
+   - `report_touched(item.line, json:)` — post-mutation output. Identify
+     tasks by **line**, never by title (duplicate titles are legal)
+   - `item_json(item)` — the standard JSON shape
 4. **Dispatch**: add the `when` clause + alias, update the usage banner.
 5. **Output**: print the resulting headline(s) of every touched task.
    `--json` via `require "json"` at use site (keep startup fast).
@@ -54,12 +60,14 @@ Every mutating command needs at minimum:
 - undo round-trip if the mutation records history
 - **file integrity**: `assert Tasks::Check.check(org).ok?` after the mutation
 
-For CLI-level behavior (arg parsing, exit codes, output), shell out in the
-test: `system("ruby", "bin/tasks", "check", ...)` against a sandbox copy, or
-better, extract the logic so it is unit-testable without a subprocess.
+For CLI-level behavior (arg parsing, exit codes, output), shell out via the
+`run_cli` helper in `test/test_cli_mutations.rb`: it sandboxes with the
+`TASKS_ORG`/`TASKS_ARCHIVE` env overrides (which `bin/tasks` honors precisely
+for this), captures stdout/stderr/status with Open3, and takes a `content:`
+kwarg when the fixture needs special shape (e.g. duplicate titles).
 
-Manual verification: copy `gtd.org` + `AGENTS.md` to a scratch dir, run the
-command there, run `bin/tasks check`, and `diff` against the original.
+Manual verification: `TASKS_ORG=/tmp/sandbox.org bin/tasks <cmd> …`, then
+`TASKS_ORG=/tmp/sandbox.org bin/tasks check`, and `diff` against the original.
 
 ## Gotchas learned the hard way
 
@@ -72,3 +80,7 @@ command there, run `bin/tasks check`, and `diff` against the original.
   archive sweep may need to delete it.
 - The TUI polls mtime every 250ms; CLI writes show up there automatically.
   Don't add locking — last-writer-wins plus the check rollback is the model.
+- Don't leave scratch reasoning in comments ("use X? No — try Y…"). Comments
+  state what the code does and why, in final form.
+- If a mutation's logic overlaps an existing `_impl`, delegate rather than
+  copy (see reschedule_impl → set_date_impl).

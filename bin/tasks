@@ -211,7 +211,15 @@ end
 def take_flags(args, *known)
   flags = {}
   rest = []
-  args.each { |a| known.include?(a) ? (flags[a] = true) : (rest << a) }
+  args.each do |a|
+    if known.include?(a)
+      flags[a] = true
+    elsif a.start_with?("--")
+      abort "unknown flag: #{a} (this command accepts: #{known.join(", ")})"
+    else
+      rest << a
+    end
+  end
   [flags, rest]
 end
 
@@ -259,9 +267,11 @@ def resolve_ref(ref, include_done: false)
 end
 
 # After a mutation, print (or JSON-emit) the touched task's new headline.
-def report_touched(title, json:)
+# `line` is the headline's line number, which none of these mutations move
+# (CLOSED:/stamps insert after it) — unlike titles, it can't be ambiguous.
+def report_touched(line, json:)
   store.reload!
-  item = store.items.find { |i| i.title == title }
+  item = store.items.find { |i| i.line == line }
   if json
     require "json"
     puts({ touched: item ? [item_json(item)] : [] }.to_json)
@@ -285,7 +295,7 @@ def cmd_due(args)
     return
   end
   abort "failed to set deadline (file changed underfoot?)" unless store.set_date!(item, date, kind: :deadline)
-  report_touched(item.title, json: flags["--json"])
+  report_touched(item.line, json: flags["--json"])
 end
 
 def cmd_priority(args)
@@ -303,7 +313,7 @@ def cmd_priority(args)
     return
   end
   abort "failed to set priority (file changed underfoot?)" unless store.set_priority!(item, pri)
-  report_touched(item.title, json: flags["--json"])
+  report_touched(item.line, json: flags["--json"])
 end
 
 def cmd_state(args)
@@ -321,7 +331,7 @@ def cmd_state(args)
     return
   end
   abort "failed to set state (file changed underfoot?)" unless store.set_state!(item, state_arg)
-  report_touched(item.title, json: flags["--json"])
+  report_touched(item.line, json: flags["--json"])
 end
 
 def cmd_archive

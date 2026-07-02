@@ -15,7 +15,11 @@ when it lands; agents should fall back to direct edits + `tasks check` for 🚧)
 **Invocation.** `bin/tasks <command> [args] [flags]` from the repo root (or the
 `tasks` alias). Every command has a short alias. Synonyms are accepted where
 an agent would plausibly reach for them (`done`/`complete`/`close` are the
-same command); the canonical name is listed first.
+same command); the canonical name is listed first. Unknown `--flags` are an
+error (exit 1), never silently treated as positional args.
+
+**Sandboxing.** `TASKS_ORG` / `TASKS_ARCHIVE` env vars point the CLI at
+alternate files — used by the test suite and for safe manual experiments.
 
 **Task refs.** Mutations take a `<ref>` — a case-insensitive substring of the
 task title. Resolution rules:
