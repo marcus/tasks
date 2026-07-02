@@ -257,6 +257,10 @@ module Tui
       m.arity.zero? ? m.call : m.call(k)
     end
 
+    # A detail modal keeps the task's own shortcuts live so you can act on it
+    # without leaving: complete, reschedule, re-prioritize, yank. Navigation and
+    # scroll stay modal-specific. Task actions rebuild the modal in place, or
+    # close it when the change removes the task from the view (see the actions).
     def modal_key(k)
       case k
       when "\e", "q", "\r", "\n", "?" then close_modal
@@ -265,6 +269,8 @@ module Tui
       when "\e[B", "j"     then modal_move(1)
       when "\e[5~"         then scroll_modal(-5)
       when "\e[6~"         then scroll_modal(5)
+      when "c"             then complete_selected
+      when "d"             then open_date_popup
       when "y"             then yank_ref
       when "Y"             then yank_markdown
       when "K"             then raise_priority
@@ -415,6 +421,15 @@ module Tui
       open_modal(Modals.detail(item, @store.block(item), width), kind: :detail)
     end
 
+    # After a task action taken from inside a detail modal (reschedule the
+    # cursor already followed to `line`): redraw the modal on the task if it's
+    # still in view, or close it if the change dropped it (e.g. dating an INBOX
+    # item promotes it out of the inbox view).
+    def refresh_detail_modal(line)
+      return unless @modal_kind == :detail
+      current_item&.line == line ? show_detail : close_modal
+    end
+
     # -- modal -----------------------------------------------------------------
 
     # In a task detail modal, ↑↓ walk the task list and the modal follows
@@ -491,6 +506,7 @@ module Tui
       return flash("already #{item.state}") unless item.open?
       if @store.complete!(item)
         flash("✓ DONE: #{item.title} — x to archive")
+        close_modal if @modal # the task just left the open view behind it
       else
         @store.reload!
         flash("file changed underneath — try again")
@@ -504,8 +520,10 @@ module Tui
       @mode = :date
     end
 
+    # Rescheduling can be launched from a detail modal (the popup layers over
+    # it); return there rather than to the bare list when one is open.
     def close_date_popup
-      @mode = :list
+      @mode = @modal ? :modal : :list
       @date_input = +""
       @date_error = nil
     end
@@ -521,6 +539,7 @@ module Tui
         # a new date can move the task (agenda re-sort, quadrant change) — keep
         # the cursor on it, matching bump_priority.
         reselect(item.line)
+        refresh_detail_modal(item.line)
       else
         @store.reload!
         @date_error = "file changed underneath — reopen"

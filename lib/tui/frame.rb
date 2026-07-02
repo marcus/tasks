@@ -35,8 +35,10 @@ module Tui
       body.map! { |l| A.vtrunc(l, w - 2) }
       body.fill("", body.size...body_h)
 
-      overlay!(body, popup, w - 2) if popup
+      # modal first, then the popup on top: rescheduling can be launched from an
+      # open detail modal, and the date popup must sit above it.
       overlay_modal!(body, modal, w - 2) if modal
+      overlay!(body, popup, w - 2) if popup
 
       lines = []
       lines << "┌#{"─" * w}┐"

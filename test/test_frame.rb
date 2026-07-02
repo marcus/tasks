@@ -85,6 +85,15 @@ class TestFrame < Minitest::Test
     assert A.strip(box_line).index("┌") > 5
   end
 
+  def test_popup_renders_on_top_of_modal
+    # rescheduling from an open detail modal layers the date popup over it
+    modal = { title: "task", lines: %w[alpha beta gamma delta] }
+    popup = { lines: ["X" * 50], row: 3, col: 0 }
+    row = A.strip(build(modal: modal, popup: popup)[3 + 3]) # body row 3 (borders+header+rule)
+    assert_includes row, "X" * 50, "popup must overlay the modal, not sit under it"
+    refute_includes row, "│ alpha", "modal content at that row is covered by the popup"
+  end
+
   def test_modal_wider_than_frame_is_clamped
     modal = { title: "wide", lines: ["z" * 200] }
     lines = build(modal: modal)

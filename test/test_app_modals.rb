@@ -146,6 +146,47 @@ class TestAppModals < Minitest::Test
     end
   end
 
+  def test_complete_from_detail_modal_closes_it
+    with_app do |app|
+      app.send(:handle_key, "\r")                 # open detail on the selection
+      title = selected_title(app)
+      app.send(:handle_key, "c")                  # complete it
+      assert_equal :list, mode(app), "modal closes once the task leaves the view"
+      assert_nil modal(app)
+      app.send(:rows)
+      titles = app.instance_variable_get(:@rows).map { |r| r.item&.title }
+      refute_includes titles, title, "completed task gone from the open view"
+    end
+  end
+
+  def test_reschedule_from_detail_modal_updates_and_stays_open
+    with_app do |app|
+      app.send(:handle_key, "\r")                 # detail on Book flight (has deadline)
+      title = selected_title(app)
+      app.send(:handle_key, "d")                  # reschedule
+      assert_equal :date, mode(app)
+      assert_equal :detail, app.instance_variable_get(:@modal_kind),
+                   "the detail modal stays open behind the date popup"
+      "2026-07-20".chars.each { |c| app.send(:handle_key, c) }
+      app.send(:handle_key, "\r")                 # submit
+      assert_equal :modal, mode(app), "returns to the detail modal, not the bare list"
+      assert_equal title, selected_title(app), "cursor still on the task"
+      assert_equal Date.new(2026, 7, 20), app.send(:current_item).deadline
+      assert_includes modal_text(app), "2026-07-20", "modal shows the new deadline"
+    end
+  end
+
+  def test_esc_during_reschedule_from_modal_returns_to_modal
+    with_app do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "d")
+      assert_equal :date, mode(app)
+      app.send(:handle_key, "\e")                 # cancel the date entry
+      assert_equal :modal, mode(app), "esc returns to the modal it came from"
+      refute_nil modal(app)
+    end
+  end
+
   def test_p_pastes_quoted_ref_into_prompt
     with_app do |app|
       title = selected_title(app)
