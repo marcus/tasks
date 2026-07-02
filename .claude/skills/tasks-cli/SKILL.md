@@ -23,19 +23,26 @@ bin/tasks check            # is the file structurally sound? (exit 1 = no)
 ## Mutate
 
 ```sh
-bin/tasks capture "text"   # new INBOX item
-bin/tasks done "<ref>"     # fuzzy title substring; must match exactly one open task
-bin/tasks archive          # sweep DONE/CANCELLED to archive.org
+bin/tasks capture "text"             # new INBOX item
+bin/tasks done "<ref>"               # mark DONE + CLOSED stamp
+bin/tasks due "<ref>" fri            # set/replace DEADLINE (INBOX → TODO)
+bin/tasks state "<ref>" WAITING      # any state; DONE/CANCELLED manage CLOSED
+bin/tasks priority "<ref>" A         # A|B|C|none
+bin/tasks archive                    # sweep DONE/CANCELLED to archive.org
 ```
 
-Ref rules: case-insensitive substring of the title. If it matches several
-tasks the command lists the candidates and exits 2 — retry with a longer
-substring. Don't guess between candidates; if the user's request is genuinely
-ambiguous, stop and ask, listing the matches.
+Mutations accept `--dry-run` (print, don't write), `--json` (structured
+result), and dates in any form: `fri`, `+3`, `07-15`, `2026-07-15`, `today`.
+
+Ref rules: case-insensitive substring of the title, or `L<line>` for an exact
+headline line. Zero or multiple matches exit 2 and list candidates as
+`L<line>: <headline>` — retry with a longer substring or the `L<line>` ref.
+Don't guess between candidates; if the user's request is genuinely ambiguous,
+stop and ask, listing the matches.
 
 ## Direct edits (for what the CLI lacks yet)
 
-When you must edit `gtd.org` directly (reschedule, priority, tags, retitle,
+When you must edit `gtd.org` directly (schedule/undate, tags, retitle, notes,
 move between sections — until their commands land):
 
 1. Read `docs/conventions.md` for the format. Key shapes:

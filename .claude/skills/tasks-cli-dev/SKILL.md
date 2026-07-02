@@ -45,6 +45,16 @@ would no longer parse. Never bypass it with a raw `File.write`.
 4. **Dispatch**: add the `when` clause + alias, update the usage banner.
 5. **Output**: print the resulting headline(s) of every touched task.
    `--json` via `require "json"` at use site (keep startup fast).
+6. **Propagate the docs — a command isn't done until agents can find it:**
+   - `docs/cli-spec.md`: flip the row 🚧→✅, adjust flags/synonyms to match
+     what you actually built
+   - `.claude/skills/tasks-cli/SKILL.md`: add the command to the right
+     section (Read/Mutate) with a one-line example, and REMOVE it from the
+     "direct edits" list if it eliminates a direct-edit case — future agents
+     only use what that skill teaches
+   - `AGENTS.md` (the `tasks -p` system prompt): update the CLI bullet list
+     if the command replaces a listed direct-edit operation
+   - usage comment block at the top of `bin/tasks`
 
 ## Testing requirements (non-negotiable)
 
