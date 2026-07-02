@@ -204,6 +204,9 @@ module Tui
       else
         lines.insert(i + 1, "   #{stamp}\n")
       end
+      # A dated task has been processed by definition — promote it out of
+      # the inbox (see docs/conventions.md).
+      lines[i] = lines[i].sub(/^(\*+\s+)INBOX\b/, '\1TODO') if item.state == "INBOX"
       File.write(@org, lines.join)
       reload!
       true

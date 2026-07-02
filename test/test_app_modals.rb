@@ -245,7 +245,9 @@ class TestAppModals < Minitest::Test
       assert_includes Tui::Ansi.strip(app.send(:header, 80)), "opus"
       assert_match(/model: opus/, app.instance_variable_get(:@flash))
       app.send(:handle_key, "M")
-      assert_includes Tui::Ansi.strip(app.send(:header, 80)), "sonnet"
+      assert_includes Tui::Ansi.strip(app.send(:header, 80)), "haiku"
+      app.send(:handle_key, "M")
+      assert_includes Tui::Ansi.strip(app.send(:header, 80)), "sonnet", "wraps back around"
     end
   end
 

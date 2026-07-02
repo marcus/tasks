@@ -21,6 +21,7 @@ Declared at the top of `gtd.org`:
 | State       | Meaning                                                              |
 |-------------|---------------------------------------------------------------------|
 | `INBOX`     | Captured, not yet processed. Decide what it is and where it goes.    |
+|             | Giving an item a date counts as processing: a `SCHEDULED`/`DEADLINE` on an `INBOX` item promotes it to `TODO` (the tooling does this automatically). |
 | `TODO`      | Actionable, categorized, but not the immediate next physical action. |
 | `NEXT`      | The next concrete physical action you can actually do right now.     |
 | `WAITING`   | Delegated or blocked on someone/something else.                      |

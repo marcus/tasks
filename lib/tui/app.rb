@@ -25,7 +25,7 @@ module Tui
     RESP_MAX    = 10   # footer response pane grows to at most this many lines
     RESP_HINT   = "pgup/pgdn scroll · esc dismiss"
     PROMPT_MAX  = 5    # prompt input grows to at most this many lines
-    MODELS      = %w[sonnet opus].freeze
+    MODELS      = %w[sonnet opus haiku].freeze
 
     def initialize(root:)
       @store  = Store.new(org: File.join(root, "gtd.org"), archive: File.join(root, "archive.org"))
@@ -459,7 +459,8 @@ module Tui
       date = Dates.parse_when(@date_input)
       return @date_error = "can't parse “#{@date_input}”" unless date
       if @store.reschedule!(item, date)
-        flash("→ #{item.title}: #{date.iso8601} (#{date.strftime("%a")})")
+        promoted = item.state == "INBOX" ? " · INBOX → TODO" : ""
+        flash("→ #{item.title}: #{date.iso8601} (#{date.strftime("%a")})#{promoted}")
         close_date_popup
       else
         @store.reload!

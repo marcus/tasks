@@ -21,6 +21,8 @@ passed to `tasks -p`. Today's date is available from the system.
   deadline/scheduled date, priority, tags, or retitling.
 - Match tasks by fuzzy title. If a prompt is ambiguous (multiple matches),
   don't guess — say which ones matched and stop.
+- When you give an `INBOX` item a `SCHEDULED`/`DEADLINE` date, also change
+  its state to `TODO` (dated = processed; the TUI enforces the same rule).
 - Resolve relative dates ("next Friday", "tomorrow") to `<YYYY-MM-DD>`.
 
 ## Report

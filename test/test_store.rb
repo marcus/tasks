@@ -90,6 +90,36 @@ class TestStore < Minitest::Test
     end
   end
 
+  def test_reschedule_promotes_inbox_item_to_todo
+    with_store do |store, org, _a|
+      garden = find_item(store, "garden")
+      assert_equal "INBOX", garden.state
+      assert store.reschedule!(garden, Date.new(2026, 7, 10))
+      fresh = find_item(store, "garden")
+      assert_equal "TODO", fresh.state
+      assert_equal Date.new(2026, 7, 10), fresh.deadline
+      assert_match(/^\*\* TODO random thought about the garden/, File.read(org))
+    end
+  end
+
+  def test_reschedule_does_not_promote_non_inbox_states
+    with_store do |store, _o, _a|
+      waiting = find_item(store, "Travel desk")
+      assert store.reschedule!(waiting, Date.new(2026, 7, 9))
+      assert_equal "WAITING", find_item(store, "Travel desk").state
+    end
+  end
+
+  def test_reschedule_promotion_is_undoable
+    with_store do |store, org, _a|
+      before = File.read(org)
+      store.reschedule!(find_item(store, "garden"), Date.new(2026, 7, 10))
+      store.undo!
+      assert_equal before, File.read(org)
+      assert_equal "INBOX", find_item(store, "garden").state
+    end
+  end
+
   def test_reschedule_does_not_touch_next_items_stamp
     with_store do |store, org, _archive|
       # WAITING item has no stamp but is followed by other content;
