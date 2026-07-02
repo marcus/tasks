@@ -24,7 +24,7 @@ module Tui
       Entry.new(seqs: ["Y"],          keys: "Y",       desc: "yank task as markdown",            action: :yank_markdown),
       Entry.new(seqs: ["p"],          keys: "p",       desc: "paste task ref into the prompt",   action: :paste_ref),
       Entry.new(seqs: ["/"],          keys: "/",       desc: "filter tasks by text",             action: :start_filter),
-      Entry.new(seqs: ["M"],          keys: "M",       desc: "cycle claude model", action: :toggle_model),
+      Entry.new(seqs: ["M"],          keys: "M",       desc: "cycle agent/model", action: :toggle_model),
       Entry.new(seqs: ["u"],          keys: "u",       desc: "undo last change",                 action: :undo_last),
       Entry.new(seqs: ["\x12"],       keys: "ctrl-r",  desc: "redo",                             action: :redo_last),
       Entry.new(seqs: ["\t", ":"],    keys: "tab / :", desc: "ask claude — CRUD anything",       action: :focus_prompt),

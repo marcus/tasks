@@ -22,9 +22,10 @@ module Tasks
     PATH_KEYS = %w[dir org archive].freeze
 
     Paths = Struct.new(:org, :archive, :urgent_days, :sources, :config_file, keyword_init: true) do
-      # Context block appended to Claude's system prompt so a headless agent
+      # Context block appended to an agent's system prompt so a headless harness
       # finds the CLI and the task files even when they live outside the repo.
-      def claude_context(cli_root:)
+      # Provider-agnostic — every backend (Claude CLI, Hermes, …) uses it.
+      def agent_context(cli_root:)
         <<~CTX
           File locations for this run (absolute; use these, not relative paths):
           - tasks CLI: #{File.join(cli_root, "bin", "tasks")}
@@ -32,6 +33,8 @@ module Tasks
           - archive.org: #{archive}
         CTX
       end
+      # Deprecated alias kept for one release; prefer #agent_context.
+      alias_method :claude_context, :agent_context
     end
 
     # Paths pinned to one directory, ignoring env and config file — for

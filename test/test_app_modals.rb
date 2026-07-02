@@ -370,26 +370,37 @@ class TestAppModals < Minitest::Test
     end
   end
 
-  def test_model_toggle_cycles_and_shows_in_header
+  def test_model_toggle_cycles_provider_and_model_in_header
     with_app do |app|
-      assert_includes Tui::Ansi.strip(app.send(:header, 80)), "sonnet"
+      # Out of the box the switcher starts at claude-cli:sonnet and cycles the
+      # flattened (provider, model) list; the header shows provider:model.
+      assert_includes Tui::Ansi.strip(app.send(:header, 80)), "claude-cli:sonnet"
       app.send(:handle_key, "M")
-      assert_includes Tui::Ansi.strip(app.send(:header, 80)), "opus"
-      assert_match(/model: opus/, app.instance_variable_get(:@flash))
-      app.send(:handle_key, "M")
-      assert_includes Tui::Ansi.strip(app.send(:header, 80)), "haiku"
-      app.send(:handle_key, "M")
-      assert_includes Tui::Ansi.strip(app.send(:header, 80)), "sonnet", "wraps back around"
+      assert_includes Tui::Ansi.strip(app.send(:header, 80)), "claude-cli:opus"
+      assert_match(/agent: claude-cli:opus/, app.instance_variable_get(:@flash))
+      # cycle all the way around back to the first entry
+      entries = app.instance_variable_get(:@entries).size
+      (entries - 1).times { app.send(:handle_key, "M") }
+      assert_includes Tui::Ansi.strip(app.send(:header, 80)), "claude-cli:sonnet", "wraps back around"
     end
   end
 
-  def test_submit_passes_current_model_to_claude
+  def test_switching_to_another_provider_rebuilds_the_agent
+    with_app do |app|
+      app.send(:handle_key, "M") until app.send(:current_entry).provider == "hermes"
+      agent = app.instance_variable_get(:@agent)
+      assert_instance_of LLM::Agent::Hermes, agent,
+                         "cycling to the hermes entry swaps in its adapter"
+    end
+  end
+
+  def test_submit_passes_current_entry_model_to_agent
     with_app do |app|
       started = nil
-      claude = app.instance_variable_get(:@claude)
-      claude.stub(:start, ->(text, model:) { started = [text, model] }) do
-        Tui::Claude.stub(:available?, true) do
-          app.send(:handle_key, "M") # → opus
+      agent = app.instance_variable_get(:@agent)
+      agent.stub(:start, ->(text, model:) { started = [text, model] }) do
+        agent.stub(:available?, true) do
+          app.send(:handle_key, "M") # → claude-cli:opus
           app.send(:handle_key, "\t")
           app.instance_variable_get(:@input) << "hello"
           app.send(:handle_key, "\r")

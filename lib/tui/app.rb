@@ -7,7 +7,7 @@ require_relative "dates"
 require_relative "store"
 require_relative "views"
 require_relative "frame"
-require_relative "claude"
+require_relative "../llm/registry"
 require_relative "shortcuts"
 require_relative "modals"
 require_relative "clipboard"
@@ -16,7 +16,7 @@ require_relative "../tasks/config"
 
 module Tui
   # The event loop: raw-mode keyboard input, gtd.org watching, and the
-  # async Claude runner, multiplexed with IO.select.
+  # async LLM agent runner, multiplexed with IO.select.
   class App
     A = Ansi
 
@@ -26,16 +26,30 @@ module Tui
     RESP_MAX    = 10   # footer response pane grows to at most this many lines
     RESP_HINT   = "pgup/pgdn scroll · esc dismiss"
     PROMPT_MAX  = 5    # prompt input grows to at most this many lines
-    MODELS      = %w[sonnet opus haiku].freeze
+
+    # The system-context string handed to any agent: the repo's AGENTS.md
+    # conventions plus the absolute file locations for this run. Provider-
+    # agnostic — each adapter injects it however its CLI allows.
+    def self.agent_system(paths:, cli_root:)
+      agents = File.join(cli_root, "AGENTS.md")
+      base = File.exist?(agents) ? File.read(agents, encoding: "UTF-8") : +""
+      [base, paths.agent_context(cli_root: cli_root)]
+        .reject { |s| s.to_s.strip.empty? }.join("\n\n")
+    end
 
     # paths: injectable so tests can pin a sandbox dir; defaults to the
     # user's configured task files (env vars / ~/.config/tasks/config / root).
     def initialize(root:, paths: Tasks::Config.resolve(default_dir: root))
       @store  = Store.new(org: paths.org, archive: paths.archive)
       @urgent_days = paths.urgent_days # deadline window for the quadrants view
-      @claude = Claude.new(root: File.dirname(paths.org),
-                           agents_path: File.join(root, "AGENTS.md"),
-                           extra_prompt: paths.claude_context(cli_root: root))
+      # The (provider, model) switcher cycles these; the live agent is rebuilt
+      # lazily when the selected provider changes (see ensure_agent_for_current!).
+      @agent_root = File.dirname(paths.org)
+      @sys_prompt = App.agent_system(paths: paths, cli_root: root)
+      @entries    = LLM.entries
+      @entry_idx  = 0
+      @agent = build_agent(current_entry)
+      @agent_provider = current_entry.provider
       @view   = :agenda
       @sel    = 0
       @mode   = :list      # :list | :prompt | :date | :modal
@@ -52,9 +66,27 @@ module Tui
       @resp_scroll = 0
       @flash = nil
       @flash_until = nil
-      @model = MODELS.first
       @tick = 0
       @quit = false
+    end
+
+    # -- agent selection -----------------------------------------------------
+
+    def current_entry = @entries[@entry_idx]
+
+    def build_agent(entry)
+      LLM.build(entry, root: @agent_root, system: @sys_prompt)
+    end
+
+    # Rebuild the live agent when the selected provider has changed. Never swaps
+    # a running agent out from under the IO.select loop — the caller guards on
+    # idle, and cycling while a run is in flight just re-labels; the new provider
+    # takes effect on the next submit ("applies to the next request").
+    def ensure_agent_for_current!
+      return if @agent_provider == current_entry.provider || @agent.running?
+
+      @agent = build_agent(current_entry)
+      @agent_provider = current_entry.provider
     end
 
     def run
@@ -74,10 +106,10 @@ module Tui
       paint
 
       ios = [$stdin]
-      ios << @claude.io if @claude.io
+      ios << @agent.io if @agent.io
       ready = IO.select(ios, nil, nil, TICK)
       (ready&.first || []).each do |io|
-        io == $stdin ? read_keys : pump_claude
+        io == $stdin ? read_keys : pump_agent
       end
       if @store.changed? # picks up Claude edits + external edits
         @store.reload!
@@ -125,17 +157,17 @@ module Tui
       tabs = Views::TABS.map do |label, key|
         key == @view ? A.invert(A.bold(" #{label} ")) : A.dim(" #{label} ")
       end.join(" ")
-      count = A.dim("#{@store.items.count(&:open?)} open · #{A.cyan(@model)}#{A.dim(" · ? help")}")
+      count = A.dim("#{@store.items.count(&:open?)} open · #{A.cyan(current_entry.to_s)}#{A.dim(" · ? help")}")
       gap = [w - A.vislen(tabs) - A.vislen(count) - 2, 1].max
       " #{tabs}#{" " * gap}#{count} "
     end
 
     def footer(w)
       f = []
-      if @claude.running?
+      if @agent.running?
         f << A.dim(" #{SPINNER[@tick % SPINNER.size]} claude is working… (esc cancels)")
         # scrub: a streaming chunk can end mid-multibyte-char
-        A.strip(@claude.output.scrub("�")).split("\n").last(3).each { |t| f << A.dim("   #{t}") }
+        A.strip(@agent.output.scrub("�")).split("\n").last(3).each { |t| f << A.dim("   #{t}") }
         f << :rule
       elsif @resp_open && @resp
         visible = @resp[@resp_scroll, RESP_MAX] || []
@@ -159,7 +191,7 @@ module Tui
     # request stays readable; beyond that, the earliest lines scroll off.
     def prompt_lines(w)
       unless @mode == :prompt
-        hint = @claude.running? ? A.dim("…") : A.dim("tab to ask claude — reschedule, capture, edit anything…")
+        hint = @agent.running? ? A.dim("…") : A.dim("tab to ask claude — reschedule, capture, edit anything…")
         return [" #{A.bold(A.cyan("❯ "))}#{hint}"]
       end
       # char-slice rather than word-wrap: the input must render verbatim
@@ -354,9 +386,12 @@ module Tui
       @mode = :filter
     end
 
+    # Cycle the (provider, model) selection. Works mid-run — the change applies
+    # to the next request; the in-flight agent keeps streaming untouched.
     def toggle_model
-      @model = MODELS[(MODELS.index(@model) + 1) % MODELS.size]
-      flash("model: #{@model}#{@claude.running? ? " (applies to the next request)" : ""}")
+      @entry_idx = (@entry_idx + 1) % @entries.size
+      ensure_agent_for_current!
+      flash("agent: #{current_entry}#{@agent.running? ? " (applies to the next request)" : ""}")
     end
 
     def undo_last  = history_op(:undo!, "undid")
@@ -558,16 +593,19 @@ module Tui
       @input = +""
       @mode = :list
       return if text.empty?
-      return flash("claude is still working — esc to cancel") if @claude.running?
-      return flash("claude CLI not found on PATH") unless Claude.available?
+      return flash("agent is still working — esc to cancel") if @agent.running?
+      ensure_agent_for_current!
+      unless @agent.available?
+        return flash("#{current_entry.provider} not available — check the CLI is installed and any local model server is running")
+      end
       @resp_open = false
-      @claude.start(text, model: @model)
+      @agent.start(text, model: current_entry.model)
     end
 
-    def pump_claude
-      return unless @claude.pump == :done
+    def pump_agent
+      return unless @agent.pump == :done
       width = [(IO.console&.winsize || [24, 80])[1], MIN_WIDTH].max
-      @resp = A.wrap(@claude.output.strip, width - 8)
+      @resp = A.wrap(@agent.output.strip, width - 8)
       @resp = [A.dim("(no output)")] if @resp.all? { |l| l.strip.empty? }
       @resp_open = true
       @resp_scroll = 0
@@ -581,8 +619,8 @@ module Tui
     end
 
     def dismiss_or_cancel
-      if @claude.running?
-        @claude.cancel
+      if @agent.running?
+        @agent.cancel
         flash("cancelled")
       elsif @resp_open
         @resp_open = false

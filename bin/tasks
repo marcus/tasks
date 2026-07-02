@@ -26,8 +26,9 @@
 #   bin/tasks list|l [...]    list tasks grouped by state, with filters:
 #     scope:   --open/-o (default) --done/-d --archived/-x --all/-a
 #     filters: @context  /text  +tag  -A|-B|-C  (compose freely)
-#   bin/tasks -p "..."        hand a natural-language request to Claude (Sonnet),
-#                             which acts on your tasks and reports what changed
+#   bin/tasks -p "..."        hand a natural-language request to an LLM agent
+#                             (Claude or another configured harness), which acts
+#                             on your tasks and reports what changed
 #   bin/tasks config          show where gtd.org/archive.org resolve and why
 #   bin/tasks help|-h         full command reference
 #
@@ -611,24 +612,47 @@ def cmd_check(args)
   exit(res.ok? ? 0 : 1)
 end
 
-# Hand a natural-language prompt to Claude (Sonnet) with AGENTS.md as context.
-# Runs the local `claude` CLI headless; auto-applies, then shows the file diff.
-def cmd_prompt(prompt)
-  abort %(usage: tasks -p "do something with my tasks") if prompt.nil? || prompt.strip.empty?
-  abort "claude CLI not found on PATH" unless system("command -v claude >/dev/null 2>&1")
+# Hand a natural-language prompt to an LLM agent with AGENTS.md as context.
+# Runs the configured harness headless; auto-applies, then shows the file diff.
+# `--provider`/`--model` (leading flags) override the config default for one run.
+def cmd_prompt(args)
+  provider, model, words = extract_llm_flags(Array(args))
+  prompt = words.join(" ")
+  abort %(usage: tasks -p [--provider NAME] [--model NAME] "do something with my tasks") if prompt.strip.empty?
+
+  require_relative "../lib/llm/registry"
   sys_prompt = File.exist?(AGENTS) ? File.read(AGENTS, encoding: "UTF-8") : ""
-  sys_prompt = "#{sys_prompt}\n\n#{PATHS.claude_context(cli_root: ROOT)}"
+  sys_prompt = "#{sys_prompt}\n\n#{PATHS.agent_context(cli_root: ROOT)}"
   data_dir = File.dirname(ORG)
-  ok = system(
-    "claude", "-p", prompt.strip,
-    "--model", "sonnet",
-    "--append-system-prompt", sys_prompt,
-    "--output-format", "text",
-    "--dangerously-skip-permissions",
-    chdir: data_dir
-  )
-  warn "\n(claude exited non-zero)" unless ok
-  # Show what changed — only possible when the task files sit in a git repo.
+
+  entry = LLM.default_entry(provider: provider, model: model)
+  agent = LLM.build(entry, root: data_dir, system: sys_prompt)
+  unless agent.available?
+    abort "agent '#{entry.provider}' not available — check the CLI is installed and any local model server is running"
+  end
+  ok = agent.run_sync(prompt.strip, model: entry.model)
+  warn "\n(agent exited non-zero)" unless ok
+  maybe_show_diff(data_dir)
+end
+
+# Peel leading `--provider NAME` / `--model NAME` flags off the -p arguments so
+# the rest is the prompt verbatim. Only strips when they lead, so a prompt that
+# happens to mention "--model" mid-sentence is left untouched.
+def extract_llm_flags(args)
+  args = args.dup
+  provider = model = nil
+  loop do
+    case args.first
+    when "--provider" then args.shift; provider = args.shift
+    when "--model"    then args.shift; model = args.shift
+    else break
+    end
+  end
+  [provider, model, args]
+end
+
+# Show what the agent changed — only possible when the task files sit in a git repo.
+def maybe_show_diff(data_dir)
   in_git = system("git", "-C", data_dir, "rev-parse", "--is-inside-work-tree",
                   out: File::NULL, err: File::NULL)
   return unless in_git
@@ -691,7 +715,8 @@ HELP = <<~USAGE
   Lifecycle:
     archive   x              sweep DONE/CANCELLED to archive.org
     config                   show resolved file paths and their sources
-    -p "..."                 hand a natural-language request to Claude
+    -p "..."                 hand a request to an LLM agent
+                             (-p [--provider N] [--model N] "...")
     help      -h             this message
 
   Files: default to the repo; override with TASKS_DIR (or TASKS_ORG/TASKS_ARCHIVE)
@@ -709,7 +734,7 @@ def cmd_help(io = $stdout) = io.puts(HELP)
 # each branch reads via the store on demand — `check` must be able to run
 # (and report) on a file the parser would choke on
 case ARGV[0]
-when "-p", "--prompt" then cmd_prompt(ARGV[1..].join(" ")); exit
+when "-p", "--prompt" then cmd_prompt(ARGV[1..]); exit
 when "next", "n"      then cmd_next(store.items, ARGV[1..])
 when "quadrants", "q" then cmd_quadrants(store.items, ARGV[1..])
 when "agenda", "a"    then cmd_agenda(store.items, ARGV[1..])
