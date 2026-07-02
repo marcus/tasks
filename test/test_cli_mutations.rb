@@ -67,6 +67,71 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  # -- set_date! (backs `schedule`) --------------------------------------------
+
+  def test_set_date_scheduled_kind_sets_scheduled_not_deadline
+    with_store do |store, org, _a|
+      plants = find_item(store, "Water the plants")
+      assert store.set_date!(plants, Date.new(2026, 7, 20), kind: :scheduled)
+      fresh = find_item(store, "Water the plants")
+      assert_equal Date.new(2026, 7, 20), fresh.scheduled
+      assert_nil fresh.deadline
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  # -- undate! (backs `undate`) ------------------------------------------------
+
+  def test_undate_removes_both_when_no_kind
+    with_store do |store, org, _a|
+      flight = find_item(store, "Book flight")
+      store.set_date!(flight, Date.new(2026, 7, 20), kind: :scheduled)
+      assert store.undate!(find_item(store, "Book flight"))
+      fresh = find_item(store, "Book flight")
+      assert_nil fresh.deadline
+      assert_nil fresh.scheduled
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_undate_removes_specific_kind_only
+    with_store do |store, org, _a|
+      flight = find_item(store, "Book flight")
+      store.set_date!(flight, Date.new(2026, 7, 20), kind: :scheduled)
+      assert store.undate!(find_item(store, "Book flight"), kind: :deadline)
+      fresh = find_item(store, "Book flight")
+      assert_nil fresh.deadline
+      assert_equal Date.new(2026, 7, 20), fresh.scheduled
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_undate_returns_false_when_no_matching_stamp
+    with_store do |store, org, _a|
+      pr = find_item(store, "Review PR backlog")
+      refute store.undate!(pr)
+      assert_equal FIXTURE_ORG, File.read(org)
+    end
+  end
+
+  def test_undate_rejects_stale_line_numbers
+    with_store do |store, org, _a|
+      stale = find_item(store, "Book flight").dup
+      stale.line = 1
+      refute store.undate!(stale)
+      assert_match(/DEADLINE: <2026-07-02/, File.read(org))
+    end
+  end
+
+  def test_undate_is_undoable
+    with_store do |store, org, _a|
+      before = File.read(org)
+      store.undate!(find_item(store, "Book flight"))
+      store.undo!
+      assert_equal before, File.read(org)
+    end
+  end
+
   # -- set_state! (backs `state`) ---------------------------------------------
 
   def test_set_state_open_to_open
@@ -235,6 +300,141 @@ class TestCliMutations < Minitest::Test
       assert_equal 1, touched.size
       assert_equal "C", touched[0]["priority"]
       assert_match(/Book flight/, touched[0]["headline"])
+    end
+  end
+
+  # -- schedule ----------------------------------------------------------------
+
+  def test_cli_schedule_sets_scheduled
+    run_cli("schedule", "Book flight", "2026-07-20") do |org, out, _err, st|
+      assert st.success?
+      assert_match(/SCHEDULED: <2026-07-20/, File.read(org))
+      assert_match(/DEADLINE: <2026-07-02/, File.read(org), "existing deadline untouched")
+      assert_match(/Book flight/, out)
+    end
+  end
+
+  def test_cli_schedule_ambiguous_exits_2
+    run_cli("schedule", "e", "today") do |_org, _out, err, st|
+      assert_equal 2, st.exitstatus
+      assert_match(/ambiguous/, err)
+    end
+  end
+
+  # -- undate --------------------------------------------------------------------
+
+  def test_cli_undate_removes_deadline
+    run_cli("undate", "Book flight") do |org, out, _err, st|
+      assert st.success?
+      refute_match(/DEADLINE:/, File.read(org))
+      assert_match(/Book flight/, out)
+    end
+  end
+
+  def test_cli_undate_kind_flag_removes_only_that_kind
+    run_cli("undate", "self-eval", "--kind", "scheduled") do |org, out, _err, st|
+      assert st.success?
+      refute_match(/SCHEDULED:/, File.read(org))
+      assert_match(/self-eval/, out)
+    end
+  end
+
+  def test_cli_undate_nothing_to_remove_exits_1
+    run_cli("undate", "Review PR") do |_org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/nothing to remove/, err)
+    end
+  end
+
+  def test_cli_undate_bad_kind_exits_1
+    run_cli("undate", "Book flight", "--kind", "bogus") do |_org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/--kind must be deadline or scheduled/, err)
+    end
+  end
+
+  def test_cli_undate_dry_run_writes_nothing
+    run_cli("undate", "Book flight", "--dry-run") do |org, out, _err, st|
+      assert st.success?
+      assert_equal FIXTURE_ORG, File.read(org)
+      assert_match(/would remove/, out)
+    end
+  end
+
+  # -- cancel --------------------------------------------------------------------
+
+  def test_cli_cancel_marks_cancelled
+    run_cli("cancel", "Review PR") do |org, out, _err, st|
+      assert st.success?
+      assert_match(/^\*\* CANCELLED \[#B\] Review PR backlog/, File.read(org))
+      idx = File.readlines(org).index { |l| l.include?("Review PR") }
+      assert_match(/CLOSED: \[#{Date.today}\]/, File.readlines(org)[idx + 1])
+      assert_match(/CANCELLED/, out)
+    end
+  end
+
+  def test_cli_cancel_alias_drop
+    run_cli("drop", "Review PR") do |org, _out, _err, st|
+      assert st.success?
+      assert_match(/^\*\* CANCELLED \[#B\] Review PR backlog/, File.read(org))
+    end
+  end
+
+  def test_cli_cancel_no_match_exits_2
+    run_cli("cancel", "nonexistent-task") do |_org, _out, err, st|
+      assert_equal 2, st.exitstatus
+      assert_match(/no match/, err)
+    end
+  end
+
+  # -- show ------------------------------------------------------------------
+
+  def test_cli_show_human_readable
+    run_cli("show", "Book flight") do |_org, out, _err, st|
+      assert st.success?
+      assert_match(/Book flight/, out)
+      assert_match(/deadline:\s+2026-07-02/, out)
+    end
+  end
+
+  def test_cli_show_prints_notes
+    run_cli("show", "Travel desk") do |_org, out, _err, st|
+      assert st.success?
+      assert_match(/Some note line\./, out)
+    end
+  end
+
+  def test_cli_show_json
+    run_cli("show", "Travel desk", "--json") do |_org, out, _err, st|
+      assert st.success?
+      require "json"
+      data = JSON.parse(out)
+      assert_equal "WAITING", data["state"]
+      assert_equal ["Some note line."], data["notes"]
+      assert_nil data["closed"]
+    end
+  end
+
+  def test_cli_show_closed_item_includes_closed_date
+    run_cli("show", "Old finished", "--include-done", "--json") do |_org, out, _err, st|
+      assert st.success?
+      require "json"
+      data = JSON.parse(out)
+      assert_equal "2026-06-20", data["closed"]
+    end
+  end
+
+  def test_cli_show_ref_no_match_exits_2
+    run_cli("show", "nonexistent-task") do |_org, _out, err, st|
+      assert_equal 2, st.exitstatus
+      assert_match(/no match/, err)
+    end
+  end
+
+  def test_cli_show_ref_ambiguous_exits_2
+    run_cli("show", "e") do |_org, _out, err, st|
+      assert_equal 2, st.exitstatus
+      assert_match(/ambiguous/, err)
     end
   end
 end

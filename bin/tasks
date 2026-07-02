@@ -11,8 +11,12 @@
 #   bin/tasks capture|c "..." append a new item to the Inbox
 #   bin/tasks done|d "..."    mark a matching open item DONE
 #   bin/tasks due <ref> <date>       set/replace an item's DEADLINE
+#   bin/tasks schedule <ref> <date>  set/replace an item's SCHEDULED
+#   bin/tasks undate <ref> [--kind deadline|scheduled]  remove date stamp(s)
 #   bin/tasks state <ref> <STATE>    transition an item to any state
+#   bin/tasks cancel|drop <ref>      mark an item CANCELLED
 #   bin/tasks priority <ref> <A|B|C|none>  set or clear the priority cookie
+#   bin/tasks show|s <ref>    show one task in full (headline + notes)
 #   bin/tasks archive|x       move DONE/CANCELLED items to archive.org
 #   bin/tasks list|l [...]    list tasks grouped by state, with filters:
 #     scope:   --open/-o (default) --done/-d --archived/-x --all/-a
@@ -316,6 +320,89 @@ def cmd_priority(args)
   report_touched(item.line, json: flags["--json"])
 end
 
+def cmd_schedule(args)
+  require_relative "../lib/tasks/dates"
+  flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
+  ref = rest.shift
+  date_str = rest.join(" ")
+  abort %(usage: tasks schedule <ref> <date>) if ref.nil? || date_str.strip.empty?
+  date = Tasks::Dates.parse_when(date_str)
+  abort "unrecognized date: #{date_str}" unless date
+
+  item = resolve_ref(ref, include_done: flags["--include-done"])
+  if flags["--dry-run"]
+    puts "would set SCHEDULED <#{date.iso8601} #{date.strftime("%a")}> on: #{item_headline(item)}"
+    return
+  end
+  abort "failed to set scheduled date (file changed underfoot?)" unless store.set_date!(item, date, kind: :scheduled)
+  report_touched(item.line, json: flags["--json"])
+end
+
+def cmd_undate(args)
+  args = args.dup
+  kind = nil
+  if (idx = args.index("--kind"))
+    kind_arg = args[idx + 1]
+    abort "usage: tasks undate <ref> [--kind deadline|scheduled]" unless kind_arg
+    args.delete_at(idx + 1)
+    args.delete_at(idx)
+    kind = kind_arg.downcase.to_sym
+    abort "--kind must be deadline or scheduled" unless %i[deadline scheduled].include?(kind)
+  end
+
+  flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
+  ref = rest.shift
+  abort %(usage: tasks undate <ref> [--kind deadline|scheduled]) if ref.nil? || ref.strip.empty?
+
+  item = resolve_ref(ref, include_done: flags["--include-done"])
+  if flags["--dry-run"]
+    target = kind ? kind.to_s.upcase : "SCHEDULED/DEADLINE"
+    puts "would remove #{target} from: #{item_headline(item)}"
+    return
+  end
+  abort "nothing to remove (no matching date stamp, or file changed underfoot?)" unless store.undate!(item, kind: kind)
+  report_touched(item.line, json: flags["--json"])
+end
+
+def cmd_cancel(args)
+  flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
+  ref = rest.shift
+  abort %(usage: tasks cancel <ref>) if ref.nil? || ref.strip.empty?
+
+  item = resolve_ref(ref, include_done: flags["--include-done"])
+  if flags["--dry-run"]
+    puts "would set state CANCELLED on: #{item_headline(item)}"
+    return
+  end
+  abort "failed to cancel (file changed underfoot?)" unless store.set_state!(item, "CANCELLED")
+  report_touched(item.line, json: flags["--json"])
+end
+
+def cmd_show(args)
+  flags, rest = take_flags(args, "--json", "--include-done")
+  ref = rest.shift
+  abort %(usage: tasks show <ref>) if ref.nil? || ref.strip.empty?
+  item = resolve_ref(ref, include_done: flags["--include-done"])
+
+  block = store.block(item)
+  closed_line = block.find { |l| l.include?("CLOSED:") }
+  closed = closed_line && closed_line[/\[(\d{4}-\d{2}-\d{2})\]/, 1]
+  notes = block[1..].map(&:strip).reject do |l|
+    l.empty? || l.start_with?("SCHEDULED:", "DEADLINE:", "CLOSED:")
+  end
+
+  if flags["--json"]
+    require "json"
+    puts item_json(item).merge(closed: closed, notes: notes).to_json
+  else
+    puts item_headline(item)
+    puts "  scheduled: #{item.scheduled.iso8601}" if item.scheduled
+    puts "  deadline:  #{item.deadline.iso8601}" if item.deadline
+    puts "  closed:    #{closed}" if closed
+    notes.each { |n| puts "  #{n}" }
+  end
+end
+
 def cmd_state(args)
   flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
   ref = rest.shift
@@ -492,12 +579,16 @@ when "inbox", "i"     then cmd_inbox(parse)
 when "capture", "c"   then cmd_capture(ARGV[1..].join(" "))
 when "done", "d"      then cmd_done(ARGV[1..].join(" "))
 when "due", "deadline", "reschedule" then cmd_due(ARGV[1..])
+when "schedule"       then cmd_schedule(ARGV[1..])
+when "undate"         then cmd_undate(ARGV[1..])
 when "state", "mv"    then cmd_state(ARGV[1..])
+when "cancel", "drop" then cmd_cancel(ARGV[1..])
 when "priority", "pri" then cmd_priority(ARGV[1..])
+when "show", "s"      then cmd_show(ARGV[1..])
 when "archive", "x"   then cmd_archive
 when "list", "l"      then cmd_list(ARGV[1..])
 when "check", "k"     then cmd_check(ARGV[1..])
 else
-  warn %(usage: tasks {agenda|a|next|n|quadrants|q|inbox|i|capture|c "..."|done|d "..."|due <ref> <date>|state <ref> <STATE>|priority <ref> <A|B|C|none>|archive|x|list|l [...]|check|k [--json]|-p "..."})
+  warn %(usage: tasks {agenda|a|next|n|quadrants|q|inbox|i|capture|c "..."|done|d "..."|due <ref> <date>|schedule <ref> <date>|undate <ref> [--kind deadline|scheduled]|state <ref> <STATE>|cancel|drop <ref>|priority <ref> <A|B|C|none>|show|s <ref>|archive|x|list|l [...]|check|k [--json]|-p "..."})
   exit 1
 end

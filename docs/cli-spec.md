@@ -58,7 +58,7 @@ would change and writes nothing.
 | `next` | `n` | ✅ | NEXT actions by context. 🚧 `--json` |
 | `quadrants` | `q` | ✅ | Covey 2×2 by `important`/`urgent` tags. 🚧 `--json` |
 | `inbox` | `i` | ✅ | Unprocessed INBOX items. 🚧 `--json` |
-| `show <ref>` | `s` | 🚧 | One task in full: headline fields + body/notes. `--json` shape: `{state, priority, title, tags, contexts, scheduled, deadline, closed, line, notes: [..]}` |
+| `show <ref>` | `s` | ✅ | One task in full: headline fields + body/notes. `--json` shape: `{state, priority, title, tags, contexts, scheduled, deadline, closed, line, notes: [..]}` |
 | `check [--json]` | `k` | ✅ | Validate gtd.org structure. Exit 1 if errors. Run after any direct file edit. |
 
 JSON list shape (`--json` on list/agenda/next/quadrants/inbox):
@@ -75,11 +75,11 @@ JSON list shape (`--json` on list/agenda/next/quadrants/inbox):
 | Command | Alias/synonyms | Status | Description |
 |---|---|---|---|
 | `done <ref>` | `complete`, `close`, `d` | ✅ | Mark DONE + `CLOSED:` stamp. (Currently exits 1, not 2, on ref failure; migrating.) |
-| `cancel <ref>` | `drop` | 🚧 | Mark CANCELLED + `CLOSED:` stamp. |
+| `cancel <ref>` | `drop` | ✅ | Mark CANCELLED + `CLOSED:` stamp. |
 | `state <ref> <STATE>` | `mv` | ✅ | Any state transition (INBOX/TODO/NEXT/WAITING/DONE/CANCELLED). Enforces: entering DONE/CANCELLED adds `CLOSED:`; leaving them removes it. Resolves refs across open *and* closed tasks so you can reopen a DONE item. |
 | `due <ref> <date>` | `deadline`, `reschedule` | ✅ | Set/replace DEADLINE. INBOX items promote to TODO. |
-| `schedule <ref> <date>` | | 🚧 | Set/replace SCHEDULED. Same INBOX promotion. |
-| `undate <ref>` | | 🚧 | Remove SCHEDULED and/or DEADLINE (`--kind deadline\|scheduled` to pick one). |
+| `schedule <ref> <date>` | | ✅ | Set/replace SCHEDULED. Same INBOX promotion. |
+| `undate <ref>` | | ✅ | Remove SCHEDULED and/or DEADLINE (`--kind deadline\|scheduled` to pick one). |
 | `priority <ref> <A\|B\|C\|none>` | `pri` | ✅ | Set or clear the priority cookie. |
 | `retitle <ref> "new title"` | `rename` | 🚧 | Replace the headline title; tags/priority/state untouched. |
 | `tag <ref> +foo -bar @ctx -@old` | | 🚧 | Add/remove tags and contexts in one call. |

@@ -130,6 +130,14 @@ module Tasks
       with_history("state → #{state}: #{item.title}") { set_state_impl(item, state) }
     end
 
+    # Remove a date stamp (kind: :deadline, :scheduled, or nil for both).
+    # Returns false if the item has no matching stamp to remove (in addition
+    # to the usual stale-line-number case).
+    def undate!(item, kind: nil)
+      label = kind ? "remove #{kind}: #{item.title}" : "remove dates: #{item.title}"
+      with_history(label) { undate_impl(item, kind) }
+    end
+
     def archive_swept!
       with_history("archive sweep") { archive_swept_impl }
     end
@@ -233,6 +241,38 @@ module Tasks
       end
       # A dated task has been processed — promote it out of the inbox.
       lines[i] = lines[i].sub(/^(\*+\s+)INBOX\b/, '\1TODO') if item.state == "INBOX"
+      File.write(@org, lines.join)
+      reload!
+      true
+    end
+
+    # Remove the SCHEDULED and/or DEADLINE line(s) within item's block. Same
+    # staleness contract as complete!. Returns false if nothing matched.
+    def undate_impl(item, kind)
+      lines = File.readlines(@org, encoding: "UTF-8")
+      i = item.line - 1
+      return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
+      level = lines[i][/^\*+/].length
+      keys = case kind
+             when :scheduled then ["SCHEDULED"]
+             when :deadline  then ["DEADLINE"]
+             else                 ["SCHEDULED", "DEADLINE"]
+             end
+
+      removed = false
+      j = i + 1
+      while j < lines.length
+        lvl = lines[j][/^(\*+)\s/, 1]&.length
+        break if lvl && lvl <= level
+        if keys.any? { |k| lines[j].include?("#{k}:") }
+          lines.delete_at(j)
+          removed = true
+        else
+          j += 1
+        end
+      end
+      return false unless removed
+
       File.write(@org, lines.join)
       reload!
       true
