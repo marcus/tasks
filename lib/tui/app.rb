@@ -37,16 +37,20 @@ module Tui
         .reject { |s| s.to_s.strip.empty? }.join("\n\n")
     end
 
-    # paths: injectable so tests can pin a sandbox dir; defaults to the
-    # user's configured task files (env vars / ~/.config/tasks/config / root).
-    def initialize(root:, paths: Tasks::Config.resolve(default_dir: root))
+    # paths:   injectable so tests can pin a sandbox dir; defaults to the
+    #          user's configured task files (env vars / ~/.config/tasks/config).
+    # entries: the (provider, model) switcher list; defaults to the config-
+    #          assembled set. Injectable so tests are hermetic — they pin the
+    #          built-in defaults instead of reading the user's real LLM config.
+    def initialize(root:, paths: Tasks::Config.resolve(default_dir: root),
+                   entries: LLM.entries)
       @store  = Store.new(org: paths.org, archive: paths.archive)
       @urgent_days = paths.urgent_days # deadline window for the quadrants view
       # The (provider, model) switcher cycles these; the live agent is rebuilt
       # lazily when the selected provider changes (see ensure_agent_for_current!).
       @agent_root = File.dirname(paths.org)
       @sys_prompt = App.agent_system(paths: paths, cli_root: root)
-      @entries    = LLM.entries
+      @entries    = entries
       @entry_idx  = 0
       @agent = build_agent(current_entry)
       @agent_provider = current_entry.provider

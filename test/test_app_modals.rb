@@ -11,7 +11,8 @@ class TestAppModals < Minitest::Test
   def with_app
     Dir.mktmpdir do |dir|
       File.write(File.join(dir, "gtd.org"), FIXTURE_ORG)
-      app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir))
+      app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir),
+                         entries: default_llm_entries)
       app.send(:rows) # populate @rows like the paint loop does
       app.send(:clamp_selection)
       yield app
