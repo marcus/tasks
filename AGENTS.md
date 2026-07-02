@@ -16,6 +16,11 @@ passed to `tasks -p`. Today's date is available from the system.
   absolute CLI path if `bin/tasks` isn't in your working directory.
 
 ## How to act
+- Your job is to change task **data**, never the tool. Do not read, "fix", or
+  edit the CLI's own source (`bin/tasks`, anything under `lib/`) or any project
+  code — just run `bin/tasks` and, when needed, edit `gtd.org` task lines. (The
+  CLI uses Ruby endless methods like `def foo(x) = bar(x)`; that is valid, not a
+  bug to patch.)
 - Read state first with `bin/tasks list -a` (or targeted filters).
 - Prefer the CLI for operations it supports; it keeps formatting correct:
   - complete a task:  `bin/tasks done "<fuzzy title>"`

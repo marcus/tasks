@@ -370,6 +370,12 @@ or hit a network.
   visible in the transcript and `git diff` — a bad edit is inspectable and
   revertible, not silent corruption. If it proves flaky, try a larger local model
   (`gemma4:12b-mlx`, `qwen3.6`) — a one-line config change, no code.
+  Observed (2026-07-02 end-to-end verification): the adapter is correct — Hermes
+  spawned, connected to Ollama, ran with tools, exited 0, and never corrupted a
+  file — but `gemma4:e4b` itself derailed: it misread the CLI's Ruby endless
+  methods as broken and tried to *patch bin/tasks* instead of doing the capture.
+  Mitigated by an AGENTS.md guardrail ("change task data, never the tool"), but
+  the real fix is a more capable local model. The Claude path captures reliably.
 - **Hermes interface drift.** Hermes is at v0.17.0 and moving; the exact one-shot
   flags (`-z` vs `chat -q`), the system-prompt mechanism, and config schema may
   change. Confirm against `hermes --help` / the docs at implementation time and
