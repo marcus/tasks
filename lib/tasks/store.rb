@@ -2,6 +2,7 @@
 
 require "date"
 require_relative "check"
+require_relative "quadrants"
 
 module Tasks
   Item = Struct.new(

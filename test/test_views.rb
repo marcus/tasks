@@ -56,7 +56,9 @@ class TestViews < Minitest::Test
     assert_includes A.strip(flight_row.text), "7/2"
   end
 
-  def test_quadrants_places_items_by_tags
+  # Hybrid model keeps tagged fixture items where they were: the :important:/
+  # :urgent: tags force their axes, and the fixture's A/B priorities line up.
+  def test_quadrants_places_fixture_items
     rs = texts(rows(:quadrants))
     q1 = rs.index { |t| t.start_with?("Q1") }
     q2 = rs.index { |t| t.start_with?("Q2") }
@@ -66,6 +68,61 @@ class TestViews < Minitest::Test
     assert rs[q2...q3].any? { |t| t.include?("Review PR backlog") }  # important only
     assert rs[q3...q4].any? { |t| t.include?("Travel desk") }        # urgent only
     assert rs[q4..].any? { |t| t.include?("Water the plants") }      # neither
+  end
+
+  # The point of the hybrid model: priority + deadline place a task with no
+  # important/urgent tags at all.
+  def test_quadrants_derived_from_priority_and_deadline
+    org = <<~ORG
+      * Work
+      ** NEXT [#A] alpha no date
+      ** NEXT [#B] beta near deadline
+         DEADLINE: <2026-07-02>
+      ** NEXT [#C] gamma near deadline
+         DEADLINE: <2026-07-02>
+      ** NEXT delta far deadline
+         DEADLINE: <2026-07-20>
+      ** TODO [#A] epsilon scheduled only
+         SCHEDULED: <2026-07-02>
+    ORG
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "gtd.org")
+      File.write(path, org)
+      store = Tui::Store.new(org: path, archive: File.join(dir, "archive.org"))
+      rs = texts(V.rows(:quadrants, store.items, today: TODAY, urgent_days: 3))
+      q1 = rs.index { |t| t.start_with?("Q1") }
+      q2 = rs.index { |t| t.start_with?("Q2") }
+      q3 = rs.index { |t| t.start_with?("Q3") }
+      q4 = rs.index { |t| t.start_with?("Q4") }
+      assert rs[q1...q2].any? { |t| t.include?("beta") },    "B + near deadline → Q1"
+      assert rs[q2...q3].any? { |t| t.include?("alpha") },   "A, no date → Q2"
+      assert rs[q2...q3].any? { |t| t.include?("epsilon") }, "scheduled-only is not urgent → Q2"
+      assert rs[q3...q4].any? { |t| t.include?("gamma") },   "C + near deadline → Q3"
+      assert rs[q4..].any?   { |t| t.include?("delta") },    "far deadline → Q4"
+    end
+  end
+
+  # A wider urgent_days window pulls a far-out deadline into the urgent column.
+  def test_quadrants_urgent_days_widens_window
+    org = <<~ORG
+      * Work
+      ** NEXT [#A] far deadline task
+         DEADLINE: <2026-07-20>
+    ORG
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "gtd.org")
+      File.write(path, org)
+      store = Tui::Store.new(org: path, archive: File.join(dir, "archive.org"))
+      default = texts(V.rows(:quadrants, store.items, today: TODAY))
+      q2 = default.index { |t| t.start_with?("Q2") }
+      q3 = default.index { |t| t.start_with?("Q3") }
+      assert default[q2...q3].any? { |t| t.include?("far deadline") }, "default 3d → Q2"
+
+      wide = texts(V.rows(:quadrants, store.items, today: TODAY, urgent_days: 30))
+      w1 = wide.index { |t| t.start_with?("Q1") }
+      w2 = wide.index { |t| t.start_with?("Q2") }
+      assert wide[w1...w2].any? { |t| t.include?("far deadline") }, "30d window → Q1"
+    end
   end
 
   def test_inbox_lists_inbox_items

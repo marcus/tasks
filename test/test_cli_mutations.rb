@@ -603,9 +603,33 @@ class TestCliMutations < Minitest::Test
       assert st.success?
       rows = JSON.parse(out)
       flight = rows.find { |r| r["title"].include?("Book flight") }
-      assert_equal "Q1", flight["quadrant"] # important + urgent
+      assert_equal "Q1", flight["quadrant"] # [#A] + important/urgent tags
       plants = rows.find { |r| r["title"].include?("Water the plants") }
-      assert_equal "Q4", plants["quadrant"]
+      assert_equal "Q4", plants["quadrant"] # no priority, no date, no tags
+    end
+  end
+
+  # The CLI reads the urgent_days window from config/env: a far-off deadline is
+  # not urgent by default (Q2 for a high-priority task) but becomes urgent (Q1)
+  # once the window is widened past it. Uses a deadline relative to real today,
+  # since the CLI classifies against Date.today.
+  def test_cli_quadrants_honors_urgent_days_window
+    far = Date.today + 20
+    content = <<~ORG
+      * Work
+      ** NEXT [#A] distant milestone
+         DEADLINE: <#{far.iso8601} #{far.strftime("%a")}>
+    ORG
+    q = lambda do |out|
+      JSON.parse(out).find { |r| r["title"].include?("distant milestone") }["quadrant"]
+    end
+    run_cli("quadrants", "--json", content: content, env: { "TASKS_URGENT_DAYS" => nil }) do |_o, out, _e, st|
+      assert st.success?
+      assert_equal "Q2", q.call(out), "far deadline is not urgent at the default 3-day window"
+    end
+    run_cli("quadrants", "--json", content: content, env: { "TASKS_URGENT_DAYS" => "30" }) do |_o, out, _e, st|
+      assert st.success?
+      assert_equal "Q1", q.call(out), "widening the window makes it urgent"
     end
   end
 

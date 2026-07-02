@@ -44,6 +44,10 @@ passed to `tasks -p`. Today's date is available from the system.
 - When you give an `INBOX` item a `SCHEDULED`/`DEADLINE` date, also change
   its state to `TODO` (dated = processed; the TUI enforces the same rule).
 - Resolve relative dates ("next Friday", "tomorrow") to `<YYYY-MM-DD>`.
+- Quadrants (`bin/tasks quadrants`) are computed, not stored: **important** =
+  priority `A`/`B` or the `:important:` tag; **urgent** = a `DEADLINE` within a few
+  days or the `:urgent:` tag. To make something "urgent"/"important", prefer setting
+  its deadline/priority over adding tags.
 
 ## Report
 End with ONE line listing every change made — including any external

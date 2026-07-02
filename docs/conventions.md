@@ -53,19 +53,26 @@ The `|` separates "in progress" states from "done" states.
 
 Contexts answer "what can I actually do given where I am and what's in front of me?"
 
-### Covey matrix — two independent booleans
-- `:important:` — contributes to your goals/values/role.
-- `:urgent:` — has a near deadline / time pressure.
+### Covey matrix — importance × urgency
 
-The quadrant is derived from the pair:
+The tooling computes each task's quadrant from two axes:
+
+- **important** — priority `[#A]` or `[#B]`, **or** the `:important:` tag.
+- **urgent** — a `DEADLINE` within the next few days (default 3; overdue counts),
+  **or** the `:urgent:` tag. A `SCHEDULED` start date alone is *not* urgent.
 
 |                    | urgent            | not urgent           |
 |--------------------|-------------------|----------------------|
 | **important**      | **Q1** — do now   | **Q2** — schedule/invest (the sweet spot) |
 | **not important**  | **Q3** — delegate/minimize | **Q4** — eliminate |
 
-Keeping them as two tags (instead of a single `:Q1:` tag) lets the tooling compute
-the matrix and lets you retag one axis without touching the other.
+So raising a task to `[#A]`/`[#B]` and giving it a near deadline moves it toward Q1
+with no extra tagging. The `:important:`/`:urgent:` tags remain as explicit overrides
+for what the derivation misses — e.g. `:urgent:` on something with no near deadline,
+or `:important:` on a task you deliberately keep at low priority.
+
+The urgency window is configurable: `urgent_days = N` in `~/.config/tasks/config`, or
+the `TASKS_URGENT_DAYS` env var.
 
 ## Timestamps
 

@@ -6,7 +6,7 @@
 # Usage (each command has a single-letter alias):
 #   bin/tasks agenda|a        show items with SCHEDULED/DEADLINE, soonest first
 #   bin/tasks next|n          list NEXT actions grouped by context
-#   bin/tasks quadrants|q     Covey Important/Urgent 2x2
+#   bin/tasks quadrants|q     Covey 2x2 from priority+deadline (or important/urgent tags)
 #   bin/tasks inbox|i         show unprocessed INBOX items
 #   bin/tasks capture|c "..." append a new item (flags: --due/--scheduled/
 #                             --priority/--tag/--context/--state/--project)
@@ -127,21 +127,14 @@ end
 
 def cmd_quadrants(items, args = [])
   open_items = items.select { |i| open?(i) }
-  quadrant_of = lambda do |i|
-    imp = i.tags.include?("important")
-    urg = i.tags.include?("urgent")
-    imp && urg ? "Q1" : imp ? "Q2" : urg ? "Q3" : "Q4"
-  end
+  # Importance/urgency come from Tasks::Quadrants (priority + deadline, with the
+  # important/urgent tags as overrides). urgent_days is the configurable window.
+  quadrant_of = ->(i) { Tasks::Quadrants.of(i, urgent_days: PATHS.urgent_days) }
   return if emit_json?(open_items, args, extra: ->(i) { { quadrant: quadrant_of.(i) } })
-  q = {
-    "Q1 · Important + Urgent  (do now)"        => ->(i) { i.tags.include?("important") && i.tags.include?("urgent") },
-    "Q2 · Important, Not Urgent  (schedule)"   => ->(i) { i.tags.include?("important") && !i.tags.include?("urgent") },
-    "Q3 · Urgent, Not Important  (delegate)"   => ->(i) { !i.tags.include?("important") && i.tags.include?("urgent") },
-    "Q4 · Neither  (eliminate)"                => ->(i) { !i.tags.include?("important") && !i.tags.include?("urgent") },
-  }
-  q.each do |label, test|
+  by_q = open_items.group_by(&quadrant_of)
+  Tasks::Quadrants::LABELS.each do |key, label|
     puts bold(label)
-    matched = open_items.select(&test)
+    matched = by_q[key] || []
     matched.empty? ? (puts "  —") : matched.each { |i| puts "  #{fmt(i)}" }
     puts
   end
@@ -651,13 +644,15 @@ def cmd_config(args)
   if args.include?("--json")
     require "json"
     puts({ org: ORG, archive: ARCHIVE,
+           urgent_days: PATHS.urgent_days,
            sources: PATHS.sources,
            config_file: PATHS.config_file,
            config_file_exists: File.file?(PATHS.config_file) }.to_json)
   else
-    puts "org:      #{ORG}  #{dim("(#{PATHS.sources[:org]})")}"
-    puts "archive:  #{ARCHIVE}  #{dim("(#{PATHS.sources[:archive]})")}"
-    puts "config:   #{PATHS.config_file}#{File.file?(PATHS.config_file) ? "" : dim(" (not present)")}"
+    puts "org:         #{ORG}  #{dim("(#{PATHS.sources[:org]})")}"
+    puts "archive:     #{ARCHIVE}  #{dim("(#{PATHS.sources[:archive]})")}"
+    puts "urgent_days: #{PATHS.urgent_days}  #{dim("(#{PATHS.sources[:urgent_days]})")}"
+    puts "config:      #{PATHS.config_file}#{File.file?(PATHS.config_file) ? "" : dim(" (not present)")}"
   end
 end
 
@@ -669,7 +664,7 @@ HELP = <<~USAGE
   Read:
     agenda    a              dated items, soonest first
     next      n              NEXT actions grouped by context
-    quadrants q              Covey Important/Urgent 2x2
+    quadrants q              Covey 2x2: priority (A/B) + near deadline, or tags
     inbox     i              unprocessed INBOX items
     list      l [filters]    tasks by state. Filters: @context /text +tag -A|-B|-C
                              Scope: --open/-o (default) --done/-d --archived/-x --all/-a
@@ -701,6 +696,8 @@ HELP = <<~USAGE
 
   Files: default to the repo; override with TASKS_DIR (or TASKS_ORG/TASKS_ARCHIVE)
   env vars, or ~/.config/tasks/config (dir = / org = / archive = lines).
+  Quadrants urgency window: urgent_days = N in the config file, or TASKS_URGENT_DAYS
+  env (default 3) — a DEADLINE within N days counts as urgent.
 
   Dates: 2026-07-15 · 07-15 · 7/15 · fri · today · tomorrow · +3
   Refs:  a case-insensitive title substring, or L<line>.

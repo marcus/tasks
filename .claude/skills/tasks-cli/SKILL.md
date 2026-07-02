@@ -16,11 +16,18 @@ Edit the file directly only for operations the CLI doesn't cover yet
 ```sh
 bin/tasks list -a          # everything incl. archive; filters: @ctx +tag /text -A
 bin/tasks agenda           # dated items, soonest first
+bin/tasks next             # NEXT actions grouped by context
+bin/tasks quadrants        # Covey 2×2 (see note below); --json adds "quadrant"
 bin/tasks inbox            # unprocessed captures
 bin/tasks show "<ref>"     # one task in full (fields + notes); --json
 bin/tasks check            # is the file structurally sound? (exit 1 = no)
-bin/tasks config           # where gtd.org/archive.org actually resolve; --json
+bin/tasks config           # where gtd.org/archive.org resolve + urgent_days; --json
 ```
+
+Quadrants are computed, not stored: **important** = priority `A`/`B` or the
+`:important:` tag; **urgent** = a `DEADLINE` within `urgent_days` (default 3, overdue
+counts) or the `:urgent:` tag. To push a task toward Q1, set its priority and a near
+deadline (`priority`/`due`) — you don't need to add tags.
 
 The task files may live outside this repo (env vars or `~/.config/tasks/config`
 can relocate them). If you need the file's path — e.g. before a direct edit —

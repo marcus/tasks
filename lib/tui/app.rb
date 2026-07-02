@@ -32,6 +32,7 @@ module Tui
     # user's configured task files (env vars / ~/.config/tasks/config / root).
     def initialize(root:, paths: Tasks::Config.resolve(default_dir: root))
       @store  = Store.new(org: paths.org, archive: paths.archive)
+      @urgent_days = paths.urgent_days # deadline window for the quadrants view
       @claude = Claude.new(root: File.dirname(paths.org),
                            agents_path: File.join(root, "AGENTS.md"),
                            extra_prompt: paths.claude_context(cli_root: root))
@@ -110,7 +111,7 @@ module Tui
         q = q.downcase
         items = items.select { |i| i.title.downcase.include?(q) }
       end
-      @rows = Views.rows(@view, items)
+      @rows = Views.rows(@view, items, urgent_days: @urgent_days)
     end
 
     # The filter narrowing the views right now: the live buffer while
@@ -517,6 +518,9 @@ module Tui
         promoted = item.state == "INBOX" ? " · INBOX → TODO" : ""
         flash("→ #{item.title}: #{date.iso8601} (#{date.strftime("%a")})#{promoted}")
         close_date_popup
+        # a new date can move the task (agenda re-sort, quadrant change) — keep
+        # the cursor on it, matching bump_priority.
+        reselect(item.line)
       else
         @store.reload!
         @date_error = "file changed underneath — reopen"

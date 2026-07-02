@@ -31,7 +31,11 @@ Both the CLI and the TUI resolve `gtd.org`/`archive.org` through
    `~` expands; `#` comments and blank lines ignored.
 4. Default: the repo root (current behavior).
 
-`tasks config` prints the resolved paths and where each came from.
+The config file also carries non-path settings: `urgent_days = N` sets the
+quadrants urgency window (see `quadrants`), overridable by the `TASKS_URGENT_DAYS`
+env var, default 3.
+
+`tasks config` prints the resolved paths, `urgent_days`, and where each came from.
 
 **Task refs.** Mutations take a `<ref>` — a case-insensitive substring of the
 task title. Resolution rules:
@@ -68,7 +72,7 @@ would change and writes nothing.
 | `list [filters]` | `l` | ✅ | All tasks grouped by state. Filters compose: `@context`, `+tag`, `/text` or bare word, `-A/-B/-C`, scope `--open/-o` (default) `--done/-d` `--archived/-x` `--all/-a`. `--json` |
 | `agenda` | `a` | ✅ | Dated items, soonest first. `--json` |
 | `next` | `n` | ✅ | NEXT actions by context. `--json` |
-| `quadrants` | `q` | ✅ | Covey 2×2 by `important`/`urgent` tags. `--json` |
+| `quadrants` | `q` | ✅ | Covey 2×2 from priority (A/B ⇒ important) + a `DEADLINE` within `urgent_days` (default 3, overdue counts) ⇒ urgent, with `important`/`urgent` tags as overrides. `--json` adds `quadrant`. |
 | `inbox` | `i` | ✅ | Unprocessed INBOX items. `--json` |
 | `show <ref>` | `s` | ✅ | One task in full: headline fields + body/notes. `--json` shape: `{state, priority, title, tags, contexts, scheduled, deadline, closed, line, notes: [..]}` |
 | `check [--json]` | `k` | ✅ | Validate gtd.org structure. Exit 1 if errors. Run after any direct file edit. |
@@ -108,7 +112,7 @@ already sorted the way the text view sorts:
 | `delete <ref> --force` | `rm` | 🚧 | Hard-remove a block (no archive). Refuses without `--force`; suggest `cancel` instead. |
 | `undo` | | 🚧 | Revert the last CLI mutation (file-backed journal, shared with the TUI's in-memory one is out of scope). Until then: `git diff` / `git checkout -- gtd.org`. |
 | `-p "prompt"` | | ✅ | Natural-language request via headless Claude. |
-| `config [--json]` | | ✅ | Print resolved file paths (org, archive, config file) and the source of each (`TASKS_ORG env`, `TASKS_DIR env`, `config file`, `default`). |
+| `config [--json]` | | ✅ | Print resolved file paths (org, archive, config file), `urgent_days`, and the source of each (`TASKS_ORG env`, `TASKS_DIR env`, `TASKS_URGENT_DAYS env`, `config file`, `default`). |
 | `help` | `-h`, `--help` | ✅ | Grouped command reference. Also printed (to stderr, exit 1) on an unknown/absent command. |
 
 Ideas beyond this spec live in `docs/ideas.md`.

@@ -3,6 +3,7 @@
 require "date"
 require_relative "ansi"
 require_relative "store"
+require_relative "../tasks/quadrants"
 
 module Tui
   # Builds the rows for each tab. A Row with an item is selectable
@@ -21,11 +22,11 @@ module Tui
 
     module_function
 
-    def rows(view, items, today: Date.today)
+    def rows(view, items, today: Date.today, urgent_days: Tasks::Quadrants::DEFAULT_URGENT_DAYS)
       case view
       when :agenda    then agenda(items, today: today)
       when :next      then next_actions(items, today: today)
-      when :quadrants then quadrants(items)
+      when :quadrants then quadrants(items, today: today, urgent_days: urgent_days)
       when :inbox     then inbox(items)
       else []
       end
@@ -63,19 +64,15 @@ module Tui
       rows
     end
 
-    QUADRANTS = {
-      "Q1 · Important + Urgent  (do now)"      => ->(i) { i.tags.include?("important") && i.tags.include?("urgent") },
-      "Q2 · Important, Not Urgent  (schedule)" => ->(i) { i.tags.include?("important") && !i.tags.include?("urgent") },
-      "Q3 · Urgent, Not Important  (delegate)" => ->(i) { !i.tags.include?("important") && i.tags.include?("urgent") },
-      "Q4 · Neither  (eliminate)"              => ->(i) { !i.tags.include?("important") && !i.tags.include?("urgent") },
-    }.freeze
-
-    def quadrants(items)
+    # Classification (importance/urgency) lives in Tasks::Quadrants so the CLI
+    # and TUI agree; this just lays the four buckets out as rows.
+    def quadrants(items, today: Date.today, urgent_days: Tasks::Quadrants::DEFAULT_URGENT_DAYS)
       open_items = items.select(&:open?)
+      by_q = open_items.group_by { |i| Tasks::Quadrants.of(i, today: today, urgent_days: urgent_days) }
       rows = []
-      QUADRANTS.each do |label, test|
+      Tasks::Quadrants::LABELS.each do |key, label|
         rows << Row.new(A.bold(label), nil)
-        matched = open_items.select(&test)
+        matched = by_q[key] || []
         if matched.empty?
           rows << Row.new(A.dim("  —"), nil)
         else
