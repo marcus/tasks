@@ -55,10 +55,19 @@ ollama_url        = http://127.0.0.1:11434  # endpoint Hermes' availability prob
 ```
 
 Built-in providers are `claude-cli` (models `sonnet/opus/haiku`) and `hermes`
-(model `gemma4:e4b`, driving a local Ollama model via Hermes' own config). The
-TUI's `M` key cycles the flattened `(provider, model)` list; the header shows
-`provider:model`. Adding a new harness is one adapter class in `lib/llm/` plus a
+(default model `qwen3.6:35b-a3b`, driving a local Ollama model via Hermes' own
+config). The overall default stays `claude-cli:sonnet`. The TUI's `M` key cycles
+the flattened `(provider, model)` list; the header shows `provider:model`.
+Adding a new harness is one adapter class in `lib/llm/` plus a
 `Registry::DEFAULTS` entry — see `docs/plans/llm-adapter-pattern.md`.
+
+**Local models:** an eval of local models behind Hermes
+(`eval/llm/results-2026-07-02.md`) found `qwen3.6:35b-a3b` the only one that
+reliably drives the CLI (all task types, zero corruption) — hence it's the
+default Hermes model. It is not the overall default because it's slow (~2–4 min
+per request vs seconds for Sonnet). Use it for offline/private work via
+`llm_provider = hermes`, accepting the latency; re-run the harness
+(`ruby eval/llm/harness.rb`) when a faster capable local model appears.
 
 **Task refs.** Mutations take a `<ref>` — a case-insensitive substring of the
 task title. Resolution rules:

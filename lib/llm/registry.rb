@@ -25,11 +25,17 @@ module LLM
 
     # `transport` is informational (for optional-dependency handling), never a
     # call-site branch. `settings` become adapter constructor kwargs.
+    # The overall default is the first provider's first model — claude-cli:sonnet
+    # — unchanged, because no local model is fast/reliable enough to default to
+    # (see eval/llm/results-2026-07-02.md). Within Hermes, the default model is
+    # qwen3.6:35b-a3b: the one local model that reliably drove the CLI in the
+    # eval (0 corruptions, all 8 task dimensions), replacing gemma4:e4b, which
+    # derailed. gemma4:e4b is kept as a lighter/faster fallback in the switcher.
     DEFAULTS = {
       "claude-cli" => { adapter: Agent::ClaudeCli, transport: :cli,
                         models: %w[sonnet opus haiku], settings: {} },
       "hermes"     => { adapter: Agent::Hermes,     transport: :cli,
-                        models: %w[gemma4:e4b],      settings: {} },
+                        models: %w[qwen3.6:35b-a3b gemma4:e4b], settings: {} },
     }.freeze
 
     def self.build(config = Config.load)

@@ -130,9 +130,16 @@ class TestLLM < Minitest::Test
 
   def test_entries_put_default_first_and_dedupe
     entries = LLM.entries(empty_config)
-    assert_equal "claude-cli:sonnet", entries.first.to_s
+    assert_equal "claude-cli:sonnet", entries.first.to_s # overall default unchanged
     assert_equal entries.map(&:to_s), entries.map(&:to_s).uniq
+    # qwen3.6:35b-a3b is the default Hermes model (best local model per eval);
+    # gemma4:e4b remains available as a lighter fallback.
+    assert_includes entries.map(&:to_s), "hermes:qwen3.6:35b-a3b"
     assert_includes entries.map(&:to_s), "hermes:gemma4:e4b"
+  end
+
+  def test_hermes_default_model_is_the_evaluated_best
+    assert_equal "qwen3.6:35b-a3b", LLM.default_entry(provider: "hermes", config: empty_config).model
   end
 
   def test_config_moves_default_entry_to_front
@@ -149,8 +156,8 @@ class TestLLM < Minitest::Test
 
   def test_default_entry_precedence_explicit_over_config
     cfg = LLM::Config.new(provider: "claude-cli", model: "haiku", providers: {})
-    # explicit args win over config
-    assert_equal "hermes:gemma4:e4b",
+    # explicit args win over config; hermes resolves to its own default model
+    assert_equal "hermes:qwen3.6:35b-a3b",
                  LLM.default_entry(provider: "hermes", config: cfg).to_s
     # a model not in the list is still honored (flexibility to run any model)
     assert_equal "claude-cli:sonnet-5",
