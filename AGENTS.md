@@ -18,9 +18,17 @@ passed to `tasks -p`. Today's date is available from the system.
 ## How to act
 - Your job is to change task **data**, never the tool. Do not read, "fix", or
   edit the CLI's own source (`bin/tasks`, anything under `lib/`) or any project
-  code — just run `bin/tasks` and, when needed, edit `gtd.org` task lines. (The
-  CLI uses Ruby endless methods like `def foo(x) = bar(x)`; that is valid, not a
-  bug to patch.)
+  code — just run `bin/tasks` and, when needed, edit `gtd.org` task lines.
+- The tasks CLI is known-good (Ruby 3.4). It uses Ruby endless methods like
+  `def foo(x) = bar(x)` — valid syntax, NOT a bug. Always invoke it by the
+  absolute path given below. If a command seems to error, re-run it with that
+  absolute path; never conclude the CLI is broken or hand-edit files as a
+  workaround.
+- **Always use the CLI to set dates, priority, state, and tags** — it writes the
+  exact org format (e.g. `DEADLINE: <YYYY-MM-DD>` with the required angle
+  brackets). Do NOT hand-write `DEADLINE:`/`SCHEDULED:` lines; a plain
+  `DEADLINE: 2026-07-05` without `< >` is silently ignored. `due`/`schedule`
+  accept relative dates (`+3`, `tomorrow`, `fri`) so you never format a date by hand.
 - Read state first with `bin/tasks list -a` (or targeted filters).
 - Prefer the CLI for operations it supports; it keeps formatting correct:
   - complete a task:  `bin/tasks done "<fuzzy title>"`

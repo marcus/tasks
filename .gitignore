@@ -3,6 +3,14 @@
 .bundle/
 vendor/bundle/
 
+# Task data must never land in the code repo — it lives in a separate private
+# repo (see ~/.config/tasks/config). Guards against a stray CLI/eval fallback
+# write to the repo-root default.
+/gtd.org
+/gtd.org.bak
+/archive.org
+/archive.org.bak
+
 # Editor / OS
 .DS_Store
 *.swp
