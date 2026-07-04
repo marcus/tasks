@@ -567,6 +567,20 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  # A deferred task that is then completed must not keep an orphaned :defer:
+  # tag — otherwise it is invisible to `list --deferred` and unreachable by
+  # `activate`, and the dead tag rides into archive.org.
+  def test_cli_done_on_deferred_task_clears_defer_tag
+    deferred = FIXTURE_ORG.sub("Water the plants :@home:", "Water the plants :@home:defer:")
+    run_cli("done", "Water the plants", content: deferred) do |org, _out, _err, st|
+      assert st.success?
+      content = File.read(org)
+      assert_match(/^\*\* DONE Water the plants :@home:$/, content)
+      refute_match(/:defer:/, content, "completing a task drops the someday/maybe marker")
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
   # -- list/next date tags -------------------------------------------------------
 
   def test_cli_list_tags_scheduled_start_with_tilde

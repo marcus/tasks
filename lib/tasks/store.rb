@@ -251,6 +251,9 @@ module Tasks
       i = item.line - 1
       return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
       lines[i] = lines[i].sub(/^(\*+\s+)(INBOX|TODO|NEXT|WAITING)\b/, '\1DONE')
+      # A completed task is no longer someday/maybe — drop the defer marker so
+      # it can't orphan (invisible to `list --deferred`, unreachable by activate).
+      lines[i] = strip_headline_tag(lines[i], DEFER_TAG)
       lines.insert(i + 1, "   CLOSED: [#{Date.today}]\n")
       File.write(@org, lines.join)
       reload!
@@ -363,6 +366,16 @@ module Tasks
       s
     end
 
+    # Remove `tag` from a headline's tag cluster, rebuilding the line (and
+    # dropping the cluster entirely if it was the last tag). No-op if the line
+    # isn't a headline or lacks the tag.
+    def strip_headline_tag(line, tag)
+      return line unless line.match?(HEADLINE)
+      stars, state, pri, title, tags = headline_parts(line)
+      return line unless tags.include?(tag)
+      build_headline(stars, state, pri, title, tags - [tag])
+    end
+
     # Downcased title of a section heading line (its text after the stars).
     def heading_title(line) = line.sub(/^\*+\s+/, "").strip.downcase
 
@@ -470,6 +483,8 @@ module Tasks
       lines[i] = lines[i].sub(/^(\*+\s+)(INBOX|TODO|NEXT|WAITING|DONE|CANCELLED)\b/, "\\1#{new_state}")
 
       if DONE_STATES.include?(new_state) && !DONE_STATES.include?(old_state)
+        # Entering DONE/CANCELLED clears the defer marker (see complete_impl).
+        lines[i] = strip_headline_tag(lines[i], DEFER_TAG)
         lines.insert(i + 1, "   CLOSED: [#{Date.today}]\n") unless closed_line_index(lines, i)
       elsif DONE_STATES.include?(old_state) && !DONE_STATES.include?(new_state)
         (c = closed_line_index(lines, i)) && lines.delete_at(c)

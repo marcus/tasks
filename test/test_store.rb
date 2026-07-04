@@ -363,4 +363,29 @@ class TestStore < Minitest::Test
       refute store.set_deferred!(stale, true)
     end
   end
+
+  def test_completing_a_deferred_task_strips_the_defer_tag
+    with_store do |store, org, _a|
+      plants = find_item(store, "Water the plants")
+      store.set_deferred!(plants, true)
+      assert store.complete!(find_item(store, "Water the plants"))
+      done = find_item(store, "Water the plants")
+      assert_equal "DONE", done.state
+      refute done.deferred?, "a completed task must not keep the someday/maybe marker"
+      assert_match(/^\*\* DONE Water the plants :@home:$/, File.read(org))
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cancelling_a_deferred_task_via_set_state_strips_the_defer_tag
+    with_store do |store, org, _a|
+      plants = find_item(store, "Water the plants")
+      store.set_deferred!(plants, true)
+      assert store.set_state!(find_item(store, "Water the plants"), "CANCELLED")
+      cancelled = find_item(store, "Water the plants")
+      assert_equal "CANCELLED", cancelled.state
+      refute cancelled.deferred?
+      assert Tasks::Check.check(org).ok?
+    end
+  end
 end

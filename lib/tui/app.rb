@@ -396,10 +396,13 @@ module Tui
 
     # Z reveals/hides deferred (someday/maybe) tasks across every view.
     def toggle_deferred_view
+      modaled_line = current_item&.line if @modal_kind == :detail
       @show_deferred = !@show_deferred
       rows
       clamp_selection
-      show_detail if @modal_kind == :detail
+      # If a detail modal was open on a task the toggle just hid, close it
+      # rather than silently rebinding the modal to a neighboring task.
+      refresh_detail_modal(modaled_line) if modaled_line
       flash(@show_deferred ? "showing deferred tasks" : "hiding deferred tasks")
     end
 
