@@ -15,6 +15,7 @@ Edit the file directly only for operations the CLI doesn't cover yet
 
 ```sh
 bin/tasks list -a          # everything incl. archive; filters: @ctx +tag /text -A
+bin/tasks list --deferred  # only deferred (someday/maybe) tasks — a review list
 bin/tasks agenda           # dated items, soonest first
 bin/tasks next             # NEXT actions grouped by context
 bin/tasks quadrants        # Covey 2×2 (see note below); --json adds "quadrant"
@@ -51,8 +52,14 @@ bin/tasks retitle "<ref>" "new"      # replace the title; tags/state untouched
 bin/tasks tag "<ref>" +foo -bar @ctx # add/remove tags & contexts (-@ctx removes)
 bin/tasks note "<ref>" "text"        # append a body line under the task
 bin/tasks move "<ref>" "Section"     # relocate the block under a top-level heading
+bin/tasks defer "<ref>"              # hide as someday/maybe (adds :defer: tag)
+bin/tasks activate "<ref>"           # bring a deferred task back (undefer/resume)
 bin/tasks archive                    # sweep DONE/CANCELLED to archive.org
 ```
+
+Deferral is a semantic `:defer:` tag (like `:important:`/`:urgent:`): a deferred
+task keeps its state but drops out of `agenda`/`next`/`quadrants`/`inbox` and the
+default `list` until you `activate` it. Review the backlog with `list --deferred`.
 
 `capture` flags: `--due <date>`, `--scheduled <date>`, `--priority A|B|C`,
 `--tag t` (repeatable), `--context @x` (repeatable), `--state STATE`,
@@ -71,7 +78,7 @@ stop and ask, listing the matches.
 ## Direct edits (rare — for what the CLI still lacks)
 
 The CLI now covers capture, completion, cancel, state, dates, priority,
-retitle, tags, notes, and moving between sections. Reach for a direct edit
+retitle, tags, notes, moving between sections, and deferral. Reach for a direct edit
 only for something with no command yet (e.g. hard-deleting a block, editing an
 existing body line, or restructuring section headings). When you must:
 

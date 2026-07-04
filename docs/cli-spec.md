@@ -84,6 +84,14 @@ task title. Resolution rules:
 `fri`/`friday`, `today`, `tomorrow`, `+3` (days from today). Same parser as
 the TUI (`lib/tasks/dates.rb`). Bare month-day in the past rolls forward a year.
 
+**Deferral.** A task is *deferred* (someday/maybe) when it carries the semantic
+`defer` tag — the same mechanism by which `important`/`urgent` tags drive the
+quadrants view. Deferred tasks retain their state (a deferred `NEXT` is still a
+`NEXT`) but are filtered out of the active views (`agenda`, `next`, `quadrants`,
+`inbox`, and the default `list` scope) so they stop competing for attention.
+`defer`/`activate` toggle the tag; `list --deferred` reviews them. The TUI hides
+them too, with `Z` to show/hide and `z` to defer/activate the selected task.
+
 **Output.** Human-readable by default. Read commands and mutations accept
 `--json`; shapes below. Mutations always print (or return in JSON) the full
 new headline of every task they touched, so the agent can verify the result
@@ -101,7 +109,7 @@ would change and writes nothing.
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `list [filters]` | `l` | ✅ | All tasks grouped by state. Filters compose: `@context`, `+tag`, `/text` or bare word, `-A/-B/-C`, scope `--open/-o` (default) `--done/-d` `--archived/-x` `--all/-a`. `--json` |
+| `list [filters]` | `l` | ✅ | All tasks grouped by state. Filters compose: `@context`, `+tag`, `/text` or bare word, `-A/-B/-C`, scope `--open/-o` (default) `--done/-d` `--archived/-x` `--all/-a`. Deferred tasks are hidden from the default open scope; `--deferred/-D` lists only them (a someday/maybe review). `--json` |
 | `agenda` | `a` | ✅ | Dated items, soonest first. `--json` |
 | `next` | `n` | ✅ | NEXT actions by context. `--json` |
 | `quadrants` | `q` | ✅ | Covey 2×2 from priority (A/B ⇒ important) + a `DEADLINE` within `urgent_days` (default 3, overdue counts) ⇒ urgent, with `important`/`urgent` tags as overrides. `--json` adds `quadrant`. |
@@ -135,6 +143,8 @@ already sorted the way the text view sorts:
 | `tag <ref> +foo -bar @ctx -@old` | | ✅ | Add/remove tags and contexts in one call. `+t`/`@ctx` add, `-t`/`-@ctx` remove. |
 | `note <ref> "text"` | | ✅ | Append a body line under the task. |
 | `move <ref> "Section"` | | ✅ | Relocate the whole block under another top-level heading (e.g. out of `* Inbox` into `* Work`). Section matched case-insensitively (exact, then substring). |
+| `defer <ref>` | `snooze` | ✅ | Mark a task deferred (someday/maybe) by adding a semantic `defer` tag. Deferred tasks keep their state but drop out of `agenda`/`next`/`quadrants`/`inbox` and the default `list` until reactivated. Idempotent. |
+| `activate <ref>` | `undefer`, `resume` | ✅ | Clear the `defer` tag, returning the task to the active views. Resolves deferred (open) tasks. |
 
 ## Lifecycle / meta
 

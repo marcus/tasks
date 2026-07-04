@@ -21,11 +21,13 @@
 #   bin/tasks tag <ref> +t -t @ctx -@ctx   add/remove tags and contexts
 #   bin/tasks note <ref> "text"            append a body line under the task
 #   bin/tasks move <ref> "Section"         relocate the block under a heading
+#   bin/tasks defer|snooze <ref>           hide a task (someday/maybe)
+#   bin/tasks activate <ref>  bring a deferred task back (undefer/resume)
 #   bin/tasks show|s <ref>    show one task in full (headline + notes)
 #   bin/tasks archive|x       move DONE/CANCELLED items to archive.org
 #   bin/tasks list|l [...]    list tasks grouped by state, with filters:
 #     scope:   --open/-o (default) --done/-d --archived/-x --all/-a
-#     filters: @context  /text  +tag  -A|-B|-C  (compose freely)
+#     filters: @context  /text  +tag  -A|-B|-C  --deferred/-D (compose freely)
 #   bin/tasks -p "..."        hand a natural-language request to an LLM agent
 #                             (Claude or another configured harness), which acts
 #                             on your tasks and reports what changed
@@ -109,7 +111,7 @@ def emit_json?(items, args, extra: nil)
 end
 
 def cmd_next(items, args = [])
-  nexts = items.select { |i| i.state == "NEXT" }
+  nexts = items.select { |i| i.state == "NEXT" && !i.deferred? }
   return if emit_json?(nexts.sort_by { |i| i.priority || "Z" }, args)
   by_ctx = Hash.new { |h, k| h[k] = [] }
   nexts.each do |i|
@@ -127,7 +129,7 @@ def cmd_next(items, args = [])
 end
 
 def cmd_quadrants(items, args = [])
-  open_items = items.select { |i| open?(i) }
+  open_items = items.select { |i| open?(i) && !i.deferred? }
   # Importance/urgency come from Tasks::Quadrants (priority + deadline, with the
   # important/urgent tags as overrides). urgent_days is the configurable window.
   quadrant_of = ->(i) { Tasks::Quadrants.of(i, urgent_days: PATHS.urgent_days) }
@@ -142,7 +144,7 @@ def cmd_quadrants(items, args = [])
 end
 
 def cmd_agenda(items, args = [])
-  dated = items.select { |i| open?(i) && (i.scheduled || i.deadline) }
+  dated = items.select { |i| open?(i) && !i.deferred? && (i.scheduled || i.deadline) }
   dated = dated.sort_by { |i| [i.deadline || i.scheduled, i.priority || "Z"] }
   return if emit_json?(dated, args)
   dated.each do |i|
@@ -157,7 +159,7 @@ def cmd_agenda(items, args = [])
 end
 
 def cmd_inbox(items, args = [])
-  inbox = items.select { |i| i.state == "INBOX" }
+  inbox = items.select { |i| i.state == "INBOX" && !i.deferred? }
   return if emit_json?(inbox, args)
   inbox.empty? ? (puts "Inbox empty. ✨") : inbox.each { |i| puts "  #{fmt(i)}" }
 end
@@ -497,6 +499,23 @@ def cmd_note(args)
   report_touched(item.line, json: flags["--json"])
 end
 
+# `defer` and `activate` toggle the semantic `defer` tag (someday/maybe).
+# Deferring hides a task from the active views without touching its state;
+# activating brings it back. Both share the standard mutation flag handling.
+def cmd_defer(args, deferred:, usage:, verb:)
+  flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
+  ref = rest.shift
+  abort %(usage: #{usage}) if ref.nil? || ref.strip.empty?
+
+  item = resolve_ref(ref, include_done: flags["--include-done"])
+  if flags["--dry-run"]
+    puts "would #{verb}: #{item_headline(item)}"
+    return
+  end
+  abort "failed to #{verb} (file changed underfoot?)" unless store.set_deferred!(item, deferred)
+  report_touched(item.line, json: flags["--json"])
+end
+
 def cmd_move(args)
   flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
   ref = rest.shift
@@ -529,6 +548,7 @@ STATE_ORDER = %w[INBOX TODO NEXT WAITING DONE CANCELLED].freeze
 def cmd_list(args)
   scope    = :open
   json     = false
+  deferred_only = false
   contexts_f = []
   tags_f     = []
   priority_f = nil
@@ -539,6 +559,7 @@ def cmd_list(args)
     when "--done", "-d"     then scope = :done
     when "--archived", "-x" then scope = :archived
     when "--all", "-a"      then scope = :all
+    when "--deferred", "-D" then deferred_only = true
     when "--json"           then json = true
     when /\A-([ABC])\z/     then priority_f = $1
     when /\A@/              then contexts_f << a
@@ -563,9 +584,19 @@ def cmd_list(args)
     end
 
   q = text_f.join(" ").downcase
+  # Deferred tasks are hidden from the default open scope so they stop
+  # competing for attention; --deferred flips that to a someday/maybe review
+  # (only deferred tasks). Other scopes (done/archived/all) are unaffected.
+  defer_ok = lambda do |i|
+    if deferred_only then i.deferred?
+    elsif scope == :open then !i.deferred?
+    else true
+    end
+  end
   sel = items.select do |i|
     states.include?(i.state) &&
       (scope != :done || i.source == :org) &&
+      defer_ok.call(i) &&
       (priority_f.nil? || i.priority == priority_f) &&
       contexts_f.all? { |c| i.tags.include?(c) } &&
       tags_f.all?     { |t| i.tags.include?(t) } &&
@@ -587,7 +618,8 @@ def cmd_list(args)
     list.sort_by { |i| i.priority || "Z" }.each do |i|
       due = short_due(i)
       arch = i.source == :archive ? dim("  (archived)") : ""
-      puts "  #{fmt(i)}#{due.empty? ? "" : "  #{due}"}#{arch}"
+      defr = i.deferred? ? dim("  (deferred)") : ""
+      puts "  #{fmt(i)}#{due.empty? ? "" : "  #{due}"}#{defr}#{arch}"
     end
     puts
   end
@@ -695,6 +727,7 @@ HELP = <<~USAGE
     inbox     i              unprocessed INBOX items
     list      l [filters]    tasks by state. Filters: @context /text +tag -A|-B|-C
                              Scope: --open/-o (default) --done/-d --archived/-x --all/-a
+                             --deferred/-D lists only deferred (someday/maybe) tasks
     show      s <ref>        one task in full (headline + notes)
     check     k              validate gtd.org structure
 
@@ -714,6 +747,8 @@ HELP = <<~USAGE
     tag          <ref> +t -t @ctx -@ctx   add/remove tags and contexts
     note         <ref> "text"        append a body line
     move         <ref> "Section"     relocate the block under a heading
+    defer   snooze <ref>             hide a task (someday/maybe)
+    activate       <ref>             bring a deferred task back (undefer, resume)
 
   Lifecycle:
     archive   x              sweep DONE/CANCELLED to archive.org
@@ -754,6 +789,10 @@ when "retitle", "rename" then cmd_retitle(ARGV[1..])
 when "tag"            then cmd_tag(ARGV[1..])
 when "note"           then cmd_note(ARGV[1..])
 when "move"           then cmd_move(ARGV[1..])
+when "defer", "snooze" then cmd_defer(ARGV[1..], deferred: true,
+                                      usage: "tasks defer <ref>", verb: "defer")
+when "activate", "undefer", "resume" then cmd_defer(ARGV[1..], deferred: false,
+                                      usage: "tasks activate <ref>", verb: "activate")
 when "show", "s"      then cmd_show(ARGV[1..])
 when "archive", "x"   then cmd_archive
 when "list", "l"      then cmd_list(ARGV[1..])

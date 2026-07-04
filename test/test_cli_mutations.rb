@@ -502,6 +502,71 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  # -- defer / activate ----------------------------------------------------------
+
+  def test_cli_defer_tags_and_hides_from_active_views
+    run_cli("defer", "Water the plants") do |org, out, _err, st|
+      assert st.success?
+      assert_match(/Water the plants :@home:defer:/, File.read(org))
+      assert_match(/:defer:/, out) # prints the resulting headline
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_defer_synonym_snooze
+    run_cli("snooze", "Water the plants") do |org, _out, _err, st|
+      assert st.success?, "snooze should alias defer"
+      assert_match(/Water the plants :@home:defer:/, File.read(org))
+    end
+  end
+
+  def test_cli_deferred_task_dropped_from_next_and_default_list
+    deferred = FIXTURE_ORG.sub("Water the plants :@home:", "Water the plants :@home:defer:")
+    run_cli("next", content: deferred) do |_org, out, _err, st|
+      assert st.success?
+      refute_match(/Water the plants/, out, "deferred NEXT is hidden from `next`")
+    end
+    run_cli("list", content: deferred) do |_org, out, _err, st|
+      assert st.success?
+      refute_match(/Water the plants/, out, "deferred task is hidden from default list")
+    end
+  end
+
+  def test_cli_list_deferred_shows_only_deferred
+    deferred = FIXTURE_ORG.sub("Water the plants :@home:", "Water the plants :@home:defer:")
+    run_cli("list", "--deferred", content: deferred) do |_org, out, _err, st|
+      assert st.success?
+      assert_match(/Water the plants/, out)
+      assert_match(/\(deferred\)/, out)
+      refute_match(/Book flight/, out, "non-deferred tasks are excluded from --deferred")
+    end
+  end
+
+  def test_cli_activate_clears_defer_tag
+    deferred = FIXTURE_ORG.sub("Water the plants :@home:", "Water the plants :@home:defer:")
+    run_cli("activate", "Water the plants", content: deferred) do |org, _out, _err, st|
+      assert st.success?
+      assert_match(/^\*\* NEXT Water the plants :@home:$/, File.read(org))
+      refute_match(/:defer:/, File.read(org))
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_defer_dry_run_writes_nothing
+    run_cli("defer", "Water the plants", "--dry-run") do |org, out, _err, st|
+      assert st.success?
+      assert_equal FIXTURE_ORG, File.read(org)
+      assert_match(/would defer/, out)
+    end
+  end
+
+  def test_cli_defer_ambiguous_exits_2
+    run_cli("defer", "e") do |_org, _out, err, st|
+      assert_equal 2, st.exitstatus
+      assert_match(/ambiguous/, err)
+    end
+  end
+
   # -- list/next date tags -------------------------------------------------------
 
   def test_cli_list_tags_scheduled_start_with_tilde

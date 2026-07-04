@@ -30,7 +30,9 @@ class TestShortcuts < Minitest::Test
     assert_equal :open_detail, S.find("\r").action
     assert_equal :open_help, S.find("?").action
     assert_equal :quit, S.find("q").action
-    assert_nil S.find("z")
+    assert_equal :defer_selected, S.find("z").action
+    assert_equal :toggle_deferred_view, S.find("Z").action
+    assert_nil S.find("Q")
   end
 
   def test_help_modal_lists_every_shortcut

@@ -11,6 +11,9 @@ module Tasks
   ) do
     def open?    = Store::OPEN_STATES.include?(state)
     def contexts = tags.select { |t| t.start_with?("@") }
+    # Deferred (someday/maybe) is a semantic tag, like important/urgent — it
+    # rides alongside the task's real state rather than replacing it.
+    def deferred? = tags.include?(Store::DEFER_TAG)
   end
 
   # Owns gtd.org: parsing, change detection, and the mutations the TUI
@@ -22,6 +25,9 @@ module Tasks
 
     OPEN_STATES = %w[INBOX TODO NEXT WAITING].freeze
     DONE_STATES = %w[DONE CANCELLED].freeze
+
+    # Semantic tag marking a task as deferred (someday/maybe). See Item#deferred?.
+    DEFER_TAG = "defer"
 
     attr_reader :org, :archive
 
@@ -152,6 +158,16 @@ module Tasks
       add    = add.map { |t| utf8(t) }
       remove = remove.map { |t| utf8(t) }
       with_history("tags: #{item.title}") { set_tags_impl(item, add, remove) }
+    end
+
+    # Defer (someday/maybe) or reactivate a task by toggling the DEFER_TAG.
+    # Idempotent per direction; delegates to the tag machinery so deferral is
+    # just a semantic tag. Same staleness contract as complete!.
+    def set_deferred!(item, deferred)
+      label = deferred ? "defer: #{item.title}" : "activate: #{item.title}"
+      add    = deferred ? [DEFER_TAG] : []
+      remove = deferred ? [] : [DEFER_TAG]
+      with_history(label) { set_tags_impl(item, add, remove) }
     end
 
     # Append a body line at the end of the item's block. Same staleness contract.

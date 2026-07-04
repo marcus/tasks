@@ -68,4 +68,65 @@ class TestApp < Minitest::Test
       assert_equal [["reschedule the flight", "sonnet"]], fake.started
     end
   end
+
+  # -- deferral ----------------------------------------------------------------
+
+  # Build an app on a sandbox gtd.org (optionally a modified fixture), park it
+  # on a given view, and select the row whose item title includes `select`.
+  def app_on(view:, select:, content: FIXTURE_ORG)
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, "gtd.org"), content)
+      app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir),
+                         llm_config: default_llm_config)
+      app.instance_variable_set(:@view, view)
+      app.send(:rows)
+      rws = app.instance_variable_get(:@rows)
+      idx = rws.index { |r| r.item&.title&.include?(select) }
+      raise "no selectable row for #{select.inspect}" unless idx
+      app.instance_variable_set(:@sel, idx)
+      yield app
+    end
+  end
+
+  def row_titles(app)
+    (app.instance_variable_get(:@rows) || []).map { |r| r.item&.title }.compact
+  end
+
+  def test_defer_selected_marks_task_and_hides_it
+    app_on(view: :next, select: "Water the plants") do |app|
+      app.send(:defer_selected)
+      store = app.instance_variable_get(:@store)
+      assert store.items.find { |i| i.title.include?("Water the plants") }.deferred?
+      # hidden by default (show_deferred is off), so it leaves the Next view
+      refute_includes row_titles(app), "Water the plants"
+      assert_match(/deferred/, app.instance_variable_get(:@flash))
+    end
+  end
+
+  def test_toggle_deferred_view_reveals_and_hides
+    deferred = FIXTURE_ORG.sub("Water the plants :@home:", "Water the plants :@home:defer:")
+    app_on(view: :next, select: "Review PR", content: deferred) do |app|
+      refute_includes row_titles(app), "Water the plants", "deferred hidden by default"
+      app.send(:toggle_deferred_view)
+      assert app.instance_variable_get(:@show_deferred)
+      assert_includes row_titles(app), "Water the plants", "Z reveals deferred tasks"
+      app.send(:toggle_deferred_view)
+      refute app.instance_variable_get(:@show_deferred)
+      refute_includes row_titles(app), "Water the plants", "Z again hides them"
+    end
+  end
+
+  def test_defer_selected_reactivates_when_already_deferred
+    deferred = FIXTURE_ORG.sub("Water the plants :@home:", "Water the plants :@home:defer:")
+    app_on(view: :next, select: "Review PR", content: deferred) do |app|
+      app.instance_variable_set(:@show_deferred, true) # so the deferred task is selectable
+      app.send(:rows)
+      idx = app.instance_variable_get(:@rows).index { |r| r.item&.title&.include?("Water the plants") }
+      app.instance_variable_set(:@sel, idx)
+      app.send(:defer_selected)
+      store = app.instance_variable_get(:@store)
+      refute store.items.find { |i| i.title.include?("Water the plants") }.deferred?
+      assert_match(/activated/, app.instance_variable_get(:@flash))
+    end
+  end
 end

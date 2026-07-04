@@ -306,4 +306,61 @@ class TestStore < Minitest::Test
       assert_equal 1, File.read(archive).scan(/# Archived/).size
     end
   end
+
+  # -- set_deferred! (backs `defer`/`activate`) -------------------------------
+
+  def test_set_deferred_adds_defer_tag_and_keeps_state
+    with_store do |store, org, _a|
+      plants = find_item(store, "Water the plants")
+      assert store.set_deferred!(plants, true)
+      assert_match(/^\*\* NEXT Water the plants :@home:defer:$/, File.read(org))
+      fresh = find_item(store, "Water the plants")
+      assert fresh.deferred?
+      assert_equal "NEXT", fresh.state # state is untouched
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_set_deferred_preserves_existing_tags
+    with_store do |store, org, _a|
+      flight = find_item(store, "Book flight")
+      assert store.set_deferred!(flight, true)
+      fresh = find_item(store, "Book flight")
+      assert fresh.deferred?
+      # the pre-existing contexts/tags survive alongside :defer:
+      assert_includes fresh.tags, "@computer"
+      assert_includes fresh.tags, "important"
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_set_deferred_false_removes_defer_tag
+    with_store do |store, org, _a|
+      plants = find_item(store, "Water the plants")
+      store.set_deferred!(plants, true)
+      assert store.set_deferred!(find_item(store, "Water the plants"), false)
+      assert_match(/^\*\* NEXT Water the plants :@home:$/, File.read(org))
+      refute find_item(store, "Water the plants").deferred?
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_set_deferred_is_undoable
+    with_store do |store, org, _a|
+      plants = find_item(store, "Water the plants")
+      store.set_deferred!(plants, true)
+      assert find_item(store, "Water the plants").deferred?
+      assert_equal :ok, store.undo!.first
+      refute find_item(store, "Water the plants").deferred?
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_set_deferred_rejects_stale_line_numbers
+    with_store do |store, _org, _a|
+      stale = find_item(store, "Book flight").dup
+      stale.line = 1
+      refute store.set_deferred!(stale, true)
+    end
+  end
 end

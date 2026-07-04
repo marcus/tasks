@@ -64,6 +64,7 @@ module Tui
       @modal_scroll = 0
       @input  = +""        # prompt buffer
       @filter = nil        # committed filter string (nil = off)
+      @show_deferred = false # Z toggles deferred (someday/maybe) tasks in/out of view
       @filter_input = +""  # filter buffer while typing
       @date_input = +""    # reschedule buffer
       @date_error = nil
@@ -145,6 +146,9 @@ module Tui
 
     def rows
       items = @store.items
+      # Deferred (someday/maybe) tasks stay out of every view until Z reveals
+      # them — one chokepoint so all four tabs agree without each re-checking.
+      items = items.reject(&:deferred?) unless @show_deferred
       if (q = active_filter)
         q = q.downcase
         items = items.select { |i| i.title.downcase.include?(q) }
@@ -163,7 +167,9 @@ module Tui
       tabs = Views::TABS.map do |label, key|
         key == @view ? A.invert(A.bold(" #{label} ")) : A.dim(" #{label} ")
       end.join(" ")
-      count = A.dim("#{@store.items.count(&:open?)} open · #{A.cyan(current_entry.to_s)}#{A.dim(" · ? help")}")
+      open_n = @store.items.count { |i| i.open? && !i.deferred? }
+      deferred_note = @show_deferred ? "#{A.yellow("⏸ deferred shown")} · " : ""
+      count = A.dim("#{open_n} open · #{deferred_note}#{A.cyan(current_entry.to_s)}#{A.dim(" · ? help")}")
       gap = [w - A.vislen(tabs) - A.vislen(count) - 2, 1].max
       " #{tabs}#{" " * gap}#{count} "
     end
@@ -309,6 +315,7 @@ module Tui
       when "\e[6~"         then scroll_modal(5)
       when "c"             then complete_selected
       when "d"             then open_date_popup
+      when "z"             then defer_selected
       when "y"             then yank_ref
       when "Y"             then yank_markdown
       when "K"             then raise_priority
@@ -385,6 +392,39 @@ module Tui
       rows
       @sel = @rows.each_index.find { |i| @rows[i].item&.line == line } || @sel
       clamp_selection
+    end
+
+    # Z reveals/hides deferred (someday/maybe) tasks across every view.
+    def toggle_deferred_view
+      @show_deferred = !@show_deferred
+      rows
+      clamp_selection
+      show_detail if @modal_kind == :detail
+      flash(@show_deferred ? "showing deferred tasks" : "hiding deferred tasks")
+    end
+
+    # z defers the selected task, or reactivates it if it's already deferred —
+    # a snooze toggle on the item itself (distinct from Z, which toggles the view).
+    def defer_selected
+      item = current_item
+      return flash("nothing selected") unless item
+      to_deferred = !item.deferred?
+      if @store.set_deferred!(item, to_deferred)
+        flash(to_deferred ? "⏸ deferred: #{item.title}" : "▸ activated: #{item.title}")
+        # When newly deferred and the view hides deferred, the task leaves the
+        # list — drop any detail modal on it; otherwise follow it in place.
+        if to_deferred && !@show_deferred
+          close_modal if @modal
+          rows
+          clamp_selection
+        else
+          reselect(item.line)
+          refresh_detail_modal(item.line)
+        end
+      else
+        @store.reload!
+        flash("file changed underneath — try again")
+      end
     end
 
     def start_filter

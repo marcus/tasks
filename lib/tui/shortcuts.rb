@@ -18,6 +18,8 @@ module Tui
       Entry.new(seqs: ["c"],          keys: "c",       desc: "complete selected task",           action: :complete_selected),
       Entry.new(seqs: ["d"],          keys: "d",       desc: "reschedule — fri · +3 · 07-15",    action: :open_date_popup),
       Entry.new(seqs: ["x"],          keys: "x",       desc: "archive DONE/CANCELLED items",     action: :archive_sweep),
+      Entry.new(seqs: ["z"],          keys: "z",       desc: "defer / activate selected task",   action: :defer_selected),
+      Entry.new(seqs: ["Z"],          keys: "Z",       desc: "show / hide deferred tasks",       action: :toggle_deferred_view),
       Entry.new(seqs: ["K"],          keys: "K",       desc: "raise priority (→ A)",             action: :raise_priority),
       Entry.new(seqs: ["J"],          keys: "J",       desc: "lower priority (→ none)",          action: :lower_priority),
       Entry.new(seqs: ["y"],          keys: "y",       desc: "yank task ref (paste to agent)",   action: :yank_ref),

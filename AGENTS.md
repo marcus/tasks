@@ -44,6 +44,9 @@ passed to `tasks -p`. Today's date is available from the system.
   - edit tags:        `bin/tasks tag "<ref>" +tag -tag @ctx -@ctx`
   - add a note:       `bin/tasks note "<ref>" "<text>"`
   - move a task:      `bin/tasks move "<ref>" "<Section>"`
+  - defer a task:     `bin/tasks defer "<ref>"`   (someday/maybe; hides it)
+  - reactivate:       `bin/tasks activate "<ref>"`  (undefer/resume)
+  - review deferred:  `bin/tasks list --deferred`
   - inspect a task:   `bin/tasks show "<ref>" [--json]`
   - archive done:     `bin/tasks archive`
   - validate file:    `bin/tasks check` (exit 1 = structural errors)
