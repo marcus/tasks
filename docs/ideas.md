@@ -27,12 +27,15 @@ This is the single most on-philosophy addition. Highest value.
 - **`delete <ref> --force`** — hard-remove a block (no archive). Refuses
   without `--force`; suggests `cancel` instead.
 
-## 3. Recurring tasks
+## 3. Recurring tasks ✅ (done)
 
 Org-mode's native repeaters (`+1w`, `.+1m`, `++1d`). On `done`, instead of
 closing, roll the `SCHEDULED`/`DEADLINE` forward by the interval and keep the
 task open. High value for a personal GTD system (bills, reviews, standups).
-Requires: parse a repeater cookie on the timestamp, and special-case `done`.
+Shipped across CLI (`recur`, `capture --recur`, `list --recurring`, `done`
+rolls forward) and TUI (`r` popup, `↻` badge) — see `docs/plans/recurring-tasks.md`.
+Follow-on parked here: a full per-occurrence completions log (the current
+`- Did [date]` line is a lightweight stand-in).
 
 ## 4. `WAITING` aging
 

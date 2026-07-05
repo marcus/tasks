@@ -52,6 +52,7 @@ bin/tasks retitle "<ref>" "new"      # replace the title; tags/state untouched
 bin/tasks tag "<ref>" +foo -bar @ctx # add/remove tags & contexts (-@ctx removes)
 bin/tasks note "<ref>" "text"        # append a body line under the task
 bin/tasks move "<ref>" "Section"     # relocate the block under a top-level heading
+bin/tasks recur "<ref>" weekly       # repeat on done: weekly/2w/.+1m; "off" clears
 bin/tasks defer "<ref>"              # hide as someday/maybe (adds :defer: tag)
 bin/tasks activate "<ref>"           # bring a deferred task back (undefer/resume)
 bin/tasks archive                    # sweep DONE/CANCELLED to archive.org
@@ -60,6 +61,11 @@ bin/tasks archive                    # sweep DONE/CANCELLED to archive.org
 Deferral is a semantic `:defer:` tag (like `:important:`/`:urgent:`): a deferred
 task keeps its state but drops out of `agenda`/`next`/`quadrants`/`inbox` and the
 default `list` until you `activate` it. Review the backlog with `list --deferred`.
+
+Recurrence is an org repeater cookie on the date stamp (`<2026-08-01 Sat +1m>`).
+`recur "<ref>" weekly` (or `2w`, `.+1m`, `every 3 days`) sets it; `off` clears it.
+Completing a recurring task with `done` rolls its date forward and keeps it open
+(no `CLOSED:`) — use `cancel` to actually stop it. `list --recurring` reviews them.
 
 `capture` flags: `--due <date>`, `--scheduled <date>`, `--priority A|B|C`,
 `--tag t` (repeatable), `--context @x` (repeatable), `--state STATE`,

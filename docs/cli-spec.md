@@ -92,6 +92,22 @@ quadrants view. Deferred tasks retain their state (a deferred `NEXT` is still a
 `defer`/`activate` toggle the tag; `list --deferred` reviews them. The TUI hides
 them too, with `Z` to show/hide and `z` to defer/activate the selected task.
 
+**Recurrence.** A task *recurs* when its `SCHEDULED:`/`DEADLINE:` stamp carries
+an org-mode repeater cookie inside the brackets: `<2026-08-01 Sat +1m>`. The
+prefix sets what the interval is measured from on completion — `+` fixed (stored
+date + interval, one hop), `++` catch-up (repeated until strictly future), `.+`
+from-completion (today + interval) — and the suffix is a count plus a unit
+(`d`/`w`/`m`/`y`; months/years step by calendar with day-clamp, so Jan 31 `+1m`
+→ Feb 28). Completing a recurring task (`done`, or `state … DONE`) rolls its
+date forward and **leaves it open** instead of adding `CLOSED:`; it logs a
+`- Did [date]` line since the task never closes. `cancel` still truly closes it
+(stopping the recurrence). `recur <ref> <interval>` sets/replaces the cookie
+(bare intervals like `weekly`/`2w`/`every 3 days` default to `.+`; `--from
+schedule` uses `+`); `recur <ref> off` clears it; `list --recurring` reviews
+them. Dating commands (`due`/`schedule`/`reschedule`) preserve an existing
+cookie. In the TUI, `r` opens a recurrence popup on the selected task, a `↻`
+badge marks recurring tasks, and completing one rolls it forward in place.
+
 **Output.** Human-readable by default. Read commands and mutations accept
 `--json`; shapes below. Mutations always print (or return in JSON) the full
 new headline of every task they touched, so the agent can verify the result
@@ -109,30 +125,31 @@ would change and writes nothing.
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `list [filters]` | `l` | ✅ | All tasks grouped by state. Filters compose: `@context`, `+tag`, `/text` or bare word, `-A/-B/-C`, scope `--open/-o` (default) `--done/-d` `--archived/-x` `--all/-a`. Deferred tasks are hidden from the default open scope; `--deferred/-D` lists only them (a someday/maybe review). `--json` |
+| `list [filters]` | `l` | ✅ | All tasks grouped by state. Filters compose: `@context`, `+tag`, `/text` or bare word, `-A/-B/-C`, scope `--open/-o` (default) `--done/-d` `--archived/-x` `--all/-a`. Deferred tasks are hidden from the default open scope; `--deferred/-D` lists only them (a someday/maybe review); `--recurring/-R` lists only tasks with a repeater. `--json` |
 | `agenda` | `a` | ✅ | Dated items, soonest first. `--json` |
 | `next` | `n` | ✅ | NEXT actions by context. `--json` |
 | `quadrants` | `q` | ✅ | Covey 2×2 from priority (A/B ⇒ important) + a `DEADLINE` within `urgent_days` (default 3, overdue counts) ⇒ urgent, with `important`/`urgent` tags as overrides. `--json` adds `quadrant`. |
 | `inbox` | `i` | ✅ | Unprocessed INBOX items. `--json` |
-| `show <ref>` | `s` | ✅ | One task in full: headline fields + body/notes. `--json` shape: `{state, priority, title, tags, contexts, scheduled, deadline, closed, line, notes: [..]}` |
+| `show <ref>` | `s` | ✅ | One task in full: headline fields + body/notes. `--json` shape: `{state, priority, title, tags, contexts, scheduled, deadline, recur, closed, line, notes: [..]}` |
 | `check [--json]` | `k` | ✅ | Validate gtd.org structure. Exit 1 if errors. Run after any direct file edit. |
 
 JSON list shape (`--json` on list/agenda/next/quadrants/inbox) — a flat array,
 already sorted the way the text view sorts:
-`[{"state": "NEXT", "priority": "A", "title": "…", "tags": [..], "contexts": [..], "scheduled": null, "deadline": "2026-07-02", "line": 17, "source": "org", "headline": "** NEXT …"}]`
+`[{"state": "NEXT", "priority": "A", "title": "…", "tags": [..], "contexts": [..], "scheduled": null, "deadline": "2026-07-02", "recur": null, "line": 17, "source": "org", "headline": "** NEXT …"}]`
+(`recur` is the repeater cookie string, e.g. `".+1w"`, or `null`.)
 `quadrants --json` adds `"quadrant": "Q1".."Q4"` per item. Empty result → `[]`.
 
 ## Create
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `capture "text"` | `add`, `c` | ✅ | New INBOX item. Flags: `--due <date>`, `--scheduled <date>`, `--priority A\|B\|C`, `--tag t` (repeatable), `--context @x` (repeatable), `--state STATE`, `--project "Heading"`, plus `--dry-run`/`--json`. A capture with a date lands already-processed as TODO (override with `--state`); `--project` files it under that top-level heading (default: Inbox). |
+| `capture "text"` | `add`, `c` | ✅ | New INBOX item. Flags: `--due <date>`, `--scheduled <date>`, `--priority A\|B\|C`, `--tag t` (repeatable), `--context @x` (repeatable), `--state STATE`, `--project "Heading"`, `--recur <interval>`, plus `--dry-run`/`--json`. A capture with a date lands already-processed as TODO (override with `--state`); `--recur` implies a date (defaults to scheduling it today) and lands it repeating; `--project` files it under that top-level heading (default: Inbox). |
 
 ## Update (all take `<ref>`, all support `--dry-run`)
 
 | Command | Alias/synonyms | Status | Description |
 |---|---|---|---|
-| `done <ref>` | `complete`, `close`, `d` | ✅ | Mark DONE + `CLOSED:` stamp. |
+| `done <ref>` | `complete`, `close`, `d` | ✅ | Mark DONE + `CLOSED:` stamp. A recurring task (repeater cookie on its date) rolls forward and stays open instead — output shows `↻ <title> → next <date>`. |
 | `cancel <ref>` | `drop` | ✅ | Mark CANCELLED + `CLOSED:` stamp. |
 | `state <ref> <STATE>` | `mv` | ✅ | Any state transition (INBOX/TODO/NEXT/WAITING/DONE/CANCELLED). Enforces: entering DONE/CANCELLED adds `CLOSED:`; leaving them removes it. Resolves refs across open *and* closed tasks so you can reopen a DONE item. |
 | `due <ref> <date>` | `deadline`, `reschedule` | ✅ | Set/replace DEADLINE. INBOX items promote to TODO. |
@@ -143,6 +160,7 @@ already sorted the way the text view sorts:
 | `tag <ref> +foo -bar @ctx -@old` | | ✅ | Add/remove tags and contexts in one call. `+t`/`@ctx` add, `-t`/`-@ctx` remove. |
 | `note <ref> "text"` | | ✅ | Append a body line under the task. |
 | `move <ref> "Section"` | | ✅ | Relocate the whole block under another top-level heading (e.g. out of `* Inbox` into `* Work`). Section matched case-insensitively (exact, then substring). |
+| `recur <ref> <interval>` | `repeat`, `every` | ✅ | Attach/replace a repeater on the task's date stamp. `<interval>`: a cookie (`.+1w`/`+2d`/`++1m`) or friendly form (`weekly`/`daily`/`monthly`/`yearly`/`2w`/`every 3 days`); `off`/`none` clears it. `--from schedule\|completion` picks `+`/`.+` for a bare interval (default `completion` → `.+`). `--on <date>` seeds a `DEADLINE` when the task has no date yet (else it errors). `--dry-run`/`--json`. |
 | `defer <ref>` | `snooze` | ✅ | Mark a task deferred (someday/maybe) by adding a semantic `defer` tag. Deferred tasks keep their state but drop out of `agenda`/`next`/`quadrants`/`inbox` and the default `list` until reactivated. Idempotent. |
 | `activate <ref>` | `undefer`, `resume` | ✅ | Clear the `defer` tag, returning the task to the active views. Resolves deferred (open) tasks. |
 

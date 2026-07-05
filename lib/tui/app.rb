@@ -58,7 +58,7 @@ module Tui
       @agent_provider = current_entry.provider
       @view   = :agenda
       @sel    = 0
-      @mode   = :list      # :list | :prompt | :date | :modal
+      @mode   = :list      # :list | :prompt | :date | :recur | :modal
       @modal  = nil        # { title:, lines: } while a modal is open
       @modal_kind = nil    # :help | :detail
       @modal_scroll = 0
@@ -68,6 +68,8 @@ module Tui
       @filter_input = +""  # filter buffer while typing
       @date_input = +""    # reschedule buffer
       @date_error = nil
+      @recur_input = +""   # recurrence-interval buffer
+      @recur_error = nil
       @resp   = nil        # wrapped response lines
       @resp_open = false
       @resp_scroll = 0
@@ -138,7 +140,7 @@ module Tui
         header: header(width - 2),
         rows: rows, selected: @mode == :prompt ? nil : @sel,
         footer: foot,
-        popup: @mode == :date ? date_popup : nil,
+        popup: current_popup,
         modal: @modal && scrolled_modal(height - 5 - foot.size)
       )
       print "\e[H" + lines.join("\e[K\r\n") + "\e[K"
@@ -218,6 +220,15 @@ module Tui
       end
     end
 
+    # The popup layered over the list right now: reschedule (:date) or
+    # recurrence (:recur), or none.
+    def current_popup
+      case @mode
+      when :date  then date_popup
+      when :recur then recur_popup
+      end
+    end
+
     def date_popup
       item = current_item
       return nil unless item
@@ -229,6 +240,22 @@ module Tui
       ]
       pw = [inner.map { |l| A.vislen(l) }.max + 2, 36].max
       lines = ["┌ reschedule #{"─" * (pw - 14)}┐"]
+      inner.each { |l| lines << "│#{A.vpad(l, pw - 2)}│" }
+      lines << "└#{"─" * (pw - 2)}┘"
+      { lines: lines, row: sel_screen_row + 1, col: 8 }
+    end
+
+    def recur_popup
+      item = current_item
+      return nil unless item
+      cur = item.recur ? "now #{item.recur}" : "not repeating"
+      hint = @recur_error || "weekly · 2w · .+1m · off · esc cancels"
+      inner = [
+        " every: #{A.bold(@recur_input)}#{A.invert(" ")}  #{A.dim("(#{cur})")}",
+        " #{@recur_error ? A.red(hint) : A.dim(hint)}",
+      ]
+      pw = [inner.map { |l| A.vislen(l) }.max + 2, 40].max
+      lines = ["┌ recur #{"─" * (pw - 9)}┐"]
       inner.each { |l| lines << "│#{A.vpad(l, pw - 2)}│" }
       lines << "└#{"─" * (pw - 2)}┘"
       { lines: lines, row: sel_screen_row + 1, col: 8 }
@@ -270,6 +297,7 @@ module Tui
       case @mode
       when :prompt then prompt_key(k)
       when :date   then date_key(k)
+      when :recur  then recur_key(k)
       when :modal  then modal_key(k)
       when :filter then filter_key(k)
       else              list_key(k)
@@ -315,6 +343,7 @@ module Tui
       when "\e[6~"         then scroll_modal(5)
       when "c"             then complete_selected
       when "d"             then open_date_popup
+      when "r"             then open_recur_popup
       when "z"             then defer_selected
       when "y"             then yank_ref
       when "Y"             then yank_markdown
@@ -348,6 +377,20 @@ module Tui
         if k =~ /[[:print:]]/
           @date_input << k
           @date_error = nil
+        end
+      end
+    end
+
+    def recur_key(k)
+      case k
+      when "\e"       then close_recur_popup
+      when "\r", "\n" then submit_recur
+      when "", "\b" then @recur_input.chop!
+      when ""   then @quit = true
+      else
+        if k =~ /[[:print:]]/
+          @recur_input << k
+          @recur_error = nil
         end
       end
     end
@@ -588,9 +631,19 @@ module Tui
       item = current_item
       return flash("nothing selected") unless item
       return flash("already #{item.state}") unless item.open?
+      recurring = item.recurring?
       if @store.complete!(item)
-        flash("✓ DONE: #{item.title} — x to archive")
-        close_modal if @modal # the task just left the open view behind it
+        if recurring
+          # A recurring task rolled forward and is still in the view — follow it.
+          fresh = @store.items.find { |i| i.line == item.line }
+          d = fresh && (fresh.deadline || fresh.scheduled)
+          flash("↻ #{item.title}#{d ? " → #{d.iso8601} (#{d.strftime("%a")})" : ""}")
+          reselect(item.line)
+          refresh_detail_modal(item.line)
+        else
+          flash("✓ DONE: #{item.title} — x to archive")
+          close_modal if @modal # the task just left the open view behind it
+        end
       else
         @store.reload!
         flash("file changed underneath — try again")
@@ -627,6 +680,39 @@ module Tui
       else
         @store.reload!
         @date_error = "file changed underneath — reopen"
+      end
+    end
+
+    # r opens the recurrence popup on the selected task, pre-filled with its
+    # current cookie. Recurrence rides a date stamp, so a task with no date
+    # can't repeat — flash and refuse rather than open a popup that must fail.
+    def open_recur_popup
+      item = current_item
+      return flash("nothing selected") unless item
+      return flash("schedule it first — recurrence needs a date") unless item.scheduled || item.deadline
+      @recur_input = (item.recur || "").dup
+      @recur_error = nil
+      @mode = :recur
+    end
+
+    def close_recur_popup
+      @mode = @modal ? :modal : :list
+      @recur_input = +""
+      @recur_error = nil
+    end
+
+    def submit_recur
+      item = current_item
+      cookie = Tasks::Recur.parse_interval(@recur_input)
+      return @recur_error = "can't parse “#{@recur_input}”" if cookie.nil?
+      if @store.set_recur!(item, cookie)
+        flash(cookie == :off ? "↻ off: #{item.title}" : "↻ #{cookie}: #{item.title}")
+        close_recur_popup
+        reselect(item.line)
+        refresh_detail_modal(item.line)
+      else
+        @store.reload!
+        @recur_error = "file changed underneath — reopen"
       end
     end
 

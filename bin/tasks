@@ -21,6 +21,7 @@
 #   bin/tasks tag <ref> +t -t @ctx -@ctx   add/remove tags and contexts
 #   bin/tasks note <ref> "text"            append a body line under the task
 #   bin/tasks move <ref> "Section"         relocate the block under a heading
+#   bin/tasks recur <ref> <interval|off>   repeat on done (weekly, 2w, .+1m; off clears)
 #   bin/tasks defer|snooze <ref>           hide a task (someday/maybe)
 #   bin/tasks activate <ref>  bring a deferred task back (undefer/resume)
 #   bin/tasks show|s <ref>    show one task in full (headline + notes)
@@ -170,7 +171,7 @@ def cmd_capture(args)
   require_relative "../lib/tasks/dates"
   tags = []
   contexts = []
-  due = scheduled = priority = state = project = nil
+  due = scheduled = priority = state = project = recur = nil
   dry = json = false
   positional = []
   i = 0
@@ -185,6 +186,7 @@ def cmd_capture(args)
     when "--context", "--ctx"     then contexts << need.(a)
     when "--state"                then state = need.(a)
     when "--project"              then project = need.(a)
+    when "--recur", "--repeat"    then recur = need.(a)
     when "--dry-run"              then dry = true
     when "--json"                 then json = true
     when /\A--/                   then abort "unknown flag: #{a}"
@@ -194,6 +196,15 @@ def cmd_capture(args)
   end
   text = positional.join(" ").strip.force_encoding("UTF-8")
   abort CAPTURE_USAGE if text.empty?
+
+  cookie = nil
+  if recur
+    require_relative "../lib/tasks/recur"
+    cookie = Tasks::Recur.parse_interval(recur)
+    abort "unrecognized interval: #{recur} (try weekly, 2w, .+1m)" if cookie.nil? || cookie == :off
+    # A recurrence needs a date to repeat; default to scheduling it today.
+    scheduled ||= "today" unless due
+  end
 
   due_date = due && (Tasks::Dates.parse_when(due) || abort("unrecognized date: #{due}"))
   scheduled_date = scheduled && (Tasks::Dates.parse_when(scheduled) || abort("unrecognized date: #{scheduled}"))
@@ -205,6 +216,7 @@ def cmd_capture(args)
   st = state&.upcase || ((due_date || scheduled_date) ? "TODO" : "INBOX")
   valid = OPEN_STATES + DONE_STATES
   abort "unknown state: #{st} (want one of #{valid.join(", ")})" unless valid.include?(st)
+  abort "can't set recurrence on a #{st} task" if cookie && DONE_STATES.include?(st)
 
   # Contexts are tags that start with "@"; list them before plain tags.
   all_tags = contexts.map { |c| c.start_with?("@") ? c : "@#{c}" } + tags
@@ -214,6 +226,7 @@ def cmd_capture(args)
     head << "[##{pri}] " if pri
     head << text
     head << " :#{all_tags.join(":")}:" unless all_tags.empty?
+    head << " (recur #{cookie})" if cookie
     puts "would capture under #{project || "Inbox"}: #{head}"
     return
   end
@@ -221,6 +234,10 @@ def cmd_capture(args)
   line = store.capture!(text, due: due_date, scheduled: scheduled_date,
                         priority: pri, tags: all_tags, state: st, project: project)
   abort "could not capture (no '* #{project || "Inbox"}' section found?)" unless line && line.positive?
+  if cookie
+    item = store.items.find { |i| i.line == line }
+    abort "failed to set recurrence on the new item" unless item && store.set_recur!(item, cookie)
+  end
   report_touched(line, json: json)
 end
 
@@ -230,7 +247,7 @@ end
 # Store#set_state! (which stamps/clears CLOSED). `resolve_closed:` widens ref
 # resolution to closed tasks — always for `state` (so you can reopen a DONE
 # item), on demand elsewhere via --include-done.
-def change_state(args, usage:, resolve_closed:, to: nil, dry_verb: nil, archive_hint: false)
+def change_state(args, usage:, resolve_closed:, to: nil, dry_verb: nil, archive_hint: false, recur_aware: false)
   flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
   ref = rest.shift
   target = to || rest.join(" ").strip.upcase
@@ -239,20 +256,40 @@ def change_state(args, usage:, resolve_closed:, to: nil, dry_verb: nil, archive_
   abort "unknown state: #{target} (want one of #{valid.join(", ")})" unless valid.include?(target)
 
   item = resolve_ref(ref, include_done: resolve_closed || flags["--include-done"])
+  # Completing a recurring task rolls its date forward and keeps it open — a
+  # different verb (and no archive hint) than closing a one-shot task.
+  recurring_done = recur_aware && target == "DONE" && item.recurring?
   if flags["--dry-run"]
-    puts "would #{dry_verb || "set state #{target} on"}: #{item_headline(item)}"
+    if recurring_done
+      puts "would recur → #{recur_next(item).iso8601}: #{item_headline(item)}"
+    else
+      puts "would #{dry_verb || "set state #{target} on"}: #{item_headline(item)}"
+    end
     return
   end
   abort "failed to set state (file changed underfoot?)" unless store.set_state!(item, target)
+  if recurring_done && !flags["--json"]
+    fresh = store.items.find { |i| i.line == item.line }
+    d = fresh && (fresh.deadline || fresh.scheduled)
+    puts "↻ #{item.title}#{d ? " → next #{d.iso8601} (#{d.strftime("%a")})" : ""}"
+  end
   report_touched(item.line, json: flags["--json"])
-  puts "Run `tasks archive` to move it out of gtd.org." if archive_hint && !flags["--json"]
+  puts "Run `tasks archive` to move it out of gtd.org." if archive_hint && !recurring_done && !flags["--json"]
+end
+
+# The date a recurring item's next occurrence would land on, from its precedence
+# stamp (DEADLINE over SCHEDULED, matching the Store). For `done` preview output.
+def recur_next(item)
+  require_relative "../lib/tasks/recur"
+  base = item.deadline || item.scheduled
+  Tasks::Recur.next_date(item.recur, from: base)
 end
 
 # `done` and `cancel` are sugar for the DONE/CANCELLED transitions; they resolve
 # open tasks only (a closed task needs `state` to reopen or re-close it).
 def cmd_done(args)
   change_state(args, to: "DONE", usage: %(tasks done "<ref>"),
-               resolve_closed: false, dry_verb: "mark DONE", archive_hint: true)
+               resolve_closed: false, dry_verb: "mark DONE", archive_hint: true, recur_aware: true)
 end
 
 def cmd_cancel(args)
@@ -296,6 +333,7 @@ def item_json(item)
     tags: item.tags.reject { |t| t.start_with?("@") },
     contexts: contexts(item),
     scheduled: item.scheduled&.iso8601, deadline: item.deadline&.iso8601,
+    recur: item.recur,
     line: item.line, source: item.source, headline: item_headline(item),
   }
 end
@@ -430,6 +468,7 @@ def cmd_show(args)
     puts item_headline(item)
     puts "  scheduled: #{item.scheduled.iso8601}" if item.scheduled
     puts "  deadline:  #{item.deadline.iso8601}" if item.deadline
+    puts "  recur:     #{item.recur} #{dim("(#{recur_summary(item.recur)})")}" if item.recur
     puts "  closed:    #{closed}" if closed
     notes.each { |n| puts "  #{n}" }
   end
@@ -438,8 +477,9 @@ end
 def cmd_state(args)
   usage = "tasks state <ref> <#{(OPEN_STATES + DONE_STATES).join("|")}>"
   # resolve_closed: true — a state change may need to find (and reopen) a
-  # closed item, e.g. `state <ref> TODO`.
-  change_state(args, usage: usage, resolve_closed: true)
+  # closed item, e.g. `state <ref> TODO`. recur_aware: DONE on a recurring task
+  # rolls it forward (same as `done`), so the preview/output must say so.
+  change_state(args, usage: usage, resolve_closed: true, recur_aware: true)
 end
 
 def cmd_retitle(args)
@@ -516,6 +556,91 @@ def cmd_defer(args, deferred:, usage:, verb:)
   report_touched(item.line, json: flags["--json"])
 end
 
+# Human-readable gloss of a repeater cookie, e.g. ".+1w" → "every 1 week, from
+# completion". Used by `show` and `recur` output.
+def recur_summary(cookie)
+  m = cookie.to_s.match(/\A(\.\+|\+\+|\+)(\d+)([dwmy])\z/)
+  return cookie unless m
+  unit = { "d" => "day", "w" => "week", "m" => "month", "y" => "year" }[m[3]]
+  n = m[2].to_i
+  anchor = { ".+" => "from completion", "+" => "fixed", "++" => "catch-up" }[m[1]]
+  "every #{n} #{unit}#{n == 1 ? "" : "s"}, #{anchor}"
+end
+
+# Attach/replace/clear a recurrence repeater on a task's date stamp. On `done`,
+# a recurring task rolls its date forward and stays open instead of closing.
+# `<interval>`: a cookie (.+1w/+2d/++1m) or friendly form (weekly/2w/every 3 days),
+# or `off` to clear. --from schedule|completion picks +/.+ for a bare interval;
+# --on <date> seeds a stamp when the task has no date yet.
+def cmd_recur(args)
+  require_relative "../lib/tasks/dates"
+  require_relative "../lib/tasks/recur"
+  args = args.dup
+
+  from = extract_value(args, "--from")
+  abort "--from must be schedule or completion" unless from.nil? || %w[schedule completion].include?(from)
+  on = extract_value(args, "--on")
+  on_date = on && (Tasks::Dates.parse_when(on) || abort("unrecognized date: #{on}"))
+
+  flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
+  ref = rest.shift
+  interval = rest.join(" ").strip
+  abort %(usage: tasks recur <ref> <weekly|2w|.+1m|off> [--from schedule|completion] [--on <date>]) if ref.nil? || ref.strip.empty? || interval.empty?
+
+  default_prefix = from == "schedule" ? "+" : ".+"
+  cookie = Tasks::Recur.parse_interval(interval, default_prefix: default_prefix)
+  abort "unrecognized interval: #{interval} (try weekly, 2w, every 3 days, .+1m, or off)" if cookie.nil?
+
+  item = resolve_ref(ref, include_done: flags["--include-done"])
+  # A closed task with a live repeater is dead recurrence: `done` can't reach it
+  # to roll it. Refuse to create one (clearing with `off` is always fine).
+  if cookie != :off && DONE_STATES.include?(item.state)
+    abort "can't set recurrence on a #{item.state} task — reopen it first"
+  end
+  has_date = item.scheduled || item.deadline
+  if cookie != :off && !has_date && on_date.nil?
+    abort "“#{item.title}” has no date to repeat — add --on <date>, or schedule/`due` it first"
+  end
+  # Clearing recurrence from a task that has no date (so can't be recurring) is
+  # a harmless no-op, not an error.
+  noop_off = cookie == :off && !has_date
+
+  if flags["--dry-run"]
+    desc =
+      if noop_off        then "leave unchanged (no recurrence set)"
+      elsif cookie == :off then "clear recurrence"
+      else                    "set recurrence #{cookie} (#{recur_summary(cookie)})"
+      end
+    desc += ", seeding DEADLINE <#{on_date.iso8601}>" if on_date && !has_date
+    puts "would #{desc} on: #{item_headline(item)}"
+    return
+  end
+
+  if noop_off
+    report_touched(item.line, json: flags["--json"])
+    return
+  end
+  if on_date && !has_date
+    abort "failed to seed date (file changed underfoot?)" unless store.set_date!(item, on_date, kind: :deadline)
+    item = store.items.find { |i| i.line == item.line } or abort "lost the task after dating it"
+  end
+  abort "failed to set recurrence (no date stamp, or file changed underfoot?)" unless store.set_recur!(item, cookie)
+  report_touched(item.line, json: flags["--json"])
+end
+
+# Pull `--flag value` out of args in place, returning the value (or nil). Aborts
+# if the flag is present without a following value. For value flags that
+# take_flags (boolean-only) can't handle.
+def extract_value(args, flag)
+  idx = args.index(flag)
+  return nil unless idx
+  val = args[idx + 1]
+  abort "missing value for #{flag}" if val.nil? || val.start_with?("--")
+  args.delete_at(idx + 1)
+  args.delete_at(idx)
+  val
+end
+
 def cmd_move(args)
   flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
   ref = rest.shift
@@ -549,6 +674,7 @@ def cmd_list(args)
   scope    = :open
   json     = false
   deferred_only = false
+  recurring_only = false
   contexts_f = []
   tags_f     = []
   priority_f = nil
@@ -560,6 +686,7 @@ def cmd_list(args)
     when "--archived", "-x" then scope = :archived
     when "--all", "-a"      then scope = :all
     when "--deferred", "-D" then deferred_only = true
+    when "--recurring", "-R" then recurring_only = true
     when "--json"           then json = true
     when /\A-([ABC])\z/     then priority_f = $1
     when /\A@/              then contexts_f << a
@@ -597,6 +724,7 @@ def cmd_list(args)
     states.include?(i.state) &&
       (scope != :done || i.source == :org) &&
       defer_ok.call(i) &&
+      (!recurring_only || i.recurring?) &&
       (priority_f.nil? || i.priority == priority_f) &&
       contexts_f.all? { |c| i.tags.include?(c) } &&
       tags_f.all?     { |t| i.tags.include?(t) } &&
@@ -619,7 +747,8 @@ def cmd_list(args)
       due = short_due(i)
       arch = i.source == :archive ? dim("  (archived)") : ""
       defr = i.deferred? ? dim("  (deferred)") : ""
-      puts "  #{fmt(i)}#{due.empty? ? "" : "  #{due}"}#{defr}#{arch}"
+      recr = i.recur ? dim("  ↻#{i.recur}") : ""
+      puts "  #{fmt(i)}#{due.empty? ? "" : "  #{due}"}#{recr}#{defr}#{arch}"
     end
     puts
   end
@@ -727,16 +856,17 @@ HELP = <<~USAGE
     inbox     i              unprocessed INBOX items
     list      l [filters]    tasks by state. Filters: @context /text +tag -A|-B|-C
                              Scope: --open/-o (default) --done/-d --archived/-x --all/-a
-                             --deferred/-D lists only deferred (someday/maybe) tasks
+                             --deferred/-D someday/maybe · --recurring/-R repeating tasks
     show      s <ref>        one task in full (headline + notes)
     check     k              validate gtd.org structure
 
   Capture:
     capture   c "text"       new item. Flags: --due --scheduled --priority
-                             --tag --context --state --project
+                             --tag --context --state --project --recur
 
   Update (take <ref>; support --dry-run/--json/--include-done):
-    done      d <ref>        mark DONE               (aka complete, close)
+    done      d <ref>        mark DONE — or roll a recurring task forward
+                                                     (aka complete, close)
     cancel      <ref>        mark CANCELLED          (aka drop)
     state     mv <ref> <STATE>       any state transition
     due          <ref> <date>        set/replace DEADLINE   (aka deadline, reschedule)
@@ -747,6 +877,8 @@ HELP = <<~USAGE
     tag          <ref> +t -t @ctx -@ctx   add/remove tags and contexts
     note         <ref> "text"        append a body line
     move         <ref> "Section"     relocate the block under a heading
+    recur repeat <ref> <interval>    repeat on done: weekly · 2w · .+1m · off
+                                     --from schedule|completion · --on <date>
     defer   snooze <ref>             hide a task (someday/maybe)
     activate       <ref>             bring a deferred task back (undefer, resume)
 
@@ -789,6 +921,7 @@ when "retitle", "rename" then cmd_retitle(ARGV[1..])
 when "tag"            then cmd_tag(ARGV[1..])
 when "note"           then cmd_note(ARGV[1..])
 when "move"           then cmd_move(ARGV[1..])
+when "recur", "repeat", "every" then cmd_recur(ARGV[1..])
 when "defer", "snooze" then cmd_defer(ARGV[1..], deferred: true,
                                       usage: "tasks defer <ref>", verb: "defer")
 when "activate", "undefer", "resume" then cmd_defer(ARGV[1..], deferred: false,

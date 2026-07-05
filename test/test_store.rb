@@ -388,4 +388,234 @@ class TestStore < Minitest::Test
       assert Tasks::Check.check(org).ok?
     end
   end
+
+  # -- recurrence ------------------------------------------------------------
+
+  RECUR_ORG = <<~ORG
+    * Work
+    ** NEXT Pay rent :@home:
+       DEADLINE: <2026-08-01 Sat +1m>
+    ** TODO Weekly review :@computer:
+       SCHEDULED: <2026-06-20 Sat .+1w>
+    ** NEXT Plain dated task
+       DEADLINE: <2026-07-02 Thu>
+    ** TODO No date task
+  ORG
+
+  def with_recur_store
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "gtd.org")
+      File.write(org, RECUR_ORG)
+      yield Tasks::Store.new(org: org, archive: File.join(dir, "archive.org")), org
+    end
+  end
+
+  def test_parse_reads_repeater_cookie
+    with_recur_store do |store, _org|
+      assert_equal "+1m", find_item(store, "Pay rent").recur
+      assert find_item(store, "Pay rent").recurring?
+      assert_equal ".+1w", find_item(store, "Weekly review").recur
+      assert_nil find_item(store, "Plain dated task").recur
+      refute find_item(store, "Plain dated task").recurring?
+    end
+  end
+
+  def test_set_recur_attaches_cookie_preserving_date_and_dayname
+    with_recur_store do |store, org|
+      assert store.set_recur!(find_item(store, "Plain dated task"), ".+2w")
+      assert_match(/DEADLINE: <2026-07-02 Thu \.\+2w>/, File.read(org))
+      assert_equal ".+2w", find_item(store, "Plain dated task").recur
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_set_recur_off_removes_cookie
+    with_recur_store do |store, org|
+      assert store.set_recur!(find_item(store, "Pay rent"), :off)
+      assert_match(/DEADLINE: <2026-08-01 Sat>/, File.read(org))
+      refute_match(/\+1m/, File.read(org))
+      assert_nil find_item(store, "Pay rent").recur
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_set_recur_rides_scheduled_when_no_deadline
+    with_recur_store do |store, org|
+      review = find_item(store, "Weekly review")
+      assert store.set_recur!(review, "+3d")
+      assert_match(/SCHEDULED: <2026-06-20 Sat \+3d>/, File.read(org))
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_set_recur_on_undated_task_returns_false
+    with_recur_store do |store, org|
+      before = File.read(org)
+      refute store.set_recur!(find_item(store, "No date task"), ".+1w")
+      assert_equal before, File.read(org)
+    end
+  end
+
+  def test_set_recur_rejects_stale_line
+    with_recur_store do |store, _org|
+      stale = find_item(store, "Plain dated task").dup
+      stale.line = 1
+      refute store.set_recur!(stale, ".+1w")
+    end
+  end
+
+  def test_complete_recurring_rolls_forward_and_stays_open
+    with_recur_store do |store, org|
+      rent = find_item(store, "Pay rent")
+      assert store.complete!(rent)
+      fresh = find_item(store, "Pay rent")
+      assert_equal "NEXT", fresh.state, "recurring task stays open"
+      # +1m fixed hop from the stored 2026-08-01
+      assert_equal Date.new(2026, 9, 1), fresh.deadline
+      assert_equal "+1m", fresh.recur, "cookie is retained"
+      refute_match(/CLOSED:/, File.read(org), "recurring completion adds no CLOSED stamp")
+      refute_match(/DONE/, File.read(org))
+      assert_match(/- Did \[#{Date.today}\]/, File.read(org), "logs the occurrence")
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_complete_recurring_from_completion_uses_today
+    with_recur_store do |store, org|
+      review = find_item(store, "Weekly review") # .+1w
+      assert store.complete!(review)
+      assert_equal Date.today + 7, find_item(store, "Weekly review").scheduled
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_done_via_set_state_also_rolls_recurring
+    with_recur_store do |store, org|
+      rent = find_item(store, "Pay rent")
+      assert store.set_state!(rent, "DONE")
+      assert_equal "NEXT", find_item(store, "Pay rent").state
+      assert_equal Date.new(2026, 9, 1), find_item(store, "Pay rent").deadline
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cancel_recurring_truly_closes
+    with_recur_store do |store, org|
+      rent = find_item(store, "Pay rent")
+      assert store.set_state!(rent, "CANCELLED")
+      assert_equal "CANCELLED", find_item(store, "Pay rent").state
+      assert_match(/CLOSED:/, File.read(org))
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_complete_non_recurring_still_closes
+    with_recur_store do |store, org|
+      plain = find_item(store, "Plain dated task")
+      assert store.complete!(plain)
+      assert_equal "DONE", find_item(store, "Plain dated task").state
+      assert_match(/CLOSED: \[#{Date.today}\]/, File.read(org))
+    end
+  end
+
+  def test_complete_recurring_is_undoable
+    with_recur_store do |store, org|
+      before = File.read(org)
+      store.complete!(find_item(store, "Pay rent"))
+      refute_equal before, File.read(org)
+      store.undo!
+      assert_equal before, File.read(org)
+      assert_equal "+1m", find_item(store, "Pay rent").recur
+    end
+  end
+
+  # A recurring parent's roll-forward must stay within the parent's own lines —
+  # a deeper child subheading's stamp must not be touched (parse_file binds a
+  # stamp to its immediate headline; the mutation must agree).
+  def test_complete_recurring_parent_does_not_touch_child_stamp
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "gtd.org")
+      File.write(org, <<~ORG)
+        * W
+        ** NEXT Parent
+           SCHEDULED: <2026-07-01 Wed +1w>
+        *** NEXT Child
+           SCHEDULED: <2026-07-02 Thu +1d>
+      ORG
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.org"))
+      assert store.complete!(store.items.find { |i| i.title == "Parent" })
+      body = File.read(org)
+      assert_match(/Parent\n   SCHEDULED: <2026-07-08 Wed \+1w>/, body, "parent rolled")
+      assert_match(/Child\n   SCHEDULED: <2026-07-02 Thu \+1d>/, body, "child untouched")
+      # the completion log sits under the parent, before the child
+      assert_match(/\+1w>\n   - Did \[#{Date.today}\]\.\n\*\*\* NEXT Child/, body)
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_set_recur_on_parent_does_not_attach_to_child
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "gtd.org")
+      File.write(org, <<~ORG)
+        * W
+        ** NEXT Parent
+           SCHEDULED: <2026-07-01 Wed>
+        *** NEXT Child
+           DEADLINE: <2026-09-01 Tue>
+      ORG
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.org"))
+      assert store.set_recur!(store.items.find { |i| i.title == "Parent" }, "+1w")
+      body = File.read(org)
+      assert_match(/Parent\n   SCHEDULED: <2026-07-01 Wed \+1w>/, body)
+      assert_match(/DEADLINE: <2026-09-01 Tue>\n/, body, "child DEADLINE untouched")
+    end
+  end
+
+  # A bracket without an ISO date (an org diary/sexp timestamp) can't be rolled;
+  # set_recur! must return false, not crash on Date.parse(nil).
+  def test_set_recur_on_dateless_bracket_returns_false
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "gtd.org")
+      File.write(org, "* W\n** NEXT Weird\n   DEADLINE: <%%(diary-float t 4 2)>\n")
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.org"))
+      before = File.read(org)
+      refute store.set_recur!(store.items.find { |i| i.title == "Weird" }, ".+1w")
+      assert_equal before, File.read(org)
+    end
+  end
+
+  # A hand-edited zero-count cookie (++0d) must not be treated as a repeater —
+  # a catch-up roll on a zero interval would never terminate. It parses as a
+  # plain date instead, so completing it just closes the task.
+  def test_zero_count_cookie_is_not_a_repeater
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "gtd.org")
+      File.write(org, "* W\n** NEXT Rent\n   DEADLINE: <2020-01-01 Wed ++0d>\n")
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.org"))
+      rent = store.items.find { |i| i.title == "Rent" }
+      refute rent.recurring?, "++0d must not register as recurrence"
+      assert store.complete!(rent)
+      assert_equal "DONE", store.items.find { |i| i.title == "Rent" }.state
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_set_date_preserves_repeater_cookie
+    with_recur_store do |store, org|
+      rent = find_item(store, "Pay rent") # +1m
+      assert store.set_date!(rent, Date.new(2026, 12, 25), kind: :deadline)
+      assert_match(/DEADLINE: <2026-12-25 Fri \+1m>/, File.read(org))
+      assert_equal "+1m", find_item(store, "Pay rent").recur
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_reschedule_preserves_repeater_cookie
+    with_recur_store do |store, org|
+      review = find_item(store, "Weekly review") # SCHEDULED .+1w
+      assert store.reschedule!(review, Date.new(2026, 7, 10))
+      assert_match(/SCHEDULED: <2026-07-10 Fri \.\+1w>/, File.read(org))
+      assert Tasks::Check.check(org).ok?
+    end
+  end
 end

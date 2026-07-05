@@ -31,9 +31,10 @@ passed to `tasks -p`. Today's date is available from the system.
   accept relative dates (`+3`, `tomorrow`, `fri`) so you never format a date by hand.
 - Read state first with `bin/tasks list -a` (or targeted filters).
 - Prefer the CLI for operations it supports; it keeps formatting correct:
-  - complete a task:  `bin/tasks done "<fuzzy title>"`
+  - complete a task:  `bin/tasks done "<fuzzy title>"`  (a recurring task rolls
+                      its date forward and stays open instead of closing)
   - add a task:       `bin/tasks capture "<text>"` (flags: --due/--scheduled/
-                      --priority/--tag/--context/--state/--project)
+                      --priority/--tag/--context/--state/--project/--recur)
   - set a deadline:   `bin/tasks due "<ref>" <date>`  (fri, +3, 07-15, …)
   - set scheduled:    `bin/tasks schedule "<ref>" <date>`
   - remove dates:     `bin/tasks undate "<ref>" [--kind deadline|scheduled]`
@@ -44,6 +45,7 @@ passed to `tasks -p`. Today's date is available from the system.
   - edit tags:        `bin/tasks tag "<ref>" +tag -tag @ctx -@ctx`
   - add a note:       `bin/tasks note "<ref>" "<text>"`
   - move a task:      `bin/tasks move "<ref>" "<Section>"`
+  - make it recur:    `bin/tasks recur "<ref>" weekly`  (2w/.+1m/…; "off" clears)
   - defer a task:     `bin/tasks defer "<ref>"`   (someday/maybe; hides it)
   - reactivate:       `bin/tasks activate "<ref>"`  (undefer/resume)
   - review deferred:  `bin/tasks list --deferred`

@@ -1159,4 +1159,156 @@ class TestCliMutations < Minitest::Test
       assert_equal "INBOX", touched[0]["state"]
     end
   end
+
+  # -- recur ------------------------------------------------------------------
+
+  # A fixture with a dated task to attach recurrence to.
+  RECUR_CONTENT = <<~ORG
+    * Inbox
+    * Work
+    ** NEXT Pay rent :@home:
+       DEADLINE: <2026-08-01 Sat>
+    ** NEXT Standup notes :@computer:
+  ORG
+
+  def test_cli_recur_sets_cookie_from_friendly_word
+    run_cli("recur", "Pay rent", "monthly", content: RECUR_CONTENT) do |org, _out, _err, st|
+      assert st.success?
+      assert_match(/DEADLINE: <2026-08-01 Sat \.\+1m>/, File.read(org))
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_recur_from_schedule_uses_fixed_prefix
+    run_cli("recur", "Pay rent", "2w", "--from", "schedule", content: RECUR_CONTENT) do |org, _out, _err, st|
+      assert st.success?
+      assert_match(/DEADLINE: <2026-08-01 Sat \+2w>/, File.read(org))
+    end
+  end
+
+  def test_cli_recur_off_clears
+    run_cli("recur", "Pay rent", "off",
+            content: RECUR_CONTENT.sub("<2026-08-01 Sat>", "<2026-08-01 Sat .+1w>")) do |org, _out, _err, st|
+      assert st.success?
+      refute_match(/\+1w/, File.read(org))
+      assert_match(/DEADLINE: <2026-08-01 Sat>/, File.read(org))
+    end
+  end
+
+  def test_cli_recur_undated_task_without_on_exits_1
+    run_cli("recur", "Standup", "weekly", content: RECUR_CONTENT) do |_org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/no date/i, err)
+    end
+  end
+
+  def test_cli_recur_undated_task_with_on_seeds_date
+    run_cli("recur", "Standup", "every 2 days", "--on", "2026-09-01", content: RECUR_CONTENT) do |org, _out, _err, st|
+      assert st.success?
+      assert_match(/DEADLINE: <2026-09-01 Tue \.\+2d>/, File.read(org))
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_recur_bad_interval_exits_1
+    run_cli("recur", "Pay rent", "bananas", content: RECUR_CONTENT) do |_org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/unrecognized interval/, err)
+    end
+  end
+
+  def test_cli_recur_no_match_exits_2
+    run_cli("recur", "nonexistent", "weekly", content: RECUR_CONTENT) do |_org, _out, err, st|
+      assert_equal 2, st.exitstatus
+      assert_match(/no match/, err)
+    end
+  end
+
+  def test_cli_recur_dry_run_writes_nothing
+    run_cli("recur", "Pay rent", "weekly", "--dry-run", content: RECUR_CONTENT) do |org, out, _err, st|
+      assert st.success?
+      assert_match(/would set recurrence \.\+1w/, out)
+      assert_equal RECUR_CONTENT, File.read(org)
+    end
+  end
+
+  def test_cli_recur_json_includes_recur_field
+    run_cli("recur", "Pay rent", "weekly", "--json", content: RECUR_CONTENT) do |_org, out, _err, st|
+      assert st.success?
+      require "json"
+      touched = JSON.parse(out).fetch("touched")
+      assert_equal ".+1w", touched[0]["recur"]
+    end
+  end
+
+  def test_cli_done_rolls_recurring_task_forward
+    content = RECUR_CONTENT.sub("<2026-08-01 Sat>", "<2026-08-01 Sat +1m>")
+    run_cli("done", "Pay rent", content: content) do |org, out, _err, st|
+      assert st.success?
+      assert_match(/↻ Pay rent → next 2026-09-01/, out)
+      # still open, not archived away
+      assert_match(/^\*\* NEXT Pay rent/, File.read(org))
+      refute_match(/DONE/, File.read(org))
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_capture_recur_lands_scheduled_and_repeating
+    run_cli("capture", "water plants", "--recur", "weekly", content: RECUR_CONTENT) do |org, _out, _err, st|
+      assert st.success?
+      body = File.read(org)
+      assert_match(/\*\* TODO water plants/, body)
+      assert_match(/SCHEDULED: <\d{4}-\d{2}-\d{2} \w{3} \.\+1w>/, body)
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_list_recurring_filters
+    content = RECUR_CONTENT.sub("<2026-08-01 Sat>", "<2026-08-01 Sat +1m>")
+    run_cli("list", "--recurring", content: content) do |_org, out, _err, st|
+      assert st.success?
+      assert_match(/Pay rent/, out)
+      refute_match(/Standup/, out)
+    end
+  end
+
+  # `state <ref> DONE` rolls a recurring task forward (like `done`); its dry-run
+  # and output must reflect that, not claim it will just set the state.
+  def test_cli_state_done_is_recurrence_aware
+    content = RECUR_CONTENT.sub("<2026-08-01 Sat>", "<2026-08-01 Sat +1m>")
+    run_cli("state", "Pay rent", "DONE", "--dry-run", content: content) do |org, out, _err, st|
+      assert st.success?
+      assert_match(/would recur → 2026-09-01/, out)
+      assert_equal content, File.read(org)
+    end
+    run_cli("state", "Pay rent", "DONE", content: content) do |org, out, _err, st|
+      assert st.success?
+      assert_match(/↻ Pay rent → next 2026-09-01/, out)
+      assert_match(/^\*\* NEXT Pay rent/, File.read(org))
+    end
+  end
+
+  # Clearing recurrence from a task that has no date is a harmless no-op, not an
+  # error (there is nothing to clear).
+  def test_cli_recur_off_on_undated_is_noop_success
+    run_cli("recur", "Standup", "off", content: RECUR_CONTENT) do |org, _out, _err, st|
+      assert st.success?
+      assert_equal RECUR_CONTENT, File.read(org)
+    end
+  end
+
+  def test_cli_recur_on_closed_task_rejected
+    closed = RECUR_CONTENT + "** DONE Filed taxes\n   CLOSED: [2026-04-15]\n"
+    run_cli("recur", "Filed taxes", "weekly", "--include-done", content: closed) do |_org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/can't set recurrence on a DONE task/, err)
+    end
+  end
+
+  def test_cli_capture_recur_with_done_state_rejected
+    run_cli("capture", "x", "--recur", "weekly", "--state", "DONE", content: RECUR_CONTENT) do |_org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/can't set recurrence on a DONE task/, err)
+    end
+  end
 end

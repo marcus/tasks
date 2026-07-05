@@ -146,4 +146,24 @@ class TestViews < Minitest::Test
              "DONE item leaked into #{view}"
     end
   end
+
+  def test_recurring_task_gets_a_badge
+    org = <<~ORG
+      * Work
+      ** NEXT Pay rent :@home:
+         DEADLINE: <2026-07-02 Thu +1m>
+      ** NEXT Plain task
+         DEADLINE: <2026-07-02 Thu>
+    ORG
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "gtd.org")
+      File.write(path, org)
+      store = Tui::Store.new(org: path, archive: File.join(dir, "archive.org"))
+      rs = V.agenda(store.items, today: TODAY)
+      rent = rs.find { |r| r.text.include?("Pay rent") }
+      plain = rs.find { |r| r.text.include?("Plain task") }
+      assert_includes rent.text, "↻", "recurring task shows the ↻ badge"
+      refute_includes plain.text, "↻", "non-recurring task has no badge"
+    end
+  end
 end

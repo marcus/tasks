@@ -32,6 +32,7 @@ class TestShortcuts < Minitest::Test
     assert_equal :quit, S.find("q").action
     assert_equal :defer_selected, S.find("z").action
     assert_equal :toggle_deferred_view, S.find("Z").action
+    assert_equal :open_recur_popup, S.find("r").action
     assert_nil S.find("Q")
   end
 

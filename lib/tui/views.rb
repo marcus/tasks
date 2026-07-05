@@ -108,9 +108,15 @@ module Tui
 
     def pri(item) = item.priority ? A.bold("[#{item.priority}] ") : ""
 
-    # Trailing marker for a deferred task. Deferred tasks only reach these
-    # builders when the App has Z-revealed them, so mark them unconditionally.
-    def badge(item) = item.deferred? ? A.dim(" ⏸") : ""
+    # Trailing markers for a task: ↻ recurring, ⏸ deferred. Deferred tasks only
+    # reach these builders when the App has Z-revealed them, so mark them
+    # unconditionally.
+    def badge(item)
+      b = +""
+      b << A.dim(" ↻") if item.recurring?
+      b << A.dim(" ⏸") if item.deferred?
+      b
+    end
 
     def decorated_title(item)
       ctx = item.contexts

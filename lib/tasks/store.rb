@@ -3,17 +3,21 @@
 require "date"
 require_relative "check"
 require_relative "quadrants"
+require_relative "recur"
 
 module Tasks
   Item = Struct.new(
     :state, :priority, :title, :tags, :scheduled, :deadline, :line, :source,
-    keyword_init: true
+    :recur, keyword_init: true
   ) do
     def open?    = Store::OPEN_STATES.include?(state)
     def contexts = tags.select { |t| t.start_with?("@") }
     # Deferred (someday/maybe) is a semantic tag, like important/urgent — it
     # rides alongside the task's real state rather than replacing it.
     def deferred? = tags.include?(Store::DEFER_TAG)
+    # A recurring task carries an org repeater cookie (e.g. ".+1w") on its
+    # date stamp; `done` rolls the date forward instead of closing it.
+    def recurring? = !recur.nil?
   end
 
   # Owns gtd.org: parsing, change detection, and the mutations the TUI
@@ -21,7 +25,13 @@ module Tasks
   # the file out-of-band; `changed?` picks those up.
   class Store
     HEADLINE = /^\*+\s+(INBOX|TODO|NEXT|WAITING|DONE|CANCELLED)\s+(?:\[#([ABC])\]\s+)?(.*?)\s*(:[\w@:]+:)?\s*$/
-    STAMP    = /(SCHEDULED|DEADLINE):\s*<(\d{4}-\d{2}-\d{2})/
+    # An org repeater cookie inside a timestamp: +1w, ++2d, .+1m (see Tasks::Recur).
+    # The count is a positive integer (a zero count like ++0d is not a repeater —
+    # it would never terminate a catch-up roll — so it's parsed as a plain date).
+    REPEATER = /(?:\.\+|\+\+|\+)[1-9]\d*[dwmy]/
+    # A SCHEDULED:/DEADLINE: stamp, capturing the date and (optionally) the
+    # repeater cookie that may sit after a day name/time but before the `>`.
+    STAMP    = /(SCHEDULED|DEADLINE):\s*<(\d{4}-\d{2}-\d{2})(?:[^>]*?\s(#{REPEATER}))?[^>]*>/
 
     OPEN_STATES = %w[INBOX TODO NEXT WAITING].freeze
     DONE_STATES = %w[DONE CANCELLED].freeze
@@ -170,6 +180,14 @@ module Tasks
       with_history(label) { set_tags_impl(item, add, remove) }
     end
 
+    # Attach, replace, or (cookie == :off) remove a recurrence repeater on the
+    # item's date stamp. Returns false on a stale line, or when the item has no
+    # SCHEDULED/DEADLINE stamp to carry the cookie. Same staleness contract.
+    def set_recur!(item, cookie)
+      label = cookie == :off ? "recur off: #{item.title}" : "recur #{cookie}: #{item.title}"
+      with_history(label) { set_recur_impl(item, cookie) }
+    end
+
     # Append a body line at the end of the item's block. Same staleness contract.
     def add_note!(item, text)
       text = utf8(text)
@@ -247,6 +265,10 @@ module Tasks
     end
 
     def complete_impl(item)
+      # A recurring task rolls its date forward and stays open instead of
+      # closing — completing an occurrence, not the task.
+      return advance_recurrence_impl(item) if item.recurring?
+
       lines = File.readlines(@org, encoding: "UTF-8")
       i = item.line - 1
       return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
@@ -292,7 +314,6 @@ module Tasks
       i = item.line - 1
       return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
 
-      stamp = "#{key}: <#{date.iso8601} #{date.strftime("%a")}>"
       level = lines[i][/^\*+/].length
 
       j = i + 1
@@ -305,9 +326,12 @@ module Tasks
       end
 
       if stamp_at
-        lines[stamp_at] = lines[stamp_at].sub(/#{key}:\s*<[^>]*>/, stamp)
+        # Preserve any repeater cookie already on this stamp — `due`/`schedule`
+        # change the date, not the recurrence.
+        cookie = lines[stamp_at][REPEATER]
+        lines[stamp_at] = lines[stamp_at].sub(/#{key}:\s*<[^>]*>/, timestamp(key, date, cookie))
       else
-        lines.insert(i + 1, "   #{stamp}\n")
+        lines.insert(i + 1, "   #{timestamp(key, date)}\n")
       end
       # A dated task has been processed — promote it out of the inbox.
       lines[i] = lines[i].sub(/^(\*+\s+)INBOX\b/, '\1TODO') if item.state == "INBOX"
@@ -350,10 +374,94 @@ module Tasks
       true
     end
 
+    # 0-based index just past the item's OWN lines: its headline's metadata and
+    # body, stopping at the first following headline of ANY level. Recurrence is
+    # scoped this way to match parse_file, which binds a stamp to its immediate
+    # headline — a wider (subtree) scan would let a parent's roll mutate a
+    # child's stamp. Trailing blank lines are excluded (insertion point for notes).
+    def own_block_end(lines, i)
+      j = i + 1
+      j += 1 while j < lines.length && lines[j] !~ /^\*+\s/
+      j -= 1 while j > i + 1 && lines[j - 1].strip.empty?
+      j
+    end
+
+    # 0-based index of the stamp the recurrence rides — DEADLINE first, then
+    # SCHEDULED (matching reschedule_impl's precedence) — among item's OWN lines,
+    # returned as [index, "DEADLINE"|"SCHEDULED"], or nil if the item has no
+    # dated stamp. Only real ISO-dated stamps qualify (a diary/sexp timestamp
+    # like <%%(...)> is not something we can roll).
+    def recur_stamp_line(lines, i)
+      scheduled_at = nil
+      j = i + 1
+      while j < lines.length && lines[j] !~ /^\*+\s/
+        return [j, "DEADLINE"] if lines[j] =~ /^\s*DEADLINE:\s*<\d{4}-\d{2}-\d{2}/
+        scheduled_at ||= j if lines[j] =~ /^\s*SCHEDULED:\s*<\d{4}-\d{2}-\d{2}/
+        j += 1
+      end
+      scheduled_at && [scheduled_at, "SCHEDULED"]
+    end
+
+    # Set/replace/remove the repeater cookie on the item's precedence stamp.
+    # cookie is a canonical cookie string, or :off to strip it. Returns false
+    # if the item is stale or has no date stamp.
+    def set_recur_impl(item, cookie)
+      lines = File.readlines(@org, encoding: "UTF-8")
+      i = item.line - 1
+      return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
+
+      target = recur_stamp_line(lines, i)
+      return false unless target
+      at, key = target
+      date = Date.parse(lines[at][/#{key}:\s*<(\d{4}-\d{2}-\d{2})/, 1])
+      body = cookie == :off ? timestamp(key, date) : timestamp(key, date, cookie)
+      lines[at] = lines[at].sub(/#{key}:\s*<[^>]*>/, body)
+      File.write(@org, lines.join)
+      reload!
+      true
+    end
+
+    # Complete a recurring occurrence: roll every repeating stamp in the block
+    # forward by its cookie and leave the task open (no DONE, no CLOSED). Logs
+    # the completion so history survives even though the task never closes.
+    # Returns false if stale, or if no stamp actually carries a cookie.
+    def advance_recurrence_impl(item)
+      lines = File.readlines(@org, encoding: "UTF-8")
+      i = item.line - 1
+      return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
+
+      # Scope to the item's own lines so a parent's roll never touches a child
+      # subtask's stamp (see own_block_end).
+      own_end = own_block_end(lines, i)
+      rolled = false
+      (i + 1...own_end).each do |j|
+        next unless (m = lines[j].match(STAMP)) && m[3]
+        key, cookie = m[1], m[3]
+        nxt = Recur.next_date(cookie, from: Date.parse(m[2]))
+        lines[j] = lines[j].sub(/#{key}:\s*<[^>]*>/, timestamp(key, nxt, cookie))
+        rolled = true
+      end
+      return false unless rolled
+
+      lines.insert(own_end, "   - Did [#{Date.today}].\n")
+      File.write(@org, lines.join)
+      reload!
+      true
+    end
+
     # Split a headline line into [stars, state, priority, title, tags_array].
     def headline_parts(line)
       m = line.match(HEADLINE)
       [line[/^\*+/], m[1], m[2], m[3].strip, (m[4] || "").split(":").reject(&:empty?)]
+    end
+
+    # Render a SCHEDULED:/DEADLINE: stamp body, e.g. "DEADLINE: <2026-07-15 Wed>"
+    # or, with a cookie, "DEADLINE: <2026-07-15 Wed +1w>". The day name is
+    # regenerated from the date so it never goes stale.
+    def timestamp(key, date, cookie = nil)
+      inner = "#{date.iso8601} #{date.strftime("%a")}"
+      inner << " #{cookie}" if cookie
+      "#{key}: <#{inner}>"
     end
 
     # Rebuild a headline line (with trailing newline) from its parts.
@@ -475,6 +583,11 @@ module Tasks
     end
 
     def set_state_impl(item, new_state)
+      # Completing a recurring task advances the occurrence rather than closing
+      # it — the same rule complete_impl applies, so `done` and `state … DONE`
+      # agree. CANCELLED still truly closes (stops the recurrence).
+      return advance_recurrence_impl(item) if new_state == "DONE" && item.recurring?
+
       lines = File.readlines(@org, encoding: "UTF-8")
       i = item.line - 1
       return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
@@ -574,6 +687,9 @@ module Tasks
             d = Date.parse(s[2])
             current.scheduled = d if s[1] == "SCHEDULED"
             current.deadline  = d if s[1] == "DEADLINE"
+            # Record the repeater cookie, if any. DEADLINE takes precedence over
+            # SCHEDULED (matching reschedule_impl) when both carry one.
+            current.recur = s[3] if s[3] && (s[1] == "DEADLINE" || current.recur.nil?)
           rescue Date::Error
             # impossible date — leave nil; Check reports it, don't crash the TUI
           end
