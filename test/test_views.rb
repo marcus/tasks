@@ -140,8 +140,36 @@ class TestViews < Minitest::Test
     assert_includes A.strip(rs[0].text), "Inbox empty"
   end
 
+  def test_projects_view_groups_open_tasks_by_project
+    with_store do |store, _o, _a|
+      rs = V.rows(:projects, store.items, today: TODAY, store: store)
+      stripped = texts(rs)
+      work = stripped.index { |t| t.start_with?("Work") }
+      home = stripped.index { |t| t.start_with?("Home") }
+      assert work, "Work project header is shown"
+      assert home, "Home project header is shown"
+      assert_includes stripped[work], "4 open"
+      assert_includes stripped[work], "2 next"
+      assert stripped[work...home].any? { |t| t.include?("Book flight") }
+      assert stripped[home..].any? { |t| t.include?("Water the plants") }
+      refute stripped.any? { |t| t.start_with?("Inbox") }
+      assert rs.any? { |r| r.item&.title == "Book flight in Concur" }, "project task rows stay selectable"
+    end
+  end
+
+  def test_task_rows_include_themed_project_and_context_segments
+    with_store do |store, _o, _a|
+      row = V.rows(:agenda, store.items, today: TODAY, store: store)
+             .find { |r| r.item&.title&.include?("Book flight") }
+      assert_includes row.text, "\e[35m  Work\e[0m"
+      assert_includes row.text, "\e[1;36m  @computer\e[0m"
+      assert_includes row.selected_text, "Work"
+      assert_includes row.selected_text, "@computer"
+    end
+  end
+
   def test_done_items_never_appear_in_open_views
-    %i[agenda next quadrants inbox].each do |view|
+    %i[agenda next quadrants inbox projects].each do |view|
       refute texts(rows(view)).any? { |t| t.include?("Old finished thing") },
              "DONE item leaked into #{view}"
     end

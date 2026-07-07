@@ -49,6 +49,8 @@ class TestTheme < Minitest::Test
     assert_equal "\e[7mx\e[0m", T.paint(:selection, "x")
     assert_equal "\e[90mx\e[0m", T.paint(:muted, "x")
     assert_equal "\e[1;7mx\e[0m", T.paint(:tab_active, "x")
+    assert_equal "\e[36mx\e[0m", T.paint(:tab_agenda, "x")
+    assert_equal "\e[1;90mx\e[0m", T.paint(:detail_label, "x")
   end
 
   def test_unknown_slot_passes_through
@@ -58,8 +60,9 @@ class TestTheme < Minitest::Test
   # -- configure! ---------------------------------------------------------------
 
   def test_overrides_restyle_a_slot
-    T.configure!(overrides: { "accent" => "magenta" })
+    T.configure!(overrides: { "accent" => "magenta", "tab_projects_active" => "black on-yellow" })
     assert_equal "\e[35mx\e[0m", T.paint(:accent, "x")
+    assert_equal "\e[30;43mx\e[0m", T.paint(:tab_projects_active, "x")
     assert_equal "\e[90mx\e[0m", T.paint(:muted, "x") # untouched slots keep defaults
   end
 

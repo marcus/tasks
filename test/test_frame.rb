@@ -33,6 +33,25 @@ class TestFrame < Minitest::Test
     assert_includes A.strip(lines[5]), "▸ task number 3"
   end
 
+  def test_selected_segmented_row_keeps_field_theme_slots
+    Tui::Theme.configure!(overrides: {
+      selection: "on-blue",
+      due_soon_selected: "black on-yellow",
+      project_selected: "bright-white on-magenta",
+    })
+    row = Row.new(nil, Object.new, segments: [
+      ["07-02", :due_soon],
+      [" "],
+      ["Project", :project],
+    ])
+    line = build(rows: [row], selected: 0)[3]
+    assert_includes line, "\e[44m▸ \e[0m"
+    assert_includes line, "\e[44;30;43m07-02\e[0m"
+    assert_includes line, "\e[44;97;45mProject\e[0m"
+  ensure
+    Tui::Theme.reset!
+  end
+
   def test_footer_rule_sentinel_draws_divider
     lines = build(footer: ["response line", :rule, "keybar", "prompt"])
     rule = lines[-4]

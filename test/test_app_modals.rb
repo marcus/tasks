@@ -144,14 +144,14 @@ class TestAppModals < Minitest::Test
   def test_left_right_cycle_views_in_list_mode
     with_app do |app|
       views = []
-      4.times do
+      5.times do
         views << app.instance_variable_get(:@view)
         app.send(:handle_key, "\e[C")
       end
-      assert_equal %i[agenda next quadrants inbox], views
+      assert_equal %i[agenda next quadrants inbox projects], views
       assert_equal :agenda, app.instance_variable_get(:@view), "wraps around"
       app.send(:handle_key, "\e[D")
-      assert_equal :inbox, app.instance_variable_get(:@view), "left wraps backward"
+      assert_equal :projects, app.instance_variable_get(:@view), "left wraps backward"
     end
   end
 

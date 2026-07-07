@@ -13,7 +13,7 @@ module Tui
       Entry.new(seqs: ["\e[B", "j"],  keys: "↓ / j",   desc: "select next task",                 action: :select_next),
       Entry.new(seqs: ["\e[D"],       keys: "←",       desc: "previous view",                    action: :prev_view),
       Entry.new(seqs: ["\e[C"],       keys: "→",       desc: "next view",                        action: :next_view),
-      Entry.new(seqs: %w[1 2 3 4],    keys: "1-4",     desc: "jump to view",                     action: :jump_view),
+      Entry.new(seqs: %w[1 2 3 4 5],  keys: "1-5",     desc: "jump to view",                     action: :jump_view),
       Entry.new(seqs: ["\r", "\n"],   keys: "return",  desc: "task details",                     action: :open_detail),
       Entry.new(seqs: ["c"],          keys: "c",       desc: "complete selected task",           action: :complete_selected),
       Entry.new(seqs: ["d"],          keys: "d",       desc: "reschedule — fri · +3 · 07-15",    action: :open_date_popup),

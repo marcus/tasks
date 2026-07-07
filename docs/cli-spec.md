@@ -54,7 +54,10 @@ subdomains) for self-hosted systems the built-in registry can't know; user
 rows win over built-ins.
 
 **TUI colors.** The TUI paints semantic *slots* (`lib/tui/theme.rb` lists them
-all: `accent`, `selection`, `tab_active`, `note`, `link`, the `due_*` ladder,
+all: `accent`, `selection`, per-view tabs like `tab_agenda` /
+`tab_agenda_active`, task-row fields like `project`, `context`, `title`, the
+`due_*` ladder plus selected-row variants such as `due_soon_selected`,
+detail-modal slots like `detail_label`, `description`, `link`, `link_system`,
 `state_*`, …). Appearance keys in the same config file:
 
 - `theme = <name>` — a named base theme: `default`, `mono` (attribute-only),

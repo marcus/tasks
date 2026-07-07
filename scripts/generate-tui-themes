@@ -106,6 +106,7 @@ def convert_scheme(scheme)
   white = normalize_hex(scheme["white"], "#cccccc")
   bright_black = normalize_hex(scheme["brightBlack"], black)
   bright_red = normalize_hex(scheme["brightRed"], red)
+  bright_green = normalize_hex(scheme["brightGreen"], normalize_hex(scheme["green"], "#33cc66"))
   bright_yellow = normalize_hex(scheme["brightYellow"], yellow)
   bright_blue = normalize_hex(scheme["brightBlue"], blue)
   bright_cyan = normalize_hex(scheme["brightCyan"], cyan)
@@ -117,22 +118,45 @@ def convert_scheme(scheme)
   {
     tab_active: spec("bold", selection_fg, "on-#{selection_bg}"),
     tab_inactive: bright_black,
+    tab_agenda: bright_cyan,
+    tab_next: bright_green,
+    tab_quadrants: bright_yellow,
+    tab_inbox: purple,
+    tab_projects: bright_blue,
+    tab_agenda_active: spec("bold", bright_cyan, "on-#{selection_bg}"),
+    tab_next_active: spec("bold", bright_green, "on-#{selection_bg}"),
+    tab_quadrants_active: spec("bold", bright_yellow, "on-#{selection_bg}"),
+    tab_inbox_active: spec("bold", purple, "on-#{selection_bg}"),
+    tab_projects_active: spec("bold", bright_blue, "on-#{selection_bg}"),
     selection: spec(selection_fg, "on-#{selection_bg}"),
     accent: bright_cyan,
     prompt: spec("bold", bright_cyan),
     section: spec("bold", foreground),
     modal_title: spec("bold", selection_fg, "on-#{selection_bg}"),
     context: spec("bold", cyan),
+    context_selected: spec("bold", cyan),
+    project: purple,
+    project_selected: spec("bold", purple),
+    title_selected: "bold",
     priority: spec("bold", bright_yellow),
+    priority_selected: spec("bold", bright_yellow),
     muted: bright_black,
+    muted_selected: bright_black,
     note: bright_black,
+    description: bright_black,
     link: spec("underline", bright_blue),
+    detail_label: spec("bold", bright_black),
+    link_system: bright_cyan,
     error: bright_red,
     warning: bright_yellow,
     due_overdue: bright_red,
     due_soon: bright_yellow,
     due_week: bright_cyan,
     due_far: bright_black,
+    due_overdue_selected: spec("bold", bright_red),
+    due_soon_selected: spec("bold", bright_yellow),
+    due_week_selected: spec("bold", bright_cyan),
+    due_far_selected: bright_black,
     state_next: bright_cyan,
     state_waiting: bright_yellow,
     state_done: bright_black,

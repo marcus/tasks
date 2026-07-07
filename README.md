@@ -131,8 +131,9 @@ Colors are themable: `theme = dracula` (or `mono`, `nord`,
 `catppuccin-mocha`, `gruvbox-dark`, `tokyonight-night`, `solarized-dark`, and
 more) plus per-slot `color.accent = magenta` /
 `color.selection = black on-cyan` lines in `~/.config/tasks/config` restyle
-tabs, the selection bar, modal title strips, due dates, notes, links, and more. Popular schemes are
-generated from iTerm2-Color-Schemes with `scripts/generate-tui-themes`.
+tabs, the selection bar, modal title strips, task dates, projects, contexts,
+detail labels, descriptions, links, and more. Popular schemes are generated
+from iTerm2-Color-Schemes with `scripts/generate-tui-themes`.
 `NO_COLOR` is honored. See `docs/cli-spec.md` (TUI colors) for the slot and
 spec vocabulary.
 

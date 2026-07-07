@@ -48,7 +48,7 @@ module Tui
     # block: raw file lines of the item (headline + body) from Store#block
     # links: the item's Tasks::Links (Store#links) — shown under the notes;
     #        `o` opens the first one
-    def detail(item, block, width, today: Date.today, links: [])
+    def detail(item, block, width, today: Date.today, links: [], project: nil)
       w = [width - 12, 64].min
       lines = A.wrap(item.title, w).map { |l| T.paint(:section, l) }
       lines << ""
@@ -56,9 +56,10 @@ module Tui
       lines << row("priority", item.priority ? "[##{item.priority}]" : T.paint(:muted, "—"))
       lines << row("deadline",  date_value(item.deadline, today))  if item.deadline
       lines << row("scheduled", date_value(item.scheduled, today)) if item.scheduled
+      lines << row("project", T.paint(:project, project)) if project
       ctx  = item.contexts
       tags = item.tags - ctx
-      lines << row("contexts", ctx.join("  ")) unless ctx.empty?
+      lines << row("contexts", ctx.map { |c| T.paint(:context, c) }.join("  ")) unless ctx.empty?
       lines << row("tags", tags.join("  "))    unless tags.empty?
       lines << row("id", T.paint(:muted, item.id)) if item.id
 
@@ -67,25 +68,26 @@ module Tui
                           .map(&:strip).reject(&:empty?)
       unless notes.empty?
         lines << ""
-        lines << T.paint(:note, "notes")
+        lines << T.paint(:detail_label, "description")
         notes.each { |n| lines.concat(A.wrap(n, w - 2).map { |l| "  #{note_line(l)}" }) }
       end
       unless links.empty?
         lines << ""
-        lines << A.dim("links (o opens the first)")
+        lines << T.paint(:detail_label, "links") + T.paint(:muted, " (o opens the first)")
         lw = links.map { |l| l.system.length }.max
         links.each do |l|
-          lines << "  #{A.cyan(l.system.ljust(lw))} #{A.dim(l.url)}"
+          lines << "  #{T.paint(:link_system, l.system.ljust(lw))} #{T.paint(:link, l.url)}"
         end
       end
       { title: "task", lines: lines }
     end
 
     def row(label, value)
-      "#{T.paint(:muted, label.ljust(10))} #{value}"
+      "#{T.paint(:detail_label, label.ljust(10))} #{value}"
     end
 
-    # Paint a note line, giving link spans the :link slot and the rest :note.
+    # Paint a note line, giving link spans the :link slot and the rest
+    # :description.
     # Segments are painted separately (never nested) so a reset inside one
     # span can't bleed the styling of the next.
     def note_line(line)
@@ -93,11 +95,11 @@ module Tui
       last = 0
       line.scan(LINK_SPAN) do
         m = Regexp.last_match
-        out << T.paint(:note, line[last...m.begin(0)]) if m.begin(0) > last
+        out << T.paint(:description, line[last...m.begin(0)]) if m.begin(0) > last
         out << T.paint(:link, m[0])
         last = m.end(0)
       end
-      out << T.paint(:note, line[last..]) if last < line.length
+      out << T.paint(:description, line[last..]) if last < line.length
       out
     end
 

@@ -29,7 +29,7 @@ module Tui
 
       body = (rows[offset, body_h] || []).map.with_index do |row, vi|
         if offset + vi == selected
-          T.paint(:selection, A.vpad("▸ " + A.strip(row.text), w - 2))
+          selected_row(row, w - 2)
         else
           "  " + row.text
         end
@@ -53,6 +53,17 @@ module Tui
       end
       lines << "└#{"─" * w}┘"
       lines
+    end
+
+    def selected_row(row, w)
+      text = if row.respond_to?(:selected_text)
+               row.selected_text
+             else
+               T.paint(:selection, "▸ " + A.strip(row.text))
+             end
+      text = A.vtrunc(text, w)
+      pad = w - A.vislen(text)
+      pad.positive? ? text + T.paint(:selection, " " * pad) : text
     end
 
     # Paste popup lines over the body starting at popup[:row]/[:col],

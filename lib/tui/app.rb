@@ -169,7 +169,7 @@ module Tui
         q = q.downcase
         items = items.select { |i| i.title.downcase.include?(q) }
       end
-      @rows = Views.rows(@view, items, urgent_days: @urgent_days)
+      @rows = Views.rows(@view, items, urgent_days: @urgent_days, store: @store)
     end
 
     # The filter narrowing the views right now: the live buffer while
@@ -182,7 +182,9 @@ module Tui
 
     def header(w)
       tabs = Views::TABS.map do |label, key|
-        T.paint(key == @view ? :tab_active : :tab_inactive, " #{label} ")
+        slot = key == @view ? :"tab_#{key}_active" : :"tab_#{key}"
+        slot = key == @view ? :tab_active : :tab_inactive unless T.slot?(slot)
+        T.paint(slot, " #{label} ")
       end.join(" ")
       open_n = @store.items.count { |i| i.open? && !i.deferred? }
       deferred_note = @show_deferred ? "#{T.paint(:warning, "⏸ deferred shown")}#{T.paint(:muted, " · ")}" : ""
@@ -674,7 +676,8 @@ module Tui
       item = current_item
       return close_modal unless item
       width = [(IO.console&.winsize || [24, 80])[1], MIN_WIDTH].max
-      open_modal(Modals.detail(item, @store.block(item), width, links: @store.links(item)),
+      project = @store.node_for(item)&.project&.title
+      open_modal(Modals.detail(item, @store.block(item), width, links: @store.links(item), project: project),
                  kind: :detail)
     end
 
