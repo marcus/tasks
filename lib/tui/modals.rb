@@ -19,7 +19,7 @@ module Tui
         "#{A.cyan(e.keys.ljust(9))} #{e.desc}"
       end
       lines << ""
-      lines << A.dim("prompt/date input: return submits · esc cancels")
+      lines << A.dim("prompt/date input: return submits · esc cancels · ctrl-a/e/b/f move")
       lines << A.dim("in this modal:     ↑↓ scroll · esc closes")
       { title: "keyboard shortcuts", lines: lines }
     end

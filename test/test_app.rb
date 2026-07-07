@@ -2,6 +2,7 @@
 
 require_relative "test_helper"
 require "tui/app"
+require "tui/text_input"
 
 class TestApp < Minitest::Test
   # Records calls to #start and reports whatever running?/available? state we
@@ -26,7 +27,7 @@ class TestApp < Minitest::Test
       app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir),
                          llm_config: default_llm_config)
       app.instance_variable_set(:@agent, agent)
-      app.instance_variable_set(:@input, +input)
+      app.instance_variable_set(:@input, Tui::TextInput.new(input))
       yield app
     end
   end
@@ -158,7 +159,7 @@ class TestApp < Minitest::Test
   def test_submit_recur_sets_cookie
     app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE) do |app|
       app.send(:open_recur_popup)
-      app.instance_variable_set(:@recur_input, +"weekly")
+      app.instance_variable_get(:@recur_input).replace("weekly")
       app.send(:submit_recur)
       store = app.instance_variable_get(:@store)
       assert_equal ".+1w", store.items.find { |i| i.title.include?("Pay rent") }.recur
@@ -169,7 +170,7 @@ class TestApp < Minitest::Test
   def test_submit_recur_off_clears
     app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE) do |app|
       app.send(:open_recur_popup)
-      app.instance_variable_set(:@recur_input, +"off")
+      app.instance_variable_get(:@recur_input).replace("off")
       app.send(:submit_recur)
       assert_nil app.instance_variable_get(:@store).items.find { |i| i.title.include?("Pay rent") }.recur
     end
@@ -178,7 +179,7 @@ class TestApp < Minitest::Test
   def test_submit_recur_reports_parse_error
     app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE) do |app|
       app.send(:open_recur_popup)
-      app.instance_variable_set(:@recur_input, +"bananas")
+      app.instance_variable_get(:@recur_input).replace("bananas")
       app.send(:submit_recur)
       assert_equal :recur, app.instance_variable_get(:@mode), "stays open on bad input"
       assert_match(/can't parse/, app.instance_variable_get(:@recur_error))

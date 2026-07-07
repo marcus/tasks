@@ -12,6 +12,7 @@ require_relative "shortcuts"
 require_relative "modals"
 require_relative "clipboard"
 require_relative "export"
+require_relative "text_input"
 require_relative "../tasks/config"
 
 module Tui
@@ -26,6 +27,8 @@ module Tui
     RESP_MAX    = 10   # footer response pane grows to at most this many lines
     RESP_HINT   = "pgup/pgdn scroll · esc dismiss"
     PROMPT_MAX  = 5    # prompt input grows to at most this many lines
+    PASTE_START = "\e[200~"
+    PASTE_END   = "\e[201~"
 
     # The system-context string handed to any agent: the repo's AGENTS.md
     # conventions plus the absolute file locations for this run. Provider-
@@ -62,14 +65,16 @@ module Tui
       @modal  = nil        # { title:, lines: } while a modal is open
       @modal_kind = nil    # :help | :detail
       @modal_scroll = 0
-      @input  = +""        # prompt buffer
+      @input  = TextInput.new # prompt buffer
       @filter = nil        # committed filter string (nil = off)
       @show_deferred = false # Z toggles deferred (someday/maybe) tasks in/out of view
-      @filter_input = +""  # filter buffer while typing
-      @date_input = +""    # reschedule buffer
+      @filter_input = TextInput.new # filter buffer while typing
+      @date_input = TextInput.new   # reschedule buffer
       @date_error = nil
-      @recur_input = +""   # recurrence-interval buffer
+      @recur_input = TextInput.new  # recurrence-interval buffer
       @recur_error = nil
+      @input_bytes = +"".b
+      @key_data = +""
       @resp   = nil        # wrapped response lines
       @resp_open = false
       @resp_scroll = 0
@@ -100,10 +105,10 @@ module Tui
 
     def run
       $stdin.raw!
-      print "\e[?1049h\e[?25l" # alt screen, hide cursor
+      print "\e[?1049h\e[?2004h\e[?25l" # alt screen, bracketed paste, hide cursor
       loop_once until @quit
     ensure
-      print "\e[?1049l\e[?25h"
+      print "\e[?2004l\e[?1049l\e[?25h"
       $stdin.cooked!
     end
 
@@ -162,6 +167,7 @@ module Tui
     # typing, the committed filter otherwise.
     def active_filter
       s = @mode == :filter ? @filter_input : @filter
+      s = s.to_s unless s.nil?
       s.nil? || s.strip.empty? ? nil : s
     end
 
@@ -192,7 +198,7 @@ module Tui
       end
       f << " #{@flash}" if @flash
       if @mode == :filter
-        f << " #{A.bold(A.cyan("/ "))}#{@filter_input}#{A.invert(" ")}#{A.dim("  enter keeps · esc clears")}"
+        f << " #{A.bold(A.cyan("/ "))}#{inline_input(@filter_input)}#{A.dim("  enter keeps · esc clears")}"
       elsif @filter
         n = (@rows || []).count(&:item)
         f << A.dim(" / #{@filter} · #{n} match#{n == 1 ? "" : "es"} · esc clears · / edits")
@@ -208,16 +214,60 @@ module Tui
         hint = @agent.running? ? A.dim("…") : A.dim("tab to ask the agent — reschedule, capture, edit anything…")
         return [" #{A.bold(A.cyan("❯ "))}#{hint}"]
       end
-      # char-slice rather than word-wrap: the input must render verbatim
-      # (word-wrap rstrips, which hid a trailing space until the next char)
-      wrapped = @input.chars.each_slice(w - 5).map(&:join)
-      wrapped = [""] if wrapped.empty?
-      wrapped = wrapped.last(PROMPT_MAX)
+      wrapped = wrapped_input(@input, w - 5)
       wrapped.each_with_index.map do |l, i|
         prefix = i.zero? ? " #{A.bold(A.cyan("❯ "))}" : "   "
-        cursor = i == wrapped.size - 1 ? A.invert(" ") : ""
-        "#{prefix}#{l}#{cursor}"
+        "#{prefix}#{l}"
       end
+    end
+
+    def wrapped_input(input, cols)
+      cols = [cols, 1].max
+      chars = input.text.each_grapheme_cluster.to_a
+      lines = [[]]
+      starts = [0]
+      width = 0
+
+      chars.each_with_index do |gc, idx|
+        cw = A.cluster_width(gc)
+        if width.positive? && width + cw > cols
+          lines << []
+          starts << idx
+          width = 0
+        end
+        lines.last << gc
+        width += cw
+      end
+
+      if chars.length.positive? && input.cursor == chars.length && width >= cols
+        lines << []
+        starts << chars.length
+      end
+
+      cursor_line = starts.rindex { |start| start <= input.cursor } || 0
+      first_line = [cursor_line - PROMPT_MAX + 1, 0].max
+      last_line = [first_line + PROMPT_MAX, lines.length].min
+
+      (first_line...last_line).map do |line|
+        segment = lines[line] || []
+        cursor_col = input.cursor - starts[line]
+        if cursor_col.between?(0, segment.length)
+          render_input_segment(segment, cursor_col)
+        else
+          segment.join
+        end
+      end
+    end
+
+    def inline_input(input)
+      render_input_segment(input.text.each_grapheme_cluster.to_a, input.cursor)
+    end
+
+    def render_input_segment(segment, cursor_col)
+      before = segment[0...cursor_col].join
+      at = cursor_col < segment.length ? segment[cursor_col] : " "
+      after = cursor_col < segment.length ? segment[(cursor_col + 1)..].join : ""
+      "#{before}#{A.invert(at)}#{after}"
     end
 
     # The popup layered over the list right now: reschedule (:date) or
@@ -235,7 +285,7 @@ module Tui
       target = item.deadline ? "deadline" : item.scheduled ? "scheduled" : "deadline (new)"
       hint = @date_error || "fri · +3 · 07-15 · esc cancels"
       inner = [
-        " new #{target}: #{A.bold(@date_input)}#{A.invert(" ")}",
+        " new #{target}: #{inline_input(@date_input)}",
         " #{@date_error ? A.red(hint) : A.dim(hint)}",
       ]
       pw = [inner.map { |l| A.vislen(l) }.max + 2, 36].max
@@ -251,7 +301,7 @@ module Tui
       cur = item.recur ? "now #{item.recur}" : "not repeating"
       hint = @recur_error || "weekly · 2w · .+1m · off · esc cancels"
       inner = [
-        " every: #{A.bold(@recur_input)}#{A.invert(" ")}  #{A.dim("(#{cur})")}",
+        " every: #{inline_input(@recur_input)}  #{A.dim("(#{cur})")}",
         " #{@recur_error ? A.red(hint) : A.dim(hint)}",
       ]
       pw = [inner.map { |l| A.vislen(l) }.max + 2, 40].max
@@ -273,23 +323,99 @@ module Tui
     # -- input ---------------------------------------------------------------
 
     def read_keys
-      data = begin
+      bytes = begin
         # force UTF-8; a 128-byte read can split a multibyte char (e.g. a
-        # pasted em-dash), so scrub dangling bytes before they reach the
-        # [[:print:]] test and raise on the invalid sequence.
-        $stdin.read_nonblock(128).force_encoding("UTF-8").scrub("")
+        # pasted em-dash), so decode through a tiny pending-byte buffer instead
+        # of scrubbing valid trailing bytes away.
+        $stdin.read_nonblock(4096)
       rescue IO::WaitReadable, EOFError
         return
       end
-      until data.empty?
-        if data.start_with?("\e") && data.length > 1
-          seq = data[/\A\e\[[0-9;]*[A-Za-z~]/] || "\e"
+      @input_bytes << bytes
+      @key_data << drain_utf8_input
+      drain_key_data
+    end
+
+    def drain_utf8_input
+      data = @input_bytes.dup.force_encoding("UTF-8")
+      if data.valid_encoding?
+        @input_bytes = +"".b
+        return data
+      end
+
+      [3, 2, 1].each do |tail|
+        next if @input_bytes.bytesize <= tail
+        prefix = @input_bytes.byteslice(0, @input_bytes.bytesize - tail)
+        candidate = prefix.dup.force_encoding("UTF-8")
+        next unless candidate.valid_encoding?
+
+        @input_bytes = @input_bytes.byteslice(-tail, tail) || +"".b
+        return candidate
+      end
+
+      if (tail = incomplete_utf8_tail(@input_bytes.bytes))
+        @input_bytes = @input_bytes.byteslice(-tail, tail) || +"".b
+        return +""
+      end
+
+      @input_bytes = +"".b
+      data.scrub("")
+    end
+
+    def incomplete_utf8_tail(bytes)
+      [3, 2, 1].each do |len|
+        next if bytes.length < len
+        tail = bytes.last(len)
+        needed = utf8_sequence_length(tail.first)
+        next unless needed && needed > len
+        next unless tail[1..].all? { |b| b.between?(0x80, 0xBF) }
+
+        return len
+      end
+      nil
+    end
+
+    def utf8_sequence_length(byte)
+      case byte
+      when 0xC2..0xDF then 2
+      when 0xE0..0xEF then 3
+      when 0xF0..0xF4 then 4
+      end
+    end
+
+    def drain_key_data
+      until @key_data.empty?
+        if @key_data.start_with?(PASTE_START)
+          end_at = @key_data.index(PASTE_END, PASTE_START.length)
+          break unless end_at
+
+          handle_paste(@key_data[PASTE_START.length...end_at])
+          @key_data = @key_data[(end_at + PASTE_END.length)..] || +""
+        elsif @key_data.length > 1 && PASTE_START.start_with?(@key_data)
+          break
+        elsif @key_data.start_with?("\e")
+          seq = @key_data[/\A\e\[[0-9;?]*[A-Za-z~]/] || @key_data[/\A\eO[A-Za-z]/]
+          seq ||= "\e"
           handle_key(seq)
-          data = data[seq.length..]
+          @key_data = @key_data[seq.length..] || +""
         else
-          handle_key(data[0])
-          data = data[1..]
+          char = @key_data.each_grapheme_cluster.first
+          handle_key(char)
+          @key_data = @key_data[char.length..] || +""
         end
+      end
+    end
+
+    def handle_paste(text)
+      case @mode
+      when :prompt then @input.insert(text)
+      when :date   then @date_input.insert(text); @date_error = nil
+      when :recur  then @recur_input.insert(text); @recur_error = nil
+      when :filter then @filter_input.insert(text)
+      else
+        close_modal if @modal
+        @input.insert(text)
+        @mode = :prompt
       end
     end
 
@@ -308,10 +434,9 @@ module Tui
       case k
       when "\e"       then @filter = nil; @mode = :list # esc clears entirely
       when "\r", "\n" then commit_filter
-      when "", "\b" then @filter_input.chop!
       when ""   then @quit = true
       else
-        @filter_input << k if k =~ /[[:print:]]/
+        @filter_input.handle_key(k)
       end
     end
 
@@ -360,10 +485,9 @@ module Tui
       when "\e"           then @mode = :list
       when "\t"           then @mode = :list
       when "\r", "\n"     then submit_prompt
-      when "", "\b" then @input.chop!
       when ""       then @quit = true
       else
-        @input << k if k =~ /[[:print:]]/
+        @input.handle_key(k)
       end
     end
 
@@ -371,13 +495,9 @@ module Tui
       case k
       when "\e"           then close_date_popup
       when "\r", "\n"     then submit_date
-      when "", "\b" then @date_input.chop!
       when ""       then @quit = true
       else
-        if k =~ /[[:print:]]/
-          @date_input << k
-          @date_error = nil
-        end
+        @date_error = nil if @date_input.handle_key(k) == :changed
       end
     end
 
@@ -385,13 +505,9 @@ module Tui
       case k
       when "\e"       then close_recur_popup
       when "\r", "\n" then submit_recur
-      when "", "\b" then @recur_input.chop!
       when ""   then @quit = true
       else
-        if k =~ /[[:print:]]/
-          @recur_input << k
-          @recur_error = nil
-        end
+        @recur_error = nil if @recur_input.handle_key(k) == :changed
       end
     end
 
@@ -474,7 +590,7 @@ module Tui
     end
 
     def start_filter
-      @filter_input = @filter ? @filter.dup : +"" # `/` with a filter active edits it
+      @filter_input.replace(@filter || +"") # `/` with a filter active edits it
       @mode = :filter
     end
 
@@ -652,7 +768,7 @@ module Tui
 
     def open_date_popup
       return flash("nothing selected") unless current_item
-      @date_input = +""
+      @date_input.clear
       @date_error = nil
       @mode = :date
     end
@@ -661,13 +777,13 @@ module Tui
     # it); return there rather than to the bare list when one is open.
     def close_date_popup
       @mode = @modal ? :modal : :list
-      @date_input = +""
+      @date_input.clear
       @date_error = nil
     end
 
     def submit_date
       item = current_item
-      date = Dates.parse_when(@date_input)
+      date = Dates.parse_when(@date_input.to_s)
       return @date_error = "can't parse “#{@date_input}”" unless date
       if @store.reschedule!(item, date)
         promoted = item.state == "INBOX" ? " · INBOX → TODO" : ""
@@ -690,20 +806,20 @@ module Tui
       item = current_item
       return flash("nothing selected") unless item
       return flash("schedule it first — recurrence needs a date") unless item.scheduled || item.deadline
-      @recur_input = (item.recur || "").dup
+      @recur_input.replace(item.recur || +"")
       @recur_error = nil
       @mode = :recur
     end
 
     def close_recur_popup
       @mode = @modal ? :modal : :list
-      @recur_input = +""
+      @recur_input.clear
       @recur_error = nil
     end
 
     def submit_recur
       item = current_item
-      cookie = Tasks::Recur.parse_interval(@recur_input)
+      cookie = Tasks::Recur.parse_interval(@recur_input.to_s)
       return @recur_error = "can't parse “#{@recur_input}”" if cookie.nil?
       if @store.set_recur!(item, cookie)
         flash(cookie == :off ? "↻ off: #{item.title}" : "↻ #{cookie}: #{item.title}")
@@ -725,7 +841,7 @@ module Tui
 
     def submit_prompt
       text = @input.strip
-      @input = +""
+      @input.clear
       @mode = :list
       return if text.empty?
       return flash("agent is still working — esc to cancel") if @agent.running?

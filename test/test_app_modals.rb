@@ -346,10 +346,10 @@ class TestAppModals < Minitest::Test
       assert_includes plines.first, "❯"
       assert_includes plines.last, "\e[7m", "cursor on the last line"
 
-      app.instance_variable_set(:@input, +"short message")
+      app.instance_variable_get(:@input).replace("short message")
       assert_equal 1, app.send(:prompt_lines, 60).size
 
-      app.instance_variable_set(:@input, +("word " * 15)) # ~75 chars: 2 lines at w=60
+      app.instance_variable_get(:@input).replace("word " * 15) # ~75 chars: 2 lines at w=60
       assert_equal 2, app.send(:prompt_lines, 60).size
     end
   end
@@ -362,6 +362,101 @@ class TestAppModals < Minitest::Test
       assert_includes Tui::Ansi.strip(line), "hello █".sub("█", " "), # trailing space present
                       "trailing space must render"
       assert_match(/hello \e\[7m/, line, "cursor sits after the space")
+    end
+  end
+
+  def test_prompt_cursor_renders_at_insertion_point
+    with_app do |app|
+      app.send(:handle_key, "\t")
+      app.instance_variable_get(:@input).replace("hello")
+      app.send(:handle_key, "\x02") # ctrl-b
+      app.send(:handle_key, "\x02")
+      line = app.send(:prompt_lines, 60).last
+      assert_match(/hel\e\[7ml/, line, "cursor highlights the character at point")
+      app.send(:handle_key, "X")
+      assert_equal "helXlo", app.instance_variable_get(:@input).text
+    end
+  end
+
+  def test_bracketed_paste_in_list_mode_focuses_prompt_without_shortcut_actions
+    with_app do |app|
+      before = selected_title(app)
+      app.instance_variable_set(:@key_data, "\e[200~cdd https://example.com/a\nb\e[201~")
+      app.send(:drain_key_data)
+      assert_equal :prompt, mode(app)
+      assert_equal "cdd https://example.com/a b", app.instance_variable_get(:@input).text
+      assert_equal before, selected_title(app), "pasted c/d characters must not complete or reschedule"
+    end
+  end
+
+  def test_bracketed_paste_from_modal_closes_modal_before_prompt_focus
+    with_app do |app|
+      app.send(:handle_key, "?")
+      assert_equal :modal, mode(app)
+      app.instance_variable_set(:@key_data, "\e[200~hello from paste\e[201~")
+      app.send(:drain_key_data)
+      assert_equal :prompt, mode(app)
+      assert_nil modal(app)
+      assert_nil app.instance_variable_get(:@modal_kind)
+      assert_equal "hello from paste", app.instance_variable_get(:@input).text
+    end
+  end
+
+  def test_escape_is_not_held_as_partial_paste_prefix
+    with_app do |app|
+      app.send(:handle_key, "\t")
+      assert_equal :prompt, mode(app)
+      app.instance_variable_set(:@key_data, "\e")
+      app.send(:drain_key_data)
+      assert_equal :list, mode(app)
+      assert_equal "", app.instance_variable_get(:@key_data)
+    end
+  end
+
+  def test_utf8_fragment_at_start_of_read_is_preserved
+    with_app do |app|
+      app.instance_variable_set(:@input_bytes, "\xF0".b)
+      assert_equal "", app.send(:drain_utf8_input)
+      assert_equal "\xF0".b, app.instance_variable_get(:@input_bytes)
+
+      app.instance_variable_get(:@input_bytes) << "\x9F\x99\x82".b
+      assert_equal "🙂", app.send(:drain_utf8_input)
+      assert_equal "".b, app.instance_variable_get(:@input_bytes)
+    end
+  end
+
+  def test_utf8_fragmented_two_and_three_byte_sequences_are_preserved
+    with_app do |app|
+      app.instance_variable_set(:@input_bytes, "\xC3".b)
+      assert_equal "", app.send(:drain_utf8_input)
+      app.instance_variable_get(:@input_bytes) << "\xA9".b
+      assert_equal "é", app.send(:drain_utf8_input)
+
+      app.instance_variable_set(:@input_bytes, "\xE2\x80".b)
+      assert_equal "", app.send(:drain_utf8_input)
+      app.instance_variable_get(:@input_bytes) << "\x94".b
+      assert_equal "—", app.send(:drain_utf8_input)
+    end
+  end
+
+  def test_prompt_wraps_wide_characters_by_terminal_width
+    with_app do |app|
+      app.send(:handle_key, "\t")
+      app.instance_variable_get(:@input).replace("🙂🙂🙂")
+      lines = app.send(:wrapped_input, app.instance_variable_get(:@input), 5)
+      assert_operator lines.size, :>=, 2
+      assert lines.all? { |line| A.vislen(line) <= 5 }, "each input line must fit terminal cells"
+    end
+  end
+
+  def test_date_error_clears_only_when_input_changes
+    with_app do |app|
+      app.send(:open_date_popup)
+      app.instance_variable_set(:@date_error, "can't parse")
+      app.send(:handle_key, "\x02") # ctrl-b at start: handled, no edit
+      assert_equal "can't parse", app.instance_variable_get(:@date_error)
+      app.send(:handle_key, "f")
+      assert_nil app.instance_variable_get(:@date_error)
     end
   end
 
