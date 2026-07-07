@@ -12,6 +12,7 @@ require_relative "shortcuts"
 require_relative "modals"
 require_relative "clipboard"
 require_relative "export"
+require_relative "session"
 require_relative "text_input"
 require_relative "../tasks/config"
 require_relative "../tasks/opener"
@@ -61,7 +62,7 @@ module Tui
       @entry_idx  = 0
       @agent = build_agent(current_entry)
       @agent_provider = current_entry.provider
-      @view   = :agenda
+      @view   = restore_view # last session's view, or :agenda
       @sel    = 0
       @mode   = :list      # :list | :prompt | :date | :recur | :modal
       @modal  = nil        # { title:, lines: } while a modal is open
@@ -110,8 +111,11 @@ module Tui
       print "\e[?1049h\e[?2004h\e[?25l" # alt screen, bracketed paste, hide cursor
       loop_once until @quit
     ensure
+      # Terminal restore FIRST — if saving somehow raised, a skipped restore
+      # would leave the shell raw on the alt screen, far worse than a lost view.
       print "\e[?2004l\e[?1049l\e[?25h"
       $stdin.cooked!
+      save_session # so the view persists however the TUI exits
     end
 
     private
@@ -760,6 +764,25 @@ module Tui
     def cycle_view(delta)
       keys = Views::TABS.map(&:last)
       switch_view(((keys.index(@view) + delta) % keys.size) + 1)
+    end
+
+    # -- session persistence ---------------------------------------------------
+    #
+    # The active view survives a restart (Tui::Session). Restore validates
+    # against the real tab list, so a stale or hand-edited value degrades to
+    # the default rather than rendering a view that doesn't exist.
+
+    def restore_view
+      saved = Session.load[:view]
+      # Strings only: a hand-edited "view": 123 must fall back, not crash startup.
+      saved = saved.is_a?(String) ? saved.to_sym : nil
+      Views::TABS.map(&:last).include?(saved) ? saved : :agenda
+    end
+
+    def save_session
+      # Braces required: a braceless string-key hash would parse as keywords
+      # (save has an env: kwarg) and raise.
+      Session.save({ "view" => @view.to_s })
     end
 
     def complete_selected

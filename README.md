@@ -95,7 +95,8 @@ models in `~/.config/tasks/config`; see `docs/cli-spec.md` (LLM agent settings).
 
 `bin/tasks-tui` is a full-screen interactive view over the same file (stdlib only,
 like everything else). The views update live when `gtd.org` changes — whether you,
-Claude, or another process edited it.
+Claude, or another process edited it. The TUI reopens on whichever view you quit
+from (session state in `$XDG_STATE_HOME/tasks/tui.json`).
 
 ```
 1-4 / ←→   switch view: Agenda · Next · Quadrants · Inbox (arrows cycle)
