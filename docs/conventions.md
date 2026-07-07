@@ -88,6 +88,21 @@ the `TASKS_URGENT_DAYS` env var.
 - `DEADLINE:  <YYYY-MM-DD>` — the day it's *due*.
 - Dates are ISO. `<...>` is org's active-timestamp syntax (shows up in agenda).
 
+## Links
+
+Body notes routinely reference other systems — a Slack thread, a Jira ticket,
+a PR, a doc. Write them as org links when a label helps, or bare URLs when it
+doesn't; the tooling recognizes both and knows which system each points into
+(`tasks links`, `show`):
+
+```
+   Context in [[https://acme.slack.com/archives/C042/p1719][the incident thread]].
+   Ticket: https://acme.atlassian.net/browse/OPS-1234
+```
+
+Prefer the link over a prose description of where something lives — links are
+listable, openable, and survive rewording.
+
 ## Projects
 
 Anything requiring more than one action is a **project**. Model it as a heading with

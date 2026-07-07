@@ -6,8 +6,10 @@ require "set"
 require_relative "atomic"
 require_relative "check"
 require_relative "journal"
+require_relative "links"
 require_relative "quadrants"
 require_relative "recur"
+require_relative "tree"
 
 module Tasks
   Item = Struct.new(
@@ -61,6 +63,14 @@ module Tasks
     # Drop org PROPERTIES drawers (:PROPERTIES:…:END:) from block lines, for
     # display — the :ID: is surfaced on its own; the drawer is machinery, not a
     # note. Shared by the CLI's `show` and the TUI detail modal so they agree.
+    # A block's prose: drawer machinery, planning stamps, and org comment lines
+    # (e.g. the archive's "# Archived <date>" sweep separators) removed. What
+    # body search and link extraction should see — metadata has its own
+    # filters/columns, so matching "/fri" must not hit every Friday DEADLINE.
+    def self.prose(lines)
+      strip_drawer(lines).reject { |l| l =~ PLANNING || l.start_with?("#") }
+    end
+
     def self.strip_drawer(lines)
       in_drawer = false
       lines.reject do |l|
@@ -107,7 +117,64 @@ module Tasks
     def reload!
       @mtime = File.mtime(@org)
       @cache = parse
+      @tree = nil # derived from the same lines; rebuild lazily on next ask
+      @nodes_by_line = nil
       self
+    end
+
+    # The structural index (Tasks::Tree) over gtd.org: sections, tasks, and
+    # subtasks as nested nodes, each with its own body lines. Rebuilt whenever
+    # the file changes (items() drives the staleness check).
+    def tree
+      items # ensures a fresh parse and clears @tree if the file changed
+      @tree ||= Tree.build(read_lines(@org), @cache.to_h { |i| [i.line, i] })
+    end
+
+    # The tree node for an item (nil for archive items — the tree indexes the
+    # live file only). O(1) via a line-keyed map; if the item carries an id and
+    # the node at its line doesn't match (lines shifted underneath a held item),
+    # fall back to finding its node by id — same preference locate applies.
+    def node_for(item)
+      return nil unless item.source == :org
+      n = nodes_by_line[item.line]
+      if n&.item
+        # Same identity check the mutation paths apply: id when the item has
+        # one, title otherwise — a held id-less item whose line was taken over
+        # by a different task must degrade to nil, not to the wrong task.
+        return n if item.id ? n.item.id == item.id : n.item.title == item.title
+      end
+      item.id ? nodes_by_line.each_value.find { |x| x.item&.id == item.id } : nil
+    end
+
+    # Line-number => node map over the whole tree, built once per tree build so
+    # per-item lookups (body, project) are O(1), not a tree walk each.
+    def nodes_by_line
+      tree
+      @nodes_by_line ||= {}.tap do |map|
+        @tree.each { |root| root.each { |n| map[n.line] = n } }
+      end
+    end
+
+    # The item's own body lines (prose under its headline, stopping at any
+    # child headline), filtered to prose — the text that body search and link
+    # extraction run over. Works for org AND archive items: live items read
+    # the cached tree; archive items walk the archive lines (one block-boundary
+    # rule for both — own_block_end).
+    def body(item)
+      if item.source == :org
+        node = node_for(item)
+        node ? Store.prose(node.body) : []
+      else
+        lines = read_lines(@archive)
+        i = guard_line(lines, item) or return []
+        Store.prose(lines[(i + 1)...own_block_end(lines, i)])
+      end
+    end
+
+    # Links found in the item's title and body, classified by system
+    # (see Tasks::Links).
+    def links(item)
+      Links.extract([item.title, *body(item)])
     end
 
     # Raw file lines of an item: its headline plus body, up to the next
@@ -251,6 +318,26 @@ module Tasks
 
     private
 
+    # Read a file's lines with a small cache, so read surfaces that ask per
+    # item (body search over the archive, links over every task) cost one file
+    # read, not one per task. Keyed on (mtime, inode, size): Atomic.write
+    # installs a fresh inode on every write, so even two writes inside one
+    # coarse-mtime tick can't serve stale lines. Mutation impls read the org
+    # file directly under the lock; the cache serves the read/parse surfaces
+    # (and the archive id sweep, where the inode key keeps it write-fresh).
+    def read_lines(path)
+      stat = File.stat(path)
+      key = [stat.mtime, stat.ino, stat.size]
+      @lines_cache ||= {}
+      cached = @lines_cache[path]
+      return cached[1] if cached && cached[0] == key
+      lines = File.readlines(path, encoding: "UTF-8")
+      @lines_cache[path] = [key, lines]
+      lines
+    rescue Errno::ENOENT
+      []
+    end
+
     # 0-based index of the item's headline in `lines`, or nil if it can't be
     # found. Prefers the stable :ID: (so a mutation still lands even if lines
     # shifted or the title changed out from under us); falls back to the
@@ -259,6 +346,13 @@ module Tasks
       if item.id && (i = id_index(lines)[item.id])
         return i
       end
+      guard_line(lines, item)
+    end
+
+    # The pre-id staleness guard: the recorded line still holds a headline
+    # containing the item's title. Used directly for archive items (no id
+    # index over the archive) and as locate's fallback.
+    def guard_line(lines, item)
       i = item.line - 1
       i if lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
     end
@@ -845,12 +939,18 @@ module Tasks
 
     def parse = parse_file(@org, source: :org)
 
+    # Parse via the shared line cache, so items and the tree (which binds nodes
+    # to items by line number) always derive from the SAME read of the file — a
+    # write landing between two separate reads could otherwise mis-bind them.
     def parse_file(path, source:)
+      parse_lines(read_lines(path), source: source)
+    end
+
+    def parse_lines(all_lines, source:)
       items = []
-      return items unless File.exist?(path)
       current = nil
       in_drawer = false
-      File.foreach(path, encoding: "UTF-8").with_index(1) do |line, lineno|
+      all_lines.each.with_index(1) do |line, lineno|
         if (m = line.match(HEADLINE))
           current = Item.new(
             state: m[1], priority: m[2], title: m[3].strip,

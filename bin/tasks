@@ -66,6 +66,7 @@ def bold(s)   = color(s, 1)
 def dim(s)    = color(s, 90)
 def red(s)    = color(s, 31)
 def yellow(s) = color(s, 33)
+def cyan(s)   = color(s, 36)
 
 # Color a deadline by how close it is: red = overdue/today, yellow = next 2 days,
 # cyan = this week, dim = further out.
@@ -468,18 +469,88 @@ def cmd_show(args)
     l.empty? || l.start_with?("SCHEDULED:", "DEADLINE:", "CLOSED:")
   end
 
+  links = store.links(item)
+  project = store.node_for(item)&.project&.title
+
   if flags["--json"]
     require "json"
-    puts item_json(item).merge(closed: closed, notes: notes).to_json
+    puts item_json(item).merge(
+      closed: closed, notes: notes, project: project,
+      links: links.map(&:to_h),
+    ).to_json
   else
     puts item_headline(item)
     puts "  id:        #{item.id}" if item.id
+    puts "  project:   #{project}" if project
     puts "  scheduled: #{item.scheduled.iso8601}" if item.scheduled
     puts "  deadline:  #{item.deadline.iso8601}" if item.deadline
     puts "  recur:     #{item.recur} #{dim("(#{recur_summary(item.recur)})")}" if item.recur
     puts "  closed:    #{closed}" if closed
     notes.each { |n| puts "  #{n}" }
+    unless links.empty?
+      width = links.map { |l| l.system.length }.max
+      links.each { |l| puts link_line(l, width) }
+    end
   end
+end
+
+# List links found in task titles/bodies, classified by system (slack, jira,
+# github, …). One task's links with a <ref>; otherwise every open task's.
+# --system filters (e.g. --system jira); --all widens to done + archived.
+def cmd_links(args)
+  args = args.dup
+  flags = {}
+  system_f = nil
+  rest = []
+  until args.empty?
+    a = args.shift
+    case a
+    when "--json"         then flags["--json"] = true
+    when "--all", "-a"    then flags["--all"] = true
+    when "--system", "-s"
+      system_f = args.shift
+      abort "--system needs a value" if system_f.nil? || system_f.start_with?("-")
+      system_f = system_f.downcase # SYSTEMS names and host fallbacks are lowercase
+    when /\A-/            then abort "unknown flag: #{a} (links accepts: --json, --all, --system)"
+    else                       rest << a
+    end
+  end
+
+  entries =
+    if (ref = rest.shift)
+      item = resolve_ref(ref, include_done: true)
+      [[item, store.links(item)]]
+    else
+      items = store.items
+      items += store.archive_items if flags["--all"]
+      items = items.select { |i| flags["--all"] || OPEN_STATES.include?(i.state) }
+      items.map { |i| [i, store.links(i)] }
+    end
+  entries = entries.map { |i, ls| [i, system_f ? ls.select { |l| l.system == system_f } : ls] }
+                   .reject { |_i, ls| ls.empty? }
+
+  if flags["--json"]
+    require "json"
+    puts({ links: entries.flat_map { |i, ls|
+      ls.map { |l| l.to_h.merge(task: i.title, id: i.id, line: i.line, source: i.source) }
+    } }.to_json)
+    return
+  end
+
+  if entries.empty?
+    puts "No links found."
+    return
+  end
+  width = entries.flat_map { |_i, ls| ls.map { |l| l.system.length } }.max
+  entries.each do |i, ls|
+    puts fmt(i)
+    ls.each { |l| puts link_line(l, width) }
+  end
+end
+
+# One rendered link row, shared by `links` and `show` so the surfaces agree.
+def link_line(link, width)
+  "  #{cyan(link.system.ljust(width))} #{link.url}#{link.label ? dim("  (#{link.label})") : ""}"
 end
 
 def cmd_state(args)
@@ -718,6 +789,7 @@ def cmd_list(args)
   json     = false
   deferred_only = false
   recurring_only = false
+  body_search = false
   contexts_f = []
   tags_f     = []
   priority_f = nil
@@ -730,6 +802,7 @@ def cmd_list(args)
     when "--all", "-a"      then scope = :all
     when "--deferred", "-D" then deferred_only = true
     when "--recurring", "-R" then recurring_only = true
+    when "--body", "-b"     then body_search = true
     when "--json"           then json = true
     when /\A-([ABC])\z/     then priority_f = $1
     when /\A@/              then contexts_f << a
@@ -754,6 +827,14 @@ def cmd_list(args)
     end
 
   q = text_f.join(" ").downcase
+  # Text match: title always; --body widens to the task's notes (its own body
+  # lines under the headline). Body reads hit the file per candidate, so only
+  # pay for them when the flag asks and a text query is present.
+  text_ok = lambda do |i|
+    return true if q.empty?
+    return true if i.title.downcase.include?(q)
+    body_search && store.body(i).join.downcase.include?(q)
+  end
   # Deferred tasks are hidden from the default open scope so they stop
   # competing for attention; --deferred flips that to a someday/maybe review
   # (only deferred tasks). Other scopes (done/archived/all) are unaffected.
@@ -771,7 +852,7 @@ def cmd_list(args)
       (priority_f.nil? || i.priority == priority_f) &&
       contexts_f.all? { |c| i.tags.include?(c) } &&
       tags_f.all?     { |t| i.tags.include?(t) } &&
-      (q.empty? || i.title.downcase.include?(q))
+      text_ok.call(i)
   end
 
   return if emit_json?(sel, [json ? "--json" : nil].compact)
@@ -900,7 +981,11 @@ HELP = <<~USAGE
     list      l [filters]    tasks by state. Filters: @context /text +tag -A|-B|-C
                              Scope: --open/-o (default) --done/-d --archived/-x --all/-a
                              --deferred/-D someday/maybe · --recurring/-R repeating tasks
-    show      s <ref>        one task in full (headline + notes)
+                             --body/-b widens /text search into task notes
+    show      s <ref>        one task in full (headline + notes + links)
+    links     urls [<ref>]   links in task notes, by system (slack, jira, …)
+                             --system <name> filters · --all widens the listing
+                             to done + archived (<ref> stays live-file) · --json
     id           <ref>       print a task's stable :ID: (assigns one if absent)
     check     k              validate gtd.org structure
 
@@ -977,6 +1062,7 @@ when "archive", "x"   then cmd_archive
 when "undo"           then cmd_undo
 when "redo"           then cmd_redo
 when "id"             then cmd_id(ARGV[1..])
+when "links", "urls"  then cmd_links(ARGV[1..])
 when "list", "l"      then cmd_list(ARGV[1..])
 when "check", "k"     then cmd_check(ARGV[1..])
 when "config"         then cmd_config(ARGV[1..])

@@ -49,12 +49,17 @@ helper (#1). Needs a reliable "since when" signal — either the `Captured
 
 Shipped. Left here as a marker; see `docs/cli-spec.md`.
 
-## 6. Full-text search including bodies/notes
+## 6. Full-text search including bodies/notes ✅ (done)
 
-Today `/text` (in `list`) and every `<ref>` match on the **title only**
-(`resolve_ref`, `cmd_list`). Extending the match to body/note lines would make
-search far more useful — e.g. finding a task by a name mentioned in its notes.
-Consider a `--body`/`--all-text` flag so ref resolution stays predictable.
+Shipped as `list --body/-b`, backed by the structural index (`Tasks::Tree`,
+`Store#body`). Ref resolution stays title-only, as planned. The same layer
+carries `tasks links` (link extraction + per-system classification via
+`Tasks::Links` — slack/jira/github/…, unknown hosts fall back to the host) and
+`show`'s `project:`. This is the substrate for the review helper (#1) and the
+project view (#8); follow-ons for the planned link feature: user-defined
+system rows in `~/.config/tasks/config` (e.g. a self-hosted Jira/GitLab host
+that the built-in patterns can't know), open-in-browser from the TUI, and
+capture-with-link templates.
 
 ## 7. `stats` command
 
