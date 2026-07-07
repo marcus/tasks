@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "ansi"
+require_relative "theme"
 
 module Tui
   # Pure frame builder: given content, returns an array of strings, one per
@@ -8,6 +9,7 @@ module Tui
   # decides how to paint, tests can assert on the result.
   module Frame
     A = Ansi
+    T = Theme
 
     module_function
 
@@ -27,7 +29,7 @@ module Tui
 
       body = (rows[offset, body_h] || []).map.with_index do |row, vi|
         if offset + vi == selected
-          A.invert(A.vpad("▸ " + A.strip(row.text), w - 2))
+          T.paint(:selection, A.vpad("▸ " + A.strip(row.text), w - 2))
         else
           "  " + row.text
         end

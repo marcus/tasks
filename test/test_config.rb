@@ -14,7 +14,8 @@ class TestConfig < Minitest::Test
   # the config-file lookup at a sandbox XDG dir.
   def clean_env(xdg)
     { "TASKS_ORG" => nil, "TASKS_ARCHIVE" => nil, "TASKS_DIR" => nil,
-      "TASKS_URGENT_DAYS" => nil, "XDG_CONFIG_HOME" => xdg }
+      "TASKS_URGENT_DAYS" => nil, "TASKS_THEME" => nil, "NO_COLOR" => nil,
+      "XDG_CONFIG_HOME" => xdg }
   end
 
   def resolve(env: {}, default: "/repo")
@@ -43,7 +44,8 @@ class TestConfig < Minitest::Test
     paths = resolve
     assert_equal "/repo/gtd.org", paths.org
     assert_equal "/repo/archive.org", paths.archive
-    assert_equal({ org: "default", archive: "default", urgent_days: "default" }, paths.sources)
+    assert_equal({ org: "default", archive: "default", urgent_days: "default", theme: "default" },
+                 paths.sources)
   end
 
   def test_tasks_dir_env_points_both_files
@@ -154,6 +156,44 @@ class TestConfig < Minitest::Test
 
   def test_for_dir_uses_default_urgent_days
     assert_equal 3, Tasks::Config.for_dir("/sandbox").urgent_days
+  end
+
+  # -- theme + colors (TUI appearance) ----------------------------------------
+
+  def test_theme_defaults_with_no_colors
+    paths = resolve
+    assert_equal "default", paths.theme
+    assert_equal({}, paths.colors)
+  end
+
+  def test_theme_and_colors_from_config_file
+    write_config(<<~CONF)
+      theme = mono
+      color.accent = magenta
+      color.link = underline #88aaff
+    CONF
+    paths = resolve
+    assert_equal "mono", paths.theme
+    assert_equal "config file", paths.sources[:theme]
+    assert_equal({ "accent" => "magenta", "link" => "underline #88aaff" }, paths.colors)
+  end
+
+  def test_tasks_theme_env_beats_config_file
+    write_config("theme = mono\n")
+    paths = resolve(env: { "TASKS_THEME" => "default" })
+    assert_equal "default", paths.theme
+    assert_equal "TASKS_THEME env", paths.sources[:theme]
+  end
+
+  def test_no_color_env_selects_mono_unless_theme_is_explicit
+    assert_equal "mono", resolve(env: { "NO_COLOR" => "1" }).theme
+    write_config("theme = default\n")
+    assert_equal "default", resolve(env: { "NO_COLOR" => "1" }).theme
+  end
+
+  def test_bare_color_dot_key_is_ignored
+    write_config("color. = red\n")
+    assert_equal({}, resolve.colors)
   end
 
   # -- for_dir (test sandboxing) ---------------------------------------------

@@ -1,0 +1,120 @@
+# frozen_string_literal: true
+
+require_relative "test_helper"
+require "tui/theme"
+require "tui/modals"
+
+# Tui::Theme — spec parsing, slot painting, named themes, config overrides.
+class TestTheme < Minitest::Test
+  T = Tui::Theme
+
+  def teardown
+    T.reset!
+  end
+
+  # -- spec parsing ------------------------------------------------------------
+
+  def test_parses_named_colors_and_attributes
+    assert_equal [36], T.parse("cyan")
+    assert_equal [1, 36], T.parse("bold cyan")
+    assert_equal [91], T.parse("bright-red")
+    assert_equal [90], T.parse("gray")
+    assert_equal [7], T.parse("reverse")
+  end
+
+  def test_parses_backgrounds_256_and_hex
+    assert_equal [44], T.parse("on-blue")
+    assert_equal [100], T.parse("on-gray")
+    assert_equal ["38;5;208"], T.parse("208")
+    assert_equal ["48;5;17"], T.parse("on-17")
+    assert_equal ["38;2;255;136;0"], T.parse("#ff8800")
+    assert_equal ["48;2;30;32;48"], T.parse("on-#1e2030")
+    assert_equal [1, "38;2;255;136;0", 44], T.parse("bold #ff8800 on-blue")
+  end
+
+  def test_none_means_unstyled_and_invalid_specs_are_rejected_whole
+    assert_equal [], T.parse("none")
+    assert_nil T.parse("chartreuse")
+    assert_nil T.parse("bold chartreuse") # one bad token poisons the spec
+    assert_nil T.parse("300")             # out of 256-color range
+    assert_nil T.parse("#ff88")           # short hex
+    assert_nil T.parse("")
+    assert_nil T.parse("on-bold")         # attributes have no background form
+  end
+
+  # -- painting ----------------------------------------------------------------
+
+  def test_default_theme_matches_stock_look
+    assert_equal "\e[36mx\e[0m", T.paint(:accent, "x")
+    assert_equal "\e[7mx\e[0m", T.paint(:selection, "x")
+    assert_equal "\e[90mx\e[0m", T.paint(:muted, "x")
+    assert_equal "\e[1;7mx\e[0m", T.paint(:tab_active, "x")
+  end
+
+  def test_unknown_slot_passes_through
+    assert_equal "x", T.paint(:nonexistent, "x")
+  end
+
+  # -- configure! ---------------------------------------------------------------
+
+  def test_overrides_restyle_a_slot
+    T.configure!(overrides: { "accent" => "magenta" })
+    assert_equal "\e[35mx\e[0m", T.paint(:accent, "x")
+    assert_equal "\e[90mx\e[0m", T.paint(:muted, "x") # untouched slots keep defaults
+  end
+
+  def test_invalid_override_falls_back_to_default
+    T.configure!(overrides: { "accent" => "chartreuse" })
+    assert_equal "\e[36mx\e[0m", T.paint(:accent, "x")
+  end
+
+  def test_unknown_override_slot_is_ignored
+    T.configure!(overrides: { "sparkle" => "red" })
+    assert_equal "\e[36mx\e[0m", T.paint(:accent, "x")
+  end
+
+  def test_none_override_disables_styling
+    T.configure!(overrides: { "muted" => "none" })
+    assert_equal "x", T.paint(:muted, "x")
+  end
+
+  def test_mono_theme_uses_no_color_codes
+    T.configure!(name: "mono")
+    T::DEFAULTS.each_key do |slot|
+      codes = T.current[slot].join(";")
+      refute_match(/3[0-9]|4[0-8]|9[0-7]/, codes, "mono #{slot} should carry no color")
+    end
+    assert_equal "\e[2mx\e[0m", T.paint(:muted, "x")
+    assert_equal "\e[4mx\e[0m", T.paint(:link, "x")
+  end
+
+  def test_unknown_theme_name_falls_back_to_default
+    T.configure!(name: "solarized-post-punk")
+    assert_equal "\e[36mx\e[0m", T.paint(:accent, "x")
+  end
+
+  def test_overrides_apply_on_top_of_named_theme
+    T.configure!(name: "mono", overrides: { "accent" => "underline" })
+    assert_equal "\e[4mx\e[0m", T.paint(:accent, "x")
+    assert_equal "\e[2mx\e[0m", T.paint(:muted, "x")
+  end
+
+  # -- link painting in notes (Modals) ------------------------------------------
+
+  def test_note_line_paints_links_and_prose_separately
+    line = "see https://github.com/a/b for details"
+    out = Tui::Modals.note_line(line)
+    assert_includes out, "\e[4;36mhttps://github.com/a/b\e[0m"
+    assert_includes out, "\e[90msee \e[0m"
+    assert_includes out, "\e[90m for details\e[0m"
+  end
+
+  def test_note_line_paints_org_links_whole
+    out = Tui::Modals.note_line("[[https://x.dev][the doc]] rest")
+    assert_includes out, "\e[4;36m[[https://x.dev][the doc]]\e[0m"
+  end
+
+  def test_note_line_without_links_is_all_note_styled
+    assert_equal "\e[90mjust prose\e[0m", Tui::Modals.note_line("just prose")
+  end
+end

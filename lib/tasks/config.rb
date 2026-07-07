@@ -9,7 +9,8 @@ module Tasks
   #   1. TASKS_ORG / TASKS_ARCHIVE env vars (per-file overrides; tests use these)
   #   2. TASKS_DIR env var (a directory holding gtd.org + archive.org)
   #   3. config file at $XDG_CONFIG_HOME/tasks/config (default ~/.config/tasks/
-  #      config), `key = value` lines with keys dir / org / archive / urgent_days
+  #      config), `key = value` lines with keys dir / org / archive /
+  #      urgent_days / theme / color.<slot>
   #   4. default_dir — the repo root, matching the original layout
   #
   # Every consumer (CLI, TUI) goes through Config.resolve so they can never
@@ -21,7 +22,7 @@ module Tasks
   module Config
     PATH_KEYS = %w[dir org archive].freeze
 
-    Paths = Struct.new(:org, :archive, :urgent_days, :sources, :config_file, keyword_init: true) do
+    Paths = Struct.new(:org, :archive, :urgent_days, :theme, :colors, :sources, :config_file, keyword_init: true) do
       # Context block appended to an agent's system prompt so a headless harness
       # finds the CLI and the task files even when they live outside the repo.
       # Provider-agnostic — every backend (Claude CLI, Hermes, …) uses it.
@@ -43,7 +44,8 @@ module Tasks
       Paths.new(
         org: File.join(dir, "gtd.org"), archive: File.join(dir, "archive.org"),
         urgent_days: Quadrants::DEFAULT_URGENT_DAYS,
-        sources: { org: "pinned", archive: "pinned", urgent_days: "default" },
+        theme: "default", colors: {},
+        sources: { org: "pinned", archive: "pinned", urgent_days: "default", theme: "default" },
         config_file: config_file
       )
     end
@@ -64,14 +66,33 @@ module Tasks
       org,     org_source     = pick("gtd.org",     "TASKS_ORG",     dir, dir_source, conf["org"],     env)
       archive, archive_source = pick("archive.org", "TASKS_ARCHIVE", dir, dir_source, conf["archive"], env)
       urgent_days, urgent_source = pick_urgent_days(conf, env)
+      theme, theme_source = pick_theme(conf, env)
 
       Paths.new(
         org: org, archive: archive,
         urgent_days: urgent_days,
-        sources: { org: org_source, archive: archive_source, urgent_days: urgent_source },
+        theme: theme, colors: conf["colors"] || {},
+        sources: { org: org_source, archive: archive_source,
+                   urgent_days: urgent_source, theme: theme_source },
         config_file: file
       )
     end
+
+    # TUI theme name. Env beats config file; NO_COLOR (when nothing explicit
+    # is set) selects the attribute-only theme. Tui::Theme validates the name
+    # and falls back to the default look for anything it doesn't know.
+    def self.pick_theme(conf, env)
+      if env["TASKS_THEME"] && !env["TASKS_THEME"].empty?
+        [env["TASKS_THEME"], "TASKS_THEME env"]
+      elsif conf["theme"]
+        [conf["theme"], "config file"]
+      elsif env["NO_COLOR"] && !env["NO_COLOR"].empty?
+        ["mono", "NO_COLOR env"]
+      else
+        ["default", "default"]
+      end
+    end
+    private_class_method :pick_theme
 
     # Deadline window (in days) for the "urgent" axis. Env beats config file
     # beats the built-in default; an empty or non-integer value is ignored so
@@ -127,6 +148,9 @@ module Tasks
     # ignored (forward compatibility). Path keys (dir/org/archive) expand `~`
     # and relative paths; scalar keys (urgent_days) parse as integers and an
     # invalid value is dropped so the caller falls back to its default.
+    # TUI appearance: `theme = <name>` and `color.<slot> = <spec>` lines are
+    # collected verbatim (specs under conf["colors"]) — Tui::Theme owns
+    # validation so the vocabulary lives in one place.
     def self.parse_file(path)
       return {} unless File.file?(path)
 
@@ -143,6 +167,10 @@ module Tasks
           conf[key] = File.expand_path(value)
         elsif key == "urgent_days" && (n = parse_days(value))
           conf[key] = n
+        elsif key == "theme"
+          conf[key] = value
+        elsif key.start_with?("color.") && key.length > 6
+          (conf["colors"] ||= {})[key.delete_prefix("color.")] = value
         end
       end
     end

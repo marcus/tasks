@@ -119,6 +119,11 @@ The agent runs asynchronously (the local `claude` CLI by default, same as
 works; its answer appears in an expanding footer pane and the views refresh with
 whatever it changed. `M` switches backend/model between requests.
 
+Colors are themable: `theme = mono` and per-slot `color.accent = magenta` /
+`color.selection = black on-cyan` lines in `~/.config/tasks/config` restyle
+tabs, the selection bar, due dates, notes, links, and more. `NO_COLOR` is
+honored. See `docs/cli-spec.md` (TUI colors) for the slot and spec vocabulary.
+
 ## Roadmap / ideas
 
 Near-term:

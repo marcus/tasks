@@ -35,7 +35,23 @@ The config file also carries non-path settings: `urgent_days = N` sets the
 quadrants urgency window (see `quadrants`), overridable by the `TASKS_URGENT_DAYS`
 env var, default 3.
 
-`tasks config` prints the resolved paths, `urgent_days`, and where each came from.
+**TUI colors.** The TUI paints semantic *slots* (`lib/tui/theme.rb` lists them
+all: `accent`, `selection`, `tab_active`, `note`, `link`, the `due_*` ladder,
+`state_*`, …). Appearance keys in the same config file:
+
+- `theme = <name>` — a named base theme: `default`, or `mono` (attribute-only).
+  Overridable by `TASKS_THEME`; a non-empty `NO_COLOR` env var selects `mono`
+  when nothing explicit is set.
+- `color.<slot> = <spec>` — restyle one slot on top of the theme. A spec is
+  space-separated tokens: attributes (`bold`, `dim`, `italic`, `underline`,
+  `reverse`), a named color (`red`, `bright-red`, `gray`, …), a 256-color index
+  (`208`), or hex (`#ff8800`); prefix a color with `on-` for the background
+  (`on-blue`, `on-#1e2030`); `none` = unstyled. Example:
+  `color.selection = black on-cyan`. Invalid values fall back to the theme
+  default rather than erroring.
+
+`tasks config` prints the resolved paths, `urgent_days`, `theme`, and where
+each came from.
 
 ### LLM agent settings
 
@@ -185,7 +201,7 @@ already sorted the way the text view sorts:
 | `undo` | | ✅ | Revert the last mutation via the on-disk journal (`Tasks::Journal`, under `$XDG_STATE_HOME/tasks/journal/`), shared with the TUI and across CLI runs. Refuses (exit 1) if gtd.org changed out-of-band since that edit — resolve with `git diff` / `git checkout -- gtd.org`. |
 | `redo` | | ✅ | Replay the last undone mutation; same shared journal and conflict guard as `undo`. |
 | `-p [--provider N] [--model N] "prompt"` | | ✅ | Natural-language request via a headless LLM agent (Claude CLI by default, or any configured harness). Leading `--provider`/`--model` override the config default for one run; see [LLM agent settings](#llm-agent-settings). |
-| `config [--json]` | | ✅ | Print resolved file paths (org, archive, config file), `urgent_days`, and the source of each (`TASKS_ORG env`, `TASKS_DIR env`, `TASKS_URGENT_DAYS env`, `config file`, `default`). |
+| `config [--json]` | | ✅ | Print resolved file paths (org, archive, config file), `urgent_days`, `theme` (+ any `color.*` overrides), and the source of each (`TASKS_ORG env`, `TASKS_DIR env`, `TASKS_URGENT_DAYS env`, `TASKS_THEME env`, `NO_COLOR env`, `config file`, `default`). |
 | `help` | `-h`, `--help` | ✅ | Grouped command reference. Also printed (to stderr, exit 1) on an unknown/absent command. |
 
 Ideas beyond this spec live in `docs/ideas.md`.

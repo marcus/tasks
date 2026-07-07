@@ -3,6 +3,7 @@
 require "io/console"
 require "date"
 require_relative "ansi"
+require_relative "theme"
 require_relative "dates"
 require_relative "store"
 require_relative "views"
@@ -20,6 +21,7 @@ module Tui
   # async LLM agent runner, multiplexed with IO.select.
   class App
     A = Ansi
+    T = Theme
 
     MIN_WIDTH   = 40   # floor for degenerate ptys and tiny splits; no max — full width
     TICK        = 0.25 # seconds; also the file-watch poll interval
@@ -48,6 +50,7 @@ module Tui
     #             tests are hermetic instead of reading the developer's real config.
     def initialize(root:, paths: Tasks::Config.resolve(default_dir: root),
                    llm_config: LLM::Config.load)
+      Theme.configure!(name: paths.theme, overrides: paths.colors || {})
       @store  = Store.new(org: paths.org, archive: paths.archive)
       @urgent_days = paths.urgent_days # deadline window for the quadrants view
       # The (provider, model) switcher cycles these; the live agent is rebuilt
@@ -128,7 +131,7 @@ module Tui
       if @store.changed? # picks up Claude edits + external edits
         @store.reload!
         res = Tasks::Check.check(@store.org)
-        flash(A.red("⚠ gtd.org: #{res.errors.size} format error(s) — run `tasks check`")) unless res.ok?
+        flash(T.paint(:error, "⚠ gtd.org: #{res.errors.size} format error(s) — run `tasks check`")) unless res.ok?
       end
       clamp_selection
     end
@@ -173,11 +176,11 @@ module Tui
 
     def header(w)
       tabs = Views::TABS.map do |label, key|
-        key == @view ? A.invert(A.bold(" #{label} ")) : A.dim(" #{label} ")
+        T.paint(key == @view ? :tab_active : :tab_inactive, " #{label} ")
       end.join(" ")
       open_n = @store.items.count { |i| i.open? && !i.deferred? }
-      deferred_note = @show_deferred ? "#{A.yellow("⏸ deferred shown")} · " : ""
-      count = A.dim("#{open_n} open · #{deferred_note}#{A.cyan(current_entry.to_s)}#{A.dim(" · ? help")}")
+      deferred_note = @show_deferred ? "#{T.paint(:warning, "⏸ deferred shown")}#{T.paint(:muted, " · ")}" : ""
+      count = "#{T.paint(:muted, "#{open_n} open · ")}#{deferred_note}#{T.paint(:accent, current_entry.to_s)}#{T.paint(:muted, " · ? help")}"
       gap = [w - A.vislen(tabs) - A.vislen(count) - 2, 1].max
       " #{tabs}#{" " * gap}#{count} "
     end
@@ -185,23 +188,23 @@ module Tui
     def footer(w)
       f = []
       if @agent.running?
-        f << A.dim(" #{SPINNER[@tick % SPINNER.size]} #{@agent_provider} is working… (esc cancels)")
+        f << T.paint(:muted, " #{SPINNER[@tick % SPINNER.size]} #{@agent_provider} is working… (esc cancels)")
         # scrub: a streaming chunk can end mid-multibyte-char
-        A.strip(@agent.output.scrub("�")).split("\n").last(3).each { |t| f << A.dim("   #{t}") }
+        A.strip(@agent.output.scrub("�")).split("\n").last(3).each { |t| f << T.paint(:muted, "   #{t}") }
         f << :rule
       elsif @resp_open && @resp
         visible = @resp[@resp_scroll, RESP_MAX] || []
         visible.each { |l| f << "   #{l}" }
         scroll_hint = @resp.size > RESP_MAX ? "#{@resp_scroll + visible.size}/#{@resp.size} · #{RESP_HINT}" : "esc dismiss"
-        f << A.dim("   ── #{scroll_hint} ──")
+        f << T.paint(:muted, "   ── #{scroll_hint} ──")
         f << :rule
       end
       f << " #{@flash}" if @flash
       if @mode == :filter
-        f << " #{A.bold(A.cyan("/ "))}#{inline_input(@filter_input)}#{A.dim("  enter keeps · esc clears")}"
+        f << " #{T.paint(:prompt, "/ ")}#{inline_input(@filter_input)}#{T.paint(:muted, "  enter keeps · esc clears")}"
       elsif @filter
         n = (@rows || []).count(&:item)
-        f << A.dim(" / #{@filter} · #{n} match#{n == 1 ? "" : "es"} · esc clears · / edits")
+        f << T.paint(:muted, " / #{@filter} · #{n} match#{n == 1 ? "" : "es"} · esc clears · / edits")
       end
       f.concat(prompt_lines(w))
       f
@@ -211,12 +214,12 @@ module Tui
     # request stays readable; beyond that, the earliest lines scroll off.
     def prompt_lines(w)
       unless @mode == :prompt
-        hint = @agent.running? ? A.dim("…") : A.dim("tab to ask the agent — reschedule, capture, edit anything…")
-        return [" #{A.bold(A.cyan("❯ "))}#{hint}"]
+        hint = T.paint(:muted, @agent.running? ? "…" : "tab to ask the agent — reschedule, capture, edit anything…")
+        return [" #{T.paint(:prompt, "❯ ")}#{hint}"]
       end
       wrapped = wrapped_input(@input, w - 5)
       wrapped.each_with_index.map do |l, i|
-        prefix = i.zero? ? " #{A.bold(A.cyan("❯ "))}" : "   "
+        prefix = i.zero? ? " #{T.paint(:prompt, "❯ ")}" : "   "
         "#{prefix}#{l}"
       end
     end
@@ -267,7 +270,7 @@ module Tui
       before = segment[0...cursor_col].join
       at = cursor_col < segment.length ? segment[cursor_col] : " "
       after = cursor_col < segment.length ? segment[(cursor_col + 1)..].join : ""
-      "#{before}#{A.invert(at)}#{after}"
+      "#{before}#{T.paint(:selection, at)}#{after}"
     end
 
     # The popup layered over the list right now: reschedule (:date) or
@@ -286,7 +289,7 @@ module Tui
       hint = @date_error || "fri · +3 · 07-15 · esc cancels"
       inner = [
         " new #{target}: #{inline_input(@date_input)}",
-        " #{@date_error ? A.red(hint) : A.dim(hint)}",
+        " #{@date_error ? T.paint(:error, hint) : T.paint(:muted, hint)}",
       ]
       pw = [inner.map { |l| A.vislen(l) }.max + 2, 36].max
       lines = ["┌ reschedule #{"─" * (pw - 14)}┐"]
@@ -301,8 +304,8 @@ module Tui
       cur = item.recur ? "now #{item.recur}" : "not repeating"
       hint = @recur_error || "weekly · 2w · .+1m · off · esc cancels"
       inner = [
-        " every: #{inline_input(@recur_input)}  #{A.dim("(#{cur})")}",
-        " #{@recur_error ? A.red(hint) : A.dim(hint)}",
+        " every: #{inline_input(@recur_input)}  #{T.paint(:muted, "(#{cur})")}",
+        " #{@recur_error ? T.paint(:error, hint) : T.paint(:muted, hint)}",
       ]
       pw = [inner.map { |l| A.vislen(l) }.max + 2, 40].max
       lines = ["┌ recur #{"─" * (pw - 9)}┐"]
@@ -708,7 +711,7 @@ module Tui
       max_scroll = lines.size - avail
       @modal_scroll = @modal_scroll.clamp(0, max_scroll)
       visible = lines[@modal_scroll, avail]
-      marker = A.dim("── #{@modal_scroll + visible.size}/#{lines.size} · ↑↓ scroll ──")
+      marker = T.paint(:muted, "── #{@modal_scroll + visible.size}/#{lines.size} · ↑↓ scroll ──")
       { title: @modal[:title], lines: visible + [marker] }
     end
 
@@ -857,7 +860,7 @@ module Tui
       return unless @agent.pump == :done
       width = [(IO.console&.winsize || [24, 80])[1], MIN_WIDTH].max
       @resp = A.wrap(@agent.output.strip, width - 8)
-      @resp = [A.dim("(no output)")] if @resp.all? { |l| l.strip.empty? }
+      @resp = [T.paint(:muted, "(no output)")] if @resp.all? { |l| l.strip.empty? }
       @resp_open = true
       @resp_scroll = 0
       @store.reload! if @store.changed?
