@@ -21,7 +21,17 @@ module Tasks
   module Config
     PATH_KEYS = %w[dir org archive].freeze
 
-    Paths = Struct.new(:org, :archive, :urgent_days, :sources, :config_file, keyword_init: true) do
+    # Link settings live in two dotted namespaces (see Tasks::Links):
+    #   link.<name>   = <url template with %s>  — shorthand: `jira:OPS-1` in a
+    #                   body expands through the template
+    #   system.<name> = <host>                  — classify that host as <name>
+    #                   (self-hosted Jira/GitLab the built-ins can't know)
+    # Names are constrained so a stray `foo.bar = x` line can't inject a
+    # shorthand that then matches prose.
+    LINK_NAME = /\A[a-z][a-z0-9_-]*\z/
+
+    Paths = Struct.new(:org, :archive, :urgent_days, :links, :link_systems,
+                       :sources, :config_file, keyword_init: true) do
       # Context block appended to an agent's system prompt so a headless harness
       # finds the CLI and the task files even when they live outside the repo.
       # Provider-agnostic — every backend (Claude CLI, Hermes, …) uses it.
@@ -43,6 +53,7 @@ module Tasks
       Paths.new(
         org: File.join(dir, "gtd.org"), archive: File.join(dir, "archive.org"),
         urgent_days: Quadrants::DEFAULT_URGENT_DAYS,
+        links: {}, link_systems: {},
         sources: { org: "pinned", archive: "pinned", urgent_days: "default" },
         config_file: config_file
       )
@@ -68,6 +79,7 @@ module Tasks
       Paths.new(
         org: org, archive: archive,
         urgent_days: urgent_days,
+        links: conf.fetch(:links, {}), link_systems: conf.fetch(:link_systems, {}),
         sources: { org: org_source, archive: archive_source, urgent_days: urgent_source },
         config_file: file
       )
@@ -127,6 +139,9 @@ module Tasks
     # ignored (forward compatibility). Path keys (dir/org/archive) expand `~`
     # and relative paths; scalar keys (urgent_days) parse as integers and an
     # invalid value is dropped so the caller falls back to its default.
+    # Dotted link keys (`link.jira = …`, `system.gitlab = …`) collect into the
+    # :links / :link_systems maps (symbol keys so they can't collide with the
+    # flat string keys above).
     def self.parse_file(path)
       return {} unless File.file?(path)
 
@@ -136,13 +151,20 @@ module Tasks
 
         key, _, value = line.partition("=")
         key = key.strip
-        value = value.strip
+        # Strip an inline comment: whitespace + "#" ends the value. Requiring
+        # the whitespace keeps a "#" INSIDE a value intact (a URL anchor like
+        # https://host/page#sec has no space before its #).
+        value = value.strip.sub(/\s#.*\z/, "").strip
         next if value.empty?
 
         if PATH_KEYS.include?(key)
           conf[key] = File.expand_path(value)
         elsif key == "urgent_days" && (n = parse_days(value))
           conf[key] = n
+        elsif (m = key.match(/\Alink\.(.+)\z/)) && m[1].match?(LINK_NAME)
+          (conf[:links] ||= {})[m[1]] = value
+        elsif (m = key.match(/\Asystem\.(.+)\z/)) && m[1].match?(LINK_NAME)
+          (conf[:link_systems] ||= {})[m[1]] = value
         end
       end
     end

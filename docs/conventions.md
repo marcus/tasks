@@ -91,17 +91,25 @@ the `TASKS_URGENT_DAYS` env var.
 ## Links
 
 Body notes routinely reference other systems — a Slack thread, a Jira ticket,
-a PR, a doc. Write them as org links when a label helps, or bare URLs when it
-doesn't; the tooling recognizes both and knows which system each points into
-(`tasks links`, `show`):
+a PR, a doc. Three forms, all recognized by the tooling (`tasks links`,
+`show`, `open`, the TUI's `o`):
 
 ```
    Context in [[https://acme.slack.com/archives/C042/p1719][the incident thread]].
    Ticket: https://acme.atlassian.net/browse/OPS-1234
+   Or, with link.jira configured: jira:OPS-1234
 ```
 
-Prefer the link over a prose description of where something lives — links are
-listable, openable, and survive rewording.
+- **Org links** `[[url][label]]` when a label helps.
+- **Bare URLs** when it doesn't.
+- **Shorthands** (`jira:OPS-1234`, `gh:acme/app/pull/412`) for systems you
+  reference constantly — configure `link.<name> = <url template with %s>` in
+  `~/.config/tasks/config` and descriptions stay terse; the tooling expands
+  them everywhere. This mirrors org's own link abbreviations, so the same
+  names can be mirrored in `org-link-abbrev-alist` if you also use Emacs.
+
+Prefer a link over a prose description of where something lives — links are
+listable, openable (`tasks open <ref>`, `o` in the TUI), and survive rewording.
 
 ## Projects
 

@@ -54,6 +54,7 @@ AGENTS  = File.join(ROOT, "AGENTS.md")
 # The model layer owns parsing and every mutation; the CLI adds dispatch,
 # ref resolution, and output. (Tasks::Item, Store::HEADLINE etc. live there.)
 require_relative "../lib/tasks/store"
+require_relative "../lib/tasks/opener"
 
 def contexts(item) = item.tags.select { |t| t.start_with?("@") }
 def open?(item)     = OPEN_STATES.include?(item.state)
@@ -304,7 +305,8 @@ end
 # case-insensitive substring of an open task's title, or an exact `L<line>`.
 
 def store
-  @store ||= Tasks::Store.new(org: ORG, archive: ARCHIVE)
+  @store ||= Tasks::Store.new(org: ORG, archive: ARCHIVE,
+                              links: PATHS.links, link_systems: PATHS.link_systems)
 end
 
 # Pull known boolean flags out of args, returning [flags_hash, positional].
@@ -497,6 +499,15 @@ end
 # List links found in task titles/bodies, classified by system (slack, jira,
 # github, …). One task's links with a <ref>; otherwise every open task's.
 # --system filters (e.g. --system jira); --all widens to done + archived.
+# Shared --system value parsing for `links` and `open` — the two must agree
+# on how a system name is read (downcased: SYSTEMS names and host fallbacks
+# are lowercase) or "open what links showed me" breaks between them.
+def take_system_value(args)
+  value = args.shift
+  abort "--system needs a value" if value.nil? || value.start_with?("-")
+  value.downcase
+end
+
 def cmd_links(args)
   args = args.dup
   flags = {}
@@ -507,10 +518,7 @@ def cmd_links(args)
     case a
     when "--json"         then flags["--json"] = true
     when "--all", "-a"    then flags["--all"] = true
-    when "--system", "-s"
-      system_f = args.shift
-      abort "--system needs a value" if system_f.nil? || system_f.start_with?("-")
-      system_f = system_f.downcase # SYSTEMS names and host fallbacks are lowercase
+    when "--system", "-s" then system_f = take_system_value(args)
     when /\A-/            then abort "unknown flag: #{a} (links accepts: --json, --all, --system)"
     else                       rest << a
     end
@@ -551,6 +559,56 @@ end
 # One rendered link row, shared by `links` and `show` so the surfaces agree.
 def link_line(link, width)
   "  #{cyan(link.system.ljust(width))} #{link.url}#{link.label ? dim("  (#{link.label})") : ""}"
+end
+
+# Open a task's link in the browser. One link opens straight away; several
+# need a pick — a 1-based index or --system — otherwise they're listed with a
+# hint (nothing launches unbidden). --print prints instead of launching.
+def cmd_open(args)
+  args = args.dup
+  flags = {}
+  system_f = nil
+  rest = []
+  until args.empty?
+    a = args.shift
+    case a
+    when "--print", "-p"  then flags["--print"] = true
+    when "--system", "-s" then system_f = take_system_value(args)
+    when /\A-/            then abort "unknown flag: #{a} (open accepts: --print, --system)"
+    else                       rest << a
+    end
+  end
+  ref = rest.shift
+  abort "usage: tasks open <ref> [n] [--system <name>] [--print]" if ref.nil? || ref.strip.empty?
+  pick = rest.shift&.then { |n| n =~ /\A\d+\z/ ? n.to_i : abort("expected a link number, got: #{n}") }
+
+  item = resolve_ref(ref, include_done: true)
+  links = store.links(item)
+  links = links.select { |l| l.system == system_f } if system_f
+  abort "no links on: #{item.title}#{system_f ? " (system #{system_f})" : ""}" if links.empty?
+
+  if pick
+    # 1-based; 0 would negative-index into the list's tail
+    abort "no link ##{pick} (task has #{links.size})" unless pick >= 1 && links[pick - 1]
+    link = links[pick - 1]
+  elsif links.size == 1
+    link = links.first
+  else
+    # Echo the --system filter in the hint: the numbers below index the
+    # FILTERED list, so the re-run must filter the same way.
+    sys = system_f ? " --system #{system_f}" : ""
+    warn "#{links.size} links — pick one: tasks open #{ref.inspect}#{sys} <n>"
+    width = links.map { |l| l.system.length }.max
+    links.each_with_index { |l, i| warn "  #{i + 1}. #{cyan(l.system.ljust(width))} #{l.url}" }
+    exit 1
+  end
+
+  if flags["--print"]
+    puts link.url
+  else
+    Tasks::Opener.open_url(link.url) or abort "no browser launcher found (set TASKS_OPENER)"
+    puts "opened #{link.url}"
+  end
 end
 
 def cmd_state(args)
@@ -957,6 +1015,7 @@ def cmd_config(args)
     require "json"
     puts({ org: ORG, archive: ARCHIVE,
            urgent_days: PATHS.urgent_days,
+           links: PATHS.links, link_systems: PATHS.link_systems,
            sources: PATHS.sources,
            config_file: PATHS.config_file,
            config_file_exists: File.file?(PATHS.config_file) }.to_json)
@@ -964,6 +1023,10 @@ def cmd_config(args)
     puts "org:         #{ORG}  #{dim("(#{PATHS.sources[:org]})")}"
     puts "archive:     #{ARCHIVE}  #{dim("(#{PATHS.sources[:archive]})")}"
     puts "urgent_days: #{PATHS.urgent_days}  #{dim("(#{PATHS.sources[:urgent_days]})")}"
+    # The link namespaces are the debugging surface for "why doesn't my
+    # shorthand expand?" — show what actually resolved.
+    PATHS.links.each { |n, t| puts "link.#{n}:   #{t}" }
+    PATHS.link_systems.each { |n, h| puts "system.#{n}: #{h}" }
     puts "config:      #{PATHS.config_file}#{File.file?(PATHS.config_file) ? "" : dim(" (not present)")}"
   end
 end
@@ -986,6 +1049,8 @@ HELP = <<~USAGE
     links     urls [<ref>]   links in task notes, by system (slack, jira, …)
                              --system <name> filters · --all widens the listing
                              to done + archived (<ref> stays live-file) · --json
+    open      o <ref> [n]    open a task's link in the browser (n or --system
+                             picks among several; --print shows instead)
     id           <ref>       print a task's stable :ID: (assigns one if absent)
     check     k              validate gtd.org structure
 
@@ -1024,6 +1089,8 @@ HELP = <<~USAGE
   env vars, or ~/.config/tasks/config (dir = / org = / archive = lines).
   Quadrants urgency window: urgent_days = N in the config file, or TASKS_URGENT_DAYS
   env (default 3) — a DEADLINE within N days counts as urgent.
+  Link shorthands: link.jira = https://acme.atlassian.net/browse/%s in the config
+  lets notes say jira:OPS-1234; system.gitlab = gitlab.acme.io names custom hosts.
 
   Dates: 2026-07-15 · 07-15 · 7/15 · fri · today · tomorrow · +3
   Refs:  a case-insensitive title substring, an exact :ID:, or L<line>.
@@ -1063,6 +1130,7 @@ when "undo"           then cmd_undo
 when "redo"           then cmd_redo
 when "id"             then cmd_id(ARGV[1..])
 when "links", "urls"  then cmd_links(ARGV[1..])
+when "open", "o"      then cmd_open(ARGV[1..])
 when "list", "l"      then cmd_list(ARGV[1..])
 when "check", "k"     then cmd_check(ARGV[1..])
 when "config"         then cmd_config(ARGV[1..])

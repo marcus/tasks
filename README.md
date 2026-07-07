@@ -26,6 +26,9 @@ tasks inbox             # (i) unprocessed captures
 tasks list              # (l) all tasks grouped by state, with filters (see below)
 tasks capture "..."     # (c) append a new item to the Inbox
 tasks done "..."        # (d) mark a matching open item DONE
+tasks links             # links in task notes, by system (slack, jira, …)
+tasks open "..."        # (o) open a task's link in the browser
+tasks undo              # revert the last mutation (redo mirrors it)
 tasks archive           # (x) sweep DONE/CANCELLED items into archive.org
 tasks -p "..."          # hand a request to an LLM agent — it acts and reports back
 ```
@@ -101,9 +104,12 @@ return     task detail modal
 ?          keyboard shortcuts modal
 c          mark selected task DONE
 d          reschedule — accepts fri, +3, 07-15, 2026-07-15, today, tomorrow
+r          recur — weekly · 2w · .+1m · off
+z / Z      defer (someday/maybe) the selected task / show-hide deferred
 J / K      lower / raise priority (A ↔ B ↔ C ↔ none)
 /          filter tasks by text (live; enter keeps it, esc clears, / edits)
-u / ctrl-r undo / redo TUI changes (in-memory, refuses after external edits)
+u / ctrl-r undo / redo (persistent journal, shared with the CLI's `tasks undo`)
+o          open the selected task's link in the browser
 y / Y      yank task ref / full task as markdown to the clipboard
 p          paste a quoted task ref into the agent prompt
 x          archive sweep (move DONE/CANCELLED to archive.org)
