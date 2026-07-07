@@ -69,14 +69,17 @@ module Tui
     end
 
     # Box up modal content and center it over the body via overlay!.
+    # modal[:width] pins the box width (Modal computes it from the full
+    # content so scrolling can't resize the box); without it the width
+    # fits the visible lines. The title strip is painted with the
+    # :modal_title theme slot, so themes can give it a background.
     def overlay_modal!(body, modal, w)
-      inner = modal[:lines].map { |l| A.vtrunc(l, w - 8) }
-      bw = [
-        [(inner.map { |l| A.vislen(l) }.max || 0), A.vislen(modal[:title]) + 6, 30].max + 4,
-        w - 2,
-      ].min
-      title = " #{modal[:title]} "
-      box = ["┌─#{title}#{"─" * [bw - 4 - A.vislen(title), 0].max}─┐"]
+      bw = modal[:width] ||
+           [(modal[:lines].map { |l| A.vislen(l) }.max || 0), A.vislen(modal[:title]) + 6, 30].max + 4
+      bw = [bw, w - 2].min
+      inner = modal[:lines].map { |l| A.vtrunc(l, bw - 4) }
+      title = A.vtrunc(" #{modal[:title]} ", bw - 4)
+      box = ["┌─#{T.paint(:modal_title, title)}#{"─" * [bw - 4 - A.vislen(title), 0].max}─┐"]
       inner.each { |l| box << "│ #{A.vpad(l, bw - 4)} │" }
       box << "└#{"─" * (bw - 2)}┘"
       overlay!(body, {

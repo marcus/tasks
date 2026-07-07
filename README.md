@@ -102,7 +102,8 @@ from (session state in `$XDG_STATE_HOME/tasks/tui.json`).
 1-4 / ←→   switch view: Agenda · Next · Quadrants · Inbox (arrows cycle)
 ↑↓ / jk    select a task (also flips tasks inside a detail modal)
 return     task detail modal
-?          keyboard shortcuts modal
+?          keyboard shortcuts modal (/ filters its lines)
+           modals scroll vim-style: j/k line · ctrl-d/u half page · ctrl-f/b page
 c          mark selected task DONE
 d          reschedule — accepts fri, +3, 07-15, 2026-07-15, today, tomorrow
 r          recur — weekly · 2w · .+1m · off
@@ -130,7 +131,7 @@ Colors are themable: `theme = dracula` (or `mono`, `nord`,
 `catppuccin-mocha`, `gruvbox-dark`, `tokyonight-night`, `solarized-dark`, and
 more) plus per-slot `color.accent = magenta` /
 `color.selection = black on-cyan` lines in `~/.config/tasks/config` restyle
-tabs, the selection bar, due dates, notes, links, and more. Popular schemes are
+tabs, the selection bar, modal title strips, due dates, notes, links, and more. Popular schemes are
 generated from iTerm2-Color-Schemes with `scripts/generate-tui-themes`.
 `NO_COLOR` is honored. See `docs/cli-spec.md` (TUI colors) for the slot and
 spec vocabulary.

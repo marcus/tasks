@@ -27,6 +27,7 @@ module Tui
       accent:        "cyan",           # model name, help keys
       prompt:        "bold cyan",      # ❯ and / input markers
       section:       "bold",           # quadrant labels, detail title
+      modal_title:   "bold",           # modal title strip (supports on-… backgrounds)
       context:       "bold cyan",      # context group headers
       priority:      "bold",           # [#A] cookies
       muted:         "gray",           # hints, counts, badges, rules
@@ -50,7 +51,7 @@ module Tui
       "default" => {},
       "mono" => {
         tab_active: "reverse", tab_inactive: "dim", accent: "bold",
-        prompt: "bold", context: "bold", muted: "dim", note: "dim",
+        prompt: "bold", modal_title: "bold", context: "bold", muted: "dim", note: "dim",
         link: "underline", error: "bold", warning: "bold",
         due_overdue: "bold", due_soon: "none", due_week: "none",
         due_far: "dim", state_next: "bold", state_waiting: "none",

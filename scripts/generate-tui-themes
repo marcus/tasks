@@ -121,6 +121,7 @@ def convert_scheme(scheme)
     accent: bright_cyan,
     prompt: spec("bold", bright_cyan),
     section: spec("bold", foreground),
+    modal_title: spec("bold", selection_fg, "on-#{selection_bg}"),
     context: spec("bold", cyan),
     priority: spec("bold", bright_yellow),
     muted: bright_black,

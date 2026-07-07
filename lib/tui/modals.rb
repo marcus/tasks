@@ -17,14 +17,21 @@ module Tui
 
     module_function
 
+    # Both key contexts, one key column: the list-mode shortcuts, then the
+    # modal-mode ones (which also apply to this modal itself).
     def help
-      lines = Shortcuts::LIST.map do |e|
-        "#{T.paint(:accent, e.keys.ljust(9))} #{e.desc}"
-      end
+      key_w = (Shortcuts::LIST + Shortcuts::MODAL).map { |e| e.keys.length }.max
+      lines = Shortcuts::LIST.map { |e| shortcut_line(e, key_w) }
+      lines << ""
+      lines << T.paint(:section, "in a modal")
+      Shortcuts::MODAL.each { |e| lines << shortcut_line(e, key_w) }
       lines << ""
       lines << T.paint(:muted, "prompt/date input: return submits · esc cancels · ctrl-a/e/b/f move")
-      lines << T.paint(:muted, "in this modal:     ↑↓ scroll · esc closes")
       { title: "keyboard shortcuts", lines: lines }
+    end
+
+    def shortcut_line(entry, key_w)
+      "#{T.paint(:accent, entry.keys.ljust(key_w))} #{entry.desc}"
     end
 
     STATE_SLOT = {

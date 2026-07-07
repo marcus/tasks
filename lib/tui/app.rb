@@ -10,6 +10,7 @@ require_relative "views"
 require_relative "frame"
 require_relative "../llm/registry"
 require_relative "shortcuts"
+require_relative "modal"
 require_relative "modals"
 require_relative "clipboard"
 require_relative "export"
@@ -67,10 +68,9 @@ module Tui
       @agent_provider = current_entry.provider
       @view   = restore_view # last session's view, or :agenda
       @sel    = 0
-      @mode   = :list      # :list | :prompt | :date | :recur | :modal
-      @modal  = nil        # { title:, lines: } while a modal is open
-      @modal_kind = nil    # :help | :detail
-      @modal_scroll = 0
+      @mode   = :list      # :list | :prompt | :date | :recur | :modal | :modal_filter | :filter
+      @modal  = nil        # a Tui::Modal while one is open
+      @modal_filter_input = TextInput.new # `/` filter buffer inside a modal
       @input  = TextInput.new # prompt buffer
       @filter = nil        # committed filter string (nil = off)
       @show_deferred = false # Z toggles deferred (someday/maybe) tasks in/out of view
@@ -155,7 +155,7 @@ module Tui
         rows: rows, selected: @mode == :prompt ? nil : @sel,
         footer: foot,
         popup: current_popup,
-        modal: @modal && scrolled_modal(height - 5 - foot.size)
+        modal: @modal&.view([height - 5 - foot.size, 1].max)
       )
       print "\e[H" + lines.join("\e[K\r\n") + "\e[K"
     end
@@ -206,7 +206,9 @@ module Tui
         f << :rule
       end
       f << " #{@flash}" if @flash
-      if @mode == :filter
+      if @mode == :modal_filter
+        f << " #{T.paint(:prompt, "/ ")}#{inline_input(@modal_filter_input)}#{T.paint(:muted, "  filters the modal · enter keeps · esc clears")}"
+      elsif @mode == :filter
         f << " #{T.paint(:prompt, "/ ")}#{inline_input(@filter_input)}#{T.paint(:muted, "  enter keeps · esc clears")}"
       elsif @filter
         n = (@rows || []).count(&:item)
@@ -421,6 +423,7 @@ module Tui
       when :date   then @date_input.insert(text); @date_error = nil
       when :recur  then @recur_input.insert(text); @recur_error = nil
       when :filter then @filter_input.insert(text)
+      when :modal_filter then @modal_filter_input.insert(text); @modal.filter = @modal_filter_input.to_s
       else
         close_modal if @modal
         @input.insert(text)
@@ -434,6 +437,7 @@ module Tui
       when :date   then date_key(k)
       when :recur  then recur_key(k)
       when :modal  then modal_key(k)
+      when :modal_filter then modal_filter_key(k)
       when :filter then filter_key(k)
       else              list_key(k)
       end
@@ -464,29 +468,28 @@ module Tui
     end
 
     # A detail modal keeps the task's own shortcuts live so you can act on it
-    # without leaving: complete, reschedule, re-prioritize, yank. Navigation and
-    # scroll stay modal-specific. Task actions rebuild the modal in place, or
-    # close it when the change removes the task from the view (see the actions).
+    # without leaving: complete, reschedule, re-prioritize, yank. The modal-
+    # generic keys (scroll, filter, close) live in Shortcuts::MODAL — add one
+    # there and it exists here and in the ? overlay. Task actions rebuild the
+    # modal in place, or close it when the change removes the task from the
+    # view (see the actions).
     def modal_key(k)
+      if (entry = Shortcuts.find_modal(k))
+        return method(entry.action).call
+      end
       case k
-      when "\e", "q", "\r", "\n", "?" then close_modal
-      when ""        then @quit = true
-      when "\e[A", "k"     then modal_move(-1)
-      when "\e[B", "j"     then modal_move(1)
-      when "\e[5~"         then scroll_modal(-5)
-      when "\e[6~"         then scroll_modal(5)
-      when "c"             then complete_selected
-      when "d"             then open_date_popup
-      when "r"             then open_recur_popup
-      when "z"             then defer_selected
-      when "y"             then yank_ref
-      when "Y"             then yank_markdown
-      when "K"             then raise_priority
-      when "J"             then lower_priority
-      when "p"             then paste_ref
-      when "u"             then undo_last
-      when "o"             then open_link
-      when "\x12"          then redo_last
+      when "c"    then complete_selected
+      when "d"    then open_date_popup
+      when "r"    then open_recur_popup
+      when "z"    then defer_selected
+      when "y"    then yank_ref
+      when "Y"    then yank_markdown
+      when "K"    then raise_priority
+      when "J"    then lower_priority
+      when "p"    then paste_ref
+      when "u"    then undo_last
+      when "o"    then open_link
+      when "\x12" then redo_last
       end
     end
 
@@ -548,7 +551,7 @@ module Tui
       if @store.set_priority!(item, new_pri)
         flash(new_pri ? "priority: [##{new_pri}] #{item.title}" : "priority cleared: #{item.title}")
         reselect(item.line)
-        show_detail if @modal_kind == :detail
+        show_detail if detail_modal?
       else
         @store.reload!
         flash("file changed underneath — try again")
@@ -565,7 +568,7 @@ module Tui
 
     # Z reveals/hides deferred (someday/maybe) tasks across every view.
     def toggle_deferred_view
-      modaled_line = current_item&.line if @modal_kind == :detail
+      modaled_line = current_item&.line if detail_modal?
       @show_deferred = !@show_deferred
       rows
       clamp_selection
@@ -624,7 +627,7 @@ module Tui
         flash("#{verb}: #{label}")
         rows
         clamp_selection
-        show_detail if @modal_kind == :detail
+        show_detail if detail_modal?
       end
     end
 
@@ -695,47 +698,64 @@ module Tui
     # still in view, or close it if the change dropped it (e.g. dating an INBOX
     # item promotes it out of the inbox view).
     def refresh_detail_modal(line)
-      return unless @modal_kind == :detail
+      return unless detail_modal?
       current_item&.line == line ? show_detail : close_modal
     end
 
     # -- modal -----------------------------------------------------------------
 
-    # In a task detail modal, ↑↓ walk the task list and the modal follows
-    # the selection. Other modals (help) keep ↑↓ as scroll.
+    def modal_up   = modal_move(-1)
+    def modal_down = modal_move(1)
+    def modal_half_up   = @modal.scroll_half(-1, modal_body_h)
+    def modal_half_down = @modal.scroll_half(1, modal_body_h)
+    def modal_page_up   = @modal.scroll_page(-1, modal_body_h)
+    def modal_page_down = @modal.scroll_page(1, modal_body_h)
+
+    # In a task detail modal, ↑↓/j/k walk the task list and the modal follows
+    # the selection. Other modals (help) keep them as line scroll.
     def modal_move(delta)
-      return scroll_modal(delta) unless @modal_kind == :detail
+      return @modal.scroll_line(delta, modal_body_h) unless detail_modal?
       move(delta)
       show_detail
     end
 
-    def open_modal(modal, kind:)
-      @modal = modal
-      @modal_kind = kind
-      @modal_scroll = 0
+    # Body rows available to the modal box — the same budget paint hands
+    # Frame.build, so scroll steps match what's on screen.
+    def modal_body_h
+      height = [(IO.console&.winsize || [24]).first, 10].max
+      [height - 5 - footer_size, 1].max
+    end
+
+    def detail_modal? = @modal&.kind == :detail
+
+    def open_modal(content, kind:)
+      @modal = Modal.new(title: content[:title], lines: content[:lines],
+                         kind: kind, filterable: kind == :help)
+      @modal_filter_input.clear
       @mode = :modal
     end
 
     def close_modal
       @modal = nil
-      @modal_kind = nil
+      @modal_filter_input.clear
       @mode = :list
     end
 
-    def scroll_modal(delta)
-      @modal_scroll = [@modal_scroll + delta, 0].max # upper bound applied at paint
+    # `/` inside a filterable modal (the shortcuts overlay): live line filter.
+    def modal_start_filter
+      return unless @modal.filterable?
+      @modal_filter_input.replace(@modal.filter || +"")
+      @mode = :modal_filter
     end
 
-    # Slice the modal content to what fits in the body, with scroll markers.
-    def scrolled_modal(body_h)
-      lines = @modal[:lines]
-      avail = [body_h - 2, 3].max
-      return @modal if lines.size <= avail
-      max_scroll = lines.size - avail
-      @modal_scroll = @modal_scroll.clamp(0, max_scroll)
-      visible = lines[@modal_scroll, avail]
-      marker = T.paint(:muted, "── #{@modal_scroll + visible.size}/#{lines.size} · ↑↓ scroll ──")
-      { title: @modal[:title], lines: visible + [marker] }
+    def modal_filter_key(k)
+      case k
+      when "\e"       then @modal.filter = nil; @modal_filter_input.clear; @mode = :modal
+      when "\r", "\n" then @mode = :modal # the filter applied live; enter keeps it
+      when "\x03"     then @quit = true
+      else
+        @modal.filter = @modal_filter_input.to_s if @modal_filter_input.handle_key(k) == :changed
+      end
     end
 
     # -- actions ---------------------------------------------------------------

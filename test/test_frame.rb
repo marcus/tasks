@@ -100,6 +100,30 @@ class TestFrame < Minitest::Test
     lines.each { |l| assert_equal 60, A.vislen(l) }
   end
 
+  def test_modal_explicit_width_pins_the_box
+    modal = { title: "t", lines: ["short"], width: 44 }
+    lines = build(modal: modal).map { |l| A.strip(l) }
+    top = lines.find { |l| l.include?("┌─ t ") }
+    bottom = lines.find { |l| l.include?("└") }
+    assert_equal 44, top.rindex("┐") - top.index("┌") + 1, "top border pinned: #{top.inspect}"
+    assert_equal 44, bottom.rindex("┘") - bottom.index("└") + 1, "bottom border pinned"
+    content = lines.find { |l| l.include?("short") }
+    assert_equal top.index("┌"), content.index("│", 1), "content row aligns with the border"
+  end
+
+  def test_modal_explicit_width_is_clamped_to_frame
+    modal = { title: "t", lines: ["short"], width: 500 }
+    build(modal: modal).each { |l| assert_equal 60, A.vislen(l) }
+  end
+
+  def test_modal_title_is_painted_with_theme_slot
+    Tui::Theme.configure!(overrides: { modal_title: "on-blue" })
+    top = build(modal: { title: "task", lines: ["x"] }).find { |l| A.strip(l).include?("┌─ task") }
+    assert_includes top, "\e[44m task \e[0m", "title strip must carry the modal_title style"
+  ensure
+    Tui::Theme.reset!
+  end
+
   def test_empty_rows_render_blank_body
     lines = build(rows: [])
     assert_equal 15, lines.size
