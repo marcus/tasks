@@ -8,7 +8,11 @@ passed to `tasks -p`. Today's date is available from the system.
   `** STATE [#A] Title :tag:@context:` where STATE ∈
   INBOX|TODO|NEXT|WAITING|DONE|CANCELLED, priority `[#A|B|C]` optional.
   Metadata lines below a headline: `DEADLINE: <YYYY-MM-DD>`,
-  `SCHEDULED: <YYYY-MM-DD>`, `CLOSED: [YYYY-MM-DD]`.
+  `SCHEDULED: <YYYY-MM-DD>`, `CLOSED: [YYYY-MM-DD]`, and an optional
+  `:PROPERTIES:` / `:ID: <id>` / `:END:` drawer (a stable task handle).
+  **Never invent, change, or drop an `:ID:`** — preserve drawers verbatim when
+  you move or edit a block; if you must reference a task precisely, its `:ID:`
+  works as a `<ref>` (or run `tasks id <ref>` to mint one).
 - `archive.org` — completed/cancelled history. Don't edit by hand.
 - The files may live outside the CLI's repo. Absolute paths for this run
   (the CLI and both files) are appended below this prompt under

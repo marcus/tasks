@@ -248,10 +248,18 @@ class TestJournal < Minitest::Test
     with_journal_store do |build, _org, _a|
       s = build.call
       water = s.items.find { |i| i.title.include?("Water the plants") }
-      # "Water the plants" already carries @home; re-adding it writes identical
-      # content and must not create an undoable no-op entry.
-      assert s.set_tags!(water, add: ["@home"])
-      assert_equal [:empty], build.call.undo!
+      assert s.ensure_id!(water) # stamps an id — one real, undoable step
+
+      fresh = build.call
+      w2 = fresh.items.find { |i| i.title.include?("Water the plants") }
+      assert w2.id, "task now carries an id"
+      # It already has @home and now an id, so re-adding @home writes identical
+      # content — a true no-op that must not create an undoable entry.
+      assert fresh.set_tags!(w2, add: ["@home"])
+
+      u = build.call
+      assert_equal :ok, u.undo!.first, "the id assignment is undoable"
+      assert_equal [:empty], u.undo!, "the no-op tag recorded nothing"
     end
   end
 

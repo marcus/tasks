@@ -15,6 +15,9 @@ module Tasks
 
     TASK_HEADLINE = /^\*+\s+(?:#{STATES.join("|")})\s+(?:\[#[ABC]\]\s+)?(.*?)\s*(:[\w@:]+:)?\s*$/
     METADATA      = /^\s+(SCHEDULED|DEADLINE|CLOSED):/
+    ID_LINE       = /^\s*:ID:\s+(\S+)\s*$/i
+    DRAWER_START  = /^\s*:PROPERTIES:\s*$/i
+    DRAWER_END    = /^\s*:END:\s*$/i
 
     Result = Struct.new(:errors, :warnings) do
       def ok? = errors.empty?
@@ -40,11 +43,29 @@ module Tasks
       end
 
       in_task = false
+      in_drawer = false
+      drawer_at = nil
       open_titles = Hash.new { |h, k| h[k] = [] }
+      ids = Hash.new { |h, k| h[k] = [] }
 
       raw.each_line.with_index(1) do |line, no|
+        # Only an :ID: inside a task's PROPERTIES drawer is a real task id — the
+        # same scoping the store parses by (a section-heading or prose :ID: is
+        # not a task handle, so it must not trip the uniqueness check).
+        if line =~ DRAWER_START
+          in_drawer = true
+          drawer_at = no
+        elsif line =~ DRAWER_END
+          in_drawer = false
+        elsif in_task && in_drawer && (m = line.match(ID_LINE))
+          ids[m[1]] << no
+        end
+
         case line
         when /^(\*+)\s+(\S+)(.*)$/
+          # A drawer still open at the next headline never got its :END:.
+          warnings << [drawer_at, "unterminated :PROPERTIES: drawer (missing :END:)"] if in_drawer
+          in_drawer = false
           stars, first = $1, $2
           if STATES.include?(first)
             check_task_headline(line, no, errors)
@@ -74,9 +95,19 @@ module Tasks
         end
       end
 
+      # A drawer still open at end of file also never closed.
+      warnings << [drawer_at, "unterminated :PROPERTIES: drawer (missing :END:)"] if in_drawer
+
       open_titles.each do |title, lines|
         next if lines.size < 2
         warnings << [lines.last, "duplicate open title #{title.inspect} (lines #{lines.join(", ")}) — fuzzy refs will be ambiguous"]
+      end
+
+      # A stable :ID: must be unique — a collision silently points every id-based
+      # ref and locate at whichever task the parser hits first.
+      ids.each do |id, lines|
+        next if lines.size < 2
+        errors << [lines.last, "duplicate :ID: #{id.inspect} (lines #{lines.join(", ")}) — id refs will be wrong"]
       end
 
       Result.new(errors, warnings)

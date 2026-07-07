@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require "date"
+require "securerandom"
+require "set"
 require_relative "atomic"
 require_relative "check"
 require_relative "journal"
@@ -10,7 +12,7 @@ require_relative "recur"
 module Tasks
   Item = Struct.new(
     :state, :priority, :title, :tags, :scheduled, :deadline, :line, :source,
-    :recur, keyword_init: true
+    :recur, :id, keyword_init: true
   ) do
     def open?    = Store::OPEN_STATES.include?(state)
     def contexts = tags.select { |t| t.start_with?("@") }
@@ -38,12 +40,47 @@ module Tasks
     OPEN_STATES = %w[INBOX TODO NEXT WAITING].freeze
     DONE_STATES = %w[DONE CANCELLED].freeze
 
+    # A task's stable handle lives as :ID: inside an org PROPERTIES drawer, right
+    # after the headline's planning lines. We only honor an :ID: that sits inside
+    # a real :PROPERTIES:…:END: drawer under a *task* headline — not one on a
+    # section heading, a child subtask, or a bare line in prose (org wouldn't
+    # treat those as the task's property either). Keys match case-insensitively.
+    ID_LINE      = /^\s*:ID:\s+(\S+)\s*$/i
+    DRAWER_START = /^\s*:PROPERTIES:\s*$/i
+    DRAWER_END   = /^\s*:END:\s*$/i
+    # Planning lines (org keeps these between the headline and the drawer).
+    PLANNING = /^\s*(?:SCHEDULED|DEADLINE|CLOSED):/
+
     # Semantic tag marking a task as deferred (someday/maybe). See Item#deferred?.
     DEFER_TAG = "defer"
 
     attr_reader :org, :archive
 
     UNDO_LIMIT = 50 # deepest undo history the journal retains
+
+    # Drop org PROPERTIES drawers (:PROPERTIES:…:END:) from block lines, for
+    # display — the :ID: is surfaced on its own; the drawer is machinery, not a
+    # note. Shared by the CLI's `show` and the TUI detail modal so they agree.
+    def self.strip_drawer(lines)
+      in_drawer = false
+      lines.reject do |l|
+        if l =~ DRAWER_START
+          in_drawer = true
+        elsif in_drawer && l =~ DRAWER_END
+          in_drawer = false
+          true # drop the closing :END:
+        elsif in_drawer && l =~ /^\s*:[\w-]+:/
+          true # a :KEY: property line inside the drawer
+        elsif in_drawer
+          # Real prose while still "in" a drawer means the drawer was never
+          # closed (malformed input) — stop swallowing so notes aren't eaten.
+          in_drawer = false
+          false
+        else
+          false
+        end
+      end
+    end
 
     # `journal_dir` defaults to an XDG_STATE_HOME location derived from the org
     # path, so the CLI and TUI editing the same file share one undo history;
@@ -74,11 +111,10 @@ module Tasks
     end
 
     # Raw file lines of an item: its headline plus body, up to the next
-    # same-or-higher-level headline. Empty array on stale line numbers.
+    # same-or-higher-level headline. Empty array if the item can't be located.
     def block(item)
       lines = File.readlines(@org, encoding: "UTF-8")
-      i = item.line - 1
-      return [] unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
+      i = locate(lines, item) or return []
       level = lines[i][/^\*+/].length
       out = [lines[i].chomp]
       j = i + 1
@@ -204,7 +240,112 @@ module Tasks
       with_history("archive sweep") { archive_swept_impl }
     end
 
+    # Ensure the item carries a stable :ID:, returning it. Idempotent: an item
+    # that already has one is returned untouched (no write); otherwise a fresh
+    # unique id is stamped into a PROPERTIES drawer. Returns false only if the
+    # item can't be located (stale line and no id to find it by).
+    def ensure_id!(item)
+      return item.id if item.id
+      with_history("id: #{item.title}") { ensure_id_impl(item) }
+    end
+
     private
+
+    # 0-based index of the item's headline in `lines`, or nil if it can't be
+    # found. Prefers the stable :ID: (so a mutation still lands even if lines
+    # shifted or the title changed out from under us); falls back to the
+    # line-number + title guard for tasks that don't yet carry an id.
+    def locate(lines, item)
+      if item.id && (i = id_index(lines)[item.id])
+        return i
+      end
+      i = item.line - 1
+      i if lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
+    end
+
+    # Map of :ID: value => 0-based headline index it belongs to — the single
+    # source of truth for "which task owns which id", shared by locate and id
+    # minting so they can never disagree with parse_file. An id counts only
+    # inside a PROPERTIES drawer under a *task* headline: a section heading or a
+    # deeper subtask resets ownership (headline = nil / the new index), and a
+    # bare :ID: outside a drawer is ignored — matching org's own scoping.
+    def id_index(lines)
+      map = {}
+      headline = nil
+      in_drawer = false
+      lines.each_with_index do |line, idx|
+        if line.match?(HEADLINE)      then headline = idx; in_drawer = false
+        elsif line =~ /^\*+\s/        then headline = nil; in_drawer = false
+        elsif line =~ DRAWER_START    then in_drawer = true
+        elsif line =~ DRAWER_END      then in_drawer = false
+        elsif headline && in_drawer && (m = line.match(ID_LINE))
+          map[m[1]] ||= headline
+        end
+      end
+      map
+    end
+
+    # A short, unique, CLI-typeable id (8 hex chars). Collisions are astronomically
+    # unlikely, but cheap to exclude across BOTH files so a fresh id can't clash
+    # with one already swept into the archive (which id_index(@org) can't see).
+    def gen_id(taken)
+      taken = taken.to_set
+      loop do
+        id = SecureRandom.hex(4)
+        break id unless taken.include?(id)
+      end
+    end
+
+    # 0-based index just past the headline's contiguous planning lines
+    # (SCHEDULED/DEADLINE/CLOSED) — where an org PROPERTIES drawer must sit to be
+    # valid (planning first, then the drawer).
+    def planning_end(lines, i)
+      j = i + 1
+      j += 1 while j < lines.length && lines[j] =~ PLANNING
+      j
+    end
+
+    # The three lines of a PROPERTIES drawer carrying `id` (3-space indent, org
+    # order). The one place the drawer's shape is defined — capture and
+    # first-touch stamping both build it here.
+    def drawer_lines(id)
+      ["   :PROPERTIES:\n", "   :ID: #{id}\n", "   :END:\n"]
+    end
+
+    # Guarantee the block at headline index `i` has an :ID:, returning the id
+    # (existing or freshly minted). If the task already has its property drawer
+    # (the one org recognizes: immediately after the headline's planning lines),
+    # add the :ID: INTO it — a second drawer would orphan the existing keys.
+    # Otherwise insert a fresh, org-canonical drawer at that spot. Mutates
+    # `lines` in place, but only below `i`, so the caller's headline index holds.
+    def ensure_drawer(lines, i)
+      index = id_index(lines)
+      existing = index.key(i)
+      return existing if existing
+
+      id = gen_id(index.keys + archived_ids)
+      at = planning_end(lines, i)
+      if lines[at] =~ DRAWER_START
+        lines.insert(at + 1, "   :ID: #{id}\n")
+      else
+        lines.insert(at, *drawer_lines(id))
+      end
+      id
+    end
+
+    def archived_ids
+      return [] unless File.exist?(@archive)
+      parse_file(@archive, source: :archive).map(&:id).compact
+    end
+
+    def ensure_id_impl(item)
+      lines = File.readlines(@org, encoding: "UTF-8")
+      i = locate(lines, item) or return false
+      id = ensure_drawer(lines, i)
+      Atomic.write(@org, lines.join)
+      reload!
+      id
+    end
 
     # User-supplied text (ARGV, TUI input) is tagged with the process locale,
     # which is ASCII-8BIT/BINARY when LANG is unset. The bytes are UTF-8 — the
@@ -302,8 +443,8 @@ module Tasks
       return advance_recurrence_impl(item) if item.recurring?
 
       lines = File.readlines(@org, encoding: "UTF-8")
-      i = item.line - 1
-      return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
+      i = locate(lines, item) or return false
+      ensure_drawer(lines, i)
       lines[i] = lines[i].sub(/^(\*+\s+)(INBOX|TODO|NEXT|WAITING)\b/, '\1DONE')
       # A completed task is no longer someday/maybe — drop the defer marker so
       # it can't orphan (invisible to `list --deferred`, unreachable by activate).
@@ -318,8 +459,8 @@ module Tasks
     # Same staleness contract as complete!.
     def set_priority_impl(item, pri)
       lines = File.readlines(@org, encoding: "UTF-8")
-      i = item.line - 1
-      return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
+      i = locate(lines, item) or return false
+      ensure_drawer(lines, i)
       cookie = pri ? "[##{pri}] " : ""
       lines[i] = lines[i].sub(/^(\*+\s+#{item.state}\s+)(?:\[#[ABC]\]\s+)?/, "\\1#{cookie}")
       Atomic.write(@org, lines.join)
@@ -343,8 +484,8 @@ module Tasks
     # and delegates here. Same staleness contract as complete!.
     def set_date_impl(item, date, key)
       lines = File.readlines(@org, encoding: "UTF-8")
-      i = item.line - 1
-      return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
+      i = locate(lines, item) or return false
+      ensure_drawer(lines, i)
 
       level = lines[i][/^\*+/].length
 
@@ -376,8 +517,8 @@ module Tasks
     # staleness contract as complete!. Returns false if nothing matched.
     def undate_impl(item, kind)
       lines = File.readlines(@org, encoding: "UTF-8")
-      i = item.line - 1
-      return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
+      i = locate(lines, item) or return false
+      ensure_drawer(lines, i)
       level = lines[i][/^\*+/].length
       keys = case kind
              when :scheduled then ["SCHEDULED"]
@@ -439,8 +580,8 @@ module Tasks
     # if the item is stale or has no date stamp.
     def set_recur_impl(item, cookie)
       lines = File.readlines(@org, encoding: "UTF-8")
-      i = item.line - 1
-      return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
+      i = locate(lines, item) or return false
+      ensure_drawer(lines, i)
 
       target = recur_stamp_line(lines, i)
       return false unless target
@@ -459,8 +600,8 @@ module Tasks
     # Returns false if stale, or if no stamp actually carries a cookie.
     def advance_recurrence_impl(item)
       lines = File.readlines(@org, encoding: "UTF-8")
-      i = item.line - 1
-      return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
+      i = locate(lines, item) or return false
+      ensure_drawer(lines, i)
 
       # Scope to the item's own lines so a parent's roll never touches a child
       # subtask's stamp (see own_block_end).
@@ -544,8 +685,8 @@ module Tasks
 
     def retitle_impl(item, new_title)
       lines = File.readlines(@org, encoding: "UTF-8")
-      i = item.line - 1
-      return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
+      i = locate(lines, item) or return false
+      ensure_drawer(lines, i)
       stars, state, pri, _title, tags = headline_parts(lines[i])
       lines[i] = build_headline(stars, state, pri, new_title.strip, tags)
       Atomic.write(@org, lines.join)
@@ -555,8 +696,8 @@ module Tasks
 
     def set_tags_impl(item, add, remove)
       lines = File.readlines(@org, encoding: "UTF-8")
-      i = item.line - 1
-      return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
+      i = locate(lines, item) or return false
+      ensure_drawer(lines, i)
       stars, state, pri, title, tags = headline_parts(lines[i])
       tags = tags.reject { |t| remove.include?(t) }
       add.each { |t| tags << t unless tags.include?(t) }
@@ -568,8 +709,8 @@ module Tasks
 
     def add_note_impl(item, text)
       lines = File.readlines(@org, encoding: "UTF-8")
-      i = item.line - 1
-      return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
+      i = locate(lines, item) or return false
+      ensure_drawer(lines, i)
       lines.insert(block_end_index(lines, i), "   #{text.strip}\n")
       Atomic.write(@org, lines.join)
       reload!
@@ -578,8 +719,8 @@ module Tasks
 
     def move_impl(item, section)
       lines = File.readlines(@org, encoding: "UTF-8")
-      i = item.line - 1
-      return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
+      i = locate(lines, item) or return false
+      ensure_drawer(lines, i)
       block_end = block_end_index(lines, i)
       block = lines[i...block_end]
       block[-1] = "#{block[-1].chomp}\n" if block[-1] && !block[-1].end_with?("\n")
@@ -604,6 +745,8 @@ module Tasks
       entry = [build_headline(stars, state, priority, text.strip, tags)]
       entry << "   SCHEDULED: <#{scheduled.iso8601} #{scheduled.strftime("%a")}>\n" if scheduled
       entry << "   DEADLINE: <#{due.iso8601} #{due.strftime("%a")}>\n" if due
+      # Every new task gets a stable id (drawer after the planning lines, per org).
+      entry.concat(drawer_lines(gen_id(id_index(lines).keys + archived_ids)))
       entry << "   Captured [#{Date.today}].\n"
 
       insert_at = ((idx + 1)...lines.length).find { |k| lines[k] =~ /^\* / } || lines.length
@@ -621,8 +764,8 @@ module Tasks
       return advance_recurrence_impl(item) if new_state == "DONE" && item.recurring?
 
       lines = File.readlines(@org, encoding: "UTF-8")
-      i = item.line - 1
-      return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
+      i = locate(lines, item) or return false
+      ensure_drawer(lines, i)
 
       old_state = item.state
       lines[i] = lines[i].sub(/^(\*+\s+)(INBOX|TODO|NEXT|WAITING|DONE|CANCELLED)\b/, "\\1#{new_state}")
@@ -706,6 +849,7 @@ module Tasks
       items = []
       return items unless File.exist?(path)
       current = nil
+      in_drawer = false
       File.foreach(path, encoding: "UTF-8").with_index(1) do |line, lineno|
         if (m = line.match(HEADLINE))
           current = Item.new(
@@ -714,6 +858,16 @@ module Tasks
             line: lineno, source: source
           )
           items << current
+          in_drawer = false
+        elsif line =~ /^\*+\s/
+          # A non-task headline (a section like "* Work") ends the task's scope,
+          # so its own properties/stamps aren't misread as the task's above it.
+          current = nil
+          in_drawer = false
+        elsif line =~ DRAWER_START
+          in_drawer = true
+        elsif line =~ DRAWER_END
+          in_drawer = false
         elsif current && (s = line.match(STAMP))
           begin
             d = Date.parse(s[2])
@@ -725,6 +879,9 @@ module Tasks
           rescue Date::Error
             # impossible date — leave nil; Check reports it, don't crash the TUI
           end
+        elsif current && in_drawer && (idm = line.match(ID_LINE))
+          # First :ID: in the drawer wins (a well-formed task has exactly one).
+          current.id ||= idm[1]
         end
       end
       items

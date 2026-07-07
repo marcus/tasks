@@ -2,6 +2,7 @@
 
 require "date"
 require_relative "ansi"
+require_relative "store"
 require_relative "views"
 require_relative "shortcuts"
 
@@ -44,10 +45,11 @@ module Tui
       tags = item.tags - ctx
       lines << row("contexts", ctx.join("  ")) unless ctx.empty?
       lines << row("tags", tags.join("  "))    unless tags.empty?
+      lines << row("id", A.dim(item.id)) if item.id
 
-      notes = block.drop(1)
-                   .reject { |l| l =~ /^\s*(SCHEDULED|DEADLINE):/ }
-                   .map(&:strip).reject(&:empty?)
+      notes = Tasks::Store.strip_drawer(block).drop(1)
+                          .reject { |l| l =~ /^\s*(SCHEDULED|DEADLINE):/ }
+                          .map(&:strip).reject(&:empty?)
       unless notes.empty?
         lines << ""
         lines << A.dim("notes")

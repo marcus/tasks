@@ -78,7 +78,17 @@ task title. Resolution rules:
   The agent retries with a longer substring or an exact `L<line>` ref.
 - `L<line>` (e.g. `L42`) targets the task whose headline is on that file line —
   precise, but only valid until the file changes. Prefer titles.
+- An exact `:ID:` (e.g. `7f3a9c2e`) resolves unambiguously and is stable across
+  edits — it wins over fuzzy title matching. Get one with `tasks id <ref>`.
 - By default refs match **open** tasks only; `--include-done` widens.
+
+**Task IDs.** Each task can carry a stable id in an org `:PROPERTIES:` drawer
+(`:ID:`), the durable handle for that task no matter how lines shift or the
+title changes. `capture` stamps every new task; an existing task earns one the
+first time it's mutated or when you run `tasks id <ref>`. Mutations locate their
+target by id when it has one (falling back to line + title otherwise), so an
+out-of-band reflow or retitle can't misfire an edit onto the wrong task. IDs
+must be unique — `check` reports a collision as an error.
 
 **Dates.** Anywhere a date is accepted: `2026-07-15`, `07-15`, `7/15`,
 `fri`/`friday`, `today`, `tomorrow`, `+3` (days from today). Same parser as
@@ -130,7 +140,8 @@ would change and writes nothing.
 | `next` | `n` | ✅ | NEXT actions by context. `--json` |
 | `quadrants` | `q` | ✅ | Covey 2×2 from priority (A/B ⇒ important) + a `DEADLINE` within `urgent_days` (default 3, overdue counts) ⇒ urgent, with `important`/`urgent` tags as overrides. `--json` adds `quadrant`. |
 | `inbox` | `i` | ✅ | Unprocessed INBOX items. `--json` |
-| `show <ref>` | `s` | ✅ | One task in full: headline fields + body/notes. `--json` shape: `{state, priority, title, tags, contexts, scheduled, deadline, recur, closed, line, notes: [..]}` |
+| `show <ref>` | `s` | ✅ | One task in full: headline fields + body/notes. `--json` shape: `{id, state, priority, title, tags, contexts, scheduled, deadline, recur, closed, line, notes: [..]}`. Drawer lines are hidden from `notes`. |
+| `id <ref> [--json]` | | ✅ | Print a task's stable `:ID:`, assigning one (a `:PROPERTIES:` drawer) if absent. Idempotent. Resolves refs regardless of state. |
 | `check [--json]` | `k` | ✅ | Validate gtd.org structure. Exit 1 if errors. Run after any direct file edit. |
 
 JSON list shape (`--json` on list/agenda/next/quadrants/inbox) — a flat array,

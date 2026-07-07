@@ -548,7 +548,7 @@ class TestStore < Minitest::Test
       assert_match(/Parent\n   SCHEDULED: <2026-07-08 Wed \+1w>/, body, "parent rolled")
       assert_match(/Child\n   SCHEDULED: <2026-07-02 Thu \+1d>/, body, "child untouched")
       # the completion log sits under the parent, before the child
-      assert_match(/\+1w>\n   - Did \[#{Date.today}\]\.\n\*\*\* NEXT Child/, body)
+      assert_match(/- Did \[#{Date.today}\]\.\n\*\*\* NEXT Child/, body)
       assert Tasks::Check.check(org).ok?
     end
   end

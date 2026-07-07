@@ -35,6 +35,9 @@ The `|` separates "in progress" states from "done" states.
 ```
 ** NEXT [#A] Purchase ECR flight in Concur   :@computer:urgent:important:
    DEADLINE: <2026-07-15>
+   :PROPERTIES:
+   :ID: 7f3a9c2e
+   :END:
    Denver. Fly in Jul 20, ECR Jul 21-22, leave Jul 23.
 ```
 
@@ -43,6 +46,11 @@ The `|` separates "in progress" states from "done" states.
 - **Title** — short, starts with a verb for actions.
 - **Tags** — `:tag:tag:` at end of line (see below).
 - **Timestamps** — `DEADLINE:` / `SCHEDULED:` on the line below.
+- **ID** — a stable handle in a `:PROPERTIES:` drawer (`:ID:`), sitting right
+  after the timestamps (org's required order: planning lines, then the drawer).
+  New captures get one automatically; existing tasks earn one when first touched
+  or via `tasks id`. It's how a ref survives a retitle or a line reflow — the
+  tooling locates a task by id before falling back to line + title. Leave it be.
 - **Body** — indented free text for notes, links, context.
 
 ## Tags

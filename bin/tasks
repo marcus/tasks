@@ -329,6 +329,7 @@ end
 
 def item_json(item)
   {
+    id: item.id,
     state: item.state, priority: item.priority, title: item.title,
     tags: item.tags.reject { |t| t.start_with?("@") },
     contexts: contexts(item),
@@ -351,6 +352,12 @@ def resolve_ref(ref, include_done: false)
       warn "no #{include_done ? "" : "open "}task with a headline on line #{m[1]}"
       exit 2
     end
+    return item
+  end
+
+  # An exact :ID: match is unambiguous, so it wins over fuzzy title matching
+  # (case-insensitive, since org treats property values loosely).
+  if (item = items.find { |i| i.id && i.id.casecmp?(ref.strip) })
     return item
   end
 
@@ -454,7 +461,7 @@ def cmd_show(args)
   abort %(usage: tasks show <ref>) if ref.nil? || ref.strip.empty?
   item = resolve_ref(ref, include_done: flags["--include-done"])
 
-  block = store.block(item)
+  block = Tasks::Store.strip_drawer(store.block(item))
   closed_line = block.find { |l| l.include?("CLOSED:") }
   closed = closed_line && closed_line[/\[(\d{4}-\d{2}-\d{2})\]/, 1]
   notes = block[1..].map(&:strip).reject do |l|
@@ -466,6 +473,7 @@ def cmd_show(args)
     puts item_json(item).merge(closed: closed, notes: notes).to_json
   else
     puts item_headline(item)
+    puts "  id:        #{item.id}" if item.id
     puts "  scheduled: #{item.scheduled.iso8601}" if item.scheduled
     puts "  deadline:  #{item.deadline.iso8601}" if item.deadline
     puts "  recur:     #{item.recur} #{dim("(#{recur_summary(item.recur)})")}" if item.recur
@@ -673,6 +681,26 @@ end
 def cmd_undo = run_history(:undo!, verb: "undo", past: "undid")
 def cmd_redo = run_history(:redo!, verb: "redo", past: "redid")
 
+# Print a task's stable :ID:, assigning one (a PROPERTIES drawer) if it has none.
+# Idempotent — a task that already carries an id is printed without a rewrite.
+def cmd_id(args)
+  flags, rest = take_flags(args, "--json")
+  ref = rest.shift
+  abort "usage: tasks id <ref>" if ref.nil? || ref.strip.empty?
+  item = resolve_ref(ref, include_done: true) # referenceable regardless of state
+  id = store.ensure_id!(item)
+  abort "failed to assign id (file changed underfoot?)" unless id
+  store.reload!
+  fresh = store.items.find { |i| i.id == id }
+  if flags["--json"]
+    require "json"
+    puts({ id: id, touched: fresh ? [item_json(fresh)] : [] }.to_json)
+  else
+    puts id
+    puts item_headline(fresh) if fresh
+  end
+end
+
 def run_history(op, verb:, past:)
   kind, label = store.public_send(op)
   case kind
@@ -873,6 +901,7 @@ HELP = <<~USAGE
                              Scope: --open/-o (default) --done/-d --archived/-x --all/-a
                              --deferred/-D someday/maybe · --recurring/-R repeating tasks
     show      s <ref>        one task in full (headline + notes)
+    id           <ref>       print a task's stable :ID: (assigns one if absent)
     check     k              validate gtd.org structure
 
   Capture:
@@ -912,7 +941,7 @@ HELP = <<~USAGE
   env (default 3) — a DEADLINE within N days counts as urgent.
 
   Dates: 2026-07-15 · 07-15 · 7/15 · fri · today · tomorrow · +3
-  Refs:  a case-insensitive title substring, or L<line>.
+  Refs:  a case-insensitive title substring, an exact :ID:, or L<line>.
   Full spec: docs/cli-spec.md
 USAGE
 
@@ -947,6 +976,7 @@ when "show", "s"      then cmd_show(ARGV[1..])
 when "archive", "x"   then cmd_archive
 when "undo"           then cmd_undo
 when "redo"           then cmd_redo
+when "id"             then cmd_id(ARGV[1..])
 when "list", "l"      then cmd_list(ARGV[1..])
 when "check", "k"     then cmd_check(ARGV[1..])
 when "config"         then cmd_config(ARGV[1..])
