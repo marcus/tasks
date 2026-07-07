@@ -2,7 +2,16 @@
 
 require "minitest/autorun"
 require "tmpdir"
+require "fileutils"
 require "date"
+
+# Point the undo journal (Tasks::Journal) at a throwaway dir for the whole test
+# run, so nothing lands in the developer's real ~/.local/state. Each test uses a
+# unique org path (Dir.mktmpdir), which the journal hashes into its own subdir,
+# so stores stay isolated from each other. Child CLI processes inherit this env.
+TEST_STATE_HOME = Dir.mktmpdir("tasks-test-state")
+ENV["XDG_STATE_HOME"] = TEST_STATE_HOME
+at_exit { FileUtils.remove_entry(TEST_STATE_HOME) if File.directory?(TEST_STATE_HOME) }
 
 # Minitest 6 dropped minitest/mock (and Object#stub); this project is
 # stdlib-only, so vendor the classic Minitest 5 stub — the one feature the

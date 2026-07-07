@@ -10,6 +10,10 @@ vendor/bundle/
 /gtd.org.bak
 /archive.org
 /archive.org.bak
+# Advisory-lock sidecar Store#with_lock drops beside the org file (the undo
+# journal itself lives under $XDG_STATE_HOME/tasks/, out of the repo).
+/.gtd.org.lock
+/.archive.org.lock
 
 # Editor / OS
 .DS_Store

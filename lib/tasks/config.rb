@@ -109,9 +109,18 @@ module Tasks
     private_class_method :pick
 
     def self.config_file(env = ENV)
-      base = env["XDG_CONFIG_HOME"]
-      base = File.join(Dir.home, ".config") if base.nil? || base.empty?
-      File.join(base, "tasks", "config")
+      File.join(xdg_base("XDG_CONFIG_HOME", ".config", env: env), "tasks", "config")
+    end
+
+    # Resolve an XDG base directory, falling back to ~/<default...> when the env
+    # var is unset or empty, and expanding either form to an absolute path — a
+    # relative XDG value would otherwise resolve against each process's cwd, so
+    # two invocations from different directories would disagree on where state
+    # lives. Shared by every "where does tasks state live" decision.
+    def self.xdg_base(env_key, *default, env: ENV)
+      base = env[env_key]
+      base = File.join(Dir.home, *default) if base.nil? || base.empty?
+      File.expand_path(base)
     end
 
     # `key = value` per line; `#` comments and blanks ignored; unknown keys

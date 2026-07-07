@@ -170,7 +170,8 @@ already sorted the way the text view sorts:
 |---|---|---|---|
 | `archive` | `x` | ✅ | Sweep DONE/CANCELLED blocks to archive.org. |
 | `delete <ref> --force` | `rm` | 🚧 | Hard-remove a block (no archive). Refuses without `--force`; suggest `cancel` instead. |
-| `undo` | | 🚧 | Revert the last CLI mutation (file-backed journal, shared with the TUI's in-memory one is out of scope). Until then: `git diff` / `git checkout -- gtd.org`. |
+| `undo` | | ✅ | Revert the last mutation via the on-disk journal (`Tasks::Journal`, under `$XDG_STATE_HOME/tasks/journal/`), shared with the TUI and across CLI runs. Refuses (exit 1) if gtd.org changed out-of-band since that edit — resolve with `git diff` / `git checkout -- gtd.org`. |
+| `redo` | | ✅ | Replay the last undone mutation; same shared journal and conflict guard as `undo`. |
 | `-p [--provider N] [--model N] "prompt"` | | ✅ | Natural-language request via a headless LLM agent (Claude CLI by default, or any configured harness). Leading `--provider`/`--model` override the config default for one run; see [LLM agent settings](#llm-agent-settings). |
 | `config [--json]` | | ✅ | Print resolved file paths (org, archive, config file), `urgent_days`, and the source of each (`TASKS_ORG env`, `TASKS_DIR env`, `TASKS_URGENT_DAYS env`, `config file`, `default`). |
 | `help` | `-h`, `--help` | ✅ | Grouped command reference. Also printed (to stderr, exit 1) on an unknown/absent command. |
@@ -182,7 +183,8 @@ Ideas beyond this spec live in `docs/ideas.md`.
 1. **Spec first**: add/adjust the row here before implementing.
 2. Thin dispatch in `bin/tasks`; logic in `lib/tasks/` (usually a `Store` method).
 3. Mutations go through `Store#with_history` — never `File.write` directly.
-   That buys the post-write `check` rollback and (future) undo journal.
+   That buys the file lock, the post-write `check` rollback, the persistent
+   undo journal, and crash-safe atomic writes (`Tasks::Atomic.write`).
 4. Accept synonyms liberally, print the canonical name in output.
 5. Every mutation's output includes the resulting headline(s).
 6. Tests required: happy path, ref-not-found, ref-ambiguous, and

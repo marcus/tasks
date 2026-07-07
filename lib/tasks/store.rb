@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 
 require "date"
+require_relative "atomic"
 require_relative "check"
+require_relative "journal"
 require_relative "quadrants"
 require_relative "recur"
 
@@ -41,15 +43,17 @@ module Tasks
 
     attr_reader :org, :archive
 
-    UNDO_LIMIT = 50 # in-memory only; history does not survive a restart
+    UNDO_LIMIT = 50 # deepest undo history the journal retains
 
-    def initialize(org:, archive:)
+    # `journal_dir` defaults to an XDG_STATE_HOME location derived from the org
+    # path, so the CLI and TUI editing the same file share one undo history;
+    # tests pass an explicit dir to stay hermetic.
+    def initialize(org:, archive:, journal_dir: nil, undo_limit: UNDO_LIMIT)
       @org = org
       @archive = archive
       @mtime = nil
       @cache = nil
-      @undo_stack = []
-      @redo_stack = []
+      @journal = Journal.new(dir: journal_dir || Journal.dir_for(org), org: org, limit: undo_limit)
     end
 
     def items
@@ -89,31 +93,15 @@ module Tasks
 
     # -- undo/redo -------------------------------------------------------------
     #
-    # Every TUI mutation snapshots both files before and after the write.
-    # undo!/redo! restore snapshots, but only when the current file content
-    # matches what the mutation left behind — an out-of-band edit (Claude,
-    # another process) makes the entry unsafe and it is refused, not forced.
+    # History lives in an on-disk Journal (see journal.rb) shared by the CLI and
+    # the TUI, so it survives a restart and one tool can undo the other's edit.
+    # A step is applied only when the live files still match what that mutation
+    # left behind — an out-of-band edit (Claude, another process) makes the step
+    # unsafe and it is refused, not forced.
 
     # Returns [:ok, label] | [:empty] | [:conflict, label]
-    def undo!
-      entry = @undo_stack.last
-      return [:empty] unless entry
-      return [:conflict, entry[:label]] unless snapshot == entry[:after]
-      @undo_stack.pop
-      restore(entry[:before])
-      @redo_stack << entry
-      [:ok, entry[:label]]
-    end
-
-    def redo!
-      entry = @redo_stack.last
-      return [:empty] unless entry
-      return [:conflict, entry[:label]] unless snapshot == entry[:before]
-      @redo_stack.pop
-      restore(entry[:after])
-      @undo_stack << entry
-      [:ok, entry[:label]]
-    end
+    def undo! = history_step(-1)
+    def redo! = history_step(1)
 
     # -- mutations ---------------------------------------------------------------
 
@@ -229,6 +217,32 @@ module Tasks
       recoded.valid_encoding? ? recoded : str
     end
 
+    # Serialize the read-modify-write of a mutation across *tasks* processes (the
+    # CLI and the TUI): without it, two of them could interleave their
+    # readlines/write and silently drop one change. The lock is an advisory flock
+    # on a sidecar next to the real gtd.org, so every process reaches the same
+    # inode regardless of how the path was spelled (symlink, relative, differing
+    # XDG_STATE_HOME) — that shared identity is why the lock file lives beside the
+    # file it guards, not in the journal dir. It does NOT constrain out-of-band
+    # editors (Claude, an editor) that don't take the lock; those are caught
+    # instead by the post-write Check and the journal's conflict detection, and
+    # Atomic.write keeps even an unlocked concurrent read from ever tearing.
+    def with_lock
+      File.open(lock_path, File::RDWR | File::CREAT, 0o644) do |f|
+        f.flock(File::LOCK_EX)
+        yield
+      end
+    end
+
+    # A per-file lock sidecar (".gtd.org.lock") beside the resolved org file.
+    # Journal.canonical resolves the symlink (so two spellings of the same file
+    # lock in common) and is ENOENT-safe (a delete race falls back to the
+    # expanded path instead of crashing with_lock).
+    def lock_path
+      target = Journal.canonical(@org)
+      File.join(File.dirname(target), ".#{File.basename(target)}.lock")
+    end
+
     def snapshot
       {
         org: File.read(@org, encoding: "UTF-8"),
@@ -237,31 +251,49 @@ module Tasks
     end
 
     def restore(snap)
-      File.write(@org, snap[:org])
+      Atomic.write(@org, snap[:org])
       if snap[:archive].nil?
         File.delete(@archive) if File.exist?(@archive)
       else
-        File.write(@archive, snap[:archive])
+        Atomic.write(@archive, snap[:archive])
       end
       reload!
     end
 
-    # Record history only when the mutation actually wrote (truthy, nonzero).
-    def with_history(label)
-      before = snapshot
-      result = yield
-      if result && result != 0
-        # post-write invariant: a mutation must never mangle the file.
-        # If it would, roll back and report failure instead.
-        unless Check.check(@org).ok?
-          restore(before)
-          return result.is_a?(Integer) ? 0 : false
-        end
-        @undo_stack << { label: label, before: before, after: snapshot }
-        @undo_stack.shift while @undo_stack.size > UNDO_LIMIT
-        @redo_stack.clear
+    # Apply an undo (delta -1) or redo (delta +1) planned by the journal, under
+    # the lock so the plan and its commit can't race another writer.
+    def history_step(delta)
+      with_lock do
+        step = @journal.plan(delta)
+        return [:empty] unless step
+        return [:conflict, step[:label]] unless snapshot == step[:expect]
+        restore(step[:target])
+        step[:commit].call
+        [:ok, step[:label]]
       end
-      result
+    end
+
+    # Record history only when the mutation actually wrote (truthy, nonzero) AND
+    # changed the file — an idempotent no-op (e.g. adding a tag already present)
+    # succeeds but must not burn an undo slot with a label that reverts nothing.
+    # The whole read-modify-write (snapshot, mutate, validate, journal) runs
+    # under the lock so a concurrent writer can't slip between the steps.
+    def with_history(label)
+      with_lock do
+        before = snapshot
+        result = yield
+        if result && result != 0
+          # post-write invariant: a mutation must never mangle the file.
+          # If it would, roll back and report failure instead.
+          unless Check.check(@org).ok?
+            restore(before)
+            return result.is_a?(Integer) ? 0 : false
+          end
+          after = snapshot
+          @journal.record(label: label, before: before, after: after) unless after == before
+        end
+        result
+      end
     end
 
     def complete_impl(item)
@@ -277,7 +309,7 @@ module Tasks
       # it can't orphan (invisible to `list --deferred`, unreachable by activate).
       lines[i] = strip_headline_tag(lines[i], DEFER_TAG)
       lines.insert(i + 1, "   CLOSED: [#{Date.today}]\n")
-      File.write(@org, lines.join)
+      Atomic.write(@org, lines.join)
       reload!
       true
     end
@@ -290,7 +322,7 @@ module Tasks
       return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
       cookie = pri ? "[##{pri}] " : ""
       lines[i] = lines[i].sub(/^(\*+\s+#{item.state}\s+)(?:\[#[ABC]\]\s+)?/, "\\1#{cookie}")
-      File.write(@org, lines.join)
+      Atomic.write(@org, lines.join)
       reload!
       true
     end
@@ -335,7 +367,7 @@ module Tasks
       end
       # A dated task has been processed — promote it out of the inbox.
       lines[i] = lines[i].sub(/^(\*+\s+)INBOX\b/, '\1TODO') if item.state == "INBOX"
-      File.write(@org, lines.join)
+      Atomic.write(@org, lines.join)
       reload!
       true
     end
@@ -369,7 +401,7 @@ module Tasks
       end
       return false unless removed
 
-      File.write(@org, lines.join)
+      Atomic.write(@org, lines.join)
       reload!
       true
     end
@@ -416,7 +448,7 @@ module Tasks
       date = Date.parse(lines[at][/#{key}:\s*<(\d{4}-\d{2}-\d{2})/, 1])
       body = cookie == :off ? timestamp(key, date) : timestamp(key, date, cookie)
       lines[at] = lines[at].sub(/#{key}:\s*<[^>]*>/, body)
-      File.write(@org, lines.join)
+      Atomic.write(@org, lines.join)
       reload!
       true
     end
@@ -444,7 +476,7 @@ module Tasks
       return false unless rolled
 
       lines.insert(own_end, "   - Did [#{Date.today}].\n")
-      File.write(@org, lines.join)
+      Atomic.write(@org, lines.join)
       reload!
       true
     end
@@ -516,7 +548,7 @@ module Tasks
       return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
       stars, state, pri, _title, tags = headline_parts(lines[i])
       lines[i] = build_headline(stars, state, pri, new_title.strip, tags)
-      File.write(@org, lines.join)
+      Atomic.write(@org, lines.join)
       reload!
       true
     end
@@ -529,7 +561,7 @@ module Tasks
       tags = tags.reject { |t| remove.include?(t) }
       add.each { |t| tags << t unless tags.include?(t) }
       lines[i] = build_headline(stars, state, pri, title, tags)
-      File.write(@org, lines.join)
+      Atomic.write(@org, lines.join)
       reload!
       true
     end
@@ -539,7 +571,7 @@ module Tasks
       i = item.line - 1
       return false unless lines[i]&.match?(HEADLINE) && lines[i].include?(item.title)
       lines.insert(block_end_index(lines, i), "   #{text.strip}\n")
-      File.write(@org, lines.join)
+      Atomic.write(@org, lines.join)
       reload!
       true
     end
@@ -558,7 +590,7 @@ module Tasks
       insert_at = ((target + 1)...rest.length).find { |k| rest[k] =~ /^\* / } || rest.length
       insert_at -= 1 while insert_at > target + 1 && rest[insert_at - 1].strip.empty?
       rest.insert(insert_at, *block)
-      File.write(@org, rest.join)
+      Atomic.write(@org, rest.join)
       reload!
       insert_at + 1
     end
@@ -577,7 +609,7 @@ module Tasks
       insert_at = ((idx + 1)...lines.length).find { |k| lines[k] =~ /^\* / } || lines.length
       insert_at -= 1 while insert_at > idx + 1 && lines[insert_at - 1].strip.empty?
       lines.insert(insert_at, *entry)
-      File.write(@org, lines.join)
+      Atomic.write(@org, lines.join)
       reload!
       insert_at + 1
     end
@@ -603,7 +635,7 @@ module Tasks
         (c = closed_line_index(lines, i)) && lines.delete_at(c)
       end
 
-      File.write(@org, lines.join)
+      Atomic.write(@org, lines.join)
       reload!
       true
     end
@@ -649,11 +681,11 @@ module Tasks
       end
       return 0 if moved.empty?
 
-      File.write(@org, kept.join)
+      Atomic.write(@org, kept.join)
       arch = File.exist?(@archive) ? File.read(@archive, encoding: "UTF-8") : +""
       arch << "\n" unless arch.empty? || arch.end_with?("\n")
       arch << "\n# Archived #{Date.today}\n" << moved.join("\n") << "\n"
-      File.write(@archive, arch)
+      Atomic.write(@archive, arch)
       reload!
       moved.size
     end

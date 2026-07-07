@@ -667,6 +667,21 @@ def cmd_archive
   end
 end
 
+# Revert (undo) or replay (redo) the last mutation. History is the on-disk
+# journal shared with the TUI and across CLI runs, so this reaches back past the
+# current invocation. Refuses when gtd.org changed out-of-band since that edit.
+def cmd_undo = run_history(:undo!, verb: "undo", past: "undid")
+def cmd_redo = run_history(:redo!, verb: "redo", past: "redid")
+
+def run_history(op, verb:, past:)
+  kind, label = store.public_send(op)
+  case kind
+  when :empty    then abort "nothing to #{verb}"
+  when :conflict then abort "gtd.org changed since that edit — refusing to #{verb} “#{label}”"
+  else                puts "#{past}: #{label}"
+  end
+end
+
 STATE_ORDER = %w[INBOX TODO NEXT WAITING DONE CANCELLED].freeze
 
 # Parse `list` args into a scope symbol plus filters, then print grouped output.
@@ -884,6 +899,8 @@ HELP = <<~USAGE
 
   Lifecycle:
     archive   x              sweep DONE/CANCELLED to archive.org
+    undo                     revert the last mutation (shared with the TUI)
+    redo                     replay the last undone mutation
     config                   show resolved file paths and their sources
     -p "..."                 hand a request to an LLM agent
                              (-p [--provider N] [--model N] "...")
@@ -928,6 +945,8 @@ when "activate", "undefer", "resume" then cmd_defer(ARGV[1..], deferred: false,
                                       usage: "tasks activate <ref>", verb: "activate")
 when "show", "s"      then cmd_show(ARGV[1..])
 when "archive", "x"   then cmd_archive
+when "undo"           then cmd_undo
+when "redo"           then cmd_redo
 when "list", "l"      then cmd_list(ARGV[1..])
 when "check", "k"     then cmd_check(ARGV[1..])
 when "config"         then cmd_config(ARGV[1..])
