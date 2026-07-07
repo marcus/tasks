@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "ansi"
+require_relative "generated_themes"
 
 module Tui
   # The semantic color layer. Rendering code never names a color — it paints
@@ -43,9 +44,9 @@ module Tui
     }.freeze
 
     # Named themes overlay DEFAULTS; slots they omit keep the stock value.
-    # "mono" is attribute-only (also the NO_COLOR fallback). New themes are
-    # one hash here.
-    THEMES = {
+    # "mono" is attribute-only (also the NO_COLOR fallback). Popular color
+    # schemes live in generated_themes.rb and are refreshed by the generator.
+    BUILTIN_THEMES = {
       "default" => {},
       "mono" => {
         tab_active: "reverse", tab_inactive: "dim", accent: "bold",
@@ -56,6 +57,7 @@ module Tui
         state_done: "dim",
       }.freeze,
     }.freeze
+    THEMES = BUILTIN_THEMES.merge(GeneratedThemes::THEMES).freeze
 
     NAMED_COLORS = {
       "black" => 30, "red" => 31, "green" => 32, "yellow" => 33,

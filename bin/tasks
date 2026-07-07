@@ -1092,8 +1092,9 @@ HELP = <<~USAGE
   env vars, or ~/.config/tasks/config (dir = / org = / archive = lines).
   Quadrants urgency window: urgent_days = N in the config file, or TASKS_URGENT_DAYS
   env (default 3) — a DEADLINE within N days counts as urgent.
-  TUI colors: theme = default|mono and color.<slot> = <spec> in the config file
-  (or TASKS_THEME env; NO_COLOR honored) — see docs/cli-spec.md (TUI colors).
+  TUI colors: theme = default|mono|dracula|nord|catppuccin-mocha|... and
+  color.<slot> = <spec> in the config file (or TASKS_THEME env; NO_COLOR
+  honored) — see docs/cli-spec.md (TUI colors).
   Link shorthands: link.jira = https://acme.atlassian.net/browse/%s in the config
   lets notes say jira:OPS-1234; system.gitlab = gitlab.acme.io names custom hosts.
 

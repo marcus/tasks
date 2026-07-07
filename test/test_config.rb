@@ -178,6 +178,13 @@ class TestConfig < Minitest::Test
     assert_equal({ "accent" => "magenta", "link" => "underline #88aaff" }, paths.colors)
   end
 
+  def test_generated_theme_name_from_config_file
+    write_config("theme = dracula\n")
+    paths = resolve
+    assert_equal "dracula", paths.theme
+    assert_equal "config file", paths.sources[:theme]
+  end
+
   def test_tasks_theme_env_beats_config_file
     write_config("theme = mono\n")
     paths = resolve(env: { "TASKS_THEME" => "default" })

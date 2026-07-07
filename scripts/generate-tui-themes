@@ -1,0 +1,200 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "fileutils"
+require "json"
+require "optparse"
+
+POPULAR_SCHEMES = [
+  "Ayu",
+  "Ayu Light",
+  "Ayu Mirage",
+  "Catppuccin Frappe",
+  "Catppuccin Latte",
+  "Catppuccin Macchiato",
+  "Catppuccin Mocha",
+  "Dracula",
+  "Everforest Dark Hard",
+  "Everforest Light Med",
+  "Gruvbox Dark",
+  "Gruvbox Dark Hard",
+  "Gruvbox Light",
+  "Gruvbox Material Dark",
+  "Gruvbox Material Light",
+  "iTerm2 Solarized Dark",
+  "iTerm2 Solarized Light",
+  "Kanagawa Dragon",
+  "Kanagawa Wave",
+  "Molokai",
+  "Monokai Classic",
+  "Monokai Pro",
+  "Nord",
+  "Nord Light",
+  "One Half Dark",
+  "One Half Light",
+  "Rose Pine",
+  "Rose Pine Dawn",
+  "Rose Pine Moon",
+  "TokyoNight",
+  "TokyoNight Day",
+  "TokyoNight Moon",
+  "TokyoNight Night",
+  "TokyoNight Storm",
+  "Tomorrow Night",
+  "Tomorrow Night Eighties",
+].freeze
+
+options = {
+  repo: File.expand_path("~/code/iTerm2-Color-Schemes"),
+  output: File.expand_path("../lib/tui/generated_themes.rb", __dir__),
+  all: false,
+}
+
+OptionParser.new do |parser|
+  parser.banner = "Usage: scripts/generate-tui-themes [options]"
+  parser.on("--repo PATH", "Path to iTerm2-Color-Schemes clone") { |v| options[:repo] = File.expand_path(v) }
+  parser.on("--output PATH", "Generated Ruby output path") { |v| options[:output] = File.expand_path(v) }
+  parser.on("--all", "Generate every available scheme instead of the popular subset") { options[:all] = true }
+end.parse!
+
+source_dir = File.join(options[:repo], "windowsterminal")
+abort "Missing #{source_dir}. Clone https://github.com/mbadolato/iTerm2-Color-Schemes first." unless File.directory?(source_dir)
+
+def normalize_hex(value, fallback = nil)
+  value = value.to_s.strip
+  value = fallback.to_s.strip if value.empty?
+  raise "invalid color: #{value.inspect}" unless value.match?(/\A#[0-9a-fA-F]{6}\z/)
+
+  value.downcase
+end
+
+def srgb_channel(v)
+  v /= 255.0
+  v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055)**2.4
+end
+
+def luminance(hex)
+  r, g, b = hex.delete_prefix("#").scan(/../).map { |pair| pair.to_i(16) }
+  (0.2126 * srgb_channel(r)) + (0.7152 * srgb_channel(g)) + (0.0722 * srgb_channel(b))
+end
+
+def contrast(a, b)
+  high, low = [luminance(a), luminance(b)].sort.reverse
+  (high + 0.05) / (low + 0.05)
+end
+
+def readable_text(bg)
+  contrast(bg, "#000000") > contrast(bg, "#ffffff") ? "#000000" : "#ffffff"
+end
+
+def slug(name)
+  cleaned = name.sub(/\AiTerm2\s+/i, "").gsub("+", " plus ")
+  cleaned.downcase.gsub(/[^a-z0-9]+/, "-").gsub(/\A-|-+\z/, "")
+end
+
+def spec(*tokens)
+  tokens.compact.join(" ")
+end
+
+def convert_scheme(scheme)
+  black = normalize_hex(scheme["black"], "#000000")
+  red = normalize_hex(scheme["red"], "#cc3333")
+  yellow = normalize_hex(scheme["yellow"], "#cc9933")
+  blue = normalize_hex(scheme["blue"], "#3366cc")
+  purple = normalize_hex(scheme["purple"], "#9966cc")
+  cyan = normalize_hex(scheme["cyan"], "#33cccc")
+  white = normalize_hex(scheme["white"], "#cccccc")
+  bright_black = normalize_hex(scheme["brightBlack"], black)
+  bright_red = normalize_hex(scheme["brightRed"], red)
+  bright_yellow = normalize_hex(scheme["brightYellow"], yellow)
+  bright_blue = normalize_hex(scheme["brightBlue"], blue)
+  bright_cyan = normalize_hex(scheme["brightCyan"], cyan)
+  bright_white = normalize_hex(scheme["brightWhite"], white)
+  foreground = normalize_hex(scheme["foreground"], bright_white)
+  selection_bg = normalize_hex(scheme["selectionBackground"], bright_black)
+  selection_fg = readable_text(selection_bg)
+
+  {
+    tab_active: spec("bold", selection_fg, "on-#{selection_bg}"),
+    tab_inactive: bright_black,
+    selection: spec(selection_fg, "on-#{selection_bg}"),
+    accent: bright_cyan,
+    prompt: spec("bold", bright_cyan),
+    section: spec("bold", foreground),
+    context: spec("bold", cyan),
+    priority: spec("bold", bright_yellow),
+    muted: bright_black,
+    note: bright_black,
+    link: spec("underline", bright_blue),
+    error: bright_red,
+    warning: bright_yellow,
+    due_overdue: bright_red,
+    due_soon: bright_yellow,
+    due_week: bright_cyan,
+    due_far: bright_black,
+    state_next: bright_cyan,
+    state_waiting: bright_yellow,
+    state_done: bright_black,
+  }.select { |_, value| !value.empty? }
+end
+
+schemes = Dir.children(source_dir)
+             .grep(/\.json\z/)
+             .map { |file| JSON.parse(File.read(File.join(source_dir, file), encoding: "UTF-8")) }
+             .sort_by { |scheme| scheme.fetch("name").downcase }
+by_name = schemes.to_h { |scheme| [scheme.fetch("name"), scheme] }
+
+selected =
+  if options[:all]
+    schemes
+  else
+    missing = POPULAR_SCHEMES.reject { |name| by_name.key?(name) }
+    abort "Missing expected schemes: #{missing.join(", ")}" unless missing.empty?
+    POPULAR_SCHEMES.map { |name| by_name.fetch(name) }
+  end
+
+seen = {}
+themes = selected.to_h do |scheme|
+  base = slug(scheme.fetch("name"))
+  base = "iterm-#{base}" if %w[default mono].include?(base)
+  name = base
+  suffix = 2
+  while seen[name]
+    name = "#{base}-#{suffix}"
+    suffix += 1
+  end
+  seen[name] = true
+  [name, [scheme.fetch("name"), convert_scheme(scheme)]]
+end
+
+def ruby_hash(hash, indent: 6)
+  pad = " " * indent
+  hash.map do |key, value|
+    "#{pad}#{key.inspect} => #{value.inspect},"
+  end.join("\n")
+end
+
+body = +"# frozen_string_literal: true\n\n"
+body << "# Generated by scripts/generate-tui-themes from iTerm2-Color-Schemes.\n"
+body << "# Source: https://github.com/mbadolato/iTerm2-Color-Schemes (MIT)\n"
+body << "# Do not edit by hand; rerun the generator instead.\n\n"
+body << "module Tui\n"
+body << "  module GeneratedThemes\n"
+body << "    THEMES = {\n"
+themes.each do |name, (_display, slots)|
+  body << "      #{name.inspect} => {\n"
+  body << ruby_hash(slots)
+  body << "\n      }.freeze,\n"
+end
+body << "    }.freeze\n\n"
+body << "    DISPLAY_NAMES = {\n"
+themes.each do |name, (display, _slots)|
+  body << "      #{name.inspect} => #{display.inspect},\n"
+end
+body << "    }.freeze\n"
+body << "  end\n"
+body << "end\n"
+
+FileUtils.mkdir_p(File.dirname(options[:output]))
+File.write(options[:output], body, encoding: "UTF-8")
+puts "#{themes.size} themes -> #{options[:output]}"

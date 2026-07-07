@@ -57,9 +57,13 @@ rows win over built-ins.
 all: `accent`, `selection`, `tab_active`, `note`, `link`, the `due_*` ladder,
 `state_*`, …). Appearance keys in the same config file:
 
-- `theme = <name>` — a named base theme: `default`, or `mono` (attribute-only).
-  Overridable by `TASKS_THEME`; a non-empty `NO_COLOR` env var selects `mono`
-  when nothing explicit is set.
+- `theme = <name>` — a named base theme: `default`, `mono` (attribute-only),
+  or a generated popular scheme such as `dracula`, `nord`,
+  `catppuccin-mocha`, `gruvbox-dark`, `tokyonight-night`, or
+  `solarized-dark`. The generated names come from
+  `scripts/generate-tui-themes`, which converts iTerm2-Color-Schemes
+  Window Terminal JSON into tasks semantic slots. Overridable by `TASKS_THEME`;
+  a non-empty `NO_COLOR` env var selects `mono` when nothing explicit is set.
 - `color.<slot> = <spec>` — restyle one slot on top of the theme. A spec is
   space-separated tokens: attributes (`bold`, `dim`, `italic`, `underline`,
   `reverse`), a named color (`red`, `bright-red`, `gray`, …), a 256-color index

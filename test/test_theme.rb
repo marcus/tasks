@@ -99,6 +99,33 @@ class TestTheme < Minitest::Test
     assert_equal "\e[2mx\e[0m", T.paint(:muted, "x")
   end
 
+  def test_popular_generated_themes_are_available
+    %w[
+      catppuccin-mocha
+      dracula
+      gruvbox-dark
+      nord
+      solarized-dark
+      tokyonight-night
+    ].each { |name| assert_includes T::THEMES.keys, name }
+  end
+
+  def test_generated_theme_specs_parse
+    T::THEMES.each do |name, slots|
+      slots.each do |slot, spec|
+        assert T::DEFAULTS.key?(slot), "#{name} defines unknown slot #{slot}"
+        assert T.parse(spec), "#{name}.#{slot} has invalid spec #{spec.inspect}"
+      end
+    end
+  end
+
+  def test_generated_theme_can_be_configured_by_name
+    T.configure!(name: "dracula")
+    assert_equal "\e[38;2;164;255;255mx\e[0m", T.paint(:accent, "x")
+    assert_includes T.paint(:selection, "x"), "\e[38;2;"
+    assert_includes T.paint(:selection, "x"), ";48;2;"
+  end
+
   # -- link painting in notes (Modals) ------------------------------------------
 
   def test_note_line_paints_links_and_prose_separately
