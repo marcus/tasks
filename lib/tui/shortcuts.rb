@@ -23,6 +23,7 @@ module Tui
       Entry.new(seqs: ["Z"],          keys: "Z",       desc: "show / hide deferred tasks",       action: :toggle_deferred_view),
       Entry.new(seqs: ["K"],          keys: "K",       desc: "raise priority (→ A)",             action: :raise_priority),
       Entry.new(seqs: ["J"],          keys: "J",       desc: "lower priority (→ none)",          action: :lower_priority),
+      Entry.new(seqs: ["o"],          keys: "o",       desc: "open task link in browser",        action: :open_link),
       Entry.new(seqs: ["y"],          keys: "y",       desc: "yank task ref (paste to agent)",   action: :yank_ref),
       Entry.new(seqs: ["Y"],          keys: "Y",       desc: "yank task as markdown",            action: :yank_markdown),
       Entry.new(seqs: ["p"],          keys: "p",       desc: "paste task ref into the prompt",   action: :paste_ref),

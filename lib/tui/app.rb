@@ -13,8 +13,10 @@ require_relative "shortcuts"
 require_relative "modals"
 require_relative "clipboard"
 require_relative "export"
+require_relative "session"
 require_relative "text_input"
 require_relative "../tasks/config"
+require_relative "../tasks/opener"
 
 module Tui
   # The event loop: raw-mode keyboard input, gtd.org watching, and the
@@ -51,7 +53,8 @@ module Tui
     def initialize(root:, paths: Tasks::Config.resolve(default_dir: root),
                    llm_config: LLM::Config.load)
       Theme.configure!(name: paths.theme, overrides: paths.colors || {})
-      @store  = Store.new(org: paths.org, archive: paths.archive)
+      @store  = Store.new(org: paths.org, archive: paths.archive,
+                          links: paths.links || {}, link_systems: paths.link_systems || {})
       @urgent_days = paths.urgent_days # deadline window for the quadrants view
       # The (provider, model) switcher cycles these; the live agent is rebuilt
       # lazily when the selected provider changes (see ensure_agent_for_current!).
@@ -62,7 +65,7 @@ module Tui
       @entry_idx  = 0
       @agent = build_agent(current_entry)
       @agent_provider = current_entry.provider
-      @view   = :agenda
+      @view   = restore_view # last session's view, or :agenda
       @sel    = 0
       @mode   = :list      # :list | :prompt | :date | :recur | :modal
       @modal  = nil        # { title:, lines: } while a modal is open
@@ -111,8 +114,11 @@ module Tui
       print "\e[?1049h\e[?2004h\e[?25l" # alt screen, bracketed paste, hide cursor
       loop_once until @quit
     ensure
+      # Terminal restore FIRST — if saving somehow raised, a skipped restore
+      # would leave the shell raw on the alt screen, far worse than a lost view.
       print "\e[?2004l\e[?1049l\e[?25h"
       $stdin.cooked!
+      save_session # so the view persists however the TUI exits
     end
 
     private
@@ -479,6 +485,7 @@ module Tui
       when "J"             then lower_priority
       when "p"             then paste_ref
       when "u"             then undo_last
+      when "o"             then open_link
       when "\x12"          then redo_last
       end
     end
@@ -664,7 +671,23 @@ module Tui
       item = current_item
       return close_modal unless item
       width = [(IO.console&.winsize || [24, 80])[1], MIN_WIDTH].max
-      open_modal(Modals.detail(item, @store.block(item), width), kind: :detail)
+      open_modal(Modals.detail(item, @store.block(item), width, links: @store.links(item)),
+                 kind: :detail)
+    end
+
+    # Open the selected task's first link in the browser (`o`, list or detail
+    # mode). Deliberately the FIRST link: notes lead with the primary reference;
+    # the CLI (`tasks open <ref> <n>`) handles precise picking.
+    def open_link
+      item = current_item or return
+      links = @store.links(item)
+      return flash("no links on this task") if links.empty?
+      link = links.first
+      unless Tasks::Opener.open_url(link.url)
+        return flash("no browser launcher found (set TASKS_OPENER)")
+      end
+      extra = links.size > 1 ? " (1 of #{links.size})" : ""
+      flash("opened #{link.system}: #{link.url}#{extra}")
     end
 
     # After a task action taken from inside a detail modal (reschedule the
@@ -744,6 +767,25 @@ module Tui
     def cycle_view(delta)
       keys = Views::TABS.map(&:last)
       switch_view(((keys.index(@view) + delta) % keys.size) + 1)
+    end
+
+    # -- session persistence ---------------------------------------------------
+    #
+    # The active view survives a restart (Tui::Session). Restore validates
+    # against the real tab list, so a stale or hand-edited value degrades to
+    # the default rather than rendering a view that doesn't exist.
+
+    def restore_view
+      saved = Session.load[:view]
+      # Strings only: a hand-edited "view": 123 must fall back, not crash startup.
+      saved = saved.is_a?(String) ? saved.to_sym : nil
+      Views::TABS.map(&:last).include?(saved) ? saved : :agenda
+    end
+
+    def save_session
+      # Braces required: a braceless string-key hash would parse as keywords
+      # (save has an env: kwarg) and raise.
+      Session.save({ "view" => @view.to_s })
     end
 
     def complete_selected

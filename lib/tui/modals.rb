@@ -39,7 +39,9 @@ module Tui
 
     # item:  the Views/Store Item
     # block: raw file lines of the item (headline + body) from Store#block
-    def detail(item, block, width, today: Date.today)
+    # links: the item's Tasks::Links (Store#links) — shown under the notes;
+    #        `o` opens the first one
+    def detail(item, block, width, today: Date.today, links: [])
       w = [width - 12, 64].min
       lines = A.wrap(item.title, w).map { |l| T.paint(:section, l) }
       lines << ""
@@ -60,6 +62,14 @@ module Tui
         lines << ""
         lines << T.paint(:note, "notes")
         notes.each { |n| lines.concat(A.wrap(n, w - 2).map { |l| "  #{note_line(l)}" }) }
+      end
+      unless links.empty?
+        lines << ""
+        lines << A.dim("links (o opens the first)")
+        lw = links.map { |l| l.system.length }.max
+        links.each do |l|
+          lines << "  #{A.cyan(l.system.ljust(lw))} #{A.dim(l.url)}"
+        end
       end
       { title: "task", lines: lines }
     end

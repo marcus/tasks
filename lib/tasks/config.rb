@@ -22,7 +22,18 @@ module Tasks
   module Config
     PATH_KEYS = %w[dir org archive].freeze
 
-    Paths = Struct.new(:org, :archive, :urgent_days, :theme, :colors, :sources, :config_file, keyword_init: true) do
+    # Link settings live in two dotted namespaces (see Tasks::Links):
+    #   link.<name>   = <url template with %s>  — shorthand: `jira:OPS-1` in a
+    #                   body expands through the template
+    #   system.<name> = <host>                  — classify that host as <name>
+    #                   (self-hosted Jira/GitLab the built-ins can't know)
+    # Names are constrained so a stray `foo.bar = x` line can't inject a
+    # shorthand that then matches prose.
+    LINK_NAME = /\A[a-z][a-z0-9_-]*\z/
+
+    Paths = Struct.new(:org, :archive, :urgent_days, :theme, :colors,
+                       :links, :link_systems,
+                       :sources, :config_file, keyword_init: true) do
       # Context block appended to an agent's system prompt so a headless harness
       # finds the CLI and the task files even when they live outside the repo.
       # Provider-agnostic — every backend (Claude CLI, Hermes, …) uses it.
@@ -45,6 +56,7 @@ module Tasks
         org: File.join(dir, "gtd.org"), archive: File.join(dir, "archive.org"),
         urgent_days: Quadrants::DEFAULT_URGENT_DAYS,
         theme: "default", colors: {},
+        links: {}, link_systems: {},
         sources: { org: "pinned", archive: "pinned", urgent_days: "default", theme: "default" },
         config_file: config_file
       )
@@ -72,6 +84,7 @@ module Tasks
         org: org, archive: archive,
         urgent_days: urgent_days,
         theme: theme, colors: conf["colors"] || {},
+        links: conf.fetch(:links, {}), link_systems: conf.fetch(:link_systems, {}),
         sources: { org: org_source, archive: archive_source,
                    urgent_days: urgent_source, theme: theme_source },
         config_file: file
@@ -151,6 +164,9 @@ module Tasks
     # TUI appearance: `theme = <name>` and `color.<slot> = <spec>` lines are
     # collected verbatim (specs under conf["colors"]) — Tui::Theme owns
     # validation so the vocabulary lives in one place.
+    # Dotted link keys (`link.jira = …`, `system.gitlab = …`) collect into the
+    # :links / :link_systems maps (symbol keys so they can't collide with the
+    # flat string keys above).
     def self.parse_file(path)
       return {} unless File.file?(path)
 
@@ -160,7 +176,13 @@ module Tasks
 
         key, _, value = line.partition("=")
         key = key.strip
+        # Strip an inline comment: whitespace + "#" ends the value. Requiring
+        # the whitespace keeps a "#" INSIDE a value intact (a URL anchor like
+        # https://host/page#sec has no space before its #). color.* specs are
+        # exempt — a hex token (`bold #ff8800`) legitimately follows a space,
+        # so color lines can't carry inline comments.
         value = value.strip
+        value = value.sub(/\s#.*\z/, "").strip unless key.start_with?("color.")
         next if value.empty?
 
         if PATH_KEYS.include?(key)
@@ -171,6 +193,10 @@ module Tasks
           conf[key] = value
         elsif key.start_with?("color.") && key.length > 6
           (conf["colors"] ||= {})[key.delete_prefix("color.")] = value
+        elsif (m = key.match(/\Alink\.(.+)\z/)) && m[1].match?(LINK_NAME)
+          (conf[:links] ||= {})[m[1]] = value
+        elsif (m = key.match(/\Asystem\.(.+)\z/)) && m[1].match?(LINK_NAME)
+          (conf[:link_systems] ||= {})[m[1]] = value
         end
       end
     end

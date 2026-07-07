@@ -28,12 +28,30 @@ Both the CLI and the TUI resolve `gtd.org`/`archive.org` through
 2. `TASKS_DIR` env var — a directory containing `gtd.org` and `archive.org`.
 3. Config file `~/.config/tasks/config` (or `$XDG_CONFIG_HOME/tasks/config`),
    `key = value` lines: `dir = ~/tasks`, or per-file `org = …` / `archive = …`.
-   `~` expands; `#` comments and blank lines ignored.
+   `~` expands; `#` comments (full-line, or inline after whitespace) and blank
+   lines ignored — so a value can't contain ` #`; a bare `#` inside a value
+   (e.g. a URL anchor) is fine.
 4. Default: the repo root (current behavior).
 
 The config file also carries non-path settings: `urgent_days = N` sets the
 quadrants urgency window (see `quadrants`), overridable by the `TASKS_URGENT_DAYS`
 env var, default 3.
+
+Two dotted namespaces configure links (see `links`/`open`):
+
+```
+link.jira   = https://acme.atlassian.net/browse/%s   # shorthand: notes can say jira:OPS-1234
+link.gh     = https://github.com/%s                  # gh:acme/app/pull/412
+system.gitlab = gitlab.acme.io                       # classify this host as "gitlab"
+```
+
+`link.<name>` makes `<name>:<value>` in a task body expand through the URL
+template (`%s`, or appended if the template has none) — descriptions stay
+terse and one config edit re-points every link if a host changes. Names are
+`[a-z][a-z0-9_-]*`; only configured names match, so ordinary prose ("note:
+this") can't false-positive. `system.<name>` classifies a custom host (and its
+subdomains) for self-hosted systems the built-in registry can't know; user
+rows win over built-ins.
 
 **TUI colors.** The TUI paints semantic *slots* (`lib/tui/theme.rb` lists them
 all: `accent`, `selection`, `tab_active`, `note`, `link`, the `due_*` ladder,
@@ -48,10 +66,11 @@ all: `accent`, `selection`, `tab_active`, `note`, `link`, the `due_*` ladder,
   (`208`), or hex (`#ff8800`); prefix a color with `on-` for the background
   (`on-blue`, `on-#1e2030`); `none` = unstyled. Example:
   `color.selection = black on-cyan`. Invalid values fall back to the theme
-  default rather than erroring.
+  default rather than erroring. Because a hex token follows a space, `color.*`
+  lines are exempt from inline `#` comments.
 
-`tasks config` prints the resolved paths, `urgent_days`, `theme`, and where
-each came from.
+`tasks config` prints the resolved paths, `urgent_days`, `theme` (+ any
+`color.*` and link overrides), and where each came from.
 
 ### LLM agent settings
 
@@ -158,7 +177,8 @@ would change and writes nothing.
 | `inbox` | `i` | ✅ | Unprocessed INBOX items. `--json` |
 | `show <ref>` | `s` | ✅ | One task in full: headline fields + body/notes + links. `--json` shape: `{id, state, priority, title, tags, contexts, scheduled, deadline, recur, closed, line, notes: [..], project, links: [{url, label, system}]}`. Drawer lines are hidden from `notes`; `project` is the nearest ancestor heading. |
 | `id <ref> [--json]` | | ✅ | Print a task's stable `:ID:`, assigning one (a `:PROPERTIES:` drawer) if absent. Idempotent. Resolves refs regardless of state. |
-| `links [<ref>]` | `urls` | ✅ | Links found in task titles/notes, classified by system (`slack`, `jira`, `github`, …; unknown hosts fall back to the host name; Confluence-on-Atlassian is told apart from Jira by its `/wiki` path). One task's links with `<ref>`; every open task's otherwise. `--system <name>` filters (case-insensitive), `--all` widens the listing to done + archived (`<ref>` resolution itself stays live-file only), `--json` emits `{links: [{url, label, system, task, id, line, source}]}`. Recognizes org links `[[url][label]]` and bare URLs; org-internal targets (`[[id:…]]`, `[[file:…]]`, headline links) are org navigation, not links. |
+| `links [<ref>]` | `urls` | ✅ | Links found in task titles/notes, classified by system (`slack`, `jira`, `github`, …; unknown hosts fall back to the host name; Confluence-on-Atlassian is told apart from Jira by its `/wiki` path). One task's links with `<ref>`; every open task's otherwise. `--system <name>` filters (case-insensitive), `--all` widens the listing to done + archived (`<ref>` resolution itself stays live-file only), `--json` emits `{links: [{url, label, system, task, id, line, source}]}`. Recognizes org links `[[url][label]]`, bare URLs, and configured shorthands (below), in file order; org-internal targets (`[[id:…]]`, `[[file:…]]`, headline links) are org navigation, not links. |
+| `open <ref> [n]` | `o` | ✅ | Open a task's link in the browser (macOS `open` / `xdg-open`; `TASKS_OPENER` overrides). One link opens directly; several are listed numbered (exit 1) unless picked by 1-based `n` or `--system <name>`. `--print` prints the URL instead of launching. Resolves refs regardless of state (live file). |
 | `check [--json]` | `k` | ✅ | Validate gtd.org structure. Exit 1 if errors. Run after any direct file edit. |
 
 JSON list shape (`--json` on list/agenda/next/quadrants/inbox) — a flat array,

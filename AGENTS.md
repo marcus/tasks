@@ -14,8 +14,11 @@ passed to `tasks -p`. Today's date is available from the system.
   you move or edit a block; if you must reference a task precisely, its `:ID:`
   works as a `<ref>` (or run `tasks id <ref>` to mint one).
   Links in notes (Slack, Jira, PRs, docs) are first-class: write them as
-  `[[url][label]]` or bare URLs; `tasks links` lists them by system and
-  `list --body /text` searches note text. Keep links intact when editing.
+  `[[url][label]]`, bare URLs, or configured shorthands like `jira:OPS-1234`
+  (expanded via `link.<name>` rows in the user's config — reuse a shorthand
+  when one exists rather than pasting the full URL). `tasks links` lists them
+  by system and `list --body /text` searches note text. Keep links intact
+  when editing.
 - `archive.org` — completed/cancelled history. Don't edit by hand.
 - The files may live outside the CLI's repo. Absolute paths for this run
   (the CLI and both files) are appended below this prompt under

@@ -94,12 +94,17 @@ module Tasks
 
     # `journal_dir` defaults to an XDG_STATE_HOME location derived from the org
     # path, so the CLI and TUI editing the same file share one undo history;
-    # tests pass an explicit dir to stay hermetic.
-    def initialize(org:, archive:, journal_dir: nil, undo_limit: UNDO_LIMIT)
+    # tests pass an explicit dir to stay hermetic. `links`/`link_systems` are
+    # the user's configured shorthand templates and custom host rows
+    # (Config#links / #link_systems), consulted by #links.
+    def initialize(org:, archive:, journal_dir: nil, undo_limit: UNDO_LIMIT,
+                   links: {}, link_systems: {})
       @org = org
       @archive = archive
       @mtime = nil
       @cache = nil
+      @link_shorthands = links
+      @link_systems = link_systems
       @journal = Journal.new(dir: journal_dir || Journal.dir_for(org), org: org, limit: undo_limit)
     end
 
@@ -171,10 +176,12 @@ module Tasks
       end
     end
 
-    # Links found in the item's title and body, classified by system
-    # (see Tasks::Links).
+    # Links found in the item's title and body — org links, bare URLs, and
+    # configured shorthands (jira:OPS-1) — classified by system (see
+    # Tasks::Links).
     def links(item)
-      Links.extract([item.title, *body(item)])
+      Links.extract([item.title, *body(item)],
+                    shorthands: @link_shorthands, systems: @link_systems)
     end
 
     # Raw file lines of an item: its headline plus body, up to the next
