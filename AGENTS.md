@@ -13,6 +13,9 @@ passed to `tasks -p`. Today's date is available from the system.
   **Never invent, change, or drop an `:ID:`** — preserve drawers verbatim when
   you move or edit a block; if you must reference a task precisely, its `:ID:`
   works as a `<ref>` (or run `tasks id <ref>` to mint one).
+  Links in notes (Slack, Jira, PRs, docs) are first-class: write them as
+  `[[url][label]]` or bare URLs; `tasks links` lists them by system and
+  `list --body /text` searches note text. Keep links intact when editing.
 - `archive.org` — completed/cancelled history. Don't edit by hand.
 - The files may live outside the CLI's repo. Absolute paths for this run
   (the CLI and both files) are appended below this prompt under
