@@ -3,6 +3,7 @@
 require "date"
 require "set"
 require_relative "ansi"
+require_relative "theme"
 require_relative "store"
 require_relative "../tasks/quadrants"
 
@@ -12,16 +13,23 @@ module Tui
   # mode a task Row also carries its Tasks::Tree node (nil for headers, blanks,
   # and every flat-mode row) so the App can answer hierarchy questions
   # (collapse/expand) without re-deriving them.
+  #
+  # Rows never name a color: builders paint text through Theme slots
+  # (:context, :section, :muted, the due ladder, …) so the active theme and
+  # any per-slot config overrides decide the final look. Frame highlights the
+  # selected row by reversing the plain text over the :selection slot.
   module Views
     Row = Struct.new(:text, :item, :node)
 
     A = Ansi
+    T = Theme
 
     TABS = [
       ["1 Agenda",    :agenda],
       ["2 Next",      :next],
       ["3 Quadrants", :quadrants],
       ["4 Inbox",     :inbox],
+      ["5 Projects",  :projects],
     ].freeze
 
     # Visible width of the agenda date stamp ("MM-DD KIND (when....)"), so an
@@ -37,11 +45,15 @@ module Tui
 
     module_function
 
-    # `tree` nil → the flat builders (unchanged; this path serves `/` filter
-    # mode). `tree` present (the Store#tree forest) → the outliner builders,
-    # which nest each anchor's visible subtree under it with indent + markers.
+    # `tree` nil → the flat builders (unchanged shape; this path serves `/`
+    # filter mode). `tree` present (the Store#tree forest) → the outliner
+    # builders, which nest each anchor's visible subtree under it with indent +
+    # markers. `store` (always the live Store) lets the projects view resolve
+    # each task's parent project regardless of path.
     def rows(view, items, tree: nil, collapsed: Set.new, show_deferred: false,
-             today: Date.today, urgent_days: Tasks::Quadrants::DEFAULT_URGENT_DAYS)
+             today: Date.today, urgent_days: Tasks::Quadrants::DEFAULT_URGENT_DAYS, store: nil)
+      return projects(items, today: today, store: store) if view == :projects
+
       if tree
         ctx = { collapsed: collapsed, show_deferred: show_deferred, today: today, urgent_days: urgent_days }
         case view
@@ -64,7 +76,7 @@ module Tui
 
     # -- flat builders (tree: nil) -------------------------------------------
     # These render exactly as before the outliner existed; the `/` filter view
-    # relies on their byte-for-byte output.
+    # relies on their output shape.
 
     def agenda(items, today: Date.today)
       dated = items.select { |i| i.open? && (i.scheduled || i.deadline) }
@@ -82,7 +94,7 @@ module Tui
       end
       rows = []
       by_ctx.sort.each do |ctx, list|
-        rows << Row.new(A.bold(A.cyan(ctx)), nil)
+        rows << Row.new(T.paint(:context, ctx), nil)
         list.sort_by { |i| i.priority || "Z" }.each do |i|
           rows << Row.new("  #{next_body(i, today)}", i)
         end
@@ -99,10 +111,10 @@ module Tui
       by_q = open_items.group_by { |i| Tasks::Quadrants.of(i, today: today, urgent_days: urgent_days) }
       rows = []
       Tasks::Quadrants::LABELS.each do |key, label|
-        rows << Row.new(A.bold(label), nil)
+        rows << Row.new(T.paint(:section, label), nil)
         matched = by_q[key] || []
         if matched.empty?
-          rows << Row.new(A.dim("  —"), nil)
+          rows << Row.new(T.paint(:muted, "  —"), nil)
         else
           matched.each { |i| rows << Row.new("  #{quad_body(i)}", i) }
         end
@@ -114,8 +126,48 @@ module Tui
 
     def inbox(items)
       inbox = items.select { |i| i.state == "INBOX" }
-      return [Row.new(A.dim("Inbox empty. ✨"), nil)] if inbox.empty?
+      return [Row.new(T.paint(:muted, "Inbox empty. ✨"), nil)] if inbox.empty?
       inbox.map { |i| Row.new("  #{inbox_body(i)}", i) }
+    end
+
+    # The projects view groups every open task under its parent project (the
+    # nearest headline ancestor, via Store#node_for). It's a grouped summary in
+    # both flat and tree mode — the grouping already expresses the hierarchy, so
+    # it doesn't ride the outliner walker. Each group header shows the open /
+    # NEXT counts and the soonest date; tasks list beneath, project column
+    # suppressed (it's the header).
+    def projects(items, today: Date.today, store: nil)
+      return [Row.new(T.paint(:muted, "Project data needs the task tree."), nil)] unless store
+
+      groups = Hash.new { |h, k| h[k] = [] }
+      items.select(&:open?).each do |item|
+        project = project_name(item, store)
+        next if project == "Inbox"
+        groups[project] << item if project
+      end
+      return [Row.new(T.paint(:muted, "No active projects."), nil)] if groups.empty?
+
+      rows = groups.sort_by { |name, list| [next_project_date(list) || Date.new(9999, 12, 31), name] }
+                   .flat_map do |name, list|
+        rows = [Row.new(project_header(name, list, today), nil)]
+        list.sort_by { |i| [i.deadline || i.scheduled || Date.new(9999, 12, 31), i.priority || "Z", i.title] }
+            .each { |i| rows << Row.new("  #{next_body(i, today)}", i) }
+        rows << Row.new("", nil)
+        rows
+      end
+      rows.pop
+      rows
+    end
+
+    def project_header(name, list, today)
+      open  = list.size
+      nexts = list.count { |i| i.state == "NEXT" }
+      head  = +"#{T.paint(:project, name)}  #{T.paint(:muted, "#{open} open")}"
+      head << T.paint(nexts.zero? ? :warning : :muted, " · #{nexts} next")
+      if (upcoming = next_project_date(list))
+        head << T.paint(due_slot((upcoming - today).to_i), " · next #{upcoming.strftime("%m-%d")}")
+      end
+      head
     end
 
     # -- tree builders (tree: present) ---------------------------------------
@@ -149,7 +201,7 @@ module Tui
       end
       rows = []
       by_ctx.sort.each do |ctx, list|
-        rows << Row.new(A.bold(A.cyan(ctx)), nil)
+        rows << Row.new(T.paint(:context, ctx), nil)
         list.sort_by { |n| n.item.priority || "Z" }.each do |anchor|
           append_subtree(rows, anchor, "  ", collapsed: collapsed, show_deferred: show_deferred) do |item|
             next_body(item, today)
@@ -166,10 +218,10 @@ module Tui
       by_q = anchors.group_by { |n| Tasks::Quadrants.of(n.item, today: today, urgent_days: urgent_days) }
       rows = []
       Tasks::Quadrants::LABELS.each do |key, label|
-        rows << Row.new(A.bold(label), nil)
+        rows << Row.new(T.paint(:section, label), nil)
         matched = by_q[key] || []
         if matched.empty?
-          rows << Row.new(A.dim("  —"), nil)
+          rows << Row.new(T.paint(:muted, "  —"), nil)
         else
           matched.each do |anchor|
             append_subtree(rows, anchor, "  ", collapsed: collapsed, show_deferred: show_deferred) do |item|
@@ -187,7 +239,7 @@ module Tui
       anchors = visible_nodes(tree, show_deferred).select do |n|
         n.item.state == "INBOX" && !inbox_ancestor?(n, show_deferred)
       end
-      return [Row.new(A.dim("Inbox empty. ✨"), nil)] if anchors.empty?
+      return [Row.new(T.paint(:muted, "Inbox empty. ✨"), nil)] if anchors.empty?
       rows = []
       anchors.each do |anchor|
         append_subtree(rows, anchor, "  ", collapsed: collapsed, show_deferred: show_deferred) do |item|
@@ -203,12 +255,12 @@ module Tui
     # visible node. `base` is the view's existing leading indent (kept so
     # top-level rows stay aligned); each level below the anchor adds two spaces,
     # then the marker column, then the per-view body the block formats. A
-    # collapsed node emits only its own row (marker ▸) with a dim hidden-count.
+    # collapsed node emits only its own row (marker ▸) with a muted hidden-count.
     def append_subtree(rows, anchor, base, collapsed:, show_deferred:, &body)
       subtree_rows(anchor, 0, collapsed: collapsed, show_deferred: show_deferred) do |node, depth, marker, folded|
         text = +""
         text << base << ("  " * depth) << marker << body.call(node.item)
-        text << A.dim(" (#{visible_descendant_count(node, show_deferred)})") if folded
+        text << T.paint(:muted, " (#{visible_descendant_count(node, show_deferred)})") if folded
         rows << Row.new(text, node.item, node)
       end
     end
@@ -353,48 +405,58 @@ module Tui
       kind = item.deadline ? "DUE " : "STRT"
       days = (d - today).to_i
       when_s = days.negative? ? "#{-days}d ago" : days.zero? ? "today" : "in #{days}d"
-      A.color("#{d.strftime("%m-%d")} #{kind} #{("(" + when_s + ")").ljust(8)}", due_color(days))
+      T.paint(due_slot(days), "#{d.strftime("%m-%d")} #{kind} #{("(" + when_s + ")").ljust(8)}")
     end
 
     def next_body(item, today)
       due = short_due(item, today)
-      "#{pri(item)}#{item.title}#{due.empty? ? "" : "  #{due}"}#{badge(item)}"
+      "#{pri(item)}#{T.paint(:title, item.title)}#{due.empty? ? "" : "  #{due}"}#{badge(item)}"
     end
 
-    def quad_body(item)  = "#{pri(item)}#{item.title}#{badge(item)}"
-    def inbox_body(item) = "#{item.title}#{badge(item)}"
+    def quad_body(item)  = "#{pri(item)}#{T.paint(:title, item.title)}#{badge(item)}"
+    def inbox_body(item) = "#{T.paint(:title, item.title)}#{badge(item)}"
 
     # -- shared bits ---------------------------------------------------------
 
-    def due_color(days)
-      if    days <= 0 then 31
-      elsif days <= 2 then 33
-      elsif days <= 7 then 36
-      else                 90
+    # The urgency ladder as theme slots; Modals reuses it for dates.
+    def due_slot(days)
+      if    days <= 0 then :due_overdue
+      elsif days <= 2 then :due_soon
+      elsif days <= 7 then :due_week
+      else                 :due_far
       end
     end
 
     def short_due(item, today)
       return "" unless item.deadline
       days = (item.deadline - today).to_i
-      A.color("#{item.deadline.month}/#{item.deadline.day}", due_color(days))
+      T.paint(due_slot(days), "#{item.deadline.month}/#{item.deadline.day}")
     end
 
-    def pri(item) = item.priority ? A.bold("[#{item.priority}] ") : ""
+    def pri(item) = item.priority ? T.paint(:priority, "[#{item.priority}] ") : ""
 
     # Trailing markers for a task: ↻ recurring, ⏸ deferred. Deferred tasks only
     # reach these builders when the App has Z-revealed them, so mark them
     # unconditionally.
     def badge(item)
       b = +""
-      b << A.dim(" ↻") if item.recurring?
-      b << A.dim(" ⏸") if item.deferred?
+      b << T.paint(:muted, " ↻") if item.recurring?
+      b << T.paint(:muted, " ⏸") if item.deferred?
       b
     end
 
     def decorated_title(item)
       ctx = item.contexts
-      "#{pri(item)}#{item.title}#{ctx.empty? ? "" : A.dim("  " + ctx.join(" "))}"
+      "#{pri(item)}#{T.paint(:title, item.title)}#{ctx.empty? ? "" : "  " + ctx.map { |c| T.paint(:context, c) }.join(" ")}"
+    end
+
+    def project_name(item, store)
+      return nil unless store
+      store.node_for(item)&.project&.title
+    end
+
+    def next_project_date(items)
+      items.filter_map { |i| i.deadline || i.scheduled }.min
     end
   end
 end

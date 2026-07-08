@@ -1101,6 +1101,7 @@ def cmd_config(args)
     puts({ org: ORG, archive: ARCHIVE,
            urgent_days: PATHS.urgent_days,
            max_depth: PATHS.max_depth,
+           theme: PATHS.theme, colors: PATHS.colors,
            links: PATHS.links, link_systems: PATHS.link_systems,
            sources: PATHS.sources,
            config_file: PATHS.config_file,
@@ -1110,6 +1111,8 @@ def cmd_config(args)
     puts "archive:     #{ARCHIVE}  #{dim("(#{PATHS.sources[:archive]})")}"
     puts "urgent_days: #{PATHS.urgent_days}  #{dim("(#{PATHS.sources[:urgent_days]})")}"
     puts "max_depth:   #{PATHS.max_depth}  #{dim("(#{PATHS.sources[:max_depth]})")}"
+    puts "theme:       #{PATHS.theme}  #{dim("(#{PATHS.sources[:theme]})")}"
+    puts "colors:      #{PATHS.colors.map { |k, v| "#{k}=#{v}" }.join(" · ")}" unless PATHS.colors.empty?
     # The link namespaces are the debugging surface for "why doesn't my
     # shorthand expand?" — show what actually resolved.
     PATHS.links.each { |n, t| puts "link.#{n}:   #{t}" }
@@ -1179,6 +1182,9 @@ HELP = <<~USAGE
   env vars, or ~/.config/tasks/config (dir = / file = / archive = lines).
   Quadrants urgency window: urgent_days = N in the config file, or TASKS_URGENT_DAYS
   env (default 3) — a DEADLINE within N days counts as urgent.
+  TUI colors: theme = default|mono|dracula|nord|catppuccin-mocha|... and
+  color.<slot> = <spec> in the config file (or TASKS_THEME env; NO_COLOR
+  honored) — see docs/cli-spec.md (TUI colors).
   Link shorthands: link.jira = https://acme.atlassian.net/browse/%s in the config
   lets notes say jira:OPS-1234; system.gitlab = gitlab.acme.io names custom hosts.
 

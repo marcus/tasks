@@ -33,6 +33,20 @@ class TestFrame < Minitest::Test
     assert_includes A.strip(lines[5]), "▸ task number 3"
   end
 
+  # The selected row paints through the :selection slot. Rows carry
+  # pre-rendered themed text (Views::Row is text/item/node), so Frame reverses
+  # the stripped text under :selection and pads the rest of the line in the
+  # same slot — a custom selection background wraps the whole cursor line.
+  def test_selected_row_uses_selection_slot
+    Tui::Theme.configure!(overrides: { selection: "on-blue" })
+    row = Row.new("\e[35mProject\e[0m task", Object.new)
+    line = build(rows: [row], selected: 0)[3]
+    assert_includes line, "\e[44m▸ Project task"   # stripped text, painted :selection
+    assert_includes A.strip(line), "▸ Project task"
+  ensure
+    Tui::Theme.reset!
+  end
+
   def test_footer_rule_sentinel_draws_divider
     lines = build(footer: ["response line", :rule, "keybar", "prompt"])
     rule = lines[-4]
@@ -98,6 +112,30 @@ class TestFrame < Minitest::Test
     modal = { title: "wide", lines: ["z" * 200] }
     lines = build(modal: modal)
     lines.each { |l| assert_equal 60, A.vislen(l) }
+  end
+
+  def test_modal_explicit_width_pins_the_box
+    modal = { title: "t", lines: ["short"], width: 44 }
+    lines = build(modal: modal).map { |l| A.strip(l) }
+    top = lines.find { |l| l.include?("┌─ t ") }
+    bottom = lines.find { |l| l.include?("└") }
+    assert_equal 44, top.rindex("┐") - top.index("┌") + 1, "top border pinned: #{top.inspect}"
+    assert_equal 44, bottom.rindex("┘") - bottom.index("└") + 1, "bottom border pinned"
+    content = lines.find { |l| l.include?("short") }
+    assert_equal top.index("┌"), content.index("│", 1), "content row aligns with the border"
+  end
+
+  def test_modal_explicit_width_is_clamped_to_frame
+    modal = { title: "t", lines: ["short"], width: 500 }
+    build(modal: modal).each { |l| assert_equal 60, A.vislen(l) }
+  end
+
+  def test_modal_title_is_painted_with_theme_slot
+    Tui::Theme.configure!(overrides: { modal_title: "on-blue" })
+    top = build(modal: { title: "task", lines: ["x"] }).find { |l| A.strip(l).include?("┌─ task") }
+    assert_includes top, "\e[44m task \e[0m", "title strip must carry the modal_title style"
+  ensure
+    Tui::Theme.reset!
   end
 
   def test_empty_rows_render_blank_body

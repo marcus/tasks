@@ -21,7 +21,7 @@ class TestAppModals < Minitest::Test
 
   def mode(app)  = app.instance_variable_get(:@mode)
   def modal(app) = app.instance_variable_get(:@modal)
-  def modal_text(app) = modal(app)[:lines].map { |l| A.strip(l) }.join("\n")
+  def modal_text(app) = modal(app).lines.map { |l| A.strip(l) }.join("\n")
   def selected_title(app) = app.send(:current_item).title
 
   def test_enter_opens_detail_modal_for_selection
@@ -47,12 +47,88 @@ class TestAppModals < Minitest::Test
 
   def test_arrows_scroll_help_modal_without_moving_selection
     with_app do |app|
+      IO.stub(:console, nil) do # pin the 24x80 default so the help modal overflows
+        before = selected_title(app)
+        app.send(:handle_key, "?")
+        assert_equal :modal, mode(app)
+        app.send(:handle_key, "\e[B")
+        assert_equal before, selected_title(app), "help modal must not move selection"
+        assert_equal 1, modal(app).scroll
+      end
+    end
+  end
+
+  def test_vim_scroll_keys_page_and_half_page_in_help_modal
+    with_app do |app|
+      IO.stub(:console, nil) do # pin the 24x80 default so the help modal overflows
+        app.send(:handle_key, "?")
+        viewport = modal(app).viewport(app.send(:modal_body_h))
+        app.send(:handle_key, "\x04") # ctrl-d: half page down
+        assert_equal [viewport / 2, 1].max, modal(app).scroll
+        app.send(:handle_key, "\x15") # ctrl-u: back up
+        assert_equal 0, modal(app).scroll
+        app.send(:handle_key, "\x06") # ctrl-f: full page
+        assert_equal viewport, modal(app).scroll
+        app.send(:handle_key, "\x02") # ctrl-b
+        assert_equal 0, modal(app).scroll
+        app.send(:handle_key, "\e[6~") # pgdn = page too
+        assert_equal viewport, modal(app).scroll
+        app.send(:handle_key, "\e[5~")
+        assert_equal 0, modal(app).scroll
+      end
+    end
+  end
+
+  def test_vim_scroll_keys_scroll_detail_modal_without_moving_selection
+    with_app do |app|
+      app.send(:handle_key, "\r")
       before = selected_title(app)
-      app.send(:handle_key, "?")
+      app.send(:handle_key, "\x04")
+      assert_equal before, selected_title(app), "ctrl-d scrolls the modal, not the task list"
       assert_equal :modal, mode(app)
-      app.send(:handle_key, "\e[B")
-      assert_equal before, selected_title(app), "help modal must not move selection"
-      assert_equal 1, app.instance_variable_get(:@modal_scroll)
+    end
+  end
+
+  def test_slash_filters_help_modal_live
+    with_app do |app|
+      app.send(:handle_key, "?")
+      total = modal(app).lines.size
+      app.send(:handle_key, "/")
+      assert_equal :modal_filter, mode(app)
+      "yank".chars.each { |c| app.send(:handle_key, c) }
+      matches = modal(app).lines.map { |l| A.strip(l) }
+      assert_operator matches.size, :<, total
+      assert matches.all? { |l| l.downcase.include?("yank") }
+
+      app.send(:handle_key, "\r") # enter keeps the filter
+      assert_equal :modal, mode(app)
+      assert_equal "yank", modal(app).filter
+
+      app.send(:handle_key, "/") # `/` again edits it
+      app.send(:handle_key, "\e") # esc clears entirely
+      assert_equal :modal, mode(app)
+      assert_nil modal(app).filter
+      assert_equal total, modal(app).lines.size
+    end
+  end
+
+  def test_slash_does_nothing_in_detail_modal
+    with_app do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "/")
+      assert_equal :modal, mode(app), "detail modal is not filterable yet"
+      refute modal(app).filterable?
+    end
+  end
+
+  def test_paste_while_filtering_modal_applies_live
+    with_app do |app|
+      app.send(:handle_key, "?")
+      app.send(:handle_key, "/")
+      app.instance_variable_set(:@key_data, "\e[200~quit\e[201~")
+      app.send(:drain_key_data)
+      assert_equal :modal_filter, mode(app)
+      assert_equal "quit", modal(app).filter
     end
   end
 
@@ -62,21 +138,20 @@ class TestAppModals < Minitest::Test
       app.send(:handle_key, "\e")
       assert_equal :list, mode(app)
       assert_nil modal(app)
-      assert_nil app.instance_variable_get(:@modal_kind)
     end
   end
 
   def test_left_right_cycle_views_in_list_mode
     with_app do |app|
       views = []
-      4.times do
+      5.times do
         views << app.instance_variable_get(:@view)
         app.send(:handle_key, "\e[C")
       end
-      assert_equal %i[agenda next quadrants inbox], views
+      assert_equal %i[agenda next quadrants inbox projects], views
       assert_equal :agenda, app.instance_variable_get(:@view), "wraps around"
       app.send(:handle_key, "\e[D")
-      assert_equal :inbox, app.instance_variable_get(:@view), "left wraps backward"
+      assert_equal :projects, app.instance_variable_get(:@view), "left wraps backward"
     end
   end
 
@@ -166,7 +241,7 @@ class TestAppModals < Minitest::Test
       title = selected_title(app)
       app.send(:handle_key, "d")                  # reschedule
       assert_equal :date, mode(app)
-      assert_equal :detail, app.instance_variable_get(:@modal_kind),
+      assert_equal :detail, modal(app).kind,
                    "the detail modal stays open behind the date popup"
       "2026-07-20".chars.each { |c| app.send(:handle_key, c) }
       app.send(:handle_key, "\r")                 # submit

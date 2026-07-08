@@ -11,7 +11,7 @@ module Tasks
   #   2. TASKS_DIR env var (a directory holding tasks.jsonl + archive.jsonl)
   #   3. config file at $XDG_CONFIG_HOME/tasks/config (default ~/.config/tasks/
   #      config), `key = value` lines with keys dir / file / archive /
-  #      urgent_days / max_depth
+  #      urgent_days / max_depth / theme / color.<slot>
   #   4. default_dir — the repo root, matching the original layout
   #
   # Every consumer (CLI, TUI) goes through Config.resolve so they can never
@@ -32,7 +32,8 @@ module Tasks
     # shorthand that then matches prose.
     LINK_NAME = /\A[a-z][a-z0-9_-]*\z/
 
-    Paths = Struct.new(:org, :archive, :urgent_days, :max_depth, :links, :link_systems,
+    Paths = Struct.new(:org, :archive, :urgent_days, :max_depth, :theme, :colors,
+                       :links, :link_systems,
                        :sources, :config_file, keyword_init: true) do
       # Context block appended to an agent's system prompt so a headless harness
       # finds the CLI and the task files even when they live outside the repo.
@@ -56,8 +57,10 @@ module Tasks
         org: File.join(dir, "tasks.jsonl"), archive: File.join(dir, "archive.jsonl"),
         urgent_days: Quadrants::DEFAULT_URGENT_DAYS,
         max_depth: Tree::DEFAULT_MAX_DEPTH,
+        theme: "default", colors: {},
         links: {}, link_systems: {},
-        sources: { org: "pinned", archive: "pinned", urgent_days: "default", max_depth: "default" },
+        sources: { org: "pinned", archive: "pinned", urgent_days: "default",
+                   max_depth: "default", theme: "default" },
         config_file: config_file
       )
     end
@@ -79,16 +82,34 @@ module Tasks
       archive, archive_source = pick("archive.jsonl", "TASKS_ARCHIVE", dir, dir_source, conf["archive"], env)
       urgent_days, urgent_source = pick_urgent_days(conf, env)
       max_depth,   max_depth_source = pick_max_depth(conf, env)
+      theme, theme_source = pick_theme(conf, env)
 
       Paths.new(
         org: org, archive: archive,
         urgent_days: urgent_days, max_depth: max_depth,
+        theme: theme, colors: conf["colors"] || {},
         links: conf.fetch(:links, {}), link_systems: conf.fetch(:link_systems, {}),
         sources: { org: org_source, archive: archive_source, urgent_days: urgent_source,
-                   max_depth: max_depth_source },
+                   max_depth: max_depth_source, theme: theme_source },
         config_file: file
       )
     end
+
+    # TUI theme name. Env beats config file; NO_COLOR (when nothing explicit
+    # is set) selects the attribute-only theme. Tui::Theme validates the name
+    # and falls back to the default look for anything it doesn't know.
+    def self.pick_theme(conf, env)
+      if env["TASKS_THEME"] && !env["TASKS_THEME"].empty?
+        [env["TASKS_THEME"], "TASKS_THEME env"]
+      elsif conf["theme"]
+        [conf["theme"], "config file"]
+      elsif env["NO_COLOR"] && !env["NO_COLOR"].empty?
+        ["mono", "NO_COLOR env"]
+      else
+        ["default", "default"]
+      end
+    end
+    private_class_method :pick_theme
 
     # Deadline window (in days) for the "urgent" axis. Env beats config file
     # beats the built-in default; an empty or non-integer value is ignored so
@@ -168,6 +189,9 @@ module Tasks
     # ignored (forward compatibility). Path keys (dir/file/archive) expand `~`
     # and relative paths; scalar keys (urgent_days, max_depth) parse as integers
     # and an invalid value is dropped so the caller falls back to its default.
+    # TUI appearance: `theme = <name>` and `color.<slot> = <spec>` lines are
+    # collected verbatim (specs under conf["colors"]) — Tui::Theme owns
+    # validation so the vocabulary lives in one place.
     # Dotted link keys (`link.jira = …`, `system.gitlab = …`) collect into the
     # :links / :link_systems maps (symbol keys so they can't collide with the
     # flat string keys above).
@@ -182,8 +206,11 @@ module Tasks
         key = key.strip
         # Strip an inline comment: whitespace + "#" ends the value. Requiring
         # the whitespace keeps a "#" INSIDE a value intact (a URL anchor like
-        # https://host/page#sec has no space before its #).
-        value = value.strip.sub(/\s#.*\z/, "").strip
+        # https://host/page#sec has no space before its #). color.* specs are
+        # exempt — a hex token (`bold #ff8800`) legitimately follows a space,
+        # so color lines can't carry inline comments.
+        value = value.strip
+        value = value.sub(/\s#.*\z/, "").strip unless key.start_with?("color.")
         next if value.empty?
 
         if PATH_KEYS.include?(key)
@@ -192,6 +219,10 @@ module Tasks
           conf[key] = n
         elsif key == "max_depth" && (n = parse_depth(value))
           conf[key] = n
+        elsif key == "theme"
+          conf[key] = value
+        elsif key.start_with?("color.") && key.length > 6
+          (conf["colors"] ||= {})[key.delete_prefix("color.")] = value
         elsif (m = key.match(/\Alink\.(.+)\z/)) && m[1].match?(LINK_NAME)
           (conf[:links] ||= {})[m[1]] = value
         elsif (m = key.match(/\Asystem\.(.+)\z/)) && m[1].match?(LINK_NAME)

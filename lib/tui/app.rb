@@ -4,12 +4,14 @@ require "io/console"
 require "date"
 require "set"
 require_relative "ansi"
+require_relative "theme"
 require_relative "dates"
 require_relative "store"
 require_relative "views"
 require_relative "frame"
 require_relative "../llm/registry"
 require_relative "shortcuts"
+require_relative "modal"
 require_relative "modals"
 require_relative "clipboard"
 require_relative "export"
@@ -23,6 +25,7 @@ module Tui
   # async LLM agent runner, multiplexed with IO.select.
   class App
     A = Ansi
+    T = Theme
 
     MIN_WIDTH   = 40   # floor for degenerate ptys and tiny splits; no max — full width
     TICK        = 0.25 # seconds; also the file-watch poll interval
@@ -51,6 +54,7 @@ module Tui
     #             tests are hermetic instead of reading the developer's real config.
     def initialize(root:, paths: Tasks::Config.resolve(default_dir: root),
                    llm_config: LLM::Config.load)
+      Theme.configure!(name: paths.theme, overrides: paths.colors || {})
       @store  = Store.new(org: paths.org, archive: paths.archive,
                           links: paths.links || {}, link_systems: paths.link_systems || {},
                           max_depth: paths.max_depth)
@@ -66,10 +70,9 @@ module Tui
       @agent_provider = current_entry.provider
       @view   = restore_view # last session's view, or :agenda
       @sel    = 0
-      @mode   = :list      # :list | :prompt | :date | :recur | :modal
-      @modal  = nil        # { title:, lines: } while a modal is open
-      @modal_kind = nil    # :help | :detail
-      @modal_scroll = 0
+      @mode   = :list      # :list | :prompt | :date | :recur | :modal | :modal_filter | :filter
+      @modal  = nil        # a Tui::Modal while one is open
+      @modal_filter_input = TextInput.new # `/` filter buffer inside a modal
       @input  = TextInput.new # prompt buffer
       @filter = nil        # committed filter string (nil = off)
       @collapsed = restore_collapsed # task ids folded shut in the outliner, from last session
@@ -137,7 +140,7 @@ module Tui
       if @store.changed? # picks up Claude edits + external edits
         @store.reload!
         res = Tasks::Check.check(@store.org)
-        flash(A.red("⚠ tasks.jsonl: #{res.errors.size} format error(s) — run `tasks check`")) unless res.ok?
+        flash(T.paint(:error, "⚠ tasks.jsonl: #{res.errors.size} format error(s) — run `tasks check`")) unless res.ok?
       end
       clamp_selection
     end
@@ -155,7 +158,7 @@ module Tui
         rows: rows, selected: @mode == :prompt ? nil : @sel,
         footer: foot,
         popup: current_popup,
-        modal: @modal && scrolled_modal(height - 5 - foot.size)
+        modal: @modal&.view([height - 5 - foot.size, 1].max)
       )
       print "\e[H" + lines.join("\e[K\r\n") + "\e[K"
     end
@@ -169,10 +172,11 @@ module Tui
         items = items.reject(&:deferred?) unless @show_deferred
         q = q.downcase
         items = items.select { |i| i.title.downcase.include?(q) }
-        @rows = Views.rows(@view, items, urgent_days: @urgent_days)
+        @rows = Views.rows(@view, items, urgent_days: @urgent_days, store: @store)
       else
         @rows = Views.rows(@view, items, tree: @store.tree, collapsed: @collapsed,
-                                         show_deferred: @show_deferred, urgent_days: @urgent_days)
+                                         show_deferred: @show_deferred, urgent_days: @urgent_days,
+                                         store: @store)
       end
     end
 
@@ -186,11 +190,13 @@ module Tui
 
     def header(w)
       tabs = Views::TABS.map do |label, key|
-        key == @view ? A.invert(A.bold(" #{label} ")) : A.dim(" #{label} ")
+        slot = key == @view ? :"tab_#{key}_active" : :"tab_#{key}"
+        slot = key == @view ? :tab_active : :tab_inactive unless T.slot?(slot)
+        T.paint(slot, " #{label} ")
       end.join(" ")
       open_n = @store.items.count { |i| i.open? && !i.deferred? }
-      deferred_note = @show_deferred ? "#{A.yellow("⏸ deferred shown")} · " : ""
-      count = A.dim("#{open_n} open · #{deferred_note}#{A.cyan(current_entry.to_s)}#{A.dim(" · ? help")}")
+      deferred_note = @show_deferred ? "#{T.paint(:warning, "⏸ deferred shown")}#{T.paint(:muted, " · ")}" : ""
+      count = "#{T.paint(:muted, "#{open_n} open · ")}#{deferred_note}#{T.paint(:accent, current_entry.to_s)}#{T.paint(:muted, " · ? help")}"
       gap = [w - A.vislen(tabs) - A.vislen(count) - 2, 1].max
       " #{tabs}#{" " * gap}#{count} "
     end
@@ -198,23 +204,25 @@ module Tui
     def footer(w)
       f = []
       if @agent.running?
-        f << A.dim(" #{SPINNER[@tick % SPINNER.size]} #{@agent_provider} is working… (esc cancels)")
+        f << T.paint(:muted, " #{SPINNER[@tick % SPINNER.size]} #{@agent_provider} is working… (esc cancels)")
         # scrub: a streaming chunk can end mid-multibyte-char
-        A.strip(@agent.output.scrub("�")).split("\n").last(3).each { |t| f << A.dim("   #{t}") }
+        A.strip(@agent.output.scrub("�")).split("\n").last(3).each { |t| f << T.paint(:muted, "   #{t}") }
         f << :rule
       elsif @resp_open && @resp
         visible = @resp[@resp_scroll, RESP_MAX] || []
         visible.each { |l| f << "   #{l}" }
         scroll_hint = @resp.size > RESP_MAX ? "#{@resp_scroll + visible.size}/#{@resp.size} · #{RESP_HINT}" : "esc dismiss"
-        f << A.dim("   ── #{scroll_hint} ──")
+        f << T.paint(:muted, "   ── #{scroll_hint} ──")
         f << :rule
       end
       f << " #{@flash}" if @flash
-      if @mode == :filter
-        f << " #{A.bold(A.cyan("/ "))}#{inline_input(@filter_input)}#{A.dim("  enter keeps · esc clears")}"
+      if @mode == :modal_filter
+        f << " #{T.paint(:prompt, "/ ")}#{inline_input(@modal_filter_input)}#{T.paint(:muted, "  filters the modal · enter keeps · esc clears")}"
+      elsif @mode == :filter
+        f << " #{T.paint(:prompt, "/ ")}#{inline_input(@filter_input)}#{T.paint(:muted, "  enter keeps · esc clears")}"
       elsif @filter
         n = (@rows || []).count(&:item)
-        f << A.dim(" / #{@filter} · #{n} match#{n == 1 ? "" : "es"} · esc clears · / edits")
+        f << T.paint(:muted, " / #{@filter} · #{n} match#{n == 1 ? "" : "es"} · esc clears · / edits")
       end
       f.concat(prompt_lines(w))
       f
@@ -224,12 +232,12 @@ module Tui
     # request stays readable; beyond that, the earliest lines scroll off.
     def prompt_lines(w)
       unless @mode == :prompt
-        hint = @agent.running? ? A.dim("…") : A.dim("tab to ask the agent — reschedule, capture, edit anything…")
-        return [" #{A.bold(A.cyan("❯ "))}#{hint}"]
+        hint = T.paint(:muted, @agent.running? ? "…" : "tab to ask the agent — reschedule, capture, edit anything…")
+        return [" #{T.paint(:prompt, "❯ ")}#{hint}"]
       end
       wrapped = wrapped_input(@input, w - 5)
       wrapped.each_with_index.map do |l, i|
-        prefix = i.zero? ? " #{A.bold(A.cyan("❯ "))}" : "   "
+        prefix = i.zero? ? " #{T.paint(:prompt, "❯ ")}" : "   "
         "#{prefix}#{l}"
       end
     end
@@ -280,7 +288,7 @@ module Tui
       before = segment[0...cursor_col].join
       at = cursor_col < segment.length ? segment[cursor_col] : " "
       after = cursor_col < segment.length ? segment[(cursor_col + 1)..].join : ""
-      "#{before}#{A.invert(at)}#{after}"
+      "#{before}#{T.paint(:selection, at)}#{after}"
     end
 
     # The popup layered over the list right now: reschedule (:date) or
@@ -299,7 +307,7 @@ module Tui
       hint = @date_error || "fri · +3 · 07-15 · esc cancels"
       inner = [
         " new #{target}: #{inline_input(@date_input)}",
-        " #{@date_error ? A.red(hint) : A.dim(hint)}",
+        " #{@date_error ? T.paint(:error, hint) : T.paint(:muted, hint)}",
       ]
       pw = [inner.map { |l| A.vislen(l) }.max + 2, 36].max
       lines = ["┌ reschedule #{"─" * (pw - 14)}┐"]
@@ -314,8 +322,8 @@ module Tui
       cur = item.recur ? "now #{item.recur}" : "not repeating"
       hint = @recur_error || "weekly · 2w · .+1m · off · esc cancels"
       inner = [
-        " every: #{inline_input(@recur_input)}  #{A.dim("(#{cur})")}",
-        " #{@recur_error ? A.red(hint) : A.dim(hint)}",
+        " every: #{inline_input(@recur_input)}  #{T.paint(:muted, "(#{cur})")}",
+        " #{@recur_error ? T.paint(:error, hint) : T.paint(:muted, hint)}",
       ]
       pw = [inner.map { |l| A.vislen(l) }.max + 2, 40].max
       lines = ["┌ recur #{"─" * (pw - 9)}┐"]
@@ -425,6 +433,7 @@ module Tui
       when :date   then @date_input.insert(text); @date_error = nil
       when :recur  then @recur_input.insert(text); @recur_error = nil
       when :filter then @filter_input.insert(text)
+      when :modal_filter then @modal_filter_input.insert(text); @modal.filter = @modal_filter_input.to_s
       else
         close_modal if @modal
         @input.insert(text)
@@ -438,6 +447,7 @@ module Tui
       when :date   then date_key(k)
       when :recur  then recur_key(k)
       when :modal  then modal_key(k)
+      when :modal_filter then modal_filter_key(k)
       when :filter then filter_key(k)
       else              list_key(k)
       end
@@ -468,29 +478,28 @@ module Tui
     end
 
     # A detail modal keeps the task's own shortcuts live so you can act on it
-    # without leaving: complete, reschedule, re-prioritize, yank. Navigation and
-    # scroll stay modal-specific. Task actions rebuild the modal in place, or
-    # close it when the change removes the task from the view (see the actions).
+    # without leaving: complete, reschedule, re-prioritize, yank. The modal-
+    # generic keys (scroll, filter, close) live in Shortcuts::MODAL — add one
+    # there and it exists here and in the ? overlay. Task actions rebuild the
+    # modal in place, or close it when the change removes the task from the
+    # view (see the actions).
     def modal_key(k)
+      if (entry = Shortcuts.find_modal(k))
+        return method(entry.action).call
+      end
       case k
-      when "\e", "q", "\r", "\n", "?" then close_modal
-      when ""        then @quit = true
-      when "\e[A", "k"     then modal_move(-1)
-      when "\e[B", "j"     then modal_move(1)
-      when "\e[5~"         then scroll_modal(-5)
-      when "\e[6~"         then scroll_modal(5)
-      when "c"             then complete_selected
-      when "d"             then open_date_popup
-      when "r"             then open_recur_popup
-      when "z"             then defer_selected
-      when "y"             then yank_ref
-      when "Y"             then yank_markdown
-      when "K"             then raise_priority
-      when "J"             then lower_priority
-      when "p"             then paste_ref
-      when "u"             then undo_last
-      when "o"             then open_link
-      when "\x12"          then redo_last
+      when "c"    then complete_selected
+      when "d"    then open_date_popup
+      when "r"    then open_recur_popup
+      when "z"    then defer_selected
+      when "y"    then yank_ref
+      when "Y"    then yank_markdown
+      when "K"    then raise_priority
+      when "J"    then lower_priority
+      when "p"    then paste_ref
+      when "u"    then undo_last
+      when "o"    then open_link
+      when "\x12" then redo_last
       end
     end
 
@@ -552,7 +561,7 @@ module Tui
       if @store.set_priority!(item, new_pri)
         flash(new_pri ? "priority: [##{new_pri}] #{item.title}" : "priority cleared: #{item.title}")
         reselect(item.line)
-        show_detail if @modal_kind == :detail
+        show_detail if detail_modal?
       else
         @store.reload!
         flash("file changed underneath — try again")
@@ -569,7 +578,7 @@ module Tui
 
     # Z reveals/hides deferred (someday/maybe) tasks across every view.
     def toggle_deferred_view
-      modaled_line = current_item&.line if @modal_kind == :detail
+      modaled_line = current_item&.line if detail_modal?
       @show_deferred = !@show_deferred
       rows
       clamp_selection
@@ -628,7 +637,7 @@ module Tui
         flash("#{verb}: #{label}")
         rows
         clamp_selection
-        show_detail if @modal_kind == :detail
+        show_detail if detail_modal?
       end
     end
 
@@ -675,7 +684,8 @@ module Tui
       item = current_item
       return close_modal unless item
       width = [(IO.console&.winsize || [24, 80])[1], MIN_WIDTH].max
-      open_modal(Modals.detail(item, @store.body(item), width, links: @store.links(item)),
+      project = @store.node_for(item)&.project&.title
+      open_modal(Modals.detail(item, @store.body(item), width, links: @store.links(item), project: project),
                  kind: :detail)
     end
 
@@ -699,47 +709,64 @@ module Tui
     # still in view, or close it if the change dropped it (e.g. dating an INBOX
     # item promotes it out of the inbox view).
     def refresh_detail_modal(line)
-      return unless @modal_kind == :detail
+      return unless detail_modal?
       current_item&.line == line ? show_detail : close_modal
     end
 
     # -- modal -----------------------------------------------------------------
 
-    # In a task detail modal, ↑↓ walk the task list and the modal follows
-    # the selection. Other modals (help) keep ↑↓ as scroll.
+    def modal_up   = modal_move(-1)
+    def modal_down = modal_move(1)
+    def modal_half_up   = @modal.scroll_half(-1, modal_body_h)
+    def modal_half_down = @modal.scroll_half(1, modal_body_h)
+    def modal_page_up   = @modal.scroll_page(-1, modal_body_h)
+    def modal_page_down = @modal.scroll_page(1, modal_body_h)
+
+    # In a task detail modal, ↑↓/j/k walk the task list and the modal follows
+    # the selection. Other modals (help) keep them as line scroll.
     def modal_move(delta)
-      return scroll_modal(delta) unless @modal_kind == :detail
+      return @modal.scroll_line(delta, modal_body_h) unless detail_modal?
       move(delta)
       show_detail
     end
 
-    def open_modal(modal, kind:)
-      @modal = modal
-      @modal_kind = kind
-      @modal_scroll = 0
+    # Body rows available to the modal box — the same budget paint hands
+    # Frame.build, so scroll steps match what's on screen.
+    def modal_body_h
+      height = [(IO.console&.winsize || [24]).first, 10].max
+      [height - 5 - footer_size, 1].max
+    end
+
+    def detail_modal? = @modal&.kind == :detail
+
+    def open_modal(content, kind:)
+      @modal = Modal.new(title: content[:title], lines: content[:lines],
+                         kind: kind, filterable: kind == :help)
+      @modal_filter_input.clear
       @mode = :modal
     end
 
     def close_modal
       @modal = nil
-      @modal_kind = nil
+      @modal_filter_input.clear
       @mode = :list
     end
 
-    def scroll_modal(delta)
-      @modal_scroll = [@modal_scroll + delta, 0].max # upper bound applied at paint
+    # `/` inside a filterable modal (the shortcuts overlay): live line filter.
+    def modal_start_filter
+      return unless @modal.filterable?
+      @modal_filter_input.replace(@modal.filter || +"")
+      @mode = :modal_filter
     end
 
-    # Slice the modal content to what fits in the body, with scroll markers.
-    def scrolled_modal(body_h)
-      lines = @modal[:lines]
-      avail = [body_h - 2, 3].max
-      return @modal if lines.size <= avail
-      max_scroll = lines.size - avail
-      @modal_scroll = @modal_scroll.clamp(0, max_scroll)
-      visible = lines[@modal_scroll, avail]
-      marker = A.dim("── #{@modal_scroll + visible.size}/#{lines.size} · ↑↓ scroll ──")
-      { title: @modal[:title], lines: visible + [marker] }
+    def modal_filter_key(k)
+      case k
+      when "\e"       then @modal.filter = nil; @modal_filter_input.clear; @mode = :modal
+      when "\r", "\n" then @mode = :modal # the filter applied live; enter keeps it
+      when "\x03"     then @quit = true
+      else
+        @modal.filter = @modal_filter_input.to_s if @modal_filter_input.handle_key(k) == :changed
+      end
     end
 
     # -- actions ---------------------------------------------------------------
@@ -984,7 +1011,7 @@ module Tui
       return unless @agent.pump == :done
       width = [(IO.console&.winsize || [24, 80])[1], MIN_WIDTH].max
       @resp = A.wrap(@agent.output.strip, width - 8)
-      @resp = [A.dim("(no output)")] if @resp.all? { |l| l.strip.empty? }
+      @resp = [T.paint(:muted, "(no output)")] if @resp.all? { |l| l.strip.empty? }
       @resp_open = true
       @resp_scroll = 0
       @store.reload! if @store.changed?

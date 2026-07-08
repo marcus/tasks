@@ -13,7 +13,7 @@ module Tui
       Entry.new(seqs: ["\e[B", "j"],  keys: "↓ / j",   desc: "select next task",                 action: :select_next),
       Entry.new(seqs: ["\e[D"],       keys: "←",       desc: "previous view",                    action: :prev_view),
       Entry.new(seqs: ["\e[C"],       keys: "→",       desc: "next view",                        action: :next_view),
-      Entry.new(seqs: %w[1 2 3 4],    keys: "1-4",     desc: "jump to view",                     action: :jump_view),
+      Entry.new(seqs: %w[1 2 3 4 5],  keys: "1-5",     desc: "jump to view",                     action: :jump_view),
       Entry.new(seqs: ["h"],          keys: "h",       desc: "collapse subtree (again: to parent)", action: :collapse_selected),
       Entry.new(seqs: ["l"],          keys: "l",       desc: "expand subtree",                   action: :expand_selected),
       Entry.new(seqs: ["H"],          keys: "H",       desc: "collapse all subtrees",            action: :collapse_all),
@@ -43,6 +43,22 @@ module Tui
       Entry.new(seqs: ["q", "\x03"],  keys: "q",       desc: "quit",                             action: :quit),
     ].freeze
 
-    def self.find(seq) = LIST.find { |e| e.seqs.include?(seq) }
+    # Modal-mode navigation: vim-style scrolling, filtering, closing. Task
+    # actions (c, d, K, …) stay live inside a detail modal via App#modal_key's
+    # fallthrough, so this list only owns the modal-generic keys.
+    MODAL = [
+      Entry.new(seqs: ["\e[A", "k"],      keys: "↑ / k",         desc: "scroll up · previous task (detail)",  action: :modal_up),
+      Entry.new(seqs: ["\e[B", "j"],      keys: "↓ / j",         desc: "scroll down · next task (detail)",    action: :modal_down),
+      Entry.new(seqs: ["\x15"],           keys: "ctrl-u",        desc: "scroll half page up",                 action: :modal_half_up),
+      Entry.new(seqs: ["\x04"],           keys: "ctrl-d",        desc: "scroll half page down",               action: :modal_half_down),
+      Entry.new(seqs: ["\x02", "\e[5~"],  keys: "ctrl-b / pgup", desc: "scroll page up",                      action: :modal_page_up),
+      Entry.new(seqs: ["\x06", "\e[6~"],  keys: "ctrl-f / pgdn", desc: "scroll page down",                    action: :modal_page_down),
+      Entry.new(seqs: ["/"],              keys: "/",             desc: "filter lines (shortcuts modal)",      action: :modal_start_filter),
+      Entry.new(seqs: ["\e", "q", "\r", "\n", "?"], keys: "esc / q", desc: "close modal",                     action: :close_modal),
+      Entry.new(seqs: ["\x03"],           keys: "ctrl-c",        desc: "quit",                                action: :quit),
+    ].freeze
+
+    def self.find(seq)       = LIST.find { |e| e.seqs.include?(seq) }
+    def self.find_modal(seq) = MODAL.find { |e| e.seqs.include?(seq) }
   end
 end

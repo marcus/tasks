@@ -56,8 +56,31 @@ this") can't false-positive. `system.<name>` classifies a custom host (and its
 subdomains) for self-hosted systems the built-in registry can't know; user
 rows win over built-ins.
 
-`tasks config` prints the resolved paths, `urgent_days`, `max_depth`, and where
-each came from.
+**TUI colors.** The TUI paints semantic *slots* (`lib/tui/theme.rb` lists them
+all: `accent`, `selection`, per-view tabs like `tab_agenda` /
+`tab_agenda_active`, task-row fields like `project`, `context`, `title`, the
+`due_*` ladder plus selected-row variants such as `due_soon_selected`,
+detail-modal slots like `detail_label`, `description`, `link`, `link_system`,
+`state_*`, …). Appearance keys in the same config file:
+
+- `theme = <name>` — a named base theme: `default`, `mono` (attribute-only),
+  or a generated popular scheme such as `dracula`, `nord`,
+  `catppuccin-mocha`, `gruvbox-dark`, `tokyonight-night`, or
+  `solarized-dark`. The generated names come from
+  `scripts/generate-tui-themes`, which converts iTerm2-Color-Schemes
+  Window Terminal JSON into tasks semantic slots. Overridable by `TASKS_THEME`;
+  a non-empty `NO_COLOR` env var selects `mono` when nothing explicit is set.
+- `color.<slot> = <spec>` — restyle one slot on top of the theme. A spec is
+  space-separated tokens: attributes (`bold`, `dim`, `italic`, `underline`,
+  `reverse`), a named color (`red`, `bright-red`, `gray`, …), a 256-color index
+  (`208`), or hex (`#ff8800`); prefix a color with `on-` for the background
+  (`on-blue`, `on-#1e2030`); `none` = unstyled. Example:
+  `color.selection = black on-cyan`. Invalid values fall back to the theme
+  default rather than erroring. Because a hex token follows a space, `color.*`
+  lines are exempt from inline `#` comments.
+
+`tasks config` prints the resolved paths, `urgent_days`, `max_depth`, `theme`
+(+ any `color.*` and link overrides), and where each came from.
 
 ### LLM agent settings
 
@@ -270,7 +293,7 @@ is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or `nul
 | `undo` | | ✅ | Revert the last mutation via the on-disk journal (`Tasks::Journal`, under `$XDG_STATE_HOME/tasks/journal/`), shared with the TUI and across CLI runs. Refuses (exit 1) if `tasks.jsonl` changed out-of-band since that edit — resolve with `git diff` / `git checkout -- tasks.jsonl`. |
 | `redo` | | ✅ | Replay the last undone mutation; same shared journal and conflict guard as `undo`. |
 | `-p [--provider N] [--model N] "prompt"` | | ✅ | Natural-language request via a headless LLM agent (Claude CLI by default, or any configured harness). Leading `--provider`/`--model` override the config default for one run; see [LLM agent settings](#llm-agent-settings). |
-| `config [--json]` | | ✅ | Print resolved file paths (tasks file, archive, config file), `urgent_days`, `max_depth`, and the source of each (`TASKS_FILE env`, `TASKS_DIR env`, `TASKS_URGENT_DAYS env`, `TASKS_MAX_DEPTH env`, `config file`, `default`). |
+| `config [--json]` | | ✅ | Print resolved file paths (tasks file, archive, config file), `urgent_days`, `max_depth`, `theme` (+ any `color.*` overrides), and the source of each (`TASKS_FILE env`, `TASKS_DIR env`, `TASKS_URGENT_DAYS env`, `TASKS_MAX_DEPTH env`, `TASKS_THEME env`, `NO_COLOR env`, `config file`, `default`). |
 | `help` | `-h`, `--help` | ✅ | Grouped command reference. Also printed (to stderr, exit 1) on an unknown/absent command. |
 
 Ideas beyond this spec live in `docs/ideas.md`.

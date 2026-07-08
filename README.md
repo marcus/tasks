@@ -109,7 +109,8 @@ from, with the same subtrees collapsed (session state in
 h / l      collapse / expand the selected subtree (h again climbs to the parent)
 H / L      collapse / expand all subtrees
 return     task detail modal
-?          keyboard shortcuts modal
+?          keyboard shortcuts modal (/ filters its lines)
+           modals scroll vim-style: j/k line · ctrl-d/u half page · ctrl-f/b page
 c          mark selected task DONE
 d          reschedule — accepts fri, +3, 07-15, 2026-07-15, today, tomorrow
 r          recur — weekly · 2w · .+1m · off
@@ -132,6 +133,16 @@ The agent runs asynchronously (the local `claude` CLI by default, same as
 `tasks -p`, or any configured harness), so the UI stays responsive while it
 works; its answer appears in an expanding footer pane and the views refresh with
 whatever it changed. `M` switches backend/model between requests.
+
+Colors are themable: `theme = dracula` (or `mono`, `nord`,
+`catppuccin-mocha`, `gruvbox-dark`, `tokyonight-night`, `solarized-dark`, and
+more) plus per-slot `color.accent = magenta` /
+`color.selection = black on-cyan` lines in `~/.config/tasks/config` restyle
+tabs, the selection bar, modal title strips, task dates, projects, contexts,
+detail labels, descriptions, links, and more. Popular schemes are generated
+from iTerm2-Color-Schemes with `scripts/generate-tui-themes`.
+`NO_COLOR` is honored. See `docs/cli-spec.md` (TUI colors) for the slot and
+spec vocabulary.
 
 ## Roadmap / ideas
 
