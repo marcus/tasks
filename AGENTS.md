@@ -3,45 +3,56 @@
 You are acting on a personal GTD task list via natural-language prompts
 passed to `tasks -p`. Today's date is available from the system.
 
+## The one rule: the CLI is the only writer
+
+**Never hand-edit `tasks.jsonl` (or `archive.jsonl`).** It's a JSONL store where
+every record carries a stable id, records sit in a strict DFS pre-order, keys use
+a fixed order, and line 1 is a `meta` record — a hand-edit gets one of those
+wrong and corrupts the file. Every change you need has a `bin/tasks` command;
+use it. The CLI writes the exact format, validates after every write, and rolls
+back a bad one.
+
 ## Files
-- `gtd.org` — the live list. Org-mode headlines:
-  `** STATE [#A] Title :tag:@context:` where STATE ∈
-  INBOX|TODO|NEXT|WAITING|DONE|CANCELLED, priority `[#A|B|C]` optional.
-  Metadata lines below a headline: `DEADLINE: <YYYY-MM-DD>`,
-  `SCHEDULED: <YYYY-MM-DD>`, `CLOSED: [YYYY-MM-DD]`, and an optional
-  `:PROPERTIES:` / `:ID: <id>` / `:END:` drawer (a stable task handle).
-  **Never invent, change, or drop an `:ID:`** — preserve drawers verbatim when
-  you move or edit a block; if you must reference a task precisely, its `:ID:`
-  works as a `<ref>` (or run `tasks id <ref>` to mint one).
-  Links in notes (Slack, Jira, PRs, docs) are first-class: write them as
-  `[[url][label]]`, bare URLs, or configured shorthands like `jira:OPS-1234`
-  (expanded via `link.<name>` rows in the user's config — reuse a shorthand
-  when one exists rather than pasting the full URL). `tasks links` lists them
-  by system and `list --body /text` searches note text. Keep links intact
-  when editing.
-- `archive.org` — completed/cancelled history. Don't edit by hand.
+- `tasks.jsonl` — the live list. One JSON record per line: a `meta` header, then
+  `section` records (GTD lists / project headings) and `task` records, tree-ordered
+  by `parent` id. Task fields: `state` ∈ INBOX|TODO|NEXT|WAITING|DONE|CANCELLED,
+  optional `priority` A|B|C, `title`, `tags` (array, includes `@contexts`),
+  `scheduled`/`deadline`/`closed` dates (`"YYYY-MM-DD"`), `recur` cookie, `body`
+  notes. Read it via the CLI's `--json`, never by parsing the file yourself.
+  Links in notes (Slack, Jira, PRs, docs) are first-class — `[[url][label]]`, bare
+  URLs, or configured shorthands like `jira:OPS-1234`. `tasks links` lists them by
+  system and `list --body /text` searches note text.
+- `archive.jsonl` — completed/cancelled history (swept by `tasks archive`).
 - The files may live outside the CLI's repo. Absolute paths for this run
   (the CLI and both files) are appended below this prompt under
-  "File locations for this run" — use those for direct reads/edits, and the
-  absolute CLI path if `bin/tasks` isn't in your working directory.
+  "File locations for this run" — use the absolute CLI path if `bin/tasks` isn't
+  in your working directory.
+
+## Reading (always via the CLI, `--json` when you reason over results)
+- `bin/tasks list -a` — everything, grouped by state (filters: `@ctx +tag /text -A`).
+- `bin/tasks agenda` — dated items, soonest first.
+- `bin/tasks show "<ref>"` — one task in full (fields + notes + links).
+- All read commands accept `--json` (a flat, pre-sorted array).
+
+**Refs.** A `<ref>` resolves as: a case-insensitive substring of the title; an
+exact `id` (8 hex, stable across edits — wins over title matching); or `L<line>`
+(the record on that 1-based file line). Multiple title matches exit 2 listing each
+candidate as `L<line>: <headline>` — retry with a longer substring or an `L<line>`.
+Don't guess between candidates; if the request is genuinely ambiguous, stop and
+say which ones matched.
 
 ## How to act
 - Your job is to change task **data**, never the tool. Do not read, "fix", or
   edit the CLI's own source (`bin/tasks`, anything under `lib/`) or any project
-  code — just run `bin/tasks` and, when needed, edit `gtd.org` task lines.
+  code — just run `bin/tasks`.
 - The tasks CLI is known-good (Ruby 3.4). It uses Ruby endless methods like
   `def foo(x) = bar(x)` — valid syntax, NOT a bug. Always invoke it by the
   absolute path given below. If a command seems to error, re-run it with that
   absolute path; never conclude the CLI is broken or hand-edit files as a
   workaround.
-- **Always use the CLI to set dates, priority, state, and tags** — it writes the
-  exact org format (e.g. `DEADLINE: <YYYY-MM-DD>` with the required angle
-  brackets). Do NOT hand-write `DEADLINE:`/`SCHEDULED:` lines; a plain
-  `DEADLINE: 2026-07-05` without `< >` is silently ignored. `due`/`schedule`
-  accept relative dates (`+3`, `tomorrow`, `fri`) so you never format a date by hand.
-- Read state first with `bin/tasks list -a` (or targeted filters).
-- Prefer the CLI for operations it supports; it keeps formatting correct:
-  - complete a task:  `bin/tasks done "<fuzzy title>"`  (a recurring task rolls
+- Use the CLI for every mutation — dates, priority, state, tags, notes. It
+  accepts relative dates (`+3`, `tomorrow`, `fri`) so you never format one by hand:
+  - complete a task:  `bin/tasks done "<ref>"`  (a recurring task rolls
                       its date forward and stays open instead of closing)
   - add a task:       `bin/tasks capture "<text>"` (flags: --due/--scheduled/
                       --priority/--tag/--context/--state/--project/--recur)
@@ -61,22 +72,20 @@ passed to `tasks -p`. Today's date is available from the system.
   - review deferred:  `bin/tasks list --deferred`
   - inspect a task:   `bin/tasks show "<ref>" [--json]`
   - archive done:     `bin/tasks archive`
-  - validate file:    `bin/tasks check` (exit 1 = structural errors)
   (full command set + roadmap: `docs/cli-spec.md`)
-- Edit `gtd.org` directly only for what the CLI still lacks (e.g. hard-delete,
-  rewriting an existing body line, restructuring section headings).
-- After ANY direct edit to `gtd.org`, run `bin/tasks check` and fix
-  whatever it reports before finishing.
-- Match tasks by fuzzy title. If a prompt is ambiguous (multiple matches),
-  don't guess — say which ones matched and stop.
-- When you give an `INBOX` item a `SCHEDULED`/`DEADLINE` date, also change
-  its state to `TODO` (dated = processed; the TUI enforces the same rule).
-- Resolve relative dates ("next Friday", "tomorrow") to `<YYYY-MM-DD>`.
+- When you give an `INBOX` item a date, the CLI already promotes it to `TODO`
+  (dated = processed) — no extra step.
+- Resolve relative dates ("next Friday", "tomorrow") — the CLI's date parser
+  takes them directly.
 - Quadrants (`bin/tasks quadrants`) are computed, not stored: **important** =
-  priority `A`/`B` or the `:important:` tag; **urgent** = a `DEADLINE` within a few
-  days or the `:urgent:` tag. To make something "urgent"/"important", prefer setting
+  priority `A`/`B` or the `important` tag; **urgent** = a `deadline` within a few
+  days or the `urgent` tag. To make something "urgent"/"important", prefer setting
   its deadline/priority over adding tags.
 
 ## Report
 End with ONE line listing every change made — including any external
 action (Slack, email) — so the caller has a full audit trail.
+
+---
+*Escape hatch: if the file is ever edited out-of-band (not by you), `bin/tasks
+check` reports any structural breakage. You should not be making such edits.*

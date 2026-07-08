@@ -3,7 +3,7 @@
 module Tasks
   # Durable, all-or-nothing file replacement. A plain File.write can be seen
   # half-written by a concurrent reader (the live TUI, another CLI) and leaves a
-  # truncated gtd.org behind if the process dies mid-write. Instead write the
+  # truncated tasks.jsonl behind if the process dies mid-write. Instead write the
   # full contents to a sibling temp file, flush it to disk, then rename it over
   # the target: rename is atomic on a POSIX filesystem, so a reader — or a crash
   # — only ever sees the whole old file or the whole new one, never a torn mix.
@@ -12,7 +12,7 @@ module Tasks
   # transparent: the target's symlink is followed (a rename over a symlink would
   # replace the link itself, orphaning a Dropbox/dotfiles setup), its permission
   # bits are carried onto the replacement (a fresh temp is born at the umask, so
-  # a chmod-600 gtd.org would otherwise silently widen to 644), and the parent
+  # a chmod-600 tasks.jsonl would otherwise silently widen to 644), and the parent
   # directory is fsynced after the rename so the swap is durable across a crash,
   # not merely atomic. Hardlinks are not preserved — atomic-rename replacement is
   # fundamentally incompatible with keeping a second hardlink name in sync.
@@ -46,7 +46,7 @@ module Tasks
     # file so we replace *it*, not the link — even a dangling link (target on a
     # briefly-unmounted volume) is followed to its intended path rather than
     # overwritten into a plain file. A path with no link and no file yet (e.g.
-    # archive.org before the first sweep) is used as given.
+    # archive.jsonl before the first sweep) is used as given.
     def resolve(path)
       if File.symlink?(path)
         File.exist?(path) ? File.realpath(path) : File.expand_path(File.readlink(path), File.dirname(path))
@@ -58,7 +58,7 @@ module Tasks
     end
 
     # Carry the existing file's permission bits onto the replacement, since a
-    # fresh temp is born at the umask (a chmod-600 gtd.org would otherwise widen
+    # fresh temp is born at the umask (a chmod-600 tasks.jsonl would otherwise widen
     # to 644). Best-effort, like fsync_dir: a filesystem that rejects chmod
     # (some CIFS/exFAT/FUSE mounts), or a target deleted out-of-band mid-write,
     # must not turn a working write into a hard failure — the write still lands,

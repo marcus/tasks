@@ -1,14 +1,16 @@
 # tasks CLI — agent interface specification
 
-The `tasks` CLI is the API for `gtd.org`. Humans use it too, but the primary
-audience is LLM agents: every mutation an agent would otherwise make by
-editing the file should have a command, so direct file edits become the rare
-exception rather than the norm. Commands go through the shared model layer
-(`lib/tasks/store.rb`), which enforces conventions (e.g. dating an INBOX item
-promotes it to TODO) and validates the file after every write.
+The `tasks` CLI is the API for `tasks.jsonl`. Humans use it too, but the primary
+audience is LLM agents. The CLI is the **only** writer: `tasks.jsonl` is a JSONL
+store with per-record ids, a strict DFS pre-order, fixed key order, and a `meta`
+line 1, so a hand-edit is error-prone by construction — every mutation has a
+command. Commands go through the shared model layer (`lib/tasks/store.rb`), which
+enforces conventions (e.g. dating an INBOX item promotes it to TODO) and validates
+the file after every write.
 
 Status legend: ✅ implemented · 🚧 planned (spec is authoritative for behavior
-when it lands; agents should fall back to direct edits + `tasks check` for 🚧).
+when it lands). `tasks check` is the escape hatch if the file is ever edited
+out-of-band.
 
 ## Global conventions
 
@@ -20,14 +22,14 @@ error (exit 1), never silently treated as positional args.
 
 **File locations.** The task files don't have to live in this repo — the code
 and your data are separable (so the project can be shared without the tasks).
-Both the CLI and the TUI resolve `gtd.org`/`archive.org` through
+Both the CLI and the TUI resolve `tasks.jsonl`/`archive.jsonl` through
 `lib/tasks/config.rb`, highest precedence first:
 
-1. `TASKS_ORG` / `TASKS_ARCHIVE` env vars (per-file; used by the test suite
+1. `TASKS_FILE` / `TASKS_ARCHIVE` env vars (per-file; used by the test suite
    and for safe manual experiments).
-2. `TASKS_DIR` env var — a directory containing `gtd.org` and `archive.org`.
+2. `TASKS_DIR` env var — a directory containing `tasks.jsonl` and `archive.jsonl`.
 3. Config file `~/.config/tasks/config` (or `$XDG_CONFIG_HOME/tasks/config`),
-   `key = value` lines: `dir = ~/tasks`, or per-file `org = …` / `archive = …`.
+   `key = value` lines: `dir = ~/tasks`, or per-file `file = …` / `archive = …`.
    `~` expands; `#` comments (full-line, or inline after whitespace) and blank
    lines ignored — so a value can't contain ` #`; a bare `#` inside a value
    (e.g. a URL anchor) is fine.
@@ -58,7 +60,7 @@ rows win over built-ins.
 ### LLM agent settings
 
 `-p` and the TUI hand your request to an **agent** — an autonomous harness
-(the local `claude` CLI, the Hermes agent, …) that acts on `gtd.org` itself
+(the local `claude` CLI, the Hermes agent, …) that acts on `tasks.jsonl` itself
 through this CLI. Which harness and model are chosen from the same config file;
 all keys optional, unknown keys ignored:
 
@@ -94,19 +96,18 @@ task title. Resolution rules:
 - Zero matches → exit 2, message `no match: <ref>`.
 - Multiple matches → exit 2, listing each candidate as `L<line>: <headline>`.
   The agent retries with a longer substring or an exact `L<line>` ref.
-- `L<line>` (e.g. `L42`) targets the task whose headline is on that file line —
-  precise, but only valid until the file changes. Prefer titles.
-- An exact `:ID:` (e.g. `7f3a9c2e`) resolves unambiguously and is stable across
+- `L<line>` (e.g. `L42`) targets the record on that 1-based file line — precise,
+  but only valid until the file changes. Prefer titles.
+- An exact `id` (e.g. `7f3a9c2e`) resolves unambiguously and is stable across
   edits — it wins over fuzzy title matching. Get one with `tasks id <ref>`.
 - By default refs match **open** tasks only; `--include-done` widens.
 
-**Task IDs.** Each task can carry a stable id in an org `:PROPERTIES:` drawer
-(`:ID:`), the durable handle for that task no matter how lines shift or the
-title changes. `capture` stamps every new task; an existing task earns one the
-first time it's mutated or when you run `tasks id <ref>`. Mutations locate their
-target by id when it has one (falling back to line + title otherwise), so an
-out-of-band reflow or retitle can't misfire an edit onto the wrong task. IDs
-must be unique — `check` reports a collision as an error.
+**Task IDs.** Every record carries a stable 8-hex `id` field — the durable handle
+for that task no matter how lines shift or the title changes. Migration and
+`capture` mint them; `tasks id <ref>` is the repair path for a record somehow
+missing one. Mutations locate their target by id (falling back to line + title
+otherwise), so an out-of-band reflow or retitle can't misfire an edit onto the
+wrong task. IDs must be unique — `check` reports a collision as an error.
 
 **Dates.** Anywhere a date is accepted: `2026-07-15`, `07-15`, `7/15`,
 `fri`/`friday`, `today`, `tomorrow`, `+3` (days from today). Same parser as
@@ -120,15 +121,15 @@ quadrants view. Deferred tasks retain their state (a deferred `NEXT` is still a
 `defer`/`activate` toggle the tag; `list --deferred` reviews them. The TUI hides
 them too, with `Z` to show/hide and `z` to defer/activate the selected task.
 
-**Recurrence.** A task *recurs* when its `SCHEDULED:`/`DEADLINE:` stamp carries
-an org-mode repeater cookie inside the brackets: `<2026-08-01 Sat +1m>`. The
-prefix sets what the interval is measured from on completion — `+` fixed (stored
-date + interval, one hop), `++` catch-up (repeated until strictly future), `.+`
-from-completion (today + interval) — and the suffix is a count plus a unit
-(`d`/`w`/`m`/`y`; months/years step by calendar with day-clamp, so Jan 31 `+1m`
-→ Feb 28). Completing a recurring task (`done`, or `state … DONE`) rolls its
-date forward and **leaves it open** instead of adding `CLOSED:`; it logs a
-`- Did [date]` line since the task never closes. `cancel` still truly closes it
+**Recurrence.** A task *recurs* when it carries a `recur` cookie alongside a
+`scheduled`/`deadline` date: `.+1w`, `++1m`, `+2d`. The prefix sets what the
+interval is measured from on completion — `+` fixed (stored date + interval, one
+hop), `++` catch-up (repeated until strictly future), `.+` from-completion (today
++ interval) — and the suffix is a count plus a unit (`d`/`w`/`m`/`y`; months/years
+step by calendar with day-clamp, so Jan 31 `+1m` → Feb 28). Completing a recurring
+task (`done`, or `state … DONE`) rolls its date forward and **leaves it open**
+instead of setting `closed`; it logs a `- Did [date]` line to the body since the
+task never closes. `cancel` still truly closes it
 (stopping the recurrence). `recur <ref> <interval>` sets/replaces the cookie
 (bare intervals like `weekly`/`2w`/`every 3 days` default to `.+`; `--from
 schedule` uses `+`); `recur <ref> off` clears it; `list --recurring` reviews
@@ -158,16 +159,17 @@ would change and writes nothing.
 | `next` | `n` | ✅ | NEXT actions by context. `--json` |
 | `quadrants` | `q` | ✅ | Covey 2×2 from priority (A/B ⇒ important) + a `DEADLINE` within `urgent_days` (default 3, overdue counts) ⇒ urgent, with `important`/`urgent` tags as overrides. `--json` adds `quadrant`. |
 | `inbox` | `i` | ✅ | Unprocessed INBOX items. `--json` |
-| `show <ref>` | `s` | ✅ | One task in full: headline fields + body/notes + links. `--json` shape: `{id, state, priority, title, tags, contexts, scheduled, deadline, recur, closed, line, notes: [..], project, links: [{url, label, system}]}`. Drawer lines are hidden from `notes`; `project` is the nearest ancestor heading. |
-| `id <ref> [--json]` | | ✅ | Print a task's stable `:ID:`, assigning one (a `:PROPERTIES:` drawer) if absent. Idempotent. Resolves refs regardless of state. |
+| `show <ref>` | `s` | ✅ | One task in full: rendered headline + body/notes + links. `--json` shape: `{id, state, priority, title, tags, contexts, scheduled, deadline, recur, closed, line, notes: [..], project, links: [{url, label, system}]}`. `notes` is the task's `body` split to lines (a child's body never leaks in — children are separate records); `project` is the nearest ancestor section. |
+| `id <ref> [--json]` | | ✅ | Print a task's stable `id`, minting one if absent (post-migration every record already has one — this is the repair path). Idempotent. Resolves refs regardless of state. |
 | `links [<ref>]` | `urls` | ✅ | Links found in task titles/notes, classified by system (`slack`, `jira`, `github`, …; unknown hosts fall back to the host name; Confluence-on-Atlassian is told apart from Jira by its `/wiki` path). One task's links with `<ref>`; every open task's otherwise. `--system <name>` filters (case-insensitive), `--all` widens the listing to done + archived (`<ref>` resolution itself stays live-file only), `--json` emits `{links: [{url, label, system, task, id, line, source}]}`. Recognizes org links `[[url][label]]`, bare URLs, and configured shorthands (below), in file order; org-internal targets (`[[id:…]]`, `[[file:…]]`, headline links) are org navigation, not links. |
 | `open <ref> [n]` | `o` | ✅ | Open a task's link in the browser (macOS `open` / `xdg-open`; `TASKS_OPENER` overrides). One link opens directly; several are listed numbered (exit 1) unless picked by 1-based `n` or `--system <name>`. `--print` prints the URL instead of launching. Resolves refs regardless of state (live file). |
-| `check [--json]` | `k` | ✅ | Validate gtd.org structure. Exit 1 if errors. Run after any direct file edit. |
+| `check [--json]` | `k` | ✅ | Validate `tasks.jsonl` structure (records, ids, DFS order, dates). Exit 1 if errors. The escape hatch after any out-of-band edit. |
 
 JSON list shape (`--json` on list/agenda/next/quadrants/inbox) — a flat array,
 already sorted the way the text view sorts:
-`[{"state": "NEXT", "priority": "A", "title": "…", "tags": [..], "contexts": [..], "scheduled": null, "deadline": "2026-07-02", "recur": null, "line": 17, "source": "org", "headline": "** NEXT …"}]`
-(`recur` is the repeater cookie string, e.g. `".+1w"`, or `null`.)
+`[{"state": "NEXT", "priority": "A", "title": "…", "tags": [..], "contexts": [..], "scheduled": null, "deadline": "2026-07-02", "recur": null, "line": 17, "source": "live", "headline": "NEXT [#A] …"}]`
+(`headline` is the star-less summary rendered from the record's fields; `source`
+is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or `null`.)
 `quadrants --json` adds `"quadrant": "Q1".."Q4"` per item. Empty result → `[]`.
 
 ## Create
@@ -180,18 +182,18 @@ already sorted the way the text view sorts:
 
 | Command | Alias/synonyms | Status | Description |
 |---|---|---|---|
-| `done <ref>` | `complete`, `close`, `d` | ✅ | Mark DONE + `CLOSED:` stamp. A recurring task (repeater cookie on its date) rolls forward and stays open instead — output shows `↻ <title> → next <date>`. |
-| `cancel <ref>` | `drop` | ✅ | Mark CANCELLED + `CLOSED:` stamp. |
-| `state <ref> <STATE>` | `mv` | ✅ | Any state transition (INBOX/TODO/NEXT/WAITING/DONE/CANCELLED). Enforces: entering DONE/CANCELLED adds `CLOSED:`; leaving them removes it. Resolves refs across open *and* closed tasks so you can reopen a DONE item. |
-| `due <ref> <date>` | `deadline`, `reschedule` | ✅ | Set/replace DEADLINE. INBOX items promote to TODO. |
-| `schedule <ref> <date>` | | ✅ | Set/replace SCHEDULED. Same INBOX promotion. |
-| `undate <ref>` | | ✅ | Remove SCHEDULED and/or DEADLINE (`--kind deadline\|scheduled` to pick one). |
-| `priority <ref> <A\|B\|C\|none>` | `pri` | ✅ | Set or clear the priority cookie. |
-| `retitle <ref> "new title"` | `rename` | ✅ | Replace the headline title; tags/priority/state untouched. |
+| `done <ref>` | `complete`, `close`, `d` | ✅ | Mark DONE + `closed` date. A recurring task (recur cookie on its date) rolls forward and stays open instead — output shows `↻ <title> → next <date>`. |
+| `cancel <ref>` | `drop` | ✅ | Mark CANCELLED + `closed` date. |
+| `state <ref> <STATE>` | `mv` | ✅ | Any state transition (INBOX/TODO/NEXT/WAITING/DONE/CANCELLED). Enforces: entering DONE/CANCELLED sets `closed`; leaving them clears it. Resolves refs across open *and* closed tasks so you can reopen a DONE item. |
+| `due <ref> <date>` | `deadline`, `reschedule` | ✅ | Set/replace `deadline`. INBOX items promote to TODO. |
+| `schedule <ref> <date>` | | ✅ | Set/replace `scheduled`. Same INBOX promotion. |
+| `undate <ref>` | | ✅ | Remove `scheduled` and/or `deadline` (`--kind deadline\|scheduled` to pick one). |
+| `priority <ref> <A\|B\|C\|none>` | `pri` | ✅ | Set or clear the `priority` field. |
+| `retitle <ref> "new title"` | `rename` | ✅ | Replace the `title`; tags/priority/state untouched. |
 | `tag <ref> +foo -bar @ctx -@old` | | ✅ | Add/remove tags and contexts in one call. `+t`/`@ctx` add, `-t`/`-@ctx` remove. |
-| `note <ref> "text"` | | ✅ | Append a body line under the task. |
-| `move <ref> "Section"` | | ✅ | Relocate the whole block under another top-level heading (e.g. out of `* Inbox` into `* Work`). Section matched case-insensitively (exact, then substring). |
-| `recur <ref> <interval>` | `repeat`, `every` | ✅ | Attach/replace a repeater on the task's date stamp. `<interval>`: a cookie (`.+1w`/`+2d`/`++1m`) or friendly form (`weekly`/`daily`/`monthly`/`yearly`/`2w`/`every 3 days`); `off`/`none` clears it. `--from schedule\|completion` picks `+`/`.+` for a bare interval (default `completion` → `.+`). `--on <date>` seeds a `DEADLINE` when the task has no date yet (else it errors). `--dry-run`/`--json`. |
+| `note <ref> "text"` | | ✅ | Append a line to the task's `body`. |
+| `move <ref> "Section"` | | ✅ | Relocate the whole subtree under another top-level section (e.g. out of `Inbox` into `Work`) by re-pointing its `parent`. Section matched case-insensitively (exact, then substring). |
+| `recur <ref> <interval>` | `repeat`, `every` | ✅ | Attach/replace the `recur` cookie on the task's date. `<interval>`: a cookie (`.+1w`/`+2d`/`++1m`) or friendly form (`weekly`/`daily`/`monthly`/`yearly`/`2w`/`every 3 days`); `off`/`none` clears it. `--from schedule\|completion` picks `+`/`.+` for a bare interval (default `completion` → `.+`). `--on <date>` seeds a `deadline` when the task has no date yet (else it errors). `--dry-run`/`--json`. |
 | `defer <ref>` | `snooze` | ✅ | Mark a task deferred (someday/maybe) by adding a semantic `defer` tag. Deferred tasks keep their state but drop out of `agenda`/`next`/`quadrants`/`inbox` and the default `list` until reactivated. Idempotent. |
 | `activate <ref>` | `undefer`, `resume` | ✅ | Clear the `defer` tag, returning the task to the active views. Resolves deferred (open) tasks. |
 
@@ -199,12 +201,13 @@ already sorted the way the text view sorts:
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `archive` | `x` | ✅ | Sweep DONE/CANCELLED blocks to archive.org. |
-| `delete <ref> --force` | `rm` | 🚧 | Hard-remove a block (no archive). Refuses without `--force`; suggest `cancel` instead. |
-| `undo` | | ✅ | Revert the last mutation via the on-disk journal (`Tasks::Journal`, under `$XDG_STATE_HOME/tasks/journal/`), shared with the TUI and across CLI runs. Refuses (exit 1) if gtd.org changed out-of-band since that edit — resolve with `git diff` / `git checkout -- gtd.org`. |
+| `archive` | `x` | ✅ | Sweep each DONE/CANCELLED subtree to `archive.jsonl` (root drops `parent`, gains `archived`). |
+| `migrate [--from <dir>] [--dry-run] [--force]` | | ✅ | **Temporary** one-shot importer: convert legacy `gtd.org`/`archive.org` under `<dir>` (default: the resolved data dir) to `tasks.jsonl`/`archive.jsonl` beside them, minting ids and validating the output. Refuses to overwrite existing targets without `--force`. Removed once the real repo is cut over. |
+| `delete <ref> --force` | `rm` | 🚧 | Hard-remove a record (no archive). Refuses without `--force`; suggest `cancel` instead. |
+| `undo` | | ✅ | Revert the last mutation via the on-disk journal (`Tasks::Journal`, under `$XDG_STATE_HOME/tasks/journal/`), shared with the TUI and across CLI runs. Refuses (exit 1) if `tasks.jsonl` changed out-of-band since that edit — resolve with `git diff` / `git checkout -- tasks.jsonl`. |
 | `redo` | | ✅ | Replay the last undone mutation; same shared journal and conflict guard as `undo`. |
 | `-p [--provider N] [--model N] "prompt"` | | ✅ | Natural-language request via a headless LLM agent (Claude CLI by default, or any configured harness). Leading `--provider`/`--model` override the config default for one run; see [LLM agent settings](#llm-agent-settings). |
-| `config [--json]` | | ✅ | Print resolved file paths (org, archive, config file), `urgent_days`, and the source of each (`TASKS_ORG env`, `TASKS_DIR env`, `TASKS_URGENT_DAYS env`, `config file`, `default`). |
+| `config [--json]` | | ✅ | Print resolved file paths (tasks file, archive, config file), `urgent_days`, and the source of each (`TASKS_FILE env`, `TASKS_DIR env`, `TASKS_URGENT_DAYS env`, `config file`, `default`). |
 | `help` | `-h`, `--help` | ✅ | Grouped command reference. Also printed (to stderr, exit 1) on an unknown/absent command. |
 
 Ideas beyond this spec live in `docs/ideas.md`.

@@ -1055,7 +1055,7 @@ HELP = <<~USAGE
                              to done + archived (<ref> stays live-file) · --json
     open      o <ref> [n]    open a task's link in the browser (n or --system
                              picks among several; --print shows instead)
-    id           <ref>       print a task's stable :ID: (assigns one if absent)
+    id           <ref>       print a task's stable id (assigns one if absent)
     check     k              validate tasks.jsonl structure
 
   Capture:
@@ -1097,7 +1097,7 @@ HELP = <<~USAGE
   lets notes say jira:OPS-1234; system.gitlab = gitlab.acme.io names custom hosts.
 
   Dates: 2026-07-15 · 07-15 · 7/15 · fri · today · tomorrow · +3
-  Refs:  a case-insensitive title substring, an exact :ID:, or L<line>.
+  Refs:  a case-insensitive title substring, an exact id, or L<line>.
   Full spec: docs/cli-spec.md
 USAGE
 

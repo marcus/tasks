@@ -5,15 +5,16 @@ vendor/bundle/
 
 # Task data must never land in the code repo — it lives in a separate private
 # repo (see ~/.config/tasks/config). Guards against a stray CLI/eval fallback
-# write to the repo-root default.
-/gtd.org
-/gtd.org.bak
-/archive.org
-/archive.org.bak
-# Advisory-lock sidecar Store#with_lock drops beside the org file (the undo
+# write to the repo-root default. (examples/tasks.jsonl is committed sample data;
+# these root-anchored patterns don't touch it.)
+/tasks.jsonl
+/tasks.jsonl.bak
+/archive.jsonl
+/archive.jsonl.bak
+# Advisory-lock sidecar Store#with_lock drops beside the live file (the undo
 # journal itself lives under $XDG_STATE_HOME/tasks/, out of the repo).
-/.gtd.org.lock
-/.archive.org.lock
+/.tasks.jsonl.lock
+/.archive.jsonl.lock
 
 # Editor / OS
 .DS_Store

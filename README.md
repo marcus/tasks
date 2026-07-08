@@ -1,15 +1,15 @@
 # tasks
 
-A plain-text, Claude co-managed task system. Org-mode-inspired format, GTD workflow,
-Covey Important/Urgent matrix. Ruby tooling on top.
+A plain-text, Claude co-managed task system. The store is a JSONL file that diffs
+one task per line. GTD workflow, Covey Important/Urgent matrix. Ruby tooling on top.
 
 ## Layout
 
 ```
-gtd.org            The one file that matters — you provide this (see below).
-examples/gtd.org   A tiny sample; copy it to get started.
+tasks.jsonl        The one file that matters — you provide this (see below).
+examples/tasks.jsonl  A tiny sample; copy it to get started.
 docs/conventions.md  The format + methodology spec (read this).
-bin/tasks          Ruby CLI for querying gtd.org (stdlib only, no gems needed).
+bin/tasks          Ruby CLI for querying tasks.jsonl (stdlib only, no gems needed).
 bin/tasks-tui      Interactive TUI: live views, single-key actions, agent prompt.
 lib/tui/           TUI modules (store, views, frame, app loop).
 lib/llm/           LLM agent adapters (Claude CLI, Hermes) behind one protocol.
@@ -29,7 +29,7 @@ tasks done "..."        # (d) mark a matching open item DONE
 tasks links             # links in task notes, by system (slack, jira, …)
 tasks open "..."        # (o) open a task's link in the browser
 tasks undo              # revert the last mutation (redo mirrors it)
-tasks archive           # (x) sweep DONE/CANCELLED items into archive.org
+tasks archive           # (x) sweep DONE/CANCELLED items into archive.jsonl
 tasks -p "..."          # hand a request to an LLM agent — it acts and reports back
 ```
 
@@ -38,12 +38,12 @@ Every command has the single-letter alias shown in parentheses (`tasks n`, `task
 
 ## Where your tasks live
 
-Your tasks live in a `gtd.org` (plus `archive.org`) that you own — keep it
+Your tasks live in a `tasks.jsonl` (plus `archive.jsonl`) that you own — keep it
 wherever you like; the data is fully separable from the code. Point the tooling
 at it:
 
 ```sh
-mkdir -p ~/tasks && cp examples/gtd.org ~/tasks/gtd.org   # seed from the sample
+mkdir -p ~/tasks && cp examples/tasks.jsonl ~/tasks/tasks.jsonl   # seed from the sample
 mkdir -p ~/.config/tasks
 echo "dir = ~/tasks" > ~/.config/tasks/config
 tasks config          # shows the resolved paths and where each came from
@@ -51,16 +51,20 @@ tasks config          # shows the resolved paths and where each came from
 
 If you set nothing, the tooling falls back to the repo root.
 
-Resolution order (both CLI and TUI): `TASKS_ORG`/`TASKS_ARCHIVE` env vars,
-then `TASKS_DIR`, then the config file (`dir = …`, or per-file `org = …` /
+Resolution order (both CLI and TUI): `TASKS_FILE`/`TASKS_ARCHIVE` env vars,
+then `TASKS_DIR`, then the config file (`dir = …`, or per-file `file = …` /
 `archive = …`), then the repo root. Env vars make one-off sandboxes easy:
-`TASKS_ORG=/tmp/scratch.org tasks capture "test"`.
+`TASKS_FILE=/tmp/scratch.jsonl tasks capture "test"`.
+
+The store is plain text — a JSONL file where each line is one task record, so
+every change is a one-line, reviewable git diff. The CLI and TUI are the writers;
+it isn't meant for hand-editing (`tasks check` catches any out-of-band edit).
 
 ### Filtering with `list`
 
 ```sh
 tasks list                     # open items only (default)
-tasks list -d                  # done items still in gtd.org
+tasks list -d                  # done items still in tasks.jsonl
 tasks list -x                  # archived items
 tasks list -a                  # everything, both files
 tasks list @computer -A /denver  # compose: context, priority, text — all at once
@@ -71,9 +75,9 @@ Filter sigils: `@context`  `/text` (or a bare word)  `+tag`  `-A|-B|-C` (priorit
 
 ## Working with an agent
 
-An LLM agent can read and edit `gtd.org` directly — add captures to the Inbox,
+An LLM agent manages your tasks through the CLI — add captures to the Inbox,
 process items into lists, suggest next actions, and surface what matters. The
-plain-text format means every change is a reviewable git diff.
+plain-text JSONL store means every change is a reviewable, one-line git diff.
 
 **From the terminal**, `tasks -p "..."` hands a natural-language request to an
 autonomous agent with `AGENTS.md` as context. It acts on your tasks right where
@@ -89,12 +93,12 @@ The agent is a pluggable **harness**: by default the local `claude` CLI, but any
 configured backend — e.g. the [Hermes agent](https://hermes-agent.nousresearch.com)
 driving a local Ollama model — works the same way. Pick the default and add
 models in `~/.config/tasks/config`; see `docs/cli-spec.md` (LLM agent settings).
-`AGENTS.md` documents the org format and conventions so any agent stays consistent.
+`AGENTS.md` documents the record format and conventions so any agent stays consistent.
 
 ## TUI
 
 `bin/tasks-tui` is a full-screen interactive view over the same file (stdlib only,
-like everything else). The views update live when `gtd.org` changes — whether you,
+like everything else). The views update live when `tasks.jsonl` changes — whether you,
 Claude, or another process edited it. The TUI reopens on whichever view you quit
 from (session state in `$XDG_STATE_HOME/tasks/tui.json`).
 
@@ -113,7 +117,7 @@ u / ctrl-r undo / redo (persistent journal, shared with the CLI's `tasks undo`)
 o          open the selected task's link in the browser
 y / Y      yank task ref / full task as markdown to the clipboard
 p          paste a quoted task ref into the agent prompt
-x          archive sweep (move DONE/CANCELLED to archive.org)
+x          archive sweep (move DONE/CANCELLED to archive.jsonl)
 M          cycle the agent/model (provider:model shown in the header)
 tab or :   focus the agent prompt — natural-language CRUD on your tasks
 esc        dismiss the response / cancel a running request / close modal

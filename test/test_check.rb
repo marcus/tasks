@@ -3,7 +3,6 @@
 require_relative "test_helper"
 require "tasks/check"
 require "tasks/format"
-require "tasks/migrate"
 
 class TestCheck < Minitest::Test
   C = Tasks::Check
@@ -29,15 +28,11 @@ class TestCheck < Minitest::Test
     assert_empty res.warnings
   end
 
-  # The example org file, migrated to jsonl, must pass the new Check — the
-  # importer and the linter agree on the schema.
-  def test_migrated_example_is_clean
-    Dir.mktmpdir do |dir|
-      FileUtils.cp(File.expand_path("../examples/gtd.org", __dir__), File.join(dir, "gtd.org"))
-      assert Tasks::Migrate.run([], default_dir: dir, out: StringIO.new, err: StringIO.new)
-      res = C.check(File.join(dir, "tasks.jsonl"))
-      assert res.ok?, res.errors.inspect
-    end
+  # The shipped example store must pass the linter — the sample a new user
+  # seeds from is, itself, a structurally valid tasks.jsonl.
+  def test_example_store_is_clean
+    res = C.check(File.expand_path("../examples/tasks.jsonl", __dir__))
+    assert res.ok?, res.errors.inspect
   end
 
   def test_missing_file

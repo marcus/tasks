@@ -5,7 +5,7 @@
 #
 # For each candidate model we run a spread of natural-language task prompts
 # through the REAL CLI (`bin/tasks -p --provider hermes --model <M>`) against a
-# fresh sandbox copy of a known gtd.org, then score the *outcome* deterministically
+# fresh sandbox copy of a known tasks.jsonl, then score the *outcome* deterministically
 # using the repo's own parser (Tasks::Store) — did the file end up in the expected
 # state, and did it stay structurally valid (no corruption)? Each prompt is run
 # TRIALS times because agentic runs are stochastic.
@@ -35,7 +35,7 @@ REPORT = ENV["EVAL_REPORT"] || File.join(HERE, "results-#{Date.today}.md")
 
 # Sandboxes live under $HOME, NOT the macOS temp dir (/var/folders/.../T): Hermes'
 # file-write safety filter refuses "sensitive system paths" like /var/folders,
-# which silently blocked direct gtd.org edits and biased the first run. A normal
+# which silently blocked direct tasks.jsonl edits and biased the first run. A normal
 # home-dir path also better mirrors where real task files live.
 SANDBOX_BASE = File.join(Dir.home, ".cache", "tasks-eval")
 FileUtils.mkdir_p(SANDBOX_BASE)
@@ -59,20 +59,20 @@ WARMUP_TIMEOUT = 240
 MAX_WALL       = Integer(ENV["EVAL_MAX_WALL"] || 6.5 * 3600) # stop launching new runs after this
 HERMES_PROVIDER = "ollama-launch"
 
-# The known starting list. Titles are distinct so fuzzy matching is unambiguous.
-BASE_ORG = <<~ORG
-  * Inbox
-  ** INBOX Random idea about the garden hose
-
-  * Work
-  ** NEXT [#B] Budget review for Q3 :@computer:
-  ** TODO Call the insurance company about the claim :@phone:
-  ** WAITING Reply from the travel desk :@email:
-
-  * Home
-  ** NEXT Water the plants :@home:
-  ** TODO [#C] Fix the leaky faucet :@home:
-ORG
+# The known starting list, as a tasks.jsonl store (stable ids so the fixture is
+# reproducible). Titles are distinct so fuzzy matching is unambiguous.
+BASE_JSONL = <<~JSONL
+  {"type":"meta","version":1}
+  {"type":"section","id":"bbbb0001","title":"Inbox"}
+  {"type":"task","id":"bbbb0002","parent":"bbbb0001","state":"INBOX","title":"Random idea about the garden hose"}
+  {"type":"section","id":"bbbb0003","title":"Work"}
+  {"type":"task","id":"bbbb0004","parent":"bbbb0003","state":"NEXT","priority":"B","title":"Budget review for Q3","tags":["@computer"]}
+  {"type":"task","id":"bbbb0005","parent":"bbbb0003","state":"TODO","title":"Call the insurance company about the claim","tags":["@phone"]}
+  {"type":"task","id":"bbbb0006","parent":"bbbb0003","state":"WAITING","title":"Reply from the travel desk","tags":["@email"]}
+  {"type":"section","id":"bbbb0007","title":"Home"}
+  {"type":"task","id":"bbbb0008","parent":"bbbb0007","state":"NEXT","title":"Water the plants","tags":["@home"]}
+  {"type":"task","id":"bbbb0009","parent":"bbbb0007","state":"TODO","priority":"C","title":"Fix the leaky faucet","tags":["@home"]}
+JSONL
 
 TODAY = Date.today
 
@@ -112,7 +112,7 @@ TASKS = [
 
   { id: "readonly", dim: "restraint (read-only, no mutation)",
     prompt: "Which of my tasks are waiting?",
-    check: ->(_items, raw) { raw.strip == BASE_ORG.strip } },
+    check: ->(_items, raw) { raw.strip == BASE_JSONL.strip } },
 ].select { |t| ENV["EVAL_TASKS"].nil? || ENV["EVAL_TASKS"].split(",").include?(t[:id]) }
 
 # ---------------------------------------------------------------------------
@@ -175,24 +175,25 @@ end
 
 def run_task(model, task)
   Dir.mktmpdir("run-", SANDBOX_BASE) do |sb|
-    File.write(File.join(sb, "gtd.org"), BASE_ORG)
-    File.write(File.join(sb, "archive.org"), "")
+    tasks_file = File.join(sb, "tasks.jsonl")
+    archive    = File.join(sb, "archive.jsonl")
+    File.write(tasks_file, BASE_JSONL)
+    File.write(archive, "")
     cmd = ["ruby", File.join(REPO, "bin", "tasks"), "-p",
            "--provider", "hermes", "--model", model, task[:prompt]]
     # Pin the task files with the HIGHEST-precedence overrides (absolute paths),
     # not just TASKS_DIR: the model runs its own `bin/tasks` inside the run, and
     # if that shell lost TASKS_DIR it would fall back to config/default and
-    # resolve OUTSIDE the sandbox. TASKS_ORG/TASKS_ARCHIVE beat everything and
+    # resolve OUTSIDE the sandbox. TASKS_FILE/TASKS_ARCHIVE beat everything and
     # don't depend on HOME/XDG, so the sandbox is airtight.
     env = { "TASKS_DIR" => sb,
-            "TASKS_ORG" => File.join(sb, "gtd.org"),
-            "TASKS_ARCHIVE" => File.join(sb, "archive.org") }
+            "TASKS_FILE" => tasks_file,
+            "TASKS_ARCHIVE" => archive }
     status, out, secs = run_capture(cmd, env, RUN_TIMEOUT)
 
-    org = File.join(sb, "gtd.org")
-    raw = File.read(org)
+    raw = File.read(tasks_file)
     items = begin
-      Tasks::Store.new(org: org, archive: File.join(sb, "archive.org")).items
+      Tasks::Store.new(org: tasks_file, archive: archive).items
     rescue StandardError
       [] # unparseable == corrupted; checks will fail
     end
@@ -204,7 +205,7 @@ def run_task(model, task)
       end
     corrupted =
       !begin
-        Tasks::Check.check(org).ok?
+        Tasks::Check.check(tasks_file).ok?
       rescue StandardError
         false
       end
@@ -262,7 +263,7 @@ def regenerate_report(warmups)
     f.puts
     f.puts "Generated #{Time.now.strftime("%Y-%m-%d %H:%M")}. Harness: `eval/llm/harness.rb`."
     f.puts "Each model drives the real CLI through the Hermes harness against a fresh"
-    f.puts "sandbox `gtd.org`; outcomes scored by the repo's own parser. #{TRIALS} trials/task,"
+    f.puts "sandbox `tasks.jsonl`; outcomes scored by the repo's own parser. #{TRIALS} trials/task,"
     f.puts "#{RUN_TIMEOUT}s timeout/run. \"Reliable\" = passed a majority (#{need}/#{TRIALS}) of trials."
     f.puts
     f.puts "## Ranking"
@@ -296,7 +297,7 @@ def regenerate_report(warmups)
     f.puts
     f.puts "## Notes"
     f.puts
-    f.puts "- Corruptions = runs that left `gtd.org` structurally invalid (`tasks check` fails)."
+    f.puts "- Corruptions = runs that left `tasks.jsonl` structurally invalid (`tasks check` fails)."
     f.puts "- Timeouts counted as failures (too slow to be usable is a real signal)."
     f.puts "- Raw per-run transcripts + outcomes in `eval/llm/runs.jsonl`."
   end

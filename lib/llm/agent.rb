@@ -4,7 +4,7 @@ module LLM
   # Abstract agent protocol — the one and only execution contract in this layer.
   #
   # An "agent" is an autonomous harness: we hand it a prompt, a system-context
-  # string, and a working directory, and it acts on its own — reads gtd.org,
+  # string, and a working directory, and it acts on its own — reads tasks.jsonl,
   # runs `bin/tasks`, edits files. Our code never parses its output for meaning;
   # it streams a transcript to the user and reloads the Store when the file
   # changes on disk. Every backend (Claude CLI, Hermes, later the Claude Agent
@@ -26,7 +26,7 @@ module LLM
   class Agent
     attr_reader :output, :io
 
-    # root:    working directory the harness runs in (where gtd.org lives).
+    # root:    working directory the harness runs in (where tasks.jsonl lives).
     # system:  fully-resolved system-context string (AGENTS.md + file
     #          locations), or nil. Adapters inject it however their CLI allows.
     # command: binary name/path — lets config point at a non-default install.

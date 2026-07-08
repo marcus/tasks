@@ -18,7 +18,7 @@ require_relative "../tasks/config"
 require_relative "../tasks/opener"
 
 module Tui
-  # The event loop: raw-mode keyboard input, gtd.org watching, and the
+  # The event loop: raw-mode keyboard input, tasks.jsonl watching, and the
   # async LLM agent runner, multiplexed with IO.select.
   class App
     A = Ansi

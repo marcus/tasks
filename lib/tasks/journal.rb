@@ -8,7 +8,7 @@ require_relative "atomic"
 require_relative "config"
 
 module Tasks
-  # A durable, cross-process undo history for gtd.org (and archive.org).
+  # A durable, cross-process undo history for tasks.jsonl (and archive.jsonl).
   #
   # The in-memory undo stack the TUI used to keep died with the process and was
   # invisible to the CLI. This journal persists every mutation to disk, so
@@ -32,7 +32,7 @@ module Tasks
   # costs one small blob plus a tiny index rewrite, never a re-serialization of
   # the entire history.
   #
-  # The journal is convenience state, not the source of truth: gtd.org is. Every
+  # The journal is convenience state, not the source of truth: tasks.jsonl is. Every
   # method here runs under Store's file lock, and index.json is replaced
   # atomically, so concurrent processes never corrupt it — but a crash in the
   # narrow window between rewriting the files and committing the cursor can

@@ -1,0 +1,13 @@
+{"type":"meta","version":1}
+{"type":"section","id":"aaaa0001","title":"Inbox","body":"Capture here first. Process into the lists below during review."}
+{"type":"task","id":"aaaa0002","parent":"aaaa0001","state":"INBOX","priority":"B","title":"Skim the new API docs and note anything worth trying","tags":["@computer"],"body":"Captured [2026-01-15]."}
+{"type":"section","id":"aaaa0003","title":"Tasks"}
+{"type":"task","id":"aaaa0004","parent":"aaaa0003","state":"NEXT","priority":"A","title":"Draft the Q1 planning outline","tags":["@computer","important"],"scheduled":"2026-01-16","body":"Start with goals, then break into projects."}
+{"type":"task","id":"aaaa0005","parent":"aaaa0003","state":"TODO","priority":"B","title":"Reply to the vendor about the renewal quote","tags":["@email"],"deadline":"2026-01-20"}
+{"type":"task","id":"aaaa0006","parent":"aaaa0003","state":"WAITING","title":"Sign-off on the budget from finance","tags":["@waiting"],"body":"Pinged 2026-01-14; nudge if no answer by Fri."}
+{"type":"section","id":"aaaa0007","title":"Projects"}
+{"type":"section","id":"aaaa0008","parent":"aaaa0007","title":"Launch the personal site","body":"Goal: a simple site up by end of month."}
+{"type":"task","id":"aaaa0009","parent":"aaaa0008","state":"NEXT","title":"Pick a static-site generator","tags":["@computer","important"]}
+{"type":"task","id":"aaaa000a","parent":"aaaa0008","state":"TODO","title":"Write the landing-page copy","tags":["@computer"]}
+{"type":"section","id":"aaaa000b","title":"Someday / Maybe"}
+{"type":"task","id":"aaaa000c","parent":"aaaa000b","state":"TODO","title":"Learn to make sourdough","tags":["@home"]}

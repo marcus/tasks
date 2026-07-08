@@ -15,7 +15,7 @@ module LLM
 
       def command(prompt, model:, stream: true)
         # --dangerously-skip-permissions: a headless run can't answer permission
-        # prompts, and the whole point is letting the agent edit gtd.org freely.
+        # prompts, and the whole point is letting the agent edit tasks.jsonl freely.
         args = [@command, "-p", prompt, "--model", model,
                 "--output-format", "text", "--dangerously-skip-permissions"]
         args += ["--append-system-prompt", @system] if @system
