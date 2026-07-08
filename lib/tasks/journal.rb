@@ -58,7 +58,14 @@ module Tasks
     def self.canonical(org)
       File.realpath(org)
     rescue Errno::ENOENT
-      File.expand_path(org)
+      # The file doesn't exist yet (first-run capture bootstraps it). Resolve the
+      # containing directory — which does exist — so the identity stays stable
+      # once the file appears: otherwise a /tmp → /private/tmp style symlink,
+      # unresolved while the file is missing but resolved afterward, would shift
+      # the journal key between the capture and its undo.
+      dir = File.dirname(org)
+      dir = File.realpath(dir) if File.exist?(dir)
+      File.join(File.expand_path(dir), File.basename(org))
     end
 
     def initialize(dir:, org:, limit:)

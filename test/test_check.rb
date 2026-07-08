@@ -145,6 +145,36 @@ class TestCheck < Minitest::Test
     assert_match(/malformed id/, res.errors.map { |_l, m| m }.join)
   end
 
+  # A JSON integer id must not crash Check (it would blow up `id !~ ID_RE`) —
+  # since with_history runs Check after writing, a raise there bypasses the
+  # rollback. Check must type-guard and report it as malformed. (C1)
+  def test_non_string_id_reports_error_without_raising
+    res = nil
+    assert_silent { res = check_records([meta, section("aaaa0001", "W"),
+                                         task(12345678, "aaaa0001", "NEXT", "int id")]) }
+    refute res.ok?
+    # Exact (line, message) assertion — the malformed-id error lands on line 3.
+    assert_includes res.errors, [3, "malformed id 12345678 (expected 8 hex chars)"]
+  end
+
+  # A non-Integer version (the float 1.0 that `1.0 == 1` would wave through) is
+  # unsupported, not a matching version. (m7)
+  def test_float_meta_version_is_unsupported
+    res = check_records([{ "type" => "meta", "version" => 1.0 },
+                         section("aaaa0001", "W")])
+    refute res.ok?
+    assert_match(/unsupported meta version 1\.0/, res.errors.map { |_l, m| m }.join)
+  end
+
+  # A string tags value crashes readers before Check runs; Check must still
+  # report it precisely. (M5)
+  def test_string_tags_is_an_error
+    res = check_records([meta, section("aaaa0001", "W"),
+                         task("aaaa0002", "aaaa0001", "NEXT", "t", "tags" => "@x")])
+    refute res.ok?
+    assert_match(/tags must be an array/, res.errors.map { |_l, m| m }.join)
+  end
+
   def test_unknown_key_warns
     res = check_records([meta, section("aaaa0001", "W"),
                          task("aaaa0002", "aaaa0001", "NEXT", "t", "colour" => "blue")])

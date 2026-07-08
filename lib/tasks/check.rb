@@ -111,16 +111,22 @@ module Tasks
         errors << [1, "missing meta record on line 1"] unless errors.any? { |l, _| l == 1 }
       elsif meta["type"] != "meta"
         errors << [1, "line 1 must be a meta record ({\"type\":\"meta\",\"version\":#{Format::VERSION}})"]
-      elsif meta["version"] != Format::VERSION
+      elsif !meta["version"].is_a?(Integer) || meta["version"] != Format::VERSION
+        # A non-Integer version (e.g. the float 1.0, which `1.0 == 1` would
+        # otherwise wave through) is unsupported, not just a wrong number.
         errors << [1, "unsupported meta version #{meta["version"].inspect} (expected #{Format::VERSION})"]
       end
     end
 
+    # Check must never raise on malformed raw JSON — a non-String id (e.g. the
+    # integer 12345678) would blow up `id !~ ID_RE`, and since with_history runs
+    # Check AFTER writing, that raise would bypass the rollback. Type-guard first,
+    # then emit an error tuple describing the real problem.
     def check_id(r, line, errors, dup_ids)
       id = r["id"]
-      if id.nil? || id.to_s.empty?
+      if id.nil? || id == ""
         errors << [line, "record missing id"]
-      elsif id !~ ID_RE
+      elsif !id.is_a?(String) || id !~ ID_RE
         errors << [line, "malformed id #{id.inspect} (expected 8 hex chars)"]
       else
         dup_ids[id] << line
@@ -163,12 +169,17 @@ module Tasks
       if r["priority"] && !PRIORITIES.include?(r["priority"])
         errors << [line, "invalid priority #{r["priority"].inspect} (expected A, B, or C)"]
       end
-      if r["title"].nil? || r["title"].to_s.strip.empty?
+      title = r["title"]
+      if title.nil? || (title.is_a?(String) && title.strip.empty?)
         errors << [line, "task has no title"]
+      elsif !title.is_a?(String)
+        errors << [line, "title must be a string"]
       end
       %w[scheduled deadline closed].each { |k| check_date(r, k, line, errors) }
       check_date(r, "archived", line, errors)
-      if (rc = r["recur"]) && rc !~ RECUR_RE
+      # Guard the type before the regex: a non-String recur (e.g. an integer)
+      # would raise on `!~`, and Check must report — never crash — on bad data.
+      if (rc = r["recur"]) && (!rc.is_a?(String) || rc !~ RECUR_RE)
         errors << [line, "invalid recur cookie #{rc.inspect} (expected e.g. .+1w, ++1m, +2d)"]
       end
       if r["closed"] && OPEN_STATES.include?(r["state"])
@@ -176,6 +187,8 @@ module Tasks
       end
       if r["tags"] && !r["tags"].is_a?(Array)
         errors << [line, "tags must be an array"]
+      elsif r["tags"].is_a?(Array) && r["tags"].any? { |t| !t.is_a?(String) }
+        errors << [line, "tags must all be strings"]
       end
     end
 

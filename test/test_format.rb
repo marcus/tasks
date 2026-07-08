@@ -190,4 +190,13 @@ class TestFormat < Minitest::Test
     assert_equal GOLDEN_RECORDS.size, res.records.size
     assert res.ok?
   end
+
+  # A leading UTF-8 BOM (U+FEFF, which some editors prepend) must be tolerated,
+  # not fold line 1 in as an opaque "invalid JSON". (m8)
+  def test_leading_bom_is_stripped_and_line_one_parses
+    res = F.parse("﻿" + GOLDEN_TEXT)
+    assert res.ok?, res.errors.inspect
+    assert_equal "meta", res.records.first["type"]
+    assert_equal 1, res.records.first["line"]
+  end
 end

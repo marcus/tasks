@@ -622,4 +622,151 @@ class TestStore < Minitest::Test
       assert Tasks::Check.check(org).ok?
     end
   end
+
+  # M1: the single `recur` field belongs to the DEADLINE when both dates are
+  # present. Only that owning date rolls; the fixed SCHEDULED is left untouched.
+  def test_recurring_completion_rolls_only_the_owning_date
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, dump_fixture([
+        { "type" => "meta", "version" => 1 },
+        { "type" => "section", "id" => "aaaa0001", "title" => "W" },
+        { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "NEXT",
+          "title" => "Both dates", "scheduled" => "2026-07-01", "deadline" => "2026-08-01",
+          "recur" => "+1w" },
+      ]))
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
+      assert store.complete!(store.items.find { |i| i.title == "Both dates" })
+      rec = record_for(org, title: "Both dates")
+      assert_equal "2026-08-08", rec["deadline"], "the owning (deadline) date rolls +1w"
+      assert_equal "2026-07-01", rec["scheduled"], "the fixed scheduled date is untouched"
+      assert_equal "NEXT", rec["state"], "recurring task stays open"
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  # m1: a deferred recurring task, once completed, drops the defer marker (like
+  # complete_impl) while still rolling its date.
+  def test_recurring_completion_strips_defer_tag
+    with_recur_store do |store, org|
+      store.set_deferred!(find_item(store, "Weekly review"), true)
+      assert find_item(store, "Weekly review").deferred?
+      assert store.complete!(find_item(store, "Weekly review")) # scheduled .+1w
+      fresh = find_item(store, "Weekly review")
+      refute fresh.deferred?, "defer tag dropped on recurring completion"
+      assert_equal Date.today + 7, fresh.scheduled, "date still rolled"
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  # m4: an invalid recur cookie (e.g. a hand-edited "++0d") is not a repeater, so
+  # completion routes through the normal close instead of Recur.next_date (which
+  # would raise ArgumentError). Check still reports the bad cookie — which, with
+  # the post-write validation gate, means the close rolls back; crucially nothing
+  # raises (the old crash is gone).
+  def test_zero_count_cookie_is_not_a_repeater
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, dump_fixture([
+        { "type" => "meta", "version" => 1 },
+        { "type" => "section", "id" => "aaaa0001", "title" => "W" },
+        { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "NEXT",
+          "title" => "Rent", "deadline" => "2020-01-01", "recur" => "++0d" },
+      ]))
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
+      rent = store.items.find { |i| i.title == "Rent" }
+      refute rent.recurring?, "++0d must not register as recurrence (was an ArgumentError)"
+      before = File.read(org)
+      refute store.complete!(rent), "post-write gate rolls back the still-invalid cookie"
+      assert_equal before, File.read(org), "file unchanged — but no raise"
+      assert_match(/invalid recur cookie/, Tasks::Check.check(org).errors.map { |_l, m| m }.join)
+    end
+  end
+
+  # C1: a file containing a non-string (integer) id must not crash mutations on a
+  # DIFFERENT, valid task — the write happens, post-write Check flags the bad id,
+  # and the whole thing rolls back cleanly (false, file unchanged, no raise).
+  def test_mutation_rolls_back_cleanly_in_a_file_with_a_non_string_id
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, dump_fixture([
+        { "type" => "meta", "version" => 1 },
+        { "type" => "section", "id" => "aaaa0001", "title" => "W" },
+        { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "NEXT",
+          "title" => "Valid task" },
+        { "type" => "task", "id" => 12345678, "parent" => "aaaa0001", "state" => "NEXT",
+          "title" => "Bad id task" },
+      ]))
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
+      assert_equal 2, store.items.size, "readers survive the integer id"
+      before = File.read(org)
+      refute store.complete!(store.items.find { |i| i.title == "Valid task" })
+      assert_equal before, File.read(org), "rolled back byte-for-byte"
+    end
+  end
+
+  # M2: an item that HAS an id no longer present in the file must fail to locate
+  # — never fall back to whatever same-title record now sits at its line.
+  def test_present_but_missing_id_does_not_fall_back_to_line_title
+    with_store do |store, org, _a|
+      flight = find_item(store, "Book flight") # holds a real id
+      records = Tasks::Format.parse(File.read(org)).records
+      # Same title, same line — but the held id has vanished (record re-ided).
+      records.find { |r| r["title"] == "Book flight in Concur" }["id"] = "ffff9999"
+      File.write(org, Tasks::Format.dump(records))
+      before = File.read(org)
+      refute store.retitle!(flight, "hijacked"), "id-bearing item must not match by line+title"
+      assert_equal before, File.read(org), "the record at that line is untouched"
+    end
+  end
+
+  # M3: undo/redo restores are gated by Check. Repairing a pre-existing invalid
+  # field succeeds, but undoing back to the invalid state is refused.
+  def test_undo_refuses_to_restore_an_invalid_prior_state
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, dump_fixture([
+        { "type" => "meta", "version" => 1 },
+        { "type" => "section", "id" => "aaaa0001", "title" => "W" },
+        { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "TODO",
+          "title" => "Fix me", "scheduled" => "not-a-date" },
+      ]))
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
+      refute Tasks::Check.check(org).ok?, "seed is invalid"
+      assert store.set_date!(store.items.find { |i| i.title == "Fix me" },
+                             Date.new(2026, 8, 1), kind: :scheduled)
+      assert Tasks::Check.check(org).ok?, "the mutation repaired the bad date"
+      repaired = File.read(org)
+      assert_equal :conflict, store.undo!.first, "undo to the invalid state is refused"
+      assert_equal repaired, File.read(org), "file stays valid after the refused undo"
+    end
+  end
+
+  # M5: a string `tags` value coerces to [] in readers (no crash) while Check
+  # still reports it.
+  def test_string_tags_does_not_crash_readers
+    with_store do |store, org, _a|
+      records = Tasks::Format.parse(File.read(org)).records
+      records.find { |r| r["title"] == "Book flight in Concur" }["tags"] = "@x"
+      File.write(org, Tasks::Format.dump(records))
+      store.reload!
+      flight = find_item(store, "Book flight")
+      assert_equal [], flight.tags, "coerced to an empty array"
+      assert_kind_of String, store.headline(flight) # doesn't raise
+      refute Tasks::Check.check(org).ok?
+      assert_match(/tags must be an array/, Tasks::Check.check(org).errors.map { |_l, m| m }.join)
+    end
+  end
+
+  # m9: notes accumulate — the body joins successive notes with "\n" and
+  # store.body splits them back into N lines.
+  def test_multiple_notes_accumulate_in_body
+    with_store do |store, org, _a|
+      store.add_note!(find_item(store, "Water the plants"), "first note")
+      store.add_note!(find_item(store, "Water the plants"), "second note")
+      assert_equal "first note\nsecond note", record_for(org, title: "Water the plants")["body"]
+      assert_equal ["first note", "second note"], store.body(find_item(store, "Water the plants"))
+      assert Tasks::Check.check(org).ok?
+    end
+  end
 end

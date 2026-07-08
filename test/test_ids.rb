@@ -93,13 +93,15 @@ class TestIds < Minitest::Test
     end
   end
 
-  def test_undo_of_id_assignment_removes_the_id
+  # Undoing an id repair would restore the idless (Check-invalid) prior state, so
+  # the undo gate refuses it (see the M3 validation gate in history_step) — the
+  # repaired file stays valid rather than reverting to a "record missing id".
+  def test_undo_of_id_assignment_is_refused_because_prior_state_is_invalid
     with_idless_store do |store, org|
-      before = File.read(org)
       store.ensure_id!(store.items.find { |i| i.title == "Ship it" })
-      refute_equal before, File.read(org)
-      assert_equal :ok, store.undo!.first
-      assert_equal before, File.read(org), "undo strips the id it added"
+      after_repair = File.read(org)
+      assert_equal :conflict, store.undo!.first, "refuses to revert to a missing-id file"
+      assert_equal after_repair, File.read(org), "the repaired id survives the refused undo"
     end
   end
 

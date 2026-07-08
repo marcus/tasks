@@ -1364,4 +1364,60 @@ class TestCliMutations < Minitest::Test
       assert_match(/can't set recurrence on a DONE task/, err)
     end
   end
+
+  # C1: `list` over a file with a non-string (integer) id must not crash — the
+  # reader coerces the id, so the CLI still renders every task.
+  def test_cli_list_survives_a_non_string_id
+    bad = dump_fixture([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "aaaa0001", "title" => "W" },
+      { "type" => "task", "id" => 12345678, "parent" => "aaaa0001", "state" => "NEXT",
+        "title" => "Int id task" },
+    ])
+    run_cli("list", content: bad) do |_org, out, err, st|
+      assert st.success?, "list crashed: #{err}"
+      assert_match(/Int id task/, out)
+    end
+  end
+
+  # M4: a mutation on a pre-existing-invalid file writes, fails post-Check, and
+  # rolls back. The CLI must point at `check` (not the phantom "changed
+  # underfoot"), exit 1, and leave the file untouched.
+  def test_cli_mutation_on_invalid_file_hints_at_check
+    dup = dump_fixture([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "aaaa0001", "title" => "W" },
+      { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "NEXT",
+        "title" => "Alpha" },
+      { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "NEXT",
+        "title" => "Beta" },
+    ])
+    run_cli("priority", "Alpha", "A", content: dup) do |org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/tasks check/, err)
+      assert_equal dup, File.read(org, encoding: "UTF-8"), "file unchanged after rollback"
+    end
+  end
+
+  # m5: capturing into an empty TASKS_DIR bootstraps a fresh, valid store (meta
+  # line + Inbox section + the task), and undo removes it (deletes the file).
+  def test_cli_capture_bootstraps_an_empty_store
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      env = { "TASKS_FILE" => org, "TASKS_ARCHIVE" => archive }
+
+      _out, err, st = Open3.capture3(env, "ruby", BIN, "capture", "brand new task")
+      assert st.success?, "capture failed: #{err}"
+      recs = Tasks::Format.parse(File.read(org, encoding: "UTF-8")).records
+      assert_equal "meta", recs.first["type"]
+      assert(recs.any? { |r| r["type"] == "section" && r["title"] == "Inbox" }, "Inbox section seeded")
+      assert(recs.any? { |r| r["type"] == "task" && r["title"] == "brand new task" }, "task inserted")
+      assert Tasks::Check.check(org).ok?, Tasks::Check.check(org).errors.inspect
+
+      _out2, err2, st2 = Open3.capture3(env, "ruby", BIN, "undo")
+      assert st2.success?, "undo failed: #{err2}"
+      refute File.exist?(org), "undo deletes the bootstrapped file"
+    end
+  end
 end

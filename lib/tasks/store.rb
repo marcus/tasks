@@ -22,9 +22,12 @@ module Tasks
     # Deferred (someday/maybe) is a semantic tag, like important/urgent — it
     # rides alongside the task's real state rather than replacing it.
     def deferred? = tags.include?(Store::DEFER_TAG)
-    # A recurring task carries a raw repeater cookie (e.g. ".+1w") in its own
-    # `recur` field; `done` rolls the date forward instead of closing it.
-    def recurring? = !recur.nil?
+    # A recurring task carries a VALID repeater cookie (e.g. ".+1w") in its own
+    # `recur` field; `done` rolls the date forward instead of closing it. A cookie
+    # that doesn't match the grammar (a hand-edited "++0d", say) is treated as
+    # non-recurring so completion closes the task normally — Check still reports
+    # the bad cookie. Guards Recur.next_date from raising on a junk value.
+    def recurring? = Recur.cookie?(recur)
   end
 
   # Owns tasks.jsonl: parsing records into Items, change detection, and the
@@ -42,6 +45,12 @@ module Tasks
 
     attr_reader :org, :archive
 
+    # The Check error summary from the most recent mutation that wrote a file
+    # then failed post-write validation and was rolled back — nil when the last
+    # mutation was clean. Lets the CLI tell a validation rollback (run `check`)
+    # apart from a genuine stale-line staleness. Cleared at each mutation's entry.
+    attr_reader :last_rollback
+
     UNDO_LIMIT = 50 # deepest undo history the journal retains
 
     # `journal_dir` defaults to an XDG_STATE_HOME location derived from the live
@@ -54,7 +63,7 @@ module Tasks
                    links: {}, link_systems: {})
       @org = org
       @archive = archive
-      @mtime = nil
+      @stat = nil
       @cache = nil
       @records = nil
       @link_shorthands = links
@@ -68,13 +77,11 @@ module Tasks
     end
 
     def changed?
-      File.mtime(@org) != @mtime
-    rescue Errno::ENOENT
-      false
+      stat_key(@org) != @stat
     end
 
     def reload!
-      @mtime = mtime_of(@org)
+      @stat = stat_key(@org)
       @records = parse_records(@org)
       @cache = @records.select { |r| r["type"] == "task" }.map { |r| build_item(r, :live) }
       @tree = nil # derived from the same records; rebuild lazily on next ask
@@ -277,8 +284,13 @@ module Tasks
 
     # -- reading ---------------------------------------------------------------
 
-    def mtime_of(path)
-      File.mtime(path)
+    # The staleness key for a file: [mtime, inode, size] — the same triple the
+    # read cache keys on, so two out-of-band writes within one coarse mtime tick
+    # (which bare mtime can't tell apart) still register as a change. nil when
+    # the file is absent.
+    def stat_key(path)
+      st = File.stat(path)
+      [st.mtime, st.ino, st.size]
     rescue Errno::ENOENT
       nil
     end
@@ -314,20 +326,26 @@ module Tasks
       item.source == :archive ? parse_records(@archive) : parse_records(@org)
     end
 
+    # Build an Item, coercing defensively so a hand-edited/malformed record can
+    # never crash a reader (list, headline, resolve_ref) before Check gets to
+    # report it: id → String, tags → Array of Strings. Check still flags the
+    # underlying breakage; the coercion only keeps the readers alive.
     def build_item(rec, source)
+      tags = rec["tags"]
+      tags = tags.is_a?(Array) ? tags.map(&:to_s) : []
       Item.new(
         state: rec["state"], priority: rec["priority"], title: rec["title"],
-        tags: rec["tags"] || [],
+        tags: tags,
         scheduled: to_date(rec["scheduled"]), deadline: to_date(rec["deadline"]),
-        recur: rec["recur"], id: rec["id"], closed: to_date(rec["closed"]),
+        recur: rec["recur"], id: rec["id"]&.to_s, closed: to_date(rec["closed"]),
         line: rec["line"], source: source
       )
     end
 
-    # Parse an ISO date string, returning nil for a missing or malformed value
-    # (Check reports the malformed one — the TUI must not crash on it).
+    # Parse an ISO date string, returning nil for a missing, non-string, or
+    # malformed value (Check reports the malformed one — readers must not crash).
     def to_date(str)
-      return nil if str.nil? || str.empty?
+      return nil unless str.is_a?(String) && !str.empty?
       Date.iso8601(str)
     rescue ArgumentError, Date::Error
       nil
@@ -335,12 +353,12 @@ module Tasks
 
     # Locate the item's record among `records`, preferring its stable id (so a
     # mutation still lands after lines shifted or the title changed out from
-    # under us); falls back to the record at the item's line whose title still
-    # matches — the pre-id staleness guard. Returns the record hash, or nil.
+    # under us). Only an id-less item falls back to the record at its line whose
+    # title still matches (the pre-id staleness guard): an item that HAS an id
+    # no longer present in the file must fail the locate — never silently land on
+    # whatever task now occupies that line. Returns the record hash, or nil.
     def locate(records, item)
-      if item.id && (r = records.find { |x| x["id"] == item.id })
-        return r
-      end
+      return records.find { |x| x["id"] == item.id } if item.id
       r = records.find { |x| x["line"] == item.line }
       r if r && r["type"] == "task" && r["title"] == item.title
     end
@@ -348,9 +366,7 @@ module Tasks
     # As locate, but returns the index into `records` (mutations that splice
     # subtrees need the position, not just the hash).
     def locate_index(records, item)
-      if item.id && (i = records.index { |x| x["id"] == item.id })
-        return i
-      end
+      return records.index { |x| x["id"] == item.id } if item.id
       i = records.index { |x| x["line"] == item.line }
       i if i && records[i]["type"] == "task" && records[i]["title"] == item.title
     end
@@ -447,15 +463,22 @@ module Tasks
       File.join(File.dirname(target), ".#{File.basename(target)}.lock")
     end
 
+    # A nil org means "no file yet" — the first-run state before `capture`
+    # bootstraps the store. restore mirrors it by deleting the file, the same
+    # way it handles a nil archive.
     def snapshot
       {
-        org: File.read(@org, encoding: "UTF-8"),
+        org: File.exist?(@org) ? File.read(@org, encoding: "UTF-8") : nil,
         archive: File.exist?(@archive) ? File.read(@archive, encoding: "UTF-8") : nil,
       }
     end
 
     def restore(snap)
-      Atomic.write(@org, snap[:org])
+      if snap[:org].nil?
+        File.delete(@org) if File.exist?(@org)
+      else
+        Atomic.write(@org, snap[:org])
+      end
       if snap[:archive].nil?
         File.delete(@archive) if File.exist?(@archive)
       else
@@ -471,7 +494,18 @@ module Tasks
         step = @journal.plan(delta)
         return [:empty] unless step
         return [:conflict, step[:label]] unless snapshot == step[:expect]
+        before = snapshot
         restore(step[:target])
+        # A journaled snapshot could pre-date a repair: restoring it would write
+        # a state that fails today's invariants. Gate the restored live file the
+        # same way with_history gates a forward mutation; on failure put the
+        # pre-undo state back and refuse (reusing the :conflict shape callers
+        # already handle). A nil target org is the empty first-run state — no
+        # file to validate — so skip the gate there.
+        if step[:target][:org] && !Check.check(@org).ok?
+          restore(before)
+          return [:conflict, step[:label]]
+        end
         step[:commit].call
         [:ok, step[:label]]
       end
@@ -484,12 +518,15 @@ module Tasks
     # can't slip between the steps.
     def with_history(label)
       with_lock do
+        @last_rollback = nil
         before = snapshot
         result = yield
         if result && result != 0
-          # post-write invariant: a mutation must never mangle the file. If it
-          # would, roll back and report failure instead.
-          unless Check.check(@org).ok?
+          # post-write invariant: a mutation must never mangle either file (the
+          # sweep writes the archive too). If it would, record why, roll back —
+          # both files are snapshotted — and report failure instead.
+          if (reason = post_write_failure)
+            @last_rollback = reason
             restore(before)
             return result.is_a?(Integer) ? 0 : false
           end
@@ -498,6 +535,17 @@ module Tasks
         end
         result
       end
+    end
+
+    # The first Check error summary if the live file — or the archive, when it
+    # exists (sweep writes it) — fails validation after a write; nil when both
+    # are clean. Drives the rollback and the CLI's "run `tasks check`" hint.
+    def post_write_failure
+      [@org, (@archive if File.exist?(@archive))].compact.each do |path|
+        res = Check.check(path)
+        return res.errors.first&.last || "validation failed" unless res.ok?
+      end
+      nil
     end
 
     # -- mutation impls --------------------------------------------------------
@@ -636,24 +684,27 @@ module Tasks
       true
     end
 
-    # Complete a recurring occurrence: roll every present date forward by the
-    # cookie (each from its own base) and leave the task open (no DONE, no
-    # closed). Logs the completion in the body so history survives even though
-    # the task never closes. Returns false if stale or not actually recurring.
+    # Complete a recurring occurrence: roll ONLY the date the cookie owns forward
+    # and leave the task open (no DONE, no closed). The schema's single `recur`
+    # field belongs to the DEADLINE when present, else the SCHEDULED (the
+    # migrator discarded a SCHEDULED cookie when both stamps had one). Rolling
+    # the other date too would rewrite a fixed deadline the user never repeated
+    # and desync a `++` catch-up — old org semantics never rolled a stamp that
+    # carried no repeater. Logs the completion in the body so history survives.
+    # Returns false if stale or there's no date to repeat from.
     def advance_recurrence_impl(item)
       records = fresh_records(@org)
       rec = locate(records, item) or return false
       cookie = rec["recur"]
       return false unless cookie
 
-      rolled = false
-      %w[scheduled deadline].each do |f|
-        base = to_date(rec[f]) or next
-        rec[f] = Recur.next_date(cookie, from: base).iso8601
-        rolled = true
-      end
-      return false unless rolled
+      field = rec["deadline"] ? "deadline" : ("scheduled" if rec["scheduled"])
+      base = field && to_date(rec[field]) or return false
+      rec[field] = Recur.next_date(cookie, from: base).iso8601
 
+      # A completed occurrence is no longer someday/maybe — drop the defer
+      # marker, matching complete_impl.
+      rec["tags"] = (rec["tags"] || []) - [DEFER_TAG] if rec["tags"]
       rec["body"] = append_body(rec["body"], "- Did [#{Date.today}].")
       write_records(@org, records)
       reload!
@@ -678,7 +729,17 @@ module Tasks
 
     def capture_impl(text, due, scheduled, priority, tags, state, project)
       records = fresh_records(@org)
-      si = find_section(records, project || "Inbox") or return false
+      if records.empty?
+        # First run: a missing or empty file. Bootstrap a brand-new store — a
+        # meta line plus the target section (default "Inbox") — then insert into
+        # it. (A NAMED --project missing from a NON-empty file still fails below.)
+        records = [meta_record,
+                   { "type" => "section", "id" => gen_id(archived_ids),
+                     "title" => (project || "Inbox").strip }]
+        si = records.length - 1
+      else
+        si = find_section(records, project || "Inbox") or return false
+      end
 
       rec = { "type" => "task", "id" => gen_id(ids_of(records) + archived_ids),
               "parent" => records[si]["id"], "state" => state }

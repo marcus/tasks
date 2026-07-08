@@ -72,6 +72,9 @@ module Tasks
     def parse(text)
       records = []
       errors = []
+      # Tolerate a leading UTF-8 BOM (some editors prepend U+FEFF): strip it so
+      # line 1 parses as JSON instead of folding in as an opaque "invalid JSON".
+      text = text.sub(/\A﻿/, "")
       text.each_line.with_index(1) do |line, no|
         stripped = line.chomp
         if stripped.strip.empty?

@@ -235,7 +235,7 @@ def cmd_capture(args)
 
   line = store.capture!(text, due: due_date, scheduled: scheduled_date,
                         priority: pri, tags: all_tags, state: st, project: project)
-  abort "could not capture (no '* #{project || "Inbox"}' section found?)" unless line && line.positive?
+  mutation_failed %(could not capture (no "#{project || "Inbox"}" section found?)) unless line && line.positive?
   if cookie
     item = store.items.find { |i| i.line == line }
     abort "failed to set recurrence on the new item" unless item && store.set_recur!(item, cookie)
@@ -269,7 +269,7 @@ def change_state(args, usage:, resolve_closed:, to: nil, dry_verb: nil, archive_
     end
     return
   end
-  abort "failed to set state (file changed underfoot?)" unless store.set_state!(item, target)
+  mutation_failed "failed to set state" unless store.set_state!(item, target)
   if recurring_done && !flags["--json"]
     fresh = store.items.find { |i| i.line == item.line }
     d = fresh && (fresh.deadline || fresh.scheduled)
@@ -307,6 +307,18 @@ end
 def store
   @store ||= Tasks::Store.new(org: ORG, archive: ARCHIVE,
                               links: PATHS.links, link_systems: PATHS.link_systems)
+end
+
+# Abort a failed mutation. A false return is usually a stale line, but it's also
+# how a post-write validation rollback surfaces — if the store recorded one,
+# append a pointed hint so the user runs `check` instead of chasing a phantom
+# concurrent edit.
+def mutation_failed(msg)
+  if store.last_rollback
+    abort "#{msg}\nfile failed validation after the edit — run `tasks check`"
+  else
+    abort msg
+  end
 end
 
 # Pull known boolean flags out of args, returning [flags_hash, positional].
@@ -377,8 +389,8 @@ def resolve_ref(ref, include_done: false)
 end
 
 # After a mutation, print (or JSON-emit) the touched task's new headline.
-# `line` is the headline's line number, which none of these mutations move
-# (CLOSED:/stamps insert after it) — unlike titles, it can't be ambiguous.
+# `line` is the record's line number, which stays put — one JSON record per line,
+# each edit rewriting that record in place — so unlike titles it can't be ambiguous.
 def report_touched(line, json:)
   store.reload!
   item = store.items.find { |i| i.line == line }
@@ -406,7 +418,7 @@ def cmd_set_date(args, kind:, usage:)
     puts "would set #{key} <#{date.iso8601} #{date.strftime("%a")}> on: #{item_headline(item)}"
     return
   end
-  abort "failed to set #{key.downcase} (file changed underfoot?)" unless store.set_date!(item, date, kind: kind)
+  mutation_failed "failed to set #{key.downcase}" unless store.set_date!(item, date, kind: kind)
   report_touched(item.line, json: flags["--json"])
 end
 
@@ -427,7 +439,7 @@ def cmd_priority(args)
     puts "would set priority #{pri ? "[##{pri}]" : "(none)"} on: #{item_headline(item)}"
     return
   end
-  abort "failed to set priority (file changed underfoot?)" unless store.set_priority!(item, pri)
+  mutation_failed "failed to set priority" unless store.set_priority!(item, pri)
   report_touched(item.line, json: flags["--json"])
 end
 
@@ -453,7 +465,7 @@ def cmd_undate(args)
     puts "would remove #{target} from: #{item_headline(item)}"
     return
   end
-  abort "nothing to remove (no matching date stamp, or file changed underfoot?)" unless store.undate!(item, kind: kind)
+  mutation_failed "nothing to remove (no matching date stamp?)" unless store.undate!(item, kind: kind)
   report_touched(item.line, json: flags["--json"])
 end
 
@@ -625,7 +637,7 @@ def cmd_retitle(args)
     puts "would retitle to #{new_title.inspect}: #{item_headline(item)}"
     return
   end
-  abort "failed to retitle (file changed underfoot?)" unless store.retitle!(item, new_title)
+  mutation_failed "failed to retitle" unless store.retitle!(item, new_title)
   report_touched(item.line, json: flags["--json"])
 end
 
@@ -652,7 +664,7 @@ def cmd_tag(args)
     puts "would apply #{changes} to: #{item_headline(item)}"
     return
   end
-  abort "failed to update tags (file changed underfoot?)" unless store.set_tags!(item, add: add, remove: remove)
+  mutation_failed "failed to update tags" unless store.set_tags!(item, add: add, remove: remove)
   report_touched(item.line, json: flags["--json"])
 end
 
@@ -667,7 +679,7 @@ def cmd_note(args)
     puts "would add note to #{item_headline(item)}: #{text}"
     return
   end
-  abort "failed to add note (file changed underfoot?)" unless store.add_note!(item, text)
+  mutation_failed "failed to add note" unless store.add_note!(item, text)
   report_touched(item.line, json: flags["--json"])
 end
 
@@ -684,7 +696,7 @@ def cmd_defer(args, deferred:, usage:, verb:)
     puts "would #{verb}: #{item_headline(item)}"
     return
   end
-  abort "failed to #{verb} (file changed underfoot?)" unless store.set_deferred!(item, deferred)
+  mutation_failed "failed to #{verb}" unless store.set_deferred!(item, deferred)
   report_touched(item.line, json: flags["--json"])
 end
 
@@ -753,10 +765,10 @@ def cmd_recur(args)
     return
   end
   if on_date && !has_date
-    abort "failed to seed date (file changed underfoot?)" unless store.set_date!(item, on_date, kind: :deadline)
+    mutation_failed "failed to seed date" unless store.set_date!(item, on_date, kind: :deadline)
     item = store.items.find { |i| i.line == item.line } or abort "lost the task after dating it"
   end
-  abort "failed to set recurrence (no date stamp, or file changed underfoot?)" unless store.set_recur!(item, cookie)
+  mutation_failed "failed to set recurrence (no date stamp?)" unless store.set_recur!(item, cookie)
   report_touched(item.line, json: flags["--json"])
 end
 
@@ -786,7 +798,7 @@ def cmd_move(args)
   end
   # move relocates the block, so its headline lands on a new line — report that.
   new_line = store.move!(item, section)
-  abort "could not move (no '* #{section}' section, or file changed underfoot?)" unless new_line && new_line.positive?
+  mutation_failed %(could not move (no "#{section}" section?)) unless new_line && new_line.positive?
   report_touched(new_line, json: flags["--json"])
 end
 
@@ -813,7 +825,7 @@ def cmd_id(args)
   abort "usage: tasks id <ref>" if ref.nil? || ref.strip.empty?
   item = resolve_ref(ref, include_done: true) # referenceable regardless of state
   id = store.ensure_id!(item)
-  abort "failed to assign id (file changed underfoot?)" unless id
+  mutation_failed "failed to assign id" unless id
   store.reload!
   fresh = store.items.find { |i| i.id == id }
   if flags["--json"]
