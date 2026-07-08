@@ -134,6 +134,16 @@ module Tui
       codes.nil? || codes.empty? ? str : Ansi.color(str, *codes)
     end
 
+    # The raw SGR opening sequence for a slot (e.g. "\e[7m", or
+    # "\e[38;2;0;0;0;48;2;64;159;255m"), or "" when the slot is unset or :none.
+    # Frame uses this to composite the :selection background UNDER a row's own
+    # field styling instead of stripping and repainting the row — see
+    # Frame.selected_row's compositing contract.
+    def sgr(slot)
+      codes = current[slot]
+      codes.nil? || codes.empty? ? "" : "\e[#{codes.join(";")}m"
+    end
+
     def slot?(slot) = DEFAULTS.key?(slot.to_sym)
 
     def selected_slot(slot)

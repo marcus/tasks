@@ -31,6 +31,20 @@ module Tasks
       # task). nil at top level.
       def project = parent
 
+      # The task's project *for grouping/display*: the nearest ancestor headline
+      # that is either a section or an OPEN task, climbing PAST closed
+      # (DONE/CANCELLED) task ancestors — a closed ancestor is transparent, the
+      # same way the outliner hoists open descendants out of a closed parent.
+      # Deferred tasks count as open (a deferred project still owns its
+      # subtasks). nil when no such ancestor exists (a top-level task, or one
+      # whose every task ancestor is closed with no section above it), so those
+      # tasks fall out of the Projects view rather than heading a dead group.
+      def open_project
+        a = parent
+        a = a.parent while a && a.task? && !a.item.open?
+        a
+      end
+
       # Body prose joined for matching. The record's body is already prose
       # (Format strips nothing — the store stored only prose), so this is a
       # straight join of the node's own lines.

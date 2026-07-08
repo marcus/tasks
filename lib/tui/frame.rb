@@ -55,15 +55,35 @@ module Tui
       lines
     end
 
+    # The selection cursor glyph. Deliberately distinct from Views::MARK_COLLAPSED
+    # ("▸ ") so a selected collapsed row reads "❯ ▸ title", not a doubled marker.
+    # One cell + a trailing space = two cells, matching the marker column width.
+    CURSOR = "❯ "
+
+    # Render the selected row with its own field colors intact ON TOP of the
+    # :selection background, via SGR compositing (no stripping/repaint).
+    #
+    # Contract: the row text already carries its field SGRs, each closed with a
+    # reset (\e[0m — the only reset form Ansi.color emits). We (1) open the line
+    # with the :selection SGR, (2) re-open it immediately after every reset so a
+    # field's own fg/attrs layer over the selection background instead of
+    # clearing it, (3) pad the visible text to the full inner width so the
+    # background spans the row, then (4) close with a single reset. Truncation
+    # runs FIRST, on the composed cursor+text, so the pad+reset tail can never be
+    # clipped. A :selection that resolves to nothing (an unstyled theme) skips
+    # compositing and just pads the plain cursor+text.
     def selected_row(row, w)
-      text = if row.respond_to?(:selected_text)
-               row.selected_text
-             else
-               T.paint(:selection, "▸ " + A.strip(row.text))
-             end
-      text = A.vtrunc(text, w)
-      pad = w - A.vislen(text)
-      pad.positive? ? text + T.paint(:selection, " " * pad) : text
+      body = A.vtrunc(CURSOR + row.text, w)
+      sel = T.sgr(:selection)
+      return A.vpad(body, w) if sel.empty?
+
+      # \e[0?m matches only the true resets (\e[0m / \e[m), never a field opener
+      # that merely contains a 0 param (e.g. \e[38;2;0;0;0m), so we re-inject the
+      # selection SGR after resets only.
+      composited = sel + body.gsub(/\e\[0?m/) { |reset| reset + sel }
+      pad = w - A.vislen(body)
+      composited += " " * pad if pad.positive?
+      composited + "\e[0m"
     end
 
     # Paste popup lines over the body starting at popup[:row]/[:col],

@@ -988,6 +988,32 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  def test_cli_show_project_skips_closed_ancestors
+    # `project` follows the nearest-OPEN-ancestor rule shared with the TUI's
+    # Projects view and detail modal: a DONE parent is skipped, an open one isn't.
+    nested = dump_fixture(
+      [{ "type" => "meta", "version" => 1 },
+       { "type" => "section", "id" => "cccc0001", "title" => "Work" },
+       { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001", "state" => "DONE",
+         "title" => "Done parent", "closed" => "2026-07-01" },
+       { "type" => "task", "id" => "cccc0003", "parent" => "cccc0002", "state" => "NEXT",
+         "title" => "Hoisted child" },
+       { "type" => "task", "id" => "cccc0004", "parent" => "cccc0001", "state" => "TODO",
+         "title" => "Open parent" },
+       { "type" => "task", "id" => "cccc0005", "parent" => "cccc0004", "state" => "TODO",
+         "title" => "Nested child" }]
+    )
+    require "json"
+    run_cli("show", "Hoisted child", "--json", content: nested) do |_org, out, _err, st|
+      assert st.success?
+      assert_equal "Work", JSON.parse(out)["project"], "DONE parent skipped → section"
+    end
+    run_cli("show", "Nested child", "--json", content: nested) do |_org, out, _err, st|
+      assert st.success?
+      assert_equal "Open parent", JSON.parse(out)["project"]
+    end
+  end
+
   def test_cli_show_closed_item_includes_closed_date
     run_cli("show", "Old finished", "--include-done", "--json") do |_org, out, _err, st|
       assert st.success?

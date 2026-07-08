@@ -30,19 +30,82 @@ class TestFrame < Minitest::Test
   def test_selected_row_is_highlighted
     lines = build(selected: 2)
     assert_includes lines[5], "\e[7m"   # borders(1) + header(1) + rule(1) + 2 rows
-    assert_includes A.strip(lines[5]), "▸ task number 3"
+    assert_includes A.strip(lines[5]), "❯ task number 3"
   end
 
-  # The selected row paints through the :selection slot. Rows carry
-  # pre-rendered themed text (Views::Row is text/item/node), so Frame reverses
-  # the stripped text under :selection and pads the rest of the line in the
-  # same slot — a custom selection background wraps the whole cursor line.
-  def test_selected_row_uses_selection_slot
+  # The selected row composites the :selection SGR UNDER the row's own field
+  # colors instead of stripping them: the line opens with the selection prefix,
+  # the row's inner fg SGR survives, and the selection prefix is re-injected
+  # after the field's reset so the background carries on across the row.
+  def test_selected_row_composites_selection_under_field_colors
     Tui::Theme.configure!(overrides: { selection: "on-blue" })
     row = Row.new("\e[35mProject\e[0m task", Object.new)
     line = build(rows: [row], selected: 0)[3]
-    assert_includes line, "\e[44m▸ Project task"   # stripped text, painted :selection
-    assert_includes A.strip(line), "▸ Project task"
+    assert_includes line, "\e[44m❯ ", "line opens with the selection SGR + cursor"
+    assert_includes line, "\e[35mProject", "the field's own fg SGR is preserved, not stripped"
+    assert_includes line, "\e[0m\e[44m", "selection SGR re-injected after the field reset"
+    assert_includes A.strip(line), "❯ Project task"
+    inner = line[/\A│ (.*) │\z/, 1]
+    assert inner.end_with?("\e[0m"), "row closes with a reset so styling can't leak"
+  ensure
+    Tui::Theme.reset!
+  end
+
+  # The selection background spans the full inner width: the visible text is
+  # padded and the padding sits under the selection SGR (before the final reset).
+  def test_selected_row_pads_to_full_width_under_selection
+    Tui::Theme.configure!(overrides: { selection: "on-blue" })
+    line = build(rows: [Row.new("short", Object.new)], selected: 0)[3]
+    inner = line[/\A│ (.*) │\z/, 1]
+    refute_nil inner, "body cell parses out of the frame line"
+    assert_equal 56, A.vislen(inner), "selected row fills the inner width (60 - borders/margins)"
+    # the padding tail is styled (last visible run is under the selection SGR),
+    # closed by exactly one trailing reset.
+    assert inner.end_with?("\e[0m")
+    assert_includes inner, "\e[44m", "selection background present across the row"
+  ensure
+    Tui::Theme.reset!
+  end
+
+  # Mono / NO_COLOR: :selection is reverse video (attribute-only, no bg color).
+  # The reverse must still cover the padded width so the whole row inverts.
+  def test_selected_row_reverse_video_covers_padding
+    Tui::Theme.configure!(name: "mono")
+    line = build(rows: [Row.new("plain row", Object.new)], selected: 0)[3]
+    inner = line[/\A│ (.*) │\z/, 1]
+    assert inner.start_with?("\e[7m"), "reverse video opens the row"
+    assert_equal 56, A.vislen(inner)
+    assert inner.end_with?("\e[0m")
+    # no stray reset mid-row would drop the reverse before the pad
+    assert_includes A.strip(inner), "❯ plain row"
+  ensure
+    Tui::Theme.reset!
+  end
+
+  # A selected row narrower than its content truncates cleanly: the pad+reset
+  # tail is never clipped (truncation runs before compositing), the line ends in
+  # a reset, and the visible width is exactly the inner width.
+  def test_selected_row_truncates_and_stays_well_formed
+    Tui::Theme.configure!(overrides: { selection: "on-blue" })
+    row = Row.new("\e[35m#{"x" * 200}\e[0m", Object.new)
+    line = build(rows: [row], selected: 0)[3]
+    inner = line[/\A│ (.*) │\z/, 1]
+    assert_equal 56, A.vislen(inner), "truncated selected row fills exactly the inner width"
+    assert inner.end_with?("\e[0m"), "truncated row still closes with a reset"
+    assert_includes A.strip(inner), "…", "ellipsis marks the truncation"
+    assert_includes inner, "\e[44m", "selection SGR survives truncation"
+  ensure
+    Tui::Theme.reset!
+  end
+
+  # A plain-text row (no field ANSI at all) still gets the full-width selection.
+  def test_selected_plain_row_gets_full_width_selection
+    Tui::Theme.configure!(overrides: { selection: "on-blue" })
+    line = build(rows: [Row.new("no ansi here", Object.new)], selected: 0)[3]
+    inner = line[/\A│ (.*) │\z/, 1]
+    assert inner.start_with?("\e[44m❯ "), "selection opens even with no field SGRs"
+    assert_equal 56, A.vislen(inner)
+    assert inner.end_with?("\e[0m")
   ensure
     Tui::Theme.reset!
   end

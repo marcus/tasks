@@ -130,10 +130,14 @@ module Tui
       inbox.map { |i| Row.new("  #{inbox_body(i)}", i) }
     end
 
-    # The projects view groups every open task under its parent project (the
-    # nearest headline ancestor, via Store#node_for). It's a grouped summary in
-    # both flat and tree mode — the grouping already expresses the hierarchy, so
-    # it doesn't ride the outliner walker. Each group header shows the open /
+    # The projects view groups every open task under its project — the nearest
+    # ancestor headline that's a section or an OPEN task, skipping closed
+    # (DONE/CANCELLED) task ancestors (Node#open_project). A task with no such
+    # ancestor (bare top-level, or all task ancestors closed) has no project and
+    # is left out, exactly like a bare top-level task; it still shows in the
+    # other four views. It's a grouped summary in both flat and tree mode — the
+    # grouping already expresses the hierarchy, so it doesn't ride the outliner
+    # walker. Each group header shows the open /
     # NEXT counts and the soonest date; tasks list beneath, project column
     # suppressed (it's the header).
     def projects(items, today: Date.today, store: nil)
@@ -452,7 +456,7 @@ module Tui
 
     def project_name(item, store)
       return nil unless store
-      store.node_for(item)&.project&.title
+      store.node_for(item)&.open_project&.title
     end
 
     def next_project_date(items)

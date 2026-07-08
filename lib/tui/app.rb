@@ -684,7 +684,9 @@ module Tui
       item = current_item
       return close_modal unless item
       width = [(IO.console&.winsize || [24, 80])[1], MIN_WIDTH].max
-      project = @store.node_for(item)&.project&.title
+      # Same rule as the Projects view: the nearest open ancestor headline,
+      # closed task ancestors skipped (Node#open_project).
+      project = @store.node_for(item)&.open_project&.title
       open_modal(Modals.detail(item, @store.body(item), width, links: @store.links(item), project: project),
                  kind: :detail)
     end

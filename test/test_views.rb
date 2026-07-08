@@ -387,6 +387,82 @@ class TestViews < Minitest::Test
     end
   end
 
+  # A DONE parent is never an active project header: its open (hoisted) child
+  # groups under the nearest open ancestor — here the enclosing section — and no
+  # "done middle" header appears, matching the outliner's hoisting through closed
+  # ancestors.
+  PROJ_DONE_PARENT = [
+    { "type" => "meta", "version" => 1 },
+    { "type" => "section", "id" => "s1", "title" => "Work" },
+    { "type" => "task", "id" => "done1", "parent" => "s1", "state" => "DONE",
+      "title" => "done middle", "closed" => "2026-06-01" },
+    { "type" => "task", "id" => "oc", "parent" => "done1", "state" => "NEXT",
+      "title" => "hoisted child" },
+  ].freeze
+
+  def test_projects_skips_done_parent_groups_under_open_ancestor
+    with_records(PROJ_DONE_PARENT) do |store|
+      stripped = texts(V.rows(:projects, store.items, today: TODAY, store: store))
+      refute stripped.any? { |t| t.start_with?("done middle") },
+             "a DONE parent must not head an active project group"
+      work = stripped.index { |t| t.start_with?("Work") }
+      assert work, "child groups under its nearest open ancestor (the section)"
+      assert stripped[work..].any? { |t| t.include?("hoisted child") }
+    end
+  end
+
+  # No open ancestor at all (a DONE root task, no section above): the hoisted
+  # child has no project and drops out of the Projects view entirely — like a
+  # bare top-level task. It stays visible in the other views.
+  PROJ_ORPHAN = [
+    { "type" => "meta", "version" => 1 },
+    { "type" => "task", "id" => "done1", "state" => "DONE",
+      "title" => "done root", "closed" => "2026-06-01" },
+    { "type" => "task", "id" => "oc", "parent" => "done1", "state" => "NEXT",
+      "title" => "orphan child" },
+  ].freeze
+
+  def test_projects_excludes_task_with_no_open_ancestor
+    with_records(PROJ_ORPHAN) do |store|
+      stripped = texts(V.rows(:projects, store.items, today: TODAY, store: store))
+      refute stripped.any? { |t| t.include?("orphan child") },
+             "a task under only closed ancestors has no project"
+      # it's still reachable in a normal view
+      assert tree_texts(store, :next).any? { |t| t.include?("orphan child") },
+             "the hoisted child still shows in Next"
+    end
+  end
+
+  # A DEFERRED project is treated as OPEN for grouping (a deferred project still
+  # owns its subtasks); it heads its own group rather than being skipped.
+  PROJ_DEFERRED = [
+    { "type" => "meta", "version" => 1 },
+    { "type" => "section", "id" => "s1", "title" => "Work" },
+    { "type" => "task", "id" => "dp", "parent" => "s1", "state" => "TODO",
+      "title" => "deferred project", "tags" => %w[defer] },
+    { "type" => "task", "id" => "kid", "parent" => "dp", "state" => "NEXT",
+      "title" => "child of deferred" },
+  ].freeze
+
+  def test_projects_deferred_parent_still_heads_group
+    with_records(PROJ_DEFERRED) do |store|
+      stripped = texts(V.rows(:projects, store.items, today: TODAY, store: store))
+      head = stripped.index { |t| t.start_with?("deferred project") }
+      assert head, "a deferred project still heads its group"
+      assert stripped[head..].any? { |t| t.include?("child of deferred") }
+    end
+  end
+
+  # The detail-modal project string follows the same nearest-open-ancestor rule
+  # as the Projects view — one definition (Node#open_project), so a closed
+  # parent is skipped in the modal too.
+  def test_open_project_skips_closed_parent_for_detail
+    with_records(PROJ_DONE_PARENT) do |store|
+      child = store.node_for(store.items.find { |i| i.title == "hoisted child" })
+      assert_equal "Work", child.open_project.title, "skips the DONE parent up to the section"
+    end
+  end
+
   # List rows paint their fields through theme slots (contexts via :context).
   # Parentage is shown by the outliner's nesting and by the dedicated Projects
   # view rather than an inline project tag on every row, so a list task row

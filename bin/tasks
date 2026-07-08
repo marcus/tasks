@@ -518,7 +518,9 @@ def cmd_show(args)
   notes = store.body(item).map(&:strip).reject(&:empty?)
 
   links = store.links(item)
-  project = store.node_for(item)&.project&.title
+  # Same rule as the TUI detail modal / Projects view: nearest OPEN ancestor
+  # (closed parents skipped), so a hoisted task reports a live project.
+  project = store.node_for(item)&.open_project&.title
 
   if flags["--json"]
     require "json"
