@@ -2,6 +2,7 @@
 
 require "io/console"
 require "date"
+require "set"
 require_relative "ansi"
 require_relative "dates"
 require_relative "store"
@@ -71,6 +72,7 @@ module Tui
       @modal_scroll = 0
       @input  = TextInput.new # prompt buffer
       @filter = nil        # committed filter string (nil = off)
+      @collapsed = Set.new # task ids folded shut in the outliner (Stage 5 drives it)
       @show_deferred = false # Z toggles deferred (someday/maybe) tasks in/out of view
       @filter_input = TextInput.new # filter buffer while typing
       @date_input = TextInput.new   # reschedule buffer
@@ -160,14 +162,18 @@ module Tui
 
     def rows
       items = @store.items
-      # Deferred (someday/maybe) tasks stay out of every view until Z reveals
-      # them — one chokepoint so all four tabs agree without each re-checking.
-      items = items.reject(&:deferred?) unless @show_deferred
       if (q = active_filter)
+        # Filter mode renders a flat list. Deferred (someday/maybe) tasks stay
+        # out until Z reveals them — the reject lives here because the tree path
+        # applies the same rule inside its walker instead.
+        items = items.reject(&:deferred?) unless @show_deferred
         q = q.downcase
         items = items.select { |i| i.title.downcase.include?(q) }
+        @rows = Views.rows(@view, items, urgent_days: @urgent_days)
+      else
+        @rows = Views.rows(@view, items, tree: @store.tree, collapsed: @collapsed,
+                                         show_deferred: @show_deferred, urgent_days: @urgent_days)
       end
-      @rows = Views.rows(@view, items, urgent_days: @urgent_days)
     end
 
     # The filter narrowing the views right now: the live buffer while

@@ -186,6 +186,13 @@ already-top-level task is a no-op (prints "already at top level", exit 0, burns
 no undo slot). Completion still cascades over the whole subtree regardless of
 depth (see Cascading completion).
 
+In the TUI tree views, an open task under a *closed* (DONE/CANCELLED) ancestor
+is **hoisted** to top level rather than dropped with its pruned parent — so a
+reopened child, or a task captured under a since-completed project, still shows.
+A *deferred* ancestor is different: it still hides its whole subtree (unless `Z`
+reveals deferred tasks), and defer-hiding wins over hoisting — a closed node
+under a hidden deferred parent stays hidden with it.
+
 **Output.** Human-readable by default. Read commands and mutations accept
 `--json`; shapes below. Mutations always print (or return in JSON) the full
 new headline of every task they touched — a single mutation may touch several
