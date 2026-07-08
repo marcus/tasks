@@ -37,7 +37,8 @@ Both the CLI and the TUI resolve `tasks.jsonl`/`archive.jsonl` through
 
 The config file also carries non-path settings: `urgent_days = N` sets the
 quadrants urgency window (see `quadrants`), overridable by the `TASKS_URGENT_DAYS`
-env var, default 3.
+env var, default 3. `max_depth = N` caps how deeply tasks may nest (integer ≥ 1),
+overridable by the `TASKS_MAX_DEPTH` env var, default 4.
 
 Two dotted namespaces configure links (see `links`/`open`):
 
@@ -55,7 +56,8 @@ this") can't false-positive. `system.<name>` classifies a custom host (and its
 subdomains) for self-hosted systems the built-in registry can't know; user
 rows win over built-ins.
 
-`tasks config` prints the resolved paths, `urgent_days`, and where each came from.
+`tasks config` prints the resolved paths, `urgent_days`, `max_depth`, and where
+each came from.
 
 ### LLM agent settings
 
@@ -206,7 +208,7 @@ is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or `nul
 | `undo` | | ✅ | Revert the last mutation via the on-disk journal (`Tasks::Journal`, under `$XDG_STATE_HOME/tasks/journal/`), shared with the TUI and across CLI runs. Refuses (exit 1) if `tasks.jsonl` changed out-of-band since that edit — resolve with `git diff` / `git checkout -- tasks.jsonl`. |
 | `redo` | | ✅ | Replay the last undone mutation; same shared journal and conflict guard as `undo`. |
 | `-p [--provider N] [--model N] "prompt"` | | ✅ | Natural-language request via a headless LLM agent (Claude CLI by default, or any configured harness). Leading `--provider`/`--model` override the config default for one run; see [LLM agent settings](#llm-agent-settings). |
-| `config [--json]` | | ✅ | Print resolved file paths (tasks file, archive, config file), `urgent_days`, and the source of each (`TASKS_FILE env`, `TASKS_DIR env`, `TASKS_URGENT_DAYS env`, `config file`, `default`). |
+| `config [--json]` | | ✅ | Print resolved file paths (tasks file, archive, config file), `urgent_days`, `max_depth`, and the source of each (`TASKS_FILE env`, `TASKS_DIR env`, `TASKS_URGENT_DAYS env`, `TASKS_MAX_DEPTH env`, `config file`, `default`). |
 | `help` | `-h`, `--help` | ✅ | Grouped command reference. Also printed (to stderr, exit 1) on an unknown/absent command. |
 
 Ideas beyond this spec live in `docs/ideas.md`.

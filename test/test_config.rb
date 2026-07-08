@@ -14,7 +14,7 @@ class TestConfig < Minitest::Test
   # the config-file lookup at a sandbox XDG dir.
   def clean_env(xdg)
     { "TASKS_FILE" => nil, "TASKS_ARCHIVE" => nil, "TASKS_DIR" => nil,
-      "TASKS_URGENT_DAYS" => nil, "XDG_CONFIG_HOME" => xdg }
+      "TASKS_URGENT_DAYS" => nil, "TASKS_MAX_DEPTH" => nil, "XDG_CONFIG_HOME" => xdg }
   end
 
   def resolve(env: {}, default: "/repo")
@@ -43,7 +43,8 @@ class TestConfig < Minitest::Test
     paths = resolve
     assert_equal "/repo/tasks.jsonl", paths.org
     assert_equal "/repo/archive.jsonl", paths.archive
-    assert_equal({ org: "default", archive: "default", urgent_days: "default" }, paths.sources)
+    assert_equal({ org: "default", archive: "default", urgent_days: "default",
+                   max_depth: "default" }, paths.sources)
   end
 
   def test_tasks_dir_env_points_both_files
@@ -156,6 +157,58 @@ class TestConfig < Minitest::Test
     assert_equal 3, Tasks::Config.for_dir("/sandbox").urgent_days
   end
 
+  # -- max_depth (the task-nesting depth cap) ---------------------------------
+
+  def test_max_depth_defaults_to_four
+    paths = resolve
+    assert_equal 4, paths.max_depth
+    assert_equal "default", paths.sources[:max_depth]
+  end
+
+  def test_max_depth_from_config_file
+    write_config("max_depth = 6\n")
+    paths = resolve
+    assert_equal 6, paths.max_depth
+    assert_equal "config file", paths.sources[:max_depth]
+  end
+
+  def test_max_depth_env_beats_config_file
+    write_config("max_depth = 6\n")
+    paths = resolve(env: { "TASKS_MAX_DEPTH" => "2" })
+    assert_equal 2, paths.max_depth
+    assert_equal "TASKS_MAX_DEPTH env", paths.sources[:max_depth]
+  end
+
+  def test_max_depth_zero_falls_back_to_default
+    write_config("max_depth = 0\n")
+    assert_equal 4, resolve.max_depth
+  end
+
+  def test_max_depth_negative_falls_back_to_default
+    write_config("max_depth = -1\n")
+    assert_equal 4, resolve.max_depth
+  end
+
+  def test_max_depth_non_numeric_falls_back_to_default
+    write_config("max_depth = deep\n")
+    assert_equal 4, resolve.max_depth
+  end
+
+  def test_max_depth_invalid_env_falls_back_to_config
+    write_config("max_depth = 5\n")
+    # a below-1 (or unparseable) env value is ignored, not fatal
+    assert_equal 5, resolve(env: { "TASKS_MAX_DEPTH" => "0" }).max_depth
+  end
+
+  def test_max_depth_empty_env_is_ignored
+    write_config("max_depth = 5\n")
+    assert_equal 5, resolve(env: { "TASKS_MAX_DEPTH" => "" }).max_depth
+  end
+
+  def test_for_dir_uses_default_max_depth
+    assert_equal 4, Tasks::Config.for_dir("/sandbox").max_depth
+  end
+
   # -- for_dir (test sandboxing) ---------------------------------------------
 
   def test_for_dir_pins_both_files_ignoring_env_and_config
@@ -178,6 +231,8 @@ class TestConfig < Minitest::Test
       assert_equal "TASKS_DIR env", j["sources"]["org"]
       assert_equal 3, j["urgent_days"]
       assert_equal "default", j["sources"]["urgent_days"]
+      assert_equal 4, j["max_depth"]
+      assert_equal "default", j["sources"]["max_depth"]
       assert_equal File.join(@xdg, "tasks", "config"), j["config_file"]
       assert_equal false, j["config_file_exists"]
     end

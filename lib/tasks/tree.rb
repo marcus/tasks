@@ -11,6 +11,10 @@ module Tasks
   # counting, no block inference). A task node's `item` is the Store item the
   # parser produced for that record; a section node's `item` is nil.
   module Tree
+    # Caps task-depth for nesting mutations (capture/move --under); enforcement
+    # lives in Store, not Check, so deeper legacy files still validate.
+    DEFAULT_MAX_DEPTH = 4
+
     Node = Struct.new(:title, :line, :level, :item, :body, :children, :parent,
                       keyword_init: true) do
       def task?    = !item.nil?

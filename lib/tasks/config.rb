@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "quadrants"
+require_relative "tree"
 
 module Tasks
   # Resolves where tasks.jsonl and archive.jsonl live, so the task data can sit
@@ -9,7 +10,8 @@ module Tasks
   #   1. TASKS_FILE / TASKS_ARCHIVE env vars (per-file overrides; tests use these)
   #   2. TASKS_DIR env var (a directory holding tasks.jsonl + archive.jsonl)
   #   3. config file at $XDG_CONFIG_HOME/tasks/config (default ~/.config/tasks/
-  #      config), `key = value` lines with keys dir / file / archive / urgent_days
+  #      config), `key = value` lines with keys dir / file / archive /
+  #      urgent_days / max_depth
   #   4. default_dir — the repo root, matching the original layout
   #
   # Every consumer (CLI, TUI) goes through Config.resolve so they can never
@@ -30,7 +32,7 @@ module Tasks
     # shorthand that then matches prose.
     LINK_NAME = /\A[a-z][a-z0-9_-]*\z/
 
-    Paths = Struct.new(:org, :archive, :urgent_days, :links, :link_systems,
+    Paths = Struct.new(:org, :archive, :urgent_days, :max_depth, :links, :link_systems,
                        :sources, :config_file, keyword_init: true) do
       # Context block appended to an agent's system prompt so a headless harness
       # finds the CLI and the task files even when they live outside the repo.
@@ -53,8 +55,9 @@ module Tasks
       Paths.new(
         org: File.join(dir, "tasks.jsonl"), archive: File.join(dir, "archive.jsonl"),
         urgent_days: Quadrants::DEFAULT_URGENT_DAYS,
+        max_depth: Tree::DEFAULT_MAX_DEPTH,
         links: {}, link_systems: {},
-        sources: { org: "pinned", archive: "pinned", urgent_days: "default" },
+        sources: { org: "pinned", archive: "pinned", urgent_days: "default", max_depth: "default" },
         config_file: config_file
       )
     end
@@ -75,12 +78,14 @@ module Tasks
       org,     org_source     = pick("tasks.jsonl",   "TASKS_FILE",    dir, dir_source, conf["file"],    env)
       archive, archive_source = pick("archive.jsonl", "TASKS_ARCHIVE", dir, dir_source, conf["archive"], env)
       urgent_days, urgent_source = pick_urgent_days(conf, env)
+      max_depth,   max_depth_source = pick_max_depth(conf, env)
 
       Paths.new(
         org: org, archive: archive,
-        urgent_days: urgent_days,
+        urgent_days: urgent_days, max_depth: max_depth,
         links: conf.fetch(:links, {}), link_systems: conf.fetch(:link_systems, {}),
-        sources: { org: org_source, archive: archive_source, urgent_days: urgent_source },
+        sources: { org: org_source, archive: archive_source, urgent_days: urgent_source,
+                   max_depth: max_depth_source },
         config_file: file
       )
     end
@@ -108,6 +113,30 @@ module Tasks
       nil
     end
     private_class_method :parse_days
+
+    # Task-nesting depth cap. Env beats config file beats the built-in default;
+    # a value below 1 (0 would forbid all tasks) or non-integer is ignored so a
+    # typo falls through to the next source rather than crashing.
+    def self.pick_max_depth(conf, env)
+      env_val = env["TASKS_MAX_DEPTH"]
+      if env_val && !env_val.empty? && (n = parse_depth(env_val))
+        [n, "TASKS_MAX_DEPTH env"]
+      elsif conf.key?("max_depth")
+        [conf["max_depth"], "config file"]
+      else
+        [Tree::DEFAULT_MAX_DEPTH, "default"]
+      end
+    end
+    private_class_method :pick_max_depth
+
+    # Parse a positive integer (≥ 1) depth, or nil if the value is unusable.
+    def self.parse_depth(str)
+      n = Integer(str, 10)
+      n < 1 ? nil : n
+    rescue ArgumentError, TypeError
+      nil
+    end
+    private_class_method :parse_depth
 
     def self.pick(basename, env_key, dir, dir_source, file_value, env)
       if env[env_key] && !env[env_key].empty?
@@ -137,8 +166,8 @@ module Tasks
 
     # `key = value` per line; `#` comments and blanks ignored; unknown keys
     # ignored (forward compatibility). Path keys (dir/file/archive) expand `~`
-    # and relative paths; scalar keys (urgent_days) parse as integers and an
-    # invalid value is dropped so the caller falls back to its default.
+    # and relative paths; scalar keys (urgent_days, max_depth) parse as integers
+    # and an invalid value is dropped so the caller falls back to its default.
     # Dotted link keys (`link.jira = …`, `system.gitlab = …`) collect into the
     # :links / :link_systems maps (symbol keys so they can't collide with the
     # flat string keys above).
@@ -160,6 +189,8 @@ module Tasks
         if PATH_KEYS.include?(key)
           conf[key] = File.expand_path(value)
         elsif key == "urgent_days" && (n = parse_days(value))
+          conf[key] = n
+        elsif key == "max_depth" && (n = parse_depth(value))
           conf[key] = n
         elsif (m = key.match(/\Alink\.(.+)\z/)) && m[1].match?(LINK_NAME)
           (conf[:links] ||= {})[m[1]] = value
