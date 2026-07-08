@@ -198,4 +198,155 @@ class TestApp < Minitest::Test
       assert_includes row_titles(app), "Pay rent"
     end
   end
+
+  # -- outliner collapse / expand (h l H L) ----------------------------------
+
+  # Work → "Ship release" (07-10) → "write notes" (07-12) → "grandchild task",
+  # plus a sibling leaf "undated rider"; Home → "solo top" (07-15), a top-level
+  # leaf. Rendered in agenda the rows are, in order: Ship release, write notes,
+  # grandchild task, undated rider, solo top.
+  NESTED_APP = dump_fixture([
+    { "type" => "meta", "version" => 1 },
+    { "type" => "section", "id" => "aaaa0001", "title" => "Work" },
+    { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "NEXT",
+      "title" => "Ship release", "deadline" => "2026-07-10" },
+    { "type" => "task", "id" => "aaaa0003", "parent" => "aaaa0002", "state" => "TODO",
+      "title" => "write notes", "deadline" => "2026-07-12" },
+    { "type" => "task", "id" => "aaaa0004", "parent" => "aaaa0003", "state" => "NEXT",
+      "title" => "grandchild task" },
+    { "type" => "task", "id" => "aaaa0005", "parent" => "aaaa0002", "state" => "TODO",
+      "title" => "undated rider" },
+    { "type" => "section", "id" => "aaaa0006", "title" => "Home" },
+    { "type" => "task", "id" => "aaaa0007", "parent" => "aaaa0006", "state" => "NEXT",
+      "title" => "solo top", "deadline" => "2026-07-15" },
+  ])
+
+  def sel_title(app)
+    rws = app.instance_variable_get(:@rows)
+    rws[app.instance_variable_get(:@sel)]&.item&.title
+  end
+
+  def collapsed(app) = app.instance_variable_get(:@collapsed)
+
+  def test_collapse_selected_folds_subtree_and_holds_selection
+    app_on(view: :agenda, select: "Ship release", content: NESTED_APP) do |app|
+      before = row_titles(app).size
+      app.send(:collapse_selected)
+      titles = row_titles(app)
+      assert_equal "Ship release", sel_title(app), "selection stays on the folded parent"
+      refute_includes titles, "write notes", "subtree hidden"
+      refute_includes titles, "grandchild task"
+      refute_includes titles, "undated rider"
+      assert_operator titles.size, :<, before, "rows shrank"
+      ship = app.instance_variable_get(:@rows).find { |r| r.item&.title == "Ship release" }
+      assert_includes Tui::Ansi.strip(ship.text), "(3)", "hidden-descendant count shows"
+      assert_includes collapsed(app), "aaaa0002"
+    end
+  end
+
+  def test_collapse_again_on_top_level_collapsed_is_noop
+    app_on(view: :agenda, select: "Ship release", content: NESTED_APP) do |app|
+      app.send(:collapse_selected) # fold
+      folded = row_titles(app)
+      sel = app.instance_variable_get(:@sel)
+      app.send(:collapse_selected) # again: parent is a section → no-op
+      assert_equal folded, row_titles(app)
+      assert_equal sel, app.instance_variable_get(:@sel)
+      assert_equal "Ship release", sel_title(app)
+    end
+  end
+
+  def test_collapse_again_on_folded_child_jumps_to_parent
+    app_on(view: :agenda, select: "write notes", content: NESTED_APP) do |app|
+      app.send(:collapse_selected) # write notes has a child → folds
+      assert_equal "write notes", sel_title(app)
+      assert_includes collapsed(app), "aaaa0003"
+      app.send(:collapse_selected) # folded now → climb to parent
+      assert_equal "Ship release", sel_title(app)
+    end
+  end
+
+  def test_collapse_on_leaf_jumps_to_parent
+    app_on(view: :agenda, select: "grandchild task", content: NESTED_APP) do |app|
+      app.send(:collapse_selected)
+      assert_equal "write notes", sel_title(app), "leaf climbs to its parent row"
+      assert_empty collapsed(app), "a leaf never folds anything"
+    end
+  end
+
+  def test_collapse_on_top_level_leaf_is_noop
+    app_on(view: :agenda, select: "solo top", content: NESTED_APP) do |app|
+      before = row_titles(app)
+      app.send(:collapse_selected)
+      assert_equal "solo top", sel_title(app)
+      assert_equal before, row_titles(app)
+      assert_empty collapsed(app)
+    end
+  end
+
+  def test_expand_selected_unfolds_and_holds_selection
+    app_on(view: :agenda, select: "Ship release", content: NESTED_APP) do |app|
+      app.send(:collapse_selected)
+      refute_includes row_titles(app), "write notes"
+      app.send(:expand_selected)
+      assert_includes row_titles(app), "write notes", "subtree back"
+      assert_equal "Ship release", sel_title(app)
+      assert_empty collapsed(app)
+    end
+  end
+
+  def test_expand_selected_on_expanded_node_is_noop
+    app_on(view: :agenda, select: "Ship release", content: NESTED_APP) do |app|
+      before = row_titles(app)
+      app.send(:expand_selected) # nothing folded → no-op
+      assert_equal before, row_titles(app)
+      assert_empty collapsed(app)
+    end
+  end
+
+  def test_collapse_all_folds_every_parent
+    app_on(view: :agenda, select: "grandchild task", content: NESTED_APP) do |app|
+      app.send(:collapse_all)
+      set = collapsed(app)
+      assert_includes set, "aaaa0002", "Ship release folded"
+      assert_includes set, "aaaa0003", "write notes folded"
+      refute_includes set, "aaaa0004", "the leaf grandchild is not a parent"
+      refute_includes set, "aaaa0007", "the top-level leaf is not a parent"
+      titles = row_titles(app)
+      refute_includes titles, "write notes"
+      refute_includes titles, "grandchild task"
+      assert_includes titles, "Ship release"
+      assert_includes titles, "solo top"
+      # the selection sat on a now-hidden row; clamp lands it on a visible task
+      landed = app.instance_variable_get(:@rows)[app.instance_variable_get(:@sel)]
+      assert landed&.item, "selection clamps onto a visible task"
+    end
+  end
+
+  def test_expand_all_restores_full_tree
+    app_on(view: :agenda, select: "Ship release", content: NESTED_APP) do |app|
+      app.send(:collapse_all)
+      app.send(:expand_all)
+      assert_empty collapsed(app)
+      titles = row_titles(app)
+      ["Ship release", "write notes", "grandchild task", "undated rider", "solo top"].each do |t|
+        assert_includes titles, t
+      end
+    end
+  end
+
+  def test_collapse_expand_do_not_crash_during_filter
+    app_on(view: :agenda, select: "Ship release", content: NESTED_APP) do |app|
+      app.instance_variable_set(:@filter, "e") # flat path: rows carry no node
+      app.send(:rows)
+      before = row_titles(app)
+      app.send(:collapse_selected) # node nil → no-op
+      app.send(:expand_selected)   # node nil → no-op
+      assert_equal before, row_titles(app), "flat filter rows unchanged by h/l"
+      # H/L still touch the store tree, but the flat filter rows don't change.
+      app.send(:collapse_all)
+      app.send(:expand_all)
+      assert_equal before, row_titles(app)
+    end
+  end
 end

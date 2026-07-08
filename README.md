@@ -100,11 +100,14 @@ models in `~/.config/tasks/config`; see `docs/cli-spec.md` (LLM agent settings).
 `bin/tasks-tui` is a full-screen interactive view over the same file (stdlib only,
 like everything else). The views update live when `tasks.jsonl` changes — whether you,
 Claude, or another process edited it. The TUI reopens on whichever view you quit
-from (session state in `$XDG_STATE_HOME/tasks/tui.json`).
+from, with the same subtrees collapsed (session state in
+`$XDG_STATE_HOME/tasks/tui.json`).
 
 ```
 1-4 / ←→   switch view: Agenda · Next · Quadrants · Inbox (arrows cycle)
 ↑↓ / jk    select a task (also flips tasks inside a detail modal)
+h / l      collapse / expand the selected subtree (h again climbs to the parent)
+H / L      collapse / expand all subtrees
 return     task detail modal
 ?          keyboard shortcuts modal
 c          mark selected task DONE

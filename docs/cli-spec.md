@@ -193,6 +193,12 @@ A *deferred* ancestor is different: it still hides its whole subtree (unless `Z`
 reveals deferred tasks), and defer-hiding wins over hoisting — a closed node
 under a hidden deferred parent stays hidden with it.
 
+`h`/`l` collapse/expand the selected subtree (a collapsed node shows `▸` and a
+dim count of hidden descendants; a second `h` on a leaf or already-collapsed
+node climbs to the parent), and `H`/`L` collapse/expand every subtree at once.
+The collapsed set persists across restarts alongside the active view (pruned to
+tasks that still exist), in `$XDG_STATE_HOME/tasks/tui.json`.
+
 **Output.** Human-readable by default. Read commands and mutations accept
 `--json`; shapes below. Mutations always print (or return in JSON) the full
 new headline of every task they touched — a single mutation may touch several

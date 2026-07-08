@@ -72,7 +72,7 @@ module Tui
       @modal_scroll = 0
       @input  = TextInput.new # prompt buffer
       @filter = nil        # committed filter string (nil = off)
-      @collapsed = Set.new # task ids folded shut in the outliner (Stage 5 drives it)
+      @collapsed = restore_collapsed # task ids folded shut in the outliner, from last session
       @show_deferred = false # Z toggles deferred (someday/maybe) tasks in/out of view
       @filter_input = TextInput.new # filter buffer while typing
       @date_input = TextInput.new   # reschedule buffer
@@ -773,6 +773,68 @@ module Tui
       switch_view(((keys.index(@view) + delta) % keys.size) + 1)
     end
 
+    # -- outliner collapse / expand (h l H L) ----------------------------------
+    #
+    # The tree rows carry their Tasks::Tree node (nil for headers, blanks, and
+    # every flat/filter-mode row), so hierarchy questions read straight off the
+    # selection. @collapsed is a Set of task ids; Views prunes a collapsed id's
+    # subtree at paint. A collapsed id that hides nothing is harmless, so these
+    # never have to reason about visibility beyond "does this node show children".
+
+    # h: fold the selected subtree. On an expandable, not-yet-folded node, add
+    # its id and keep the cursor on it. Otherwise (leaf, already folded, or an
+    # id-less row) climb to the parent task row — a second h walks you up the
+    # tree; at the top (parent is a section/nil) it's a no-op.
+    def collapse_selected
+      node = @rows[@sel]&.node
+      return unless node&.item
+      item = node.item
+      if Views.visible_children(node, @show_deferred).any? && item.id && !@collapsed.include?(item.id)
+        @collapsed.add(item.id)
+        reselect(item.line)
+      else
+        jump_to_parent(node)
+      end
+    end
+
+    # l: unfold the selected node if it's folded; otherwise nothing to do.
+    def expand_selected
+      node = @rows[@sel]&.node
+      id = node&.item&.id
+      return unless id && @collapsed.include?(id)
+      @collapsed.delete(id)
+      reselect(node.item.line)
+    end
+
+    # H: fold every task node that has task children, across the whole tree
+    # (works regardless of filter mode — the ids just wait, hidden, until the
+    # filter clears). The selection may have been on a now-hidden row, so clamp.
+    def collapse_all
+      @store.tree.each do |root|
+        root.each do |n|
+          @collapsed.add(n.item.id) if n.task? && n.item.id && n.children.any?(&:task?)
+        end
+      end
+      rows
+      clamp_selection
+    end
+
+    # L: unfold everything.
+    def expand_all
+      @collapsed.clear
+      rows
+      clamp_selection
+    end
+
+    # Move the cursor to the row of `node`'s parent task. A section (or missing)
+    # parent means we're already at the top of a subtree — leave the cursor put.
+    def jump_to_parent(node)
+      parent = node.parent
+      return unless parent&.task? && parent.item
+      idx = @rows.each_index.find { |i| @rows[i].item&.line == parent.item.line }
+      @sel = idx if idx
+    end
+
     # -- session persistence ---------------------------------------------------
     #
     # The active view survives a restart (Tui::Session). Restore validates
@@ -786,10 +848,21 @@ module Tui
       Views::TABS.map(&:last).include?(saved) ? saved : :agenda
     end
 
+    # The collapsed set from last session: an Array of id strings only. Anything
+    # else (missing key, a hand-edited scalar, ids that no longer exist) degrades
+    # to an empty set — stale ids that survive are pruned again at save time.
+    def restore_collapsed
+      saved = Session.load[:collapsed]
+      return Set.new unless saved.is_a?(Array) && saved.all? { |x| x.is_a?(String) }
+      Set.new(saved)
+    end
+
     def save_session
       # Braces required: a braceless string-key hash would parse as keywords
-      # (save has an env: kwarg) and raise.
-      Session.save({ "view" => @view.to_s })
+      # (save has an env: kwarg) and raise. Prune the collapsed set to live task
+      # ids so ids from deleted tasks don't accumulate in the state file.
+      live_ids = @store.items.map(&:id).compact
+      Session.save({ "view" => @view.to_s, "collapsed" => (@collapsed & live_ids).to_a })
     end
 
     def complete_selected

@@ -2,6 +2,7 @@
 
 require_relative "test_helper"
 require "json"
+require "set"
 require "tui/app"
 
 # Coverage for TUI session persistence: the active view survives a restart
@@ -107,6 +108,64 @@ class TestSession < Minitest::Test
       # A future feature (e.g. theme) writes alongside view; load carries both.
       Tui::Session.save({ "view" => "inbox", "theme" => "solarized" })
       assert_equal({ view: "inbox", theme: "solarized" }, Tui::Session.load)
+    end
+  end
+
+  # -- collapsed set (Stage 5) -------------------------------------------------
+
+  def test_collapsed_round_trips
+    with_state_home do
+      assert Tui::Session.save({ "view" => "agenda", "collapsed" => %w[aaaa0002 aaaa0003] })
+      assert_equal({ view: "agenda", collapsed: %w[aaaa0002 aaaa0003] }, Tui::Session.load)
+    end
+  end
+
+  # A sandbox app on the shared fixture, so live task ids are known (FIX values).
+  def app_on_fixture(dir)
+    File.write(File.join(dir, "tasks.jsonl"), FIXTURE_ORG)
+    build_app(dir)
+  end
+
+  def test_collapsed_persists_across_app_instances
+    with_state_home do
+      Dir.mktmpdir do |dir|
+        app = app_on_fixture(dir)
+        app.instance_variable_set(:@collapsed, Set[FIX[:flight]])
+        app.send(:save_session)
+        assert_equal Set[FIX[:flight]], app_on_fixture(dir).instance_variable_get(:@collapsed)
+      end
+    end
+  end
+
+  def test_save_session_prunes_stale_collapsed_ids
+    with_state_home do
+      Dir.mktmpdir do |dir|
+        app = app_on_fixture(dir)
+        # One live id (flight) and one that no longer exists in the file.
+        app.instance_variable_set(:@collapsed, Set[FIX[:flight], "deadbeef"])
+        app.send(:save_session)
+        assert_equal [FIX[:flight]], Tui::Session.load[:collapsed], "stale id pruned on save"
+      end
+    end
+  end
+
+  def test_legacy_session_without_collapsed_loads_empty
+    with_state_home do
+      Tui::Session.save({ "view" => "next" }) # no collapsed key at all
+      Dir.mktmpdir do |dir|
+        assert_empty app_on_fixture(dir).instance_variable_get(:@collapsed)
+      end
+    end
+  end
+
+  def test_corrupt_collapsed_value_falls_back_to_empty
+    with_state_home do
+      FileUtils.mkdir_p(File.dirname(Tui::Session.path))
+      # A string where an array belongs must degrade, not crash startup.
+      File.write(Tui::Session.path, JSON.generate(version: 1, view: "agenda", collapsed: "oops"))
+      Dir.mktmpdir do |dir|
+        assert_empty app_on_fixture(dir).instance_variable_get(:@collapsed)
+      end
     end
   end
 end
