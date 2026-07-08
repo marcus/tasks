@@ -14,7 +14,7 @@ require_relative "tree"
 module Tasks
   Item = Struct.new(
     :state, :priority, :title, :tags, :scheduled, :deadline, :line, :source,
-    :recur, :id, keyword_init: true
+    :recur, :id, :closed, keyword_init: true
   ) do
     def open?    = Store::OPEN_STATES.include?(state)
     def contexts = tags.select { |t| t.start_with?("@") }
@@ -38,6 +38,8 @@ module Tasks
     # A SCHEDULED:/DEADLINE: stamp, capturing the date and (optionally) the
     # repeater cookie that may sit after a day name/time but before the `>`.
     STAMP    = /(SCHEDULED|DEADLINE):\s*<(\d{4}-\d{2}-\d{2})(?:[^>]*?\s(#{REPEATER}))?[^>]*>/
+    # A CLOSED: stamp (bracketed, inactive — set when a task enters DONE/CANCELLED).
+    CLOSED_STAMP = /^\s*CLOSED:\s*\[(\d{4}-\d{2}-\d{2})\]/
 
     OPEN_STATES = %w[INBOX TODO NEXT WAITING].freeze
     DONE_STATES = %w[DONE CANCELLED].freeze
@@ -182,6 +184,17 @@ module Tasks
     def links(item)
       Links.extract([item.title, *body(item)],
                     shorthands: @link_shorthands, systems: @link_systems)
+    end
+
+    # The item's headline rendered from its fields, star-less: state, optional
+    # priority cookie, title, trailing tag cluster (stored order). Replaces
+    # reading the item's raw file line — works for org and archive items alike.
+    def headline(item)
+      s = +"#{item.state} "
+      s << "[##{item.priority}] " if item.priority
+      s << item.title
+      s << " :#{item.tags.join(":")}:" unless item.tags.empty?
+      s
     end
 
     # Raw file lines of an item: its headline plus body, up to the next
@@ -983,6 +996,12 @@ module Tasks
             # Record the repeater cookie, if any. DEADLINE takes precedence over
             # SCHEDULED (matching reschedule_impl) when both carry one.
             current.recur = s[3] if s[3] && (s[1] == "DEADLINE" || current.recur.nil?)
+          rescue Date::Error
+            # impossible date — leave nil; Check reports it, don't crash the TUI
+          end
+        elsif current && (cm = line.match(CLOSED_STAMP))
+          begin
+            current.closed = Date.parse(cm[1])
           rescue Date::Error
             # impossible date — leave nil; Check reports it, don't crash the TUI
           end

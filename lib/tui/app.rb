@@ -635,17 +635,17 @@ module Tui
     end
 
     def yank_ref
-      yank { |item, _block| Export.reference(item) }
+      yank { |item, _notes| Export.reference(item) }
     end
 
     def yank_markdown
-      yank { |item, block| Export.markdown(item, block) }
+      yank { |item, notes| Export.markdown(item, notes) }
     end
 
     def yank
       item = current_item
       return flash("nothing selected") unless item
-      text = yield(item, @store.block(item))
+      text = yield(item, @store.body(item))
       if Clipboard.copy(text)
         flash("yanked: “#{item.title}”")
       else
@@ -668,7 +668,7 @@ module Tui
       item = current_item
       return close_modal unless item
       width = [(IO.console&.winsize || [24, 80])[1], MIN_WIDTH].max
-      open_modal(Modals.detail(item, @store.block(item), width, links: @store.links(item)),
+      open_modal(Modals.detail(item, @store.body(item), width, links: @store.links(item)),
                  kind: :detail)
     end
 

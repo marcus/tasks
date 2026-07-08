@@ -326,8 +326,7 @@ def take_flags(args, *known)
 end
 
 def item_headline(item)
-  path = item.source == :archive ? ARCHIVE : ORG
-  File.readlines(path, encoding: "UTF-8")[item.line - 1]&.chomp || fmt(item)
+  store.headline(item)
 end
 
 def item_json(item)
@@ -464,12 +463,8 @@ def cmd_show(args)
   abort %(usage: tasks show <ref>) if ref.nil? || ref.strip.empty?
   item = resolve_ref(ref, include_done: flags["--include-done"])
 
-  block = Tasks::Store.strip_drawer(store.block(item))
-  closed_line = block.find { |l| l.include?("CLOSED:") }
-  closed = closed_line && closed_line[/\[(\d{4}-\d{2}-\d{2})\]/, 1]
-  notes = block[1..].map(&:strip).reject do |l|
-    l.empty? || l.start_with?("SCHEDULED:", "DEADLINE:", "CLOSED:")
-  end
+  closed = item.closed
+  notes = store.body(item).map(&:strip).reject(&:empty?)
 
   links = store.links(item)
   project = store.node_for(item)&.project&.title
@@ -477,7 +472,7 @@ def cmd_show(args)
   if flags["--json"]
     require "json"
     puts item_json(item).merge(
-      closed: closed, notes: notes, project: project,
+      closed: closed&.iso8601, notes: notes, project: project,
       links: links.map(&:to_h),
     ).to_json
   else
@@ -487,7 +482,7 @@ def cmd_show(args)
     puts "  scheduled: #{item.scheduled.iso8601}" if item.scheduled
     puts "  deadline:  #{item.deadline.iso8601}" if item.deadline
     puts "  recur:     #{item.recur} #{dim("(#{recur_summary(item.recur)})")}" if item.recur
-    puts "  closed:    #{closed}" if closed
+    puts "  closed:    #{closed.iso8601}" if closed
     notes.each { |n| puts "  #{n}" }
     unless links.empty?
       width = links.map { |l| l.system.length }.max

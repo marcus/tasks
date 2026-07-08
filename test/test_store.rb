@@ -24,6 +24,54 @@ class TestStore < Minitest::Test
     end
   end
 
+  def test_parse_reads_closed_date
+    with_store do |store, _org, _archive|
+      done = find_item(store, "Old finished thing")
+      assert_equal Date.new(2026, 6, 20), done.closed
+      assert_nil find_item(store, "Book flight").closed
+    end
+  end
+
+  def test_closed_does_not_leak_from_parent_to_child
+    with_store do |store, org, _archive|
+      File.write(org, "* Work\n** DONE Parent\n   CLOSED: [2026-06-20]\n*** NEXT Child\n")
+      store.reload!
+      assert_equal Date.new(2026, 6, 20), find_item(store, "Parent").closed
+      assert_nil find_item(store, "Child").closed
+    end
+  end
+
+  def test_closed_does_not_leak_from_child_to_parent
+    with_store do |store, org, _archive|
+      File.write(org, "* Work\n** DONE Parent\n*** DONE Child\n   CLOSED: [2026-06-20]\n")
+      store.reload!
+      assert_nil find_item(store, "Parent").closed
+      assert_equal Date.new(2026, 6, 20), find_item(store, "Child").closed
+    end
+  end
+
+  def test_headline_renders_state_priority_title_tags
+    with_store do |store, _org, _archive|
+      flight = find_item(store, "Book flight")
+      assert_equal "NEXT [#A] Book flight in Concur :@computer:important:urgent:",
+                   store.headline(flight)
+    end
+  end
+
+  def test_headline_omits_priority_when_absent
+    with_store do |store, _org, _archive|
+      plants = find_item(store, "Water the plants")
+      assert_equal "NEXT Water the plants :@home:", store.headline(plants)
+    end
+  end
+
+  def test_headline_omits_tags_when_absent
+    with_store do |store, _org, _archive|
+      thought = find_item(store, "random thought")
+      assert_equal "INBOX random thought about the garden", store.headline(thought)
+    end
+  end
+
   def test_changed_detects_external_writes
     with_store do |store, org, _archive|
       store.reload!

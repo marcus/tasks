@@ -10,7 +10,7 @@ class TestExport < Minitest::Test
   def export_for(text)
     with_store do |store, _o, _a|
       item = find_item(store, text)
-      return yield(item, store.block(item))
+      return yield(item, store.body(item))
     end
   end
 
@@ -34,6 +34,12 @@ class TestExport < Minitest::Test
   def test_markdown_includes_notes
     md = export_for("Travel desk") { |i, b| E.markdown(i, b) }
     assert_includes md, "Some note line."
+  end
+
+  def test_markdown_includes_closed_date
+    md = export_for("Old finished thing") { |i, b| E.markdown(i, b) }
+    assert_includes md, "- closed: 2026-06-20"
+    refute_includes md, "CLOSED: [" # raw org stamps don't leak
   end
 
   def test_markdown_minimal_task_omits_empty_sections

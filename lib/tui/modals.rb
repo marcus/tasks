@@ -32,10 +32,10 @@ module Tui
     }.freeze
 
     # item:  the Views/Store Item
-    # block: raw file lines of the item (headline + body) from Store#block
+    # notes: the item's prose lines (already filtered) from Store#body
     # links: the item's Tasks::Links (Store#links) — shown under the notes;
     #        `o` opens the first one
-    def detail(item, block, width, today: Date.today, links: [])
+    def detail(item, notes, width, today: Date.today, links: [])
       w = [width - 12, 64].min
       lines = A.wrap(item.title, w).map { |l| A.bold(l) }
       lines << ""
@@ -43,15 +43,14 @@ module Tui
       lines << row("priority", item.priority ? "[##{item.priority}]" : A.dim("—"))
       lines << row("deadline",  date_value(item.deadline, today))  if item.deadline
       lines << row("scheduled", date_value(item.scheduled, today)) if item.scheduled
+      lines << row("closed", item.closed.iso8601) if item.closed
       ctx  = item.contexts
       tags = item.tags - ctx
       lines << row("contexts", ctx.join("  ")) unless ctx.empty?
       lines << row("tags", tags.join("  "))    unless tags.empty?
       lines << row("id", A.dim(item.id)) if item.id
 
-      notes = Tasks::Store.strip_drawer(block).drop(1)
-                          .reject { |l| l =~ /^\s*(SCHEDULED|DEADLINE):/ }
-                          .map(&:strip).reject(&:empty?)
+      notes = notes.map(&:strip).reject(&:empty?)
       unless notes.empty?
         lines << ""
         lines << A.dim("notes")

@@ -11,7 +11,7 @@ class TestModals < Minitest::Test
   def detail_for(text)
     with_store do |store, _o, _a|
       item = find_item(store, text)
-      return M.detail(item, store.block(item), 100, today: TODAY)
+      return M.detail(item, store.body(item), 100, today: TODAY)
     end
   end
 
@@ -39,6 +39,16 @@ class TestModals < Minitest::Test
     refute lines.any? { |l| l.include?("SCHEDULED:") }
   end
 
+  def test_detail_shows_closed_row_when_present
+    lines = texts(detail_for("Old finished thing"))
+    assert lines.any? { |l| l =~ /closed\s+2026-06-20/ }
+  end
+
+  def test_detail_open_item_has_no_closed_row
+    lines = texts(detail_for("Book flight"))
+    refute lines.any? { |l| l.start_with?("closed") }
+  end
+
   def test_detail_item_without_extras_is_minimal
     lines = texts(detail_for("Water the plants"))
     refute lines.any? { |l| l.start_with?("deadline") }
@@ -51,7 +61,7 @@ class TestModals < Minitest::Test
       File.write(org, "* X\n** TODO #{"very long title word " * 10}:@computer:\n")
       store.reload!
       item = store.items.first
-      modal = M.detail(item, store.block(item), 60, today: TODAY)
+      modal = M.detail(item, store.body(item), 60, today: TODAY)
       title_lines = modal[:lines].take_while { |l| !A.strip(l).empty? }
       assert title_lines.size > 1, "long title should wrap to multiple lines"
     end
