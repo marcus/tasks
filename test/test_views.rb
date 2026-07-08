@@ -14,21 +14,22 @@ class TestViews < Minitest::Test
   def texts(rs) = rs.map { |r| A.strip(r.text) }
 
   def test_agenda_same_date_sorts_by_priority
-    org = <<~ORG
-      * Work
-      ** NEXT [#B] beta task tomorrow
-         DEADLINE: <2026-07-02>
-      ** NEXT [#A] alpha task tomorrow
-         DEADLINE: <2026-07-02>
-      ** NEXT no-priority task tomorrow
-         DEADLINE: <2026-07-02>
-      ** NEXT [#C] later but urgent-ish
-         DEADLINE: <2026-07-05>
-    ORG
+    jsonl = dump_fixture([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "cccc0001", "title" => "Work" },
+      { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001", "state" => "NEXT",
+        "priority" => "B", "title" => "beta task tomorrow", "deadline" => "2026-07-02" },
+      { "type" => "task", "id" => "cccc0003", "parent" => "cccc0001", "state" => "NEXT",
+        "priority" => "A", "title" => "alpha task tomorrow", "deadline" => "2026-07-02" },
+      { "type" => "task", "id" => "cccc0004", "parent" => "cccc0001", "state" => "NEXT",
+        "title" => "no-priority task tomorrow", "deadline" => "2026-07-02" },
+      { "type" => "task", "id" => "cccc0005", "parent" => "cccc0001", "state" => "NEXT",
+        "priority" => "C", "title" => "later but urgent-ish", "deadline" => "2026-07-05" },
+    ])
     Dir.mktmpdir do |dir|
-      path = File.join(dir, "gtd.org")
-      File.write(path, org)
-      store = Tui::Store.new(org: path, archive: File.join(dir, "archive.org"))
+      path = File.join(dir, "tasks.jsonl")
+      File.write(path, jsonl)
+      store = Tui::Store.new(org: path, archive: File.join(dir, "archive.jsonl"))
       titles = V.agenda(store.items, today: TODAY).map { |r| A.strip(r.text) }
       assert_operator titles.index { |t| t.include?("alpha") }, :<, titles.index { |t| t.include?("beta") }
       assert_operator titles.index { |t| t.include?("beta") }, :<, titles.index { |t| t.include?("no-priority") }
@@ -73,22 +74,24 @@ class TestViews < Minitest::Test
   # The point of the hybrid model: priority + deadline place a task with no
   # important/urgent tags at all.
   def test_quadrants_derived_from_priority_and_deadline
-    org = <<~ORG
-      * Work
-      ** NEXT [#A] alpha no date
-      ** NEXT [#B] beta near deadline
-         DEADLINE: <2026-07-02>
-      ** NEXT [#C] gamma near deadline
-         DEADLINE: <2026-07-02>
-      ** NEXT delta far deadline
-         DEADLINE: <2026-07-20>
-      ** TODO [#A] epsilon scheduled only
-         SCHEDULED: <2026-07-02>
-    ORG
+    jsonl = dump_fixture([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "cccc0001", "title" => "Work" },
+      { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001", "state" => "NEXT",
+        "priority" => "A", "title" => "alpha no date" },
+      { "type" => "task", "id" => "cccc0003", "parent" => "cccc0001", "state" => "NEXT",
+        "priority" => "B", "title" => "beta near deadline", "deadline" => "2026-07-02" },
+      { "type" => "task", "id" => "cccc0004", "parent" => "cccc0001", "state" => "NEXT",
+        "priority" => "C", "title" => "gamma near deadline", "deadline" => "2026-07-02" },
+      { "type" => "task", "id" => "cccc0005", "parent" => "cccc0001", "state" => "NEXT",
+        "title" => "delta far deadline", "deadline" => "2026-07-20" },
+      { "type" => "task", "id" => "cccc0006", "parent" => "cccc0001", "state" => "TODO",
+        "priority" => "A", "title" => "epsilon scheduled only", "scheduled" => "2026-07-02" },
+    ])
     Dir.mktmpdir do |dir|
-      path = File.join(dir, "gtd.org")
-      File.write(path, org)
-      store = Tui::Store.new(org: path, archive: File.join(dir, "archive.org"))
+      path = File.join(dir, "tasks.jsonl")
+      File.write(path, jsonl)
+      store = Tui::Store.new(org: path, archive: File.join(dir, "archive.jsonl"))
       rs = texts(V.rows(:quadrants, store.items, today: TODAY, urgent_days: 3))
       q1 = rs.index { |t| t.start_with?("Q1") }
       q2 = rs.index { |t| t.start_with?("Q2") }
@@ -104,15 +107,16 @@ class TestViews < Minitest::Test
 
   # A wider urgent_days window pulls a far-out deadline into the urgent column.
   def test_quadrants_urgent_days_widens_window
-    org = <<~ORG
-      * Work
-      ** NEXT [#A] far deadline task
-         DEADLINE: <2026-07-20>
-    ORG
+    jsonl = dump_fixture([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "cccc0001", "title" => "Work" },
+      { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001", "state" => "NEXT",
+        "priority" => "A", "title" => "far deadline task", "deadline" => "2026-07-20" },
+    ])
     Dir.mktmpdir do |dir|
-      path = File.join(dir, "gtd.org")
-      File.write(path, org)
-      store = Tui::Store.new(org: path, archive: File.join(dir, "archive.org"))
+      path = File.join(dir, "tasks.jsonl")
+      File.write(path, jsonl)
+      store = Tui::Store.new(org: path, archive: File.join(dir, "archive.jsonl"))
       default = texts(V.rows(:quadrants, store.items, today: TODAY))
       q2 = default.index { |t| t.start_with?("Q2") }
       q3 = default.index { |t| t.start_with?("Q3") }
@@ -148,17 +152,18 @@ class TestViews < Minitest::Test
   end
 
   def test_recurring_task_gets_a_badge
-    org = <<~ORG
-      * Work
-      ** NEXT Pay rent :@home:
-         DEADLINE: <2026-07-02 Thu +1m>
-      ** NEXT Plain task
-         DEADLINE: <2026-07-02 Thu>
-    ORG
+    jsonl = dump_fixture([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "cccc0001", "title" => "Work" },
+      { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001", "state" => "NEXT",
+        "title" => "Pay rent", "tags" => %w[@home], "deadline" => "2026-07-02", "recur" => "+1m" },
+      { "type" => "task", "id" => "cccc0003", "parent" => "cccc0001", "state" => "NEXT",
+        "title" => "Plain task", "deadline" => "2026-07-02" },
+    ])
     Dir.mktmpdir do |dir|
-      path = File.join(dir, "gtd.org")
-      File.write(path, org)
-      store = Tui::Store.new(org: path, archive: File.join(dir, "archive.org"))
+      path = File.join(dir, "tasks.jsonl")
+      File.write(path, jsonl)
+      store = Tui::Store.new(org: path, archive: File.join(dir, "archive.jsonl"))
       rs = V.agenda(store.items, today: TODAY)
       rent = rs.find { |r| r.text.include?("Pay rent") }
       plain = rs.find { |r| r.text.include?("Plain task") }

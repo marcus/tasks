@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require "tasks/format"
 require "open3"
 require "json"
 
@@ -8,29 +9,34 @@ require "json"
 # (Tasks::Links), and the surfaces they back: Store#tree/node_for/body/links,
 # `tasks links`, and `list --body` full-text search.
 class TestTree < Minitest::Test
-  NESTED_ORG = <<~ORG
-    * Work
-    ** NEXT [#A] Fix billing outage :@computer:
-       DEADLINE: <2026-07-10 Fri>
-       :PROPERTIES:
-       :ID: aaaa1111
-       :END:
-       Context in [[https://acme.slack.com/archives/C042/p171][the incident thread]].
-       Ticket: https://acme.atlassian.net/browse/OPS-1234.
-    ** NEXT Review Q3 planning doc
-       https://docs.google.com/document/d/abc/edit
-    *** TODO Leave comments for Dana
-       Dana prefers suggestions mode.
-    * Home
-    ** TODO Renew passport
-       Photo specs: https://travel.state.gov/photos.html, then book.
-  ORG
+  # A nested fixture: a section with a task carrying body links, a task with a
+  # subtask, and a second section — the same shape the old NESTED_ORG had.
+  NESTED_RECORDS = [
+    { "type" => "meta", "version" => 1 },
+    { "type" => "section", "id" => "aaaa0001", "title" => "Work" },
+    { "type" => "task", "id" => "aaaa1111", "parent" => "aaaa0001", "state" => "NEXT",
+      "priority" => "A", "title" => "Fix billing outage", "tags" => %w[@computer],
+      "deadline" => "2026-07-10",
+      "body" => "Context in [[https://acme.slack.com/archives/C042/p171][the incident thread]].\n" \
+                "Ticket: https://acme.atlassian.net/browse/OPS-1234." },
+    { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "NEXT",
+      "title" => "Review Q3 planning doc",
+      "body" => "https://docs.google.com/document/d/abc/edit" },
+    { "type" => "task", "id" => "aaaa0003", "parent" => "aaaa0002", "state" => "TODO",
+      "title" => "Leave comments for Dana", "body" => "Dana prefers suggestions mode." },
+    { "type" => "section", "id" => "aaaa0004", "title" => "Home" },
+    { "type" => "task", "id" => "aaaa0005", "parent" => "aaaa0004", "state" => "TODO",
+      "title" => "Renew passport",
+      "body" => "Photo specs: https://travel.state.gov/photos.html, then book." },
+  ].freeze
+
+  NESTED = Tasks::Format.dump(NESTED_RECORDS)
 
   def nested_store
     Dir.mktmpdir do |dir|
-      org = File.join(dir, "gtd.org")
-      File.write(org, NESTED_ORG)
-      yield Tasks::Store.new(org: org, archive: File.join(dir, "archive.org")), org, dir
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, NESTED)
+      yield Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl")), org, dir
     end
   end
 
@@ -70,23 +76,25 @@ class TestTree < Minitest::Test
     nested_store do |store, org, _d|
       assert_equal 2, store.tree.size
       future = Time.now + 2
-      File.write(org, NESTED_ORG + "* Errands\n** TODO Buy stamps\n")
+      extra = [{ "type" => "section", "id" => "aaaa0006", "title" => "Errands" },
+               { "type" => "task", "id" => "aaaa0007", "parent" => "aaaa0006", "state" => "TODO",
+                 "title" => "Buy stamps" }]
+      File.write(org, NESTED + Tasks::Format.dump(extra))
       File.utime(future, future, org)
       assert_equal 3, store.tree.size, "tree follows the file, like items"
     end
   end
 
-  def test_body_strips_drawer_and_covers_archive_items
+  def test_body_is_prose_and_covers_archive_items
     nested_store do |store, _o, _d|
       billing = store.items.find { |i| i.title.include?("billing") }
-      body = store.body(billing).join
-      refute_match(/:PROPERTIES:|:ID:/, body, "drawer is machinery, not body")
+      body = store.body(billing).join("\n")
       assert_match(/incident thread/, body)
 
       store.complete!(billing)
       store.archive_swept!
       archived = store.archive_items.find { |i| i.title.include?("billing") }
-      assert_match(/incident thread/, store.body(archived).join, "body works for archive items")
+      assert_match(/incident thread/, store.body(archived).join("\n"), "body works for archive items")
       assert_nil store.node_for(archived), "tree indexes the live file only"
     end
   end
@@ -174,7 +182,11 @@ class TestTree < Minitest::Test
       held.id = nil # an id-less held item
       # An out-of-band edit shifts lines so a different task sits at held.line.
       future = Time.now + 2
-      File.write(org, "* New\n** TODO interloper task\n" + File.read(org))
+      prefix = [{ "type" => "section", "id" => "aaaa0008", "title" => "New" },
+                { "type" => "task", "id" => "aaaa0009", "parent" => "aaaa0008", "state" => "TODO",
+                  "title" => "interloper task" }]
+      shifted = [{ "type" => "meta", "version" => 1 }, *prefix, *NESTED_RECORDS[1..]]
+      File.write(org, Tasks::Format.dump(shifted))
       File.utime(future, future, org)
       assert_empty store.body(held), "an id-less stale item degrades to empty, not to the wrong task"
     end
@@ -185,23 +197,16 @@ class TestTree < Minitest::Test
     assert_equal "jira",       Tasks::Links.classify("https://acme.atlassian.net/browse/OPS-1")
   end
 
-  def test_body_excludes_planning_and_archive_separators
-    nested_store do |store, _o, _d|
-      billing = store.items.find { |i| i.title.include?("billing") }
-      refute_match(/DEADLINE/, store.body(billing).join, "planning stamps are not prose")
-
-      store.complete!(billing)
-      store.archive_swept!
-      archived = store.archive_items.find { |i| i.title.include?("billing") }
-      refute_match(/# Archived/, store.body(archived).join, "sweep separators are not prose")
-    end
-  end
-
   def test_store_links_includes_title_urls
     Dir.mktmpdir do |dir|
-      org = File.join(dir, "gtd.org")
-      File.write(org, "* Work\n** TODO Review https://github.com/acme/app/pull/7\n")
-      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.org"))
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, Tasks::Format.dump([
+        { "type" => "meta", "version" => 1 },
+        { "type" => "section", "id" => "aaaa0001", "title" => "Work" },
+        { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "TODO",
+          "title" => "Review https://github.com/acme/app/pull/7" },
+      ]))
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
       links = store.links(store.items.first)
       assert_equal ["github"], links.map(&:system)
     end
@@ -212,8 +217,8 @@ class TestTree < Minitest::Test
   BIN = File.expand_path("../bin/tasks", __dir__)
 
   def cli(dir, *args)
-    env = { "TASKS_ORG" => File.join(dir, "gtd.org"),
-            "TASKS_ARCHIVE" => File.join(dir, "archive.org"),
+    env = { "TASKS_FILE" => File.join(dir, "tasks.jsonl"),
+            "TASKS_ARCHIVE" => File.join(dir, "archive.jsonl"),
             "XDG_STATE_HOME" => File.join(dir, "state") }
     out, err, st = Open3.capture3(env, "ruby", BIN, *args)
     [out.force_encoding("UTF-8"), err.force_encoding("UTF-8"), st]
@@ -221,7 +226,7 @@ class TestTree < Minitest::Test
 
   def with_cli_fixture
     Dir.mktmpdir do |dir|
-      File.write(File.join(dir, "gtd.org"), NESTED_ORG)
+      File.write(File.join(dir, "tasks.jsonl"), NESTED)
       yield dir
     end
   end
@@ -230,8 +235,8 @@ class TestTree < Minitest::Test
     with_cli_fixture do |dir|
       out, _e, st = cli(dir, "links")
       assert st.success?
-      assert_match(/slack\s+https:\/\/acme\.slack\.com/, out)
-      assert_match(/jira\s+https:\/\/acme\.atlassian\.net/, out)
+      assert_match(%r{slack\s+https://acme\.slack\.com}, out)
+      assert_match(%r{jira\s+https://acme\.atlassian\.net}, out)
 
       out, _e, st = cli(dir, "links", "--system", "jira")
       assert st.success?
@@ -271,7 +276,12 @@ class TestTree < Minitest::Test
 
   def test_cli_links_empty_message
     Dir.mktmpdir do |dir|
-      File.write(File.join(dir, "gtd.org"), "* Inbox\n** TODO nothing linked\n")
+      File.write(File.join(dir, "tasks.jsonl"), Tasks::Format.dump([
+        { "type" => "meta", "version" => 1 },
+        { "type" => "section", "id" => "aaaa0001", "title" => "Inbox" },
+        { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "TODO",
+          "title" => "nothing linked" },
+      ]))
       out, _e, st = cli(dir, "links")
       assert st.success?
       assert_match(/No links found/, out)

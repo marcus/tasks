@@ -49,6 +49,7 @@ require "tui/store"
 require "tui/views"
 require "tui/frame"
 require "llm/registry"
+require "tasks/format"
 
 module LLMTestHelpers
   # An EMPTY LLM config so App tests are hermetic — they never read the
@@ -60,30 +61,77 @@ module LLMTestHelpers
 end
 Minitest::Test.include(LLMTestHelpers)
 
-FIXTURE_ORG = <<~ORG
-  * Inbox
-  ** INBOX random thought about the garden
+# Fixed 8-hex ids for the shared fixture, exposed so tests can assert against a
+# known id (and so migration-style stable ids are exercised end to end). Real
+# ids are SecureRandom.hex(4); these are hand-picked hex so they're stable.
+FIX = {
+  inbox:  "aaaa0001",
+  garden: "aaaa0002",
+  work:   "aaaa0003",
+  flight: "aaaa0004",
+  pr:     "aaaa0005",
+  eval:   "aaaa0006",
+  travel: "aaaa0007",
+  old:    "aaaa0008",
+  home:   "aaaa0009",
+  plants: "aaaa000a",
+}.freeze
 
-  * Work
-  ** NEXT [#A] Book flight in Concur :@computer:important:urgent:
-     DEADLINE: <2026-07-02 Thu>
-  ** NEXT [#B] Review PR backlog :@computer:important:
-  ** TODO [#A] Midyear self-eval :@computer:important:
-     SCHEDULED: <2026-07-03 Fri>
-  ** WAITING Travel desk reply :@email:urgent:
-     Some note line.
-  ** DONE [#C] Old finished thing :@computer:
-     CLOSED: [2026-06-20]
+# The shared fixture as records — same titles/states/dates/tags/notes as the
+# old org fixture, so behavioral assertions carry over. `with_store` serializes
+# this to tasks.jsonl. Order is DFS pre-order (a validated invariant).
+FIXTURE_RECORDS = [
+  { "type" => "meta", "version" => 1 },
+  { "type" => "section", "id" => FIX[:inbox], "title" => "Inbox" },
+  { "type" => "task", "id" => FIX[:garden], "parent" => FIX[:inbox], "state" => "INBOX",
+    "title" => "random thought about the garden" },
+  { "type" => "section", "id" => FIX[:work], "title" => "Work" },
+  { "type" => "task", "id" => FIX[:flight], "parent" => FIX[:work], "state" => "NEXT",
+    "priority" => "A", "title" => "Book flight in Concur",
+    "tags" => %w[@computer important urgent], "deadline" => "2026-07-02" },
+  { "type" => "task", "id" => FIX[:pr], "parent" => FIX[:work], "state" => "NEXT",
+    "priority" => "B", "title" => "Review PR backlog", "tags" => %w[@computer important] },
+  { "type" => "task", "id" => FIX[:eval], "parent" => FIX[:work], "state" => "TODO",
+    "priority" => "A", "title" => "Midyear self-eval",
+    "tags" => %w[@computer important], "scheduled" => "2026-07-03" },
+  { "type" => "task", "id" => FIX[:travel], "parent" => FIX[:work], "state" => "WAITING",
+    "title" => "Travel desk reply", "tags" => %w[@email urgent], "body" => "Some note line." },
+  { "type" => "task", "id" => FIX[:old], "parent" => FIX[:work], "state" => "DONE",
+    "priority" => "C", "title" => "Old finished thing", "tags" => %w[@computer],
+    "closed" => "2026-06-20" },
+  { "type" => "section", "id" => FIX[:home], "title" => "Home" },
+  { "type" => "task", "id" => FIX[:plants], "parent" => FIX[:home], "state" => "NEXT",
+    "title" => "Water the plants", "tags" => %w[@home] },
+].freeze
 
-  * Home
-  ** NEXT Water the plants :@home:
-ORG
+# The canonical fixture text (one JSON record per line). Kept under the old
+# name so the many `File.write(path, FIXTURE_ORG)` / `assert_equal FIXTURE_ORG`
+# sites read unchanged — the content is jsonl now.
+FIXTURE = Tasks::Format.dump(FIXTURE_RECORDS)
+FIXTURE_ORG = FIXTURE
+
+# Serialize a records array to fixture text (for tests that need a variant).
+def dump_fixture(records) = Tasks::Format.dump(records)
+
+# The fixture with the plants task deferred (a common variant).
+def deferred_fixture
+  recs = FIXTURE_RECORDS.map(&:dup)
+  plants = recs.find { |r| r["id"] == FIX[:plants] }
+  plants["tags"] = plants["tags"] + ["defer"]
+  Tasks::Format.dump(recs)
+end
+
+# The parsed record (string-keyed hash, stamped with "line") whose title
+# matches — the field-level counterpart to the old regex-over-org assertions.
+def record_for(path, title:)
+  Tasks::Format.parse(File.read(path, encoding: "UTF-8")).records.find { |r| r["title"] == title }
+end
 
 def with_store
   Dir.mktmpdir do |dir|
-    org = File.join(dir, "gtd.org")
-    archive = File.join(dir, "archive.org")
-    File.write(org, FIXTURE_ORG)
+    org = File.join(dir, "tasks.jsonl")
+    archive = File.join(dir, "archive.jsonl")
+    File.write(org, FIXTURE)
     yield Tui::Store.new(org: org, archive: archive), org, archive
   end
 end

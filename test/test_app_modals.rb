@@ -10,7 +10,7 @@ class TestAppModals < Minitest::Test
 
   def with_app
     Dir.mktmpdir do |dir|
-      File.write(File.join(dir, "gtd.org"), FIXTURE_ORG)
+      File.write(File.join(dir, "tasks.jsonl"), FIXTURE_ORG)
       app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir),
                          llm_config: default_llm_config)
       app.send(:rows) # populate @rows like the paint loop does

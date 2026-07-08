@@ -3,13 +3,13 @@
 require_relative "quadrants"
 
 module Tasks
-  # Resolves where gtd.org and archive.org live, so the task data can sit
+  # Resolves where tasks.jsonl and archive.jsonl live, so the task data can sit
   # outside this repo. Precedence, highest first:
   #
-  #   1. TASKS_ORG / TASKS_ARCHIVE env vars (per-file overrides; tests use these)
-  #   2. TASKS_DIR env var (a directory holding gtd.org + archive.org)
+  #   1. TASKS_FILE / TASKS_ARCHIVE env vars (per-file overrides; tests use these)
+  #   2. TASKS_DIR env var (a directory holding tasks.jsonl + archive.jsonl)
   #   3. config file at $XDG_CONFIG_HOME/tasks/config (default ~/.config/tasks/
-  #      config), `key = value` lines with keys dir / org / archive / urgent_days
+  #      config), `key = value` lines with keys dir / file / archive / urgent_days
   #   4. default_dir — the repo root, matching the original layout
   #
   # Every consumer (CLI, TUI) goes through Config.resolve so they can never
@@ -19,7 +19,7 @@ module Tasks
   # window that marks a task "urgent" in the Covey quadrants (env
   # TASKS_URGENT_DAYS > config `urgent_days` > Quadrants::DEFAULT_URGENT_DAYS).
   module Config
-    PATH_KEYS = %w[dir org archive].freeze
+    PATH_KEYS = %w[dir file archive].freeze
 
     # Link settings live in two dotted namespaces (see Tasks::Links):
     #   link.<name>   = <url template with %s>  — shorthand: `jira:OPS-1` in a
@@ -39,8 +39,8 @@ module Tasks
         <<~CTX
           File locations for this run (absolute; use these, not relative paths):
           - tasks CLI: #{File.join(cli_root, "bin", "tasks")}
-          - gtd.org: #{org}
-          - archive.org: #{archive}
+          - tasks.jsonl: #{org}
+          - archive.jsonl: #{archive}
         CTX
       end
       # Deprecated alias kept for one release; prefer #agent_context.
@@ -51,7 +51,7 @@ module Tasks
     # sandboxes (tests) that must never touch the user's real task files.
     def self.for_dir(dir)
       Paths.new(
-        org: File.join(dir, "gtd.org"), archive: File.join(dir, "archive.org"),
+        org: File.join(dir, "tasks.jsonl"), archive: File.join(dir, "archive.jsonl"),
         urgent_days: Quadrants::DEFAULT_URGENT_DAYS,
         links: {}, link_systems: {},
         sources: { org: "pinned", archive: "pinned", urgent_days: "default" },
@@ -72,8 +72,8 @@ module Tasks
           [default_dir, "default"]
         end
 
-      org,     org_source     = pick("gtd.org",     "TASKS_ORG",     dir, dir_source, conf["org"],     env)
-      archive, archive_source = pick("archive.org", "TASKS_ARCHIVE", dir, dir_source, conf["archive"], env)
+      org,     org_source     = pick("tasks.jsonl",   "TASKS_FILE",    dir, dir_source, conf["file"],    env)
+      archive, archive_source = pick("archive.jsonl", "TASKS_ARCHIVE", dir, dir_source, conf["archive"], env)
       urgent_days, urgent_source = pick_urgent_days(conf, env)
 
       Paths.new(
@@ -136,7 +136,7 @@ module Tasks
     end
 
     # `key = value` per line; `#` comments and blanks ignored; unknown keys
-    # ignored (forward compatibility). Path keys (dir/org/archive) expand `~`
+    # ignored (forward compatibility). Path keys (dir/file/archive) expand `~`
     # and relative paths; scalar keys (urgent_days) parse as integers and an
     # invalid value is dropped so the caller falls back to its default.
     # Dotted link keys (`link.jira = …`, `system.gitlab = …`) collect into the

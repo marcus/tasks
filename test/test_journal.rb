@@ -13,9 +13,9 @@ class TestJournal < Minitest::Test
   # the same org file shares that history (as the CLI and TUI would).
   def with_journal_store
     Dir.mktmpdir do |dir|
-      org = File.join(dir, "gtd.org")
-      archive = File.join(dir, "archive.org")
-      File.write(org, FIXTURE_ORG)
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, FIXTURE)
       jdir = File.join(dir, "journal")
       build = ->() { Tasks::Store.new(org: org, archive: archive, journal_dir: jdir) }
       yield build, org, archive, jdir
@@ -248,17 +248,16 @@ class TestJournal < Minitest::Test
     with_journal_store do |build, _org, _a|
       s = build.call
       water = s.items.find { |i| i.title.include?("Water the plants") }
-      assert s.ensure_id!(water) # stamps an id — one real, undoable step
+      assert s.set_priority!(water, "B") # one real, undoable step
 
       fresh = build.call
       w2 = fresh.items.find { |i| i.title.include?("Water the plants") }
-      assert w2.id, "task now carries an id"
-      # It already has @home and now an id, so re-adding @home writes identical
-      # content — a true no-op that must not create an undoable entry.
+      # It already has @home, so re-adding @home writes identical content —
+      # a true no-op that must not create an undoable entry.
       assert fresh.set_tags!(w2, add: ["@home"])
 
       u = build.call
-      assert_equal :ok, u.undo!.first, "the id assignment is undoable"
+      assert_equal :ok, u.undo!.first, "the priority change is undoable"
       assert_equal [:empty], u.undo!, "the no-op tag recorded nothing"
     end
   end
@@ -270,8 +269,8 @@ class TestJournal < Minitest::Test
   # Run bin/tasks against a fixed org + state dir so successive invocations
   # share one history (the real cross-process scenario).
   def cli(dir, *args)
-    env = { "TASKS_ORG" => File.join(dir, "gtd.org"),
-            "TASKS_ARCHIVE" => File.join(dir, "archive.org"),
+    env = { "TASKS_FILE" => File.join(dir, "tasks.jsonl"),
+            "TASKS_ARCHIVE" => File.join(dir, "archive.jsonl"),
             "XDG_STATE_HOME" => File.join(dir, "state") }
     out, err, st = Open3.capture3(env, "ruby", BIN, *args)
     [out.force_encoding("UTF-8"), err.force_encoding("UTF-8"), st]
@@ -279,8 +278,8 @@ class TestJournal < Minitest::Test
 
   def test_cli_undo_reverts_a_prior_invocation
     Dir.mktmpdir do |dir|
-      org = File.join(dir, "gtd.org")
-      File.write(org, FIXTURE_ORG)
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, FIXTURE)
       before = File.read(org)
 
       _o, _e, st = cli(dir, "done", "Book flight")
@@ -301,7 +300,7 @@ class TestJournal < Minitest::Test
 
   def test_cli_undo_with_empty_history_fails_cleanly
     Dir.mktmpdir do |dir|
-      File.write(File.join(dir, "gtd.org"), FIXTURE_ORG)
+      File.write(File.join(dir, "tasks.jsonl"), FIXTURE)
       _o, err, st = cli(dir, "undo")
       refute st.success?
       assert_match(/nothing to undo/, err)
@@ -310,8 +309,8 @@ class TestJournal < Minitest::Test
 
   def test_cli_undo_refuses_after_out_of_band_edit
     Dir.mktmpdir do |dir|
-      org = File.join(dir, "gtd.org")
-      File.write(org, FIXTURE_ORG)
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, FIXTURE)
       cli(dir, "priority", "Book flight", "C")
       # Claude (or the user) edits the file directly afterward.
       File.write(org, File.read(org) + "** TODO added out of band\n")
@@ -330,12 +329,12 @@ class TestJournal < Minitest::Test
     # Without the lock, one read-modify-write clobbers the other; with it, both
     # captures survive.
     Dir.mktmpdir do |dir|
-      org = File.join(dir, "gtd.org")
-      archive = File.join(dir, "archive.org")
-      File.write(org, FIXTURE_ORG)
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, FIXTURE)
       state = File.join(dir, "state")
       bin = File.expand_path("../bin/tasks", __dir__)
-      env = { "TASKS_ORG" => org, "TASKS_ARCHIVE" => archive, "XDG_STATE_HOME" => state }
+      env = { "TASKS_FILE" => org, "TASKS_ARCHIVE" => archive, "XDG_STATE_HOME" => state }
 
       threads = 8.times.map do |i|
         Thread.new { Open3.capture3(env, "ruby", bin, "capture", "concurrent item #{i}") }

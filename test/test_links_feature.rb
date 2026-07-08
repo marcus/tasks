@@ -124,26 +124,27 @@ class TestLinksFeature < Minitest::Test
 
   BIN = File.expand_path("../bin/tasks", __dir__)
 
-  ORG_WITH_LINKS = <<~ORG
-    * Work
-    ** NEXT One-link task
-       Ticket jira:OPS-7
-    ** NEXT Many-link task
-       jira:OPS-8 and https://acme.slack.com/archives/C1/p2
-    ** NEXT Linkless task
-       just prose
-  ORG
+  ORG_WITH_LINKS = dump_fixture([
+    { "type" => "meta", "version" => 1 },
+    { "type" => "section", "id" => "cccc0001", "title" => "Work" },
+    { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001", "state" => "NEXT",
+      "title" => "One-link task", "body" => "Ticket jira:OPS-7" },
+    { "type" => "task", "id" => "cccc0003", "parent" => "cccc0001", "state" => "NEXT",
+      "title" => "Many-link task", "body" => "jira:OPS-8 and https://acme.slack.com/archives/C1/p2" },
+    { "type" => "task", "id" => "cccc0004", "parent" => "cccc0001", "state" => "NEXT",
+      "title" => "Linkless task", "body" => "just prose" },
+  ])
 
   # Sandbox with a config file carrying shorthand rows; XDG_CONFIG_HOME points
   # at it so the CLI resolves our config, never the developer's real one.
   def with_link_env
     Dir.mktmpdir do |dir|
-      File.write(File.join(dir, "gtd.org"), ORG_WITH_LINKS)
+      File.write(File.join(dir, "tasks.jsonl"), ORG_WITH_LINKS)
       FileUtils.mkdir_p(File.join(dir, "cfg", "tasks"))
       File.write(File.join(dir, "cfg", "tasks", "config"),
                  "link.jira = https://acme.atlassian.net/browse/%s\n")
-      env = { "TASKS_ORG" => File.join(dir, "gtd.org"),
-              "TASKS_ARCHIVE" => File.join(dir, "archive.org"),
+      env = { "TASKS_FILE" => File.join(dir, "tasks.jsonl"),
+              "TASKS_ARCHIVE" => File.join(dir, "archive.jsonl"),
               "XDG_CONFIG_HOME" => File.join(dir, "cfg"),
               "XDG_STATE_HOME" => File.join(dir, "state") }
       yield dir, env
@@ -235,7 +236,7 @@ class TestLinksFeature < Minitest::Test
 
   def tui_app(content)
     Dir.mktmpdir do |dir|
-      File.write(File.join(dir, "gtd.org"), content)
+      File.write(File.join(dir, "tasks.jsonl"), content)
       paths = Tasks::Config.for_dir(dir)
       paths.links = { "jira" => "https://acme.atlassian.net/browse/%s" }
       app = Tui::App.new(root: dir, paths: paths, llm_config: default_llm_config)

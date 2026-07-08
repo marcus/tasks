@@ -134,7 +134,7 @@ module Tui
       if @store.changed? # picks up Claude edits + external edits
         @store.reload!
         res = Tasks::Check.check(@store.org)
-        flash(A.red("⚠ gtd.org: #{res.errors.size} format error(s) — run `tasks check`")) unless res.ok?
+        flash(A.red("⚠ tasks.jsonl: #{res.errors.size} format error(s) — run `tasks check`")) unless res.ok?
       end
       clamp_selection
     end

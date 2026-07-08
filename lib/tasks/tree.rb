@@ -1,15 +1,15 @@
 # frozen_string_literal: true
 
 module Tasks
-  # The structural index over an org file: every headline (task or section)
+  # The structural index over the live file: every record (section or task)
   # becomes a Node with its OWN body lines and its children, so callers can ask
   # hierarchy questions the flat Store#items list can't answer — which project a
   # task belongs to, whether a project has a NEXT action, what prose sits under
   # a heading (for body search and link extraction).
   #
-  # Nodes carry raw body text; interpretation (search, links) happens above.
-  # Built from the same lines the parser reads, keyed by line number so a
-  # node's `item` is the exact Store item for that headline.
+  # Hierarchy comes straight from each record's `parent` pointer (no star
+  # counting, no block inference). A task node's `item` is the Store item the
+  # parser produced for that record; a section node's `item` is nil.
   module Tree
     Node = Struct.new(:title, :line, :level, :item, :body, :children, :parent,
                       keyword_init: true) do
@@ -27,43 +27,43 @@ module Tasks
       # task). nil at top level.
       def project = parent
 
-      # Body prose joined for matching — drawer machinery, planning stamps, and
-      # comment lines excluded (Store.prose, the same rule every surface applies).
-      def body_text = Store.prose(body).join
+      # Body prose joined for matching. The record's body is already prose
+      # (Format strips nothing — the store stored only prose), so this is a
+      # straight join of the node's own lines.
+      def body_text = body.join("\n")
     end
 
     module_function
 
-    # Build the forest of top-level nodes from raw file `lines` (1-exact as read
-    # from disk). `items_by_line` maps a 1-based headline line number to its
-    # Store item, binding each task node to the item the parser produced.
-    def build(lines, items_by_line)
+    # Build the forest of top-level nodes from `records` (as Tasks::Format
+    # parsed them, each carrying its physical `line`). `items_by_line` maps a
+    # 1-based line number to its Store item, binding each task node to the item
+    # the parser produced. Order is DFS pre-order, so a single pass over the
+    # records — linking each to its parent by id — reconstructs the tree.
+    def build(records, items_by_line)
       roots = []
-      stack = [] # open ancestors, innermost last
-      lines.each_with_index do |line, idx|
-        stars = line[/\A(\*+)\s/, 1]
-        unless stars
-          stack.last&.body&.push(line)
-          next
-        end
+      by_id = {}
+      records.each do |r|
+        next if r["type"] == "meta"
 
-        item = items_by_line[idx + 1]
+        item = items_by_line[r["line"]]
+        body = r["body"].nil? || r["body"].empty? ? [] : r["body"].split("\n")
         node = Node.new(
-          # A task node's title is the parsed item title (no state/priority/tag
-          # decoration); a section's is its heading text.
-          title: item ? item.title : line.sub(/\A\*+\s+/, "").strip,
-          line: idx + 1, level: stars.length,
-          item: item,
-          body: [], children: [],
+          # A task node's title is the parsed item title; a section's is its
+          # own title field.
+          title: item ? item.title : r["title"],
+          line: r["line"], level: 1,
+          item: item, body: body, children: [],
         )
-        stack.pop while stack.any? && stack.last.level >= node.level
-        if (parent = stack.last)
+        by_id[r["id"]] = node
+
+        if (pid = r["parent"]) && (parent = by_id[pid])
           node.parent = parent
+          node.level = parent.level + 1
           parent.children << node
         else
           roots << node
         end
-        stack << node
       end
       roots
     end

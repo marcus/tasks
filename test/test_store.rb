@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require "tasks/format"
 
 class TestStore < Minitest::Test
   def test_parse_finds_all_items
@@ -32,21 +33,21 @@ class TestStore < Minitest::Test
     end
   end
 
-  def test_closed_does_not_leak_from_parent_to_child
+  # Each record owns its own fields, so `closed` never leaks between a parent
+  # and a child the way an org CLOSED: line's block scope once could.
+  def test_closed_is_per_record_parent_and_child
     with_store do |store, org, _archive|
-      File.write(org, "* Work\n** DONE Parent\n   CLOSED: [2026-06-20]\n*** NEXT Child\n")
+      File.write(org, dump_fixture([
+        { "type" => "meta", "version" => 1 },
+        { "type" => "section", "id" => "cccc0001", "title" => "Work" },
+        { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001", "state" => "DONE",
+          "title" => "Parent", "closed" => "2026-06-20" },
+        { "type" => "task", "id" => "cccc0003", "parent" => "cccc0002", "state" => "NEXT",
+          "title" => "Child" },
+      ]))
       store.reload!
       assert_equal Date.new(2026, 6, 20), find_item(store, "Parent").closed
       assert_nil find_item(store, "Child").closed
-    end
-  end
-
-  def test_closed_does_not_leak_from_child_to_parent
-    with_store do |store, org, _archive|
-      File.write(org, "* Work\n** DONE Parent\n*** DONE Child\n   CLOSED: [2026-06-20]\n")
-      store.reload!
-      assert_nil find_item(store, "Parent").closed
-      assert_equal Date.new(2026, 6, 20), find_item(store, "Child").closed
     end
   end
 
@@ -77,7 +78,9 @@ class TestStore < Minitest::Test
       store.reload!
       refute store.changed?
       future = Time.now + 2
-      File.write(org, FIXTURE_ORG + "** TODO added later\n")
+      extra = dump_fixture([{ "type" => "task", "id" => "bbbb0001", "parent" => FIX[:home],
+                              "state" => "TODO", "title" => "added later" }])
+      File.write(org, FIXTURE + extra)
       File.utime(future, future, org) # avoid same-mtime flakiness
       assert store.changed?
       assert_equal 8, store.items.size
@@ -88,9 +91,9 @@ class TestStore < Minitest::Test
     with_store do |store, org, _archive|
       flight = find_item(store, "Book flight")
       assert store.complete!(flight)
-      text = File.read(org)
-      assert_match(/^\*\* DONE \[#A\] Book flight in Concur/, text)
-      assert_match(/CLOSED: \[#{Date.today}\]/, text)
+      rec = record_for(org, title: "Book flight in Concur")
+      assert_equal "DONE", rec["state"]
+      assert_equal Date.today.iso8601, rec["closed"]
       assert_equal "DONE", find_item(store, "Book flight").state
     end
   end
@@ -99,9 +102,10 @@ class TestStore < Minitest::Test
     with_store do |store, org, _archive|
       flight = find_item(store, "Book flight")
       stale = flight.dup
-      stale.line = 1 # points at "* Inbox", not the flight headline
+      stale.id = nil    # no id to relocate by...
+      stale.line = 1    # ...and the line points at the meta record, not the flight
       refute store.complete!(stale)
-      refute_match(/DONE.*Book flight/, File.read(org))
+      assert_equal "NEXT", record_for(org, title: "Book flight in Concur")["state"]
     end
   end
 
@@ -109,8 +113,7 @@ class TestStore < Minitest::Test
     with_store do |store, org, _archive|
       flight = find_item(store, "Book flight")
       assert store.reschedule!(flight, Date.new(2026, 7, 10))
-      assert_match(/DEADLINE: <2026-07-10 Fri>/, File.read(org))
-      refute_match(/2026-07-02/, File.read(org))
+      assert_equal "2026-07-10", record_for(org, title: "Book flight in Concur")["deadline"]
       assert_equal Date.new(2026, 7, 10), find_item(store, "Book flight").deadline
     end
   end
@@ -119,11 +122,9 @@ class TestStore < Minitest::Test
     with_store do |store, org, _archive|
       eval = find_item(store, "self-eval")
       assert store.reschedule!(eval, Date.new(2026, 7, 8))
-      assert_match(/SCHEDULED: <2026-07-08 Wed>/, File.read(org))
-      # the self-eval block itself must not have gained a DEADLINE
-      lines = File.readlines(org)
-      idx = lines.index { |l| l.include?("self-eval") }
-      refute_includes lines[idx + 1], "DEADLINE"
+      rec = record_for(org, title: "Midyear self-eval")
+      assert_equal "2026-07-08", rec["scheduled"]
+      refute rec.key?("deadline"), "the self-eval must not have gained a DEADLINE"
     end
   end
 
@@ -132,9 +133,7 @@ class TestStore < Minitest::Test
       plants = find_item(store, "Water the plants")
       assert store.reschedule!(plants, Date.new(2026, 7, 5))
       assert_equal Date.new(2026, 7, 5), find_item(store, "Water the plants").deadline
-      lines = File.readlines(org)
-      idx = lines.index { |l| l.include?("Water the plants") }
-      assert_match(/DEADLINE: <2026-07-05 Sun>/, lines[idx + 1])
+      assert_equal "2026-07-05", record_for(org, title: "Water the plants")["deadline"]
     end
   end
 
@@ -146,7 +145,7 @@ class TestStore < Minitest::Test
       fresh = find_item(store, "garden")
       assert_equal "TODO", fresh.state
       assert_equal Date.new(2026, 7, 10), fresh.deadline
-      assert_match(/^\*\* TODO random thought about the garden/, File.read(org))
+      assert_equal "TODO", record_for(org, title: "random thought about the garden")["state"]
     end
   end
 
@@ -168,10 +167,8 @@ class TestStore < Minitest::Test
     end
   end
 
-  def test_reschedule_does_not_touch_next_items_stamp
-    with_store do |store, org, _archive|
-      # WAITING item has no stamp but is followed by other content;
-      # rescheduling it must not modify a different item's stamp.
+  def test_reschedule_does_not_touch_other_items
+    with_store do |store, _org, _archive|
       waiting = find_item(store, "Travel desk")
       assert store.reschedule!(waiting, Date.new(2026, 7, 9))
       assert_equal Date.new(2026, 7, 2), find_item(store, "Book flight").deadline
@@ -183,10 +180,12 @@ class TestStore < Minitest::Test
     with_store do |store, org, archive|
       n = store.archive_swept!
       assert_equal 1, n
-      refute_match(/Old finished thing/, File.read(org))
-      arch = File.read(archive)
-      assert_match(/DONE \[#C\] Old finished thing/, arch)
-      assert_match(/CLOSED: \[2026-06-20\]/, arch) # block body moves too
+      assert_nil record_for(org, title: "Old finished thing"), "swept out of the live file"
+      arch = record_for(archive, title: "Old finished thing")
+      assert_equal "DONE", arch["state"]
+      assert_equal "2026-06-20", arch["closed"] # closed field travels too
+      assert_equal Date.today.iso8601, arch["archived"]
+      refute arch.key?("parent"), "a swept root loses its parent"
       assert_equal 6, store.items.size
     end
   end
@@ -195,7 +194,7 @@ class TestStore < Minitest::Test
     with_store do |store, org, _a|
       flight = find_item(store, "Book flight")
       assert store.set_priority!(flight, "B")
-      assert_match(/^\*\* NEXT \[#B\] Book flight in Concur :@computer:important:urgent:$/, File.read(org))
+      assert_equal "B", record_for(org, title: "Book flight in Concur")["priority"]
       assert_equal "B", find_item(store, "Book flight").priority
     end
   end
@@ -204,7 +203,7 @@ class TestStore < Minitest::Test
     with_store do |store, org, _a|
       plants = find_item(store, "Water the plants")
       assert store.set_priority!(plants, "C")
-      assert_match(/^\*\* NEXT \[#C\] Water the plants/, File.read(org))
+      assert_equal "C", record_for(org, title: "Water the plants")["priority"]
     end
   end
 
@@ -212,7 +211,7 @@ class TestStore < Minitest::Test
     with_store do |store, org, _a|
       flight = find_item(store, "Book flight")
       assert store.set_priority!(flight, nil)
-      assert_match(/^\*\* NEXT Book flight in Concur/, File.read(org))
+      refute record_for(org, title: "Book flight in Concur").key?("priority")
       assert_nil find_item(store, "Book flight").priority
     end
   end
@@ -220,36 +219,10 @@ class TestStore < Minitest::Test
   def test_set_priority_rejects_stale_line_numbers
     with_store do |store, org, _a|
       stale = find_item(store, "Book flight").dup
+      stale.id = nil
       stale.line = 1
       refute store.set_priority!(stale, "B")
-      assert_match(/\[#A\] Book flight/, File.read(org))
-    end
-  end
-
-  def test_block_returns_headline_and_body
-    with_store do |store, _o, _a|
-      waiting = find_item(store, "Travel desk")
-      block = store.block(waiting)
-      assert_equal 2, block.size
-      assert_includes block[0], "WAITING Travel desk reply"
-      assert_includes block[1], "Some note line."
-    end
-  end
-
-  def test_block_stops_at_next_headline
-    with_store do |store, _o, _a|
-      flight = find_item(store, "Book flight")
-      block = store.block(flight)
-      assert_equal 2, block.size # headline + DEADLINE stamp
-      refute block.any? { |l| l.include?("Review PR") }
-    end
-  end
-
-  def test_block_rejects_stale_line_numbers
-    with_store do |store, _o, _a|
-      stale = find_item(store, "Book flight").dup
-      stale.line = 1
-      assert_empty store.block(stale)
+      assert_equal "A", record_for(org, title: "Book flight in Concur")["priority"]
     end
   end
 
@@ -285,8 +258,8 @@ class TestStore < Minitest::Test
       store.set_priority!(find_item(store, "Book flight"), "B")
       store.reschedule!(find_item(store, "Book flight"), Date.new(2026, 7, 20))
       store.undo! # reschedule
-      assert_match(/2026-07-02/, File.read(org))
-      assert_match(/\[#B\] Book flight/, File.read(org))
+      assert_equal "2026-07-02", record_for(org, title: "Book flight in Concur")["deadline"]
+      assert_equal "B", record_for(org, title: "Book flight in Concur")["priority"]
       store.undo! # priority
       assert_equal original, File.read(org)
     end
@@ -304,7 +277,9 @@ class TestStore < Minitest::Test
   def test_undo_refuses_after_external_edit
     with_store do |store, org, _a|
       store.complete!(find_item(store, "Book flight"))
-      File.write(org, File.read(org) + "** TODO claude added this\n")
+      File.write(org, File.read(org) +
+        dump_fixture([{ "type" => "task", "id" => "bbbb0002", "parent" => FIX[:work],
+                        "state" => "TODO", "title" => "claude added this" }]))
       kind, label = store.undo!
       assert_equal :conflict, kind
       assert_includes label, "Book flight"
@@ -330,6 +305,7 @@ class TestStore < Minitest::Test
   def test_failed_mutation_records_no_history
     with_store do |store, _o, _a|
       stale = find_item(store, "Book flight").dup
+      stale.id = nil
       stale.line = 1
       refute store.complete!(stale)
       assert_equal [:empty], store.undo!
@@ -348,10 +324,10 @@ class TestStore < Minitest::Test
   end
 
   def test_archive_with_nothing_to_do
-    with_store do |store, _org, archive|
-      store.archive_swept!
-      assert_equal 0, store.archive_swept!
-      assert_equal 1, File.read(archive).scan(/# Archived/).size
+    with_store do |store, _org, _archive|
+      assert_equal 1, store.archive_swept!
+      assert_equal 0, store.archive_swept!, "second sweep has nothing to move"
+      assert_equal 1, store.archive_items.size
     end
   end
 
@@ -361,7 +337,7 @@ class TestStore < Minitest::Test
     with_store do |store, org, _a|
       plants = find_item(store, "Water the plants")
       assert store.set_deferred!(plants, true)
-      assert_match(/^\*\* NEXT Water the plants :@home:defer:$/, File.read(org))
+      assert_equal %w[@home defer], record_for(org, title: "Water the plants")["tags"]
       fresh = find_item(store, "Water the plants")
       assert fresh.deferred?
       assert_equal "NEXT", fresh.state # state is untouched
@@ -375,7 +351,6 @@ class TestStore < Minitest::Test
       assert store.set_deferred!(flight, true)
       fresh = find_item(store, "Book flight")
       assert fresh.deferred?
-      # the pre-existing contexts/tags survive alongside :defer:
       assert_includes fresh.tags, "@computer"
       assert_includes fresh.tags, "important"
       assert Tasks::Check.check(org).ok?
@@ -387,7 +362,7 @@ class TestStore < Minitest::Test
       plants = find_item(store, "Water the plants")
       store.set_deferred!(plants, true)
       assert store.set_deferred!(find_item(store, "Water the plants"), false)
-      assert_match(/^\*\* NEXT Water the plants :@home:$/, File.read(org))
+      assert_equal %w[@home], record_for(org, title: "Water the plants")["tags"]
       refute find_item(store, "Water the plants").deferred?
       assert Tasks::Check.check(org).ok?
     end
@@ -407,6 +382,7 @@ class TestStore < Minitest::Test
   def test_set_deferred_rejects_stale_line_numbers
     with_store do |store, _org, _a|
       stale = find_item(store, "Book flight").dup
+      stale.id = nil
       stale.line = 1
       refute store.set_deferred!(stale, true)
     end
@@ -420,7 +396,7 @@ class TestStore < Minitest::Test
       done = find_item(store, "Water the plants")
       assert_equal "DONE", done.state
       refute done.deferred?, "a completed task must not keep the someday/maybe marker"
-      assert_match(/^\*\* DONE Water the plants :@home:$/, File.read(org))
+      assert_equal %w[@home], record_for(org, title: "Water the plants")["tags"]
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -439,22 +415,24 @@ class TestStore < Minitest::Test
 
   # -- recurrence ------------------------------------------------------------
 
-  RECUR_ORG = <<~ORG
-    * Work
-    ** NEXT Pay rent :@home:
-       DEADLINE: <2026-08-01 Sat +1m>
-    ** TODO Weekly review :@computer:
-       SCHEDULED: <2026-06-20 Sat .+1w>
-    ** NEXT Plain dated task
-       DEADLINE: <2026-07-02 Thu>
-    ** TODO No date task
-  ORG
+  RECUR_RECORDS = [
+    { "type" => "meta", "version" => 1 },
+    { "type" => "section", "id" => "dddd0001", "title" => "Work" },
+    { "type" => "task", "id" => "dddd0002", "parent" => "dddd0001", "state" => "NEXT",
+      "title" => "Pay rent", "tags" => %w[@home], "deadline" => "2026-08-01", "recur" => "+1m" },
+    { "type" => "task", "id" => "dddd0003", "parent" => "dddd0001", "state" => "TODO",
+      "title" => "Weekly review", "tags" => %w[@computer], "scheduled" => "2026-06-20", "recur" => ".+1w" },
+    { "type" => "task", "id" => "dddd0004", "parent" => "dddd0001", "state" => "NEXT",
+      "title" => "Plain dated task", "deadline" => "2026-07-02" },
+    { "type" => "task", "id" => "dddd0005", "parent" => "dddd0001", "state" => "TODO",
+      "title" => "No date task" },
+  ].freeze
 
   def with_recur_store
     Dir.mktmpdir do |dir|
-      org = File.join(dir, "gtd.org")
-      File.write(org, RECUR_ORG)
-      yield Tasks::Store.new(org: org, archive: File.join(dir, "archive.org")), org
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, Tasks::Format.dump(RECUR_RECORDS))
+      yield Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl")), org
     end
   end
 
@@ -468,11 +446,12 @@ class TestStore < Minitest::Test
     end
   end
 
-  def test_set_recur_attaches_cookie_preserving_date_and_dayname
+  def test_set_recur_attaches_cookie_preserving_date
     with_recur_store do |store, org|
       assert store.set_recur!(find_item(store, "Plain dated task"), ".+2w")
-      assert_match(/DEADLINE: <2026-07-02 Thu \.\+2w>/, File.read(org))
-      assert_equal ".+2w", find_item(store, "Plain dated task").recur
+      rec = record_for(org, title: "Plain dated task")
+      assert_equal "2026-07-02", rec["deadline"]
+      assert_equal ".+2w", rec["recur"]
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -480,8 +459,9 @@ class TestStore < Minitest::Test
   def test_set_recur_off_removes_cookie
     with_recur_store do |store, org|
       assert store.set_recur!(find_item(store, "Pay rent"), :off)
-      assert_match(/DEADLINE: <2026-08-01 Sat>/, File.read(org))
-      refute_match(/\+1m/, File.read(org))
+      rec = record_for(org, title: "Pay rent")
+      assert_equal "2026-08-01", rec["deadline"]
+      refute rec.key?("recur")
       assert_nil find_item(store, "Pay rent").recur
       assert Tasks::Check.check(org).ok?
     end
@@ -491,7 +471,9 @@ class TestStore < Minitest::Test
     with_recur_store do |store, org|
       review = find_item(store, "Weekly review")
       assert store.set_recur!(review, "+3d")
-      assert_match(/SCHEDULED: <2026-06-20 Sat \+3d>/, File.read(org))
+      rec = record_for(org, title: "Weekly review")
+      assert_equal "2026-06-20", rec["scheduled"]
+      assert_equal "+3d", rec["recur"]
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -507,6 +489,7 @@ class TestStore < Minitest::Test
   def test_set_recur_rejects_stale_line
     with_recur_store do |store, _org|
       stale = find_item(store, "Plain dated task").dup
+      stale.id = nil
       stale.line = 1
       refute store.set_recur!(stale, ".+1w")
     end
@@ -518,12 +501,11 @@ class TestStore < Minitest::Test
       assert store.complete!(rent)
       fresh = find_item(store, "Pay rent")
       assert_equal "NEXT", fresh.state, "recurring task stays open"
-      # +1m fixed hop from the stored 2026-08-01
-      assert_equal Date.new(2026, 9, 1), fresh.deadline
+      assert_equal Date.new(2026, 9, 1), fresh.deadline # +1m fixed hop from 2026-08-01
       assert_equal "+1m", fresh.recur, "cookie is retained"
-      refute_match(/CLOSED:/, File.read(org), "recurring completion adds no CLOSED stamp")
-      refute_match(/DONE/, File.read(org))
-      assert_match(/- Did \[#{Date.today}\]/, File.read(org), "logs the occurrence")
+      rec = record_for(org, title: "Pay rent")
+      refute rec.key?("closed"), "recurring completion adds no closed date"
+      assert_match(/- Did \[#{Date.today}\]/, rec["body"], "logs the occurrence")
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -552,7 +534,7 @@ class TestStore < Minitest::Test
       rent = find_item(store, "Pay rent")
       assert store.set_state!(rent, "CANCELLED")
       assert_equal "CANCELLED", find_item(store, "Pay rent").state
-      assert_match(/CLOSED:/, File.read(org))
+      assert_equal Date.today.iso8601, record_for(org, title: "Pay rent")["closed"]
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -562,7 +544,7 @@ class TestStore < Minitest::Test
       plain = find_item(store, "Plain dated task")
       assert store.complete!(plain)
       assert_equal "DONE", find_item(store, "Plain dated task").state
-      assert_match(/CLOSED: \[#{Date.today}\]/, File.read(org))
+      assert_equal Date.today.iso8601, record_for(org, title: "Plain dated task")["closed"]
     end
   end
 
@@ -577,74 +559,45 @@ class TestStore < Minitest::Test
     end
   end
 
-  # A recurring parent's roll-forward must stay within the parent's own lines —
-  # a deeper child subheading's stamp must not be touched (parse_file binds a
-  # stamp to its immediate headline; the mutation must agree).
+  # A recurring parent's roll-forward touches only its own record — a child
+  # subtask's date must not move (each record's dates are its own).
   def test_complete_recurring_parent_does_not_touch_child_stamp
     Dir.mktmpdir do |dir|
-      org = File.join(dir, "gtd.org")
-      File.write(org, <<~ORG)
-        * W
-        ** NEXT Parent
-           SCHEDULED: <2026-07-01 Wed +1w>
-        *** NEXT Child
-           SCHEDULED: <2026-07-02 Thu +1d>
-      ORG
-      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.org"))
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, dump_fixture([
+        { "type" => "meta", "version" => 1 },
+        { "type" => "section", "id" => "eeee0001", "title" => "W" },
+        { "type" => "task", "id" => "eeee0002", "parent" => "eeee0001", "state" => "NEXT",
+          "title" => "Parent", "scheduled" => "2026-07-01", "recur" => "+1w" },
+        { "type" => "task", "id" => "eeee0003", "parent" => "eeee0002", "state" => "NEXT",
+          "title" => "Child", "scheduled" => "2026-07-02", "recur" => "+1d" },
+      ]))
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
       assert store.complete!(store.items.find { |i| i.title == "Parent" })
-      body = File.read(org)
-      assert_match(/Parent\n   SCHEDULED: <2026-07-08 Wed \+1w>/, body, "parent rolled")
-      assert_match(/Child\n   SCHEDULED: <2026-07-02 Thu \+1d>/, body, "child untouched")
-      # the completion log sits under the parent, before the child
-      assert_match(/- Did \[#{Date.today}\]\.\n\*\*\* NEXT Child/, body)
+      assert_equal "2026-07-08", record_for(org, title: "Parent")["scheduled"], "parent rolled"
+      assert_equal "2026-07-02", record_for(org, title: "Child")["scheduled"], "child untouched"
+      assert_match(/- Did \[#{Date.today}\]/, record_for(org, title: "Parent")["body"])
       assert Tasks::Check.check(org).ok?
     end
   end
 
   def test_set_recur_on_parent_does_not_attach_to_child
     Dir.mktmpdir do |dir|
-      org = File.join(dir, "gtd.org")
-      File.write(org, <<~ORG)
-        * W
-        ** NEXT Parent
-           SCHEDULED: <2026-07-01 Wed>
-        *** NEXT Child
-           DEADLINE: <2026-09-01 Tue>
-      ORG
-      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.org"))
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, dump_fixture([
+        { "type" => "meta", "version" => 1 },
+        { "type" => "section", "id" => "ffff0001", "title" => "W" },
+        { "type" => "task", "id" => "ffff0002", "parent" => "ffff0001", "state" => "NEXT",
+          "title" => "Parent", "scheduled" => "2026-07-01" },
+        { "type" => "task", "id" => "ffff0003", "parent" => "ffff0002", "state" => "NEXT",
+          "title" => "Child", "deadline" => "2026-09-01" },
+      ]))
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
       assert store.set_recur!(store.items.find { |i| i.title == "Parent" }, "+1w")
-      body = File.read(org)
-      assert_match(/Parent\n   SCHEDULED: <2026-07-01 Wed \+1w>/, body)
-      assert_match(/DEADLINE: <2026-09-01 Tue>\n/, body, "child DEADLINE untouched")
-    end
-  end
-
-  # A bracket without an ISO date (an org diary/sexp timestamp) can't be rolled;
-  # set_recur! must return false, not crash on Date.parse(nil).
-  def test_set_recur_on_dateless_bracket_returns_false
-    Dir.mktmpdir do |dir|
-      org = File.join(dir, "gtd.org")
-      File.write(org, "* W\n** NEXT Weird\n   DEADLINE: <%%(diary-float t 4 2)>\n")
-      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.org"))
-      before = File.read(org)
-      refute store.set_recur!(store.items.find { |i| i.title == "Weird" }, ".+1w")
-      assert_equal before, File.read(org)
-    end
-  end
-
-  # A hand-edited zero-count cookie (++0d) must not be treated as a repeater —
-  # a catch-up roll on a zero interval would never terminate. It parses as a
-  # plain date instead, so completing it just closes the task.
-  def test_zero_count_cookie_is_not_a_repeater
-    Dir.mktmpdir do |dir|
-      org = File.join(dir, "gtd.org")
-      File.write(org, "* W\n** NEXT Rent\n   DEADLINE: <2020-01-01 Wed ++0d>\n")
-      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.org"))
-      rent = store.items.find { |i| i.title == "Rent" }
-      refute rent.recurring?, "++0d must not register as recurrence"
-      assert store.complete!(rent)
-      assert_equal "DONE", store.items.find { |i| i.title == "Rent" }.state
-      assert Tasks::Check.check(org).ok?
+      assert_equal "+1w", record_for(org, title: "Parent")["recur"]
+      child = record_for(org, title: "Child")
+      refute child.key?("recur"), "child gains no recurrence"
+      assert_equal "2026-09-01", child["deadline"]
     end
   end
 
@@ -652,8 +605,9 @@ class TestStore < Minitest::Test
     with_recur_store do |store, org|
       rent = find_item(store, "Pay rent") # +1m
       assert store.set_date!(rent, Date.new(2026, 12, 25), kind: :deadline)
-      assert_match(/DEADLINE: <2026-12-25 Fri \+1m>/, File.read(org))
-      assert_equal "+1m", find_item(store, "Pay rent").recur
+      rec = record_for(org, title: "Pay rent")
+      assert_equal "2026-12-25", rec["deadline"]
+      assert_equal "+1m", rec["recur"]
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -662,7 +616,9 @@ class TestStore < Minitest::Test
     with_recur_store do |store, org|
       review = find_item(store, "Weekly review") # SCHEDULED .+1w
       assert store.reschedule!(review, Date.new(2026, 7, 10))
-      assert_match(/SCHEDULED: <2026-07-10 Fri \.\+1w>/, File.read(org))
+      rec = record_for(org, title: "Weekly review")
+      assert_equal "2026-07-10", rec["scheduled"]
+      assert_equal ".+1w", rec["recur"]
       assert Tasks::Check.check(org).ok?
     end
   end

@@ -58,7 +58,13 @@ class TestModals < Minitest::Test
 
   def test_detail_wraps_long_titles
     with_store do |store, org, _a|
-      File.write(org, "* X\n** TODO #{"very long title word " * 10}:@computer:\n")
+      File.write(org, dump_fixture([
+                        { "type" => "meta", "version" => 1 },
+                        { "type" => "section", "id" => "cccc0001", "title" => "X" },
+                        { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001",
+                          "state" => "TODO", "title" => "very long title word " * 10,
+                          "tags" => %w[@computer] },
+                      ]))
       store.reload!
       item = store.items.first
       modal = M.detail(item, store.body(item), 60, today: TODAY)

@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# tasks — a tiny CLI over gtd.org
+# tasks — a tiny CLI over tasks.jsonl
 #
 # Usage (each command has a single-letter alias):
 #   bin/tasks agenda|a        show items with SCHEDULED/DEADLINE, soonest first
@@ -20,24 +20,24 @@
 #   bin/tasks retitle <ref> "new title"    replace the headline title
 #   bin/tasks tag <ref> +t -t @ctx -@ctx   add/remove tags and contexts
 #   bin/tasks note <ref> "text"            append a body line under the task
-#   bin/tasks move <ref> "Section"         relocate the block under a heading
+#   bin/tasks move <ref> "Section"         relocate the subtree under a heading
 #   bin/tasks recur <ref> <interval|off>   repeat on done (weekly, 2w, .+1m; off clears)
 #   bin/tasks defer|snooze <ref>           hide a task (someday/maybe)
 #   bin/tasks activate <ref>  bring a deferred task back (undefer/resume)
 #   bin/tasks show|s <ref>    show one task in full (headline + notes)
-#   bin/tasks archive|x       move DONE/CANCELLED items to archive.org
+#   bin/tasks archive|x       move DONE/CANCELLED items to archive.jsonl
 #   bin/tasks list|l [...]    list tasks grouped by state, with filters:
 #     scope:   --open/-o (default) --done/-d --archived/-x --all/-a
 #     filters: @context  /text  +tag  -A|-B|-C  --deferred/-D (compose freely)
 #   bin/tasks -p "..."        hand a natural-language request to an LLM agent
 #                             (Claude or another configured harness), which acts
 #                             on your tasks and reports what changed
-#   bin/tasks config          show where gtd.org/archive.org resolve and why
+#   bin/tasks config          show where tasks.jsonl/archive.jsonl resolve and why
 #   bin/tasks help|-h         full command reference
 #
-# Stdlib only — no bundler required. Parses gtd.org with simple line matching.
+# Stdlib only — no bundler required. Reads tasks.jsonl (one JSON record/line).
 # Task files default to the repo root; point them elsewhere with TASKS_DIR
-# (or TASKS_ORG/TASKS_ARCHIVE) env vars or ~/.config/tasks/config.
+# (or TASKS_FILE/TASKS_ARCHIVE) env vars or ~/.config/tasks/config.
 
 require "date"
 require "shellwords"
@@ -52,7 +52,7 @@ ARCHIVE = PATHS.archive
 AGENTS  = File.join(ROOT, "AGENTS.md")
 
 # The model layer owns parsing and every mutation; the CLI adds dispatch,
-# ref resolution, and output. (Tasks::Item, Store::HEADLINE etc. live there.)
+# ref resolution, and output. (Tasks::Item, Tasks::Format etc. live there.)
 require_relative "../lib/tasks/store"
 require_relative "../lib/tasks/opener"
 
@@ -276,7 +276,7 @@ def change_state(args, usage:, resolve_closed:, to: nil, dry_verb: nil, archive_
     puts "↻ #{item.title}#{d ? " → next #{d.iso8601} (#{d.strftime("%a")})" : ""}"
   end
   report_touched(item.line, json: flags["--json"])
-  puts "Run `tasks archive` to move it out of gtd.org." if archive_hint && !recurring_done && !flags["--json"]
+  puts "Run `tasks archive` to move it out of tasks.jsonl." if archive_hint && !recurring_done && !flags["--json"]
 end
 
 # The date a recurring item's next occurrence would land on, from its precedence
@@ -795,13 +795,13 @@ def cmd_archive
   if n.zero?
     puts "Nothing to archive (no DONE/CANCELLED items)."
   else
-    puts "Archived #{n} item#{n == 1 ? "" : "s"} to archive.org."
+    puts "Archived #{n} item#{n == 1 ? "" : "s"} to archive.jsonl."
   end
 end
 
 # Revert (undo) or replay (redo) the last mutation. History is the on-disk
 # journal shared with the TUI and across CLI runs, so this reaches back past the
-# current invocation. Refuses when gtd.org changed out-of-band since that edit.
+# current invocation. Refuses when tasks.jsonl changed out-of-band since that edit.
 def cmd_undo = run_history(:undo!, verb: "undo", past: "undid")
 def cmd_redo = run_history(:redo!, verb: "redo", past: "redid")
 
@@ -829,7 +829,7 @@ def run_history(op, verb:, past:)
   kind, label = store.public_send(op)
   case kind
   when :empty    then abort "nothing to #{verb}"
-  when :conflict then abort "gtd.org changed since that edit — refusing to #{verb} “#{label}”"
+  when :conflict then abort "tasks.jsonl changed since that edit — refusing to #{verb} “#{label}”"
   else                puts "#{past}: #{label}"
   end
 end
@@ -899,7 +899,7 @@ def cmd_list(args)
   end
   sel = items.select do |i|
     states.include?(i.state) &&
-      (scope != :done || i.source == :org) &&
+      (scope != :done || i.source == :live) &&
       defer_ok.call(i) &&
       (!recurring_only || i.recurring?) &&
       (priority_f.nil? || i.priority == priority_f) &&
@@ -931,7 +931,7 @@ def cmd_list(args)
   end
 end
 
-# Validate gtd.org structure. Exit 0 clean, 1 errors found.
+# Validate tasks.jsonl structure. Exit 0 clean, 1 errors found.
 def cmd_check(args)
   res = Tasks::Check.check(ORG)
   if args.include?("--json")
@@ -1038,7 +1038,7 @@ end
 require "shellwords"
 
 HELP = <<~USAGE
-  tasks — a plain-text GTD CLI over gtd.org. Every command has a short alias.
+  tasks — a plain-text GTD CLI over tasks.jsonl. Every command has a short alias.
 
   Read:
     agenda    a              dated items, soonest first
@@ -1056,7 +1056,7 @@ HELP = <<~USAGE
     open      o <ref> [n]    open a task's link in the browser (n or --system
                              picks among several; --print shows instead)
     id           <ref>       print a task's stable :ID: (assigns one if absent)
-    check     k              validate gtd.org structure
+    check     k              validate tasks.jsonl structure
 
   Capture:
     capture   c "text"       new item. Flags: --due --scheduled --priority
@@ -1074,14 +1074,14 @@ HELP = <<~USAGE
     retitle rename <ref> "title"     replace the headline title
     tag          <ref> +t -t @ctx -@ctx   add/remove tags and contexts
     note         <ref> "text"        append a body line
-    move         <ref> "Section"     relocate the block under a heading
+    move         <ref> "Section"     relocate the subtree under a heading
     recur repeat <ref> <interval>    repeat on done: weekly · 2w · .+1m · off
                                      --from schedule|completion · --on <date>
     defer   snooze <ref>             hide a task (someday/maybe)
     activate       <ref>             bring a deferred task back (undefer, resume)
 
   Lifecycle:
-    archive   x              sweep DONE/CANCELLED to archive.org
+    archive   x              sweep DONE/CANCELLED to archive.jsonl
     undo                     revert the last mutation (shared with the TUI)
     redo                     replay the last undone mutation
     config                   show resolved file paths and their sources
@@ -1089,8 +1089,8 @@ HELP = <<~USAGE
                              (-p [--provider N] [--model N] "...")
     help      -h             this message
 
-  Files: default to the repo; override with TASKS_DIR (or TASKS_ORG/TASKS_ARCHIVE)
-  env vars, or ~/.config/tasks/config (dir = / org = / archive = lines).
+  Files: default to the repo; override with TASKS_DIR (or TASKS_FILE/TASKS_ARCHIVE)
+  env vars, or ~/.config/tasks/config (dir = / file = / archive = lines).
   Quadrants urgency window: urgent_days = N in the config file, or TASKS_URGENT_DAYS
   env (default 3) — a DEADLINE within N days counts as urgent.
   Link shorthands: link.jira = https://acme.atlassian.net/browse/%s in the config

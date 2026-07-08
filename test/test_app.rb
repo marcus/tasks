@@ -23,7 +23,7 @@ class TestApp < Minitest::Test
 
   def app_with(agent:, input:)
     Dir.mktmpdir do |dir|
-      File.write(File.join(dir, "gtd.org"), FIXTURE_ORG)
+      File.write(File.join(dir, "tasks.jsonl"), FIXTURE_ORG)
       app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir),
                          llm_config: default_llm_config)
       app.instance_variable_set(:@agent, agent)
@@ -76,7 +76,7 @@ class TestApp < Minitest::Test
   # on a given view, and select the row whose item title includes `select`.
   def app_on(view:, select:, content: FIXTURE_ORG)
     Dir.mktmpdir do |dir|
-      File.write(File.join(dir, "gtd.org"), content)
+      File.write(File.join(dir, "tasks.jsonl"), content)
       app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir),
                          llm_config: default_llm_config)
       app.instance_variable_set(:@view, view)
@@ -105,8 +105,7 @@ class TestApp < Minitest::Test
   end
 
   def test_toggle_deferred_view_reveals_and_hides
-    deferred = FIXTURE_ORG.sub("Water the plants :@home:", "Water the plants :@home:defer:")
-    app_on(view: :next, select: "Review PR", content: deferred) do |app|
+    app_on(view: :next, select: "Review PR", content: deferred_fixture) do |app|
       refute_includes row_titles(app), "Water the plants", "deferred hidden by default"
       app.send(:toggle_deferred_view)
       assert app.instance_variable_get(:@show_deferred)
@@ -118,8 +117,7 @@ class TestApp < Minitest::Test
   end
 
   def test_defer_selected_reactivates_when_already_deferred
-    deferred = FIXTURE_ORG.sub("Water the plants :@home:", "Water the plants :@home:defer:")
-    app_on(view: :next, select: "Review PR", content: deferred) do |app|
+    app_on(view: :next, select: "Review PR", content: deferred_fixture) do |app|
       app.instance_variable_set(:@show_deferred, true) # so the deferred task is selectable
       app.send(:rows)
       idx = app.instance_variable_get(:@rows).index { |r| r.item&.title&.include?("Water the plants") }
@@ -133,12 +131,14 @@ class TestApp < Minitest::Test
 
   # -- recurrence ------------------------------------------------------------
 
-  RECUR_FIXTURE = <<~ORG
-    * Work
-    ** NEXT Pay rent :@home:
-       DEADLINE: <2026-08-01 Sat +1m>
-    ** NEXT Standup notes :@computer:
-  ORG
+  RECUR_FIXTURE = dump_fixture([
+    { "type" => "meta", "version" => 1 },
+    { "type" => "section", "id" => "cccc0001", "title" => "Work" },
+    { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001", "state" => "NEXT",
+      "title" => "Pay rent", "tags" => %w[@home], "deadline" => "2026-08-01", "recur" => "+1m" },
+    { "type" => "task", "id" => "cccc0003", "parent" => "cccc0001", "state" => "NEXT",
+      "title" => "Standup notes", "tags" => %w[@computer] },
+  ])
 
   def test_open_recur_popup_prefills_current_cookie
     app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE) do |app|

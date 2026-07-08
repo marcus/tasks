@@ -6,7 +6,7 @@ require "open3"
 
 # Store-layer coverage for the CLI's due/state/priority mutations, plus
 # end-to-end CLI tests (arg parsing, ref resolution, exit codes) that shell
-# out to bin/tasks against a sandbox copy via TASKS_ORG/TASKS_ARCHIVE.
+# out to bin/tasks against a sandbox copy via TASKS_FILE/TASKS_ARCHIVE.
 class TestCliMutations < Minitest::Test
   # -- set_date! (backs `due`) ------------------------------------------------
 
@@ -14,8 +14,9 @@ class TestCliMutations < Minitest::Test
     with_store do |store, org, _a|
       flight = find_item(store, "Book flight")
       assert store.set_date!(flight, Date.new(2026, 7, 15), kind: :deadline)
-      assert_match(/DEADLINE: <2026-07-15 Wed>/, File.read(org))
-      refute_match(/2026-07-02/, File.read(org))
+      rec = record_for(org, title: "Book flight in Concur")
+      assert_equal "2026-07-15", rec["deadline"]
+      refute_equal "2026-07-02", rec["deadline"]
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -54,9 +55,10 @@ class TestCliMutations < Minitest::Test
   def test_set_date_rejects_stale_line_numbers
     with_store do |store, org, _a|
       stale = find_item(store, "Book flight").dup
+      stale.id = nil
       stale.line = 1
       refute store.set_date!(stale, Date.new(2026, 7, 15), kind: :deadline)
-      assert_match(/2026-07-02/, File.read(org))
+      assert_equal "2026-07-02", record_for(org, title: "Book flight in Concur")["deadline"]
     end
   end
 
@@ -119,25 +121,24 @@ class TestCliMutations < Minitest::Test
   def test_undate_rejects_stale_line_numbers
     with_store do |store, org, _a|
       stale = find_item(store, "Book flight").dup
+      stale.id = nil
       stale.line = 1
       refute store.undate!(stale)
-      assert_match(/DEADLINE: <2026-07-02/, File.read(org))
+      assert_equal "2026-07-02", record_for(org, title: "Book flight in Concur")["deadline"]
     end
   end
 
   def test_undate_never_deletes_prose_mentioning_a_stamp_keyword
     with_store do |store, org, _a|
-      # a body note that mentions "DEADLINE:" mid-sentence must survive
-      lines = File.readlines(org)
-      idx = lines.index { |l| l.include?("DEADLINE: <2026-07-02") }
-      lines.insert(idx + 1, "   Waiting on the DEADLINE: confirmation from legal.\n")
-      File.write(org, lines.join)
-      store.reload!
+      # undate clears only the date FIELD; a body note that merely mentions
+      # "DEADLINE:" mid-sentence must survive as body text.
+      flight = find_item(store, "Book flight")
+      store.add_note!(flight, "Waiting on the DEADLINE: confirmation from legal.")
 
       assert store.undate!(find_item(store, "Book flight"), kind: :deadline)
-      content = File.read(org)
-      refute_match(/DEADLINE: <2026-07-02/, content)
-      assert_match(/Waiting on the DEADLINE: confirmation/, content)
+      rec = record_for(org, title: "Book flight in Concur")
+      assert_nil rec["deadline"]
+      assert_match(/Waiting on the DEADLINE: confirmation/, rec["body"])
     end
   end
 
@@ -156,7 +157,9 @@ class TestCliMutations < Minitest::Test
     with_store do |store, org, _a|
       assert store.set_state!(find_item(store, "Review PR"), "WAITING")
       assert_equal "WAITING", find_item(store, "Review PR").state
-      assert_match(/^\*\* WAITING \[#B\] Review PR backlog/, File.read(org))
+      rec = record_for(org, title: "Review PR backlog")
+      assert_equal "WAITING", rec["state"]
+      assert_equal "B", rec["priority"]
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -164,9 +167,9 @@ class TestCliMutations < Minitest::Test
   def test_set_state_entering_done_adds_closed_stamp
     with_store do |store, org, _a|
       assert store.set_state!(find_item(store, "Review PR"), "DONE")
-      lines = File.readlines(org)
-      idx = lines.index { |l| l.include?("Review PR") }
-      assert_match(/CLOSED: \[#{Date.today}\]/, lines[idx + 1])
+      rec = record_for(org, title: "Review PR backlog")
+      assert_equal "DONE", rec["state"]
+      assert_equal Date.today.iso8601, rec["closed"]
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -174,9 +177,9 @@ class TestCliMutations < Minitest::Test
   def test_set_state_cancelled_adds_closed_stamp
     with_store do |store, org, _a|
       assert store.set_state!(find_item(store, "Travel desk"), "CANCELLED")
-      assert_match(/^\*\* CANCELLED Travel desk reply/, File.read(org))
-      idx = File.readlines(org).index { |l| l.include?("Travel desk") }
-      assert_match(/CLOSED: \[#{Date.today}\]/, File.readlines(org)[idx + 1])
+      rec = record_for(org, title: "Travel desk reply")
+      assert_equal "CANCELLED", rec["state"]
+      assert_equal Date.today.iso8601, rec["closed"]
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -186,7 +189,7 @@ class TestCliMutations < Minitest::Test
       done = store.items.find { |i| i.title.include?("Old finished") }
       assert store.set_state!(done, "TODO")
       assert_equal "TODO", store.items.find { |i| i.title.include?("Old finished") }.state
-      refute_match(/CLOSED: \[2026-06-20\]/, File.read(org))
+      assert_nil record_for(org, title: "Old finished thing")["closed"]
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -195,8 +198,11 @@ class TestCliMutations < Minitest::Test
     with_store do |store, org, _a|
       done = store.items.find { |i| i.title.include?("Old finished") }
       assert store.set_state!(done, "CANCELLED")
-      assert_equal 1, File.read(org).scan(/CLOSED:/).size
-      assert_match(/^\*\* CANCELLED \[#C\] Old finished/, File.read(org))
+      rec = record_for(org, title: "Old finished thing")
+      assert_equal "CANCELLED", rec["state"]
+      assert_equal "C", rec["priority"]
+      # DONE→CANCELLED keeps the single original closed date, not a fresh one.
+      assert_equal "2026-06-20", rec["closed"]
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -204,9 +210,12 @@ class TestCliMutations < Minitest::Test
   def test_set_state_rejects_stale_line_numbers
     with_store do |store, org, _a|
       stale = find_item(store, "Review PR").dup
+      stale.id = nil
       stale.line = 1
       refute store.set_state!(stale, "DONE")
-      assert_match(/^\*\* NEXT \[#B\] Review PR/, File.read(org))
+      rec = record_for(org, title: "Review PR backlog")
+      assert_equal "NEXT", rec["state"]
+      assert_equal "B", rec["priority"]
     end
   end
 
@@ -224,8 +233,8 @@ class TestCliMutations < Minitest::Test
   def test_retitle_replaces_title_only
     with_store do |store, org, _a|
       assert store.retitle!(find_item(store, "Book flight"), "Rebook the flight")
-      line = File.readlines(org).find { |l| l.include?("Rebook the flight") }
-      assert_match(/^\*\* NEXT \[#A\] Rebook the flight :@computer:important:urgent:$/, line.chomp)
+      fresh = find_item(store, "Rebook the flight")
+      assert_equal "NEXT [#A] Rebook the flight :@computer:important:urgent:", store.headline(fresh)
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -233,7 +242,7 @@ class TestCliMutations < Minitest::Test
   def test_retitle_preserves_headline_without_tags
     with_store do |store, org, _a|
       assert store.retitle!(find_item(store, "garden"), "prune the roses")
-      assert_match(/^\*\* INBOX prune the roses$/, File.readlines(org).find { |l| l.include?("prune") }.chomp)
+      assert_equal "INBOX prune the roses", store.headline(find_item(store, "prune the roses"))
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -241,9 +250,10 @@ class TestCliMutations < Minitest::Test
   def test_retitle_rejects_stale_line_numbers
     with_store do |store, org, _a|
       stale = find_item(store, "Book flight").dup
+      stale.id = nil
       stale.line = 1
       refute store.retitle!(stale, "nope")
-      assert_match(/Book flight in Concur/, File.read(org))
+      assert record_for(org, title: "Book flight in Concur")
     end
   end
 
@@ -284,7 +294,7 @@ class TestCliMutations < Minitest::Test
     with_store do |store, org, _a|
       pr = find_item(store, "Review PR")
       assert store.set_tags!(pr, remove: %w[@computer important])
-      assert_match(/^\*\* NEXT \[#B\] Review PR backlog$/, File.readlines(org).find { |l| l.include?("Review PR") }.chomp)
+      assert_equal "NEXT [#B] Review PR backlog", store.headline(find_item(store, "Review PR"))
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -292,6 +302,7 @@ class TestCliMutations < Minitest::Test
   def test_set_tags_rejects_stale_line_numbers
     with_store do |store, org, _a|
       stale = find_item(store, "Review PR").dup
+      stale.id = nil
       stale.line = 1
       refute store.set_tags!(stale, add: %w[urgent])
       assert_equal FIXTURE_ORG, File.read(org)
@@ -303,21 +314,19 @@ class TestCliMutations < Minitest::Test
   def test_add_note_appends_body_line
     with_store do |store, org, _a|
       assert store.add_note!(find_item(store, "Review PR"), "ping the reviewers")
-      block = store.block(find_item(store, "Review PR"))
-      assert_includes block.map(&:strip), "ping the reviewers"
+      body = store.body(find_item(store, "Review PR"))
+      assert_includes body.map(&:strip), "ping the reviewers"
       assert Tasks::Check.check(org).ok?
     end
   end
 
   def test_add_note_lands_within_the_block_not_the_next_task
     with_store do |store, org, _a|
-      # garden is the only Inbox item; its note must not bleed into * Work
+      # A note appends to the target's own body field and cannot bleed into a
+      # sibling record: garden gains the note, the next task (flight) does not.
       assert store.add_note!(find_item(store, "garden"), "north bed")
-      lines = File.readlines(org)
-      garden = lines.index { |l| l.include?("garden") }
-      work = lines.index { |l| l =~ /^\* Work/ }
-      note = lines.index { |l| l.include?("north bed") }
-      assert garden < note && note < work
+      assert_match(/north bed/, record_for(org, title: "random thought about the garden")["body"])
+      assert_nil record_for(org, title: "Book flight in Concur")["body"]
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -325,6 +334,7 @@ class TestCliMutations < Minitest::Test
   def test_add_note_rejects_stale_line_numbers
     with_store do |store, org, _a|
       stale = find_item(store, "Review PR").dup
+      stale.id = nil
       stale.line = 1
       refute store.add_note!(stale, "nope")
       assert_equal FIXTURE_ORG, File.read(org)
@@ -347,7 +357,7 @@ class TestCliMutations < Minitest::Test
     with_store do |store, org, _a|
       note = "follow up — see thread".dup.force_encoding("ASCII-8BIT")
       assert store.add_note!(find_item(store, "Review PR"), note)
-      assert_includes store.block(find_item(store, "Review PR")).map(&:strip),
+      assert_includes store.body(find_item(store, "Review PR")).map(&:strip),
                       "follow up — see thread"
       assert Tasks::Check.check(org).ok?
     end
@@ -359,23 +369,23 @@ class TestCliMutations < Minitest::Test
     with_store do |store, org, _a|
       line = store.move!(find_item(store, "garden"), "Work")
       assert line.is_a?(Integer) && line.positive?
-      lines = File.readlines(org)
-      garden = lines.index { |l| l.include?("garden") }
-      work = lines.index { |l| l =~ /^\* Work/ }
-      home = lines.index { |l| l =~ /^\* Home/ }
-      assert work < garden && garden < home, "garden now sits inside Work"
-      assert_equal line, garden + 1
+      garden = record_for(org, title: "random thought about the garden")
+      work = record_for(org, title: "Work")
+      home = record_for(org, title: "Home")
+      assert_equal work["id"], garden["parent"], "garden now sits inside Work"
+      assert work["line"] < garden["line"] && garden["line"] < home["line"]
+      assert_equal line, garden["line"]
       assert Tasks::Check.check(org).ok?
     end
   end
 
   def test_move_carries_the_whole_block
     with_store do |store, org, _a|
-      # self-eval has a SCHEDULED body line that must travel with it
+      # self-eval's SCHEDULED date must travel with the moved record
       store.move!(find_item(store, "self-eval"), "Home")
-      lines = File.readlines(org)
-      idx = lines.index { |l| l.include?("self-eval") }
-      assert_match(/SCHEDULED: <2026-07-03/, lines[idx + 1])
+      rec = record_for(org, title: "Midyear self-eval")
+      assert_equal "2026-07-03", rec["scheduled"]
+      assert_equal record_for(org, title: "Home")["id"], rec["parent"]
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -390,6 +400,7 @@ class TestCliMutations < Minitest::Test
   def test_move_rejects_stale_line_numbers
     with_store do |store, org, _a|
       stale = find_item(store, "garden").dup
+      stale.id = nil
       stale.line = 99
       refute store.move!(stale, "Work")
       assert_equal FIXTURE_ORG, File.read(org)
@@ -441,12 +452,12 @@ class TestCliMutations < Minitest::Test
   def test_capture_under_named_project
     with_store do |store, org, _a|
       store.capture!("refactor parser", state: "NEXT", tags: %w[@computer], project: "Work")
-      lines = File.readlines(org)
-      idx = lines.index { |l| l.include?("refactor parser") }
-      work = lines.index { |l| l =~ /^\* Work/ }
-      home = lines.index { |l| l =~ /^\* Home/ }
-      assert work < idx && idx < home
-      assert_match(/^\*\* NEXT refactor parser :@computer:$/, lines[idx].chomp)
+      rec = record_for(org, title: "refactor parser")
+      work = record_for(org, title: "Work")
+      home = record_for(org, title: "Home")
+      assert work["line"] < rec["line"] && rec["line"] < home["line"]
+      assert_equal work["id"], rec["parent"]
+      assert_equal "NEXT refactor parser :@computer:", store.headline(find_item(store, "refactor parser"))
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -470,9 +481,9 @@ class TestCliMutations < Minitest::Test
   def test_cli_done_marks_done_with_closed_stamp
     run_cli("done", "Book flight") do |org, out, _err, st|
       assert st.success?
-      content = File.read(org)
-      assert_match(/^\*\* DONE \[#A\] Book flight/, content)
-      assert_match(/CLOSED: \[#{Date.today}\]/, content)
+      rec = record_for(org, title: "Book flight in Concur")
+      assert_equal "DONE", rec["state"]
+      assert_equal Date.today.iso8601, rec["closed"]
       assert_match(/DONE.*Book flight/, out)
       assert Tasks::Check.check(org).ok?
     end
@@ -489,7 +500,7 @@ class TestCliMutations < Minitest::Test
     %w[complete close].each do |syn|
       run_cli(syn, "Book flight") do |org, _out, _err, st|
         assert st.success?, "#{syn} should alias done"
-        assert_match(/^\*\* DONE \[#A\] Book flight/, File.read(org))
+        assert_equal "DONE", record_for(org, title: "Book flight in Concur")["state"]
       end
     end
   end
@@ -507,7 +518,7 @@ class TestCliMutations < Minitest::Test
   def test_cli_defer_tags_and_hides_from_active_views
     run_cli("defer", "Water the plants") do |org, out, _err, st|
       assert st.success?
-      assert_match(/Water the plants :@home:defer:/, File.read(org))
+      assert_equal %w[@home defer], record_for(org, title: "Water the plants")["tags"]
       assert_match(/:defer:/, out) # prints the resulting headline
       assert Tasks::Check.check(org).ok?
     end
@@ -516,12 +527,12 @@ class TestCliMutations < Minitest::Test
   def test_cli_defer_synonym_snooze
     run_cli("snooze", "Water the plants") do |org, _out, _err, st|
       assert st.success?, "snooze should alias defer"
-      assert_match(/Water the plants :@home:defer:/, File.read(org))
+      assert_includes record_for(org, title: "Water the plants")["tags"], "defer"
     end
   end
 
   def test_cli_deferred_task_dropped_from_next_and_default_list
-    deferred = FIXTURE_ORG.sub("Water the plants :@home:", "Water the plants :@home:defer:")
+    deferred = deferred_fixture
     run_cli("next", content: deferred) do |_org, out, _err, st|
       assert st.success?
       refute_match(/Water the plants/, out, "deferred NEXT is hidden from `next`")
@@ -533,7 +544,7 @@ class TestCliMutations < Minitest::Test
   end
 
   def test_cli_list_deferred_shows_only_deferred
-    deferred = FIXTURE_ORG.sub("Water the plants :@home:", "Water the plants :@home:defer:")
+    deferred = deferred_fixture
     run_cli("list", "--deferred", content: deferred) do |_org, out, _err, st|
       assert st.success?
       assert_match(/Water the plants/, out)
@@ -543,11 +554,12 @@ class TestCliMutations < Minitest::Test
   end
 
   def test_cli_activate_clears_defer_tag
-    deferred = FIXTURE_ORG.sub("Water the plants :@home:", "Water the plants :@home:defer:")
+    deferred = deferred_fixture
     run_cli("activate", "Water the plants", content: deferred) do |org, _out, _err, st|
       assert st.success?
-      assert_match(/^\*\* NEXT Water the plants :@home:$/, File.read(org))
-      refute_match(/:defer:/, File.read(org))
+      rec = record_for(org, title: "Water the plants")
+      assert_equal "NEXT", rec["state"]
+      assert_equal %w[@home], rec["tags"]
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -569,14 +581,14 @@ class TestCliMutations < Minitest::Test
 
   # A deferred task that is then completed must not keep an orphaned :defer:
   # tag — otherwise it is invisible to `list --deferred` and unreachable by
-  # `activate`, and the dead tag rides into archive.org.
+  # `activate`, and the dead tag rides into archive.jsonl.
   def test_cli_done_on_deferred_task_clears_defer_tag
-    deferred = FIXTURE_ORG.sub("Water the plants :@home:", "Water the plants :@home:defer:")
+    deferred = deferred_fixture
     run_cli("done", "Water the plants", content: deferred) do |org, _out, _err, st|
       assert st.success?
-      content = File.read(org)
-      assert_match(/^\*\* DONE Water the plants :@home:$/, content)
-      refute_match(/:defer:/, content, "completing a task drops the someday/maybe marker")
+      rec = record_for(org, title: "Water the plants")
+      assert_equal "DONE", rec["state"]
+      assert_equal %w[@home], rec["tags"], "completing a task drops the someday/maybe marker"
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -617,18 +629,16 @@ class TestCliMutations < Minitest::Test
   def test_cli_archive_sweeps_to_archive_file
     run_cli("archive") do |org, out, _err, st|
       assert st.success?
-      refute_match(/Old finished thing/, File.read(org))
-      archive = File.join(File.dirname(org), "archive.org")
-      assert_match(/Old finished thing/, File.read(archive))
+      assert_nil record_for(org, title: "Old finished thing")
+      archive = File.join(File.dirname(org), "archive.jsonl")
+      assert record_for(archive, title: "Old finished thing")
       assert_match(/Archived 1 item/, out)
       assert Tasks::Check.check(org).ok?
     end
   end
 
   def test_cli_archive_nothing_to_do
-    no_done = FIXTURE_ORG.lines.reject.with_index { |l, i|
-      l.include?("Old finished") || l.include?("CLOSED: [2026-06-20]")
-    }.join
+    no_done = dump_fixture(FIXTURE_RECORDS.reject { |r| r["title"] == "Old finished thing" })
     run_cli("archive", content: no_done) do |_org, out, _err, st|
       assert st.success?
       assert_match(/Nothing to archive/, out)
@@ -647,7 +657,7 @@ class TestCliMutations < Minitest::Test
       %w[state priority title tags contexts scheduled deadline line source headline].each do |k|
         assert row.key?(k), "missing key #{k}"
       end
-      assert_equal "org", row["source"]
+      assert_equal "live", row["source"]
     end
   end
 
@@ -660,11 +670,11 @@ class TestCliMutations < Minitest::Test
 
   def test_cli_list_json_includes_archived_with_source
     run_cli("archive") do |org, _out, _err, _st|
-      env = { "TASKS_ORG" => org, "TASKS_ARCHIVE" => File.join(File.dirname(org), "archive.org") }
+      env = { "TASKS_FILE" => org, "TASKS_ARCHIVE" => File.join(File.dirname(org), "archive.jsonl") }
       out, _err, st = Open3.capture3(env, "ruby", BIN, "list", "-a", "--json")
       assert st.success?
       sources = JSON.parse(out).map { |r| r["source"] }.uniq.sort
-      assert_equal %w[archive org], sources
+      assert_equal %w[archive live], sources
     end
   end
 
@@ -694,11 +704,12 @@ class TestCliMutations < Minitest::Test
   # since the CLI classifies against Date.today.
   def test_cli_quadrants_honors_urgent_days_window
     far = Date.today + 20
-    content = <<~ORG
-      * Work
-      ** NEXT [#A] distant milestone
-         DEADLINE: <#{far.iso8601} #{far.strftime("%a")}>
-    ORG
+    content = dump_fixture([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "dddd0001", "title" => "Work" },
+      { "type" => "task", "id" => "dddd0002", "parent" => "dddd0001", "state" => "NEXT",
+        "priority" => "A", "title" => "distant milestone", "deadline" => far.iso8601 },
+    ])
     q = lambda do |out|
       JSON.parse(out).find { |r| r["title"].include?("distant milestone") }["quadrant"]
     end
@@ -742,10 +753,10 @@ class TestCliMutations < Minitest::Test
   # Run bin/tasks in a sandbox; returns [stdout, stderr, status].
   def run_cli(*args, content: FIXTURE_ORG, env: {})
     Dir.mktmpdir do |dir|
-      org = File.join(dir, "gtd.org")
-      archive = File.join(dir, "archive.org")
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
       File.write(org, content)
-      env = { "TASKS_ORG" => org, "TASKS_ARCHIVE" => archive }.merge(env)
+      env = { "TASKS_FILE" => org, "TASKS_ARCHIVE" => archive }.merge(env)
       require "open3"
       out, err, st = Open3.capture3(env, "ruby", BIN, *args)
       # The CLI emits UTF-8; capture3 tags output with the runner's locale,
@@ -758,7 +769,7 @@ class TestCliMutations < Minitest::Test
   def test_cli_due_sets_deadline
     run_cli("due", "Book flight", "2026-07-15") do |org, out, _err, st|
       assert st.success?
-      assert_match(/DEADLINE: <2026-07-15/, File.read(org))
+      assert_equal "2026-07-15", record_for(org, title: "Book flight in Concur")["deadline"]
       assert_match(/DONE|NEXT/, out) # prints the resulting headline
     end
   end
@@ -776,7 +787,9 @@ class TestCliMutations < Minitest::Test
   def test_cli_priority_clears_with_none
     run_cli("priority", "Book flight", "none") do |org, out, _err, st|
       assert st.success?
-      assert_match(/^\*\* NEXT Book flight/, File.read(org))
+      rec = record_for(org, title: "Book flight in Concur")
+      assert_equal "NEXT", rec["state"]
+      assert_nil rec["priority"]
       assert_match(/Book flight/, out)
     end
   end
@@ -784,8 +797,9 @@ class TestCliMutations < Minitest::Test
   def test_cli_state_reopens_done_item
     run_cli("state", "Old finished", "TODO") do |org, out, _err, st|
       assert st.success?
-      assert_match(/^\*\* TODO \[#C\] Old finished/, File.read(org))
-      refute_match(/CLOSED:/, File.read(org))
+      rec = record_for(org, title: "Old finished thing")
+      assert_equal "TODO", rec["state"]
+      assert_nil rec["closed"]
       assert_match(/TODO/, out)
     end
   end
@@ -814,12 +828,22 @@ class TestCliMutations < Minitest::Test
   end
 
   def test_cli_duplicate_titles_report_the_right_task
-    dup_org = "* W\n** TODO pay the bill :@home:\n** NEXT pay the bill :@computer:\n"
-    # L3 targets the NEXT copy; the reported headline must be that one
+    # Records ordered so the NEXT copy lands on physical line 3 (meta=1,
+    # section=2, NEXT=3, TODO=4); L3 targets the NEXT copy.
+    dup_org = dump_fixture([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "eeee0001", "title" => "W" },
+      { "type" => "task", "id" => "eeee0002", "parent" => "eeee0001", "state" => "NEXT",
+        "title" => "pay the bill", "tags" => %w[@computer] },
+      { "type" => "task", "id" => "eeee0003", "parent" => "eeee0001", "state" => "TODO",
+        "title" => "pay the bill", "tags" => %w[@home] },
+    ])
     run_cli("priority", "L3", "A", content: dup_org) do |org, out, _err, st|
       assert st.success?
       assert_match(/NEXT \[#A\] pay the bill/, out)
-      assert_match(/^\*\* TODO pay the bill/, File.read(org), "TODO copy untouched")
+      recs = Tasks::Format.parse(File.read(org)).records
+      assert_equal "A", recs.find { |r| r["state"] == "NEXT" }["priority"]
+      assert_nil recs.find { |r| r["state"] == "TODO" }["priority"], "TODO copy untouched"
     end
   end
 
@@ -855,8 +879,9 @@ class TestCliMutations < Minitest::Test
   def test_cli_schedule_sets_scheduled
     run_cli("schedule", "Book flight", "2026-07-20") do |org, out, _err, st|
       assert st.success?
-      assert_match(/SCHEDULED: <2026-07-20/, File.read(org))
-      assert_match(/DEADLINE: <2026-07-02/, File.read(org), "existing deadline untouched")
+      rec = record_for(org, title: "Book flight in Concur")
+      assert_equal "2026-07-20", rec["scheduled"]
+      assert_equal "2026-07-02", rec["deadline"], "existing deadline untouched"
       assert_match(/Book flight/, out)
     end
   end
@@ -913,9 +938,10 @@ class TestCliMutations < Minitest::Test
   def test_cli_cancel_marks_cancelled
     run_cli("cancel", "Review PR") do |org, out, _err, st|
       assert st.success?
-      assert_match(/^\*\* CANCELLED \[#B\] Review PR backlog/, File.read(org))
-      idx = File.readlines(org).index { |l| l.include?("Review PR") }
-      assert_match(/CLOSED: \[#{Date.today}\]/, File.readlines(org)[idx + 1])
+      rec = record_for(org, title: "Review PR backlog")
+      assert_equal "CANCELLED", rec["state"]
+      assert_equal "B", rec["priority"]
+      assert_equal Date.today.iso8601, rec["closed"]
       assert_match(/CANCELLED/, out)
     end
   end
@@ -923,7 +949,7 @@ class TestCliMutations < Minitest::Test
   def test_cli_cancel_alias_drop
     run_cli("drop", "Review PR") do |org, _out, _err, st|
       assert st.success?
-      assert_match(/^\*\* CANCELLED \[#B\] Review PR backlog/, File.read(org))
+      assert_equal "CANCELLED", record_for(org, title: "Review PR backlog")["state"]
     end
   end
 
@@ -990,7 +1016,10 @@ class TestCliMutations < Minitest::Test
   def test_cli_retitle_replaces_title
     run_cli("retitle", "Book flight", "Rebook the flight") do |org, out, _err, st|
       assert st.success?
-      assert_match(/^\*\* NEXT \[#A\] Rebook the flight :@computer:important:urgent:/, File.read(org))
+      rec = record_for(org, title: "Rebook the flight")
+      assert_equal "NEXT", rec["state"]
+      assert_equal "A", rec["priority"]
+      assert_equal %w[@computer important urgent], rec["tags"]
       assert_match(/Rebook the flight/, out)
     end
   end
@@ -998,7 +1027,7 @@ class TestCliMutations < Minitest::Test
   def test_cli_retitle_alias_rename
     run_cli("rename", "Book flight", "Rebook") do |org, _out, _err, st|
       assert st.success?
-      assert_match(/^\*\* NEXT \[#A\] Rebook /, File.read(org))
+      assert_equal "Rebook", record_for(org, title: "Rebook")["title"]
     end
   end
 
@@ -1014,10 +1043,10 @@ class TestCliMutations < Minitest::Test
   def test_cli_tag_adds_and_removes
     run_cli("tag", "Review PR", "+urgent", "-important", "@home") do |org, out, _err, st|
       assert st.success?
-      line = File.readlines(org).find { |l| l.include?("Review PR") }
-      assert_match(/urgent/, line)
-      assert_match(/@home/, line)
-      refute_match(/important/, line)
+      tags = record_for(org, title: "Review PR backlog")["tags"]
+      assert_includes tags, "urgent"
+      assert_includes tags, "@home"
+      refute_includes tags, "important"
       assert_match(/Review PR/, out)
     end
   end
@@ -1025,7 +1054,7 @@ class TestCliMutations < Minitest::Test
   def test_cli_tag_removes_context
     run_cli("tag", "Review PR", "-@computer") do |org, _out, _err, st|
       assert st.success?
-      refute_match(/@computer/, File.readlines(org).find { |l| l.include?("Review PR") })
+      refute_includes record_for(org, title: "Review PR backlog")["tags"], "@computer"
     end
   end
 
@@ -1067,11 +1096,11 @@ class TestCliMutations < Minitest::Test
   def test_cli_move_relocates_and_reports_new_headline
     run_cli("move", "garden", "Work") do |org, out, _err, st|
       assert st.success?
-      lines = File.readlines(org)
-      garden = lines.index { |l| l.include?("garden") }
-      work = lines.index { |l| l =~ /^\* Work/ }
-      home = lines.index { |l| l =~ /^\* Home/ }
-      assert work < garden && garden < home
+      garden = record_for(org, title: "random thought about the garden")
+      work = record_for(org, title: "Work")
+      home = record_for(org, title: "Home")
+      assert_equal work["id"], garden["parent"]
+      assert work["line"] < garden["line"] && garden["line"] < home["line"]
       assert_match(/garden/, out)
     end
   end
@@ -1089,8 +1118,9 @@ class TestCliMutations < Minitest::Test
   def test_cli_capture_default_inbox
     run_cli("capture", "call the plumber") do |org, out, _err, st|
       assert st.success?
-      assert_match(/^\*\* INBOX call the plumber/, File.read(org))
-      assert_match(/Captured \[#{Date.today}\]/, File.read(org))
+      rec = record_for(org, title: "call the plumber")
+      assert_equal "INBOX", rec["state"]
+      assert_match(/Captured \[#{Date.today}\]/, rec["body"])
       assert_match(/call the plumber/, out)
     end
   end
@@ -1100,13 +1130,14 @@ class TestCliMutations < Minitest::Test
             "--priority", "A", "--tag", "important", "--context", "@work",
             "--project", "Work") do |org, out, _err, st|
       assert st.success?
-      lines = File.readlines(org)
-      idx = lines.index { |l| l.include?("prep board deck") }
-      work = lines.index { |l| l =~ /^\* Work/ }
-      home = lines.index { |l| l =~ /^\* Home/ }
-      assert work < idx && idx < home
-      assert_match(/^\*\* TODO \[#A\] prep board deck :@work:important:/, lines[idx].chomp)
-      assert(lines[idx..(idx + 3)].any? { |l| l =~ /DEADLINE: <2026-07-20/ })
+      rec = record_for(org, title: "prep board deck")
+      work = record_for(org, title: "Work")
+      home = record_for(org, title: "Home")
+      assert work["line"] < rec["line"] && rec["line"] < home["line"]
+      assert_equal "TODO", rec["state"]
+      assert_equal "A", rec["priority"]
+      assert_equal %w[@work important], rec["tags"]
+      assert_equal "2026-07-20", rec["deadline"]
       assert_match(/prep board deck/, out)
       assert Tasks::Check.check(org).ok?
     end
@@ -1115,7 +1146,7 @@ class TestCliMutations < Minitest::Test
   def test_cli_capture_explicit_state_overrides_date_default
     run_cli("capture", "waiting on legal", "--due", "2026-07-20", "--state", "WAITING") do |org, _out, _err, st|
       assert st.success?
-      assert_match(/^\*\* WAITING waiting on legal/, File.read(org))
+      assert_equal "WAITING", record_for(org, title: "waiting on legal")["state"]
     end
   end
 
@@ -1162,19 +1193,33 @@ class TestCliMutations < Minitest::Test
 
   # -- recur ------------------------------------------------------------------
 
-  # A fixture with a dated task to attach recurrence to.
-  RECUR_CONTENT = <<~ORG
-    * Inbox
-    * Work
-    ** NEXT Pay rent :@home:
-       DEADLINE: <2026-08-01 Sat>
-    ** NEXT Standup notes :@computer:
-  ORG
+  # A fixture with a dated task (Pay rent) to attach recurrence to, and an
+  # undated one (Standup notes) for the no-date paths.
+  RECUR_RECORDS = [
+    { "type" => "meta", "version" => 1 },
+    { "type" => "section", "id" => "cccc0001", "title" => "Inbox" },
+    { "type" => "section", "id" => "cccc0002", "title" => "Work" },
+    { "type" => "task", "id" => "cccc0003", "parent" => "cccc0002", "state" => "NEXT",
+      "title" => "Pay rent", "tags" => %w[@home], "deadline" => "2026-08-01" },
+    { "type" => "task", "id" => "cccc0004", "parent" => "cccc0002", "state" => "NEXT",
+      "title" => "Standup notes", "tags" => %w[@computer] },
+  ].freeze
+  RECUR_CONTENT = dump_fixture(RECUR_RECORDS)
+
+  # RECUR_RECORDS deep-duped, with `recur` optionally seeded on Pay rent — the
+  # jsonl counterpart of the old `RECUR_CONTENT.sub("<…>", "<… .+1w>")` splices.
+  def recur_content(pay_rent_recur: nil)
+    recs = RECUR_RECORDS.map(&:dup)
+    recs.find { |r| r["title"] == "Pay rent" }["recur"] = pay_rent_recur if pay_rent_recur
+    dump_fixture(recs)
+  end
 
   def test_cli_recur_sets_cookie_from_friendly_word
     run_cli("recur", "Pay rent", "monthly", content: RECUR_CONTENT) do |org, _out, _err, st|
       assert st.success?
-      assert_match(/DEADLINE: <2026-08-01 Sat \.\+1m>/, File.read(org))
+      rec = record_for(org, title: "Pay rent")
+      assert_equal ".+1m", rec["recur"]
+      assert_equal "2026-08-01", rec["deadline"]
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -1182,16 +1227,17 @@ class TestCliMutations < Minitest::Test
   def test_cli_recur_from_schedule_uses_fixed_prefix
     run_cli("recur", "Pay rent", "2w", "--from", "schedule", content: RECUR_CONTENT) do |org, _out, _err, st|
       assert st.success?
-      assert_match(/DEADLINE: <2026-08-01 Sat \+2w>/, File.read(org))
+      assert_equal "+2w", record_for(org, title: "Pay rent")["recur"]
     end
   end
 
   def test_cli_recur_off_clears
     run_cli("recur", "Pay rent", "off",
-            content: RECUR_CONTENT.sub("<2026-08-01 Sat>", "<2026-08-01 Sat .+1w>")) do |org, _out, _err, st|
+            content: recur_content(pay_rent_recur: ".+1w")) do |org, _out, _err, st|
       assert st.success?
-      refute_match(/\+1w/, File.read(org))
-      assert_match(/DEADLINE: <2026-08-01 Sat>/, File.read(org))
+      rec = record_for(org, title: "Pay rent")
+      assert_nil rec["recur"]
+      assert_equal "2026-08-01", rec["deadline"]
     end
   end
 
@@ -1205,7 +1251,9 @@ class TestCliMutations < Minitest::Test
   def test_cli_recur_undated_task_with_on_seeds_date
     run_cli("recur", "Standup", "every 2 days", "--on", "2026-09-01", content: RECUR_CONTENT) do |org, _out, _err, st|
       assert st.success?
-      assert_match(/DEADLINE: <2026-09-01 Tue \.\+2d>/, File.read(org))
+      rec = record_for(org, title: "Standup notes")
+      assert_equal "2026-09-01", rec["deadline"]
+      assert_equal ".+2d", rec["recur"]
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -1242,13 +1290,14 @@ class TestCliMutations < Minitest::Test
   end
 
   def test_cli_done_rolls_recurring_task_forward
-    content = RECUR_CONTENT.sub("<2026-08-01 Sat>", "<2026-08-01 Sat +1m>")
+    content = recur_content(pay_rent_recur: "+1m")
     run_cli("done", "Pay rent", content: content) do |org, out, _err, st|
       assert st.success?
       assert_match(/↻ Pay rent → next 2026-09-01/, out)
-      # still open, not archived away
-      assert_match(/^\*\* NEXT Pay rent/, File.read(org))
-      refute_match(/DONE/, File.read(org))
+      # still open, not archived away — rolled forward instead of closed
+      rec = record_for(org, title: "Pay rent")
+      assert_equal "NEXT", rec["state"]
+      assert_equal "2026-09-01", rec["deadline"]
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -1256,15 +1305,16 @@ class TestCliMutations < Minitest::Test
   def test_cli_capture_recur_lands_scheduled_and_repeating
     run_cli("capture", "water plants", "--recur", "weekly", content: RECUR_CONTENT) do |org, _out, _err, st|
       assert st.success?
-      body = File.read(org)
-      assert_match(/\*\* TODO water plants/, body)
-      assert_match(/SCHEDULED: <\d{4}-\d{2}-\d{2} \w{3} \.\+1w>/, body)
+      rec = record_for(org, title: "water plants")
+      assert_equal "TODO", rec["state"]
+      assert_match(/\A\d{4}-\d{2}-\d{2}\z/, rec["scheduled"])
+      assert_equal ".+1w", rec["recur"]
       assert Tasks::Check.check(org).ok?
     end
   end
 
   def test_cli_list_recurring_filters
-    content = RECUR_CONTENT.sub("<2026-08-01 Sat>", "<2026-08-01 Sat +1m>")
+    content = recur_content(pay_rent_recur: "+1m")
     run_cli("list", "--recurring", content: content) do |_org, out, _err, st|
       assert st.success?
       assert_match(/Pay rent/, out)
@@ -1275,7 +1325,7 @@ class TestCliMutations < Minitest::Test
   # `state <ref> DONE` rolls a recurring task forward (like `done`); its dry-run
   # and output must reflect that, not claim it will just set the state.
   def test_cli_state_done_is_recurrence_aware
-    content = RECUR_CONTENT.sub("<2026-08-01 Sat>", "<2026-08-01 Sat +1m>")
+    content = recur_content(pay_rent_recur: "+1m")
     run_cli("state", "Pay rent", "DONE", "--dry-run", content: content) do |org, out, _err, st|
       assert st.success?
       assert_match(/would recur → 2026-09-01/, out)
@@ -1284,7 +1334,7 @@ class TestCliMutations < Minitest::Test
     run_cli("state", "Pay rent", "DONE", content: content) do |org, out, _err, st|
       assert st.success?
       assert_match(/↻ Pay rent → next 2026-09-01/, out)
-      assert_match(/^\*\* NEXT Pay rent/, File.read(org))
+      assert_equal "NEXT", record_for(org, title: "Pay rent")["state"]
     end
   end
 
@@ -1298,7 +1348,10 @@ class TestCliMutations < Minitest::Test
   end
 
   def test_cli_recur_on_closed_task_rejected
-    closed = RECUR_CONTENT + "** DONE Filed taxes\n   CLOSED: [2026-04-15]\n"
+    recs = RECUR_RECORDS.map(&:dup)
+    recs << { "type" => "task", "id" => "cccc0005", "parent" => "cccc0002",
+              "state" => "DONE", "title" => "Filed taxes", "closed" => "2026-04-15" }
+    closed = dump_fixture(recs)
     run_cli("recur", "Filed taxes", "weekly", "--include-done", content: closed) do |_org, _out, err, st|
       assert_equal 1, st.exitstatus
       assert_match(/can't set recurrence on a DONE task/, err)
