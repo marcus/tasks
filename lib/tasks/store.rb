@@ -407,6 +407,27 @@ module Tasks
       j
     end
 
+    # Close every OPEN task inside the subtree rooted at records[ri], excluding
+    # the root itself — the cascade behind completing a parent: finishing a
+    # project finishes its open work. Each open descendant (state in
+    # OPEN_STATES) goes DONE with today's `closed`, drops the DEFER_TAG, and has
+    # its `recur` cookie retired outright — a cascaded recurring descendant is
+    # NOT advanced (no date roll, no body log): completing the parent completes
+    # it. DONE/CANCELLED descendants are left untouched (their prior `closed`
+    # stands). Returns the touched records' `line` values, in file order.
+    def close_open_descendants(records, ri)
+      rj = subtree_end(records, ri)
+      today = Date.today.iso8601
+      records[(ri + 1)...rj].each_with_object([]) do |rec, touched|
+        next unless rec["type"] == "task" && OPEN_STATES.include?(rec["state"])
+        rec["state"] = "DONE"
+        rec["closed"] = today
+        rec["tags"] = (rec["tags"] || []) - [DEFER_TAG]
+        rec.delete("recur")
+        touched << rec["line"]
+      end
+    end
+
     # Index of the top-level ("* ") section matching `name` — a section record
     # with no parent, exact title then substring (case-insensitive) — or nil.
     def find_section(records, name)
@@ -560,14 +581,19 @@ module Tasks
       return advance_recurrence_impl(item) if item.recurring?
 
       records = fresh_records(@org)
-      rec = locate(records, item) or return false
+      ri = locate_index(records, item) or return false
+      rec = records[ri]
       rec["state"] = "DONE"
       rec["closed"] = Date.today.iso8601
       # A completed task is no longer someday/maybe — drop the defer marker.
       rec["tags"] = (rec["tags"] || []) - [DEFER_TAG]
+      # Completing a parent completes its open descendants — one journal entry,
+      # one undo. Returns the touched line numbers (root first, then children in
+      # file order); an Array is truthy and != 0 so with_history still records.
+      lines = [rec["line"]] + close_open_descendants(records, ri)
       write_records(@org, records)
       reload!
-      true
+      lines
     end
 
     def set_priority_impl(item, pri)
@@ -657,20 +683,25 @@ module Tasks
       return advance_recurrence_impl(item) if new_state == "DONE" && item.recurring?
 
       records = fresh_records(@org)
-      rec = locate(records, item) or return false
+      ri = locate_index(records, item) or return false
+      rec = records[ri]
       old_state = rec["state"]
       rec["state"] = new_state
 
+      lines = [rec["line"]]
       if DONE_STATES.include?(new_state) && !DONE_STATES.include?(old_state)
         rec["tags"] = (rec["tags"] || []) - [DEFER_TAG]
         rec["closed"] ||= Date.today.iso8601
+        # Cascade only on a real transition INTO DONE — completing a parent
+        # completes its open descendants. CANCELLED closes the root alone.
+        lines.concat(close_open_descendants(records, ri)) if new_state == "DONE"
       elsif DONE_STATES.include?(old_state) && !DONE_STATES.include?(new_state)
         rec.delete("closed")
       end
 
       write_records(@org, records)
       reload!
-      true
+      lines
     end
 
     # Set/replace/remove the recurrence cookie. Requires a date to repeat from.
@@ -708,7 +739,10 @@ module Tasks
       rec["body"] = append_body(rec["body"], "- Did [#{Date.today}].")
       write_records(@org, records)
       reload!
-      true
+      # Returns the touched line as a one-element Array so complete_impl and
+      # set_state_impl hand callers a uniform lines array (no cascade — a
+      # recurring parent rolls forward and does not complete its descendants).
+      [rec["line"]]
     end
 
     def move_impl(item, section)

@@ -1302,6 +1302,70 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  # -- cascading completion (CLI) ----------------------------------------------
+
+  # A nested project fixture: "Ship release" over two open children.
+  CASCADE_CONTENT = Tasks::Format.dump([
+    { "type" => "meta", "version" => 1 },
+    { "type" => "section", "id" => "cccd0001", "title" => "Work" },
+    { "type" => "task", "id" => "cccd0002", "parent" => "cccd0001", "state" => "TODO",
+      "title" => "Ship release" },
+    { "type" => "task", "id" => "cccd0003", "parent" => "cccd0002", "state" => "TODO",
+      "title" => "Write notes" },
+    { "type" => "task", "id" => "cccd0004", "parent" => "cccd0002", "state" => "NEXT",
+      "title" => "Tag build" },
+  ])
+
+  def test_cli_done_on_parent_prints_every_cascaded_headline
+    run_cli("done", "Ship release", content: CASCADE_CONTENT) do |org, out, _err, st|
+      assert st.success?
+      assert_match(/DONE.*Ship release/, out)
+      assert_match(/DONE.*Write notes/, out)
+      assert_match(/DONE.*Tag build/, out)
+      assert_equal "DONE", record_for(org, title: "Write notes")["state"]
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_done_json_touched_array_has_all_entries
+    run_cli("done", "Ship release", "--json", content: CASCADE_CONTENT) do |_org, out, _err, st|
+      assert st.success?
+      require "json"
+      touched = JSON.parse(out)["touched"]
+      assert_equal 3, touched.size
+      assert_equal %w[Ship\ release Write\ notes Tag\ build].map { |t| t.tr("\\", " ") }.sort,
+                   touched.map { |t| t["title"] }.sort
+      assert(touched.all? { |t| t["state"] == "DONE" })
+    end
+  end
+
+  def test_cli_done_dry_run_reports_descendant_count
+    run_cli("done", "Ship release", "--dry-run", content: CASCADE_CONTENT) do |org, out, _err, st|
+      assert st.success?
+      assert_equal CASCADE_CONTENT, File.read(org), "dry-run writes nothing"
+      assert_match(/would mark DONE/, out)
+      assert_match(/would also close 2 open descendants/, out)
+    end
+  end
+
+  def test_cli_done_recurring_parent_prints_roll_and_does_not_cascade
+    content = Tasks::Format.dump([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "cccd0011", "title" => "Work" },
+      { "type" => "task", "id" => "cccd0012", "parent" => "cccd0011", "state" => "NEXT",
+        "title" => "Weekly sync", "deadline" => "2026-08-01", "recur" => "+1m" },
+      { "type" => "task", "id" => "cccd0013", "parent" => "cccd0012", "state" => "TODO",
+        "title" => "Prep agenda" },
+    ])
+    run_cli("done", "Weekly sync", content: content) do |org, out, _err, st|
+      assert st.success?
+      assert_match(/↻ Weekly sync → next 2026-09-01/, out)
+      assert_equal "NEXT", record_for(org, title: "Weekly sync")["state"], "rolled, still open"
+      assert_equal "TODO", record_for(org, title: "Prep agenda")["state"], "child not cascaded"
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
   def test_cli_capture_recur_lands_scheduled_and_repeating
     run_cli("capture", "water plants", "--recur", "weekly", content: RECUR_CONTENT) do |org, _out, _err, st|
       assert st.success?

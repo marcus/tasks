@@ -52,8 +52,9 @@ say which ones matched.
   workaround.
 - Use the CLI for every mutation — dates, priority, state, tags, notes. It
   accepts relative dates (`+3`, `tomorrow`, `fri`) so you never format one by hand:
-  - complete a task:  `bin/tasks done "<ref>"`  (a recurring task rolls
-                      its date forward and stays open instead of closing)
+  - complete a task:  `bin/tasks done "<ref>"`  (completing a parent cascades
+                      to its open descendants, as one undo; a recurring task
+                      rolls its date forward and stays open, and does not cascade)
   - add a task:       `bin/tasks capture "<text>"` (flags: --due/--scheduled/
                       --priority/--tag/--context/--state/--project/--recur)
   - set a deadline:   `bin/tasks due "<ref>" <date>`  (fri, +3, 07-15, …)

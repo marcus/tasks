@@ -43,7 +43,7 @@ prefer it when you need to reason over tasks rather than display them.
 
 ```sh
 bin/tasks capture "text"             # new INBOX item (see flags below)
-bin/tasks done "<ref>"               # mark DONE + closed date
+bin/tasks done "<ref>"               # mark DONE + closed date (cascades to open subtasks)
 bin/tasks cancel "<ref>"             # mark CANCELLED + closed date
 bin/tasks due "<ref>" fri            # set/replace deadline (INBOX → TODO)
 bin/tasks schedule "<ref>" +3        # set/replace scheduled (INBOX → TODO)
@@ -68,6 +68,12 @@ Recurrence is a `recur` cookie alongside the task's date (`.+1w`, `++1m`, `+2d`)
 `recur "<ref>" weekly` (or `2w`, `.+1m`, `every 3 days`) sets it; `off` clears it.
 Completing a recurring task with `done` rolls its date forward and keeps it open
 (no `closed`) — use `cancel` to actually stop it. `list --recurring` reviews them.
+
+Completing a parent cascades: `done` (or `state … DONE`) closes every open
+descendant too (recurring descendants close outright — their cookie is retired),
+as one undo step. A recurring parent is the exception — it rolls forward and does
+not cascade. `cancel` never cascades; reopening a parent does not reopen its
+descendants.
 
 `capture` flags: `--due <date>`, `--scheduled <date>`, `--priority A|B|C`,
 `--tag t` (repeatable), `--context @x` (repeatable), `--state STATE`,

@@ -10,7 +10,9 @@
 #   bin/tasks inbox|i         show unprocessed INBOX items
 #   bin/tasks capture|c "..." append a new item (flags: --due/--scheduled/
 #                             --priority/--tag/--context/--state/--project)
-#   bin/tasks done|d <ref>    mark a matching open item DONE (complete/close)
+#   bin/tasks done|d <ref>    mark a matching open item DONE (complete/close);
+#                             cascades to its open descendants (recurring parent
+#                             rolls forward instead and does not cascade)
 #   bin/tasks due <ref> <date>       set/replace an item's DEADLINE
 #   bin/tasks schedule <ref> <date>  set/replace an item's SCHEDULED
 #   bin/tasks undate <ref> [--kind deadline|scheduled]  remove date stamp(s)
@@ -266,16 +268,25 @@ def change_state(args, usage:, resolve_closed:, to: nil, dry_verb: nil, archive_
       puts "would recur → #{recur_next(item).iso8601}: #{item_headline(item)}"
     else
       puts "would #{dry_verb || "set state #{target} on"}: #{item_headline(item)}"
+      # Completing an open parent cascades to its open descendants; preview how
+      # many would close so a `done` on a project isn't a silent surprise. Gated
+      # on an actual transition into DONE (item still open), matching the store.
+      if target == "DONE" && item.open? && (n = open_descendant_count(item)) > 0
+        puts "would also close #{n} open descendant#{"s" unless n == 1}"
+      end
     end
     return
   end
-  mutation_failed "failed to set state" unless store.set_state!(item, target)
+  # A cascade returns every touched line; report_touched prints them all. Capture
+  # the return value rather than reporting the stale `item.line` on its own.
+  touched = store.set_state!(item, target)
+  mutation_failed "failed to set state" unless touched
   if recurring_done && !flags["--json"]
     fresh = store.items.find { |i| i.line == item.line }
     d = fresh && (fresh.deadline || fresh.scheduled)
     puts "↻ #{item.title}#{d ? " → next #{d.iso8601} (#{d.strftime("%a")})" : ""}"
   end
-  report_touched(item.line, json: flags["--json"])
+  report_touched(touched, json: flags["--json"])
   puts "Run `tasks archive` to move it out of tasks.jsonl." if archive_hint && !recurring_done && !flags["--json"]
 end
 
@@ -388,18 +399,32 @@ def resolve_ref(ref, include_done: false)
   matches.first
 end
 
-# After a mutation, print (or JSON-emit) the touched task's new headline.
-# `line` is the record's line number, which stays put — one JSON record per line,
-# each edit rewriting that record in place — so unlike titles it can't be ambiguous.
-def report_touched(line, json:)
+# After a mutation, print (or JSON-emit) every touched task's new headline.
+# Accepts a single line number or an Array of them (a cascade touches many):
+# a line stays put — one JSON record per line, each edit rewriting that record
+# in place — so unlike titles it can't be ambiguous. Prints one headline per
+# touched task in file order; `--json` emits them all under a `touched:` array.
+def report_touched(line_or_lines, json:)
   store.reload!
-  item = store.items.find { |i| i.line == line }
+  items = Array(line_or_lines)
+         .map { |ln| store.items.find { |i| i.line == ln } }
+         .compact.sort_by(&:line)
   if json
     require "json"
-    puts({ touched: item ? [item_json(item)] : [] }.to_json)
-  elsif item
-    puts item_headline(item)
+    puts({ touched: items.map { |i| item_json(i) } }.to_json)
+  else
+    items.each { |i| puts item_headline(i) }
   end
+end
+
+# How many open tasks sit below `item` in the tree — the descendants a `done`
+# cascade would close. Read-side count over the item's tree node (self dropped);
+# 0 when the item has no live node (e.g. an archive item), so the caller stays
+# silent rather than guessing.
+def open_descendant_count(item)
+  node = store.node_for(item)
+  return 0 unless node
+  node.each.drop(1).count { |n| n.item&.open? }
 end
 
 # Shared implementation for `due` (DEADLINE) and `schedule` (SCHEDULED).
@@ -1068,8 +1093,8 @@ HELP = <<~USAGE
                              --tag --context --state --project --recur
 
   Update (take <ref>; support --dry-run/--json/--include-done):
-    done      d <ref>        mark DONE — or roll a recurring task forward
-                                                     (aka complete, close)
+    done      d <ref>        mark DONE (cascades to open subtasks) — or roll a
+                             recurring task forward (aka complete, close)
     cancel      <ref>        mark CANCELLED          (aka drop)
     state     mv <ref> <STATE>       any state transition
     due          <ref> <date>        set/replace DEADLINE   (aka deadline, reschedule)

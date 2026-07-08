@@ -575,7 +575,13 @@ class TestStore < Minitest::Test
       store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
       assert store.complete!(store.items.find { |i| i.title == "Parent" })
       assert_equal "2026-07-08", record_for(org, title: "Parent")["scheduled"], "parent rolled"
-      assert_equal "2026-07-02", record_for(org, title: "Child")["scheduled"], "child untouched"
+      # A recurring parent rolls forward and must NOT cascade — the child keeps
+      # its own open state, date, and recur cookie.
+      child = record_for(org, title: "Child")
+      assert_equal "NEXT", child["state"], "recurring parent does not cascade"
+      assert_equal "2026-07-02", child["scheduled"], "child untouched"
+      assert_equal "+1d", child["recur"], "child recur cookie survives"
+      refute child.key?("closed"), "child stays open"
       assert_match(/- Did \[#{Date.today}\]/, record_for(org, title: "Parent")["body"])
       assert Tasks::Check.check(org).ok?
     end
@@ -755,6 +761,174 @@ class TestStore < Minitest::Test
       assert_kind_of String, store.headline(flight) # doesn't raise
       refute Tasks::Check.check(org).ok?
       assert_match(/tags must be an array/, Tasks::Check.check(org).errors.map { |_l, m| m }.join)
+    end
+  end
+
+  # -- cascading completion ----------------------------------------------------
+  #
+  # A nested project: the root "Project" has open descendants at two depths, a
+  # pre-existing DONE and CANCELLED child (must keep their own closed dates), a
+  # recurring child (cascade retires it, does NOT roll it), and a sibling
+  # subtree that must stay untouched.
+  CASCADE_RECORDS = [
+    { "type" => "meta", "version" => 1 },
+    { "type" => "section", "id" => "cccc0001", "title" => "Work" },
+    { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001", "state" => "TODO",
+      "title" => "Project" },
+    { "type" => "task", "id" => "cccc0003", "parent" => "cccc0002", "state" => "TODO",
+      "title" => "Task A" },
+    { "type" => "task", "id" => "cccc0004", "parent" => "cccc0003", "state" => "NEXT",
+      "title" => "Subtask A1" },
+    { "type" => "task", "id" => "cccc0005", "parent" => "cccc0002", "state" => "WAITING",
+      "title" => "Task B" },
+    { "type" => "task", "id" => "cccc0006", "parent" => "cccc0002", "state" => "INBOX",
+      "title" => "Loose idea" },
+    { "type" => "task", "id" => "cccc0007", "parent" => "cccc0002", "state" => "DONE",
+      "title" => "Already done sub", "closed" => "2026-06-01" },
+    { "type" => "task", "id" => "cccc0008", "parent" => "cccc0002", "state" => "CANCELLED",
+      "title" => "Dropped sub", "closed" => "2026-06-05" },
+    { "type" => "task", "id" => "cccc0009", "parent" => "cccc0002", "state" => "NEXT",
+      "title" => "Recurring sub", "scheduled" => "2026-07-01", "recur" => ".+1w",
+      "tags" => %w[defer] },
+    { "type" => "task", "id" => "cccc000a", "parent" => "cccc0001", "state" => "TODO",
+      "title" => "Sibling" },
+    { "type" => "task", "id" => "cccc000b", "parent" => "cccc000a", "state" => "NEXT",
+      "title" => "Sibling child" },
+  ].freeze
+
+  def with_cascade_store
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, Tasks::Format.dump(CASCADE_RECORDS))
+      yield Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl")), org
+    end
+  end
+
+  def test_complete_cascades_open_descendants_at_all_depths
+    with_cascade_store do |store, org|
+      lines = store.complete!(store.items.find { |i| i.title == "Project" })
+      assert_kind_of Array, lines
+      today = Date.today.iso8601
+
+      %w[Project Task\ A Subtask\ A1 Task\ B Loose\ idea].each do |title|
+        title = title.tr("\\", " ")
+        rec = record_for(org, title: title)
+        assert_equal "DONE", rec["state"], "#{title} closed"
+        assert_equal today, rec["closed"], "#{title} closed today"
+      end
+
+      # Pre-existing DONE/CANCELLED descendants keep their own closed dates.
+      assert_equal "2026-06-01", record_for(org, title: "Already done sub")["closed"]
+      done = record_for(org, title: "Dropped sub")
+      assert_equal "CANCELLED", done["state"]
+      assert_equal "2026-06-05", done["closed"]
+
+      # Sibling subtree untouched.
+      assert_equal "TODO", record_for(org, title: "Sibling")["state"]
+      assert_equal "NEXT", record_for(org, title: "Sibling child")["state"]
+
+      # Returns root + every touched descendant line (root first, file order).
+      assert_equal lines, lines.sort
+      assert_equal 6, lines.size, "root + 5 open descendants"
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_complete_cascade_retires_recurring_descendant
+    with_cascade_store do |store, org|
+      store.complete!(store.items.find { |i| i.title == "Project" })
+      rec = record_for(org, title: "Recurring sub")
+      assert_equal "DONE", rec["state"]
+      assert_equal Date.today.iso8601, rec["closed"]
+      assert_equal "2026-07-01", rec["scheduled"], "date NOT advanced — retired, not rolled"
+      refute rec.key?("recur"), "recur cookie retired"
+      refute rec.fetch("tags", []).include?("defer"), "defer tag dropped"
+      refute_match(/- Did/, rec["body"].to_s, "no occurrence log — the sub is retired")
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_complete_cascade_is_one_undo_step_restoring_bytes
+    with_cascade_store do |store, org|
+      before = File.read(org)
+      store.complete!(store.items.find { |i| i.title == "Project" })
+      refute_equal before, File.read(org)
+      assert_equal [:ok, "complete: Project"], store.undo!
+      assert_equal before, File.read(org), "one undo restores the subtree byte-identically"
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_set_state_done_cascades
+    with_cascade_store do |store, org|
+      lines = store.set_state!(store.items.find { |i| i.title == "Project" }, "DONE")
+      assert_kind_of Array, lines
+      assert_equal 6, lines.size
+      assert_equal "DONE", record_for(org, title: "Task A")["state"]
+      assert_equal "DONE", record_for(org, title: "Subtask A1")["state"]
+      assert_equal Date.today.iso8601, record_for(org, title: "Task B")["closed"]
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_set_state_cancelled_does_not_cascade
+    with_cascade_store do |store, org|
+      lines = store.set_state!(store.items.find { |i| i.title == "Project" }, "CANCELLED")
+      assert_equal 1, lines.size, "only the root touched"
+      assert_equal "CANCELLED", record_for(org, title: "Project")["state"]
+      # Open descendants keep their own open states.
+      assert_equal "TODO", record_for(org, title: "Task A")["state"]
+      assert_equal "NEXT", record_for(org, title: "Subtask A1")["state"]
+      assert_equal "WAITING", record_for(org, title: "Task B")["state"]
+      assert_equal "INBOX", record_for(org, title: "Loose idea")["state"]
+      refute record_for(org, title: "Task A").key?("closed")
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_reclose_of_done_parent_does_not_recascade
+    # A DONE parent with an out-of-band open child: re-closing the parent
+    # (old_state already DONE) is not a transition INTO DONE, so no cascade.
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, dump_fixture([
+        { "type" => "meta", "version" => 1 },
+        { "type" => "section", "id" => "99990001", "title" => "W" },
+        { "type" => "task", "id" => "99990002", "parent" => "99990001", "state" => "DONE",
+          "title" => "Closed parent", "closed" => "2026-06-01" },
+        { "type" => "task", "id" => "99990003", "parent" => "99990002", "state" => "TODO",
+          "title" => "Stray open child" },
+      ]))
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
+      parent = store.items.find { |i| i.title == "Closed parent" }
+      lines = store.set_state!(parent, "DONE")
+      assert_equal 1, lines.size, "no cascade off an already-DONE parent"
+      assert_equal "TODO", record_for(org, title: "Stray open child")["state"]
+      assert_equal "2026-06-01", record_for(org, title: "Closed parent")["closed"], "closed preserved"
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cascade_works_on_a_six_deep_file
+    # Depth cap is a mutation-only concern (Stage 3); cascade itself walks any
+    # depth. A 6-level chain closes end to end from the root.
+    recs = [{ "type" => "meta", "version" => 1 },
+            { "type" => "section", "id" => "8888aaaa", "title" => "Deep" }]
+    prev = "8888aaaa"
+    6.times do |n|
+      id = format("8888%04d", n)
+      recs << { "type" => "task", "id" => id, "parent" => prev, "state" => "TODO",
+                "title" => "Level #{n}" }
+      prev = id
+    end
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, dump_fixture(recs))
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
+      lines = store.complete!(store.items.find { |i| i.title == "Level 0" })
+      assert_equal 6, lines.size, "root + 5 descendants"
+      6.times { |n| assert_equal "DONE", record_for(org, title: "Level #{n}")["state"] }
+      assert Tasks::Check.check(org).ok?
     end
   end
 

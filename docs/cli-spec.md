@@ -139,10 +139,27 @@ them. Dating commands (`due`/`schedule`/`reschedule`) preserve an existing
 cookie. In the TUI, `r` opens a recurrence popup on the selected task, a `↻`
 badge marks recurring tasks, and completing one rolls it forward in place.
 
+**Cascading completion.** Completing a parent completes its whole open subtree.
+`done` (or `state … DONE`) on a task closes every open descendant
+(INBOX/TODO/NEXT/WAITING) with the same `closed` date and drops any `defer`
+tag. A recurring descendant closes **outright** — its `recur` cookie is retired,
+not rolled forward: finishing the project finishes the sub-item (no date hop, no
+`- Did` log). Already-closed descendants (DONE/CANCELLED) keep their existing
+`closed`. The whole cascade is a single journal entry, so one `undo` restores
+the subtree exactly. Completing a **recurring parent** is the exception: it rolls
+its own date forward, stays open, and does **not** cascade (an occurrence, not
+the project). `cancel` (and `state … CANCELLED`) never cascades — it closes only
+the target. Reopening a cascaded parent (e.g. `state … TODO`) does **not**
+reopen its descendants; reopen those individually. (Pre-existing caveat:
+`archive` sweeps a CANCELLED parent's whole subtree — still-open descendants
+included — since a closed root moves as one unit.)
+
 **Output.** Human-readable by default. Read commands and mutations accept
 `--json`; shapes below. Mutations always print (or return in JSON) the full
-new headline of every task they touched, so the agent can verify the result
-without a follow-up read.
+new headline of every task they touched — a single mutation may touch several
+(a completion cascade closes the whole open subtree; every touched headline
+prints, in file order) — so the agent can verify the result without a
+follow-up read.
 
 **Exit codes.** `0` success · `1` error (bad args, validation failure,
 file corrupt) · `2` ref resolution failure (no match / ambiguous). Code 2 is
@@ -184,9 +201,9 @@ is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or `nul
 
 | Command | Alias/synonyms | Status | Description |
 |---|---|---|---|
-| `done <ref>` | `complete`, `close`, `d` | ✅ | Mark DONE + `closed` date. A recurring task (recur cookie on its date) rolls forward and stays open instead — output shows `↻ <title> → next <date>`. |
+| `done <ref>` | `complete`, `close`, `d` | ✅ | Mark DONE + `closed` date, cascading to every open descendant (see Cascading completion); recurring descendants close outright and their recur cookie is retired. A recurring task (recur cookie on its date) rolls forward and stays open instead — output shows `↻ <title> → next <date>` — and does **not** cascade. `--dry-run` also previews how many open descendants would close. |
 | `cancel <ref>` | `drop` | ✅ | Mark CANCELLED + `closed` date. |
-| `state <ref> <STATE>` | `mv` | ✅ | Any state transition (INBOX/TODO/NEXT/WAITING/DONE/CANCELLED). Enforces: entering DONE/CANCELLED sets `closed`; leaving them clears it. Resolves refs across open *and* closed tasks so you can reopen a DONE item. |
+| `state <ref> <STATE>` | `mv` | ✅ | Any state transition (INBOX/TODO/NEXT/WAITING/DONE/CANCELLED). Enforces: entering DONE/CANCELLED sets `closed`; leaving them clears it. Entering DONE cascades to open descendants (see Cascading completion); entering CANCELLED does not. Resolves refs across open *and* closed tasks so you can reopen a DONE item (reopening does not reopen cascaded descendants). |
 | `due <ref> <date>` | `deadline`, `reschedule` | ✅ | Set/replace `deadline`. INBOX items promote to TODO. |
 | `schedule <ref> <date>` | | ✅ | Set/replace `scheduled`. Same INBOX promotion. |
 | `undate <ref>` | | ✅ | Remove `scheduled` and/or `deadline` (`--kind deadline\|scheduled` to pick one). |

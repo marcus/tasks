@@ -790,7 +790,8 @@ module Tui
       return flash("nothing selected") unless item
       return flash("already #{item.state}") unless item.open?
       recurring = item.recurring?
-      if @store.complete!(item)
+      result = @store.complete!(item)
+      if result
         if recurring
           # A recurring task rolled forward and is still in the view — follow it.
           fresh = @store.items.find { |i| i.line == item.line }
@@ -799,7 +800,11 @@ module Tui
           reselect(item.line)
           refresh_detail_modal(item.line)
         else
-          flash("✓ DONE: #{item.title} — x to archive")
+          # complete! returns every touched line; a parent cascade closes its
+          # open descendants too — note how many rode along.
+          n = result.is_a?(Array) ? result.size - 1 : 0
+          subs = n > 0 ? " (+#{n} subtask#{"s" unless n == 1})" : ""
+          flash("✓ DONE: #{item.title}#{subs} — x to archive")
           close_modal if @modal # the task just left the open view behind it
         end
       else
