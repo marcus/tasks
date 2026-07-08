@@ -950,6 +950,15 @@ def cmd_check(args)
   exit(res.ok? ? 0 : 1)
 end
 
+# One-shot org→JSONL migration (additive; leaves gtd.org/archive.org in place).
+# Emits tasks.jsonl/archive.jsonl beside the source org files. Exit 0 ok, 1 on
+# any refusal or error. See lib/tasks/migrate.rb.
+def cmd_migrate(args)
+  require_relative "../lib/tasks/migrate"
+  ok = Tasks::Migrate.run(args, default_dir: File.dirname(ORG))
+  exit(ok ? 0 : 1)
+end
+
 # Hand a natural-language prompt to an LLM agent with AGENTS.md as context.
 # Runs the configured harness headless; auto-applies, then shows the file diff.
 # `--provider`/`--model` (leading flags) override the config default for one run.
@@ -1128,6 +1137,7 @@ when "links", "urls"  then cmd_links(ARGV[1..])
 when "open", "o"      then cmd_open(ARGV[1..])
 when "list", "l"      then cmd_list(ARGV[1..])
 when "check", "k"     then cmd_check(ARGV[1..])
+when "migrate"        then cmd_migrate(ARGV[1..])
 when "config"         then cmd_config(ARGV[1..])
 when "help", "-h", "--help" then cmd_help
 else
