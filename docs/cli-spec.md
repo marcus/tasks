@@ -202,7 +202,6 @@ is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or `nul
 | Command | Alias | Status | Description |
 |---|---|---|---|
 | `archive` | `x` | ✅ | Sweep each DONE/CANCELLED subtree to `archive.jsonl` (root drops `parent`, gains `archived`). |
-| `migrate [--from <dir>] [--dry-run] [--force]` | | ✅ | **Temporary** one-shot importer: convert legacy `gtd.org`/`archive.org` under `<dir>` (default: the resolved data dir) to `tasks.jsonl`/`archive.jsonl` beside them, minting ids and validating the output. Refuses to overwrite existing targets without `--force`. Removed once the real repo is cut over. |
 | `delete <ref> --force` | `rm` | 🚧 | Hard-remove a record (no archive). Refuses without `--force`; suggest `cancel` instead. |
 | `undo` | | ✅ | Revert the last mutation via the on-disk journal (`Tasks::Journal`, under `$XDG_STATE_HOME/tasks/journal/`), shared with the TUI and across CLI runs. Refuses (exit 1) if `tasks.jsonl` changed out-of-band since that edit — resolve with `git diff` / `git checkout -- tasks.jsonl`. |
 | `redo` | | ✅ | Replay the last undone mutation; same shared journal and conflict guard as `undo`. |
