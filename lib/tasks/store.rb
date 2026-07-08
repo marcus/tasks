@@ -45,6 +45,11 @@ module Tasks
 
     attr_reader :org, :archive
 
+    # The nesting depth cap enforced by capture/move --under (see task_depth).
+    # Resolved from config (Tasks::Config); Check stays depth-agnostic so deeper
+    # legacy files still validate and roll back cleanly.
+    attr_reader :max_depth
+
     # The Check error summary from the most recent mutation that wrote a file
     # then failed post-write validation and was rolled back — nil when the last
     # mutation was clean. Lets the CLI tell a validation rollback (run `check`)
@@ -60,9 +65,10 @@ module Tasks
     # (Config#links / #link_systems), consulted by #links. The keyword stays
     # `org:` for constructor compatibility though it now names the jsonl file.
     def initialize(org:, archive:, journal_dir: nil, undo_limit: UNDO_LIMIT,
-                   links: {}, link_systems: {})
+                   links: {}, link_systems: {}, max_depth: Tree::DEFAULT_MAX_DEPTH)
       @org = org
       @archive = archive
+      @max_depth = max_depth
       @stat = nil
       @cache = nil
       @records = nil
@@ -256,10 +262,30 @@ module Tasks
     # Returns the new record's 1-based line number, or false if the section
     # doesn't exist. A capture with a date is already "processed"; callers pass
     # state: "TODO" in that case.
-    def capture!(text, due: nil, scheduled: nil, priority: nil, tags: [], state: "INBOX", project: nil)
+    # `under:` (an Item) nests the new task as the last child of that task
+    # instead of filing it under a section; it is mutually exclusive with
+    # `project` (the CLI enforces that — the impl just prefers `under`). A capture
+    # `under` a parent already at the depth cap returns :too_deep before writing.
+    def capture!(text, due: nil, scheduled: nil, priority: nil, tags: [], state: "INBOX", project: nil, under: nil)
       text = utf8(text)
       tags = tags.map { |t| utf8(t) }
-      with_history("capture: #{text}") { capture_impl(text, due, scheduled, priority, tags, state, project) }
+      with_history("capture: #{text}") { capture_impl(text, due, scheduled, priority, tags, state, project, under) }
+    end
+
+    # Nest the item's whole subtree as the last child of `parent_item`. Returns
+    # the moved root's new 1-based line, or :cycle (parent is inside the moved
+    # subtree, self included), :too_deep (would exceed max_depth), or false
+    # (either ref went stale). A move that keeps depth within the cap only.
+    def move_under!(item, parent_item)
+      with_history("nest under #{parent_item.title}: #{item.title}") { move_under_impl(item, parent_item) }
+    end
+
+    # Unnest the item's whole subtree to the end of its nearest ancestor section
+    # (top level). Never depth-checked — it can only reduce depth. Returns the
+    # new 1-based line, 0 when the item is already top-level (a no-op that burns
+    # no undo slot), or false if the item went stale.
+    def move_top!(item)
+      with_history("unnest: #{item.title}") { move_top_impl(item) }
     end
 
     def archive_swept!
@@ -405,6 +431,33 @@ module Tasks
         j += 1
       end
       j
+    end
+
+    # Task-depth of `rec`: the number of TASK records on its parent chain,
+    # counting itself. A task filed directly under a section is depth 1;
+    # sections don't count. `by_id` maps every record id to its record (built
+    # once per mutation) so the walk is O(chain length). Drives the nesting cap.
+    def task_depth(by_id, rec)
+      depth = 0
+      cur = rec
+      while cur
+        depth += 1 if cur["type"] == "task"
+        pid = cur["parent"]
+        cur = pid && by_id[pid]
+      end
+      depth
+    end
+
+    # Height of the subtree rooted at records[ri]: over the span
+    # records[ri...subtree_end), max(task_depth) − task_depth(root) + 1. The span
+    # is contiguous and holds only the root's task descendants, so measuring
+    # task-depth within the span (root = 1) yields the height directly — the
+    # ancestor prefix above the root cancels out of the difference.
+    def subtree_height(records, ri)
+      rj = subtree_end(records, ri)
+      span = records[ri...rj]
+      by_id = span.to_h { |r| [r["id"], r] }
+      span.map { |r| task_depth(by_id, r) }.max
     end
 
     # Close every OPEN task inside the subtree rooted at records[ri], excluding
@@ -761,9 +814,77 @@ module Tasks
       insert_at + 1
     end
 
-    def capture_impl(text, due, scheduled, priority, tags, state, project)
+    # Splice the item's subtree in as the last child of parent_item. Guards the
+    # cycle (parent inside the moved span — self-nesting included) and the depth
+    # cap before touching the file, so a refused move burns no undo slot.
+    def move_under_impl(item, parent_item)
       records = fresh_records(@org)
-      if records.empty?
+      ri = locate_index(records, item) or return false
+      rj = subtree_end(records, ri)
+      pi = locate_index(records, parent_item) or return false
+      # Parent within [ri, rj) means nesting a task under itself or a descendant.
+      return :cycle if pi >= ri && pi < rj
+      by_id = records.to_h { |r| [r["id"], r] }
+      return :too_deep if task_depth(by_id, records[pi]) + subtree_height(records, ri) > @max_depth
+
+      parent_id = records[pi]["id"]
+      subtree = records[ri...rj].map(&:dup)
+      rest = records[0...ri] + records[rj..]
+      # The parent survives the deletion (it's outside the moved span); re-find it
+      # by id in the trimmed list before splicing the subtree back in after it.
+      new_pi = rest.index { |r| r["id"] == parent_id }
+      subtree[0]["parent"] = parent_id
+      insert_at = subtree_end(rest, new_pi)
+      rest[insert_at, 0] = subtree
+      write_records(@org, rest)
+      reload!
+      insert_at + 1
+    end
+
+    # Move the item's subtree to the end of its nearest ancestor section. No
+    # depth check (unnesting can only shrink depth). Returns 0 when the item is
+    # already parented directly to that section — a no-op with_history skips.
+    def move_top_impl(item)
+      records = fresh_records(@org)
+      ri = locate_index(records, item) or return false
+      by_id = records.to_h { |r| [r["id"], r] }
+
+      # Walk the ancestor chain by explicit parent id — a nil parent must stop
+      # the walk (a parentless task has no section to unnest to), not hit the
+      # id-less meta record via by_id[nil] and loop forever.
+      pid = records[ri]["parent"]
+      section = pid && by_id[pid]
+      while section && section["type"] != "section"
+        pid = section["parent"]
+        section = pid && by_id[pid]
+      end
+      return false unless section
+      return 0 if records[ri]["parent"] == section["id"]
+
+      section_id = section["id"]
+      rj = subtree_end(records, ri)
+      subtree = records[ri...rj].map(&:dup)
+      rest = records[0...ri] + records[rj..]
+      si = rest.index { |r| r["id"] == section_id }
+      subtree[0]["parent"] = section_id
+      insert_at = subtree_end(rest, si)
+      rest[insert_at, 0] = subtree
+      write_records(@org, rest)
+      reload!
+      insert_at + 1
+    end
+
+    def capture_impl(text, due, scheduled, priority, tags, state, project, under = nil)
+      records = fresh_records(@org)
+      if under
+        # Nest under an existing task: locate it (stale → false), enforce the
+        # depth cap BEFORE any write, then file the new task as its last child.
+        pi = locate_index(records, under) or return false
+        by_id = records.to_h { |r| [r["id"], r] }
+        return :too_deep if task_depth(by_id, records[pi]) + 1 > @max_depth
+        parent_id = records[pi]["id"]
+        insert_at = subtree_end(records, pi)
+      elsif records.empty?
         # First run: a missing or empty file. Bootstrap a brand-new store — a
         # meta line plus the target section (default "Inbox") — then insert into
         # it. (A NAMED --project missing from a NON-empty file still fails below.)
@@ -771,12 +892,16 @@ module Tasks
                    { "type" => "section", "id" => gen_id(archived_ids),
                      "title" => (project || "Inbox").strip }]
         si = records.length - 1
+        parent_id = records[si]["id"]
+        insert_at = subtree_end(records, si)
       else
         si = find_section(records, project || "Inbox") or return false
+        parent_id = records[si]["id"]
+        insert_at = subtree_end(records, si)
       end
 
       rec = { "type" => "task", "id" => gen_id(ids_of(records) + archived_ids),
-              "parent" => records[si]["id"], "state" => state }
+              "parent" => parent_id, "state" => state }
       rec["priority"] = priority if priority
       rec["title"] = text.strip
       rec["tags"] = tags unless tags.empty?
@@ -784,7 +909,6 @@ module Tasks
       rec["deadline"] = due.iso8601 if due
       rec["body"] = "Captured [#{Date.today}]."
 
-      insert_at = subtree_end(records, si)
       records[insert_at, 0] = [rec]
       write_records(@org, records)
       reload!

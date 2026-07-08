@@ -56,7 +56,8 @@ say which ones matched.
                       to its open descendants, as one undo; a recurring task
                       rolls its date forward and stays open, and does not cascade)
   - add a task:       `bin/tasks capture "<text>"` (flags: --due/--scheduled/
-                      --priority/--tag/--context/--state/--project/--recur)
+                      --priority/--tag/--context/--state/--project/--under/--recur)
+  - nest a new task:  `bin/tasks capture "<text>" --under "<ref>"`  (child of a task; ≤ max_depth)
   - set a deadline:   `bin/tasks due "<ref>" <date>`  (fri, +3, 07-15, …)
   - set scheduled:    `bin/tasks schedule "<ref>" <date>`
   - remove dates:     `bin/tasks undate "<ref>" [--kind deadline|scheduled]`
@@ -67,6 +68,8 @@ say which ones matched.
   - edit tags:        `bin/tasks tag "<ref>" +tag -tag @ctx -@ctx`
   - add a note:       `bin/tasks note "<ref>" "<text>"`
   - move a task:      `bin/tasks move "<ref>" "<Section>"`
+  - nest a subtree:   `bin/tasks move "<ref>" --under "<ref>"`  (below another task; ≤ max_depth)
+  - unnest a subtree: `bin/tasks move "<ref>" --top`  (back to the section level)
   - make it recur:    `bin/tasks recur "<ref>" weekly`  (2w/.+1m/…; "off" clears)
   - defer a task:     `bin/tasks defer "<ref>"`   (someday/maybe; hides it)
   - reactivate:       `bin/tasks activate "<ref>"`  (undefer/resume)

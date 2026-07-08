@@ -154,6 +154,38 @@ reopen its descendants; reopen those individually. (Pre-existing caveat:
 `archive` sweeps a CANCELLED parent's whole subtree — still-open descendants
 included — since a closed root moves as one unit.)
 
+**Nesting.** Tasks form a tree via their `parent` ids; the CLI both reads that
+hierarchy (`list` groups it, `show` reports each task's `project` — unchanged
+here) and edits it. Two depth terms govern the mutations:
+
+- **task-depth** — the number of TASK records on a task's parent chain,
+  counting itself. A task filed directly under a section is depth 1; sections
+  don't count.
+- **subtree height** — over the span `records[ri...subtree_end)` of a subtree,
+  `max(task_depth) − task_depth(root) + 1` (a lone task has height 1).
+
+The `max_depth` config (default 4; see [Global conventions](#global-conventions),
+env `TASKS_MAX_DEPTH`) caps how deep tasks may nest, enforced only at these mutation
+points (never in `check`, so a deeper legacy file still validates and rolls
+back cleanly):
+
+- `capture --under P` requires `task_depth(P) + 1 ≤ max_depth`.
+- `move <ref> --under P` of subtree S requires `task_depth(P) + height(S) ≤
+  max_depth`.
+- A move to a section (positional `move <ref> "Section"`) or `move <ref> --top`
+  is **never** depth-checked — it can only reduce depth, so it's the escape
+  hatch for a legacy file already deeper than the cap.
+
+`capture --under <ref>` files the new task as the last child of an existing task
+(mutually exclusive with `--project`, which files under a section). `move`'s
+destination is exactly one of a positional section, `--under <ref>` (nest the
+whole subtree below another task), or `--top` (unnest to the section level).
+Over-cap moves/captures exit 1 with a depth message and write nothing; nesting a
+task under itself or a descendant exits 1 (a cycle); `move --top` on an
+already-top-level task is a no-op (prints "already at top level", exit 0, burns
+no undo slot). Completion still cascades over the whole subtree regardless of
+depth (see Cascading completion).
+
 **Output.** Human-readable by default. Read commands and mutations accept
 `--json`; shapes below. Mutations always print (or return in JSON) the full
 new headline of every task they touched — a single mutation may touch several
@@ -195,7 +227,7 @@ is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or `nul
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `capture "text"` | `add`, `c` | ✅ | New INBOX item. Flags: `--due <date>`, `--scheduled <date>`, `--priority A\|B\|C`, `--tag t` (repeatable), `--context @x` (repeatable), `--state STATE`, `--project "Heading"`, `--recur <interval>`, plus `--dry-run`/`--json`. A capture with a date lands already-processed as TODO (override with `--state`); `--recur` implies a date (defaults to scheduling it today) and lands it repeating; `--project` files it under that top-level heading (default: Inbox). |
+| `capture "text"` | `add`, `c` | ✅ | New INBOX item. Flags: `--due <date>`, `--scheduled <date>`, `--priority A\|B\|C`, `--tag t` (repeatable), `--context @x` (repeatable), `--state STATE`, `--project "Heading"`, `--under <ref>`, `--recur <interval>`, plus `--dry-run`/`--json`. A capture with a date lands already-processed as TODO (override with `--state`); `--recur` implies a date (defaults to scheduling it today) and lands it repeating; `--project` files it under that top-level heading (default: Inbox). `--under <ref>` instead nests it as the last child of an existing task (mutually exclusive with `--project`; exit 1 if both) — capped at `max_depth` (over-cap exits 1 with a depth message, writes nothing; see Nesting). |
 
 ## Update (all take `<ref>`, all support `--dry-run`)
 
@@ -211,7 +243,7 @@ is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or `nul
 | `retitle <ref> "new title"` | `rename` | ✅ | Replace the `title`; tags/priority/state untouched. |
 | `tag <ref> +foo -bar @ctx -@old` | | ✅ | Add/remove tags and contexts in one call. `+t`/`@ctx` add, `-t`/`-@ctx` remove. |
 | `note <ref> "text"` | | ✅ | Append a line to the task's `body`. |
-| `move <ref> "Section"` | | ✅ | Relocate the whole subtree under another top-level section (e.g. out of `Inbox` into `Work`) by re-pointing its `parent`. Section matched case-insensitively (exact, then substring). |
+| `move <ref> ("Section" \| --under <ref> \| --top)` | | ✅ | Relocate a task's whole subtree by re-pointing its `parent`. Exactly one destination: a positional **section** name (out of `Inbox` into `Work`; matched case-insensitively, exact then substring), `--under <ref>` to **nest** below another task, or `--top` to **unnest** to the section level. Section and `--top` moves are never depth-checked; `--under` is capped at `max_depth` (over-cap exits 1 with a depth message). Nesting under itself or a descendant exits 1 (cycle). `--top` on an already-top-level task prints "already at top level" (exit 0, no-op). See Nesting. |
 | `recur <ref> <interval>` | `repeat`, `every` | ✅ | Attach/replace the `recur` cookie on the task's date. `<interval>`: a cookie (`.+1w`/`+2d`/`++1m`) or friendly form (`weekly`/`daily`/`monthly`/`yearly`/`2w`/`every 3 days`); `off`/`none` clears it. `--from schedule\|completion` picks `+`/`.+` for a bare interval (default `completion` → `.+`). `--on <date>` seeds a `deadline` when the task has no date yet (else it errors). `--dry-run`/`--json`. |
 | `defer <ref>` | `snooze` | ✅ | Mark a task deferred (someday/maybe) by adding a semantic `defer` tag. Deferred tasks keep their state but drop out of `agenda`/`next`/`quadrants`/`inbox` and the default `list` until reactivated. Idempotent. |
 | `activate <ref>` | `undefer`, `resume` | ✅ | Clear the `defer` tag, returning the task to the active views. Resolves deferred (open) tasks. |

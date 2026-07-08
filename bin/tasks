@@ -9,7 +9,7 @@
 #   bin/tasks quadrants|q     Covey 2x2 from priority+deadline (or important/urgent tags)
 #   bin/tasks inbox|i         show unprocessed INBOX items
 #   bin/tasks capture|c "..." append a new item (flags: --due/--scheduled/
-#                             --priority/--tag/--context/--state/--project)
+#                             --priority/--tag/--context/--state/--project/--under)
 #   bin/tasks done|d <ref>    mark a matching open item DONE (complete/close);
 #                             cascades to its open descendants (recurring parent
 #                             rolls forward instead and does not cascade)
@@ -22,7 +22,7 @@
 #   bin/tasks retitle <ref> "new title"    replace the headline title
 #   bin/tasks tag <ref> +t -t @ctx -@ctx   add/remove tags and contexts
 #   bin/tasks note <ref> "text"            append a body line under the task
-#   bin/tasks move <ref> "Section"         relocate the subtree under a heading
+#   bin/tasks move <ref> ("Section"|--under <ref>|--top)  relocate/nest/unnest a subtree
 #   bin/tasks recur <ref> <interval|off>   repeat on done (weekly, 2w, .+1m; off clears)
 #   bin/tasks defer|snooze <ref>           hide a task (someday/maybe)
 #   bin/tasks activate <ref>  bring a deferred task back (undefer/resume)
@@ -169,13 +169,13 @@ def cmd_inbox(items, args = [])
   inbox.empty? ? (puts "Inbox empty. ✨") : inbox.each { |i| puts "  #{fmt(i)}" }
 end
 
-CAPTURE_USAGE = %(usage: tasks capture "text" [--due d] [--scheduled d] [--priority A|B|C] [--tag t] [--context @x] [--state STATE] [--project "Heading"])
+CAPTURE_USAGE = %(usage: tasks capture "text" [--due d] [--scheduled d] [--priority A|B|C] [--tag t] [--context @x] [--state STATE] [--project "Heading" | --under <ref>])
 
 def cmd_capture(args)
   require_relative "../lib/tasks/dates"
   tags = []
   contexts = []
-  due = scheduled = priority = state = project = recur = nil
+  due = scheduled = priority = state = project = recur = under = nil
   dry = json = false
   positional = []
   i = 0
@@ -190,6 +190,7 @@ def cmd_capture(args)
     when "--context", "--ctx"     then contexts << need.(a)
     when "--state"                then state = need.(a)
     when "--project"              then project = need.(a)
+    when "--under"                then under = need.(a)
     when "--recur", "--repeat"    then recur = need.(a)
     when "--dry-run"              then dry = true
     when "--json"                 then json = true
@@ -200,6 +201,9 @@ def cmd_capture(args)
   end
   text = positional.join(" ").strip.force_encoding("UTF-8")
   abort CAPTURE_USAGE if text.empty?
+  # --under (nest under a task) and --project (file under a section) are two
+  # different destinations — pick one.
+  abort "can't combine --under and --project\n#{CAPTURE_USAGE}" if under && project
 
   cookie = nil
   if recur
@@ -225,18 +229,27 @@ def cmd_capture(args)
   # Contexts are tags that start with "@"; list them before plain tags.
   all_tags = contexts.map { |c| c.start_with?("@") ? c : "@#{c}" } + tags
 
+  # --under nests below an existing task (open-only ref, exit 2 on miss).
+  under_item = under && resolve_ref(under)
+
   if dry
     head = +"#{st} "
     head << "[##{pri}] " if pri
     head << text
     head << " :#{all_tags.join(":")}:" unless all_tags.empty?
     head << " (recur #{cookie})" if cookie
-    puts "would capture under #{project || "Inbox"}: #{head}"
+    if under_item
+      puts %(would capture under "#{under_item.title}": #{head})
+    else
+      puts "would capture under #{project || "Inbox"}: #{head}"
+    end
     return
   end
 
   line = store.capture!(text, due: due_date, scheduled: scheduled_date,
-                        priority: pri, tags: all_tags, state: st, project: project)
+                        priority: pri, tags: all_tags, state: st,
+                        project: project, under: under_item)
+  mutation_failed "would exceed max depth #{store.max_depth} (max_depth config / TASKS_MAX_DEPTH)" if line == :too_deep
   mutation_failed %(could not capture (no "#{project || "Inbox"}" section found?)) unless line && line.positive?
   if cookie
     item = store.items.find { |i| i.line == line }
@@ -317,7 +330,8 @@ end
 
 def store
   @store ||= Tasks::Store.new(org: ORG, archive: ARCHIVE,
-                              links: PATHS.links, link_systems: PATHS.link_systems)
+                              links: PATHS.links, link_systems: PATHS.link_systems,
+                              max_depth: PATHS.max_depth)
 end
 
 # Abort a failed mutation. A false return is usually a stale line, but it's also
@@ -810,21 +824,60 @@ def extract_value(args, flag)
   val
 end
 
+MOVE_USAGE = %(tasks move <ref> ("Section" | --under <ref> | --top))
+
+# Relocate a task's subtree. Exactly one destination: a positional section
+# name, --under <ref> (nest below another task, depth-capped), or --top (unnest
+# to the section level). --top and moves to a section are never depth-checked.
 def cmd_move(args)
-  flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
+  args = args.dup
+  under = extract_value(args, "--under")
+  flags, rest = take_flags(args, "--dry-run", "--json", "--include-done", "--top")
   ref = rest.shift
   section = rest.join(" ").strip
-  abort %(usage: tasks move <ref> "Section") if ref.nil? || ref.strip.empty? || section.empty?
+  top = flags["--top"]
+  abort %(usage: #{MOVE_USAGE}) if ref.nil? || ref.strip.empty?
+  # Exactly one destination.
+  abort %(usage: #{MOVE_USAGE}) unless [!section.empty?, !under.nil?, top].count(true) == 1
 
   item = resolve_ref(ref, include_done: flags["--include-done"])
-  if flags["--dry-run"]
-    puts "would move to #{section.inspect}: #{item_headline(item)}"
-    return
+
+  if top
+    if flags["--dry-run"]
+      puts "would unnest to top level: #{item_headline(item)}"
+      return
+    end
+    new_line = store.move_top!(item)
+    if new_line == false
+      mutation_failed "failed to unnest"
+    elsif new_line == 0
+      # Already parented to its section — nothing to do (and no undo slot burned).
+      puts "already at top level"
+      puts item_headline(item)
+    else
+      report_touched(new_line, json: flags["--json"])
+    end
+  elsif under
+    parent_item = resolve_ref(under)
+    if flags["--dry-run"]
+      puts %(would nest under "#{parent_item.title}": #{item_headline(item)})
+      return
+    end
+    new_line = store.move_under!(item, parent_item)
+    mutation_failed "would exceed max depth #{store.max_depth} (max_depth config / TASKS_MAX_DEPTH)" if new_line == :too_deep
+    mutation_failed "can't nest a task under its own subtree" if new_line == :cycle
+    mutation_failed %(could not nest under "#{parent_item.title}") unless new_line.is_a?(Integer) && new_line.positive?
+    report_touched(new_line, json: flags["--json"])
+  else
+    if flags["--dry-run"]
+      puts "would move to #{section.inspect}: #{item_headline(item)}"
+      return
+    end
+    # move relocates the block, so its headline lands on a new line — report that.
+    new_line = store.move!(item, section)
+    mutation_failed %(could not move (no "#{section}" section?)) unless new_line && new_line.positive?
+    report_touched(new_line, json: flags["--json"])
   end
-  # move relocates the block, so its headline lands on a new line — report that.
-  new_line = store.move!(item, section)
-  mutation_failed %(could not move (no "#{section}" section?)) unless new_line && new_line.positive?
-  report_touched(new_line, json: flags["--json"])
 end
 
 def cmd_archive
@@ -1090,7 +1143,8 @@ HELP = <<~USAGE
 
   Capture:
     capture   c "text"       new item. Flags: --due --scheduled --priority
-                             --tag --context --state --project --recur
+                             --tag --context --state --project --under --recur
+                             (--under <ref> nests it below a task; caps at max_depth)
 
   Update (take <ref>; support --dry-run/--json/--include-done):
     done      d <ref>        mark DONE (cascades to open subtasks) — or roll a
@@ -1105,6 +1159,8 @@ HELP = <<~USAGE
     tag          <ref> +t -t @ctx -@ctx   add/remove tags and contexts
     note         <ref> "text"        append a body line
     move         <ref> "Section"     relocate the subtree under a heading
+                 <ref> --under <ref> nest the subtree below another task (≤ max_depth)
+                 <ref> --top         unnest the subtree back to the section level
     recur repeat <ref> <interval>    repeat on done: weekly · 2w · .+1m · off
                                      --from schedule|completion · --on <date>
     defer   snooze <ref>             hide a task (someday/maybe)

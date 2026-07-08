@@ -53,7 +53,10 @@ bin/tasks priority "<ref>" A         # A|B|C|none
 bin/tasks retitle "<ref>" "new"      # replace the title; tags/state untouched
 bin/tasks tag "<ref>" +foo -bar @ctx # add/remove tags & contexts (-@ctx removes)
 bin/tasks note "<ref>" "text"        # append a body line under the task
+bin/tasks capture "sub" --under "<ref>" # nest a new task below an existing one
 bin/tasks move "<ref>" "Section"     # relocate the block under a top-level heading
+bin/tasks move "<ref>" --under "<ref>"  # nest the subtree below another task
+bin/tasks move "<ref>" --top         # unnest the subtree back to the section level
 bin/tasks recur "<ref>" weekly       # repeat on done: weekly/2w/.+1m; "off" clears
 bin/tasks defer "<ref>"              # hide as someday/maybe (adds defer tag)
 bin/tasks activate "<ref>"           # bring a deferred task back (undefer/resume)
@@ -77,8 +80,17 @@ descendants.
 
 `capture` flags: `--due <date>`, `--scheduled <date>`, `--priority A|B|C`,
 `--tag t` (repeatable), `--context @x` (repeatable), `--state STATE`,
-`--project "Heading"`. A date makes it land as TODO (override with `--state`);
-`--project` files it under that section (default Inbox).
+`--project "Heading"`, `--under <ref>`. A date makes it land as TODO (override
+with `--state`); `--project` files it under that section (default Inbox);
+`--under <ref>` nests it below an existing task instead (mutually exclusive with
+`--project`).
+
+Nesting is capped at `max_depth` (default 4; `tasks config` shows it). `capture
+--under` / `move --under` past the cap fail with a depth message (exit 1) and
+write nothing; nesting a task under its own subtree is a cycle (exit 1). Moving
+to a section or `move --top` (unnest) is never depth-checked, so it's the escape
+hatch for a file already deeper than the cap. `move --top` on an already
+top-level task is a harmless no-op.
 
 Mutations accept `--dry-run` (print, don't write), `--json` (structured
 result), and dates in any form: `fri`, `+3`, `07-15`, `2026-07-15`, `today`.

@@ -2,6 +2,7 @@
 
 require_relative "test_helper"
 require "tasks/format"
+require "timeout"
 
 class TestStore < Minitest::Test
   def test_parse_finds_all_items
@@ -928,6 +929,241 @@ class TestStore < Minitest::Test
       lines = store.complete!(store.items.find { |i| i.title == "Level 0" })
       assert_equal 6, lines.size, "root + 5 descendants"
       6.times { |n| assert_equal "DONE", record_for(org, title: "Level #{n}")["state"] }
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  # A WAITING parent transitioning to DONE cascades to its open child — covers
+  # the WAITING → DONE edge the other cascade tests (TODO root) don't hit.
+  def test_set_state_waiting_parent_to_done_cascades
+    with_cascade_store do |store, org|
+      project = store.items.find { |i| i.title == "Project" }
+      store.set_state!(project, "WAITING")
+      waiting = store.items.find { |i| i.title == "Project" }
+      lines = store.set_state!(waiting, "DONE")
+      assert_kind_of Array, lines
+      assert_equal "DONE", record_for(org, title: "Project")["state"]
+      assert_equal "DONE", record_for(org, title: "Task A")["state"], "open child cascaded"
+      assert_equal Date.today.iso8601, record_for(org, title: "Task B")["closed"]
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  # -- nesting: capture --under, move --under/--top ---------------------------
+  #
+  # A tree with two depth levels plus a two-node subtree (Solo/Solo child, a
+  # height-2 anchor for the depth-math tests) and a second section (Home) to
+  # unnest into.
+  NEST_RECORDS = [
+    { "type" => "meta", "version" => 1 },
+    { "type" => "section", "id" => "dddd0001", "title" => "Work" },
+    { "type" => "task", "id" => "dddd0002", "parent" => "dddd0001", "state" => "TODO",
+      "title" => "Project" },
+    { "type" => "task", "id" => "dddd0003", "parent" => "dddd0002", "state" => "TODO",
+      "title" => "Phase 1" },
+    { "type" => "task", "id" => "dddd0004", "parent" => "dddd0003", "state" => "NEXT",
+      "title" => "Step A" },
+    { "type" => "task", "id" => "dddd0005", "parent" => "dddd0002", "state" => "TODO",
+      "title" => "Phase 2" },
+    { "type" => "task", "id" => "dddd0006", "parent" => "dddd0001", "state" => "TODO",
+      "title" => "Solo" },
+    { "type" => "task", "id" => "dddd0007", "parent" => "dddd0006", "state" => "NEXT",
+      "title" => "Solo child" },
+    { "type" => "section", "id" => "dddd0008", "title" => "Home" },
+    { "type" => "task", "id" => "dddd0009", "parent" => "dddd0008", "state" => "TODO",
+      "title" => "Chore" },
+  ].freeze
+
+  def with_nest_store(max_depth: 4)
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, Tasks::Format.dump(NEST_RECORDS))
+      yield Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"),
+                             max_depth: max_depth), org
+    end
+  end
+
+  # Order of the task titles as they appear in the file (DFS pre-order).
+  def title_order(org)
+    Tasks::Format.parse(File.read(org, encoding: "UTF-8")).records
+                 .select { |r| r["type"] == "task" }.map { |r| r["title"] }
+  end
+
+  def test_capture_under_appends_as_last_child
+    with_nest_store do |store, org|
+      project = store.items.find { |i| i.title == "Project" }
+      line = store.capture!("New phase", under: project)
+      assert_kind_of Integer, line
+      rec = record_for(org, title: "New phase")
+      assert_equal "dddd0002", rec["parent"], "parented to Project"
+      # Last child: lands after Project's existing descendants (Phase 1, Step A,
+      # Phase 2), before the Solo subtree.
+      order = title_order(org)
+      assert_equal %w[Project Phase\ 1 Step\ A Phase\ 2 New\ phase Solo Solo\ child Chore]
+        .map { |t| t.tr("\\", " ") }, order
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_capture_under_at_cap_returns_too_deep_and_leaves_file_unchanged
+    with_nest_store(max_depth: 3) do |store, org|
+      before = File.read(org)
+      # Step A is at depth 3; a child would be depth 4 > cap 3.
+      step = store.items.find { |i| i.title == "Step A" }
+      assert_equal :too_deep, store.capture!("Too deep", under: step)
+      assert_equal before, File.read(org), "no write on refusal"
+    end
+  end
+
+  def test_move_under_moves_whole_subtree_contiguously
+    with_nest_store do |store, org|
+      # Move Phase 1 (with Step A) under Solo — grandchild rides along, in order.
+      phase1 = store.items.find { |i| i.title == "Phase 1" }
+      solo = store.items.find { |i| i.title == "Solo" }
+      line = store.move_under!(phase1, solo)
+      assert_kind_of Integer, line
+      assert_equal "dddd0006", record_for(org, title: "Phase 1")["parent"], "reparented to Solo"
+      assert_equal "dddd0003", record_for(org, title: "Step A")["parent"], "child keeps its parent"
+      order = title_order(org)
+      # Phase 1 + Step A land contiguously as Solo's last children.
+      assert_equal %w[Project Phase\ 2 Solo Solo\ child Phase\ 1 Step\ A Chore]
+        .map { |t| t.tr("\\", " ") }, order
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_move_under_depth_math
+    # max_depth 4: Solo's subtree has height 2. Under Step A (depth 3): 3+2=5 →
+    # too deep. Under Phase 2 (depth 2): 2+2=4 → ok.
+    with_nest_store(max_depth: 4) do |store, org|
+      solo = store.items.find { |i| i.title == "Solo" }
+      step = store.items.find { |i| i.title == "Step A" }
+      before = File.read(org)
+      assert_equal :too_deep, store.move_under!(solo, step)
+      assert_equal before, File.read(org), "refused move writes nothing"
+
+      solo = store.items.find { |i| i.title == "Solo" }
+      phase2 = store.items.find { |i| i.title == "Phase 2" }
+      assert_kind_of Integer, store.move_under!(solo, phase2)
+      assert_equal "dddd0005", record_for(org, title: "Solo")["parent"]
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_move_under_cycle_guard
+    with_nest_store do |store, org|
+      before = File.read(org)
+      project = store.items.find { |i| i.title == "Project" }
+      # Self: a task cannot nest under itself.
+      assert_equal :cycle, store.move_under!(project, project)
+      # Descendant: Project cannot nest under its own Step A.
+      step = store.items.find { |i| i.title == "Step A" }
+      assert_equal :cycle, store.move_under!(project, step)
+      assert_equal before, File.read(org), "no write on either cycle"
+    end
+  end
+
+  def test_move_top_reparents_to_nearest_section
+    with_nest_store do |store, org|
+      step = store.items.find { |i| i.title == "Step A" }
+      line = store.move_top!(step)
+      assert_kind_of Integer, line
+      assert_equal "dddd0001", record_for(org, title: "Step A")["parent"], "unnested to Work"
+      # Lands at the end of Work's span (after Solo child, before the Home section).
+      order = title_order(org)
+      assert_equal %w[Project Phase\ 1 Phase\ 2 Solo Solo\ child Step\ A Chore]
+        .map { |t| t.tr("\\", " ") }, order
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_move_top_on_top_level_task_is_a_noop_that_burns_no_undo
+    with_nest_store do |store, _org|
+      # A prior real mutation to prove the no-op doesn't shadow it in the journal.
+      store.set_priority!(store.items.find { |i| i.title == "Solo" }, "A")
+      solo = store.items.find { |i| i.title == "Solo" }
+      assert_equal 0, store.move_top!(solo), "already top-level → 0"
+      # Undo reaches PAST the no-op to the priority change (no slot burned).
+      assert_equal [:ok, "priority [#A]: Solo"], store.undo!
+    end
+  end
+
+  def test_move_top_on_parentless_task_returns_false_without_hanging
+    # A task with no parent at all is Check-valid but has no ancestor section.
+    # The ancestor walk must stop at the nil parent (not resolve by_id[nil] to
+    # the id-less meta record and spin forever holding the lock).
+    recs = [{ "type" => "meta", "version" => 1 },
+            { "type" => "task", "id" => "8888aaaa", "state" => "TODO", "title" => "Rootless" },
+            { "type" => "task", "id" => "8888bbbb", "parent" => "8888aaaa", "state" => "TODO",
+              "title" => "Rootless child" }]
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, dump_fixture(recs))
+      assert Tasks::Check.check(org).ok?, "parentless task is a valid file"
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
+      before = File.read(org)
+      Timeout.timeout(5) do
+        refute store.move_top!(store.items.find { |i| i.title == "Rootless" }),
+               "no section to unnest to → false"
+        refute store.move_top!(store.items.find { |i| i.title == "Rootless child" }),
+               "descendant of a rootless task → false"
+      end
+      assert_equal before, File.read(org), "no write on the failure path"
+    end
+  end
+
+  def test_move_over_cap_height_subtree_still_moves_to_a_section
+    # Escape hatch: a subtree deeper than the cap is never depth-checked when the
+    # destination is a section (move!). A 5-deep chain (cap 4) relocates freely.
+    recs = [{ "type" => "meta", "version" => 1 },
+            { "type" => "section", "id" => "7777aaaa", "title" => "Deep" },
+            { "type" => "section", "id" => "7777bbbb", "title" => "Elsewhere" }]
+    prev = "7777aaaa"
+    5.times do |n|
+      id = format("7777%04d", n)
+      recs << { "type" => "task", "id" => id, "parent" => prev, "state" => "TODO",
+                "title" => "Level #{n}" }
+      prev = id
+    end
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, dump_fixture(recs))
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"), max_depth: 4)
+      # Level 0 heads a height-5 subtree; moving it to another section succeeds.
+      assert_kind_of Integer, store.move!(store.items.find { |i| i.title == "Level 0" }, "Elsewhere")
+      assert_equal "7777bbbb", record_for(org, title: "Level 0")["parent"]
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_move_under_and_top_reject_stale_items
+    with_nest_store do |store, org|
+      before = File.read(org)
+      stale = store.items.find { |i| i.title == "Step A" }.dup
+      stale.id = nil
+      stale.line = 999
+      parent = store.items.find { |i| i.title == "Solo" }
+      refute store.move_under!(stale, parent), "stale subject → false"
+      refute store.move_top!(stale), "stale subject → false"
+      # A live subject with a stale parent ref also fails.
+      live = store.items.find { |i| i.title == "Step A" }
+      stale_parent = store.items.find { |i| i.title == "Solo" }.dup
+      stale_parent.id = nil
+      stale_parent.line = 999
+      refute store.move_under!(live, stale_parent), "stale parent → false"
+      assert_equal before, File.read(org), "no write on any stale path"
+    end
+  end
+
+  def test_move_under_is_undoable_byte_for_byte
+    with_nest_store do |store, org|
+      before = File.read(org)
+      phase1 = store.items.find { |i| i.title == "Phase 1" }
+      solo = store.items.find { |i| i.title == "Solo" }
+      store.move_under!(phase1, solo)
+      refute_equal before, File.read(org)
+      assert_equal [:ok, "nest under Solo: Phase 1"], store.undo!
+      assert_equal before, File.read(org), "one undo restores the file exactly"
       assert Tasks::Check.check(org).ok?
     end
   end

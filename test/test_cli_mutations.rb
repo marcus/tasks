@@ -1484,4 +1484,89 @@ class TestCliMutations < Minitest::Test
       refute File.exist?(org), "undo deletes the bootstrapped file"
     end
   end
+
+  # -- nesting: capture --under, move --under/--top ---------------------------
+
+  # A small nested fixture: Work > Parent > Child, plus a second top-level task
+  # and a Home section, so the CLI nesting paths have somewhere to move things.
+  NEST_CLI = Tasks::Format.dump([
+    { "type" => "meta", "version" => 1 },
+    { "type" => "section", "id" => "ffff0001", "title" => "Work" },
+    { "type" => "task", "id" => "ffff0002", "parent" => "ffff0001", "state" => "TODO",
+      "title" => "Parent task" },
+    { "type" => "task", "id" => "ffff0003", "parent" => "ffff0002", "state" => "NEXT",
+      "title" => "Child task" },
+    { "type" => "task", "id" => "ffff0004", "parent" => "ffff0001", "state" => "TODO",
+      "title" => "Other task" },
+    { "type" => "section", "id" => "ffff0005", "title" => "Home" },
+  ])
+
+  def test_cli_capture_under_happy_path
+    run_cli("capture", "draft outline", "--under", "Parent task", content: NEST_CLI) do |org, out, _err, st|
+      assert_equal 0, st.exitstatus
+      rec = record_for(org, title: "draft outline")
+      assert_equal "ffff0002", rec["parent"], "nested under Parent task"
+      assert_match(/draft outline/, out)
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_capture_under_and_project_conflict_exits_1
+    run_cli("capture", "x", "--under", "Parent task", "--project", "Work", content: NEST_CLI) do |org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/can't combine --under and --project/, err)
+      refute_match(/"title":"x"/, File.read(org), "nothing captured")
+    end
+  end
+
+  def test_cli_capture_under_unknown_ref_exits_2
+    run_cli("capture", "x", "--under", "no-such-task", content: NEST_CLI) do |_org, _out, err, st|
+      assert_equal 2, st.exitstatus
+      assert_match(/no match/, err)
+    end
+  end
+
+  def test_cli_capture_under_over_cap_exits_1_with_depth_message
+    # TASKS_MAX_DEPTH=1: Parent task is depth 1, so a child would be depth 2 > 1.
+    run_cli("capture", "x", "--under", "Parent task", content: NEST_CLI,
+            env: { "TASKS_MAX_DEPTH" => "1" }) do |org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/would exceed max depth 1/, err)
+      assert_equal NEST_CLI, File.read(org, encoding: "UTF-8"), "nothing written"
+    end
+  end
+
+  def test_cli_move_under_happy_path
+    run_cli("move", "Other task", "--under", "Parent task", content: NEST_CLI) do |org, out, _err, st|
+      assert_equal 0, st.exitstatus
+      assert_equal "ffff0002", record_for(org, title: "Other task")["parent"]
+      assert_match(/Other task/, out)
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_move_top_happy_path
+    run_cli("move", "Child task", "--top", content: NEST_CLI) do |org, out, _err, st|
+      assert_equal 0, st.exitstatus
+      assert_equal "ffff0001", record_for(org, title: "Child task")["parent"], "unnested to Work"
+      assert_match(/Child task/, out)
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_move_two_destinations_exits_1_usage
+    run_cli("move", "Child task", "Home", "--under", "Parent task", content: NEST_CLI) do |org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/usage: tasks move/, err)
+      assert_equal NEST_CLI, File.read(org, encoding: "UTF-8"), "nothing written"
+    end
+  end
+
+  def test_cli_move_under_own_child_exits_1_cycle
+    run_cli("move", "Parent task", "--under", "Child task", content: NEST_CLI) do |org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/can't nest a task under its own subtree/, err)
+      assert_equal NEST_CLI, File.read(org, encoding: "UTF-8"), "nothing written"
+    end
+  end
 end

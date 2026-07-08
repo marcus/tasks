@@ -51,7 +51,8 @@ module Tui
     def initialize(root:, paths: Tasks::Config.resolve(default_dir: root),
                    llm_config: LLM::Config.load)
       @store  = Store.new(org: paths.org, archive: paths.archive,
-                          links: paths.links || {}, link_systems: paths.link_systems || {})
+                          links: paths.links || {}, link_systems: paths.link_systems || {},
+                          max_depth: paths.max_depth)
       @urgent_days = paths.urgent_days # deadline window for the quadrants view
       # The (provider, model) switcher cycles these; the live agent is rebuilt
       # lazily when the selected provider changes (see ensure_agent_for_current!).
