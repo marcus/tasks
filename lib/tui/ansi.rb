@@ -9,6 +9,19 @@ module Tui
 
     def color(str, *codes) = "\e[#{codes.join(";")}m#{str}\e[0m"
 
+    # Composite `sgr` (an opening SGR sequence, e.g. "\e[1m") over `str`, whose
+    # embedded field styling already closes with a reset (\e[0m). Re-injects
+    # `sgr` immediately after every true reset so the overlay survives each
+    # field boundary instead of being cleared by it — same trick Frame uses to
+    # lay :selection under a row's own colors. \e[0?m matches only true resets
+    # (\e[0m / \e[m), never a field opener that merely carries a 0 param (e.g.
+    # \e[38;2;0;0;0m). Does NOT append a trailing reset (the caller closes once,
+    # after any padding). `sgr` empty → `str` unchanged.
+    def composite(sgr, str)
+      return str if sgr.empty?
+      sgr + str.gsub(/\e\[0?m/) { |reset| reset + sgr }
+    end
+
     def bold(s)   = color(s, 1)
     def dim(s)    = color(s, 90)
     def red(s)    = color(s, 31)

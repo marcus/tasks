@@ -111,4 +111,32 @@ class TestAnsi < Minitest::Test
     out = A.vtrunc(line, 10)
     assert_equal 10, A.vislen(out)
   end
+
+  def test_composite_empty_sgr_is_noop
+    assert_equal "hello", A.composite("", "hello")
+    styled = A.bold("hi")
+    assert_equal styled, A.composite("", styled)
+  end
+
+  def test_composite_reinjects_after_embedded_reset
+    # a field that closes with \e[0m mid-string: the overlay must re-open after
+    # it so styling survives the field boundary instead of being cleared.
+    body = "a" + A.red("b") + "c" # "a\e[31mb\e[0mc"
+    out = A.composite("\e[1m", body)
+    assert_equal "\e[1ma\e[31mb\e[0m\e[1mc", out
+  end
+
+  def test_composite_does_not_append_trailing_reset
+    # the caller closes once, after any padding — composite must not add its own
+    out = A.composite("\e[1m", "plain")
+    refute out.end_with?("\e[0m")
+    assert_equal "\e[1mplain", out
+  end
+
+  def test_composite_ignores_field_opener_with_zero_param
+    # \e[38;2;0;0;0m carries a 0 but is NOT a reset — no re-injection there
+    body = "\e[38;2;0;0;0mx\e[0m"
+    out = A.composite("\e[1m", body)
+    assert_equal "\e[1m\e[38;2;0;0;0mx\e[0m\e[1m", out
+  end
 end

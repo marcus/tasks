@@ -27,10 +27,17 @@ class TestViews < Minitest::Test
     end
   end
 
-  # Tree-mode rows for `view`, as stripped-text strings.
-  def tree_texts(store, view, collapsed: Set.new, show_deferred: false)
+  # Tree-mode Rows for `view` (keeps the Row so tests can reach r.node.level —
+  # the true nesting depth, decoupled from whatever indent glyph the outliner
+  # renders).
+  def tree_rows(store, view, collapsed: Set.new, show_deferred: false)
     V.rows(view, store.items, tree: store.tree, collapsed: collapsed,
                               show_deferred: show_deferred, today: TODAY, urgent_days: 3)
+  end
+
+  # Tree-mode rows for `view`, as stripped-text strings.
+  def tree_texts(store, view, collapsed: Set.new, show_deferred: false)
+    tree_rows(store, view, collapsed: collapsed, show_deferred: show_deferred)
       .map { |r| A.strip(r.text) }
   end
 
@@ -57,47 +64,59 @@ class TestViews < Minitest::Test
 
   # -- tree rendering ------------------------------------------------------
 
+  # Nesting is asserted on the true tree depth (node.level), not by counting
+  # leading spaces — the outliner now drops a │ thread-glyph (not a space) at the
+  # head of a nested row, so screen-scraped indent no longer tracks depth. As a
+  # visible-rendering check we additionally assert the child row carries the
+  # thread glyph the parent (depth 0) lacks.
+  def find_row(rows, needle) = rows.find { |r| A.strip(r.text).include?(needle) }
+
   def test_children_render_indented_in_agenda
     with_records(NESTED) do |store|
-      t = tree_texts(store, :agenda)
-      parent = t.index { |s| s.include?("Ship release") }
-      child  = t.index { |s| s.include?("write notes") }
-      refute_nil parent
-      assert_equal parent + 1, child, "child follows parent"
-      assert_operator indent(t[child]), :>, indent(t[parent]), "child indented deeper"
+      rs = tree_rows(store, :agenda)
+      pi = rs.index { |r| A.strip(r.text).include?("Ship release") }
+      ci = rs.index { |r| A.strip(r.text).include?("write notes") }
+      refute_nil pi
+      assert_equal pi + 1, ci, "child follows parent"
+      assert_operator rs[ci].node.level, :>, rs[pi].node.level, "child nests deeper"
+      assert_includes rs[ci].text, "│", "nested row carries the thread glyph"
+      refute_includes rs[pi].text, "│", "the depth-0 anchor has no thread glyph"
     end
   end
 
   def test_children_render_indented_in_next
     with_records(NESTED) do |store|
-      t = tree_texts(store, :next)
-      parent = t.index { |s| s.include?("Ship release") }
-      child  = t.index { |s| s.include?("write notes") }
-      refute_nil parent
-      assert_operator child, :>, parent
-      assert_operator indent(t[child]), :>, indent(t[parent]), "child indented deeper"
+      rs = tree_rows(store, :next)
+      pi = rs.index { |r| A.strip(r.text).include?("Ship release") }
+      ci = rs.index { |r| A.strip(r.text).include?("write notes") }
+      refute_nil pi
+      assert_operator ci, :>, pi
+      assert_operator rs[ci].node.level, :>, rs[pi].node.level, "child nests deeper"
+      assert_includes rs[ci].text, "│", "nested row carries the thread glyph"
     end
   end
 
   def test_children_render_indented_in_quadrants
     with_records(NESTED) do |store|
-      t = tree_texts(store, :quadrants)
-      parent = t.index { |s| s.include?("Ship release") }
-      child  = t.index { |s| s.include?("write notes") }
-      refute_nil parent
-      assert_operator child, :>, parent
-      assert_operator indent(t[child]), :>, indent(t[parent]), "child indented deeper"
+      rs = tree_rows(store, :quadrants)
+      pi = rs.index { |r| A.strip(r.text).include?("Ship release") }
+      ci = rs.index { |r| A.strip(r.text).include?("write notes") }
+      refute_nil pi
+      assert_operator ci, :>, pi
+      assert_operator rs[ci].node.level, :>, rs[pi].node.level, "child nests deeper"
+      assert_includes rs[ci].text, "│", "nested row carries the thread glyph"
     end
   end
 
   def test_children_render_indented_in_inbox
     with_records(NESTED) do |store|
-      t = tree_texts(store, :inbox)
-      parent = t.index { |s| s.include?("plan trip") }
-      child  = t.index { |s| s.include?("book hotel") }
-      refute_nil parent
-      assert_equal parent + 1, child
-      assert_operator indent(t[child]), :>, indent(t[parent]), "child indented deeper"
+      rs = tree_rows(store, :inbox)
+      pi = rs.index { |r| A.strip(r.text).include?("plan trip") }
+      ci = rs.index { |r| A.strip(r.text).include?("book hotel") }
+      refute_nil pi
+      assert_equal pi + 1, ci
+      assert_operator rs[ci].node.level, :>, rs[pi].node.level, "child nests deeper"
+      assert_includes rs[ci].text, "│", "nested row carries the thread glyph"
     end
   end
 
@@ -144,8 +163,9 @@ class TestViews < Minitest::Test
       leaf = A.strip(rider.text)
       refute_includes leaf, "▾"
       refute_includes leaf, "▸"
-      # the leaf's marker column is two spaces where a parent's ▾/▸ would sit
-      assert_includes leaf, "    undated rider" # base(2) + marker pad(2)
+      # the leaf's marker column is two spaces where a parent's ▾/▸ would sit,
+      # preceded by the depth-1 thread glyph
+      assert_includes leaf, "│   undated rider" # thread(│ ) + marker pad(2)
     end
   end
 
@@ -450,6 +470,194 @@ class TestViews < Minitest::Test
       head = stripped.index { |t| t.start_with?("deferred project") }
       assert head, "a deferred project still heads its group"
       assert stripped[head..].any? { |t| t.include?("child of deferred") }
+    end
+  end
+
+  # -- Projects view, tree mode --------------------------------------------
+
+  # Tree-mode Projects rows (nesting-aware body, unlike the flat `/`-filter path).
+  def projects_rows(store, collapsed: Set.new, show_deferred: false)
+    V.rows(:projects, store.items, tree: store.tree, collapsed: collapsed,
+                                   show_deferred: show_deferred, today: TODAY, store: store)
+  end
+
+  # A project with a parent task and its own child, plus a leaf sibling.
+  PROJ_NESTED = [
+    { "type" => "meta", "version" => 1 },
+    { "type" => "section", "id" => "s1", "title" => "Work" },
+    { "type" => "task", "id" => "p1", "parent" => "s1", "state" => "NEXT",
+      "title" => "parent task", "deadline" => "2026-07-03" },
+    { "type" => "task", "id" => "c1", "parent" => "p1", "state" => "TODO",
+      "title" => "child task" },
+    { "type" => "task", "id" => "l1", "parent" => "s1", "state" => "TODO",
+      "title" => "leaf sibling" },
+  ].freeze
+
+  def test_projects_tree_renders_child_directly_below_parent
+    with_records(PROJ_NESTED) do |store|
+      rs = projects_rows(store)
+      pi = rs.index { |r| A.strip(r.text).include?("parent task") }
+      ci = rs.index { |r| A.strip(r.text).include?("child task") }
+      refute_nil pi
+      assert_equal pi + 1, ci, "child renders on the row immediately after its parent (DFS)"
+      assert_operator rs[ci].node.level, :>, rs[pi].node.level, "child nests deeper"
+      assert_includes rs[ci].text, "│", "nested child row carries the thread glyph"
+    end
+  end
+
+  def test_projects_tree_bolds_containers_not_leaves
+    with_records(PROJ_NESTED) do |store|
+      rs = projects_rows(store)
+      parent = rs.find { |r| A.strip(r.text).include?("parent task") }
+      child  = rs.find { |r| A.strip(r.text).include?("child task") }
+      leaf   = rs.find { |r| A.strip(r.text).include?("leaf sibling") }
+      bold = Tui::Theme.sgr(:outline_container) # "\e[1m" by default
+      refute bold.empty?, "outline_container must carry an SGR for this test"
+      assert_includes parent.text, bold, "a parent (container) row is bolded"
+      refute_includes child.text, bold, "a leaf child row is not bolded"
+      refute_includes leaf.text, bold, "a leaf sibling row is not bolded"
+    end
+  end
+
+  # tree: nil is the flat fallback the `/` filter path uses: every descendant
+  # flattened, no markers, no per-row node, fixed 2-space indent.
+  def test_projects_flat_fallback_matches_legacy_shape
+    with_records(PROJ_NESTED) do |store|
+      flat = V.rows(:projects, store.items, today: TODAY, store: store)
+      flat.each do |r|
+        assert_nil r.node, "flat projects row carries no node"
+        refute_includes r.text, "│", "flat projects has no thread glyph"
+        refute_includes r.text, "▾"
+        refute_includes r.text, "▸"
+      end
+      stripped = flat.map { |r| A.strip(r.text) }
+      assert stripped.any? { |t| t.start_with?("Work") }, "project header present"
+      assert stripped.any? { |t| t.include?("parent task") }
+      assert stripped.any? { |t| t.include?("child task") }
+    end
+  end
+
+  # A project SUB-HEADING nested inside another section (Projects -> "Launch
+  # the site" -> tasks) — mirrors docs/conventions.md's own canonical example.
+  # top_level_task_nodes previously unwrapped only one level of sections, so
+  # every task under a nested project heading was invisible to EVERY tree view
+  # (agenda/next/quadrants/inbox/projects all seed anchors from it) — a
+  # pre-existing bug, not introduced by the nesting-visuals change, but one
+  # this change's Projects rewrite would otherwise have inherited/surfaced.
+  PROJ_DOUBLE_NESTED = [
+    { "type" => "meta", "version" => 1 },
+    { "type" => "section", "id" => "s1", "title" => "Projects" },
+    { "type" => "section", "id" => "s2", "parent" => "s1", "title" => "Launch the site" },
+    { "type" => "task", "id" => "t1", "parent" => "s2", "state" => "NEXT",
+      "title" => "pick a generator", "deadline" => "2026-07-03" },
+  ].freeze
+
+  def test_task_under_nested_project_heading_is_not_dropped
+    with_records(PROJ_DOUBLE_NESTED) do |store|
+      # agenda (it's dated) / next (it's NEXT) / quadrants (state-agnostic) all
+      # source their anchors from the same top_level_task_nodes walk; inbox
+      # only shows INBOX-state items so a NEXT task doesn't apply there.
+      %i[agenda next quadrants].each do |view|
+        texts = tree_texts(store, view)
+        assert texts.any? { |t| t.include?("pick a generator") },
+               "#{view} tree view must surface a task under a nested project heading"
+      end
+      rs = projects_rows(store)
+      stripped = rs.map { |r| A.strip(r.text) }
+      assert stripped.any? { |t| t.start_with?("Launch the site") }, "nested project header present"
+      assert stripped.any? { |t| t.include?("pick a generator") }
+    end
+  end
+
+  # Project header rows carry neither an item nor a node and aren't blank; the
+  # title is the leading token before the "  N open" stats. Extracting them lets
+  # a test assert the EXACT set of project groups rendered.
+  def project_header_titles(rs)
+    rs.reject { |r| r.item || r.node }
+      .map { |r| A.strip(r.text) }
+      .reject(&:empty?)
+      .map { |t| t.sub(/  \d+ open.*\z/, "") }
+  end
+
+  # Bug 1 regression: a task with a nested open child (Work → "parent task"
+  # (NEXT) → "child task" (TODO)) must NOT spawn a spurious project header named
+  # after the parent task. The old code grouped the child by open_project (its
+  # nearest OPEN ancestor = "parent task"), so groups gained a bogus "parent
+  # task" key with an empty body — a dangling header. Grouping by the enclosing
+  # SECTION instead lands the child under "Work" (nested beneath its parent), so
+  # the ONLY header is "Work".
+  def test_projects_tree_no_spurious_header_for_intermediate_task
+    with_records(PROJ_NESTED) do |store|
+      rs = projects_rows(store)
+      assert_equal ["Work"], project_header_titles(rs),
+                   "only the enclosing section heads a group — no pseudo-project per open parent task"
+    end
+  end
+
+  # A project with one live task and one deferred task.
+  PROJ_MIXED_DEFER = [
+    { "type" => "meta", "version" => 1 },
+    { "type" => "section", "id" => "s1", "title" => "Work" },
+    { "type" => "task", "id" => "t1", "parent" => "s1", "state" => "TODO",
+      "title" => "live task", "deadline" => "2026-07-03" },
+    { "type" => "task", "id" => "t2", "parent" => "s1", "state" => "TODO",
+      "title" => "someday task", "tags" => %w[defer] },
+  ].freeze
+
+  # A project whose every open task is deferred.
+  PROJ_ALL_DEFERRED = [
+    { "type" => "meta", "version" => 1 },
+    { "type" => "section", "id" => "s1", "title" => "Work" },
+    { "type" => "task", "id" => "t1", "parent" => "s1", "state" => "TODO",
+      "title" => "someday one", "tags" => %w[defer] },
+    { "type" => "task", "id" => "t2", "parent" => "s1", "state" => "TODO",
+      "title" => "someday two", "tags" => %w[defer] },
+  ].freeze
+
+  # Bug 2 regression: header stats must be computed from the SAME (deferred-
+  # respecting) traversal as the body, so the stated open-count always matches
+  # the actual number of body rows. The old code counted ALL open items
+  # (deferred included) for the header but hid deferred tasks from the body when
+  # show_deferred was false — an overcount with no matching row.
+  def test_projects_tree_header_count_matches_body_when_deferred_hidden
+    with_records(PROJ_MIXED_DEFER) do |store|
+      rs = projects_rows(store, show_deferred: false)
+      header = rs.find { |r| r.item.nil? && r.node.nil? && A.strip(r.text).start_with?("Work") }
+      refute_nil header, "Work project header present"
+      open_count = A.strip(header.text)[/(\d+) open/, 1].to_i
+      body_rows = rs.count { |r| r.item }
+      assert_equal 1, body_rows, "only the live task renders (deferred hidden)"
+      assert_equal body_rows, open_count, "header open-count matches rendered body rows"
+    end
+  end
+
+  def test_projects_tree_header_count_matches_body_when_deferred_shown
+    with_records(PROJ_MIXED_DEFER) do |store|
+      rs = projects_rows(store, show_deferred: true)
+      header = rs.find { |r| r.item.nil? && r.node.nil? && A.strip(r.text).start_with?("Work") }
+      refute_nil header
+      open_count = A.strip(header.text)[/(\d+) open/, 1].to_i
+      body_rows = rs.count { |r| r.item }
+      assert_equal 2, body_rows, "both tasks render when deferred shown"
+      assert_equal body_rows, open_count, "header open-count matches rendered body rows"
+      assert rs.any? { |r| r.item && A.strip(r.text).include?("someday task") },
+             "the deferred task appears in the body when show_deferred"
+    end
+  end
+
+  # Bug 2, degenerate case: a project whose only open tasks are all deferred must
+  # NOT print a bare header (with zero body rows) when show_deferred is false —
+  # it should vanish entirely, exactly like a project with no anchors.
+  def test_projects_tree_all_deferred_project_hidden_when_deferred_hidden
+    with_records(PROJ_ALL_DEFERRED) do |store|
+      hidden = projects_rows(store, show_deferred: false)
+      refute hidden.any? { |r| A.strip(r.text).start_with?("Work") },
+             "an all-deferred project shows no dangling header when deferred hidden"
+
+      shown = projects_rows(store, show_deferred: true)
+      assert shown.any? { |r| A.strip(r.text).start_with?("Work") },
+             "the project reappears once deferred tasks are revealed"
+      assert_equal 2, shown.count { |r| r.item }, "both deferred tasks render when shown"
     end
   end
 

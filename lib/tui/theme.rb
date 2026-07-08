@@ -48,6 +48,8 @@ module Tui
       priority_selected: "bold",
       muted:         "gray",           # hints, counts, badges, rules
       muted_selected: "gray",
+      outline_thread:    "gray",       # the nesting guide line dropped from a parent row
+      outline_container: "bold",       # a row that has children, painted like a heading
       note:          "gray",           # note body lines in the detail modal
       description:   "gray",           # task description/body prose in details
       link:          "underline cyan", # URLs / org links inside notes
@@ -83,6 +85,7 @@ module Tui
         prompt: "bold", modal_title: "bold", context: "bold",
         context_selected: "bold", project: "none", project_selected: "bold",
         title: "none", title_selected: "bold", muted: "dim", muted_selected: "dim",
+        outline_thread: "dim",
         note: "dim", description: "dim", detail_label: "bold", link_system: "none",
         link: "underline", error: "bold", warning: "bold",
         due_overdue: "bold", due_soon: "none", due_week: "none",
@@ -154,6 +157,18 @@ module Tui
     def paint_over(base_slot, slot, str)
       codes = Array(current[base_slot]) + Array(current[slot])
       codes.empty? ? str : Ansi.color(str, *codes)
+    end
+
+    # Composite `slot`'s style OVER a line that already carries its own field
+    # SGRs (each closed with a reset) — e.g. laying :outline_container's bold
+    # across a row whose title/tags/due-date are each independently colored.
+    # A :none/unset slot is a no-op passthrough. Unlike paint_over (which
+    # combines two slots' codes on fresh plain text), this preserves the line's
+    # existing per-field colors and only layers `slot` on top. See
+    # Ansi.composite for the mechanics; closes with one trailing reset.
+    def composite_over(slot, str)
+      seq = sgr(slot)
+      seq.empty? ? str : Ansi.composite(seq, str) + "\e[0m"
     end
 
     # Spec string → array of SGR codes, [] for "none", nil if any token is

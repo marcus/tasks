@@ -102,6 +102,26 @@ class TestTheme < Minitest::Test
     assert_equal "\e[2mx\e[0m", T.paint(:muted, "x")
   end
 
+  # -- composite_over ----------------------------------------------------------
+
+  def test_composite_over_unset_slot_is_noop
+    T.configure!(overrides: { "outline_container" => "none" })
+    styled = Tui::Ansi.bold("row")
+    assert_equal styled, T.composite_over(:outline_container, styled)
+  end
+
+  def test_composite_over_wraps_and_closes_with_one_reset
+    T.configure! # outline_container defaults to bold
+    # a line with its own field color, closed by its own reset
+    line = "a" + Tui::Ansi.color("b", 36) + "c" # "a\e[36mb\e[0mc"
+    out = T.composite_over(:outline_container, line)
+    # opens bold, re-injects bold after the field's reset, closes once
+    assert_equal "\e[1ma\e[36mb\e[0m\e[1mc\e[0m", out
+    assert out.end_with?("\e[0m"), "closes with a trailing reset"
+    # exactly one reset beyond the line's own embedded field reset
+    assert_equal 2, out.scan("\e[0m").length
+  end
+
   def test_popular_generated_themes_are_available
     %w[
       catppuccin-mocha

@@ -77,10 +77,7 @@ module Tui
       sel = T.sgr(:selection)
       return A.vpad(body, w) if sel.empty?
 
-      # \e[0?m matches only the true resets (\e[0m / \e[m), never a field opener
-      # that merely contains a 0 param (e.g. \e[38;2;0;0;0m), so we re-inject the
-      # selection SGR after resets only.
-      composited = sel + body.gsub(/\e\[0?m/) { |reset| reset + sel }
+      composited = A.composite(sel, body)
       pad = w - A.vislen(body)
       composited += " " * pad if pad.positive?
       composited + "\e[0m"

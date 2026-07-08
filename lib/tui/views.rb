@@ -52,7 +52,10 @@ module Tui
     # each task's parent project regardless of path.
     def rows(view, items, tree: nil, collapsed: Set.new, show_deferred: false,
              today: Date.today, urgent_days: Tasks::Quadrants::DEFAULT_URGENT_DAYS, store: nil)
-      return projects(items, today: today, store: store) if view == :projects
+      if view == :projects
+        return projects(items, tree: tree, collapsed: collapsed, show_deferred: show_deferred,
+                               today: today, store: store)
+      end
 
       if tree
         ctx = { collapsed: collapsed, show_deferred: show_deferred, today: today, urgent_days: urgent_days }
@@ -130,19 +133,93 @@ module Tui
       inbox.map { |i| Row.new("  #{inbox_body(i)}", i) }
     end
 
-    # The projects view groups every open task under its project — the nearest
-    # ancestor headline that's a section or an OPEN task, skipping closed
-    # (DONE/CANCELLED) task ancestors (Node#open_project). A task with no such
-    # ancestor (bare top-level, or all task ancestors closed) has no project and
-    # is left out, exactly like a bare top-level task; it still shows in the
-    # other four views. It's a grouped summary in both flat and tree mode — the
-    # grouping already expresses the hierarchy, so it doesn't ride the outliner
-    # walker. Each group header shows the open /
-    # NEXT counts and the soonest date; tasks list beneath, project column
-    # suppressed (it's the header).
-    def projects(items, today: Date.today, store: nil)
+    # The projects view groups tasks under their enclosing project SECTION. In
+    # tree mode (below) grouping is by project_section — the nearest SECTION
+    # ancestor, climbing past every task ancestor — so a subtask of an open
+    # parent task lands under its grandparent project, never as a pseudo-project
+    # named after its parent. The header stats (open / NEXT counts, soonest date)
+    # and the body rows are both derived from the SAME anchor traversal, so they
+    # can never disagree. The flat `/`-filter path (projects_flat, unchanged)
+    # still groups the flat item list by project_name (Node#open_project).
+    #
+    # In tree mode the group body rides the outliner walker like the other four
+    # tabs: a project's root tasks sort by date/priority/title, then each root's
+    # own subtree renders depth-first beneath it (file order for descendants) so
+    # thread-lines and bold containers line up with actual parent/child ties.
+    # `tree` nil (the `/` filter path) falls back to the flat builder, which
+    # sorts every descendant together by nearest date — no nesting.
+    def projects(items, tree: nil, collapsed: Set.new, show_deferred: false, today: Date.today, store: nil)
       return [Row.new(T.paint(:muted, "Project data needs the task tree."), nil)] unless store
+      return projects_flat(items, today: today, store: store) unless tree
 
+      # ONE pass over the anchor roots the body will actually render: group them
+      # by their enclosing project SECTION (not open_project — see below), so the
+      # header stats and the body rows come from the same traversal and can never
+      # disagree. A subtask of an open parent task is never an anchor (its open
+      # parent renders it nested), so it lands under the right section here via
+      # its anchor ancestor's subtree, never as a pseudo-project of its own.
+      roots_by_project = Hash.new { |h, k| h[k] = [] }
+      anchor_roots(tree, show_deferred).each do |node|
+        project = project_section(node)&.title
+        next if project.nil? || project == "Inbox"
+        roots_by_project[project] << node
+      end
+      return [Row.new(T.paint(:muted, "No active projects."), nil)] if roots_by_project.empty?
+
+      # Header stats derive from the SAME anchors plus their full visible
+      # subtrees (the exact items the body will emit), so open/next counts and
+      # the soonest date match the rows below by construction.
+      items_for = lambda do |anchors|
+        anchors.flat_map { |a| subtree_items(a, show_deferred) }
+      end
+
+      rows = roots_by_project
+             .sort_by { |name, anchors| [next_project_date(items_for.call(anchors)) || Date.new(9999, 12, 31), name] }
+             .flat_map do |name, anchors|
+        rows = [Row.new(project_header(name, items_for.call(anchors), today), nil)]
+        anchors
+          .sort_by { |n| [n.item.deadline || n.item.scheduled || Date.new(9999, 12, 31), n.item.priority || "Z", n.item.title] }
+          .each do |anchor|
+            append_subtree(rows, anchor, "  ", collapsed: collapsed, show_deferred: show_deferred) do |item|
+              next_body(item, today)
+            end
+          end
+        rows << Row.new("", nil)
+        rows
+      end
+      rows.pop
+      rows
+    end
+
+    # The enclosing project SECTION for a tree node — climbs past every task
+    # ancestor (open or closed), unlike Node#open_project (which stops at the
+    # first OPEN task ancestor — the right notion for a task's own "show"
+    # display, wrong for grouping the Projects tab, where a subtask of an open
+    # parent task must still land under its grandparent project, not become a
+    # pseudo-project named after its parent).
+    def project_section(node)
+      a = node.parent
+      a = a.parent while a && a.task?
+      a
+    end
+
+    # The anchor's full visible subtree as a flat item list (the anchor itself
+    # plus every visible descendant, respecting show_deferred) — the exact set of
+    # tasks append_subtree would emit rows for, so project header stats computed
+    # from this can't disagree with the body.
+    def subtree_items(anchor, show_deferred)
+      out = [anchor.item]
+      visible_children(anchor, show_deferred).each do |c|
+        out.concat(subtree_items(c, show_deferred))
+      end
+      out
+    end
+
+    # Pre-outliner flat Projects body: every open descendant of a project
+    # flattened into one list sorted by nearest date/priority/title, each row a
+    # fixed 2-space indent. Serves the `/` filter path (which always renders
+    # flat) and shows no parent/child nesting.
+    def projects_flat(items, today: Date.today, store: nil)
       groups = Hash.new { |h, k| h[k] = [] }
       items.select(&:open?).each do |item|
         project = project_name(item, store)
@@ -257,13 +334,19 @@ module Tui
 
     # Depth-first over the anchor's visible subtree, appending one Row per
     # visible node. `base` is the view's existing leading indent (kept so
-    # top-level rows stay aligned); each level below the anchor adds two spaces,
-    # then the marker column, then the per-view body the block formats. A
+    # top-level rows stay aligned); each level below the anchor drops a dim
+    # thread-line (│ per level, :outline_thread) so a descendant reads as hanging
+    # off its parent, then the marker column, then the per-view body the block
+    # formats. A container row (marker ≠ MARK_LEAF, i.e. it has visible children)
+    # has its body bolded (:outline_container) so it reads like a heading. A
     # collapsed node emits only its own row (marker ▸) with a muted hidden-count.
     def append_subtree(rows, anchor, base, collapsed:, show_deferred:, &body)
       subtree_rows(anchor, 0, collapsed: collapsed, show_deferred: show_deferred) do |node, depth, marker, folded|
+        thread = depth.positive? ? T.paint(:outline_thread, "│ " * depth) : ""
+        line = body.call(node.item)
+        line = T.composite_over(:outline_container, line) unless marker == MARK_LEAF
         text = +""
-        text << base << ("  " * depth) << marker << body.call(node.item)
+        text << base << thread << marker << line
         text << T.paint(:muted, " (#{visible_descendant_count(node, show_deferred)})") if folded
         rows << Row.new(text, node.item, node)
       end
@@ -283,9 +366,15 @@ module Tui
 
     # -- tree helpers --------------------------------------------------------
 
-    # Top-level task nodes: a section's task children, or a bare task root.
+    # Top-level task nodes: every task with no task ancestor, however many
+    # nested SECTIONS sit above it (a project sub-heading under "Projects" is
+    # still a section, so its tasks are top-level too — only a task parent
+    # makes a node non-top-level). Recurses through section children rather
+    # than unwrapping one level, so a project-under-a-project heading doesn't
+    # silently drop its tasks from every tree view (agenda/next/quadrants/
+    # inbox/projects all seed their anchors from this).
     def top_level_task_nodes(tree)
-      tree.flat_map { |root| root.section? ? root.children : [root] }.select(&:task?)
+      tree.flat_map { |root| root.section? ? top_level_task_nodes(root.children) : [root] }
     end
 
     # The anchor roots every tree view builds on: the roots of the maximal OPEN
