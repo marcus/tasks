@@ -24,6 +24,14 @@ class TestAppModals < Minitest::Test
   def modal_text(app) = modal(app).lines.map { |l| A.strip(l) }.join("\n")
   def selected_title(app) = app.send(:current_item).title
 
+  def rewrite_records(app)
+    store = app.instance_variable_get(:@store)
+    records = Tasks::Format.parse(File.read(store.org, encoding: "UTF-8")).records
+    yield records
+    File.write(store.org, dump_fixture(records))
+    app.send(:reload_store)
+  end
+
   def test_enter_opens_detail_modal_for_selection
     with_app do |app|
       app.send(:handle_key, "\r")
@@ -42,6 +50,37 @@ class TestAppModals < Minitest::Test
       assert_includes modal_text(app), selected_title(app), "modal follows selection"
       app.send(:handle_key, "\e[A")
       assert_equal before, selected_title(app)
+    end
+  end
+
+  def test_external_resort_keeps_detail_bound_to_original_task_id
+    with_app do |app|
+      app.send(:handle_key, "\r")
+      selected_id = app.send(:current_item).id
+      rewrite_records(app) do |records|
+        records.find { |record| record["id"] == FIX[:flight] }["deadline"] = "2026-08-20"
+      end
+
+      assert_equal :modal, mode(app)
+      assert_equal selected_id, app.send(:current_item).id
+      assert_equal selected_id, app.instance_variable_get(:@detail_item_id)
+      assert_includes modal_text(app), "Book flight in Concur"
+    end
+  end
+
+  def test_external_hide_closes_detail_instead_of_rebinding_neighbor
+    with_app do |app|
+      app.send(:handle_key, "\r")
+      rewrite_records(app) do |records|
+        flight = records.find { |record| record["id"] == FIX[:flight] }
+        flight["state"] = "DONE"
+        flight["closed"] = "2026-07-10"
+      end
+
+      assert_equal :list, mode(app)
+      assert_nil modal(app)
+      refute_equal FIX[:flight], app.send(:current_item).id
+      assert_equal app.send(:current_item).id, app.instance_variable_get(:@selected_id)
     end
   end
 

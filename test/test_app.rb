@@ -84,7 +84,7 @@ class TestApp < Minitest::Test
       rws = app.instance_variable_get(:@rows)
       idx = rws.index { |r| r.item&.title&.include?(select) }
       raise "no selectable row for #{select.inspect}" unless idx
-      app.instance_variable_set(:@sel, idx)
+      app.send(:select_row, idx)
       yield app
     end
   end
@@ -121,7 +121,7 @@ class TestApp < Minitest::Test
       app.instance_variable_set(:@show_deferred, true) # so the deferred task is selectable
       app.send(:rows)
       idx = app.instance_variable_get(:@rows).index { |r| r.item&.title&.include?("Water the plants") }
-      app.instance_variable_set(:@sel, idx)
+      app.send(:select_row, idx)
       app.send(:defer_selected)
       store = app.instance_variable_get(:@store)
       refute store.items.find { |i| i.title.include?("Water the plants") }.deferred?
@@ -196,6 +196,98 @@ class TestApp < Minitest::Test
       assert_match(/↻ Pay rent/, app.instance_variable_get(:@flash))
       # still selectable in the agenda view
       assert_includes row_titles(app), "Pay rent"
+    end
+  end
+
+  # -- stable selection identity ---------------------------------------------
+
+  SELECTION_FIXTURE = dump_fixture([
+    { "type" => "meta", "version" => 1 },
+    { "type" => "section", "id" => "5e1e0001", "title" => "Work" },
+    { "type" => "task", "id" => "5e1e0002", "parent" => "5e1e0001", "state" => "NEXT",
+      "title" => "Alpha", "deadline" => "2026-07-11" },
+    { "type" => "task", "id" => "5e1e0003", "parent" => "5e1e0001", "state" => "NEXT",
+      "title" => "Beta", "deadline" => "2026-07-12" },
+    { "type" => "task", "id" => "5e1e0004", "parent" => "5e1e0001", "state" => "NEXT",
+      "title" => "Gamma", "deadline" => "2026-07-13" },
+  ])
+
+  def rewrite_records(app)
+    store = app.instance_variable_get(:@store)
+    records = Tasks::Format.parse(File.read(store.org, encoding: "UTF-8")).records
+    yield records
+    File.write(store.org, dump_fixture(records))
+    app.send(:reload_store)
+  end
+
+  def test_external_resort_retains_selected_task_by_id
+    app_on(view: :agenda, select: "Beta", content: SELECTION_FIXTURE) do |app|
+      old_row = app.instance_variable_get(:@sel)
+      rewrite_records(app) do |records|
+        records.find { |record| record["id"] == "5e1e0004" }["deadline"] = "2026-07-10"
+      end
+
+      assert_equal "Beta", app.send(:current_item).title
+      assert_equal "5e1e0003", app.instance_variable_get(:@selected_id)
+      refute_equal old_row, app.instance_variable_get(:@sel), "render coordinate follows the resort"
+    end
+  end
+
+  def test_inserting_an_earlier_record_retains_id_across_line_shift
+    app_on(view: :agenda, select: "Beta", content: SELECTION_FIXTURE) do |app|
+      old_line = app.send(:current_item).line
+      rewrite_records(app) do |records|
+        records.insert(2,
+          { "type" => "task", "id" => "5e1e0005", "parent" => "5e1e0001", "state" => "DONE",
+            "title" => "Inserted history", "closed" => "2026-07-09" })
+      end
+
+      assert_equal "5e1e0003", app.send(:current_item).id
+      assert_operator app.send(:current_item).line, :>, old_line
+    end
+  end
+
+  def test_deleted_selection_falls_back_to_nearest_row_and_updates_id
+    app_on(view: :agenda, select: "Beta", content: SELECTION_FIXTURE) do |app|
+      rewrite_records(app) do |records|
+        records.reject! { |record| record["id"] == "5e1e0003" }
+      end
+
+      assert_equal "Gamma", app.send(:current_item).title
+      assert_equal "5e1e0004", app.instance_variable_get(:@selected_id)
+    end
+  end
+
+  def test_view_filter_and_navigation_keep_id_synchronized
+    app_on(view: :agenda, select: "Book flight", content: FIXTURE_ORG) do |app|
+      app.send(:switch_view, 2)
+      assert_equal FIX[:flight], app.send(:current_item).id
+
+      app.instance_variable_set(:@filter, "flight")
+      app.send(:rows)
+      assert_equal FIX[:flight], app.send(:current_item).id
+
+      app.instance_variable_set(:@filter, nil)
+      app.send(:rows)
+      app.send(:move, 1)
+      assert_equal app.send(:current_item).id, app.instance_variable_get(:@selected_id)
+    end
+  end
+
+  def test_rebuild_keeps_selected_occurrence_when_task_has_multiple_contexts
+    records = Tasks::Format.parse(SELECTION_FIXTURE).records
+    beta = records.find { |record| record["id"] == "5e1e0003" }
+    beta["tags"] = %w[@alpha @omega]
+    content = dump_fixture(records)
+
+    app_on(view: :next, select: "Beta", content: content) do |app|
+      app.send(:move, 1)
+      second_occurrence = app.instance_variable_get(:@sel)
+      assert_equal "5e1e0003", app.send(:current_item).id
+
+      app.send(:rows)
+      assert_equal second_occurrence, app.instance_variable_get(:@sel)
+      assert_equal "5e1e0003", app.instance_variable_get(:@selected_id)
     end
   end
 

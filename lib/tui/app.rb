@@ -70,8 +70,10 @@ module Tui
       @agent_provider = current_entry.provider
       @view   = restore_view # last session's view, or :agenda
       @sel    = 0
+      @selected_id = nil     # stable task identity; @sel is only a rendered row coordinate
       @mode   = :list      # :list | :prompt | :date | :recur | :modal | :modal_filter | :filter
       @modal  = nil        # a Tui::Modal while one is open
+      @detail_item_id = nil # prevents a detail modal rebinding when its task disappears
       @archive_preview = nil # immutable summary accepted by an archive confirmation
       @modal_filter_input = TextInput.new # `/` filter buffer inside a modal
       @input  = TextInput.new # prompt buffer
@@ -139,11 +141,20 @@ module Tui
         io == $stdin ? read_keys : pump_agent
       end
       if @store.changed? # picks up Claude edits + external edits
-        @store.reload!
+        reload_store
         res = Tasks::Check.check(@store.org)
         flash(T.paint(:error, "⚠ tasks.jsonl: #{res.errors.size} format error(s) — run `tasks check`")) unless res.ok?
       end
       clamp_selection
+    end
+
+    # Reload external writes without losing the selected task to a new physical
+    # row. An open detail modal is rebuilt only for the id it was opened on.
+    def reload_store
+      detail_id = @detail_item_id if detail_modal?
+      @store.reload!
+      rows
+      refresh_detail_modal(detail_id) if detail_id && detail_modal?
     end
 
     # -- painting ------------------------------------------------------------
@@ -179,6 +190,8 @@ module Tui
                                          show_deferred: @show_deferred, urgent_days: @urgent_days,
                                          store: @store)
       end
+      sync_selection
+      @rows
     end
 
     # The filter narrowing the views right now: the live buffer while
@@ -563,31 +576,29 @@ module Tui
       return if new_pri == item.priority # already at the end of the ladder
       if @store.set_priority!(item, new_pri)
         flash(new_pri ? "priority: [##{new_pri}] #{item.title}" : "priority cleared: #{item.title}")
-        reselect(item.line)
+        reselect(item.id)
         show_detail if detail_modal?
       else
-        @store.reload!
+        reload_store
         flash("file changed underneath — try again")
       end
     end
 
-    # After a mutation, views may re-sort; follow the task by its file line
-    # (stable for in-place edits) instead of the old row position.
-    def reselect(line)
+    # After a mutation or reload, views may re-sort and physical lines may move.
+    # Follow the task by its durable id; rows and line numbers are coordinates.
+    def reselect(id)
+      @selected_id = id
       rows
-      @sel = @rows.each_index.find { |i| @rows[i].item&.line == line } || @sel
-      clamp_selection
     end
 
     # Z reveals/hides deferred (someday/maybe) tasks across every view.
     def toggle_deferred_view
-      modaled_line = current_item&.line if detail_modal?
+      modaled_id = @detail_item_id if detail_modal?
       @show_deferred = !@show_deferred
       rows
-      clamp_selection
       # If a detail modal was open on a task the toggle just hid, close it
       # rather than silently rebinding the modal to a neighboring task.
-      refresh_detail_modal(modaled_line) if modaled_line
+      refresh_detail_modal(modaled_id) if modaled_id
       flash(@show_deferred ? "showing deferred tasks" : "hiding deferred tasks")
     end
 
@@ -606,11 +617,11 @@ module Tui
           rows
           clamp_selection
         else
-          reselect(item.line)
-          refresh_detail_modal(item.line)
+          reselect(item.id)
+          refresh_detail_modal(item.id)
         end
       else
-        @store.reload!
+        reload_store
         flash("file changed underneath — try again")
       end
     end
@@ -639,7 +650,6 @@ module Tui
       else
         flash("#{verb}: #{label}")
         rows
-        clamp_selection
         show_detail if detail_modal?
       end
     end
@@ -691,7 +701,7 @@ module Tui
       # closed task ancestors skipped (Node#open_project).
       project = @store.node_for(item)&.open_project&.title
       open_modal(Modals.detail(item, @store.body(item), width, links: @store.links(item), project: project),
-                 kind: :detail)
+                 kind: :detail, item_id: item.id)
     end
 
     # Open the selected task's first link in the browser (`o`, list or detail
@@ -710,12 +720,15 @@ module Tui
     end
 
     # After a task action taken from inside a detail modal (reschedule the
-    # cursor already followed to `line`): redraw the modal on the task if it's
+    # cursor already followed to `id`): redraw the modal on the task if it's
     # still in view, or close it if the change dropped it (e.g. dating an INBOX
     # item promotes it out of the inbox view).
-    def refresh_detail_modal(line)
+    def refresh_detail_modal(id)
       return unless detail_modal?
-      current_item&.line == line ? show_detail : close_modal
+      return close_modal unless @detail_item_id == id
+
+      reselect(id)
+      detail_modal? && current_item&.id == id ? show_detail : close_modal
     end
 
     # -- modal -----------------------------------------------------------------
@@ -744,15 +757,17 @@ module Tui
 
     def detail_modal? = @modal&.kind == :detail
 
-    def open_modal(content, kind:)
+    def open_modal(content, kind:, item_id: nil)
       @modal = Modal.new(title: content[:title], lines: content[:lines],
                          kind: kind, filterable: kind == :help)
+      @detail_item_id = item_id
       @modal_filter_input.clear
       @mode = :modal
     end
 
     def close_modal
       @modal = nil
+      @detail_item_id = nil
       @archive_preview = nil
       @modal_filter_input.clear
       @mode = :list
@@ -781,24 +796,48 @@ module Tui
 
     def current_item = @rows[@sel]&.item
 
+    def select_row(index)
+      @sel = index
+      @selected_id = @rows[@sel]&.item&.id
+    end
+
     def move(delta)
       sels = selectable_indexes
       return if sels.empty?
       cur = sels.index(@sel) || 0
-      @sel = sels[(cur + delta).clamp(0, sels.size - 1)]
+      select_row(sels[(cur + delta).clamp(0, sels.size - 1)])
     end
 
     def clamp_selection
+      sync_selection
+    end
+
+    # Reconcile stable identity with the current rendered rows. If an id is no
+    # longer visible, land on the selectable row nearest the prior coordinate.
+    # A detail modal bound to the missing id closes rather than following that
+    # fallback selection.
+    def sync_selection
       sels = selectable_indexes
-      return @sel = 0 if sels.empty?
-      @sel = sels.min_by { |i| (i - @sel).abs } unless sels.include?(@sel)
+      if sels.empty?
+        @sel = 0
+        @selected_id = nil
+        close_modal if detail_modal?
+        return
+      end
+
+      # A task with multiple contexts can appear more than once in the Next
+      # view. Keep the current occurrence when it still represents the id;
+      # otherwise choose the first visible occurrence deterministically.
+      idx = @sel if @selected_id && sels.include?(@sel) && @rows[@sel].item&.id == @selected_id
+      idx ||= @selected_id && sels.find { |i| @rows[i].item&.id == @selected_id }
+      idx ||= sels.min_by { |i| [(i - @sel).abs, i] }
+      select_row(idx)
+      close_modal if detail_modal? && @detail_item_id != @selected_id
     end
 
     def switch_view(n)
       @view = Views::TABS[n - 1].last
-      @sel = 0
       rows
-      clamp_selection
     end
 
     def cycle_view(delta)
@@ -824,7 +863,7 @@ module Tui
       item = node.item
       if Views.visible_children(node, @show_deferred).any? && item.id && !@collapsed.include?(item.id)
         @collapsed.add(item.id)
-        reselect(item.line)
+        reselect(item.id)
       else
         jump_to_parent(node)
       end
@@ -836,7 +875,7 @@ module Tui
       id = node&.item&.id
       return unless id && @collapsed.include?(id)
       @collapsed.delete(id)
-      reselect(node.item.line)
+      reselect(node.item.id)
     end
 
     # H: fold every task node that has task children, across the whole tree
@@ -849,14 +888,12 @@ module Tui
         end
       end
       rows
-      clamp_selection
     end
 
     # L: unfold everything.
     def expand_all
       @collapsed.clear
       rows
-      clamp_selection
     end
 
     # Move the cursor to the row of `node`'s parent task. A section (or missing)
@@ -864,8 +901,8 @@ module Tui
     def jump_to_parent(node)
       parent = node.parent
       return unless parent&.task? && parent.item
-      idx = @rows.each_index.find { |i| @rows[i].item&.line == parent.item.line }
-      @sel = idx if idx
+      idx = @rows.each_index.find { |i| @rows[i].item&.id == parent.item.id }
+      select_row(idx) if idx
     end
 
     # -- session persistence ---------------------------------------------------
@@ -907,11 +944,11 @@ module Tui
       if result
         if recurring
           # A recurring task rolled forward and is still in the view — follow it.
-          fresh = @store.items.find { |i| i.line == item.line }
+          fresh = @store.items.find { |i| i.id == item.id }
           d = fresh && (fresh.deadline || fresh.scheduled)
           flash("↻ #{item.title}#{d ? " → #{d.iso8601} (#{d.strftime("%a")})" : ""}")
-          reselect(item.line)
-          refresh_detail_modal(item.line)
+          reselect(item.id)
+          refresh_detail_modal(item.id)
         else
           # complete! returns every touched line; a parent cascade closes its
           # open descendants too — note how many rode along.
@@ -919,9 +956,10 @@ module Tui
           subs = n > 0 ? " (+#{n} subtask#{"s" unless n == 1})" : ""
           flash("✓ DONE: #{item.title}#{subs} — x to archive")
           close_modal if @modal # the task just left the open view behind it
+          rows
         end
       else
-        @store.reload!
+        reload_store
         flash("file changed underneath — try again")
       end
     end
@@ -951,10 +989,10 @@ module Tui
         close_date_popup
         # a new date can move the task (agenda re-sort, quadrant change) — keep
         # the cursor on it, matching bump_priority.
-        reselect(item.line)
-        refresh_detail_modal(item.line)
+        reselect(item.id)
+        refresh_detail_modal(item.id)
       else
-        @store.reload!
+        reload_store
         @date_error = "file changed underneath — reopen"
       end
     end
@@ -984,10 +1022,10 @@ module Tui
       if @store.set_recur!(item, cookie)
         flash(cookie == :off ? "↻ off: #{item.title}" : "↻ #{cookie}: #{item.title}")
         close_recur_popup
-        reselect(item.line)
-        refresh_detail_modal(item.line)
+        reselect(item.id)
+        refresh_detail_modal(item.id)
       else
-        @store.reload!
+        reload_store
         @recur_error = "file changed underneath — reopen"
       end
     end
@@ -1072,7 +1110,7 @@ module Tui
       @resp = [T.paint(:muted, "(no output)")] if @resp.all? { |l| l.strip.empty? }
       @resp_open = true
       @resp_scroll = 0
-      @store.reload! if @store.changed?
+      reload_store if @store.changed?
     end
 
     def scroll_resp(delta)
