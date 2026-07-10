@@ -191,7 +191,8 @@ module Tui
         items = items.reject(&:deferred?) unless @ui.show_deferred
         q = q.downcase
         items = items.select { |i| i.title.downcase.include?(q) }
-        @rows = Views.rows(@ui.view, items, urgent_days: @urgent_days, store: @store)
+        @rows = Views.rows(@ui.view, items, show_deferred: @ui.show_deferred,
+                                           urgent_days: @urgent_days, store: @store)
       else
         @rows = Views.rows(@ui.view, items, tree: @store.tree, collapsed: @ui.collapsed,
                                          show_deferred: @ui.show_deferred, urgent_days: @urgent_days,

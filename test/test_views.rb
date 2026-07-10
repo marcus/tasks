@@ -259,6 +259,88 @@ class TestViews < Minitest::Test
     end
   end
 
+  # The Query is the semantic source of truth for both render modes. Flat mode
+  # renders exactly the matching set; tree mode must contain every match but may
+  # additionally show open descendants as contextual riders.
+  def test_flat_and_tree_modes_share_canonical_eligibility
+    with_records(NESTED) do |store|
+      %i[agenda next quadrants inbox projects].each do |view|
+        query = V.view_query(view, today: TODAY, urgent_days: 3, store: store)
+        eligible = query.select(store.items).map(&:id).to_set
+        flat = V.rows(view, store.items, today: TODAY, urgent_days: 3, store: store)
+                .filter_map { |row| row.item&.id }.to_set
+        tree = V.rows(view, store.items, tree: store.tree, today: TODAY, urgent_days: 3,
+                                        store: store)
+                .filter_map { |row| row.item&.id }.to_set
+
+        assert_equal eligible, flat, "flat #{view} renders exactly the query matches"
+        assert eligible.subset?(tree), "tree #{view} retains every query match"
+      end
+    end
+  end
+
+  # Hierarchy remains a presentation concern: an agenda anchor brings its open,
+  # undated descendants along for context, while flat/filter mode stays a strict
+  # list of dated query matches.
+  def test_tree_contextual_riders_are_an_intentional_output_difference
+    with_records(NESTED) do |store|
+      flat_ids = V.rows(:agenda, store.items, today: TODAY)
+                  .filter_map { |row| row.item&.id }.to_set
+      tree_ids = tree_rows(store, :agenda).filter_map { |row| row.item&.id }.to_set
+
+      assert_equal Set["p1", "c1", "c4"], flat_ids
+      assert_equal Set["p2", "g1", "c2"], tree_ids - flat_ids,
+                   "undated ancestors/descendants ride the matching dated subtree"
+    end
+  end
+
+  def test_project_grouping_is_identical_in_flat_and_tree_modes
+    with_records(PROJ_DEFERRED) do |store|
+      flat = V.rows(:projects, store.items, show_deferred: true, today: TODAY, store: store)
+      tree = V.rows(:projects, store.items, tree: store.tree, show_deferred: true,
+                                     today: TODAY, store: store)
+      assert_equal ["Work"], project_header_titles(flat)
+      assert_equal project_header_titles(flat), project_header_titles(tree)
+    end
+  end
+
+  def test_project_group_order_uses_earliest_descendant_date_in_both_modes
+    records = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "s1", "title" => "Alpha" },
+      { "type" => "task", "id" => "p1", "parent" => "s1", "state" => "TODO", "title" => "parent" },
+      { "type" => "task", "id" => "c1", "parent" => "p1", "state" => "NEXT", "title" => "dated child",
+        "deadline" => "2026-07-02" },
+      { "type" => "section", "id" => "s2", "title" => "Beta" },
+      { "type" => "task", "id" => "p2", "parent" => "s2", "state" => "NEXT", "title" => "later root",
+        "deadline" => "2026-07-03" },
+    ]
+    with_records(records) do |store|
+      flat = V.rows(:projects, store.items, today: TODAY, store: store)
+      tree = V.rows(:projects, store.items, tree: store.tree, today: TODAY, store: store)
+      assert_equal %w[Alpha Beta], project_header_titles(flat)
+      assert_equal project_header_titles(flat), project_header_titles(tree)
+    end
+  end
+
+  def test_badges_are_shared_between_flat_and_tree_renderers
+    records = NESTED.map(&:dup)
+    ship = records.find { |record| record["id"] == "p1" }
+    ship["tags"] = %w[@computer defer]
+    ship["recur"] = ".+1w"
+    with_records(records) do |store|
+      flat = V.rows(:agenda, store.items, show_deferred: true, today: TODAY)
+              .find { |row| row.item&.id == "p1" }
+      tree = V.rows(:agenda, store.items, tree: store.tree, show_deferred: true,
+                                    today: TODAY)
+              .find { |row| row.item&.id == "p1" }
+      [flat, tree].each do |row|
+        assert_includes A.strip(row.text), "↻"
+        assert_includes A.strip(row.text), "⏸"
+      end
+    end
+  end
+
   def test_agenda_same_date_sorts_by_priority
     jsonl = dump_fixture([
       { "type" => "meta", "version" => 1 },
@@ -453,8 +535,9 @@ class TestViews < Minitest::Test
     end
   end
 
-  # A DEFERRED project is treated as OPEN for grouping (a deferred project still
-  # owns its subtasks); it heads its own group rather than being skipped.
+  # A deferred parent remains an open task, but it is not a project heading.
+  # Flat and tree modes both group it and its child under the enclosing SECTION
+  # instead of promoting the parent task to a pseudo-project.
   PROJ_DEFERRED = [
     { "type" => "meta", "version" => 1 },
     { "type" => "section", "id" => "s1", "title" => "Work" },
@@ -464,12 +547,16 @@ class TestViews < Minitest::Test
       "title" => "child of deferred" },
   ].freeze
 
-  def test_projects_deferred_parent_still_heads_group
+  def test_projects_deferred_parent_stays_under_enclosing_section
     with_records(PROJ_DEFERRED) do |store|
-      stripped = texts(V.rows(:projects, store.items, today: TODAY, store: store))
-      head = stripped.index { |t| t.start_with?("deferred project") }
-      assert head, "a deferred project still heads its group"
-      assert stripped[head..].any? { |t| t.include?("child of deferred") }
+      hidden = V.rows(:projects, store.items, today: TODAY, store: store)
+      refute hidden.any?(&:item), "deferred parent hides its descendant in flat mode"
+
+      rows = V.rows(:projects, store.items, show_deferred: true, today: TODAY, store: store)
+      assert_equal ["Work"], project_header_titles(rows)
+      stripped = texts(rows)
+      assert stripped.any? { |t| t.include?("deferred project") }
+      assert stripped.any? { |t| t.include?("child of deferred") }
     end
   end
 

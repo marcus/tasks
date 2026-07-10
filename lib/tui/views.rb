@@ -43,6 +43,106 @@ module Tui
     MARK_COLLAPSED = "▸ "
     MARK_LEAF      = "  "
 
+    # Canonical semantic query for both flat/filter and tree modes. It owns the
+    # per-view eligibility, classification/grouping, and item ordering policy;
+    # tree builders only decide which matching nodes become hierarchy anchors
+    # and then render their contextual descendants in DFS order.
+    class Query
+      FAR_FUTURE = Date.new(9999, 12, 31)
+      IDENTITY = ->(value) { value }
+
+      attr_reader :view
+
+      def initialize(view, today:, urgent_days:, show_deferred:, project_resolver: nil,
+                     deferred_hidden_resolver: nil)
+        @view = view
+        @today = today
+        @urgent_days = urgent_days
+        @show_deferred = show_deferred
+        @project_resolver = project_resolver
+        @deferred_hidden_resolver = deferred_hidden_resolver
+      end
+
+      def eligible?(item)
+        return false if !@show_deferred && deferred_hidden?(item)
+
+        case view
+        when :agenda    then item.open? && !!(item.deadline || item.scheduled)
+        when :next      then item.state == "NEXT"
+        when :quadrants then item.open?
+        when :inbox     then item.state == "INBOX"
+        when :projects
+          project = project_for(item)
+          item.open? && !project.nil? && project != "Inbox"
+        else false
+        end
+      end
+
+      def group_keys(item)
+        case view
+        when :next
+          item.contexts.empty? ? ["(no context)"] : item.contexts
+        when :quadrants
+          [Tasks::Quadrants.of(item, today: @today, urgent_days: @urgent_days)]
+        when :projects
+          [project_for(item)]
+        else
+          [nil]
+        end
+      end
+
+      def sort_key(item)
+        case view
+        when :agenda
+          [item.deadline || item.scheduled, item.priority || "Z"]
+        when :next
+          [item.priority || "Z"]
+        when :projects
+          [item.deadline || item.scheduled || FAR_FUTURE, item.priority || "Z", item.title]
+        else
+          [item.line || Float::INFINITY]
+        end
+      end
+
+      def select(entries, &item_for)
+        item_for ||= IDENTITY
+        entries.select { |entry| eligible?(item_for.call(entry)) }
+      end
+
+      def sort(entries, &item_for)
+        item_for ||= IDENTITY
+        entries.sort_by { |entry| sort_key(item_for.call(entry)) }
+      end
+
+      def grouped(entries, &item_for)
+        item_for ||= IDENTITY
+        groups = Hash.new { |h, key| h[key] = [] }
+        select(entries, &item_for).each do |entry|
+          group_keys(item_for.call(entry)).each { |key| groups[key] << entry }
+        end
+        groups.transform_values { |list| sort(list, &item_for) }
+      end
+
+      def sorted_groups(groups)
+        groups.sort_by do |key, entries|
+          if view == :projects
+            items = entries.flat_map do |entry|
+              resolved = yield entry
+              resolved.is_a?(Array) ? resolved : [resolved]
+            end
+            [items.filter_map { |item| item.deadline || item.scheduled }.min || FAR_FUTURE, key]
+          else
+            [key.to_s]
+          end
+        end
+      end
+
+      private
+
+      def project_for(item) = @project_resolver&.call(item)
+      def deferred_hidden?(item) = @deferred_hidden_resolver&.call(item) || item.deferred?
+    end
+
     module_function
 
     # `tree` nil → the flat builders (unchanged shape; this path serves `/`
@@ -68,10 +168,15 @@ module Tui
         end
       else
         case view
-        when :agenda    then agenda(items, today: today)
-        when :next      then next_actions(items, today: today)
-        when :quadrants then quadrants(items, today: today, urgent_days: urgent_days)
-        when :inbox     then inbox(items)
+        when :agenda
+          agenda(items, today: today, show_deferred: show_deferred, store: store)
+        when :next
+          next_actions(items, today: today, show_deferred: show_deferred, store: store)
+        when :quadrants
+          quadrants(items, today: today, urgent_days: urgent_days,
+                            show_deferred: show_deferred, store: store)
+        when :inbox
+          inbox(items, show_deferred: show_deferred, store: store)
         else []
         end
       end
@@ -81,24 +186,20 @@ module Tui
     # These render exactly as before the outliner existed; the `/` filter view
     # relies on their output shape.
 
-    def agenda(items, today: Date.today)
-      dated = items.select { |i| i.open? && (i.scheduled || i.deadline) }
-      # same date → priority order (A first, none last)
-      dated.sort_by { |i| [i.deadline || i.scheduled, i.priority || "Z"] }.map do |i|
+    def agenda(items, today: Date.today, show_deferred: true, store: nil)
+      query = view_query(:agenda, today: today, show_deferred: show_deferred, store: store)
+      query.sort(query.select(items)).map do |i|
         Row.new("#{agenda_stamp(i, today)} #{decorated_title(i)}#{badge(i)}", i)
       end
     end
 
-    def next_actions(items, today: Date.today)
-      by_ctx = Hash.new { |h, k| h[k] = [] }
-      items.select { |i| i.state == "NEXT" }.each do |i|
-        ctxs = i.contexts
-        (ctxs.empty? ? ["(no context)"] : ctxs).each { |c| by_ctx[c] << i }
-      end
+    def next_actions(items, today: Date.today, show_deferred: true, store: nil)
+      query = view_query(:next, today: today, show_deferred: show_deferred, store: store)
+      by_ctx = query.grouped(items)
       rows = []
-      by_ctx.sort.each do |ctx, list|
+      query.sorted_groups(by_ctx) { |item| item }.each do |ctx, list|
         rows << Row.new(T.paint(:context, ctx), nil)
-        list.sort_by { |i| i.priority || "Z" }.each do |i|
+        list.each do |i|
           rows << Row.new("  #{next_body(i, today)}", i)
         end
         rows << Row.new("", nil)
@@ -109,9 +210,11 @@ module Tui
 
     # Classification (importance/urgency) lives in Tasks::Quadrants so the CLI
     # and TUI agree; this just lays the four buckets out as rows.
-    def quadrants(items, today: Date.today, urgent_days: Tasks::Quadrants::DEFAULT_URGENT_DAYS)
-      open_items = items.select(&:open?)
-      by_q = open_items.group_by { |i| Tasks::Quadrants.of(i, today: today, urgent_days: urgent_days) }
+    def quadrants(items, today: Date.today, urgent_days: Tasks::Quadrants::DEFAULT_URGENT_DAYS,
+                  show_deferred: true, store: nil)
+      query = view_query(:quadrants, today: today, urgent_days: urgent_days,
+                                     show_deferred: show_deferred, store: store)
+      by_q = query.grouped(items)
       rows = []
       Tasks::Quadrants::LABELS.each do |key, label|
         rows << Row.new(T.paint(:section, label), nil)
@@ -127,10 +230,11 @@ module Tui
       rows
     end
 
-    def inbox(items)
-      inbox = items.select { |i| i.state == "INBOX" }
-      return [Row.new(T.paint(:muted, "Inbox empty. ✨"), nil)] if inbox.empty?
-      inbox.map { |i| Row.new("  #{inbox_body(i)}", i) }
+    def inbox(items, show_deferred: true, store: nil)
+      query = view_query(:inbox, show_deferred: show_deferred, store: store)
+      matched = query.sort(query.select(items))
+      return [Row.new(T.paint(:muted, "Inbox empty. ✨"), nil)] if matched.empty?
+      matched.map { |i| Row.new("  #{inbox_body(i)}", i) }
     end
 
     # The projects view groups tasks under their enclosing project SECTION. In
@@ -139,8 +243,8 @@ module Tui
     # parent task lands under its grandparent project, never as a pseudo-project
     # named after its parent. The header stats (open / NEXT counts, soonest date)
     # and the body rows are both derived from the SAME anchor traversal, so they
-    # can never disagree. The flat `/`-filter path (projects_flat, unchanged)
-    # still groups the flat item list by project_name (Node#open_project).
+    # can never disagree. Flat/filter mode uses the same enclosing-SECTION
+    # resolver, preventing a nested open task from becoming a pseudo-project.
     #
     # In tree mode the group body rides the outliner walker like the other four
     # tabs: a project's root tasks sort by date/priority/title, then each root's
@@ -150,20 +254,10 @@ module Tui
     # sorts every descendant together by nearest date — no nesting.
     def projects(items, tree: nil, collapsed: Set.new, show_deferred: false, today: Date.today, store: nil)
       return [Row.new(T.paint(:muted, "Project data needs the task tree."), nil)] unless store
-      return projects_flat(items, today: today, store: store) unless tree
+      return projects_flat(items, today: today, show_deferred: show_deferred, store: store) unless tree
 
-      # ONE pass over the anchor roots the body will actually render: group them
-      # by their enclosing project SECTION (not open_project — see below), so the
-      # header stats and the body rows come from the same traversal and can never
-      # disagree. A subtask of an open parent task is never an anchor (its open
-      # parent renders it nested), so it lands under the right section here via
-      # its anchor ancestor's subtree, never as a pseudo-project of its own.
-      roots_by_project = Hash.new { |h, k| h[k] = [] }
-      anchor_roots(tree, show_deferred).each do |node|
-        project = project_section(node)&.title
-        next if project.nil? || project == "Inbox"
-        roots_by_project[project] << node
-      end
+      query = view_query(:projects, today: today, show_deferred: show_deferred, store: store)
+      roots_by_project = query.grouped(anchor_roots(tree, show_deferred)) { |node| node.item }
       return [Row.new(T.paint(:muted, "No active projects."), nil)] if roots_by_project.empty?
 
       # Header stats derive from the SAME anchors plus their full visible
@@ -173,17 +267,14 @@ module Tui
         anchors.flat_map { |a| subtree_items(a, show_deferred) }
       end
 
-      rows = roots_by_project
-             .sort_by { |name, anchors| [next_project_date(items_for.call(anchors)) || Date.new(9999, 12, 31), name] }
+      rows = query.sorted_groups(roots_by_project) { |node| subtree_items(node, show_deferred) }
              .flat_map do |name, anchors|
         rows = [Row.new(project_header(name, items_for.call(anchors), today), nil)]
-        anchors
-          .sort_by { |n| [n.item.deadline || n.item.scheduled || Date.new(9999, 12, 31), n.item.priority || "Z", n.item.title] }
-          .each do |anchor|
-            append_subtree(rows, anchor, "  ", collapsed: collapsed, show_deferred: show_deferred) do |item|
-              next_body(item, today)
-            end
+        anchors.each do |anchor|
+          append_subtree(rows, anchor, "  ", collapsed: collapsed, show_deferred: show_deferred) do |item|
+            next_body(item, today)
           end
+        end
         rows << Row.new("", nil)
         rows
       end
@@ -192,11 +283,9 @@ module Tui
     end
 
     # The enclosing project SECTION for a tree node — climbs past every task
-    # ancestor (open or closed), unlike Node#open_project (which stops at the
-    # first OPEN task ancestor — the right notion for a task's own "show"
-    # display, wrong for grouping the Projects tab, where a subtask of an open
-    # parent task must still land under its grandparent project, not become a
-    # pseudo-project named after its parent).
+    # ancestor (open or closed). A task's nearest open ancestor is useful in its
+    # detail display, but Projects groups by the containing section in both flat
+    # and tree modes so subtasks cannot become pseudo-projects.
     def project_section(node)
       a = node.parent
       a = a.parent while a && a.task?
@@ -219,20 +308,15 @@ module Tui
     # flattened into one list sorted by nearest date/priority/title, each row a
     # fixed 2-space indent. Serves the `/` filter path (which always renders
     # flat) and shows no parent/child nesting.
-    def projects_flat(items, today: Date.today, store: nil)
-      groups = Hash.new { |h, k| h[k] = [] }
-      items.select(&:open?).each do |item|
-        project = project_name(item, store)
-        next if project == "Inbox"
-        groups[project] << item if project
-      end
+    def projects_flat(items, today: Date.today, show_deferred: true, store: nil)
+      query = view_query(:projects, today: today, show_deferred: show_deferred, store: store)
+      groups = query.grouped(items)
       return [Row.new(T.paint(:muted, "No active projects."), nil)] if groups.empty?
 
-      rows = groups.sort_by { |name, list| [next_project_date(list) || Date.new(9999, 12, 31), name] }
+      rows = query.sorted_groups(groups) { |item| item }
                    .flat_map do |name, list|
         rows = [Row.new(project_header(name, list, today), nil)]
-        list.sort_by { |i| [i.deadline || i.scheduled || Date.new(9999, 12, 31), i.priority || "Z", i.title] }
-            .each { |i| rows << Row.new("  #{next_body(i, today)}", i) }
+        list.each { |i| rows << Row.new("  #{next_body(i, today)}", i) }
         rows << Row.new("", nil)
         rows
       end
@@ -258,8 +342,10 @@ module Tui
     # and quadrants read them.
 
     def agenda_tree(tree, collapsed:, show_deferred:, today:, urgent_days:)
+      query = view_query(:agenda, today: today, urgent_days: urgent_days,
+                                  show_deferred: show_deferred)
       anchors = anchor_roots(tree, show_deferred).select do |n|
-        subtree_has_dated?(n, show_deferred)
+        subtree_items(n, show_deferred).any? { |item| query.eligible?(item) }
       end
       anchors.sort_by! { |n| [agenda_anchor_date(n, show_deferred), n.item.priority || "Z"] }
       rows = []
@@ -272,18 +358,15 @@ module Tui
     end
 
     def next_tree(tree, collapsed:, show_deferred:, today:, urgent_days:)
-      anchors = visible_nodes(tree, show_deferred).select do |n|
-        n.item.state == "NEXT" && !next_ancestor?(n, show_deferred)
-      end
-      by_ctx = Hash.new { |h, k| h[k] = [] }
-      anchors.each do |n|
-        ctxs = n.item.contexts
-        (ctxs.empty? ? ["(no context)"] : ctxs).each { |c| by_ctx[c] << n }
-      end
+      query = view_query(:next, today: today, urgent_days: urgent_days,
+                                show_deferred: show_deferred)
+      matching = query.select(visible_nodes(tree, show_deferred)) { |node| node.item }
+      anchors = matching.reject { |node| matching_ancestor?(node, query, show_deferred) }
+      by_ctx = query.grouped(anchors) { |node| node.item }
       rows = []
-      by_ctx.sort.each do |ctx, list|
+      query.sorted_groups(by_ctx) { |node| node.item }.each do |ctx, list|
         rows << Row.new(T.paint(:context, ctx), nil)
-        list.sort_by { |n| n.item.priority || "Z" }.each do |anchor|
+        list.each do |anchor|
           append_subtree(rows, anchor, "  ", collapsed: collapsed, show_deferred: show_deferred) do |item|
             next_body(item, today)
           end
@@ -295,8 +378,10 @@ module Tui
     end
 
     def quadrants_tree(tree, collapsed:, show_deferred:, today:, urgent_days:)
-      anchors = anchor_roots(tree, show_deferred)
-      by_q = anchors.group_by { |n| Tasks::Quadrants.of(n.item, today: today, urgent_days: urgent_days) }
+      query = view_query(:quadrants, today: today, urgent_days: urgent_days,
+                                     show_deferred: show_deferred)
+      anchors = query.select(anchor_roots(tree, show_deferred)) { |node| node.item }
+      by_q = query.grouped(anchors) { |node| node.item }
       rows = []
       Tasks::Quadrants::LABELS.each do |key, label|
         rows << Row.new(T.paint(:section, label), nil)
@@ -317,9 +402,11 @@ module Tui
     end
 
     def inbox_tree(tree, collapsed:, show_deferred:, today:, urgent_days:)
-      anchors = visible_nodes(tree, show_deferred).select do |n|
-        n.item.state == "INBOX" && !inbox_ancestor?(n, show_deferred)
-      end
+      query = view_query(:inbox, today: today, urgent_days: urgent_days,
+                                 show_deferred: show_deferred)
+      matching = query.select(visible_nodes(tree, show_deferred)) { |node| node.item }
+      anchors = matching.reject { |node| matching_ancestor?(node, query, show_deferred) }
+      anchors = query.sort(anchors) { |node| node.item }
       return [Row.new(T.paint(:muted, "Inbox empty. ✨"), nil)] if anchors.empty?
       rows = []
       anchors.each do |anchor|
@@ -446,14 +533,6 @@ module Tui
       !id.nil? && collapsed.include?(id)
     end
 
-    # Does the anchor's visible subtree hold at least one dated open task? (The
-    # anchor qualifies for the agenda only if some visible node is scheduled or
-    # has a deadline.)
-    def subtree_has_dated?(node, show_deferred)
-      return true if node.item.scheduled || node.item.deadline
-      visible_children(node, show_deferred).any? { |c| subtree_has_dated?(c, show_deferred) }
-    end
-
     # The date the agenda sorts an anchor by: its own deadline/scheduled if it
     # has one, else the earliest date among its visible dated descendants.
     def agenda_anchor_date(node, show_deferred)
@@ -470,23 +549,19 @@ module Tui
       dates
     end
 
-    # Whether some ancestor WITHIN THE SAME rendered subtree is in `state` (used
-    # for the maximal-NEXT and maximal-INBOX anchor rules — a node under such an
-    # ancestor rides its subtree instead of anchoring its own). The walk stops
-    # at the anchor-root boundary: a closed or deferred-hidden ancestor breaks
-    # the subtree, so a NEXT above a DONE middle does NOT suppress a hoisted NEXT
-    # below it — the hoisted node is its own anchor and must count as maximal.
-    def ancestor_state?(node, state, show_deferred)
+    # Whether some ancestor WITHIN THE SAME rendered subtree matches the same
+    # canonical view query. NEXT and INBOX use this maximal-match rule so a
+    # matching descendant rides its matching ancestor's subtree instead of
+    # anchoring a duplicate group. A closed/deferred-hidden ancestor stops the
+    # search because it also breaks the rendered subtree.
+    def matching_ancestor?(node, query, show_deferred)
       a = node.parent
       while a && visible?(a, show_deferred)
-        return true if a.item.state == state
+        return true if query.eligible?(a.item)
         a = a.parent
       end
       false
     end
-
-    def next_ancestor?(node, show_deferred)  = ancestor_state?(node, "NEXT", show_deferred)
-    def inbox_ancestor?(node, show_deferred) = ancestor_state?(node, "INBOX", show_deferred)
 
     # -- per-item line bodies (shared by flat + tree builders) ---------------
 
@@ -543,9 +618,30 @@ module Tui
       "#{pri(item)}#{T.paint(:title, item.title)}#{ctx.empty? ? "" : "  " + ctx.map { |c| T.paint(:context, c) }.join(" ")}"
     end
 
+    def view_query(view, today: Date.today, urgent_days: Tasks::Quadrants::DEFAULT_URGENT_DAYS,
+                   show_deferred: true, store: nil)
+      resolver = ->(item) { project_name(item, store) } if view == :projects
+      hidden_resolver = ->(item) { deferred_hidden?(item, store) } if store
+      Query.new(view, today: today, urgent_days: urgent_days, show_deferred: show_deferred,
+                     project_resolver: resolver, deferred_hidden_resolver: hidden_resolver)
+    end
+
+    # Flat/filter mode has no subtree walker, so resolve deferred visibility
+    # through the item's live ancestry. This matches tree mode's rule that a
+    # deferred parent hides its whole subtree until Z reveals it.
+    def deferred_hidden?(item, store)
+      node = store&.node_for(item)
+      while node&.task?
+        return true if node.item.deferred?
+        node = node.parent
+      end
+      false
+    end
+
     def project_name(item, store)
       return nil unless store
-      store.node_for(item)&.open_project&.title
+      node = store.node_for(item)
+      project_section(node)&.title if node
     end
 
     def next_project_date(items)

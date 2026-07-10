@@ -295,6 +295,30 @@ class TestApp < Minitest::Test
     end
   end
 
+  def test_filter_respects_deferred_parent_visibility
+    content = dump_fixture([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "aaaa0001", "title" => "Work" },
+      { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "NEXT",
+        "title" => "deferred parent", "tags" => %w[defer] },
+      { "type" => "task", "id" => "aaaa0003", "parent" => "aaaa0002", "state" => "NEXT",
+        "title" => "child match" },
+      { "type" => "task", "id" => "aaaa0004", "parent" => "aaaa0001", "state" => "NEXT",
+        "title" => "live sibling" },
+    ])
+
+    app_on(view: :next, select: "live sibling", content: content) do |app|
+      ui(app).filter = "child"
+      app.send(:rows)
+      refute_includes row_titles(app), "child match",
+                      "flat filtering hides descendants of a deferred parent"
+
+      ui(app).show_deferred = true
+      app.send(:rows)
+      assert_includes row_titles(app), "child match", "Z reveals the filtered descendant"
+    end
+  end
+
   def test_defer_selected_reactivates_when_already_deferred
     app_on(view: :next, select: "Review PR", content: deferred_fixture) do |app|
       ui(app).show_deferred = true # so the deferred task is selectable

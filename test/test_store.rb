@@ -906,6 +906,44 @@ class TestStore < Minitest::Test
     end
   end
 
+  # The shared single-record update path must retain Store's post-write gate,
+  # including a byte-identical rollback and the public false return contract.
+  def test_simple_record_update_rolls_back_on_invalid_store
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, dump_fixture([
+        { "type" => "meta", "version" => 1 },
+        { "type" => "section", "id" => "aaaa0001", "title" => "W" },
+        { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "NEXT",
+          "title" => "Valid task" },
+        { "type" => "task", "id" => 12345678, "parent" => "aaaa0001", "state" => "NEXT",
+          "title" => "Bad id task" },
+      ]))
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
+      before = File.read(org)
+
+      refute store.set_priority!(store.items.find { |item| item.title == "Valid task" }, "A")
+      assert_equal before, File.read(org), "helper-backed update rolls back byte-for-byte"
+      assert_match(/id .*expected 8 hex chars/, store.last_rollback)
+    end
+  end
+
+  # A truthy idempotent update is still a successful command, but snapshot
+  # equality means it must not consume an undo slot ahead of the prior change.
+  def test_simple_record_noop_does_not_consume_undo_history
+    with_store do |store, org, _archive|
+      pr = find_item(store, "Review PR")
+      assert store.set_priority!(pr, "A")
+      after_priority = File.read(org)
+
+      assert store.set_tags!(find_item(store, "Review PR"), add: %w[important])
+      assert_equal after_priority, File.read(org), "idempotent tag update leaves bytes unchanged"
+      assert_equal [:ok, "priority [#A]: Review PR backlog"], store.undo!,
+                   "undo skips the no-op and reaches the real mutation"
+      assert_equal FIXTURE_ORG, File.read(org)
+    end
+  end
+
   # M2: an item that HAS an id no longer present in the file must fail to locate
   # — never fall back to whatever same-title record now sits at its line.
   def test_present_but_missing_id_does_not_fall_back_to_line_title

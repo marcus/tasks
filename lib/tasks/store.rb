@@ -666,9 +666,20 @@ module Tasks
 
     # -- mutation impls --------------------------------------------------------
     #
-    # Every impl: read fresh records under the lock, locate the target record by
-    # id (fallback: line + title guard), mutate its hash fields, and write the
-    # whole record list back through Format. No line-walking anywhere.
+    # Simple single-record impls use update_record: read fresh records under the
+    # lock, locate by id (fallback: line + title guard), mutate, write through
+    # Format, and reload. Multi-record, tree, archive, and recurrence-advancement
+    # paths stay explicit because their return and atomicity contracts differ.
+
+    def update_record(item)
+      records = fresh_records(@org)
+      rec = locate(records, item) or return false
+      result = yield rec
+      return result unless result
+      write_records(@org, records)
+      reload!
+      result
+    end
 
     def complete_impl(item)
       # A recurring task rolls its date forward and stays open instead of
@@ -692,12 +703,10 @@ module Tasks
     end
 
     def set_priority_impl(item, pri)
-      records = fresh_records(@org)
-      rec = locate(records, item) or return false
-      if pri then rec["priority"] = pri else rec.delete("priority") end
-      write_records(@org, records)
-      reload!
-      true
+      update_record(item) do |rec|
+        if pri then rec["priority"] = pri else rec.delete("priority") end
+        true
+      end
     end
 
     # Update the item's DEADLINE (or SCHEDULED, if that's all it has). Items
@@ -713,62 +722,52 @@ module Tasks
     # Set/replace a specific date field, adding it if absent. Sole date-write
     # path — reschedule_impl infers the kind and delegates here.
     def set_date_impl(item, date, kind)
-      records = fresh_records(@org)
-      rec = locate(records, item) or return false
-      rec[kind == :scheduled ? "scheduled" : "deadline"] = date.iso8601
-      # A dated task has been processed — promote it out of the inbox.
-      rec["state"] = "TODO" if rec["state"] == "INBOX"
-      write_records(@org, records)
-      reload!
-      true
+      update_record(item) do |rec|
+        rec[kind == :scheduled ? "scheduled" : "deadline"] = date.iso8601
+        # A dated task has been processed — promote it out of the inbox.
+        rec["state"] = "TODO" if rec["state"] == "INBOX"
+        true
+      end
     end
 
     # Remove the scheduled and/or deadline field(s). Returns false if nothing
     # matched. Clears a now-meaningless recur if no date remains.
     def undate_impl(item, kind)
-      records = fresh_records(@org)
-      rec = locate(records, item) or return false
-      fields = case kind
-               when :scheduled then ["scheduled"]
-               when :deadline  then ["deadline"]
-               else                 %w[scheduled deadline]
-               end
-      removed = fields.any? { |f| rec[f] }
-      return false unless removed
-      fields.each { |f| rec.delete(f) }
-      rec.delete("recur") unless rec["scheduled"] || rec["deadline"]
-      write_records(@org, records)
-      reload!
-      true
+      update_record(item) do |rec|
+        fields = case kind
+                 when :scheduled then ["scheduled"]
+                 when :deadline  then ["deadline"]
+                 else                 %w[scheduled deadline]
+                 end
+        removed = fields.any? { |f| rec[f] }
+        next false unless removed
+        fields.each { |f| rec.delete(f) }
+        rec.delete("recur") unless rec["scheduled"] || rec["deadline"]
+        true
+      end
     end
 
     def retitle_impl(item, new_title)
-      records = fresh_records(@org)
-      rec = locate(records, item) or return false
-      rec["title"] = new_title.strip
-      write_records(@org, records)
-      reload!
-      true
+      update_record(item) do |rec|
+        rec["title"] = new_title.strip
+        true
+      end
     end
 
     def set_tags_impl(item, add, remove)
-      records = fresh_records(@org)
-      rec = locate(records, item) or return false
-      tags = (rec["tags"] || []).reject { |t| remove.include?(t) }
-      add.each { |t| tags << t unless tags.include?(t) }
-      rec["tags"] = tags
-      write_records(@org, records)
-      reload!
-      true
+      update_record(item) do |rec|
+        tags = (rec["tags"] || []).reject { |t| remove.include?(t) }
+        add.each { |t| tags << t unless tags.include?(t) }
+        rec["tags"] = tags
+        true
+      end
     end
 
     def add_note_impl(item, text)
-      records = fresh_records(@org)
-      rec = locate(records, item) or return false
-      rec["body"] = append_body(rec["body"], text.strip)
-      write_records(@org, records)
-      reload!
-      true
+      update_record(item) do |rec|
+        rec["body"] = append_body(rec["body"], text.strip)
+        true
+      end
     end
 
     def set_state_impl(item, new_state)
@@ -801,13 +800,11 @@ module Tasks
 
     # Set/replace/remove the recurrence cookie. Requires a date to repeat from.
     def set_recur_impl(item, cookie)
-      records = fresh_records(@org)
-      rec = locate(records, item) or return false
-      return false unless rec["scheduled"] || rec["deadline"]
-      if cookie == :off then rec.delete("recur") else rec["recur"] = cookie end
-      write_records(@org, records)
-      reload!
-      true
+      update_record(item) do |rec|
+        next false unless rec["scheduled"] || rec["deadline"]
+        if cookie == :off then rec.delete("recur") else rec["recur"] = cookie end
+        true
+      end
     end
 
     # Complete a recurring occurrence: roll ONLY the date the cookie owns forward
