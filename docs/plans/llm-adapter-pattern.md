@@ -4,6 +4,10 @@ Status: implemented (phases 1–3; phase 4 / Claude Agent SDK deferred)
 Author: Marcus (drafted with Claude)
 Date: 2026-07-01 (rev. 2026-07-02: agent-harness-only direction; Hermes first)
 
+Maintenance note (2026-07-10): file references now match the JSONL store. Model
+names in the design narrative record the July 2 rollout; current provider and
+model defaults live in `docs/cli-spec.md`.
+
 Implementation note (2026-07-02): shipped in `lib/llm/` — `Agent` protocol +
 shared CLI machinery, `Agent::ClaudeCli`, `Agent::Hermes`, `Registry`, `Config`.
 Both call sites (`tasks -p`, the TUI switcher) run through it; the switcher
@@ -39,10 +43,11 @@ out to `claude -p`, and eventually others like **opencode** or **pi agent**.
 
 **Every backend we support is an agentic harness — a program we hand a prompt +
 system context + a working directory, that then acts autonomously.** It reads
-`gtd.org`, runs `bin/tasks`, and edits files itself. Our code never parses its
-output for meaning — it streams a transcript to the user and reloads the Store
-when the file changes on disk. This is the "reschedule, capture, edit anything"
-box in the TUI, and it is the *only* execution contract in the design.
+task data through `bin/tasks` and applies changes through the same CLI. Our code
+never parses its output for meaning — it streams a transcript to the user and
+reloads the Store when `tasks.jsonl` changes on disk. This is the "reschedule,
+capture, edit anything" box in the TUI, and it is the *only* execution contract
+in the design.
 
 We deliberately **do not** support harnessless models — a bare
 completion/chat endpoint (Ollama's `/api/chat`, a raw OpenAI call) that returns
@@ -73,7 +78,7 @@ contract to keep in sync.
                                        │ factory
                                        ▼
                             LLM::Agent (one protocol)
-                            autonomous, mutates files
+                            autonomous, invokes tasks CLI
                             #start #io #pump #cancel #available?
                     ┌───────────────────┼────────────────────┐
                     ▼                   ▼                     ▼
@@ -142,9 +147,9 @@ end
 ### 2. `LLM::Agent::HermesAgent` — the first non-Claude harness
 
 Hermes (Nous Research) is an agentic CLI already installed at
-`~/.local/bin/hermes` (v0.17.0). It runs tools and edits files autonomously, so
-it fits the `Agent` protocol with **no second contract** — it's another spawn,
-just a different binary and flags.
+`~/.local/bin/hermes` (v0.17.0). It runs tools and applies task changes through
+`bin/tasks`, so it fits the `Agent` protocol with **no second contract** — it's
+another spawn, just a different binary and flags.
 
 - **Invocation.** Two documented one-shot entry points:
   - `hermes -z "PROMPT"` — purest one-shot: single prompt in, *final response
@@ -265,7 +270,7 @@ speed and quality, not in what actions they expose.
 
 Register `LLM::Agent::HermesAgent` (see Architecture §2) and drive it exactly
 like `claude -p`: hand it the same prompt + `agent_context` + `AGENTS.md` in the
-project working directory and let it run `bin/tasks` and edit `gtd.org` itself.
+project working directory and let it run `bin/tasks` against `tasks.jsonl`.
 Nothing about the mutation path changes — Hermes goes through the same
 `Tasks::Store` commands every other flow uses, so `tasks check` guarantees and
 file integrity are preserved without any new validation code on our side.
@@ -365,10 +370,11 @@ or hit a network.
 ## Risks & open questions
 
 - **Small-model tool-use reliability.** A 4B-class model behind Hermes may run
-  the wrong `bin/tasks` command or mangle a flag. But because Hermes mutates only
-  through the CLI, every change still passes the Store's validation and is
-  visible in the transcript and `git diff` — a bad edit is inspectable and
-  revertible, not silent corruption. If it proves flaky, try a larger local model
+  the wrong `bin/tasks` command or mangle a flag. The expected mutation path is
+  the CLI, where every change passes Store validation and appears in the
+  transcript and `git diff`. `AGENTS.md` also forbids direct task-file and source
+  edits. If a harness ignores that instruction, `tasks check` and the diff are
+  the backstops. If the model proves flaky, try a larger local model
   (`gemma4:12b-mlx`, `qwen3.6`) — a one-line config change, no code.
   Observed (2026-07-02 end-to-end verification): the adapter is correct — Hermes
   spawned, connected to Ollama, ran with tools, exited 0, and never corrupted a

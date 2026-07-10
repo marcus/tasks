@@ -90,10 +90,10 @@ through this CLI. Which harness and model are chosen from the same config file;
 all keys optional, unknown keys ignored:
 
 ```
-llm_provider = hermes            # default harness (default: claude-cli)
-llm_model    = gemma4:e4b        # default model within that provider
+llm_provider = hermes            # selected harness (default: claude-cli)
+llm_model    = qwen3.6:35b-a3b   # selected model (default: provider's first model)
 claude-cli_models = sonnet,opus,haiku   # override a provider's model list
-hermes_models     = gemma4:e4b,gemma4:12b-mlx
+hermes_models     = qwen3.6:35b-a3b      # override Hermes' model list
 hermes_command    = hermes       # override the binary a provider spawns
 hermes_provider   = ollama-launch # Hermes inference provider (passed as --provider)
 ollama_url        = http://127.0.0.1:11434  # endpoint Hermes' availability probe hits
@@ -106,13 +106,12 @@ the flattened `(provider, model)` list; the header shows `provider:model`.
 Adding a new harness is one adapter class in `lib/llm/` plus a
 `Registry::DEFAULTS` entry — see `docs/plans/llm-adapter-pattern.md`.
 
-**Local models:** an eval of local models behind Hermes
-(`eval/llm/results-2026-07-02.md`) found `qwen3.6:35b-a3b` the only one that
-reliably drives the CLI (all task types, zero corruption) — hence it's the
-default Hermes model. It is not the overall default because it's slow (~2–4 min
-per request vs seconds for Sonnet). Use it for offline/private work via
-`llm_provider = hermes`, accepting the latency; re-run the harness
-(`ruby eval/llm/harness.rb`) when a faster capable local model appears.
+**Local models:** a pre-JSONL eval of models behind Hermes
+(`eval/llm/results-2026-07-02.md`) selected `qwen3.6:35b-a3b` as the default
+Hermes model. It was the only candidate that handled every tested task type
+without corrupting the Org store, but it took roughly 2–4 minutes per request.
+The overall default remains `claude-cli:sonnet`. Treat those scores as
+historical until the harness is rerun against `tasks.jsonl`.
 
 **Task refs.** Mutations take a `<ref>` — a case-insensitive substring of the
 task title. Resolution rules:

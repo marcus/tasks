@@ -19,19 +19,18 @@ interactive `--fix`) would surface:
 
 This is the single most on-philosophy addition. Highest value.
 
-## 2. `undo` and `delete` (both already 🚧 in the spec)
+## 2. Hard delete
 
-- **`undo`** — revert the last CLI mutation. Needs a file-backed journal
-  (snapshot per mutation), which could also replace the TUI's in-memory
-  history so both share one undo stack.
-- **`delete <ref> --force`** — hard-remove a block (no archive). Refuses
-  without `--force`; suggests `cancel` instead.
+`undo` and `redo` are implemented through the file-backed journal shared by the
+CLI and TUI. The remaining idea is `delete <ref> --force`: hard-remove a subtree
+without archiving it. It should refuse without `--force` and suggest `cancel`
+for the normal case.
 
 ## 3. Recurring tasks ✅ (done)
 
-Org-mode's native repeaters (`+1w`, `.+1m`, `++1d`). On `done`, instead of
-closing, roll the `SCHEDULED`/`DEADLINE` forward by the interval and keep the
-task open. High value for a personal GTD system (bills, reviews, standups).
+The `recur` field uses Org-style cookies (`+1w`, `.+1m`, `++1d`). On `done`,
+advance `scheduled` or `deadline` by the interval and keep the task open. This
+covers bills, reviews, standups, and other repeating work.
 Shipped across CLI (`recur`, `capture --recur`, `list --recurring`, `done`
 rolls forward) and TUI (`r` popup, `↻` badge) — see `docs/plans/recurring-tasks.md`.
 Follow-on parked here: a full per-occurrence completions log (the current
@@ -64,8 +63,8 @@ sugar (`capture --link URL`, auto-moving URLs out of capture titles).
 ## 7. `stats` command
 
 A quick dashboard: counts by state, overdue count, inbox size, and throughput
-derived from `CLOSED:` stamps in `archive.org` (e.g. "12 done this week").
-Cheap to build on the existing parser; nice for motivation and review.
+derived from `closed` dates in `archive.jsonl` (e.g. "12 done this week"). Cheap
+to build on the existing parser; useful for motivation and review.
 
 ## 8. Smaller polish
 
