@@ -19,6 +19,8 @@ require_relative "session"
 require_relative "text_input"
 require_relative "form"
 require_relative "action_palette"
+require_relative "ui_state"
+require_relative "screen_layout"
 require_relative "../tasks/config"
 require_relative "../tasks/opener"
 
@@ -71,22 +73,9 @@ module Tui
       @entry_idx  = 0
       @agent = build_agent(current_entry)
       @agent_provider = current_entry.provider
-      @view   = restore_view # last session's view, or :agenda
+      @ui = UiState.restore(saved: Session.load, views: Views::TABS.map(&:last), default_view: :agenda)
       @sel    = 0
-      @selected_id = nil     # stable task identity; @sel is only a rendered row coordinate
-      @mode   = :list      # :list | :prompt | :form | :palette | :modal | :modal_filter | :filter
-      @modal  = nil        # a Tui::Modal while one is open
-      @detail_item_id = nil # prevents a detail modal rebinding when its task disappears
-      @archive_preview = nil # immutable summary accepted by an archive confirmation
-      @modal_filter_input = TextInput.new # `/` filter buffer inside a modal
       @input  = TextInput.new # prompt buffer
-      @filter = nil        # committed filter string (nil = off)
-      @collapsed = restore_collapsed # task ids folded shut in the outliner, from last session
-      @show_deferred = false # Z toggles deferred (someday/maybe) tasks in/out of view
-      @filter_input = TextInput.new # filter buffer while typing
-      @form = nil          # reusable date/recurrence popup lifecycle
-      @form_success = nil  # post-close effects for a successful form submit
-      @action_palette = nil
       @input_bytes = +"".b
       @key_data = +""
       @resp   = nil        # wrapped response lines
@@ -153,14 +142,14 @@ module Tui
     # Reload external writes without losing the selected task to a new physical
     # row. An open detail modal is rebuilt only for the id it was opened on.
     def reload_store
-      overlay_mode = @mode if %i[form palette].include?(@mode)
-      detail_id = @detail_item_id if detail_modal?
+      overlay_mode = @ui.mode if %i[form palette].include?(@ui.mode)
+      detail_id = @ui.detail_item_id if detail_modal?
       @store.reload!
       rows
       refresh_detail_modal(detail_id) if detail_id && detail_modal?
-      restore_form if overlay_mode == :form && @form
-      if overlay_mode == :palette && @action_palette
-        restore_action_palette(@action_palette)
+      restore_form if overlay_mode == :form && @ui.form
+      if overlay_mode == :palette && @ui.action_palette
+        restore_action_palette(@ui.action_palette)
       end
     end
 
@@ -168,15 +157,18 @@ module Tui
 
     def paint
       height, width = terminal_size
-      foot = fitted_footer(width: width, height: height)
-      body_h = [height - 5 - foot.size, 1].max
+      frame_rows = rows
+      visual_selection = @ui.mode == :prompt ? nil : @sel
+      layout = screen_layout(width: width, height: height, selected: visual_selection)
       lines = Frame.build(
         width: width, height: height,
         header: header(width - 2),
-        rows: rows, selected: @mode == :prompt ? nil : @sel,
-        footer: foot,
-        popup: current_popup(width: width, height: height, footer_size: foot.size),
-        modal: @modal&.view(body_h)
+        rows: frame_rows,
+        selected: visual_selection,
+        footer: layout.footer,
+        popup: current_popup(layout: layout),
+        modal: layout.place_modal(@ui.modal&.view(layout.body_height)),
+        layout: layout
       )
       print "\e[H" + lines.join("\e[K\r\n") + "\e[K"
     end
@@ -196,13 +188,13 @@ module Tui
         # Filter mode renders a flat list. Deferred (someday/maybe) tasks stay
         # out until Z reveals them — the reject lives here because the tree path
         # applies the same rule inside its walker instead.
-        items = items.reject(&:deferred?) unless @show_deferred
+        items = items.reject(&:deferred?) unless @ui.show_deferred
         q = q.downcase
         items = items.select { |i| i.title.downcase.include?(q) }
-        @rows = Views.rows(@view, items, urgent_days: @urgent_days, store: @store)
+        @rows = Views.rows(@ui.view, items, urgent_days: @urgent_days, store: @store)
       else
-        @rows = Views.rows(@view, items, tree: @store.tree, collapsed: @collapsed,
-                                         show_deferred: @show_deferred, urgent_days: @urgent_days,
+        @rows = Views.rows(@ui.view, items, tree: @store.tree, collapsed: @ui.collapsed,
+                                         show_deferred: @ui.show_deferred, urgent_days: @urgent_days,
                                          store: @store)
       end
       sync_selection
@@ -212,19 +204,19 @@ module Tui
     # The filter narrowing the views right now: the live buffer while
     # typing, the committed filter otherwise.
     def active_filter
-      s = @mode == :filter ? @filter_input : @filter
+      s = @ui.mode == :filter ? @ui.filter_input : @ui.filter
       s = s.to_s unless s.nil?
       s.nil? || s.strip.empty? ? nil : s
     end
 
     def header(w)
       tabs = Views::TABS.map do |label, key|
-        slot = key == @view ? :"tab_#{key}_active" : :"tab_#{key}"
-        slot = key == @view ? :tab_active : :tab_inactive unless T.slot?(slot)
+        slot = key == @ui.view ? :"tab_#{key}_active" : :"tab_#{key}"
+        slot = key == @ui.view ? :tab_active : :tab_inactive unless T.slot?(slot)
         T.paint(slot, " #{label} ")
       end.join(" ")
       open_n = @store.items.count { |i| i.open? && !i.deferred? }
-      deferred_note = @show_deferred ? "#{T.paint(:warning, "⏸ deferred shown")}#{T.paint(:muted, " · ")}" : ""
+      deferred_note = @ui.show_deferred ? "#{T.paint(:warning, "⏸ deferred shown")}#{T.paint(:muted, " · ")}" : ""
       count = "#{T.paint(:muted, "#{open_n} open · ")}#{deferred_note}#{T.paint(:accent, current_entry.to_s)}#{T.paint(:muted, " · ? help")}"
       gap = [w - A.vislen(tabs) - A.vislen(count) - 2, 1].max
       " #{tabs}#{" " * gap}#{count} "
@@ -245,24 +237,24 @@ module Tui
         f << :rule
       end
       f << " #{@flash}" if @flash
-      if @mode == :modal_filter
-        f << " #{T.paint(:prompt, "/ ")}#{inline_input(@modal_filter_input)}#{T.paint(:muted, "  filters the modal · enter keeps · esc clears")}"
-      elsif @mode == :filter
-        f << " #{T.paint(:prompt, "/ ")}#{inline_input(@filter_input)}#{T.paint(:muted, "  enter keeps · esc clears")}"
-      elsif @filter
+      if @ui.mode == :modal_filter
+        f << " #{T.paint(:prompt, "/ ")}#{inline_input(@ui.modal_filter_input)}#{T.paint(:muted, "  filters the modal · enter keeps · esc clears")}"
+      elsif @ui.mode == :filter
+        f << " #{T.paint(:prompt, "/ ")}#{inline_input(@ui.filter_input)}#{T.paint(:muted, "  enter keeps · esc clears")}"
+      elsif @ui.filter
         n = (@rows || []).count(&:item)
-        f << T.paint(:muted, " / #{@filter} · #{n} match#{n == 1 ? "" : "es"} · esc clears · / edits")
+        f << T.paint(:muted, " / #{@ui.filter} · #{n} match#{n == 1 ? "" : "es"} · esc clears · / edits")
       end
       # Active text entry owns the scarce footer row on short terminals. Forms
       # and palettes render their input in the popup; filters render it here.
-      f.concat(prompt_lines(w)) unless %i[modal_filter filter form palette].include?(@mode)
+      f.concat(prompt_lines(w)) unless %i[modal_filter filter form palette].include?(@ui.mode)
       f
     end
 
     # The prompt grows to PROMPT_MAX lines as the input wraps, so a wordy
     # request stays readable; beyond that, the earliest lines scroll off.
     def prompt_lines(w)
-      unless @mode == :prompt
+      unless @ui.mode == :prompt
         hint = T.paint(:muted, @agent.running? ? "…" : "tab to ask the agent — reschedule, capture, edit anything…")
         return [" #{T.paint(:prompt, "❯ ")}#{hint}"]
       end
@@ -327,59 +319,42 @@ module Tui
 
     # The active popup layered over the list (and, when launched from task
     # details, over the retained modal beneath it).
-    def current_popup(width: nil, height: nil, footer_size: nil)
-      terminal_height, terminal_width = terminal_size if width.nil? || height.nil?
-      width ||= terminal_width
-      height ||= terminal_height
-      footer_size ||= self.footer_size(width: width, height: height)
-      body_width = [width - 4, 1].max
-      body_height = [height - 5 - footer_size, 1].max
-      selected_row = sel_screen_row(height: height, footer_size: footer_size)
-      popup, preferred_col = case @mode
+    def current_popup(layout: nil, width: nil, height: nil, footer_size: nil)
+      if layout.nil?
+        terminal_height, terminal_width = terminal_size if width.nil? || height.nil?
+        width ||= terminal_width
+        height ||= terminal_height
+        layout = screen_layout(width: width, height: height, footer_size: footer_size)
+      end
+      popup, preferred_col = case @ui.mode
       when :form
-        [@form&.popup(row: 0, col: 0, max_width: body_width, max_height: body_height,
+        [@ui.form&.popup(row: 0, col: 0, max_width: layout.body_width, max_height: layout.body_height,
                       inline_input: method(:inline_input)), 8]
       when :palette
-        [@action_palette&.popup(row: 0, col: 0, max_width: body_width, max_height: body_height,
+        [@ui.action_palette&.popup(row: 0, col: 0, max_width: layout.body_width, max_height: layout.body_height,
                                inline_input: method(:inline_input)), 3]
       end
-      place_popup(popup, preferred_col: preferred_col, selected_row: selected_row,
-                         body_width: body_width, body_height: body_height)
-    end
-
-    def place_popup(popup, preferred_col:, selected_row:, body_width:, body_height:)
-      return unless popup
-
-      popup_width = popup[:lines].map { |line| A.vislen(line) }.max || 0
-      popup_height = popup[:lines].size
-      col = preferred_col.clamp(0, [body_width - popup_width, 0].max)
-      below = selected_row + 1
-      row = if popup_height <= body_height - below
-              below
-            elsif popup_height <= selected_row
-              selected_row - popup_height
-            else
-              [body_height - popup_height, 0].max
-            end
-      popup.merge(row: row, col: col)
+      layout.place_popup(popup, preferred_col: preferred_col)
     end
 
     def sel_screen_row(height: nil, footer_size: nil)
-      # body row of the selection, accounting for the frame's scroll offset
-      terminal_height, terminal_width = terminal_size if height.nil? || footer_size.nil?
+      terminal_height, terminal_width = terminal_size
       height ||= terminal_height
-      footer_size ||= self.footer_size(width: terminal_width, height: height)
-      body_h = [height - 5 - footer_size, 1].max
-      @sel >= body_h ? body_h - 1 : @sel
+      screen_layout(width: terminal_width, height: height, footer_size: footer_size).selected_screen_row
     end
 
     def fitted_footer(width:, height:)
-      footer(width - 2).last([height - MIN_HEIGHT, 0].max)
+      screen_layout(width: width, height: height).footer
     end
 
     def footer_size(width: nil, height: nil)
       terminal_height, terminal_width = terminal_size if width.nil? || height.nil?
-      fitted_footer(width: width || terminal_width, height: height || terminal_height).size
+      screen_layout(width: width || terminal_width, height: height || terminal_height).footer_size
+    end
+
+    def screen_layout(width:, height:, footer_size: nil, selected: @sel)
+      raw_footer = footer_size ? Array.new(footer_size, "") : footer(width - 2)
+      ScreenLayout.new(width: width, height: height, footer: raw_footer, selected: selected)
     end
 
     # -- input ---------------------------------------------------------------
@@ -469,23 +444,23 @@ module Tui
     end
 
     def handle_paste(text)
-      case @mode
+      case @ui.mode
       when :prompt then @input.insert(text)
-      when :form   then @form&.paste(text)
-      when :palette then @action_palette&.paste(text)
-      when :filter then @filter_input.insert(text)
-      when :modal_filter then @modal_filter_input.insert(text); @modal.filter = @modal_filter_input.to_s
+      when :form   then @ui.form&.paste(text)
+      when :palette then @ui.action_palette&.paste(text)
+      when :filter then @ui.filter_input.insert(text)
+      when :modal_filter then @ui.modal_filter_input.insert(text); @ui.modal.filter = @ui.modal_filter_input.to_s
       else
-        close_modal if @modal
+        close_modal if @ui.modal
         @input.insert(text)
-        @mode = :prompt
+        @ui.mode = :prompt
       end
     end
 
     def handle_key(k)
       return if dispatch_action(k, :global)
 
-      case @mode
+      case @ui.mode
       when :prompt then prompt_key(k)
       when :form   then form_key(k)
       when :palette then palette_key(k)
@@ -498,16 +473,16 @@ module Tui
 
     def filter_key(k)
       case k
-      when "\e"       then @filter = nil; @mode = :list # esc clears entirely
+      when "\e"       then @ui.filter = nil; @ui.mode = :list # esc clears entirely
       when "\r", "\n" then commit_filter
       else
-        @filter_input.handle_key(k)
+        @ui.filter_input.handle_key(k)
       end
     end
 
     def commit_filter
-      @filter = @filter_input.strip.empty? ? nil : @filter_input.strip
-      @mode = :list
+      @ui.filter = @ui.filter_input.strip.empty? ? nil : @ui.filter_input.strip
+      @ui.mode = :list
     end
 
     # Contextual actions live in Shortcuts (which also feeds the ? modal).
@@ -530,16 +505,16 @@ module Tui
     # Modal navigation is an explicit first-stage context; task-detail actions
     # are the second. Registry validation rejects key collisions between them.
     def modal_key(k)
-      return archive_confirm_key(k) if @modal&.kind == :archive_confirm
-      return archive_blocked_key(k) if @modal&.kind == :archive_blocked
+      return archive_confirm_key(k) if @ui.modal&.kind == :archive_confirm
+      return archive_blocked_key(k) if @ui.modal&.kind == :archive_blocked
       return if dispatch_action(k, :modal)
       dispatch_action(k, :detail) if detail_modal?
     end
 
     def prompt_key(k)
       case k
-      when "\e"           then @mode = :list
-      when "\t"           then @mode = :list
+      when "\e"           then @ui.mode = :list
+      when "\t"           then @ui.mode = :list
       when "\r", "\n"     then submit_prompt
       else
         @input.handle_key(k)
@@ -547,25 +522,24 @@ module Tui
     end
 
     def form_key(k)
-      case @form&.handle_key(k)
+      case @ui.form&.handle_key(k)
       when :cancelled then close_form
       when :submitted then close_form(success: true)
       end
     end
 
     def restore_form
-      target_missing = @form.target_id && current_item&.id != @form.target_id
-      if target_missing || (@form.return_mode == :modal && !@modal)
-        @form = nil
-        @form_success = nil
-        @mode = :list
+      target_missing = @ui.form.target_id && current_item&.id != @ui.form.target_id
+      if target_missing || (@ui.form.return_mode == :modal && !@ui.modal)
+        @ui.form = nil
+        @ui.form_success = nil
       else
-        @mode = :form
+        @ui.mode = :form
       end
     end
 
     def palette_key(k)
-      palette = @action_palette
+      palette = @ui.action_palette
       entry = nil
       result = palette&.handle_key(k)
       return close_action_palette if result == :cancelled
@@ -582,7 +556,7 @@ module Tui
     # -- shortcut actions (dispatched from Shortcuts::REGISTRY) ----------------
 
     def action_available? = true
-    def modal_filter_available? = @modal&.filterable?
+    def modal_filter_available? = @ui.modal&.filterable?
     def selected_action_available? = !current_item.nil?
     def recurrence_action_available?
       item = current_item
@@ -598,47 +572,46 @@ module Tui
     def prev_view      = cycle_view(-1)
     def next_view      = cycle_view(1)
     def jump_view(k)   = switch_view(k.to_i)
-    def focus_prompt   = @mode = :prompt
+    def focus_prompt   = @ui.mode = :prompt
     def resp_up        = scroll_resp(-5)
     def resp_down      = scroll_resp(5)
     def quit           = @quit = true
 
     def open_action_palette
       context = detail_modal? ? :detail : :list
-      @action_palette = ActionPalette.new(
+      @ui.action_palette = ActionPalette.new(
         entries: Shortcuts.palette_entries(context, self),
-        return_mode: @modal ? :modal : :list,
+        return_mode: @ui.modal ? :modal : :list,
         target_id: current_item&.id
       )
-      @mode = :palette
+      @ui.mode = :palette
     end
 
     def close_action_palette
-      return unless @action_palette
+      return unless @ui.action_palette
 
-      @mode = @action_palette.return_mode == :modal && !@modal ? :list : @action_palette.return_mode
-      @action_palette = nil
+      destination = @ui.action_palette.return_mode == :modal && !@ui.modal ? :list : @ui.action_palette.return_mode
+      @ui.mode = destination
+      @ui.action_palette = nil
     end
 
     def restore_action_palette(palette, error: nil)
       unless palette
-        @action_palette = nil
-        @mode = :list
+        @ui.action_palette = nil
         return flash(error) if error
         return
       end
 
       target_missing = palette.target_id && current_item&.id != palette.target_id
-      if target_missing || (palette.return_mode == :modal && !@modal)
+      if target_missing || (palette.return_mode == :modal && !@ui.modal)
         # Detail-context commands must never survive the disappearance of
         # the task they were opened for and act on the fallback selection.
-        @action_palette = nil
-        @mode = :list
+        @ui.action_palette = nil
         flash(error) if error
       else
-        @action_palette = palette
-        @mode = :palette
-        @action_palette.fail!(error) if error
+        @ui.action_palette = palette
+        @ui.mode = :palette
+        @ui.action_palette.fail!(error) if error
       end
     end
 
@@ -667,19 +640,19 @@ module Tui
     # After a mutation or reload, views may re-sort and physical lines may move.
     # Follow the task by its durable id; rows and line numbers are coordinates.
     def reselect(id)
-      @selected_id = id
+      @ui.selected_id = id
       rows
     end
 
     # Z reveals/hides deferred (someday/maybe) tasks across every view.
     def toggle_deferred_view
-      modaled_id = @detail_item_id if detail_modal?
-      @show_deferred = !@show_deferred
+      modaled_id = @ui.detail_item_id if detail_modal?
+      @ui.toggle_deferred!
       rows
       # If a detail modal was open on a task the toggle just hid, close it
       # rather than silently rebinding the modal to a neighboring task.
       refresh_detail_modal(modaled_id) if modaled_id
-      flash(@show_deferred ? "showing deferred tasks" : "hiding deferred tasks")
+      flash(@ui.show_deferred ? "showing deferred tasks" : "hiding deferred tasks")
     end
 
     # z defers the selected task, or reactivates it if it's already deferred —
@@ -692,8 +665,8 @@ module Tui
         flash(to_deferred ? "⏸ deferred: #{item.title}" : "▸ activated: #{item.title}")
         # When newly deferred and the view hides deferred, the task leaves the
         # list — drop any detail modal on it; otherwise follow it in place.
-        if to_deferred && !@show_deferred
-          close_modal if @modal
+        if to_deferred && !@ui.show_deferred
+          close_modal if @ui.modal
           rows
           clamp_selection
         else
@@ -707,8 +680,8 @@ module Tui
     end
 
     def start_filter
-      @filter_input.replace(@filter || +"") # `/` with a filter active edits it
-      @mode = :filter
+      @ui.filter_input.replace(@ui.filter || +"") # `/` with a filter active edits it
+      @ui.mode = :filter
     end
 
     # Cycle the (provider, model) selection. Works mid-run — the change applies
@@ -737,10 +710,10 @@ module Tui
     def paste_ref
       item = current_item
       return flash("nothing selected") unless item
-      close_modal if @modal
+      close_modal if @ui.modal
       @input << " " unless @input.empty? || @input.end_with?(" ")
       @input << "\"#{Export.reference(item)}\" "
-      @mode = :prompt
+      @ui.mode = :prompt
     end
 
     def yank_ref
@@ -805,7 +778,7 @@ module Tui
     # item promotes it out of the inbox view).
     def refresh_detail_modal(id)
       return unless detail_modal?
-      return close_modal unless @detail_item_id == id
+      return close_modal unless @ui.detail_item_id == id
 
       reselect(id)
       detail_modal? && current_item&.id == id ? show_detail : close_modal
@@ -815,15 +788,15 @@ module Tui
 
     def modal_up   = modal_move(-1)
     def modal_down = modal_move(1)
-    def modal_half_up   = @modal.scroll_half(-1, modal_body_h)
-    def modal_half_down = @modal.scroll_half(1, modal_body_h)
-    def modal_page_up   = @modal.scroll_page(-1, modal_body_h)
-    def modal_page_down = @modal.scroll_page(1, modal_body_h)
+    def modal_half_up   = @ui.modal.scroll_half(-1, modal_body_h)
+    def modal_half_down = @ui.modal.scroll_half(1, modal_body_h)
+    def modal_page_up   = @ui.modal.scroll_page(-1, modal_body_h)
+    def modal_page_down = @ui.modal.scroll_page(1, modal_body_h)
 
     # In a task detail modal, ↑↓/j/k walk the task list and the modal follows
     # the selection. Other modals (help) keep them as line scroll.
     def modal_move(delta)
-      return @modal.scroll_line(delta, modal_body_h) unless detail_modal?
+      return @ui.modal.scroll_line(delta, modal_body_h) unless detail_modal?
       move(delta)
       show_detail
     end
@@ -834,40 +807,40 @@ module Tui
       terminal_height, terminal_width = terminal_size if height.nil? || width.nil?
       height ||= terminal_height
       width ||= terminal_width
-      [height - 5 - footer_size(width: width, height: height), 1].max
+      screen_layout(width: width, height: height).body_height
     end
 
-    def detail_modal? = @modal&.kind == :detail
+    def detail_modal? = @ui.modal&.kind == :detail
 
     def open_modal(content, kind:, item_id: nil)
-      @modal = Modal.new(title: content[:title], lines: content[:lines],
-                         kind: kind, filterable: kind == :help)
-      @detail_item_id = item_id
-      @modal_filter_input.clear
-      @mode = :modal
+      @ui.modal = Modal.new(title: content[:title], lines: content[:lines],
+                            kind: kind, filterable: kind == :help)
+      @ui.detail_item_id = item_id
+      @ui.modal_filter_input.clear
+      @ui.mode = :modal
     end
 
     def close_modal
-      @modal = nil
-      @detail_item_id = nil
-      @archive_preview = nil
-      @modal_filter_input.clear
-      @mode = :list
+      @ui.mode = :list
+      @ui.modal = nil
+      @ui.detail_item_id = nil
+      @ui.archive_preview = nil
+      @ui.modal_filter_input.clear
     end
 
     # `/` inside a filterable modal (the shortcuts overlay): live line filter.
     def modal_start_filter
-      return unless @modal.filterable?
-      @modal_filter_input.replace(@modal.filter || +"")
-      @mode = :modal_filter
+      return unless @ui.modal.filterable?
+      @ui.modal_filter_input.replace(@ui.modal.filter || +"")
+      @ui.mode = :modal_filter
     end
 
     def modal_filter_key(k)
       case k
-      when "\e"       then @modal.filter = nil; @modal_filter_input.clear; @mode = :modal
-      when "\r", "\n" then @mode = :modal # the filter applied live; enter keeps it
+      when "\e"       then @ui.modal.filter = nil; @ui.modal_filter_input.clear; @ui.mode = :modal
+      when "\r", "\n" then @ui.mode = :modal # the filter applied live; enter keeps it
       else
-        @modal.filter = @modal_filter_input.to_s if @modal_filter_input.handle_key(k) == :changed
+        @ui.modal.filter = @ui.modal_filter_input.to_s if @ui.modal_filter_input.handle_key(k) == :changed
       end
     end
 
@@ -879,7 +852,7 @@ module Tui
 
     def select_row(index)
       @sel = index
-      @selected_id = @rows[@sel]&.item&.id
+      @ui.selected_id = @rows[@sel]&.item&.id
     end
 
     def move(delta)
@@ -901,7 +874,7 @@ module Tui
       sels = selectable_indexes
       if sels.empty?
         @sel = 0
-        @selected_id = nil
+        @ui.selected_id = nil
         close_modal if detail_modal?
         return
       end
@@ -909,28 +882,28 @@ module Tui
       # A task with multiple contexts can appear more than once in the Next
       # view. Keep the current occurrence when it still represents the id;
       # otherwise choose the first visible occurrence deterministically.
-      idx = @sel if @selected_id && sels.include?(@sel) && @rows[@sel].item&.id == @selected_id
-      idx ||= @selected_id && sels.find { |i| @rows[i].item&.id == @selected_id }
+      idx = @sel if @ui.selected_id && sels.include?(@sel) && @rows[@sel].item&.id == @ui.selected_id
+      idx ||= @ui.selected_id && sels.find { |i| @rows[i].item&.id == @ui.selected_id }
       idx ||= sels.min_by { |i| [(i - @sel).abs, i] }
       select_row(idx)
-      close_modal if detail_modal? && @detail_item_id != @selected_id
+      close_modal if detail_modal? && @ui.detail_item_id != @ui.selected_id
     end
 
     def switch_view(n)
-      @view = Views::TABS[n - 1].last
+      @ui.view = Views::TABS[n - 1].last
       rows
     end
 
     def cycle_view(delta)
       keys = Views::TABS.map(&:last)
-      switch_view(((keys.index(@view) + delta) % keys.size) + 1)
+      switch_view(((keys.index(@ui.view) + delta) % keys.size) + 1)
     end
 
     # -- outliner collapse / expand (h l H L) ----------------------------------
     #
     # The tree rows carry their Tasks::Tree node (nil for headers, blanks, and
     # every flat/filter-mode row), so hierarchy questions read straight off the
-    # selection. @collapsed is a Set of task ids; Views prunes a collapsed id's
+    # selection. UiState#collapsed is a Set of task ids; Views prunes a collapsed id's
     # subtree at paint. A collapsed id that hides nothing is harmless, so these
     # never have to reason about visibility beyond "does this node show children".
 
@@ -942,8 +915,8 @@ module Tui
       node = @rows[@sel]&.node
       return unless node&.item
       item = node.item
-      if Views.visible_children(node, @show_deferred).any? && item.id && !@collapsed.include?(item.id)
-        @collapsed.add(item.id)
+      if Views.visible_children(node, @ui.show_deferred).any? && item.id && !@ui.collapsed.include?(item.id)
+        @ui.collapsed.add(item.id)
         reselect(item.id)
       else
         jump_to_parent(node)
@@ -954,8 +927,8 @@ module Tui
     def expand_selected
       node = @rows[@sel]&.node
       id = node&.item&.id
-      return unless id && @collapsed.include?(id)
-      @collapsed.delete(id)
+      return unless id && @ui.collapsed.include?(id)
+      @ui.collapsed.delete(id)
       reselect(node.item.id)
     end
 
@@ -965,7 +938,7 @@ module Tui
     def collapse_all
       @store.tree.each do |root|
         root.each do |n|
-          @collapsed.add(n.item.id) if n.task? && n.item.id && n.children.any?(&:task?)
+          @ui.collapsed.add(n.item.id) if n.task? && n.item.id && n.children.any?(&:task?)
         end
       end
       rows
@@ -973,7 +946,7 @@ module Tui
 
     # L: unfold everything.
     def expand_all
-      @collapsed.clear
+      @ui.collapsed.clear
       rows
     end
 
@@ -986,34 +959,9 @@ module Tui
       select_row(idx) if idx
     end
 
-    # -- session persistence ---------------------------------------------------
-    #
-    # The active view survives a restart (Tui::Session). Restore validates
-    # against the real tab list, so a stale or hand-edited value degrades to
-    # the default rather than rendering a view that doesn't exist.
-
-    def restore_view
-      saved = Session.load[:view]
-      # Strings only: a hand-edited "view": 123 must fall back, not crash startup.
-      saved = saved.is_a?(String) ? saved.to_sym : nil
-      Views::TABS.map(&:last).include?(saved) ? saved : :agenda
-    end
-
-    # The collapsed set from last session: an Array of id strings only. Anything
-    # else (missing key, a hand-edited scalar, ids that no longer exist) degrades
-    # to an empty set — stale ids that survive are pruned again at save time.
-    def restore_collapsed
-      saved = Session.load[:collapsed]
-      return Set.new unless saved.is_a?(Array) && saved.all? { |x| x.is_a?(String) }
-      Set.new(saved)
-    end
-
     def save_session
-      # Braces required: a braceless string-key hash would parse as keywords
-      # (save has an env: kwarg) and raise. Prune the collapsed set to live task
-      # ids so ids from deleted tasks don't accumulate in the state file.
       live_ids = @store.items.map(&:id).compact
-      Session.save({ "view" => @view.to_s, "collapsed" => (@collapsed & live_ids).to_a })
+      Session.save(@ui.session_hash(live_ids: live_ids))
     end
 
     def complete_selected
@@ -1036,7 +984,7 @@ module Tui
           n = result.is_a?(Array) ? result.size - 1 : 0
           subs = n > 0 ? " (+#{n} subtask#{"s" unless n == 1})" : ""
           flash("✓ DONE: #{item.title}#{subs} — x to archive")
-          close_modal if @modal # the task just left the open view behind it
+          close_modal if @ui.modal # the task just left the open view behind it
           rows
         end
       else
@@ -1050,10 +998,10 @@ module Tui
       return flash("nothing selected") unless item
 
       target = item.deadline ? "deadline" : item.scheduled ? "scheduled" : "deadline (new)"
-      @form = Form.new(
+      @ui.form = Form.new(
         kind: :date, title: "reschedule", prompt: "new #{target}",
         hint: "fri · +3 · 07-15 · esc cancels", min_width: 36,
-        return_mode: @modal ? :modal : :list, target_id: item.id
+        return_mode: @ui.modal ? :modal : :list, target_id: item.id
       ) do |raw|
         date = Dates.parse_when(raw)
         next "can't parse “#{raw}”" unless date
@@ -1062,7 +1010,7 @@ module Tui
           next "file changed underneath — reopen"
         end
 
-        @form_success = lambda do
+        @ui.form_success = lambda do
           promoted = item.state == "INBOX" ? " · INBOX → TODO" : ""
           flash("→ #{item.title}: #{date.iso8601} (#{date.strftime("%a")})#{promoted}")
           reselect(item.id)
@@ -1070,7 +1018,7 @@ module Tui
         end
         nil
       end
-      @mode = :form
+      @ui.mode = :form
     end
 
     # r opens the recurrence popup on the selected task, pre-filled with its
@@ -1082,10 +1030,10 @@ module Tui
       return flash("schedule it first — recurrence needs a date") unless item.scheduled || item.deadline
 
       current = item.recur ? "now #{item.recur}" : "not repeating"
-      @form = Form.new(
+      @ui.form = Form.new(
         kind: :recurrence, title: "recur", prompt: "every",
         hint: "weekly · 2w · .+1m · off · esc cancels", min_width: 40,
-        return_mode: @modal ? :modal : :list,
+        return_mode: @ui.modal ? :modal : :list,
         initial: item.recur || +"", suffix: "(#{current})", target_id: item.id
       ) do |raw|
         cookie = Tasks::Recur.parse_interval(raw)
@@ -1095,24 +1043,25 @@ module Tui
           next "file changed underneath — reopen"
         end
 
-        @form_success = lambda do
+        @ui.form_success = lambda do
           flash(cookie == :off ? "↻ off: #{item.title}" : "↻ #{cookie}: #{item.title}")
           reselect(item.id)
           refresh_detail_modal(item.id)
         end
         nil
       end
-      @mode = :form
+      @ui.mode = :form
     end
 
     def close_form(success: false)
-      return unless @form
+      return unless @ui.form
 
-      return_mode = @form.return_mode
-      callback = success ? @form_success : nil
-      @form = nil
-      @form_success = nil
-      @mode = return_mode == :modal && !@modal ? :list : return_mode
+      return_mode = @ui.form.return_mode
+      callback = success ? @ui.form_success : nil
+      destination = return_mode == :modal && !@ui.modal ? :list : return_mode
+      @ui.mode = destination
+      @ui.form = nil
+      @ui.form_success = nil
       callback&.call
     end
 
@@ -1140,7 +1089,7 @@ module Tui
       else
         lines << ""
         lines << T.paint(:muted, "Press y to archive · n / esc cancels")
-        @archive_preview = preview
+        @ui.archive_preview = preview
         open_modal({ title: "Confirm archive", lines: lines }, kind: :archive_confirm)
       end
     end
@@ -1148,7 +1097,7 @@ module Tui
     def archive_confirm_key(k)
       case k
       when "y", "Y"
-        expected = @archive_preview
+        expected = @ui.archive_preview
         result = @store.archive_swept!(expected_preview: expected)
         close_modal
         if result.is_a?(Tasks::Store::ArchiveRefusal)
@@ -1178,7 +1127,7 @@ module Tui
     def submit_prompt
       text = @input.strip
       @input.clear
-      @mode = :list
+      @ui.mode = :list
       return if text.empty?
       return flash("agent is still working — esc to cancel") if @agent.running?
       ensure_agent_for_current!
@@ -1211,8 +1160,8 @@ module Tui
         flash("cancelled")
       elsif @resp_open
         @resp_open = false
-      elsif @filter
-        @filter = nil
+      elsif @ui.filter
+        @ui.filter = nil
         flash("filter cleared")
       end
     end

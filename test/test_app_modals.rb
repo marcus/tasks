@@ -19,8 +19,9 @@ class TestAppModals < Minitest::Test
     end
   end
 
-  def mode(app)  = app.instance_variable_get(:@mode)
-  def modal(app) = app.instance_variable_get(:@modal)
+  def ui(app) = app.instance_variable_get(:@ui)
+  def mode(app)  = ui(app).mode
+  def modal(app) = ui(app).modal
   def modal_text(app) = modal(app).lines.map { |l| A.strip(l) }.join("\n")
   def selected_title(app) = app.send(:current_item).title
 
@@ -63,7 +64,7 @@ class TestAppModals < Minitest::Test
 
       assert_equal :modal, mode(app)
       assert_equal selected_id, app.send(:current_item).id
-      assert_equal selected_id, app.instance_variable_get(:@detail_item_id)
+      assert_equal selected_id, ui(app).detail_item_id
       assert_includes modal_text(app), "Book flight in Concur"
     end
   end
@@ -80,7 +81,7 @@ class TestAppModals < Minitest::Test
       assert_equal :list, mode(app)
       assert_nil modal(app)
       refute_equal FIX[:flight], app.send(:current_item).id
-      assert_equal app.send(:current_item).id, app.instance_variable_get(:@selected_id)
+      assert_equal app.send(:current_item).id, ui(app).selected_id
     end
   end
 
@@ -277,13 +278,13 @@ class TestAppModals < Minitest::Test
     with_app do |app|
       views = []
       5.times do
-        views << app.instance_variable_get(:@view)
+        views << ui(app).view
         app.send(:handle_key, "\e[C")
       end
       assert_equal %i[agenda next quadrants inbox projects], views
-      assert_equal :agenda, app.instance_variable_get(:@view), "wraps around"
+      assert_equal :agenda, ui(app).view, "wraps around"
       app.send(:handle_key, "\e[D")
-      assert_equal :projects, app.instance_variable_get(:@view), "left wraps backward"
+      assert_equal :projects, ui(app).view, "left wraps backward"
     end
   end
 
@@ -291,7 +292,7 @@ class TestAppModals < Minitest::Test
     with_app do |app|
       app.send(:handle_key, "\r")
       app.send(:handle_key, "\e[C") # right arrow: no binding in modal mode
-      assert_equal :agenda, app.instance_variable_get(:@view)
+      assert_equal :agenda, ui(app).view
       assert_equal :modal, mode(app)
     end
   end
@@ -373,7 +374,7 @@ class TestAppModals < Minitest::Test
       title = selected_title(app)
       app.send(:handle_key, "d")                  # reschedule
       assert_equal :form, mode(app)
-      assert_equal :date, app.instance_variable_get(:@form).kind
+      assert_equal :date, ui(app).form.kind
       assert_equal :detail, modal(app).kind,
                    "the detail modal stays open behind the date popup"
       "2026-07-20".chars.each { |c| app.send(:handle_key, c) }
@@ -408,7 +409,7 @@ class TestAppModals < Minitest::Test
 
       assert_equal :form, mode(app)
       assert_equal :detail, modal(app).kind
-      assert_match(/file changed underneath/, app.instance_variable_get(:@form).error)
+      assert_match(/file changed underneath/, ui(app).form.error)
       refute_nil app.send(:current_popup), "the stale-write error remains visible"
     end
   end
@@ -419,7 +420,7 @@ class TestAppModals < Minitest::Test
       item_id = app.send(:current_item).id
       app.send(:handle_key, "r")
       assert_equal :form, mode(app)
-      assert_equal :recurrence, app.instance_variable_get(:@form).kind
+      assert_equal :recurrence, ui(app).form.kind
       app.send(:handle_paste, "weekly")
       app.send(:handle_key, "\r")
 
@@ -526,7 +527,7 @@ class TestAppModals < Minitest::Test
       "flight".chars.each { |c| app.send(:handle_key, c) }
       app.send(:handle_key, "\r")
       assert_equal :list, mode(app)
-      assert_equal "flight", app.instance_variable_get(:@filter)
+      assert_equal "flight", ui(app).filter
 
       app.send(:handle_key, "2") # Next view
       titles = app.instance_variable_get(:@rows).select(&:item).map { |r| r.item.title }
@@ -541,7 +542,7 @@ class TestAppModals < Minitest::Test
       "flight".chars.each { |c| app.send(:handle_key, c) }
       app.send(:handle_key, "\e")
       assert_equal :list, mode(app)
-      assert_nil app.instance_variable_get(:@filter)
+      assert_nil ui(app).filter
       app.send(:rows)
       assert_equal all, app.instance_variable_get(:@rows).count(&:item)
     end
@@ -553,7 +554,7 @@ class TestAppModals < Minitest::Test
       "flight".chars.each { |c| app.send(:handle_key, c) }
       app.send(:handle_key, "\r")
       app.send(:handle_key, "\e")
-      assert_nil app.instance_variable_get(:@filter)
+      assert_nil ui(app).filter
       assert_match(/filter cleared/, app.instance_variable_get(:@flash))
     end
   end
@@ -564,7 +565,7 @@ class TestAppModals < Minitest::Test
       "flight".chars.each { |c| app.send(:handle_key, c) }
       app.send(:handle_key, "\r")
       app.send(:handle_key, "/")
-      assert_equal "flight", app.instance_variable_get(:@filter_input)
+      assert_equal "flight", ui(app).filter_input
     end
   end
 
@@ -715,7 +716,7 @@ class TestAppModals < Minitest::Test
   def test_date_error_clears_only_when_input_changes
     with_app do |app|
       app.send(:open_date_popup)
-      form = app.instance_variable_get(:@form)
+      form = ui(app).form
       form.instance_variable_set(:@error, "can't parse")
       app.send(:handle_key, "\x02") # ctrl-b at start: handled, no edit
       assert_equal "can't parse", form.error
@@ -800,13 +801,13 @@ class TestAppModals < Minitest::Test
     with_app do |app|
       app.send(:handle_key, ":")
       assert_equal :palette, mode(app)
-      refute_nil app.instance_variable_get(:@action_palette)
+      refute_nil ui(app).action_palette
       app.send(:handle_key, "\e")
       assert_equal :list, mode(app)
 
       app.send(:handle_key, "\t")
       assert_equal :prompt, mode(app)
-      assert_nil app.instance_variable_get(:@action_palette)
+      assert_nil ui(app).action_palette
     end
   end
 
@@ -814,11 +815,11 @@ class TestAppModals < Minitest::Test
     with_app do |app|
       app.send(:handle_key, ":")
       app.send(:handle_paste, "reschedule")
-      palette = app.instance_variable_get(:@action_palette)
+      palette = ui(app).action_palette
       assert_equal [:open_date_popup], palette.results.map(&:handler)
       app.send(:handle_key, "\r")
       assert_equal :form, mode(app)
-      assert_equal :date, app.instance_variable_get(:@form).kind
+      assert_equal :date, ui(app).form.kind
     end
   end
 
@@ -854,7 +855,7 @@ class TestAppModals < Minitest::Test
 
       assert_equal :list, mode(app)
       assert_nil modal(app)
-      assert_nil app.instance_variable_get(:@action_palette)
+      assert_nil ui(app).action_palette
       neighbor = app.send(:current_item)
       refute_equal removed_id, neighbor.id
       assert neighbor.open?, "the fallback neighbor was not acted on"
@@ -875,7 +876,7 @@ class TestAppModals < Minitest::Test
 
       assert_equal :list, mode(app)
       assert_nil modal(app)
-      assert_nil app.instance_variable_get(:@form)
+      assert_nil ui(app).form
       removed = app.instance_variable_get(:@store).items.find { |item| item.id == removed_id }
       assert_equal original_deadline, removed.deadline
     end
@@ -892,7 +893,7 @@ class TestAppModals < Minitest::Test
       end
 
       assert_equal :list, mode(app)
-      assert_nil app.instance_variable_get(:@action_palette)
+      assert_nil ui(app).action_palette
       refute_equal removed_id, app.send(:current_item).id
       assert app.send(:current_item).open?, "the fallback neighbor was not acted on"
     end
@@ -910,7 +911,7 @@ class TestAppModals < Minitest::Test
       end
 
       assert_equal :list, mode(app)
-      assert_nil app.instance_variable_get(:@form)
+      assert_nil ui(app).form
       removed = app.instance_variable_get(:@store).items.find { |item| item.id == removed_id }
       assert_equal original_deadline, removed.deadline
     end
@@ -920,12 +921,12 @@ class TestAppModals < Minitest::Test
     with_app do |app|
       app.send(:handle_key, "\r")
       app.send(:handle_key, ":")
-      app.instance_variable_set(:@modal, nil)
+      ui(app).modal = nil
       app.send(:handle_key, "\e")
       assert_equal :list, mode(app)
 
       app.send(:open_date_popup)
-      app.instance_variable_get(:@form).instance_variable_set(:@return_mode, :modal)
+      ui(app).form.instance_variable_set(:@return_mode, :modal)
       app.send(:handle_key, "\e")
       assert_equal :list, mode(app)
     end
@@ -933,17 +934,17 @@ class TestAppModals < Minitest::Test
 
   def test_palette_excludes_unavailable_actions_and_handles_empty_unicode_query
     with_app do |app|
-      app.instance_variable_set(:@view, :next)
+      ui(app).view = :next
       app.send(:rows)
       index = app.instance_variable_get(:@rows).index { |row| row.item&.title&.include?("Review PR") }
       app.send(:select_row, index)
       app.send(:handle_key, ":")
-      handlers = app.instance_variable_get(:@action_palette).entries.map(&:handler)
+      handlers = ui(app).action_palette.entries.map(&:handler)
       refute_includes handlers, :open_recur_popup
       refute_includes handlers, :open_link
 
       app.send(:handle_paste, "🦄界")
-      assert_empty app.instance_variable_get(:@action_palette).results
+      assert_empty ui(app).action_palette.results
       app.send(:handle_key, "\r")
       assert_equal :palette, mode(app), "enter on no results is inert"
     end
@@ -957,12 +958,11 @@ class TestAppModals < Minitest::Test
         palette: true, form: nil, confirmation: nil
       )
       app.define_singleton_method(:explode) { raise "boom" }
-      app.instance_variable_set(:@action_palette,
-                                Tui::ActionPalette.new(entries: [entry], return_mode: :list))
-      app.instance_variable_set(:@mode, :palette)
+      ui(app).action_palette = Tui::ActionPalette.new(entries: [entry], return_mode: :list)
+      ui(app).mode = :palette
       app.send(:handle_key, "\r")
       assert_equal :palette, mode(app)
-      assert_match(/explode failed: boom/, app.instance_variable_get(:@action_palette).error)
+      assert_match(/explode failed: boom/, ui(app).action_palette.error)
     end
   end
 
@@ -978,14 +978,13 @@ class TestAppModals < Minitest::Test
         send(:close_modal)
         raise "boom"
       end
-      app.instance_variable_set(:@action_palette,
-                                Tui::ActionPalette.new(entries: [entry], return_mode: :modal))
-      app.instance_variable_set(:@mode, :palette)
+      ui(app).action_palette = Tui::ActionPalette.new(entries: [entry], return_mode: :modal)
+      ui(app).mode = :palette
       app.send(:handle_key, "\r")
 
       assert_equal :list, mode(app)
       assert_nil modal(app)
-      assert_nil app.instance_variable_get(:@action_palette)
+      assert_nil ui(app).action_palette
       assert_match(/explode failed: boom/, app.instance_variable_get(:@flash))
     end
   end

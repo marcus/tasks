@@ -64,9 +64,19 @@ class TestShortcuts < Minitest::Test
   def test_global_dispatch_precedes_every_input_mode
     %i[list prompt form palette filter modal modal_filter].each do |mode|
       app = Tui::App.allocate
-      app.instance_variable_set(:@mode, mode)
+      ui = Tui::UiState.new(view: :agenda)
+      case mode
+      when :form
+        ui.form = Struct.new(:return_mode).new(:list)
+      when :palette
+        ui.action_palette = Struct.new(:return_mode).new(:list)
+      when :modal, :modal_filter
+        ui.modal = Struct.new(:kind, :filterable?).new(:help, true)
+        ui.mode = :modal
+      end
+      ui.mode = mode unless mode == :list || mode == :modal
+      app.instance_variable_set(:@ui, ui)
       app.instance_variable_set(:@quit, false)
-      app.instance_variable_set(:@modal, Struct.new(:kind).new(:archive_confirm)) if mode == :modal
       app.send(:handle_key, "\x03")
       assert app.instance_variable_get(:@quit), "ctrl-c did not quit from #{mode} mode"
     end
@@ -159,7 +169,9 @@ class TestShortcuts < Minitest::Test
   def test_modal_filter_binding_is_unavailable_but_consumed_in_task_detail
     modal = Struct.new(:filterable?).new(false)
     app = Tui::App.allocate
-    app.instance_variable_set(:@modal, modal)
+    ui = Tui::UiState.new(view: :agenda)
+    ui.modal = modal
+    app.instance_variable_set(:@ui, ui)
     entry = S.match("/", :modal)
 
     refute S.available?(entry, app)

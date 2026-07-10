@@ -2,6 +2,7 @@
 
 require_relative "ansi"
 require_relative "theme"
+require_relative "screen_layout"
 
 module Tui
   # Pure frame builder: given content, returns an array of strings, one per
@@ -18,21 +19,18 @@ module Tui
     # footer:   array of interior lines; the symbol :rule draws a divider
     # popup:    { lines: [...], row: Integer, col: Integer } overlaid on body
     # modal:    { title:, lines: [...] } drawn as a centered box over the body
-    def build(width:, height:, header:, rows:, selected: nil, footer: [], popup: nil, modal: nil)
+    def build(width:, height:, header:, rows:, selected: nil, footer: [], popup: nil, modal: nil,
+              layout: nil)
+      layout ||= ScreenLayout.new(width: width, height: height, footer: footer, selected: selected)
+      width = layout.width
+      height = layout.height
       w = width - 2
-      # Preserve the most actionable tail (flash/filter/prompt) when a short
-      # terminal cannot fit the full response footer. Six rows are the minimum
-      # frame: borders, header/rules, and one body row.
-      footer = footer.last([height - 6, 0].max)
-      # top border + header + rule + body + rule + footer + bottom border
-      body_h = [height - 5 - footer.size, 1].max
-
-      # keep the selection in view
-      offset = 0
-      offset = selected - body_h + 1 if selected && selected >= body_h
+      footer = layout.footer
+      body_h = layout.body_height
+      offset = layout.viewport_offset
 
       body = (rows[offset, body_h] || []).map.with_index do |row, vi|
-        if offset + vi == selected
+        if vi == layout.selected_screen_row
           selected_row(row, w - 2)
         else
           "  " + row.text
@@ -134,8 +132,8 @@ module Tui
       box << "└#{"─" * (bw - 2)}┘"
       overlay!(body, {
         lines: box,
-        row: [(body.size - box.size) / 2, 0].max,
-        col: [(w - bw) / 2, 0].max,
+        row: modal.fetch(:row, [(body.size - box.size) / 2, 0].max),
+        col: modal.fetch(:col, [(w - bw) / 2, 0].max),
       }, w)
     end
   end

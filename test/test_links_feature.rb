@@ -240,7 +240,7 @@ class TestLinksFeature < Minitest::Test
       paths = Tasks::Config.for_dir(dir)
       paths.links = { "jira" => "https://acme.atlassian.net/browse/%s" }
       app = Tui::App.new(root: dir, paths: paths, llm_config: default_llm_config)
-      app.instance_variable_set(:@view, :next)
+      app.instance_variable_get(:@ui).view = :next
       app.send(:rows)
       yield app
     end
@@ -281,7 +281,7 @@ class TestLinksFeature < Minitest::Test
     tui_app(ORG_WITH_LINKS) do |app|
       select_row(app, "One-link")
       app.send(:show_detail)
-      text = app.instance_variable_get(:@modal).lines.join("\n")
+      text = app.instance_variable_get(:@ui).modal.lines.join("\n")
       plain = text.gsub(/\e\[[0-9;]*m/, "")
       assert_match(/links \(o opens the first\)/, plain)
       assert_match(%r{browse/OPS-7}, plain)

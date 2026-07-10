@@ -5,6 +5,8 @@ require "tui/app"
 require "tui/text_input"
 
 class TestApp < Minitest::Test
+  def ui(app) = app.instance_variable_get(:@ui)
+
   # Records calls to #start and reports whatever running?/available? state we
   # set, so we can drive submit_prompt without spawning a real agent process.
   class FakeAgent
@@ -40,7 +42,7 @@ class TestApp < Minitest::Test
       assert_match(/still working/, app.instance_variable_get(:@flash))
       # input is cleared and focus returns to the list even on rejection
       assert_equal "", app.instance_variable_get(:@input)
-      assert_equal :list, app.instance_variable_get(:@mode)
+      assert_equal :list, ui(app).mode
     end
   end
 
@@ -93,7 +95,7 @@ class TestApp < Minitest::Test
   def test_footer_height_is_calculated_at_the_current_width
     fake = FakeAgent.new(running: false)
     app_with(agent: fake, input: "界 " * 60) do |app|
-      app.instance_variable_set(:@mode, :prompt)
+      ui(app).mode = :prompt
       narrow = app.send(:footer_size, width: 40)
       wide = app.send(:footer_size, width: 120)
       assert_operator narrow, :>, wide
@@ -124,9 +126,64 @@ class TestApp < Minitest::Test
     end
     assert_equal 43, captured[:width]
     assert_equal 12, captured[:height]
-    assert_equal 43, popup_geometry[:width]
-    assert_equal 12, popup_geometry[:height]
-    assert_equal captured[:footer].size, popup_geometry[:footer_size]
+    assert_equal 43, popup_geometry[:layout].width
+    assert_equal 12, popup_geometry[:layout].height
+    assert_equal captured[:footer].size, popup_geometry[:layout].footer_size
+  end
+
+  def test_paint_samples_terminal_size_once_during_resize
+    fake = FakeAgent.new(running: false)
+    calls = 0
+    console = Object.new
+    console.define_singleton_method(:winsize) do
+      calls += 1
+      calls == 1 ? [12, 43] : [40, 120]
+    end
+    captured = nil
+
+    app_with(agent: fake, input: "") do |app|
+      IO.stub(:console, console) do
+        Tui::Frame.stub(:build, ->(**args) { captured = args; Array.new(args[:height], "") }) do
+          capture_io { app.send(:paint) }
+        end
+      end
+    end
+
+    assert_equal 1, calls, "one frame must not mix dimensions across a resize"
+    assert_equal [43, 12], captured.values_at(:width, :height)
+  end
+
+  def test_prompt_mode_hides_selection_without_scrolling_to_it
+    fake = FakeAgent.new(running: false)
+    captured = nil
+    console = Struct.new(:winsize).new([8, 43])
+
+    app_with(agent: fake, input: "ask") do |app|
+      app.send(:rows)
+      original_rows = app.instance_variable_get(:@rows).dup
+      app.instance_variable_set(:@sel, original_rows.length - 1)
+      ui(app).mode = :prompt
+      IO.stub(:console, console) do
+        Tui::Frame.stub(:build, ->(**args) { captured = args; Array.new(args[:height], "") }) do
+          capture_io { app.send(:paint) }
+        end
+      end
+
+      assert_nil captured[:selected]
+      assert_equal 0, captured[:layout].viewport_offset
+      assert_equal original_rows.first.item.id, captured[:rows].first.item.id
+      assert_equal original_rows.length, captured[:rows].length
+    end
+  end
+
+  def test_extracted_state_has_no_shadow_app_ivars
+    fake = FakeAgent.new(running: false)
+    app_with(agent: fake, input: "") do |app|
+      extracted = %i[@mode @selected_id @view @filter @collapsed @show_deferred
+                     @modal @form @action_palette]
+      assert_empty extracted & app.instance_variables
+      assert_instance_of Tui::UiState, ui(app)
+    end
   end
 
   def test_popup_placement_uses_supplied_terminal_geometry
@@ -170,12 +227,12 @@ class TestApp < Minitest::Test
     fake = FakeAgent.new(running: false)
     app_with(agent: fake, input: "") do |app|
       popup = { lines: ["123456", "abcdef"], row: 99, col: 99 }
-      below = app.send(:place_popup, popup, preferred_col: 8, selected_row: 1,
-                       body_width: 10, body_height: 6)
+      below = Tui::ScreenLayout.new(width: 14, height: 11, footer: [], selected: 1)
+                               .place_popup(popup, preferred_col: 8)
       assert_equal [2, 4], below.values_at(:row, :col)
 
-      above = app.send(:place_popup, popup, preferred_col: 8, selected_row: 5,
-                       body_width: 10, body_height: 6)
+      above = Tui::ScreenLayout.new(width: 14, height: 11, footer: [], selected: 5)
+                               .place_popup(popup, preferred_col: 8)
       assert_equal [3, 4], above.values_at(:row, :col)
     end
   end
@@ -183,8 +240,8 @@ class TestApp < Minitest::Test
   def test_short_footer_keeps_active_filter_input_over_generic_hint
     fake = FakeAgent.new(running: false)
     app_with(agent: fake, input: "") do |app|
-      app.instance_variable_set(:@mode, :filter)
-      app.instance_variable_get(:@filter_input).replace("界")
+      ui(app).mode = :filter
+      ui(app).filter_input.replace("界")
       footer = app.send(:fitted_footer, width: 8, height: 7)
       assert_equal 1, footer.size
       assert_includes Tui::Ansi.strip(footer.first), "界"
@@ -201,7 +258,7 @@ class TestApp < Minitest::Test
       File.write(File.join(dir, "tasks.jsonl"), content)
       app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir),
                          llm_config: default_llm_config)
-      app.instance_variable_set(:@view, view)
+      ui(app).view = view
       app.send(:rows)
       rws = app.instance_variable_get(:@rows)
       idx = rws.index { |r| r.item&.title&.include?(select) }
@@ -230,17 +287,17 @@ class TestApp < Minitest::Test
     app_on(view: :next, select: "Review PR", content: deferred_fixture) do |app|
       refute_includes row_titles(app), "Water the plants", "deferred hidden by default"
       app.send(:toggle_deferred_view)
-      assert app.instance_variable_get(:@show_deferred)
+      assert ui(app).show_deferred
       assert_includes row_titles(app), "Water the plants", "Z reveals deferred tasks"
       app.send(:toggle_deferred_view)
-      refute app.instance_variable_get(:@show_deferred)
+      refute ui(app).show_deferred
       refute_includes row_titles(app), "Water the plants", "Z again hides them"
     end
   end
 
   def test_defer_selected_reactivates_when_already_deferred
     app_on(view: :next, select: "Review PR", content: deferred_fixture) do |app|
-      app.instance_variable_set(:@show_deferred, true) # so the deferred task is selectable
+      ui(app).show_deferred = true # so the deferred task is selectable
       app.send(:rows)
       idx = app.instance_variable_get(:@rows).index { |r| r.item&.title&.include?("Water the plants") }
       app.send(:select_row, idx)
@@ -265,16 +322,16 @@ class TestApp < Minitest::Test
   def test_open_recur_popup_prefills_current_cookie
     app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE) do |app|
       app.send(:open_recur_popup)
-      assert_equal :form, app.instance_variable_get(:@mode)
-      assert_equal :recurrence, app.instance_variable_get(:@form).kind
-      assert_equal "+1m", app.instance_variable_get(:@form).input
+      assert_equal :form, ui(app).mode
+      assert_equal :recurrence, ui(app).form.kind
+      assert_equal "+1m", ui(app).form.input
     end
   end
 
   def test_open_recur_popup_refuses_undated_task
     app_on(view: :next, select: "Standup notes", content: RECUR_FIXTURE) do |app|
       app.send(:open_recur_popup)
-      assert_equal :list, app.instance_variable_get(:@mode), "no popup for a task with no date"
+      assert_equal :list, ui(app).mode, "no popup for a task with no date"
       assert_match(/schedule it first/, app.instance_variable_get(:@flash))
     end
   end
@@ -282,18 +339,18 @@ class TestApp < Minitest::Test
   def test_submit_recur_sets_cookie
     app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE) do |app|
       app.send(:open_recur_popup)
-      app.instance_variable_get(:@form).input.replace("weekly")
+      ui(app).form.input.replace("weekly")
       app.send(:handle_key, "\r")
       store = app.instance_variable_get(:@store)
       assert_equal ".+1w", store.items.find { |i| i.title.include?("Pay rent") }.recur
-      assert_equal :list, app.instance_variable_get(:@mode)
+      assert_equal :list, ui(app).mode
     end
   end
 
   def test_submit_recur_off_clears
     app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE) do |app|
       app.send(:open_recur_popup)
-      app.instance_variable_get(:@form).input.replace("off")
+      ui(app).form.input.replace("off")
       app.send(:handle_key, "\r")
       assert_nil app.instance_variable_get(:@store).items.find { |i| i.title.include?("Pay rent") }.recur
     end
@@ -302,10 +359,10 @@ class TestApp < Minitest::Test
   def test_submit_recur_reports_parse_error
     app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE) do |app|
       app.send(:open_recur_popup)
-      app.instance_variable_get(:@form).input.replace("bananas")
+      ui(app).form.input.replace("bananas")
       app.send(:handle_key, "\r")
-      assert_equal :form, app.instance_variable_get(:@mode), "stays open on bad input"
-      assert_match(/can't parse/, app.instance_variable_get(:@form).error)
+      assert_equal :form, ui(app).mode, "stays open on bad input"
+      assert_match(/can't parse/, ui(app).form.error)
     end
   end
 
@@ -351,7 +408,7 @@ class TestApp < Minitest::Test
       end
 
       assert_equal "Beta", app.send(:current_item).title
-      assert_equal "5e1e0003", app.instance_variable_get(:@selected_id)
+      assert_equal "5e1e0003", ui(app).selected_id
       refute_equal old_row, app.instance_variable_get(:@sel), "render coordinate follows the resort"
     end
   end
@@ -377,7 +434,7 @@ class TestApp < Minitest::Test
       end
 
       assert_equal "Gamma", app.send(:current_item).title
-      assert_equal "5e1e0004", app.instance_variable_get(:@selected_id)
+      assert_equal "5e1e0004", ui(app).selected_id
     end
   end
 
@@ -386,14 +443,14 @@ class TestApp < Minitest::Test
       app.send(:switch_view, 2)
       assert_equal FIX[:flight], app.send(:current_item).id
 
-      app.instance_variable_set(:@filter, "flight")
+      ui(app).filter = "flight"
       app.send(:rows)
       assert_equal FIX[:flight], app.send(:current_item).id
 
-      app.instance_variable_set(:@filter, nil)
+      ui(app).filter = nil
       app.send(:rows)
       app.send(:move, 1)
-      assert_equal app.send(:current_item).id, app.instance_variable_get(:@selected_id)
+      assert_equal app.send(:current_item).id, ui(app).selected_id
     end
   end
 
@@ -410,7 +467,7 @@ class TestApp < Minitest::Test
 
       app.send(:rows)
       assert_equal second_occurrence, app.instance_variable_get(:@sel)
-      assert_equal "5e1e0003", app.instance_variable_get(:@selected_id)
+      assert_equal "5e1e0003", ui(app).selected_id
     end
   end
 
@@ -441,7 +498,7 @@ class TestApp < Minitest::Test
     rws[app.instance_variable_get(:@sel)]&.item&.title
   end
 
-  def collapsed(app) = app.instance_variable_get(:@collapsed)
+  def collapsed(app) = ui(app).collapsed
 
   def test_collapse_selected_folds_subtree_and_holds_selection
     app_on(view: :agenda, select: "Ship release", content: NESTED_APP) do |app|
@@ -552,7 +609,7 @@ class TestApp < Minitest::Test
 
   def test_collapse_expand_do_not_crash_during_filter
     app_on(view: :agenda, select: "Ship release", content: NESTED_APP) do |app|
-      app.instance_variable_set(:@filter, "e") # flat path: rows carry no node
+      ui(app).filter = "e" # flat path: rows carry no node
       app.send(:rows)
       before = row_titles(app)
       app.send(:collapse_selected) # node nil → no-op

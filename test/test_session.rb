@@ -8,6 +8,8 @@ require "tui/app"
 # Coverage for TUI session persistence: the active view survives a restart
 # (Tui::Session + App#restore_view/#save_session).
 class TestSession < Minitest::Test
+  def ui(app) = app.instance_variable_get(:@ui)
+
   # Run a block with XDG_STATE_HOME pinned to a fresh dir, so session state
   # written here can't leak into the suite-wide sandbox other tests share.
   def with_state_home
@@ -70,12 +72,12 @@ class TestSession < Minitest::Test
       Dir.mktmpdir do |dir|
         File.write(File.join(dir, "gtd.org"), FIXTURE_ORG)
         app = build_app(dir)
-        assert_equal :agenda, app.instance_variable_get(:@view), "default on first run"
+        assert_equal :agenda, ui(app).view, "default on first run"
 
         app.send(:switch_view, 2) # Next
         app.send(:save_session)   # what run's ensure does on exit
 
-        assert_equal :next, build_app(dir).instance_variable_get(:@view),
+        assert_equal :next, ui(build_app(dir)).view,
                      "a fresh App reopens on the saved view"
       end
     end
@@ -86,7 +88,7 @@ class TestSession < Minitest::Test
       Tui::Session.save({ "view" => "themes-someday" })
       Dir.mktmpdir do |dir|
         File.write(File.join(dir, "gtd.org"), FIXTURE_ORG)
-        assert_equal :agenda, build_app(dir).instance_variable_get(:@view)
+        assert_equal :agenda, ui(build_app(dir)).view
       end
     end
   end
@@ -98,7 +100,7 @@ class TestSession < Minitest::Test
       File.write(Tui::Session.path, JSON.generate(version: 1, view: 123))
       Dir.mktmpdir do |dir|
         File.write(File.join(dir, "gtd.org"), FIXTURE_ORG)
-        assert_equal :agenda, build_app(dir).instance_variable_get(:@view)
+        assert_equal :agenda, ui(build_app(dir)).view
       end
     end
   end
@@ -130,9 +132,9 @@ class TestSession < Minitest::Test
     with_state_home do
       Dir.mktmpdir do |dir|
         app = app_on_fixture(dir)
-        app.instance_variable_set(:@collapsed, Set[FIX[:flight]])
+        ui(app).collapsed = Set[FIX[:flight]]
         app.send(:save_session)
-        assert_equal Set[FIX[:flight]], app_on_fixture(dir).instance_variable_get(:@collapsed)
+        assert_equal Set[FIX[:flight]], ui(app_on_fixture(dir)).collapsed
       end
     end
   end
@@ -142,7 +144,7 @@ class TestSession < Minitest::Test
       Dir.mktmpdir do |dir|
         app = app_on_fixture(dir)
         # One live id (flight) and one that no longer exists in the file.
-        app.instance_variable_set(:@collapsed, Set[FIX[:flight], "deadbeef"])
+        ui(app).collapsed = Set[FIX[:flight], "deadbeef"]
         app.send(:save_session)
         assert_equal [FIX[:flight]], Tui::Session.load[:collapsed], "stale id pruned on save"
       end
@@ -153,7 +155,7 @@ class TestSession < Minitest::Test
     with_state_home do
       Tui::Session.save({ "view" => "next" }) # no collapsed key at all
       Dir.mktmpdir do |dir|
-        assert_empty app_on_fixture(dir).instance_variable_get(:@collapsed)
+        assert_empty ui(app_on_fixture(dir)).collapsed
       end
     end
   end
@@ -164,7 +166,7 @@ class TestSession < Minitest::Test
       # A string where an array belongs must degrade, not crash startup.
       File.write(Tui::Session.path, JSON.generate(version: 1, view: "agenda", collapsed: "oops"))
       Dir.mktmpdir do |dir|
-        assert_empty app_on_fixture(dir).instance_variable_get(:@collapsed)
+        assert_empty ui(app_on_fixture(dir)).collapsed
       end
     end
   end
