@@ -143,8 +143,9 @@ class TestApp < Minitest::Test
   def test_open_recur_popup_prefills_current_cookie
     app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE) do |app|
       app.send(:open_recur_popup)
-      assert_equal :recur, app.instance_variable_get(:@mode)
-      assert_equal "+1m", app.instance_variable_get(:@recur_input)
+      assert_equal :form, app.instance_variable_get(:@mode)
+      assert_equal :recurrence, app.instance_variable_get(:@form).kind
+      assert_equal "+1m", app.instance_variable_get(:@form).input
     end
   end
 
@@ -159,8 +160,8 @@ class TestApp < Minitest::Test
   def test_submit_recur_sets_cookie
     app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE) do |app|
       app.send(:open_recur_popup)
-      app.instance_variable_get(:@recur_input).replace("weekly")
-      app.send(:submit_recur)
+      app.instance_variable_get(:@form).input.replace("weekly")
+      app.send(:handle_key, "\r")
       store = app.instance_variable_get(:@store)
       assert_equal ".+1w", store.items.find { |i| i.title.include?("Pay rent") }.recur
       assert_equal :list, app.instance_variable_get(:@mode)
@@ -170,8 +171,8 @@ class TestApp < Minitest::Test
   def test_submit_recur_off_clears
     app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE) do |app|
       app.send(:open_recur_popup)
-      app.instance_variable_get(:@recur_input).replace("off")
-      app.send(:submit_recur)
+      app.instance_variable_get(:@form).input.replace("off")
+      app.send(:handle_key, "\r")
       assert_nil app.instance_variable_get(:@store).items.find { |i| i.title.include?("Pay rent") }.recur
     end
   end
@@ -179,10 +180,10 @@ class TestApp < Minitest::Test
   def test_submit_recur_reports_parse_error
     app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE) do |app|
       app.send(:open_recur_popup)
-      app.instance_variable_get(:@recur_input).replace("bananas")
-      app.send(:submit_recur)
-      assert_equal :recur, app.instance_variable_get(:@mode), "stays open on bad input"
-      assert_match(/can't parse/, app.instance_variable_get(:@recur_error))
+      app.instance_variable_get(:@form).input.replace("bananas")
+      app.send(:handle_key, "\r")
+      assert_equal :form, app.instance_variable_get(:@mode), "stays open on bad input"
+      assert_match(/can't parse/, app.instance_variable_get(:@form).error)
     end
   end
 

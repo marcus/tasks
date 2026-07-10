@@ -25,6 +25,7 @@ class TestShortcuts < Minitest::Test
       refute_empty entry.contexts
       assert_kind_of Symbol, entry.handler
       assert entry.availability
+      assert_includes [TrueClass, FalseClass, NilClass, Symbol, Proc], entry.palette.class
       assert_includes [NilClass, Symbol, Hash], entry.form.class
       assert_includes [NilClass, Symbol, Hash], entry.confirmation.class
     end
@@ -61,7 +62,7 @@ class TestShortcuts < Minitest::Test
   end
 
   def test_global_dispatch_precedes_every_input_mode
-    %i[list prompt date recur filter modal modal_filter].each do |mode|
+    %i[list prompt form palette filter modal modal_filter].each do |mode|
       app = Tui::App.allocate
       app.instance_variable_set(:@mode, mode)
       app.instance_variable_set(:@quit, false)
@@ -104,6 +105,10 @@ class TestShortcuts < Minitest::Test
     missing_availability = changed_entry(availability: :not_an_app_predicate)
     error = assert_raises(ArgumentError) { S.validate!(Tui::App, entries: [missing_availability]) }
     assert_match(/missing shortcut availability/, error.message)
+
+    missing_palette_availability = changed_entry(palette: :not_an_app_predicate)
+    error = assert_raises(ArgumentError) { S.validate!(Tui::App, entries: [missing_palette_availability]) }
+    assert_match(/missing shortcut palette availability/, error.message)
   end
 
   def test_validation_rejects_invalid_metadata
@@ -114,6 +119,31 @@ class TestShortcuts < Minitest::Test
     bad_confirmation = changed_entry(confirmation: { label: "missing kind" })
     error = assert_raises(ArgumentError) { S.validate!(nil, entries: [bad_confirmation]) }
     assert_match(/confirmation metadata/, error.message)
+  end
+
+  def test_validation_rejects_palette_handler_that_requires_the_original_key
+    jump = S::REGISTRY.find { |entry| entry.handler == :jump_view }
+    invalid = changed_entry(jump, palette: true)
+    error = assert_raises(ArgumentError) { S.validate!(Tui::App, entries: [invalid]) }
+    assert_match(/must not require a key/, error.message)
+  end
+
+  def test_palette_entries_are_contextual_available_and_executable_without_a_key
+    app = Tui::App.allocate
+    item = Struct.new(:scheduled, :deadline).new(nil, nil)
+    app.define_singleton_method(:current_item) { item }
+    app.define_singleton_method(:selected_action_available?) { true }
+    app.define_singleton_method(:recurrence_action_available?) { false }
+    app.define_singleton_method(:link_action_available?) { false }
+    app.define_singleton_method(:action_available?) { true }
+
+    entries = S.palette_entries(:detail, app)
+    handlers = entries.map(&:handler)
+    assert_includes handlers, :complete_selected
+    refute_includes handlers, :open_recur_popup
+    refute_includes handlers, :open_link
+    refute_includes handlers, :open_action_palette
+    assert entries.all? { |entry| app.method(entry.handler).arity.zero? }
   end
 
   def test_unavailable_binding_consumes_key_without_calling_handler

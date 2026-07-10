@@ -10,7 +10,7 @@ module Tui
 
     Entry = Struct.new(
       :sequences, :display_key, :description, :contexts, :handler,
-      :availability, :form, :confirmation,
+      :availability, :palette, :form, :confirmation,
       keyword_init: true
     ) do
       def available?(receiver)
@@ -22,7 +22,8 @@ module Tui
     end
 
     def self.entry(sequences:, key:, description:, contexts:, handler:,
-                   availability: :action_available?, form: nil, confirmation: nil)
+                   availability: :action_available?, palette: false,
+                   form: nil, confirmation: nil)
       Entry.new(
         sequences: sequences.freeze,
         display_key: key.freeze,
@@ -30,6 +31,7 @@ module Tui
         contexts: contexts.freeze,
         handler: handler,
         availability: availability,
+        palette: palette,
         form: form,
         confirmation: confirmation
       ).freeze
@@ -42,33 +44,34 @@ module Tui
       entry(sequences: ["\e[D"],       key: "←",       description: "previous view",                    contexts: [:list], handler: :prev_view),
       entry(sequences: ["\e[C"],       key: "→",       description: "next view",                        contexts: [:list], handler: :next_view),
       entry(sequences: %w[1 2 3 4 5],  key: "1-5",     description: "jump to view",                     contexts: [:list], handler: :jump_view),
-      entry(sequences: ["h"],          key: "h",       description: "collapse subtree (again: to parent)", contexts: [:list], handler: :collapse_selected),
-      entry(sequences: ["l"],          key: "l",       description: "expand subtree",                   contexts: [:list], handler: :expand_selected),
-      entry(sequences: ["H"],          key: "H",       description: "collapse all subtrees",            contexts: [:list], handler: :collapse_all),
-      entry(sequences: ["L"],          key: "L",       description: "expand all subtrees",              contexts: [:list], handler: :expand_all),
-      entry(sequences: ["\r", "\n"],   key: "return",  description: "task details",                     contexts: [:list], handler: :open_detail),
-      entry(sequences: ["c"],          key: "c",       description: "complete selected task",           contexts: %i[list detail], handler: :complete_selected),
-      entry(sequences: ["d"],          key: "d",       description: "reschedule — fri · +3 · 07-15",    contexts: %i[list detail], handler: :open_date_popup, form: :date),
-      entry(sequences: ["r"],          key: "r",       description: "recur — weekly · 2w · .+1m · off", contexts: %i[list detail], handler: :open_recur_popup, form: :recurrence),
-      entry(sequences: ["x"],          key: "x",       description: "archive DONE/CANCELLED items",     contexts: [:list], handler: :archive_sweep, confirmation: :archive_preview),
-      entry(sequences: ["z"],          key: "z",       description: "defer / activate selected task",   contexts: %i[list detail], handler: :defer_selected),
-      entry(sequences: ["Z"],          key: "Z",       description: "show / hide deferred tasks",       contexts: [:list], handler: :toggle_deferred_view),
-      entry(sequences: ["K"],          key: "K",       description: "raise priority (→ A)",             contexts: %i[list detail], handler: :raise_priority),
-      entry(sequences: ["J"],          key: "J",       description: "lower priority (→ none)",          contexts: %i[list detail], handler: :lower_priority),
-      entry(sequences: ["o"],          key: "o",       description: "open task link in browser",        contexts: %i[list detail], handler: :open_link),
-      entry(sequences: ["y"],          key: "y",       description: "yank task ref (paste to agent)",   contexts: %i[list detail], handler: :yank_ref),
-      entry(sequences: ["Y"],          key: "Y",       description: "yank task as markdown",            contexts: %i[list detail], handler: :yank_markdown),
-      entry(sequences: ["p"],          key: "p",       description: "paste task ref into the prompt",   contexts: %i[list detail], handler: :paste_ref),
-      entry(sequences: ["/"],          key: "/",       description: "filter tasks by text",             contexts: [:list], handler: :start_filter, form: :filter),
-      entry(sequences: ["M"],          key: "M",       description: "cycle agent/model",                contexts: [:list], handler: :toggle_model),
-      entry(sequences: ["u"],          key: "u",       description: "undo last change",                 contexts: %i[list detail], handler: :undo_last),
-      entry(sequences: ["\x12"],       key: "ctrl-r",  description: "redo",                             contexts: %i[list detail], handler: :redo_last),
-      entry(sequences: ["\t", ":"],    key: "tab / :", description: "ask the agent — CRUD anything",    contexts: [:list], handler: :focus_prompt, form: :agent_prompt),
+      entry(sequences: ["h"],          key: "h",       description: "collapse subtree (again: to parent)", contexts: [:list], handler: :collapse_selected, palette: :selected_action_available?),
+      entry(sequences: ["l"],          key: "l",       description: "expand subtree",                   contexts: [:list], handler: :expand_selected, palette: :selected_action_available?),
+      entry(sequences: ["H"],          key: "H",       description: "collapse all subtrees",            contexts: [:list], handler: :collapse_all, palette: true),
+      entry(sequences: ["L"],          key: "L",       description: "expand all subtrees",              contexts: [:list], handler: :expand_all, palette: true),
+      entry(sequences: ["\r", "\n"],   key: "return",  description: "task details",                     contexts: [:list], handler: :open_detail, palette: :selected_action_available?),
+      entry(sequences: ["c"],          key: "c",       description: "complete selected task",           contexts: %i[list detail], handler: :complete_selected, palette: :selected_action_available?),
+      entry(sequences: ["d"],          key: "d",       description: "reschedule — fri · +3 · 07-15",    contexts: %i[list detail], handler: :open_date_popup, palette: :selected_action_available?, form: :date),
+      entry(sequences: ["r"],          key: "r",       description: "recur — weekly · 2w · .+1m · off", contexts: %i[list detail], handler: :open_recur_popup, palette: :recurrence_action_available?, form: :recurrence),
+      entry(sequences: ["x"],          key: "x",       description: "archive DONE/CANCELLED items",     contexts: [:list], handler: :archive_sweep, palette: true, confirmation: :archive_preview),
+      entry(sequences: ["z"],          key: "z",       description: "defer / activate selected task",   contexts: %i[list detail], handler: :defer_selected, palette: :selected_action_available?),
+      entry(sequences: ["Z"],          key: "Z",       description: "show / hide deferred tasks",       contexts: [:list], handler: :toggle_deferred_view, palette: true),
+      entry(sequences: ["K"],          key: "K",       description: "raise priority (→ A)",             contexts: %i[list detail], handler: :raise_priority, palette: :selected_action_available?),
+      entry(sequences: ["J"],          key: "J",       description: "lower priority (→ none)",          contexts: %i[list detail], handler: :lower_priority, palette: :selected_action_available?),
+      entry(sequences: ["o"],          key: "o",       description: "open task link in browser",        contexts: %i[list detail], handler: :open_link, palette: :link_action_available?),
+      entry(sequences: ["y"],          key: "y",       description: "yank task ref (paste to agent)",   contexts: %i[list detail], handler: :yank_ref, palette: :selected_action_available?),
+      entry(sequences: ["Y"],          key: "Y",       description: "yank task as markdown",            contexts: %i[list detail], handler: :yank_markdown, palette: :selected_action_available?),
+      entry(sequences: ["p"],          key: "p",       description: "paste task ref into the prompt",   contexts: %i[list detail], handler: :paste_ref, palette: :selected_action_available?),
+      entry(sequences: ["/"],          key: "/",       description: "filter tasks by text",             contexts: [:list], handler: :start_filter, palette: true, form: :filter),
+      entry(sequences: ["M"],          key: "M",       description: "cycle agent/model",                contexts: [:list], handler: :toggle_model, palette: true),
+      entry(sequences: ["u"],          key: "u",       description: "undo last change",                 contexts: %i[list detail], handler: :undo_last, palette: true),
+      entry(sequences: ["\x12"],       key: "ctrl-r",  description: "redo",                             contexts: %i[list detail], handler: :redo_last, palette: true),
+      entry(sequences: ["\t"],         key: "tab",     description: "ask the agent — CRUD anything",    contexts: [:list], handler: :focus_prompt, palette: true, form: :agent_prompt),
+      entry(sequences: [":"],          key: ":",       description: "search available actions",         contexts: %i[list detail], handler: :open_action_palette),
       entry(sequences: ["\e[5~"],      key: "pgup",    description: "scroll agent response up",         contexts: [:list], handler: :resp_up),
       entry(sequences: ["\e[6~"],      key: "pgdn",    description: "scroll agent response down",       contexts: [:list], handler: :resp_down),
       entry(sequences: ["\e"],         key: "esc",     description: "dismiss response / cancel agent",  contexts: [:list], handler: :dismiss_or_cancel),
-      entry(sequences: ["?"],          key: "?",       description: "keyboard shortcuts",               contexts: [:list], handler: :open_help),
-      entry(sequences: ["q"],          key: "q",       description: "quit",                             contexts: [:list], handler: :quit),
+      entry(sequences: ["?"],          key: "?",       description: "keyboard shortcuts",               contexts: [:list], handler: :open_help, palette: true),
+      entry(sequences: ["q"],          key: "q",       description: "quit",                             contexts: [:list], handler: :quit, palette: true),
 
       # Modal navigation is kept as an explicit context. App dispatches it
       # before detail-task actions; validation rejects collisions between the
@@ -101,6 +104,18 @@ module Tui
 
     def self.available?(entry, receiver) = entry.available?(receiver)
 
+    def self.palette_entries(context, receiver)
+      entries(context, include_global: false).select do |entry|
+        next false unless available?(entry, receiver)
+
+        case entry.palette
+        when Symbol then receiver.send(entry.palette)
+        when true then true
+        else entry.palette.respond_to?(:call) && entry.palette.call(receiver)
+        end
+      end
+    end
+
     def self.validate!(handler_owner = nil, entries: REGISTRY)
       entries.each { |entry| validate_entry!(entry, handler_owner) }
       validate_collisions!(entries)
@@ -117,13 +132,22 @@ module Tui
       unless entry.availability.is_a?(Symbol) || entry.availability.respond_to?(:call)
         raise ArgumentError, "shortcut availability must be a method name or callable"
       end
+      unless [true, false, nil].include?(entry.palette) || entry.palette.is_a?(Symbol) || entry.palette.respond_to?(:call)
+        raise ArgumentError, "shortcut palette availability must be boolean, method name, or callable"
+      end
       validate_metadata!(:form, entry.form)
       validate_metadata!(:confirmation, entry.confirmation)
       return unless handler_owner
 
       raise ArgumentError, "missing shortcut handler #{handler_owner}##{entry.handler}" unless handler_owner.private_method_defined?(entry.handler) || handler_owner.method_defined?(entry.handler)
+      if entry.palette && handler_owner.instance_method(entry.handler).arity != 0
+        raise ArgumentError, "palette shortcut handler #{handler_owner}##{entry.handler} must not require a key"
+      end
       if entry.availability.is_a?(Symbol) && !(handler_owner.private_method_defined?(entry.availability) || handler_owner.method_defined?(entry.availability))
         raise ArgumentError, "missing shortcut availability #{handler_owner}##{entry.availability}"
+      end
+      if entry.palette.is_a?(Symbol) && !(handler_owner.private_method_defined?(entry.palette) || handler_owner.method_defined?(entry.palette))
+        raise ArgumentError, "missing shortcut palette availability #{handler_owner}##{entry.palette}"
       end
     end
     private_class_method :validate_entry!

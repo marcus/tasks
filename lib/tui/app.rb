@@ -17,6 +17,8 @@ require_relative "clipboard"
 require_relative "export"
 require_relative "session"
 require_relative "text_input"
+require_relative "form"
+require_relative "action_palette"
 require_relative "../tasks/config"
 require_relative "../tasks/opener"
 
@@ -71,7 +73,7 @@ module Tui
       @view   = restore_view # last session's view, or :agenda
       @sel    = 0
       @selected_id = nil     # stable task identity; @sel is only a rendered row coordinate
-      @mode   = :list      # :list | :prompt | :date | :recur | :modal | :modal_filter | :filter
+      @mode   = :list      # :list | :prompt | :form | :palette | :modal | :modal_filter | :filter
       @modal  = nil        # a Tui::Modal while one is open
       @detail_item_id = nil # prevents a detail modal rebinding when its task disappears
       @archive_preview = nil # immutable summary accepted by an archive confirmation
@@ -81,10 +83,9 @@ module Tui
       @collapsed = restore_collapsed # task ids folded shut in the outliner, from last session
       @show_deferred = false # Z toggles deferred (someday/maybe) tasks in/out of view
       @filter_input = TextInput.new # filter buffer while typing
-      @date_input = TextInput.new   # reschedule buffer
-      @date_error = nil
-      @recur_input = TextInput.new  # recurrence-interval buffer
-      @recur_error = nil
+      @form = nil          # reusable date/recurrence popup lifecycle
+      @form_success = nil  # post-close effects for a successful form submit
+      @action_palette = nil
       @input_bytes = +"".b
       @key_data = +""
       @resp   = nil        # wrapped response lines
@@ -151,10 +152,15 @@ module Tui
     # Reload external writes without losing the selected task to a new physical
     # row. An open detail modal is rebuilt only for the id it was opened on.
     def reload_store
+      overlay_mode = @mode if %i[form palette].include?(@mode)
       detail_id = @detail_item_id if detail_modal?
       @store.reload!
       rows
       refresh_detail_modal(detail_id) if detail_id && detail_modal?
+      restore_form if overlay_mode == :form && @form
+      if overlay_mode == :palette && @action_palette
+        restore_action_palette(@action_palette)
+      end
     end
 
     # -- painting ------------------------------------------------------------
@@ -305,45 +311,16 @@ module Tui
       "#{before}#{T.paint(:selection, at)}#{after}"
     end
 
-    # The popup layered over the list right now: reschedule (:date) or
-    # recurrence (:recur), or none.
+    # The active popup layered over the list (and, when launched from task
+    # details, over the retained modal beneath it).
     def current_popup
       case @mode
-      when :date  then date_popup
-      when :recur then recur_popup
+      when :form
+        @form&.popup(row: sel_screen_row + 1, col: 8, inline_input: method(:inline_input))
+      when :palette
+        cols = [(IO.console&.winsize || [24, 80])[1], MIN_WIDTH].max
+        @action_palette&.popup(row: sel_screen_row + 1, cols: cols, inline_input: method(:inline_input))
       end
-    end
-
-    def date_popup
-      item = current_item
-      return nil unless item
-      target = item.deadline ? "deadline" : item.scheduled ? "scheduled" : "deadline (new)"
-      hint = @date_error || "fri · +3 · 07-15 · esc cancels"
-      inner = [
-        " new #{target}: #{inline_input(@date_input)}",
-        " #{@date_error ? T.paint(:error, hint) : T.paint(:muted, hint)}",
-      ]
-      pw = [inner.map { |l| A.vislen(l) }.max + 2, 36].max
-      lines = ["┌ reschedule #{"─" * (pw - 14)}┐"]
-      inner.each { |l| lines << "│#{A.vpad(l, pw - 2)}│" }
-      lines << "└#{"─" * (pw - 2)}┘"
-      { lines: lines, row: sel_screen_row + 1, col: 8 }
-    end
-
-    def recur_popup
-      item = current_item
-      return nil unless item
-      cur = item.recur ? "now #{item.recur}" : "not repeating"
-      hint = @recur_error || "weekly · 2w · .+1m · off · esc cancels"
-      inner = [
-        " every: #{inline_input(@recur_input)}  #{T.paint(:muted, "(#{cur})")}",
-        " #{@recur_error ? T.paint(:error, hint) : T.paint(:muted, hint)}",
-      ]
-      pw = [inner.map { |l| A.vislen(l) }.max + 2, 40].max
-      lines = ["┌ recur #{"─" * (pw - 9)}┐"]
-      inner.each { |l| lines << "│#{A.vpad(l, pw - 2)}│" }
-      lines << "└#{"─" * (pw - 2)}┘"
-      { lines: lines, row: sel_screen_row + 1, col: 8 }
     end
 
     def sel_screen_row
@@ -444,8 +421,8 @@ module Tui
     def handle_paste(text)
       case @mode
       when :prompt then @input.insert(text)
-      when :date   then @date_input.insert(text); @date_error = nil
-      when :recur  then @recur_input.insert(text); @recur_error = nil
+      when :form   then @form&.paste(text)
+      when :palette then @action_palette&.paste(text)
       when :filter then @filter_input.insert(text)
       when :modal_filter then @modal_filter_input.insert(text); @modal.filter = @modal_filter_input.to_s
       else
@@ -460,8 +437,8 @@ module Tui
 
       case @mode
       when :prompt then prompt_key(k)
-      when :date   then date_key(k)
-      when :recur  then recur_key(k)
+      when :form   then form_key(k)
+      when :palette then palette_key(k)
       when :modal  then modal_key(k)
       when :modal_filter then modal_filter_key(k)
       when :filter then filter_key(k)
@@ -519,28 +496,52 @@ module Tui
       end
     end
 
-    def date_key(k)
-      case k
-      when "\e"           then close_date_popup
-      when "\r", "\n"     then submit_date
-      else
-        @date_error = nil if @date_input.handle_key(k) == :changed
+    def form_key(k)
+      case @form&.handle_key(k)
+      when :cancelled then close_form
+      when :submitted then close_form(success: true)
       end
     end
 
-    def recur_key(k)
-      case k
-      when "\e"       then close_recur_popup
-      when "\r", "\n" then submit_recur
+    def restore_form
+      target_missing = @form.target_id && current_item&.id != @form.target_id
+      if target_missing || (@form.return_mode == :modal && !@modal)
+        @form = nil
+        @form_success = nil
+        @mode = :list
       else
-        @recur_error = nil if @recur_input.handle_key(k) == :changed
+        @mode = :form
       end
+    end
+
+    def palette_key(k)
+      palette = @action_palette
+      entry = nil
+      result = palette&.handle_key(k)
+      return close_action_palette if result == :cancelled
+      return unless result.is_a?(Array) && result.first == :execute
+
+      entry = result.last
+      close_action_palette
+      method(entry.handler).call
+    rescue StandardError => e
+      label = entry ? entry.description : "action palette"
+      restore_action_palette(palette, error: "#{label} failed: #{e.message}")
     end
 
     # -- shortcut actions (dispatched from Shortcuts::REGISTRY) ----------------
 
     def action_available? = true
     def modal_filter_available? = @modal&.filterable?
+    def selected_action_available? = !current_item.nil?
+    def recurrence_action_available?
+      item = current_item
+      !!(item && (item.scheduled || item.deadline))
+    end
+    def link_action_available?
+      item = current_item
+      !!(item && !@store.links(item).empty?)
+    end
 
     def select_prev    = move(-1)
     def select_next    = move(1)
@@ -551,6 +552,45 @@ module Tui
     def resp_up        = scroll_resp(-5)
     def resp_down      = scroll_resp(5)
     def quit           = @quit = true
+
+    def open_action_palette
+      context = detail_modal? ? :detail : :list
+      @action_palette = ActionPalette.new(
+        entries: Shortcuts.palette_entries(context, self),
+        return_mode: @modal ? :modal : :list,
+        target_id: current_item&.id
+      )
+      @mode = :palette
+    end
+
+    def close_action_palette
+      return unless @action_palette
+
+      @mode = @action_palette.return_mode == :modal && !@modal ? :list : @action_palette.return_mode
+      @action_palette = nil
+    end
+
+    def restore_action_palette(palette, error: nil)
+      unless palette
+        @action_palette = nil
+        @mode = :list
+        return flash(error) if error
+        return
+      end
+
+      target_missing = palette.target_id && current_item&.id != palette.target_id
+      if target_missing || (palette.return_mode == :modal && !@modal)
+        # Detail-context commands must never survive the disappearance of
+        # the task they were opened for and act on the fallback selection.
+        @action_palette = nil
+        @mode = :list
+        flash(error) if error
+      else
+        @action_palette = palette
+        @mode = :palette
+        @action_palette.fail!(error) if error
+      end
+    end
 
     # Priority ladder: A is highest, nil (no cookie) lowest.
     PRIORITY_ORDER = ["A", "B", "C", nil].freeze
@@ -954,36 +994,31 @@ module Tui
     end
 
     def open_date_popup
-      return flash("nothing selected") unless current_item
-      @date_input.clear
-      @date_error = nil
-      @mode = :date
-    end
-
-    # Rescheduling can be launched from a detail modal (the popup layers over
-    # it); return there rather than to the bare list when one is open.
-    def close_date_popup
-      @mode = @modal ? :modal : :list
-      @date_input.clear
-      @date_error = nil
-    end
-
-    def submit_date
       item = current_item
-      date = Dates.parse_when(@date_input.to_s)
-      return @date_error = "can't parse “#{@date_input}”" unless date
-      if @store.reschedule!(item, date)
-        promoted = item.state == "INBOX" ? " · INBOX → TODO" : ""
-        flash("→ #{item.title}: #{date.iso8601} (#{date.strftime("%a")})#{promoted}")
-        close_date_popup
-        # a new date can move the task (agenda re-sort, quadrant change) — keep
-        # the cursor on it, matching bump_priority.
-        reselect(item.id)
-        refresh_detail_modal(item.id)
-      else
-        reload_store
-        @date_error = "file changed underneath — reopen"
+      return flash("nothing selected") unless item
+
+      target = item.deadline ? "deadline" : item.scheduled ? "scheduled" : "deadline (new)"
+      @form = Form.new(
+        kind: :date, title: "reschedule", prompt: "new #{target}",
+        hint: "fri · +3 · 07-15 · esc cancels", min_width: 36,
+        return_mode: @modal ? :modal : :list, target_id: item.id
+      ) do |raw|
+        date = Dates.parse_when(raw)
+        next "can't parse “#{raw}”" unless date
+        unless @store.reschedule!(item, date)
+          reload_store
+          next "file changed underneath — reopen"
+        end
+
+        @form_success = lambda do
+          promoted = item.state == "INBOX" ? " · INBOX → TODO" : ""
+          flash("→ #{item.title}: #{date.iso8601} (#{date.strftime("%a")})#{promoted}")
+          reselect(item.id)
+          refresh_detail_modal(item.id)
+        end
+        nil
       end
+      @mode = :form
     end
 
     # r opens the recurrence popup on the selected task, pre-filled with its
@@ -993,30 +1028,40 @@ module Tui
       item = current_item
       return flash("nothing selected") unless item
       return flash("schedule it first — recurrence needs a date") unless item.scheduled || item.deadline
-      @recur_input.replace(item.recur || +"")
-      @recur_error = nil
-      @mode = :recur
-    end
 
-    def close_recur_popup
-      @mode = @modal ? :modal : :list
-      @recur_input.clear
-      @recur_error = nil
-    end
+      current = item.recur ? "now #{item.recur}" : "not repeating"
+      @form = Form.new(
+        kind: :recurrence, title: "recur", prompt: "every",
+        hint: "weekly · 2w · .+1m · off · esc cancels", min_width: 40,
+        return_mode: @modal ? :modal : :list,
+        initial: item.recur || +"", suffix: "(#{current})", target_id: item.id
+      ) do |raw|
+        cookie = Tasks::Recur.parse_interval(raw)
+        next "can't parse “#{raw}”" if cookie.nil?
+        unless @store.set_recur!(item, cookie)
+          reload_store
+          next "file changed underneath — reopen"
+        end
 
-    def submit_recur
-      item = current_item
-      cookie = Tasks::Recur.parse_interval(@recur_input.to_s)
-      return @recur_error = "can't parse “#{@recur_input}”" if cookie.nil?
-      if @store.set_recur!(item, cookie)
-        flash(cookie == :off ? "↻ off: #{item.title}" : "↻ #{cookie}: #{item.title}")
-        close_recur_popup
-        reselect(item.id)
-        refresh_detail_modal(item.id)
-      else
-        reload_store
-        @recur_error = "file changed underneath — reopen"
+        @form_success = lambda do
+          flash(cookie == :off ? "↻ off: #{item.title}" : "↻ #{cookie}: #{item.title}")
+          reselect(item.id)
+          refresh_detail_modal(item.id)
+        end
+        nil
       end
+      @mode = :form
+    end
+
+    def close_form(success: false)
+      return unless @form
+
+      return_mode = @form.return_mode
+      callback = success ? @form_success : nil
+      @form = nil
+      @form_success = nil
+      @mode = return_mode == :modal && !@modal ? :list : return_mode
+      callback&.call
     end
 
     def archive_sweep

@@ -372,7 +372,8 @@ class TestAppModals < Minitest::Test
       app.send(:handle_key, "\r")                 # detail on Book flight (has deadline)
       title = selected_title(app)
       app.send(:handle_key, "d")                  # reschedule
-      assert_equal :date, mode(app)
+      assert_equal :form, mode(app)
+      assert_equal :date, app.instance_variable_get(:@form).kind
       assert_equal :detail, modal(app).kind,
                    "the detail modal stays open behind the date popup"
       "2026-07-20".chars.each { |c| app.send(:handle_key, c) }
@@ -388,10 +389,43 @@ class TestAppModals < Minitest::Test
     with_app do |app|
       app.send(:handle_key, "\r")
       app.send(:handle_key, "d")
-      assert_equal :date, mode(app)
+      assert_equal :form, mode(app)
       app.send(:handle_key, "\e")                 # cancel the date entry
       assert_equal :modal, mode(app), "esc returns to the modal it came from"
       refute_nil modal(app)
+    end
+  end
+
+  def test_stale_form_write_keeps_error_visible_above_detail_modal
+    with_app do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "d")
+      app.send(:handle_paste, "2026-07-20")
+      store = app.instance_variable_get(:@store)
+      store.stub(:reschedule!, false) do
+        app.send(:handle_key, "\r")
+      end
+
+      assert_equal :form, mode(app)
+      assert_equal :detail, modal(app).kind
+      assert_match(/file changed underneath/, app.instance_variable_get(:@form).error)
+      refute_nil app.send(:current_popup), "the stale-write error remains visible"
+    end
+  end
+
+  def test_recurrence_form_submit_from_detail_restores_and_refreshes_modal
+    with_app do |app|
+      app.send(:handle_key, "\r")
+      item_id = app.send(:current_item).id
+      app.send(:handle_key, "r")
+      assert_equal :form, mode(app)
+      assert_equal :recurrence, app.instance_variable_get(:@form).kind
+      app.send(:handle_paste, "weekly")
+      app.send(:handle_key, "\r")
+
+      assert_equal :modal, mode(app)
+      assert_equal :detail, modal(app).kind
+      assert_equal ".+1w", app.instance_variable_get(:@store).items.find { |item| item.id == item_id }.recur
     end
   end
 
@@ -659,11 +693,12 @@ class TestAppModals < Minitest::Test
   def test_date_error_clears_only_when_input_changes
     with_app do |app|
       app.send(:open_date_popup)
-      app.instance_variable_set(:@date_error, "can't parse")
+      form = app.instance_variable_get(:@form)
+      form.instance_variable_set(:@error, "can't parse")
       app.send(:handle_key, "\x02") # ctrl-b at start: handled, no edit
-      assert_equal "can't parse", app.instance_variable_get(:@date_error)
+      assert_equal "can't parse", form.error
       app.send(:handle_key, "f")
-      assert_nil app.instance_variable_get(:@date_error)
+      assert_nil form.error
     end
   end
 
@@ -736,6 +771,200 @@ class TestAppModals < Minitest::Test
         end
       end
       assert_equal ["hello", "opus"], started
+    end
+  end
+
+  def test_colon_opens_palette_while_tab_still_focuses_agent_prompt
+    with_app do |app|
+      app.send(:handle_key, ":")
+      assert_equal :palette, mode(app)
+      refute_nil app.instance_variable_get(:@action_palette)
+      app.send(:handle_key, "\e")
+      assert_equal :list, mode(app)
+
+      app.send(:handle_key, "\t")
+      assert_equal :prompt, mode(app)
+      assert_nil app.instance_variable_get(:@action_palette)
+    end
+  end
+
+  def test_palette_filters_and_executes_existing_form_action
+    with_app do |app|
+      app.send(:handle_key, ":")
+      app.send(:handle_paste, "reschedule")
+      palette = app.instance_variable_get(:@action_palette)
+      assert_equal [:open_date_popup], palette.results.map(&:handler)
+      app.send(:handle_key, "\r")
+      assert_equal :form, mode(app)
+      assert_equal :date, app.instance_variable_get(:@form).kind
+    end
+  end
+
+  def test_palette_cancel_and_form_cancel_restore_detail_modal
+    with_app do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, ":")
+      assert_equal :palette, mode(app)
+      app.send(:handle_key, "\e")
+      assert_equal :modal, mode(app)
+      assert_equal :detail, modal(app).kind
+
+      app.send(:handle_key, ":")
+      app.send(:handle_paste, "reschedule")
+      app.send(:handle_key, "\r")
+      assert_equal :form, mode(app)
+      app.send(:handle_key, "\e")
+      assert_equal :modal, mode(app)
+      assert_equal :detail, modal(app).kind
+    end
+  end
+
+  def test_external_detail_removal_cancels_palette_before_neighbor_can_be_acted_on
+    with_app do |app|
+      app.send(:handle_key, "\r")
+      removed_id = app.send(:current_item).id
+      app.send(:handle_key, ":")
+      rewrite_records(app) do |records|
+        removed = records.find { |record| record["id"] == removed_id }
+        removed["state"] = "DONE"
+        removed["closed"] = "2026-07-10"
+      end
+
+      assert_equal :list, mode(app)
+      assert_nil modal(app)
+      assert_nil app.instance_variable_get(:@action_palette)
+      neighbor = app.send(:current_item)
+      refute_equal removed_id, neighbor.id
+      assert neighbor.open?, "the fallback neighbor was not acted on"
+    end
+  end
+
+  def test_external_detail_removal_cancels_form_before_hidden_task_can_be_mutated
+    with_app do |app|
+      app.send(:handle_key, "\r")
+      removed_id = app.send(:current_item).id
+      original_deadline = app.send(:current_item).deadline
+      app.send(:handle_key, "d")
+      rewrite_records(app) do |records|
+        removed = records.find { |record| record["id"] == removed_id }
+        removed["state"] = "DONE"
+        removed["closed"] = "2026-07-10"
+      end
+
+      assert_equal :list, mode(app)
+      assert_nil modal(app)
+      assert_nil app.instance_variable_get(:@form)
+      removed = app.instance_variable_get(:@store).items.find { |item| item.id == removed_id }
+      assert_equal original_deadline, removed.deadline
+    end
+  end
+
+  def test_external_list_selection_removal_cancels_palette_before_neighbor_action
+    with_app do |app|
+      removed_id = app.send(:current_item).id
+      app.send(:handle_key, ":")
+      rewrite_records(app) do |records|
+        removed = records.find { |record| record["id"] == removed_id }
+        removed["state"] = "DONE"
+        removed["closed"] = "2026-07-10"
+      end
+
+      assert_equal :list, mode(app)
+      assert_nil app.instance_variable_get(:@action_palette)
+      refute_equal removed_id, app.send(:current_item).id
+      assert app.send(:current_item).open?, "the fallback neighbor was not acted on"
+    end
+  end
+
+  def test_external_list_selection_removal_cancels_form_before_hidden_task_mutation
+    with_app do |app|
+      removed_id = app.send(:current_item).id
+      original_deadline = app.send(:current_item).deadline
+      app.send(:handle_key, "d")
+      rewrite_records(app) do |records|
+        removed = records.find { |record| record["id"] == removed_id }
+        removed["state"] = "DONE"
+        removed["closed"] = "2026-07-10"
+      end
+
+      assert_equal :list, mode(app)
+      assert_nil app.instance_variable_get(:@form)
+      removed = app.instance_variable_get(:@store).items.find { |item| item.id == removed_id }
+      assert_equal original_deadline, removed.deadline
+    end
+  end
+
+  def test_form_and_palette_cancel_fall_back_to_list_if_retained_modal_disappears
+    with_app do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, ":")
+      app.instance_variable_set(:@modal, nil)
+      app.send(:handle_key, "\e")
+      assert_equal :list, mode(app)
+
+      app.send(:open_date_popup)
+      app.instance_variable_get(:@form).instance_variable_set(:@return_mode, :modal)
+      app.send(:handle_key, "\e")
+      assert_equal :list, mode(app)
+    end
+  end
+
+  def test_palette_excludes_unavailable_actions_and_handles_empty_unicode_query
+    with_app do |app|
+      app.instance_variable_set(:@view, :next)
+      app.send(:rows)
+      index = app.instance_variable_get(:@rows).index { |row| row.item&.title&.include?("Review PR") }
+      app.send(:select_row, index)
+      app.send(:handle_key, ":")
+      handlers = app.instance_variable_get(:@action_palette).entries.map(&:handler)
+      refute_includes handlers, :open_recur_popup
+      refute_includes handlers, :open_link
+
+      app.send(:handle_paste, "🦄界")
+      assert_empty app.instance_variable_get(:@action_palette).results
+      app.send(:handle_key, "\r")
+      assert_equal :palette, mode(app), "enter on no results is inert"
+    end
+  end
+
+  def test_palette_action_error_is_contained_and_palette_remains_open
+    with_app do |app|
+      entry = Tui::Shortcuts::Entry.new(
+        sequences: ["!"], display_key: "!", description: "explode",
+        contexts: [:list], handler: :explode, availability: :action_available?,
+        palette: true, form: nil, confirmation: nil
+      )
+      app.define_singleton_method(:explode) { raise "boom" }
+      app.instance_variable_set(:@action_palette,
+                                Tui::ActionPalette.new(entries: [entry], return_mode: :list))
+      app.instance_variable_set(:@mode, :palette)
+      app.send(:handle_key, "\r")
+      assert_equal :palette, mode(app)
+      assert_match(/explode failed: boom/, app.instance_variable_get(:@action_palette).error)
+    end
+  end
+
+  def test_palette_action_error_does_not_restore_stale_detail_context
+    with_app do |app|
+      app.send(:handle_key, "\r")
+      entry = Tui::Shortcuts::Entry.new(
+        sequences: ["!"], display_key: "!", description: "explode",
+        contexts: [:detail], handler: :explode, availability: :action_available?,
+        palette: true, form: nil, confirmation: nil
+      )
+      app.define_singleton_method(:explode) do
+        send(:close_modal)
+        raise "boom"
+      end
+      app.instance_variable_set(:@action_palette,
+                                Tui::ActionPalette.new(entries: [entry], return_mode: :modal))
+      app.instance_variable_set(:@mode, :palette)
+      app.send(:handle_key, "\r")
+
+      assert_equal :list, mode(app)
+      assert_nil modal(app)
+      assert_nil app.instance_variable_get(:@action_palette)
+      assert_match(/explode failed: boom/, app.instance_variable_get(:@flash))
     end
   end
 end
