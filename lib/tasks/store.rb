@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "date"
+require "digest"
 require "securerandom"
 require "set"
 require_relative "atomic"
@@ -39,6 +40,18 @@ module Tasks
   class Store
     OPEN_STATES = %w[INBOX TODO NEXT WAITING].freeze
     DONE_STATES = %w[DONE CANCELLED].freeze
+
+    ArchiveBlock = Struct.new(:root_id, :root_title, :open_ids, :open_titles, keyword_init: true)
+    ArchivePreview = Struct.new(:roots, :descendants, :blocks, :candidate_ids, :fingerprint, keyword_init: true) do
+      def total = roots + descendants
+      def blocked? = !blocks.empty?
+      def blocked_roots = blocks.length
+      def open_descendants = blocks.sum { |block| block.open_ids.length }
+    end
+    ArchiveRefusal = Struct.new(:reason, :preview, :details, keyword_init: true)
+
+    ArchivePlan = Struct.new(:kept, :moved, :preview, keyword_init: true)
+    private_constant :ArchivePlan
 
     # Semantic tag marking a task as deferred (someday/maybe). See Item#deferred?.
     DEFER_TAG = "defer"
@@ -288,8 +301,15 @@ module Tasks
       with_history("unnest: #{item.title}") { move_top_impl(item) }
     end
 
-    def archive_swept!
-      with_history("archive sweep") { archive_swept_impl }
+    def archive_swept!(expected_preview: nil)
+      with_history("archive sweep") { archive_swept_impl(expected_preview) }
+    end
+
+    # A read-only summary of what the next archive sweep would move. Roots are
+    # the DONE/CANCELLED tasks selected by the sweep; descendants excludes those
+    # roots. Blocks identify closed roots whose subtree still contains open work.
+    def archive_preview
+      with_lock { archive_plan(fresh_records(@org)).preview }
     end
 
     # Ensure the item carries a stable id, returning it. Idempotent: an item
@@ -548,17 +568,34 @@ module Tasks
     end
 
     def restore(snap)
-      if snap[:org].nil?
-        File.delete(@org) if File.exist?(@org)
-      else
-        Atomic.write(@org, snap[:org])
-      end
-      if snap[:archive].nil?
-        File.delete(@archive) if File.exist?(@archive)
-      else
-        Atomic.write(@archive, snap[:archive])
-      end
+      current = snapshot
+      paths = restore_archive_first?(current, snap) ? %i[archive org] : %i[org archive]
+      paths.each { |kind| restore_file(kind == :org ? @org : @archive, snap[kind]) }
       reload!
+    end
+
+    def restore_file(path, content)
+      if content.nil?
+        File.delete(path) if File.exist?(path)
+      else
+        Atomic.write(path, content)
+      end
+    end
+
+    # Undo/redo can replay an archive sweep, so restore has the same ordering
+    # obligation as the forward operation. Install the destination copy before
+    # removing the source copy: archive first for live -> archive (redo), live
+    # first for archive -> live (undo). Other history entries retain live-first.
+    def restore_archive_first?(current, target)
+      current_live = snapshot_ids(current[:org])
+      target_live = snapshot_ids(target[:org])
+      target_archive = snapshot_ids(target[:archive])
+      ((current_live - target_live) & target_archive).any?
+    end
+
+    def snapshot_ids(content)
+      return Set.new unless content
+      Format.parse(content).records.filter_map { |record| record["id"] }.to_set
     end
 
     # Apply an undo (delta -1) or redo (delta +1) planned by the journal, under
@@ -596,6 +633,12 @@ module Tasks
         before = snapshot
         result = yield
         if result && result != 0
+          after = snapshot
+          # A typed refusal/no-op may be inspecting a preexisting invalid file
+          # specifically to report an actionable conflict. It wrote nothing,
+          # so preserve that result; post-write validation applies only when the
+          # mutation actually changed a snapshot.
+          return result if after == before
           # post-write invariant: a mutation must never mangle either file (the
           # sweep writes the archive too). If it would, record why, roll back —
           # both files are snapshotted — and report failure instead.
@@ -604,8 +647,7 @@ module Tasks
             restore(before)
             return result.is_a?(Integer) ? 0 : false
           end
-          after = snapshot
-          @journal.record(label: label, before: before, after: after) unless after == before
+          @journal.record(label: label, before: before, after: after)
         end
         result
       end
@@ -915,39 +957,115 @@ module Tasks
       insert_at + 1
     end
 
-    # Move every DONE/CANCELLED task's whole subtree to the archive file. The
-    # swept root drops its `parent` and gains `archived: today`; descendants
-    # keep their internal parents. Returns the count of roots swept.
-    def archive_swept_impl
-      records = fresh_records(@org)
+    # Move every fully closed DONE/CANCELLED task subtree to the archive file.
+    # The archive is written first, then the live file: interruption can leave
+    # retry-safe duplicates across the two files, but can never silently lose a
+    # task. A retry converges only when every stable ID has one canonically
+    # equal archived copy; partial or mismatched overlap refuses safely. Returns
+    # the count of roots swept, or ArchiveRefusal when a safety gate blocks it.
+    def archive_swept_impl(expected_preview)
+      plan = archive_plan(fresh_records(@org))
+      if expected_preview && (expected_preview.candidate_ids != plan.preview.candidate_ids ||
+                              expected_preview.fingerprint != plan.preview.fingerprint)
+        return ArchiveRefusal.new(reason: :preview_changed, preview: plan.preview)
+      end
+      return ArchiveRefusal.new(reason: :open_descendants, preview: plan.preview) if plan.preview.blocked?
+      return 0 if plan.moved.empty?
+
+      arch = File.exist?(@archive) ? fresh_records(@archive) : []
+      arch = [meta_record] if arch.empty?
+      retry_state, conflicts = archive_retry_state(arch, plan.moved)
+      if retry_state == :conflict
+        return ArchiveRefusal.new(reason: :archive_conflict, preview: plan.preview, details: conflicts)
+      end
+      if retry_state == :new
+        arch.concat(plan.moved)
+        write_records(@archive, arch)
+      end
+
+      # A successful atomic archive write is the commit point. Re-read it before
+      # deleting live records so even an injected/custom writer cannot make the
+      # destructive half proceed without durable copies of every moved id.
+      persisted_ids = ids_of(fresh_records(@archive)).to_set
+      missing_ids = ids_of(plan.moved).reject { |id| persisted_ids.include?(id) }
+      raise "archive write omitted moved ids: #{missing_ids.join(", ")}" unless missing_ids.empty?
+
+      write_records(@org, plan.kept)
+      reload!
+      plan.preview.roots
+    end
+
+    # A retry is safe only when the archive contains either none of the moved
+    # IDs (a new sweep), or exactly one canonical copy of every moved record (an
+    # interrupted archive-first sweep). Partial overlap, duplicate IDs, or
+    # differing content is a conflict: retain live data and require resolution.
+    def archive_retry_state(arch, moved)
+      by_id = arch.group_by { |record| record["id"] }
+      moved_ids = ids_of(moved)
+      overlap = moved_ids.select { |id| by_id.key?(id) }
+      return [:new, []] if overlap.empty?
+
+      conflicts = moved_ids.select do |id|
+        copies = by_id[id] || []
+        expected = moved.find { |record| record["id"] == id }
+        copies.length != 1 || !archive_retry_record?(expected, copies.first)
+      end
+      conflicts |= moved_ids - overlap if overlap.length != moved_ids.length
+      conflicts.empty? ? [:complete, []] : [:conflict, conflicts]
+    end
+
+    def archive_retry_record?(expected, actual)
+      expected = expected.reject { |key, _| key == "line" }
+      actual = actual.reject { |key, _| key == "line" }
+      # The first archive write owns the timestamp. A retry after midnight must
+      # not conflict solely because today's proposed stamp has advanced.
+      expected["archived"] = actual["archived"] if expected["archived"] && actual["archived"]
+      expected == actual
+    end
+
+    def archive_plan(records)
       kept = []
       moved = []
       roots = 0
+      descendants = 0
+      blocks = []
       i = 0
       while i < records.length
         r = records[i]
         if r["type"] == "task" && DONE_STATES.include?(r["state"])
           j = subtree_end(records, i)
           group = records[i...j].map(&:dup)
+          open = group.drop(1).select do |record|
+            record["type"] == "task" && OPEN_STATES.include?(record["state"])
+          end
+          unless open.empty?
+            blocks << ArchiveBlock.new(
+              root_id: r["id"], root_title: r["title"],
+              open_ids: open.map { |record| record["id"] },
+              open_titles: open.map { |record| record["title"] }
+            )
+          end
           group[0].delete("parent")
           group[0]["archived"] = Date.today.iso8601
           moved.concat(group)
           roots += 1
+          descendants += group.count { |record| record["type"] == "task" } - 1
           i = j
         else
           kept << r
           i += 1
         end
       end
-      return 0 if moved.empty?
-
-      write_records(@org, kept)
-      arch = File.exist?(@archive) ? fresh_records(@archive) : []
-      arch = [meta_record] if arch.empty?
-      arch.concat(moved)
-      write_records(@archive, arch)
-      reload!
-      roots
+      candidate_ids = ids_of(moved).freeze
+      preview = ArchivePreview.new(
+        roots: roots, descendants: descendants, blocks: blocks.freeze,
+        candidate_ids: candidate_ids,
+        fingerprint: Digest::SHA256.hexdigest(Format.dump(moved))
+      ).freeze
+      ArchivePlan.new(
+        kept: kept, moved: moved,
+        preview: preview
+      )
     end
 
     def ensure_id_impl(item)

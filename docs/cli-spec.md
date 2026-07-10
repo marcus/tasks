@@ -173,8 +173,9 @@ its own date forward, stays open, and does **not** cascade (an occurrence, not
 the project). `cancel` (and `state … CANCELLED`) never cascades — it closes only
 the target. Reopening a cascaded parent (e.g. `state … TODO`) does **not**
 reopen its descendants; reopen those individually. (Pre-existing caveat:
-`archive` sweeps a CANCELLED parent's whole subtree — still-open descendants
-included — since a closed root moves as one unit.)
+`archive` refuses the whole sweep when a DONE/CANCELLED root still has an open
+descendant. Complete, cancel, move, or unnest the open descendant first; a
+closed subtree only moves as one unit once every descendant is closed.)
 
 **Nesting.** Tasks form a tree via their `parent` ids; the CLI both reads that
 hierarchy (`list` groups it, `show` reports each task's `project` — unchanged
@@ -287,7 +288,7 @@ is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or `nul
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `archive` | `x` | ✅ | Sweep each DONE/CANCELLED subtree to `archive.jsonl` (root drops `parent`, gains `archived`). |
+| `archive` | `x` | ✅ | Sweep each DONE/CANCELLED subtree to `archive.jsonl` (root drops `parent`, gains `archived`). Refuses with exit 1 when any candidate root has an open descendant and explains how to resolve it. Persistence is retry-safe across interruption: the archive is installed first, and live records are removed only when the archive contains exactly one canonical copy of every moved ID; partial or conflicting overlap refuses without deleting live data. In the TUI, `x` previews root and descendant counts and requires `y` confirmation; the Store validates that exact candidate-ID/content fingerprint under the sweep lock, while `n`/`esc` cancels without writing. |
 | `delete <ref> --force` | `rm` | 🚧 | Hard-remove a record (no archive). Refuses without `--force`; suggest `cancel` instead. |
 | `undo` | | ✅ | Revert the last mutation via the on-disk journal (`Tasks::Journal`, under `$XDG_STATE_HOME/tasks/journal/`), shared with the TUI and across CLI runs. Refuses (exit 1) if `tasks.jsonl` changed out-of-band since that edit — resolve with `git diff` / `git checkout -- tasks.jsonl`. |
 | `redo` | | ✅ | Replay the last undone mutation; same shared journal and conflict guard as `undo`. |

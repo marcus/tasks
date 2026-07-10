@@ -72,6 +72,7 @@ module Tui
       @sel    = 0
       @mode   = :list      # :list | :prompt | :date | :recur | :modal | :modal_filter | :filter
       @modal  = nil        # a Tui::Modal while one is open
+      @archive_preview = nil # immutable summary accepted by an archive confirmation
       @modal_filter_input = TextInput.new # `/` filter buffer inside a modal
       @input  = TextInput.new # prompt buffer
       @filter = nil        # committed filter string (nil = off)
@@ -484,6 +485,8 @@ module Tui
     # modal in place, or close it when the change removes the task from the
     # view (see the actions).
     def modal_key(k)
+      return archive_confirm_key(k) if @modal&.kind == :archive_confirm
+      return archive_blocked_key(k) if @modal&.kind == :archive_blocked
       if (entry = Shortcuts.find_modal(k))
         return method(entry.action).call
       end
@@ -750,6 +753,7 @@ module Tui
 
     def close_modal
       @modal = nil
+      @archive_preview = nil
       @modal_filter_input.clear
       @mode = :list
     end
@@ -989,8 +993,60 @@ module Tui
     end
 
     def archive_sweep
-      n = @store.archive_swept!
-      flash(n.zero? ? "nothing to archive" : "archived #{n} item#{n == 1 ? "" : "s"}")
+      preview = @store.archive_preview
+      if preview.roots.zero?
+        return flash("archive preview: 0 roots · 0 descendants — nothing to archive")
+      end
+
+      noun = preview.descendants == 1 ? "descendant" : "descendants"
+      lines = [
+        "Would move #{preview.roots} completed root#{preview.roots == 1 ? "" : "s"} " \
+          "and #{preview.descendants} #{noun} to archive.jsonl.",
+      ]
+      if preview.blocked?
+        lines << ""
+        lines << T.paint(:error,
+          "Cannot archive: #{preview.blocked_roots} closed root#{preview.blocked_roots == 1 ? " has" : "s have"} " \
+          "#{preview.open_descendants} open descendant#{preview.open_descendants == 1 ? "" : "s"}.")
+        preview.blocks.each do |block|
+          lines << "  #{block.root_title}: #{block.open_titles.join(", ")}"
+        end
+        lines << T.paint(:muted, "Complete, cancel, move, or unnest that work first. esc closes")
+        open_modal({ title: "Archive blocked", lines: lines }, kind: :archive_blocked)
+      else
+        lines << ""
+        lines << T.paint(:muted, "Press y to archive · n / esc cancels")
+        @archive_preview = preview
+        open_modal({ title: "Confirm archive", lines: lines }, kind: :archive_confirm)
+      end
+    end
+
+    def archive_confirm_key(k)
+      case k
+      when "y", "Y"
+        expected = @archive_preview
+        result = @store.archive_swept!(expected_preview: expected)
+        close_modal
+        if result.is_a?(Tasks::Store::ArchiveRefusal)
+          case result.reason
+          when :preview_changed
+            flash("task list changed — press x to review the updated archive preview")
+          when :archive_conflict
+            flash("archive conflict — live tasks preserved; run tasks archive for details")
+          else
+            flash("archive refused — open descendants remain; press x for details")
+          end
+        else
+          flash(result.zero? ? "nothing to archive" : "archived #{result} root#{result == 1 ? "" : "s"}")
+        end
+      when "n", "N", "\e", "q"
+        close_modal
+        flash("archive cancelled")
+      end
+    end
+
+    def archive_blocked_key(k)
+      close_modal if ["n", "N", "\e", "q", "\r", "\n"].include?(k)
     end
 
     # -- claude ----------------------------------------------------------------

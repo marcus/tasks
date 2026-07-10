@@ -645,6 +645,91 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  def test_cli_archive_refuses_open_descendants_with_actionable_error
+    records = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "accc1001", "title" => "Projects" },
+      { "type" => "task", "id" => "accc1002", "parent" => "accc1001", "state" => "CANCELLED",
+        "title" => "Cancelled project", "closed" => "2026-07-01" },
+      { "type" => "task", "id" => "accc1003", "parent" => "accc1002", "state" => "WAITING",
+        "title" => "Waiting on vendor" },
+    ]
+
+    run_cli("archive", content: dump_fixture(records)) do |org, out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_empty out
+      assert_match(/Archive refused/, err)
+      assert_match(/1 open descendant/, err)
+      assert_match(/Waiting on vendor/, err)
+      assert_match(/Complete, cancel, move, or unnest/, err)
+      assert record_for(org, title: "Cancelled project")
+      assert record_for(org, title: "Waiting on vendor")
+      refute File.exist?(File.join(File.dirname(org), "archive.jsonl"))
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_archive_conflict_preserves_live_data_and_explains_recovery
+    stale_archive = dump_fixture([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "task", "id" => FIX[:old], "state" => "DONE",
+        "title" => "Stale archived copy", "closed" => "2026-06-20", "archived" => "2026-07-09" },
+    ])
+
+    run_cli("archive", archive_content: stale_archive) do |org, out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_empty out
+      assert_match(/partial or conflicting copies/, err)
+      assert_match(/Live tasks were preserved/, err)
+      assert_match(/tasks list --archived --json/, err)
+      assert record_for(org, title: "Old finished thing")
+      archive = File.join(File.dirname(org), "archive.jsonl")
+      assert record_for(archive, title: "Stale archived copy")
+    end
+  end
+
+  def test_cli_archive_child_only_overlap_reports_conflict_instead_of_crashing
+    live = dump_fixture([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "accc3001", "title" => "Projects" },
+      { "type" => "task", "id" => "accc3002", "parent" => "accc3001", "state" => "DONE",
+        "title" => "Closed parent", "closed" => "2026-07-08" },
+      { "type" => "task", "id" => "accc3003", "parent" => "accc3002", "state" => "DONE",
+        "title" => "Closed child", "closed" => "2026-07-08" },
+    ])
+    child_only_archive = dump_fixture([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "task", "id" => "accc3003", "parent" => "accc3002", "state" => "DONE",
+        "title" => "Closed child", "closed" => "2026-07-08" },
+    ])
+
+    run_cli("archive", content: live, archive_content: child_only_archive) do |org, out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_empty out
+      assert_match(/partial or conflicting copies/, err)
+      refute_match(/NoMethodError/, err)
+      assert record_for(org, title: "Closed parent")
+      assert record_for(org, title: "Closed child")
+    end
+  end
+
+  def test_cli_archive_duplicate_id_overlap_reports_conflict_instead_of_crashing
+    duplicate = { "type" => "task", "id" => FIX[:old], "state" => "DONE",
+                  "title" => "Old finished thing", "priority" => "C", "tags" => %w[@computer],
+                  "closed" => "2026-06-20", "archived" => "2026-07-09" }
+    duplicate_archive = dump_fixture([
+      { "type" => "meta", "version" => 1 }, duplicate, duplicate.dup,
+    ])
+
+    run_cli("archive", archive_content: duplicate_archive) do |org, out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_empty out
+      assert_match(/partial or conflicting copies/, err)
+      refute_match(/NoMethodError/, err)
+      assert record_for(org, title: "Old finished thing")
+    end
+  end
+
   # -- read commands --json ----------------------------------------------------
 
   def test_cli_list_json_shape_and_filters
@@ -751,11 +836,12 @@ class TestCliMutations < Minitest::Test
   BIN = File.expand_path("../bin/tasks", __dir__)
 
   # Run bin/tasks in a sandbox; returns [stdout, stderr, status].
-  def run_cli(*args, content: FIXTURE_ORG, env: {})
+  def run_cli(*args, content: FIXTURE_ORG, archive_content: nil, env: {})
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       archive = File.join(dir, "archive.jsonl")
       File.write(org, content)
+      File.write(archive, archive_content) if archive_content
       env = { "TASKS_FILE" => org, "TASKS_ARCHIVE" => archive }.merge(env)
       require "open3"
       out, err, st = Open3.capture3(env, "ruby", BIN, *args)

@@ -883,7 +883,30 @@ def cmd_move(args)
 end
 
 def cmd_archive
-  n = store.archive_swept!
+  result = store.archive_swept!
+  if result.is_a?(Tasks::Store::ArchiveRefusal)
+    preview = result.preview
+    if result.reason == :archive_conflict
+      abort [
+        "Archive refused: archive.jsonl has partial or conflicting copies of candidate IDs " \
+          "#{result.details.join(", ")}.",
+        "Live tasks were preserved. Compare `tasks list --done --json` with " \
+          "`tasks list --archived --json`, reconcile the conflicting records, then retry.",
+      ].join("\n")
+    end
+    blocked = preview.blocks.map do |block|
+      %(#{block.root_title.inspect}: #{block.open_titles.join(", ")})
+    end
+    abort [
+      "Archive refused: #{preview.blocked_roots} closed root#{preview.blocked_roots == 1 ? " has" : "s have"} " \
+        "#{preview.open_descendants} open descendant#{preview.open_descendants == 1 ? "" : "s"}.",
+      "Blocked subtree#{blocked.length == 1 ? "" : "s"}: #{blocked.join("; ")}",
+      "Complete, cancel, move, or unnest the open work, then retry `tasks archive`.",
+    ].join("\n")
+  end
+  mutation_failed("archive failed; live tasks were preserved") if result == false || store.last_rollback
+
+  n = result
   if n.zero?
     puts "Nothing to archive (no DONE/CANCELLED items)."
   else

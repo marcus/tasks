@@ -191,6 +191,200 @@ class TestStore < Minitest::Test
     end
   end
 
+  ARCHIVE_TREE_RECORDS = [
+    { "type" => "meta", "version" => 1 },
+    { "type" => "section", "id" => "accc0001", "title" => "Projects" },
+    { "type" => "task", "id" => "accc0002", "parent" => "accc0001", "state" => "DONE",
+      "title" => "Closed project", "closed" => "2026-07-01" },
+    { "type" => "task", "id" => "accc0003", "parent" => "accc0002", "state" => "CANCELLED",
+      "title" => "Closed child", "closed" => "2026-07-02" },
+    { "type" => "task", "id" => "accc0004", "parent" => "accc0003", "state" => "DONE",
+      "title" => "Closed grandchild", "closed" => "2026-07-03" },
+    { "type" => "task", "id" => "accc0005", "parent" => "accc0001", "state" => "NEXT",
+      "title" => "Still live" },
+  ].freeze
+
+  def with_archive_tree_store(records = ARCHIVE_TREE_RECORDS)
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, dump_fixture(records))
+      yield Tasks::Store.new(org: org, archive: archive), org, archive
+    end
+  end
+
+  def test_archive_preview_counts_roots_and_descendants_without_writing
+    with_archive_tree_store do |store, org, archive|
+      before = File.read(org)
+      preview = store.archive_preview
+
+      assert_equal 1, preview.roots
+      assert_equal 2, preview.descendants
+      assert_equal 3, preview.total
+      refute preview.blocked?
+      assert_equal before, File.read(org)
+      refute File.exist?(archive)
+    end
+  end
+
+  def test_archive_nested_subtree_preserves_dfs_structure_and_undo
+    with_archive_tree_store do |store, org, archive|
+      before = File.read(org)
+
+      assert_equal 1, store.archive_swept!
+      root = record_for(archive, title: "Closed project")
+      child = record_for(archive, title: "Closed child")
+      grandchild = record_for(archive, title: "Closed grandchild")
+      refute root.key?("parent")
+      assert_equal root["id"], child["parent"]
+      assert_equal child["id"], grandchild["parent"]
+      assert Tasks::Check.check(org).ok?
+      assert Tasks::Check.check(archive).ok?
+
+      assert_equal [:ok, "archive sweep"], store.undo!
+      assert_equal before, File.read(org)
+      refute File.exist?(archive)
+      assert Tasks::Check.check(org).ok?
+
+      assert_equal [:ok, "archive sweep"], store.redo!
+      assert_nil record_for(org, title: "Closed project")
+      assert record_for(archive, title: "Closed grandchild")
+      assert Tasks::Check.check(org).ok?
+      assert Tasks::Check.check(archive).ok?
+    end
+  end
+
+  def test_archive_refuses_closed_root_with_open_descendant
+    records = ARCHIVE_TREE_RECORDS.map(&:dup)
+    records.find { |r| r["id"] == "accc0004" }["state"] = "NEXT"
+    records.find { |r| r["id"] == "accc0004" }.delete("closed")
+
+    with_archive_tree_store(records) do |store, org, archive|
+      before = File.read(org)
+      result = store.archive_swept!
+
+      assert_instance_of Tasks::Store::ArchiveRefusal, result
+      assert_equal :open_descendants, result.reason
+      assert_equal 1, result.preview.blocked_roots
+      assert_equal 1, result.preview.open_descendants
+      assert_equal ["Closed grandchild"], result.preview.blocks.first.open_titles
+      assert_equal before, File.read(org), "the entire blocked subtree remains live"
+      refute File.exist?(archive)
+      assert_equal [:empty], store.undo!, "a refusal does not consume history"
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_archive_refuses_complete_id_overlap_when_canonical_content_differs
+    with_archive_tree_store do |store, org, archive|
+      before = File.read(org)
+      archived = ARCHIVE_TREE_RECORDS[2..4].map(&:dup)
+      archived.first.delete("parent")
+      archived.first["archived"] = Date.today.iso8601
+      archived.first["title"] = "Stale project title"
+      File.write(archive, dump_fixture([{ "type" => "meta", "version" => 1 }] + archived))
+
+      result = store.archive_swept!
+
+      assert_instance_of Tasks::Store::ArchiveRefusal, result
+      assert_equal :archive_conflict, result.reason
+      assert_includes result.details, "accc0002"
+      assert_equal before, File.read(org), "newer live content is never replaced by ID alone"
+      assert_equal "Stale project title", record_for(archive, title: "Stale project title")["title"]
+      assert Tasks::Check.check(org).ok?
+      assert Tasks::Check.check(archive).ok?
+    end
+  end
+
+  def test_archive_refuses_partial_prior_archive_without_deleting_live_subtree
+    with_archive_tree_store do |store, org, archive|
+      before = File.read(org)
+      root = ARCHIVE_TREE_RECORDS[2].dup
+      root.delete("parent")
+      root["archived"] = Date.today.iso8601
+      File.write(archive, dump_fixture([{ "type" => "meta", "version" => 1 }, root]))
+
+      result = store.archive_swept!
+
+      assert_instance_of Tasks::Store::ArchiveRefusal, result
+      assert_equal :archive_conflict, result.reason
+      assert_includes result.details, "accc0003"
+      assert_includes result.details, "accc0004"
+      assert_equal before, File.read(org)
+      assert_nil record_for(archive, title: "Closed child")
+      assert Tasks::Check.check(org).ok?
+      assert Tasks::Check.check(archive).ok?
+    end
+  end
+
+  def test_archive_expected_preview_is_validated_atomically_by_candidate_fingerprint
+    records = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "accc2001", "title" => "Projects" },
+      { "type" => "task", "id" => "accc2002", "parent" => "accc2001", "state" => "DONE",
+        "title" => "Candidate A", "closed" => "2026-07-09" },
+      { "type" => "task", "id" => "accc2003", "parent" => "accc2001", "state" => "NEXT",
+        "title" => "Candidate B" },
+    ]
+    with_archive_tree_store(records) do |store, org, archive|
+      expected = store.archive_preview
+      changed = Tasks::Format.parse(File.read(org, encoding: "UTF-8")).records
+      candidate_a = changed.find { |record| record["id"] == "accc2002" }
+      candidate_a["state"] = "NEXT"
+      candidate_a.delete("closed")
+      candidate_b = changed.find { |record| record["id"] == "accc2003" }
+      candidate_b["state"] = "DONE"
+      candidate_b["closed"] = "2026-07-10"
+      File.write(org, dump_fixture(changed))
+
+      current = store.archive_preview
+      assert_equal expected.roots, current.roots
+      refute_equal expected.candidate_ids, current.candidate_ids
+      refute_equal expected.fingerprint, current.fingerprint
+
+      result = store.archive_swept!(expected_preview: expected)
+      assert_instance_of Tasks::Store::ArchiveRefusal, result
+      assert_equal :preview_changed, result.reason
+      assert record_for(org, title: "Candidate A")
+      assert record_for(org, title: "Candidate B")
+      refute File.exist?(archive)
+    end
+  end
+
+  def test_archive_interruption_after_archive_write_is_retry_safe_and_idempotent
+    with_archive_tree_store do |store, org, archive|
+      original_write = store.method(:write_records)
+      injected = false
+      failing_write = lambda do |path, records|
+        if path == org && !injected
+          injected = true
+          raise "injected interruption before live commit"
+        end
+        original_write.call(path, records)
+      end
+
+      error = assert_raises(RuntimeError) do
+        store.stub(:write_records, failing_write) { store.archive_swept! }
+      end
+      assert_match(/injected interruption/, error.message)
+      assert record_for(org, title: "Closed project"), "live copy survives the interruption"
+      assert record_for(archive, title: "Closed project"), "archive copy was durable first"
+      assert Tasks::Check.check(org).ok?
+      assert Tasks::Check.check(archive).ok?
+
+      assert_equal 1, store.archive_swept!, "retry finishes the interrupted sweep"
+      assert_nil record_for(org, title: "Closed project")
+      archived = Tasks::Format.parse(File.read(archive, encoding: "UTF-8")).records
+      moved_ids = %w[accc0002 accc0003 accc0004]
+      assert_equal moved_ids.sort, archived.filter_map { |r| r["id"] if moved_ids.include?(r["id"]) }.sort
+      assert_equal 0, store.archive_swept!, "a completed retry is idempotent"
+      assert_equal moved_ids.length,
+                   Tasks::Format.parse(File.read(archive, encoding: "UTF-8")).records.count { |r| moved_ids.include?(r["id"]) }
+      assert Tasks::Check.check(org).ok?
+      assert Tasks::Check.check(archive).ok?
+    end
+  end
+
   def test_set_priority_replaces_existing_cookie
     with_store do |store, org, _a|
       flight = find_item(store, "Book flight")

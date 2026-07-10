@@ -8,9 +8,9 @@ require "tui/app"
 class TestAppModals < Minitest::Test
   A = Tui::Ansi
 
-  def with_app
+  def with_app(content: FIXTURE_ORG)
     Dir.mktmpdir do |dir|
-      File.write(File.join(dir, "tasks.jsonl"), FIXTURE_ORG)
+      File.write(File.join(dir, "tasks.jsonl"), content)
       app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir),
                          llm_config: default_llm_config)
       app.send(:rows) # populate @rows like the paint loop does
@@ -138,6 +138,99 @@ class TestAppModals < Minitest::Test
       app.send(:handle_key, "\e")
       assert_equal :list, mode(app)
       assert_nil modal(app)
+    end
+  end
+
+  def test_x_previews_archive_counts_before_any_write
+    with_app do |app|
+      store = app.instance_variable_get(:@store)
+      before = File.read(store.org)
+
+      app.send(:handle_key, "x")
+
+      assert_equal :modal, mode(app)
+      assert_equal :archive_confirm, modal(app).kind
+      assert_includes modal_text(app), "1 completed root"
+      assert_includes modal_text(app), "0 descendants"
+      assert_includes modal_text(app), "Press y to archive"
+      assert_equal before, File.read(store.org)
+      refute File.exist?(store.archive)
+    end
+  end
+
+  def test_archive_confirmation_y_moves_candidates
+    with_app do |app|
+      store = app.instance_variable_get(:@store)
+      app.send(:handle_key, "x")
+      app.send(:handle_key, "y")
+
+      assert_equal :list, mode(app)
+      assert_nil record_for(store.org, title: "Old finished thing")
+      assert record_for(store.archive, title: "Old finished thing")
+      assert_match(/archived 1 root/, app.instance_variable_get(:@flash))
+    end
+  end
+
+  def test_archive_confirmation_refuses_when_preview_changed
+    with_app do |app|
+      store = app.instance_variable_get(:@store)
+      app.send(:handle_key, "x")
+
+      records = Tasks::Format.parse(File.read(store.org, encoding: "UTF-8")).records
+      old = records.find { |record| record["title"] == "Old finished thing" }
+      old["state"] = "NEXT"
+      old.delete("closed")
+      replacement = records.find { |record| record["title"] == "Water the plants" }
+      replacement["state"] = "DONE"
+      replacement["closed"] = "2026-07-10"
+      File.write(store.org, dump_fixture(records))
+      app.send(:handle_key, "y")
+
+      assert_equal :list, mode(app)
+      assert record_for(store.org, title: "Old finished thing")
+      assert record_for(store.org, title: "Water the plants")
+      refute File.exist?(store.archive)
+      assert_match(/task list changed/, app.instance_variable_get(:@flash))
+    end
+  end
+
+  def test_archive_confirmation_n_and_escape_are_no_ops
+    %w[n escape].each do |answer|
+      with_app do |app|
+        store = app.instance_variable_get(:@store)
+        before = File.read(store.org)
+        app.send(:handle_key, "x")
+        app.send(:handle_key, answer == "escape" ? "\e" : answer)
+
+        assert_equal :list, mode(app)
+        assert_equal before, File.read(store.org)
+        refute File.exist?(store.archive)
+        assert_match(/cancelled/, app.instance_variable_get(:@flash))
+      end
+    end
+  end
+
+  def test_archive_blocked_modal_names_open_descendant_and_cannot_confirm
+    records = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "accc0001", "title" => "Projects" },
+      { "type" => "task", "id" => "accc0002", "parent" => "accc0001", "state" => "DONE",
+        "title" => "Closed project", "closed" => "2026-07-01" },
+      { "type" => "task", "id" => "accc0003", "parent" => "accc0002", "state" => "NEXT",
+        "title" => "Open child" },
+    ]
+
+    with_app(content: dump_fixture(records)) do |app|
+      store = app.instance_variable_get(:@store)
+      before = File.read(store.org)
+      app.send(:handle_key, "x")
+
+      assert_equal :archive_blocked, modal(app).kind
+      assert_includes modal_text(app), "1 open descendant"
+      assert_includes modal_text(app), "Open child"
+      app.send(:handle_key, "y")
+      assert_equal before, File.read(store.org)
+      refute File.exist?(store.archive)
     end
   end
 
