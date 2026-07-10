@@ -9,55 +9,144 @@ class TestShortcuts < Minitest::Test
   S = Tui::Shortcuts
   A = Tui::Ansi
 
-  def test_every_action_is_an_app_method
-    (S::LIST + S::MODAL).each do |e|
-      assert Tui::App.private_method_defined?(e.action),
-             "shortcut #{e.keys.inspect} points at missing App##{e.action}"
+  def changed_entry(entry = S::REGISTRY.first, **changes)
+    S::Entry.new(**entry.to_h.merge(changes))
+  end
+
+  def test_registry_validates_against_app
+    assert S.validate!(Tui::App)
+  end
+
+  def test_every_entry_declares_context_handler_availability_and_metadata
+    S::REGISTRY.each do |entry|
+      refute_empty entry.sequences
+      refute_empty entry.display_key
+      refute_empty entry.description
+      refute_empty entry.contexts
+      assert_kind_of Symbol, entry.handler
+      assert entry.availability
+      assert_includes [NilClass, Symbol, Hash], entry.form.class
+      assert_includes [NilClass, Symbol, Hash], entry.confirmation.class
     end
   end
 
-  def test_sequences_are_unique_within_each_context
-    [S::LIST, S::MODAL].each do |list|
-      seqs = list.flat_map(&:seqs)
-      assert_equal seqs.uniq, seqs, "duplicate key sequences"
+  def test_context_lookup_keeps_task_actions_in_list_and_detail_only
+    assert_equal :complete_selected, S.match("c", :list).handler
+    assert_equal :complete_selected, S.match("c", :detail).handler
+    assert_nil S.match("c", :modal)
+    assert_nil S.match("x", :detail), "list-only archive must not leak into details"
+    assert_nil S.match("\e[C", :detail), "list navigation must not leak into details"
+  end
+
+  def test_modal_navigation_resolves_independently
+    assert_equal :modal_half_down, S.match("\x04", :modal).handler
+    assert_equal :modal_half_up, S.match("\x15", :modal).handler
+    assert_equal :modal_page_down, S.match("\x06", :modal).handler
+    assert_equal :modal_page_down, S.match("\e[6~", :modal).handler
+    assert_equal :modal_page_up, S.match("\x02", :modal).handler
+    assert_equal :modal_start_filter, S.match("/", :modal).handler
+    assert_equal :close_modal, S.match("\e", :modal).handler
+    assert_equal :close_modal, S.match("q", :modal).handler
+  end
+
+  def test_unknown_lookup_context_is_rejected
+    error = assert_raises(ArgumentError) { S.entries(:bogus) }
+    assert_match(/unknown shortcut context/, error.message)
+  end
+
+  def test_global_binding_resolves_in_every_context
+    %i[list detail modal global].each do |context|
+      assert_equal :quit, S.match("\x03", context).handler
     end
   end
 
-  def test_find_modal_resolves_modal_sequences
-    assert_equal :modal_half_down, S.find_modal("\x04").action
-    assert_equal :modal_half_up, S.find_modal("\x15").action
-    assert_equal :modal_page_down, S.find_modal("\x06").action
-    assert_equal :modal_page_down, S.find_modal("\e[6~").action
-    assert_equal :modal_page_up, S.find_modal("\x02").action
-    assert_equal :modal_start_filter, S.find_modal("/").action
-    assert_equal :close_modal, S.find_modal("\e").action
-    assert_equal :close_modal, S.find_modal("q").action
-    assert_nil S.find_modal("c"), "task actions are App fallthrough, not modal entries"
+  def test_global_dispatch_precedes_every_input_mode
+    %i[list prompt date recur filter modal modal_filter].each do |mode|
+      app = Tui::App.allocate
+      app.instance_variable_set(:@mode, mode)
+      app.instance_variable_set(:@quit, false)
+      app.instance_variable_set(:@modal, Struct.new(:kind).new(:archive_confirm)) if mode == :modal
+      app.send(:handle_key, "\x03")
+      assert app.instance_variable_get(:@quit), "ctrl-c did not quit from #{mode} mode"
+    end
   end
 
-  def test_find_resolves_sequences
-    assert_equal :complete_selected, S.find("c").action
-    assert_equal :select_prev, S.find("\e[A").action
-    assert_equal :select_prev, S.find("k").action
-    assert_equal :prev_view, S.find("\e[D").action
-    assert_equal :next_view, S.find("\e[C").action
-    assert_equal :open_detail, S.find("\r").action
-    assert_equal :open_help, S.find("?").action
-    assert_equal :quit, S.find("q").action
-    assert_equal :defer_selected, S.find("z").action
-    assert_equal :toggle_deferred_view, S.find("Z").action
-    assert_equal :open_recur_popup, S.find("r").action
-    assert_nil S.find("Q")
+  def test_validation_rejects_duplicate_key_in_same_context
+    duplicate = changed_entry(S::REGISTRY.first, handler: :select_next)
+    error = assert_raises(ArgumentError) { S.validate!(nil, entries: [S::REGISTRY.first, duplicate]) }
+    assert_match(/duplicate shortcut/, error.message)
   end
 
-  def test_help_modal_lists_every_shortcut_in_both_contexts
+  def test_validation_rejects_duplicate_sequences_inside_one_entry
+    duplicate = changed_entry(sequences: ["k", "k"])
+    error = assert_raises(ArgumentError) { S.validate!(nil, entries: [duplicate]) }
+    assert_match(/sequences must be unique/, error.message)
+  end
+
+  def test_validation_rejects_modal_binding_that_would_shadow_detail
+    modal = changed_entry(contexts: [:modal])
+    detail = changed_entry(contexts: [:detail], handler: :select_next)
+    error = assert_raises(ArgumentError) { S.validate!(nil, entries: [modal, detail]) }
+    assert_match(/duplicate shortcut/, error.message)
+  end
+
+  def test_validation_allows_same_key_in_list_and_plain_modal
+    list = changed_entry(contexts: [:list])
+    modal = changed_entry(contexts: [:modal], handler: :modal_up)
+    assert S.validate!(nil, entries: [list, modal])
+  end
+
+  def test_validation_rejects_missing_handler_and_availability_hook
+    missing_handler = changed_entry(handler: :not_an_app_handler)
+    error = assert_raises(ArgumentError) { S.validate!(Tui::App, entries: [missing_handler]) }
+    assert_match(/missing shortcut handler/, error.message)
+
+    missing_availability = changed_entry(availability: :not_an_app_predicate)
+    error = assert_raises(ArgumentError) { S.validate!(Tui::App, entries: [missing_availability]) }
+    assert_match(/missing shortcut availability/, error.message)
+  end
+
+  def test_validation_rejects_invalid_metadata
+    bad_form = changed_entry(form: Object.new)
+    error = assert_raises(ArgumentError) { S.validate!(nil, entries: [bad_form]) }
+    assert_match(/form metadata/, error.message)
+
+    bad_confirmation = changed_entry(confirmation: { label: "missing kind" })
+    error = assert_raises(ArgumentError) { S.validate!(nil, entries: [bad_confirmation]) }
+    assert_match(/confirmation metadata/, error.message)
+  end
+
+  def test_unavailable_binding_consumes_key_without_calling_handler
+    app = Tui::App.allocate
+    app.instance_variable_set(:@quit, false)
+    unavailable = changed_entry(handler: :quit, availability: ->(_receiver) { false })
+    S.stub(:match, unavailable) do
+      assert app.send(:dispatch_action, "q", :list)
+    end
+    refute app.instance_variable_get(:@quit)
+  end
+
+  def test_modal_filter_binding_is_unavailable_but_consumed_in_task_detail
+    modal = Struct.new(:filterable?).new(false)
+    app = Tui::App.allocate
+    app.instance_variable_set(:@modal, modal)
+    entry = S.match("/", :modal)
+
+    refute S.available?(entry, app)
+    assert app.send(:dispatch_action, "/", :modal)
+  end
+
+  def test_help_modal_is_generated_from_registry_with_context_labels
     help = Tui::Modals.help
-    text = help[:lines].map { |l| A.strip(l) }.join("\n")
-    (S::LIST + S::MODAL).each do |e|
-      assert_includes text, e.desc
-      assert_includes text, e.keys
+    text = help[:lines].map { |line| A.strip(line) }.join("\n")
+    S::REGISTRY.each do |entry|
+      assert_includes text, entry.description
+      assert_includes text, entry.display_key
     end
+    assert_includes text, "in the task list"
+    assert_includes text, "in task details"
     assert_includes text, "in a modal"
+    assert_includes text, "everywhere"
     assert_equal "keyboard shortcuts", help[:title]
   end
 end

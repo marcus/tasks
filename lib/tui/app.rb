@@ -456,6 +456,8 @@ module Tui
     end
 
     def handle_key(k)
+      return if dispatch_action(k, :global)
+
       case @mode
       when :prompt then prompt_key(k)
       when :date   then date_key(k)
@@ -471,7 +473,6 @@ module Tui
       case k
       when "\e"       then @filter = nil; @mode = :list # esc clears entirely
       when "\r", "\n" then commit_filter
-      when ""   then @quit = true
       else
         @filter_input.handle_key(k)
       end
@@ -482,41 +483,30 @@ module Tui
       @mode = :list
     end
 
-    # List-mode keys live in Shortcuts (which also feeds the ? modal) —
-    # this just dispatches. Actions that need the key take one argument.
+    # Contextual actions live in Shortcuts (which also feeds the ? modal).
+    # A matched-but-unavailable action consumes its key so dispatch can never
+    # leak into a lower-priority context.
     def list_key(k)
-      entry = Shortcuts.find(k)
-      return unless entry
-      m = method(entry.action)
-      m.arity.zero? ? m.call : m.call(k)
+      dispatch_action(k, :list)
     end
 
-    # A detail modal keeps the task's own shortcuts live so you can act on it
-    # without leaving: complete, reschedule, re-prioritize, yank. The modal-
-    # generic keys (scroll, filter, close) live in Shortcuts::MODAL — add one
-    # there and it exists here and in the ? overlay. Task actions rebuild the
-    # modal in place, or close it when the change removes the task from the
-    # view (see the actions).
+    def dispatch_action(k, context)
+      entry = Shortcuts.match(k, context)
+      return false unless entry
+      return true unless Shortcuts.available?(entry, self)
+
+      m = method(entry.handler)
+      m.arity.zero? ? m.call : m.call(k)
+      true
+    end
+
+    # Modal navigation is an explicit first-stage context; task-detail actions
+    # are the second. Registry validation rejects key collisions between them.
     def modal_key(k)
       return archive_confirm_key(k) if @modal&.kind == :archive_confirm
       return archive_blocked_key(k) if @modal&.kind == :archive_blocked
-      if (entry = Shortcuts.find_modal(k))
-        return method(entry.action).call
-      end
-      case k
-      when "c"    then complete_selected
-      when "d"    then open_date_popup
-      when "r"    then open_recur_popup
-      when "z"    then defer_selected
-      when "y"    then yank_ref
-      when "Y"    then yank_markdown
-      when "K"    then raise_priority
-      when "J"    then lower_priority
-      when "p"    then paste_ref
-      when "u"    then undo_last
-      when "o"    then open_link
-      when "\x12" then redo_last
-      end
+      return if dispatch_action(k, :modal)
+      dispatch_action(k, :detail) if detail_modal?
     end
 
     def prompt_key(k)
@@ -524,7 +514,6 @@ module Tui
       when "\e"           then @mode = :list
       when "\t"           then @mode = :list
       when "\r", "\n"     then submit_prompt
-      when ""       then @quit = true
       else
         @input.handle_key(k)
       end
@@ -534,7 +523,6 @@ module Tui
       case k
       when "\e"           then close_date_popup
       when "\r", "\n"     then submit_date
-      when ""       then @quit = true
       else
         @date_error = nil if @date_input.handle_key(k) == :changed
       end
@@ -544,13 +532,15 @@ module Tui
       case k
       when "\e"       then close_recur_popup
       when "\r", "\n" then submit_recur
-      when ""   then @quit = true
       else
         @recur_error = nil if @recur_input.handle_key(k) == :changed
       end
     end
 
-    # -- shortcut actions (dispatched from Shortcuts::LIST) --------------------
+    # -- shortcut actions (dispatched from Shortcuts::REGISTRY) ----------------
+
+    def action_available? = true
+    def modal_filter_available? = @modal&.filterable?
 
     def select_prev    = move(-1)
     def select_next    = move(1)
@@ -784,7 +774,6 @@ module Tui
       case k
       when "\e"       then @modal.filter = nil; @modal_filter_input.clear; @mode = :modal
       when "\r", "\n" then @mode = :modal # the filter applied live; enter keeps it
-      when "\x03"     then @quit = true
       else
         @modal.filter = @modal_filter_input.to_s if @modal_filter_input.handle_key(k) == :changed
       end
@@ -1143,3 +1132,5 @@ module Tui
     end
   end
 end
+
+Tui::Shortcuts.validate!(Tui::App)

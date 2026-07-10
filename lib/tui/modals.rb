@@ -17,21 +17,29 @@ module Tui
 
     module_function
 
-    # Both key contexts, one key column: the list-mode shortcuts, then the
-    # modal-mode ones (which also apply to this modal itself).
+    # Generated entirely from the action registry. Shared task actions are
+    # repeated in the detail section so their availability is unambiguous.
     def help
-      key_w = (Shortcuts::LIST + Shortcuts::MODAL).map { |e| e.keys.length }.max
-      lines = Shortcuts::LIST.map { |e| shortcut_line(e, key_w) }
-      lines << ""
-      lines << T.paint(:section, "in a modal")
-      Shortcuts::MODAL.each { |e| lines << shortcut_line(e, key_w) }
+      key_w = Shortcuts::REGISTRY.map { |e| e.display_key.length }.max
+      groups = [
+        ["in the task list", Shortcuts.entries(:list, include_global: false)],
+        ["in task details", Shortcuts.entries(:detail, include_global: false)],
+        ["in a modal", Shortcuts.entries(:modal, include_global: false)],
+        ["everywhere", Shortcuts.entries(:global, include_global: false)],
+      ]
+      lines = []
+      groups.each_with_index do |(title, entries), index|
+        lines << "" unless index.zero?
+        lines << T.paint(:section, title)
+        entries.each { |entry| lines << shortcut_line(entry, key_w) }
+      end
       lines << ""
       lines << T.paint(:muted, "prompt/date input: return submits · esc cancels · ctrl-a/e/b/f move")
       { title: "keyboard shortcuts", lines: lines }
     end
 
     def shortcut_line(entry, key_w)
-      "#{T.paint(:accent, entry.keys.ljust(key_w))} #{entry.desc}"
+      "#{T.paint(:accent, entry.display_key.ljust(key_w))} #{entry.description}"
     end
 
     STATE_SLOT = {
