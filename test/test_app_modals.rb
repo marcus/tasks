@@ -690,6 +690,28 @@ class TestAppModals < Minitest::Test
     end
   end
 
+  def test_prompt_width_one_substitutes_wide_grapheme_and_draws_one_cursor
+    with_app do |app|
+      app.send(:handle_key, "\t")
+      app.instance_variable_get(:@input).replace("界")
+      lines = app.send(:wrapped_input, app.instance_variable_get(:@input), 1)
+      assert lines.all? { |line| A.vislen(line) <= 1 }, lines.inspect
+      assert_equal 1, lines.join.scan(/\e\[7m/).size, "cursor must render exactly once"
+      refute_includes A.strip(lines.join), "界", "a two-cell cluster cannot fit a one-cell budget"
+    end
+  end
+
+  def test_prompt_exact_ascii_boundary_draws_cursor_once
+    with_app do |app|
+      app.send(:handle_key, "\t")
+      app.instance_variable_get(:@input).replace("abc")
+      lines = app.send(:wrapped_input, app.instance_variable_get(:@input), 3)
+      assert lines.all? { |line| A.vislen(line) <= 3 }, lines.inspect
+      assert_equal ["abc", " "], lines.map { |line| A.strip(line) }
+      assert_equal 1, lines.join.scan(/\e\[7m/).size, "cursor must render exactly once"
+    end
+  end
+
   def test_date_error_clears_only_when_input_changes
     with_app do |app|
       app.send(:open_date_popup)

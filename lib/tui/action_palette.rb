@@ -66,7 +66,7 @@ module Tui
       @error = message.to_s
     end
 
-    def popup(row:, cols:, inline_input:)
+    def popup(row:, col:, max_width:, max_height:, inline_input:)
       matches = results
       @selected = [[@selected, 0].max, [matches.size - 1, 0].max].min
       first = [[@selected - MAX_RESULTS + 1, 0].max, [matches.size - MAX_RESULTS, 0].max].min
@@ -77,17 +77,39 @@ module Tui
         " #{marker} #{entry.description}  #{T.paint(:muted, key)}"
       end
       content = [T.paint(:muted, "   no matching actions")] if content.empty?
+      selected_entry = matches[@selected]
+      selected_line = content.find { |line| line.include?("❯") } || content.first
+      compact_selected = if selected_entry
+                           "❯ #{selected_entry.display_key} #{selected_entry.description}"
+                         else
+                           T.paint(:muted, "no matches")
+                         end
 
       query = " search: #{inline_input.call(@input)}"
       hint = @error ? T.paint(:error, @error) : T.paint(:muted, "↑↓ choose · enter run · esc cancel")
       inner = [query, *content, " #{hint}"]
-      width = [inner.map { |line| A.vislen(line) }.max + 2, 46].max
-      width = [width, [cols - 6, 24].max].min
+      natural_width = [inner.map { |line| A.vislen(line) }.max + 2, 46].max
+      width = [[natural_width, max_width].min, 1].max
+      height = [[inner.size + 2, max_height].min, 1].max
+
+      if width < 6 || height < 3
+        compact = [compact_selected, query, " #{hint}"].first(height)
+        lines = compact.map { |line| A.vpad(A.vtrunc(line, width), width) }
+        return { lines: lines, row: row, col: col }
+      end
+
+      slots = height - 2
+      other_actions = content.reject { |line| line.equal?(selected_line) }
+      visible_inner = [selected_line, query, *other_actions, " #{hint}"].first(slots)
       title = " actions "
-      lines = ["┌#{title}#{"─" * [width - A.vislen(title) - 2, 0].max}┐"]
-      inner.each { |line| lines << "│#{A.vpad(A.vtrunc(line, width - 2), width - 2)}│" }
+      inner_width = width - 2
+      title = A.vtrunc(title, inner_width)
+      lines = ["┌#{title}#{"─" * (inner_width - A.vislen(title))}┐"]
+      visible_inner.compact.each do |line|
+        lines << "│#{A.vpad(A.vtrunc(line, inner_width), inner_width)}│"
+      end
       lines << "└#{"─" * (width - 2)}┘"
-      { lines: lines, row: row, col: 3 }
+      { lines: lines, row: row, col: col }
     end
 
     private

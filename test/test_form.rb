@@ -56,4 +56,43 @@ class TestForm < Minitest::Test
     assert_includes text, "value: 界"
     assert_includes text, "bad value"
   end
+
+  def test_popup_adapts_to_every_narrow_body_rectangle
+    f = form(initial: "界") { nil }
+    (1..12).each do |width|
+      (1..4).each do |height|
+        popup = f.popup(row: 0, col: 0, max_width: width, max_height: height,
+                        inline_input: ->(_input) { A.invert(" ") })
+        assert_operator popup[:lines].size, :<=, height
+        assert popup[:lines].all? { |line| A.vislen(line) <= width },
+               "#{width}x#{height}: #{popup[:lines].inspect}"
+        if width >= 6 && height >= 3
+          assert A.strip(popup[:lines].first).start_with?("┌")
+          assert A.strip(popup[:lines].last).end_with?("┘")
+        end
+      end
+    end
+  end
+
+  def test_empty_form_is_labeled_at_every_positive_height
+    f = form { nil }
+    (1..6).each do |height|
+      popup = f.popup(row: 0, col: 0, max_width: 12, max_height: height,
+                      inline_input: ->(_input) { A.invert(" ") })
+      text = popup[:lines].map { |line| A.strip(line) }.join("\n")
+      assert_match(/value|example/, text, "empty form unlabeled at height #{height}")
+      assert_operator popup[:lines].size, :<=, height
+      assert popup[:lines].all? { |line| A.vislen(line) <= 12 }
+    end
+  end
+
+  def test_one_row_form_uses_available_cells_for_prompt_label
+    f = form { nil }
+    (1..5).each do |width|
+      popup = f.popup(row: 0, col: 0, max_width: width, max_height: 1,
+                      inline_input: ->(_input) { A.invert(" ") })
+      assert_equal "value"[0, width], A.strip(popup[:lines].first)
+      assert_equal width, A.vislen(popup[:lines].first)
+    end
+  end
 end

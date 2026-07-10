@@ -27,6 +27,13 @@ class TestFrame < Minitest::Test
     assert_equal 15, build.size
   end
 
+  def test_short_frame_clips_footer_to_preserve_exact_height
+    lines = build(width: 20, height: 6, footer: ["old response", :rule, "prompt"])
+    assert_equal 6, lines.size
+    lines.each { |line| assert_equal 20, A.vislen(line) }
+    refute lines.any? { |line| A.strip(line).include?("old response") }
+  end
+
   def test_selected_row_is_highlighted
     lines = build(selected: 2)
     assert_includes lines[5], "\e[7m"   # borders(1) + header(1) + rule(1) + 2 rows
@@ -148,6 +155,43 @@ class TestFrame < Minitest::Test
     assert_includes body_row, "right-side-content"
   end
 
+  def test_popup_splices_at_terminal_cell_boundaries
+    rows = [Row.new("a界bcdef", Object.new)]
+    # Body coordinates include the two-cell row marker. Column 3 lands on the
+    # first cell of 界; replacing only that cell must blank the other half while
+    # leaving b at its original terminal column.
+    line = A.strip(build(width: 20, height: 8, rows: rows, footer: [],
+                         popup: { lines: ["X"], row: 0, col: 3 })[3])
+    assert_includes line, "aX bcdef"
+    assert_equal 20, A.vislen(line)
+  end
+
+  def test_popup_preserves_styles_around_wide_base_content
+    rows = [Row.new(A.red("a界bcdef"), Object.new)]
+    popup = { lines: [A.bold("X")], row: 0, col: 3 }
+    line = build(width: 20, height: 8, rows: rows, footer: [], popup: popup)[3]
+    assert_equal 20, A.vislen(line)
+    assert_includes line, "\e[1mX\e[0m", "popup styling survives the splice"
+    assert_includes line, "\e[31m bcdef", "base styling is restored on the suffix"
+    assert_includes A.strip(line), "aX bcdef"
+  end
+
+  def test_wide_popup_is_clipped_without_overflow_at_right_edge
+    rows = [Row.new("underlay", Object.new)]
+    popup = { lines: ["界"], row: 0, col: 15 }
+    line = build(width: 20, height: 8, rows: rows, footer: [], popup: popup)[3]
+    assert_equal 20, A.vislen(line)
+    refute_includes A.strip(line), "界", "a two-cell cluster cannot be half-rendered"
+  end
+
+  def test_popup_clips_cleanly_at_negative_left_edge
+    rows = [Row.new("underlay", Object.new)]
+    popup = { lines: ["[ABC]"], row: 0, col: -2 }
+    line = build(width: 20, height: 8, rows: rows, footer: [], popup: popup)[3]
+    assert_equal 20, A.vislen(line)
+    assert_includes A.strip(line), "BC]nderlay"
+  end
+
   def test_modal_draws_centered_box_with_title
     modal = { title: "task", lines: ["alpha", "beta gamma"] }
     lines = build(modal: modal)
@@ -160,6 +204,16 @@ class TestFrame < Minitest::Test
     # centered: box border starts past the left margin
     box_line = lines.find { |l| A.strip(l).include?("┌─ task") }
     assert A.strip(box_line).index("┌") > 5
+  end
+
+  def test_modal_uses_compact_unboxed_view_when_body_is_one_row
+    lines = build(width: 8, height: 6, rows: [], footer: [],
+                  modal: { title: "task", lines: ["details"] })
+    assert_equal 6, lines.size
+    lines.each { |line| assert_equal 8, A.vislen(line) }
+    body = A.strip(lines[3])
+    assert_includes body, "tas", "compact modal remains identifiable"
+    refute_match(/[┌┐└┘]/, body, "never show a clipped box fragment")
   end
 
   def test_popup_renders_on_top_of_modal
@@ -205,5 +259,21 @@ class TestFrame < Minitest::Test
     lines = build(rows: [])
     assert_equal 15, lines.size
     lines.each { |l| assert_equal 60, A.vislen(l) }
+  end
+
+  def test_mixed_unicode_frames_respect_narrow_width_boundaries
+    rows = [Row.new(A.cyan("界👩‍💻 e\u0301 " + "x" * 40), Object.new)]
+    modal = { title: "界 task", lines: [A.yellow("👩‍💻 details e\u0301")] }
+
+    (8..24).each do |width|
+      lines = build(width: width, height: 10, header: A.bold("界👩‍💻 header"),
+                    rows: rows, footer: ["界 footer"], modal: modal,
+                    popup: { lines: [A.red("界 edge")], row: 1, col: width - 8 })
+      assert_equal 10, lines.size
+      lines.each_with_index do |line, index|
+        assert_equal width, A.vislen(line),
+                     "width #{width}, line #{index}: #{line.inspect}"
+      end
+    end
   end
 end

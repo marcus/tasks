@@ -70,6 +70,128 @@ class TestApp < Minitest::Test
     end
   end
 
+  def test_terminal_size_uses_current_console_dimensions
+    fake = FakeAgent.new(running: false)
+    console = Struct.new(:winsize).new([13, 47])
+    app_with(agent: fake, input: "") do |app|
+      IO.stub(:console, console) do
+        assert_equal [13, 47], app.send(:terminal_size)
+      end
+    end
+  end
+
+  def test_terminal_size_retains_narrow_but_renderable_dimensions
+    fake = FakeAgent.new(running: false)
+    console = Struct.new(:winsize).new([7, 11])
+    app_with(agent: fake, input: "") do |app|
+      IO.stub(:console, console) do
+        assert_equal [7, 11], app.send(:terminal_size)
+      end
+    end
+  end
+
+  def test_footer_height_is_calculated_at_the_current_width
+    fake = FakeAgent.new(running: false)
+    app_with(agent: fake, input: "界 " * 60) do |app|
+      app.instance_variable_set(:@mode, :prompt)
+      narrow = app.send(:footer_size, width: 40)
+      wide = app.send(:footer_size, width: 120)
+      assert_operator narrow, :>, wide
+      assert_operator narrow, :<=, Tui::App::PROMPT_MAX
+    end
+  end
+
+  def test_paint_threads_one_terminal_size_through_frame_geometry
+    fake = FakeAgent.new(running: false)
+    console = Struct.new(:winsize).new([12, 43])
+    captured = nil
+    popup_geometry = nil
+    builder = lambda do |**args|
+      captured = args
+      Array.new(args[:height], " " * args[:width])
+    end
+    popup_builder = lambda do |**args|
+      popup_geometry = args
+      nil
+    end
+
+    app_with(agent: fake, input: "") do |app|
+      IO.stub(:console, console) do
+        app.stub(:current_popup, popup_builder) do
+          Tui::Frame.stub(:build, builder) { capture_io { app.send(:paint) } }
+        end
+      end
+    end
+    assert_equal 43, captured[:width]
+    assert_equal 12, captured[:height]
+    assert_equal 43, popup_geometry[:width]
+    assert_equal 12, popup_geometry[:height]
+    assert_equal captured[:footer].size, popup_geometry[:footer_size]
+  end
+
+  def test_popup_placement_uses_supplied_terminal_geometry
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:open_action_palette)
+      app.instance_variable_set(:@sel, 99)
+      popup = app.send(:current_popup, width: 42, height: 12, footer_size: 3)
+      body_width = 42 - 4
+      body_height = 12 - 5 - 3
+      assert_operator popup[:row], :>=, 0
+      assert_operator popup[:row] + popup[:lines].size, :<=, body_height
+      assert_operator popup[:col], :>=, 0
+      assert popup[:lines].all? { |line| Tui::Ansi.vislen(line) <= body_width },
+             "palette is sized from the supplied 42-column terminal body"
+    end
+  end
+
+  def test_form_popup_remains_visible_inside_an_eight_by_six_terminal
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:open_date_popup)
+      popup = app.send(:current_popup, width: 8, height: 6, footer_size: 0)
+      assert_equal 0, popup[:row]
+      assert_equal 0, popup[:col]
+      assert_equal 1, popup[:lines].size
+      assert popup[:lines].all? { |line| Tui::Ansi.vislen(line) <= 4 }
+    end
+  end
+
+  def test_palette_popup_remains_visible_inside_an_eight_by_six_terminal
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:open_action_palette)
+      popup = app.send(:current_popup, width: 8, height: 6, footer_size: 0)
+      assert_equal 0, popup[:row]
+      assert_equal 0, popup[:col]
+      assert_equal 1, popup[:lines].size
+      assert popup[:lines].all? { |line| Tui::Ansi.vislen(line) <= 4 }
+    end
+  end
+
+  def test_popup_placement_chooses_below_then_above_and_clamps_column
+    fake = FakeAgent.new(running: false)
+    app_with(agent: fake, input: "") do |app|
+      popup = { lines: ["123456", "abcdef"], row: 99, col: 99 }
+      below = app.send(:place_popup, popup, preferred_col: 8, selected_row: 1,
+                       body_width: 10, body_height: 6)
+      assert_equal [2, 4], below.values_at(:row, :col)
+
+      above = app.send(:place_popup, popup, preferred_col: 8, selected_row: 5,
+                       body_width: 10, body_height: 6)
+      assert_equal [3, 4], above.values_at(:row, :col)
+    end
+  end
+
+  def test_short_footer_keeps_active_filter_input_over_generic_hint
+    fake = FakeAgent.new(running: false)
+    app_with(agent: fake, input: "") do |app|
+      app.instance_variable_set(:@mode, :filter)
+      app.instance_variable_get(:@filter_input).replace("界")
+      footer = app.send(:fitted_footer, width: 8, height: 7)
+      assert_equal 1, footer.size
+      assert_includes Tui::Ansi.strip(footer.first), "界"
+      refute_includes Tui::Ansi.strip(footer.first), "tab to ask"
+    end
+  end
+
   # -- deferral ----------------------------------------------------------------
 
   # Build an app on a sandbox gtd.org (optionally a modified fixture), park it

@@ -29,7 +29,8 @@ module Tui
     A = Ansi
     T = Theme
 
-    MIN_WIDTH   = 40   # floor for degenerate ptys and tiny splits; no max — full width
+    MIN_WIDTH   = 8    # smallest frame that can retain borders, margins, and content
+    MIN_HEIGHT  = 6    # borders, header/rules, and one body row
     TICK        = 0.25 # seconds; also the file-watch poll interval
     SPINNER     = %w[⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏].freeze
     RESP_MAX    = 10   # footer response pane grows to at most this many lines
@@ -166,19 +167,27 @@ module Tui
     # -- painting ------------------------------------------------------------
 
     def paint
-      height, cols = IO.console&.winsize || [24, 80]
-      height = [height, 10].max               # degenerate ptys report 0x0
-      width  = [cols, MIN_WIDTH].max
-      foot = footer(width - 2)
+      height, width = terminal_size
+      foot = fitted_footer(width: width, height: height)
+      body_h = [height - 5 - foot.size, 1].max
       lines = Frame.build(
         width: width, height: height,
         header: header(width - 2),
         rows: rows, selected: @mode == :prompt ? nil : @sel,
         footer: foot,
-        popup: current_popup,
-        modal: @modal&.view([height - 5 - foot.size, 1].max)
+        popup: current_popup(width: width, height: height, footer_size: foot.size),
+        modal: @modal&.view(body_h)
       )
       print "\e[H" + lines.join("\e[K\r\n") + "\e[K"
+    end
+
+    def terminal_size
+      height, width = IO.console&.winsize || [24, 80]
+      height = height.to_i
+      width = width.to_i
+      height = 24 unless height.positive? # degenerate ptys can report 0x0
+      width = 80 unless width.positive?
+      [[height, MIN_HEIGHT].max, [width, MIN_WIDTH].max]
     end
 
     def rows
@@ -244,7 +253,9 @@ module Tui
         n = (@rows || []).count(&:item)
         f << T.paint(:muted, " / #{@filter} · #{n} match#{n == 1 ? "" : "es"} · esc clears · / edits")
       end
-      f.concat(prompt_lines(w))
+      # Active text entry owns the scarce footer row on short terminals. Forms
+      # and palettes render their input in the popup; filters render it here.
+      f.concat(prompt_lines(w)) unless %i[modal_filter filter form palette].include?(@mode)
       f
     end
 
@@ -265,12 +276,15 @@ module Tui
     def wrapped_input(input, cols)
       cols = [cols, 1].max
       chars = input.text.each_grapheme_cluster.to_a
+      display = chars.map do |gc|
+        width = A.cluster_width(gc)
+        width > cols ? [" " * cols, cols] : [gc, width]
+      end
       lines = [[]]
       starts = [0]
       width = 0
 
-      chars.each_with_index do |gc, idx|
-        cw = A.cluster_width(gc)
+      display.each_with_index do |(gc, cw), idx|
         if width.positive? && width + cw > cols
           lines << []
           starts << idx
@@ -292,7 +306,7 @@ module Tui
       (first_line...last_line).map do |line|
         segment = lines[line] || []
         cursor_col = input.cursor - starts[line]
-        if cursor_col.between?(0, segment.length)
+        if line == cursor_line
           render_input_segment(segment, cursor_col)
         else
           segment.join
@@ -313,24 +327,60 @@ module Tui
 
     # The active popup layered over the list (and, when launched from task
     # details, over the retained modal beneath it).
-    def current_popup
-      case @mode
+    def current_popup(width: nil, height: nil, footer_size: nil)
+      terminal_height, terminal_width = terminal_size if width.nil? || height.nil?
+      width ||= terminal_width
+      height ||= terminal_height
+      footer_size ||= self.footer_size(width: width, height: height)
+      body_width = [width - 4, 1].max
+      body_height = [height - 5 - footer_size, 1].max
+      selected_row = sel_screen_row(height: height, footer_size: footer_size)
+      popup, preferred_col = case @mode
       when :form
-        @form&.popup(row: sel_screen_row + 1, col: 8, inline_input: method(:inline_input))
+        [@form&.popup(row: 0, col: 0, max_width: body_width, max_height: body_height,
+                      inline_input: method(:inline_input)), 8]
       when :palette
-        cols = [(IO.console&.winsize || [24, 80])[1], MIN_WIDTH].max
-        @action_palette&.popup(row: sel_screen_row + 1, cols: cols, inline_input: method(:inline_input))
+        [@action_palette&.popup(row: 0, col: 0, max_width: body_width, max_height: body_height,
+                               inline_input: method(:inline_input)), 3]
       end
+      place_popup(popup, preferred_col: preferred_col, selected_row: selected_row,
+                         body_width: body_width, body_height: body_height)
     end
 
-    def sel_screen_row
+    def place_popup(popup, preferred_col:, selected_row:, body_width:, body_height:)
+      return unless popup
+
+      popup_width = popup[:lines].map { |line| A.vislen(line) }.max || 0
+      popup_height = popup[:lines].size
+      col = preferred_col.clamp(0, [body_width - popup_width, 0].max)
+      below = selected_row + 1
+      row = if popup_height <= body_height - below
+              below
+            elsif popup_height <= selected_row
+              selected_row - popup_height
+            else
+              [body_height - popup_height, 0].max
+            end
+      popup.merge(row: row, col: col)
+    end
+
+    def sel_screen_row(height: nil, footer_size: nil)
       # body row of the selection, accounting for the frame's scroll offset
-      height = [(IO.console&.winsize || [24]).first, 10].max
+      terminal_height, terminal_width = terminal_size if height.nil? || footer_size.nil?
+      height ||= terminal_height
+      footer_size ||= self.footer_size(width: terminal_width, height: height)
       body_h = [height - 5 - footer_size, 1].max
       @sel >= body_h ? body_h - 1 : @sel
     end
 
-    def footer_size = footer(80).size
+    def fitted_footer(width:, height:)
+      footer(width - 2).last([height - MIN_HEIGHT, 0].max)
+    end
+
+    def footer_size(width: nil, height: nil)
+      terminal_height, terminal_width = terminal_size if width.nil? || height.nil?
+      fitted_footer(width: width || terminal_width, height: height || terminal_height).size
+    end
 
     # -- input ---------------------------------------------------------------
 
@@ -726,7 +776,7 @@ module Tui
     def show_detail
       item = current_item
       return close_modal unless item
-      width = [(IO.console&.winsize || [24, 80])[1], MIN_WIDTH].max
+      width = terminal_size.last
       # Same rule as the Projects view: the nearest open ancestor headline,
       # closed task ancestors skipped (Node#open_project).
       project = @store.node_for(item)&.open_project&.title
@@ -780,9 +830,11 @@ module Tui
 
     # Body rows available to the modal box — the same budget paint hands
     # Frame.build, so scroll steps match what's on screen.
-    def modal_body_h
-      height = [(IO.console&.winsize || [24]).first, 10].max
-      [height - 5 - footer_size, 1].max
+    def modal_body_h(height: nil, width: nil)
+      terminal_height, terminal_width = terminal_size if height.nil? || width.nil?
+      height ||= terminal_height
+      width ||= terminal_width
+      [height - 5 - footer_size(width: width, height: height), 1].max
     end
 
     def detail_modal? = @modal&.kind == :detail
@@ -1139,7 +1191,7 @@ module Tui
 
     def pump_agent
       return unless @agent.pump == :done
-      width = [(IO.console&.winsize || [24, 80])[1], MIN_WIDTH].max
+      width = terminal_size.last
       @resp = A.wrap(@agent.output.strip, width - 8)
       @resp = [T.paint(:muted, "(no output)")] if @resp.all? { |l| l.strip.empty? }
       @resp_open = true

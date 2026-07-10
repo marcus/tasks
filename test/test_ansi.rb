@@ -41,7 +41,7 @@ class TestAnsi < Minitest::Test
 
   def test_wrap_wraps_words
     lines = A.wrap("one two three four five", 10)
-    assert lines.all? { |l| l.length <= 10 }
+    assert lines.all? { |l| A.vislen(l) <= 10 }
     assert_equal "one two three four five", lines.join(" ").squeeze(" ")
   end
 
@@ -49,9 +49,17 @@ class TestAnsi < Minitest::Test
     assert_equal ["a", "", "b"], A.wrap("a\n\nb", 10)
   end
 
-  def test_wrap_strips_ansi
+  def test_wrap_preserves_ansi
     lines = A.wrap(Tui::Ansi.bold("styled text"), 20)
-    assert_equal ["styled text"], lines
+    assert_equal ["styled text"], lines.map { |line| A.strip(line) }
+    assert_includes lines.first, "\e[1m"
+    assert lines.first.end_with?("\e[0m")
+  end
+
+  def test_wrap_carries_active_style_across_explicit_newlines
+    lines = A.wrap(A.bold("first\nsecond"), 20)
+    assert_equal %w[first second], lines.map { |line| A.strip(line) }
+    assert lines.all? { |line| line.include?("\e[1m") && line.end_with?("\e[0m") }
   end
 
   def test_wrap_hard_breaks_overlong_words
@@ -73,6 +81,35 @@ class TestAnsi < Minitest::Test
     lines = A.wrap(truncated, 20)
     assert lines.all?(&:valid_encoding?)
     assert_includes lines.first, "task done"
+  end
+
+  def test_wrap_uses_terminal_cells_for_wide_and_combining_graphemes
+    samples = [
+      "界界界界界",
+      "👩‍💻👩‍💻 task",
+      "e\u0301e\u0301e\u0301e\u0301",
+      A.cyan("界界 styled text"),
+    ]
+
+    samples.each do |sample|
+      (2..7).each do |width|
+        lines = A.wrap(sample, width)
+        assert lines.all? { |line| A.vislen(line) <= width },
+               "#{sample.inspect} exceeded #{width}: #{lines.inspect}"
+        assert lines.all?(&:valid_encoding?)
+      end
+    end
+  end
+
+  def test_wrap_never_splits_grapheme_clusters
+    text = "界👩‍💻e\u0301界"
+    lines = A.wrap(text, 3)
+    assert_equal text, lines.map { |line| A.strip(line) }.join
+    assert_equal [2, 3, 2], lines.map { |line| A.vislen(line) }
+  end
+
+  def test_wrap_replaces_a_cluster_that_cannot_fit_the_budget
+    assert_equal [" "], A.wrap("界", 1)
   end
 
   def test_vislen_counts_emoji_as_two_cells
@@ -110,6 +147,30 @@ class TestAnsi < Minitest::Test
     line = A.wrap("é" * 50, 40).first
     out = A.vtrunc(line, 10)
     assert_equal 10, A.vislen(out)
+  end
+
+  def test_vtrunc_zero_width_is_empty
+    assert_equal "", A.vtrunc("界", 0)
+  end
+
+  def test_cell_slice_uses_cell_offsets_and_pads_partial_wide_clusters
+    assert_equal "a ", A.cell_slice("a界b", 0, 2)
+    assert_equal "界", A.cell_slice("a界b", 1, 2)
+    assert_equal " b", A.cell_slice("a界b", 2, 2)
+  end
+
+  def test_cell_slice_preserves_styles_and_closes_them
+    sliced = A.cell_slice(A.red("a界b"), 2, 2)
+    assert_equal " b", A.strip(sliced)
+    assert_includes sliced, "\e[31m"
+    assert sliced.end_with?("\e[0m")
+  end
+
+  def test_cell_slice_normalizes_invalid_binary_utf8
+    sliced = A.cell_slice("ok \xE2\x9C".b, 0, 10)
+    assert sliced.valid_encoding?
+    assert_equal Encoding::UTF_8, sliced.encoding
+    assert_includes sliced, "ok "
   end
 
   def test_composite_empty_sgr_is_noop

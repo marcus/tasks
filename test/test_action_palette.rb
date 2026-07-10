@@ -54,11 +54,51 @@ class TestActionPalette < Minitest::Test
     p = palette
     p.paste("complete")
     p.fail!("action failed")
-    popup = p.popup(row: 2, cols: 40, inline_input: ->(input) { input.to_s })
+    popup = p.popup(row: 2, col: 3, max_width: 34, max_height: 12,
+                    inline_input: ->(input) { input.to_s })
     text = popup[:lines].map { |line| A.strip(line) }.join("\n")
     assert_equal :modal, p.return_mode
     assert_includes text, "complete"
     assert_includes text, "action failed"
     assert popup[:lines].all? { |line| A.vislen(line) <= 34 }
+  end
+
+  def test_popup_adapts_to_every_narrow_body_rectangle
+    p = palette
+    (1..12).each do |width|
+      (1..6).each do |height|
+        popup = p.popup(row: 0, col: 0, max_width: width, max_height: height,
+                        inline_input: ->(_input) { " " })
+        assert_operator popup[:lines].size, :<=, height
+        assert popup[:lines].all? { |line| A.vislen(line) <= width },
+               "#{width}x#{height}: #{popup[:lines].inspect}"
+        if width >= 6 && height >= 3
+          assert A.strip(popup[:lines].first).start_with?("┌")
+          assert A.strip(popup[:lines].last).end_with?("┘")
+        end
+      end
+    end
+  end
+
+  def test_every_positive_height_keeps_selected_action_visible
+    p = palette
+    3.times { p.handle_key("\e[B") }
+    selected = p.current.description
+    (1..10).each do |height|
+      popup = p.popup(row: 0, col: 0, max_width: 34, max_height: height,
+                      inline_input: ->(input) { input.to_s })
+      text = popup[:lines].map { |line| A.strip(line) }.join("\n")
+      assert_includes text, selected[0, 18], "selected action missing at height #{height}"
+      assert_operator popup[:lines].size, :<=, height
+    end
+  end
+
+  def test_one_row_four_cell_palette_identifies_selected_key
+    p = palette
+    popup = p.popup(row: 0, col: 0, max_width: 4, max_height: 1,
+                    inline_input: ->(_input) { " " })
+    assert_equal 1, popup[:lines].size
+    assert_equal 4, A.vislen(popup[:lines].first)
+    assert_includes A.strip(popup[:lines].first), p.current.display_key
   end
 end

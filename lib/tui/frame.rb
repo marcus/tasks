@@ -20,6 +20,10 @@ module Tui
     # modal:    { title:, lines: [...] } drawn as a centered box over the body
     def build(width:, height:, header:, rows:, selected: nil, footer: [], popup: nil, modal: nil)
       w = width - 2
+      # Preserve the most actionable tail (flash/filter/prompt) when a short
+      # terminal cannot fit the full response footer. Six rows are the minimum
+      # frame: borders, header/rules, and one body row.
+      footer = footer.last([height - 6, 0].max)
       # top border + header + rule + body + rule + footer + bottom border
       body_h = [height - 5 - footer.size, 1].max
 
@@ -83,16 +87,27 @@ module Tui
       composited + "\e[0m"
     end
 
-    # Paste popup lines over the body starting at popup[:row]/[:col],
-    # preserving the (plain-text) base content on either side. Styling
-    # under the popup is dropped — fine for a transient overlay.
+    # Paste popup lines over the body starting at terminal-cell coordinates,
+    # preserving styled base content on either side. Cell slices replace any
+    # partially covered wide grapheme with padding, so content after the popup
+    # remains in its original column.
     def overlay!(body, popup, w)
       popup[:lines].each_with_index do |pl, k|
         r = popup[:row] + k
         next if r.negative? || r >= body.size
-        base = A.strip(body[r]).ljust(w)
-        rest = base[popup[:col] + A.vislen(pl)..] || ""
-        body[r] = A.vtrunc(base[0, popup[:col]] + pl + rest, w)
+
+        col = popup[:col].to_i
+        source_start = [-col, 0].max
+        dest_start = [col, 0].max
+        next if dest_start >= w
+
+        base = A.vpad(A.vtrunc(body[r], w), w)
+        replacement = A.cell_slice(pl, source_start, w - dest_start)
+        replacement_width = A.vislen(replacement)
+        prefix = A.vpad(A.cell_slice(base, 0, dest_start), dest_start)
+        suffix_start = dest_start + replacement_width
+        suffix = A.cell_slice(base, suffix_start, w - suffix_start)
+        body[r] = A.vpad(A.vtrunc(prefix + replacement + suffix, w), w)
       end
     end
 
@@ -102,10 +117,17 @@ module Tui
     # fits the visible lines. The title strip is painted with the
     # :modal_title theme slot, so themes can give it a background.
     def overlay_modal!(body, modal, w)
+      if body.size < 3 || w < 4
+        compact = [T.paint(:modal_title, modal[:title]), *modal[:lines]].first(body.size)
+        overlay!(body, { lines: compact, row: 0, col: 0 }, w)
+        return
+      end
+
       bw = modal[:width] ||
            [(modal[:lines].map { |l| A.vislen(l) }.max || 0), A.vislen(modal[:title]) + 6, 30].max + 4
-      bw = [bw, w - 2].min
+      bw = [[bw, w].min, 4].max
       inner = modal[:lines].map { |l| A.vtrunc(l, bw - 4) }
+      inner = inner.first(body.size - 2)
       title = A.vtrunc(" #{modal[:title]} ", bw - 4)
       box = ["┌─#{T.paint(:modal_title, title)}#{"─" * [bw - 4 - A.vislen(title), 0].max}─┐"]
       inner.each { |l| box << "│ #{A.vpad(l, bw - 4)} │" }

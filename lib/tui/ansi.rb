@@ -7,6 +7,8 @@ module Tui
   module Ansi
     module_function
 
+    SGR = /\e\[[0-9;]*m/
+
     def color(str, *codes) = "\e[#{codes.join(";")}m#{str}\e[0m"
 
     # Composite `sgr` (an opening SGR sequence, e.g. "\e[1m") over `str`, whose
@@ -29,7 +31,13 @@ module Tui
     def cyan(s)   = color(s, 36)
     def invert(s) = color(s, 7)
 
-    def strip(s) = s.gsub(/\e\[[0-9;]*m/, "")
+    def normalize(s)
+      return s if s.encoding == Encoding::UTF_8 && s.valid_encoding?
+
+      s.dup.force_encoding(Encoding::UTF_8).scrub("�")
+    end
+
+    def strip(s) = normalize(s).gsub(SGR, "")
 
     # Codepoint ranges that occupy two terminal cells: East Asian Wide/
     # Fullwidth plus default-emoji-presentation symbols and the emoji planes.
@@ -90,57 +98,185 @@ module Tui
     # wide/emoji graphemes as two cells).
     def vislen(s) = strip(s).each_grapheme_cluster.sum { |g| cluster_width(g) }
 
+    # Return the visible cell window [start, start + width) without splitting
+    # grapheme clusters. ANSI SGR styling is retained and closed at the slice
+    # boundary. If a boundary crosses a wide cluster, spaces occupy the partial
+    # cells so content after that cluster stays at its original terminal column.
+    # With width omitted, return everything from start to the end.
+    def cell_slice(s, start, width = nil)
+      text = normalize(s)
+      start = [Integer(start), 0].max
+      width = [Integer(width), 0].max unless width.nil?
+      return +"" if width == 0
+
+      finish = width && start + width
+      prefix = +""
+      out = +""
+      cell = 0
+      started = false
+      used_sgr = false
+
+      text.scan(/(#{SGR})|(\X)/) do |esc, gc|
+        if esc
+          if !started && cell <= start
+            prefix << esc
+          elsif finish.nil? || cell < finish
+            out << esc
+            used_sgr = true
+          end
+          next
+        end
+
+        cw = cluster_width(gc)
+        if cw.zero?
+          if cell >= start && (finish.nil? || cell < finish)
+            unless started
+              out << prefix
+              used_sgr ||= !prefix.empty?
+              started = true
+            end
+            out << gc
+          end
+          next
+        end
+
+        cluster_end = cell + cw
+        if cluster_end <= start
+          cell = cluster_end
+          next
+        end
+        break if finish && cell >= finish
+
+        overlap_start = [cell, start].max
+        overlap_end = finish ? [cluster_end, finish].min : cluster_end
+        if overlap_end > overlap_start
+          unless started
+            out << prefix
+            used_sgr ||= !prefix.empty?
+            started = true
+          end
+          if overlap_start == cell && overlap_end == cluster_end
+            out << gc
+          else
+            out << " " * (overlap_end - overlap_start)
+          end
+        end
+        cell = cluster_end
+      end
+
+      out << "\e[0m" if used_sgr && !out.end_with?("\e[0m")
+      out
+    end
+
     # Pad to visible width w (no-op if already wider).
     def vpad(s, w)
-      pad = w - vislen(s)
-      pad.positive? ? s + " " * pad : s
+      text = normalize(s)
+      pad = w - vislen(text)
+      pad.positive? ? text + " " * pad : text
     end
 
     # Truncate to visible width w, appending a dim ellipsis. Escape codes
     # are preserved; a reset is appended so styles can't leak.
     def vtrunc(s, w)
-      return s if vislen(s) <= w
-      out = +""
-      count = 0
-      limit = w - 1 # reserve one cell for the ellipsis
-      s.scan(/(\e\[[0-9;]*m)|(\X)/) do |esc, gc|
-        if esc
-          out << esc
-        else
-          cw = cluster_width(gc)
-          break if count + cw > limit
-          out << gc
-          count += cw
-        end
-      end
-      out << "\e[0m" << dim("…")
+      w = Integer(w)
+      return +"" unless w.positive?
+
+      text = normalize(s)
+      return text if vislen(text) <= w
+
+      cell_slice(text, 0, w - 1) + dim("…")
     end
 
-    # Word-wrap plain text to width w. Returns an array of lines.
-    # Normalizes encoding defensively — subprocess output can arrive as
-    # BINARY, and a split multibyte char would make it invalid UTF-8.
+    # Word-wrap text to a terminal-cell width, preserving ANSI styling and
+    # grapheme clusters. Subprocess output is normalized defensively because it
+    # can arrive as BINARY or end on an incomplete UTF-8 sequence.
     def wrap(text, w)
-      unless text.encoding == Encoding::UTF_8 && text.valid_encoding?
-        text = text.dup.force_encoding("UTF-8").scrub("�")
-      end
-      strip(text).split("\n", -1).flat_map do |line|
-        line = line.rstrip
-        next [""] if line.empty?
-        out = []
-        cur = +""
-        line.split(/(\s+)/).each do |tok|
-          if cur.length + tok.length > w && !cur.strip.empty?
-            out << cur.rstrip
-            cur = tok.lstrip.dup
-          else
-            cur << tok
-          end
-        end
-        out << cur.rstrip unless cur.strip.empty?
-        out = [""] if out.empty?
-        # hard-break any single token longer than the width
-        out.flat_map { |l| l.length <= w ? [l] : l.chars.each_slice(w).map(&:join) }
+      w = [Integer(w), 1].max
+      styled_lines(normalize(text)).flat_map do |line|
+        wrap_line(line, w)
       end
     end
+
+    def styled_lines(text)
+      state = +""
+      text.split("\n", -1).map.with_index do |line, index|
+        styled = index.zero? ? line : state + line
+        line.scan(SGR) { |sgr| state << sgr }
+        styled
+      end
+    end
+    private_class_method :styled_lines
+
+    def wrap_line(line, w)
+      plain = strip(line)
+      clusters = []
+      cell = 0
+      plain.each_grapheme_cluster do |gc|
+        cw = cluster_width(gc)
+        clusters << [gc, cell, cell + cw]
+        cell += cw
+      end
+
+      words = []
+      current = []
+      clusters.each do |entry|
+        if entry[0].match?(/\A\s+\z/)
+          words << current unless current.empty?
+          current = []
+        else
+          current << entry
+        end
+      end
+      words << current unless current.empty?
+      return [""] if words.empty?
+
+      ranges = []
+      line_start = nil
+      line_end = nil
+      words.each do |word|
+        word_start = word.first[1]
+        word_end = word.last[2]
+        word_width = word_end - word_start
+        if word_width > w
+          ranges << [line_start, line_end] if line_start
+          ranges.concat(hard_wrap_ranges(word, w))
+          line_start = line_end = nil
+        elsif line_start && word_end - line_start > w
+          ranges << [line_start, line_end]
+          line_start = word_start
+          line_end = word_end
+        else
+          line_start ||= word_start
+          line_end = word_end
+        end
+      end
+      ranges << [line_start, line_end] if line_start
+      ranges.map { |from, to| cell_slice(line, from, to - from) }
+    end
+    private_class_method :wrap_line
+
+    def hard_wrap_ranges(word, w)
+      ranges = []
+      from = nil
+      to = nil
+      word.each do |_, cluster_start, cluster_end|
+        cw = cluster_end - cluster_start
+        if cw > w
+          ranges << [from, to] if from
+          ranges << [cluster_start, cluster_start + w]
+          from = to = nil
+        elsif from && cluster_end - from > w
+          ranges << [from, to]
+          from = cluster_start
+          to = cluster_end
+        else
+          from ||= cluster_start
+          to = cluster_end
+        end
+      end
+      ranges << [from, to] if from
+      ranges
+    end
+    private_class_method :hard_wrap_ranges
   end
 end
