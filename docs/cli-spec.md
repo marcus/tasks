@@ -82,6 +82,13 @@ detail-modal slots like `detail_label`, `description`, `link`, `link_system`,
 `tasks config` prints the resolved paths, `urgent_days`, `max_depth`, `theme`
 (+ any `color.*` and link overrides), and where each came from.
 
+**TUI interaction.** `Tab` focuses the agent prompt. `:` opens the searchable,
+context-aware action palette; typing filters the available actions, the arrow
+keys choose one, Return runs it, and Escape cancels. Direct shortcuts and palette
+entries invoke the same registered actions. `x` previews the number of completed
+roots and descendants that would move to `archive.jsonl`; `y` confirms, while
+`n` or Escape cancels without writing.
+
 ### LLM agent settings
 
 `-p` and the TUI hand your request to an **agent** — an autonomous harness

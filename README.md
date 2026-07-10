@@ -104,7 +104,7 @@ from, with the same subtrees collapsed (session state in
 `$XDG_STATE_HOME/tasks/tui.json`).
 
 ```
-1-4 / ←→   switch view: Agenda · Next · Quadrants · Inbox (arrows cycle)
+1-5 / ←→   switch view: Agenda · Next · Quadrants · Inbox · Projects (arrows cycle)
 ↑↓ / jk    select a task (also flips tasks inside a detail modal)
 h / l      collapse / expand the selected subtree (h again climbs to the parent)
 H / L      collapse / expand all subtrees
@@ -121,9 +121,10 @@ u / ctrl-r undo / redo (persistent journal, shared with the CLI's `tasks undo`)
 o          open the selected task's link in the browser
 y / Y      yank task ref / full task as markdown to the clipboard
 p          paste a quoted task ref into the agent prompt
-x          archive sweep (move DONE/CANCELLED to archive.jsonl)
+x          preview archive sweep counts; y confirms, n / esc cancels
 M          cycle the agent/model (provider:model shown in the header)
-tab or :   focus the agent prompt — natural-language CRUD on your tasks
+tab        focus the agent prompt — natural-language CRUD on your tasks
+:          search available actions; type to filter, ↑↓ choose, return runs, esc cancels
 esc        dismiss the response / cancel a running request / close modal
 pgup/pgdn  scroll a long response (footer grows, then collapses on esc)
 q          quit
@@ -133,6 +134,11 @@ The agent runs asynchronously (the local `claude` CLI by default, same as
 `tasks -p`, or any configured harness), so the UI stays responsive while it
 works; its answer appears in an expanding footer pane and the views refresh with
 whatever it changed. `M` switches backend/model between requests.
+
+The action palette shows only actions available in the current list or task
+detail context. It runs the same operations as their direct keyboard shortcuts;
+archive remains a two-step action, with the root and descendant counts shown
+before confirmation.
 
 Colors are themable: `theme = dracula` (or `mono`, `nord`,
 `catppuccin-mocha`, `gruvbox-dark`, `tokyonight-night`, `solarized-dark`, and
