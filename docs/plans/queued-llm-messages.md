@@ -1,6 +1,6 @@
 # Plan: queued LLM requests and result history
 
-Status: implemented; independent adversarial review pending
+Status: implemented; independent adversarial review complete
 
 Date: 2026-07-13
 
@@ -9,6 +9,11 @@ single-run adapters, with a pure Agent activity renderer, live modal refresh,
 process outcome metadata, FIFO App integration, session-bounded history,
 queue-aware cancellation/quit guards, and focused integration tests. The
 headless `tasks -p` path remains unchanged.
+
+Adversarial review found and verified fixes for TERM-resistant child processes,
+mutable provider/model aliases, and the result-count footer contract. The
+remediation also hardens stream failures and keeps silent running elapsed time
+live without rebuilding the activity view more than once per second.
 
 ## Outcome
 
