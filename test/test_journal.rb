@@ -417,6 +417,213 @@ class TestJournal < Minitest::Test
     end
   end
 
+  def test_undo_cursor_commit_failure_restores_org_archive_and_original_cursor
+    with_journal_store do |build, org, archive, jdir|
+      store = build.call
+      assert_equal 1, store.archive_swept!
+      before = { org: File.binread(org), archive: File.binread(archive) }
+      cursor = journal_cursor(jdir)
+
+      result = with_atomic_write_denied(File.join(jdir, "index.json")) { store.undo! }
+      assert_equal [:conflict, "archive sweep"], result
+      assert_equal before[:org], File.binread(org)
+      assert File.exist?(archive)
+      assert_equal before[:archive], File.binread(archive)
+      assert_equal cursor, journal_cursor(jdir)
+
+      assert_equal [:ok, "archive sweep"], store.undo!
+      refute File.exist?(archive), "the retained cursor still points to the undoable sweep"
+    end
+  end
+
+  def test_redo_cursor_commit_failure_restores_archive_absence_and_original_cursor
+    with_journal_store do |build, org, archive, jdir|
+      store = build.call
+      assert_equal 1, store.archive_swept!
+      swept = { org: File.binread(org), archive: File.binread(archive) }
+      assert_equal [:ok, "archive sweep"], store.undo!
+      before = File.binread(org)
+      refute File.exist?(archive)
+      cursor = journal_cursor(jdir)
+
+      result = with_atomic_write_denied(File.join(jdir, "index.json")) { store.redo! }
+      assert_equal [:conflict, "archive sweep"], result
+      assert_equal before, File.binread(org)
+      refute File.exist?(archive)
+      assert_equal cursor, journal_cursor(jdir)
+
+      assert_equal [:ok, "archive sweep"], store.redo!
+      assert_equal swept[:org], File.binread(org)
+      assert_equal swept[:archive], File.binread(archive)
+    end
+  end
+
+  def test_org_restore_failure_keeps_files_and_cursor_at_original_state
+    with_journal_store do |build, org, _archive, jdir|
+      store = build.call
+      item = store.items.find { |i| i.title.include?("Book flight") }
+      assert store.set_priority!(item, "C")
+      before = File.binread(org)
+      cursor = journal_cursor(jdir)
+
+      result = with_atomic_write_denied(org) { store.undo! }
+      assert_equal :conflict, result.first
+      assert_equal before, File.binread(org)
+      assert_equal cursor, journal_cursor(jdir)
+      assert_equal :ok, store.undo!.first
+    end
+  end
+
+  def test_archive_write_failure_during_redo_keeps_archive_absent
+    with_journal_store do |build, org, archive, jdir|
+      store = build.call
+      assert_equal 1, store.archive_swept!
+      assert_equal :ok, store.undo!.first
+      before = File.binread(org)
+      cursor = journal_cursor(jdir)
+
+      result = with_atomic_write_denied(archive) { store.redo! }
+      assert_equal [:conflict, "archive sweep"], result
+      assert_equal before, File.binread(org)
+      refute File.exist?(archive)
+      assert_equal cursor, journal_cursor(jdir)
+    end
+  end
+
+  def test_archive_delete_failure_during_undo_rolls_org_back_and_keeps_cursor
+    with_journal_store do |build, org, archive, jdir|
+      store = build.call
+      assert_equal 1, store.archive_swept!
+      before = { org: File.binread(org), archive: File.binread(archive) }
+      cursor = journal_cursor(jdir)
+      original = File.method(:delete)
+      deleter = lambda do |path, *args|
+        raise Errno::EACCES, path if path == archive
+        original.call(path, *args)
+      end
+
+      result = File.stub(:delete, deleter) { store.undo! }
+      assert_equal [:conflict, "archive sweep"], result
+      assert_equal before[:org], File.binread(org)
+      assert_equal before[:archive], File.binread(archive)
+      assert_equal cursor, journal_cursor(jdir)
+    end
+  end
+
+  def test_transient_rollback_write_failure_retries_without_split_state
+    with_journal_store do |build, org, _archive, jdir|
+      store = build.call
+      item = store.items.find { |i| i.title.include?("Book flight") }
+      assert store.set_priority!(item, "C")
+      before = File.binread(org)
+      cursor = journal_cursor(jdir)
+      index = File.join(jdir, "index.json")
+      original = Tasks::Atomic.method(:write)
+      org_writes = 0
+      writer = lambda do |path, content|
+        if path == org
+          org_writes += 1
+          raise Errno::EACCES, path if org_writes == 2
+        end
+        raise Errno::EACCES, path if path == index
+        original.call(path, content)
+      end
+
+      result = Tasks::Atomic.stub(:write, writer) { store.undo! }
+      assert_equal :conflict, result.first
+      assert_equal 3, org_writes, "rollback retries once after its first write failure"
+      assert_equal before, File.binread(org)
+      assert_equal cursor, journal_cursor(jdir)
+    end
+  end
+
+  def test_cursor_rollback_retries_when_commit_failed_after_installing_index
+    with_journal_store do |build, org, _archive, jdir|
+      store = build.call
+      item = store.items.find { |i| i.title.include?("Book flight") }
+      assert store.set_priority!(item, "C")
+      before = File.binread(org)
+      cursor = journal_cursor(jdir)
+      index = File.join(jdir, "index.json")
+      original = Tasks::Atomic.method(:write)
+      index_writes = 0
+      writer = lambda do |path, content|
+        if path == index
+          index_writes += 1
+          if index_writes == 1
+            original.call(path, content)
+            raise Errno::EACCES, path
+          end
+          raise Errno::EACCES, path if index_writes == 2
+        end
+        original.call(path, content)
+      end
+
+      result = Tasks::Atomic.stub(:write, writer) { store.undo! }
+      assert_equal :conflict, result.first
+      assert_equal 3, index_writes, "cursor rollback retries after its first write failure"
+      assert_equal before, File.binread(org)
+      assert_equal cursor, journal_cursor(jdir)
+    end
+  end
+
+  def test_persistent_rollback_failure_keeps_archive_copy_and_original_cursor
+    with_journal_store do |build, org, archive, jdir|
+      store = build.call
+      assert_equal 1, store.archive_swept!
+      cursor = journal_cursor(jdir)
+      original_write = Tasks::Atomic.method(:write)
+      org_writes = 0
+      writer = lambda do |path, content|
+        if path == org
+          org_writes += 1
+          raise Errno::EACCES, path if org_writes > 1
+        end
+        original_write.call(path, content)
+      end
+      original_delete = File.method(:delete)
+      deleter = lambda do |path, *args|
+        raise Errno::EACCES, path if path == archive
+        original_delete.call(path, *args)
+      end
+
+      result = Tasks::Atomic.stub(:write, writer) do
+        File.stub(:delete, deleter) { store.undo! }
+      end
+      assert_equal [:conflict, "archive sweep"], result
+      assert_equal 3, org_writes
+      assert record_for(org, title: "Old finished thing"),
+             "the forward install preserves a live copy when archive deletion fails"
+      assert record_for(archive, title: "Old finished thing"),
+             "the archive copy remains when rollback cannot restore the old live bytes"
+      assert_equal cursor, journal_cursor(jdir)
+      assert Tasks::Check.check(org).ok?
+      assert Tasks::Check.check(archive).ok?
+    end
+  end
+
+  def test_fatal_cursor_commit_error_rolls_files_back_then_propagates
+    with_journal_store do |build, org, _archive, jdir|
+      store = build.call
+      item = store.items.find { |i| i.title.include?("Book flight") }
+      assert store.set_priority!(item, "C")
+      before = File.binread(org)
+      cursor = journal_cursor(jdir)
+      index = File.join(jdir, "index.json")
+      original = Tasks::Atomic.method(:write)
+      writer = lambda do |path, content|
+        raise NoMemoryError, "injected fatal" if path == index
+        original.call(path, content)
+      end
+
+      assert_raises(NoMemoryError) do
+        Tasks::Atomic.stub(:write, writer) { store.undo! }
+      end
+      assert_equal before, File.binread(org)
+      assert_equal cursor, journal_cursor(jdir)
+    end
+  end
+
   def test_noop_mutation_records_no_history
     with_journal_store do |build, _org, _a|
       s = build.call
@@ -438,6 +645,19 @@ class TestJournal < Minitest::Test
   def current_org_blob(jdir)
     data = JSON.parse(File.read(File.join(jdir, "index.json")))
     File.join(jdir, "blobs", data.fetch("states").fetch(data.fetch("cursor")).fetch("org_sha"))
+  end
+
+  def journal_cursor(jdir)
+    JSON.parse(File.read(File.join(jdir, "index.json"))).fetch("cursor")
+  end
+
+  def with_atomic_write_denied(path)
+    original = Tasks::Atomic.method(:write)
+    writer = lambda do |candidate, content|
+      raise Errno::EACCES, candidate if candidate == path
+      original.call(candidate, content)
+    end
+    Tasks::Atomic.stub(:write, writer) { yield }
   end
 
   # -- CLI undo/redo end-to-end ------------------------------------------------

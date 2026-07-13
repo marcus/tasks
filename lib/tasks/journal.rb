@@ -160,6 +160,14 @@ module Tasks
           # coalescing with an editor session that preceded the history move.
           states = idx[:states].map { |state| state.except(:coalesce_key, :coalesce_scope) }
           persist(to, states, gc: false)
+        },
+        rollback: lambda {
+          # Atomic.write failures ordinarily leave the old index untouched. If
+          # a wrapper/filesystem reports failure after installing the new index,
+          # restore the captured cursor and state metadata exactly once.
+          current = load
+          persist(from, idx[:states], gc: false) unless current == idx
+          true
         } }
     rescue SystemCallError, IOError, CorruptBlob
       nil

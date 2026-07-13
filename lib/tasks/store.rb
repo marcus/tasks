@@ -1005,7 +1005,10 @@ module Tasks
     def restore(snap)
       current = snapshot
       paths = restore_archive_first?(current, snap) ? %i[archive org] : %i[org archive]
-      paths.each { |kind| restore_file(kind == :org ? @org : @archive, snap[kind]) }
+      paths.each do |kind|
+        next if current[kind] == snap[kind]
+        restore_file(kind == :org ? @org : @archive, snap[kind])
+      end
       reload!
     end
 
@@ -1041,20 +1044,60 @@ module Tasks
         return [:empty] unless step
         return [:conflict, step[:label]] unless snapshot == step[:expect]
         before = snapshot
-        restore(step[:target])
-        # A journaled snapshot could pre-date a repair: restoring it would write
-        # a state that fails today's invariants. Gate the restored live file the
-        # same way with_history gates a forward mutation; on failure put the
-        # pre-undo state back and refuse (reusing the :conflict shape callers
-        # already handle). A nil target org is the empty first-run state — no
-        # file to validate — so skip the gate there.
-        if step[:target][:org] && !Check.check(@org).ok?
-          restore(before)
-          return [:conflict, step[:label]]
+        commit_started = false
+        begin
+          restore(step[:target])
+          # A journaled snapshot could pre-date a repair: restoring it would write
+          # a state that fails today's invariants. Gate the restored live file the
+          # same way with_history gates a forward mutation. A nil target org is the
+          # empty first-run state — no file to validate — so skip the gate there.
+          if step[:target][:org] && !Check.check(@org).ok?
+            rollback_history_files(before)
+            return [:conflict, step[:label]]
+          end
+          commit_started = true
+          step[:commit].call
+          [:ok, step[:label]]
+        rescue SystemCallError, IOError
+          cursor_restored = !commit_started || rollback_history_cursor(step)
+          rollback_history_files(before) if cursor_restored
+          [:conflict, step[:label]]
+        rescue Exception # fatal exceptions propagate after best-effort rollback
+          cursor_restored = !commit_started || rollback_history_cursor(step)
+          rollback_history_files(before) if cursor_restored
+          raise
         end
-        step[:commit].call
-        [:ok, step[:label]]
       end
+    end
+
+    # Cursor commit is last, so a failed file restore never needs this path.
+    # Ordinary rollback trouble is contained; fatal exceptions still propagate.
+    def rollback_history_cursor(step)
+      2.times do
+        begin
+          step[:rollback].call
+          return true
+        rescue SystemCallError, IOError
+          # retry once below
+        end
+      end
+      false
+    end
+
+    # Atomic replacement means a failed attempt leaves either the complete old
+    # or complete new file. Retry once for transient rollback failures; exact
+    # snapshot comparison (including nil absence) avoids rewriting paths that
+    # never changed and keeps persistent failures loss-safe rather than torn.
+    def rollback_history_files(before)
+      2.times do
+        begin
+          restore(before)
+          return true if snapshot == before
+        rescue SystemCallError, IOError
+          # retry once below
+        end
+      end
+      false
     end
 
     # Record history only when the mutation actually wrote (truthy, nonzero) AND
