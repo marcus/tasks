@@ -52,7 +52,9 @@ class TestForm < Minitest::Test
     assert_equal :modal, f.return_mode
     assert_equal 4, popup[:row]
     assert_equal 8, popup[:col]
+    assert_equal 0, popup[:focused_content_row]
     assert_includes text, "example"
+    assert_includes text, "›! value"
     assert_includes text, "value: 界"
     assert_includes text, "bad value"
   end

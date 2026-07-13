@@ -384,7 +384,21 @@ class TestApp < Minitest::Test
       app.send(:open_recur_popup)
       assert_equal :form, ui(app).mode
       assert_equal :recurrence, ui(app).form.kind
+      assert_instance_of TermForm::Fields::Input, ui(app).form.field
       assert_equal "+1m", ui(app).form.input
+    end
+  end
+
+  def test_open_date_popup_uses_term_form_date_input_without_changing_quick_submit
+    app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE) do |app|
+      app.send(:open_date_popup)
+      assert_instance_of TermForm::Fields::DateInput, ui(app).form.field
+
+      ui(app).form.input.replace("2026-08-14")
+      app.send(:handle_key, "\r")
+
+      assert_equal :list, ui(app).mode
+      assert_equal Date.new(2026, 8, 14), app.send(:current_item).deadline
     end
   end
 

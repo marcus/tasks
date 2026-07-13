@@ -2,7 +2,8 @@
 
 require_relative "ansi"
 require_relative "theme"
-require_relative "text_input"
+require_relative "form_renderer"
+require_relative "../term_form"
 
 module Tui
   # Reusable lifecycle for the TUI's small, single-field popup forms. The
@@ -12,10 +13,10 @@ module Tui
     A = Ansi
     T = Theme
 
-    attr_reader :kind, :input, :error, :return_mode, :target_id
+    attr_reader :kind, :input, :error, :return_mode, :target_id, :field, :engine
 
     def initialize(kind:, title:, prompt:, hint:, min_width:, return_mode:,
-                   initial: +"", suffix: nil, target_id: nil, &submit)
+                   initial: +"", suffix: nil, target_id: nil, field: nil, renderer: FormRenderer.new, &submit)
       @kind = kind
       @title = title
       @prompt = prompt
@@ -25,7 +26,13 @@ module Tui
       @target_id = target_id
       @suffix = suffix
       @submit = submit || raise(ArgumentError, "form submit callback required")
-      @input = TextInput.new(initial)
+      @field = field || TermForm::Fields::Input.new(key: :value, value: initial, label: prompt)
+      @engine = TermForm::Form.new(
+        groups: [TermForm::Group.new(key: :quick, label: "", fields: [@field])],
+        focus: @field.key,
+      )
+      @input = InputProxy.new(@engine, @field)
+      @renderer = renderer
       @error = nil
     end
 
@@ -34,14 +41,14 @@ module Tui
       when "\e"       then :cancelled
       when "\r", "\n" then submit
       else
-        changed = @input.handle_key(key) == :changed
+        changed = @engine.handle(key).changed?
         @error = nil if changed
         changed ? :changed : :handled
       end
     end
 
     def paste(text)
-      changed = @input.insert(text) == :changed
+      changed = @engine.handle(TermForm::Event.paste(text)).changed?
       @error = nil if changed
       changed ? :changed : :handled
     end
@@ -60,45 +67,42 @@ module Tui
     end
 
     def popup(row:, col:, inline_input:, max_width: nil, max_height: nil)
-      suffix = @suffix.to_s
-      suffix = "  #{T.paint(:muted, suffix)}" unless suffix.empty?
-      hint = @error || @hint
-      inner = [
-        " #{@prompt}: #{inline_input.call(@input)}#{suffix}",
-        " #{@error ? T.paint(:error, hint) : T.paint(:muted, hint)}",
-      ]
-      natural_width = [inner.map { |line| A.vislen(line) }.max + 2, @min_width].max
+      # inline_input remains accepted for compatibility with existing popup
+      # hosts; cursor rendering now comes from TermForm's semantic cursor.
+      inline_input
+      natural_width = [A.vislen("#{@prompt} #{@input} #{@suffix}") + 10, @min_width].max
       width = [natural_width, max_width || natural_width].min
       height = [4, max_height || 4].min
       width = [width, 1].max
       height = [height, 1].max
+      rendered = @renderer.render(
+        model: @engine.render_model, width: width, height: height,
+        title: @title, hint: @hint, error: @error, suffix: @suffix,
+      )
+      { lines: rendered.lines, focused_content_row: rendered.focused_content_row, row: row, col: col }
+    end
 
-      if width < 6 || height < 3
-        label = @prompt.to_s.strip.empty? ? @title.to_s : @prompt.to_s
-        compact = if @error
-                    "#{label}: #{@error}"
-                  elsif @input.to_s.empty?
-                    rendered = inline_input.call(@input)
-                    if A.vislen(label) + 1 + A.vislen(rendered) <= width
-                      "#{label} #{rendered}"
-                    else
-                      A.cell_slice(label, 0, width)
-                    end
-                  else
-                    inline_input.call(@input)
-                  end
-        lines = [A.vpad(A.vtrunc(compact, width), width)]
-        return { lines: lines.first(height), row: row, col: col }
+    # Keeps the old single-input API available while TermForm owns the actual
+    # editor and baseline. Direct test/host replacement therefore participates
+    # in dirty-state rendering instead of mutating a second buffer.
+    class InputProxy
+      def initialize(engine, field)
+        @engine = engine
+        @field = field
       end
 
-      inner_width = width - 2
-      title = A.vtrunc(" #{@title} ", inner_width)
-      lines = ["┌#{title}#{"─" * (inner_width - A.vislen(title))}┐"]
-      inner.first(height - 2).each do |line|
-        lines << "│#{A.vpad(A.vtrunc(line, inner_width), inner_width)}│"
+      def text = @field.text
+      def to_s = text
+      def to_str = text
+      def cursor = @field.cursor
+      def empty? = text.empty?
+      def strip = text.strip
+      def ==(other) = text == other.to_s
+
+      def replace(value)
+        @engine.set_value(@field.key, value)
+        self
       end
-      lines << "└#{"─" * (width - 2)}┘"
-      { lines: lines, row: row, col: col }
     end
   end
 end

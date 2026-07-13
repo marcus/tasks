@@ -1040,10 +1040,14 @@ module Tui
       return flash("nothing selected") unless item
 
       target = item.deadline ? "deadline" : item.scheduled ? "scheduled" : "deadline (new)"
+      field = TermForm::Fields::DateInput.new(
+        key: :value, value: +"", label: "new #{target}",
+        parser: ->(raw, _today) { Dates.parse_when(raw) },
+      )
       @ui.form = Form.new(
         kind: :date, title: "reschedule", prompt: "new #{target}",
         hint: "fri · +3 · 07-15 · esc cancels", min_width: 36,
-        return_mode: :list, target_id: item.id
+        return_mode: :list, target_id: item.id, field: field
       ) do |raw|
         date = Dates.parse_when(raw)
         next "can't parse “#{raw}”" unless date
@@ -1072,11 +1076,14 @@ module Tui
       return flash("schedule it first — recurrence needs a date") unless item.scheduled || item.deadline
 
       current = item.recur ? "now #{item.recur}" : "not repeating"
+      field = TermForm::Fields::Input.new(
+        key: :value, value: item.recur || +"", label: "every",
+      )
       @ui.form = Form.new(
         kind: :recurrence, title: "recur", prompt: "every",
         hint: "weekly · 2w · .+1m · off · esc cancels", min_width: 40,
         return_mode: :list,
-        initial: item.recur || +"", suffix: "(#{current})", target_id: item.id
+        initial: item.recur || +"", suffix: "(#{current})", target_id: item.id, field: field
       ) do |raw|
         cookie = Tasks::Recur.parse_interval(raw)
         next "can't parse “#{raw}”" if cookie.nil?

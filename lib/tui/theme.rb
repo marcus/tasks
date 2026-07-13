@@ -58,6 +58,17 @@ module Tui
       link_system:   "cyan",
       error:         "red",
       warning:       "yellow",
+      form_group:    "bold",           # form section heading
+      form_label:    "bold",           # field label
+      form_value:    "none",           # editable value
+      form_focus:    "bold cyan",      # focused-row cue (also has a glyph)
+      form_cursor:   "reverse",        # cursor cell inside a focused value
+      form_error:    "bold red",       # invalid field/message (also has !)
+      form_unsaved:  "bold yellow",    # dirty field (also has *)
+      form_hint:     "gray",           # help and suffix text
+      form_disabled: "dim",            # unavailable field
+      form_choice_cursor: "bold cyan", # highlighted option (also has >)
+      form_choice_selected: "bold",     # selected option (also has [x])
       due_overdue:   "red",            # due ladder: today/overdue …
       due_soon:      "yellow",         # … within 2 days …
       due_week:      "cyan",           # … within a week …
@@ -89,6 +100,10 @@ module Tui
         outline_thread: "dim",
         note: "dim", description: "dim", detail_label: "bold", link_system: "none",
         link: "underline", error: "bold", warning: "bold",
+        form_group: "bold", form_label: "bold", form_value: "none",
+        form_focus: "bold", form_cursor: "reverse", form_error: "bold",
+        form_unsaved: "bold", form_hint: "dim", form_disabled: "dim",
+        form_choice_cursor: "bold", form_choice_selected: "bold",
         due_overdue: "bold", due_soon: "none", due_week: "none",
         due_overdue_selected: "bold", due_soon_selected: "bold",
         due_week_selected: "bold", due_far_selected: "dim",
