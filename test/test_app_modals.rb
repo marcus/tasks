@@ -162,6 +162,41 @@ class TestAppModals < Minitest::Test
     end
   end
 
+  def test_modal_filter_input_renders_inside_modal_not_the_footer
+    with_app do |app|
+      app.send(:handle_key, "?")
+      app.send(:handle_key, "/")
+      "yank".chars.each { |c| app.send(:handle_key, c) }
+
+      filter_line = app.send(:modal_filter_line)
+      refute_nil filter_line, "a filterable modal exposes a filter line"
+      assert_includes A.strip(filter_line), "/ yank"
+
+      view = app.send(:modal_view, app.send(:modal_body_h))
+      assert_includes A.strip(view[:lines].first), "/ yank",
+                      "the filter input renders on the modal's top line"
+
+      footer = app.send(:footer, 80).map { |f| f.is_a?(String) ? A.strip(f) : f }
+      refute(footer.any? { |f| f.is_a?(String) && f.include?("/ yank") },
+             "the filter input must not leak into the main prompt/footer area")
+    end
+  end
+
+  def test_modal_keeps_height_as_filter_shrinks_matches
+    with_app do |app|
+      IO.stub(:console, nil) do # pin the 24x80 default so the help modal overflows
+        app.send(:handle_key, "?")
+        body_h = app.send(:modal_body_h)
+        full = app.send(:modal_view, body_h)[:lines].size
+        app.send(:handle_key, "/")
+        "yank".chars.each { |c| app.send(:handle_key, c) }
+        assert_operator modal(app).lines.size, :<, full, "the filter really narrows the list"
+        filtered = app.send(:modal_view, body_h)[:lines].size
+        assert_equal full, filtered, "the modal box keeps its height while matches shrink"
+      end
+    end
+  end
+
   def test_slash_filters_task_list_while_detail_panel_remains_open
     with_app do |app|
       app.send(:handle_key, "\r")

@@ -181,7 +181,10 @@ module Tui
 
     def paint
       height, width = terminal_size
-      frame_rows = rows
+      # A blocking modal freezes the task list beneath it, so reuse the last
+      # computed rows instead of rebuilding the whole view tree on every
+      # keystroke — that rebuild was the bulk of modal-filter redraw latency.
+      frame_rows = @ui.modal ? (@rows || rows) : rows
       visual_selection = @ui.mode == :prompt ? nil : @sel
       layout = screen_layout(width: width, height: height, selected: visual_selection,
                              panel: @ui.panel)
@@ -202,7 +205,7 @@ module Tui
         footer: layout.footer,
         popup: current_popup(layout: layout),
         panel: @ui.panel&.view(height: layout.body_height, width: layout.panel_content_width),
-        modal: layout.place_modal(@ui.modal&.view(layout.body_height)),
+        modal: layout.place_modal(modal_view(layout.body_height)),
         layout: layout
       )
       print "\e[H" + lines.join("\e[K\r\n") + "\e[K"
@@ -273,17 +276,18 @@ module Tui
         f << :rule
       end
       f << " #{@flash}" if @flash
-      if mode == :modal_filter
-        f << " #{T.paint(:prompt, "/ ")}#{inline_input(@ui.modal_filter_input)}#{T.paint(:muted, "  filters the modal · enter keeps · esc clears")}"
-      elsif mode == :filter
+      if mode == :filter
         f << " #{T.paint(:prompt, "/ ")}#{inline_input(@ui.filter_input)}#{T.paint(:muted, "  enter keeps · esc clears")}"
       elsif @ui.filter
         n = (@rows || []).count(&:item)
         f << T.paint(:muted, " / #{@ui.filter} · #{n} match#{n == 1 ? "" : "es"} · esc clears · / edits")
       end
-      # Active text entry owns the scarce footer row on short terminals. Forms
-      # and palettes render their input in the popup; filters render it here.
-      f.concat(prompt_lines(w)) unless %i[modal_filter filter form palette task_edit].include?(mode)
+      # Active text entry owns the scarce footer row on short terminals. Forms,
+      # palettes, and the modal filter render their input in their own overlay;
+      # the task-list filter renders it here. Keeping :modal_filter's footer
+      # identical to :modal's also pins the body height across the two modes, so
+      # opening the filter can't jog the modal box.
+      f.concat(prompt_lines(w)) unless %i[filter form palette task_edit].include?(mode)
       f
     end
 
@@ -1216,6 +1220,27 @@ module Tui
     end
 
     # -- modal -----------------------------------------------------------------
+
+    # Frame draws the modal box; App supplies the filter line so the `/` filter
+    # renders inside the modal chrome rather than in the main prompt area.
+    def modal_view(body_h)
+      return unless @ui.modal
+
+      @ui.modal.view(body_h, filter_line: modal_filter_line)
+    end
+
+    # The filter line shown inside a filterable modal: the live input with a
+    # cursor while typing, the retained query once committed, nil otherwise.
+    def modal_filter_line
+      return unless @ui.modal&.filterable?
+
+      if @ui.mode == :modal_filter
+        "#{T.paint(:prompt, "/ ")}#{inline_input(@ui.modal_filter_input)}" \
+          "#{T.paint(:muted, "  enter keeps · esc clears")}"
+      elsif @ui.modal.filter
+        "#{T.paint(:prompt, "/ ")}#{@ui.modal.filter}#{T.paint(:muted, "  / edits · esc clears")}"
+      end
+    end
 
     def modal_up   = modal_move(-1)
     def modal_down = modal_move(1)

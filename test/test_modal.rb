@@ -86,22 +86,66 @@ class TestModal < Minitest::Test
     assert_includes A.strip(m.lines.first), "Styled TWO"
   end
 
-  def test_filter_resets_scroll_and_shows_query_in_status
+  def test_filter_resets_scroll_and_pins_query_line_with_count
     m = modal
     m.scroll_page(1, BODY_H)
     m.filter = "line 1"
     assert_equal 0, m.scroll
-    status = texts(m.view(BODY_H)).last
-    assert_includes status, "/ line 1"
-    assert_includes status, "/11" # line 1, 10–19
+    lines = texts(m.view(BODY_H))
+    assert_includes lines.first, "/ line 1" # filter line pinned to the top of the box
+    assert_includes lines.last, "/11"       # line 1, 10–19 → 11 matches in the count status
   end
 
   def test_no_match_filter_shows_placeholder_not_empty_box
     m = modal
     m.filter = "zzz-nope"
     lines = texts(m.view(BODY_H))
-    assert_match(/no lines match/, lines.first)
+    assert_includes lines.first, "/ zzz-nope"           # filter line still shown
+    assert(lines.any? { |l| l =~ /no lines match/ })    # placeholder inside the box
     assert_includes lines.last, "0/0"
+  end
+
+  def test_filter_line_renders_inside_the_modal
+    m = modal
+    view = m.view(BODY_H, filter_line: "/ yank·cursor")
+    assert_includes texts(view).first, "/ yank·cursor",
+                    "the supplied filter input renders inside the modal box, not the prompt area"
+  end
+
+  def test_height_is_retained_while_filtering
+    m = modal # 30 lines overflow a 12-row body
+    unfiltered = m.view(BODY_H)[:lines].size
+    m.filter = "line 2" # matches far fewer than 30 lines
+    assert_operator m.lines.size, :<, 30
+    filtered = m.view(BODY_H, filter_line: "/ line 2")[:lines].size
+    assert_equal unfiltered, filtered, "the box keeps its unfiltered height while filtering"
+  end
+
+  def test_height_is_retained_even_with_no_matches
+    m = modal
+    unfiltered = m.view(BODY_H)[:lines].size
+    m.filter = "zzz-nope"
+    filtered = m.view(BODY_H, filter_line: "/ zzz-nope")[:lines].size
+    assert_equal unfiltered, filtered, "an empty result must not shrink the box"
+  end
+
+  def test_short_modal_keeps_height_and_shows_matches_while_filtering
+    m = Tui::Modal.new(title: "tiny", lines: ["alpha", "beta"], kind: :help, filterable: true)
+    unfiltered = m.view(BODY_H)[:lines].size
+    m.filter = "beta"
+    view = texts(m.view(BODY_H, filter_line: "/ beta"))
+    assert_equal unfiltered, view.size, "a ≤2-line modal must not grow while filtering"
+    assert(view.any? { |l| l.include?("beta") }, "the match must not be crowded out by the status row")
+  end
+
+  def test_unchanged_query_keeps_scroll_and_memo
+    m = modal
+    m.filter = "line"
+    before = m.lines
+    m.scroll_line(1, BODY_H)
+    m.filter = "line" # same query
+    assert_equal 1, m.scroll, "re-applying the same query must not reset scroll"
+    assert_same before, m.lines, "the same query reuses the memoized match set"
   end
 
   def test_clearing_filter_restores_all_lines
