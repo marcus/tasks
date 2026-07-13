@@ -10,6 +10,16 @@ edit the repository normally and follow its development and test conventions.
 The CLI-only rule below still applies to any task data touched while doing that
 work.
 
+## Your job is the list, not the tasks on it
+
+You manage the task list; you do not do the work the tasks describe. "Add a
+task to reply to Sixt about the claim" means capture that task — it is not a
+request to draft or send the reply, ask for email access, or offer to handle
+it. The same goes for every captured item: the deliverable is an updated list,
+nothing else. Don't end by proposing to perform a task yourself. Only act on a
+task's underlying work when the user explicitly asks you to do that work in
+this prompt, outside of managing the list.
+
 ## The one rule: the CLI is the only writer
 
 **Never hand-edit `tasks.jsonl` (or `archive.jsonl`).** It's a JSONL store where
