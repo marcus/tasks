@@ -1,7 +1,14 @@
 # AGENTS.md — tasks repo
 
-You are acting on a personal GTD task list via natural-language prompts
-passed to `tasks -p`. Today's date is available from the system.
+These instructions apply when you are acting on a personal GTD task list via
+natural-language prompts passed to `tasks -p`. Today's date is available from
+the system.
+
+They do not prohibit development work on the tasks application itself. When a
+request explicitly asks you to change the CLI, TUI, tests, or documentation,
+edit the repository normally and follow its development and test conventions.
+The CLI-only rule below still applies to any task data touched while doing that
+work.
 
 ## The one rule: the CLI is the only writer
 
@@ -42,9 +49,12 @@ Don't guess between candidates; if the request is genuinely ambiguous, stop and
 say which ones matched.
 
 ## How to act
-- Your job is to change task **data**, never the tool. Do not read, "fix", or
-  edit the CLI's own source (`bin/tasks`, anything under `lib/`) or any project
-  code — just run `bin/tasks`.
+- For task-management requests, change task **data**, not the tool. Do not read,
+  "fix", or edit the CLI's source (`bin/tasks`, anything under `lib/`) or other
+  project code as a workaround for a task-data operation; just run `bin/tasks`.
+- For application-development requests, source, test, and documentation changes
+  are in scope. Never hand-edit `tasks.jsonl` or `archive.jsonl`; use `bin/tasks`
+  if the development work also requires changing task data.
 - The tasks CLI is known-good (Ruby 3.4). It uses Ruby endless methods like
   `def foo(x) = bar(x)` — valid syntax, NOT a bug. Always invoke it by the
   absolute path given below. If a command seems to error, re-run it with that
