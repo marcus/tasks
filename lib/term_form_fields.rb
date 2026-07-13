@@ -29,6 +29,29 @@ module TermForm
       def virtual_cursor = [virtual_cursor_row, virtual_cursor_column].freeze
     end
 
+    # Key maps preserve the transport bytes in Event#raw for diagnostics, but
+    # field behavior must follow the decoded semantic event. Raw bytes are only
+    # a fallback for default bindings that intentionally collapse arrows into
+    # form navigation events.
+    module DecodedEvent
+      module_function
+
+      def key(event)
+        candidate = case event.type
+                    when :key then event.key || event.raw
+                    when :input then event.text.nil? ? event.raw : event.text
+                    when :next, :previous then event.raw
+                    end
+        return nil if candidate.nil?
+
+        candidate.is_a?(Symbol) ? Event::KEY_BYTES.fetch(candidate) : candidate
+      end
+
+      def command?(event, type, *keys)
+        event.type == type || (event.type == :key && keys.include?(key(event)))
+      end
+    end
+
     State = Struct.new(:editor, :row_offset, :column_offset, :width, :height, :positions)
 
     class TextField < Field
@@ -60,7 +83,7 @@ module TermForm
       def handle_event(event, _value, _context)
         result = case event.type
                  when :paste then paste(event.text)
-                 when :input then handle_key(event.text || event.raw)
+                 when :input then handle_key(DecodedEvent.key(event))
                  when :key then handle_key(key_bytes(event))
                  end
         edit_result(result)
@@ -77,8 +100,7 @@ module TermForm
       end
 
       def key_bytes(event)
-        key = event.key || event.raw
-        key.is_a?(Symbol) ? Event::KEY_BYTES.fetch(key) : key
+        DecodedEvent.key(event)
       end
     end
 
@@ -137,11 +159,11 @@ module TermForm
 
         result = case event.type
                  when :commit
-                   handle_key(event.raw) if ["\r", "\n"].include?(event.raw)
+                   handle_key("\r")
                  when :next
-                   move_vertical(1) if event.raw == "\e[B"
+                   move_vertical(1) if DecodedEvent.key(event) == "\e[B"
                  when :previous
-                   move_vertical(-1) if event.raw == "\e[A"
+                   move_vertical(-1) if DecodedEvent.key(event) == "\e[A"
                  end
         edit_result(result)
       end
@@ -247,7 +269,7 @@ module TermForm
 
     class ChoiceField < Field
       def initialize(key:, value:, options:, searchable:, metadata:, kind:, **field_options)
-        @option_source = options
+        @option_source = options.respond_to?(:call) ? options : Support.frozen_copy(options)
         @searchable = searchable
         @choice_state = ChoiceState.new(TextEditor.new("", multiline: false, kill_to_end: false), 0, false)
         if field_options.key?(:baseline)
@@ -274,17 +296,19 @@ module TermForm
 
       def filtered_options(context)
         choices = options(context)
-        return choices if query.empty?
-
-        needle = query.downcase
-        choices.select do |option|
-          option.label.downcase.include?(needle) || option.value.to_s.downcase.include?(needle)
-        end.freeze
+        unless query.empty?
+          needle = query.downcase
+          choices = choices.select do |option|
+            option.label.downcase.include?(needle) || option.value.to_s.downcase.include?(needle)
+          end.freeze
+        end
+        clamp_highlight(choices.length)
+        choices
       end
 
       def highlighted_option(context)
         choices = filtered_options(context)
-        choices[[highlight_index, choices.length - 1].min] unless choices.empty?
+        choices[highlight_index] unless choices.empty?
       end
 
       def validation_errors(value, context)
@@ -346,8 +370,7 @@ module TermForm
 
         status = case event.type
                  when :paste then @choice_state.editor.insert(event.text)
-                 when :input then @choice_state.editor.handle_key(event.text || event.raw)
-                 when :key then @choice_state.editor.handle_key(event.raw)
+                 when :input, :key then @choice_state.editor.handle_key(DecodedEvent.key(event))
                  end
         return unless status
 
@@ -362,10 +385,18 @@ module TermForm
       end
 
       def arrow_offset(event)
-        case event.raw
+        case DecodedEvent.key(event)
         when "\e[A" then -1
         when "\e[B" then 1
         end
+      end
+
+      def return?(event) = DecodedEvent.command?(event, :commit, "\r", "\n")
+      def cancel?(event) = DecodedEvent.command?(event, :cancel, "\e")
+
+      def clamp_highlight(option_count)
+        maximum = [option_count - 1, 0].max
+        @choice_state.highlight_index = [[highlight_index, 0].max, maximum].min
       end
     end
 
@@ -378,13 +409,13 @@ module TermForm
       def handle_event(event, value, context)
         return move_highlight(arrow_offset(event), context) if arrow_offset(event)
 
-        if event.type == :cancel && open?
+        if cancel?(event) && open?
           @choice_state.open = false
           clear_query
           return Field::Result.new(:handled, value)
         end
 
-        if event.type == :commit && ["\r", "\n"].include?(event.raw)
+        if return?(event)
           unless open?
             @choice_state.open = true
             current = filtered_options(context).index { |option| option.value == value }
@@ -426,7 +457,7 @@ module TermForm
         current = normalize_value(value)
         return move_highlight(arrow_offset(event), context) if arrow_offset(event)
 
-        if event.type == :cancel && open?
+        if cancel?(event) && open?
           @choice_state.open = false
           clear_query
           return Field::Result.new(:handled, current)
@@ -436,7 +467,7 @@ module TermForm
           return Field::Result.new(:changed, current[0...-1])
         end
 
-        if event.type == :commit && ["\r", "\n"].include?(event.raw)
+        if return?(event)
           chosen = highlighted_option(context)
           token = if !query.empty? && @creatable
                     exact = filtered_options(context).find do |option|
@@ -480,7 +511,7 @@ module TermForm
       end
 
       def backspace?(event)
-        event.raw == "\x7f" || event.raw == "\b"
+        %i[key input].include?(event.type) && ["\x7f", "\b"].include?(DecodedEvent.key(event))
       end
     end
 
@@ -500,11 +531,15 @@ module TermForm
       def normalize_value(value) = !!value
 
       def handle_event(event, value, _context)
-        next_value = case event.raw
+        next_value = if DecodedEvent.command?(event, :commit, "\r", "\n")
+                     !value
+                   else
+                     case DecodedEvent.key(event)
                      when "y", "Y", "\e[C", "\e[B" then true
                      when "n", "N", "\e[D", "\e[A" then false
-                     when " ", "\r", "\n" then !value
+                     when " " then !value
                      end
+                   end
         return unless [true, false].include?(next_value)
 
         Field::Result.new(next_value == value ? :handled : :changed, next_value)
@@ -531,7 +566,7 @@ module TermForm
         @parser = parser || ->(text, _today) { Date.iso8601(text) }
         @formatter = formatter || ->(date) { date.iso8601 }
         @today_source = today
-        @suggestion_source = suggestions
+        @suggestion_source = suggestions.respond_to?(:call) ? suggestions : Support.frozen_copy(suggestions)
         @default_anchor = default_anchor
         normalized = normalize_value(value)
         text = normalized.is_a?(Date) ? format_date(normalized) : value.to_s
@@ -566,7 +601,7 @@ module TermForm
       def handle_event(event, value, context)
         return handle_picker_event(event, value) if picker_open?
 
-        if event.type == :commit && ["\r", "\n"].include?(event.raw)
+        if DecodedEvent.command?(event, :commit, "\r", "\n")
           @state.picker_open = true
           @state.anchor = anchor_for(value, context)
           return Field::Result.new(:handled, value)
@@ -574,8 +609,7 @@ module TermForm
 
         status = case event.type
                  when :paste then @state.editor.insert(event.text)
-                 when :input then @state.editor.handle_key(event.text || event.raw)
-                 when :key then @state.editor.handle_key(event.raw)
+                 when :input, :key then @state.editor.handle_key(DecodedEvent.key(event))
                  end
         return unless status
 
@@ -600,7 +634,7 @@ module TermForm
         date = value.is_a?(Date) ? value : parse_text(text)
         metadata.merge(
           text: text, preview: date && format_date(date), picker_open: picker_open?,
-          suggestions: Array(Support.property(@suggestion_source, context)).map(&:to_s).freeze,
+          suggestions: Array(Support.property(@suggestion_source, context)).map { |entry| entry.to_s.dup.freeze }.freeze,
           picker: picker_open? ? calendar_metadata(@state.anchor) : nil,
         )
       end
@@ -637,7 +671,7 @@ module TermForm
 
         result = call_with_today(@parser, text)
         result if result.is_a?(Date)
-      rescue ArgumentError, Date::Error
+      rescue StandardError
         nil
       end
 
@@ -670,10 +704,18 @@ module TermForm
       end
 
       def handle_picker_event(event, value)
-        case event.raw
-        when "\e"
+        if DecodedEvent.command?(event, :cancel, "\e")
           @state.picker_open = false
           return Field::Result.new(:handled, value)
+        end
+        if DecodedEvent.command?(event, :commit, "\r", "\n")
+          selected = @state.anchor
+          @state.editor.replace(format_date(selected))
+          @state.picker_open = false
+          return Field::Result.new(selected == value ? :handled : :changed, selected)
+        end
+
+        case DecodedEvent.key(event)
         when "\e[D" then @state.anchor -= 1
         when "\e[C" then @state.anchor += 1
         when "\e[A" then @state.anchor -= 7
@@ -681,11 +723,6 @@ module TermForm
         when "\e[5~" then @state.anchor = shift_month(@state.anchor, -1)
         when "\e[6~" then @state.anchor = shift_month(@state.anchor, 1)
         when "t", "T" then @state.anchor = today
-        when "\r", "\n"
-          selected = @state.anchor
-          @state.editor.replace(format_date(selected))
-          @state.picker_open = false
-          return Field::Result.new(selected == value ? :handled : :changed, selected)
         else
           return nil
         end

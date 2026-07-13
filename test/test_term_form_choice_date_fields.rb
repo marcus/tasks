@@ -51,6 +51,146 @@ class TestTermFormChoiceDateFields < Minitest::Test
     assert form.handle("\e").cancel_requested?
   end
 
+  def test_choice_fields_honor_decoded_keys_and_types_before_raw_aliases
+    key_map = TermForm::KeyMap.new({
+      "j" => TermForm::Event.key(:down),
+      "n" => TermForm::Event.key(:return),
+      "q" => TermForm::Event.key(:escape),
+      "o" => TermForm::Event.new(:commit),
+      "c" => TermForm::Event.new(:cancel),
+      "\e[B" => TermForm::Event.new(:cancel),
+    }, defaults: false)
+    select = TermForm::Fields::Select.new(key: :choice, value: "A", options: %w[A B])
+    form = TermForm::Form.new(
+      groups: [TermForm::Group.new(key: :main, fields: [select])], key_map: key_map,
+    )
+
+    assert form.handle("o").handled?
+    assert select.open?
+    assert_equal "", select.query
+    assert form.handle("\e[B").handled?, "decoded cancel type must beat raw down"
+    refute select.open?
+    assert_equal "", select.query
+
+    form.handle("o")
+    assert form.handle("c").handled?
+    refute select.open?
+
+    assert form.handle("j").handled?
+    assert_equal 1, select.highlight_index
+    assert_equal "", select.query
+    assert form.handle("n").changed?
+    assert_equal "B", form.value(:choice)
+
+    multi = TermForm::Fields::MultiSelect.new(key: :tokens, options: %w[A B])
+    multi_form = TermForm::Form.new(
+      groups: [TermForm::Group.new(key: :main, fields: [multi])], key_map: key_map,
+    )
+    multi_form.handle("j")
+    assert multi_form.handle("n").changed?
+    assert_equal ["B"], multi_form.value(:tokens)
+    assert_equal "", multi.query
+    multi_form.handle("j")
+    assert multi_form.handle("q").handled?
+    assert_equal "", multi.query
+  end
+
+  def test_confirm_and_date_picker_honor_decoded_right_down_return_and_cancel
+    key_map = TermForm::KeyMap.new({
+      "n" => TermForm::Event.key(:right),
+      "y" => TermForm::Event.key(:left),
+      "r" => TermForm::Event.key(:return),
+      "j" => TermForm::Event.key(:down),
+      "l" => TermForm::Event.key(:right),
+      "q" => TermForm::Event.key(:escape),
+    }, defaults: false)
+    confirm = TermForm::Fields::Confirm.new(key: :confirm, value: false)
+    confirm_form = TermForm::Form.new(
+      groups: [TermForm::Group.new(key: :main, fields: [confirm])], key_map: key_map,
+    )
+
+    assert confirm_form.handle("n").changed?, "decoded right must beat raw n"
+    assert_equal true, confirm_form.value(:confirm)
+    assert confirm_form.handle("y").changed?, "decoded left must beat raw y"
+    assert_equal false, confirm_form.value(:confirm)
+    assert confirm_form.handle("r").changed?
+    assert_equal true, confirm_form.value(:confirm)
+
+    date = date_field(value: TODAY)
+    date_form = TermForm::Form.new(
+      groups: [TermForm::Group.new(key: :main, fields: [date])], key_map: key_map,
+    )
+    assert date_form.handle("r").handled?
+    date_form.handle("j")
+    date_form.handle("l")
+    assert_equal TODAY + 8, date.picker_date
+    assert date_form.handle("q").handled?
+    refute date.picker_open?
+    assert_equal TODAY, date_form.value(:date)
+    assert_equal TODAY.iso8601, date.text
+
+    date_form.handle("r")
+    date_form.handle("l")
+    assert date_form.handle("r").changed?
+    assert_equal TODAY + 1, date_form.value(:date)
+    assert_equal (TODAY + 1).iso8601, date.text
+  end
+
+  def test_dynamic_option_shrink_clamps_highlight_for_metadata_and_selection
+    source = %w[A B C]
+    field = TermForm::Fields::Select.new(key: :choice, value: "A", options: -> { source })
+    form = form_with(field)
+
+    form.handle("\e[B")
+    form.handle("\e[B")
+    assert_equal 2, field.highlight_index
+    source.replace(%w[A B])
+
+    options = form.render_model.focused_row.metadata[:options]
+    assert_equal 1, field.highlight_index
+    assert_equal [false, true], options.map { |option| option[:highlighted] }
+    assert form.handle("\r").changed?
+    assert_equal "B", form.value(:choice)
+  end
+
+  def test_static_options_and_suggestions_are_snapshotted_but_callables_stay_dynamic
+    label = +"Alpha"
+    note = +"original"
+    static_options = [{ value: +"A", label: label, metadata: { note: note } }]
+    static_suggestions = [+"today"]
+    select = TermForm::Fields::Select.new(key: :choice, value: "A", options: static_options)
+    date = date_field(suggestions: static_suggestions)
+    form = form_with(select, date)
+
+    label.replace("changed")
+    note.replace("changed")
+    static_options << "B"
+    static_suggestions.first.replace("changed")
+    static_suggestions << "tomorrow"
+
+    option = select.options(form.context).fetch(0)
+    assert_equal "Alpha", option.label
+    assert_equal "original", option.metadata[:note]
+    assert option.frozen?
+    assert option.value.frozen?
+    assert option.label.frozen?
+    assert option.metadata.frozen?
+    suggestions = date.metadata_for(nil, form.context)[:suggestions]
+    assert_equal ["today"], suggestions
+    assert suggestions.frozen?
+    assert suggestions.first.frozen?
+
+    dynamic_options = %w[A]
+    dynamic_suggestions = %w[today]
+    live_select = TermForm::Fields::Select.new(key: :live_choice, value: "A", options: -> { dynamic_options })
+    live_date = date_field(suggestions: -> { dynamic_suggestions })
+    live_form = form_with(live_select, live_date)
+    dynamic_options << "B"
+    dynamic_suggestions << "tomorrow"
+    assert_equal %w[A B], live_select.options(live_form.context).map(&:value)
+    assert_equal %w[today tomorrow], live_date.metadata_for(nil, live_form.context)[:suggestions]
+  end
+
   def test_multi_select_normalizes_ordered_tokens_deduplicates_and_creates
     normalizer = ->(token) { token.to_s.sub(/\A@?/, "@").downcase }
     field = TermForm::Fields::MultiSelect.new(
@@ -135,6 +275,19 @@ class TestTermFormChoiceDateFields < Minitest::Test
     assert_equal "tomorrow", field.text
     assert_equal "2026-07-14 (Tue)", field.preview
     assert_equal "2026-07-14 (Tue)", form.render_model.focused_row.metadata[:preview]
+  end
+
+  def test_date_parser_standard_errors_become_validation_errors_but_fatal_exceptions_escape
+    field = date_field(parser: ->(_text) { raise RuntimeError, "parser unavailable" })
+    form = form_with(field)
+
+    assert form.handle("x").changed?
+    assert_equal "x", form.value(:date)
+    assert_equal ["is not a valid date"], form.validate[:date]
+
+    fatal = date_field(parser: ->(_text) { raise Interrupt, "stop" })
+    fatal_form = form_with(fatal)
+    assert_raises(Interrupt) { fatal_form.handle("x") }
   end
 
   def test_empty_date_is_an_explicit_unset_and_invalid_text_blocks_commit
