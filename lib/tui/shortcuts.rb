@@ -48,7 +48,7 @@ module Tui
       entry(sequences: ["l"],          key: "l",       description: "expand subtree",                   contexts: [:list], handler: :expand_selected, palette: :selected_action_available?),
       entry(sequences: ["H"],          key: "H",       description: "collapse all subtrees",            contexts: [:list], handler: :collapse_all, palette: true),
       entry(sequences: ["L"],          key: "L",       description: "expand all subtrees",              contexts: [:list], handler: :expand_all, palette: true),
-      entry(sequences: ["\r", "\n"],   key: "return",  description: "task details",                     contexts: [:list], handler: :open_detail, palette: :selected_action_available?),
+      entry(sequences: ["\r", "\n"],   key: "return",  description: "open / close task details",        contexts: [:list], handler: :open_detail, palette: :selected_action_available?),
       entry(sequences: ["c"],          key: "c",       description: "complete selected task",           contexts: %i[list detail], handler: :complete_selected, palette: :selected_action_available?),
       entry(sequences: ["d"],          key: "d",       description: "reschedule — fri · +3 · 07-15",    contexts: %i[list detail], handler: :open_date_popup, palette: :selected_action_available?, form: :date),
       entry(sequences: ["r"],          key: "r",       description: "recur — weekly · 2w · .+1m · off", contexts: %i[list detail], handler: :open_recur_popup, palette: :recurrence_action_available?, form: :recurrence),
@@ -65,19 +65,22 @@ module Tui
       entry(sequences: ["M"],          key: "M",       description: "cycle agent/model",                contexts: [:list], handler: :toggle_model, palette: true),
       entry(sequences: ["u"],          key: "u",       description: "undo last change",                 contexts: %i[list detail], handler: :undo_last, palette: true),
       entry(sequences: ["\x12"],       key: "ctrl-r",  description: "redo",                             contexts: %i[list detail], handler: :redo_last, palette: true),
+      entry(sequences: ["\x15"],       key: "ctrl-u",  description: "scroll task details up",           contexts: [:list], handler: :panel_half_up, availability: :panel_scroll_available?),
+      entry(sequences: ["\x04"],       key: "ctrl-d",  description: "scroll task details down",         contexts: [:list], handler: :panel_half_down, availability: :panel_scroll_available?),
+      entry(sequences: ["\x02"],       key: "ctrl-b",  description: "scroll task details one page up", contexts: [:list], handler: :panel_page_up, availability: :panel_scroll_available?),
+      entry(sequences: ["\x06"],       key: "ctrl-f",  description: "scroll task details one page down", contexts: [:list], handler: :panel_page_down, availability: :panel_scroll_available?),
       entry(sequences: ["\t"],         key: "tab",     description: "ask the agent — CRUD anything",    contexts: [:list], handler: :focus_prompt, palette: true, form: :agent_prompt),
       entry(sequences: [":"],          key: ":",       description: "search available actions",         contexts: %i[list detail], handler: :open_action_palette),
       entry(sequences: ["\e[5~"],      key: "pgup",    description: "scroll agent response up",         contexts: [:list], handler: :resp_up),
       entry(sequences: ["\e[6~"],      key: "pgdn",    description: "scroll agent response down",       contexts: [:list], handler: :resp_down),
-      entry(sequences: ["\e"],         key: "esc",     description: "dismiss response / cancel agent",  contexts: [:list], handler: :dismiss_or_cancel),
+      entry(sequences: ["\e"],         key: "esc",     description: "dismiss response / close task details", contexts: [:list], handler: :dismiss_or_cancel),
       entry(sequences: ["?"],          key: "?",       description: "keyboard shortcuts",               contexts: [:list], handler: :open_help, palette: true),
       entry(sequences: ["q"],          key: "q",       description: "quit",                             contexts: [:list], handler: :quit, palette: true),
 
-      # Modal navigation is kept as an explicit context. App dispatches it
-      # before detail-task actions; validation rejects collisions between the
-      # two contexts so navigation cannot accidentally shadow an action.
-      entry(sequences: ["\e[A", "k"],      key: "↑ / k",         description: "scroll up · previous task (detail)", contexts: [:modal], handler: :modal_up),
-      entry(sequences: ["\e[B", "j"],      key: "↓ / j",         description: "scroll down · next task (detail)", contexts: [:modal], handler: :modal_down),
+      # Modal navigation is kept as an explicit context for blocking overlays.
+      # Detail actions are palette metadata while the panel stays in list mode.
+      entry(sequences: ["\e[A", "k"],      key: "↑ / k",         description: "scroll modal up",                        contexts: [:modal], handler: :modal_up),
+      entry(sequences: ["\e[B", "j"],      key: "↓ / j",         description: "scroll modal down",                      contexts: [:modal], handler: :modal_down),
       entry(sequences: ["\x15"],           key: "ctrl-u",        description: "scroll half page up",                 contexts: [:modal], handler: :modal_half_up),
       entry(sequences: ["\x04"],           key: "ctrl-d",        description: "scroll half page down",               contexts: [:modal], handler: :modal_half_down),
       entry(sequences: ["\x02", "\e[5~"],  key: "ctrl-b / pgup", description: "scroll page up",                      contexts: [:modal], handler: :modal_page_up),
@@ -164,9 +167,6 @@ module Tui
       bindings = {}
       entries.each do |entry|
         effective_contexts = entry.contexts.include?(:global) ? CONTEXTS - [:global] : entry.contexts
-        # :modal is dispatched before :detail, so sharing a sequence across
-        # them would make the detail binding unreachable.
-        effective_contexts += [:detail] if effective_contexts.include?(:modal)
         effective_contexts.each do |context|
           entry.sequences.each do |sequence|
             key = [context, sequence]

@@ -94,11 +94,10 @@ class TestShortcuts < Minitest::Test
     assert_match(/sequences must be unique/, error.message)
   end
 
-  def test_validation_rejects_modal_binding_that_would_shadow_detail
+  def test_validation_allows_same_key_in_modal_and_palette_only_detail_context
     modal = changed_entry(contexts: [:modal])
     detail = changed_entry(contexts: [:detail], handler: :select_next)
-    error = assert_raises(ArgumentError) { S.validate!(nil, entries: [modal, detail]) }
-    assert_match(/duplicate shortcut/, error.message)
+    assert S.validate!(nil, entries: [modal, detail])
   end
 
   def test_validation_allows_same_key_in_list_and_plain_modal

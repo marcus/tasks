@@ -10,10 +10,15 @@ module Tui
     A = Ansi
     FIXED_ROWS = 5 # borders, header, and the two rules outside the body/footer
 
+    PANEL_RATIO = 0.40
+    MIN_PANEL_WIDTH = 28
+    MIN_LIST_WIDTH = 8
+
     attr_reader :width, :height, :footer, :body_height, :body_width,
+                :list_width, :panel_width, :panel_content_width,
                 :viewport_offset, :selected_screen_row, :selected
 
-    def initialize(width:, height:, footer:, selected: nil)
+    def initialize(width:, height:, footer:, selected: nil, panel: false)
       @width = width
       @height = height
       @footer = footer.last([height - 6, 0].max).map do |line|
@@ -21,6 +26,9 @@ module Tui
       end.freeze
       @body_height = [height - FIXED_ROWS - @footer.size, 1].max
       @body_width = [width - 4, 1].max
+      @panel_width = panel ? calculate_panel_width : 0
+      @panel_content_width = @panel_width.zero? ? 0 : [@panel_width - 2, 1].max
+      @list_width = @body_width - @panel_width
       @selected = selected
       @viewport_offset = @selected && @selected >= @body_height ? @selected - @body_height + 1 : 0
       @selected_screen_row = @selected && @selected - @viewport_offset
@@ -28,6 +36,7 @@ module Tui
     end
 
     def footer_size = @footer.size
+    def panel? = @panel_width.positive?
 
     def visible_rows(rows)
       rows[@viewport_offset, @body_height] || []
@@ -68,6 +77,15 @@ module Tui
         row: [(@body_height - box_height) / 2, 0].max,
         col: [(@body_width - box_width) / 2, 0].max,
       )
+    end
+
+    private
+
+    def calculate_panel_width
+      return [@body_width - 1, 0].max if @body_width < MIN_LIST_WIDTH + 3
+
+      desired = [(@body_width * PANEL_RATIO).round, MIN_PANEL_WIDTH].max
+      desired.clamp(3, @body_width - MIN_LIST_WIDTH)
     end
   end
 end

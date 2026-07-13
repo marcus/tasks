@@ -38,6 +38,7 @@ module Tui
       prompt:        "bold cyan",      # ❯ and / input markers
       section:       "bold",           # quadrant labels, detail title
       modal_title:   "bold",           # modal title strip (supports on-… backgrounds)
+      panel_title:   "bold",           # persistent right-panel heading
       context:       "bold cyan",      # context group headers
       context_selected: "bold cyan",
       project:       "magenta",
@@ -50,7 +51,7 @@ module Tui
       muted_selected: "gray",
       outline_thread:    "gray",       # the nesting guide line dropped from a parent row
       outline_container: "bold",       # a row that has children, painted like a heading
-      note:          "gray",           # note body lines in the detail modal
+      note:          "gray",           # note body lines in task details
       description:   "gray",           # task description/body prose in details
       link:          "underline cyan", # URLs / org links inside notes
       detail_label:  "bold gray",
@@ -82,7 +83,7 @@ module Tui
         tab_agenda_active: "reverse", tab_next_active: "reverse",
         tab_quadrants_active: "reverse", tab_inbox_active: "reverse",
         tab_projects_active: "reverse",
-        prompt: "bold", modal_title: "bold", context: "bold",
+        prompt: "bold", modal_title: "bold", panel_title: "bold", context: "bold",
         context_selected: "bold", project: "none", project_selected: "bold",
         title: "none", title_selected: "bold", muted: "dim", muted_selected: "dim",
         outline_thread: "dim",

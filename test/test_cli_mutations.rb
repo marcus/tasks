@@ -1076,7 +1076,7 @@ class TestCliMutations < Minitest::Test
 
   def test_cli_show_project_skips_closed_ancestors
     # `project` follows the nearest-OPEN-ancestor rule shared with the TUI's
-    # Projects view and detail modal: a DONE parent is skipped, an open one isn't.
+    # Projects view and detail panel: a DONE parent is skipped, an open one isn't.
     nested = dump_fixture(
       [{ "type" => "meta", "version" => 1 },
        { "type" => "section", "id" => "cccc0001", "title" => "Work" },

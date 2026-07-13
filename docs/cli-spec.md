@@ -60,7 +60,7 @@ rows win over built-ins.
 all: `accent`, `selection`, per-view tabs like `tab_agenda` /
 `tab_agenda_active`, task-row fields like `project`, `context`, `title`, the
 `due_*` ladder plus selected-row variants such as `due_soon_selected`,
-detail-modal slots like `detail_label`, `description`, `link`, `link_system`,
+detail-panel slots like `panel_title`, `detail_label`, `description`, `link`, `link_system`,
 `state_*`, …). Appearance keys in the same config file:
 
 - `theme = <name>` — a named base theme: `default`, `mono` (attribute-only),
@@ -85,7 +85,9 @@ detail-modal slots like `detail_label`, `description`, `link`, `link_system`,
 **TUI interaction.** `Tab` focuses the agent prompt. `:` opens the searchable,
 context-aware action palette; typing filters the available actions, the arrow
 keys choose one, Return runs it, and Escape cancels. Direct shortcuts and palette
-entries invoke the same registered actions. `x` previews the number of completed
+entries invoke the same registered actions. Return opens a fixed-width task-detail
+panel on the right in every view; list navigation stays active and refreshes the
+panel for each newly selected task. Return or Escape closes it. `x` previews the number of completed
 roots and descendants that would move to `archive.jsonl`; `y` confirms, while
 `n` or Escape cancels without writing.
 
@@ -253,7 +255,7 @@ would change and writes nothing.
 | `next` | `n` | ✅ | NEXT actions by context. `--json` |
 | `quadrants` | `q` | ✅ | Covey 2×2 from priority (A/B ⇒ important) + a `DEADLINE` within `urgent_days` (default 3, overdue counts) ⇒ urgent, with `important`/`urgent` tags as overrides. `--json` adds `quadrant`. |
 | `inbox` | `i` | ✅ | Unprocessed INBOX items. `--json` |
-| `show <ref>` | `s` | ✅ | One task in full: rendered headline + body/notes + links. `--json` shape: `{id, state, priority, title, tags, contexts, scheduled, deadline, recur, closed, line, notes: [..], project, links: [{url, label, system}]}`. `notes` is the task's `body` split to lines (a child's body never leaks in — children are separate records); `project` is the nearest OPEN ancestor — a live parent task, else the enclosing section; closed ancestors are skipped (same rule as the TUI's Projects view and detail modal). |
+| `show <ref>` | `s` | ✅ | One task in full: rendered headline + body/notes + links. `--json` shape: `{id, state, priority, title, tags, contexts, scheduled, deadline, recur, closed, line, notes: [..], project, links: [{url, label, system}]}`. `notes` is the task's `body` split to lines (a child's body never leaks in — children are separate records); `project` is the nearest OPEN ancestor — a live parent task, else the enclosing section; closed ancestors are skipped (same rule as the TUI's Projects view and detail panel). |
 | `id <ref> [--json]` | | ✅ | Print a task's stable `id`, minting one if absent (post-migration every record already has one — this is the repair path). Idempotent. Resolves refs regardless of state. |
 | `links [<ref>]` | `urls` | ✅ | Links found in task titles/notes, classified by system (`slack`, `jira`, `github`, …; unknown hosts fall back to the host name; Confluence-on-Atlassian is told apart from Jira by its `/wiki` path). One task's links with `<ref>`; every open task's otherwise. `--system <name>` filters (case-insensitive), `--all` widens the listing to done + archived (`<ref>` resolution itself stays live-file only), `--json` emits `{links: [{url, label, system, task, id, line, source}]}`. Recognizes org links `[[url][label]]`, bare URLs, and configured shorthands (below), in file order; org-internal targets (`[[id:…]]`, `[[file:…]]`, headline links) are org navigation, not links. |
 | `open <ref> [n]` | `o` | ✅ | Open a task's link in the browser (macOS `open` / `xdg-open`; `TASKS_OPENER` overrides). One link opens directly; several are listed numbered (exit 1) unless picked by 1-based `n` or `--system <name>`. `--print` prints the URL instead of launching. Resolves refs regardless of state (live file). |

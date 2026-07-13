@@ -64,6 +64,22 @@ class TestScreenLayout < Minitest::Test
     assert wide.frozen?
   end
 
+  def test_right_panel_uses_stable_percentage_and_preserves_list_space
+    layout = Tui::ScreenLayout.new(
+      width: 100, height: 24, footer: ["prompt"], selected: 0, panel: true
+    )
+    assert_equal 96, layout.body_width
+    assert_equal 38, layout.panel_width
+    assert_equal 36, layout.panel_content_width
+    assert_equal 58, layout.list_width
+
+    same_width = Tui::ScreenLayout.new(
+      width: 100, height: 12, footer: [], selected: 0, panel: true
+    )
+    assert_equal layout.panel_width, same_width.panel_width,
+                 "panel width depends on terminal width, not content or height"
+  end
+
   def test_frame_consumes_layout_body_and_viewport_without_recomputing
     rows = (0..12).map { |i| Tui::Views::Row.new("row #{i}", Object.new) }
     layout = Tui::ScreenLayout.new(width: 42, height: 12, footer: %w[a b c], selected: 9)

@@ -105,12 +105,13 @@ from, with the same subtrees collapsed (session state in
 
 ```
 1-5 / ←→   switch view: Agenda · Next · Quadrants · Inbox · Projects (arrows cycle)
-↑↓ / jk    select a task (also flips tasks inside a detail modal)
+↑↓ / jk    select a task; an open detail panel follows the selection
 h / l      collapse / expand the selected subtree (h again climbs to the parent)
 H / L      collapse / expand all subtrees
-return     task detail modal
+return     open / close the task detail panel on the right
 ?          keyboard shortcuts modal (/ filters its lines)
-           modals scroll vim-style: j/k line · ctrl-d/u half page · ctrl-f/b page
+ctrl-d/u   scroll the detail panel half a page (ctrl-f/b scrolls a full page)
+           the shortcuts modal scrolls with j/k, ctrl-d/u, and ctrl-f/b
 c          mark selected task DONE
 d          reschedule — accepts fri, +3, 07-15, 2026-07-15, today, tomorrow
 r          recur — weekly · 2w · .+1m · off
@@ -125,7 +126,7 @@ x          preview archive sweep counts; y confirms, n / esc cancels
 M          cycle the agent/model (provider:model shown in the header)
 tab        focus the agent prompt — natural-language CRUD on your tasks
 :          search available actions; type to filter, ↑↓ choose, return runs, esc cancels
-esc        dismiss the response / cancel a running request / close modal
+esc        dismiss the response / cancel a request / close the detail panel
 pgup/pgdn  scroll a long response (footer grows, then collapses on esc)
 q          quit
 ```
@@ -144,7 +145,7 @@ Colors are themable: `theme = dracula` (or `mono`, `nord`,
 `catppuccin-mocha`, `gruvbox-dark`, `tokyonight-night`, `solarized-dark`, and
 more) plus per-slot `color.accent = magenta` /
 `color.selection = black on-cyan` lines in `~/.config/tasks/config` restyle
-tabs, the selection bar, modal title strips, task dates, projects, contexts,
+tabs, the selection bar, panel and modal titles, task dates, projects, contexts,
 detail labels, descriptions, links, and more. Popular schemes are generated
 from iTerm2-Color-Schemes with `scripts/generate-tui-themes`.
 `NO_COLOR` is honored. See `docs/cli-spec.md` (TUI colors) for the slot and

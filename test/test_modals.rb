@@ -1,17 +1,17 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
-require "tui/modals"
+require "tui/task_details"
 
-class TestModals < Minitest::Test
-  M = Tui::Modals
+class TestTaskDetails < Minitest::Test
+  D = Tui::TaskDetails
   A = Tui::Ansi
   TODAY = Date.new(2026, 7, 1)
 
   def detail_for(text)
     with_store do |store, _o, _a|
       item = find_item(store, text)
-      return M.detail(item, store.body(item), 100, today: TODAY)
+      return D.build(item, store.body(item), 64, today: TODAY)
     end
   end
 
@@ -67,8 +67,8 @@ class TestModals < Minitest::Test
                       ]))
       store.reload!
       item = store.items.first
-      modal = M.detail(item, store.body(item), 60, today: TODAY)
-      title_lines = modal[:lines].take_while { |l| !A.strip(l).empty? }
+      details = D.build(item, store.body(item), 48, today: TODAY)
+      title_lines = details[:lines].take_while { |line| !A.strip(line).empty? }
       assert title_lines.size > 1, "long title should wrap to multiple lines"
     end
   end

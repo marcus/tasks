@@ -13,6 +13,8 @@ require_relative "../llm/registry"
 require_relative "shortcuts"
 require_relative "modal"
 require_relative "modals"
+require_relative "right_panel"
+require_relative "task_details"
 require_relative "clipboard"
 require_relative "export"
 require_relative "session"
@@ -140,13 +142,12 @@ module Tui
     end
 
     # Reload external writes without losing the selected task to a new physical
-    # row. An open detail modal is rebuilt only for the id it was opened on.
+    # row. An open detail panel follows whichever task selection remains visible.
     def reload_store
       overlay_mode = @ui.mode if %i[form palette].include?(@ui.mode)
-      detail_id = @ui.detail_item_id if detail_modal?
       @store.reload!
       rows
-      refresh_detail_modal(detail_id) if detail_id && detail_modal?
+      refresh_detail_panel if detail_panel?
       restore_form if overlay_mode == :form && @ui.form
       if overlay_mode == :palette && @ui.action_palette
         restore_action_palette(@ui.action_palette)
@@ -159,7 +160,9 @@ module Tui
       height, width = terminal_size
       frame_rows = rows
       visual_selection = @ui.mode == :prompt ? nil : @sel
-      layout = screen_layout(width: width, height: height, selected: visual_selection)
+      layout = screen_layout(width: width, height: height, selected: visual_selection,
+                             panel: @ui.panel)
+      refresh_detail_panel(content_width: layout.panel_content_width) if detail_panel?
       lines = Frame.build(
         width: width, height: height,
         header: header(width - 2),
@@ -167,6 +170,7 @@ module Tui
         selected: visual_selection,
         footer: layout.footer,
         popup: current_popup(layout: layout),
+        panel: @ui.panel&.view(height: layout.body_height, width: layout.panel_content_width),
         modal: layout.place_modal(@ui.modal&.view(layout.body_height)),
         layout: layout
       )
@@ -318,8 +322,7 @@ module Tui
       "#{before}#{T.paint(:selection, at)}#{after}"
     end
 
-    # The active popup layered over the list (and, when launched from task
-    # details, over the retained modal beneath it).
+    # The active popup layered over the list and any persistent right panel.
     def current_popup(layout: nil, width: nil, height: nil, footer_size: nil)
       if layout.nil?
         terminal_height, terminal_width = terminal_size if width.nil? || height.nil?
@@ -353,9 +356,10 @@ module Tui
       screen_layout(width: width || terminal_width, height: height || terminal_height).footer_size
     end
 
-    def screen_layout(width:, height:, footer_size: nil, selected: @sel)
+    def screen_layout(width:, height:, footer_size: nil, selected: @sel, panel: @ui.panel)
       raw_footer = footer_size ? Array.new(footer_size, "") : footer(width - 2)
-      ScreenLayout.new(width: width, height: height, footer: raw_footer, selected: selected)
+      ScreenLayout.new(width: width, height: height, footer: raw_footer, selected: selected,
+                       panel: !panel.nil?)
     end
 
     # -- input ---------------------------------------------------------------
@@ -503,13 +507,12 @@ module Tui
       true
     end
 
-    # Modal navigation is an explicit first-stage context; task-detail actions
-    # are the second. Registry validation rejects key collisions between them.
+    # Modal navigation is reserved for blocking overlays such as help and
+    # archive confirmation. Task details remain in list mode in the right panel.
     def modal_key(k)
       return archive_confirm_key(k) if @ui.modal&.kind == :archive_confirm
       return archive_blocked_key(k) if @ui.modal&.kind == :archive_blocked
-      return if dispatch_action(k, :modal)
-      dispatch_action(k, :detail) if detail_modal?
+      dispatch_action(k, :modal)
     end
 
     def prompt_key(k)
@@ -558,6 +561,7 @@ module Tui
 
     def action_available? = true
     def modal_filter_available? = @ui.modal&.filterable?
+    def panel_scroll_available? = detail_panel?
     def selected_action_available? = !current_item.nil?
     def recurrence_action_available?
       item = current_item
@@ -579,10 +583,9 @@ module Tui
     def quit           = @quit = true
 
     def open_action_palette
-      context = detail_modal? ? :detail : :list
       @ui.action_palette = ActionPalette.new(
-        entries: Shortcuts.palette_entries(context, self),
-        return_mode: @ui.modal ? :modal : :list,
+        entries: Shortcuts.palette_entries(:list, self),
+        return_mode: :list,
         target_id: current_item&.id
       )
       @ui.mode = :palette
@@ -631,7 +634,7 @@ module Tui
       if @store.set_priority!(item, new_pri)
         flash(new_pri ? "priority: [##{new_pri}] #{item.title}" : "priority cleared: #{item.title}")
         reselect(item.id)
-        show_detail if detail_modal?
+        refresh_detail_panel if detail_panel?
       else
         reload_store
         flash("file changed underneath — try again")
@@ -647,12 +650,9 @@ module Tui
 
     # Z reveals/hides deferred (someday/maybe) tasks across every view.
     def toggle_deferred_view
-      modaled_id = @ui.detail_item_id if detail_modal?
       @ui.toggle_deferred!
       rows
-      # If a detail modal was open on a task the toggle just hid, close it
-      # rather than silently rebinding the modal to a neighboring task.
-      refresh_detail_modal(modaled_id) if modaled_id
+      refresh_detail_panel if detail_panel?
       flash(@ui.show_deferred ? "showing deferred tasks" : "hiding deferred tasks")
     end
 
@@ -665,14 +665,14 @@ module Tui
       if @store.set_deferred!(item, to_deferred)
         flash(to_deferred ? "⏸ deferred: #{item.title}" : "▸ activated: #{item.title}")
         # When newly deferred and the view hides deferred, the task leaves the
-        # list — drop any detail modal on it; otherwise follow it in place.
+        # list and the persistent panel follows the next visible selection.
         if to_deferred && !@ui.show_deferred
-          close_modal if @ui.modal
           rows
           clamp_selection
+          refresh_detail_panel if detail_panel?
         else
           reselect(item.id)
-          refresh_detail_modal(item.id)
+          refresh_detail_panel if detail_panel?
         end
       else
         reload_store
@@ -704,7 +704,7 @@ module Tui
       else
         flash("#{verb}: #{label}")
         rows
-        show_detail if detail_modal?
+        refresh_detail_panel if detail_panel?
       end
     end
 
@@ -742,20 +742,16 @@ module Tui
 
     def open_detail
       return flash("nothing selected") unless current_item
-      show_detail
+      detail_panel? ? close_panel : show_detail
     end
 
-    # Build (or rebuild, when the selection moves) the detail modal for the
-    # current item. Keeps :modal mode.
+    # Build the persistent detail panel for the current item. The app stays in
+    # list mode, so moving through any of the five views updates this panel.
     def show_detail
       item = current_item
-      return close_modal unless item
-      width = terminal_size.last
-      # Same rule as the Projects view: the nearest open ancestor headline,
-      # closed task ancestors skipped (Node#open_project).
-      project = @store.node_for(item)&.open_project&.title
-      open_modal(Modals.detail(item, @store.body(item), width, links: @store.links(item), project: project),
-                 kind: :detail, item_id: item.id)
+      return close_panel unless item
+
+      refresh_detail_panel(content_width: detail_panel_content_width)
     end
 
     # Open the selected task's first link in the browser (`o`, list or detail
@@ -773,16 +769,34 @@ module Tui
       flash("opened #{link.system}: #{link.url}#{extra}")
     end
 
-    # After a task action taken from inside a detail modal (reschedule the
-    # cursor already followed to `id`): redraw the modal on the task if it's
-    # still in view, or close it if the change dropped it (e.g. dating an INBOX
-    # item promotes it out of the inbox view).
-    def refresh_detail_modal(id)
-      return unless detail_modal?
-      return close_modal unless @ui.detail_item_id == id
+    def refresh_detail_panel(content_width: @detail_panel_content_width)
+      item = current_item
+      return close_panel unless item
 
-      reselect(id)
-      detail_modal? && current_item&.id == id ? show_detail : close_modal
+      content_width ||= detail_panel_content_width
+      @detail_panel_content_width = content_width
+      project = @store.node_for(item)&.open_project&.title
+      content = TaskDetails.build(
+        item, @store.body(item), content_width,
+        links: @store.links(item), project: project
+      )
+      if detail_panel?
+        @ui.panel.replace(title: content[:title], lines: content[:lines], identity: item.id)
+      else
+        @ui.panel = RightPanel.new(
+          title: content[:title], lines: content[:lines], kind: :detail, identity: item.id
+        )
+      end
+    end
+
+    def detail_panel_content_width
+      height, width = terminal_size
+      screen_layout(width: width, height: height, panel: true).panel_content_width
+    end
+
+    def close_panel
+      @ui.panel = nil
+      @detail_panel_content_width = nil
     end
 
     # -- modal -----------------------------------------------------------------
@@ -794,12 +808,15 @@ module Tui
     def modal_page_up   = @ui.modal.scroll_page(-1, modal_body_h)
     def modal_page_down = @ui.modal.scroll_page(1, modal_body_h)
 
-    # In a task detail modal, ↑↓/j/k walk the task list and the modal follows
-    # the selection. Other modals (help) keep them as line scroll.
+    def panel_half_up   = @ui.panel.scroll_half(-1, panel_body_h)
+    def panel_half_down = @ui.panel.scroll_half(1, panel_body_h)
+    def panel_page_up   = @ui.panel.scroll_page(-1, panel_body_h)
+    def panel_page_down = @ui.panel.scroll_page(1, panel_body_h)
+
+    # Blocking modals own their own scroll. The detail panel remains in list
+    # mode and therefore uses ordinary task navigation.
     def modal_move(delta)
-      return @ui.modal.scroll_line(delta, modal_body_h) unless detail_modal?
-      move(delta)
-      show_detail
+      @ui.modal.scroll_line(delta, modal_body_h)
     end
 
     # Body rows available to the modal box — the same budget paint hands
@@ -811,12 +828,15 @@ module Tui
       screen_layout(width: width, height: height).body_height
     end
 
-    def detail_modal? = @ui.modal&.kind == :detail
+    def panel_body_h(height: nil, width: nil)
+      modal_body_h(height: height, width: width)
+    end
 
-    def open_modal(content, kind:, item_id: nil)
+    def detail_panel? = @ui.panel&.kind == :detail
+
+    def open_modal(content, kind:)
       @ui.modal = Modal.new(title: content[:title], lines: content[:lines],
                             kind: kind, filterable: kind == :help)
-      @ui.detail_item_id = item_id
       @ui.modal_filter_input.clear
       @ui.mode = :modal
     end
@@ -824,7 +844,6 @@ module Tui
     def close_modal
       @ui.mode = :list
       @ui.modal = nil
-      @ui.detail_item_id = nil
       @ui.archive_preview = nil
       @ui.modal_filter_input.clear
     end
@@ -854,6 +873,7 @@ module Tui
     def select_row(index)
       @sel = index
       @ui.selected_id = @rows[@sel]&.item&.id
+      refresh_detail_panel if detail_panel?
     end
 
     def move(delta)
@@ -868,15 +888,14 @@ module Tui
     end
 
     # Reconcile stable identity with the current rendered rows. If an id is no
-    # longer visible, land on the selectable row nearest the prior coordinate.
-    # A detail modal bound to the missing id closes rather than following that
-    # fallback selection.
+    # longer visible, land on the selectable row nearest the prior coordinate;
+    # an open detail panel follows that fallback selection.
     def sync_selection
       sels = selectable_indexes
       if sels.empty?
         @sel = 0
         @ui.selected_id = nil
-        close_modal if detail_modal?
+        close_panel if detail_panel?
         return
       end
 
@@ -887,7 +906,6 @@ module Tui
       idx ||= @ui.selected_id && sels.find { |i| @rows[i].item&.id == @ui.selected_id }
       idx ||= sels.min_by { |i| [(i - @sel).abs, i] }
       select_row(idx)
-      close_modal if detail_modal? && @ui.detail_item_id != @ui.selected_id
     end
 
     def switch_view(n)
@@ -978,15 +996,15 @@ module Tui
           d = fresh && (fresh.deadline || fresh.scheduled)
           flash("↻ #{item.title}#{d ? " → #{d.iso8601} (#{d.strftime("%a")})" : ""}")
           reselect(item.id)
-          refresh_detail_modal(item.id)
+          refresh_detail_panel if detail_panel?
         else
           # complete! returns every touched line; a parent cascade closes its
           # open descendants too — note how many rode along.
           n = result.is_a?(Array) ? result.size - 1 : 0
           subs = n > 0 ? " (+#{n} subtask#{"s" unless n == 1})" : ""
           flash("✓ DONE: #{item.title}#{subs} — x to archive")
-          close_modal if @ui.modal # the task just left the open view behind it
           rows
+          refresh_detail_panel if detail_panel?
         end
       else
         reload_store
@@ -1002,7 +1020,7 @@ module Tui
       @ui.form = Form.new(
         kind: :date, title: "reschedule", prompt: "new #{target}",
         hint: "fri · +3 · 07-15 · esc cancels", min_width: 36,
-        return_mode: @ui.modal ? :modal : :list, target_id: item.id
+        return_mode: :list, target_id: item.id
       ) do |raw|
         date = Dates.parse_when(raw)
         next "can't parse “#{raw}”" unless date
@@ -1015,7 +1033,7 @@ module Tui
           promoted = item.state == "INBOX" ? " · INBOX → TODO" : ""
           flash("→ #{item.title}: #{date.iso8601} (#{date.strftime("%a")})#{promoted}")
           reselect(item.id)
-          refresh_detail_modal(item.id)
+          refresh_detail_panel if detail_panel?
         end
         nil
       end
@@ -1034,7 +1052,7 @@ module Tui
       @ui.form = Form.new(
         kind: :recurrence, title: "recur", prompt: "every",
         hint: "weekly · 2w · .+1m · off · esc cancels", min_width: 40,
-        return_mode: @ui.modal ? :modal : :list,
+        return_mode: :list,
         initial: item.recur || +"", suffix: "(#{current})", target_id: item.id
       ) do |raw|
         cookie = Tasks::Recur.parse_interval(raw)
@@ -1047,7 +1065,7 @@ module Tui
         @ui.form_success = lambda do
           flash(cookie == :off ? "↻ off: #{item.title}" : "↻ #{cookie}: #{item.title}")
           reselect(item.id)
-          refresh_detail_modal(item.id)
+          refresh_detail_panel if detail_panel?
         end
         nil
       end
@@ -1164,6 +1182,8 @@ module Tui
       elsif @ui.filter
         @ui.filter = nil
         flash("filter cleared")
+      elsif detail_panel?
+        close_panel
       end
     end
 

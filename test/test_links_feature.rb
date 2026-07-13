@@ -7,7 +7,7 @@ require "tui/app"
 
 # Coverage for the links feature: config-driven shorthands (link.<name> rows),
 # custom system hosts (system.<name> rows), the `tasks open` command, and the
-# TUI `o` action + detail-modal links.
+# TUI `o` action + detail-panel links.
 class TestLinksFeature < Minitest::Test
   # -- config parsing ----------------------------------------------------------
 
@@ -277,11 +277,11 @@ class TestLinksFeature < Minitest::Test
     end
   end
 
-  def test_tui_detail_modal_shows_links
+  def test_tui_detail_panel_shows_links
     tui_app(ORG_WITH_LINKS) do |app|
       select_row(app, "One-link")
       app.send(:show_detail)
-      text = app.instance_variable_get(:@ui).modal.lines.join("\n")
+      text = app.instance_variable_get(:@ui).panel.lines.join("\n")
       plain = text.gsub(/\e\[[0-9;]*m/, "")
       assert_match(/links \(o opens the first\)/, plain)
       assert_match(%r{browse/OPS-7}, plain)

@@ -18,10 +18,12 @@ module Tui
     # selected: row index to highlight (or nil)
     # footer:   array of interior lines; the symbol :rule draws a divider
     # popup:    { lines: [...], row: Integer, col: Integer } overlaid on body
+    # panel:    { title:, lines: [...] } drawn in a fixed-width right pane
     # modal:    { title:, lines: [...] } drawn as a centered box over the body
-    def build(width:, height:, header:, rows:, selected: nil, footer: [], popup: nil, modal: nil,
+    def build(width:, height:, header:, rows:, selected: nil, footer: [], popup: nil, panel: nil, modal: nil,
               layout: nil)
-      layout ||= ScreenLayout.new(width: width, height: height, footer: footer, selected: selected)
+      layout ||= ScreenLayout.new(width: width, height: height, footer: footer, selected: selected,
+                                  panel: !panel.nil?)
       width = layout.width
       height = layout.height
       w = width - 2
@@ -29,18 +31,22 @@ module Tui
       body_h = layout.body_height
       offset = layout.viewport_offset
 
+      list_w = layout.list_width
       body = (rows[offset, body_h] || []).map.with_index do |row, vi|
         if vi == layout.selected_screen_row
-          selected_row(row, w - 2)
+          selected_row(row, list_w)
         else
           "  " + row.text
         end
       end
-      body.map! { |l| A.vtrunc(l, w - 2) }
+      body.map! { |line| A.vpad(A.vtrunc(line, list_w), list_w) }
       body.fill("", body.size...body_h)
+      body.map! { |line| A.vpad(line, list_w) }
 
-      # modal first, then the popup on top: rescheduling can be launched from an
-      # open detail modal, and the date popup must sit above it.
+      render_panel!(body, panel, layout) if panel
+
+      # Modal first, then the popup on top. Archive confirmation and forms must
+      # remain visible above a persistent task-detail panel.
       overlay_modal!(body, modal, w - 2) if modal
       overlay!(body, popup, w - 2) if popup
 
@@ -55,6 +61,18 @@ module Tui
       end
       lines << "└#{"─" * w}┘"
       lines
+    end
+
+    def render_panel!(body, panel, layout)
+      content_width = layout.panel_content_width
+      panel_lines = [T.paint(:panel_title, A.vtrunc(panel[:title], content_width))]
+      panel_lines << T.paint(:muted, "─" * content_width)
+      panel_lines.concat(panel[:lines])
+
+      body.map!.with_index do |list_line, index|
+        content = A.vpad(A.vtrunc(panel_lines[index].to_s, content_width), content_width)
+        "#{A.vpad(A.vtrunc(list_line, layout.list_width), layout.list_width)}│ #{content}"
+      end
     end
 
     # The selection cursor glyph. Deliberately distinct from Views::MARK_COLLAPSED

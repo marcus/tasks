@@ -146,6 +146,37 @@ class TestFrame < Minitest::Test
     assert_equal 60, A.vislen(lines[4])
   end
 
+  def test_right_panel_splits_body_at_fixed_layout_width
+    layout = Tui::ScreenLayout.new(
+      width: 60, height: 15, footer: ["prompt"], selected: 0, panel: true
+    )
+    panel = { title: "task", lines: ["details", "more"] }
+    lines = build(rows: [Row.new("selected task", Object.new)], selected: 0,
+                  footer: layout.footer, panel: panel, layout: layout)
+    body = A.strip(lines[3])
+    assert_includes body, "selected task"
+    assert_includes body, "task"
+    assert_includes A.strip(lines[6]), "more"
+    assert lines.all? { |line| A.vislen(line) == 60 }
+  end
+
+  def test_panel_width_does_not_change_with_content
+    short = build(panel: { title: "task", lines: ["x"] })
+    long = build(panel: { title: "task", lines: ["x" * 200] })
+    short_divider = A.strip(short[3]).index("│", 1)
+    long_divider = A.strip(long[3]).index("│", 1)
+    assert_equal short_divider, long_divider
+  end
+
+  def test_panel_remains_renderable_at_minimum_terminal_size
+    lines = build(
+      width: 8, height: 6, rows: [Row.new("task", Object.new)], footer: [], selected: 0,
+      panel: { title: "task", lines: ["details"] }
+    )
+    assert_equal 6, lines.size
+    assert lines.all? { |line| A.vislen(line) == 8 }
+  end
+
   def test_popup_preserves_base_content_on_both_sides
     rows = [Row.new("left-side middle-part right-side-content", Object.new)]
     popup = { lines: ["[P]"], row: 0, col: 12 }
@@ -217,7 +248,7 @@ class TestFrame < Minitest::Test
   end
 
   def test_popup_renders_on_top_of_modal
-    # rescheduling from an open detail modal layers the date popup over it
+    # A popup always layers over a blocking modal.
     modal = { title: "task", lines: %w[alpha beta gamma delta] }
     popup = { lines: ["X" * 50], row: 3, col: 0 }
     row = A.strip(build(modal: modal, popup: popup)[3 + 3]) # body row 3 (borders+header+rule)

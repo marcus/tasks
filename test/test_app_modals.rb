@@ -3,8 +3,8 @@
 require_relative "test_helper"
 require "tui/app"
 
-# Exercises App's modal-mode key handling through its private interface —
-# the pieces a pty smoke test can't assert on.
+# Exercises App's panel, modal, and popup handling through its private
+# interface — the pieces a pty smoke test can't assert on.
 class TestAppModals < Minitest::Test
   A = Tui::Ansi
 
@@ -22,7 +22,9 @@ class TestAppModals < Minitest::Test
   def ui(app) = app.instance_variable_get(:@ui)
   def mode(app)  = ui(app).mode
   def modal(app) = ui(app).modal
+  def panel(app) = ui(app).panel
   def modal_text(app) = modal(app).lines.map { |l| A.strip(l) }.join("\n")
+  def panel_text(app) = panel(app).lines.map { |line| A.strip(line) }.join("\n")
   def selected_title(app) = app.send(:current_item).title
 
   def rewrite_records(app)
@@ -33,22 +35,25 @@ class TestAppModals < Minitest::Test
     app.send(:reload_store)
   end
 
-  def test_enter_opens_detail_modal_for_selection
+  def test_enter_opens_detail_panel_for_selection
     with_app do |app|
       app.send(:handle_key, "\r")
-      assert_equal :modal, mode(app)
-      assert_includes modal_text(app), selected_title(app)
+      assert_equal :list, mode(app)
+      assert_nil modal(app)
+      assert_equal :detail, panel(app).kind
+      assert_includes panel_text(app), selected_title(app)
     end
   end
 
-  def test_arrows_walk_tasks_while_detail_modal_open
+  def test_arrows_walk_tasks_while_detail_panel_stays_open
     with_app do |app|
       app.send(:handle_key, "\r")
       before = selected_title(app)
       app.send(:handle_key, "\e[B")
-      assert_equal :modal, mode(app), "modal stays open"
+      assert_equal :list, mode(app)
+      assert_equal :detail, panel(app).kind, "panel stays open"
       refute_equal before, selected_title(app), "selection moved"
-      assert_includes modal_text(app), selected_title(app), "modal follows selection"
+      assert_includes panel_text(app), selected_title(app), "panel follows selection"
       app.send(:handle_key, "\e[A")
       assert_equal before, selected_title(app)
     end
@@ -62,14 +67,14 @@ class TestAppModals < Minitest::Test
         records.find { |record| record["id"] == FIX[:flight] }["deadline"] = "2026-08-20"
       end
 
-      assert_equal :modal, mode(app)
+      assert_equal :list, mode(app)
       assert_equal selected_id, app.send(:current_item).id
-      assert_equal selected_id, ui(app).detail_item_id
-      assert_includes modal_text(app), "Book flight in Concur"
+      assert_equal selected_id, panel(app).identity
+      assert_includes panel_text(app), "Book flight in Concur"
     end
   end
 
-  def test_external_hide_closes_detail_instead_of_rebinding_neighbor
+  def test_external_hide_keeps_panel_open_on_fallback_neighbor
     with_app do |app|
       app.send(:handle_key, "\r")
       rewrite_records(app) do |records|
@@ -82,6 +87,8 @@ class TestAppModals < Minitest::Test
       assert_nil modal(app)
       refute_equal FIX[:flight], app.send(:current_item).id
       assert_equal app.send(:current_item).id, ui(app).selected_id
+      assert_equal app.send(:current_item).id, panel(app).identity
+      assert_includes panel_text(app), selected_title(app)
     end
   end
 
@@ -119,13 +126,16 @@ class TestAppModals < Minitest::Test
     end
   end
 
-  def test_vim_scroll_keys_scroll_detail_modal_without_moving_selection
+  def test_vim_scroll_keys_scroll_detail_panel_without_moving_selection
     with_app do |app|
-      app.send(:handle_key, "\r")
-      before = selected_title(app)
-      app.send(:handle_key, "\x04")
-      assert_equal before, selected_title(app), "ctrl-d scrolls the modal, not the task list"
-      assert_equal :modal, mode(app)
+      IO.stub(:console, Struct.new(:winsize).new([10, 80])) do
+        app.send(:handle_key, "\r")
+        before = selected_title(app)
+        app.send(:handle_key, "\x04")
+        assert_equal before, selected_title(app), "ctrl-d scrolls the panel, not the task list"
+        assert_equal :list, mode(app)
+        assert_operator panel(app).scroll, :>, 0
+      end
     end
   end
 
@@ -152,12 +162,12 @@ class TestAppModals < Minitest::Test
     end
   end
 
-  def test_slash_does_nothing_in_detail_modal
+  def test_slash_filters_task_list_while_detail_panel_remains_open
     with_app do |app|
       app.send(:handle_key, "\r")
       app.send(:handle_key, "/")
-      assert_equal :modal, mode(app), "detail modal is not filterable yet"
-      refute modal(app).filterable?
+      assert_equal :filter, mode(app)
+      assert_equal :detail, panel(app).kind
     end
   end
 
@@ -172,12 +182,13 @@ class TestAppModals < Minitest::Test
     end
   end
 
-  def test_esc_closes_modal_and_returns_to_list
+  def test_esc_closes_detail_panel_and_stays_in_list
     with_app do |app|
       app.send(:handle_key, "\r")
       app.send(:handle_key, "\e")
       assert_equal :list, mode(app)
       assert_nil modal(app)
+      assert_nil panel(app)
     end
   end
 
@@ -288,23 +299,39 @@ class TestAppModals < Minitest::Test
     end
   end
 
-  def test_arrows_do_not_cycle_views_while_modal_open
+  def test_arrows_cycle_views_and_refresh_open_detail_panel
     with_app do |app|
       app.send(:handle_key, "\r")
-      app.send(:handle_key, "\e[C") # right arrow: no binding in modal mode
-      assert_equal :agenda, ui(app).view
-      assert_equal :modal, mode(app)
+      app.send(:handle_key, "\e[C")
+      assert_equal :next, ui(app).view
+      assert_equal :list, mode(app)
+      assert_equal app.send(:current_item).id, panel(app).identity
+      assert_includes panel_text(app), selected_title(app)
     end
   end
 
-  def test_yank_works_in_list_and_modal_mode
+  def test_detail_panel_remains_available_across_all_five_views
+    with_app do |app|
+      app.send(:handle_key, "\r")
+      (1..5).each do |number|
+        app.send(:handle_key, number.to_s)
+        assert_equal Tui::Views::TABS[number - 1].last, ui(app).view
+        assert_equal :detail, panel(app).kind
+        assert_equal app.send(:current_item).id, panel(app).identity
+        assert_includes panel_text(app).tr("\n", " "), selected_title(app)
+      end
+    end
+  end
+
+  def test_yank_works_with_detail_panel_open
     with_app do |app|
       copied = []
       Tui::Clipboard.stub(:copy, ->(text, **) { copied << text; true }) do
         app.send(:handle_key, "y")                      # list mode: ref
-        app.send(:handle_key, "\r")                     # open detail modal
-        app.send(:handle_key, "Y")                      # modal mode: markdown
-        assert_equal :modal, mode(app), "yank must not close the modal"
+        app.send(:handle_key, "\r")                     # open detail panel
+        app.send(:handle_key, "Y")                      # markdown while panel is open
+        assert_equal :list, mode(app)
+        assert_equal :detail, panel(app).kind, "yank must not close the panel"
       end
       assert_equal 2, copied.size
       assert_equal selected_title(app), copied[0]
@@ -345,59 +372,61 @@ class TestAppModals < Minitest::Test
     end
   end
 
-  def test_priority_bump_works_in_detail_modal
+  def test_priority_bump_refreshes_detail_panel
     with_app do |app|
       app.send(:handle_key, "\r")
       app.send(:handle_key, "J")
-      assert_equal :modal, mode(app)
+      assert_equal :list, mode(app)
       assert_equal "B", app.send(:current_item).priority
-      assert_match(/priority\s+\[#B\]/, modal_text(app), "modal content refreshed")
+      assert_match(/priority\s+\[#B\]/, panel_text(app), "panel content refreshed")
     end
   end
 
-  def test_complete_from_detail_modal_closes_it
+  def test_complete_with_detail_panel_open_follows_next_selection
     with_app do |app|
       app.send(:handle_key, "\r")                 # open detail on the selection
       title = selected_title(app)
       app.send(:handle_key, "c")                  # complete it
-      assert_equal :list, mode(app), "modal closes once the task leaves the view"
+      assert_equal :list, mode(app)
       assert_nil modal(app)
       app.send(:rows)
       titles = app.instance_variable_get(:@rows).map { |r| r.item&.title }
       refute_includes titles, title, "completed task gone from the open view"
+      assert_equal app.send(:current_item).id, panel(app).identity
+      assert_includes panel_text(app), selected_title(app)
     end
   end
 
-  def test_reschedule_from_detail_modal_updates_and_stays_open
+  def test_reschedule_from_detail_panel_updates_and_stays_open
     with_app do |app|
       app.send(:handle_key, "\r")                 # detail on Book flight (has deadline)
       title = selected_title(app)
       app.send(:handle_key, "d")                  # reschedule
       assert_equal :form, mode(app)
       assert_equal :date, ui(app).form.kind
-      assert_equal :detail, modal(app).kind,
-                   "the detail modal stays open behind the date popup"
+      assert_equal :detail, panel(app).kind,
+                   "the detail panel stays open behind the date popup"
       "2026-07-20".chars.each { |c| app.send(:handle_key, c) }
       app.send(:handle_key, "\r")                 # submit
-      assert_equal :modal, mode(app), "returns to the detail modal, not the bare list"
+      assert_equal :list, mode(app), "returns to the list with the detail panel open"
       assert_equal title, selected_title(app), "cursor still on the task"
       assert_equal Date.new(2026, 7, 20), app.send(:current_item).deadline
-      assert_includes modal_text(app), "2026-07-20", "modal shows the new deadline"
+      assert_includes panel_text(app), "2026-07-20", "panel shows the new deadline"
     end
   end
 
-  def test_esc_during_reschedule_from_modal_returns_to_modal
+  def test_esc_during_reschedule_returns_to_list_with_panel
     with_app do |app|
       app.send(:handle_key, "\r")
       app.send(:handle_key, "d")
       assert_equal :form, mode(app)
       app.send(:handle_key, "\e")                 # cancel the date entry
-      assert_equal :modal, mode(app), "esc returns to the modal it came from"
-      refute_nil modal(app)
+      assert_equal :list, mode(app)
+      assert_equal :detail, panel(app).kind
     end
   end
 
-  def test_stale_form_write_keeps_error_visible_above_detail_modal
+  def test_stale_form_write_keeps_error_visible_above_detail_panel
     with_app do |app|
       app.send(:handle_key, "\r")
       app.send(:handle_key, "d")
@@ -408,13 +437,13 @@ class TestAppModals < Minitest::Test
       end
 
       assert_equal :form, mode(app)
-      assert_equal :detail, modal(app).kind
+      assert_equal :detail, panel(app).kind
       assert_match(/file changed underneath/, ui(app).form.error)
       refute_nil app.send(:current_popup), "the stale-write error remains visible"
     end
   end
 
-  def test_recurrence_form_submit_from_detail_restores_and_refreshes_modal
+  def test_recurrence_form_submit_from_detail_refreshes_panel
     with_app do |app|
       app.send(:handle_key, "\r")
       item_id = app.send(:current_item).id
@@ -424,8 +453,8 @@ class TestAppModals < Minitest::Test
       app.send(:handle_paste, "weekly")
       app.send(:handle_key, "\r")
 
-      assert_equal :modal, mode(app)
-      assert_equal :detail, modal(app).kind
+      assert_equal :list, mode(app)
+      assert_equal :detail, panel(app).kind
       assert_equal ".+1w", app.instance_variable_get(:@store).items.find { |item| item.id == item_id }.recur
     end
   end
@@ -463,14 +492,14 @@ class TestAppModals < Minitest::Test
     end
   end
 
-  def test_undo_inside_detail_modal_refreshes_content
+  def test_undo_with_detail_panel_refreshes_content
     with_app do |app|
       app.send(:handle_key, "\r")
       app.send(:handle_key, "J")
-      assert_match(/priority\s+\[#B\]/, modal_text(app))
+      assert_match(/priority\s+\[#B\]/, panel_text(app))
       app.send(:handle_key, "u")
-      assert_equal :modal, mode(app)
-      assert_match(/priority\s+\[#A\]/, modal_text(app), "modal shows undone state")
+      assert_equal :list, mode(app)
+      assert_match(/priority\s+\[#A\]/, panel_text(app), "panel shows undone state")
     end
   end
 
@@ -487,7 +516,7 @@ class TestAppModals < Minitest::Test
     end
   end
 
-  def test_p_from_modal_closes_it_and_appends_to_existing_input
+  def test_p_from_panel_keeps_it_open_and_appends_to_existing_input
     with_app do |app|
       app.instance_variable_get(:@input) << "complete"
       app.send(:handle_key, "\r")
@@ -495,6 +524,7 @@ class TestAppModals < Minitest::Test
       app.send(:handle_key, "p")
       assert_equal :prompt, mode(app)
       assert_nil modal(app)
+      assert_equal :detail, panel(app).kind
       assert_equal "complete \"#{title}\" ", app.instance_variable_get(:@input)
     end
   end
@@ -823,22 +853,33 @@ class TestAppModals < Minitest::Test
     end
   end
 
-  def test_palette_cancel_and_form_cancel_restore_detail_modal
+  def test_palette_cancel_and_form_cancel_restore_list_with_detail_panel
     with_app do |app|
       app.send(:handle_key, "\r")
       app.send(:handle_key, ":")
       assert_equal :palette, mode(app)
       app.send(:handle_key, "\e")
-      assert_equal :modal, mode(app)
-      assert_equal :detail, modal(app).kind
+      assert_equal :list, mode(app)
+      assert_equal :detail, panel(app).kind
 
       app.send(:handle_key, ":")
       app.send(:handle_paste, "reschedule")
       app.send(:handle_key, "\r")
       assert_equal :form, mode(app)
       app.send(:handle_key, "\e")
-      assert_equal :modal, mode(app)
-      assert_equal :detail, modal(app).kind
+      assert_equal :list, mode(app)
+      assert_equal :detail, panel(app).kind
+    end
+  end
+
+  def test_panel_keeps_list_only_actions_in_action_palette
+    with_app do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, ":")
+      handlers = ui(app).action_palette.entries.map(&:handler)
+      assert_includes handlers, :archive_sweep
+      assert_includes handlers, :open_help
+      assert_includes handlers, :complete_selected
     end
   end
 
@@ -859,6 +900,7 @@ class TestAppModals < Minitest::Test
       neighbor = app.send(:current_item)
       refute_equal removed_id, neighbor.id
       assert neighbor.open?, "the fallback neighbor was not acted on"
+      assert_equal neighbor.id, panel(app).identity
     end
   end
 
@@ -966,7 +1008,7 @@ class TestAppModals < Minitest::Test
     end
   end
 
-  def test_palette_action_error_does_not_restore_stale_detail_context
+  def test_palette_action_error_remains_visible_after_panel_closes
     with_app do |app|
       app.send(:handle_key, "\r")
       entry = Tui::Shortcuts::Entry.new(
@@ -975,17 +1017,19 @@ class TestAppModals < Minitest::Test
         palette: true, form: nil, confirmation: nil
       )
       app.define_singleton_method(:explode) do
-        send(:close_modal)
+        send(:close_panel)
         raise "boom"
       end
-      ui(app).action_palette = Tui::ActionPalette.new(entries: [entry], return_mode: :modal)
+      ui(app).action_palette = Tui::ActionPalette.new(
+        entries: [entry], return_mode: :list, target_id: app.send(:current_item).id
+      )
       ui(app).mode = :palette
       app.send(:handle_key, "\r")
 
-      assert_equal :list, mode(app)
+      assert_equal :palette, mode(app)
       assert_nil modal(app)
-      assert_nil ui(app).action_palette
-      assert_match(/explode failed: boom/, app.instance_variable_get(:@flash))
+      assert_nil panel(app)
+      assert_match(/explode failed: boom/, ui(app).action_palette.error)
     end
   end
 end

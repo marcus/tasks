@@ -8,7 +8,8 @@ class TestActionPalette < Minitest::Test
   A = Tui::Ansi
 
   def entries
-    Tui::Shortcuts::REGISTRY.values_at(10, 14, 25, 26)
+    handlers = %i[complete_selected defer_selected redo_last focus_prompt]
+    handlers.map { |handler| Tui::Shortcuts::REGISTRY.find { |entry| entry.handler == handler } }
   end
 
   def palette

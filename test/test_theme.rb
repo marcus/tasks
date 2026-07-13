@@ -3,6 +3,7 @@
 require_relative "test_helper"
 require "tui/theme"
 require "tui/modals"
+require "tui/task_details"
 
 # Tui::Theme — spec parsing, slot painting, named themes, config overrides.
 class TestTheme < Minitest::Test
@@ -149,22 +150,22 @@ class TestTheme < Minitest::Test
     assert_includes T.paint(:selection, "x"), ";48;2;"
   end
 
-  # -- link painting in notes (Modals) ------------------------------------------
+  # -- link painting in task details --------------------------------------------
 
   def test_note_line_paints_links_and_prose_separately
     line = "see https://github.com/a/b for details"
-    out = Tui::Modals.note_line(line)
+    out = Tui::TaskDetails.note_line(line)
     assert_includes out, "\e[4;36mhttps://github.com/a/b\e[0m"
     assert_includes out, "\e[90msee \e[0m"
     assert_includes out, "\e[90m for details\e[0m"
   end
 
   def test_note_line_paints_org_links_whole
-    out = Tui::Modals.note_line("[[https://x.dev][the doc]] rest")
+    out = Tui::TaskDetails.note_line("[[https://x.dev][the doc]] rest")
     assert_includes out, "\e[4;36m[[https://x.dev][the doc]]\e[0m"
   end
 
   def test_note_line_without_links_is_all_note_styled
-    assert_equal "\e[90mjust prose\e[0m", Tui::Modals.note_line("just prose")
+    assert_equal "\e[90mjust prose\e[0m", Tui::TaskDetails.note_line("just prose")
   end
 end

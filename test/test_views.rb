@@ -748,9 +748,9 @@ class TestViews < Minitest::Test
     end
   end
 
-  # The detail-modal project string follows the same nearest-open-ancestor rule
+  # The detail-panel project string follows the same nearest-open-ancestor rule
   # as the Projects view — one definition (Node#open_project), so a closed
-  # parent is skipped in the modal too.
+  # parent is skipped in the panel too.
   def test_open_project_skips_closed_parent_for_detail
     with_records(PROJ_DONE_PARENT) do |store|
       child = store.node_for(store.items.find { |i| i.title == "hoisted child" })

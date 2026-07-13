@@ -84,7 +84,7 @@ class TestUiState < Minitest::Test
     assert_equal :list, ui.mode
     assert_nil ui.form
     assert_nil ui.form_success
-    assert_nil ui.detail_item_id
+    assert_nil ui.panel
   end
 
   def test_restore_validates_view_and_collapsed_shape

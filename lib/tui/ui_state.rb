@@ -23,7 +23,7 @@ module Tui
 
     attr_reader :mode
     attr_accessor :view, :selected_id, :filter, :collapsed, :show_deferred,
-                  :modal, :detail_item_id, :archive_preview, :form,
+                  :modal, :panel, :archive_preview, :form,
                   :form_success, :action_palette, :filter_input,
                   :modal_filter_input
 
@@ -49,7 +49,7 @@ module Tui
       @collapsed = collapsed
       @show_deferred = false
       @modal = nil
-      @detail_item_id = nil
+      @panel = nil
       @archive_preview = nil
       @form = nil
       @form_success = nil
@@ -92,7 +92,6 @@ module Tui
       @modal = value
       return unless value.nil?
 
-      @detail_item_id = nil
       @archive_preview = nil
       if @mode == :form && @form&.return_mode == :modal
         @form = nil
