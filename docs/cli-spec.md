@@ -117,6 +117,11 @@ task's stable ID. External changes to the same owned semantic slice conflict;
 unrelated task or same-task field changes may be adopted without overwriting an
 active buffer. Missing targets are never rebound to a neighboring row.
 
+Quitting with `Ctrl-C`, or `q` while a resize-suspended editor exists, requires
+an explicit visible confirmation before any unsaved field buffer is discarded.
+Repeated quit keys do not confirm that prompt; `y`/Return confirms and
+`n`/Escape cancels while retaining the draft.
+
 Field ownership and order are contractual: Title owns `title`; Priority owns
 `priority`; Deferred owns only the `defer` tag; Scheduled and Deadline each own
 their date plus documented INBOX/recurrence side effects; Recurrence owns

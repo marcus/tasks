@@ -296,6 +296,151 @@ class TestApp < Minitest::Test
     end
   end
 
+  def test_dirty_active_editor_ctrl_c_requires_visible_cancelable_confirmation
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\t")
+      editor = ui(app).task_editor
+      editor.form.set_value(:title, "UNSAVED-ACTIVE-DRAFT")
+      before = File.binread(app.instance_variable_get(:@store).org)
+
+      app.send(:handle_key, "\x03")
+
+      refute app.instance_variable_get(:@quit)
+      assert_same editor, ui(app).task_editor
+      assert editor.dirty?(:title)
+      assert_equal "UNSAVED-ACTIVE-DRAFT", editor.edit_form.value(:title)
+      assert_equal :task_draft_quit_confirm, ui(app).modal.kind
+      assert_match(/discard.*quit/i, ui(app).modal.lines.join(" "))
+      assert_equal before, File.binread(app.instance_variable_get(:@store).org)
+
+      app.send(:handle_key, "\x03")
+      refute app.instance_variable_get(:@quit), "repeated ctrl-c must not confirm draft loss"
+      assert_same editor, ui(app).task_editor
+
+      app.send(:handle_key, "n")
+      refute app.instance_variable_get(:@quit)
+      assert_nil ui(app).modal
+      assert_equal :task_edit, ui(app).mode
+      assert_same editor, ui(app).task_editor
+      assert_equal "UNSAVED-ACTIVE-DRAFT", editor.edit_form.value(:title)
+      assert_match(/retained/, app.instance_variable_get(:@flash))
+
+      app.send(:handle_key, "\x03")
+      app.send(:handle_key, "y")
+      assert app.instance_variable_get(:@quit)
+      assert_nil ui(app).task_editor
+      assert_equal before, File.binread(app.instance_variable_get(:@store).org),
+                   "confirmed quit discards only the local buffer"
+    end
+  end
+
+  def test_dirty_suspended_editor_q_requires_visible_cancelable_confirmation
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\t")
+      editor = ui(app).task_editor
+      editor.form.set_value(:title, "UNSAVED-SUSPENDED-DRAFT")
+      before = File.binread(app.instance_variable_get(:@store).org)
+      small = Struct.new(:winsize).new([7, 46])
+      IO.stub(:console, small) { capture_io { app.send(:paint) } }
+      assert_same editor, app.instance_variable_get(:@suspended_task_editor)
+
+      app.send(:handle_key, "q")
+
+      refute app.instance_variable_get(:@quit)
+      assert_equal :task_draft_quit_confirm, ui(app).modal.kind
+      assert_same editor, app.instance_variable_get(:@suspended_task_editor)
+      assert_equal "UNSAVED-SUSPENDED-DRAFT", editor.edit_form.value(:title)
+      assert_equal before, File.binread(app.instance_variable_get(:@store).org)
+
+      app.send(:handle_key, "q")
+      refute app.instance_variable_get(:@quit), "repeated q must not confirm draft loss"
+      app.send(:handle_key, "\e")
+      refute app.instance_variable_get(:@quit)
+      assert_nil ui(app).modal
+      assert_same editor, app.instance_variable_get(:@suspended_task_editor)
+      assert_equal "UNSAVED-SUSPENDED-DRAFT", editor.edit_form.value(:title)
+
+      app.send(:handle_key, "q")
+      app.send(:handle_key, "\r")
+      assert app.instance_variable_get(:@quit)
+      assert_nil app.instance_variable_get(:@suspended_task_editor)
+      assert_equal before, File.binread(app.instance_variable_get(:@store).org)
+    end
+  end
+
+  def test_clean_active_and_suspended_editors_keep_immediate_quit_behavior
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\t")
+      refute ui(app).task_editor.dirty?
+
+      app.send(:handle_key, "\x03")
+
+      assert app.instance_variable_get(:@quit)
+      assert_nil ui(app).modal
+    end
+
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\t")
+      editor = ui(app).task_editor
+      small = Struct.new(:winsize).new([7, 46])
+      IO.stub(:console, small) { capture_io { app.send(:paint) } }
+      refute editor.dirty?
+
+      app.send(:handle_key, "q")
+
+      assert app.instance_variable_get(:@quit)
+      assert_nil ui(app).modal
+    end
+  end
+
+  def test_dirty_quit_confirmation_precedes_and_restores_prompt_palette_and_modal
+    {
+      prompt: ->(app) { app.send(:handle_key, "p"); app.instance_variable_get(:@input) },
+      palette: ->(app) { app.send(:handle_key, ":"); ui(app).action_palette },
+      modal: ->(app) { app.send(:handle_key, "?"); ui(app).modal },
+    }.each do |expected_mode, open_overlay|
+      app_on(view: :agenda, select: "Book flight") do |app|
+        app.send(:handle_key, "\r")
+        app.send(:handle_key, "\t")
+        editor = ui(app).task_editor
+        editor.form.set_value(:title, "#{expected_mode}-safe-draft")
+        small = Struct.new(:winsize).new([7, 46])
+        IO.stub(:console, small) { capture_io { app.send(:paint) } }
+        underlying = open_overlay.call(app)
+        underlying_value = case expected_mode
+                           when :prompt then underlying.to_s
+                           when :palette then underlying.input.to_s
+                           when :modal then underlying.scroll
+                           end
+        assert_equal expected_mode, ui(app).mode
+
+        app.send(:handle_key, "\x03")
+        assert_equal :task_draft_quit_confirm, ui(app).modal.kind
+        app.send(:handle_key, "n")
+
+        refute app.instance_variable_get(:@quit)
+        assert_equal expected_mode, ui(app).mode
+        case expected_mode
+        when :prompt
+          assert_same underlying, app.instance_variable_get(:@input)
+          assert_equal underlying_value, underlying.to_s
+        when :palette
+          assert_same underlying, ui(app).action_palette
+          assert_equal underlying_value, underlying.input.to_s
+        when :modal
+          assert_same underlying, ui(app).modal
+          assert_equal underlying_value, underlying.scroll
+        end
+        assert_same editor, app.instance_variable_get(:@suspended_task_editor)
+        assert_equal "#{expected_mode}-safe-draft", editor.edit_form.value(:title)
+      end
+    end
+  end
+
   def test_panel_resize_preserves_entire_editor_and_performs_no_write
     app_on(view: :agenda, select: "Book flight") do |app|
       app.send(:handle_key, "\r")

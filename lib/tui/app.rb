@@ -94,6 +94,10 @@ module Tui
       @task_edit_message = nil
       @suspended_task_editor = nil
       @suspended_task_panel = nil
+      @draft_quit_editor = nil
+      @draft_quit_return_modal = nil
+      @draft_quit_return_message = nil
+      @draft_quit_changed_mode = false
     end
 
     # -- agent selection -----------------------------------------------------
@@ -516,6 +520,7 @@ module Tui
     end
 
     def handle_key(k)
+      return task_draft_quit_confirmation_key(k) if task_draft_quit_confirmation?
       return if dispatch_action(k, :global)
       return task_edit_key(k) if task_editing?
 
@@ -660,7 +665,12 @@ module Tui
     end
     def resp_up        = scroll_resp(-5)
     def resp_down      = scroll_resp(5)
-    def quit           = @quit = true
+    def quit
+      editor = @ui.task_editor || @suspended_task_editor
+      return @quit = true unless editor&.dirty?
+
+      show_task_draft_quit_confirmation(editor, editor.request_quit)
+    end
 
     def open_action_palette
       entries = Shortcuts.palette_entries(:list, self)
@@ -942,6 +952,7 @@ module Tui
 
     def suspend_task_edit_for_layout(layout)
       editor = @ui.task_editor
+      cancel_task_draft_quit_confirmation if @draft_quit_editor.equal?(editor)
       suspension = editor.suspend
       @suspended_task_panel = @ui.panel
       @ui.task_editor = nil
@@ -1131,6 +1142,77 @@ module Tui
         close_panel
       end
       flash(message) if message
+    end
+
+    def task_draft_quit_confirmation?
+      @draft_quit_editor&.pending_quit_confirmation
+    end
+
+    def show_task_draft_quit_confirmation(editor, outcome)
+      @draft_quit_editor = editor
+      @draft_quit_return_modal = @ui.modal
+      @draft_quit_return_message = @task_edit_message
+      @draft_quit_changed_mode = @ui.mode == :modal_filter
+      @ui.mode = :modal if @draft_quit_changed_mode
+      @ui.modal = Modal.new(
+        title: "Discard unsaved task draft?",
+        lines: [
+          outcome.message,
+          "Press y or Return to discard the draft and quit.",
+          "Press n or Escape to keep the draft and continue.",
+          "Ctrl-C and q do not confirm this prompt.",
+        ],
+        kind: :task_draft_quit_confirm,
+      )
+      @task_edit_message = outcome.message if @ui.task_editor.equal?(editor)
+      flash("unsaved task draft — y/return discards and quits · n/esc keeps editing")
+    end
+
+    def task_draft_quit_confirmation_key(key)
+      editor = @draft_quit_editor
+      outcome = editor.handle_quit_confirmation(key)
+      case outcome.status
+      when :quit_confirmed
+        clear_task_draft_quit_confirmation(restore: false)
+        @ui.task_editor = nil if @ui.task_editor.equal?(editor)
+        if @suspended_task_editor.equal?(editor)
+          @suspended_task_editor = nil
+          @suspended_task_panel = nil
+        end
+        @task_edit_message = nil
+        @quit = true
+      when :quit_cancelled
+        clear_task_draft_quit_confirmation
+        flash(outcome.message)
+      else
+        flash("confirmation still open — y/return discards and quits · n/esc keeps editing") \
+          if key == "\x03" || key == "q"
+      end
+    end
+
+    def cancel_task_draft_quit_confirmation
+      return unless task_draft_quit_confirmation?
+
+      @draft_quit_editor.handle_quit_confirmation("\e")
+      clear_task_draft_quit_confirmation
+    end
+
+    def clear_task_draft_quit_confirmation(restore: true)
+      return_modal = @draft_quit_return_modal
+      return_message = @draft_quit_return_message
+      changed_mode = @draft_quit_changed_mode
+      @draft_quit_editor = nil
+      @draft_quit_return_modal = nil
+      @draft_quit_return_message = nil
+      @draft_quit_changed_mode = false
+
+      if restore
+        @ui.modal = return_modal
+        @ui.mode = :modal_filter if changed_mode && return_modal&.filterable?
+        @task_edit_message = return_message
+      else
+        @ui.modal = nil
+      end
     end
 
     # -- modal -----------------------------------------------------------------

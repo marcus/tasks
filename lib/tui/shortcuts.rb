@@ -80,7 +80,7 @@ module Tui
       entry(sequences: ["\e[6~"],      key: "pgdn",    description: "scroll agent response down",       contexts: [:list], handler: :resp_down),
       entry(sequences: ["\e"],         key: "esc",     description: "dismiss response / close task details", contexts: [:list], handler: :dismiss_or_cancel),
       entry(sequences: ["?"],          key: "?",       description: "keyboard shortcuts",               contexts: [:list], handler: :open_help, palette: true),
-      entry(sequences: ["q"],          key: "q",       description: "quit",                             contexts: [:list], handler: :quit, palette: true),
+      entry(sequences: ["q"],          key: "q",       description: "quit (confirms unsaved draft)",    contexts: [:list], handler: :quit, palette: true),
 
       entry(sequences: ["\t"],         key: "tab",     description: "save field and edit next",         contexts: [:task_edit], handler: :task_edit_input),
       entry(sequences: ["\e[Z"],       key: "shift-tab", description: "save field and edit previous",    contexts: [:task_edit], handler: :task_edit_input),
@@ -101,7 +101,7 @@ module Tui
       entry(sequences: ["/"],              key: "/",             description: "filter lines (shortcuts modal)",      contexts: [:modal], handler: :modal_start_filter, availability: :modal_filter_available?, form: :modal_filter),
       entry(sequences: ["\e", "q", "\r", "\n", "?"], key: "esc / q", description: "close modal", contexts: [:modal], handler: :close_modal),
 
-      entry(sequences: ["\x03"], key: "ctrl-c", description: "quit", contexts: [:global], handler: :quit),
+      entry(sequences: ["\x03"], key: "ctrl-c", description: "quit (confirms unsaved draft)", contexts: [:global], handler: :quit),
     ].freeze
 
     def self.entries(context, include_global: true)

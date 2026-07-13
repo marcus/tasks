@@ -27,6 +27,7 @@ module Tui
     Confirmation = Data.define(
       :token, :field, :value, :message, :summary, :request, :finish, :expectations
     )
+    QuitConfirmation = Data.define(:message)
     Conflict = Data.define(:field, :local_value, :fresh_value, :snapshot, :result)
 
     CTRL_S = "\x13"
@@ -34,7 +35,7 @@ module Tui
 
     attr_reader :store, :target_id, :snapshot, :coalesce_key, :edit_form,
                 :pending_confirmation, :conflict, :pending_revert, :kept_copy,
-                :last_result
+                :last_result, :pending_quit_confirmation
 
     alias form_adapter edit_form
 
@@ -46,6 +47,7 @@ module Tui
       @coalesce_key = (coalesce_key || SecureRandom.hex(16)).to_s.dup.freeze
       @pending_confirmation = nil
       @pending_revert = nil
+      @pending_quit_confirmation = nil
       @conflict = nil
       @kept_copy = nil
       @last_result = nil
@@ -63,6 +65,34 @@ module Tui
     def render_model = edit_form&.render_model
     def read_only = edit_form ? edit_form.read_only : { id: target_id, closed: nil }.freeze
     def copy_value = kept_copy || (edit_form && focused_key && edit_form.value(focused_key))
+
+    # The draft owns quit confirmation so the same protection follows an editor
+    # while active or resize-suspended. App owns only the visible overlay and
+    # releases the editor after an explicit confirmation.
+    def request_quit
+      return outcome(:quit_ready) unless dirty?
+
+      message = "Unsaved task draft will be discarded"
+      @pending_quit_confirmation ||= QuitConfirmation.new(message: message.freeze)
+      outcome(:quit_confirmation, message: message, data: pending_quit_confirmation)
+    end
+
+    def handle_quit_confirmation(input)
+      return outcome(:unhandled) unless pending_quit_confirmation
+
+      raw = raw_input(input)
+      if ["y", "Y", "\r", "\n"].include?(raw)
+        @pending_quit_confirmation = nil
+        return outcome(:quit_confirmed, message: "Unsaved task draft discarded")
+      end
+      if ["n", "N", "\e"].include?(raw)
+        @pending_quit_confirmation = nil
+        return outcome(:quit_cancelled, message: "Quit cancelled; unsaved task draft retained")
+      end
+
+      outcome(:quit_confirmation, message: pending_quit_confirmation.message,
+              data: pending_quit_confirmation)
+    end
 
     def handle(input)
       return outcome(:missing, message: "Task no longer exists", data: copy_value) if missing?
@@ -141,6 +171,11 @@ module Tui
         @pending_revert = nil
         return outcome(:suspended,
                        message: "Discard prompt cancelled while editing paused; local value retained")
+      end
+      if pending_quit_confirmation
+        @pending_quit_confirmation = nil
+        return outcome(:suspended,
+                       message: "Quit cancelled while editing paused; local value retained")
       end
       if conflict
         return outcome(:suspended,
