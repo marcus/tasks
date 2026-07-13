@@ -5,6 +5,12 @@ priority order. These are captured for future work — nothing here is committed
 When you pick one up: spec it in `docs/cli-spec.md` first, then follow the
 `tasks-cli-dev` skill (model layer → CLI dispatch → docs → tests).
 
+## Active plan: editable task panel
+
+The next TUI feature is a read-by-default task panel with an explicit editable
+view, responsive panel widths, and a task-agnostic reactive form package. The
+review draft lives in [`docs/plans/editable-task-panel.md`](plans/editable-task-panel.md).
+
 ## 1. Weekly-review helper — `tasks review`
 
 `docs/conventions.md` calls the weekly review the habit that keeps the system
