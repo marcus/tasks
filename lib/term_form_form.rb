@@ -159,6 +159,7 @@ module TermForm
         @errors = supplied
         @validation_active = true
       end
+      ensure_focus!
       transition(:commit_rejected, nil, request: request, errors: self.errors)
     end
     alias reject reject_commit
@@ -192,16 +193,21 @@ module TermForm
 
     def render_model
       current = context
+      pending_owner_key = @pending_commit&.field_key
       row_index = 0
       rendered_groups = @groups.filter_map do |group|
-        next unless group.visible?(current)
+        group_visible = group.visible?(current)
+        group_owns_pending = group.fields.any? { |field| field.key == pending_owner_key }
+        next unless group_visible || group_owns_pending
 
-        group_enabled = group.enabled?(current)
+        group_enabled = group_visible && group.enabled?(current)
         rows = group.fields.filter_map do |field|
-          next unless field.visible?(current)
+          pending = field.key == pending_owner_key
+          field_visible = group_visible && field.visible?(current)
+          next unless field_visible || pending
 
           value = @values.fetch(field.key)
-          enabled = group_enabled && field.enabled?(current)
+          enabled = field_visible && group_enabled && field.enabled?(current)
           focused = field.key == @focus_key
           row = RenderModel::Row.new(
             key: field.key,
@@ -211,6 +217,7 @@ module TermForm
             index: row_index,
             enabled: enabled,
             focused: focused,
+            pending: pending,
             dirty: current.dirty?(field.key),
             required: field.required?(current),
             errors: @errors.fetch(field.key, []),
@@ -287,6 +294,14 @@ module TermForm
     end
 
     def ensure_focus!(after: nil)
+      # A pending commit owns logical focus until the host resolves it. Reactivity
+      # may hide or disable that field, but moving focus here would orphan the
+      # request. render_model keeps the owner available as a semantic pending row.
+      if @pending_commit
+        apply_focus(@pending_commit.field_key)
+        return @focus_key
+      end
+
       candidates = focusable_fields
       if @focus_key && candidates.any? { |field| field.key == @focus_key }
         return @focus_key

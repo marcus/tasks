@@ -103,10 +103,10 @@ module TermForm
   class RenderModel
     class Row
       attr_reader :key, :group_key, :label, :value, :index, :enabled, :focused,
-                  :dirty, :required, :errors, :cursor, :metadata
+                  :pending, :dirty, :required, :errors, :cursor, :metadata
 
       def initialize(key:, group_key:, label:, value:, index:, enabled:, focused:,
-                     dirty:, required:, errors:, cursor:, metadata:)
+                     dirty:, required:, errors:, cursor:, metadata:, pending: false)
         @key = key
         @group_key = group_key
         @label = Support.frozen_copy(label)
@@ -114,6 +114,7 @@ module TermForm
         @index = index
         @enabled = enabled
         @focused = focused
+        @pending = pending
         @dirty = dirty
         @required = required
         @errors = Support.frozen_copy(errors)
@@ -124,6 +125,7 @@ module TermForm
 
       def enabled? = @enabled
       def focused? = @focused
+      def pending? = @pending
       def dirty? = @dirty
       def required? = @required
       def error = @errors.first

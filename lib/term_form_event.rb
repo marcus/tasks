@@ -58,7 +58,13 @@ module TermForm
       raise ArgumentError, "unknown transition type: #{@type}" unless TYPES.include?(@type)
 
       @event = event && Event.normalize(event)
-      @data = Support.frozen_copy(data)
+      @data = data.each_with_object({}) do |(key, value), copied|
+        copied[Support.frozen_copy(key)] = if defined?(CommitRequest) && value.is_a?(CommitRequest)
+                                             value
+                                           else
+                                             Support.frozen_copy(value)
+                                           end
+      end.freeze
       freeze
     end
 

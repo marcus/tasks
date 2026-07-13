@@ -350,6 +350,84 @@ class TestTermForm < Minitest::Test
     assert_equal :first, form.focus_key
   end
 
+  def test_refresh_keeps_hidden_pending_owner_as_semantic_focus_until_rejection
+    form = TermForm::Form.new(groups: [group(:main, [
+      field(:mode, value: "advanced"),
+      field(:details, value: "old", visible: ->(context) { context[:mode] == "advanced" },
+            cursor: ->(value) { value.length }),
+      field(:finish, value: "done"),
+    ])], focus: :details)
+    form.set_value(:details, "dirty")
+    request = form.focus_next.request
+
+    refreshed = form.refresh(values: { mode: "simple" })
+    model = refreshed.render_model
+
+    assert refreshed.refreshed?
+    assert form.pending?
+    assert_same request, form.pending_commit
+    assert_equal :details, form.focus_key
+    assert_equal :details, request.field_key
+    assert_equal %i[mode finish], form.visible_fields.map(&:key)
+    assert_equal %i[mode finish], form.focusable_fields.map(&:key)
+    assert_equal %i[mode details finish], model.rows.map(&:key)
+    assert_equal :details, model.focused_key
+    assert_equal :details, model.focused_row.key
+    assert model.focused_row.focused?
+    assert model.focused_row.pending?
+    refute model.focused_row.enabled?
+    assert_equal TermForm::RenderModel::Cursor.new(1, 5, :details), model.cursor
+
+    assert_raises(ArgumentError) { form.accept_commit(token: request.token + 1) }
+    assert_raises(ArgumentError) { form.reject_commit(token: request.token + 1) }
+    assert_same request, form.pending_commit
+    assert_equal :details, form.focus_key
+    assert_equal :details, form.render_model.focused_row.key
+
+    rejected = form.reject_commit(message: "save failed", token: request.token)
+
+    assert rejected.commit_rejected?
+    refute form.pending?
+    assert_equal :mode, form.focus_key
+    assert_equal %i[mode finish], form.render_model.rows.map(&:key)
+    assert_equal :mode, form.render_model.focused_row.key
+    assert_raises(RuntimeError) { form.accept_commit(token: request.token) }
+    assert_equal :mode, form.focus_key
+  end
+
+  def test_refresh_keeps_disabled_pending_owner_focused_until_acceptance
+    form = TermForm::Form.new(groups: [group(:main, [
+      field(:mode, value: "advanced"),
+      field(:details, value: "old", enabled: ->(context) { context[:mode] == "advanced" }),
+      field(:finish, value: "done"),
+    ])], focus: :details)
+    form.set_value(:details, "dirty")
+    request = form.focus_next.request
+
+    form.refresh(values: { mode: "simple" })
+    model = form.render_model
+
+    assert form.pending?
+    assert_equal :details, form.focus_key
+    assert_equal :details, model.focused_key
+    assert_equal :details, model.focused_row.key
+    assert model.focused_row.pending?
+    refute model.focused_row.enabled?
+    assert_equal %i[mode finish], form.focusable_fields.map(&:key)
+
+    accepted = form.accept_commit(token: request.token)
+
+    assert accepted.commit_accepted?
+    refute form.pending?
+    refute form.dirty?(:details)
+    assert_equal "dirty", form.baseline(:details)
+    assert_equal :finish, form.focus_key
+    assert_equal :finish, form.render_model.focused_row.key
+    refute form.render_model.rows.any?(&:pending?)
+    assert_raises(RuntimeError) { form.reject_commit(token: request.token) }
+    assert_equal :finish, form.focus_key
+  end
+
   def test_pending_request_is_cancelled_when_buffer_returns_to_baseline_before_navigation
     form = simple_form
     form.set_value(:first, "dirty first")
