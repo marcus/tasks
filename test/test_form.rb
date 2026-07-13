@@ -97,4 +97,16 @@ class TestForm < Minitest::Test
       assert_equal width, A.vislen(popup[:lines].first)
     end
   end
+
+  def test_zero_width_or_height_popup_budget_emits_no_lines
+    f = form(initial: "value") { nil }
+    assert_empty f.popup(
+      row: 0, col: 0, max_width: 0, max_height: 4,
+      inline_input: ->(input) { input.to_s },
+    )[:lines]
+    assert_empty f.popup(
+      row: 0, col: 0, max_width: 8, max_height: 0,
+      inline_input: ->(input) { input.to_s },
+    )[:lines]
+  end
 end

@@ -73,8 +73,8 @@ module Tui
       natural_width = [A.vislen("#{@prompt} #{@input} #{@suffix}") + 10, @min_width].max
       width = [natural_width, max_width || natural_width].min
       height = [4, max_height || 4].min
-      width = [width, 1].max
-      height = [height, 1].max
+      width = [width, 0].max
+      height = [height, 0].max
       rendered = @renderer.render(
         model: @engine.render_model, width: width, height: height,
         title: @title, hint: @hint, error: @error, suffix: @suffix,

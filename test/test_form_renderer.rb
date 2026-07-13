@@ -53,6 +53,57 @@ class TestFormRenderer < Minitest::Test
     assert_includes plain, "[x] Todo"
   end
 
+  def test_date_input_switches_from_text_to_a_deterministic_wide_picker
+    form = date_form
+    text = A.strip(render(form, width: 42, height: 12).lines.join("\n"))
+    assert_includes text, "Date: 2026-07-13"
+    refute_includes text, "Selected [13]"
+
+    form.handle("\r")
+    picker = A.strip(render(form, width: 42, height: 12).lines.join("\n"))
+    assert_includes picker, "July 2026"
+    assert_includes picker, "Selected [13] · 2026-07-13"
+    assert_includes picker, "[13]", "selected day has a non-color calendar cue"
+    assert_includes picker, "Mo  Tu  We  Th  Fr  Sa  Su"
+  end
+
+  def test_date_picker_selected_day_updates_in_narrow_mono_no_color_output
+    form = date_form
+    form.handle("\r")
+    form.handle("\e[C")
+    T.configure!(name: "mono")
+
+    output = render(form, width: 19, height: 6).lines.join("\n")
+    plain = A.strip(output)
+    refute_match(/\e\[(?:3[0-9]|4[0-8]|9[0-7])m/, output)
+    assert_includes plain, "July 2026"
+    assert_includes plain, "> Jul 14 selected"
+    refute_includes plain, "2026-07-13", "picker output differs from the closed text field"
+  end
+
+  def test_zero_and_one_cell_picker_budgets_never_overrun
+    form = date_form
+    form.handle("\r")
+    renderer = Tui::FormRenderer.new
+
+    [[0, 0], [0, 4], [4, 0]].each do |width, height|
+      result = renderer.render(model: form.render_model, width: width, height: height, title: "Date")
+      assert_empty result.lines
+    end
+
+    (0..18).each do |width|
+      (0..8).each do |height|
+        result = renderer.render(model: form.render_model, width: width, height: height, title: "Date")
+        assert_operator result.lines.size, :<=, height
+        assert result.lines.all? { |line| A.vislen(line) <= width },
+               "picker #{width}x#{height}: #{result.lines.inspect}"
+      end
+    end
+
+    one_cell = renderer.render(model: form.render_model, width: 1, height: 1, title: "Date")
+    assert_equal [">"], one_cell.lines
+  end
+
   def test_unicode_and_every_tiny_positive_rectangle_stay_inside_cell_budget
     form = input_form(value: "界🙂e\u0301", baseline: "")
     renderer = Tui::FormRenderer.new
@@ -88,6 +139,14 @@ class TestFormRenderer < Minitest::Test
   def input_form(value:, baseline: value, validate: nil)
     field = TermForm::Fields::Input.new(
       key: :name, label: "Name", value: value, baseline: baseline, validate: validate,
+    )
+    TermForm::Form.new(groups: [TermForm::Group.new(key: :main, label: "", fields: [field])])
+  end
+
+  def date_form
+    field = TermForm::Fields::DateInput.new(
+      key: :date, label: "Date", value: Date.new(2026, 7, 13),
+      today: -> { Date.new(2026, 7, 13) },
     )
     TermForm::Form.new(groups: [TermForm::Group.new(key: :main, label: "", fields: [field])])
   end
