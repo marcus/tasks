@@ -77,6 +77,52 @@ class TestTermFormTextFields < Minitest::Test
     assert form.handle(type: :key, key: :left).handled?
   end
 
+  def test_custom_key_mapping_uses_the_decoded_key_instead_of_transport_bytes
+    key_map = TermForm::KeyMap.new({
+      "h" => TermForm::Event.key(:left),
+      "x" => TermForm::Event.key("X"),
+      "i" => TermForm::Event.new(:input, text: "I"),
+      "p" => TermForm::Event.paste("P\nQ"),
+    }, defaults: false)
+    field = TermForm::Fields::Input.new(key: :title, value: "ab")
+    form = TermForm::Form.new(
+      groups: [TermForm::Group.new(key: :main, fields: [field])],
+      key_map: key_map,
+    )
+
+    transition = form.handle("h")
+    assert transition.handled?
+    assert_equal "ab", form.value(:title)
+    assert_equal 1, field.cursor
+
+    assert form.handle("x").changed?
+    assert form.handle("i").changed?
+    assert form.handle("q").changed?
+    assert form.handle("p").changed?
+    assert_equal "aXIqP Qb", form.value(:title)
+  end
+
+  def test_text_area_custom_key_mapping_preserves_decoded_motion_and_newline
+    key_map = TermForm::KeyMap.new({
+      "h" => TermForm::Event.key(:left),
+      "u" => TermForm::Event.key(:up),
+      "n" => TermForm::Event.key(:return),
+    }, defaults: false)
+    field = TermForm::Fields::TextArea.new(key: :notes, value: "ab\ncd")
+    form = TermForm::Form.new(
+      groups: [TermForm::Group.new(key: :main, fields: [field])],
+      key_map: key_map,
+    )
+    field.render(width: 4, height: 2)
+
+    assert form.handle("h").handled?
+    assert_equal 4, field.cursor
+    assert form.handle("u").handled?
+    assert_equal 1, field.cursor
+    assert form.handle("n").changed?
+    assert_equal "a\nb\ncd", form.value(:notes)
+  end
+
   def test_text_area_return_inserts_newline_while_tab_traverses
     notes = TermForm::Fields::TextArea.new(key: :notes, value: "first")
     other = TermForm::Fields::Input.new(key: :other)

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "term_form_model"
+require_relative "term_form_event"
 require_relative "term_form_text"
 
 module TermForm
@@ -51,7 +52,8 @@ module TermForm
       def handle_event(event, _value, _context)
         result = case event.type
                  when :paste then paste(event.text)
-                 when :input, :key then handle_key(event.raw || event.key || event.text)
+                 when :input then handle_key(event.text || event.raw)
+                 when :key then handle_key(key_bytes(event))
                  end
         edit_result(result)
       end
@@ -64,6 +66,11 @@ module TermForm
         return nil unless status
 
         Field::Result.new(status, text)
+      end
+
+      def key_bytes(event)
+        key = event.key || event.raw
+        key.is_a?(Symbol) ? Event::KEY_BYTES.fetch(key) : key
       end
     end
 
@@ -109,6 +116,14 @@ module TermForm
       end
 
       def handle_event(event, value, context)
+        if event.type == :key
+          vertical = case key_bytes(event)
+                     when "\e[A" then move_vertical(-1)
+                     when "\e[B" then move_vertical(1)
+                     end
+          return edit_result(vertical) if vertical
+        end
+
         inherited = super
         return inherited if inherited
 
