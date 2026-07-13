@@ -58,18 +58,19 @@ module Tui
       return Submission.new(request: nil, error: "agent queue is full (#{@max_pending} waiting)") \
         if pending_count >= @max_pending
 
-      agent = @agent_factory.call(entry)
+      captured_entry = immutable_entry(entry)
+      agent = @agent_factory.call(captured_entry)
       unless agent.available?
         return Submission.new(
           request: nil,
-          error: "#{entry.provider} not available — check the CLI is installed and any local model server is running"
+          error: "#{captured_entry.provider} not available — check the CLI is installed and any local model server is running"
         )
       end
 
       item = Item.new(
         id: @next_id,
         prompt: prompt.to_s.dup.freeze,
-        entry: entry,
+        entry: captured_entry,
         status: :queued,
         queued_at: now,
         output: +"",
@@ -123,6 +124,21 @@ module Tui
                         exit_status: @agent.exit_status, error: error)
       clear_active
       Event.new(type: :finished, request: snapshot(item))
+    rescue StandardError => e
+      item = @active
+      agent = @agent
+      cancel_error = nil
+      begin
+        agent.cancel
+      rescue StandardError => cancel_exception
+        cancel_error = cancel_exception.message
+      end
+      message = "agent stream failed: #{e.message}"
+      message += " (cleanup also failed: #{cancel_error})" if cancel_error
+      finish_item(item, status: :failed, output: agent.output,
+                        exit_status: agent.exit_status, error: message)
+      clear_active
+      Event.new(type: :finished, request: snapshot(item))
     end
 
     def cancel_active
@@ -156,6 +172,7 @@ module Tui
     def active? = !@active.nil?
     def pending? = !@pending.empty?
     def pending_count = @pending.size
+    def submitted_count = @next_id - 1
     def any? = !@items.empty?
     def work? = active? || pending?
     def active_output = @agent&.output.to_s
@@ -170,6 +187,20 @@ module Tui
     private
 
     def now = @clock.call
+
+    # LLM::Entry is intentionally mutable for registry/config assembly. Queue
+    # requests are not: provider/model must remain exactly as submitted even if
+    # the UI selection or a returned snapshot is mutated later.
+    def immutable_entry(entry)
+      copy = entry.dup
+      copy.provider = immutable_value(entry.provider)
+      copy.model = immutable_value(entry.model)
+      copy.freeze
+    end
+
+    def immutable_value(value)
+      value.is_a?(String) ? value.dup.freeze : value
+    end
 
     def finish_item(item, status:, output: nil, exit_status: nil, error: nil)
       item.status = status

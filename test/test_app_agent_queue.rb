@@ -123,7 +123,7 @@ class TestAppAgentQueue < Minitest::Test
       agents[0].finish_with("done")
       app.send(:pump_agent_queue)
       finished = app.send(:footer, 100).map { |line| line.is_a?(String) ? A.strip(line) : line }.join("\n")
-      assert_includes finished, "result #1"
+      assert_includes finished, "result #1 of 2"
       assert_includes finished, "A opens all agent activity"
     end
   end
@@ -150,6 +150,21 @@ class TestAppAgentQueue < Minitest::Test
       assert_includes filtered, "second request"
       assert_includes filtered, "result   (waiting)"
       refute_includes filtered, "first request"
+    end
+  end
+
+  def test_silent_running_activity_refreshes_on_elapsed_second
+    with_app(agent_count: 1) do |app, agents|
+      submit(app, "silent request")
+      app.send(:open_agent_activity)
+      _height, width = app.send(:terminal_size)
+      agents[0].instance_variable_set(:@output, +"late transcript")
+      app.instance_variable_set(:@agent_activity_second, -1)
+
+      app.send(:modal_view, app.send(:modal_body_h), width: width)
+
+      rendered = ui(app).modal.lines.map { |line| A.strip(line) }.join("\n")
+      assert_includes rendered, "late transcript"
     end
   end
 

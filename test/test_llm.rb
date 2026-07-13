@@ -19,6 +19,17 @@ class TestLLM < Minitest::Test
     end
   end
 
+  def pump_until_output(agent, needle)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 2
+    until agent.output.include?(needle)
+      remaining = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      raise "timed out waiting for agent output" unless remaining.positive?
+
+      IO.select([agent.io], nil, nil, remaining) if agent.io
+      raise "agent exited before expected output" if agent.pump == :done
+    end
+  end
+
   # -- ClaudeCli adapter -----------------------------------------------------
 
   def test_claude_command_includes_model_and_permissions_flag
@@ -235,6 +246,31 @@ class TestLLM < Minitest::Test
     end
     assert agent.success?
     assert_equal 0, agent.exit_status
+  end
+
+  def test_async_agent_cancellation_escalates_when_child_ignores_term
+    agent = A::ClaudeCli.new(root: "/tmp")
+    hostile = [
+      RbConfig.ruby, "-e",
+      "STDOUT.sync=true; trap('TERM') {}; puts 'ready'; sleep 30",
+    ]
+    agent.stub(:command, ->(_prompt, model:, stream:) { hostile }) do
+      agent.start("ignored", model: "ignored")
+      begin
+        pump_until_output(agent, "ready")
+        started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        agent.cancel
+        elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+        assert_operator elapsed, :<, 1.0, "TERM-resistant child must not freeze cancellation"
+      ensure
+        agent.cancel if agent.running?
+      end
+    end
+
+    assert agent.cancelled?
+    refute agent.success?
+    assert agent.process_status.signaled?
+    assert_equal Signal.list.fetch("KILL"), agent.process_status.termsig
   end
 
   def test_build_returns_configured_adapter_with_settings

@@ -104,6 +104,7 @@ module Tui
       @agent_quit_return_modal = nil
       @agent_quit_return_mode = nil
       @agent_activity_width = nil
+      @agent_activity_second = nil
     end
 
     # -- agent selection -----------------------------------------------------
@@ -272,7 +273,10 @@ module Tui
         end
         f << :rule
       elsif @resp_open && @resp
-        f << T.paint(:muted, " result ##{@resp_request_id} · A opens all agent activity")
+        f << T.paint(
+          :muted,
+          " result ##{@resp_request_id} of #{@agent_queue.submitted_count} · A opens all agent activity"
+        )
         visible = @resp[@resp_scroll, RESP_MAX] || []
         visible.each { |l| f << "   #{l}" }
         scroll_hint = @resp.size > RESP_MAX ? "#{@resp_scroll + visible.size}/#{@resp.size} · #{RESP_HINT}" : "esc dismiss"
@@ -921,6 +925,7 @@ module Tui
       _height, width = terminal_size
       open_modal(agent_activity_content(width: width), kind: :agent_activity)
       @agent_activity_width = width
+      @agent_activity_second = monotonic_now.floor
     end
 
     def cancel_queued_agent_requests
@@ -1351,8 +1356,11 @@ module Tui
     def modal_view(body_h, width: nil)
       return unless @ui.modal
 
-      if @ui.modal.kind == :agent_activity && width && width != @agent_activity_width
-        refresh_agent_activity(width: width)
+      if @ui.modal.kind == :agent_activity && width
+        second = monotonic_now.floor
+        if width != @agent_activity_width || (@agent_queue.active? && second != @agent_activity_second)
+          refresh_agent_activity(width: width, now: second)
+        end
       end
 
       @ui.modal.view(body_h, filter_line: modal_filter_line)
@@ -1413,32 +1421,39 @@ module Tui
     end
 
     def close_modal
-      @agent_activity_width = nil if @ui.modal&.kind == :agent_activity
+      if @ui.modal&.kind == :agent_activity
+        @agent_activity_width = nil
+        @agent_activity_second = nil
+      end
       @ui.mode = :list
       @ui.modal = nil
       @ui.archive_preview = nil
       @ui.modal_filter_input.clear
     end
 
-    def agent_activity_content(width: nil)
+    def agent_activity_content(width: nil, now: nil)
       _height, sampled_width = terminal_size unless width
       width ||= sampled_width
       AgentActivity.content(
         requests: @agent_queue.requests,
-        now: Process.clock_gettime(Process::CLOCK_MONOTONIC),
+        now: now || monotonic_now,
         width: width
       )
     end
 
-    def refresh_agent_activity(width: nil)
+    def refresh_agent_activity(width: nil, now: nil)
       return unless @ui.modal&.kind == :agent_activity
 
       width ||= @agent_activity_width || terminal_size.last
-      content = agent_activity_content(width: width)
+      now ||= monotonic_now
+      content = agent_activity_content(width: width, now: now)
       @ui.modal.replace(title: content[:title], lines: content[:lines],
                         filter_groups: content[:filter_groups])
       @agent_activity_width = width
+      @agent_activity_second = now.floor
     end
+
+    def monotonic_now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
     # `/` inside a filterable modal (the shortcuts overlay): live line filter.
     def modal_start_filter

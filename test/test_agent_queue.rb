@@ -17,11 +17,12 @@ class TestAgentQueue < Minitest::Test
   class FakeAgent
     attr_reader :started, :output, :process_status, :exit_status
 
-    def initialize(available: true, success: true, output: "ok", start_error: nil)
+    def initialize(available: true, success: true, output: "ok", start_error: nil, pump_error: nil)
       @availability = Array(available)
       @success = success
       @final_output = output
       @start_error = start_error
+      @pump_error = pump_error
       @started = []
       @output = +""
       @process_status = nil
@@ -44,6 +45,8 @@ class TestAgentQueue < Minitest::Test
     end
 
     def pump
+      raise @pump_error if @pump_error
+
       @output << @final_output
       @running = false
       @exit_status = @success ? 0 : 7
@@ -119,6 +122,26 @@ class TestAgentQueue < Minitest::Test
     assert_equal [["two", "qwen"]], agents[1].started
   end
 
+  def test_entry_snapshot_cannot_be_changed_by_source_or_consumer
+    agent = FakeAgent.new
+    queue, built = queue_with(agent)
+    source = entry("sonnet")
+    accepted = queue.enqueue(prompt: "stable", entry: source)
+
+    source.model = "opus"
+    snapshot = accepted.request
+    assert_equal "sonnet", snapshot.entry.model
+    assert snapshot.entry.frozen?
+    assert snapshot.entry.model.frozen?
+    assert_raises(FrozenError) { snapshot.entry.model << "-changed" }
+    assert_raises(FrozenError) { snapshot.entry.model = "haiku" }
+    assert_same snapshot.entry, queue.requests.first.entry
+
+    queue.start_next
+    assert_equal [["stable", "sonnet"]], agent.started
+    assert_same snapshot.entry, built.first
+  end
+
   def test_rejects_unavailable_or_over_capacity_without_recording_request
     unavailable = FakeAgent.new(available: false)
     queue, = queue_with(unavailable)
@@ -175,6 +198,23 @@ class TestAgentQueue < Minitest::Test
     assert_equal 7, result.exit_status
     assert_equal "partial transcript", result.output
     assert_match(/exited 7/, result.error)
+  end
+
+  def test_pump_exception_fails_one_request_cleans_up_and_allows_next
+    broken = FakeAgent.new(pump_error: IOError.new("read exploded"))
+    good = FakeAgent.new
+    queue, = queue_with(broken, good)
+    queue.enqueue(prompt: "broken", entry: entry)
+    queue.enqueue(prompt: "good", entry: entry)
+    queue.start_next
+
+    failed = queue.pump
+    assert_equal :failed, failed.request.status
+    assert_match(/stream failed: read exploded/, failed.request.error)
+    assert broken.cancelled?
+
+    assert_equal :started, queue.start_next.type
+    assert_equal [["good", "sonnet"]], good.started
   end
 
   def test_cancel_active_preserves_partial_output_and_leaves_pending_for_advance

@@ -24,6 +24,9 @@ module LLM
   #   - sync  (CLI): #run_sync spawns with inherited stdio so output streams
   #     straight to the terminal, and returns true on a clean exit.
   class Agent
+    CANCEL_TERM_GRACE = 0.15
+    CANCEL_KILL_GRACE = 0.15
+
     attr_reader :output, :io, :process_status
 
     # root:    working directory the harness runs in (where tasks.jsonl lives).
@@ -96,11 +99,22 @@ module LLM
 
     def cancel
       @cancelled = true
-      # Negative pid = signal the whole process group started in #start.
-      Process.kill("TERM", -@pid) if @pid
-      finish
-    rescue Errno::ESRCH
-      finish
+      close_output
+      return :done unless @pid
+
+      # Negative pid = signal the whole process group started in #start. Some
+      # harnesses (or their tool subprocesses) trap TERM, so cancellation must
+      # not block the raw-terminal UI indefinitely in wait2. Give the group a
+      # short graceful window, escalate to KILL, then detach as a last resort so
+      # the child can still be reaped without holding the UI hostage.
+      signal_group("TERM")
+      return :done if reap_within(CANCEL_TERM_GRACE)
+
+      signal_group("KILL")
+      return :done if reap_within(CANCEL_KILL_GRACE)
+
+      detach_unreaped_child
+      :done
     end
 
     # Blocking run for the CLI: inherit stdio so the harness streams to the
@@ -122,8 +136,7 @@ module LLM
     end
 
     def finish
-      @io&.close
-      @io = nil
+      close_output
       if @pid
         _pid, @process_status = Process.wait2(@pid)
         @pid = nil
@@ -132,6 +145,45 @@ module LLM
     rescue Errno::ECHILD
       @pid = nil
       :done
+    end
+
+    def close_output
+      @io&.close
+      @io = nil
+    end
+
+    def signal_group(signal)
+      Process.kill(signal, -@pid) if @pid
+    rescue Errno::ESRCH
+      nil
+    end
+
+    def reap_within(seconds)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + seconds
+      loop do
+        waited_pid, status = Process.wait2(@pid, Process::WNOHANG)
+        if waited_pid
+          @process_status = status
+          @pid = nil
+          return true
+        end
+
+        remaining = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        return false unless remaining.positive?
+
+        IO.select(nil, nil, nil, [remaining, 0.01].min)
+      end
+    rescue Errno::ECHILD
+      @pid = nil
+      true
+    end
+
+    def detach_unreaped_child
+      pid = @pid
+      @pid = nil
+      Process.detach(pid) if pid
+    rescue Errno::ECHILD
+      nil
     end
   end
 end
