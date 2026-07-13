@@ -73,6 +73,10 @@ module TermForm
 
     def normalize_value(value) = value
 
+    # Stateful fields can add current, renderer-neutral presentation data while
+    # preserving the immutable metadata supplied by the host.
+    def metadata_for(_value, _context) = metadata
+
     # Form calls this after host-driven refreshes or direct value changes so a
     # stateful field can reconcile its private editing buffer.
     def sync_value(_value) = nil

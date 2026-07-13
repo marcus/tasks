@@ -236,7 +236,7 @@ module TermForm
             required: field.required?(current),
             errors: @errors.fetch(field.key, []),
             cursor: focused ? field.cursor_for(value, current) : nil,
-            metadata: field.metadata,
+            metadata: field.metadata_for(value, current),
           )
           row_index += 1
           row

@@ -14,6 +14,8 @@ class TestTermFormRequireBoundary < Minitest::Test
       abort "forbidden dependencies: #{forbidden.join(", ")}" unless forbidden.empty?
       abort "missing core" unless defined?(TermForm::Form) && defined?(TermForm::RenderModel)
       abort "missing text fields" unless defined?(TermForm::Fields::Input) && defined?(TermForm::Fields::TextArea)
+      abort "missing choice fields" unless defined?(TermForm::Fields::Select) && defined?(TermForm::Fields::MultiSelect)
+      abort "missing confirm/date fields" unless defined?(TermForm::Fields::Confirm) && defined?(TermForm::Fields::DateInput)
     RUBY
 
     stdout, stderr, status = Open3.capture3(
