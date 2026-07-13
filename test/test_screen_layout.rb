@@ -93,8 +93,50 @@ class TestScreenLayout < Minitest::Test
         width: terminal_width, height: 24, footer: [], selected: 0, panel: true
       )
       assert_equal content_width, layout.panel_content_width
+      expected_breakpoint = content_width < 32 ? :below_minimum : (content_width < 48 ? :stacked : :inline)
+      assert_equal expected_breakpoint, layout.content_breakpoint
       assert_operator layout.list_width, :>=, Tui::ScreenLayout::MIN_LIST_WIDTH
     end
+  end
+
+
+  def test_named_panel_modes_are_centrally_resolved
+    expected = { compact: 32, standard: 36, wide: 54, focus: 86 }
+    expected.each do |mode, content_width|
+      layout = Tui::ScreenLayout.new(
+        width: 100, height: 24, footer: [], panel: true, panel_mode: mode
+      )
+      assert_equal mode, layout.panel_mode
+      assert_equal content_width, layout.panel_content_width
+      assert_equal 96, layout.list_width + layout.panel_width
+    end
+  end
+
+  def test_editing_promotes_without_overwriting_requested_read_preference
+    layout = Tui::ScreenLayout.new(
+      width: 87, height: 24, footer: [], panel: true,
+      panel_mode: :standard, editing: true
+    )
+    assert_equal :standard, layout.requested_panel_mode
+    assert_equal :wide, layout.panel_mode
+    assert_operator layout.panel_content_width, :>=, 32
+    assert layout.editable_panel?
+  end
+
+  def test_editing_admission_is_exact_at_minimum_terminal_width
+    below = Tui::ScreenLayout.new(
+      width: 45, height: 18, footer: [], panel: true,
+      panel_mode: :compact, editing: true
+    )
+    exact = Tui::ScreenLayout.new(
+      width: 46, height: 18, footer: [], panel: true,
+      panel_mode: :compact, editing: true
+    )
+    assert_equal 31, below.panel_content_width
+    refute below.editable_panel?
+    assert_equal 32, exact.panel_content_width
+    assert exact.editable_panel?
+    assert_equal 46, Tui::ScreenLayout.minimum_edit_terminal_width
   end
 
   def test_frame_consumes_layout_body_and_viewport_without_recomputing

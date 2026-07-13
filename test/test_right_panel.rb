@@ -42,4 +42,17 @@ class TestRightPanel < Minitest::Test
     assert_empty panel.view(height: 1, width: 1)[:lines]
     assert_empty panel.view(height: 2, width: 1)[:lines]
   end
+
+
+  def test_focused_row_is_revealed_without_replacing_editor_scroll_state
+    subject = panel
+    subject.replace(title: "editing", lines: (1..30).map(&:to_s), focused_row: 19)
+    view = subject.view(height: 8, width: 9)
+    assert_operator subject.scroll, :>, 0
+    assert_includes view[:lines].map { |line| A.strip(line) }, "20"
+
+    subject.replace(title: "editing", lines: (1..30).map(&:to_s), focused_row: 1)
+    subject.view(height: 8, width: 9)
+    assert_equal 1, subject.scroll
+  end
 end

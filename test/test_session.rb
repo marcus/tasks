@@ -83,6 +83,19 @@ class TestSession < Minitest::Test
     end
   end
 
+
+  def test_named_panel_mode_persists_across_app_instances
+    with_state_home do
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, "tasks.jsonl"), FIXTURE_ORG)
+        app = build_app(dir)
+        ui(app).panel_mode = :wide
+        app.send(:save_session)
+        assert_equal :wide, ui(build_app(dir)).panel_mode
+      end
+    end
+  end
+
   def test_unknown_saved_view_falls_back_to_agenda
     with_state_home do
       Tui::Session.save({ "view" => "themes-someday" })

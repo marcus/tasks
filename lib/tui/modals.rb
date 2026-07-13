@@ -20,6 +20,7 @@ module Tui
       groups = [
         ["in the task list", Shortcuts.entries(:list, include_global: false)],
         ["in task details", Shortcuts.entries(:detail, include_global: false)],
+        ["while editing a task", Shortcuts.entries(:task_edit, include_global: false)],
         ["in a modal", Shortcuts.entries(:modal, include_global: false)],
         ["everywhere", Shortcuts.entries(:global, include_global: false)],
       ]

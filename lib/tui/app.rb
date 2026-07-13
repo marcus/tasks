@@ -23,6 +23,8 @@ require_relative "form"
 require_relative "action_palette"
 require_relative "ui_state"
 require_relative "screen_layout"
+require_relative "form_renderer"
+require_relative "task_editor_session"
 require_relative "../tasks/config"
 require_relative "../tasks/opener"
 
@@ -43,6 +45,7 @@ module Tui
     PASTE_START = "\e[200~"
     PASTE_END   = "\e[201~"
     ESCAPE_WAIT = 0.01 # distinguish a lone Escape from a split CSI sequence
+    PANEL_MODES = UiState::PANEL_MODES
 
     # The system-context string handed to any agent: the repo's AGENTS.md
     # conventions plus the absolute file locations for this run. Provider-
@@ -88,6 +91,7 @@ module Tui
       @flash_until = nil
       @tick = 0
       @quit = false
+      @task_edit_message = nil
     end
 
     # -- agent selection -----------------------------------------------------
@@ -145,10 +149,15 @@ module Tui
     # Reload external writes without losing the selected task to a new physical
     # row. An open detail panel follows whichever task selection remains visible.
     def reload_store
-      overlay_mode = @ui.mode if %i[form palette].include?(@ui.mode)
+      overlay_mode = @ui.mode if %i[form palette task_edit].include?(@ui.mode)
       @store.reload!
+      edit_outcome = @ui.task_editor&.refresh if overlay_mode == :task_edit
       rows
-      refresh_detail_panel if detail_panel?
+      if overlay_mode == :task_edit
+        @task_edit_message = edit_outcome&.message
+      else
+        refresh_detail_panel if detail_panel?
+      end
       restore_form if overlay_mode == :form && @ui.form
       if overlay_mode == :palette && @ui.action_palette
         restore_action_palette(@ui.action_palette)
@@ -164,6 +173,7 @@ module Tui
       layout = screen_layout(width: width, height: height, selected: visual_selection,
                              panel: @ui.panel)
       refresh_detail_panel(content_width: layout.panel_content_width) if detail_panel?
+      refresh_task_edit_panel(layout: layout) if task_editing?
       lines = Frame.build(
         width: width, height: height,
         header: header(width - 2),
@@ -253,7 +263,7 @@ module Tui
       end
       # Active text entry owns the scarce footer row on short terminals. Forms
       # and palettes render their input in the popup; filters render it here.
-      f.concat(prompt_lines(w)) unless %i[modal_filter filter form palette].include?(@ui.mode)
+      f.concat(prompt_lines(w)) unless %i[modal_filter filter form palette task_edit].include?(@ui.mode)
       f
     end
 
@@ -360,7 +370,8 @@ module Tui
     def screen_layout(width:, height:, footer_size: nil, selected: @sel, panel: @ui.panel)
       raw_footer = footer_size ? Array.new(footer_size, "") : footer(width - 2)
       ScreenLayout.new(width: width, height: height, footer: raw_footer, selected: selected,
-                       panel: !panel.nil?)
+                       panel: !panel.nil?, panel_mode: @ui.panel_mode,
+                       editing: task_editing?)
     end
 
     # -- input ---------------------------------------------------------------
@@ -475,6 +486,7 @@ module Tui
       case @ui.mode
       when :prompt then @input.insert(text)
       when :form   then @ui.form&.paste(text)
+      when :task_edit then process_task_edit_outcome(@ui.task_editor&.handle(TermForm::Event.paste(text)))
       when :palette then @ui.action_palette&.paste(text)
       when :filter then @ui.filter_input.insert(text)
       when :modal_filter then @ui.modal_filter_input.insert(text); @ui.modal.filter = @ui.modal_filter_input.to_s
@@ -487,6 +499,7 @@ module Tui
 
     def handle_key(k)
       return if dispatch_action(k, :global)
+      return task_edit_key(k) if task_editing?
 
       case @ui.mode
       when :prompt then prompt_key(k)
@@ -517,6 +530,8 @@ module Tui
     # A matched-but-unavailable action consumes its key so dispatch can never
     # leak into a lower-priority context.
     def list_key(k)
+      return if detail_panel? && dispatch_action(k, :detail)
+
       dispatch_action(k, :list)
     end
 
@@ -547,6 +562,20 @@ module Tui
         @input.handle_key(k)
       end
     end
+
+    def task_edit_key(k)
+      return grow_task_panel if k == "\x0b"
+      return shrink_task_panel if k == "\x0c"
+      if @ui.task_editor&.missing? && ["\e", TaskEditorSession::CTRL_O].include?(k)
+        return close_task_edit(message: "Task no longer exists; local edit discarded")
+      end
+
+      process_task_edit_outcome(@ui.task_editor&.handle(k))
+    end
+
+    # Registry hook used for generated task-edit help. Runtime dispatch sends
+    # every editor-owned byte through task_edit_key before list/prompt handlers.
+    def task_edit_input(k) = task_edit_key(k)
 
     def form_key(k)
       case @ui.form&.handle_key(k)
@@ -600,14 +629,21 @@ module Tui
     def prev_view      = cycle_view(-1)
     def next_view      = cycle_view(1)
     def jump_view(k)   = switch_view(k.to_i)
-    def focus_prompt   = @ui.mode = :prompt
+    def focus_prompt
+      detail_panel? ? start_task_edit : @ui.mode = :prompt
+    end
     def resp_up        = scroll_resp(-5)
     def resp_down      = scroll_resp(5)
     def quit           = @quit = true
 
     def open_action_palette
+      entries = Shortcuts.palette_entries(:list, self)
+      if detail_panel?
+        detail_entries = Shortcuts.palette_entries(:detail, self)
+        entries = (entries + detail_entries).uniq(&:handler)
+      end
       @ui.action_palette = ActionPalette.new(
-        entries: Shortcuts.palette_entries(:list, self),
+        entries: entries,
         return_mode: :list,
         target_id: current_item&.id
       )
@@ -669,6 +705,41 @@ module Tui
     def reselect(id)
       @ui.selected_id = id
       rows
+    end
+
+    def start_task_edit = enter_task_edit(:title)
+    def start_task_edit_last = enter_task_edit(TaskEditForm::FIELD_ORDER.last)
+
+    def enter_task_edit(focus)
+      item = current_item
+      return flash("nothing selected") unless item
+
+      height, width = terminal_size
+      layout = screen_layout(width: width, height: height, panel: true)
+      unless ScreenLayout.new(width: width, height: height, footer: layout.footer,
+                              selected: @sel, panel: true, panel_mode: @ui.panel_mode,
+                              editing: true).editable_panel?
+        return flash("task editing needs at least #{ScreenLayout.minimum_edit_terminal_width} terminal columns")
+      end
+
+      editor = TaskEditorSession.new(store: @store, target_id: item.id, focus: focus)
+      return flash("task no longer exists") if editor.missing?
+
+      @ui.task_editor = editor
+      @ui.panel = RightPanel.new(title: "task · editing", lines: [], kind: :task_edit,
+                                 identity: editor.target_id)
+      @task_edit_message = nil
+      @ui.mode = :task_edit
+    end
+
+    def grow_task_panel = resize_task_panel(1)
+    def shrink_task_panel = resize_task_panel(-1)
+
+    def resize_task_panel(delta)
+      index = PANEL_MODES.index(@ui.panel_mode) || PANEL_MODES.index(:standard)
+      next_mode = PANEL_MODES[(index + delta).clamp(0, PANEL_MODES.length - 1)]
+      @ui.panel_mode = next_mode
+      flash("task panel: #{next_mode}")
     end
 
     # Z reveals/hides deferred (someday/maybe) tasks across every view.
@@ -820,6 +891,79 @@ module Tui
     def close_panel
       @ui.panel = nil
       @detail_panel_content_width = nil
+    end
+
+    def task_editing? = @ui.mode == :task_edit && !@ui.task_editor.nil?
+
+    def refresh_task_edit_panel(layout:)
+      editor = @ui.task_editor
+      return unless editor && @ui.panel&.kind == :task_edit
+
+      unless layout.editable_panel?
+        needed = ScreenLayout.minimum_edit_terminal_width
+        @ui.panel.replace(
+          title: "task · editing paused",
+          lines: ["Widen the terminal to at least #{needed} columns.",
+                  "Your task, field, buffer, cursor, and errors are preserved."],
+          identity: editor.target_id,
+        )
+        return
+      end
+
+      message = @task_edit_message
+      message = "Task no longer exists · esc discards the local edit" if editor.missing?
+      result = FormRenderer.new.render(
+        model: editor.render_model,
+        width: layout.panel_content_width,
+        height: [layout.body_height - 2, 1].max,
+        title: "edit task",
+        hint: message || "tab saves on blur · ctrl-s saves · ctrl-o finishes",
+        error: %i[conflict invalid missing].include?(editor.last_result&.status) ? message : nil,
+      )
+      focus_row = result.focused_content_row && result.focused_content_row + 1
+      @ui.panel.replace(title: "task · editing", lines: result.lines,
+                        identity: editor.target_id, focused_row: focus_row)
+    end
+
+    def process_task_edit_outcome(outcome)
+      return unless outcome
+
+      @task_edit_message = outcome.message
+      if outcome.patch_result&.changed?
+        target_id = @ui.task_editor.target_id
+        @ui.selected_id = target_id
+        rows
+        unless @rows.any? { |row| row.item&.id == target_id }
+          destination = current_item&.title
+          explanation = "Saved; task left the #{@ui.view} view"
+          explanation += " · selected #{destination}" if destination
+          return close_task_edit(message: explanation, keep_panel: false)
+        end
+      end
+
+      if outcome.finished?
+        close_task_edit(message: outcome.message)
+      elsif outcome.missing?
+        @task_edit_message = outcome.message
+      elsif outcome.status == :confirmation
+        @task_edit_message = "#{outcome.message} · y accepts · n cancels"
+      end
+    end
+
+    def close_task_edit(message: nil, keep_panel: true)
+      editor = @ui.task_editor
+      target_id = editor&.target_id
+      @ui.task_editor = nil
+      @task_edit_message = nil
+      @ui.mode = :list unless @ui.mode == :list
+
+      target_visible = target_id && current_item&.id == target_id
+      if keep_panel && target_visible
+        show_detail
+      else
+        close_panel
+      end
+      flash(message) if message
     end
 
     # -- modal -----------------------------------------------------------------

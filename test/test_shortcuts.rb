@@ -56,9 +56,21 @@ class TestShortcuts < Minitest::Test
   end
 
   def test_global_binding_resolves_in_every_context
-    %i[list detail modal global].each do |context|
+    %i[list detail task_edit modal global].each do |context|
       assert_equal :quit, S.match("\x03", context).handler
     end
+  end
+
+
+  def test_task_edit_bindings_are_complete_and_isolated
+    assert_equal :start_task_edit, S.match("e", :detail).handler
+    assert_equal :start_task_edit_last, S.match("\e[Z", :detail).handler
+    assert_equal :task_edit_input, S.match("\t", :task_edit).handler
+    assert_equal :task_edit_input, S.match("\x13", :task_edit).handler
+    assert_equal :task_edit_input, S.match("\x0f", :task_edit).handler
+    assert_equal :grow_task_panel, S.match("\x0b", :task_edit).handler
+    assert_equal :shrink_task_panel, S.match("\x0c", :task_edit).handler
+    assert_nil S.match("j", :task_edit), "list movement must not leak into editor dispatch"
   end
 
   def test_global_dispatch_precedes_every_input_mode
@@ -186,6 +198,7 @@ class TestShortcuts < Minitest::Test
     end
     assert_includes text, "in the task list"
     assert_includes text, "in task details"
+    assert_includes text, "while editing a task"
     assert_includes text, "in a modal"
     assert_includes text, "everywhere"
     assert_equal "keyboard shortcuts", help[:title]

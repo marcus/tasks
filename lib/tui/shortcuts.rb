@@ -6,7 +6,7 @@ module Tui
   # implementations. Optional form/confirmation metadata is reserved for the
   # command palette and other future consumers.
   module Shortcuts
-    CONTEXTS = %i[list detail modal global].freeze
+    CONTEXTS = %i[list detail task_edit modal global].freeze
 
     Entry = Struct.new(
       :sequences, :display_key, :description, :contexts, :handler,
@@ -61,6 +61,10 @@ module Tui
       entry(sequences: ["y"],          key: "y",       description: "yank task ref (paste to agent)",   contexts: %i[list detail], handler: :yank_ref, palette: :selected_action_available?),
       entry(sequences: ["Y"],          key: "Y",       description: "yank task as markdown",            contexts: %i[list detail], handler: :yank_markdown, palette: :selected_action_available?),
       entry(sequences: ["p"],          key: "p",       description: "paste task ref into the prompt",   contexts: %i[list detail], handler: :paste_ref, palette: :selected_action_available?),
+      entry(sequences: ["e"],          key: "e",       description: "edit task",                         contexts: [:detail], handler: :start_task_edit, palette: :selected_action_available?, form: :task_edit),
+      entry(sequences: ["\e[Z"],       key: "shift-tab", description: "edit task from its last field",   contexts: [:detail], handler: :start_task_edit_last),
+      entry(sequences: ["\x0b"],       key: "ctrl-k",  description: "grow task panel",                  contexts: [:detail], handler: :grow_task_panel, palette: true),
+      entry(sequences: ["\x0c"],       key: "ctrl-l",  description: "shrink task panel",                contexts: [:detail], handler: :shrink_task_panel, palette: true),
       entry(sequences: ["/"],          key: "/",       description: "filter tasks by text",             contexts: [:list], handler: :start_filter, palette: true, form: :filter),
       entry(sequences: ["M"],          key: "M",       description: "cycle agent/model",                contexts: [:list], handler: :toggle_model, palette: true),
       entry(sequences: ["u"],          key: "u",       description: "undo last change",                 contexts: %i[list detail], handler: :undo_last, palette: true),
@@ -76,6 +80,14 @@ module Tui
       entry(sequences: ["\e"],         key: "esc",     description: "dismiss response / close task details", contexts: [:list], handler: :dismiss_or_cancel),
       entry(sequences: ["?"],          key: "?",       description: "keyboard shortcuts",               contexts: [:list], handler: :open_help, palette: true),
       entry(sequences: ["q"],          key: "q",       description: "quit",                             contexts: [:list], handler: :quit, palette: true),
+
+      entry(sequences: ["\t"],         key: "tab",     description: "save field and edit next",         contexts: [:task_edit], handler: :task_edit_input),
+      entry(sequences: ["\e[Z"],       key: "shift-tab", description: "save field and edit previous",    contexts: [:task_edit], handler: :task_edit_input),
+      entry(sequences: ["\x13"],       key: "ctrl-s",  description: "save focused task field",          contexts: [:task_edit], handler: :task_edit_input),
+      entry(sequences: ["\x0f"],       key: "ctrl-o",  description: "finish editing task",              contexts: [:task_edit], handler: :task_edit_input),
+      entry(sequences: ["\x0b"],       key: "ctrl-k",  description: "grow task panel without saving",   contexts: [:task_edit], handler: :grow_task_panel),
+      entry(sequences: ["\x0c"],       key: "ctrl-l",  description: "shrink task panel without saving", contexts: [:task_edit], handler: :shrink_task_panel),
+      entry(sequences: ["\e"],         key: "esc",     description: "close picker / confirm field revert / finish editing", contexts: [:task_edit], handler: :task_edit_input),
 
       # Modal navigation is kept as an explicit context for blocking overlays.
       # Detail actions are palette metadata while the panel stays in list mode.

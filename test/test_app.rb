@@ -188,6 +188,224 @@ class TestApp < Minitest::Test
     end
   end
 
+
+  def test_detail_tab_and_shift_tab_enter_one_editor_at_first_and_last_fields
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:handle_key, "\r")
+      assert ui(app).panel
+
+      app.send(:handle_key, "\t")
+      editor = ui(app).task_editor
+      assert_equal :task_edit, ui(app).mode
+      assert_equal FIX[:flight], editor.target_id
+      assert_equal :title, editor.focused_key
+      assert_equal :task_edit, ui(app).panel.kind
+
+      app.send(:handle_key, "\x0f")
+      assert_equal :list, ui(app).mode
+      assert_nil ui(app).task_editor
+      assert_equal :detail, ui(app).panel.kind
+
+      app.send(:handle_key, "\e[Z")
+      assert_equal :task_edit, ui(app).mode
+      assert_equal :state, ui(app).task_editor.focused_key
+    end
+  end
+
+  def test_task_editor_opens_on_a_stable_target_in_all_five_views
+    targets = {
+      agenda: "Book flight",
+      next: "Book flight",
+      quadrants: "Book flight",
+      inbox: "random thought",
+      projects: "Book flight",
+    }
+    targets.each do |view, title|
+      app_on(view: view, select: title) do |app|
+        target_id = app.send(:current_item).id
+        app.send(:handle_key, "\r")
+        app.send(:handle_key, "e")
+        assert_equal :task_edit, ui(app).mode, view.to_s
+        assert_equal target_id, ui(app).task_editor.target_id, view.to_s
+        assert_equal Tui::TaskEditForm::FIELD_ORDER,
+                     ui(app).task_editor.edit_form.field_order, view.to_s
+      end
+    end
+  end
+
+  def test_editor_dispatch_precedes_list_prompt_and_colon_actions
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\t")
+      editor = ui(app).task_editor
+      selected_id = ui(app).selected_id
+
+      app.send(:handle_key, "j")
+      app.send(:handle_key, ":")
+
+      assert_equal "Book flight in Concurj:", editor.edit_form.value(:title)
+      assert_equal selected_id, ui(app).selected_id
+      assert_equal :task_edit, ui(app).mode
+      assert_nil ui(app).action_palette
+    end
+  end
+
+  def test_ctrl_s_saves_in_place_and_ctrl_o_returns_to_read_panel
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\t")
+      editor = ui(app).task_editor
+      editor.form.set_value(:title, "Book flight safely")
+
+      app.send(:handle_key, "\x13")
+      assert_equal :task_edit, ui(app).mode
+      assert_equal :title, editor.focused_key
+      assert_equal "Book flight safely", app.send(:current_item).title
+      refute editor.dirty?(:title)
+
+      app.send(:handle_key, "\x0f")
+      assert_equal :list, ui(app).mode
+      assert_equal :detail, ui(app).panel.kind
+      assert_equal FIX[:flight], ui(app).panel.identity
+    end
+  end
+
+  def test_panel_resize_preserves_entire_editor_and_performs_no_write
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\t")
+      editor = ui(app).task_editor
+      editor.form.set_value(:title, "draft text")
+      field = editor.form.field(:title)
+      field.handle_key("\e[D")
+      before = File.binread(app.instance_variable_get(:@store).org)
+      identity = [editor.object_id, editor.target_id, editor.focused_key,
+                  editor.edit_form.value(:title), field.cursor, editor.coalesce_key]
+
+      app.send(:handle_key, "\x0b")
+      app.send(:handle_key, "\x0c")
+
+      assert_equal :standard, ui(app).panel_mode
+      assert_equal identity,
+                   [ui(app).task_editor.object_id, ui(app).task_editor.target_id,
+                    ui(app).task_editor.focused_key,
+                    ui(app).task_editor.edit_form.value(:title), field.cursor,
+                    ui(app).task_editor.coalesce_key]
+      assert_equal before, File.binread(app.instance_variable_get(:@store).org)
+    end
+  end
+
+  def test_terminal_resize_preserves_dirty_picker_session_without_write
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\t")
+      editor = ui(app).task_editor
+      editor.form.focus(:deadline)
+      editor.form.set_value(:deadline, Date.new(2026, 7, 20))
+      editor.handle("\r")
+      assert editor.form.field(:deadline).picker_open?
+      before = File.binread(app.instance_variable_get(:@store).org)
+      coalesce_key = editor.coalesce_key
+      console = Struct.new(:winsize).new([18, 60])
+
+      IO.stub(:console, console) { capture_io { app.send(:paint) } }
+
+      assert_same editor, ui(app).task_editor
+      assert_equal :deadline, editor.focused_key
+      assert editor.form.field(:deadline).picker_open?
+      assert_equal Date.new(2026, 7, 20), editor.edit_form.value(:deadline)
+      assert_equal coalesce_key, editor.coalesce_key
+      assert_equal before, File.binread(app.instance_variable_get(:@store).org)
+    end
+  end
+
+
+  def test_below_minimum_resize_pauses_form_instead_of_rendering_it_broken
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\t")
+      editor = ui(app).task_editor
+      editor.form.set_value(:title, "narrow draft")
+      before = File.binread(app.instance_variable_get(:@store).org)
+      captured = nil
+      console = Struct.new(:winsize).new([18, 45])
+
+      IO.stub(:console, console) do
+        Tui::Frame.stub(:build, ->(**args) { captured = args; Array.new(args[:height], "") }) do
+          capture_io { app.send(:paint) }
+        end
+      end
+
+      refute captured[:layout].editable_panel?
+      assert_equal :task_edit, ui(app).mode
+      assert_same editor, ui(app).task_editor
+      assert_equal "narrow draft", editor.edit_form.value(:title)
+      assert_match(/editing paused/, ui(app).panel.title)
+      assert_match(/at least 46/, ui(app).panel.lines.first)
+      assert_equal before, File.binread(app.instance_variable_get(:@store).org)
+    end
+  end
+
+  def test_read_panel_resize_changes_named_preference_without_identity_change
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:handle_key, "\r")
+      identity = ui(app).panel.identity
+
+      app.send(:handle_key, "\x0b")
+      assert_equal :wide, ui(app).panel_mode
+      assert_equal identity, ui(app).panel.identity
+
+      app.send(:handle_key, "\x0c")
+      assert_equal :standard, ui(app).panel_mode
+      assert_equal identity, ui(app).panel.identity
+    end
+  end
+
+  def test_successful_state_edit_that_leaves_view_exits_to_nearby_row
+    app_on(view: :next, select: "Book flight") do |app|
+      target_id = app.send(:current_item).id
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\t")
+      editor = ui(app).task_editor
+      editor.form.focus(:state)
+      editor.form.set_value(:state, "DONE")
+
+      app.send(:handle_key, "\x13")
+      assert editor.pending_confirmation
+      app.send(:handle_key, "y")
+
+      assert_equal :list, ui(app).mode
+      assert_nil ui(app).task_editor
+      assert_nil ui(app).panel
+      refute_equal target_id, ui(app).selected_id
+      assert_match(/left the next view/, app.instance_variable_get(:@flash))
+    end
+  end
+
+  def test_external_missing_editor_target_never_retargets_fallback_selection
+    app_on(view: :agenda, select: "Book flight") do |app|
+      target_id = app.send(:current_item).id
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\t")
+      editor = ui(app).task_editor
+      editor.form.set_value(:title, "local recoverable draft")
+
+      rewrite_records(app) { |records| records.reject! { |record| record["id"] == target_id } }
+
+      assert_same editor, ui(app).task_editor
+      assert editor.missing?
+      assert_equal target_id, editor.target_id
+      assert_equal "local recoverable draft", editor.edit_form.value(:title)
+      refute_equal target_id, ui(app).selected_id
+      assert_equal target_id, ui(app).panel.identity
+
+      app.send(:handle_key, "\e")
+      assert_equal :list, ui(app).mode
+      assert_nil ui(app).task_editor
+      assert_nil ui(app).panel
+    end
+  end
+
   def test_shift_tab_csi_split_after_escape_is_dispatched_as_one_key
     fake = FakeAgent.new(running: false)
     app_with(agent: fake, input: "") do |app|

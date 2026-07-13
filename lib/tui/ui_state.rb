@@ -10,22 +10,24 @@ module Tui
   class UiState
     class InvalidTransition < ArgumentError; end
 
-    MODES = %i[list prompt filter modal modal_filter form palette].freeze
+    MODES = %i[list prompt filter modal modal_filter form palette task_edit].freeze
+    PANEL_MODES = %i[compact standard wide focus].freeze
     TRANSITIONS = {
-      list:         %i[list prompt filter modal form palette],
+      list:         %i[list prompt filter modal form palette task_edit],
       prompt:       %i[prompt list modal],
       filter:       %i[filter list],
       modal:        %i[modal list modal_filter form palette],
       modal_filter: %i[modal_filter modal list],
       form:         %i[form list modal],
       palette:      %i[palette list modal],
+      task_edit:    %i[task_edit list],
     }.freeze
 
     attr_reader :mode
     attr_accessor :view, :selected_id, :filter, :collapsed, :show_deferred,
                   :modal, :panel, :archive_preview, :form,
                   :form_success, :action_palette, :filter_input,
-                  :modal_filter_input
+                  :modal_filter_input, :task_editor, :panel_mode
 
     def self.restore(saved:, views:, default_view:)
       saved_view = saved[:view]
@@ -38,10 +40,13 @@ module Tui
                   else
                     Set.new
                   end
-      new(view: view, collapsed: collapsed)
+      saved_panel_mode = saved[:panel_mode]
+      saved_panel_mode = saved_panel_mode.to_sym if saved_panel_mode.is_a?(String)
+      panel_mode = PANEL_MODES.include?(saved_panel_mode) ? saved_panel_mode : :standard
+      new(view: view, collapsed: collapsed, panel_mode: panel_mode)
     end
 
-    def initialize(view:, collapsed: Set.new)
+    def initialize(view:, collapsed: Set.new, panel_mode: :standard)
       @view = view
       @selected_id = nil
       @mode = :list
@@ -54,6 +59,8 @@ module Tui
       @form = nil
       @form_success = nil
       @action_palette = nil
+      @task_editor = nil
+      @panel_mode = PANEL_MODES.include?(panel_mode.to_sym) ? panel_mode.to_sym : :standard
       @filter_input = TextInput.new
       @modal_filter_input = TextInput.new
     end
@@ -79,6 +86,8 @@ module Tui
         if @action_palette.return_mode == :modal && !@modal
           raise InvalidTransition, "palette returning to modal requires a retained modal"
         end
+      when :task_edit
+        raise InvalidTransition, "task_edit mode requires a task editor" unless @task_editor
       end
       @mode = target
     end
@@ -124,6 +133,18 @@ module Tui
       force_list! if value.nil? && @mode == :palette
     end
 
+    def task_editor=(value)
+      @task_editor = value
+      force_list! if value.nil? && @mode == :task_edit
+    end
+
+    def panel_mode=(value)
+      normalized = value.respond_to?(:to_sym) ? value.to_sym : nil
+      raise ArgumentError, "unknown panel mode #{value.inspect}" unless PANEL_MODES.include?(normalized)
+
+      @panel_mode = normalized
+    end
+
     def toggle_deferred!
       @show_deferred = !@show_deferred
     end
@@ -132,6 +153,7 @@ module Tui
       {
         "view" => @view.to_s,
         "collapsed" => (@collapsed & live_ids.to_set).to_a,
+        "panel_mode" => @panel_mode.to_s,
       }
     end
 

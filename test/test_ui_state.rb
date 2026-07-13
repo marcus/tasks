@@ -14,6 +14,19 @@ class TestUiState < Minitest::Test
     assert_raises(Tui::UiState::InvalidTransition) { ui.mode = :form }
     assert_raises(Tui::UiState::InvalidTransition) { ui.mode = :palette }
     assert_raises(Tui::UiState::InvalidTransition) { ui.mode = :modal }
+    assert_raises(Tui::UiState::InvalidTransition) { ui.mode = :task_edit }
+  end
+
+  def test_task_editor_is_one_explicit_mode_owner
+    ui = state
+    editor = Object.new
+    ui.task_editor = editor
+    ui.mode = :task_edit
+    assert_same editor, ui.task_editor
+    assert_equal :task_edit, ui.mode
+
+    ui.task_editor = nil
+    assert_equal :list, ui.mode
   end
 
   def test_rejects_modal_dependent_overlays_without_retained_modal
@@ -106,8 +119,24 @@ class TestUiState < Minitest::Test
   def test_session_hash_prunes_stale_collapsed_ids
     ui = Tui::UiState.new(view: :projects, collapsed: Set["live0001", "deadbeef"])
     assert_equal(
-      { "view" => "projects", "collapsed" => ["live0001"] },
+      { "view" => "projects", "collapsed" => ["live0001"], "panel_mode" => "standard" },
       ui.session_hash(live_ids: ["live0001", "other002"])
     )
+  end
+
+
+  def test_panel_mode_restore_and_validation
+    restored = Tui::UiState.restore(
+      saved: { view: "agenda", panel_mode: "wide" },
+      views: %i[agenda], default_view: :agenda
+    )
+    assert_equal :wide, restored.panel_mode
+    assert_raises(ArgumentError) { restored.panel_mode = :elastic }
+
+    fallback = Tui::UiState.restore(
+      saved: { view: "agenda", panel_mode: "elastic" },
+      views: %i[agenda], default_view: :agenda
+    )
+    assert_equal :standard, fallback.panel_mode
   end
 end

@@ -12,21 +12,23 @@ module Tui
     A = Ansi
     T = Theme
 
-    attr_reader :title, :kind, :identity, :lines, :scroll
+    attr_reader :title, :kind, :identity, :lines, :scroll, :focused_row
 
-    def initialize(title:, lines:, kind:, identity: nil)
+    def initialize(title:, lines:, kind:, identity: nil, focused_row: nil)
       @title = title
       @lines = lines
       @kind = kind
       @identity = identity
       @scroll = 0
+      @focused_row = focused_row
     end
 
-    def replace(title:, lines:, identity: @identity)
+    def replace(title:, lines:, identity: @identity, focused_row: nil)
       @scroll = 0 if identity != @identity
       @title = title
       @lines = lines
       @identity = identity
+      @focused_row = focused_row
       self
     end
 
@@ -35,6 +37,7 @@ module Tui
     def view(height:, width:)
       budget = [height - 2, 0].max
       viewport = content_viewport(budget)
+      reveal_focused_row(viewport) if @focused_row
       @scroll = @scroll.clamp(0, [@lines.size - viewport, 0].max)
       shown = @lines[@scroll, viewport] || []
       shown = shown.map { |line| A.vtrunc(line, width) }
@@ -51,6 +54,14 @@ module Tui
     end
 
     private
+
+    def reveal_focused_row(viewport)
+      return if viewport <= 0
+
+      row = @focused_row.clamp(0, [@lines.size - 1, 0].max)
+      @scroll = row if row < @scroll
+      @scroll = row - viewport + 1 if row >= @scroll + viewport
+    end
 
     def content_viewport(budget)
       [budget - (status?(budget) ? 1 : 0), 0].max
