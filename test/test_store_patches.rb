@@ -34,6 +34,13 @@ class TestStorePatches < Minitest::Test
     Tasks::Format.parse(File.read(path, encoding: "UTF-8")).records
   end
 
+  def install_interleaved_tags(path)
+    records = parsed(path)
+    records.find { |record| record["id"] == "11110002" }["tags"] =
+      %w[@a x @b defer y]
+    File.write(path, Tasks::Format.dump(records))
+  end
+
   def test_edit_snapshot_is_exact_and_deeply_immutable
     with_patch_store do |store, _org|
       snapshot = store.edit_snapshot("11110002")
@@ -156,6 +163,62 @@ class TestStorePatches < Minitest::Test
       assert_equal :ok, result.status
       assert_equal "B", parsed(org).find { |r| r["id"] == "11110002" }["priority"]
       assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_interleaved_tag_slice_noops_preserve_exact_bytes_and_history
+    with_patch_store do |store, org|
+      install_interleaved_tags(org)
+      before = File.binread(org)
+
+      snapshot = store.edit_snapshot("11110002")
+      result = store.patch_task!(patch(snapshot, :contexts, %w[@a @b]))
+      assert_equal :no_change, result.status
+      assert_equal before, File.binread(org)
+
+      snapshot = result.snapshot
+      result = store.patch_task!(patch(snapshot, :tags, %w[x y]))
+      assert_equal :no_change, result.status
+      assert_equal before, File.binread(org)
+
+      snapshot = result.snapshot
+      result = store.patch_task!(patch(snapshot, :deferred, true))
+      assert_equal :no_change, result.status
+      assert_equal before, File.binread(org)
+      assert_equal [:empty], store.undo!
+    end
+  end
+
+  def test_changed_contexts_preserve_interleaved_unowned_tag_placement
+    with_patch_store do |store, org|
+      install_interleaved_tags(org)
+      snapshot = store.edit_snapshot("11110002")
+      result = store.patch_task!(patch(snapshot, :contexts, %w[@c @d @e]))
+      assert_equal :ok, result.status
+      assert_equal %w[@c x @d @e defer y],
+                   parsed(org).find { |record| record["id"] == "11110002" }["tags"]
+    end
+  end
+
+  def test_changed_plain_tags_preserve_interleaved_unowned_tag_placement
+    with_patch_store do |store, org|
+      install_interleaved_tags(org)
+      snapshot = store.edit_snapshot("11110002")
+      result = store.patch_task!(patch(snapshot, :tags, ["m"]))
+      assert_equal :ok, result.status
+      assert_equal %w[@a m @b defer],
+                   parsed(org).find { |record| record["id"] == "11110002" }["tags"]
+    end
+  end
+
+  def test_changed_defer_preserves_interleaved_unowned_tag_placement
+    with_patch_store do |store, org|
+      install_interleaved_tags(org)
+      snapshot = store.edit_snapshot("11110002")
+      result = store.patch_task!(patch(snapshot, :deferred, false))
+      assert_equal :ok, result.status
+      assert_equal %w[@a x @b y],
+                   parsed(org).find { |record| record["id"] == "11110002" }["tags"]
     end
   end
 
@@ -342,6 +405,49 @@ class TestStorePatches < Minitest::Test
       assert result.errors.any? { |error| error.include?("invalid JSON") }
       assert_equal before, File.binread(org)
       assert_equal [:empty], store.undo!
+    end
+  end
+
+  def test_invalid_utf8_live_bytes_are_contained_and_preserved
+    with_patch_store do |store, org|
+      bytes = File.binread(org).sub("Parent", "Par\xFFent".b)
+      File.binwrite(org, bytes)
+      request = Tasks::TaskPatch.new(id: "11110002", field: :title,
+                                     value: "Renamed", expected: "Parent")
+
+      assert_nil store.edit_snapshot("11110002")
+      result = store.patch_task!(request)
+      assert_equal :invalid, result.status
+      assert result.errors.all?(&:valid_encoding?)
+      assert result.errors.any? { |error| error.include?("UTF-8") }
+      assert_equal bytes, File.binread(org)
+      assert_equal [:empty], store.undo!
+    end
+  end
+
+  def test_invalid_utf8_proposed_value_is_a_typed_atomic_failure
+    with_patch_store do |store, org|
+      snapshot = store.edit_snapshot("11110002")
+      invalid = "\xFF".b.force_encoding(Encoding::UTF_8)
+      before = File.binread(org)
+
+      result = store.patch_task!(patch(snapshot, :body, invalid))
+      assert_equal :invalid, result.status
+      assert result.errors.all?(&:valid_encoding?)
+      assert_equal before, File.binread(org)
+      assert_equal [:empty], store.undo!
+    end
+  end
+
+  def test_patch_boundary_does_not_swallow_fatal_exceptions
+    with_patch_store do |store, _org|
+      snapshot = store.edit_snapshot("11110002")
+      fatal_reader = ->(_path) { raise NoMemoryError, "injected fatal" }
+      assert_raises(NoMemoryError) do
+        store.stub(:fresh_records, fatal_reader) do
+          store.patch_task!(patch(snapshot, :title, "Renamed"))
+        end
+      end
     end
   end
 

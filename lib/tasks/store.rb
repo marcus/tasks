@@ -319,11 +319,16 @@ module Tasks
     # live file while holding the same lock mutations use. The target may be a
     # stable id, an Item, or any object responding to #id. Missing ids never
     # fall back to a line number: an edit session must not retarget another row.
+    # Invalid live bytes/schema return nil, matching the missing-target shape;
+    # callers that need the diagnostic use patch_task!, whose failure is typed.
     def edit_snapshot(target)
       with_lock do
+        return nil unless Check.check(@org).ok?
         records = fresh_records(@org)
         ri = locate_stable_index(records, stable_id(target))
         ri && build_edit_snapshot(records, ri)
+      rescue JSON::GeneratorError, EncodingError, ArgumentError
+        nil
       end
     end
 
@@ -339,36 +344,45 @@ module Tasks
       with_lock do
         @last_rollback = nil
         before = snapshot
-        records = fresh_records(@org)
-        ri = locate_stable_index(records, patch.id)
-        return PatchResult.new(status: :missing) unless ri
+        current = nil
+        begin
+          # Check raw validity before parsing/building: Format.parse assumes a
+          # valid UTF-8 String, while Check deliberately contains bad bytes.
+          preflight = Check.check(@org)
+          unless preflight.ok?
+            return PatchResult.new(status: :invalid,
+                                   errors: preflight.errors.map(&:last))
+          end
 
-        current = build_edit_snapshot(records, ri)
-        field = normalize_patch_field(patch.field)
-        unless EditSnapshot::FIELDS.include?(field)
+          records = fresh_records(@org)
+          ri = locate_stable_index(records, patch.id)
+          return PatchResult.new(status: :missing) unless ri
+
+          current = build_edit_snapshot(records, ri)
+          field = normalize_patch_field(patch.field)
+          unless EditSnapshot::FIELDS.include?(field)
+            return PatchResult.new(status: :invalid, snapshot: current,
+                                   errors: ["unknown editable field #{patch.field.inspect}"])
+          end
+
+          actual = current.expected_for(field)
+          unless semantic_patch_equal?(field, actual, patch.expected)
+            return PatchResult.new(status: :conflict, snapshot: current)
+          end
+
+          original_records = Format.dump(records)
+          applied = apply_semantic_patch(records, ri, field, patch.value)
+          if applied[:status] != :ok
+            return PatchResult.new(status: applied[:status], snapshot: current,
+                                   errors: applied[:errors] || [], summary: applied[:summary])
+          end
+          proposed_records = Format.dump(records)
+        rescue JSON::GeneratorError, EncodingError, ArgumentError => e
           return PatchResult.new(status: :invalid, snapshot: current,
-                                 errors: ["unknown editable field #{patch.field.inspect}"])
+                                 errors: [safe_patch_error(e)])
         end
 
-        preflight = Check.check(@org)
-        unless preflight.ok?
-          return PatchResult.new(status: :invalid, snapshot: current,
-                                 errors: preflight.errors.map(&:last))
-        end
-
-        actual = current.expected_for(field)
-        unless semantic_patch_equal?(field, actual, patch.expected)
-          return PatchResult.new(status: :conflict, snapshot: current)
-        end
-
-        original_records = Format.dump(records)
-        applied = apply_semantic_patch(records, ri, field, patch.value)
-        if applied[:status] != :ok
-          return PatchResult.new(status: applied[:status], snapshot: current,
-                                 errors: applied[:errors] || [], summary: applied[:summary])
-        end
-
-        if Format.dump(records) == original_records
+        if proposed_records == original_records
           return PatchResult.new(status: :no_change, snapshot: current,
                                  summary: applied[:summary])
         end
@@ -394,11 +408,11 @@ module Tasks
             summary: applied[:summary]
           )
         rescue StandardError => e
-          @last_rollback = e.message
+          @last_rollback = safe_patch_error(e)
           restore(before)
           PatchResult.new(status: :invalid,
                           snapshot: restored_edit_snapshot(patch.id),
-                          errors: [e.message])
+                          errors: [safe_patch_error(e)])
         end
       end
     end
@@ -665,8 +679,9 @@ module Tasks
       return patch_invalid("deferred must be true or false") unless value == true || value == false
       rec = records[ri]
       tags = semantic_tags(rec)
+      return patch_ok(rec) if tags.include?(DEFER_TAG) == value
       if value
-        tags << DEFER_TAG unless tags.include?(DEFER_TAG)
+        tags << DEFER_TAG
       else
         tags.delete(DEFER_TAG)
       end
@@ -718,26 +733,35 @@ module Tasks
              else
                ->(tag) { !tag.start_with?("@") && tag != DEFER_TAG }
              end
-      rec["tags"] = merge_owned_slice(semantic_tags(rec), proposed, &owns)
+      existing = semantic_tags(rec)
+      return patch_ok(rec) if existing.select(&owns) == proposed
+      rec["tags"] = merge_owned_slice(existing, proposed, &owns)
       replace_optional(rec, "tags", rec["tags"])
       patch_ok(rec)
     end
 
     def merge_owned_slice(existing, proposed)
       merged = []
-      inserted = false
+      owned_count = existing.count { |tag| yield(tag) }
+      owned_index = 0
       existing.each do |tag|
         if yield(tag)
-          unless inserted
-            merged.concat(proposed)
-            inserted = true
-          end
+          merged << proposed[owned_index] if owned_index < proposed.length
+          owned_index += 1
+          merged.concat(proposed[owned_index..]) if owned_index == owned_count && owned_index < proposed.length
         else
           merged << tag
         end
       end
-      merged.concat(proposed) unless inserted
+      merged.concat(proposed) if owned_count.zero?
       merged
+    end
+
+    def safe_patch_error(error)
+      error.message.to_s.encode(Encoding::UTF_8, invalid: :replace,
+                                undef: :replace, replace: "�")
+    rescue EncodingError
+      "invalid patch data"
     end
 
     def patch_body(records, ri, value)
