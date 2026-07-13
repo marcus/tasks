@@ -272,6 +272,151 @@ class TestJournal < Minitest::Test
     end
   end
 
+  def test_directory_at_current_blob_makes_undo_empty_and_next_record_repairs_history
+    with_journal_store do |build, org, _a, jdir|
+      first = build.call
+      item = first.items.find { |i| i.title.include?("Book flight") }
+      assert first.set_priority!(item, "C")
+      before_second = File.binread(org)
+      blob = current_org_blob(jdir)
+      File.delete(blob)
+      Dir.mkdir(blob)
+
+      assert_equal [:empty], first.undo!
+      assert_equal before_second, File.binread(org), "failed inspection must not touch task bytes"
+
+      second = build.call
+      item = second.items.find { |i| i.title.include?("Book flight") }
+      assert second.set_priority!(item, "B")
+      assert File.file?(blob), "the next record replaces the empty directory with a blob"
+      assert_equal :ok, second.undo!.first
+      assert_equal before_second, File.binread(org)
+    end
+  end
+
+  def test_symlink_at_current_blob_is_never_followed_and_next_record_repairs_history
+    with_journal_store do |build, org, _a, jdir|
+      first = build.call
+      item = first.items.find { |i| i.title.include?("Book flight") }
+      assert first.set_priority!(item, "C")
+      before_second = File.binread(org)
+      blob = current_org_blob(jdir)
+      sentinel = File.join(File.dirname(jdir), "journal-symlink-target")
+      File.write(sentinel, "do not read or replace me")
+      File.delete(blob)
+      File.symlink(sentinel, blob)
+
+      assert_equal [:empty], first.undo!
+      assert_equal before_second, File.binread(org)
+      assert_equal "do not read or replace me", File.read(sentinel)
+
+      second = build.call
+      item = second.items.find { |i| i.title.include?("Book flight") }
+      assert second.set_priority!(item, "B")
+      assert File.file?(blob)
+      refute File.symlink?(blob)
+      assert_equal "do not read or replace me", File.read(sentinel)
+      assert_equal :ok, second.undo!.first
+      assert_equal before_second, File.binread(org)
+    end
+  end
+
+  def test_directory_at_current_blob_makes_redo_empty_without_touching_task_bytes
+    with_journal_store do |build, org, _a, jdir|
+      store = build.call
+      item = store.items.find { |i| i.title.include?("Book flight") }
+      assert store.set_priority!(item, "C")
+      assert_equal :ok, store.undo!.first
+      before_redo = File.binread(org)
+      blob = current_org_blob(jdir)
+      File.delete(blob)
+      Dir.mkdir(blob)
+
+      assert_equal [:empty], store.redo!
+      assert_equal before_redo, File.binread(org), "failed inspection must not touch task bytes"
+    end
+  end
+
+  def test_directory_index_degrades_to_empty_and_next_record_rebuilds_history
+    with_journal_store do |build, org, _a, jdir|
+      first = build.call
+      item = first.items.find { |i| i.title.include?("Book flight") }
+      assert first.set_priority!(item, "C")
+      before_second = File.binread(org)
+      index = File.join(jdir, "index.json")
+      File.delete(index)
+      Dir.mkdir(index)
+
+      assert_equal [:empty], first.undo!
+      assert_equal before_second, File.binread(org)
+
+      second = build.call
+      item = second.items.find { |i| i.title.include?("Book flight") }
+      assert second.set_priority!(item, "B")
+      assert File.file?(index)
+      assert_equal :ok, second.undo!.first
+      assert_equal before_second, File.binread(org)
+    end
+  end
+
+  def test_unreadable_blob_error_degrades_to_empty_but_fatal_errors_propagate
+    with_journal_store do |build, org, _a, jdir|
+      store = build.call
+      item = store.items.find { |i| i.title.include?("Book flight") }
+      assert store.set_priority!(item, "C")
+      live = File.binread(org)
+      blob = current_org_blob(jdir)
+      original = File.method(:binread)
+
+      denied = lambda do |path, *args|
+        raise Errno::EACCES, path if path == blob
+        original.call(path, *args)
+      end
+      File.stub(:binread, denied) do
+        assert_equal [:empty], store.undo!
+      end
+      assert_equal live, File.binread(org)
+
+      fatal = lambda do |path, *args|
+        raise NoMemoryError, "injected fatal" if path == blob
+        original.call(path, *args)
+      end
+      File.stub(:binread, fatal) do
+        assert_raises(NoMemoryError) { store.undo! }
+      end
+      assert_equal live, File.binread(org)
+    end
+  end
+
+  def test_unreadable_index_error_degrades_to_empty_but_fatal_errors_propagate
+    with_journal_store do |build, org, _a, jdir|
+      store = build.call
+      item = store.items.find { |i| i.title.include?("Book flight") }
+      assert store.set_priority!(item, "C")
+      live = File.binread(org)
+      index = File.join(jdir, "index.json")
+      original = File.method(:read)
+
+      denied = lambda do |path, *args, **kwargs|
+        raise Errno::EACCES, path if path == index
+        original.call(path, *args, **kwargs)
+      end
+      File.stub(:read, denied) do
+        assert_equal [:empty], store.undo!
+      end
+      assert_equal live, File.binread(org)
+
+      fatal = lambda do |path, *args, **kwargs|
+        raise NoMemoryError, "injected fatal" if path == index
+        original.call(path, *args, **kwargs)
+      end
+      File.stub(:read, fatal) do
+        assert_raises(NoMemoryError) { store.undo! }
+      end
+      assert_equal live, File.binread(org)
+    end
+  end
+
   def test_noop_mutation_records_no_history
     with_journal_store do |build, _org, _a|
       s = build.call
@@ -288,6 +433,11 @@ class TestJournal < Minitest::Test
       assert_equal :ok, u.undo!.first, "the priority change is undoable"
       assert_equal [:empty], u.undo!, "the no-op tag recorded nothing"
     end
+  end
+
+  def current_org_blob(jdir)
+    data = JSON.parse(File.read(File.join(jdir, "index.json")))
+    File.join(jdir, "blobs", data.fetch("states").fetch(data.fetch("cursor")).fetch("org_sha"))
   end
 
   # -- CLI undo/redo end-to-end ------------------------------------------------

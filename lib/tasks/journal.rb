@@ -94,7 +94,7 @@ module Tasks
     # (undoing across it would clobber that edit), so we discard it and start a
     # fresh baseline at `before`.
     def record(label:, before:, after:, coalesce_key: nil)
-      FileUtils.mkdir_p(blobs_dir)
+      ensure_directory(blobs_dir)
       idx = load
       tip_matches = !idx[:states].empty? &&
                     state_matches_snapshot?(idx[:states][idx[:cursor]], before)
@@ -129,6 +129,10 @@ module Tasks
         cursor -= drop
       end
       persist(cursor, states, gc: true)
+    rescue SystemCallError, IOError
+      # History is convenience state. An unreadable or non-repairable journal
+      # must not roll back a task mutation that was already durably written.
+      false
     end
 
     # Plan an undo (delta -1) or redo (delta +1): the label of the mutation being
@@ -138,9 +142,9 @@ module Tasks
     # no step in that direction. This and the commit run under the caller's held
     # lock, so no other process moves the cursor in between.
     #
-    # ENOENT (a blob the index references was lost, e.g. to a truncated crash)
-    # degrades to nil — nothing to undo — rather than raising, upholding the
-    # "journal trouble never crashes a command" contract.
+    # Missing, unreadable, or non-regular journal files degrade to nil — nothing
+    # to undo — rather than raising, upholding the "journal trouble never crashes
+    # a command" contract. Fatal process errors are deliberately not contained.
     def plan(delta)
       idx = load
       from = idx[:cursor]
@@ -157,7 +161,7 @@ module Tasks
           states = idx[:states].map { |state| state.except(:coalesce_key, :coalesce_scope) }
           persist(to, states, gc: false)
         } }
-    rescue Errno::ENOENT, CorruptBlob
+    rescue SystemCallError, IOError, CorruptBlob
       nil
     end
 
@@ -168,6 +172,7 @@ module Tasks
     def blob_path(sha) = File.join(blobs_dir, sha)
 
     def load
+      return blank unless regular_file?(index_path)
       data = JSON.parse(File.read(index_path, encoding: "UTF-8"), symbolize_names: true)
       return blank unless data.is_a?(Hash)
       # A key collision (different org, same 16-hex prefix) or a format bump
@@ -182,7 +187,7 @@ module Tasks
                           cursor.between?(0, states.length - 1)
       return blank unless states.all? { |state| valid_state?(state) }
       { cursor: cursor, states: states }
-    rescue Errno::ENOENT, JSON::ParserError
+    rescue SystemCallError, IOError, JSON::ParserError
       blank
     end
 
@@ -205,7 +210,7 @@ module Tasks
         sha = state[:"#{kind}_sha"]
         expected.nil? ? sha.nil? : sha && blob_bytes(sha) == expected.b
       end
-    rescue Errno::ENOENT
+    rescue SystemCallError, IOError, CorruptBlob
       false
     end
 
@@ -213,7 +218,7 @@ module Tasks
       state && %i[org_sha archive_sha].all? do |key|
         state[key].nil? || Digest::SHA256.hexdigest(blob_bytes(state[key])) == state[key]
       end
-    rescue Errno::ENOENT
+    rescue SystemCallError, IOError, CorruptBlob
       false
     end
 
@@ -221,9 +226,10 @@ module Tasks
     # dropped a redo tail) — an undo/redo commit leaves `states` untouched, so
     # scanning the blob dir for it would be pure waste on the hot path.
     def persist(cursor, states, gc:)
-      FileUtils.mkdir_p(blobs_dir)
+      ensure_directory(blobs_dir)
       data = { version: VERSION, org: @org, cursor: cursor,
                states: states.map { |s| compact(s) } }
+      discard_nonregular(index_path)
       Atomic.write(index_path, JSON.pretty_generate(data))
       collect(states) if gc
     end
@@ -246,8 +252,13 @@ module Tasks
       sha = Digest::SHA256.hexdigest(text)
       path = blob_path(sha)
       # Content-addressed: identical content already on disk needs no rewrite.
+      return sha if regular_blob_matches?(path, sha, text)
       # Repair a tampered/truncated blob before a new baseline references it.
-      Atomic.write(path, text) unless File.exist?(path) && blob_bytes(sha) == text.b
+      # Symlinks and other special files are unlinked, never followed; an empty
+      # directory at the blob path is removed. A non-empty/unremovable entry is
+      # left alone and record() degrades without disturbing the task write.
+      discard_nonregular(path)
+      Atomic.write(path, text)
       sha
     end
 
@@ -263,7 +274,43 @@ module Tasks
       raise CorruptBlob unless text.valid_encoding?
       text
     end
-    def blob_bytes(sha) = File.binread(blob_path(sha))
+
+    def blob_bytes(sha)
+      path = blob_path(sha)
+      raise CorruptBlob unless regular_file?(path)
+      File.binread(path)
+    end
+
+    def regular_blob_matches?(path, sha, text)
+      return false unless regular_file?(path)
+      bytes = File.binread(path)
+      bytes == text.b && Digest::SHA256.hexdigest(bytes) == sha
+    rescue SystemCallError, IOError
+      false
+    end
+
+    def regular_file?(path)
+      File.lstat(path).file?
+    rescue SystemCallError
+      false
+    end
+
+    def ensure_directory(path)
+      stat = File.lstat(path)
+      return if stat.directory?
+      File.unlink(path)
+      Dir.mkdir(path)
+    rescue Errno::ENOENT
+      FileUtils.mkdir_p(path)
+    end
+
+    def discard_nonregular(path)
+      stat = File.lstat(path)
+      return if stat.file?
+      stat.directory? ? Dir.rmdir(path) : File.unlink(path)
+    rescue Errno::ENOENT
+      nil
+    end
 
     # Delete blobs no live state references (freed by capping or a dropped redo
     # tail). Best-effort: a leaked blob wastes a little disk, never breaks undo.
@@ -272,8 +319,9 @@ module Tasks
       Dir.children(blobs_dir).each do |name|
         File.delete(blob_path(name)) unless keep.include?(name)
       end
-    rescue Errno::ENOENT
-      # no blobs dir yet — nothing to collect
+    rescue SystemCallError, IOError
+      # Missing/unreadable/non-regular blob state is already a history break.
+      # Garbage collection is best-effort and must not affect task durability.
     end
   end
 end
