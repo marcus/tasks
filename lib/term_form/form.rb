@@ -30,6 +30,7 @@ module TermForm
 
       ensure_focus!
       synchronize_fields!
+      notify_focus(@focus_key) if @focus_key
     end
 
     def values = Support.frozen_copy(@values)
@@ -146,9 +147,11 @@ module TermForm
       @pending_commit = nil
       @errors = {}
       @validation_active = false
+      # Reconcile editing buffers before focus moves so focus_gained sees the
+      # committed value instead of being undone by a later buffer sync.
+      synchronize_fields!
       apply_focus(request.intended_focus) if request.intended_focus && focusable_key?(request.intended_focus)
       ensure_focus!
-      synchronize_fields!
       transition(:commit_accepted, nil, request: request)
     end
     alias accept accept_commit
@@ -281,7 +284,13 @@ module TermForm
     end
 
     def apply_focus(key)
+      changed = key != @focus_key
       @focus_key = key
+      notify_focus(key) if changed && key
+    end
+
+    def notify_focus(key)
+      @field_by_key.fetch(key).focus_gained(@values.fetch(key), context)
     end
 
     def focusable_key?(key)

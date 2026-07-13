@@ -145,6 +145,14 @@ module TermForm
         super(key: key, value: value, metadata: metadata, kind: :text_area, multiline: true, **options)
       end
 
+      # Entering a text area shows it from the top: the default cursor position
+      # after a sync is end-of-buffer, which would scroll a tall value so only
+      # its bottom is visible. A deliberately placed mid-buffer cursor survives
+      # blur/refocus because sync_value leaves an unchanged buffer untouched.
+      def focus_gained(_value, _context)
+        @state.editor.cursor = 0 if cursor == Text.graphemes(text).length
+      end
+
       def handle_event(event, value, context)
         if event.type == :key
           vertical = case key_bytes(event)

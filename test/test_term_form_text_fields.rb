@@ -115,6 +115,7 @@ class TestTermFormTextFields < Minitest::Test
     )
     field.render(width: 4, height: 2)
 
+    assert form.handle("\e[F").handled?, "end key moves the entry cursor to end-of-buffer"
     assert form.handle("h").handled?
     assert_equal 4, field.cursor
     assert form.handle("u").handled?
@@ -128,6 +129,7 @@ class TestTermFormTextFields < Minitest::Test
     other = TermForm::Fields::Input.new(key: :other)
     form = TermForm::Form.new(groups: [TermForm::Group.new(key: :main, fields: [notes, other])])
 
+    assert form.handle("\e[F").handled?, "end key moves the entry cursor to end-of-buffer"
     assert form.handle("\r").changed?
     assert_equal "first\n", form.value(:notes)
     transition = form.handle("\t")
@@ -201,6 +203,7 @@ class TestTermFormTextFields < Minitest::Test
     form = form_with(field)
     field.render(width: 2, height: 2)
 
+    assert form.handle("\e[F").handled?, "end key moves the entry cursor to end-of-buffer"
     assert form.handle("\e[A").handled?
     assert_equal 2, field.cursor
     assert form.handle("X").changed?
@@ -228,6 +231,48 @@ class TestTermFormTextFields < Minitest::Test
     assert_equal "remote value", form.value(:title)
     assert_equal "remote value", form.baseline(:title)
     assert_equal "remote value", field.text
+  end
+
+  def test_text_area_focus_enters_at_the_top_and_keeps_a_deliberate_cursor
+    title = TermForm::Fields::Input.new(key: :title, value: "ready")
+    notes = TermForm::Fields::TextArea.new(key: :notes, value: "one\ntwo\nthree")
+    form = TermForm::Form.new(
+      groups: [TermForm::Group.new(key: :main, fields: [title, notes])],
+      focus: :notes,
+    )
+
+    assert_equal 0, notes.cursor, "initial focus on a text area enters at the top"
+    assert_equal 5, title.cursor, "single-line entry cursor stays at the end"
+
+    form.focus(:title)
+    form.focus(:notes)
+    assert_equal 0, notes.cursor, "tab-style refocus of an untouched text area re-enters at the top"
+
+    3.times { form.handle("\e[C") }
+    assert_equal 3, notes.cursor
+    form.focus(:title)
+    form.focus(:notes)
+    assert_equal 3, notes.cursor, "a deliberately placed mid-buffer cursor survives blur and refocus"
+
+    form.handle("\e[F")
+    assert_equal 13, notes.cursor, "end-of-buffer key still jumps to the end"
+  end
+
+  def test_commit_round_trip_into_a_text_area_enters_at_the_top
+    title = TermForm::Fields::Input.new(key: :title, value: "old")
+    notes = TermForm::Fields::TextArea.new(key: :notes, value: "one\ntwo\nthree")
+    form = TermForm::Form.new(
+      groups: [TermForm::Group.new(key: :main, fields: [title, notes])],
+      focus: :title,
+    )
+
+    form.handle("!")
+    transition = form.handle("\t")
+    assert transition.commit_requested?
+    form.accept_commit(values: { title: "old!" })
+
+    assert_equal :notes, form.focus_key
+    assert_equal 0, notes.cursor, "focus arriving via an accepted commit enters the text area at the top"
   end
 
   private

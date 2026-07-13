@@ -258,6 +258,7 @@ class TestFormRenderer < Minitest::Test
   def test_exact_full_line_before_newline_does_not_create_a_phantom_row
     [["abcd\nZ", 12], ["界界\nZ", 12]].each do |value, width|
       form = notes_form(value, label: "N")
+      form.handle("\e[F") # phantom rows are only threatened by an end-of-buffer cursor
       result = Tui::FormRenderer.new.render(
         model: form.render_model, width: width, height: 6, title: "N",
       )
@@ -270,8 +271,10 @@ class TestFormRenderer < Minitest::Test
       assert_includes result.lines.fetch(2), "\e[7m", "cursor remains on the second semantic row"
     end
 
+    continuation_form = notes_form("a\n1234567\nZ", label: "N")
+    continuation_form.handle("\e[F")
     continuation = Tui::FormRenderer.new.render(
-      model: notes_form("a\n1234567\nZ", label: "N").render_model,
+      model: continuation_form.render_model,
       width: 12, height: 7, title: "N",
     )
     continuation_fields = multiline_field_lines(continuation)
@@ -302,9 +305,10 @@ class TestFormRenderer < Minitest::Test
       values = ["a" * first_capacity]
       values << "界" * (first_capacity / 2) if first_capacity.even?
       values.each do |first_line|
+        form = notes_form("#{first_line}\nZ", label: "N")
+        form.handle("\e[F") # boundary rows are only threatened by an end-of-buffer cursor
         result = Tui::FormRenderer.new.render(
-          model: notes_form("#{first_line}\nZ", label: "N").render_model,
-          width: width, height: 6, title: "N",
+          model: form.render_model, width: width, height: 6, title: "N",
         )
         fields = multiline_field_lines(result)
         assert_equal 2, fields.size, "#{width}: #{first_line.inspect} => #{fields.inspect}"
@@ -312,6 +316,100 @@ class TestFormRenderer < Minitest::Test
         assert_equal 1, result.focused_content_row
       end
     end
+  end
+
+  def test_focused_single_line_field_wraps_while_a_blurred_one_stays_truncated
+    editing = TermForm::Fields::Input.new(
+      key: :title, label: "Title", value: "alpha beta gamma delta epsilon zeta",
+    )
+    blurred = TermForm::Fields::Input.new(
+      key: :note, label: "Note", value: "one two three four five six seven eight",
+    )
+    form = TermForm::Form.new(
+      groups: [TermForm::Group.new(key: :main, label: "", fields: [editing, blurred])],
+      focus: :title,
+    )
+    result = Tui::FormRenderer.new.render(
+      model: form.render_model, width: 30, height: 12, title: "Edit",
+    )
+    plain = result.lines.map { |line| A.strip(line) }
+
+    # The focused single-line field wraps onto continuation rows so the whole
+    # value stays visible, including text that would fall past a truncation.
+    title_rows = multiline_field_lines(result)
+    assert_equal 1, title_rows.count { |line| line.start_with?("›") }
+    assert title_rows.any? { |line| line.start_with?("│") },
+           "focused single-line field wraps onto continuation rows"
+    assert plain.any? { |line| line.include?("zeta") },
+           "tail of the edited value survives instead of being truncated away"
+    assert result.lines.any? { |line| line.include?("\e[7m") }, "cursor stays visible while wrapping"
+
+    # The neighbouring blurred field keeps the compact one-line truncated form.
+    note_lines = plain.select { |line| line.include?("Note:") }
+    assert_equal 1, note_lines.size, "blurred single-line field stays on one row"
+    assert_includes note_lines.first, "…", "blurred single-line field truncates as before"
+    refute note_lines.first.include?("eight"), "blurred value is not fully expanded"
+  end
+
+  def test_focusing_a_field_keeps_context_above_it_instead_of_jumping_to_an_edge
+    fillers_before = (0...10).map do |index|
+      TermForm::Fields::Input.new(key: :"before#{index}", label: "Item#{index}", value: "x")
+    end
+    notes = TermForm::Fields::TextArea.new(key: :notes, label: "Notes", value: "n1\nn2\nn3")
+    fillers_after = (0...5).map do |index|
+      TermForm::Fields::Input.new(key: :"after#{index}", label: "Tail#{index}", value: "y")
+    end
+    form = TermForm::Form.new(
+      groups: [TermForm::Group.new(key: :main, label: "",
+                                   fields: fillers_before + [notes] + fillers_after)],
+      focus: :notes,
+    )
+    result = Tui::FormRenderer.new.render(
+      model: form.render_model, width: 40, height: 8, title: "Edit", hint: "tab saves",
+    )
+    plain = result.lines.map { |line| A.strip(line) }
+
+    # The multiline field is shown from its top (label row visible) rather than
+    # pinned to the bottom, and a couple of context rows precede it.
+    notes_index = plain.index { |line| line.include?("Notes:") }
+    refute_nil notes_index, "focused field top stays visible: #{plain.inspect}"
+    context_rows = plain[1...notes_index] # drop the top border at index 0
+    assert_equal Tui::FormRenderer::CONTEXT_ROWS, context_rows.size,
+                 "focused field keeps context rows above it: #{plain.inspect}"
+    assert context_rows.all? { |line| line.include?("Item") },
+           "context above the field is the surrounding form, not blank padding"
+    assert result.lines.any? { |line| line.include?("\e[7m") }, "cursor remains visible"
+    # Content below the field is also visible, proving it was not jammed to the edge.
+    assert plain.any? { |line| line.include?("Tail") }, "field is not pinned to the bottom edge"
+  end
+
+  def test_tall_multiline_field_opens_at_its_top_and_follows_the_cursor_to_the_end
+    notes = TermForm::Fields::TextArea.new(
+      key: :notes, label: "Notes",
+      value: (1..20).map { |index| "note line #{index}" }.join("\n"),
+    )
+    form = TermForm::Form.new(
+      groups: [TermForm::Group.new(key: :main, label: "", fields: [notes])],
+      focus: :notes,
+    )
+    renderer = Tui::FormRenderer.new
+
+    opened = renderer.render(model: form.render_model, width: 30, height: 8, title: "Edit")
+    opened_plain = opened.lines.map { |line| A.strip(line) }
+    assert opened_plain.any? { |line| line.include?("Notes: note line 1") },
+           "focusing a tall field shows its label and first row: #{opened_plain.inspect}"
+    refute opened_plain.any? { |line| line.include?("note line 20") },
+           "bottom rows stay out of view until the cursor travels there"
+    assert opened.lines.any? { |line| line.include?("\e[7m") }, "entry cursor is visible at the top"
+
+    form.handle("\e[F") # end-of-buffer key
+    ended = renderer.render(model: form.render_model, width: 30, height: 8, title: "Edit")
+    ended_plain = ended.lines.map { |line| A.strip(line) }
+    assert ended_plain.any? { |line| line.include?("note line 20") },
+           "moving to the end scrolls the bottom into view: #{ended_plain.inspect}"
+    refute ended_plain.any? { |line| line.include?("Notes: note line 1") },
+           "the field top scrolls away once the cursor reaches the end"
+    assert ended.lines.any? { |line| line.include?("\e[7m") }, "cursor stays visible at the end"
   end
 
   def test_rendering_does_not_sample_terminal_geometry

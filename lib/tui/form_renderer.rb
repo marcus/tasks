@@ -13,6 +13,11 @@ module Tui
 
     Result = Data.define(:lines, :focused_content_row)
 
+    # Lines of the surrounding form kept visible above a focused field when the
+    # content is scrolled, so bringing a field into view reads as scrolling
+    # rather than jumping it to the very top or bottom edge.
+    CONTEXT_ROWS = 2
+
     def render(model:, width:, height:, title:, hint: nil, error: nil, suffix: nil)
       width = [Integer(width), 0].max
       height = [Integer(height), 0].max
@@ -22,6 +27,7 @@ module Tui
       inner_width = width - 2
       content = []
       focused_content_row = nil
+      focused_field_row = nil
       model.groups.each do |group|
         label = inline_text(group.label).strip
         content << T.paint(:form_group, label) unless label.empty?
@@ -30,7 +36,10 @@ module Tui
             row, width: inner_width, suffix: suffix,
             external_error: error && row.focused?,
           )
-          focused_content_row = content.length + focus_offset if row.focused?
+          if row.focused?
+            focused_field_row = content.length
+            focused_content_row = content.length + focus_offset
+          end
           content.concat(field_lines)
           content.concat(render_picker(row, width: width - 2))
           content.concat(render_choices(row))
@@ -42,7 +51,7 @@ module Tui
       content = [T.paint(:form_hint, "(empty form)")] if content.empty?
 
       budget = height - 2
-      offset = viewport_offset(content.length, budget, focused_content_row)
+      offset = viewport_offset(content.length, budget, focused_field_row, focused_content_row)
       shown = (content[offset, budget] || []).map { |line| A.vpad(truncate(line, inner_width), inner_width) }
       shown += [" " * inner_width] * (budget - shown.length)
 
@@ -82,7 +91,9 @@ module Tui
     end
 
     def render_field_rows(row, width:, suffix: nil, external_error: false)
-      return [[render_row(row, suffix: suffix, external_error: external_error)], 0] unless multiline_value?(row)
+      unless multiline_value?(row) || wrap_focused_input?(row)
+        return [[render_row(row, suffix: suffix, external_error: external_error)], 0]
+      end
 
       render_multiline_rows(row, width: width, suffix: suffix, external_error: external_error)
     end
@@ -284,6 +295,14 @@ module Tui
       row.metadata[:kind] == :text_area || value_text(row).match?(/[\r\n]/)
     end
 
+    # A single-line text field wraps across rows only while it is being edited,
+    # so the whole value (or as much as the panel height allows around the
+    # cursor) stays visible instead of truncating at the panel edge. Blurred
+    # fields keep the compact one-line form.
+    def wrap_focused_input?(row)
+      row.focused? && row.metadata[:kind] == :input
+    end
+
     def multiline_text(value)
       value.to_s.gsub(/\R/, "\n")
     end
@@ -299,10 +318,16 @@ module Tui
       A.cell_slice(line, 0, width - 1) + T.paint(:form_hint, "…")
     end
 
-    def viewport_offset(size, budget, focused)
-      return 0 if size <= budget || focused.nil?
+    # Choose the first visible content row. The focused field is anchored a
+    # couple of rows below the top so navigation keeps context above it, and the
+    # cursor is followed downward only when the field is taller than the budget
+    # (so typing near the end of a long field never scrolls the cursor away).
+    def viewport_offset(size, budget, field_row, cursor_row)
+      return 0 if size <= budget || field_row.nil?
 
-      focused.clamp(0, size - budget)
+      offset = field_row - CONTEXT_ROWS
+      offset = cursor_row - budget + 1 if cursor_row > offset + budget - 1
+      offset.clamp(0, size - budget)
     end
   end
 end

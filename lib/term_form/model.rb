@@ -81,6 +81,11 @@ module TermForm
     # stateful field can reconcile its private editing buffer.
     def sync_value(_value) = nil
 
+    # Form calls this when the field gains focus so a stateful field can
+    # position its private cursor for entry. Focus can be re-applied (initial
+    # focus, commit round-trips), so implementations must tolerate repeats.
+    def focus_gained(_value, _context) = nil
+
     def validation_errors(value, context)
       errors = []
       errors << "is required" if required?(context) && blank?(value)
