@@ -156,6 +156,23 @@ a stable public or gem API.
 `x` previews the number of completed roots and descendants that would move to
 `archive.jsonl`; `y` confirms, while `n` or Escape cancels without writing.
 
+**Queued TUI agent requests.** Return in the agent prompt accepts the request
+even while another request is running. The TUI executes accepted requests one
+at a time in FIFO order; at most one autonomous harness may mutate the task
+files at once. Each request snapshots the selected `provider:model` at submit
+time, so `M` affects only subsequently submitted requests. The waiting queue is
+capped at 100; a full queue or an unavailable selected harness leaves the
+prompt intact and focused.
+
+The footer streams the active request and reports the pending count. `A` opens
+a scrollable, filterable Agent activity modal containing every retained prompt,
+status, provider/model, and transcript. Results are session-only: the latest 50
+finished requests plus every active/pending request remain available until the
+TUI exits. Escape cancels only the active request and continues with the next
+queued request. The action palette can cancel all waiting requests without
+touching the active one. Quit with active or pending work requires explicit
+confirmation, then cancels the live process group and discards the queue.
+
 ### LLM agent settings
 
 `-p` and the TUI hand your request to an **agent** — an autonomous harness

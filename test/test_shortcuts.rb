@@ -19,7 +19,11 @@ class TestShortcuts < Minitest::Test
 
   def test_every_entry_declares_context_handler_availability_and_metadata
     S::REGISTRY.each do |entry|
-      refute_empty entry.sequences
+      if entry.sequences.empty?
+        assert entry.palette, "keyless actions must be palette-enabled"
+      else
+        refute_empty entry.sequences
+      end
       refute_empty entry.display_key
       refute_empty entry.description
       refute_empty entry.contexts
@@ -90,6 +94,9 @@ class TestShortcuts < Minitest::Test
       ui.mode = mode unless mode == :list || mode == :modal
       app.instance_variable_set(:@ui, ui)
       app.instance_variable_set(:@quit, false)
+      queue = Object.new
+      queue.define_singleton_method(:work?) { false }
+      app.instance_variable_set(:@agent_queue, queue)
       app.send(:handle_key, "\x03")
       assert app.instance_variable_get(:@quit), "ctrl-c did not quit from #{mode} mode"
     end
@@ -105,6 +112,15 @@ class TestShortcuts < Minitest::Test
     duplicate = changed_entry(sequences: ["k", "k"])
     error = assert_raises(ArgumentError) { S.validate!(nil, entries: [duplicate]) }
     assert_match(/sequences must be unique/, error.message)
+  end
+
+  def test_validation_allows_palette_only_action_and_rejects_unreachable_action
+    palette_only = changed_entry(sequences: [], display_key: "palette", palette: true)
+    assert S.validate!(nil, entries: [palette_only])
+
+    unreachable = changed_entry(sequences: [], palette: false)
+    error = assert_raises(ArgumentError) { S.validate!(nil, entries: [unreachable]) }
+    assert_match(/must be palette-enabled/, error.message)
   end
 
   def test_validation_allows_same_key_in_modal_and_palette_only_detail_context

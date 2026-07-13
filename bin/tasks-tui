@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 # tasks-tui — interactive TUI over tasks.jsonl.
-# Realtime views, single-key actions, and an always-on Claude prompt.
+# Realtime views, single-key actions, and a queued multi-provider agent prompt.
 
 require_relative "../lib/tui/app"
 

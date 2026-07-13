@@ -8,11 +8,24 @@ require "tui/app"
 class TestAppModals < Minitest::Test
   A = Tui::Ansi
 
-  def with_app(content: FIXTURE_ORG)
+  class QueueAgent
+    attr_reader :started, :output
+
+    def initialize
+      @started = []
+      @output = +""
+    end
+
+    def available? = true
+    def start(prompt, model:) = (@started << [prompt, model]; self)
+    def io = nil
+  end
+
+  def with_app(content: FIXTURE_ORG, agent_factory: nil)
     Dir.mktmpdir do |dir|
       File.write(File.join(dir, "tasks.jsonl"), content)
       app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir),
-                         llm_config: default_llm_config)
+                         llm_config: default_llm_config, agent_factory: agent_factory)
       app.send(:rows) # populate @rows like the paint loop does
       app.send(:clamp_selection)
       yield app
@@ -811,54 +824,38 @@ class TestAppModals < Minitest::Test
     end
   end
 
-  def test_switching_to_another_provider_rebuilds_the_agent
-    with_app do |app|
+  def test_switching_provider_builds_that_adapter_only_when_request_is_submitted
+    built = []
+    agent = QueueAgent.new
+    with_app(agent_factory: ->(entry) { built << entry; agent }) do |app|
       app.send(:handle_key, "M") until app.send(:current_entry).provider == "hermes"
-      agent = app.instance_variable_get(:@agent)
-      assert_instance_of LLM::Agent::Hermes, agent,
-                         "cycling to the hermes entry swaps in its adapter"
+      assert_empty built, "cycling only selects the entry; no queued adapter exists yet"
+      app.send(:focus_prompt)
+      app.instance_variable_get(:@input) << "hello"
+      app.send(:submit_prompt)
+
+      assert_equal ["hermes"], built.map(&:provider)
+      assert_equal [["hello", app.send(:current_entry).model]], agent.started
     end
   end
 
-  def test_model_only_change_keeps_same_agent_instance
-    with_app do |app|
-      before = app.instance_variable_get(:@agent) # claude-cli:sonnet
-      app.send(:handle_key, "M")                   # → claude-cli:opus (same provider)
-      assert_equal "opus", app.send(:current_entry).model
-      assert_same before, app.instance_variable_get(:@agent),
-                  "a model-only switch must not rebuild the adapter"
-    end
-  end
+  def test_model_change_while_active_is_snapshotted_only_for_new_request
+    first = QueueAgent.new
+    second = QueueAgent.new
+    pool = [first, second]
+    with_app(agent_factory: ->(_entry) { pool.shift }) do |app|
+      app.send(:focus_prompt)
+      app.instance_variable_get(:@input) << "first"
+      app.send(:submit_prompt)
+      app.send(:toggle_model) # sonnet -> opus while first remains active
+      app.send(:focus_prompt)
+      app.instance_variable_get(:@input) << "second"
+      app.send(:submit_prompt)
 
-  def test_provider_switch_is_deferred_while_a_run_is_in_flight
-    with_app do |app|
-      # stand in a running agent so the switcher must not swap it out
-      running = Object.new
-      def running.running? = true
-      def running.io = nil
-      app.instance_variable_set(:@agent, running)
-      app.instance_variable_set(:@agent_provider, "claude-cli")
-
-      app.send(:handle_key, "M") until app.send(:current_entry).provider == "hermes"
-      assert_same running, app.instance_variable_get(:@agent),
-                  "must never drop a running agent's io from IO.select"
-      assert_equal "claude-cli", app.instance_variable_get(:@agent_provider)
-    end
-  end
-
-  def test_submit_passes_current_entry_model_to_agent
-    with_app do |app|
-      started = nil
-      agent = app.instance_variable_get(:@agent)
-      agent.stub(:start, ->(text, model:) { started = [text, model] }) do
-        agent.stub(:available?, true) do
-          app.send(:handle_key, "M") # → claude-cli:opus
-          app.send(:handle_key, "\t")
-          app.instance_variable_get(:@input) << "hello"
-          app.send(:handle_key, "\r")
-        end
-      end
-      assert_equal ["hello", "opus"], started
+      queue = app.instance_variable_get(:@agent_queue)
+      assert_equal %w[sonnet opus], queue.requests.map { |request| request.entry.model }
+      assert_equal [["first", "sonnet"]], first.started
+      assert_empty second.started, "the new model's request waits behind the active one"
     end
   end
 

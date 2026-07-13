@@ -68,6 +68,8 @@ module Tui
       entry(sequences: ["\x0c"],       key: "ctrl-l",  description: "shrink task panel",                contexts: [:detail], handler: :shrink_task_panel, palette: true),
       entry(sequences: ["/"],          key: "/",       description: "filter tasks by text",             contexts: [:list], handler: :start_filter, palette: true, form: :filter),
       entry(sequences: ["M"],          key: "M",       description: "cycle agent/model",                contexts: [:list], handler: :toggle_model, palette: true),
+      entry(sequences: ["A"],          key: "A",       description: "open agent activity",               contexts: [:list], handler: :open_agent_activity, availability: :agent_activity_available?, palette: true),
+      entry(sequences: [],             key: "palette", description: "cancel queued agent requests",       contexts: [:list], handler: :cancel_queued_agent_requests, availability: :pending_agent_requests_available?, palette: true, confirmation: :agent_queue),
       entry(sequences: ["u"],          key: "u",       description: "undo last change",                 contexts: %i[list detail], handler: :undo_last, palette: true),
       entry(sequences: ["\x12"],       key: "ctrl-r",  description: "redo",                             contexts: %i[list detail], handler: :redo_last, palette: true),
       entry(sequences: ["\x15"],       key: "ctrl-u",  description: "scroll task details up",           contexts: [:list], handler: :panel_half_up, availability: :panel_scroll_available?),
@@ -139,7 +141,12 @@ module Tui
     end
 
     def self.validate_entry!(entry, handler_owner)
-      raise ArgumentError, "shortcut sequences must be a non-empty array" unless entry.sequences.is_a?(Array) && !entry.sequences.empty? && entry.sequences.all? { |s| s.is_a?(String) && !s.empty? }
+      unless entry.sequences.is_a?(Array) && entry.sequences.all? { |s| s.is_a?(String) && !s.empty? }
+        raise ArgumentError, "shortcut sequences must be an array of non-empty strings"
+      end
+      if entry.sequences.empty? && !entry.palette
+        raise ArgumentError, "a shortcut without key sequences must be palette-enabled"
+      end
       raise ArgumentError, "shortcut sequences must be unique" unless entry.sequences.uniq == entry.sequences
       raise ArgumentError, "shortcut display key must be a non-empty string" unless entry.display_key.is_a?(String) && !entry.display_key.empty?
       raise ArgumentError, "shortcut description must be a non-empty string" unless entry.description.is_a?(String) && !entry.description.empty?

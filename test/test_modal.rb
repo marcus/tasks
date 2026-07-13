@@ -148,6 +148,30 @@ class TestModal < Minitest::Test
     assert_same before, m.lines, "the same query reuses the memoized match set"
   end
 
+  def test_replacing_live_content_preserves_filter_and_scroll_intent
+    m = modal
+    m.filter = "line"
+    m.scroll_line(2, BODY_H)
+    m.replace(title: "Agent activity · updated", lines: (0...40).map { |i| "line #{i} refreshed" })
+
+    assert_equal "line", m.filter
+    assert_equal 2, m.scroll
+    assert_equal "Agent activity · updated", m.title
+    assert m.lines.all? { |line| line.include?("refreshed") }
+    assert_includes texts(m.view(BODY_H)).first, "/ line"
+  end
+
+  def test_grouped_filter_keeps_the_whole_matching_request_block
+    lines = ["#1", "request alpha", "result one", "", "#2", "request beta", "result two"]
+    groups = [1, 1, 1, 2, 2, 2, 2]
+    m = Tui::Modal.new(title: "Agent activity", lines: lines, kind: :agent_activity,
+                       filterable: true, filter_groups: groups)
+    m.filter = "beta"
+
+    assert_equal ["", "#2", "request beta", "result two"], m.lines
+    refute_includes m.lines, "#1"
+  end
+
   def test_clearing_filter_restores_all_lines
     m = modal
     m.filter = "line 3"

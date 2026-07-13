@@ -128,8 +128,9 @@ y / Y      yank task ref / full task as markdown to the clipboard
 p          paste a quoted task ref into the agent prompt
 x          preview archive sweep counts; y confirms, n / esc cancels
 M          cycle the agent/model (provider:model shown in the header)
+A          open queued/running/completed agent activity and full transcripts
 :          search available actions; type to filter, ↑↓ choose, return runs, esc cancels
-esc        dismiss the response / cancel a request / close the detail panel
+esc        dismiss response / cancel the active request and continue the queue / close details
 pgup/pgdn  scroll a long response (footer grows, then collapses on esc)
 q          quit
 ```
@@ -150,8 +151,14 @@ remains an internal API and does not promise gem compatibility or stability.
 
 The agent runs asynchronously (the local `claude` CLI by default, same as
 `tasks -p`, or any configured harness), so the UI stays responsive while it
-works; its answer appears in an expanding footer pane and the views refresh with
-whatever it changed. `M` switches backend/model between requests.
+works. Return accepts more prompts while an agent is active; requests run FIFO,
+one at a time, and each keeps the provider/model selected when it was submitted.
+The footer streams the active request and reports the waiting count, while `A`
+opens the session's prompts, statuses, and full transcripts. The action palette
+can cancel all waiting requests without interrupting the active one. Results
+remain available for the TUI session; quitting with unfinished agent work asks
+for confirmation. Views refresh after each request changes the task list. `M`
+switches the backend/model for newly submitted requests.
 
 The action palette shows only actions available in the current list or task
 detail context. It runs the same operations as their direct keyboard shortcuts;

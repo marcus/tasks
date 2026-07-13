@@ -17,6 +17,11 @@ Phase 4 (Claude Agent SDK) is left as a drop-in extension point — a new adapte
 class + one `Registry::DEFAULTS` line — since it adds an optional dependency and
 nothing in phases 1–3 needs it.
 
+Follow-on (2026-07-13): the TUI's multi-request FIFO coordinator and
+session-scoped result history are specified in
+[`queued-llm-messages.md`](queued-llm-messages.md). The coordinator remains
+above this single-run adapter protocol; `tasks -p` is still synchronous.
+
 ## Why
 
 The LLM integration is welded to one backend: the local `claude` CLI, invoked

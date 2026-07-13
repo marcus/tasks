@@ -24,9 +24,10 @@ module Tui
 
     attr_reader :title, :kind, :scroll, :filter
 
-    def initialize(title:, lines:, kind:, filterable: false)
+    def initialize(title:, lines:, kind:, filterable: false, filter_groups: nil)
       @title = title
-      @all = lines
+      @all = lines.dup.freeze
+      @filter_groups = normalize_filter_groups(filter_groups, @all.size)
       @kind = kind
       @filterable = filterable
       @scroll = 0
@@ -36,6 +37,19 @@ module Tui
     end
 
     def filterable? = @filterable
+
+    # Replace live modal content without discarding the user's filter or scroll
+    # intent. The next view call clamps scroll against the refreshed match set.
+    # Used by Agent activity as queued/running requests change underneath it.
+    def replace(title:, lines:, filter_groups: nil)
+      @title = title
+      @all = lines.dup.freeze
+      @filter_groups = normalize_filter_groups(filter_groups, @all.size)
+      @filtered = nil
+      @haystack = nil
+      @width = nil
+      self
+    end
 
     def filter=(query)
       query = query.to_s
@@ -57,7 +71,13 @@ module Tui
 
       @filtered ||= begin
         q = @filter.downcase
-        @all.each_index.select { |i| haystack[i].include?(q) }.map { |i| @all[i] }
+        matches = @all.each_index.select { |i| haystack[i].include?(q) }
+        if @filter_groups
+          groups = matches.map { |i| @filter_groups[i] }.uniq
+          @all.each_index.select { |i| groups.include?(@filter_groups[i]) }.map { |i| @all[i] }
+        else
+          matches.map { |i| @all[i] }
+        end
       end
     end
 
@@ -105,6 +125,13 @@ module Tui
     end
 
     private
+
+    def normalize_filter_groups(groups, size)
+      return if groups.nil?
+      raise ArgumentError, "filter groups must align with modal lines" unless groups.size == size
+
+      groups.dup.freeze
+    end
 
     # A fixed-height view for an active filter: the query line on top, matched
     # (scrolled) content padded to the retained height, and the count status at

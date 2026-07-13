@@ -1,8 +1,14 @@
 # Plan: queued LLM requests and result history
 
-Status: proposed for discussion — do not implement yet
+Status: implemented; independent adversarial review pending
 
 Date: 2026-07-13
+
+Implementation note: delivered as a TUI-layer `AgentQueue` above the existing
+single-run adapters, with a pure Agent activity renderer, live modal refresh,
+process outcome metadata, FIFO App integration, session-bounded history,
+queue-aware cancellation/quit guards, and focused integration tests. The
+headless `tasks -p` path remains unchanged.
 
 ## Outcome
 

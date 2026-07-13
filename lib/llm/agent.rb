@@ -24,7 +24,7 @@ module LLM
   #   - sync  (CLI): #run_sync spawns with inherited stdio so output streams
   #     straight to the terminal, and returns true on a clean exit.
   class Agent
-    attr_reader :output, :io
+    attr_reader :output, :io, :process_status
 
     # root:    working directory the harness runs in (where tasks.jsonl lives).
     # system:  fully-resolved system-context string (AGENTS.md + file
@@ -37,6 +37,8 @@ module LLM
       @output = +""
       @pid = nil
       @io = nil
+      @process_status = nil
+      @cancelled = false
     end
 
     # The binary this adapter spawns unless config overrides it.
@@ -54,9 +56,14 @@ module LLM
     def available? = command_on_path?(@command)
 
     def running? = !@pid.nil?
+    def cancelled? = @cancelled
+    def exit_status = @process_status&.exitstatus
+    def success? = !!@process_status&.success?
 
     def start(prompt, model:, stream: true)
       @output = +""
+      @process_status = nil
+      @cancelled = false
       r, w = IO.pipe
       # pgroup: true puts the child in its own process group so #cancel can TERM
       # the whole tree — these harnesses spawn tool subprocesses that would
@@ -66,6 +73,12 @@ module LLM
       w.close
       @io = r
       self
+    rescue StandardError
+      w&.close unless w&.closed?
+      r&.close unless r&.closed?
+      @pid = nil
+      @io = nil
+      raise
     end
 
     # Drain available output. Returns :running or :done.
@@ -82,6 +95,7 @@ module LLM
     end
 
     def cancel
+      @cancelled = true
       # Negative pid = signal the whole process group started in #start.
       Process.kill("TERM", -@pid) if @pid
       finish
@@ -111,7 +125,7 @@ module LLM
       @io&.close
       @io = nil
       if @pid
-        Process.wait(@pid)
+        _pid, @process_status = Process.wait2(@pid)
         @pid = nil
       end
       :done

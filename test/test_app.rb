@@ -14,40 +14,57 @@ class TestApp < Minitest::Test
     app.send(:screen_layout, width: width, height: height, panel: true).panel_width
   end
 
-  # Records calls to #start and reports whatever running?/available? state we
-  # set, so we can drive submit_prompt without spawning a real agent process.
+  # Single-run adapter fake used behind AgentQueue's injected factory.
   class FakeAgent
-    attr_reader :started
+    attr_reader :started, :output, :process_status, :exit_status
 
     def initialize(running:, available: true)
       @running = running
       @available = available
       @started = []
+      @output = +""
+      @process_status = nil
+      @exit_status = nil
     end
 
     def running? = @running
     def available? = @available
-    def start(text, model:) = @started << [text, model]
+    def start(text, model:)
+      @started << [text, model]
+      @running = true
+      self
+    end
+    def success? = true
+    def cancel = @running = false
+    def io = nil
   end
 
-  def app_with(agent:, input:)
+  def app_with(agent: nil, agents: nil, input:)
     Dir.mktmpdir do |dir|
       File.write(File.join(dir, "tasks.jsonl"), FIXTURE_ORG)
+      pool = Array(agents || [agent])
       app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir),
-                         llm_config: default_llm_config)
-      app.instance_variable_set(:@agent, agent)
+                         llm_config: default_llm_config,
+                         agent_factory: ->(_entry) { pool.shift || agent })
       app.instance_variable_set(:@input, Tui::TextInput.new(input))
       yield app
     end
   end
 
-  def test_submit_prompt_rejected_while_agent_running
-    fake = FakeAgent.new(running: true)
-    app_with(agent: fake, input: "reschedule the flight") do |app|
+  def test_submit_prompt_queues_while_agent_running
+    active = FakeAgent.new(running: false)
+    waiting = FakeAgent.new(running: false)
+    app_with(agents: [active, waiting], input: "first request") do |app|
       app.send(:submit_prompt)
-      assert_empty fake.started, "must not orphan the in-flight run by starting a second"
-      assert_match(/still working/, app.instance_variable_get(:@flash))
-      # input is cleared and focus returns to the list even on rejection
+      app.instance_variable_get(:@input).replace("reschedule the flight")
+      ui(app).mode = :prompt
+      app.send(:submit_prompt)
+
+      assert_equal [["first request", "sonnet"]], active.started
+      assert_empty waiting.started, "queued adapter must not start alongside the active one"
+      queue = app.instance_variable_get(:@agent_queue)
+      assert_equal 1, queue.pending_count
+      assert_match(/queued agent request/, app.instance_variable_get(:@flash))
       assert_equal "", app.instance_variable_get(:@input)
       assert_equal :list, ui(app).mode
     end
@@ -68,6 +85,8 @@ class TestApp < Minitest::Test
       app.send(:submit_prompt)
       assert_empty fake.started, "must not start an unavailable agent"
       assert_match(/not available/, app.instance_variable_get(:@flash))
+      assert_equal "do a thing", app.instance_variable_get(:@input).to_s
+      assert_equal :prompt, ui(app).mode
     end
   end
 
@@ -509,6 +528,32 @@ class TestApp < Minitest::Test
         assert_same editor, app.instance_variable_get(:@suspended_task_editor)
         assert_equal "#{expected_mode}-safe-draft", editor.edit_form.value(:title)
       end
+    end
+  end
+
+  def test_dirty_editor_quit_confirmation_also_accounts_for_agent_queue
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\t")
+      ui(app).task_editor.form.set_value(:title, "unsaved with agents")
+
+      queue = Object.new
+      queue.define_singleton_method(:work?) { true }
+      queue.define_singleton_method(:active?) { true }
+      queue.define_singleton_method(:pending_count) { 2 }
+      queue.define_singleton_method(:shutdown) { @shutdown = true }
+      queue.define_singleton_method(:shutdown?) { !!@shutdown }
+      app.instance_variable_set(:@agent_queue, queue)
+
+      app.send(:handle_key, "\x03")
+      text = ui(app).modal.lines.join(" ")
+      assert_includes text, "active request"
+      assert_includes text, "2 queued requests"
+      refute queue.shutdown?
+
+      app.send(:handle_key, "\r")
+      assert app.instance_variable_get(:@quit)
+      assert queue.shutdown?
     end
   end
 

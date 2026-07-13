@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require "rbconfig"
 require "tmpdir"
 require "llm/registry"
 
@@ -10,6 +11,13 @@ require "llm/registry"
 # probes are pointed at a dead port so they fail fast.
 class TestLLM < Minitest::Test
   A = LLM::Agent
+
+  def pump_until_done(agent)
+    loop do
+      IO.select([agent.io], nil, nil, 2) if agent.io
+      return if agent.pump == :done
+    end
+  end
 
   # -- ClaudeCli adapter -----------------------------------------------------
 
@@ -192,6 +200,41 @@ class TestLLM < Minitest::Test
       assert agent.run_sync("hi", model: "m")
     end
     assert_equal false, seen, "sync CLI wants the final answer, not a transcript"
+  end
+
+  def test_async_agent_records_output_and_nonzero_process_status
+    agent = A::ClaudeCli.new(root: "/tmp")
+    command = [RbConfig.ruby, "-e", "STDOUT.write('transcript'); exit 7"]
+    agent.stub(:command, ->(_prompt, model:, stream:) { command }) do
+      agent.start("ignored", model: "ignored")
+      pump_until_done(agent)
+    end
+
+    assert_equal "transcript", agent.output
+    assert_equal 7, agent.exit_status
+    refute agent.success?
+    refute agent.cancelled?
+    assert agent.process_status.exited?
+  end
+
+  def test_async_agent_cancellation_is_distinct_and_next_start_resets_metadata
+    agent = A::ClaudeCli.new(root: "/tmp")
+    long = [RbConfig.ruby, "-e", "sleep 30"]
+    agent.stub(:command, ->(_prompt, model:, stream:) { long }) do
+      agent.start("ignored", model: "ignored")
+      agent.cancel
+    end
+    assert agent.cancelled?
+    refute agent.success?
+
+    quick = [RbConfig.ruby, "-e", "exit 0"]
+    agent.stub(:command, ->(_prompt, model:, stream:) { quick }) do
+      agent.start("again", model: "ignored")
+      refute agent.cancelled?, "a new run resets cancellation metadata"
+      pump_until_done(agent)
+    end
+    assert agent.success?
+    assert_equal 0, agent.exit_status
   end
 
   def test_build_returns_configured_adapter_with_settings

@@ -10,6 +10,8 @@ require_relative "store"
 require_relative "views"
 require_relative "frame"
 require_relative "../llm/registry"
+require_relative "agent_queue"
+require_relative "agent_activity"
 require_relative "shortcuts"
 require_relative "modal"
 require_relative "modals"
@@ -63,27 +65,28 @@ module Tui
     #             both the entry list and each rebuilt agent agree. Injectable so
     #             tests are hermetic instead of reading the developer's real config.
     def initialize(root:, paths: Tasks::Config.resolve(default_dir: root),
-                   llm_config: LLM::Config.load)
+                   llm_config: LLM::Config.load, agent_factory: nil)
       Theme.configure!(name: paths.theme, overrides: paths.colors || {})
       @store  = Store.new(org: paths.org, archive: paths.archive,
                           links: paths.links || {}, link_systems: paths.link_systems || {},
                           max_depth: paths.max_depth)
       @urgent_days = paths.urgent_days # deadline window for the quadrants view
-      # The (provider, model) switcher cycles these; the live agent is rebuilt
-      # lazily when the selected provider changes (see ensure_agent_for_current!).
+      # The (provider, model) switcher cycles these. AgentQueue snapshots an
+      # entry and builds one adapter per accepted request, so later cycling can
+      # never retarget queued or running work.
       @agent_root = File.dirname(paths.org)
       @sys_prompt = App.agent_system(paths: paths, cli_root: root)
       @llm_config = llm_config
       @entries    = LLM.entries(llm_config)
       @entry_idx  = 0
-      @agent = build_agent(current_entry)
-      @agent_provider = current_entry.provider
+      @agent_queue = AgentQueue.new(agent_factory: agent_factory || method(:build_agent))
       @ui = UiState.restore(saved: Session.load, views: Views::TABS.map(&:last), default_view: :agenda)
       @sel    = 0
       @input  = TextInput.new # prompt buffer
       @input_bytes = +"".b
       @key_data = +""
       @resp   = nil        # wrapped response lines
+      @resp_request_id = nil
       @resp_open = false
       @resp_scroll = 0
       @flash = nil
@@ -95,8 +98,12 @@ module Tui
       @suspended_task_panel = nil
       @draft_quit_editor = nil
       @draft_quit_return_modal = nil
+      @draft_quit_return_mode = nil
       @draft_quit_return_message = nil
-      @draft_quit_changed_mode = false
+      @agent_quit_confirmation = false
+      @agent_quit_return_modal = nil
+      @agent_quit_return_mode = nil
+      @agent_activity_width = nil
     end
 
     # -- agent selection -----------------------------------------------------
@@ -105,17 +112,6 @@ module Tui
 
     def build_agent(entry)
       LLM.build(entry, root: @agent_root, system: @sys_prompt, config: @llm_config)
-    end
-
-    # Rebuild the live agent when the selected provider has changed. Never swaps
-    # a running agent out from under the IO.select loop — the caller guards on
-    # idle, and cycling while a run is in flight just re-labels; the new provider
-    # takes effect on the next submit ("applies to the next request").
-    def ensure_agent_for_current!
-      return if @agent_provider == current_entry.provider || @agent.running?
-
-      @agent = build_agent(current_entry)
-      @agent_provider = current_entry.provider
     end
 
     def run
@@ -127,6 +123,7 @@ module Tui
       # would leave the shell raw on the alt screen, far worse than a lost view.
       print "\e[?2004l\e[?1049l\e[?25h"
       $stdin.cooked!
+      @agent_queue.shutdown if @agent_queue&.work?
       save_session # so the view persists however the TUI exits
     end
 
@@ -138,10 +135,10 @@ module Tui
       paint
 
       ios = [$stdin]
-      ios << @agent.io if @agent.io
+      ios << @agent_queue.io if @agent_queue.io
       ready = IO.select(ios, nil, nil, TICK)
       (ready&.first || []).each do |io|
-        io == $stdin ? read_keys : pump_agent
+        io == $stdin ? read_keys : pump_agent_queue
       end
       if @store.changed? # picks up Claude edits + external edits
         reload_store
@@ -204,7 +201,7 @@ module Tui
         footer: layout.footer,
         popup: current_popup(layout: layout),
         panel: @ui.panel&.view(height: layout.body_height, width: layout.panel_content_width),
-        modal: layout.place_modal(modal_view(layout.body_height)),
+        modal: layout.place_modal(modal_view(layout.body_height, width: width)),
         layout: layout
       )
       print "\e[H" + lines.join("\e[K\r\n") + "\e[K"
@@ -262,12 +259,20 @@ module Tui
 
     def footer(w, mode: @ui.mode)
       f = []
-      if @agent.running?
-        f << T.paint(:muted, " #{SPINNER[@tick % SPINNER.size]} #{@agent_provider} is working… (esc cancels)")
+      if (active = @agent_queue.active_request)
+        pending = @agent_queue.pending_count
+        queued = pending.positive? ? " · #{pending} queued" : ""
+        f << T.paint(
+          :muted,
+          " #{SPINNER[@tick % SPINNER.size]} ##{active.id} #{active.entry} is working#{queued} · A activity · esc cancels"
+        )
         # scrub: a streaming chunk can end mid-multibyte-char
-        A.strip(@agent.output.scrub("�")).split("\n").last(3).each { |t| f << T.paint(:muted, "   #{t}") }
+        A.strip(@agent_queue.active_output.scrub("�")).split("\n").last(3).each do |line|
+          f << T.paint(:muted, "   #{line}")
+        end
         f << :rule
       elsif @resp_open && @resp
+        f << T.paint(:muted, " result ##{@resp_request_id} · A opens all agent activity")
         visible = @resp[@resp_scroll, RESP_MAX] || []
         visible.each { |l| f << "   #{l}" }
         scroll_hint = @resp.size > RESP_MAX ? "#{@resp_scroll + visible.size}/#{@resp.size} · #{RESP_HINT}" : "esc dismiss"
@@ -294,7 +299,13 @@ module Tui
     # request stays readable; beyond that, the earliest lines scroll off.
     def prompt_lines(w)
       unless @ui.mode == :prompt
-        hint = T.paint(:muted, @agent.running? ? "…" : "tab to ask the agent — reschedule, capture, edit anything…")
+        hint_text = if @agent_queue.work?
+                      suffix = @agent_queue.pending_count.positive? ? " · #{@agent_queue.pending_count} queued" : ""
+                      "tab to ask the agent#{suffix}"
+                    else
+                      "tab to ask the agent — reschedule, capture, edit anything…"
+                    end
+        hint = T.paint(:muted, hint_text)
         return [" #{T.paint(:prompt, "❯ ")}#{hint}"]
       end
       wrapped = wrapped_input(@input, w - 5)
@@ -523,6 +534,7 @@ module Tui
     end
 
     def handle_key(k)
+      return agent_quit_confirmation_key(k) if @agent_quit_confirmation
       return task_draft_quit_confirmation_key(k) if task_draft_quit_confirmation?
       return if dispatch_action(k, :global)
       return task_edit_key(k) if task_editing?
@@ -581,6 +593,7 @@ module Tui
     def modal_key(k)
       return archive_confirm_key(k) if @ui.modal&.kind == :archive_confirm
       return archive_blocked_key(k) if @ui.modal&.kind == :archive_blocked
+      return cancel_queued_agent_requests_key(k) if @ui.modal&.kind == :agent_queue_cancel_confirm
       dispatch_action(k, :modal)
     end
 
@@ -648,6 +661,8 @@ module Tui
     def action_available? = true
     def modal_filter_available? = @ui.modal&.filterable?
     def panel_scroll_available? = detail_panel?
+    def agent_activity_available? = @agent_queue.any?
+    def pending_agent_requests_available? = @agent_queue.pending?
     def selected_action_available? = !current_item.nil?
     def recurrence_action_available?
       item = current_item
@@ -670,9 +685,10 @@ module Tui
     def resp_down      = scroll_resp(5)
     def quit
       editor = @ui.task_editor || @suspended_task_editor
-      return @quit = true unless editor&.dirty?
+      return show_task_draft_quit_confirmation(editor, editor.request_quit) if editor&.dirty?
+      return show_agent_quit_confirmation if @agent_queue&.work?
 
-      show_task_draft_quit_confirmation(editor, editor.request_quit)
+      @quit = true
     end
 
     def open_action_palette
@@ -849,8 +865,7 @@ module Tui
     # to the next request; the in-flight agent keeps streaming untouched.
     def toggle_model
       @entry_idx = (@entry_idx + 1) % @entries.size
-      ensure_agent_for_current!
-      flash("agent: #{current_entry}#{@agent.running? ? " (applies to the next request)" : ""}")
+      flash("agent: #{current_entry}#{@agent_queue.work? ? " (applies to new requests)" : ""}")
     end
 
     def undo_last  = history_op(:undo!, "undid")
@@ -898,6 +913,44 @@ module Tui
 
     def open_help
       open_modal(Modals.help, kind: :help)
+    end
+
+    def open_agent_activity
+      return flash("no agent requests this session") unless @agent_queue.any?
+
+      _height, width = terminal_size
+      open_modal(agent_activity_content(width: width), kind: :agent_activity)
+      @agent_activity_width = width
+    end
+
+    def cancel_queued_agent_requests
+      count = @agent_queue.pending_count
+      return flash("no queued agent requests") if count.zero?
+
+      noun = count == 1 ? "request" : "requests"
+      open_modal(
+        {
+          title: "Cancel queued agent requests?",
+          lines: [
+            "Discard #{count} waiting #{noun}?",
+            "The active request will keep running.",
+            "Press y to discard waiting work · n / esc cancels",
+          ],
+        },
+        kind: :agent_queue_cancel_confirm
+      )
+    end
+
+    def cancel_queued_agent_requests_key(key)
+      case key
+      when "y", "Y", "\r", "\n"
+        count = @agent_queue.cancel_pending.size
+        close_modal
+        flash("cancelled #{count} queued agent request#{count == 1 ? "" : "s"}")
+      when "n", "N", "\e", "q"
+        close_modal
+        flash("queued requests kept")
+      end
     end
 
     def open_detail
@@ -1162,19 +1215,25 @@ module Tui
     def show_task_draft_quit_confirmation(editor, outcome)
       @draft_quit_editor = editor
       @draft_quit_return_modal = @ui.modal
+      @draft_quit_return_mode = @ui.mode
       @draft_quit_return_message = @task_edit_message
-      @draft_quit_changed_mode = @ui.mode == :modal_filter
-      @ui.mode = :modal if @draft_quit_changed_mode
+      @ui.mode = :modal if @ui.mode == :modal_filter
+      @ui.mode = :list if @ui.mode == :task_edit
+      work_line = if @agent_queue.work?
+                    "Quitting also cancels/discards #{agent_work_summary}."
+                  end
       @ui.modal = Modal.new(
         title: "Discard unsaved task draft?",
         lines: [
           outcome.message,
+          work_line,
           "Press y or Return to discard the draft and quit.",
           "Press n or Escape to keep the draft and continue.",
           "Ctrl-C and q do not confirm this prompt.",
-        ],
+        ].compact,
         kind: :task_draft_quit_confirm,
       )
+      @ui.mode = :modal
       @task_edit_message = outcome.message if @ui.task_editor.equal?(editor)
       flash("unsaved task draft — y/return discards and quits · n/esc keeps editing")
     end
@@ -1191,6 +1250,7 @@ module Tui
           @suspended_task_panel = nil
         end
         @task_edit_message = nil
+        @agent_queue.shutdown if @agent_queue.work?
         @quit = true
       when :quit_cancelled
         clear_task_draft_quit_confirmation
@@ -1210,28 +1270,90 @@ module Tui
 
     def clear_task_draft_quit_confirmation(restore: true)
       return_modal = @draft_quit_return_modal
+      return_mode = @draft_quit_return_mode
       return_message = @draft_quit_return_message
-      changed_mode = @draft_quit_changed_mode
       @draft_quit_editor = nil
       @draft_quit_return_modal = nil
+      @draft_quit_return_mode = nil
       @draft_quit_return_message = nil
-      @draft_quit_changed_mode = false
 
       if restore
         @ui.modal = return_modal
-        @ui.mode = :modal_filter if changed_mode && return_modal&.filterable?
+        @ui.mode = return_mode if return_mode && @ui.mode != return_mode
         @task_edit_message = return_message
       else
         @ui.modal = nil
       end
     end
 
+    def show_agent_quit_confirmation
+      @agent_quit_confirmation = true
+      @agent_quit_return_modal = @ui.modal
+      @agent_quit_return_mode = @ui.mode
+      @ui.mode = :modal if @ui.mode == :modal_filter
+      @ui.mode = :list if @ui.mode == :task_edit
+      @ui.modal = Modal.new(
+        title: "Quit with agent work pending?",
+        lines: [
+          "Quitting cancels/discards #{agent_work_summary}.",
+          "Press y or Return to quit.",
+          "Press n or Escape to keep the queue running.",
+          "Ctrl-C and q do not confirm this prompt.",
+        ],
+        kind: :agent_quit_confirm,
+      )
+      @ui.mode = :modal
+      flash("agent work pending — y/return quits · n/esc keeps running")
+    end
+
+    def agent_quit_confirmation_key(key)
+      case key
+      when "y", "Y", "\r", "\n"
+        clear_agent_quit_confirmation(restore: false)
+        @agent_queue.shutdown
+        @quit = true
+      when "n", "N", "\e"
+        clear_agent_quit_confirmation
+        flash("quit cancelled — agent queue kept")
+      else
+        flash("confirmation still open — y/return quits · n/esc keeps running") \
+          if key == "\x03" || key == "q"
+      end
+    end
+
+    def clear_agent_quit_confirmation(restore: true)
+      return_modal = @agent_quit_return_modal
+      return_mode = @agent_quit_return_mode
+      @agent_quit_confirmation = false
+      @agent_quit_return_modal = nil
+      @agent_quit_return_mode = nil
+
+      if restore
+        @ui.modal = return_modal
+        @ui.mode = return_mode if return_mode && @ui.mode != return_mode
+      else
+        @ui.modal = nil
+      end
+    end
+
+    def agent_work_summary
+      parts = []
+      parts << "the active request" if @agent_queue.active?
+      pending = @agent_queue.pending_count
+      parts << "#{pending} queued request#{pending == 1 ? "" : "s"}" if pending.positive?
+      parts.join(" and ")
+    end
+
     # -- modal -----------------------------------------------------------------
 
     # Frame draws the modal box; App supplies the filter line so the `/` filter
     # renders inside the modal chrome rather than in the main prompt area.
-    def modal_view(body_h)
+    def modal_view(body_h, width: nil)
       return unless @ui.modal
+
+      if @ui.modal.kind == :agent_activity && width && width != @agent_activity_width
+        refresh_agent_activity(width: width)
+      end
 
       @ui.modal.view(body_h, filter_line: modal_filter_line)
     end
@@ -1284,16 +1406,38 @@ module Tui
 
     def open_modal(content, kind:)
       @ui.modal = Modal.new(title: content[:title], lines: content[:lines],
-                            kind: kind, filterable: kind == :help)
+                            kind: kind, filterable: %i[help agent_activity].include?(kind),
+                            filter_groups: content[:filter_groups])
       @ui.modal_filter_input.clear
       @ui.mode = :modal
     end
 
     def close_modal
+      @agent_activity_width = nil if @ui.modal&.kind == :agent_activity
       @ui.mode = :list
       @ui.modal = nil
       @ui.archive_preview = nil
       @ui.modal_filter_input.clear
+    end
+
+    def agent_activity_content(width: nil)
+      _height, sampled_width = terminal_size unless width
+      width ||= sampled_width
+      AgentActivity.content(
+        requests: @agent_queue.requests,
+        now: Process.clock_gettime(Process::CLOCK_MONOTONIC),
+        width: width
+      )
+    end
+
+    def refresh_agent_activity(width: nil)
+      return unless @ui.modal&.kind == :agent_activity
+
+      width ||= @agent_activity_width || terminal_size.last
+      content = agent_activity_content(width: width)
+      @ui.modal.replace(title: content[:title], lines: content[:lines],
+                        filter_groups: content[:filter_groups])
+      @agent_activity_width = width
     end
 
     # `/` inside a filterable modal (the shortcuts overlay): live line filter.
@@ -1598,30 +1742,67 @@ module Tui
       close_modal if ["n", "N", "\e", "q", "\r", "\n"].include?(k)
     end
 
-    # -- claude ----------------------------------------------------------------
+    # -- agent queue -----------------------------------------------------------
 
     def submit_prompt
       text = @input.strip
+      return if text.empty?
+
+      submission = @agent_queue.enqueue(prompt: text, entry: current_entry)
+      unless submission.accepted?
+        @ui.mode = :prompt
+        return flash(submission.error)
+      end
+
       @input.clear
       @ui.mode = :list
-      return if text.empty?
-      return flash("agent is still working — esc to cancel") if @agent.running?
-      ensure_agent_for_current!
-      unless @agent.available?
-        return flash("#{current_entry.provider} not available — check the CLI is installed and any local model server is running")
-      end
       @resp_open = false
-      @agent.start(text, model: current_entry.model)
+      was_active = @agent_queue.active?
+      start_event = advance_agent_queue unless was_active
+      request = submission.request
+      if was_active
+        flash("queued agent request ##{request.id} · #{@agent_queue.pending_count} waiting")
+      elsif start_event&.type == :started
+        flash("starting agent request ##{request.id}")
+      else
+        flash("agent request ##{request.id} failed to start")
+      end
     end
 
-    def pump_agent
-      return unless @agent.pump == :done
+    def pump_agent_queue
+      event = @agent_queue.pump
+      refresh_agent_activity
+      return unless event
+
+      record_agent_result(event.request)
+      reload_store if @store.changed?
+      advance_agent_queue
+    end
+
+    def advance_agent_queue
+      loop do
+        event = @agent_queue.start_next
+        return unless event
+
+        refresh_agent_activity
+        return event if event.type == :started
+
+        record_agent_result(event.request)
+        reload_store if @store.changed?
+      end
+    end
+
+    def record_agent_result(request)
       width = terminal_size.last
-      @resp = A.wrap(@agent.output.strip, width - 8)
+      output = A.normalize(request.output.to_s).scrub("�").strip
+      @resp = A.wrap(output, width - 8)
       @resp = [T.paint(:muted, "(no output)")] if @resp.all? { |l| l.strip.empty? }
+      if request.error && request.status == :failed
+        @resp << T.paint(:error, request.error)
+      end
+      @resp_request_id = request.id
       @resp_open = true
       @resp_scroll = 0
-      reload_store if @store.changed?
     end
 
     def scroll_resp(delta)
@@ -1631,9 +1812,12 @@ module Tui
     end
 
     def dismiss_or_cancel
-      if @agent.running?
-        @agent.cancel
-        flash("cancelled")
+      if @agent_queue.active?
+        event = @agent_queue.cancel_active
+        record_agent_result(event.request)
+        reload_store if @store.changed?
+        advance_agent_queue
+        flash("cancelled agent request ##{event.request.id}")
       elsif @resp_open
         @resp_open = false
       elsif @ui.filter
