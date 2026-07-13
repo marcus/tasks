@@ -73,6 +73,42 @@ class TestTaskEditorSession < Minitest::Test
     end
   end
 
+  def test_mutable_identity_coalesce_and_request_strings_are_bound_at_entry
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, Tasks::Format.dump(EDIT_TREE))
+      store = Tasks::Store.new(org: org, archive: archive)
+      target = +"11110002"
+      coalesce = +"editor-session"
+      proposed = +"Bound title"
+      session = Tui::TaskEditorSession.new(
+        store: store, target_id: target, coalesce_key: coalesce,
+        today: Date.new(2026, 7, 13),
+      )
+      session.form.set_value(:title, proposed)
+
+      target.replace("11110003")
+      coalesce.replace("different-session")
+      proposed.replace("Mutated title")
+
+      assert session.target_id.frozen?
+      assert session.coalesce_key.frozen?
+      assert_equal "11110002", session.target_id
+      assert_equal "editor-session", session.coalesce_key
+      assert_equal :ok, session.save.status
+      assert_equal "Bound title", record(org, "11110002")["title"]
+      assert_equal "Child", record(org, "11110003")["title"]
+
+      session.form.focus(:priority)
+      session.form.set_value(:priority, "A")
+      assert_equal :ok, session.save.status
+      assert_equal :ok, store.undo!.first
+      assert_equal "Parent", record(org, "11110002")["title"]
+      assert_equal "B", record(org, "11110002")["priority"]
+    end
+  end
+
   def test_blur_commits_and_one_session_coalesces_history
     with_editor do |session, store, org|
       original = File.read(org)
@@ -185,6 +221,79 @@ class TestTaskEditorSession < Minitest::Test
       consequence = session.save
       assert consequence.confirmation?
       assert_match(/clears recurrence/, consequence.message)
+    end
+  end
+
+  def test_clear_final_date_confirmation_conflicts_with_newer_recurrence_without_writing
+    with_editor do |session, store, org|
+      session.form.focus(:scheduled)
+      session.form.set_value(:scheduled, nil)
+      pending = session.save
+      assert pending.confirmation?
+      assert_equal ".+1w", pending.data.expectations[:recurrence]
+
+      external = store.edit_snapshot("11110002")
+      changed = store.patch_task!(Tasks::TaskPatch.from(external, field: :recurrence, value: ".+1m"))
+      assert_equal :ok, changed.status
+      before_confirm = File.read(org)
+
+      refused = session.confirm!
+      assert refused.conflict?
+      assert_same pending.data, session.pending_confirmation
+      assert session.form.pending?
+      assert_nil session.edit_form.value(:scheduled)
+      assert_equal before_confirm, File.read(org)
+      assert_equal "2026-07-13", record(org)["scheduled"]
+      assert_equal ".+1m", record(org)["recur"]
+
+      assert_equal :conflict_reloaded, session.reload_conflict!.status
+      assert_nil session.pending_confirmation
+      refute session.form.pending?
+      assert_equal Date.new(2026, 7, 13), session.edit_form.value(:scheduled)
+    end
+  end
+
+  def test_state_confirmation_conflicts_with_newer_subtree_lifecycle
+    with_editor do |session, store, org|
+      session.form.focus(:state)
+      session.form.set_value(:state, "DONE")
+      pending = session.save
+      assert pending.confirmation?
+
+      child = store.edit_snapshot("11110003")
+      changed = store.patch_task!(Tasks::TaskPatch.from(child, field: :state, value: "WAITING"))
+      assert_equal :ok, changed.status
+      before_confirm = File.read(org)
+
+      refused = session.confirm!
+      assert refused.conflict?
+      assert_same pending.data, session.pending_confirmation
+      assert session.form.pending?
+      assert_equal before_confirm, File.read(org)
+      assert_equal "NEXT", record(org)["state"]
+      assert_equal "WAITING", record(org, "11110003")["state"]
+    end
+  end
+
+  def test_location_confirmation_conflicts_with_newer_structure
+    with_editor do |session, store, org|
+      session.form.focus(:location)
+      session.form.set_value(:location, "22220001")
+      pending = session.save
+      assert pending.confirmation?
+
+      destination = store.edit_snapshot("22220002")
+      changed = store.patch_task!(Tasks::TaskPatch.from(destination, field: :location, value: "11110001"))
+      assert_equal :ok, changed.status
+      before_confirm = File.read(org)
+
+      refused = session.confirm!
+      assert refused.conflict?
+      assert_same pending.data, session.pending_confirmation
+      assert session.form.pending?
+      assert_equal before_confirm, File.read(org)
+      assert_equal "11110001", record(org)["parent"]
+      assert_equal "11110001", record(org, "22220002")["parent"]
     end
   end
 

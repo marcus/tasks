@@ -2,6 +2,7 @@
 
 require "securerandom"
 require_relative "task_edit_form"
+require_relative "../tasks/patch_result"
 require_relative "../tasks/task_patch"
 
 module Tui
@@ -23,7 +24,9 @@ module Tui
       def handled? = status != :unhandled
     end
 
-    Confirmation = Data.define(:token, :field, :value, :message, :summary, :request, :finish)
+    Confirmation = Data.define(
+      :token, :field, :value, :message, :summary, :request, :finish, :expectations
+    )
     Conflict = Data.define(:field, :local_value, :fresh_value, :snapshot, :result)
 
     CTRL_S = "\x13"
@@ -127,9 +130,18 @@ module Tui
       confirmation = pending_confirmation
       return outcome(:handled) unless confirmation
 
-      @pending_confirmation = nil
-      persist(confirmation.request, value: confirmation.value,
-              confirmation: confirmation.token, finish: confirmation.finish)
+      result = persist(
+        confirmation.request,
+        value: confirmation.value,
+        confirmation: {
+          token: confirmation.token,
+          expected: confirmation.expectations,
+        },
+        finish: confirmation.finish,
+        retain_pending_on_conflict: true,
+      )
+      @pending_confirmation = nil unless result.conflict?
+      result
     end
     alias confirm_confirmation! confirm!
 
@@ -152,6 +164,10 @@ module Tui
       fresh = store.edit_snapshot(target_id)
       return become_missing unless fresh
 
+      if pending_confirmation
+        edit_form.reject_commit(token: pending_confirmation.request.token)
+        @pending_confirmation = nil
+      end
       @snapshot = fresh
       edit_form.reload_field(field, fresh)
       edit_form.refresh_snapshot(fresh)
@@ -191,7 +207,8 @@ module Tui
       persist(request, value: semantic, finish: finish)
     end
 
-    def persist(request, value:, confirmation: nil, finish: false)
+    def persist(request, value:, confirmation: nil, finish: false,
+                retain_pending_on_conflict: false)
       patch = Tasks::TaskPatch.new(
         id: target_id,
         field: request.field_key,
@@ -219,10 +236,12 @@ module Tui
 
       case result.status
       when :conflict
-        transition = edit_form.reject_commit(
-          errors: { request.field_key => ["Changed externally; reload, revert, or keep for copy"] },
-          token: request.token,
-        )
+        transition = unless retain_pending_on_conflict
+                       edit_form.reject_commit(
+                         errors: { request.field_key => ["Changed externally; reload, revert, or keep for copy"] },
+                         token: request.token,
+                       )
+                     end
         local = edit_form.value(request.field_key)
         fresh_value = result.snapshot && snapshot_value(result.snapshot, request.field_key)
         @conflict = Conflict.new(field: request.field_key, local_value: immutable_copy(local),
@@ -295,7 +314,8 @@ module Tui
 
       Confirmation.new(token: SecureRandom.hex(12), field: field, value: immutable_copy(value),
                        message: message.freeze, summary: immutable_copy(summary),
-                       request: request, finish: finish)
+                       request: request, finish: finish,
+                       expectations: confirmation_expectations(field, snapshot))
     end
 
     def handle_confirmation(input)
@@ -346,7 +366,7 @@ module Tui
 
     def stable_id(target)
       value = target.respond_to?(:id) ? target.id : target
-      value.to_s
+      value.to_s.dup.freeze
     end
 
     def raw_input(input)
@@ -367,6 +387,17 @@ module Tui
     def open_descendant_ids
       ids = Array(snapshot.metadata[:subtree_ids]).drop(1)
       store.items.select { |item| ids.include?(item.id) && item.open? }.map(&:id)
+    end
+
+    def confirmation_expectations(field, value)
+      fields = case field
+               when :location then %i[location]
+               when :state then %i[state]
+               when :recurrence then %i[recurrence scheduled deadline]
+               when :scheduled, :deadline then %i[scheduled deadline recurrence state]
+               else [field]
+               end
+      fields.to_h { |owned| [owned, immutable_copy(value.expected_for(owned))] }.freeze
     end
 
     def immutable_copy(value)

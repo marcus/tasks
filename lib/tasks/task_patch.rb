@@ -39,7 +39,9 @@ module Tasks
     def immutable(value)
       case value
       when Hash
-        value.each_with_object({}) { |(key, item), copy| copy[key] = immutable(item) }.freeze
+        value.each_with_object({}) do |(key, item), copy|
+          copy[immutable(key)] = immutable(item)
+        end.freeze
       when Array
         value.map { |item| immutable(item) }.freeze
       when String

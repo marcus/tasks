@@ -63,9 +63,21 @@ class TestStorePatches < Minitest::Test
   def test_task_patch_and_result_are_immutable_typed_values
     with_patch_store do |store, _org|
       snapshot = store.edit_snapshot("11110002")
-      request = Tasks::TaskPatch.from(snapshot, field: :contexts, value: ["@work"])
+      confirmation_key = +"expected"
+      confirmation_value = +"baseline"
+      request = Tasks::TaskPatch.from(
+        snapshot,
+        field: :contexts,
+        value: ["@work"],
+        confirmation: { confirmation_key => confirmation_value },
+      )
+      confirmation_key.replace("mutated")
+      confirmation_value.replace("mutated")
       assert request.frozen?
       assert request.value.frozen?
+      assert_equal({ "expected" => "baseline" }, request.confirmation)
+      assert request.confirmation.keys.first.frozen?
+      assert request.confirmation.values.first.frozen?
       result = store.patch_task!(request)
       assert_equal :ok, result.status
       assert result.ok?
@@ -73,6 +85,37 @@ class TestStorePatches < Minitest::Test
       assert result.frozen?
       assert result.touched_ids.frozen?
       assert_equal ["11110002"], result.touched_ids
+    end
+  end
+
+  def test_confirmation_expectations_atomically_guard_coupled_date_recurrence
+    with_patch_store do |store, org|
+      original = store.edit_snapshot("11110003")
+      external = store.patch_task!(patch(original, :recurrence, ".+1m"))
+      assert_equal :ok, external.status
+      before = File.read(org)
+
+      request = Tasks::TaskPatch.new(
+        id: original.id,
+        field: :scheduled,
+        value: nil,
+        expected: original.expected_for(:scheduled),
+        confirmation: {
+          token: "confirmation-token",
+          expected: {
+            scheduled: original.expected_for(:scheduled),
+            deadline: original.expected_for(:deadline),
+            recurrence: original.expected_for(:recurrence),
+          },
+        },
+      )
+      result = store.patch_task!(request)
+
+      assert_equal :conflict, result.status
+      assert_equal before, File.read(org)
+      task = parsed(org).find { |record| record["id"] == "11110003" }
+      assert_equal "2026-07-13", task["scheduled"]
+      assert_equal ".+1m", task["recur"]
     end
   end
 

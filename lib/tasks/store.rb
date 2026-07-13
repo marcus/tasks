@@ -365,6 +365,10 @@ module Tasks
                                    errors: ["unknown editable field #{patch.field.inspect}"])
           end
 
+          unless confirmation_matches?(current, patch.respond_to?(:confirmation) && patch.confirmation)
+            return PatchResult.new(status: :conflict, snapshot: current)
+          end
+
           actual = current.expected_for(field)
           unless semantic_patch_equal?(field, actual, patch.expected)
             return PatchResult.new(status: :conflict, snapshot: current)
@@ -620,6 +624,22 @@ module Tasks
         actual == Array(expected)
       else
         actual == expected
+      end
+    end
+
+    # High-impact confirmations may own semantic inputs beyond the focused
+    # field. Validate those expectations under the mutation lock so a change
+    # between the prompt and confirmation can never erase a concurrent update.
+    def confirmation_matches?(snapshot, confirmation)
+      return true unless confirmation.is_a?(Hash)
+
+      expected = confirmation[:expected] || confirmation["expected"]
+      return true unless expected.is_a?(Hash)
+
+      expected.all? do |field, baseline|
+        normalized = normalize_patch_field(field)
+        EditSnapshot::FIELDS.include?(normalized) &&
+          semantic_patch_equal?(normalized, snapshot.expected_for(normalized), baseline)
       end
     end
 
