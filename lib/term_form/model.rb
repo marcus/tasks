@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require_relative "term_form_support"
+require_relative "support"
 
 module TermForm
   class Context

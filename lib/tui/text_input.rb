@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require_relative "../term_form_text"
+require_relative "../term_form/text"
 
 module Tui
   # Compatibility name for the TUI's single-line editor. The grapheme-aware

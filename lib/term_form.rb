@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require_relative "term_form_event"
-require_relative "term_form_model"
-require_relative "term_form_fields"
-require_relative "term_form_form"
+require_relative "term_form/event"
+require_relative "term_form/model"
+require_relative "term_form/fields"
+require_relative "term_form/form"

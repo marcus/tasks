@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
-require_relative "term_form_model"
-require_relative "term_form_event"
-require_relative "term_form_text"
+require_relative "model"
+require_relative "event"
+require_relative "text"
 require "date"
 
 module TermForm
