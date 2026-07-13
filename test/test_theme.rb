@@ -150,6 +150,25 @@ class TestTheme < Minitest::Test
     assert_includes T.paint(:selection, "x"), ";48;2;"
   end
 
+  # -- form group-label chip ----------------------------------------------------
+
+  def test_form_group_label_is_a_themed_background_chip
+    # The stock chip pairs a foreground with an accent background.
+    assert_equal [1, 30, 46], T.parse(T::DEFAULTS[:form_group_label])
+
+    # Every generated theme derives a foreground-on-accent-background chip so
+    # section headers stay legible in both light and dark schemes.
+    Tui::GeneratedThemes::THEMES.each do |name, slots|
+      spec = slots.fetch(:form_group_label)
+      assert_match(/on-#/, spec, "#{name} chip is missing its background")
+      assert T.parse(spec), "#{name} chip spec is invalid: #{spec.inspect}"
+    end
+
+    # The NO_COLOR/mono fallback stays attribute-only (an inverted chip).
+    T.configure!(name: "mono")
+    refute_match(/3[0-9]|4[0-8]|9[0-7]/, T.current[:form_group_label].join(";"))
+  end
+
   # -- link painting in task details --------------------------------------------
 
   def test_note_line_paints_links_and_prose_separately

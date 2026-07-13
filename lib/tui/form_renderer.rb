@@ -30,7 +30,10 @@ module Tui
       focused_field_row = nil
       model.groups.each do |group|
         label = inline_text(group.label).strip
-        content << T.paint(:form_group, label) unless label.empty?
+        # Section headers render as a padded, background-colored chip (e.g.
+        # " Basics ") so the grouped fields are easy to scan; :form_group_label
+        # carries the fg/bg pair. Field labels keep their plain :form_label.
+        content << T.paint(:form_group_label, " #{label} ") unless label.empty?
         group.rows.each do |row|
           field_lines, focus_offset = render_field_rows(
             row, width: inner_width, suffix: suffix,

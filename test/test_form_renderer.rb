@@ -412,6 +412,30 @@ class TestFormRenderer < Minitest::Test
     assert ended.lines.any? { |line| line.include?("\e[7m") }, "cursor stays visible at the end"
   end
 
+  def test_group_labels_render_as_a_themed_background_chip
+    field = TermForm::Fields::Input.new(key: :title, label: "Title", value: "x")
+    form = TermForm::Form.new(
+      groups: [TermForm::Group.new(key: :basics, label: "Basics", fields: [field])],
+      focus: :title,
+    )
+    result = Tui::FormRenderer.new.render(
+      model: form.render_model, width: 30, height: 6, title: "Edit",
+    )
+
+    header = result.lines.find { |line| A.strip(line).include?("Basics") }
+    refute_nil header, "group header row is rendered"
+    # The section header is a padded chip carrying the themed :form_group_label
+    # fg/bg pair, distinct from the plain :form_label used on the field row.
+    assert_includes header, T.sgr(:form_group_label), "group label carries its themed role"
+    assert_includes A.strip(header), " Basics ", "group label renders as a padded chip"
+
+    T.configure!(overrides: { "form_group_label" => "black on-magenta" })
+    recolored = Tui::FormRenderer.new.render(
+      model: form.render_model, width: 30, height: 6, title: "Edit",
+    ).lines.find { |line| A.strip(line).include?("Basics") }
+    assert_includes recolored, "\e[30;45m", "chip follows the configured background role"
+  end
+
   def test_rendering_does_not_sample_terminal_geometry
     form = input_form(value: "value")
     IO.stub(:console, -> { raise "geometry IO is forbidden" }) do

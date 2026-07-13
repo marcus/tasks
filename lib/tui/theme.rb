@@ -58,7 +58,8 @@ module Tui
       link_system:   "cyan",
       error:         "red",
       warning:       "yellow",
-      form_group:    "bold",           # form section heading
+      form_group:    "bold",           # form section heading (calendar picker month)
+      form_group_label: "bold black on-cyan", # section-header chip (fg on accent bg)
       form_label:    "bold",           # field label
       form_value:    "none",           # editable value
       form_focus:    "bold cyan",      # focused-row cue (also has a glyph)
@@ -100,7 +101,8 @@ module Tui
         outline_thread: "dim",
         note: "dim", description: "dim", detail_label: "bold", link_system: "none",
         link: "underline", error: "bold", warning: "bold",
-        form_group: "bold", form_label: "bold", form_value: "none",
+        form_group: "bold", form_group_label: "bold reverse",
+        form_label: "bold", form_value: "none",
         form_focus: "bold", form_cursor: "reverse", form_error: "bold",
         form_unsaved: "bold", form_hint: "dim", form_disabled: "dim",
         form_choice_cursor: "bold", form_choice_selected: "bold",

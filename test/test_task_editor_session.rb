@@ -26,10 +26,8 @@ class TestTaskEditorSession < Minitest::Test
       archive = File.join(dir, "archive.jsonl")
       File.write(org, Tasks::Format.dump(EDIT_TREE))
       store = Tasks::Store.new(org: org, archive: archive)
-      locations = [["11110001", "One"], ["22220001", "Two"], ["22220002", "Destination"]]
       session = Tui::TaskEditorSession.new(
         store: store, target_id: "11110002", today: Date.new(2026, 7, 13),
-        locations: locations,
       )
       yield session, store, org
     end
@@ -52,13 +50,16 @@ class TestTaskEditorSession < Minitest::Test
 
   def test_adapter_has_exact_field_order_semantic_values_and_read_only_metadata
     with_editor do |session, _store, _org|
+      # The placement/location field is deliberately absent from the form; task
+      # nesting is handled outside the editor (Store still accepts :location).
       assert_equal %i[
         title priority deferred scheduled deadline recurrence contexts tags body
-        location state
+        state
       ], session.edit_form.field_order
+      refute_includes session.edit_form.field_order, :location
       assert_equal [
         "Title", "Priority", "Deferred", "Scheduled", "Deadline", "Recurrence",
-        "Contexts", "Tags", "Notes", "Location", "State",
+        "Contexts", "Tags", "Notes", "State",
       ], session.render_model.rows.map(&:label)
       assert_equal({ id: "11110002", closed: nil }, session.read_only)
 
@@ -223,7 +224,7 @@ class TestTaskEditorSession < Minitest::Test
     end
   end
 
-  def test_state_location_recurrence_and_coupled_date_changes_require_confirmation
+  def test_state_recurrence_and_coupled_date_changes_require_confirmation
     with_editor do |session, _store, org|
       session.form.focus(:state)
       session.form.set_value(:state, "DONE")
@@ -235,15 +236,6 @@ class TestTaskEditorSession < Minitest::Test
       assert_equal :ok, accepted.status
       assert_equal "NEXT", record(org)["state"]
       assert_equal "2026-07-20", record(org)["scheduled"]
-    end
-
-    with_editor do |session, _store, org|
-      session.form.focus(:location)
-      session.form.set_value(:location, "22220001")
-      assert session.save.confirmation?
-      session.cancel_confirmation!
-      assert_equal "11110001", record(org)["parent"]
-      assert session.dirty?(:location)
     end
 
     with_editor do |session, _store, org|
@@ -388,28 +380,6 @@ class TestTaskEditorSession < Minitest::Test
       assert_equal before_confirm, File.read(org)
       assert_equal "NEXT", record(org)["state"]
       assert_equal "WAITING", record(org, "11110003")["state"]
-    end
-  end
-
-  def test_location_confirmation_conflicts_with_newer_structure
-    with_editor do |session, store, org|
-      session.form.focus(:location)
-      session.form.set_value(:location, "22220001")
-      pending = session.save
-      assert pending.confirmation?
-
-      destination = store.edit_snapshot("22220002")
-      changed = store.patch_task!(Tasks::TaskPatch.from(destination, field: :location, value: "11110001"))
-      assert_equal :ok, changed.status
-      before_confirm = File.read(org)
-
-      refused = session.confirm!
-      assert refused.conflict?
-      assert_same pending.data, session.pending_confirmation
-      assert session.form.pending?
-      assert_equal before_confirm, File.read(org)
-      assert_equal "11110001", record(org)["parent"]
-      assert_equal "11110001", record(org, "22220002")["parent"]
     end
   end
 

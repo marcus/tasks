@@ -133,6 +133,7 @@ def convert_scheme(scheme)
     prompt: spec("bold", bright_cyan),
     section: spec("bold", foreground),
     modal_title: spec("bold", selection_fg, "on-#{selection_bg}"),
+    form_group_label: spec("bold", readable_text(bright_cyan), "on-#{bright_cyan}"),
     context: spec("bold", cyan),
     context_selected: spec("bold", cyan),
     project: purple,

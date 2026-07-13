@@ -126,10 +126,11 @@ Field ownership and order are contractual: Title owns `title`; Priority owns
 `priority`; Deferred owns only the `defer` tag; Scheduled and Deadline each own
 their date plus documented INBOX/recurrence side effects; Recurrence owns
 `recur`; Contexts owns `@` tags; Tags owns other non-`defer` tags; Notes owns
-exact raw `body`; Location owns parent/subtree placement; and State owns
-`state`, `closed`, recurrence completion, and documented lifecycle effects.
-Location is the late Placement field after Notes and State is last, keeping
-high-impact changes out of ordinary traversal.
+exact raw `body`; and State owns `state`, `closed`, recurrence completion, and
+documented lifecycle effects. State is last, keeping high-impact changes out of
+ordinary traversal. Parent/subtree placement is not an editor field: nesting is
+handled at the store/move level (`tasks move --under/--top`), pending a
+dedicated indent/outdent affordance in the tree views.
 
 Panel sizing uses named modes with content-cell breakpoints: 48 or more cells
 may render short labels and controls inline; 32–47 cells stack them; 32 cells is

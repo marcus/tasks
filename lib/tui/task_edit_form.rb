@@ -11,15 +11,18 @@ module Tui
   class TaskEditForm
     FIELD_ORDER = %i[
       title priority deferred scheduled deadline recurrence contexts tags body
-      location state
+      state
     ].freeze
 
+    # The "placement" group and its `location` Select (task nesting via parent
+    # move) are intentionally omitted: indent/outdent will be handled outside
+    # this form. Store#patch_task! still accepts a `:location` patch, so the
+    # store/move-level nesting path is untouched — only the form surface is gone.
     GROUPS = {
       basics: %i[title priority deferred],
       timing: %i[scheduled deadline recurrence],
       organization: %i[contexts tags],
       notes: %i[body],
-      placement: %i[location],
       lifecycle: %i[state],
     }.freeze
 
@@ -30,14 +33,13 @@ module Tui
 
     attr_reader :form, :snapshot, :store, :today
 
-    def initialize(snapshot:, store: nil, today: -> { Date.today }, locations: nil,
+    def initialize(snapshot:, store: nil, today: -> { Date.today },
                    context_options: nil, tag_options: nil, focus: nil)
       raise ArgumentError, "snapshot must have a stable id" if snapshot.nil? || snapshot.id.to_s.empty?
 
       @snapshot = snapshot
       @store = store
       @today = today.respond_to?(:call) ? today : -> { today }
-      @location_source = locations
       @context_source = context_options
       @tag_source = tag_options
       @expectations = FIELD_ORDER.to_h { |field| [field, snapshot.expected_for(field)] }
@@ -64,14 +66,6 @@ module Tui
 
     def expected_for(field)
       @expectations.fetch(normalize_field(field))
-    end
-
-    def option_label(field, value)
-      candidate = form.field(field)
-      return value.to_s unless candidate.respond_to?(:options)
-
-      option = candidate.options(form.context).find { |entry| entry.value == value }
-      option ? option.label : value.to_s
     end
 
     # Convert a form value into the exact semantic value owned by TaskPatch.
@@ -190,10 +184,6 @@ module Tui
           key: :body, label: "Notes", value: values[:body],
         ),
         TermForm::Fields::Select.new(
-          key: :location, label: "Location", value: values[:location],
-          options: method(:location_options), searchable: true,
-        ),
-        TermForm::Fields::Select.new(
           key: :state, label: "State", value: values[:state],
           options: STATE_OPTIONS, searchable: false,
         ),
@@ -231,7 +221,6 @@ module Tui
         contexts: value.contexts,
         tags: value.tags,
         body: value.body,
-        location: value.parent,
         state: value.state,
       }
     end
@@ -246,18 +235,6 @@ module Tui
       source = option_source(@tag_source, context)
       source ||= store&.items&.flat_map(&:tags)
       Array(source).map { |value| normalize_tag(value) }.compact.uniq
-    end
-
-    def location_options(context = nil)
-      supplied = option_source(@location_source, context)
-      current = [snapshot.parent, snapshot.metadata[:parent_title] || snapshot.parent]
-      return ([current] + Array(supplied)).uniq { |entry| Array(entry).first } if supplied
-
-      excluded = Array(snapshot.metadata[:subtree_ids])
-      task_options = store&.items&.reject { |item| excluded.include?(item.id) }&.map do |item|
-        [item.id, item.title]
-      end || []
-      ([current] + task_options).uniq { |entry| entry.first }
     end
 
     def option_source(source, context)

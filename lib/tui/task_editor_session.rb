@@ -335,13 +335,6 @@ module Tui
       message = nil
 
       case field
-      when :location
-        return nil if value == old
-        from = snapshot.metadata[:parent_title] || old
-        destination = edit_form.option_label(:location, value)
-        size = Array(snapshot.metadata[:subtree_ids]).length
-        message = "Move this task subtree (#{size} task#{size == 1 ? "" : "s"}) from #{from} to #{destination}?"
-        summary = { from: old, to: value, subtree_ids: snapshot.metadata[:subtree_ids] }
       when :state
         return nil if value == old
         if value == "DONE" && snapshot.recurrence
@@ -453,7 +446,7 @@ module Tui
       values = {}
       predicates = {}
       case field
-      when :location, :state
+      when :state
         owned[field] = value.expected_for(field)
       when :recurrence
         owned[:recurrence] = value.expected_for(:recurrence)
