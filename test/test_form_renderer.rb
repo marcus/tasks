@@ -154,7 +154,13 @@ class TestFormRenderer < Minitest::Test
       assert_operator result.lines.size, :<=, height
       assert result.lines.all? { |line| A.vislen(line) <= width },
              "long data escaped #{width}x#{height}: #{result.lines.inspect}"
-      assert_equal(height < 3 ? 0 : 2, result.focused_content_row)
+      if height < 3
+        assert_equal 0, result.focused_content_row
+      else
+        focused_line = A.strip(result.lines.fetch(result.focused_content_row + 1))
+        assert_includes focused_line, "Location",
+                        "visible focus row follows the viewport after multiline notes expand"
+      end
     end
 
     wide = A.strip(renderer.render(
@@ -163,6 +169,90 @@ class TestFormRenderer < Minitest::Test
     ).lines.join("\n"))
     assert_includes wide, "Location: one"
     assert_includes wide, "A very long project and parent-task option"
+  end
+
+  def test_unicode_multiline_notes_expand_into_explicit_rows_with_cursor_mapping
+    notes = TermForm::Fields::TextArea.new(
+      key: :notes, label: "Notes", value: "first 👩‍💻界\nsecond e\u0301 line\n\n尾",
+      baseline: "", validate: ->(*) { nil },
+    )
+    form = TermForm::Form.new(
+      groups: [TermForm::Group.new(key: :main, label: "", fields: [notes])],
+    )
+    result = render(form, width: 32, height: 12)
+    plain = result.lines.map { |line| A.strip(line) }
+
+    refute result.lines.any? { |line| line.match?(/[\r\n]/) }
+    assert plain.any? { |line| line.include?("›* Notes: first") }
+    assert plain.any? { |line| line.include?("│* second e\u0301 line") }
+    assert plain.any? { |line| line.include?("│* 尾") }
+    cursor_line = result.lines.index { |line| line.include?("\e[7m") }
+    refute_nil cursor_line
+    assert_equal cursor_line - 1, result.focused_content_row,
+                 "focused content row points at the explicit row containing the cursor"
+  end
+
+  def test_multiline_error_and_generic_semantic_value_never_embed_newlines
+    notes = TermForm::Fields::TextArea.new(
+      key: :notes, label: "Notes", value: "draft\n尾", baseline: "",
+      validate: ->(*) { "notes\nmust be valid" },
+    )
+    form = TermForm::Form.new(
+      groups: [TermForm::Group.new(key: :main, label: "", fields: [notes])],
+    )
+    form.validate
+    result = render(form, width: 30, height: 8)
+    plain = result.lines.map { |line| A.strip(line) }
+    assert plain.any? { |line| line.include?("›! Notes: draft") }
+    assert plain.any? { |line| line.include?("! notes must be valid") }
+    refute result.lines.any? { |line| line.match?(/[\r\n]/) }
+
+    form.set_value(:notes, (1..12).map { |index| "invalid #{index}" }.join("\n"))
+    short = render(form, width: 24, height: 6)
+    focused = short.lines.fetch(short.focused_content_row + 1)
+    assert_includes A.strip(focused), "│!",
+                    "scrolled cursor row retains the focused error cue"
+    assert_includes focused, "\e[7m", "focused row still owns the cursor cell"
+
+    generic = TermForm::Form.new(groups: [
+      TermForm::Group.new(key: :main, label: "", fields: [
+        TermForm::Field.new(key: :value, label: "Value", value: "alpha\nbeta"),
+      ]),
+    ])
+    generic_result = render(generic, width: 24, height: 6)
+    generic_plain = generic_result.lines.map { |line| A.strip(line) }
+    assert generic_plain.any? { |line| line.include?("Value: alpha") }
+    assert generic_plain.any? { |line| line.include?("beta") }
+    refute generic_result.lines.any? { |line| line.match?(/[\r\n]/) }
+  end
+
+  def test_multiline_unicode_respects_every_width_and_height_budget
+    notes = TermForm::Fields::TextArea.new(
+      key: :notes, label: "Notes", baseline: "",
+      value: (1..18).map { |index| "#{index} 👩‍💻界 e\u0301 and a long tail" }.join("\n"),
+    )
+    form = TermForm::Form.new(
+      groups: [TermForm::Group.new(key: :main, label: "", fields: [notes])],
+    )
+    renderer = Tui::FormRenderer.new
+
+    (0..64).each do |width|
+      (0..18).each do |height|
+        result = renderer.render(
+          model: form.render_model, width: width, height: height,
+          title: "Notes", hint: "tab saves",
+        )
+        assert_operator result.lines.size, :<=, height
+        assert result.lines.all? { |line| A.vislen(line) <= width },
+               "multiline escaped #{width}x#{height}: #{result.lines.inspect}"
+        refute result.lines.any? { |line| line.match?(/[\r\n]/) },
+               "embedded newline escaped #{width}x#{height}"
+      end
+    end
+
+    visible = renderer.render(model: form.render_model, width: 40, height: 8, title: "Notes")
+    cursor_line = visible.lines.index { |line| line.include?("\e[7m") }
+    assert_equal cursor_line - 1, visible.focused_content_row
   end
 
   def test_rendering_does_not_sample_terminal_geometry

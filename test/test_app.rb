@@ -276,6 +276,36 @@ class TestApp < Minitest::Test
     end
   end
 
+  def test_multiline_unicode_notes_keep_exact_120_by_32_app_frame_geometry
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\t")
+      editor = ui(app).task_editor
+      editor.form.focus(:body)
+      editor.form.set_value(
+        :body,
+        (1..24).map { |index| "line #{index} · 👩‍💻界 · e\u0301 · detailed note" }.join("\n"),
+      )
+
+      frame = nil
+      original_build = Tui::Frame.method(:build)
+      console = Struct.new(:winsize).new([32, 120])
+      IO.stub(:console, console) do
+        Tui::Frame.stub(:build, ->(**args) { frame = original_build.call(**args) }) do
+          capture_io { app.send(:paint) }
+        end
+      end
+
+      assert_equal 32, frame.size
+      assert frame.all? { |line| Tui::Ansi.vislen(line) == 120 },
+             frame.map { |line| Tui::Ansi.vislen(line) }.inspect
+      refute frame.any? { |line| line.match?(/[\r\n]/) }
+      assert_match(/\A┌─+┐\z/, Tui::Ansi.strip(frame.first))
+      assert_match(/\A└─+┘\z/, Tui::Ansi.strip(frame.last))
+      refute ui(app).panel.lines.any? { |line| line.match?(/[\r\n]/) }
+    end
+  end
+
   def test_ctrl_s_saves_in_place_and_ctrl_o_returns_to_read_panel
     app_on(view: :agenda, select: "Book flight") do |app|
       app.send(:handle_key, "\r")

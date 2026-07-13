@@ -19,14 +19,19 @@ module Tui
       return Result.new(lines: [].freeze, focused_content_row: model.focused_row_index) if width.zero? || height.zero?
       return compact(model, width, height, title, error) if width < 6 || height < 3
 
+      inner_width = width - 2
       content = []
       focused_content_row = nil
       model.groups.each do |group|
-        label = group.label.to_s.strip
+        label = inline_text(group.label).strip
         content << T.paint(:form_group, label) unless label.empty?
         group.rows.each do |row|
-          focused_content_row = content.length if row.focused?
-          content << render_row(row, suffix: suffix, external_error: error && row.focused?)
+          field_lines, focus_offset = render_field_rows(
+            row, width: inner_width, suffix: suffix,
+            external_error: error && row.focused?,
+          )
+          focused_content_row = content.length + focus_offset if row.focused?
+          content.concat(field_lines)
           content.concat(render_picker(row, width: width - 2))
           content.concat(render_choices(row))
         end
@@ -36,31 +41,32 @@ module Tui
       content << T.paint(error || model.errors.any? ? :form_error : :form_hint, cue_message(message, error || model.errors.any?)) if message
       content = [T.paint(:form_hint, "(empty form)")] if content.empty?
 
-      inner_width = width - 2
       budget = height - 2
       offset = viewport_offset(content.length, budget, focused_content_row)
       shown = (content[offset, budget] || []).map { |line| A.vpad(truncate(line, inner_width), inner_width) }
       shown += [" " * inner_width] * (budget - shown.length)
 
-      title_text = truncate(" #{title} ", inner_width)
+      title_text = truncate(" #{inline_text(title)} ", inner_width)
       lines = ["┌#{title_text}#{"─" * (inner_width - A.vislen(title_text))}┐"]
       lines.concat(shown.map { |line| "│#{line}│" })
       lines << "└#{"─" * inner_width}┘"
-      Result.new(lines: lines.freeze, focused_content_row: focused_content_row)
+      visible_focus = focused_content_row && focused_content_row - offset
+      Result.new(lines: lines.freeze, focused_content_row: visible_focus)
     end
 
     private
 
     def compact(model, width, height, title, error)
       row = model.focused_row || model.rows.first
-      label = row&.label.to_s.strip
-      label = title.to_s if label.empty?
+      label = inline_text(row&.label).strip
+      label = inline_text(title) if label.empty?
+      compact_value = inline_text(value_text(row), separator: " ↵ ")
       plain = if error
-                "#{row&.focused? ? "›" : ""}! #{label}: #{error}"
+                "#{row&.focused? ? "›" : ""}! #{label}: #{inline_text(error)}"
               elsif row&.metadata&.dig(:picker_open)
                 "> #{picker_selected(row).iso8601}"
-              elsif row && !value_text(row).empty?
-                "#{row.focused? ? "›" : " "}#{row.dirty? ? "*" : " "} #{value_text(row)}"
+              elsif row && !compact_value.empty?
+                "#{row.focused? ? "›" : " "}#{row.dirty? ? "*" : " "} #{compact_value}"
               else
                 label
               end
@@ -75,26 +81,29 @@ module Tui
       Result.new(lines: [line].first(height).freeze, focused_content_row: row ? 0 : nil)
     end
 
+    def render_field_rows(row, width:, suffix: nil, external_error: false)
+      return [[render_row(row, suffix: suffix, external_error: external_error)], 0] unless multiline_value?(row)
+
+      render_multiline_rows(row, width: width, suffix: suffix, external_error: external_error)
+    end
+
     def render_row(row, suffix: nil, external_error: false)
+      prefix = row_prefix(row, external_error: external_error)
+      tail = suffix.to_s.empty? ? "" : "  #{T.paint(:form_hint, inline_text(suffix))}"
+      "#{prefix}#{render_value(row)}#{tail}"
+    end
+
+    def row_prefix(row, external_error: false)
       focus = row.focused? ? T.paint(:form_focus, "›") : " "
-      status = if external_error || row.error
-                 T.paint(:form_error, "!")
-               elsif row.dirty?
-                 T.paint(:form_unsaved, "*")
-               else
-                 " "
-               end
-      label = row.label.to_s
+      status = row_status(row, external_error: external_error)
+      label = inline_text(row.label)
       label += "*" if row.required?
       label = T.paint(row.enabled? ? :form_label : :form_disabled, label)
-      value = render_value(row)
-      value = T.paint(:form_disabled, value) unless row.enabled?
-      tail = suffix.to_s.empty? ? "" : "  #{T.paint(:form_hint, suffix)}"
-      "#{focus}#{status} #{label}: #{value}#{tail}"
+      "#{focus}#{status} #{label}: "
     end
 
     def render_value(row)
-      text = value_text(row)
+      text = inline_text(value_text(row))
       return T.paint(:form_value, text) unless row.focused? && row.cursor
 
       clusters = text.each_grapheme_cluster.to_a
@@ -103,6 +112,106 @@ module Tui
       at = cursor < clusters.length ? clusters[cursor] : " "
       after = cursor < clusters.length ? clusters[(cursor + 1)..].join : ""
       T.paint(:form_value, before) + T.paint(:form_cursor, at) + T.paint(:form_value, after)
+    end
+
+    def render_multiline_rows(row, width:, suffix:, external_error:)
+      prefix = row_prefix(row, external_error: external_error)
+      continuation = if row.focused?
+                       "#{T.paint(:form_focus, "│")}#{row_status(row, external_error: external_error)} "
+                     else
+                       "   "
+                     end
+      first_width = [width - A.vislen(prefix), 0].max
+      continuation_width = [width - A.vislen(continuation), 1].max
+      layout = multiline_layout(
+        value_text(row), first_width: first_width,
+        continuation_width: continuation_width, cursor: row.cursor,
+      )
+      cursor_row, cursor_column = layout.fetch(:cursor)
+      lines = layout.fetch(:lines).map.with_index do |segment, index|
+        value = if row.focused? && row.cursor && index == cursor_row
+                  render_cursor_cell(segment, cursor_column)
+                else
+                  T.paint(:form_value, segment)
+                end
+        value = T.paint(:form_disabled, value) unless row.enabled?
+        "#{index.zero? ? prefix : continuation}#{value}"
+      end
+      unless suffix.to_s.empty?
+        lines[-1] += "  #{T.paint(:form_hint, inline_text(suffix))}"
+      end
+      [lines, cursor_row]
+    end
+
+    def multiline_layout(value, first_width:, continuation_width:, cursor:)
+      text = multiline_text(value)
+      units = text.each_grapheme_cluster.to_a
+      cursor = cursor.nil? ? units.length : cursor.clamp(0, units.length)
+      lines = [+""]
+      positions = []
+      row = 0
+      column = 0
+      capacity = first_width
+
+      new_row = lambda do
+        lines << +""
+        row += 1
+        column = 0
+        capacity = continuation_width
+      end
+
+      units.each_with_index do |grapheme, index|
+        if grapheme == "\n"
+          new_row.call if capacity <= 0 || column == capacity
+          positions[index] = [row, column]
+          new_row.call
+          next
+        end
+
+        cell_width = A.cluster_width(grapheme)
+        new_row.call if capacity <= 0 || column == capacity || (column.positive? && column + cell_width > capacity)
+        positions[index] = [row, column]
+        if cell_width > capacity
+          lines[row] << " " * capacity
+          column += capacity
+        else
+          lines[row] << grapheme
+          column += cell_width
+        end
+      end
+      new_row.call if capacity <= 0 || column == capacity
+      positions[units.length] = [row, column]
+      { lines: lines.freeze, cursor: positions.fetch(cursor).freeze }.freeze
+    end
+
+    def render_cursor_cell(text, column)
+      before = A.cell_slice(text, 0, column)
+      cell = 0
+      cluster = nil
+      text.each_grapheme_cluster do |grapheme|
+        if cell == column && A.cluster_width(grapheme).positive?
+          cluster = grapheme
+          break
+        end
+        cell += A.cluster_width(grapheme)
+      end
+      if cluster
+        width = A.cluster_width(cluster)
+        after = A.cell_slice(text, column + width, [A.vislen(text) - column - width, 0].max)
+        T.paint(:form_value, before) + T.paint(:form_cursor, cluster) + T.paint(:form_value, after)
+      else
+        T.paint(:form_value, before) + T.paint(:form_cursor, " ")
+      end
+    end
+
+    def row_status(row, external_error: false)
+      if external_error || row.error
+        T.paint(:form_error, "!")
+      elsif row.dirty?
+        T.paint(:form_unsaved, "*")
+      else
+        " "
+      end
     end
 
     def value_text(row)
@@ -116,7 +225,7 @@ module Tui
       Array(row.metadata[:options]).map do |option|
         cursor = option[:highlighted] ? T.paint(:form_choice_cursor, ">") : " "
         selected = option[:selected] ? T.paint(:form_choice_selected, "[x]") : "[ ]"
-        "  #{cursor} #{selected} #{option[:label]}"
+        "  #{cursor} #{selected} #{inline_text(option[:label])}"
       end
     end
 
@@ -158,7 +267,19 @@ module Tui
     end
 
     def cue_message(message, error)
-      "#{error ? "!" : "·"} #{message}"
+      "#{error ? "!" : "·"} #{inline_text(message)}"
+    end
+
+    def multiline_value?(row)
+      row.metadata[:kind] == :text_area || value_text(row).match?(/[\r\n]/)
+    end
+
+    def multiline_text(value)
+      value.to_s.gsub(/\R/, "\n")
+    end
+
+    def inline_text(value, separator: " ")
+      value.to_s.gsub(/\R/, separator)
     end
 
     def truncate(line, width)
