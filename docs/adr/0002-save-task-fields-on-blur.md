@@ -71,7 +71,7 @@ change, reloads, and returns a typed result plus a fresh edit snapshot.
 The result distinguishes at least `ok`, `no_change`, `conflict`, `missing`,
 `invalid`, `cycle`, and `too_deep`. Successful results refresh clean fields and
 reactive context. A conflict keeps the local field copyable and offers reload,
-revert, or keep-for-copy; the first version does not offer overwrite or an
+revert, or keep-for-copy; the shipped editor does not offer overwrite or an
 automatic merge. A missing target never retargets the neighboring row.
 
 High-impact state or location changes show their exact consequence and require
@@ -83,9 +83,10 @@ Traversal and persistence feel like one operation, while no write occurs until
 a field is complete enough to leave. Failed validation and conflicts keep focus
 where the user can fix the problem.
 
-The Store gains a first-class semantic patch path and exact edit snapshots,
-including raw body and parent data that `Tasks::Item` does not expose today.
-Pure mutation helpers must be extracted so the TUI and CLI share task behavior.
+The Store has a first-class semantic patch path and exact edit snapshots,
+including raw body and parent data that `Tasks::Item` does not expose. The
+implementation keeps mutation rules in Store-side fresh-record helpers so the
+TUI and CLI share task behavior.
 
 Save-on-blur creates multiple durable mutations during one editing pass. ADR-0003
 groups rigorously contiguous commits into a usable undo step without weakening

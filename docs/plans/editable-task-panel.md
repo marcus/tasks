@@ -30,9 +30,9 @@ library inspired by Charm's [Huh](https://github.com/charmbracelet/huh). It owns
 fields, groups, focus, validation, reactive properties, and semantic rendering,
 but it does not know what a task or Store is. `Tui::TaskEditForm` supplies the
 task-specific fields and policy, while `Tui::TaskEditorSession` coordinates
-persistence and the existing right panel. The boundary should work perfectly
-for this project and remain honest enough to extract after a second use proves
-the API.
+persistence and the existing right panel. The shipped boundary works inside
+this project and is demonstrated independently by the plain renderer; it
+remains an internal API until another real use can test the design.
 
 ## Approved product direction
 
@@ -53,31 +53,36 @@ Review on 2026-07-13 settled the keys: `Ctrl-K`/`Ctrl-L` directional resize,
 field buffer is discarded. ADR-0003 is accepted: immediately durable field
 writes coalesce only within one byte-contiguous edit session.
 
-## Current baseline
+## Historical baseline before implementation
 
-The implementation extends the seams already in the repository:
+The work began from these seams in the repository. This list records the
+pre-implementation state; it is not a description of missing work today:
 
 - `lib/tui/form.rb` owns small single-field popup flows.
 - `lib/tui/text_input.rb` provides grapheme-aware single-line editing.
 - `lib/tui/right_panel.rb` owns persistent panel identity and scrolling.
 - `lib/tui/task_details.rb` is the pure read-only detail builder.
 - `lib/tui/ui_state.rb` validates legal interaction-mode transitions.
-- `lib/tui/screen_layout.rb` is the single terminal-geometry authority. Its
-  current split uses a 28-cell panel minimum and two cells of panel chrome.
+- `lib/tui/screen_layout.rb` was the single terminal-geometry authority. Its
+  original split used a 28-cell panel minimum and two cells of panel chrome.
 - `lib/tui/shortcuts.rb` is the declarative action and help registry. Its list
   `Tab` already dispatches `focus_prompt`, so contextual behavior must extend
   that handler rather than register a colliding list shortcut.
 - `Tasks::Store#with_history` already provides locking, before/after snapshots,
   atomic writes, `Tasks::Check`, rollback, reload, and the shared undo journal.
 
-The current `Tui::Form` is a migration source, not the multi-field design. The
-Store has many correct individual mutations, but it lacks exact body replacement
-and a typed semantic field-patch operation. `Tasks::Item` carries no `body` or
-`parent` members at all — body text is reachable only through `Store#body(item)`,
-already split into lines — so the edit snapshot must be constructed by the Store
-from fresh records rather than reconstructed by the TUI.
+At that point, `Tui::Form` was a migration source rather than a multi-field
+design. The Store had many correct individual mutations but lacked exact body
+replacement and a typed semantic field-patch operation. `Tasks::Item` carried
+no `body` or `parent` members, so the plan required Store-built snapshots from
+fresh records rather than TUI reconstruction.
 
-## Goals
+The shipped implementation added exact body replacement, `EditSnapshot`,
+`TaskPatch`, `PatchResult`, `Store#patch_task!`, grouped journal history, the
+multi-field adapter/session, and responsive edit layouts. `Tui::Form` now
+remains only as a compatibility wrapper for the quick single-field flows.
+
+## Delivered goals
 
 - Edit every appropriate live-task property: title, priority, deferred status,
   dates, recurrence, contexts, tags, notes/body, location, and workflow state.
@@ -92,7 +97,7 @@ from fresh records rather than reconstructed by the TUI.
   task panel or terminal resizes.
 - Keep generic form code independent of task records, persistence, ANSI themes,
   the app event loop, and global terminal geometry.
-- Migrate the current date and recurrence popups onto the same field machinery.
+- Use the same field machinery for the existing date and recurrence popups.
 - Work in wide, narrow, short, Unicode, pasted, monochrome, and `NO_COLOR`
   terminals with non-color focus and error cues.
 
@@ -226,8 +231,8 @@ than a stale `Tasks::Item#recurring?` value.
 When a pending blur would complete/cancel a task, advance a recurrence, cascade
 to descendants, clear recurrence, or move a subtree, the session shows the exact
 consequence before calling the Store. Confirm continues the pending blur;
-cancel returns to the field without changing its persisted baseline. The first
-implementation may reject combinations that cannot be explained clearly rather
+cancel returns to the field without changing its persisted baseline. The
+shipped editor rejects combinations that cannot be explained clearly rather
 than splitting them into multiple writes.
 
 ## Date input behavior
@@ -254,34 +259,25 @@ tabs are normalized to spaces on entry, not silently rewritten at save time.
 
 ## `TermForm` library design
 
-### Proposed files
+### Shipped files
 
 ```text
 lib/
   term_form.rb
-  term_form/
-    event.rb
-    transition.rb
-    form.rb
-    group.rb
-    context.rb
-    field.rb
-    key_map.rb
-    render_model.rb
-    fields/
-      input.rb
-      text_area.rb
-      select.rb
-      multi_select.rb
-      date_input.rb
-      confirm.rb
+  term_form_event.rb
+  term_form_fields.rb
+  term_form_form.rb
+  term_form_model.rb
+  term_form_support.rb
+  term_form_text.rb
   tui/
     form_renderer.rb
     task_edit_form.rb
     task_editor_session.rb
 ```
 
-Names may tighten, but dependency direction may not change:
+The flat `lib/term_form*.rb` layout is the implementation record. The dependency
+direction remains:
 
 ```text
 Tasks domain and Store
@@ -307,20 +303,20 @@ form = TermForm::Form.new(
         TermForm::Fields::Input.new(
           key: :title,
           label: "Title",
+          value: "Book flight",
           validate: ->(value, _) { "Title is required" if value.strip.empty? }
         )
       ]
     )
-  ],
-  values: { title: "Book flight" },
-  key_map: TermForm::KeyMap.default
+  ]
 )
 
-transition = form.handle(TermForm::Event.key("\t"))
-render_model = form.render(width: 48, height: 20)
+transition = form.handle(TermForm::Event.key(:tab))
+render_model = form.render_model
 ```
 
-The exact constructors can evolve; these behavioral contracts are fixed:
+The constructors remain internal and can evolve. The shipped behavioral
+contracts are:
 
 - field keys are unique;
 - events are normalized before fields see them: decoded keys and whole
@@ -328,8 +324,9 @@ The exact constructors can evolve; these behavioral contracts are fixed:
   fields never parse raw escape bytes (the app already brackets paste input);
 - values and persisted baselines are explicit and copied;
 - current values are exposed through a read-only context;
-- `handle` returns a typed transition such as `changed`, `focus_changed`,
-  `commit_requested`, `revert_requested`, `action_requested`, or `ignored`;
+- `handle` returns one of the shipped typed transitions: `unhandled`, `handled`,
+  `changed`, `focus_changed`, `invalid`, `commit_requested`, `commit_pending`,
+  `commit_accepted`, `commit_rejected`, `cancel_requested`, or `refreshed`;
 - fields own cursor, selection, option search, and inner viewport state;
 - the form owns groups, focus order, pending values, persisted baselines,
   validation, and reactive recomputation;
@@ -344,8 +341,9 @@ changing the fields.
 
 Labels, hints, visibility, enabled state, options, and validators may be static
 or callables over a read-only form context. They recompute synchronously after
-accepted local changes and after the host refreshes external context. The first
-version does not need an observer graph or background subscriptions.
+accepted local changes and after the host refreshes external context. The
+shipped implementation uses synchronous recomputation, not an observer graph or
+background subscriptions.
 
 Task-specific examples include recurrence availability, DONE consequences,
 eligible locations, and ownership of `defer`. If a selected dynamic option
@@ -358,10 +356,10 @@ such as label, value, focus, placeholder, hint, error, disabled, unsaved,
 choice cursor, and selected choice into ANSI and theme output. It also returns
 the focused content row so `RightPanel` can keep that row visible.
 
-Focus and errors cannot rely on color alone. Monochrome and `NO_COLOR` output
-use text, attributes, or glyphs. A plain renderer/example must render the same
-labels, hints, errors, and choices without cursor addressing. A full screen-
-reader runner is later work, but this design must not make it impossible.
+Focus and errors do not rely on color alone. Monochrome and `NO_COLOR` output
+use text, attributes, or glyphs. The plain renderer example renders labels,
+hints, errors, and choices without cursor addressing. A full screen-reader
+runner remains later work, but the semantic model leaves that path open.
 
 ### Extraction proof
 
@@ -383,7 +381,7 @@ call `IO.console`.
 | Mode | Intended use | Width rule |
 |---|---|---|
 | compact | Short read-only details | About 32 content cells where the terminal permits; not selected for editing below the minimum. |
-| standard | Default reading | Current roughly 40 percent split, centrally clamped. |
+| standard | Default reading | Roughly 40 percent split, centrally clamped. |
 | wide | Forms and long notes | About 58 percent of body width. |
 | focus | Dense forms and small terminals | Gives the panel the body width, preserving a narrow list strip only when feasible. |
 
@@ -394,14 +392,14 @@ later read mode.
 
 - 48 or more panel-content cells: short labels and controls may share a row.
 - 32–47 content cells: labels stack above controls; hints/errors wrap below.
-- 32 content cells: first implementation's editable minimum.
+- 32 content cells: the shipped editable minimum.
 - Below 32 available cells: automatically use focus mode if the terminal can
   provide the minimum; otherwise keep a usable read view and show the required
   terminal width instead of presenting a broken form.
 
 These thresholds are panel-content cells after borders/dividers, not total
-terminal columns. The current 28-cell panel constant must be reconciled in
-`ScreenLayout`, not duplicated in the renderer. Height also degrades cleanly:
+terminal columns. The prior 28-cell read-panel minimum was reconciled centrally
+in `ScreenLayout`, not duplicated in the renderer. Height also degrades cleanly:
 the focused row remains visible, text areas gain an inner viewport, and the
 panel footer yields space before the focused control disappears.
 
@@ -413,7 +411,8 @@ triggers blur.
 
 ### Typed values
 
-Add immutable values under `lib/tasks/` (exact filenames may tighten):
+The shipped immutable values are defined in `lib/tasks/edit_snapshot.rb`,
+`lib/tasks/task_patch.rb`, and `lib/tasks/patch_result.rb`:
 
 - `EditSnapshot`: stable ID; exact raw editable values including `body` and
   direct `parent`; per-field semantic baselines; affected-subtree fingerprints;
@@ -444,11 +443,11 @@ Each changed blur calls one semantic patch operation. Under the existing lock it
 Expected statuses include `ok`, `no_change`, `conflict`, `missing`, `invalid`,
 `cycle`, and `too_deep`. Boolean failure is insufficient for an editor.
 
-Existing CLI operations continue to work. New pure helpers should be extracted
-from current Store implementations so CLI and TUI share blank-title, date,
-recurrence, lifecycle, tag, body, move, DFS, depth, validation, and rollback
-rules. Helpers must receive the fresh proposed record/record set, never infer
-new behavior from a stale `Tasks::Item` captured when the editor opened.
+Existing CLI operations continue to work. Store-side fresh-record helpers share
+blank-title, date, recurrence, lifecycle, tag, body, move, DFS, depth,
+validation, and rollback rules between CLI and TUI paths. They receive the
+fresh proposed record or record set rather than inferring new behavior from a
+stale `Tasks::Item` captured when the editor opened.
 
 ### Conflict and reload behavior
 
@@ -460,12 +459,11 @@ External writers include the in-process agent: a queued agent request can
 complete and mutate the file while the editor is open. Its writes go through
 the same CLI/Store path, follow the same slice-conflict rules, and break undo
 coalescing like any other intervening mutation. No special case is needed, but
-tests must cover it because it is the most likely concurrent writer in
-practice.
+tests cover it because it is the most likely concurrent writer in practice.
 
 - If the active field's owned slice changed externally, save returns conflict.
   Focus and buffer remain. Actions are Reload field, Revert local, or Keep for
-  copy; overwrite is not offered initially.
+  copy; overwrite is not offered.
 - After every successful patch, the session adopts the Store's fresh snapshot
   for every clean field and refreshes suggestions/reactive context.
 - Unfocused clean fields may reflect external changes immediately. A pending
@@ -525,23 +523,24 @@ editing controller.
 
 ### Existing quick actions
 
-Keep `d` and `r`. Migrate their popup implementations to `TermForm::DateInput`
-and the recurrence field before the full editor lands. They retain their keys,
-return modes, error behavior, and Store methods. This is the compatibility proof
-for the new form engine and renderer.
+`d` and `r` remain on their original keys. Their popup implementations use
+`TermForm::Fields::DateInput` and `TermForm::Fields::Input` through the
+compatibility wrapper, while retaining their return modes, error behavior, and
+Store methods. This is the compatibility proof for the form engine and renderer.
 
-## Delivery plan
+## Delivery record
 
-Each phase should be reviewable, preserve unrelated work, and keep the full
-suite green. Generic fields, Store mutation mechanics, and app integration
-should not arrive as one mixed change.
+The implementation was delivered in reviewable phases that preserved unrelated
+work and kept the full suite green. The numbered steps below are retained as the
+historical implementation checklist; their imperative wording does not mark
+current gaps. Phases 0–5 and Phase 6A are complete, while the independent Phase
+6B adversarial review remains separate.
 
-After Phase 0, the TermForm track (Phases 1–3) and the persistence track
-(Phase 4) share no files and no contracts beyond this plan — they can be built
-and adversarially reviewed in parallel by independent agents. Phase 5 is the
-first change that needs both.
+After Phase 0, the TermForm track (Phases 1–3) and persistence track (Phase 4)
+shared no files or contracts beyond this plan, so they were built and reviewed
+independently. Phase 5 was the first change that needed both.
 
-### Phase 0: approve contracts and freeze behavior
+### Phase 0: approve contracts and freeze behavior — complete
 
 1. Review this plan and ADRs 0001–0004; mark accepted decisions accordingly.
 2. Update `docs/cli-spec.md` before code with contextual Tab, blur lifecycle,
@@ -550,10 +549,10 @@ first change that needs both.
    UI transitions, session persistence, Store history, external reload, and
    screen-layout boundaries.
 
-Exit: tests can be written from the interaction and persistence contracts
+Exit evidence: tests derive from the interaction and persistence contracts
 without inventing policy during implementation.
 
-### Phase 1: build the form engine
+### Phase 1: build the form engine — complete
 
 1. Add events, typed transitions, context, field base, group, form, baselines,
    focus traversal, validation, and reactive properties.
@@ -561,12 +560,12 @@ without inventing policy during implementation.
 3. Add injectable key maps and semantic render output with focus/cursor rows.
 4. Add dependency-boundary and require-smoke tests.
 
-Exit: a fake multi-group form can edit, traverse, skip disabled fields, react,
+Exit evidence: a fake multi-group form can edit, traverse, skip disabled fields, react,
 validate, request a commit, remain focused on rejection, and render without ANSI.
 
-### Phase 2: add reusable fields
+### Phase 2: add reusable fields — complete
 
-Implement in small slices:
+Implemented in small slices:
 
 1. `Input`, reusing or extracting proven grapheme behavior from `TextInput`.
 2. `TextArea`, including real newline paste, wrapping, and inner scrolling.
@@ -574,19 +573,19 @@ Implement in small slices:
 4. `Confirm` for boolean choices and consequence confirmation.
 5. `DateInput` with injected parser, clock, preview, picker, and unset behavior.
 
-Exit: every field works without `Tasks`, respects supplied cell budgets at and
+Exit evidence: every field works without `Tasks`, respects supplied cell budgets at and
 above its documented minimum, and performs no IO.
 
-### Phase 3: add the renderer and migrate quick actions
+### Phase 3: add the renderer and migrate quick actions — complete
 
 1. Add semantic form theme slots and `Tui::FormRenderer`.
 2. Adapt `Tui::Form` as a compatibility wrapper where useful.
 3. Move `d` and `r` onto new fields without changing their user contract.
 4. Prove focus/error cues in color, mono, `NO_COLOR`, narrow, and Unicode cases.
 
-Exit: existing quick-edit flows use the new engine with no visible regression.
+Exit evidence: existing quick-edit flows use the new engine with no visible regression.
 
-### Phase 4: add semantic Store patches and grouped history
+### Phase 4: add semantic Store patches and grouped history — complete
 
 1. Add `EditSnapshot`, `TaskPatch`, and `PatchResult`.
 2. Build exact raw body/parent snapshots inside Store.
@@ -595,11 +594,11 @@ Exit: existing quick-edit flows use the new engine with no visible regression.
 5. Add optional, rigorously contiguous journal coalescing to `with_history`.
 6. Keep every existing CLI mutation and undo test green.
 
-Exit: every field patch writes atomically, coupled effects match CLI behavior,
+Exit evidence: every field patch writes atomically, coupled effects match CLI behavior,
 conflicts are slice-accurate, and consecutive session patches undo together
 without merging across an intervening mutation.
 
-### Phase 5: integrate panel editing and responsive layout
+### Phase 5: integrate panel editing and responsive layout — complete
 
 1. Add `TaskEditForm` and `TaskEditorSession`.
 2. Add `:task_edit`, contextual Tab, edit actions, and generated help.
@@ -609,10 +608,10 @@ without merging across an intervening mutation.
 5. Reconcile stable selection after save, move, lifecycle change, view resort,
    missing target, and exit.
 
-Exit: every in-scope property is editable from all five views, and resize never
+Exit evidence: every in-scope property is editable from all five views, and resize never
 loses or commits a pending field.
 
-### Phase 6: harden, review, and document
+### Phase 6: harden, review, and document — 6A complete; 6B pending
 
 1. Add the standalone TermForm and plain-render examples.
 2. Test bracketed paste, long notes/options, tiny/short/wide terminals, live
@@ -623,7 +622,7 @@ loses or commits a pending field.
 4. Fix findings and rerun focused and full verification.
 5. Update README, CLI spec, generated help, ADR statuses, and this plan's status.
 
-Exit: documentation matches the live keys and behavior; extraction and all
+Exit evidence: documentation matches the live keys and behavior; extraction and all
 quality gates are proven.
 
 ## Test plan
@@ -731,8 +730,8 @@ for the changed slice run before the full suite.
   and a single Escape never discards typed text.
 - Existing list, detail, prompt, quick edit, palette, undo, and reload behavior
   remains covered and green.
-- `lib/term_form/` loads without task dependencies and a standalone example uses
-  the same engine.
+- The flat `lib/term_form*.rb` implementation loads without task dependencies,
+  and a standalone example uses the same engine.
 - README, CLI spec, generated help, ADRs, and actual behavior agree.
 - Full tests, task-store check, dependency smoke, and diff checks pass.
 

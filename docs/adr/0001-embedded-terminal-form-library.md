@@ -4,6 +4,11 @@ Status: Accepted and implemented
 
 Date: 2026-07-13
 
+Implementation note: the neutral library shipped as the flat files
+`lib/term_form.rb` and `lib/term_form_*.rb`, with task-owned integration under
+`lib/tui/`. The flat layout differs from the directory sketched during review
+without changing the accepted dependency boundary.
+
 ## Context
 
 The TUI has a reusable `Tui::Form`, but it is a single-field popup tied to the
@@ -34,17 +39,17 @@ a real form would make early design mistakes expensive.
 2. Create and publish a separate gem first. This establishes a hard boundary,
    but it commits to packaging and public API compatibility before the task
    editor has tested the design.
-3. Add a neutral library under `lib/term_form/`, with a tasks-owned adapter and
-   renderer. Prove extraction with dependency tests and a standalone example,
-   then consider moving it to a gem.
+3. Add a neutral library under flat `lib/term_form*.rb` files, with a tasks-owned
+   adapter and renderer. Prove extraction with dependency tests and a standalone
+   example, then consider moving it to a gem.
 
 ## Decision
 
 Choose option 3.
 
-The reusable namespace will be `TermForm`. Code under `lib/term_form/` may use
-the Ruby standard library, but it may not require `tasks/*`, `tui/app`,
-`tui/store`, or task-specific theme constants. It will own:
+The reusable namespace is `TermForm`. Code in `lib/term_form.rb` and
+`lib/term_form_*.rb` may use the Ruby standard library, but may not require
+`tasks/*`, `tui/app`, `tui/store`, or task-specific theme constants. It owns:
 
 - form, group, field, focus, draft, dirty, and validation state;
 - input, text-area, select, multi-select/token, date-input, and confirm fields;
@@ -53,7 +58,7 @@ the Ruby standard library, but it may not require `tasks/*`, `tui/app`,
 - normalized input events and configurable key maps;
 - semantic render output, including the focused row and virtual cursor.
 
-The tasks application will own `Tui::FormRenderer`, `Tui::TaskEditForm`, and
+The tasks application owns `Tui::FormRenderer`, `Tui::TaskEditForm`, and
 `Tui::TaskEditorSession`. The renderer maps semantic form roles onto
 `Tui::Theme` and `Tui::Ansi`. The task adapter maps a Store edit snapshot to
 fields, validators, suggestions, and semantic patch requests. The editor
@@ -66,13 +71,13 @@ files, inspect application modes, or print to the terminal. This protocol does
 not require a save-on-blur host: another consumer may persist in memory, batch
 changes, or offer an explicit submit action.
 
-`Tui::Form` will remain as a compatibility wrapper while the existing date and
-recurrence popups move onto `TermForm`. It can be removed or reduced to an alias
-after those paths pass their current tests.
+`Tui::Form` remains as a compatibility wrapper, and the date and recurrence
+popups use `TermForm` fields. It may be removed or reduced to an alias in a
+separate cleanup.
 
-The first release is an internal API. Gem packaging, versioning guarantees, and
-a name suitable for RubyGems wait until the task editor and at least one
-standalone example use the same core without exceptions.
+The shipped release is an internal API. The task editor and standalone example
+use the same core, but gem packaging, versioning guarantees, and a name suitable
+for RubyGems remain separate decisions after another real consumer tests it.
 
 ## Consequences
 
@@ -80,7 +85,7 @@ The form engine can evolve independently and can be tested with plain Ruby
 objects. Task rules stay close to the Store and can change without teaching
 generic fields about GTD concepts.
 
-The repository will have an adapter layer and a semantic render contract that a
+The repository has an adapter layer and a semantic render contract that a
 single in-place implementation would not need. That cost is deliberate: it is
 the seam that prevents `TermForm` from becoming another name for tasks TUI
 internals.

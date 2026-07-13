@@ -6,11 +6,12 @@ Date: 2026-07-13
 
 ## Context
 
-The current detail panel uses a centrally calculated 40 percent split and a
-28-column panel minimum. A multi-field form, long notes, option lists, and a
-calendar need more space, but permanently widening the panel would reduce list
-context during ordinary reading. The user also wants a hotkey to resize the
-panel while form elements remain usable down to a defined minimum.
+Before this decision, the detail panel used a centrally calculated 40 percent
+split and a 28-column panel minimum. A multi-field form, long notes, option
+lists, and a calendar needed more space, but permanently widening the panel
+would reduce list context during ordinary reading. The user also wanted a hotkey
+to resize the panel while form elements remained usable down to a defined
+minimum.
 
 Persisting a raw number of columns would behave poorly after terminal resize or
 across terminals. Letting fields measure the terminal independently would create
@@ -41,7 +42,7 @@ Choose option 3.
 The modes are `compact`, `standard`, `wide`, and `focus`:
 
 - compact targets about 32 panel-content cells for short read-only details;
-- standard retains the current roughly 40 percent reading split;
+- standard retains the prior roughly 40 percent reading split;
 - wide targets roughly 58 percent for forms and notes;
 - focus gives the panel the available body, preserving a narrow list strip only
   when space permits.
@@ -55,7 +56,7 @@ kill-line. The session persists the named preference, not a raw width.
 `ScreenLayout` remains the only geometry authority and returns the final content
 width after panel chrome. At 48 or more content cells, labels and short controls
 may share a row. From 32 through 47, labels stack and help/errors wrap. Thirty-two
-content cells is the initial editable minimum. Editing promotes to a mode that
+content cells is the shipped editable minimum. Editing promotes to a mode that
 can supply it; when the terminal itself cannot, the app keeps a usable read view
 and reports the required width instead of rendering a broken editor.
 
@@ -76,6 +77,6 @@ Users can trade list context for editing space with predictable states, and
 tests can pin exact breakpoints. The named preference continues to make sense on
 a terminal with different dimensions.
 
-`ScreenLayout` must reconcile the current 28-column panel minimum, list minimum,
-panel chrome, and edit minimum centrally. Renderers receive final dimensions and
-must not call `IO.console` or invent separate clamps.
+`ScreenLayout` now reconciles the prior 28-column read-panel minimum, list
+minimum, panel chrome, and edit minimum centrally. Renderers receive final
+dimensions and do not call `IO.console` or invent separate clamps.
