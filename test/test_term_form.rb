@@ -1,0 +1,260 @@
+# frozen_string_literal: true
+
+require "minitest/autorun"
+require_relative "../lib/term_form"
+
+class TestTermForm < Minitest::Test
+  def test_event_normalization_and_typed_transitions
+    event = TermForm::Event.normalize(type: :change, key: :name, value: "Ada")
+    transition = TermForm::Transition.new(:changed, event: event, changed_key: :name)
+
+    assert_equal :change, event.type
+    assert_equal :name, event.key
+    assert_equal "Ada", event.value
+    assert_equal false, TermForm::Event.new(:change, value: false).value
+    assert transition.changed?
+    refute transition.invalid?
+    assert_raises(ArgumentError) { TermForm::Transition.new(:mystery) }
+  end
+
+  def test_key_map_is_injected_and_unknown_input_remains_semantic
+    key_map = TermForm::KeyMap.new({ "j" => :next, "s" => { type: :commit, intended_focus: :second } }, defaults: false)
+    form = simple_form(key_map: key_map)
+
+    assert_equal :second, form.handle("j").focus_key
+    commit = form.handle("s")
+    assert commit.commit_requested?
+    assert_equal :second, commit.request.intended_focus
+
+    input = key_map.event_for("x")
+    assert_equal :input, input.type
+    assert_equal "x", input.text
+  end
+
+  def test_form_rejects_duplicate_keys
+    duplicate_fields = [field(:same), field(:same)]
+    error = assert_raises(ArgumentError) do
+      TermForm::Form.new(groups: [group(:main, duplicate_fields)])
+    end
+    assert_match(/duplicate TermForm key: same/, error.message)
+
+    error = assert_raises(ArgumentError) do
+      TermForm::Form.new(groups: [group(:same, [field(:same)])])
+    end
+    assert_match(/duplicate TermForm key: same/, error.message)
+  end
+
+  def test_values_baselines_and_context_are_defensive_read_only_copies
+    source = { nested: ["original"] }
+    form = TermForm::Form.new(groups: [group(:main, [field(:payload, value: source)])])
+    source[:nested] << "outside"
+
+    assert_equal({ nested: ["original"] }, form.value(:payload))
+    assert form.values.frozen?
+    assert form.values[:payload].frozen?
+    assert form.values[:payload][:nested].frozen?
+    assert_raises(FrozenError) { form.context.values[:payload][:nested] << "mutation" }
+
+    returned = form.value(:payload)
+    assert_raises(FrozenError) { returned[:nested] << "mutation" }
+    assert_equal({ nested: ["original"] }, form.baseline(:payload))
+  end
+
+  def test_forward_and_backward_traversal_skip_hidden_and_disabled_fields
+    fields = [
+      field(:first),
+      field(:hidden, visible: false),
+      field(:disabled, enabled: false),
+      field(:last),
+    ]
+    form = TermForm::Form.new(groups: [group(:main, fields)])
+
+    assert_equal :first, form.focus_key
+    assert_equal :last, form.focus_next.focus_key
+    assert_equal :first, form.focus_next.focus_key
+    assert_equal :last, form.focus_previous.focus_key
+    assert_equal %i[first last], form.focusable_fields.map(&:key)
+    assert_equal %i[first disabled last], form.visible_fields.map(&:key)
+  end
+
+  def test_group_visibility_and_enabled_state_participate_in_traversal
+    form = TermForm::Form.new(groups: [
+      group(:off, [field(:unavailable)], enabled: false),
+      group(:hidden, [field(:invisible)], visible: false),
+      group(:on, [field(:available)]),
+    ])
+
+    assert_equal :available, form.focus_key
+    assert_equal [:available], form.focusable_fields.map(&:key)
+    assert_equal %i[unavailable available], form.visible_fields.map(&:key)
+  end
+
+  def test_reactive_properties_recompute_and_move_focus_when_current_field_hides
+    fields = [
+      field(:mode, value: "advanced"),
+      field(:details, value: "x", visible: ->(context) { context[:mode] == "advanced" }),
+      field(:finish),
+    ]
+    form = TermForm::Form.new(groups: [group(:main, fields)], focus: :details)
+
+    transition = form.set_value(:mode, "simple")
+
+    assert transition.changed?
+    assert_equal :finish, form.focus_key
+    assert_equal %i[mode finish], form.visible_fields.map(&:key)
+  end
+
+  def test_validation_uses_current_context_and_ignores_hidden_or_disabled_fields
+    fields = [
+      field(:mode, value: "short"),
+      field(:name, value: "", required: true),
+      field(:dependent, value: "too long", validate: ->(value, context) { "too long" if value.length > context[:mode].length }),
+      field(:hidden, value: "", visible: false, required: true),
+      field(:disabled, value: "", enabled: false, required: true),
+    ]
+    form = TermForm::Form.new(groups: [group(:main, fields)])
+
+    errors = form.validate
+    assert_equal ["is required"], errors[:name]
+    assert_equal ["too long"], errors[:dependent]
+    refute errors.key?(:hidden)
+    refute errors.key?(:disabled)
+
+    form.set_value(:name, "Ada")
+    form.set_value(:dependent, "ok")
+    assert form.valid?
+  end
+
+  def test_invalid_commit_focuses_first_error_and_does_not_become_pending
+    form = TermForm::Form.new(groups: [group(:main, [
+      field(:first, value: ""),
+      field(:required, value: "", required: true),
+    ])], focus: :first)
+
+    transition = form.request_commit(intended_focus: :first)
+
+    assert transition.invalid?
+    assert_equal :required, transition.focus_key
+    refute form.pending?
+  end
+
+  def test_rejection_retains_dirty_value_focus_and_cursor
+    fields = [
+      field(:title, value: "old", cursor: ->(value) { value.length }),
+      field(:notes, value: "notes"),
+    ]
+    form = TermForm::Form.new(groups: [group(:main, fields)], focus: :title)
+    form.set_value(:title, "edited")
+    before = form.render_model
+
+    request = form.request_commit(intended_focus: :notes)
+    assert request.commit_requested?
+    rejected = form.reject_commit(message: "save failed", token: request.request.token)
+
+    assert rejected.commit_rejected?
+    assert_equal "edited", form.value(:title)
+    assert_equal "old", form.baseline(:title)
+    assert_equal :title, form.focus_key
+    assert_equal before.cursor, form.render_model.cursor
+    assert form.dirty?(:title)
+    refute form.pending?
+    assert_equal ["save failed"], form.errors[:base]
+  end
+
+  def test_accept_uses_fresh_baselines_without_erasing_edits_made_while_pending
+    form = simple_form
+    form.set_value(:first, "submitted first")
+    request = form.request_commit(intended_focus: :second)
+    form.set_value(:second, "edited while saving")
+
+    accepted = form.accept_commit(values: { first: "canonical first", second: "server second" }, token: request.request.token)
+
+    assert accepted.commit_accepted?
+    assert_equal "canonical first", form.value(:first)
+    assert_equal "canonical first", form.baseline(:first)
+    assert_equal "edited while saving", form.value(:second)
+    assert_equal "server second", form.baseline(:second)
+    assert form.dirty?(:second)
+    refute form.dirty?(:first)
+    assert_equal :second, form.focus_key
+  end
+
+  def test_accept_without_fresh_values_accepts_submitted_snapshot
+    form = simple_form
+    form.set_value(:first, "submitted")
+    request = form.request_commit
+
+    form.accept_commit(token: request.request.token)
+
+    assert_equal "submitted", form.baseline(:first)
+    refute form.dirty?
+  end
+
+  def test_refresh_updates_clean_values_and_baselines_but_preserves_dirty_values
+    form = simple_form
+    form.set_value(:second, "local second")
+    old_focus = form.focus_key
+
+    transition = form.refresh(values: { first: "remote first", second: "remote second" })
+
+    assert transition.refreshed?
+    assert_equal "remote first", form.value(:first)
+    assert_equal "remote first", form.baseline(:first)
+    assert_equal "local second", form.value(:second)
+    assert_equal "remote second", form.baseline(:second)
+    assert form.dirty?(:second)
+    assert_equal old_focus, form.focus_key
+  end
+
+  def test_render_model_is_semantic_and_exposes_focused_row_and_cursor
+    fields = [
+      field(:name, value: "Ada", required: true, cursor: 2, metadata: { kind: :text }),
+      field(:locked, value: "fixed", enabled: false),
+      field(:hidden, visible: false),
+    ]
+    form = TermForm::Form.new(groups: [group(:identity, fields, label: "Identity")])
+    form.set_value(:name, "Grace")
+    model = form.render_model
+
+    assert_equal [:identity], model.groups.map(&:key)
+    assert_equal %i[name locked], model.rows.map(&:key)
+    assert_equal :name, model.focused_key
+    assert_equal :name, model.focused_row.key
+    assert_equal 0, model.focused_row_index
+    assert_equal TermForm::RenderModel::Cursor.new(0, 2, :name), model.cursor
+    assert model.focused_row.focused?
+    assert model.focused_row.dirty?
+    assert model.focused_row.required?
+    assert_equal({ kind: :text }, model.focused_row.metadata)
+    refute model.rows.last.enabled?
+    assert model.frozen?
+  end
+
+  def test_pending_commit_is_single_flight_and_tokens_are_checked
+    form = simple_form
+    request = form.request_commit
+
+    assert form.request_commit.commit_pending?
+    assert_raises(ArgumentError) { form.accept_commit(token: request.request.token + 1) }
+    assert form.pending?
+    form.reject_commit(token: request.request.token)
+    assert_raises(RuntimeError) { form.reject_commit }
+  end
+
+  private
+
+  def field(key, **options)
+    TermForm::Field.new(key: key, **options)
+  end
+
+  def group(key, fields, **options)
+    TermForm::Group.new(key: key, fields: fields, **options)
+  end
+
+  def simple_form(key_map: TermForm::KeyMap.new)
+    TermForm::Form.new(
+      groups: [group(:main, [field(:first, value: "first"), field(:second, value: "second")])],
+      key_map: key_map,
+    )
+  end
+end
