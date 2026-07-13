@@ -37,14 +37,16 @@ the API.
   open means enter editing; edit mode means save-on-blur and traverse.
 - Persistence is save-on-blur, not save-on-keystroke and not whole-form Save.
 - `TermForm` is the working library name.
-- The panel has named width modes and a resize action. Form elements stack or
-  reflow down to a documented edit minimum.
+- The panel has named width modes and directional resize actions. Form elements
+  stack or reflow down to a documented edit minimum.
 - Existing CLI and TUI mutations remain the source of task lifecycle semantics.
 - Publishing a gem is not part of this feature. Extraction is demonstrated,
   then considered separately.
 
-The exact resize key and undo-coalescing policy are recommendations in this
-plan. They can be amended during review without changing the core architecture.
+Review on 2026-07-13 settled the keys: `Ctrl-K`/`Ctrl-L` directional resize,
+`Ctrl-O` for finish editing, and a confirming second `Escape` before an unsaved
+field buffer is discarded. The undo-coalescing policy remains a recommendation
+pending ADR-0003 acceptance.
 
 ## Current baseline
 
@@ -65,10 +67,10 @@ The implementation extends the seams already in the repository:
 
 The current `Tui::Form` is a migration source, not the multi-field design. The
 Store has many correct individual mutations, but it lacks exact body replacement
-and a typed semantic field-patch operation. `Tasks::Item#body` is split into
-lines and the item does not expose raw parent information, so the edit snapshot
-must be constructed by the Store from fresh records rather than reconstructed
-by the TUI.
+and a typed semantic field-patch operation. `Tasks::Item` carries no `body` or
+`parent` members at all — body text is reachable only through `Store#body(item)`,
+already split into lines — so the edit snapshot must be constructed by the Store
+from fresh records rather than reconstructed by the TUI.
 
 ## Goals
 
@@ -110,8 +112,9 @@ by the TUI.
 - With a task detail panel open, `Tab` enters edit mode at the first editable
   field and `Shift-Tab` enters at the last editable field.
 - An `Edit task` palette action exposes the same transition for discoverability.
-- `Ctrl-L` is the proposed `Resize task panel` action in both read and edit mode.
-  It cycles named widths without changing the panel's task identity.
+- `Ctrl-K` grows the task panel and `Ctrl-L` shrinks it, stepping through the
+  named widths in both read and edit mode (palette: `Grow task panel` /
+  `Shrink task panel`) without changing the panel's task identity.
 - `Escape` closes the read-only panel as it does today.
 
 ### Edit mode and blur lifecycle
@@ -123,11 +126,16 @@ and prompt shortcuts do not receive keys while a field owns focus.
 |---|---|
 | `Tab` | Validate and save a changed field, then focus the next visible enabled field. An unchanged field moves immediately. |
 | `Shift-Tab` | The same operation in reverse. |
-| `Ctrl-S` | Save the focused field in place without changing focus. This is a convenience and recovery action. |
+| `Ctrl-S` | Save the focused field in place without changing focus. This is a convenience and recovery action. (The TUI already runs the terminal raw, so `Ctrl-S` is not eaten by XOFF flow control.) |
 | `Return` | Accept a picker choice or field-specific action; in a text area it inserts a newline. |
-| `Ctrl-L` | Cycle panel width without blurring, validating, or saving the focused field. |
-| `Escape` | Close an inner picker first; otherwise revert an unsaved focused field to its last persisted value; on a clean field, leave edit mode. |
-| `Finish editing` | Palette action that saves the focused field if necessary, then returns to the read-only panel. |
+| `Ctrl-K` / `Ctrl-L` | Grow / shrink the panel one named width without blurring, validating, or saving the focused field. In task-edit text fields `Ctrl-K` shadows readline kill-to-end — an accepted trade; `Ctrl-U` and `Ctrl-W` still kill, and the agent prompt keeps `Ctrl-K` kill-line. |
+| `Escape` | Close an inner picker first. On a dirty field, revert takes a confirming second `Escape`: the first press discards nothing and announces what would be lost. On a clean field, leave edit mode. |
+| `Ctrl-O` | Finish editing: save the focused field if changed, then return to the read-only panel. This needs a direct key because the `:` action palette is unreachable while a field owns focus — `:` is ordinary text there. |
+
+`Shift-Tab` arrives as the escape sequence `\e[Z`. Because a lone `Escape` is
+meaningful inside the editor, the key reader must decode complete CSI sequences
+before dispatch — a partial read must never turn `\e[Z` into an Escape (reverting
+a field) followed by stray `[Z` text.
 
 Blur is a two-phase transition, not a callback that performs IO inside a field:
 
@@ -141,7 +149,7 @@ Blur is a two-phase transition, not a callback that performs IO inside a field:
 6. On validation failure or conflict, focus stays put, the pending buffer stays
    copyable, and the field or form receives an actionable error.
 
-Opening a picker, cycling panel width, scrolling a field, or resizing the
+Opening a picker, resizing the panel, scrolling a field, or resizing the
 terminal is not blur. No focus movement occurs until persistence succeeds.
 
 ### Feedback and exit behavior
@@ -154,8 +162,9 @@ terminal is not blur. No focus movement occurs until persistence succeeds.
   snapshot, including side effects such as INBOX promotion.
 - A save error remains next to the field. It never becomes a transient flash
   that disappears before the user can act.
-- Escape only discards the currently unsaved field buffer. Values saved on
-  earlier blurs remain durable.
+- Escape discards only the currently unsaved field buffer, and only on the
+  confirming second press — a single keystroke can never lose typed text.
+  Values saved on earlier blurs remain durable.
 - If the edited task leaves the current view after a successful state or
   location patch, the app selects a deterministic nearby row, returns to the
   read panel or list, and explains where the task went.
@@ -163,7 +172,10 @@ terminal is not blur. No focus movement occurs until persistence succeeds.
 ## Task form
 
 High-impact fields are deliberately late in traversal so ordinary edits do not
-cross them accidentally.
+cross them accidentally. Traversal order is also render order, so a field's
+group must never pull it visually earlier than its traversal position — which
+is why Location gets its own late `Placement` group after Notes instead of
+rejoining Organization.
 
 | Order | Group | Field | Component | Task behavior |
 |---:|---|---|---|---|
@@ -176,7 +188,7 @@ cross them accidentally.
 | 7 | Organization | Contexts | creatable `MultiSelect` | Suggests existing contexts; normalizes leading `@`; preserves order and removes duplicates. |
 | 8 | Organization | Tags | creatable `MultiSelect` | Suggests non-context tags; excludes `defer` because Deferred owns it. |
 | 9 | Notes | Notes/body | `TextArea` | Exact multi-line replacement; links remain ordinary source text. |
-| 10 | Organization | Location | searchable `Select` | Sections and eligible parent tasks; rejects self, descendants, cycles, and excessive depth. |
+| 10 | Placement | Location | searchable `Select` | Sections and eligible parent tasks; rejects self, descendants, cycles, and excessive depth. |
 | 11 | Lifecycle | State | `Select` | INBOX, TODO, NEXT, WAITING, DONE, CANCELLED; irreversible-looking consequences require confirmation. |
 | — | Metadata | ID | read-only | Always visible and copyable. |
 | — | Metadata | Closed | read-only | Shown when present; lifecycle code owns it. |
@@ -229,8 +241,11 @@ suggestions, and default calendar anchor. In the tasks adapter:
 - At wide widths the calendar may sit beside text help; at narrow widths it
   stacks or becomes a compact single-month view.
 
+## Notes text area behavior
+
 The text area preserves pasted line breaks. Enter inserts a newline. Tab remains
-form traversal; literal tab characters are not stored in task notes.
+form traversal; literal tab characters are not stored in task notes — pasted
+tabs are normalized to spaces on entry, not silently rewritten at save time.
 
 ## `TermForm` library design
 
@@ -303,6 +318,9 @@ render_model = form.render(width: 48, height: 20)
 The exact constructors can evolve; these behavioral contracts are fixed:
 
 - field keys are unique;
+- events are normalized before fields see them: decoded keys and whole
+  bracketed pastes arrive as distinct typed events (`Event.key`, `Event.paste`);
+  fields never parse raw escape bytes (the app already brackets paste input);
 - values and persisted baselines are explicit and copied;
 - current values are exposed through a read-only context;
 - `handle` returns a typed transition such as `changed`, `focus_changed`,
@@ -382,8 +400,9 @@ terminal columns. The current 28-cell panel constant must be reconciled in
 the focused row remains visible, text areas gain an inner viewport, and the
 panel footer yields space before the focused control disappears.
 
-`Ctrl-L` and terminal resize preserve task ID, focused field, pending buffer,
-cursor, errors, picker state, and editor scroll. Neither action triggers blur.
+`Ctrl-K`/`Ctrl-L` and terminal resize preserve task ID, focused field, pending
+buffer, cursor, errors, picker state, and editor scroll. None of these actions
+triggers blur.
 
 ## Task-domain persistence
 
@@ -431,6 +450,13 @@ new behavior from a stale `Tasks::Item` captured when the editor opened.
 Field-slice comparison allows an unrelated task change—and an unrelated field
 on the same task—to coexist without a false conflict. It does not allow a blur
 to overwrite a newer value in the slice it owns.
+
+External writers include the in-process agent: a queued agent request can
+complete and mutate the file while the editor is open. Its writes go through
+the same CLI/Store path, follow the same slice-conflict rules, and break undo
+coalescing like any other intervening mutation. No special case is needed, but
+tests must cover it because it is the most likely concurrent writer in
+practice.
 
 - If the active field's owned slice changed externally, save returns conflict.
   Focus and buffer remain. Actions are Reload field, Revert local, or Keep for
@@ -486,6 +512,8 @@ editing controller.
 - Change the existing list `Tab` handler to act contextually on `detail_panel?`;
   do not register a second colliding list key.
 - In edit mode, normalized events go to the session before list/prompt actions.
+- The `:` action palette is unreachable while a field owns focus (`:` is text
+  there), so every edit-mode action needs a direct key and generated-help entry.
 - Global quit/cancel safety remains explicit.
 - Generated help and the action palette derive from the same registry/key map.
 - Agent prompt remains reachable with panel closed and by its palette action.
@@ -502,6 +530,11 @@ for the new form engine and renderer.
 Each phase should be reviewable, preserve unrelated work, and keep the full
 suite green. Generic fields, Store mutation mechanics, and app integration
 should not arrive as one mixed change.
+
+After Phase 0, the TermForm track (Phases 1–3) and the persistence track
+(Phase 4) share no files and no contracts beyond this plan — they can be built
+and adversarially reviewed in parallel by independent agents. Phase 5 is the
+first change that needs both.
 
 ### Phase 0: approve contracts and freeze behavior
 
@@ -631,9 +664,17 @@ quality gates are proven.
 - Panel-closed Tab still focuses the agent prompt.
 - Panel-open Tab/Shift-Tab enters first/last task field without shortcut
   collisions; edit-mode traversal never leaks to prompt/list handlers.
-- Escape closes picker, reverts one unsaved field, or exits from a clean field.
-- `Ctrl-L` and terminal resize preserve identity, focus, buffer, cursor, error,
-  picker state, scroll, and coalesce session; neither causes a write.
+- Key decoding distinguishes a lone `Escape` from `Shift-Tab` (`\e[Z`) and
+  other CSI sequences, including a sequence split across two reads.
+- Escape closes a picker first; a first Escape on a dirty field discards
+  nothing and announces the pending revert; the second discards only that
+  field's buffer; a clean field exits edit mode.
+- `Ctrl-K`/`Ctrl-L` and terminal resize preserve identity, focus, buffer,
+  cursor, error, picker state, scroll, and coalesce session; none causes a
+  write.
+- In task-edit text fields `Ctrl-K` resizes the panel rather than killing to
+  end of line, while `Ctrl-U`/`Ctrl-W` still kill; the agent prompt retains
+  `Ctrl-K` kill-to-end.
 - Named modes and breakpoints produce exact widths through the central layout at
   31, 32, 47, and 48 content cells and around list-context constraints.
 - Focused controls and errors remain visible at short heights.
@@ -648,7 +689,8 @@ quality gates are proven.
 
 Exercise 120x32, 80x24, 60x18, and the documented minimum; color, `NO_COLOR`,
 and monochrome; short and long task data; fast date text and calendar; pasted
-Unicode notes; panel cycling during an unsaved field; successive blur saves;
+Unicode notes; growing and shrinking the panel during an unsaved field; a
+single and a double Escape on a dirty field; successive blur saves;
 one-step undo; an intervening CLI write; and same-slice conflict. Manual writes
 must use a temporary task file and the CLI/Store—never the live JSONL by hand.
 
@@ -679,7 +721,8 @@ the changed slice run before the full suite.
 - Selection cannot drift to a neighbor during edit, external reload, or removal.
 - Form elements reflow at 48 and 32 content-cell breakpoints; below minimum the
   layout falls back safely rather than clipping an unusable editor.
-- Panel cycling and terminal resize preserve pending edit state without blur.
+- Panel resizing and terminal resize preserve pending edit state without blur,
+  and a single Escape never discards typed text.
 - Existing list, detail, prompt, quick edit, palette, undo, and reload behavior
   remains covered and green.
 - `lib/term_form/` loads without task dependencies and a standalone example uses
@@ -705,9 +748,17 @@ the changed slice run before the full suite.
 ## Review checklist
 
 This consolidated plan incorporates the independent review of both forked plan
-drafts. Before implementation, confirm or amend:
+drafts.
 
-- `Ctrl-L` as the resize key and compact → standard → wide → focus order.
+Decided 2026-07-13: `Ctrl-K` grows and `Ctrl-L` shrinks the panel through the
+compact → standard → wide → focus order (task-edit text fields trade away
+readline kill-to-end, keeping `Ctrl-U`/`Ctrl-W`; the agent prompt keeps
+`Ctrl-K`); `Ctrl-O` finishes editing, since the `:` palette is unreachable
+while a field owns focus; reverting an unsaved field takes a confirming second
+`Escape`.
+
+Before implementation, confirm or amend:
+
 - 32 panel-content cells as the editable minimum and 48 as the inline-layout
   breakpoint.
 - session-based undo coalescing as specified in ADR-0003.

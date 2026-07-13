@@ -1,6 +1,6 @@
 # ADR-0004: Use responsive named widths for the task panel
 
-Status: Proposed
+Status: Accepted
 
 Date: 2026-07-13
 
@@ -31,8 +31,8 @@ competing geometry and accidental clipping.
    list space.
 2. Store an arbitrary panel column count. Flexible, but fragile across terminal
    sizes and harder to test or explain.
-3. Cycle named responsive modes that `ScreenLayout` centrally clamps against
-   terminal, list, and form constraints.
+3. Step through named responsive modes that `ScreenLayout` centrally clamps
+   against terminal, list, and form constraints.
 
 ## Decision
 
@@ -46,8 +46,11 @@ The modes are `compact`, `standard`, `wide`, and `focus`:
 - focus gives the panel the available body, preserving a narrow list strip only
   when space permits.
 
-`Ctrl-L` is the proposed resize key and the action palette exposes `Resize task
-panel`. The session persists the named preference, not a raw width.
+`Ctrl-K` grows and `Ctrl-L` shrinks the panel, stepping through the mode order;
+the action palette exposes `Grow task panel` and `Shrink task panel`. Inside
+task-edit text fields `Ctrl-K` shadows readline kill-to-end — an accepted
+trade; `Ctrl-U`/`Ctrl-W` still kill, and the agent prompt keeps `Ctrl-K`
+kill-line. The session persists the named preference, not a raw width.
 
 `ScreenLayout` remains the only geometry authority and returns the final content
 width after panel chrome. At 48 or more content cells, labels and short controls
