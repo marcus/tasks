@@ -442,6 +442,120 @@ class TestApp < Minitest::Test
     end
   end
 
+  def test_done_suspended_target_uses_inert_recovery_then_allows_new_editor
+    app_on(view: :next, select: "Book flight") do |app|
+      target_id = app.send(:current_item).id
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\t")
+      editor = ui(app).task_editor
+      editor.form.set_value(:title, "draft for externally done task")
+      small = Struct.new(:winsize).new([7, 46])
+      IO.stub(:console, small) { capture_io { app.send(:paint) } }
+
+      rewrite_records(app) do |records|
+        record = records.find { |candidate| candidate["id"] == target_id }
+        record["state"] = "DONE"
+        record["closed"] = "2026-07-13"
+      end
+
+      refute editor.missing?
+      assert_equal target_id, editor.target_id
+      assert_equal "draft for externally done task", editor.edit_form.value(:title)
+      refute_equal target_id, ui(app).selected_id
+      assert_equal :suspended_task_edit, ui(app).panel.kind
+      assert_match(/hidden from the canonical views/, ui(app).panel.lines.first)
+      assert_nil app.send(:suspended_target_canonical_view)
+
+      before = File.binread(app.instance_variable_get(:@store).org)
+      app.send(:handle_key, "\x13")
+      assert_equal before, File.binread(app.instance_variable_get(:@store).org)
+      assert_equal "draft for externally done task", editor.edit_form.value(:title)
+
+      copied = nil
+      Tui::Clipboard.stub(:copy, ->(value) { copied = value; true }) do
+        app.send(:handle_key, "y")
+      end
+      assert_equal "draft for externally done task", copied
+
+      app.send(:handle_key, "\e")
+      assert_nil app.instance_variable_get(:@suspended_task_editor)
+      app.send(:handle_key, "\r")
+      replacement_id = app.send(:current_item).id
+      wide = Struct.new(:winsize).new([18, 80])
+      IO.stub(:console, wide) { app.send(:handle_key, "\t") }
+      assert_equal :task_edit, ui(app).mode
+      refute_same editor, ui(app).task_editor
+      assert_equal replacement_id, ui(app).task_editor.target_id
+    end
+  end
+
+  def test_location_move_out_of_projects_can_resume_from_another_canonical_view
+    app_on(view: :projects, select: "Book flight") do |app|
+      target_id = app.send(:current_item).id
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\t")
+      editor = ui(app).task_editor
+      editor.form.set_value(:title, "moved task draft")
+      small = Struct.new(:winsize).new([7, 46])
+      IO.stub(:console, small) { capture_io { app.send(:paint) } }
+
+      rewrite_records(app) do |records|
+        record = records.delete(records.find { |candidate| candidate["id"] == target_id })
+        record["parent"] = FIX[:inbox]
+        records.insert(records.index { |candidate| candidate["id"] == FIX[:work] }, record)
+      end
+
+      assert_equal :suspended_task_edit, ui(app).panel.kind
+      assert_match(/switch to agenda/, ui(app).panel.lines.first)
+      assert_equal :agenda, app.send(:suspended_target_canonical_view)
+      refute_equal target_id, ui(app).selected_id
+
+      app.send(:handle_key, "1")
+      assert_equal :agenda, ui(app).view
+      assert_equal target_id, ui(app).selected_id
+      assert_equal target_id, app.send(:current_item).id
+      assert_equal :detail, ui(app).panel.kind
+
+      wide = Struct.new(:winsize).new([18, 80])
+      IO.stub(:console, wide) { app.send(:handle_key, "\t") }
+      assert_same editor, ui(app).task_editor
+      assert_equal target_id, ui(app).task_editor.target_id
+      assert_equal "moved task draft", editor.edit_form.value(:title)
+    end
+  end
+
+  def test_deferred_suspended_target_recovers_when_deferred_rows_are_revealed
+    app_on(view: :next, select: "Book flight") do |app|
+      target_id = app.send(:current_item).id
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\t")
+      editor = ui(app).task_editor
+      editor.form.set_value(:title, "deferred task draft")
+      small = Struct.new(:winsize).new([7, 46])
+      IO.stub(:console, small) { capture_io { app.send(:paint) } }
+
+      rewrite_records(app) do |records|
+        record = records.find { |candidate| candidate["id"] == target_id }
+        record["tags"] = Array(record["tags"]) + ["defer"]
+      end
+
+      assert_equal :suspended_task_edit, ui(app).panel.kind
+      assert_nil app.send(:suspended_target_canonical_view)
+      assert_match(/not selectable/, app.instance_variable_get(:@flash))
+
+      app.send(:handle_key, "Z")
+      assert ui(app).show_deferred
+      assert_equal target_id, ui(app).selected_id
+      assert_equal target_id, app.send(:current_item).id
+      assert_equal :detail, ui(app).panel.kind
+
+      wide = Struct.new(:winsize).new([18, 80])
+      IO.stub(:console, wide) { app.send(:handle_key, "\t") }
+      assert_same editor, ui(app).task_editor
+      assert_equal "deferred task draft", editor.edit_form.value(:title)
+    end
+  end
+
   def test_confirmation_is_cancelled_on_suspend_and_rearmed_visibly_after_resume
     app_on(view: :next, select: "Book flight") do |app|
       app.send(:handle_key, "\r")

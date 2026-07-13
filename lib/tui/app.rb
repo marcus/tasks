@@ -517,7 +517,9 @@ module Tui
 
     def handle_key(k)
       return if dispatch_action(k, :global)
-      return suspended_missing_key(k) if suspended_editor_missing? && ["y", "\e", "\t"].include?(k)
+      if suspended_recovery_panel? && ["y", "\e", "\t"].include?(k)
+        return suspended_recovery_key(k)
+      end
       return task_edit_key(k) if task_editing?
 
       case @ui.mode
@@ -784,8 +786,10 @@ module Tui
     # Z reveals/hides deferred (someday/maybe) tasks across every view.
     def toggle_deferred_view
       @ui.toggle_deferred!
+      @ui.selected_id = @suspended_task_editor.target_id if resumable_suspended_editor?
       rows
-      refresh_detail_panel if detail_panel?
+      reconcile_suspended_after_navigation
+      refresh_detail_panel if detail_panel? && !@suspended_task_editor
       flash(@ui.show_deferred ? "showing deferred tasks" : "hiding deferred tasks")
     end
 
@@ -949,41 +953,94 @@ module Tui
             "Tab resumes · #{@task_edit_message}")
     end
 
-    def suspended_editor_missing? = @suspended_task_editor&.missing?
+    def suspended_recovery_panel?
+      @suspended_task_editor && @ui.panel&.kind == :suspended_task_edit
+    end
+
+    def resumable_suspended_editor?
+      @suspended_task_editor && !@suspended_task_editor.missing?
+    end
 
     def reconcile_suspended_editor(outcome)
       @task_edit_message = task_edit_outcome_message(outcome)
-      if outcome&.missing?
-        value = @suspended_task_editor.copy_value.to_s
-        @ui.panel = RightPanel.new(
-          title: "task draft · target deleted",
-          lines: ["Task no longer exists; local field retained.",
-                  "Draft: #{value}", "y copies field · esc discards draft"],
-          kind: :suspended_task_edit, identity: @suspended_task_editor.target_id,
-        )
-        flash("task deleted while editing was paused — y copies the field · esc discards the draft")
+      if outcome&.missing? || !suspended_target_visible_in_current_rows?
+        show_suspended_recovery_panel
       elsif detail_panel?
         refresh_detail_panel
       end
     end
 
-    def suspended_missing_key(key)
+    def show_suspended_recovery_panel
+      editor = @suspended_task_editor
+      canonical_view = suspended_target_canonical_view
+      missing = editor.missing?
+      title = missing ? "task draft · target deleted" : "task draft · target not visible"
+      explanation = if missing
+                      "Task no longer exists; local field retained."
+                    elsif canonical_view
+                      "Task left #{@ui.view}; switch to #{canonical_view} to resume."
+                    else
+                      "Task exists but is hidden from the canonical views."
+                    end
+      lines = [explanation, "Draft: #{editor.copy_value}"]
+      lines << if canonical_view
+                 "switch view + Tab resumes · y copies · esc discards"
+               else
+                 "y copies field · esc discards draft"
+               end
+      @ui.panel = RightPanel.new(title: title, lines: lines,
+                                 kind: :suspended_task_edit, identity: editor.target_id)
+      guidance = canonical_view ? "switch to #{canonical_view} to resume" : "target is not selectable"
+      flash("paused task draft: #{guidance} · y copies · esc discards")
+    end
+
+    def suspended_recovery_key(key)
       case key
       when "y"
         value = @suspended_task_editor.copy_value.to_s
         if Clipboard.copy(value)
-          flash("copied local field from deleted task; esc discards the draft")
+          flash("copied paused task field; esc discards the draft")
         else
-          flash("no clipboard tool found; local deleted-task draft is still retained")
+          flash("no clipboard tool found; local paused draft is still retained")
         end
       when "\e"
         @suspended_task_editor = nil
         @suspended_task_panel = nil
         @task_edit_message = nil
         close_panel
-        flash("discarded local draft for deleted task")
+        flash("discarded local draft for paused task")
       when "\t"
-        flash("deleted task draft remains — y copies the field · esc discards it")
+        show_suspended_recovery_panel
+      end
+    end
+
+    def suspended_target_visible_in_current_rows?
+      target_id = @suspended_task_editor&.target_id
+      target_id && Array(@rows).any? { |row| row.item&.id == target_id }
+    end
+
+    def suspended_target_canonical_view
+      editor = @suspended_task_editor
+      return if !editor || editor.missing?
+
+      Views::TABS.each do |_label, view|
+        candidates = Views.rows(
+          view, @store.items, tree: @store.tree, collapsed: Set.new,
+          show_deferred: @ui.show_deferred, urgent_days: @urgent_days, store: @store,
+        )
+        return view if candidates.any? { |row| row.item&.id == editor.target_id }
+      end
+      nil
+    end
+
+    def reconcile_suspended_after_navigation
+      return unless @suspended_task_editor
+
+      if suspended_target_visible_in_current_rows?
+        show_detail
+        flash("paused task draft selected — Tab resumes")
+      else
+        show_suspended_recovery_panel
       end
     end
 
@@ -1177,8 +1234,10 @@ module Tui
     end
 
     def switch_view(n)
+      @ui.selected_id = @suspended_task_editor.target_id if resumable_suspended_editor?
       @ui.view = Views::TABS[n - 1].last
       rows
+      reconcile_suspended_after_navigation
     end
 
     def cycle_view(delta)
