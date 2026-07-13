@@ -233,6 +233,38 @@ class TestTermForm < Minitest::Test
     assert_equal :second, form.focus_key
   end
 
+  def test_semantic_focus_event_uses_the_same_dirty_two_phase_guard
+    form = simple_form
+    form.set_value(:first, "dirty first")
+
+    transition = form.handle(type: :focus, key: :second, direction: :direct)
+
+    assert transition.commit_requested?
+    assert_equal :first, form.focus_key
+    assert_equal :first, transition.request.field_key
+    assert_equal :second, transition.request.intended_focus
+    assert_equal :direct, transition.request.direction
+
+    form.accept_commit(token: transition.request.token)
+    assert_equal :second, form.focus_key
+  end
+
+  def test_public_focus_helpers_share_the_dirty_departure_guard
+    form = simple_form
+    form.set_value(:first, "dirty first")
+
+    transition = form.focus_next
+
+    assert transition.commit_requested?
+    assert_equal :first, form.focus_key
+    assert_equal :next, transition.request.direction
+    form.reject_commit(token: transition.request.token)
+
+    transition = form.focus(:second)
+    assert transition.commit_requested?
+    assert_equal :first, form.focus_key
+  end
+
   def test_clean_tab_and_shift_tab_move_without_requesting_commit
     form = simple_form
 
@@ -287,6 +319,49 @@ class TestTermForm < Minitest::Test
     assert_equal "remote second", form.baseline(:second)
     refute form.dirty?(:second)
     assert_equal :second, form.focus_key
+  end
+
+  def test_same_field_refresh_during_pending_wins_over_implicit_stale_accept
+    form = simple_form
+    request = form.request_commit.request
+
+    form.refresh(values: { first: "remote first" })
+    form.accept_commit(token: request.token)
+
+    assert_equal "remote first", form.value(:first)
+    assert_equal "remote first", form.baseline(:first)
+    refute form.dirty?(:first)
+    refute form.pending?
+  end
+
+  def test_same_field_refresh_rejects_stale_accept_when_pending_buffer_is_still_dirty
+    form = simple_form
+    form.set_value(:first, "submitted first")
+    request = form.handle("\t").request
+    form.refresh(values: { first: "remote first" })
+
+    error = assert_raises(ArgumentError) { form.accept_commit(token: request.token) }
+
+    assert_equal "commit token is stale after refresh", error.message
+    assert_equal "submitted first", form.value(:first)
+    assert_equal "remote first", form.baseline(:first)
+    assert form.dirty?(:first)
+    assert form.pending?
+    assert_equal :first, form.focus_key
+  end
+
+  def test_pending_request_is_cancelled_when_buffer_returns_to_baseline_before_navigation
+    form = simple_form
+    form.set_value(:first, "dirty first")
+    request = form.handle("\t").request
+    form.set_value(:first, "first")
+
+    transition = form.handle("\t")
+
+    assert transition.focus_changed?
+    assert_equal :second, form.focus_key
+    refute form.pending?
+    assert_raises(RuntimeError) { form.accept_commit(token: request.token) }
   end
 
   def test_refresh_during_pending_and_accept_preserve_another_dirty_buffer

@@ -52,13 +52,12 @@ module TermForm
       @fields.select { |field| field_focusable?(field, current) }.freeze
     end
 
-    def focus(key, event: nil)
+    def focus(key, event: nil, direction: nil)
       normalized = resolve_key(key)
       return transition(:handled, event) unless focusable_fields.any? { |field| field.key == normalized }
+      return transition(:handled, event) if @focus_key == normalized
 
-      changed = @focus_key != normalized
-      @focus_key = normalized
-      transition(changed ? :focus_changed : :handled, event)
+      request_focus(normalized, event: event, direction: direction)
     end
 
     def focus_next(event: nil) = move_focus(1, event: event)
@@ -99,7 +98,7 @@ module TermForm
       validate
       unless @errors.empty?
         first_error = @errors.each_key.find { |key| focusable_fields.any? { |field| field.key == key } }
-        @focus_key = first_error if first_error
+        apply_focus(first_error) if first_error
         return transition(:invalid, event, errors: errors)
       end
 
@@ -127,11 +126,14 @@ module TermForm
       raise ArgumentError, "pass fresh values either positionally or with values:, not both" if fresh_values && values
 
       host_values = normalize_values(values || fresh_values || {})
-      committed_value = host_values.delete(request.field_key) { request.proposed_value }
-
-      current = @values.fetch(request.field_key)
-      @values[request.field_key] = Support.copy(committed_value) if current == request.proposed_value
-      @baselines[request.field_key] = Support.copy(committed_value)
+      if host_values.key?(request.field_key)
+        committed_value = host_values.delete(request.field_key)
+        reconcile_committed_field(request, committed_value)
+      elsif @baselines.fetch(request.field_key) == request.expected_baseline
+        reconcile_committed_field(request, request.proposed_value)
+      elsif @values.fetch(request.field_key) != @baselines.fetch(request.field_key)
+        raise ArgumentError, "commit token is stale after refresh"
+      end
 
       host_values.each do |key, fresh|
         current = @values.fetch(key)
@@ -142,7 +144,7 @@ module TermForm
       @pending_commit = nil
       @errors = {}
       @validation_active = false
-      focus(request.intended_focus) if request.intended_focus
+      apply_focus(request.intended_focus) if request.intended_focus && focusable_key?(request.intended_focus)
       ensure_focus!
       transition(:commit_accepted, nil, request: request)
     end
@@ -178,9 +180,9 @@ module TermForm
     def handle(value)
       event = value.is_a?(String) ? @key_map.event_for(value) : Event.normalize(value)
       case event.type
-      when :next then navigate_or_commit(1, :next, event)
-      when :previous then navigate_or_commit(-1, :previous, event)
-      when :focus then focus(event.key, event: event)
+      when :next then focus_next(event: event)
+      when :previous then focus_previous(event: event)
+      when :focus then focus(event.key, event: event, direction: event[:direction])
       when :change then set_value(event.key, event.value, event: event)
       when :commit then request_commit(intended_focus: event[:intended_focus], event: event)
       when :cancel then transition(:cancel_requested, event)
@@ -236,20 +238,42 @@ module TermForm
 
       index = candidates.index { |field| field.key == @focus_key }
       target = index ? candidates[(index + offset) % candidates.length] : candidates.first
-      focus(target.key, event: event)
+      direction = offset.positive? ? :next : :previous
+      focus(target.key, event: event, direction: direction)
     end
 
-    def navigate_or_commit(offset, direction, event)
-      candidates = focusable_fields
-      return transition(:handled, event) if candidates.empty?
+    def request_focus(target, event:, direction:)
+      if pending?
+        if dirty?(@pending_commit.field_key)
+          return transition(:commit_pending, event, request: @pending_commit)
+        end
 
-      index = candidates.index { |field| field.key == @focus_key }
-      target = index ? candidates[(index + offset) % candidates.length] : candidates.first
-      if @focus_key && dirty?(@focus_key)
-        request_commit(intended_focus: target.key, direction: direction, field_key: @focus_key, event: event)
-      else
-        focus(target.key, event: event)
+        @pending_commit = nil
       end
+
+      if @focus_key && dirty?(@focus_key)
+        request_commit(intended_focus: target, direction: direction, field_key: @focus_key, event: event)
+      else
+        apply_focus(target)
+        transition(:focus_changed, event)
+      end
+    end
+
+    def apply_focus(key)
+      @focus_key = key
+    end
+
+    def focusable_key?(key)
+      focusable_fields.any? { |field| field.key == key }
+    end
+
+    def reconcile_committed_field(request, committed_value)
+      current = @values.fetch(request.field_key)
+      old_baseline = @baselines.fetch(request.field_key)
+      if current == request.proposed_value || current == old_baseline
+        @values[request.field_key] = Support.copy(committed_value)
+      end
+      @baselines[request.field_key] = Support.copy(committed_value)
     end
 
     def field_visible?(field, current)
@@ -269,9 +293,9 @@ module TermForm
       end
       if after && (position = @fields.index { |field| field.key == after })
         ordered = @fields.rotate(position + 1)
-        @focus_key = ordered.find { |field| candidates.include?(field) }&.key
+        apply_focus(ordered.find { |field| candidates.include?(field) }&.key)
       else
-        @focus_key = candidates.first&.key
+        apply_focus(candidates.first&.key)
       end
     end
 
