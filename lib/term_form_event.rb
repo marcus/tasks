@@ -87,7 +87,7 @@ module TermForm
 
       source = defaults ? DEFAULT_BINDINGS.merge(bindings) : bindings
       @bindings = source.each_with_object({}) do |(raw, event), result|
-        result[raw] = event.is_a?(Event) ? event : Event.normalize(event)
+        result[Support.frozen_copy(raw)] = event.is_a?(Event) ? event : Event.normalize(event)
       end.freeze
       freeze
     end

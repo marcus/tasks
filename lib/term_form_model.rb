@@ -38,7 +38,7 @@ module TermForm
     def initialize(key:, value: nil, baseline: UNSET, label: nil, visible: true, enabled: true,
                    required: false, validate: nil, cursor: nil, metadata: {})
       @key = Support.key(key)
-      @label = label || @key.to_s
+      @label = Support.frozen_copy(label || @key.to_s)
       @initial_value = Support.frozen_copy(value)
       baseline = value if baseline.equal?(UNSET)
       @initial_baseline = Support.frozen_copy(baseline)
@@ -54,6 +54,7 @@ module TermForm
     def visible?(context) = !!Support.property(@visible, context)
     def enabled?(context) = !!Support.property(@enabled, context)
     def required?(context) = !!Support.property(@required, context)
+    def label_for(context) = Support.frozen_copy(Support.property(@label, context))
 
     def cursor_for(value, context)
       return nil if @cursor.nil?
@@ -84,7 +85,7 @@ module TermForm
 
     def initialize(key:, fields:, label: nil, visible: true, enabled: true, metadata: {})
       @key = Support.key(key)
-      @label = label || @key.to_s
+      @label = Support.frozen_copy(label || @key.to_s)
       @fields = Array(fields).dup.freeze
       raise ArgumentError, "group fields must all be TermForm::Field values" unless @fields.all? { |field| field.is_a?(Field) }
 
@@ -96,6 +97,7 @@ module TermForm
 
     def visible?(context) = !!Support.property(@visible, context)
     def enabled?(context) = !!Support.property(@enabled, context)
+    def label_for(context) = Support.frozen_copy(Support.property(@label, context))
   end
 
   class RenderModel
@@ -107,7 +109,7 @@ module TermForm
                      dirty:, required:, errors:, cursor:, metadata:)
         @key = key
         @group_key = group_key
-        @label = label
+        @label = Support.frozen_copy(label)
         @value = Support.frozen_copy(value)
         @index = index
         @enabled = enabled
@@ -116,7 +118,7 @@ module TermForm
         @required = required
         @errors = Support.frozen_copy(errors)
         @cursor = cursor
-        @metadata = metadata
+        @metadata = Support.frozen_copy(metadata)
         freeze
       end
 
@@ -132,10 +134,10 @@ module TermForm
 
       def initialize(key:, label:, rows:, enabled:, metadata:)
         @key = key
-        @label = label
+        @label = Support.frozen_copy(label)
         @rows = rows.freeze
         @enabled = enabled
-        @metadata = metadata
+        @metadata = Support.frozen_copy(metadata)
         freeze
       end
 
@@ -162,15 +164,23 @@ module TermForm
   end
 
   class CommitRequest
-    attr_reader :token, :values, :changed_keys, :focus_key, :intended_focus
+    attr_reader :token, :values, :changed_keys, :focus_key, :field_key,
+                :proposed_value, :expected_baseline, :intended_focus, :direction
 
-    def initialize(token:, values:, changed_keys:, focus_key:, intended_focus:)
+    def initialize(token:, values:, changed_keys:, focus_key:, field_key:,
+                   proposed_value:, expected_baseline:, intended_focus:, direction:)
       @token = token
       @values = Support.frozen_copy(values)
       @changed_keys = changed_keys.dup.freeze
       @focus_key = focus_key
+      @field_key = field_key
+      @proposed_value = Support.frozen_copy(proposed_value)
+      @expected_baseline = Support.frozen_copy(expected_baseline)
       @intended_focus = intended_focus
+      @direction = direction
       freeze
     end
+
+    alias intended_direction direction
   end
 end

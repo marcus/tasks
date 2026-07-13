@@ -21,6 +21,13 @@ module TermForm
         value.map { |entry| copy(entry) }
       when Hash
         value.each_with_object({}) { |(key, entry), result| result[copy(key)] = copy(entry) }
+      when Struct
+        copied = value.each_pair.to_h { |name, entry| [name, copy(entry)] }
+        if value.class.respond_to?(:keyword_init?) && value.class.keyword_init?
+          value.class.new(**copied)
+        else
+          value.class.new(*value.members.map { |name| copied.fetch(name) })
+        end
       else
         value.dup
       end
@@ -39,12 +46,16 @@ module TermForm
         value.each { |entry| deep_freeze(entry) }
       when Hash
         value.each { |key, entry| deep_freeze(key); deep_freeze(entry) }
+      when Struct
+        value.each_pair { |_name, entry| deep_freeze(entry) }
       end
       value.freeze
     end
 
     def property(value, context)
-      value.respond_to?(:call) ? value.call(context) : value
+      return value unless value.respond_to?(:call)
+
+      value.arity.zero? ? value.call : value.call(context)
     end
 
     def callable(callable, value, context)

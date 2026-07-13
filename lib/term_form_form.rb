@@ -93,7 +93,7 @@ module TermForm
       validate.empty?
     end
 
-    def request_commit(intended_focus: nil, event: nil)
+    def request_commit(intended_focus: nil, direction: nil, field_key: nil, event: nil)
       return transition(:commit_pending, event, request: @pending_commit) if pending?
 
       validate
@@ -104,13 +104,20 @@ module TermForm
       end
 
       intended = intended_focus.nil? ? @focus_key : resolve_key(intended_focus)
+      committed_key = field_key.nil? ? @focus_key : resolve_key(field_key)
+      raise RuntimeError, "cannot request a commit without a focused field" unless committed_key
+
       @commit_sequence += 1
       @pending_commit = CommitRequest.new(
         token: @commit_sequence,
         values: @values,
         changed_keys: changed_keys,
         focus_key: @focus_key,
+        field_key: committed_key,
+        proposed_value: @values.fetch(committed_key),
+        expected_baseline: @baselines.fetch(committed_key),
         intended_focus: intended,
+        direction: direction,
       )
       transition(:commit_requested, event, request: @pending_commit, values: @pending_commit.values)
     end
@@ -119,10 +126,17 @@ module TermForm
       request = require_pending!(token)
       raise ArgumentError, "pass fresh values either positionally or with values:, not both" if fresh_values && values
 
-      accepted = request.values.merge(normalize_values(values || fresh_values || {}))
-      accepted.each do |key, fresh|
+      host_values = normalize_values(values || fresh_values || {})
+      committed_value = host_values.delete(request.field_key) { request.proposed_value }
+
+      current = @values.fetch(request.field_key)
+      @values[request.field_key] = Support.copy(committed_value) if current == request.proposed_value
+      @baselines[request.field_key] = Support.copy(committed_value)
+
+      host_values.each do |key, fresh|
         current = @values.fetch(key)
-        @values[key] = Support.copy(fresh) if current == request.values.fetch(key)
+        old_baseline = @baselines.fetch(key)
+        @values[key] = Support.copy(fresh) if current == old_baseline
         @baselines[key] = Support.copy(fresh)
       end
       @pending_commit = nil
@@ -164,8 +178,8 @@ module TermForm
     def handle(value)
       event = value.is_a?(String) ? @key_map.event_for(value) : Event.normalize(value)
       case event.type
-      when :next then focus_next(event: event)
-      when :previous then focus_previous(event: event)
+      when :next then navigate_or_commit(1, :next, event)
+      when :previous then navigate_or_commit(-1, :previous, event)
       when :focus then focus(event.key, event: event)
       when :change then set_value(event.key, event.value, event: event)
       when :commit then request_commit(intended_focus: event[:intended_focus], event: event)
@@ -190,7 +204,7 @@ module TermForm
           row = RenderModel::Row.new(
             key: field.key,
             group_key: group.key,
-            label: field.label,
+            label: field.label_for(current),
             value: value,
             index: row_index,
             enabled: enabled,
@@ -204,7 +218,7 @@ module TermForm
           row_index += 1
           row
         end
-        RenderModel::Group.new(key: group.key, label: group.label, rows: rows,
+        RenderModel::Group.new(key: group.key, label: group.label_for(current), rows: rows,
                                enabled: group_enabled, metadata: group.metadata)
       end
       RenderModel.new(groups: rendered_groups, focused_key: @focus_key, errors: @errors)
@@ -223,6 +237,19 @@ module TermForm
       index = candidates.index { |field| field.key == @focus_key }
       target = index ? candidates[(index + offset) % candidates.length] : candidates.first
       focus(target.key, event: event)
+    end
+
+    def navigate_or_commit(offset, direction, event)
+      candidates = focusable_fields
+      return transition(:handled, event) if candidates.empty?
+
+      index = candidates.index { |field| field.key == @focus_key }
+      target = index ? candidates[(index + offset) % candidates.length] : candidates.first
+      if @focus_key && dirty?(@focus_key)
+        request_commit(intended_focus: target.key, direction: direction, field_key: @focus_key, event: event)
+      else
+        focus(target.key, event: event)
+      end
     end
 
     def field_visible?(field, current)

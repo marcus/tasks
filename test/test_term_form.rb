@@ -4,6 +4,8 @@ require "minitest/autorun"
 require_relative "../lib/term_form"
 
 class TestTermForm < Minitest::Test
+  NestedValue = Struct.new(:name, :items, keyword_init: true)
+
   def test_event_normalization_and_typed_transitions
     event = TermForm::Event.normalize(type: :change, key: :name, value: "Ada")
     transition = TermForm::Transition.new(:changed, event: event, changed_key: :name)
@@ -29,6 +31,15 @@ class TestTermForm < Minitest::Test
     input = key_map.event_for("x")
     assert_equal :input, input.type
     assert_equal "x", input.text
+  end
+
+  def test_key_map_defensively_copies_mutable_keys
+    raw_key = +"j"
+    key_map = TermForm::KeyMap.new({ raw_key => :next }, defaults: false)
+    raw_key.replace("mutated")
+
+    assert_equal :next, key_map.event_for("j").type
+    assert_equal :input, key_map.event_for("mutated").type
   end
 
   def test_form_rejects_duplicate_keys
@@ -104,6 +115,26 @@ class TestTermForm < Minitest::Test
     assert_equal %i[mode finish], form.visible_fields.map(&:key)
   end
 
+  def test_reactive_properties_accept_zero_arity_and_context_arity_callables
+    fields = [
+      field(:gate, value: true),
+      field(:zero, label: -> { "Zero" }, visible: -> { true }, enabled: -> { true }),
+      field(:contextual, label: ->(context) { context[:gate] ? "On" : "Off" },
+            visible: ->(context) { context[:gate] }, enabled: ->(context) { context[:gate] }),
+    ]
+    form = TermForm::Form.new(groups: [
+      group(:main, fields, label: ->(context) { context[:gate] ? "Enabled" : "Disabled" },
+            visible: -> { true }, enabled: -> { true }),
+    ])
+
+    assert_equal %i[gate zero contextual], form.focusable_fields.map(&:key)
+    assert_equal "Enabled", form.render_model.groups.first.label
+    assert_equal %w[gate Zero On], form.render_model.rows.map(&:label)
+    form.set_value(:gate, false)
+    assert_equal %i[gate zero], form.focusable_fields.map(&:key)
+    assert_equal "Disabled", form.render_model.groups.first.label
+  end
+
   def test_validation_uses_current_context_and_ignores_hidden_or_disabled_fields
     fields = [
       field(:mode, value: "short"),
@@ -161,6 +192,57 @@ class TestTermForm < Minitest::Test
     assert_equal ["save failed"], form.errors[:base]
   end
 
+  def test_dirty_tab_requests_a_field_commit_and_holds_focus_until_accept
+    form = simple_form
+    form.set_value(:first, "dirty first")
+
+    transition = form.handle("\t")
+    request = transition.request
+
+    assert transition.commit_requested?
+    assert form.pending?
+    assert_equal :first, form.focus_key
+    assert_equal :first, request.field_key
+    assert_equal "dirty first", request.proposed_value
+    assert_equal "first", request.expected_baseline
+    assert_equal :second, request.intended_focus
+    assert_equal :next, request.direction
+    assert_equal :next, request.intended_direction
+    assert request.frozen?
+    assert request.proposed_value.frozen?
+
+    form.accept_commit(token: request.token)
+    assert_equal :second, form.focus_key
+    refute form.dirty?(:first)
+  end
+
+  def test_dirty_shift_tab_requests_backward_commit_and_holds_focus
+    form = simple_form
+    form.focus(:second)
+    form.set_value(:second, "dirty second")
+
+    transition = form.handle("\e[Z")
+
+    assert transition.commit_requested?
+    assert_equal :second, form.focus_key
+    assert_equal :second, transition.request.field_key
+    assert_equal :first, transition.request.intended_focus
+    assert_equal :previous, transition.request.direction
+
+    form.reject_commit(token: transition.request.token)
+    assert_equal :second, form.focus_key
+  end
+
+  def test_clean_tab_and_shift_tab_move_without_requesting_commit
+    form = simple_form
+
+    assert form.handle("\t").focus_changed?
+    refute form.pending?
+    assert_equal :second, form.focus_key
+    assert form.handle("\e[Z").focus_changed?
+    assert_equal :first, form.focus_key
+  end
+
   def test_accept_uses_fresh_baselines_without_erasing_edits_made_while_pending
     form = simple_form
     form.set_value(:first, "submitted first")
@@ -188,6 +270,38 @@ class TestTermForm < Minitest::Test
 
     assert_equal "submitted", form.baseline(:first)
     refute form.dirty?
+  end
+
+  def test_refresh_during_pending_then_accept_does_not_redirty_clean_remote_value
+    form = simple_form
+    form.set_value(:first, "submitted first")
+    request = form.handle("\t").request
+
+    form.refresh(values: { second: "remote second" })
+    assert_equal "remote second", form.value(:second)
+    refute form.dirty?(:second)
+
+    form.accept_commit(token: request.token)
+
+    assert_equal "remote second", form.value(:second)
+    assert_equal "remote second", form.baseline(:second)
+    refute form.dirty?(:second)
+    assert_equal :second, form.focus_key
+  end
+
+  def test_refresh_during_pending_and_accept_preserve_another_dirty_buffer
+    form = simple_form
+    form.set_value(:second, "local second")
+    form.focus(:first)
+    form.set_value(:first, "submitted first")
+    request = form.handle("\t").request
+
+    form.refresh(values: { second: "remote second" })
+    form.accept_commit(token: request.token)
+
+    assert_equal "local second", form.value(:second)
+    assert_equal "remote second", form.baseline(:second)
+    assert form.dirty?(:second)
   end
 
   def test_refresh_updates_clean_values_and_baselines_but_preserves_dirty_values
@@ -228,6 +342,40 @@ class TestTermForm < Minitest::Test
     assert_equal({ kind: :text }, model.focused_row.metadata)
     refute model.rows.last.enabled?
     assert model.frozen?
+  end
+
+  def test_custom_struct_values_labels_and_render_data_are_deep_copied_and_frozen
+    value = NestedValue.new(name: +"before", items: [[+"nested"]])
+    label = +"Mutable label"
+    metadata = { options: [NestedValue.new(name: +"meta", items: [])] }
+    form = TermForm::Form.new(groups: [group(:main, [
+      field(:structured, value: value, label: label, metadata: metadata),
+    ])])
+
+    value.name.replace("outside")
+    value.items.first.first.replace("outside")
+    label.replace("outside")
+    metadata[:options].first.name.replace("outside")
+
+    stored = form.value(:structured)
+    row = form.render_model.focused_row
+    assert_equal "before", stored.name
+    assert_equal "nested", stored.items.first.first
+    assert stored.frozen?
+    assert stored.name.frozen?
+    assert stored.items.frozen?
+    assert stored.items.first.frozen?
+    assert stored.items.first.first.frozen?
+    assert_equal "Mutable label", row.label
+    assert row.label.frozen?
+    assert_equal "meta", row.metadata[:options].first.name
+    assert row.metadata[:options].first.frozen?
+
+    form.set_value(:structured, NestedValue.new(name: "dirty", items: [["request"]]))
+    request = form.request_commit.request
+    assert request.proposed_value.frozen?
+    assert request.proposed_value.items.first.first.frozen?
+    assert request.expected_baseline.frozen?
   end
 
   def test_pending_commit_is_single_flight_and_tokens_are_checked
