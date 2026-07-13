@@ -315,7 +315,7 @@ module Tui
       Confirmation.new(token: SecureRandom.hex(12), field: field, value: immutable_copy(value),
                        message: message.freeze, summary: immutable_copy(summary),
                        request: request, finish: finish,
-                       expectations: confirmation_expectations(field, snapshot))
+                       expectations: confirmation_expectations(field, snapshot, summary))
     end
 
     def handle_confirmation(input)
@@ -389,15 +389,27 @@ module Tui
       store.items.select { |item| ids.include?(item.id) && item.open? }.map(&:id)
     end
 
-    def confirmation_expectations(field, value)
-      fields = case field
-               when :location then %i[location]
-               when :state then %i[state]
-               when :recurrence then %i[recurrence scheduled deadline]
-               when :scheduled, :deadline then %i[scheduled deadline recurrence state]
-               else [field]
-               end
-      fields.to_h { |owned| [owned, immutable_copy(value.expected_for(owned))] }.freeze
+    def confirmation_expectations(field, value, summary)
+      owned = {}
+      values = {}
+      predicates = {}
+      case field
+      when :location, :state
+        owned[field] = value.expected_for(field)
+      when :recurrence
+        owned[:recurrence] = value.expected_for(:recurrence)
+        predicates[:any_live_date] = true
+      when :scheduled, :deadline
+        owned[field] = value.expected_for(field)
+        if summary[:clears_recurrence]
+          other = field == :scheduled ? :deadline : :scheduled
+          owned[:recurrence] = value.expected_for(:recurrence)
+          predicates[:date_presence] = { other => false }
+        elsif summary[:promotes_to]
+          values[:state] = value.state
+        end
+      end
+      immutable_copy(owned: owned, values: values, predicates: predicates)
     end
 
     def immutable_copy(value)

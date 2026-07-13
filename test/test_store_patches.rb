@@ -103,9 +103,11 @@ class TestStorePatches < Minitest::Test
         confirmation: {
           token: "confirmation-token",
           expected: {
-            scheduled: original.expected_for(:scheduled),
-            deadline: original.expected_for(:deadline),
-            recurrence: original.expected_for(:recurrence),
+            owned: {
+              scheduled: original.expected_for(:scheduled),
+              recurrence: original.expected_for(:recurrence),
+            },
+            predicates: { date_presence: { deadline: false } },
           },
         },
       )
@@ -115,6 +117,33 @@ class TestStorePatches < Minitest::Test
       assert_equal before, File.read(org)
       task = parsed(org).find { |record| record["id"] == "11110003" }
       assert_equal "2026-07-13", task["scheduled"]
+      assert_equal ".+1m", task["recur"]
+    end
+  end
+
+  def test_recurrence_confirmation_uses_live_date_availability_not_exact_other_date
+    with_patch_store do |store, org|
+      original = store.edit_snapshot("11110003")
+      added = store.patch_task!(patch(original, :deadline, Date.new(2026, 8, 1)))
+      assert_equal :ok, added.status
+
+      request = Tasks::TaskPatch.new(
+        id: original.id,
+        field: :recurrence,
+        value: ".+1m",
+        expected: original.expected_for(:recurrence),
+        confirmation: {
+          expected: {
+            owned: { recurrence: original.expected_for(:recurrence) },
+            predicates: { any_live_date: true },
+          },
+        },
+      )
+      result = store.patch_task!(request)
+
+      assert_equal :ok, result.status
+      task = parsed(org).find { |record| record["id"] == "11110003" }
+      assert_equal "2026-08-01", task["deadline"]
       assert_equal ".+1m", task["recur"]
     end
   end

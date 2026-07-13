@@ -636,10 +636,47 @@ module Tasks
       expected = confirmation[:expected] || confirmation["expected"]
       return true unless expected.is_a?(Hash)
 
-      expected.all? do |field, baseline|
+      structured = %i[owned values predicates].any? do |key|
+        expected.key?(key) || expected.key?(key.to_s)
+      end
+      owned = structured ? confirmation_section(expected, :owned, {}) : expected
+      values = structured ? confirmation_section(expected, :values, {}) : {}
+      predicates = structured ? confirmation_section(expected, :predicates, {}) : {}
+      return false unless owned.is_a?(Hash) && values.is_a?(Hash) && predicates.is_a?(Hash)
+
+      owned.all? do |field, baseline|
         normalized = normalize_patch_field(field)
         EditSnapshot::FIELDS.include?(normalized) &&
           semantic_patch_equal?(normalized, snapshot.expected_for(normalized), baseline)
+      end && values.all? do |field, baseline|
+        normalized = normalize_patch_field(field)
+        EditSnapshot::FIELDS.include?(normalized) &&
+          semantic_patch_equal?(normalized, snapshot[normalized], baseline)
+      end && confirmation_predicates_match?(snapshot, predicates)
+    end
+
+    def confirmation_section(expected, key, fallback)
+      return expected[key] if expected.key?(key)
+      return expected[key.to_s] if expected.key?(key.to_s)
+
+      fallback
+    end
+
+    def confirmation_predicates_match?(snapshot, predicates)
+      predicates.all? do |name, expected|
+        case normalize_patch_field(name)
+        when :any_live_date
+          expected == !!(snapshot.scheduled || snapshot.deadline)
+        when :date_presence
+          expected.is_a?(Hash) && expected.all? do |field, present|
+            normalized = normalize_patch_field(field)
+            %i[scheduled deadline].include?(normalized) &&
+              (present == true || present == false) &&
+              present == !snapshot[normalized].nil?
+          end
+        else
+          false
+        end
       end
     end
 

@@ -230,7 +230,8 @@ class TestTaskEditorSession < Minitest::Test
       session.form.set_value(:scheduled, nil)
       pending = session.save
       assert pending.confirmation?
-      assert_equal ".+1w", pending.data.expectations[:recurrence]
+      assert_equal ".+1w", pending.data.expectations[:owned][:recurrence]
+      assert_equal({ deadline: false }, pending.data.expectations[:predicates][:date_presence])
 
       external = store.edit_snapshot("11110002")
       changed = store.patch_task!(Tasks::TaskPatch.from(external, field: :recurrence, value: ".+1m"))
@@ -250,6 +251,84 @@ class TestTaskEditorSession < Minitest::Test
       assert_nil session.pending_confirmation
       refute session.form.pending?
       assert_equal Date.new(2026, 7, 13), session.edit_form.value(:scheduled)
+    end
+  end
+
+  def test_child_lifecycle_change_coexists_with_parent_final_date_clear
+    with_editor do |session, store, org|
+      session.form.focus(:scheduled)
+      session.form.set_value(:scheduled, nil)
+      assert session.save.confirmation?
+
+      child = store.edit_snapshot("11110003")
+      changed = store.patch_task!(Tasks::TaskPatch.from(child, field: :state, value: "WAITING"))
+      assert_equal :ok, changed.status
+
+      accepted = session.confirm!
+      assert_equal :ok, accepted.status
+      assert_nil record(org)["scheduled"]
+      assert_nil record(org)["recur"]
+      assert_equal "WAITING", record(org, "11110003")["state"]
+    end
+  end
+
+  def test_added_deadline_coexists_with_recurrence_change_when_a_live_date_remains
+    with_editor do |session, store, org|
+      session.form.focus(:recurrence)
+      session.form.set_value(:recurrence, "monthly")
+      pending = session.save
+      assert pending.confirmation?
+      assert_equal({ any_live_date: true }, pending.data.expectations[:predicates])
+
+      external = store.edit_snapshot("11110002")
+      added = store.patch_task!(Tasks::TaskPatch.from(
+        external, field: :deadline, value: Date.new(2026, 8, 1)
+      ))
+      assert_equal :ok, added.status
+
+      accepted = session.confirm!
+      assert_equal :ok, accepted.status
+      assert_equal "2026-08-01", record(org)["deadline"]
+      assert_equal ".+1m", record(org)["recur"]
+    end
+  end
+
+  def test_recurrence_confirmation_conflicts_when_all_dates_disappear_or_recurrence_changes
+    with_editor do |session, store, org|
+      session.form.focus(:recurrence)
+      session.form.set_value(:recurrence, "monthly")
+      pending = session.save
+      assert pending.confirmation?
+
+      external = store.edit_snapshot("11110002")
+      removed = store.patch_task!(Tasks::TaskPatch.from(external, field: :scheduled, value: nil))
+      assert_equal :ok, removed.status
+      before_confirm = File.read(org)
+
+      refused = session.confirm!
+      assert refused.conflict?
+      assert_same pending.data, session.pending_confirmation
+      assert_equal before_confirm, File.read(org)
+      assert_nil record(org)["scheduled"]
+      assert_nil record(org)["recur"]
+    end
+
+    with_editor do |session, store, org|
+      session.form.focus(:recurrence)
+      session.form.set_value(:recurrence, "monthly")
+      pending = session.save
+      assert pending.confirmation?
+
+      external = store.edit_snapshot("11110002")
+      changed = store.patch_task!(Tasks::TaskPatch.from(external, field: :recurrence, value: ".+1d"))
+      assert_equal :ok, changed.status
+      before_confirm = File.read(org)
+
+      refused = session.confirm!
+      assert refused.conflict?
+      assert_same pending.data, session.pending_confirmation
+      assert_equal before_confirm, File.read(org)
+      assert_equal ".+1d", record(org)["recur"]
     end
   end
 
