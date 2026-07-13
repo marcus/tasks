@@ -13,6 +13,7 @@ class TestTermFormRequireBoundary < Minitest::Test
       forbidden = $LOADED_FEATURES.grep(%r{/lib/(?:tasks|tui)(?:/|\.rb\z)|/lib/ansi\.rb\z})
       abort "forbidden dependencies: #{forbidden.join(", ")}" unless forbidden.empty?
       abort "missing core" unless defined?(TermForm::Form) && defined?(TermForm::RenderModel)
+      abort "missing text fields" unless defined?(TermForm::Fields::Input) && defined?(TermForm::Fields::TextArea)
     RUBY
 
     stdout, stderr, status = Open3.capture3(

@@ -32,6 +32,10 @@ module TermForm
 
   class Field
     UNSET = Object.new.freeze
+    Result = Data.define(:status, :value) do
+      def changed? = status == :changed
+      def handled? = status == :handled
+    end
 
     attr_reader :key, :label, :initial_value, :initial_baseline, :metadata
 
@@ -62,6 +66,16 @@ module TermForm
 
       Support.callable(@cursor, value, context)
     end
+
+    # Stateful field subclasses consume normalized events here. Returning nil
+    # leaves the event to Form's navigation/commit protocol.
+    def handle_event(_event, _value, _context) = nil
+
+    def normalize_value(value) = value
+
+    # Form calls this after host-driven refreshes or direct value changes so a
+    # stateful field can reconcile its private editing buffer.
+    def sync_value(_value) = nil
 
     def validation_errors(value, context)
       errors = []

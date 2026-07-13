@@ -4,6 +4,12 @@ require_relative "term_form_support"
 
 module TermForm
   class Event
+    KEY_BYTES = {
+      tab: "\t", shift_tab: "\e[Z", return: "\r", escape: "\e",
+      up: "\e[A", down: "\e[B", left: "\e[D", right: "\e[C",
+      home: "\e[H", end: "\e[F", delete: "\e[3~", backspace: "\x7f",
+    }.freeze
+
     attr_reader :type, :payload, :raw
 
     def self.normalize(value)
@@ -20,6 +26,12 @@ module TermForm
         raise ArgumentError, "cannot normalize #{value.class} as an event"
       end
     end
+
+    def self.key(key)
+      raw = key.is_a?(Symbol) ? KEY_BYTES.fetch(key) { raise ArgumentError, "unknown key: #{key}" } : key
+      new(:key, { key: key }, raw: raw)
+    end
+    def self.paste(text) = new(:paste, text: text)
 
     def initialize(type, payload = nil, raw: nil, **attributes)
       @type = Support.key(type)
@@ -99,7 +111,10 @@ module TermForm
     end
 
     def event_for(raw)
-      @bindings.fetch(raw) { Event.new(:input, { text: raw }, raw: raw) }
+      bound = @bindings[raw]
+      return Event.new(:input, { text: raw }, raw: raw) unless bound
+
+      Event.new(bound.type, bound.payload, raw: raw)
     end
     alias call event_for
   end

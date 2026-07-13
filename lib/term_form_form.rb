@@ -29,6 +29,7 @@ module TermForm
       raise ArgumentError, "unknown focus key: #{@focus_key}" if @focus_key && !@field_by_key.key?(@focus_key)
 
       ensure_focus!
+      synchronize_fields!
     end
 
     def values = Support.frozen_copy(@values)
@@ -65,11 +66,12 @@ module TermForm
 
     def set_value(key, value, event: nil)
       normalized = resolve_key(key)
-      copied = Support.copy(value)
+      copied = Support.copy(@field_by_key.fetch(normalized).normalize_value(value))
       return transition(:handled, event) if @values[normalized] == copied
 
       old_focus = @focus_key
       @values[normalized] = copied
+      @field_by_key.fetch(normalized).sync_value(copied)
       validate if @validation_active
       ensure_focus!(after: old_focus)
       transition(:changed, event, changed_key: normalized)
@@ -146,6 +148,7 @@ module TermForm
       @validation_active = false
       apply_focus(request.intended_focus) if request.intended_focus && focusable_key?(request.intended_focus)
       ensure_focus!
+      synchronize_fields!
       transition(:commit_accepted, nil, request: request)
     end
     alias accept accept_commit
@@ -173,6 +176,7 @@ module TermForm
         @values[key] = Support.copy(fresh) if current == old_baseline
         @baselines[key] = Support.copy(fresh)
       end
+      synchronize_fields!
       validate if @validation_active
       ensure_focus!
       transition(:refreshed)
@@ -180,6 +184,16 @@ module TermForm
 
     def handle(value)
       event = value.is_a?(String) ? @key_map.event_for(value) : Event.normalize(value)
+      if event.type == :key
+        raw = event.raw || event.key
+        raw = Event::KEY_BYTES.fetch(raw, raw) if raw.is_a?(Symbol)
+        event = @key_map.event_for(raw)
+      end
+      if @focus_key && (result = @field_by_key.fetch(@focus_key).handle_event(event, @values.fetch(@focus_key), context))
+        return set_value(@focus_key, result.value, event: event) if result.changed?
+        return transition(:handled, event) if result.handled?
+      end
+
       case event.type
       when :next then focus_next(event: event)
       when :previous then focus_previous(event: event)
@@ -335,7 +349,8 @@ module TermForm
       raise ArgumentError, "values must be a Hash" unless values.is_a?(Hash)
 
       values.each_with_object({}) do |(key, value), result|
-        result[resolve_key(key)] = Support.copy(value)
+        normalized = resolve_key(key)
+        result[normalized] = Support.copy(@field_by_key.fetch(normalized).normalize_value(value))
       end
     end
 
@@ -354,6 +369,10 @@ module TermForm
       raise ArgumentError, "commit token does not match" if token && token != @pending_commit.token
 
       @pending_commit
+    end
+
+    def synchronize_fields!
+      @fields.each { |field| field.sync_value(@values.fetch(field.key)) }
     end
   end
 end
