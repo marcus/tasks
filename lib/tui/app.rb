@@ -517,9 +517,6 @@ module Tui
 
     def handle_key(k)
       return if dispatch_action(k, :global)
-      if suspended_recovery_panel? && ["y", "\e", "\t"].include?(k)
-        return suspended_recovery_key(k)
-      end
       return task_edit_key(k) if task_editing?
 
       case @ui.mode
@@ -529,7 +526,12 @@ module Tui
       when :modal  then modal_key(k)
       when :modal_filter then modal_filter_key(k)
       when :filter then filter_key(k)
-      else              list_key(k)
+      else
+        if suspended_recovery_owns_input? && ["y", "\e", "\t"].include?(k)
+          suspended_recovery_key(k)
+        else
+          list_key(k)
+        end
       end
     end
 
@@ -955,6 +957,13 @@ module Tui
 
     def suspended_recovery_panel?
       @suspended_task_editor && @ui.panel&.kind == :suspended_task_edit
+    end
+
+    # Recovery shortcuts are deliberately a read-mode concern. The retained
+    # editor may coexist with prompts and popup overlays, but those visible
+    # inputs own every byte until they close.
+    def suspended_recovery_owns_input?
+      @ui.mode == :list && suspended_recovery_panel?
     end
 
     def resumable_suspended_editor?

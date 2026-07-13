@@ -489,6 +489,107 @@ class TestApp < Minitest::Test
     end
   end
 
+  def test_prompt_owns_y_text_and_escape_before_suspended_recovery
+    app_on(view: :next, select: "Book flight") do |app|
+      editor = prepare_done_suspended_recovery(app, draft: "prompt-safe draft")
+      copied = []
+
+      Tui::Clipboard.stub(:copy, ->(value) { copied << value; true }) do
+        app.send(:handle_key, "p")
+        assert_equal :prompt, ui(app).mode
+        prefix = app.instance_variable_get(:@input).to_s
+
+        %w[y space text].each_with_index do |text, index|
+          app.send(:handle_key, " ") if index.positive?
+          text.each_char { |key| app.send(:handle_key, key) }
+        end
+        app.send(:handle_key, "\e")
+
+        assert_equal :list, ui(app).mode
+        assert_equal "#{prefix}y space text", app.instance_variable_get(:@input).to_s
+        assert_empty copied
+        assert_same editor, app.instance_variable_get(:@suspended_task_editor)
+        assert_nil ui(app).task_editor
+
+        app.send(:handle_key, "y")
+      end
+
+      assert_equal ["prompt-safe draft"], copied
+    end
+  end
+
+  def test_palette_owns_text_and_escape_before_suspended_recovery
+    app_on(view: :next, select: "Book flight") do |app|
+      editor = prepare_done_suspended_recovery(app, draft: "palette-safe draft")
+      copied = []
+
+      Tui::Clipboard.stub(:copy, ->(value) { copied << value; true }) do
+        app.send(:handle_key, ":")
+        assert_equal :palette, ui(app).mode
+        %w[y d c r].each { |key| app.send(:handle_key, key) }
+        assert_equal "ydcr", ui(app).action_palette.input.to_s
+        app.send(:handle_key, "\e")
+
+        assert_equal :list, ui(app).mode
+        assert_empty copied
+        assert_same editor, app.instance_variable_get(:@suspended_task_editor)
+        assert_nil ui(app).task_editor
+
+        app.send(:handle_key, "y")
+      end
+
+      assert_equal ["palette-safe draft"], copied
+    end
+  end
+
+  def test_modal_owns_y_d_c_r_and_escape_before_suspended_recovery
+    app_on(view: :next, select: "Book flight") do |app|
+      editor = prepare_done_suspended_recovery(app, draft: "modal-safe draft")
+      copied = []
+
+      Tui::Clipboard.stub(:copy, ->(value) { copied << value; true }) do
+        app.send(:handle_key, "?")
+        assert_equal :modal, ui(app).mode
+        %w[y d c r].each { |key| app.send(:handle_key, key) }
+        assert_equal :modal, ui(app).mode
+        app.send(:handle_key, "\e")
+
+        assert_equal :list, ui(app).mode
+        assert_empty copied
+        assert_same editor, app.instance_variable_get(:@suspended_task_editor)
+        assert_nil ui(app).task_editor
+
+        app.send(:handle_key, "y")
+      end
+
+      assert_equal ["modal-safe draft"], copied
+    end
+  end
+
+  def test_form_owns_y_d_c_r_and_escape_before_suspended_recovery
+    app_on(view: :next, select: "Book flight") do |app|
+      editor = prepare_done_suspended_recovery(app, draft: "form-safe draft")
+      copied = []
+
+      Tui::Clipboard.stub(:copy, ->(value) { copied << value; true }) do
+        app.send(:handle_key, "d")
+        assert_equal :form, ui(app).mode
+        %w[y d c r].each { |key| app.send(:handle_key, key) }
+        assert_equal "ydcr", ui(app).form.input.to_s
+        app.send(:handle_key, "\e")
+
+        assert_equal :list, ui(app).mode
+        assert_empty copied
+        assert_same editor, app.instance_variable_get(:@suspended_task_editor)
+        assert_nil ui(app).task_editor
+
+        app.send(:handle_key, "y")
+      end
+
+      assert_equal ["form-safe draft"], copied
+    end
+  end
+
   def test_location_move_out_of_projects_can_resume_from_another_canonical_view
     app_on(view: :projects, select: "Book flight") do |app|
       target_id = app.send(:current_item).id
@@ -1021,6 +1122,27 @@ class TestApp < Minitest::Test
     yield records
     File.write(store.org, dump_fixture(records))
     app.send(:reload_store)
+  end
+
+  def prepare_done_suspended_recovery(app, draft:)
+    target_id = app.send(:current_item).id
+    app.send(:handle_key, "\r")
+    app.send(:handle_key, "\t")
+    editor = ui(app).task_editor
+    editor.form.set_value(:title, draft)
+    small = Struct.new(:winsize).new([7, 46])
+    IO.stub(:console, small) { capture_io { app.send(:paint) } }
+
+    rewrite_records(app) do |records|
+      record = records.find { |candidate| candidate["id"] == target_id }
+      record["state"] = "DONE"
+      record["closed"] = "2026-07-13"
+    end
+
+    assert_equal :list, ui(app).mode
+    assert_equal :suspended_task_edit, ui(app).panel.kind
+    assert_same editor, app.instance_variable_get(:@suspended_task_editor)
+    editor
   end
 
   def test_external_resort_retains_selected_task_by_id
