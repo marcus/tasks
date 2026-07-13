@@ -126,6 +126,30 @@ module Tui
       outcome(:refreshed)
     end
 
+    # A hidden editor must never retain a one-key destructive action. Suspending
+    # keeps every field buffer and durable baseline, but disarms transient
+    # confirmation/revert prompts so read-mode keys cannot accept them.
+    def suspend
+      return outcome(:suspended,
+                     message: "Task no longer exists; local field retained for copy or discard") if missing?
+      if pending_confirmation
+        cancel_confirmation!
+        return outcome(:suspended,
+                       message: "Confirmation cancelled while editing paused; local value retained")
+      end
+      if pending_revert
+        @pending_revert = nil
+        return outcome(:suspended,
+                       message: "Discard prompt cancelled while editing paused; local value retained")
+      end
+      if conflict
+        return outcome(:suspended,
+                       message: "Edit conflict — field changed externally; local value retained")
+      end
+
+      outcome(:suspended, message: "Editing paused; local value retained")
+    end
+
     def confirm!
       confirmation = pending_confirmation
       return outcome(:handled) unless confirmation

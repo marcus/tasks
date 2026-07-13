@@ -186,6 +186,29 @@ class TestTaskEditorSession < Minitest::Test
     end
   end
 
+
+  def test_suspend_disarms_confirmation_and_revert_without_losing_local_values
+    with_editor do |session, _store, org|
+      session.form.focus(:state)
+      session.form.set_value(:state, "DONE")
+      assert session.save.confirmation?
+
+      outcome = session.suspend
+      assert_match(/Confirmation cancelled/, outcome.message)
+      assert_nil session.pending_confirmation
+      assert session.dirty?(:state)
+      assert_equal "NEXT", record(org)["state"]
+
+      session.form.focus(:title)
+      session.form.set_value(:title, "local draft")
+      assert_equal :revert_pending, session.handle("\e").status
+      outcome = session.suspend
+      assert_match(/Discard prompt cancelled/, outcome.message)
+      assert_nil session.pending_revert
+      assert_equal "local draft", session.edit_form.value(:title)
+    end
+  end
+
   def test_state_location_recurrence_and_coupled_date_changes_require_confirmation
     with_editor do |session, _store, org|
       session.form.focus(:state)

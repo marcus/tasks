@@ -396,6 +396,151 @@ class TestApp < Minitest::Test
     end
   end
 
+  def test_deleted_suspended_target_becomes_missing_copyable_and_discardable
+    app_on(view: :agenda, select: "Book flight") do |app|
+      target_id = app.send(:current_item).id
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\t")
+      editor = ui(app).task_editor
+      editor.form.set_value(:title, "recover this deleted draft")
+      small = Struct.new(:winsize).new([7, 46])
+      IO.stub(:console, small) { capture_io { app.send(:paint) } }
+
+      rewrite_records(app) { |records| records.reject! { |record| record["id"] == target_id } }
+
+      assert editor.missing?
+      assert_equal :list, ui(app).mode
+      assert_nil ui(app).task_editor
+      assert_equal :suspended_task_edit, ui(app).panel.kind
+      assert_match(/Task no longer exists/, ui(app).panel.lines.first)
+      assert_match(/cop(?:y|ies).*discard/, app.instance_variable_get(:@flash))
+
+      # Widening and Tab cannot activate or confirm the hidden missing session.
+      wide = Struct.new(:winsize).new([18, 80])
+      IO.stub(:console, wide) { app.send(:handle_key, "\t") }
+      assert_equal :list, ui(app).mode
+      assert_match(/y copies.*esc discards/, app.instance_variable_get(:@flash))
+
+      copied = nil
+      Tui::Clipboard.stub(:copy, ->(value) { copied = value; true }) do
+        app.send(:handle_key, "y")
+      end
+      assert_equal "recover this deleted draft", copied
+      assert editor.missing?
+
+      app.send(:handle_key, "\e")
+      assert_nil app.instance_variable_get(:@suspended_task_editor)
+      assert_nil ui(app).panel
+      assert_match(/discarded local draft/, app.instance_variable_get(:@flash))
+
+      app.send(:handle_key, "\r")
+      replacement_id = app.send(:current_item).id
+      IO.stub(:console, wide) { app.send(:handle_key, "\t") }
+      assert_equal :task_edit, ui(app).mode
+      refute_same editor, ui(app).task_editor
+      assert_equal replacement_id, ui(app).task_editor.target_id
+    end
+  end
+
+  def test_confirmation_is_cancelled_on_suspend_and_rearmed_visibly_after_resume
+    app_on(view: :next, select: "Book flight") do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\t")
+      editor = ui(app).task_editor
+      editor.form.focus(:state)
+      editor.form.set_value(:state, "DONE")
+      app.send(:handle_key, "\x13")
+      assert editor.pending_confirmation
+
+      small = Struct.new(:winsize).new([7, 46])
+      IO.stub(:console, small) { capture_io { app.send(:paint) } }
+      assert_nil editor.pending_confirmation
+      assert editor.dirty?(:state)
+      assert_match(/Confirmation cancelled/, app.instance_variable_get(:@flash))
+
+      # Read-mode y may run its visible list action, but cannot confirm DONE.
+      Tui::Clipboard.stub(:copy, true) { app.send(:handle_key, "y") }
+      task = app.instance_variable_get(:@store).items.find { |item| item.id == editor.target_id }
+      assert_equal "NEXT", task.state
+
+      wide = Struct.new(:winsize).new([18, 80])
+      IO.stub(:console, wide) { app.send(:handle_key, "\t") }
+      assert_same editor, ui(app).task_editor
+      assert_match(/Confirmation cancelled/, app.instance_variable_get(:@flash))
+      assert_nil editor.pending_confirmation
+
+      app.send(:handle_key, "\x13")
+      assert editor.pending_confirmation
+      assert_match(/Mark this task done.*y accepts.*n cancels/,
+                   app.instance_variable_get(:@task_edit_message))
+    end
+  end
+
+  def test_revert_prompt_is_cancelled_on_suspend_and_must_be_rearmed
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\t")
+      editor = ui(app).task_editor
+      editor.form.set_value(:title, "keep this draft")
+      app.send(:handle_key, "\e")
+      assert_equal :title, editor.pending_revert
+
+      small = Struct.new(:winsize).new([7, 46])
+      IO.stub(:console, small) { capture_io { app.send(:paint) } }
+      assert_nil editor.pending_revert
+      assert_equal "keep this draft", editor.edit_form.value(:title)
+      assert_match(/Discard prompt cancelled/, app.instance_variable_get(:@flash))
+
+      # Escape is now the visible read-panel action, not a hidden second revert.
+      app.send(:handle_key, "\e")
+      assert_nil ui(app).panel
+      assert_equal "keep this draft", editor.edit_form.value(:title)
+
+      app.send(:handle_key, "\r")
+      wide = Struct.new(:winsize).new([18, 80])
+      IO.stub(:console, wide) { app.send(:handle_key, "\t") }
+      assert_same editor, ui(app).task_editor
+      assert_match(/Discard prompt cancelled/, app.instance_variable_get(:@flash))
+
+      app.send(:handle_key, "\e")
+      assert_equal :title, editor.pending_revert
+      assert_equal "keep this draft", editor.edit_form.value(:title)
+      app.send(:handle_key, "\e")
+      assert_nil editor.pending_revert
+      refute editor.dirty?(:title)
+    end
+  end
+
+  def test_conflict_guidance_audits_that_local_value_is_retained
+    app_on(view: :agenda, select: "Book flight") do |app|
+      target_id = app.send(:current_item).id
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\t")
+      editor = ui(app).task_editor
+      editor.form.set_value(:title, "local conflicting title")
+      rewrite_records(app) do |records|
+        records.find { |record| record["id"] == target_id }["title"] = "external title"
+      end
+
+      app.send(:handle_key, "\x13")
+
+      refute_nil editor.conflict
+      assert_equal "local conflicting title", editor.edit_form.value(:title)
+      assert_match(/Edit conflict.*local value retained/,
+                   app.instance_variable_get(:@task_edit_message))
+
+      small = Struct.new(:winsize).new([7, 46])
+      IO.stub(:console, small) { capture_io { app.send(:paint) } }
+      assert_match(/Edit conflict.*local value retained/,
+                   app.instance_variable_get(:@flash))
+      wide = Struct.new(:winsize).new([18, 80])
+      IO.stub(:console, wide) { app.send(:handle_key, "\t") }
+      assert_same editor, ui(app).task_editor
+      assert_match(/Edit conflict.*local value retained/,
+                   app.instance_variable_get(:@flash))
+    end
+  end
+
   def test_read_panel_resize_changes_named_preference_without_identity_change
     app_on(view: :agenda, select: "Book flight") do |app|
       app.send(:handle_key, "\r")
@@ -448,6 +593,15 @@ class TestApp < Minitest::Test
       assert_equal "local recoverable draft", editor.edit_form.value(:title)
       refute_equal target_id, ui(app).selected_id
       assert_equal target_id, ui(app).panel.identity
+      assert_match(/Task no longer exists.*y copies.*esc discards/,
+                   app.instance_variable_get(:@flash))
+
+      copied = nil
+      Tui::Clipboard.stub(:copy, ->(value) { copied = value; true }) do
+        app.send(:handle_key, "y")
+      end
+      assert_equal "local recoverable draft", copied
+      assert_equal :task_edit, ui(app).mode
 
       app.send(:handle_key, "\e")
       assert_equal :list, ui(app).mode

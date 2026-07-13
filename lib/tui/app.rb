@@ -153,10 +153,17 @@ module Tui
     def reload_store
       overlay_mode = @ui.mode if %i[form palette task_edit].include?(@ui.mode)
       @store.reload!
-      edit_outcome = @ui.task_editor&.refresh if overlay_mode == :task_edit
+      editor = @ui.task_editor || @suspended_task_editor
+      edit_outcome = editor&.refresh
       rows
       if overlay_mode == :task_edit
-        @task_edit_message = edit_outcome&.message
+        @task_edit_message = task_edit_outcome_message(edit_outcome)
+        if edit_outcome&.missing?
+          @task_edit_message = "#{@task_edit_message} · y copies field · esc discards editor"
+          flash(@task_edit_message)
+        end
+      elsif @suspended_task_editor
+        reconcile_suspended_editor(edit_outcome)
       else
         refresh_detail_panel if detail_panel?
       end
@@ -510,6 +517,7 @@ module Tui
 
     def handle_key(k)
       return if dispatch_action(k, :global)
+      return suspended_missing_key(k) if suspended_editor_missing? && ["y", "\e", "\t"].include?(k)
       return task_edit_key(k) if task_editing?
 
       case @ui.mode
@@ -577,8 +585,11 @@ module Tui
     def task_edit_key(k)
       return grow_task_panel if k == "\x0b"
       return shrink_task_panel if k == "\x0c"
-      if @ui.task_editor&.missing? && ["\e", TaskEditorSession::CTRL_O].include?(k)
-        return close_task_edit(message: "Task no longer exists; local edit discarded")
+      if @ui.task_editor&.missing?
+        return copy_missing_editor_field if k == "y"
+        if ["\e", TaskEditorSession::CTRL_O].include?(k)
+          return close_task_edit(message: "Task no longer exists; local edit discarded")
+        end
       end
 
       process_task_edit_outcome(@ui.task_editor&.handle(k))
@@ -735,6 +746,9 @@ module Tui
       end
 
       if @suspended_task_editor&.target_id != item.id && @suspended_task_editor&.dirty?
+        if @suspended_task_editor.missing?
+          return flash("deleted task draft remains — y copies the field · esc discards it")
+        end
         return flash("unsaved task draft belongs to another row — reselect it to resume")
       end
       resumed = @suspended_task_editor&.target_id == item.id
@@ -751,8 +765,10 @@ module Tui
       @ui.task_editor = editor
       @ui.panel = panel || RightPanel.new(title: "task · editing", lines: [], kind: :task_edit,
                                           identity: editor.target_id)
-      @task_edit_message = nil
+      @task_edit_message = nil unless resumed
       @ui.mode = :task_edit
+      refresh_task_edit_panel(layout: layout)
+      flash(@task_edit_message) if resumed && @task_edit_message
     end
 
     def grow_task_panel = resize_task_panel(1)
@@ -920,15 +936,64 @@ module Tui
 
     def suspend_task_edit_for_layout(layout)
       editor = @ui.task_editor
+      suspension = editor.suspend
       @suspended_task_panel = @ui.panel
       @ui.task_editor = nil
       @suspended_task_editor = editor
-      @task_edit_message = nil
+      @task_edit_message = suspension.message
       show_detail
       required_height, required_width = ScreenLayout.minimum_edit_terminal_size(
         footer_rows: layout.footer_size
       )
-      flash("editing paused — resize to at least #{required_width}×#{required_height}; Tab resumes the draft")
+      flash("editing paused — resize to at least #{required_width}×#{required_height}; " \
+            "Tab resumes · #{@task_edit_message}")
+    end
+
+    def suspended_editor_missing? = @suspended_task_editor&.missing?
+
+    def reconcile_suspended_editor(outcome)
+      @task_edit_message = task_edit_outcome_message(outcome)
+      if outcome&.missing?
+        value = @suspended_task_editor.copy_value.to_s
+        @ui.panel = RightPanel.new(
+          title: "task draft · target deleted",
+          lines: ["Task no longer exists; local field retained.",
+                  "Draft: #{value}", "y copies field · esc discards draft"],
+          kind: :suspended_task_edit, identity: @suspended_task_editor.target_id,
+        )
+        flash("task deleted while editing was paused — y copies the field · esc discards the draft")
+      elsif detail_panel?
+        refresh_detail_panel
+      end
+    end
+
+    def suspended_missing_key(key)
+      case key
+      when "y"
+        value = @suspended_task_editor.copy_value.to_s
+        if Clipboard.copy(value)
+          flash("copied local field from deleted task; esc discards the draft")
+        else
+          flash("no clipboard tool found; local deleted-task draft is still retained")
+        end
+      when "\e"
+        @suspended_task_editor = nil
+        @suspended_task_panel = nil
+        @task_edit_message = nil
+        close_panel
+        flash("discarded local draft for deleted task")
+      when "\t"
+        flash("deleted task draft remains — y copies the field · esc discards it")
+      end
+    end
+
+    def copy_missing_editor_field
+      value = @ui.task_editor.copy_value.to_s
+      if Clipboard.copy(value)
+        flash("copied local field from deleted task; esc discards the editor")
+      else
+        flash("no clipboard tool found; local deleted-task edit is still retained")
+      end
     end
 
     def refresh_task_edit_panel(layout:)
@@ -953,7 +1018,8 @@ module Tui
     def process_task_edit_outcome(outcome)
       return unless outcome
 
-      @task_edit_message = outcome.message
+      @task_edit_message = task_edit_outcome_message(outcome)
+      flash(@task_edit_message) if outcome.missing? || outcome.conflict?
       if outcome.patch_result&.changed?
         target_id = @ui.task_editor.target_id
         @ui.selected_id = target_id
@@ -973,6 +1039,14 @@ module Tui
       elsif outcome.status == :confirmation
         @task_edit_message = "#{outcome.message} · y accepts · n cancels"
       end
+    end
+
+    def task_edit_outcome_message(outcome)
+      return unless outcome
+      return "Task no longer exists; local field retained for copy or discard" if outcome.missing?
+      return "Edit conflict — field changed externally; local value retained" if outcome.conflict?
+
+      outcome.message
     end
 
     def close_task_edit(message: nil, keep_panel: true)
