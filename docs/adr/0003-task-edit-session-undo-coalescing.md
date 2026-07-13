@@ -1,6 +1,6 @@
 # ADR-0003: Coalesce one task-edit session into a usable undo step
 
-Status: Proposed
+Status: Accepted
 
 Date: 2026-07-13
 

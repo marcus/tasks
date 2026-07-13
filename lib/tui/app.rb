@@ -42,6 +42,7 @@ module Tui
     PROMPT_MAX  = 5    # prompt input grows to at most this many lines
     PASTE_START = "\e[200~"
     PASTE_END   = "\e[201~"
+    ESCAPE_WAIT = 0.01 # distinguish a lone Escape from a split CSI sequence
 
     # The system-context string handed to any agent: the repo's AGENTS.md
     # conventions plus the absolute file locations for this run. Provider-
@@ -365,17 +366,31 @@ module Tui
     # -- input ---------------------------------------------------------------
 
     def read_keys
-      bytes = begin
-        # force UTF-8; a 128-byte read can split a multibyte char (e.g. a
-        # pasted em-dash), so decode through a tiny pending-byte buffer instead
-        # of scrubbing valid trailing bytes away.
-        $stdin.read_nonblock(4096)
-      rescue IO::WaitReadable, EOFError
-        return
+      return unless read_key_chunk
+
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + ESCAPE_WAIT
+      loop do
+        drain_key_data(flush_incomplete_escape: false)
+        break unless @key_data == "\e"
+
+        remaining = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        break unless remaining.positive? && IO.select([$stdin], nil, nil, remaining)
+        break unless read_key_chunk
       end
+
+      # A still-lone Escape has now had the minimum disambiguation window. CSI
+      # prefixes longer than one byte remain buffered for the next readable
+      # chunk instead of becoming Escape plus literal suffix text.
+      drain_key_data if @key_data == "\e"
+    end
+
+    def read_key_chunk
+      bytes = $stdin.read_nonblock(4096)
       @input_bytes << bytes
       @key_data << drain_utf8_input
-      drain_key_data
+      true
+    rescue IO::WaitReadable, EOFError
+      false
     end
 
     def drain_utf8_input
@@ -425,7 +440,7 @@ module Tui
       end
     end
 
-    def drain_key_data
+    def drain_key_data(flush_incomplete_escape: true)
       until @key_data.empty?
         if @key_data.start_with?(PASTE_START)
           end_at = @key_data.index(PASTE_END, PASTE_START.length)
@@ -436,6 +451,8 @@ module Tui
         elsif @key_data.length > 1 && PASTE_START.start_with?(@key_data)
           break
         elsif @key_data.start_with?("\e")
+          break if !flush_incomplete_escape && incomplete_escape_sequence?
+
           seq = @key_data[/\A\e\[[0-9;?]*[A-Za-z~]/] || @key_data[/\A\eO[A-Za-z]/]
           seq ||= "\e"
           handle_key(seq)
@@ -446,6 +463,12 @@ module Tui
           @key_data = @key_data[char.length..] || +""
         end
       end
+    end
+
+    def incomplete_escape_sequence?
+      @key_data == "\e" ||
+        @key_data.match?(/\A\e\[[0-9;?]*\z/) ||
+        @key_data == "\eO"
     end
 
     def handle_paste(text)

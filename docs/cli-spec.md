@@ -82,14 +82,67 @@ detail-panel slots like `panel_title`, `detail_label`, `description`, `link`, `l
 `tasks config` prints the resolved paths, `urgent_days`, `max_depth`, `theme`
 (+ any `color.*` and link overrides), and where each came from.
 
-**TUI interaction.** `Tab` focuses the agent prompt. `:` opens the searchable,
-context-aware action palette; typing filters the available actions, the arrow
-keys choose one, Return runs it, and Escape cancels. Direct shortcuts and palette
-entries invoke the same registered actions. Return opens a fixed-width task-detail
-panel on the right in every view; list navigation stays active and refreshes the
-panel for each newly selected task. Return or Escape closes it. `x` previews the number of completed
-roots and descendants that would move to `archive.jsonl`; `y` confirms, while
-`n` or Escape cancels without writing.
+**TUI interaction.** With no task panel open, `Tab` focuses the agent prompt.
+`:` opens the searchable, context-aware action palette; typing filters the
+available actions, the arrow keys choose one, Return runs it, and Escape
+cancels. Direct shortcuts and palette entries invoke the same registered
+actions. Return opens the read-only task-detail panel on the right in every
+view; list navigation stays active and refreshes the panel for each newly
+selected task. Return or Escape closes it. The existing `d` date and `r`
+recurrence quick actions remain available.
+
+**Editable task-panel contract (implementation in progress).** With a read-only
+task panel open, `Tab` enters editing at the first editable field and
+`Shift-Tab` enters at the last. In edit mode, those keys traverse in their
+respective directions. Leaving a changed field validates and immediately saves
+that semantic field before focus moves; an unchanged field moves without IO.
+Validation errors and conflicts retain focus and the pending, copyable buffer.
+Opening a picker, scrolling, resizing the terminal, or resizing the panel is
+not blur and never saves.
+
+Edit-mode keys are fixed as follows:
+
+| Key | Contract |
+|---|---|
+| `Tab` / `Shift-Tab` | Validate and save on blur, then move forward/backward only after success. |
+| `Ctrl-S` | Save the focused field in place. |
+| `Ctrl-O` | Save the focused field if needed and finish editing, returning to the read panel. |
+| `Ctrl-K` / `Ctrl-L` | Grow/shrink through compact → standard → wide → focus without blur; in task-edit text fields `Ctrl-K` intentionally shadows kill-to-end, while the agent prompt keeps its current `Ctrl-K`. |
+| `Escape` | Close an inner picker first. A dirty field requires a confirming second Escape before only that buffer is reverted; a clean field leaves edit mode. |
+
+The key reader treats `Shift-Tab` (`\e[Z`) and other CSI keys as complete
+sequences, including when input arrives across reads, so a partial sequence
+cannot become a destructive lone Escape. The editor is bound to the selected
+task's stable ID. External changes to the same owned semantic slice conflict;
+unrelated task or same-task field changes may be adopted without overwriting an
+active buffer. Missing targets are never rebound to a neighboring row.
+
+Field ownership and order are contractual: Title owns `title`; Priority owns
+`priority`; Deferred owns only the `defer` tag; Scheduled and Deadline each own
+their date plus documented INBOX/recurrence side effects; Recurrence owns
+`recur`; Contexts owns `@` tags; Tags owns other non-`defer` tags; Notes owns
+exact raw `body`; Location owns parent/subtree placement; and State owns
+`state`, `closed`, recurrence completion, and documented lifecycle effects.
+Location is the late Placement field after Notes and State is last, keeping
+high-impact changes out of ordinary traversal.
+
+Panel sizing uses named modes with content-cell breakpoints: 48 or more cells
+may render short labels and controls inline; 32–47 cells stack them; 32 cells is
+the editable minimum. Below that, the layout promotes to focus mode when it can
+supply the minimum, otherwise it stays read-only and reports the required
+width. Resize preserves task identity, focus, buffer, cursor, errors, picker
+state, scroll, and edit-session identity.
+
+Every successful blur is durable immediately. Consecutive writes in one edit
+session may coalesce into one undo entry only when their non-nil session key
+matches and the new exact `before` bytes equal the journal tip's exact `after`
+bytes. CLI/external writes, undo/redo, reopening the editor, or any byte mismatch
+breaks the group. If a successful Location or State patch removes the task from
+the current view, the app immediately exits editing, selects a deterministic
+nearby row, returns to the read panel or list, and explains where the task went.
+
+`x` previews the number of completed roots and descendants that would move to
+`archive.jsonl`; `y` confirms, while `n` or Escape cancels without writing.
 
 ### LLM agent settings
 

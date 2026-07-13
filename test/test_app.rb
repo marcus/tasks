@@ -176,6 +176,42 @@ class TestApp < Minitest::Test
     end
   end
 
+  def test_panel_closed_tab_focuses_prompt_without_rebinding_selection
+    app_on(view: :agenda, select: "Book flight") do |app|
+      selected_id = app.send(:current_item).id
+
+      app.send(:handle_key, "\t")
+
+      assert_equal :prompt, ui(app).mode
+      assert_equal selected_id, ui(app).selected_id
+      assert_nil ui(app).panel
+    end
+  end
+
+  def test_shift_tab_csi_split_after_escape_is_dispatched_as_one_key
+    fake = FakeAgent.new(running: false)
+    app_with(agent: fake, input: "") do |app|
+      dispatched = []
+      chunks = ["\e".b, "[Z".b]
+      reader = Object.new
+      reader.define_singleton_method(:read_nonblock) { |_size| chunks.shift }
+      original_stdin = $stdin
+      $stdin = reader
+      begin
+        IO.stub(:select, [[reader], [], []]) do
+          app.stub(:handle_key, ->(key) { dispatched << key }) do
+            app.send(:read_keys)
+          end
+        end
+      ensure
+        $stdin = original_stdin
+      end
+
+      assert_equal ["\e[Z"], dispatched
+      assert_equal "", app.instance_variable_get(:@key_data)
+    end
+  end
+
   def test_extracted_state_has_no_shadow_app_ivars
     fake = FakeAgent.new(running: false)
     app_with(agent: fake, input: "") do |app|
@@ -349,6 +385,19 @@ class TestApp < Minitest::Test
       assert_equal :form, ui(app).mode
       assert_equal :recurrence, ui(app).form.kind
       assert_equal "+1m", ui(app).form.input
+    end
+  end
+
+  def test_date_and_recurrence_quick_actions_freeze_the_selected_task_id
+    app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE) do |app|
+      selected_id = app.send(:current_item).id
+
+      app.send(:handle_key, "d")
+      assert_equal [:date, selected_id], [ui(app).form.kind, ui(app).form.target_id]
+
+      app.send(:handle_key, "\e")
+      app.send(:handle_key, "r")
+      assert_equal [:recurrence, selected_id], [ui(app).form.kind, ui(app).form.target_id]
     end
   end
 

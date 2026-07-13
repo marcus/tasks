@@ -1,6 +1,6 @@
 # Plan: editable task panel and reusable terminal forms
 
-Status: proposed for review
+Status: in progress
 
 Date: 2026-07-13
 
@@ -45,8 +45,8 @@ the API.
 
 Review on 2026-07-13 settled the keys: `Ctrl-K`/`Ctrl-L` directional resize,
 `Ctrl-O` for finish editing, and a confirming second `Escape` before an unsaved
-field buffer is discarded. The undo-coalescing policy remains a recommendation
-pending ADR-0003 acceptance.
+field buffer is discarded. ADR-0003 is accepted: immediately durable field
+writes coalesce only within one byte-contiguous edit session.
 
 ## Current baseline
 
@@ -745,26 +745,26 @@ the changed slice run before the full suite.
 | High-impact blur surprises the user | Put location/state late and require a concrete consequence confirmation. |
 | Early extraction freezes a weak API | Keep TermForm embedded, prove a standalone use, and defer gem publication. |
 
-## Review checklist
+## Accepted review decisions
 
 This consolidated plan incorporates the independent review of both forked plan
 drafts.
 
-Decided 2026-07-13: `Ctrl-K` grows and `Ctrl-L` shrinks the panel through the
+Accepted 2026-07-13: `Ctrl-K` grows and `Ctrl-L` shrinks the panel through the
 compact → standard → wide → focus order (task-edit text fields trade away
 readline kill-to-end, keeping `Ctrl-U`/`Ctrl-W`; the agent prompt keeps
 `Ctrl-K`); `Ctrl-O` finishes editing, since the `:` palette is unreachable
 while a field owns focus; reverting an unsaved field takes a confirming second
 `Escape`.
 
-Before implementation, confirm or amend:
-
-- 32 panel-content cells as the editable minimum and 48 as the inline-layout
+- 32 panel-content cells is the editable minimum; 48 is the inline-layout
   breakpoint.
-- session-based undo coalescing as specified in ADR-0003.
-- the field order, especially Location near the end and State last.
-- whether editing a task that leaves the current view should exit immediately
-  after the successful patch (recommended) or keep an inert completion screen.
+- Session undo coalescing follows accepted ADR-0003.
+- Location remains near the end of traversal in its own Placement group; State
+  remains last.
+- If a successful Location or State patch removes the task from the current
+  view, editing exits immediately to the read panel or list after selecting a
+  deterministic nearby row. There is no inert completion screen.
 
 All other interaction decisions above—including read-by-default, contextual
 Tab, save-on-blur, and `TermForm`—reflect the approved direction.

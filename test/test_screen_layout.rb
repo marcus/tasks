@@ -80,6 +80,23 @@ class TestScreenLayout < Minitest::Test
                  "panel width depends on terminal width, not content or height"
   end
 
+  def test_panel_content_widths_characterize_editor_breakpoint_boundaries
+    expected = {
+      87 => 31,
+      89 => 32,
+      126 => 47,
+      129 => 48,
+    }
+
+    expected.each do |terminal_width, content_width|
+      layout = Tui::ScreenLayout.new(
+        width: terminal_width, height: 24, footer: [], selected: 0, panel: true
+      )
+      assert_equal content_width, layout.panel_content_width
+      assert_operator layout.list_width, :>=, Tui::ScreenLayout::MIN_LIST_WIDTH
+    end
+  end
+
   def test_frame_consumes_layout_body_and_viewport_without_recomputing
     rows = (0..12).map { |i| Tui::Views::Row.new("row #{i}", Object.new) }
     layout = Tui::ScreenLayout.new(width: 42, height: 12, footer: %w[a b c], selected: 9)
