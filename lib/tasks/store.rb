@@ -6,11 +6,14 @@ require "securerandom"
 require "set"
 require_relative "atomic"
 require_relative "check"
+require_relative "edit_snapshot"
 require_relative "format"
 require_relative "journal"
 require_relative "links"
+require_relative "patch_result"
 require_relative "quadrants"
 require_relative "recur"
+require_relative "task_patch"
 require_relative "tree"
 
 module Tasks
@@ -312,6 +315,94 @@ module Tasks
       with_lock { archive_plan(fresh_records(@org)).preview }
     end
 
+    # Build the editor's exact values and semantic conflict baselines from the
+    # live file while holding the same lock mutations use. The target may be a
+    # stable id, an Item, or any object responding to #id. Missing ids never
+    # fall back to a line number: an edit session must not retarget another row.
+    def edit_snapshot(target)
+      with_lock do
+        records = fresh_records(@org)
+        ri = locate_stable_index(records, stable_id(target))
+        ri && build_edit_snapshot(records, ri)
+      end
+    end
+
+    # Apply one field-owned semantic change. Every outcome is typed; only :ok
+    # writes or records history, and the write/check/journal sequence rolls back
+    # to the exact prior bytes on any validation or writer failure.
+    def patch_task!(patch)
+      unless patch.respond_to?(:id) && patch.respond_to?(:field) &&
+             patch.respond_to?(:value) && patch.respond_to?(:expected)
+        return PatchResult.new(status: :invalid, errors: ["expected a Tasks::TaskPatch"])
+      end
+
+      with_lock do
+        @last_rollback = nil
+        before = snapshot
+        records = fresh_records(@org)
+        ri = locate_stable_index(records, patch.id)
+        return PatchResult.new(status: :missing) unless ri
+
+        current = build_edit_snapshot(records, ri)
+        field = normalize_patch_field(patch.field)
+        unless EditSnapshot::FIELDS.include?(field)
+          return PatchResult.new(status: :invalid, snapshot: current,
+                                 errors: ["unknown editable field #{patch.field.inspect}"])
+        end
+
+        preflight = Check.check(@org)
+        unless preflight.ok?
+          return PatchResult.new(status: :invalid, snapshot: current,
+                                 errors: preflight.errors.map(&:last))
+        end
+
+        actual = current.expected_for(field)
+        unless semantic_patch_equal?(field, actual, patch.expected)
+          return PatchResult.new(status: :conflict, snapshot: current)
+        end
+
+        original_records = Format.dump(records)
+        applied = apply_semantic_patch(records, ri, field, patch.value)
+        if applied[:status] != :ok
+          return PatchResult.new(status: applied[:status], snapshot: current,
+                                 errors: applied[:errors] || [], summary: applied[:summary])
+        end
+
+        if Format.dump(records) == original_records
+          return PatchResult.new(status: :no_change, snapshot: current,
+                                 summary: applied[:summary])
+        end
+
+        label = "edit #{field}: #{current.title}"
+        begin
+          write_records(@org, records)
+          if (reason = post_write_failure)
+            @last_rollback = reason
+            restore(before)
+            return PatchResult.new(status: :invalid,
+                                   snapshot: restored_edit_snapshot(patch.id),
+                                   errors: [reason])
+          end
+          after = snapshot
+          @journal.record(label: label, before: before, after: after)
+          reload!
+          fresh_ri = locate_stable_index(@records, patch.id)
+          PatchResult.new(
+            status: :ok,
+            snapshot: fresh_ri && build_edit_snapshot(@records, fresh_ri),
+            touched_ids: applied[:touched_ids],
+            summary: applied[:summary]
+          )
+        rescue StandardError => e
+          @last_rollback = e.message
+          restore(before)
+          PatchResult.new(status: :invalid,
+                          snapshot: restored_edit_snapshot(patch.id),
+                          errors: [e.message])
+        end
+      end
+    end
+
     # Ensure the item carries a stable id, returning it. Idempotent: an item
     # that already has one is returned untouched (no write). Post-migration ids
     # always exist; this is the repair path for a record somehow missing one.
@@ -417,6 +508,325 @@ module Tasks
       i if i && records[i]["type"] == "task" && records[i]["title"] == item.title
     end
 
+    def stable_id(target)
+      target.respond_to?(:id) ? target.id : target
+    end
+
+    def locate_stable_index(records, id)
+      return nil unless id.is_a?(String) && !id.empty?
+      records.index { |record| record["type"] == "task" && record["id"] == id }
+    end
+
+    def normalize_patch_field(field)
+      field = field.to_sym
+      field == :recur ? :recurrence : field
+    rescue NoMethodError
+      field
+    end
+
+    def semantic_tags(rec)
+      tags = rec["tags"]
+      tags.is_a?(Array) ? tags.select { |tag| tag.is_a?(String) } : []
+    end
+
+    def build_edit_snapshot(records, ri)
+      rec = records[ri]
+      tags = semantic_tags(rec)
+      contexts = tags.select { |tag| tag.start_with?("@") }
+      ordinary_tags = tags.reject { |tag| tag.start_with?("@") || tag == DEFER_TAG }
+      parent = records.find { |record| record["id"] == rec["parent"] }
+      values = {
+        title: rec["title"],
+        priority: rec["priority"],
+        deferred: tags.include?(DEFER_TAG),
+        scheduled: to_date(rec["scheduled"]),
+        deadline: to_date(rec["deadline"]),
+        recurrence: rec["recur"],
+        contexts: contexts,
+        tags: ordinary_tags,
+        body: rec["body"].is_a?(String) ? rec["body"] : "",
+        location: rec["parent"],
+        state: rec["state"],
+      }
+      EditSnapshot.new(
+        id: rec["id"], title: values[:title], priority: values[:priority],
+        deferred: values[:deferred], scheduled: values[:scheduled],
+        deadline: values[:deadline], recurrence: values[:recurrence],
+        contexts: contexts, tags: ordinary_tags, body: values[:body],
+        parent: rec["parent"], state: rec["state"], closed: to_date(rec["closed"]),
+        baselines: values,
+        fingerprints: {
+          location: location_fingerprint(records, ri),
+          state: lifecycle_fingerprint(records, ri),
+        },
+        metadata: {
+          line: rec["line"],
+          parent_type: parent && parent["type"],
+          parent_title: parent && parent["title"],
+          subtree_ids: records[ri...subtree_end(records, ri)].filter_map { |record| record["id"] },
+        }
+      )
+    end
+
+    def location_fingerprint(records, ri)
+      rec = records[ri]
+      rj = subtree_end(records, ri)
+      structural = records[ri...rj].map do |record|
+        [record["type"], record["id"], record["parent"]]
+      end
+      siblings = records.filter_map do |record|
+        record["id"] if record["parent"] == rec["parent"]
+      end
+      semantic_digest([rec["parent"], siblings, structural])
+    end
+
+    def lifecycle_fingerprint(records, ri)
+      rj = subtree_end(records, ri)
+      owned = records[ri...rj].filter_map do |record|
+        next unless record["type"] == "task"
+        tags = semantic_tags(record)
+        [record["id"], record["parent"], record["state"], record["closed"],
+         record["scheduled"], record["deadline"], record["recur"],
+         tags.include?(DEFER_TAG)]
+      end
+      semantic_digest(owned)
+    end
+
+    def semantic_digest(value)
+      Digest::SHA256.hexdigest(JSON.generate(value))
+    end
+
+    def semantic_patch_equal?(field, actual, expected)
+      case field
+      when :scheduled, :deadline
+        normalized = normalize_patch_date(expected)
+        normalized != :invalid && actual == normalized
+      when :contexts, :tags
+        actual == Array(expected)
+      else
+        actual == expected
+      end
+    end
+
+    def normalize_patch_date(value)
+      return nil if value.nil? || value == ""
+      return value if value.is_a?(Date)
+      return Date.iso8601(value) if value.is_a?(String)
+      :invalid
+    rescue ArgumentError, Date::Error
+      :invalid
+    end
+
+    def restored_edit_snapshot(id)
+      records = @records || fresh_records(@org)
+      ri = locate_stable_index(records, id)
+      ri && build_edit_snapshot(records, ri)
+    end
+
+    def apply_semantic_patch(records, ri, field, value)
+      case field
+      when :title      then patch_title(records, ri, value)
+      when :priority   then patch_priority(records, ri, value)
+      when :deferred   then patch_deferred(records, ri, value)
+      when :scheduled  then patch_date(records, ri, value, :scheduled)
+      when :deadline   then patch_date(records, ri, value, :deadline)
+      when :recurrence then patch_recurrence(records, ri, value)
+      when :contexts   then patch_tag_slice(records, ri, value, :contexts)
+      when :tags       then patch_tag_slice(records, ri, value, :tags)
+      when :body       then patch_body(records, ri, value)
+      when :location   then patch_location(records, ri, value)
+      when :state      then patch_state(records, ri, value)
+      end
+    end
+
+    def patch_ok(rec, touched_ids: nil, summary: nil)
+      { status: :ok, touched_ids: touched_ids || [rec["id"]], summary: summary }
+    end
+
+    def patch_invalid(message)
+      { status: :invalid, errors: [message] }
+    end
+
+    def patch_title(records, ri, value)
+      return patch_invalid("title must be text") unless value.is_a?(String)
+      title = utf8(value).strip
+      return patch_invalid("title cannot be blank") if title.empty?
+      records[ri]["title"] = title
+      patch_ok(records[ri])
+    end
+
+    def patch_priority(records, ri, value)
+      return patch_invalid("priority must be A, B, C, or nil") unless value.nil? || Check::PRIORITIES.include?(value)
+      value ? records[ri]["priority"] = value : records[ri].delete("priority")
+      patch_ok(records[ri])
+    end
+
+    def patch_deferred(records, ri, value)
+      return patch_invalid("deferred must be true or false") unless value == true || value == false
+      rec = records[ri]
+      tags = semantic_tags(rec)
+      if value
+        tags << DEFER_TAG unless tags.include?(DEFER_TAG)
+      else
+        tags.delete(DEFER_TAG)
+      end
+      replace_optional(rec, "tags", tags)
+      patch_ok(rec)
+    end
+
+    def patch_date(records, ri, value, kind)
+      date = normalize_patch_date(value)
+      return patch_invalid("#{kind} must be a date or nil") if date == :invalid
+      rec = records[ri]
+      key = kind.to_s
+      if date
+        rec[key] = date.iso8601
+        rec["state"] = "TODO" if rec["state"] == "INBOX"
+      else
+        rec.delete(key)
+        rec.delete("recur") unless rec["scheduled"] || rec["deadline"]
+      end
+      patch_ok(rec)
+    end
+
+    def patch_recurrence(records, ri, value)
+      rec = records[ri]
+      return patch_invalid("recurrence requires a scheduled date or deadline") unless rec["scheduled"] || rec["deadline"]
+      if value.nil? || value == :off
+        rec.delete("recur")
+      else
+        return patch_invalid("invalid recurrence cookie") unless value.is_a?(String) && Recur.cookie?(value)
+        rec["recur"] = value
+      end
+      patch_ok(rec)
+    end
+
+    def patch_tag_slice(records, ri, value, slice)
+      return patch_invalid("#{slice} must be a list of tags") unless value.is_a?(Array) && value.all? { |tag| tag.is_a?(String) }
+      proposed = value.map { |tag| utf8(tag) }
+      valid = if slice == :contexts
+                proposed.all? { |tag| tag.start_with?("@") && tag.length > 1 }
+              else
+                proposed.none? { |tag| tag.start_with?("@") || tag == DEFER_TAG || tag.empty? }
+              end
+      return patch_invalid("invalid #{slice} tag") unless valid
+      return patch_invalid("duplicate #{slice} tag") unless proposed.uniq == proposed
+
+      rec = records[ri]
+      owns = if slice == :contexts
+               ->(tag) { tag.start_with?("@") }
+             else
+               ->(tag) { !tag.start_with?("@") && tag != DEFER_TAG }
+             end
+      rec["tags"] = merge_owned_slice(semantic_tags(rec), proposed, &owns)
+      replace_optional(rec, "tags", rec["tags"])
+      patch_ok(rec)
+    end
+
+    def merge_owned_slice(existing, proposed)
+      merged = []
+      inserted = false
+      existing.each do |tag|
+        if yield(tag)
+          unless inserted
+            merged.concat(proposed)
+            inserted = true
+          end
+        else
+          merged << tag
+        end
+      end
+      merged.concat(proposed) unless inserted
+      merged
+    end
+
+    def patch_body(records, ri, value)
+      return patch_invalid("body must be text") unless value.is_a?(String)
+      replace_optional(records[ri], "body", utf8(value))
+      patch_ok(records[ri])
+    end
+
+    def replace_optional(rec, key, value)
+      value.nil? || (value.respond_to?(:empty?) && value.empty?) ? rec.delete(key) : rec[key] = value
+    end
+
+    def patch_location(records, ri, parent_id, force: false)
+      return patch_invalid("location must be a parent id") unless parent_id.is_a?(String)
+      rec = records[ri]
+      if !force && rec["parent"] == parent_id
+        return patch_ok(rec, summary: { from: rec["parent"], to: parent_id, moved_ids: [] })
+      end
+
+      pi = records.index { |record| record["id"] == parent_id }
+      return patch_invalid("location parent does not exist") unless pi
+      return patch_invalid("location parent must be a section or task") unless %w[section task].include?(records[pi]["type"])
+
+      rj = subtree_end(records, ri)
+      return { status: :cycle, summary: { from: rec["parent"], to: parent_id } } if pi >= ri && pi < rj
+
+      by_id = records.to_h { |record| [record["id"], record] }
+      if records[pi]["type"] == "task" &&
+         task_depth(by_id, records[pi]) + subtree_height(records, ri) > @max_depth
+        return { status: :too_deep, summary: { from: rec["parent"], to: parent_id } }
+      end
+
+      from = rec["parent"]
+      subtree = records[ri...rj].map(&:dup)
+      moved_ids = subtree.filter_map { |record| record["id"] }
+      rest = records[0...ri] + records[rj..]
+      new_pi = rest.index { |record| record["id"] == parent_id }
+      subtree[0]["parent"] = parent_id
+      insert_at = subtree_end(rest, new_pi)
+      rest[insert_at, 0] = subtree
+      records.replace(rest)
+      patch_ok(subtree[0], touched_ids: moved_ids,
+               summary: { from: from, to: parent_id, moved_ids: moved_ids })
+    end
+
+    def patch_state(records, ri, value)
+      return patch_invalid("invalid task state") unless Check::STATES.include?(value)
+      rec = records[ri]
+      from = rec["state"]
+      if value == "DONE" && Recur.cookie?(rec["recur"])
+        result = advance_recurrence_records(records, ri)
+        return result unless result[:status] == :ok
+        result[:summary] = { from: from, to: from, recurrence_advanced: true, cascaded_ids: [] }
+        return result
+      end
+
+      rec["state"] = value
+      touched_ids = [rec["id"]]
+      cascaded_ids = []
+      if DONE_STATES.include?(value) && !DONE_STATES.include?(from)
+        rec["tags"] = semantic_tags(rec) - [DEFER_TAG]
+        replace_optional(rec, "tags", rec["tags"])
+        rec["closed"] ||= Date.today.iso8601
+        if value == "DONE"
+          cascaded_ids = close_open_descendants(records, ri, return_ids: true)
+          touched_ids.concat(cascaded_ids)
+        end
+      elsif DONE_STATES.include?(from) && !DONE_STATES.include?(value)
+        rec.delete("closed")
+      end
+      patch_ok(rec, touched_ids: touched_ids,
+               summary: { from: from, to: value, recurrence_advanced: false,
+                          cascaded_ids: cascaded_ids })
+    end
+
+    def advance_recurrence_records(records, ri)
+      rec = records[ri]
+      cookie = rec["recur"]
+      return patch_invalid("invalid recurrence cookie") unless Recur.cookie?(cookie)
+      field = rec["deadline"] ? "deadline" : ("scheduled" if rec["scheduled"])
+      base = field && to_date(rec[field])
+      return patch_invalid("recurrence requires a valid date") unless base
+      rec[field] = Recur.next_date(cookie, from: base).iso8601
+      rec["tags"] = semantic_tags(rec) - [DEFER_TAG]
+      replace_optional(rec, "tags", rec["tags"])
+      rec["body"] = append_body(rec["body"], "- Did [#{Date.today}].")
+      patch_ok(rec)
+    end
+
     # -- id minting ------------------------------------------------------------
 
     # Every id present across a set of records (live or archive), for exclusion.
@@ -488,7 +898,7 @@ module Tasks
     # NOT advanced (no date roll, no body log): completing the parent completes
     # it. DONE/CANCELLED descendants are left untouched (their prior `closed`
     # stands). Returns the touched records' `line` values, in file order.
-    def close_open_descendants(records, ri)
+    def close_open_descendants(records, ri, return_ids: false)
       rj = subtree_end(records, ri)
       today = Date.today.iso8601
       records[(ri + 1)...rj].each_with_object([]) do |rec, touched|
@@ -497,7 +907,7 @@ module Tasks
         rec["closed"] = today
         rec["tags"] = (rec["tags"] || []) - [DEFER_TAG]
         rec.delete("recur")
-        touched << rec["line"]
+        touched << (return_ids ? rec["id"] : rec["line"])
       end
     end
 
@@ -682,31 +1092,26 @@ module Tasks
     end
 
     def complete_impl(item)
-      # A recurring task rolls its date forward and stays open instead of
-      # closing — completing an occurrence, not the task.
-      return advance_recurrence_impl(item) if item.recurring?
-
       records = fresh_records(@org)
       ri = locate_index(records, item) or return false
-      rec = records[ri]
-      rec["state"] = "DONE"
-      rec["closed"] = Date.today.iso8601
-      # A completed task is no longer someday/maybe — drop the defer marker.
-      rec["tags"] = (rec["tags"] || []) - [DEFER_TAG]
-      # Completing a parent completes its open descendants — one journal entry,
-      # one undo. Returns the touched line numbers (root first, then children in
-      # file order); an Array is truthy and != 0 so with_history still records.
-      lines = [rec["line"]] + close_open_descendants(records, ri)
+      result = patch_state(records, ri, "DONE")
+      return false unless result[:status] == :ok
+      lines = result[:touched_ids].filter_map do |id|
+        records.find { |record| record["id"] == id }&.fetch("line", nil)
+      end
       write_records(@org, records)
       reload!
       lines
     end
 
     def set_priority_impl(item, pri)
-      update_record(item) do |rec|
-        if pri then rec["priority"] = pri else rec.delete("priority") end
-        true
-      end
+      records = fresh_records(@org)
+      ri = locate_index(records, item) or return false
+      result = patch_priority(records, ri, pri)
+      return false unless result[:status] == :ok
+      write_records(@org, records)
+      reload!
+      true
     end
 
     # Update the item's DEADLINE (or SCHEDULED, if that's all it has). Items
@@ -722,36 +1127,40 @@ module Tasks
     # Set/replace a specific date field, adding it if absent. Sole date-write
     # path — reschedule_impl infers the kind and delegates here.
     def set_date_impl(item, date, kind)
-      update_record(item) do |rec|
-        rec[kind == :scheduled ? "scheduled" : "deadline"] = date.iso8601
-        # A dated task has been processed — promote it out of the inbox.
-        rec["state"] = "TODO" if rec["state"] == "INBOX"
-        true
-      end
+      records = fresh_records(@org)
+      ri = locate_index(records, item) or return false
+      result = patch_date(records, ri, date, kind)
+      return false unless result[:status] == :ok
+      write_records(@org, records)
+      reload!
+      true
     end
 
     # Remove the scheduled and/or deadline field(s). Returns false if nothing
     # matched. Clears a now-meaningless recur if no date remains.
     def undate_impl(item, kind)
-      update_record(item) do |rec|
-        fields = case kind
-                 when :scheduled then ["scheduled"]
-                 when :deadline  then ["deadline"]
-                 else                 %w[scheduled deadline]
-                 end
-        removed = fields.any? { |f| rec[f] }
-        next false unless removed
-        fields.each { |f| rec.delete(f) }
-        rec.delete("recur") unless rec["scheduled"] || rec["deadline"]
-        true
-      end
+      records = fresh_records(@org)
+      ri = locate_index(records, item) or return false
+      fields = case kind
+               when :scheduled then [:scheduled]
+               when :deadline  then [:deadline]
+               else                 %i[scheduled deadline]
+               end
+      return false unless fields.any? { |field| records[ri][field.to_s] }
+      fields.each { |field| patch_date(records, ri, nil, field) }
+      write_records(@org, records)
+      reload!
+      true
     end
 
     def retitle_impl(item, new_title)
-      update_record(item) do |rec|
-        rec["title"] = new_title.strip
-        true
-      end
+      records = fresh_records(@org)
+      ri = locate_index(records, item) or return false
+      result = patch_title(records, ri, new_title)
+      return false unless result[:status] == :ok
+      write_records(@org, records)
+      reload!
+      true
     end
 
     def set_tags_impl(item, add, remove)
@@ -771,28 +1180,13 @@ module Tasks
     end
 
     def set_state_impl(item, new_state)
-      # Completing a recurring task advances the occurrence rather than closing
-      # it — the same rule complete_impl applies, so `done` and `state … DONE`
-      # agree. CANCELLED still truly closes (stops the recurrence).
-      return advance_recurrence_impl(item) if new_state == "DONE" && item.recurring?
-
       records = fresh_records(@org)
       ri = locate_index(records, item) or return false
-      rec = records[ri]
-      old_state = rec["state"]
-      rec["state"] = new_state
-
-      lines = [rec["line"]]
-      if DONE_STATES.include?(new_state) && !DONE_STATES.include?(old_state)
-        rec["tags"] = (rec["tags"] || []) - [DEFER_TAG]
-        rec["closed"] ||= Date.today.iso8601
-        # Cascade only on a real transition INTO DONE — completing a parent
-        # completes its open descendants. CANCELLED closes the root alone.
-        lines.concat(close_open_descendants(records, ri)) if new_state == "DONE"
-      elsif DONE_STATES.include?(old_state) && !DONE_STATES.include?(new_state)
-        rec.delete("closed")
+      result = patch_state(records, ri, new_state)
+      return false unless result[:status] == :ok
+      lines = result[:touched_ids].filter_map do |id|
+        records.find { |record| record["id"] == id }&.fetch("line", nil)
       end
-
       write_records(@org, records)
       reload!
       lines
@@ -800,11 +1194,13 @@ module Tasks
 
     # Set/replace/remove the recurrence cookie. Requires a date to repeat from.
     def set_recur_impl(item, cookie)
-      update_record(item) do |rec|
-        next false unless rec["scheduled"] || rec["deadline"]
-        if cookie == :off then rec.delete("recur") else rec["recur"] = cookie end
-        true
-      end
+      records = fresh_records(@org)
+      ri = locate_index(records, item) or return false
+      result = patch_recurrence(records, ri, cookie)
+      return false unless result[:status] == :ok
+      write_records(@org, records)
+      reload!
+      true
     end
 
     # Complete a recurring occurrence: roll ONLY the date the cookie owns forward
@@ -817,40 +1213,25 @@ module Tasks
     # Returns false if stale or there's no date to repeat from.
     def advance_recurrence_impl(item)
       records = fresh_records(@org)
-      rec = locate(records, item) or return false
-      cookie = rec["recur"]
-      return false unless cookie
-
-      field = rec["deadline"] ? "deadline" : ("scheduled" if rec["scheduled"])
-      base = field && to_date(rec[field]) or return false
-      rec[field] = Recur.next_date(cookie, from: base).iso8601
-
-      # A completed occurrence is no longer someday/maybe — drop the defer
-      # marker, matching complete_impl.
-      rec["tags"] = (rec["tags"] || []) - [DEFER_TAG] if rec["tags"]
-      rec["body"] = append_body(rec["body"], "- Did [#{Date.today}].")
+      ri = locate_index(records, item) or return false
+      result = advance_recurrence_records(records, ri)
+      return false unless result[:status] == :ok
       write_records(@org, records)
       reload!
-      # Returns the touched line as a one-element Array so complete_impl and
-      # set_state_impl hand callers a uniform lines array (no cascade — a
-      # recurring parent rolls forward and does not complete its descendants).
-      [rec["line"]]
+      [records[ri]["line"]]
     end
 
     def move_impl(item, section)
       records = fresh_records(@org)
       ri = locate_index(records, item) or return false
-      rj = subtree_end(records, ri)
-      subtree = records[ri...rj].map(&:dup)
-      rest = records[0...ri] + records[rj..]
-
-      ti = find_section(rest, section) or return false
-      subtree[0]["parent"] = rest[ti]["id"]
-      insert_at = subtree_end(rest, ti)
-      rest[insert_at, 0] = subtree
-      write_records(@org, rest)
+      moved_id = records[ri]["id"]
+      ti = find_section(records, section) or return false
+      target_id = records[ti]["id"]
+      result = patch_location(records, ri, target_id, force: true)
+      return false unless result[:status] == :ok
+      write_records(@org, records)
       reload!
-      insert_at + 1
+      @records.index { |record| record["id"] == moved_id } + 1
     end
 
     # Splice the item's subtree in as the last child of parent_item. Guards the
@@ -859,25 +1240,15 @@ module Tasks
     def move_under_impl(item, parent_item)
       records = fresh_records(@org)
       ri = locate_index(records, item) or return false
-      rj = subtree_end(records, ri)
+      moved_id = records[ri]["id"]
       pi = locate_index(records, parent_item) or return false
-      # Parent within [ri, rj) means nesting a task under itself or a descendant.
-      return :cycle if pi >= ri && pi < rj
-      by_id = records.to_h { |r| [r["id"], r] }
-      return :too_deep if task_depth(by_id, records[pi]) + subtree_height(records, ri) > @max_depth
-
       parent_id = records[pi]["id"]
-      subtree = records[ri...rj].map(&:dup)
-      rest = records[0...ri] + records[rj..]
-      # The parent survives the deletion (it's outside the moved span); re-find it
-      # by id in the trimmed list before splicing the subtree back in after it.
-      new_pi = rest.index { |r| r["id"] == parent_id }
-      subtree[0]["parent"] = parent_id
-      insert_at = subtree_end(rest, new_pi)
-      rest[insert_at, 0] = subtree
-      write_records(@org, rest)
+      result = patch_location(records, ri, parent_id, force: true)
+      return result[:status] if %i[cycle too_deep].include?(result[:status])
+      return false unless result[:status] == :ok
+      write_records(@org, records)
       reload!
-      insert_at + 1
+      @records.index { |record| record["id"] == moved_id } + 1
     end
 
     # Move the item's subtree to the end of its nearest ancestor section. No
@@ -886,6 +1257,7 @@ module Tasks
     def move_top_impl(item)
       records = fresh_records(@org)
       ri = locate_index(records, item) or return false
+      moved_id = records[ri]["id"]
       by_id = records.to_h { |r| [r["id"], r] }
 
       # Walk the ancestor chain by explicit parent id — a nil parent must stop
@@ -901,16 +1273,11 @@ module Tasks
       return 0 if records[ri]["parent"] == section["id"]
 
       section_id = section["id"]
-      rj = subtree_end(records, ri)
-      subtree = records[ri...rj].map(&:dup)
-      rest = records[0...ri] + records[rj..]
-      si = rest.index { |r| r["id"] == section_id }
-      subtree[0]["parent"] = section_id
-      insert_at = subtree_end(rest, si)
-      rest[insert_at, 0] = subtree
-      write_records(@org, rest)
+      result = patch_location(records, ri, section_id, force: true)
+      return false unless result[:status] == :ok
+      write_records(@org, records)
       reload!
-      insert_at + 1
+      @records.index { |record| record["id"] == moved_id } + 1
     end
 
     def capture_impl(text, due, scheduled, priority, tags, state, project, under = nil)
