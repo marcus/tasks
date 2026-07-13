@@ -114,6 +114,10 @@ working persistence layer.
 - Letting HTTP clients address tasks by fuzzy title or transient line number.
 - Raw record editing or an endpoint that writes arbitrary JSONL.
 - Section CRUD, arbitrary sibling reordering, or archive-record editing in v1.
+- An HTTP endpoint that forwards natural-language prompts to the LLM harness
+  (`tasks -p` parity). The web client will eventually want the TUI's prompt
+  box, but exposing an LLM agent over HTTP has its own security and
+  process-lifecycle design questions and must not ride along with CRUD.
 - Preserving API compatibility before the v1 OpenAPI contract is reviewed and
   accepted.
 
@@ -151,8 +155,9 @@ app.list_sections
 app.create_task(attributes, context:)
 app.update_task(id, changes, expected_revision:, context:)
 app.delete_task(id, cascade:, expected_revision:, context:)
-app.undo(context:)
-app.redo(context:)
+app.history_preview
+app.undo(expected_store_revision:, context:)
+app.redo(expected_store_revision:, context:)
 app.archive_preview
 app.archive(expected_fingerprint:, context:)
 ```
@@ -178,10 +183,12 @@ The Store continues to own:
 - recurrence, cascade, nesting, and archive mechanics;
 - exact rollback and undo snapshots.
 
-Do not begin with a big-bang rewrite of `Tasks::Store`. Add the application
-facade, extract reusable queries and representations, and improve Store
-primitives only where a complete command cannot currently be performed as one
-transaction.
+Do not begin with a big-bang rewrite of `Tasks::Store`. First unify its two
+mutation generations onto the stable-id patch protocol as serial,
+individually-landable changes (Phase 1), then add the application facade and
+extract reusable queries and representations. Beyond that unification, improve
+Store primitives only where a complete command cannot currently be performed as
+one transaction.
 
 ### 2. Query model
 
@@ -265,6 +272,17 @@ the same value as an ETag. Derive it from the Store-produced edit snapshot's
 semantic baselines and the location/lifecycle fingerprints. Do not derive it
 from line number, mtime alone, or a client-supplied payload.
 
+The revision must be internally composite — opaque to clients, but not one
+monolithic hash. The location fingerprint includes the sibling id list and the
+lifecycle fingerprint spans the whole subtree, so a single digest over
+baselines plus fingerprints would change whenever a sibling is captured or a
+descendant is completed, and an unrelated title edit would then fail with
+`412`. Encode three digests in the one revision string — own-field baselines,
+location fingerprint, lifecycle fingerprint — and compare only the parts an
+operation depends on: ordinary field edits check the baseline digest; state
+changes add the lifecycle fingerprint; moves add the location fingerprint;
+cascading delete checks all three.
+
 - `PATCH` and `DELETE` require `If-Match`; missing preconditions return `428`.
 - A stale revision returns `412 Precondition Failed` with the current task
   resource when it is safe to disclose it.
@@ -325,8 +343,8 @@ The minimum resource endpoints are:
 | Method | Path | Behavior |
 |---|---|---|
 | `GET` | `/api/v1/meta` | Capabilities, states, priorities, config-derived limits, server mode, and global store revision; never return filesystem paths. |
-| `GET` | `/api/v1/sections` | Ordered live sections for capture and placement controls. |
-| `GET` | `/api/v1/tasks` | Ordered task collection with composable filters for scope, state, context, tag, priority, text/body search, deferred, and recurring. |
+| `GET` | `/api/v1/sections` | Ordered live sections for capture and placement controls — stable id, title, and parent id each (section records already carry the same checked eight-hex ids as tasks). |
+| `GET` | `/api/v1/tasks` | Ordered task collection with composable filters for scope, state, context, tag, priority, text/body search, deferred, and recurring. The default scope is open live tasks, matching `tasks list`. |
 | `POST` | `/api/v1/tasks` | Atomically create one task; return `201`, `Location`, resource, and ETag. |
 | `GET` | `/api/v1/tasks/{id}` | Full live or explicitly requested archived task resource. |
 | `PATCH` | `/api/v1/tasks/{id}` | Atomically apply semantic partial changes with required `If-Match`. |
@@ -338,8 +356,9 @@ resource contract:
 | Method | Path | Behavior |
 |---|---|---|
 | `GET` | `/api/v1/views/{name}` | Canonical `agenda`, `next`, `quadrants`, `inbox`, and `projects` results, including grouping metadata. |
-| `POST` | `/api/v1/history/undo` | Apply the shared journal's next undo step and return the affected label plus new store revision. |
-| `POST` | `/api/v1/history/redo` | Apply the shared journal's next redo step. |
+| `GET` | `/api/v1/history` | Peek at the next undo and redo labels plus the store revision they apply to, so the client can render labeled controls without mutating anything. |
+| `POST` | `/api/v1/history/undo` | Apply the shared journal's next undo step and return the affected label plus new store revision. Requires the `store_revision` the client last saw; a mismatch returns `409` instead of undoing a different surface's newer write. |
+| `POST` | `/api/v1/history/redo` | Apply the shared journal's next redo step, under the same `store_revision` precondition. |
 | `GET` | `/api/v1/archive-preview` | Return the existing safe sweep preview and fingerprint. |
 | `POST` | `/api/v1/archive-sweeps` | Sweep only when the preview fingerprint still matches. |
 | `GET` | `/api/v1/events` | Server-sent `store.changed` events; clients refetch affected queries. |
@@ -347,8 +366,11 @@ resource contract:
 The event endpoint is invalidation, not event sourcing. A small watcher can poll
 the Store stat key and publish the new global revision when CLI, TUI, or API
 writes replace either file. The browser still obtains authoritative state with
-normal GET requests. If SSE complicates the first slice, begin with conditional
-polling against `/meta` and add SSE immediately after CRUD is proven.
+normal GET requests. Ship conditional polling against `/meta` first: it is one
+local user polling a small file, and every open SSE response pins one thread
+from Puma's small pool for its whole lifetime, so SSE needs a sized thread
+budget (or a dedicated streaming path) before a few idle tabs can starve the
+API. Add SSE after CRUD is proven, not as part of the first slice.
 
 ### Task representation
 
@@ -357,7 +379,7 @@ A full task resource should include:
 ```text
 id, revision, source, parent_id, section_id, depth,
 state, priority, title, contexts, tags, deferred,
-scheduled, deadline, recurrence, body, closed, archived_at,
+scheduled, deadline, recurrence, body, closed, archived,
 project, child_count, descendant_count, links
 ```
 
@@ -365,6 +387,11 @@ Rules:
 
 - `contexts`, ordinary `tags`, and `deferred` remain distinct semantic fields,
   matching the TUI editor's ownership model.
+- `PATCH` bodies use merge semantics: an absent field is unchanged, an explicit
+  `null` clears a clearable field, and unknown fields are rejected, not ignored.
+- Changing `parent_id`/`section_id` places the moved subtree as the last child
+  of the new parent, matching Store move semantics. There is no sibling-order
+  parameter in v1.
 - Dates are ISO `YYYY-MM-DD` or `null`. Friendly date parsing remains a human
   CLI/TUI feature, not an HTTP contract.
 - `source` is `live` or `archive`; archived resources are read-only.
@@ -391,10 +418,17 @@ Rules:
 | Cycle, excessive depth, non-cascade parent delete, changed archive preview | `409` |
 | Structurally invalid backing store | `503` with `store_invalid` |
 
+A semantically no-op `PATCH` (the `no_change` result) returns `200` with the
+unchanged resource and its current ETag; it is a success, not an error, and it
+must not burn an undo step.
+
 ## HTTP runtime and dependency boundary
 
 Add a committed `Gemfile` and lockfile for the API runtime, initially limited to
-Rack and Puma. Implement routing directly in a small Rack app; the route count
+Rack and Puma (Puma loads `config.ru` itself, so the separate `rackup` gem is
+not needed). Test-only gems — `rack-test` and an OpenAPI validator such as
+`committee` — belong in the Gemfile's test group and do not extend the runtime
+dependency set. Implement routing directly in a small Rack app; the route count
 does not justify Rails, Sinatra, or another framework yet.
 
 Proposed entry points:
@@ -440,6 +474,11 @@ For local mode:
 - never return configured file paths, journal paths, or exception backtraces;
 - log request IDs, method, route, status, and duration, but not task bodies.
 
+One accepted limitation to document: loopback is shared by every OS user on the
+machine, not per-user. Local mode assumes a single-user machine; if that
+assumption ever fails, promote the bearer-token mode described below rather
+than inventing a weaker local guard.
+
 Add liveness and readiness endpoints outside `/api/v1`: liveness proves the
 process is serving; readiness runs a non-mutating Store check and reports only a
 safe summary.
@@ -483,32 +522,61 @@ allowlist without changing domain/application code.
 Exit: the resource model and every v1 status/error outcome are reviewable before
 server code exists.
 
-### Phase 1: reusable application/query layer, no behavior change
+### Phase 1: one mutation protocol and id-only plumbing
+
+The Store currently exposes two generations of mutation API: the line-addressed
+methods returning booleans, symbols, and line numbers, and the stable-id
+`edit_snapshot`/`patch_task!` path with typed results. Unify them before any
+API work. Every step in this phase is justified on current-codebase grounds
+alone and lands as its own small change, which keeps merge pain low against
+unrelated work on the branch and pays off even if the API slips.
+
+1. Add the immutable Store read snapshot and move `body`, `links`, and tree
+   reads onto it. This fixes today's latent inconsistency where a held `Item`
+   plus later per-field reads can straddle a reload; the API inherits it later.
+2. Normalize mutation outcomes to the shared result vocabulary (section 3) over
+   the existing patch machinery, mapping CLI exit codes and TUI messages from it.
+3. Migrate the line-addressed mutation call sites in the CLI and TUI (state,
+   priority, title, tags, dates, recurrence, defer, notes, and moves) onto
+   `edit_snapshot` plus `patch_task!`, deleting each legacy Store method as its
+   last call site moves. Deletion is the exit criterion, not incidental cleanup;
+   new work must not land on the legacy protocol while the migration runs.
+4. Make stable ids the only internal locator: refs resolve to ids at the CLI
+   parsing edge, and mutations return ids, snapshots, or typed results — never
+   line numbers. `L<line>` remains user-facing input syntax only.
+
+Exit: the Store exposes one mutation protocol (only `capture!` and the archive
+sweep await their typed replacements in Phase 3), no mutation returns a file
+coordinate, and CLI/TUI behavior is unchanged under golden tests.
+
+### Phase 2: reusable application/query layer, no behavior change
 
 1. Add typed task views, filters, query results, and operation context.
 2. Extract list/view/filter logic and canonical representation from `bin/tasks`.
-3. Extract CLI ref resolution as an adapter concern that returns stable IDs.
-4. Add `Tasks::Application` over a Store factory.
-5. Migrate CLI JSON/query paths and TUI read paths incrementally, preserving
+3. Add `Tasks::Application` over a Store factory.
+4. Migrate CLI JSON/query paths and TUI read paths incrementally, preserving
    output and keyboard behavior with golden tests.
 
 Exit: CLI and TUI behavior is unchanged, and all data needed by an HTTP GET can
 be obtained without requiring executable code from `bin/tasks`.
 
-### Phase 2: atomic typed CRUD commands
+### Phase 3: atomic typed CRUD commands
 
-1. Add `CreateTask`, `TaskChangeset`, task revision generation, and the common
-   result type.
+1. Add `CreateTask`, `TaskChangeset`, and task revision generation over the
+   Phase 1 result vocabulary.
 2. Refactor one-field `TaskPatch` to share the same semantic patch helpers.
-3. Make capture plus recurrence/initial notes one checked, undoable write.
+3. Make capture plus recurrence/initial notes one checked, undoable write, and
+   retire `capture!` in favor of `CreateTask`.
 4. Add guarded, cascading Store deletion and CLI `delete` parity.
-5. Route existing CLI mutations through application commands in small slices,
-   retaining exit codes, dry-run behavior, JSON output, and undo labels.
+5. Point the CLI's already-typed mutation paths at application commands — a
+   thin re-mapping after Phase 1 — retaining exit codes, dry-run behavior, JSON
+   output, and undo labels, and delete the last legacy Store methods.
 
 Exit: create/update/delete semantics are transport-independent, atomic, and
-covered through both application and existing CLI surfaces.
+covered through both application and existing CLI surfaces; no legacy mutation
+methods remain.
 
-### Phase 3: loopback HTTP adapter
+### Phase 4: loopback HTTP adapter
 
 1. Add the Gemfile/lockfile, Rack app, Puma entry point, request-scoped Store
    factory, JSON/error helpers, origin/host guards, and health checks.
@@ -521,7 +589,7 @@ covered through both application and existing CLI surfaces.
 Exit: a local client can perform complete task CRUD without shelling out, and
 all writes remain visible and undoable across CLI and TUI.
 
-### Phase 4: full web-manager support
+### Phase 5: full web-manager support
 
 1. Add named views, undo/redo, and the archive preview/sweep protocol.
 2. Add global revisions and conditional polling, then SSE invalidation.
@@ -532,7 +600,7 @@ all writes remain visible and undoable across CLI and TUI.
 Exit: the API supports the existing manager's important read/lifecycle flows
 and stays live as other interfaces modify the files.
 
-### Phase 5: remote deployment only when requested
+### Phase 6: remote deployment only when requested
 
 1. Threat-model the actual deployment and users.
 2. Choose identity/authentication and authorization.
@@ -653,3 +721,5 @@ Unless discussion changes them, proceed with these defaults:
    conflict checks.
 5. Ship loopback mode first. Treat non-loopback operation as unsupported until
    its authentication and threat-model phase is complete.
+6. Ship conditional polling before SSE; add SSE only after CRUD is proven and
+   the streaming thread budget is sized.
