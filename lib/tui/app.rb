@@ -45,7 +45,6 @@ module Tui
     PASTE_START = "\e[200~"
     PASTE_END   = "\e[201~"
     ESCAPE_WAIT = 0.01 # distinguish a lone Escape from a split CSI sequence
-    PANEL_MODES = UiState::PANEL_MODES
 
     # The system-context string handed to any agent: the repo's AGENTS.md
     # conventions plus the absolute file locations for this run. Provider-
@@ -392,12 +391,12 @@ module Tui
     end
 
     def screen_layout(width:, height:, footer_size: nil, selected: @sel, panel: @ui.panel,
-                      editing: task_editing?)
+                      panel_offset: @ui.panel_offset, editing: task_editing?)
       footer_mode = editing ? :task_edit : @ui.mode
       raw_footer = footer_size ? Array.new(footer_size, "") : footer(width - 2, mode: footer_mode)
       ScreenLayout.new(width: width, height: height, footer: raw_footer, selected: selected,
                        panel: !panel.nil?, panel_mode: @ui.panel_mode,
-                       editing: editing)
+                       panel_offset: panel_offset, editing: editing)
     end
 
     # -- input ---------------------------------------------------------------
@@ -792,11 +791,19 @@ module Tui
     def grow_task_panel = resize_task_panel(1)
     def shrink_task_panel = resize_task_panel(-1)
 
+    # ctrl+k/ctrl+l nudge the panel by exactly one column. The mode still sets
+    # the per-width default; this stores a signed offset on top of it. We derive
+    # the offset from the realized width (base = the mode width with no offset)
+    # so pushing past a clamp never banks phantom columns — the next press in the
+    # opposite direction always moves one column immediately.
     def resize_task_panel(delta)
-      index = PANEL_MODES.index(@ui.panel_mode) || PANEL_MODES.index(:standard)
-      next_mode = PANEL_MODES[(index + delta).clamp(0, PANEL_MODES.length - 1)]
-      @ui.panel_mode = next_mode
-      flash("task panel: #{next_mode}")
+      height, width = terminal_size
+      base = screen_layout(width: width, height: height, panel: true, panel_offset: 0).panel_width
+      current = screen_layout(width: width, height: height, panel: true).panel_width
+      @ui.panel_offset = (current + delta) - base
+      realized = screen_layout(width: width, height: height, panel: true).panel_width
+      @ui.panel_offset = realized - base
+      flash("task panel: #{realized} cols")
     end
 
     # Z reveals/hides deferred (someday/maybe) tasks across every view.

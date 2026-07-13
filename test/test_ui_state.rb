@@ -119,9 +119,29 @@ class TestUiState < Minitest::Test
   def test_session_hash_prunes_stale_collapsed_ids
     ui = Tui::UiState.new(view: :projects, collapsed: Set["live0001", "deadbeef"])
     assert_equal(
-      { "view" => "projects", "collapsed" => ["live0001"], "panel_mode" => "standard" },
+      { "view" => "projects", "collapsed" => ["live0001"],
+        "panel_mode" => "standard", "panel_offset" => 0 },
       ui.session_hash(live_ids: ["live0001", "other002"])
     )
+  end
+
+  def test_panel_offset_persists_and_coerces
+    ui = Tui::UiState.new(view: :projects)
+    ui.panel_offset = 5
+    assert_equal 5, ui.session_hash(live_ids: [])["panel_offset"]
+
+    restored = Tui::UiState.restore(
+      saved: { view: "agenda", panel_offset: -3 },
+      views: %i[agenda], default_view: :agenda
+    )
+    assert_equal(-3, restored.panel_offset)
+
+    # A malformed persisted value falls back to a neutral offset.
+    fallback = Tui::UiState.restore(
+      saved: { view: "agenda", panel_offset: "wide" },
+      views: %i[agenda], default_view: :agenda
+    )
+    assert_equal 0, fallback.panel_offset
   end
 
 

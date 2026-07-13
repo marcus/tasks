@@ -23,7 +23,7 @@ module Tui
       task_edit:    %i[task_edit list],
     }.freeze
 
-    attr_reader :mode
+    attr_reader :mode, :panel_offset
     attr_accessor :view, :selected_id, :filter, :collapsed, :show_deferred,
                   :modal, :panel, :archive_preview, :form,
                   :form_success, :action_palette, :filter_input,
@@ -43,10 +43,12 @@ module Tui
       saved_panel_mode = saved[:panel_mode]
       saved_panel_mode = saved_panel_mode.to_sym if saved_panel_mode.is_a?(String)
       panel_mode = PANEL_MODES.include?(saved_panel_mode) ? saved_panel_mode : :standard
-      new(view: view, collapsed: collapsed, panel_mode: panel_mode)
+      saved_offset = saved[:panel_offset]
+      panel_offset = saved_offset.is_a?(Integer) ? saved_offset : 0
+      new(view: view, collapsed: collapsed, panel_mode: panel_mode, panel_offset: panel_offset)
     end
 
-    def initialize(view:, collapsed: Set.new, panel_mode: :standard)
+    def initialize(view:, collapsed: Set.new, panel_mode: :standard, panel_offset: 0)
       @view = view
       @selected_id = nil
       @mode = :list
@@ -61,6 +63,7 @@ module Tui
       @action_palette = nil
       @task_editor = nil
       @panel_mode = PANEL_MODES.include?(panel_mode.to_sym) ? panel_mode.to_sym : :standard
+      @panel_offset = panel_offset.to_i
       @filter_input = TextInput.new
       @modal_filter_input = TextInput.new
     end
@@ -145,6 +148,13 @@ module Tui
       @panel_mode = normalized
     end
 
+    # The signed column tweak ctrl+k/ctrl+l apply on top of the mode width.
+    # App re-derives it against the live layout each keypress, so any Integer is
+    # legal here; ScreenLayout re-clamps it to the current terminal's bounds.
+    def panel_offset=(value)
+      @panel_offset = value.to_i
+    end
+
     def toggle_deferred!
       @show_deferred = !@show_deferred
     end
@@ -154,6 +164,7 @@ module Tui
         "view" => @view.to_s,
         "collapsed" => (@collapsed & live_ids.to_set).to_a,
         "panel_mode" => @panel_mode.to_s,
+        "panel_offset" => @panel_offset,
       }
     end
 

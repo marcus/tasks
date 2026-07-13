@@ -112,6 +112,59 @@ class TestScreenLayout < Minitest::Test
     end
   end
 
+  def test_panel_offset_shifts_one_column_each_direction
+    base = Tui::ScreenLayout.new(width: 100, height: 24, footer: [], panel: true).panel_width
+    grow = Tui::ScreenLayout.new(
+      width: 100, height: 24, footer: [], panel: true, panel_offset: 1
+    )
+    shrink = Tui::ScreenLayout.new(
+      width: 100, height: 24, footer: [], panel: true, panel_offset: -1
+    )
+    assert_equal base + 1, grow.panel_width
+    assert_equal base - 1, shrink.panel_width
+    # The list absorbs the opposite move, so the body stays fully divided.
+    assert_equal 96, grow.list_width + grow.panel_width
+  end
+
+  def test_panel_offset_clamps_to_list_and_body_invariants
+    hi = Tui::ScreenLayout.new(
+      width: 100, height: 24, footer: [], panel: true, panel_offset: 1000
+    )
+    lo = Tui::ScreenLayout.new(
+      width: 100, height: 24, footer: [], panel: true, panel_offset: -1000
+    )
+    # Growth stops once the list is down to MIN_LIST_WIDTH.
+    assert_equal 96 - Tui::ScreenLayout::MIN_LIST_WIDTH, hi.panel_width
+    assert_operator hi.list_width, :>=, Tui::ScreenLayout::MIN_LIST_WIDTH
+    # Shrink stops at the read-mode floor of 3 columns, never negative.
+    assert_equal 3, lo.panel_width
+  end
+
+  def test_panel_offset_never_starves_the_editor_content_minimum
+    layout = Tui::ScreenLayout.new(
+      width: 100, height: 24, footer: [], panel: true,
+      panel_offset: -1000, editing: true
+    )
+    assert_operator layout.panel_content_width, :>=, 32
+    assert layout.editable_panel?
+  end
+
+  def test_panel_offset_rides_ratio_base_across_terminal_resize
+    narrow = Tui::ScreenLayout.new(
+      width: 100, height: 24, footer: [], panel: true, panel_offset: 4
+    )
+    wide = Tui::ScreenLayout.new(
+      width: 120, height: 24, footer: [], panel: true, panel_offset: 4
+    )
+    narrow_base = Tui::ScreenLayout.new(width: 100, height: 24, footer: [], panel: true).panel_width
+    wide_base = Tui::ScreenLayout.new(width: 120, height: 24, footer: [], panel: true).panel_width
+    # The ratio-derived base adapts to each width; the offset is a constant tweak
+    # layered on top, so it needs no re-clamping when the terminal resizes.
+    refute_equal narrow_base, wide_base
+    assert_equal narrow_base + 4, narrow.panel_width
+    assert_equal wide_base + 4, wide.panel_width
+  end
+
   def test_editing_promotes_without_overwriting_requested_read_preference
     layout = Tui::ScreenLayout.new(
       width: 87, height: 24, footer: [], panel: true,

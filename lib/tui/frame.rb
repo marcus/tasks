@@ -21,9 +21,9 @@ module Tui
     # panel:    { title:, lines: [...] } drawn in a fixed-width right pane
     # modal:    { title:, lines: [...] } drawn as a centered box over the body
     def build(width:, height:, header:, rows:, selected: nil, footer: [], popup: nil, panel: nil, modal: nil,
-              layout: nil)
+              layout: nil, panel_offset: 0)
       layout ||= ScreenLayout.new(width: width, height: height, footer: footer, selected: selected,
-                                  panel: !panel.nil?)
+                                  panel: !panel.nil?, panel_offset: panel_offset)
       width = layout.width
       height = layout.height
       w = width - 2

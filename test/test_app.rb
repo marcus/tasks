@@ -7,6 +7,13 @@ require "tui/text_input"
 class TestApp < Minitest::Test
   def ui(app) = app.instance_variable_get(:@ui)
 
+  # Resolve the panel column count the same way the frame does, so resize
+  # assertions read the realized width rather than the stored offset.
+  def panel_width(app)
+    height, width = app.send(:terminal_size)
+    app.send(:screen_layout, width: width, height: height, panel: true).panel_width
+  end
+
   # Records calls to #start and reports whatever running?/available? state we
   # set, so we can drive submit_prompt without spawning a real agent process.
   class FakeAgent
@@ -991,18 +998,41 @@ class TestApp < Minitest::Test
     end
   end
 
-  def test_read_panel_resize_changes_named_preference_without_identity_change
+  def test_read_panel_resize_steps_one_column_without_identity_change
+    console = Struct.new(:winsize).new([24, 80])
     app_on(view: :agenda, select: "Book flight") do |app|
-      app.send(:handle_key, "\r")
-      identity = ui(app).panel.identity
+      IO.stub(:console, console) do
+        app.send(:handle_key, "\r")
+        identity = ui(app).panel.identity
+        base = panel_width(app)
 
-      app.send(:handle_key, "\x0b")
-      assert_equal :wide, ui(app).panel_mode
-      assert_equal identity, ui(app).panel.identity
+        app.send(:handle_key, "\x0b") # ctrl-k grows by exactly one column
+        assert_equal base + 1, panel_width(app)
+        assert_equal identity, ui(app).panel.identity
+        assert_match(/task panel: #{base + 1} cols/, app.instance_variable_get(:@flash))
 
-      app.send(:handle_key, "\x0c")
-      assert_equal :standard, ui(app).panel_mode
-      assert_equal identity, ui(app).panel.identity
+        app.send(:handle_key, "\x0c") # ctrl-l returns the column
+        assert_equal base, panel_width(app)
+        assert_equal identity, ui(app).panel.identity
+      end
+    end
+  end
+
+  def test_read_panel_resize_clamps_hold_at_extremes
+    console = Struct.new(:winsize).new([24, 80])
+    app_on(view: :agenda, select: "Book flight") do |app|
+      IO.stub(:console, console) do
+        app.send(:handle_key, "\r")
+        max = 76 - Tui::ScreenLayout::MIN_LIST_WIDTH # body_width - MIN_LIST_WIDTH
+
+        60.times { app.send(:handle_key, "\x0b") } # push well past the wall
+        assert_equal max, panel_width(app)
+
+        # A single opposite press must move exactly one column — no banked
+        # phantom columns from pressing past the clamp.
+        app.send(:handle_key, "\x0c")
+        assert_equal max - 1, panel_width(app)
+      end
     end
   end
 
