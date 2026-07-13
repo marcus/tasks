@@ -306,6 +306,40 @@ class TestApp < Minitest::Test
     end
   end
 
+  def test_exact_boundary_notes_use_two_panel_rows_in_default_and_mono_frames
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\t")
+      editor = ui(app).task_editor
+      editor.form.focus(:body)
+      layout = app.send(:screen_layout, width: 120, height: 32, panel: ui(app).panel)
+      first_line = "a" * (layout.panel_content_width - 12)
+      editor.form.set_value(:body, "#{first_line}\nZ")
+
+      original_build = Tui::Frame.method(:build)
+      console = Struct.new(:winsize).new([32, 120])
+      %w[default mono].each do |theme|
+        Tui::Theme.configure!(name: theme)
+        frame = nil
+        IO.stub(:console, console) do
+          Tui::Frame.stub(:build, ->(**args) { frame = original_build.call(**args) }) do
+            capture_io { app.send(:paint) }
+          end
+        end
+
+        panel_lines = ui(app).panel.lines.map { |line| Tui::Ansi.strip(line) }
+        notes_row = panel_lines.index { |line| line.include?("Notes: #{first_line}") }
+        refute_nil notes_row, theme
+        assert_includes panel_lines.fetch(notes_row + 1), "│* Z", theme
+        assert_equal 32, frame.size, theme
+        assert frame.all? { |line| Tui::Ansi.vislen(line) == 120 }, theme
+        refute frame.any? { |line| line.match?(/[\r\n]/) }, theme
+        assert_match(/\A┌─+┐\z/, Tui::Ansi.strip(frame.first), theme)
+        assert_match(/\A└─+┘\z/, Tui::Ansi.strip(frame.last), theme)
+      end
+    end
+  end
+
   def test_ctrl_s_saves_in_place_and_ctrl_o_returns_to_read_panel
     app_on(view: :agenda, select: "Book flight") do |app|
       app.send(:handle_key, "\r")

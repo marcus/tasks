@@ -255,6 +255,65 @@ class TestFormRenderer < Minitest::Test
     assert_equal cursor_line - 1, visible.focused_content_row
   end
 
+  def test_exact_full_line_before_newline_does_not_create_a_phantom_row
+    [["abcd\nZ", 12], ["界界\nZ", 12]].each do |value, width|
+      form = notes_form(value, label: "N")
+      result = Tui::FormRenderer.new.render(
+        model: form.render_model, width: width, height: 6, title: "N",
+      )
+      fields = multiline_field_lines(result)
+
+      assert_equal 2, fields.size, "#{value.inspect} at width #{width}: #{fields.inspect}"
+      assert_match(/›\* N: (?:abcd|界界)/, fields.first)
+      assert_match(/│\* Z/, fields.last)
+      assert_equal 1, result.focused_content_row
+      assert_includes result.lines.fetch(2), "\e[7m", "cursor remains on the second semantic row"
+    end
+
+    continuation = Tui::FormRenderer.new.render(
+      model: notes_form("a\n1234567\nZ", label: "N").render_model,
+      width: 12, height: 7, title: "N",
+    )
+    continuation_fields = multiline_field_lines(continuation)
+    assert_equal 3, continuation_fields.size, continuation_fields.inspect
+    assert_match(/│\* 1234567/, continuation_fields[1])
+    assert_match(/│\* Z/, continuation_fields[2])
+  end
+
+  def test_intentional_leading_middle_and_trailing_blank_lines_remain_explicit
+    {
+      "a\n\nb" => ["›* N: a", "│*", "│* b"],
+      "\na" => ["›* N:", "│* a"],
+      "a\n" => ["›* N: a", "│*"],
+    }.each do |value, expected|
+      result = Tui::FormRenderer.new.render(
+        model: notes_form(value, label: "N").render_model,
+        width: 20, height: 8, title: "N",
+      )
+      actual = multiline_field_lines(result).map(&:rstrip)
+      assert_equal expected, actual, value.inspect
+      refute result.lines.any? { |line| line.match?(/[\r\n]/) }
+    end
+  end
+
+  def test_exact_boundary_newlines_hold_across_ascii_and_unicode_widths
+    (9..40).each do |width|
+      first_capacity = width - 8 # outer borders plus `›* N: `
+      values = ["a" * first_capacity]
+      values << "界" * (first_capacity / 2) if first_capacity.even?
+      values.each do |first_line|
+        result = Tui::FormRenderer.new.render(
+          model: notes_form("#{first_line}\nZ", label: "N").render_model,
+          width: width, height: 6, title: "N",
+        )
+        fields = multiline_field_lines(result)
+        assert_equal 2, fields.size, "#{width}: #{first_line.inspect} => #{fields.inspect}"
+        assert_match(/│\* Z/, fields.last)
+        assert_equal 1, result.focused_content_row
+      end
+    end
+  end
+
   def test_rendering_does_not_sample_terminal_geometry
     form = input_form(value: "value")
     IO.stub(:console, -> { raise "geometry IO is forbidden" }) do
@@ -269,6 +328,20 @@ class TestFormRenderer < Minitest::Test
       key: :name, label: "Name", value: value, baseline: baseline, validate: validate,
     )
     TermForm::Form.new(groups: [TermForm::Group.new(key: :main, label: "", fields: [field])])
+  end
+
+  def notes_form(value, label: "Notes")
+    field = TermForm::Fields::TextArea.new(
+      key: :notes, label: label, value: value, baseline: "",
+    )
+    TermForm::Form.new(groups: [TermForm::Group.new(key: :main, label: "", fields: [field])])
+  end
+
+  def multiline_field_lines(result)
+    result.lines[1...-1].to_a.filter_map do |line|
+      content = A.strip(line).delete_prefix("│").delete_suffix("│").rstrip
+      content if content.start_with?("›", "│")
+    end
   end
 
   def date_form

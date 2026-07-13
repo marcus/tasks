@@ -146,7 +146,8 @@ module Tui
     def multiline_layout(value, first_width:, continuation_width:, cursor:)
       text = multiline_text(value)
       units = text.each_grapheme_cluster.to_a
-      cursor = cursor.nil? ? units.length : cursor.clamp(0, units.length)
+      cursor_visible = !cursor.nil?
+      cursor = cursor_visible ? cursor.clamp(0, units.length) : units.length
       lines = [+""]
       positions = []
       row = 0
@@ -160,16 +161,25 @@ module Tui
         capacity = continuation_width
       end
 
+      # A label can consume the entire first row. Move to the first real value
+      # row once; subsequent newline handling can then distinguish a full line
+      # from an intentional empty logical line without double-advancing.
+      new_row.call if capacity <= 0 && (!units.empty? || cursor_visible)
+
       units.each_with_index do |grapheme, index|
         if grapheme == "\n"
-          new_row.call if capacity <= 0 || column == capacity
-          positions[index] = [row, column]
-          new_row.call
+          if column == capacity
+            new_row.call
+            positions[index] = [row, column]
+          else
+            positions[index] = [row, column]
+            new_row.call
+          end
           next
         end
 
         cell_width = A.cluster_width(grapheme)
-        new_row.call if capacity <= 0 || column == capacity || (column.positive? && column + cell_width > capacity)
+        new_row.call if column == capacity || (column.positive? && column + cell_width > capacity)
         positions[index] = [row, column]
         if cell_width > capacity
           lines[row] << " " * capacity
@@ -179,7 +189,7 @@ module Tui
           column += cell_width
         end
       end
-      new_row.call if capacity <= 0 || column == capacity
+      new_row.call if column == capacity && cursor_visible
       positions[units.length] = [row, column]
       { lines: lines.freeze, cursor: positions.fetch(cursor).freeze }.freeze
     end
