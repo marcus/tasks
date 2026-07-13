@@ -235,6 +235,34 @@ class TestJournal < Minitest::Test
     end
   end
 
+  def test_corrupt_state_metadata_degrades_to_fresh_safe_history
+    with_journal_store do |build, org, _a, jdir|
+      first = build.call
+      first.set_priority!(first.items.find { |i| i.title.include?("Book flight") }, "C")
+      before_second = File.read(org)
+      idx = File.join(jdir, "index.json")
+      data = JSON.parse(File.read(idx))
+      data["states"].last["org_sha"] = "../../not-a-blob"
+      File.write(idx, JSON.generate(data))
+
+      second = build.call
+      second.set_priority!(second.items.find { |i| i.title.include?("Book flight") }, "B")
+      assert_equal :ok, second.undo!.first
+      assert_equal before_second, File.read(org)
+      assert_equal [:empty], second.undo!
+    end
+  end
+
+  def test_corrupt_top_level_index_shape_degrades_to_empty
+    with_journal_store do |build, _org, _a, jdir|
+      store = build.call
+      store.set_priority!(store.items.find { |i| i.title.include?("Book flight") }, "C")
+      File.write(File.join(jdir, "index.json"), "[]")
+
+      assert_equal [:empty], build.call.undo!
+    end
+  end
+
   def test_missing_blob_degrades_to_empty_not_crash
     with_journal_store do |build, _org, _a, jdir|
       build.call.set_priority!(build.call.items.find { |i| i.title.include?("Book flight") }, "C")

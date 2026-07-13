@@ -22,12 +22,13 @@ class TestStorePatches < Minitest::Test
       org = File.join(dir, "tasks.jsonl")
       archive = File.join(dir, "archive.jsonl")
       File.write(org, Tasks::Format.dump(PATCH_TREE))
-      yield Tasks::Store.new(org: org, archive: archive, max_depth: max_depth), org
+      yield Tasks::Store.new(org: org, archive: archive, max_depth: max_depth), org, archive
     end
   end
 
-  def patch(snapshot, field, value, expected: snapshot.expected_for(field))
-    Tasks::TaskPatch.new(id: snapshot.id, field: field, value: value, expected: expected)
+  def patch(snapshot, field, value, expected: snapshot.expected_for(field), coalesce_key: nil)
+    Tasks::TaskPatch.new(id: snapshot.id, field: field, value: value, expected: expected,
+                         coalesce_key: coalesce_key)
   end
 
   def parsed(path)
@@ -501,6 +502,175 @@ class TestStorePatches < Minitest::Test
       assert Tasks::Check.check(org).ok?
       assert_match(/edit body/, store.undo![1])
       assert_equal before, File.read(org)
+    end
+  end
+
+  def test_byte_contiguous_patches_with_one_session_key_are_one_undo_step
+    with_patch_store do |store, org|
+      key = "edit-session-1"
+      initial = File.read(org)
+      first = store.patch_task!(patch(store.edit_snapshot("11110002"), :title, "Renamed",
+                                      coalesce_key: key))
+      assert_equal :ok, first.status
+      after_first = File.read(org)
+      refute_equal initial, after_first, "the first blur is durable before the next patch"
+
+      second = store.patch_task!(patch(first.snapshot, :body, "replacement",
+                                       coalesce_key: key))
+      assert_equal :ok, second.status
+      final = File.read(org)
+      refute_equal after_first, final, "the second blur is independently durable"
+      assert Tasks::Check.check(org).ok?
+
+      assert_equal [:ok, "edit body: Renamed"], store.undo!
+      assert_equal initial, File.read(org), "one undo restores the session's earliest bytes"
+      assert_equal [:empty], store.undo!
+      assert_equal [:ok, "edit body: Renamed"], store.redo!
+      assert_equal final, File.read(org), "one redo restores the session's latest bytes"
+      assert_equal [:empty], store.redo!
+    end
+  end
+
+  def test_nil_and_mismatched_keys_keep_separate_patch_entries
+    [[nil, nil], ["session-a", "session-b"]].each do |first_key, second_key|
+      with_patch_store do |store, org|
+        initial = File.read(org)
+        first = store.patch_task!(patch(store.edit_snapshot("11110002"), :title, "Renamed",
+                                        coalesce_key: first_key))
+        assert_equal :ok, first.status
+        after_first = File.read(org)
+        second = store.patch_task!(patch(first.snapshot, :body, "replacement",
+                                         coalesce_key: second_key))
+        assert_equal :ok, second.status
+
+        assert_equal :ok, store.undo!.first
+        assert_equal after_first, File.read(org)
+        assert_equal :ok, store.undo!.first
+        assert_equal initial, File.read(org)
+      end
+    end
+  end
+
+  def test_intervening_cli_mutation_breaks_patch_coalescing
+    with_patch_store do |store, org|
+      key = "session"
+      initial = File.read(org)
+      first = store.patch_task!(patch(store.edit_snapshot("11110002"), :title, "Renamed",
+                                      coalesce_key: key))
+      assert_equal :ok, first.status
+      after_first = File.read(org)
+      item = store.items.find { |candidate| candidate.id == "11110002" }
+      assert store.set_priority!(item, "A")
+      after_cli = File.read(org)
+      second = store.patch_task!(patch(store.edit_snapshot("11110002"), :body, "replacement",
+                                       coalesce_key: key))
+      assert_equal :ok, second.status
+
+      assert_equal :ok, store.undo!.first
+      assert_equal after_cli, File.read(org)
+      assert_equal :ok, store.undo!.first
+      assert_equal after_first, File.read(org)
+      assert_equal :ok, store.undo!.first
+      assert_equal initial, File.read(org)
+    end
+  end
+
+  def test_undo_redo_breaks_patch_coalescing_even_back_at_exact_tip
+    with_patch_store do |store, org|
+      key = "session"
+      initial = File.read(org)
+      first = store.patch_task!(patch(store.edit_snapshot("11110002"), :title, "Renamed",
+                                      coalesce_key: key))
+      assert_equal :ok, first.status
+      after_first = File.read(org)
+      assert_equal :ok, store.undo!.first
+      assert_equal :ok, store.redo!.first
+      assert_equal after_first, File.read(org)
+      second = store.patch_task!(patch(first.snapshot, :body, "replacement", coalesce_key: key))
+      assert_equal :ok, second.status
+
+      assert_equal :ok, store.undo!.first
+      assert_equal after_first, File.read(org)
+      assert_equal :ok, store.undo!.first
+      assert_equal initial, File.read(org)
+    end
+  end
+
+  def test_history_branch_breaks_patch_coalescing
+    with_patch_store do |store, org|
+      key = "session"
+      initial = File.read(org)
+      first = store.patch_task!(patch(store.edit_snapshot("11110002"), :title, "Renamed",
+                                      coalesce_key: key))
+      assert_equal :ok, first.status
+      after_first = File.read(org)
+      item = store.items.find { |candidate| candidate.id == "11110002" }
+      assert store.set_priority!(item, "A")
+      assert_equal :ok, store.undo!.first
+      second = store.patch_task!(patch(first.snapshot, :body, "replacement", coalesce_key: key))
+      assert_equal :ok, second.status
+
+      assert_equal :ok, store.undo!.first
+      assert_equal after_first, File.read(org)
+      assert_equal :ok, store.undo!.first
+      assert_equal initial, File.read(org)
+    end
+  end
+
+  def test_new_store_instance_cannot_extend_a_coalesced_segment
+    with_patch_store do |store, org, archive|
+      key = "reused-session-key"
+      initial = File.read(org)
+      first = store.patch_task!(patch(store.edit_snapshot("11110002"), :title, "Renamed",
+                                      coalesce_key: key))
+      assert_equal :ok, first.status
+      after_first = File.read(org)
+
+      reopened = Tasks::Store.new(org: org, archive: archive)
+      second = reopened.patch_task!(patch(reopened.edit_snapshot("11110002"), :body,
+                                          "replacement", coalesce_key: key))
+      assert_equal :ok, second.status
+      assert_equal :ok, reopened.undo!.first
+      assert_equal after_first, File.read(org)
+      assert_equal :ok, reopened.undo!.first
+      assert_equal initial, File.read(org)
+    end
+  end
+
+  def test_external_org_bytes_break_coalescing_and_become_the_safe_baseline
+    with_patch_store do |store, org|
+      key = "session"
+      first = store.patch_task!(patch(store.edit_snapshot("11110002"), :title, "Renamed",
+                                      coalesce_key: key))
+      assert_equal :ok, first.status
+      records = parsed(org)
+      records.find { |record| record["id"] == "11110004" }["title"] = "External sibling"
+      File.write(org, Tasks::Format.dump(records))
+      external = File.read(org)
+
+      second = store.patch_task!(patch(first.snapshot, :body, "replacement", coalesce_key: key))
+      assert_equal :ok, second.status
+      assert_equal :ok, store.undo!.first
+      assert_equal external, File.read(org), "undo preserves the out-of-band bytes"
+      assert_equal [:empty], store.undo!, "unsafe history before the external write is discarded"
+    end
+  end
+
+  def test_external_archive_bytes_break_coalescing
+    with_patch_store do |store, org, archive|
+      key = "session"
+      first = store.patch_task!(patch(store.edit_snapshot("11110002"), :title, "Renamed",
+                                      coalesce_key: key))
+      assert_equal :ok, first.status
+      File.write(archive, Tasks::Format.dump([{ "type" => "meta", "version" => 1 }]))
+      external_archive = File.read(archive)
+
+      second = store.patch_task!(patch(first.snapshot, :body, "replacement", coalesce_key: key))
+      assert_equal :ok, second.status
+      assert_equal :ok, store.undo!.first
+      assert_equal external_archive, File.read(archive)
+      assert_equal "Renamed", parsed(org).find { |record| record["id"] == "11110002" }["title"]
+      assert_equal [:empty], store.undo!
     end
   end
 

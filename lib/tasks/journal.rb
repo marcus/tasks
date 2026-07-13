@@ -3,6 +3,7 @@
 require "digest"
 require "fileutils"
 require "json"
+require "securerandom"
 require "set"
 require_relative "atomic"
 require_relative "config"
@@ -17,7 +18,8 @@ module Tasks
   # file, they share one linear history.
   #
   # Layout (under XDG_STATE_HOME/tasks/journal/<key>/, keyed by the org's path):
-  #   index.json    { version, org, cursor, states: [{label?, org_sha, archive_sha}] }
+  #   index.json    { version, org, cursor,
+  #                   states: [{label?, org_sha, archive_sha, coalesce_key?, coalesce_scope?}] }
   #   blobs/<sha>   raw file contents, content-addressed and deduplicated
   #
   # `states` is the whole timeline; `cursor` indexes the state that matches the
@@ -40,6 +42,8 @@ module Tasks
   # conflict), never to a mangled task file.
   class Journal
     VERSION = 1
+    CorruptBlob = Class.new(StandardError)
+    private_constant :CorruptBlob
 
     # Journal directory for an org file. Uses XDG_STATE_HOME (the standard home
     # for persist-but-non-precious state), namespaced by a hash of the org's
@@ -74,30 +78,50 @@ module Tasks
       # how a sharing process spelled the path — same rationale as dir_for's key.
       @org = self.class.canonical(org)
       @limit = limit
+      # Coalescing is deliberately local to one live Journal/Store instance.
+      # Persisting this random scope on a keyed tip lets another instance share
+      # undo history without accidentally extending the prior edit session.
+      @coalesce_scope = SecureRandom.hex(16)
     end
 
     # Record a completed mutation. `before`/`after` are {org:, archive:} hashes
     # (a nil value means that file is absent at that state). Drops any redo tail,
-    # appends the new state, and caps history at `limit` undo steps.
+    # appends or safely replaces the keyed tip, and caps history at `limit` undo
+    # steps.
     #
     # If `before` doesn't match the recorded tip, an out-of-band edit slipped in
     # since the last record; the stale chain can no longer be safely replayed
     # (undoing across it would clobber that edit), so we discard it and start a
     # fresh baseline at `before`.
-    def record(label:, before:, after:)
+    def record(label:, before:, after:, coalesce_key: nil)
       FileUtils.mkdir_p(blobs_dir)
       idx = load
+      tip_matches = !idx[:states].empty? &&
+                    state_matches_snapshot?(idx[:states][idx[:cursor]], before)
       before_state = intern(before)
-      if idx[:states].empty? ||
-         idx[:states][idx[:cursor]].slice(:org_sha, :archive_sha) != before_state
+      at_tip = tip_matches && idx[:cursor] == idx[:states].length - 1
+      tip = idx[:states][idx[:cursor]] if tip_matches
+      key = coalesce_key if coalesce_key.is_a?(String)
+      coalesce = key && at_tip && idx[:cursor].positive? && tip[:coalesce_key] == key &&
+                 tip[:coalesce_scope] == @coalesce_scope &&
+                 state_blobs_valid?(idx[:states][idx[:cursor] - 1])
+
+      unless tip_matches
         states = [before_state]
         cursor = 0
       else
         states = idx[:states][0..idx[:cursor]]
         cursor = idx[:cursor]
       end
-      states << intern(after).merge(label: label)
-      cursor += 1
+
+      state = intern(after).merge(label: label)
+      state.merge!(coalesce_key: key, coalesce_scope: @coalesce_scope) if key
+      if coalesce
+        states[cursor] = state
+      else
+        states << state
+        cursor += 1
+      end
 
       if states.length > @limit + 1
         drop = states.length - (@limit + 1)
@@ -126,8 +150,14 @@ module Tasks
       # that sits *between* them (undo reverts it, redo replays it).
       label = idx[:states][[from, to].max][:label]
       { label: label, expect: content(idx[:states][from]), target: content(idx[:states][to]),
-        commit: -> { persist(to, idx[:states], gc: false) } }
-    rescue Errno::ENOENT
+        commit: lambda {
+          # Undo and redo are explicit history boundaries. Strip all segment
+          # metadata so even a redo back to the exact former tip cannot resume
+          # coalescing with an editor session that preceded the history move.
+          states = idx[:states].map { |state| state.except(:coalesce_key, :coalesce_scope) }
+          persist(to, states, gc: false)
+        } }
+    rescue Errno::ENOENT, CorruptBlob
       nil
     end
 
@@ -139,6 +169,7 @@ module Tasks
 
     def load
       data = JSON.parse(File.read(index_path, encoding: "UTF-8"), symbolize_names: true)
+      return blank unless data.is_a?(Hash)
       # A key collision (different org, same 16-hex prefix) or a format bump
       # invalidates the whole history rather than replaying someone else's.
       return blank unless data[:version] == VERSION && data[:org] == @org
@@ -149,12 +180,42 @@ module Tasks
       # every undo AND every subsequent mutation. Treat that as no history.
       return blank unless states.is_a?(Array) && cursor.is_a?(Integer) &&
                           cursor.between?(0, states.length - 1)
+      return blank unless states.all? { |state| valid_state?(state) }
       { cursor: cursor, states: states }
     rescue Errno::ENOENT, JSON::ParserError
       blank
     end
 
     def blank = { cursor: 0, states: [] }
+
+    def valid_state?(state)
+      return false unless state.is_a?(Hash)
+      return false unless %i[org_sha archive_sha].all? do |key|
+        state[key].nil? ||
+          (state[key].is_a?(String) && state[key].match?(/\A[0-9a-f]{64}\z/))
+      end
+      return false unless state[:label].nil? || state[:label].is_a?(String)
+      return false unless state[:coalesce_key].nil? || state[:coalesce_key].is_a?(String)
+      state[:coalesce_scope].nil? || state[:coalesce_scope].is_a?(String)
+    end
+
+    def state_matches_snapshot?(state, snapshot)
+      %i[org archive].all? do |kind|
+        expected = snapshot[kind]
+        sha = state[:"#{kind}_sha"]
+        expected.nil? ? sha.nil? : sha && blob_bytes(sha) == expected.b
+      end
+    rescue Errno::ENOENT
+      false
+    end
+
+    def state_blobs_valid?(state)
+      state && %i[org_sha archive_sha].all? do |key|
+        state[key].nil? || Digest::SHA256.hexdigest(blob_bytes(state[key])) == state[key]
+      end
+    rescue Errno::ENOENT
+      false
+    end
 
     # gc only when the state set may have shrunk (a `record` that capped or
     # dropped a redo tail) — an undo/redo commit leaves `states` untouched, so
@@ -170,6 +231,8 @@ module Tasks
     def compact(state)
       h = { org_sha: state[:org_sha], archive_sha: state[:archive_sha] }
       h[:label] = state[:label] if state[:label]
+      h[:coalesce_key] = state[:coalesce_key] if state[:coalesce_key]
+      h[:coalesce_scope] = state[:coalesce_scope] if state[:coalesce_scope]
       h
     end
 
@@ -183,7 +246,8 @@ module Tasks
       sha = Digest::SHA256.hexdigest(text)
       path = blob_path(sha)
       # Content-addressed: identical content already on disk needs no rewrite.
-      Atomic.write(path, text) unless File.exist?(path)
+      # Repair a tampered/truncated blob before a new baseline references it.
+      Atomic.write(path, text) unless File.exist?(path) && blob_bytes(sha) == text.b
       sha
     end
 
@@ -193,8 +257,13 @@ module Tasks
 
     def read(sha)
       return nil if sha.nil?
-      File.read(blob_path(sha), encoding: "UTF-8")
+      bytes = blob_bytes(sha)
+      raise CorruptBlob unless Digest::SHA256.hexdigest(bytes) == sha
+      text = bytes.force_encoding(Encoding::UTF_8)
+      raise CorruptBlob unless text.valid_encoding?
+      text
     end
+    def blob_bytes(sha) = File.binread(blob_path(sha))
 
     # Delete blobs no live state references (freed by capping or a dropped redo
     # tail). Best-effort: a leaked blob wastes a little disk, never breaks undo.

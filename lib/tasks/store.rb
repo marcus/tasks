@@ -398,7 +398,8 @@ module Tasks
                                    errors: [reason])
           end
           after = snapshot
-          @journal.record(label: label, before: before, after: after)
+          @journal.record(label: label, before: before, after: after,
+                          coalesce_key: patch.coalesce_key)
           reload!
           fresh_ri = locate_stable_index(@records, patch.id)
           PatchResult.new(
@@ -1061,7 +1062,7 @@ module Tasks
     # succeeds but must not burn an undo slot with a label that reverts nothing.
     # The whole read-modify-write runs under the lock so a concurrent writer
     # can't slip between the steps.
-    def with_history(label)
+    def with_history(label, coalesce_key: nil)
       with_lock do
         @last_rollback = nil
         before = snapshot
@@ -1081,7 +1082,8 @@ module Tasks
             restore(before)
             return result.is_a?(Integer) ? 0 : false
           end
-          @journal.record(label: label, before: before, after: after)
+          @journal.record(label: label, before: before, after: after,
+                          coalesce_key: coalesce_key)
         end
         result
       end
