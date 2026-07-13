@@ -1,8 +1,13 @@
 # Plan: editable task panel and reusable terminal forms
 
-Status: in progress
+Status: implemented; independent adversarial review pending
 
 Date: 2026-07-13
+
+Implementation status: Phases 0–5 and the Phase 6A extraction, hardening, and
+documentation pass are complete. Phase 6B remains an independent adversarial
+review and remediation gate; no gem publication or API-stability claim is part
+of the delivered feature.
 
 Related decisions:
 
@@ -701,10 +706,11 @@ ruby test/all.rb
 /Users/marcus/code/tasks/bin/tasks check
 git diff --check
 ruby -Ilib -e 'require "term_form"'
+ruby examples/term_form_demo.rb
 ```
 
-The TermForm smoke test becomes applicable when Phase 1 lands. Focused tests for
-the changed slice run before the full suite.
+The TermForm require smoke and standalone demo are required gates. Focused tests
+for the changed slice run before the full suite.
 
 ## Acceptance criteria
 

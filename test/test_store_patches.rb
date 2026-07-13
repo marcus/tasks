@@ -1,8 +1,11 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require "open3"
+require "rbconfig"
 
 class TestStorePatches < Minitest::Test
+  BIN = File.expand_path("../bin/tasks", __dir__)
   PATCH_TREE = [
     { "type" => "meta", "version" => 1 },
     { "type" => "section", "id" => "11110001", "title" => "One" },
@@ -33,6 +36,17 @@ class TestStorePatches < Minitest::Test
 
   def parsed(path)
     Tasks::Format.parse(File.read(path, encoding: "UTF-8")).records
+  end
+
+  def run_external_cli(org, *args)
+    env = {
+      "TASKS_FILE" => org,
+      "TASKS_ARCHIVE" => File.join(File.dirname(org), "archive.jsonl"),
+      "XDG_STATE_HOME" => ENV.fetch("XDG_STATE_HOME"),
+    }
+    stdout, stderr, status = Open3.capture3(env, RbConfig.ruby, BIN, *args)
+    assert status.success?, "#{BIN} #{args.join(" ")} failed\nstdout: #{stdout}\nstderr: #{stderr}"
+    [stdout, stderr]
   end
 
   def install_interleaved_tags(path)
@@ -644,6 +658,36 @@ class TestStorePatches < Minitest::Test
       assert_equal after_first, File.read(org)
       assert_equal :ok, store.undo!.first
       assert_equal initial, File.read(org)
+    end
+  end
+
+  def test_external_absolute_cli_write_preserves_one_step_segment_and_breaks_the_next_segment
+    with_patch_store do |store, org|
+      key = "editor-session"
+      initial = File.binread(org)
+      first = store.patch_task!(patch(
+        store.edit_snapshot("11110002"), :title, "Renamed", coalesce_key: key,
+      ))
+      second = store.patch_task!(patch(
+        first.snapshot, :body, "coalesced body", coalesce_key: key,
+      ))
+      assert_equal :ok, second.status
+      after_segment = File.binread(org)
+
+      run_external_cli(org, "priority", "11110002", "A")
+      after_external = File.binread(org)
+      third = store.patch_task!(patch(
+        store.edit_snapshot("11110002"), :body, "after CLI", coalesce_key: key,
+      ))
+      assert_equal :ok, third.status
+
+      assert_equal :ok, store.undo!.first
+      assert_equal after_external, File.binread(org), "latest editor patch is its own segment"
+      assert_equal :ok, store.undo!.first
+      assert_equal after_segment, File.binread(org), "external CLI mutation keeps its own boundary"
+      assert_equal :ok, store.undo!.first
+      assert_equal initial, File.binread(org), "the two earlier field patches remain one undo step"
+      assert_equal [:empty], store.undo!
     end
   end
 

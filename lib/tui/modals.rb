@@ -31,7 +31,7 @@ module Tui
         entries.each { |entry| lines << shortcut_line(entry, key_w) }
       end
       lines << ""
-      lines << T.paint(:muted, "prompt/form input: return submits · esc cancels · ctrl-a/e/b/f move")
+      lines << T.paint(:muted, "prompt/quick-form input: return submits · esc cancels · ctrl-a/e/b/f move")
       { title: "keyboard shortcuts", lines: lines }
     end
 

@@ -127,6 +127,44 @@ class TestFormRenderer < Minitest::Test
     assert A.strip(compact.lines.first).start_with?("›*"), "narrow focus/dirty cues must remain textual"
   end
 
+  def test_long_notes_and_options_stay_bounded_in_short_stacked_and_wide_panels
+    notes = TermForm::Fields::TextArea.new(
+      key: :notes, label: "Notes", value: ("界🙂 long note " * 30),
+    )
+    location = TermForm::Fields::Select.new(
+      key: :location, label: "Location", value: "one",
+      options: [
+        ["one", "A very long project and parent-task option " * 4],
+        ["two", "Another destination with Unicode 界🙂 " * 4],
+      ],
+      searchable: false,
+    )
+    form = TermForm::Form.new(
+      groups: [TermForm::Group.new(key: :main, label: "Long data", fields: [notes, location])],
+      focus: :location,
+    )
+    form.handle("\r")
+    renderer = Tui::FormRenderer.new
+
+    [[8, 1], [32, 4], [48, 6], [96, 10]].each do |width, height|
+      result = renderer.render(
+        model: form.render_model, width: width, height: height,
+        title: "Long data", hint: "tab saves",
+      )
+      assert_operator result.lines.size, :<=, height
+      assert result.lines.all? { |line| A.vislen(line) <= width },
+             "long data escaped #{width}x#{height}: #{result.lines.inspect}"
+      assert_equal(height < 3 ? 0 : 2, result.focused_content_row)
+    end
+
+    wide = A.strip(renderer.render(
+      model: form.render_model, width: 96, height: 10,
+      title: "Long data", hint: "tab saves",
+    ).lines.join("\n"))
+    assert_includes wide, "Location: one"
+    assert_includes wide, "A very long project and parent-task option"
+  end
+
   def test_rendering_does_not_sample_terminal_geometry
     form = input_form(value: "value")
     IO.stub(:console, -> { raise "geometry IO is forbidden" }) do

@@ -108,7 +108,11 @@ from, with the same subtrees collapsed (session state in
 ↑↓ / jk    select a task; an open detail panel follows the selection
 h / l      collapse / expand the selected subtree (h again climbs to the parent)
 H / L      collapse / expand all subtrees
-return     open / close the task detail panel on the right
+return     open / close the read-only task detail panel on the right
+tab        with details open, edit from the first field; otherwise focus the agent prompt
+shift-tab  with details open, edit from the last field
+e          edit the open task (also available in the action palette)
+ctrl-k/l   grow / shrink the open task panel through its named widths
 ?          keyboard shortcuts modal (/ filters its lines)
 ctrl-d/u   scroll the detail panel half a page (ctrl-f/b scrolls a full page)
            the shortcuts modal scrolls with j/k, ctrl-d/u, and ctrl-f/b
@@ -124,12 +128,25 @@ y / Y      yank task ref / full task as markdown to the clipboard
 p          paste a quoted task ref into the agent prompt
 x          preview archive sweep counts; y confirms, n / esc cancels
 M          cycle the agent/model (provider:model shown in the header)
-tab        focus the agent prompt — natural-language CRUD on your tasks
 :          search available actions; type to filter, ↑↓ choose, return runs, esc cancels
 esc        dismiss the response / cancel a request / close the detail panel
 pgup/pgdn  scroll a long response (footer grows, then collapses on esc)
 q          quit
 ```
+
+Task editing is save-on-blur: `Tab`/`Shift-Tab` validates and saves the focused
+field before moving, `Ctrl-S` saves it in place, and `Ctrl-O` saves and returns
+to the read-only panel. Resizing the panel or terminal does not save. A dirty
+field takes two `Escape` presses to discard, while the first only warns. If an
+external CLI write changes the same field, the local buffer stays copyable and
+the save reports a conflict; unrelated field writes are adopted. Consecutive
+field saves in one uninterrupted edit session are one undo step, but a CLI
+write, undo/redo, or reopened editor creates a boundary.
+
+The editor is powered by the embedded, stdlib-only `TermForm` component. Run
+`ruby examples/term_form_demo.rb` for a plain, non-ANSI renderer that loads no
+task application code. This demonstrates the extraction seam; `TermForm`
+remains an internal API and does not promise gem compatibility or stability.
 
 The agent runs asynchronously (the local `claude` CLI by default, same as
 `tasks -p`, or any configured harness), so the UI stays responsive while it

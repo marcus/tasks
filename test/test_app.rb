@@ -250,6 +250,32 @@ class TestApp < Minitest::Test
     end
   end
 
+  def test_task_editor_receives_one_unicode_bracketed_paste_event
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\t")
+      editor = ui(app).task_editor
+      editor.form.focus(:body)
+      before = File.binread(app.instance_variable_get(:@store).org)
+
+      app.instance_variable_set(
+        :@key_data,
+        "\e[200~first 👩‍💻界\r\nsecond\tline\e[201~",
+      )
+      app.send(:drain_key_data)
+
+      assert_equal :body, editor.focused_key
+      assert_equal "first 👩‍💻界\nsecond line", editor.edit_form.value(:body)
+      assert editor.dirty?(:body)
+      assert_equal before, File.binread(app.instance_variable_get(:@store).org),
+                   "paste must not blur or save the field"
+
+      app.send(:handle_key, "\x13")
+      assert_equal "first 👩‍💻界\nsecond line",
+                   app.instance_variable_get(:@store).edit_snapshot(FIX[:flight]).body
+    end
+  end
+
   def test_ctrl_s_saves_in_place_and_ctrl_o_returns_to_read_panel
     app_on(view: :agenda, select: "Book flight") do |app|
       app.send(:handle_key, "\r")

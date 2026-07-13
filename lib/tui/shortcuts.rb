@@ -62,6 +62,7 @@ module Tui
       entry(sequences: ["Y"],          key: "Y",       description: "yank task as markdown",            contexts: %i[list detail], handler: :yank_markdown, palette: :selected_action_available?),
       entry(sequences: ["p"],          key: "p",       description: "paste task ref into the prompt",   contexts: %i[list detail], handler: :paste_ref, palette: :selected_action_available?),
       entry(sequences: ["e"],          key: "e",       description: "edit task",                         contexts: [:detail], handler: :start_task_edit, palette: :selected_action_available?, form: :task_edit),
+      entry(sequences: ["\t"],         key: "tab",       description: "edit task from its first field",    contexts: [:detail], handler: :start_task_edit),
       entry(sequences: ["\e[Z"],       key: "shift-tab", description: "edit task from its last field",   contexts: [:detail], handler: :start_task_edit_last),
       entry(sequences: ["\x0b"],       key: "ctrl-k",  description: "grow task panel",                  contexts: [:detail], handler: :grow_task_panel, palette: true),
       entry(sequences: ["\x0c"],       key: "ctrl-l",  description: "shrink task panel",                contexts: [:detail], handler: :shrink_task_panel, palette: true),

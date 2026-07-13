@@ -1,9 +1,12 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require "open3"
+require "rbconfig"
 require "tui/task_editor_session"
 
 class TestTaskEditorSession < Minitest::Test
+  BIN = File.expand_path("../bin/tasks", __dir__)
   EDIT_TREE = [
     { "type" => "meta", "version" => 1 },
     { "type" => "section", "id" => "11110001", "title" => "One" },
@@ -34,6 +37,17 @@ class TestTaskEditorSession < Minitest::Test
 
   def record(path, id = "11110002")
     Tasks::Format.parse(File.read(path, encoding: "UTF-8")).records.find { |entry| entry["id"] == id }
+  end
+
+  def run_external_cli(org, *args)
+    env = {
+      "TASKS_FILE" => org,
+      "TASKS_ARCHIVE" => File.join(File.dirname(org), "archive.jsonl"),
+      "XDG_STATE_HOME" => ENV.fetch("XDG_STATE_HOME"),
+    }
+    stdout, stderr, status = Open3.capture3(env, RbConfig.ruby, BIN, *args)
+    assert status.success?, "#{BIN} #{args.join(" ")} failed\nstdout: #{stdout}\nstderr: #{stderr}"
+    [stdout, stderr]
   end
 
   def test_adapter_has_exact_field_order_semantic_values_and_read_only_metadata
@@ -426,6 +440,31 @@ class TestTaskEditorSession < Minitest::Test
     end
   end
 
+  def test_absolute_cli_writes_merge_unowned_slices_and_conflict_on_the_owned_slice
+    with_editor do |session, _store, org|
+      session.form.set_value(:title, "Local title")
+      run_external_cli(org, "priority", "11110002", "A")
+
+      session.refresh
+      assert_equal "Local title", session.edit_form.value(:title)
+      assert_equal "A", session.edit_form.value(:priority)
+      assert_equal :ok, session.save.status
+      assert_equal "Local title", record(org)["title"]
+      assert_equal "A", record(org)["priority"]
+
+      session.form.set_value(:title, "Second local title")
+      run_external_cli(org, "retitle", "11110002", "External title")
+      session.refresh
+      before = File.binread(org)
+
+      conflict = session.save
+      assert conflict.conflict?
+      assert_equal "Second local title", session.edit_form.value(:title)
+      assert_equal "External title", conflict.data.fresh_value
+      assert_equal before, File.binread(org)
+    end
+  end
+
   def test_missing_target_is_inert_and_keeps_the_active_buffer_copyable
     with_editor do |session, _store, org|
       session.form.set_value(:title, "Copy me")
@@ -439,6 +478,23 @@ class TestTaskEditorSession < Minitest::Test
       assert_equal "Copy me", session.copy_value
       assert session.handle("x").missing?
       assert_equal "Copy me", session.edit_form.value(:title)
+    end
+  end
+
+  def test_absolute_cli_archive_makes_target_missing_without_retargeting_the_buffer
+    with_editor do |session, _store, org|
+      session.form.set_value(:title, "Copy after external archive")
+      run_external_cli(org, "recur", "11110002", "off")
+      run_external_cli(org, "done", "11110002")
+      run_external_cli(org, "archive")
+
+      result = session.refresh
+      assert result.missing?
+      assert session.inert?
+      assert_equal "11110002", session.target_id
+      assert_equal "Copy after external archive", session.copy_value
+      assert_nil record(org)
+      assert_equal "Destination", record(org, "22220002")["title"]
     end
   end
 

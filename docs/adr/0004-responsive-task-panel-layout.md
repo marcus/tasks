@@ -1,6 +1,6 @@
 # ADR-0004: Use responsive named widths for the task panel
 
-Status: Accepted
+Status: Accepted and implemented
 
 Date: 2026-07-13
 

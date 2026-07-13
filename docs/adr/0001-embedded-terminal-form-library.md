@@ -1,6 +1,6 @@
 # ADR-0001: Build the form system as an embedded, extractable library
 
-Status: Accepted
+Status: Accepted and implemented
 
 Date: 2026-07-13
 
@@ -85,7 +85,9 @@ single in-place implementation would not need. That cost is deliberate: it is
 the seam that prevents `TermForm` from becoming another name for tasks TUI
 internals.
 
-Extraction is possible but not automatic. A future gem will still need its own
-terminal renderer, documentation, versioning, and accessibility story. The plan
-requires a standalone example and dependency-boundary test so that this work is
-measured rather than assumed.
+Extraction is possible but not automatic. `examples/term_form_demo.rb` now
+exercises the semantic model through a plain renderer without loading task or
+TUI constants, and the dependency-boundary test executes both the require
+smoke and demo. A future gem would still need its own terminal renderer,
+documentation, versioning, and accessibility story; this proof does not make
+the embedded API stable.

@@ -1,6 +1,6 @@
 # ADR-0002: Commit validated task fields on blur through semantic Store patches
 
-Status: Accepted
+Status: Accepted and implemented
 
 Date: 2026-07-13
 

@@ -91,7 +91,7 @@ view; list navigation stays active and refreshes the panel for each newly
 selected task. Return or Escape closes it. The existing `d` date and `r`
 recurrence quick actions remain available.
 
-**Editable task-panel contract (implementation in progress).** With a read-only
+**Editable task-panel behavior.** With a read-only
 task panel open, `Tab` enters editing at the first editable field and
 `Shift-Tab` enters at the last. In edit mode, those keys traverse in their
 respective directions. Leaving a changed field validates and immediately saves
@@ -140,6 +140,12 @@ bytes. CLI/external writes, undo/redo, reopening the editor, or any byte mismatc
 breaks the group. If a successful Location or State patch removes the task from
 the current view, the app immediately exits editing, selects a deterministic
 nearby row, returns to the read panel or list, and explains where the task went.
+
+The generated `?` help comes from `lib/tui/shortcuts.rb` and includes the
+detail-panel entry keys, every editor-owned key, and the panel resize actions.
+The embedded `TermForm` boundary can be exercised independently with
+`ruby examples/term_form_demo.rb`; that plain renderer is extraction proof, not
+a stable public or gem API.
 
 `x` previews the number of completed roots and descendants that would move to
 `archive.jsonl`; `y` confirms, while `n` or Escape cancels without writing.
