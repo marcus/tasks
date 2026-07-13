@@ -17,11 +17,13 @@ module Tui
     MIN_LIST_WIDTH = 8
     EDIT_MIN_CONTENT_WIDTH = 32
     INLINE_CONTENT_WIDTH = 48
+    EDIT_PANEL_CHROME_ROWS = 2 # RightPanel title and divider
+    EDIT_MIN_VISIBLE_ROWS = 1  # compact focused-field fallback
 
     attr_reader :width, :height, :footer, :body_height, :body_width,
                 :list_width, :panel_width, :panel_content_width,
                 :viewport_offset, :selected_screen_row, :selected,
-                :panel_mode, :requested_panel_mode
+                :panel_mode, :requested_panel_mode, :edit_content_height
 
     def initialize(width:, height:, footer:, selected: nil, panel: false,
                    panel_mode: :standard, editing: false)
@@ -36,6 +38,7 @@ module Tui
       @editing = !!editing
       @panel_mode, @panel_width = panel ? calculate_panel : [@requested_panel_mode, 0]
       @panel_content_width = @panel_width.zero? ? 0 : [@panel_width - 2, 1].max
+      @edit_content_height = [@body_height - EDIT_PANEL_CHROME_ROWS, 0].max
       @list_width = @body_width - @panel_width
       @selected = selected
       @viewport_offset = @selected && @selected >= @body_height ? @selected - @body_height + 1 : 0
@@ -46,7 +49,10 @@ module Tui
     def footer_size = @footer.size
     def panel? = @panel_width.positive?
     def editing? = @editing
-    def editable_panel? = panel? && @panel_content_width >= EDIT_MIN_CONTENT_WIDTH
+    def editable_panel?
+      panel? && @panel_content_width >= EDIT_MIN_CONTENT_WIDTH &&
+        @edit_content_height >= EDIT_MIN_VISIBLE_ROWS
+    end
     def content_breakpoint
       return :below_minimum if @panel_content_width < EDIT_MIN_CONTENT_WIDTH
       return :stacked if @panel_content_width < INLINE_CONTENT_WIDTH
@@ -56,6 +62,16 @@ module Tui
 
     def self.minimum_edit_terminal_width
       4 + MIN_LIST_WIDTH + 2 + EDIT_MIN_CONTENT_WIDTH
+    end
+
+    # Named zero-footer minimum. Every footer/help row consumes another
+    # terminal row before the panel title, divider, and focused fallback.
+    def self.minimum_edit_terminal_height(footer_rows: 0)
+      FIXED_ROWS + Integer(footer_rows) + EDIT_PANEL_CHROME_ROWS + EDIT_MIN_VISIBLE_ROWS
+    end
+
+    def self.minimum_edit_terminal_size(footer_rows: 0)
+      [minimum_edit_terminal_height(footer_rows: footer_rows), minimum_edit_terminal_width].freeze
     end
 
     def visible_rows(rows)

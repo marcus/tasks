@@ -59,6 +59,14 @@ content cells is the initial editable minimum. Editing promotes to a mode that
 can supply it; when the terminal itself cannot, the app keeps a usable read view
 and reports the required width instead of rendering a broken editor.
 
+The named zero-footer editing minimum is **46×8 terminal cells**: 46 columns
+provide the eight-cell list strip plus 32 panel-content cells, while eight rows
+provide the frame chrome, panel title and divider, and one compact focused-field
+row. Each active footer/help row raises the minimum height by one. Below that
+minimum the app stays in read mode, or suspends a live editor into read mode so
+normal list keys remain available and the same draft session can resume after a
+resize.
+
 Panel-mode and terminal-resize events preserve target ID, focus, buffer, cursor,
 errors, picker state, and scroll. They are explicitly not focus-leave events.
 

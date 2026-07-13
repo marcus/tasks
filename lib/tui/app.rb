@@ -92,6 +92,8 @@ module Tui
       @tick = 0
       @quit = false
       @task_edit_message = nil
+      @suspended_task_editor = nil
+      @suspended_task_panel = nil
     end
 
     # -- agent selection -----------------------------------------------------
@@ -172,8 +174,15 @@ module Tui
       visual_selection = @ui.mode == :prompt ? nil : @sel
       layout = screen_layout(width: width, height: height, selected: visual_selection,
                              panel: @ui.panel)
+      if task_editing? && !layout.editable_panel?
+        suspend_task_edit_for_layout(layout)
+        visual_selection = @sel
+        layout = screen_layout(width: width, height: height, selected: visual_selection,
+                               panel: @ui.panel)
+      elsif task_editing?
+        refresh_task_edit_panel(layout: layout)
+      end
       refresh_detail_panel(content_width: layout.panel_content_width) if detail_panel?
-      refresh_task_edit_panel(layout: layout) if task_editing?
       lines = Frame.build(
         width: width, height: height,
         header: header(width - 2),
@@ -238,7 +247,7 @@ module Tui
       " #{tabs}#{" " * gap}#{count} "
     end
 
-    def footer(w)
+    def footer(w, mode: @ui.mode)
       f = []
       if @agent.running?
         f << T.paint(:muted, " #{SPINNER[@tick % SPINNER.size]} #{@agent_provider} is working… (esc cancels)")
@@ -253,9 +262,9 @@ module Tui
         f << :rule
       end
       f << " #{@flash}" if @flash
-      if @ui.mode == :modal_filter
+      if mode == :modal_filter
         f << " #{T.paint(:prompt, "/ ")}#{inline_input(@ui.modal_filter_input)}#{T.paint(:muted, "  filters the modal · enter keeps · esc clears")}"
-      elsif @ui.mode == :filter
+      elsif mode == :filter
         f << " #{T.paint(:prompt, "/ ")}#{inline_input(@ui.filter_input)}#{T.paint(:muted, "  enter keeps · esc clears")}"
       elsif @ui.filter
         n = (@rows || []).count(&:item)
@@ -263,7 +272,7 @@ module Tui
       end
       # Active text entry owns the scarce footer row on short terminals. Forms
       # and palettes render their input in the popup; filters render it here.
-      f.concat(prompt_lines(w)) unless %i[modal_filter filter form palette task_edit].include?(@ui.mode)
+      f.concat(prompt_lines(w)) unless %i[modal_filter filter form palette task_edit].include?(mode)
       f
     end
 
@@ -367,11 +376,13 @@ module Tui
       screen_layout(width: width || terminal_width, height: height || terminal_height).footer_size
     end
 
-    def screen_layout(width:, height:, footer_size: nil, selected: @sel, panel: @ui.panel)
-      raw_footer = footer_size ? Array.new(footer_size, "") : footer(width - 2)
+    def screen_layout(width:, height:, footer_size: nil, selected: @sel, panel: @ui.panel,
+                      editing: task_editing?)
+      footer_mode = editing ? :task_edit : @ui.mode
+      raw_footer = footer_size ? Array.new(footer_size, "") : footer(width - 2, mode: footer_mode)
       ScreenLayout.new(width: width, height: height, footer: raw_footer, selected: selected,
                        panel: !panel.nil?, panel_mode: @ui.panel_mode,
-                       editing: task_editing?)
+                       editing: editing)
     end
 
     # -- input ---------------------------------------------------------------
@@ -715,19 +726,31 @@ module Tui
       return flash("nothing selected") unless item
 
       height, width = terminal_size
-      layout = screen_layout(width: width, height: height, panel: true)
-      unless ScreenLayout.new(width: width, height: height, footer: layout.footer,
-                              selected: @sel, panel: true, panel_mode: @ui.panel_mode,
-                              editing: true).editable_panel?
-        return flash("task editing needs at least #{ScreenLayout.minimum_edit_terminal_width} terminal columns")
+      layout = screen_layout(width: width, height: height, panel: true, editing: true)
+      unless layout.editable_panel?
+        required_height, required_width = ScreenLayout.minimum_edit_terminal_size(
+          footer_rows: layout.footer_size
+        )
+        return flash("task editing needs at least #{required_width}×#{required_height} terminal cells")
       end
 
-      editor = TaskEditorSession.new(store: @store, target_id: item.id, focus: focus)
+      if @suspended_task_editor&.target_id != item.id && @suspended_task_editor&.dirty?
+        return flash("unsaved task draft belongs to another row — reselect it to resume")
+      end
+      resumed = @suspended_task_editor&.target_id == item.id
+      editor = if resumed
+                 @suspended_task_editor
+               else
+                 TaskEditorSession.new(store: @store, target_id: item.id, focus: focus)
+               end
       return flash("task no longer exists") if editor.missing?
 
+      panel = @suspended_task_panel if resumed
+      @suspended_task_editor = nil
+      @suspended_task_panel = nil
       @ui.task_editor = editor
-      @ui.panel = RightPanel.new(title: "task · editing", lines: [], kind: :task_edit,
-                                 identity: editor.target_id)
+      @ui.panel = panel || RightPanel.new(title: "task · editing", lines: [], kind: :task_edit,
+                                          identity: editor.target_id)
       @task_edit_message = nil
       @ui.mode = :task_edit
     end
@@ -895,20 +918,22 @@ module Tui
 
     def task_editing? = @ui.mode == :task_edit && !@ui.task_editor.nil?
 
+    def suspend_task_edit_for_layout(layout)
+      editor = @ui.task_editor
+      @suspended_task_panel = @ui.panel
+      @ui.task_editor = nil
+      @suspended_task_editor = editor
+      @task_edit_message = nil
+      show_detail
+      required_height, required_width = ScreenLayout.minimum_edit_terminal_size(
+        footer_rows: layout.footer_size
+      )
+      flash("editing paused — resize to at least #{required_width}×#{required_height}; Tab resumes the draft")
+    end
+
     def refresh_task_edit_panel(layout:)
       editor = @ui.task_editor
       return unless editor && @ui.panel&.kind == :task_edit
-
-      unless layout.editable_panel?
-        needed = ScreenLayout.minimum_edit_terminal_width
-        @ui.panel.replace(
-          title: "task · editing paused",
-          lines: ["Widen the terminal to at least #{needed} columns.",
-                  "Your task, field, buffer, cursor, and errors are preserved."],
-          identity: editor.target_id,
-        )
-        return
-      end
 
       message = @task_edit_message
       message = "Task no longer exists · esc discards the local edit" if editor.missing?
@@ -954,6 +979,8 @@ module Tui
       editor = @ui.task_editor
       target_id = editor&.target_id
       @ui.task_editor = nil
+      @suspended_task_editor = nil
+      @suspended_task_panel = nil
       @task_edit_message = nil
       @ui.mode = :list unless @ui.mode == :list
 

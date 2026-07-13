@@ -320,15 +320,18 @@ class TestApp < Minitest::Test
   end
 
 
-  def test_below_minimum_resize_pauses_form_instead_of_rendering_it_broken
+  def test_below_minimum_height_suspends_editor_and_reentry_preserves_draft
     app_on(view: :agenda, select: "Book flight") do |app|
       app.send(:handle_key, "\r")
       app.send(:handle_key, "\t")
       editor = ui(app).task_editor
+      panel = ui(app).panel
       editor.form.set_value(:title, "narrow draft")
+      panel.instance_variable_set(:@scroll, 3)
       before = File.binread(app.instance_variable_get(:@store).org)
+      coalesce_key = editor.coalesce_key
       captured = nil
-      console = Struct.new(:winsize).new([18, 45])
+      console = Struct.new(:winsize).new([7, 46])
 
       IO.stub(:console, console) do
         Tui::Frame.stub(:build, ->(**args) { captured = args; Array.new(args[:height], "") }) do
@@ -337,12 +340,59 @@ class TestApp < Minitest::Test
       end
 
       refute captured[:layout].editable_panel?
+      assert_equal :list, ui(app).mode
+      assert_nil ui(app).task_editor
+      assert_equal "narrow draft", editor.edit_form.value(:title)
+      assert_equal :detail, ui(app).panel.kind
+      assert_match(/editing paused/, app.instance_variable_get(:@flash))
+      assert_equal before, File.binread(app.instance_variable_get(:@store).org)
+
+      # The invisible editor no longer captures list keys.
+      original_id = ui(app).selected_id
+      app.send(:handle_key, "j")
+      refute_equal original_id, ui(app).selected_id
+      assert_equal "narrow draft", editor.edit_form.value(:title)
+
+      app.send(:handle_key, "k")
+      wide = Struct.new(:winsize).new([18, 80])
+      IO.stub(:console, wide) { app.send(:handle_key, "\t") }
       assert_equal :task_edit, ui(app).mode
       assert_same editor, ui(app).task_editor
+      assert_same panel, ui(app).panel
+      assert_equal 3, ui(app).panel.scroll
       assert_equal "narrow draft", editor.edit_form.value(:title)
-      assert_match(/editing paused/, ui(app).panel.title)
-      assert_match(/at least 46/, ui(app).panel.lines.first)
+      assert_equal coalesce_key, editor.coalesce_key
       assert_equal before, File.binread(app.instance_variable_get(:@store).org)
+    end
+  end
+
+  def test_enter_task_edit_rejects_46_by_6_and_7_but_shows_field_at_46_by_8
+    [6, 7].each do |height|
+      app_on(view: :agenda, select: "Book flight") do |app|
+        app.send(:handle_key, "\r")
+        console = Struct.new(:winsize).new([height, 46])
+        IO.stub(:console, console) { app.send(:handle_key, "\t") }
+        assert_equal :list, ui(app).mode, "46x#{height}"
+        assert_nil ui(app).task_editor
+        assert_equal :detail, ui(app).panel.kind
+        assert_match(/46×8/, app.instance_variable_get(:@flash))
+      end
+    end
+
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:handle_key, "\r")
+      console = Struct.new(:winsize).new([8, 46])
+      captured = nil
+      IO.stub(:console, console) do
+        app.send(:handle_key, "\t")
+        Tui::Frame.stub(:build, ->(**args) { captured = args; Array.new(args[:height], "") }) do
+          capture_io { app.send(:paint) }
+        end
+      end
+      assert_equal :task_edit, ui(app).mode
+      assert captured[:layout].editable_panel?
+      assert_equal 1, captured[:panel][:lines].size
+      assert_match(/Book flight/, Tui::Ansi.strip(captured[:panel][:lines].first))
     end
   end
 

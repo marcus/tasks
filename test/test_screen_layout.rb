@@ -139,6 +139,39 @@ class TestScreenLayout < Minitest::Test
     assert_equal 46, Tui::ScreenLayout.minimum_edit_terminal_width
   end
 
+
+  def test_editing_admission_is_exact_at_named_height_across_widths_and_modes
+    Tui::ScreenLayout::PANEL_MODES.each do |mode|
+      [45, 46, 80, 120].each do |width|
+        [6, 7, 8, 9].each do |height|
+          layout = Tui::ScreenLayout.new(
+            width: width, height: height, footer: [], panel: true,
+            panel_mode: mode, editing: true
+          )
+          expected = width >= 46 && height >= 8
+          assert_equal expected, layout.editable_panel?,
+                       "#{mode} at #{width}x#{height}"
+          assert_equal [height - 7, 0].max, layout.edit_content_height
+        end
+      end
+    end
+    assert_equal [8, 46], Tui::ScreenLayout.minimum_edit_terminal_size
+  end
+
+  def test_each_footer_row_raises_edit_height_minimum
+    below = Tui::ScreenLayout.new(
+      width: 46, height: 8, footer: ["message"], panel: true,
+      panel_mode: :focus, editing: true
+    )
+    exact = Tui::ScreenLayout.new(
+      width: 46, height: 9, footer: ["message"], panel: true,
+      panel_mode: :focus, editing: true
+    )
+    refute below.editable_panel?
+    assert exact.editable_panel?
+    assert_equal [9, 46], Tui::ScreenLayout.minimum_edit_terminal_size(footer_rows: 1)
+  end
+
   def test_frame_consumes_layout_body_and_viewport_without_recomputing
     rows = (0..12).map { |i| Tui::Views::Row.new("row #{i}", Object.new) }
     layout = Tui::ScreenLayout.new(width: 42, height: 12, footer: %w[a b c], selected: 9)
