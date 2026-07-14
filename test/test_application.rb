@@ -61,6 +61,43 @@ class TestApplication < Minitest::Test
     end
   end
 
+  def test_live_read_model_keeps_presentation_items_and_canonical_views_on_one_snapshot
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, FIXTURE)
+      built = []
+      factory = lambda do
+        store = Tasks::Store.new(org: org, archive: archive)
+        built << store
+        store
+      end
+      app = Tasks::Application.new(store_factory: factory)
+
+      first = app.read_tasks
+      flight = first.items.find { |item| item.id == FIX[:flight] }
+      task = first.task_for(flight)
+
+      assert_equal FIX[:flight], task.id
+      assert_equal task, first.task_for(FIX[:flight])
+      assert_equal FIX[:work], task.section_id
+      assert_equal [FIX[:flight], FIX[:eval]], first.view_tasks(:agenda).tasks.map(&:id)
+      assert_equal "Work", first.node_for(flight).parent.title
+      assert first.items.frozen?
+      assert first.tasks.frozen?
+      assert_nil built.first.instance_variable_get(:@read_snapshot), "read models do not retain Store caches"
+
+      records = Tasks::Format.parse(File.read(org, encoding: "UTF-8")).records
+      records.find { |record| record["id"] == FIX[:flight] }["title"] = "Changed externally"
+      File.write(org, dump_fixture(records))
+      second = app.read_tasks
+
+      assert_equal "Book flight in Concur", first.task_for(FIX[:flight]).title
+      assert_equal "Changed externally", second.task_for(FIX[:flight]).title
+      assert_equal 2, built.length
+    end
+  end
+
   def test_factory_keeps_construction_settings_immutable
     Dir.mktmpdir do |dir|
       links = { "jira" => "https://jira.example/browse/%s" }

@@ -1423,6 +1423,28 @@ class TestApp < Minitest::Test
     assert_match(/@store\.patch_task!/, source)
   end
 
+  def test_tui_presentation_reads_use_the_application_model_not_the_mutation_store
+    source = File.read(File.expand_path("../lib/tui/app.rb", __dir__), encoding: "UTF-8")
+    refute_match(/@store\.(?:items|tree|body|links|node_for)/, source)
+    assert_match(/Tasks::Application\.new/, source)
+
+    app_with(input: "") do |app|
+      app.send(:rows)
+      mutation_store = Object.new
+      %i[items tree body links node_for].each do |method|
+        mutation_store.define_singleton_method(method) { raise "presentation read leaked to mutation Store: #{method}" }
+      end
+      app.instance_variable_set(:@store, mutation_store)
+
+      rows = app.send(:rows)
+      assert_includes rows.filter_map { |row| row.item&.id }, FIX[:flight]
+      app.send(:show_detail)
+      assert_equal :detail, ui(app).panel.kind
+      assert_match(/Book flight in Concur/, ui(app).panel.lines.join("\n"))
+      refute app.send(:link_action_available?)
+    end
+  end
+
   # -- stable selection identity ---------------------------------------------
 
   SELECTION_FIXTURE = dump_fixture([
@@ -1468,6 +1490,7 @@ class TestApp < Minitest::Test
   def test_external_resort_retains_selected_task_by_id
     app_on(view: :agenda, select: "Beta", content: SELECTION_FIXTURE) do |app|
       old_row = app.instance_variable_get(:@sel)
+      before = app.instance_variable_get(:@read_model)
       rewrite_records(app) do |records|
         records.find { |record| record["id"] == "5e1e0004" }["deadline"] = "2026-07-10"
       end
@@ -1475,6 +1498,7 @@ class TestApp < Minitest::Test
       assert_equal "Beta", app.send(:current_item).title
       assert_equal "5e1e0003", ui(app).selected_id
       refute_equal old_row, app.instance_variable_get(:@sel), "render coordinate follows the resort"
+      refute_same before, app.instance_variable_get(:@read_model), "external writes replace the immutable application read"
     end
   end
 

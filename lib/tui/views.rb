@@ -148,13 +148,16 @@ module Tui
     # `tree` nil → the flat builders (unchanged shape; this path serves `/`
     # filter mode). `tree` present (the Store#tree forest) → the outliner
     # builders, which nest each anchor's visible subtree under it with indent +
-    # markers. `store` (always the live Store) lets the projects view resolve
-    # each task's parent project regardless of path.
+    # markers. `reader` supplies immutable tree lookups so the projects view
+    # can resolve each task's parent project regardless of path. `store:` is
+    # retained as a compatibility spelling for direct unit callers.
     def rows(view, items, tree: nil, collapsed: Set.new, show_deferred: false,
-             today: Date.today, urgent_days: Tasks::Quadrants::DEFAULT_URGENT_DAYS, store: nil)
+             today: Date.today, urgent_days: Tasks::Quadrants::DEFAULT_URGENT_DAYS,
+             reader: nil, store: nil)
+      reader ||= store
       if view == :projects
         return projects(items, tree: tree, collapsed: collapsed, show_deferred: show_deferred,
-                               today: today, store: store)
+                               today: today, reader: reader)
       end
 
       if tree
@@ -169,14 +172,14 @@ module Tui
       else
         case view
         when :agenda
-          agenda(items, today: today, show_deferred: show_deferred, store: store)
+          agenda(items, today: today, show_deferred: show_deferred, reader: reader)
         when :next
-          next_actions(items, today: today, show_deferred: show_deferred, store: store)
+          next_actions(items, today: today, show_deferred: show_deferred, reader: reader)
         when :quadrants
           quadrants(items, today: today, urgent_days: urgent_days,
-                            show_deferred: show_deferred, store: store)
+                            show_deferred: show_deferred, reader: reader)
         when :inbox
-          inbox(items, show_deferred: show_deferred, store: store)
+          inbox(items, show_deferred: show_deferred, reader: reader)
         else []
         end
       end
@@ -186,15 +189,15 @@ module Tui
     # These render exactly as before the outliner existed; the `/` filter view
     # relies on their output shape.
 
-    def agenda(items, today: Date.today, show_deferred: true, store: nil)
-      query = view_query(:agenda, today: today, show_deferred: show_deferred, store: store)
+    def agenda(items, today: Date.today, show_deferred: true, reader: nil, store: nil)
+      query = view_query(:agenda, today: today, show_deferred: show_deferred, reader: reader || store)
       query.sort(query.select(items)).map do |i|
         Row.new("#{agenda_stamp(i, today)} #{decorated_title(i)}#{badge(i)}", i)
       end
     end
 
-    def next_actions(items, today: Date.today, show_deferred: true, store: nil)
-      query = view_query(:next, today: today, show_deferred: show_deferred, store: store)
+    def next_actions(items, today: Date.today, show_deferred: true, reader: nil, store: nil)
+      query = view_query(:next, today: today, show_deferred: show_deferred, reader: reader || store)
       by_ctx = query.grouped(items)
       rows = []
       query.sorted_groups(by_ctx) { |item| item }.each do |ctx, list|
@@ -211,9 +214,9 @@ module Tui
     # Classification (importance/urgency) lives in Tasks::Quadrants so the CLI
     # and TUI agree; this just lays the four buckets out as rows.
     def quadrants(items, today: Date.today, urgent_days: Tasks::Quadrants::DEFAULT_URGENT_DAYS,
-                  show_deferred: true, store: nil)
+                  show_deferred: true, reader: nil, store: nil)
       query = view_query(:quadrants, today: today, urgent_days: urgent_days,
-                                     show_deferred: show_deferred, store: store)
+                                     show_deferred: show_deferred, reader: reader || store)
       by_q = query.grouped(items)
       rows = []
       Tasks::Quadrants::LABELS.each do |key, label|
@@ -230,8 +233,8 @@ module Tui
       rows
     end
 
-    def inbox(items, show_deferred: true, store: nil)
-      query = view_query(:inbox, show_deferred: show_deferred, store: store)
+    def inbox(items, show_deferred: true, reader: nil, store: nil)
+      query = view_query(:inbox, show_deferred: show_deferred, reader: reader || store)
       matched = query.sort(query.select(items))
       return [Row.new(T.paint(:muted, "Inbox empty. ✨"), nil)] if matched.empty?
       matched.map { |i| Row.new("  #{inbox_body(i)}", i) }
@@ -252,11 +255,13 @@ module Tui
     # thread-lines and bold containers line up with actual parent/child ties.
     # `tree` nil (the `/` filter path) falls back to the flat builder, which
     # sorts every descendant together by nearest date — no nesting.
-    def projects(items, tree: nil, collapsed: Set.new, show_deferred: false, today: Date.today, store: nil)
-      return [Row.new(T.paint(:muted, "Project data needs the task tree."), nil)] unless store
-      return projects_flat(items, today: today, show_deferred: show_deferred, store: store) unless tree
+    def projects(items, tree: nil, collapsed: Set.new, show_deferred: false, today: Date.today,
+                 reader: nil, store: nil)
+      reader ||= store
+      return [Row.new(T.paint(:muted, "Project data needs the task tree."), nil)] unless reader
+      return projects_flat(items, today: today, show_deferred: show_deferred, reader: reader) unless tree
 
-      query = view_query(:projects, today: today, show_deferred: show_deferred, store: store)
+      query = view_query(:projects, today: today, show_deferred: show_deferred, reader: reader)
       roots_by_project = query.grouped(anchor_roots(tree, show_deferred)) { |node| node.item }
       return [Row.new(T.paint(:muted, "No active projects."), nil)] if roots_by_project.empty?
 
@@ -308,8 +313,8 @@ module Tui
     # flattened into one list sorted by nearest date/priority/title, each row a
     # fixed 2-space indent. Serves the `/` filter path (which always renders
     # flat) and shows no parent/child nesting.
-    def projects_flat(items, today: Date.today, show_deferred: true, store: nil)
-      query = view_query(:projects, today: today, show_deferred: show_deferred, store: store)
+    def projects_flat(items, today: Date.today, show_deferred: true, reader: nil, store: nil)
+      query = view_query(:projects, today: today, show_deferred: show_deferred, reader: reader || store)
       groups = query.grouped(items)
       return [Row.new(T.paint(:muted, "No active projects."), nil)] if groups.empty?
 
@@ -619,9 +624,10 @@ module Tui
     end
 
     def view_query(view, today: Date.today, urgent_days: Tasks::Quadrants::DEFAULT_URGENT_DAYS,
-                   show_deferred: true, store: nil)
-      resolver = ->(item) { project_name(item, store) } if view == :projects
-      hidden_resolver = ->(item) { deferred_hidden?(item, store) } if store
+                   show_deferred: true, reader: nil, store: nil)
+      reader ||= store
+      resolver = ->(item) { project_name(item, reader) } if view == :projects
+      hidden_resolver = ->(item) { deferred_hidden?(item, reader) } if reader
       Query.new(view, today: today, urgent_days: urgent_days, show_deferred: show_deferred,
                      project_resolver: resolver, deferred_hidden_resolver: hidden_resolver)
     end
@@ -629,8 +635,8 @@ module Tui
     # Flat/filter mode has no subtree walker, so resolve deferred visibility
     # through the item's live ancestry. This matches tree mode's rule that a
     # deferred parent hides its whole subtree until Z reveals it.
-    def deferred_hidden?(item, store)
-      node = store&.node_for(item)
+    def deferred_hidden?(item, reader)
+      node = reader&.node_for(item)
       while node&.task?
         return true if node.item.deferred?
         node = node.parent
@@ -638,9 +644,9 @@ module Tui
       false
     end
 
-    def project_name(item, store)
-      return nil unless store
-      node = store.node_for(item)
+    def project_name(item, reader)
+      return nil unless reader
+      node = reader.node_for(item)
       project_section(node)&.title if node
     end
 

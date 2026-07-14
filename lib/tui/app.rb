@@ -28,6 +28,7 @@ require_relative "screen_layout"
 require_relative "form_renderer"
 require_relative "task_editor_session"
 require_relative "../tasks/config"
+require_relative "../tasks/application"
 require_relative "../tasks/opener"
 
 module Tui
@@ -67,9 +68,20 @@ module Tui
     def initialize(root:, paths: Tasks::Config.resolve(default_dir: root),
                    llm_config: LLM::Config.load, agent_factory: nil)
       Theme.configure!(name: paths.theme, overrides: paths.colors || {})
+      @paths = paths
+      # Store remains the deliberately stateful mutation/editor session in
+      # Phase 2. TUI presentation reads travel through @application below so a
+      # held row can never combine this Store's mutable cache with later reads.
       @store  = Store.new(org: paths.org, archive: paths.archive,
                           links: paths.links || {}, link_systems: paths.link_systems || {},
                           max_depth: paths.max_depth)
+      @application = Tasks::Application.new(
+        store_factory: Tasks::StoreFactory.new(
+          org: paths.org, archive: paths.archive, links: paths.links || {},
+          link_systems: paths.link_systems || {}, max_depth: paths.max_depth
+        )
+      )
+      @read_model = nil
       @urgent_days = paths.urgent_days # deadline window for the quadrants view
       # The (provider, model) switcher cycles these. AgentQueue snapshots an
       # entry and builds one adapter per accepted request, so later cycling can
@@ -143,7 +155,7 @@ module Tui
       end
       if @store.changed? # picks up Claude edits + external edits
         reload_store
-        res = Tasks::Check.check(@store.org)
+        res = Tasks::Check.check(@paths.org)
         flash(T.paint(:error, "⚠ tasks.jsonl: #{res.errors.size} format error(s) — run `tasks check`")) unless res.ok?
       end
       clamp_selection
@@ -154,6 +166,7 @@ module Tui
     def reload_store
       overlay_mode = @ui.mode if %i[form palette task_edit].include?(@ui.mode)
       @store.reload!
+      reload_read_model
       editor = @ui.task_editor || @suspended_task_editor
       edit_outcome = editor&.refresh
       rows
@@ -217,8 +230,24 @@ module Tui
       [[height, MIN_HEIGHT].max, [width, MIN_WIDTH].max]
     end
 
+    # The mutation Store is intentionally long-lived for the editor and shared
+    # journal operations. Every presentation read instead comes from this one
+    # immutable application result, refreshed after a known or observed write.
+    def read_model
+      @read_model ||= @application.read_tasks
+    end
+
+    def reload_read_model
+      @read_model = @application.read_tasks
+    end
+
+    def invalidate_read_model
+      @read_model = nil
+    end
+
     def rows
-      items = @store.items
+      read = read_model
+      items = read.items
       if (q = active_filter)
         # Filter mode renders a flat list. Deferred (someday/maybe) tasks stay
         # out until Z reveals them — the reject lives here because the tree path
@@ -227,11 +256,11 @@ module Tui
         q = q.downcase
         items = items.select { |i| i.title.downcase.include?(q) }
         @rows = Views.rows(@ui.view, items, show_deferred: @ui.show_deferred,
-                                           urgent_days: @urgent_days, store: @store)
+                                           urgent_days: @urgent_days, reader: read)
       else
-        @rows = Views.rows(@ui.view, items, tree: @store.tree, collapsed: @ui.collapsed,
+        @rows = Views.rows(@ui.view, items, tree: read.tree, collapsed: @ui.collapsed,
                                          show_deferred: @ui.show_deferred, urgent_days: @urgent_days,
-                                         store: @store)
+                                         reader: read)
       end
       sync_selection
       @rows
@@ -251,7 +280,7 @@ module Tui
         slot = key == @ui.view ? :tab_active : :tab_inactive unless T.slot?(slot)
         T.paint(slot, " #{label} ")
       end.join(" ")
-      open_n = @store.items.count { |i| i.open? && !i.deferred? }
+      open_n = read_model.tasks.count { |task| task.open? && !task.deferred? }
       deferred_note = @ui.show_deferred ? "#{T.paint(:warning, "⏸ deferred shown")}#{T.paint(:muted, " · ")}" : ""
       count = "#{T.paint(:muted, "#{open_n} open · ")}#{deferred_note}#{T.paint(:accent, current_entry.to_s)}#{T.paint(:muted, " · ? help")}"
       gap = [w - A.vislen(tabs) - A.vislen(count) - 2, 1].max
@@ -673,8 +702,8 @@ module Tui
       !!(item && (item.scheduled || item.deadline))
     end
     def link_action_available?
-      item = current_item
-      !!(item && !@store.links(item).empty?)
+      task = current_task
+      !!(task && !task.links.empty?)
     end
 
     def select_prev    = move(-1)
@@ -777,8 +806,10 @@ module Tui
       snapshot = @store.edit_snapshot(item.id)
       return Tasks::MutationResult.new(status: :not_found) unless snapshot
 
-      @store.patch_task!(Tasks::TaskPatch.from(snapshot, field: field, value: value,
-                                                history_label: label))
+      result = @store.patch_task!(Tasks::TaskPatch.from(snapshot, field: field, value: value,
+                                                         history_label: label))
+      invalidate_read_model if result.ok?
+      result
     end
 
     def start_task_edit = enter_task_edit(:title)
@@ -897,6 +928,7 @@ module Tui
       when :empty    then flash("nothing to #{verb == "undid" ? "undo" : "redo"}")
       when :conflict then flash("file changed externally — can't #{op.to_s.chomp("!")} “#{label}”")
       else
+        invalidate_read_model
         flash("#{verb}: #{label}")
         rows
         refresh_detail_panel if detail_panel?
@@ -923,7 +955,9 @@ module Tui
     def yank
       item = current_item
       return flash("nothing selected") unless item
-      text = yield(item, @store.body(item))
+      task = current_task
+      return flash("task no longer exists") unless task
+      text = yield(item, task.body)
       if Clipboard.copy(text)
         flash("yanked: “#{item.title}”")
       else
@@ -992,8 +1026,8 @@ module Tui
     # mode). Deliberately the FIRST link: notes lead with the primary reference;
     # the CLI (`tasks open <ref> <n>`) handles precise picking.
     def open_link
-      item = current_item or return
-      links = @store.links(item)
+      task = current_task or return
+      links = task.links
       return flash("no links on this task") if links.empty?
       link = links.first
       unless Tasks::Opener.open_url(link.url)
@@ -1006,13 +1040,13 @@ module Tui
     def refresh_detail_panel(content_width: @detail_panel_content_width)
       item = current_item
       return close_panel unless item
+      task = current_task
+      return close_panel unless task
 
       content_width ||= detail_panel_content_width
       @detail_panel_content_width = content_width
-      project = @store.node_for(item)&.open_project&.title
       content = TaskDetails.build(
-        item, @store.body(item), content_width,
-        links: @store.links(item), project: project
+        task, task.body, content_width, links: task.links, project: task.project
       )
       if detail_panel?
         @ui.panel.replace(title: content[:title], lines: content[:lines], identity: item.id)
@@ -1130,8 +1164,8 @@ module Tui
 
       Views::TABS.each do |_label, view|
         candidates = Views.rows(
-          view, @store.items, tree: @store.tree, collapsed: Set.new,
-          show_deferred: @ui.show_deferred, urgent_days: @urgent_days, store: @store,
+          view, read_model.items, tree: read_model.tree, collapsed: Set.new,
+          show_deferred: @ui.show_deferred, urgent_days: @urgent_days, reader: read_model,
         )
         return view if candidates.any? { |row| row.item&.id == editor.target_id }
       end
@@ -1183,6 +1217,7 @@ module Tui
       @task_edit_message = task_edit_outcome_message(outcome)
       flash(@task_edit_message) if outcome.missing? || outcome.conflict?
       if outcome.patch_result&.changed?
+        invalidate_read_model
         target_id = @ui.task_editor.target_id
         @ui.selected_id = target_id
         rows
@@ -1493,6 +1528,11 @@ module Tui
 
     def current_item = @rows[@sel]&.item
 
+    def current_task
+      item = current_item
+      item && read_model.task_for(item)
+    end
+
     def select_row(index)
       @sel = index
       @ui.selected_id = @rows[@sel]&.item&.id
@@ -1580,7 +1620,7 @@ module Tui
     # (works regardless of filter mode — the ids just wait, hidden, until the
     # filter clears). The selection may have been on a now-hidden row, so clamp.
     def collapse_all
-      @store.tree.each do |root|
+      read_model.tree.each do |root|
         root.each do |n|
           @ui.collapsed.add(n.item.id) if n.task? && n.item.id && n.children.any?(&:task?)
         end
@@ -1604,7 +1644,7 @@ module Tui
     end
 
     def save_session
-      live_ids = @store.items.map(&:id).compact
+      live_ids = read_model.items.map(&:id).compact
       Session.save(@ui.session_hash(live_ids: live_ids))
     end
 
@@ -1617,7 +1657,7 @@ module Tui
       if result.ok?
         if recurring
           # A recurring task rolled forward and is still in the view — follow it.
-          fresh = @store.items.find { |i| i.id == item.id }
+          fresh = read_model.task_for(item.id)
           d = fresh && (fresh.deadline || fresh.scheduled)
           flash("↻ #{item.title}#{d ? " → #{d.iso8601} (#{d.strftime("%a")})" : ""}")
           reselect(item.id)
@@ -1768,6 +1808,7 @@ module Tui
             flash("archive refused — open descendants remain; press x for details")
           end
         else
+          invalidate_read_model
           flash(result.zero? ? "nothing to archive" : "archived #{result} root#{result == 1 ? "" : "s"}")
         end
       when "n", "N", "\e", "q"

@@ -44,7 +44,7 @@ class TestTasksRequireBoundary < Minitest::Test
   def test_tui_app_and_launcher_boot_paths_are_free_of_web_dependencies
     app_script = <<~'RUBY'
       require "tui/app"
-      abort "missing TUI application" unless defined?(Tui::App)
+      abort "missing TUI application read boundary" unless defined?(Tui::App) && defined?(Tasks::Application) && defined?(Tasks::TaskReadModel)
 
       forbidden = $LOADED_FEATURES.grep(%r{(?:\A|/)(?:rack|puma)(?:/|\.rb\z)})
       abort "web dependencies leaked into TUI application: #{forbidden.join(", ")}" unless forbidden.empty?

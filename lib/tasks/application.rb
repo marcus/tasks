@@ -4,6 +4,45 @@ require_relative "store"
 require_relative "task_queries"
 
 module Tasks
+  # One coherent, immutable live read for adapters that need both the legacy
+  # Items used for presentation and their canonical TaskViews. The latter is
+  # the public data contract; Items and the tree are deliberately retained as
+  # adapter-only presentation inputs while the TUI's outliner is migrated.
+  #
+  # This is not a Store wrapper. It is created from a single ReadSnapshot and
+  # exposes no mutable Store or persistence operation.
+  class TaskReadModel
+    attr_reader :items, :tree, :tasks
+
+    def initialize(snapshot)
+      @snapshot = snapshot
+      @queries = TaskQueries.new(snapshot)
+      @items = snapshot.items
+      @tree = snapshot.tree
+      @tasks = items.map { |item| @queries.task(item) }.freeze
+      @tasks_by_id = tasks.each_with_object({}) { |task, index| index[task.id] = task if task.id }.freeze
+      freeze
+    end
+
+    # Canonical resource for a presentation Item or stable id. The Item path
+    # lets adapters keep their existing renderer without ever asking Store for
+    # a body, links, or ancestry after the read has been captured.
+    def task_for(item_or_id)
+      return @tasks_by_id[item_or_id.to_s] if item_or_id.is_a?(String) || item_or_id.is_a?(Symbol)
+
+      item_or_id && @queries.task(item_or_id)
+    end
+
+    def node_for(item) = @snapshot.node_for(item)
+
+    # Named results remain canonical TaskQueryResults. Keeping this on the
+    # model means a multi-read adapter can ask for an individual view without
+    # parsing a second Store snapshot.
+    def view_tasks(name, today: Date.today, urgent_days: Quadrants::DEFAULT_URGENT_DAYS)
+      @queries.view(name, today: today, urgent_days: urgent_days)
+    end
+  end
+
   # Builds a fresh Store for every application operation. Store maintains
   # convenient read caches for interactive clients, so keeping one instance in
   # a long-lived HTTP or CLI application object would let request-local reads
@@ -88,6 +127,13 @@ module Tasks
 
     def list_sections
       queries.sections
+    end
+
+    # A single live read for presentation adapters. It deliberately receives a
+    # new Store just like every other Application query, so the TUI cannot
+    # retain Store's mutable read cache between paints or external writes.
+    def read_tasks
+      TaskReadModel.new(store_factory.call.read_snapshot)
     end
 
     private
