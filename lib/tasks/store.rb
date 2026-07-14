@@ -411,15 +411,17 @@ module Tasks
                                       errors: preflight.errors.map(&:last))
           end
 
+          validation = validate_changeset(changeset)
+          unless validation.empty?
+            return MutationResult.new(status: :invalid, errors: validation.values.flatten,
+                                      field_errors: validation)
+          end
+
           records = fresh_records(@org)
           ri = locate_stable_index(records, changeset.id)
           return MutationResult.new(status: :not_found) unless ri
 
           current = build_edit_snapshot(records, ri)
-          validation = validate_changeset(changeset)
-          unless validation.empty?
-            return MutationResult.new(status: :invalid, snapshot: current, errors: validation)
-          end
 
           if strict_revision
             revision_error = changeset_revision_error(current, changeset)
@@ -788,28 +790,28 @@ module Tasks
     end
 
     def validate_changeset(changeset)
-      errors = []
+      errors = Hash.new { |fields, field| fields[field] = [] }
       unless changeset.id.is_a?(String) && !changeset.id.empty?
-        errors << "task id is required"
+        errors[:id] << "task id is required"
       end
       unless changeset.changes.is_a?(Hash) && !changeset.changes.empty?
-        errors << "changes must be a non-empty mapping"
+        errors[:changes] << "changes must be a non-empty mapping"
         return errors
       end
       unless changeset.duplicate_fields.empty?
-        errors << "changes repeat #{changeset.duplicate_fields.map(&:inspect).join(", ")}"
+        errors[:changes] << "changes repeat #{changeset.duplicate_fields.map(&:inspect).join(", ")}"
       end
 
       fields = changeset.ordered_fields
       unknown = fields.reject { |field| patch_field?(field) }
-      errors.concat(unknown.map { |field| "unknown editable field #{field.inspect}" })
+      errors[:changes].concat(unknown.map { |field| "unknown editable field #{field.inspect}" }) unless unknown.empty?
 
       tag_fields = %i[contexts tags deferred]
       if fields.include?(:tag_delta) && !(fields & tag_fields).empty?
-        errors << "tag_delta cannot be combined with tag slice changes"
+        errors[:changes] << "tag_delta cannot be combined with tag slice changes"
       end
       if fields.include?(:date_clear) && !(fields & %i[scheduled deadline]).empty?
-        errors << "date_clear cannot be combined with scheduled or deadline"
+        errors[:changes] << "date_clear cannot be combined with scheduled or deadline"
       end
       errors
     end

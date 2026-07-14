@@ -225,17 +225,21 @@ class TestTaskEditorSession < Minitest::Test
   end
 
   def test_state_recurrence_and_coupled_date_changes_require_confirmation
-    with_editor do |session, _store, org|
-      session.form.focus(:state)
-      session.form.set_value(:state, "DONE")
-      pending = session.save
-      assert pending.confirmation?
-      assert_match(/advances its recurrence/, pending.message)
-      assert_equal "NEXT", record(org)["state"]
-      accepted = session.confirm!
-      assert_equal :ok, accepted.status
-      assert_equal "NEXT", record(org)["state"]
-      assert_equal "2026-07-20", record(org)["scheduled"]
+    # The form's injected clock controls date parsing; Store deliberately uses
+    # Date.today for .+ recurrence completion, so pin that Store clock here.
+    Date.stub(:today, Date.new(2026, 7, 13)) do
+      with_editor do |session, _store, org|
+        session.form.focus(:state)
+        session.form.set_value(:state, "DONE")
+        pending = session.save
+        assert pending.confirmation?
+        assert_match(/advances its recurrence/, pending.message)
+        assert_equal "NEXT", record(org)["state"]
+        accepted = session.confirm!
+        assert_equal :ok, accepted.status
+        assert_equal "NEXT", record(org)["state"]
+        assert_equal "2026-07-20", record(org)["scheduled"]
+      end
     end
 
     with_editor do |session, _store, org|

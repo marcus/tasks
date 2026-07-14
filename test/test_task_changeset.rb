@@ -124,6 +124,48 @@ class TestTaskChangeset < Minitest::Test
     end
   end
 
+  def test_changeset_command_shape_is_validated_before_lookup_without_writes_or_history
+    with_changeset_store do |store, org, _archive|
+      before = File.binread(org)
+      writes = 0
+      writer = lambda do |*|
+        writes += 1
+        raise "invalid TaskChangeset must not write"
+      end
+      valid_revision = "v1.#{"0" * 64}.#{"0" * 64}.#{"0" * 64}"
+      invalid_requests = [
+        [Tasks::TaskChangeset.new(id: nil, changes: { title: "Renamed" }, expected_revision: valid_revision),
+         { id: ["task id is required"] }],
+        [Tasks::TaskChangeset.new(id: "", changes: { title: "Renamed" }, expected_revision: valid_revision),
+         { id: ["task id is required"] }],
+        [Tasks::TaskChangeset.new(id: "deadbeef", changes: {}, expected_revision: valid_revision),
+         { changes: ["changes must be a non-empty mapping"] }],
+        [Tasks::TaskChangeset.new(id: "deadbeef", changes: [], expected_revision: valid_revision),
+         { changes: ["changes must be a non-empty mapping"] }],
+      ]
+
+      invalid_requests.each do |request, field_errors|
+        result = store.stub(:write_records, writer) { store.apply_changeset!(request) }
+
+        assert_equal :invalid, result.status
+        assert_equal field_errors, result.field_errors
+        assert_equal field_errors.values.flatten, result.errors
+        assert_nil result.snapshot
+        assert_equal before, File.binread(org)
+        assert_equal [:empty], store.undo!
+      end
+
+      missing = store.apply_changeset!(Tasks::TaskChangeset.new(
+        id: "deadbeef", changes: { title: "Renamed" }, expected_revision: valid_revision
+      ))
+      assert_equal :not_found, missing.status
+      assert_empty missing.field_errors
+      assert_equal 0, writes
+      assert_equal before, File.binread(org)
+      assert_equal [:empty], store.undo!
+    end
+  end
+
   def test_changeset_rejects_ambiguous_composite_fields_before_any_write
     with_changeset_store do |store, org, _archive|
       snapshot = store.edit_snapshot("11110002")
