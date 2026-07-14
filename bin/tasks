@@ -56,6 +56,7 @@ AGENTS  = File.join(ROOT, "AGENTS.md")
 # The model layer owns parsing and every mutation; the CLI adds dispatch,
 # ref resolution, and output. (Tasks::Item, Tasks::Format etc. live there.)
 require_relative "../lib/tasks/store"
+require_relative "../lib/tasks/task_queries"
 require_relative "../lib/tasks/opener"
 
 def contexts(item) = item.tags.select { |t| t.start_with?("@") }
@@ -103,11 +104,11 @@ end
 
 # Emit items as the standard JSON array (docs/cli-spec.md) and return true
 # when --json was requested; read commands call this first.
-def emit_json?(items, args, extra: nil)
+def emit_json?(items, args, extra: nil, result: nil)
   return false unless args.include?("--json")
   require "json"
   rows = items.map do |i|
-    h = item_json(i)
+    h = item_json(i, task: result&.task_for(i))
     h.merge!(extra.call(i)) if extra
     h
   end
@@ -115,9 +116,10 @@ def emit_json?(items, args, extra: nil)
   true
 end
 
-def cmd_next(items, args = [])
-  nexts = items.select { |i| i.state == "NEXT" && !i.deferred? }
-  return if emit_json?(nexts.sort_by { |i| i.priority || "Z" }, args)
+def cmd_next(args = [])
+  result = task_queries.view(:next)
+  nexts = result.items
+  return if emit_json?(nexts, args, result: result)
   by_ctx = Hash.new { |h, k| h[k] = [] }
   nexts.each do |i|
     ctxs = contexts(i)
@@ -133,13 +135,11 @@ def cmd_next(items, args = [])
   end
 end
 
-def cmd_quadrants(items, args = [])
-  open_items = items.select { |i| open?(i) && !i.deferred? }
-  # Importance/urgency come from Tasks::Quadrants (priority + deadline, with the
-  # important/urgent tags as overrides). urgent_days is the configurable window.
-  quadrant_of = ->(i) { Tasks::Quadrants.of(i, urgent_days: PATHS.urgent_days) }
-  return if emit_json?(open_items, args, extra: ->(i) { { quadrant: quadrant_of.(i) } })
-  by_q = open_items.group_by(&quadrant_of)
+def cmd_quadrants(args = [])
+  result = task_queries.view(:quadrants, urgent_days: PATHS.urgent_days)
+  open_items = result.items
+  return if emit_json?(open_items, args, result: result, extra: ->(i) { result.metadata_for(i) })
+  by_q = open_items.group_by { |item| result.metadata_for(item).fetch(:quadrant) }
   Tasks::Quadrants::LABELS.each do |key, label|
     puts bold(label)
     matched = by_q[key] || []
@@ -148,10 +148,10 @@ def cmd_quadrants(items, args = [])
   end
 end
 
-def cmd_agenda(items, args = [])
-  dated = items.select { |i| open?(i) && !i.deferred? && (i.scheduled || i.deadline) }
-  dated = dated.sort_by { |i| [i.deadline || i.scheduled, i.priority || "Z"] }
-  return if emit_json?(dated, args)
+def cmd_agenda(args = [])
+  result = task_queries.view(:agenda)
+  dated = result.items
+  return if emit_json?(dated, args, result: result)
   dated.each do |i|
     d = i.deadline || i.scheduled
     kind = i.deadline ? "DUE " : "STRT"
@@ -163,9 +163,10 @@ def cmd_agenda(items, args = [])
   end
 end
 
-def cmd_inbox(items, args = [])
-  inbox = items.select { |i| i.state == "INBOX" && !i.deferred? }
-  return if emit_json?(inbox, args)
+def cmd_inbox(args = [])
+  result = task_queries.view(:inbox)
+  inbox = result.items
+  return if emit_json?(inbox, args, result: result)
   inbox.empty? ? (puts "Inbox empty. ✨") : inbox.each { |i| puts "  #{fmt(i)}" }
 end
 
@@ -338,6 +339,13 @@ def store
                               max_depth: PATHS.max_depth)
 end
 
+# Every extracted query reads one immutable Store snapshot. The command layer
+# retains ref parsing and terminal formatting; reusable selection and resource
+# building live in Tasks::TaskQueries.
+def task_queries(include_archive: false)
+  Tasks::TaskQueries.new(store.read_snapshot(include_archive: include_archive))
+end
+
 # Abort a failed mutation. A false return is usually a stale line, but it's also
 # how a post-write validation rollback surfaces — if the store recorded one,
 # append a pointed hint so the user runs `check` instead of chasing a phantom
@@ -454,15 +462,27 @@ def item_headline(item)
   store.headline(item)
 end
 
-def item_json(item)
+def item_json(item, task: nil)
+  unless task
+    return {
+      id: item.id,
+      state: item.state, priority: item.priority, title: item.title,
+      tags: item.tags.reject { |tag| tag.start_with?("@") },
+      contexts: contexts(item),
+      scheduled: item.scheduled&.iso8601, deadline: item.deadline&.iso8601,
+      recur: item.recur,
+      line: item.line, source: item.source, headline: item_headline(item),
+    }
+  end
+
   {
-    id: item.id,
-    state: item.state, priority: item.priority, title: item.title,
-    tags: item.tags.reject { |t| t.start_with?("@") },
-    contexts: contexts(item),
-    scheduled: item.scheduled&.iso8601, deadline: item.deadline&.iso8601,
-    recur: item.recur,
-    line: item.line, source: item.source, headline: item_headline(item),
+    id: task.id,
+    state: task.state, priority: task.priority, title: task.title,
+    tags: task.tags.reject { |tag| tag.start_with?("@") },
+    contexts: task.contexts,
+    scheduled: task.scheduled&.iso8601, deadline: task.deadline&.iso8601,
+    recur: task.recur,
+    line: item.line, source: task.source, headline: task.headline,
   }
 end
 
@@ -614,28 +634,26 @@ def cmd_show(args)
   ref = rest.shift
   abort %(usage: tasks show <ref>) if ref.nil? || ref.strip.empty?
   item = resolve_ref(ref, include_done: flags["--include-done"])
+  task = task_queries.task(item)
 
-  closed = item.closed
-  notes = store.body(item).map(&:strip).reject(&:empty?)
-
-  links = store.links(item)
-  # Same rule as the TUI detail modal / Projects view: nearest OPEN ancestor
-  # (closed parents skipped), so a hoisted task reports a live project.
-  project = store.node_for(item)&.open_project&.title
+  closed = task.closed
+  notes = task.body.map(&:strip).reject(&:empty?)
+  links = task.links
+  project = task.project
 
   if flags["--json"]
     require "json"
-    puts item_json(item).merge(
+    puts item_json(item, task: task).merge(
       closed: closed&.iso8601, notes: notes, project: project,
       links: links.map(&:to_h),
     ).to_json
   else
-    puts item_headline(item)
-    puts "  id:        #{item.id}" if item.id
+    puts task.headline
+    puts "  id:        #{task.id}" if task.id
     puts "  project:   #{project}" if project
-    puts "  scheduled: #{item.scheduled.iso8601}" if item.scheduled
-    puts "  deadline:  #{item.deadline.iso8601}" if item.deadline
-    puts "  recur:     #{item.recur} #{dim("(#{recur_summary(item.recur)})")}" if item.recur
+    puts "  scheduled: #{task.scheduled.iso8601}" if task.scheduled
+    puts "  deadline:  #{task.deadline.iso8601}" if task.deadline
+    puts "  recur:     #{task.recur} #{dim("(#{recur_summary(task.recur)})")}" if task.recur
     puts "  closed:    #{closed.iso8601}" if closed
     notes.each { |n| puts "  #{n}" }
     unless links.empty?
@@ -1077,81 +1095,19 @@ def run_history(op, verb:, past:)
   end
 end
 
-STATE_ORDER = %w[INBOX TODO NEXT WAITING DONE CANCELLED].freeze
+STATE_ORDER = Tasks::TaskFilter::STATE_ORDER
 
 # Parse `list` args into a scope symbol plus filters, then print grouped output.
 def cmd_list(args)
-  scope    = :open
-  json     = false
-  deferred_only = false
-  recurring_only = false
-  body_search = false
-  contexts_f = []
-  tags_f     = []
-  priority_f = nil
-  text_f     = []
-  args.each do |a|
-    case a
-    when "--open", "-o"     then scope = :open
-    when "--done", "-d"     then scope = :done
-    when "--archived", "-x" then scope = :archived
-    when "--all", "-a"      then scope = :all
-    when "--deferred", "-D" then deferred_only = true
-    when "--recurring", "-R" then recurring_only = true
-    when "--body", "-b"     then body_search = true
-    when "--json"           then json = true
-    when /\A-([ABC])\z/     then priority_f = $1
-    when /\A@/              then contexts_f << a
-    when /\A\+(.+)/         then tags_f << $1
-    when /\A\//             then text_f << a[1..]
-    when /\A-/              then abort "unknown flag: #{a}"
-    else                        text_f << a # bare word = text search
-    end
+  parsed = begin
+    Tasks::TaskFilter.parse_cli(args)
+  rescue ArgumentError => error
+    abort error.message
   end
+  result = task_queries(include_archive: parsed.filter.include_archive?).list(parsed.filter)
+  sel = result.items
 
-  items =
-    case scope
-    when :archived then store.archive_items
-    when :all      then store.items + store.archive_items
-    else                store.items
-    end
-  states =
-    case scope
-    when :open then OPEN_STATES
-    when :done then DONE_STATES
-    else            STATE_ORDER
-    end
-
-  q = text_f.join(" ").downcase
-  # Text match: title always; --body widens to the task's notes (its own body
-  # lines under the headline). Body reads hit the file per candidate, so only
-  # pay for them when the flag asks and a text query is present.
-  text_ok = lambda do |i|
-    return true if q.empty?
-    return true if i.title.downcase.include?(q)
-    body_search && store.body(i).join.downcase.include?(q)
-  end
-  # Deferred tasks are hidden from the default open scope so they stop
-  # competing for attention; --deferred flips that to a someday/maybe review
-  # (only deferred tasks). Other scopes (done/archived/all) are unaffected.
-  defer_ok = lambda do |i|
-    if deferred_only then i.deferred?
-    elsif scope == :open then !i.deferred?
-    else true
-    end
-  end
-  sel = items.select do |i|
-    states.include?(i.state) &&
-      (scope != :done || i.source == :live) &&
-      defer_ok.call(i) &&
-      (!recurring_only || i.recurring?) &&
-      (priority_f.nil? || i.priority == priority_f) &&
-      contexts_f.all? { |c| i.tags.include?(c) } &&
-      tags_f.all?     { |t| i.tags.include?(t) } &&
-      text_ok.call(i)
-  end
-
-  return if emit_json?(sel, [json ? "--json" : nil].compact)
+  return if emit_json?(sel, [parsed.json ? "--json" : nil].compact, result: result)
 
   if sel.empty?
     puts "No matching tasks."
@@ -1352,10 +1308,10 @@ def cmd_help(io = $stdout) = io.puts(HELP)
 # (and report) on a file the parser would choke on
 case ARGV[0]
 when "-p", "--prompt" then cmd_prompt(ARGV[1..]); exit
-when "next", "n"      then cmd_next(store.items, ARGV[1..])
-when "quadrants", "q" then cmd_quadrants(store.items, ARGV[1..])
-when "agenda", "a"    then cmd_agenda(store.items, ARGV[1..])
-when "inbox", "i"     then cmd_inbox(store.items, ARGV[1..])
+when "next", "n"      then cmd_next(ARGV[1..])
+when "quadrants", "q" then cmd_quadrants(ARGV[1..])
+when "agenda", "a"    then cmd_agenda(ARGV[1..])
+when "inbox", "i"     then cmd_inbox(ARGV[1..])
 when "capture", "add", "c" then cmd_capture(ARGV[1..])
 when "done", "complete", "close", "d" then cmd_done(ARGV[1..])
 when "due", "deadline", "reschedule" then cmd_due(ARGV[1..])

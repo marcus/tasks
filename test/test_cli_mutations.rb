@@ -3,6 +3,7 @@
 require_relative "test_helper"
 require "json"
 require "open3"
+require "tasks/task_queries"
 
 # Store-layer coverage for the CLI's due/state/priority mutations, plus
 # end-to-end CLI tests (arg parsing, ref resolution, exit codes) that shell
@@ -752,6 +753,14 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  def test_cli_list_unknown_flag_keeps_legacy_clean_error
+    run_cli("list", "--not-a-list-flag") do |_org, out, err, status|
+      assert_equal 1, status.exitstatus
+      assert_empty out
+      assert_equal "unknown flag: --not-a-list-flag\n", err
+    end
+  end
+
   def test_cli_list_json_includes_archived_with_source
     run_cli("archive") do |org, _out, _err, _st|
       env = { "TASKS_FILE" => org, "TASKS_ARCHIVE" => File.join(File.dirname(org), "archive.jsonl") }
@@ -819,6 +828,32 @@ class TestCliMutations < Minitest::Test
       assert_equal ["NEXT"], rows.map { |r| r["state"] }.uniq
       pris = rows.map { |r| r["priority"] || "Z" }
       assert_equal pris.sort, pris, "next JSON sorted by priority"
+    end
+  end
+
+  # The CLI adapter may keep its line-oriented JSON presentation, but its
+  # selected ids and order must come directly from the reusable query layer.
+  # These end-to-end cases pin the adapter-to-library parity for every named
+  # view and for composed list filters.
+  def test_cli_json_query_paths_match_reusable_query_results
+    cases = {
+      ["list", "@computer", "--json"] => ->(query) {
+        query.list(Tasks::TaskFilter.parse_cli(["@computer", "--json"]).filter)
+      },
+      ["agenda", "--json"] => ->(query) { query.view(:agenda) },
+      ["next", "--json"] => ->(query) { query.view(:next) },
+      ["quadrants", "--json"] => ->(query) { query.view(:quadrants) },
+      ["inbox", "--json"] => ->(query) { query.view(:inbox) },
+    }
+
+    cases.each do |args, build_result|
+      run_cli(*args) do |org, out, err, status|
+        assert status.success?, "#{args.join(" ")} failed: #{err}"
+        store = Tasks::Store.new(org: org, archive: File.join(File.dirname(org), "archive.jsonl"))
+        result = build_result.call(Tasks::TaskQueries.new(store.read_snapshot))
+        assert_equal result.tasks.map(&:id), JSON.parse(out).map { |row| row.fetch("id") },
+                     "#{args.join(" ")} id selection/order drifted from TaskQueries"
+      end
     end
   end
 
