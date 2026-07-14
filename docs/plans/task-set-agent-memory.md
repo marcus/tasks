@@ -1,6 +1,6 @@
 # Plan: task-set agent memory
 
-Status: proposed
+Status: implemented (2026-07-14)
 
 ## Goal
 
