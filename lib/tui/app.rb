@@ -153,7 +153,7 @@ module Tui
       (ready&.first || []).each do |io|
         io == $stdin ? read_keys : pump_agent_queue
       end
-      if @store.changed? # picks up Claude edits + external edits
+      if external_change? # picks up Claude edits + external edits
         reload_store
         res = Tasks::Check.check(@paths.org)
         flash(T.paint(:error, "⚠ tasks.jsonl: #{res.errors.size} format error(s) — run `tasks check`")) unless res.ok?
@@ -235,6 +235,15 @@ module Tui
     # immutable application result, refreshed after a known or observed write.
     def read_model
       @read_model ||= @application.read_tasks
+    end
+
+    # @store.changed? alone is not a safe reload gate: an editor-session read
+    # (store.items during a cascade confirmation, an archive preview) lets the
+    # mutation Store self-reload and consume the mtime signal, stranding the
+    # rendered read model on pre-write data forever. Ask the read model too —
+    # it knows which file state it was built from.
+    def external_change?
+      @store.changed? || (@read_model ? @read_model.stale?(@paths.org) : false)
     end
 
     def reload_read_model
@@ -1854,7 +1863,7 @@ module Tui
       return unless event
 
       record_agent_result(event.request)
-      reload_store if @store.changed?
+      reload_store if external_change?
       advance_agent_queue
     end
 
@@ -1867,7 +1876,7 @@ module Tui
         return event if event.type == :started
 
         record_agent_result(event.request)
-        reload_store if @store.changed?
+        reload_store if external_change?
       end
     end
 
@@ -1894,7 +1903,7 @@ module Tui
       if @agent_queue.active?
         event = @agent_queue.cancel_active
         record_agent_result(event.request)
-        reload_store if @store.changed?
+        reload_store if external_change?
         advance_agent_queue
         flash("cancelled agent request ##{event.request.id}")
       elsif @resp_open

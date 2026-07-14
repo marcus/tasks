@@ -1710,4 +1710,30 @@ class TestApp < Minitest::Test
       assert_equal before, row_titles(app)
     end
   end
+
+  # The run loop's reload gate must survive the mutation Store consuming its
+  # own mtime signal: an editor-session read (store.items during a cascade
+  # confirmation) self-reloads @store, after which @store.changed? is false —
+  # but the rendered read model is still pre-write and must trigger the reload.
+  def test_external_change_detected_after_a_store_read_consumes_the_signal
+    app_with(agent: FakeAgent.new(running: false), input: "") do |app|
+      app.send(:read_model) # build the presentation model over the current file
+      store = app.instance_variable_get(:@store)
+
+      records = FIXTURE_RECORDS.map(&:dup)
+      records << { "type" => "task", "id" => "bbbb0001", "parent" => FIX[:home],
+                   "state" => "TODO", "title" => "External write" }
+      File.write(store.org, Tasks::Format.dump(records))
+
+      store.items # the signal-consuming read (editor session, archive preview)
+      refute_predicate store, :changed?, "precondition: the store self-reloaded"
+
+      assert app.send(:external_change?),
+             "a stale read model must trigger the reload even after @store consumed the mtime signal"
+
+      app.send(:reload_store)
+      refute app.send(:external_change?)
+      assert_includes app.send(:read_model).items.map(&:title), "External write"
+    end
+  end
 end

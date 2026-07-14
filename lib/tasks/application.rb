@@ -27,6 +27,15 @@ module Tasks
       freeze
     end
 
+    # True when the live file no longer matches the snapshot this model was
+    # built from. Long-lived presenters must gate refreshes on this rather
+    # than on a mutation Store's #changed?: any read that lets that Store
+    # self-reload consumes its mtime signal, and a model kept until the next
+    # #changed? tick would then stay stale forever.
+    def stale?(live_path)
+      Store.stat_key(live_path) != @snapshot.live_stat
+    end
+
     # Canonical resource for a presentation Item or stable id. The Item path
     # lets adapters keep their existing renderer without ever asking Store for
     # a body, links, or ancestry after the read has been captured.

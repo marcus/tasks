@@ -114,4 +114,19 @@ class TestApplication < Minitest::Test
       assert first.instance_variable_get(:@link_shorthands).frozen?
     end
   end
+
+  def test_read_model_reports_staleness_after_an_external_write
+    with_application do |org, _archive, app|
+      model = app.read_tasks
+      refute model.stale?(org), "a freshly built model must not report stale"
+
+      records = FIXTURE_RECORDS.map(&:dup)
+      records << { "type" => "task", "id" => "bbbb0001", "parent" => FIX[:home],
+                   "state" => "TODO", "title" => "External write" }
+      File.write(org, dump_fixture(records))
+
+      assert model.stale?(org), "an external write must mark the held model stale"
+      refute app.read_tasks.stale?(org), "a rebuilt model over the new bytes is current"
+    end
+  end
 end
