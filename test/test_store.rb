@@ -308,12 +308,10 @@ class TestStore < Minitest::Test
     end
   end
 
-  def test_with_lock_scopes_reentrancy_to_owning_fiber_and_cleans_up
+  def test_with_lock_rejects_cross_fiber_contention_and_cleans_up
     with_store do |store, _org, _archive|
       events = []
-      lock_opens = []
-      lock_path = store.send(:lock_path)
-      lock_attempt = Class.new(StandardError)
+      contender_error = nil
       contender = nil
       owner = Fiber.new do
         begin
@@ -332,38 +330,30 @@ class TestStore < Minitest::Test
       contender = Fiber.new do
         begin
           store.send(:with_lock) { events << :contender_enter }
-        rescue StandardError => error
-          raise unless error.is_a?(lock_attempt)
+        rescue Tasks::Store::CrossFiberLockError => error
+          contender_error = error
+          events << :contender_rejected
         end
       end
-      original_file_open = File.method(:open)
 
-      File.stub(:open, lambda { |path, *args, **kwargs, &block|
-        if path == lock_path
-          lock_opens << Fiber.current
-          raise lock_attempt, "contender reached sidecar lock" if Fiber.current.equal?(contender)
-        end
-        original_file_open.call(path, *args, **kwargs, &block)
-      }) do
-        owner.resume
-        contender.resume
+      # These use the real sidecar flock. A same-thread contender has to fail
+      # before it reaches flock; otherwise it blocks the scheduler and the
+      # owner Fiber below cannot resume to release its lock.
+      owner.resume
+      assert_equal %i[owner_enter owner_nested], events
+      Timeout.timeout(1) { contender.resume }
+      assert_instance_of Tasks::Store::CrossFiberLockError, contender_error
+      assert_match(/held by another Fiber/, contender_error.message)
+      assert_equal %i[owner_enter owner_nested contender_rejected], events
 
-        # The distinct Fiber must try to acquire the sidecar lock instead of
-        # taking the owner's reentrant path. The nested call above remains
-        # reentrant because it runs in the owner Fiber.
-        assert_equal [owner, contender], lock_opens
-        assert_equal %i[owner_enter owner_nested], events
+      owner.resume
+      assert_equal %i[owner_enter owner_nested contender_rejected owner_rescued], events
 
-        owner.resume
-        assert_equal %i[owner_enter owner_nested owner_rescued], events
-
-        successor = Fiber.new do
-          store.send(:with_lock) { events << :successor_enter }
-        end
-        successor.resume
-        assert_equal [owner, contender, successor], lock_opens
-        assert_equal %i[owner_enter owner_nested owner_rescued successor_enter], events
+      successor = Fiber.new do
+        store.send(:with_lock) { events << :successor_enter }
       end
+      successor.resume
+      assert_equal %i[owner_enter owner_nested contender_rejected owner_rescued successor_enter], events
     end
   end
 

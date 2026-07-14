@@ -43,6 +43,10 @@ module Tasks
   class Store
     OPEN_STATES = %w[INBOX TODO NEXT WAITING].freeze
     DONE_STATES = %w[DONE CANCELLED].freeze
+    # A different Fiber on the same thread cannot wait on the sidecar flock:
+    # doing so would block the thread's scheduler before the owning Fiber can
+    # resume and release it. Callers must resume the owner first.
+    CrossFiberLockError = Class.new(StandardError)
 
     # A coherent, immutable view of the task files. A caller can hold one of
     # these while rendering a task and safely ask for its body, links, or tree
@@ -1181,8 +1185,10 @@ module Tasks
       # few locked operations legitimately call another locked read in the
       # same Ruby execution context (for example restore -> reload!). An
       # execution context is both the Thread and Fiber: a Store can be shared
-      # by threads, and a yielded owner Fiber must not let another Fiber on
-      # that thread skip the sidecar flock.
+      # by threads, and a yielded owner Fiber must not let another Fiber
+      # bypass the sidecar flock. It cannot wait on that flock either: a Fiber
+      # that blocks its thread's scheduler prevents the owner from resuming to
+      # release it, so reject that contention explicitly.
       owner = [Thread.current, Fiber.current]
       if @lock_owner == owner
         @lock_depth += 1
@@ -1191,6 +1197,11 @@ module Tasks
         ensure
           @lock_depth -= 1
         end
+      end
+
+      if @lock_owner && @lock_owner.first.equal?(Thread.current)
+        raise CrossFiberLockError,
+              "Store lock is held by another Fiber on this thread; resume the owner before locking"
       end
 
       File.open(lock_path, File::RDWR | File::CREAT, 0o644) do |f|
