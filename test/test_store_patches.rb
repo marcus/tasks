@@ -468,6 +468,15 @@ class TestStorePatches < Minitest::Test
     end
   end
 
+  def test_cascade_helper_returns_stable_ids_not_file_coordinates
+    with_patch_store do |store, org|
+      records = store.send(:fresh_records, org)
+      parent_index = records.index { |record| record["id"] == "11110002" }
+
+      assert_equal ["11110003"], store.send(:close_open_descendants, records, parent_index)
+    end
+  end
+
   def test_state_patch_advances_recurrence_without_cascade
     with_patch_store do |store, org|
       snapshot = store.edit_snapshot("11110003")

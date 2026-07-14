@@ -991,7 +991,7 @@ module Tasks
         replace_optional(rec, "tags", rec["tags"])
         rec["closed"] ||= Date.today.iso8601
         if value == "DONE"
-          cascaded_ids = close_open_descendants(records, ri, return_ids: true)
+          cascaded_ids = close_open_descendants(records, ri)
           touched_ids.concat(cascaded_ids)
         end
       elsif DONE_STATES.include?(from) && !DONE_STATES.include?(value)
@@ -1086,8 +1086,8 @@ module Tasks
     # its `recur` cookie retired outright — a cascaded recurring descendant is
     # NOT advanced (no date roll, no body log): completing the parent completes
     # it. DONE/CANCELLED descendants are left untouched (their prior `closed`
-    # stands). Returns the touched records' `line` values, in file order.
-    def close_open_descendants(records, ri, return_ids: false)
+    # stands). Returns the touched records' stable IDs, in file order.
+    def close_open_descendants(records, ri)
       rj = subtree_end(records, ri)
       today = Date.today.iso8601
       records[(ri + 1)...rj].each_with_object([]) do |rec, touched|
@@ -1096,7 +1096,7 @@ module Tasks
         rec["closed"] = today
         rec["tags"] = (rec["tags"] || []) - [DEFER_TAG]
         rec.delete("recur")
-        touched << (return_ids ? rec["id"] : rec["line"])
+        touched << rec["id"]
       end
     end
 

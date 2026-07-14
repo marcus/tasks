@@ -1168,8 +1168,8 @@ class TestStore < Minitest::Test
 
   def test_complete_cascades_open_descendants_at_all_depths
     with_cascade_store do |store, org|
-      lines = store.test_mutation.complete(store.items.find { |i| i.title == "Project" })
-      assert_kind_of Array, lines
+      ids = store.test_mutation.complete(store.items.find { |i| i.title == "Project" })
+      assert_kind_of Array, ids
       today = Date.today.iso8601
 
       %w[Project Task\ A Subtask\ A1 Task\ B Loose\ idea].each do |title|
@@ -1189,9 +1189,8 @@ class TestStore < Minitest::Test
       assert_equal "TODO", record_for(org, title: "Sibling")["state"]
       assert_equal "NEXT", record_for(org, title: "Sibling child")["state"]
 
-      # Returns root + every touched descendant line (root first, file order).
-      assert_equal lines, lines.sort
-      assert_equal 6, lines.size, "root + 5 open descendants"
+      # Returns root + every touched descendant stable ID, in file order.
+      assert_equal %w[cccc0002 cccc0003 cccc0004 cccc0005 cccc0006 cccc0009], ids
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -1223,9 +1222,9 @@ class TestStore < Minitest::Test
 
   def test_set_state_done_cascades
     with_cascade_store do |store, org|
-      lines = store.test_mutation.set_state(store.items.find { |i| i.title == "Project" }, "DONE")
-      assert_kind_of Array, lines
-      assert_equal 6, lines.size
+      ids = store.test_mutation.set_state(store.items.find { |i| i.title == "Project" }, "DONE")
+      assert_kind_of Array, ids
+      assert_equal %w[cccc0002 cccc0003 cccc0004 cccc0005 cccc0006 cccc0009], ids
       assert_equal "DONE", record_for(org, title: "Task A")["state"]
       assert_equal "DONE", record_for(org, title: "Subtask A1")["state"]
       assert_equal Date.today.iso8601, record_for(org, title: "Task B")["closed"]
@@ -1235,8 +1234,8 @@ class TestStore < Minitest::Test
 
   def test_set_state_cancelled_does_not_cascade
     with_cascade_store do |store, org|
-      lines = store.test_mutation.set_state(store.items.find { |i| i.title == "Project" }, "CANCELLED")
-      assert_equal 1, lines.size, "only the root touched"
+      ids = store.test_mutation.set_state(store.items.find { |i| i.title == "Project" }, "CANCELLED")
+      assert_equal ["cccc0002"], ids, "only the root touched"
       assert_equal "CANCELLED", record_for(org, title: "Project")["state"]
       # Open descendants keep their own open states.
       assert_equal "TODO", record_for(org, title: "Task A")["state"]
@@ -1263,8 +1262,8 @@ class TestStore < Minitest::Test
       ]))
       store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
       parent = store.items.find { |i| i.title == "Closed parent" }
-      lines = store.test_mutation.set_state(parent, "DONE")
-      assert_empty lines, "a no-op DONE patch has no touched ids"
+      ids = store.test_mutation.set_state(parent, "DONE")
+      assert_empty ids, "a no-op DONE patch has no touched ids"
       assert_equal "TODO", record_for(org, title: "Stray open child")["state"]
       assert_equal "2026-06-01", record_for(org, title: "Closed parent")["closed"], "closed preserved"
       assert Tasks::Check.check(org).ok?
@@ -1287,8 +1286,8 @@ class TestStore < Minitest::Test
       org = File.join(dir, "tasks.jsonl")
       File.write(org, dump_fixture(recs))
       store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
-      lines = store.test_mutation.complete(store.items.find { |i| i.title == "Level 0" })
-      assert_equal 6, lines.size, "root + 5 descendants"
+      ids = store.test_mutation.complete(store.items.find { |i| i.title == "Level 0" })
+      assert_equal %w[88880000 88880001 88880002 88880003 88880004 88880005], ids
       6.times { |n| assert_equal "DONE", record_for(org, title: "Level #{n}")["state"] }
       assert Tasks::Check.check(org).ok?
     end
@@ -1301,8 +1300,8 @@ class TestStore < Minitest::Test
       project = store.items.find { |i| i.title == "Project" }
       store.test_mutation.set_state(project, "WAITING")
       waiting = store.items.find { |i| i.title == "Project" }
-      lines = store.test_mutation.set_state(waiting, "DONE")
-      assert_kind_of Array, lines
+      ids = store.test_mutation.set_state(waiting, "DONE")
+      assert_equal %w[cccc0002 cccc0003 cccc0004 cccc0005 cccc0006 cccc0009], ids
       assert_equal "DONE", record_for(org, title: "Project")["state"]
       assert_equal "DONE", record_for(org, title: "Task A")["state"], "open child cascaded"
       assert_equal Date.today.iso8601, record_for(org, title: "Task B")["closed"]
