@@ -1154,7 +1154,7 @@ module Tui
         height: [layout.body_height - 2, 1].max,
         title: "edit task",
         hint: message || "tab saves on blur · ctrl-s saves · ctrl-o finishes",
-        error: %i[conflict invalid missing].include?(editor.last_result&.status) ? message : nil,
+        error: %i[conflict invalid missing].include?(editor.last_result&.tui_status) ? message : nil,
       )
       focus_row = result.focused_content_row && result.focused_content_row + 1
       @ui.panel.replace(title: "task · editing", lines: result.lines,

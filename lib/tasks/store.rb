@@ -458,7 +458,7 @@ module Tasks
     def patch_task!(patch)
       unless patch.respond_to?(:id) && patch.respond_to?(:field) &&
              patch.respond_to?(:value) && patch.respond_to?(:expected)
-        return PatchResult.new(status: :invalid, errors: ["expected a Tasks::TaskPatch"])
+        return MutationResult.new(status: :invalid, errors: ["expected a Tasks::TaskPatch"])
       end
 
       with_lock do
@@ -470,45 +470,45 @@ module Tasks
           # valid UTF-8 String, while Check deliberately contains bad bytes.
           preflight = Check.check(@org)
           unless preflight.ok?
-            return PatchResult.new(status: :invalid,
-                                   errors: preflight.errors.map(&:last))
+            return MutationResult.new(status: :store_invalid,
+                                      errors: preflight.errors.map(&:last))
           end
 
           records = fresh_records(@org)
           ri = locate_stable_index(records, patch.id)
-          return PatchResult.new(status: :missing) unless ri
+          return MutationResult.new(status: :not_found) unless ri
 
           current = build_edit_snapshot(records, ri)
           field = normalize_patch_field(patch.field)
           unless EditSnapshot::FIELDS.include?(field)
-            return PatchResult.new(status: :invalid, snapshot: current,
-                                   errors: ["unknown editable field #{patch.field.inspect}"])
+            return MutationResult.new(status: :invalid, snapshot: current,
+                                      errors: ["unknown editable field #{patch.field.inspect}"])
           end
 
           unless confirmation_matches?(current, patch.respond_to?(:confirmation) && patch.confirmation)
-            return PatchResult.new(status: :conflict, snapshot: current)
+            return MutationResult.new(status: :conflict, snapshot: current)
           end
 
           actual = current.expected_for(field)
           unless semantic_patch_equal?(field, actual, patch.expected)
-            return PatchResult.new(status: :conflict, snapshot: current)
+            return MutationResult.new(status: :conflict, snapshot: current)
           end
 
           original_records = Format.dump(records)
           applied = apply_semantic_patch(records, ri, field, patch.value)
           if applied[:status] != :ok
-            return PatchResult.new(status: applied[:status], snapshot: current,
-                                   errors: applied[:errors] || [], summary: applied[:summary])
+            return MutationResult.new(status: applied[:status], snapshot: current,
+                                      errors: applied[:errors] || [], summary: applied[:summary])
           end
           proposed_records = Format.dump(records)
         rescue JSON::GeneratorError, EncodingError, ArgumentError => e
-          return PatchResult.new(status: :invalid, snapshot: current,
-                                 errors: [safe_patch_error(e)])
+          return MutationResult.new(status: :invalid, snapshot: current,
+                                    errors: [safe_patch_error(e)])
         end
 
         if proposed_records == original_records
-          return PatchResult.new(status: :no_change, snapshot: current,
-                                 summary: applied[:summary])
+          return MutationResult.new(status: :no_change, snapshot: current,
+                                    summary: applied[:summary])
         end
 
         label = "edit #{field}: #{current.title}"
@@ -517,16 +517,16 @@ module Tasks
           if (reason = post_write_failure)
             @last_rollback = reason
             restore(before)
-            return PatchResult.new(status: :invalid,
-                                   snapshot: restored_edit_snapshot(patch.id),
-                                   errors: [reason])
+            return MutationResult.new(status: :store_invalid,
+                                      snapshot: restored_edit_snapshot(patch.id),
+                                      errors: [reason])
           end
           after = snapshot
           @journal.record(label: label, before: before, after: after,
                           coalesce_key: patch.coalesce_key)
           reload!
           fresh_ri = locate_stable_index(@records, patch.id)
-          PatchResult.new(
+          MutationResult.new(
             status: :ok,
             snapshot: fresh_ri && build_edit_snapshot(@records, fresh_ri),
             touched_ids: applied[:touched_ids],
@@ -535,9 +535,9 @@ module Tasks
         rescue StandardError => e
           @last_rollback = safe_patch_error(e)
           restore(before)
-          PatchResult.new(status: :invalid,
-                          snapshot: restored_edit_snapshot(patch.id),
-                          errors: [safe_patch_error(e)])
+          MutationResult.new(status: :unavailable,
+                             snapshot: restored_edit_snapshot(patch.id),
+                             errors: [safe_patch_error(e)])
         end
       end
     end

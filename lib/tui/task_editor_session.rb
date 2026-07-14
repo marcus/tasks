@@ -293,7 +293,7 @@ module Tui
                        patch_result: result, data: result.summary)
       end
 
-      case result.status
+      case result.tui_status
       when :conflict
         transition = unless retain_pending_on_conflict
                        edit_form.reject_commit(
@@ -311,20 +311,20 @@ module Tui
           edit_form.refresh_snapshot(result.snapshot)
         end
         outcome(:conflict, form_transition: transition, patch_result: result,
-                message: "Field changed externally", data: @conflict)
+                message: result.tui_message, data: @conflict)
       when :missing
-        edit_form.reject_commit(message: "Task no longer exists", token: request.token)
+        edit_form.reject_commit(message: result.tui_message, token: request.token)
         become_missing(result)
       else
         errors = result.field_errors.empty? ? { request.field_key => result.errors } : result.field_errors
-        errors = { request.field_key => [result.status.to_s.tr("_", " ")] } if errors.values.flatten.empty?
+        errors = { request.field_key => [result.tui_message] } if errors.values.flatten.empty?
         transition = edit_form.reject_commit(errors: errors, token: request.token)
         if result.snapshot
           @snapshot = result.snapshot
           edit_form.refresh_snapshot(result.snapshot)
         end
         outcome(:invalid, form_transition: transition, patch_result: result,
-                message: result.errors.first || result.status.to_s.tr("_", " "), data: result.summary)
+                message: result.errors.first || result.tui_message, data: result.summary)
       end
     end
 

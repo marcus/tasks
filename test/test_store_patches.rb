@@ -192,7 +192,9 @@ class TestStorePatches < Minitest::Test
     with_patch_store do |store, org|
       before = File.read(org)
       missing = Tasks::TaskPatch.new(id: "deadbeef", field: :title, value: "X", expected: "Y")
-      assert_equal :missing, store.patch_task!(missing).status
+      result = store.patch_task!(missing)
+      assert_equal :not_found, result.status
+      assert result.missing?
       unknown = Tasks::TaskPatch.new(id: "11110002", field: :bogus, value: "X", expected: nil)
       assert_equal :invalid, store.patch_task!(unknown).status
       assert_equal before, File.read(org)
@@ -488,7 +490,7 @@ class TestStorePatches < Minitest::Test
       File.write(org, File.read(org).sub("\n", "\nnot-json\n"))
       before = File.binread(org)
       result = store.patch_task!(patch(snapshot, :title, "Renamed"))
-      assert_equal :invalid, result.status
+      assert_equal :store_invalid, result.status
       assert result.errors.any? { |error| error.include?("invalid JSON") }
       assert_equal before, File.binread(org)
       assert_equal [:empty], store.undo!
@@ -504,7 +506,7 @@ class TestStorePatches < Minitest::Test
 
       assert_nil store.edit_snapshot("11110002")
       result = store.patch_task!(request)
-      assert_equal :invalid, result.status
+      assert_equal :store_invalid, result.status
       assert result.errors.all?(&:valid_encoding?)
       assert result.errors.any? { |error| error.include?("UTF-8") }
       assert_equal bytes, File.binread(org)
@@ -545,7 +547,7 @@ class TestStorePatches < Minitest::Test
       result = store.stub(:post_write_failure, "injected check failure") do
         store.patch_task!(patch(snapshot, :title, "Renamed"))
       end
-      assert_equal :invalid, result.status
+      assert_equal :store_invalid, result.status
       assert_equal ["injected check failure"], result.errors
       assert_equal before, File.read(org)
       assert_equal [:empty], store.undo!
@@ -563,7 +565,7 @@ class TestStorePatches < Minitest::Test
       result = store.stub(:write_records, writer) do
         store.patch_task!(patch(snapshot, :title, "Renamed"))
       end
-      assert_equal :invalid, result.status
+      assert_equal :unavailable, result.status
       assert_equal ["injected writer failure"], result.errors
       assert_equal before, File.read(org)
       assert_equal [:empty], store.undo!
