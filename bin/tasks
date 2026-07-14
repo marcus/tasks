@@ -251,17 +251,21 @@ def cmd_capture(args)
                         project: project, under: under_item)
   mutation_failed "would exceed max depth #{store.max_depth} (max_depth config / TASKS_MAX_DEPTH)" if line == :too_deep
   mutation_failed %(could not capture (no "#{project || "Inbox"}" section found?)) unless line && line.positive?
+  captured = store.items.find { |i| i.line == line }
+  mutation_failed "lost the captured task" unless captured&.id
+  captured_id = captured.id
   if cookie
-    item = store.items.find { |i| i.line == line }
-    abort "failed to set recurrence on the new item" unless item && store.set_recur!(item, cookie)
+    result = patch_task_by_id(captured_id, field: :recurrence, value: cookie,
+                              label: "recur #{cookie}: #{captured.title}")
+    mutation_result_failed(result, "failed to set recurrence on the new item")
   end
-  report_touched(line, json: json)
+  report_touched([captured_id], json: json)
 end
 
 # Core of the state-transition verbs. `state` passes the target as a
 # positional arg; its sugar `done`/`cancel` hardcode DONE/CANCELLED. All three
-# resolve the ref, honor --dry-run/--json, and route the write through the same
-# Store#set_state! (which stamps/clears CLOSED). `resolve_closed:` widens ref
+# resolve the ref, honor --dry-run/--json, and route the write through the
+# stable-id state patch (which stamps/clears CLOSED). `resolve_closed:` widens ref
 # resolution to closed tasks — always for `state` (so you can reopen a DONE
 # item), on demand elsewhere via --include-done.
 def change_state(args, usage:, resolve_closed:, to: nil, dry_verb: nil, archive_hint: false, recur_aware: false)
@@ -290,16 +294,16 @@ def change_state(args, usage:, resolve_closed:, to: nil, dry_verb: nil, archive_
     end
     return
   end
-  # A cascade returns every touched line; report_touched prints them all. Capture
-  # the return value rather than reporting the stale `item.line` on its own.
-  touched = store.set_state!(item, target)
-  mutation_failed "failed to set state" unless touched
+  task_id = stable_id_for(item)
+  result = patch_task_by_id(task_id, field: :state, value: target,
+                            label: "state → #{target}: #{item.title}")
+  mutation_result_failed(result, "failed to set state")
   if recurring_done && !flags["--json"]
-    fresh = store.items.find { |i| i.line == item.line }
+    fresh = store.items.find { |i| i.id == task_id }
     d = fresh && (fresh.deadline || fresh.scheduled)
     puts "↻ #{item.title}#{d ? " → next #{d.iso8601} (#{d.strftime("%a")})" : ""}"
   end
-  report_touched(touched, json: flags["--json"])
+  report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"])
   puts "Run `tasks archive` to move it out of tasks.jsonl." if archive_hint && !recurring_done && !flags["--json"]
 end
 
@@ -344,6 +348,90 @@ def mutation_failed(msg)
   else
     abort msg
   end
+end
+
+# CLI refs are deliberately fuzzy and may use L<line>, but that convenience
+# ends at the command boundary. Every write below addresses its target by the
+# stable id returned from ref resolution.
+def stable_id_for(item)
+  return item.id if item.id && !item.id.empty?
+
+  mutation_failed "task has no stable id"
+end
+
+PATCH_EXPECTED_UNSET = Object.new.freeze
+PATCH_SNAPSHOT_UNSET = Object.new.freeze
+
+# Build one stable-id patch from a fresh editor snapshot. A ref can disappear
+# after the CLI resolved it; that is the legacy stale-edit case (exit 1), while
+# refs that are absent at resolution still exit 2 in resolve_ref.
+def patch_task_by_id(task_id, field:, value:, label:, expected: PATCH_EXPECTED_UNSET,
+                     coalesce_key: nil, snapshot: PATCH_SNAPSHOT_UNSET, force: false)
+  snapshot = store.edit_snapshot(task_id) if snapshot.equal?(PATCH_SNAPSHOT_UNSET)
+  baseline = if expected.equal?(PATCH_EXPECTED_UNSET)
+               snapshot && patch_expected(snapshot, field)
+             else
+               expected
+             end
+  patch = Tasks::TaskPatch.new(id: task_id, field: field, value: value,
+                               expected: baseline, history_label: label,
+                               coalesce_key: coalesce_key, force: force)
+  result = store.patch_task!(patch)
+  return result unless result.not_found?
+
+  Tasks::MutationResult.new(status: :stale, snapshot: result.snapshot,
+                             errors: result.errors, field_errors: result.field_errors,
+                             form_errors: result.form_errors,
+                             touched_ids: result.touched_ids, summary: result.summary)
+end
+
+def patch_expected(snapshot, field)
+  return snapshot.metadata.fetch(:tag_sequence) if field == :tag_delta
+  return snapshot.metadata.fetch(:date_state) if field == :date_clear
+
+  snapshot.expected_for(field)
+end
+
+# Adapter mapping for typed Store results. Human wording remains the command's
+# established wording; the result supplies the exit status after the command
+# has already distinguished ref-resolution failures from stale writes.
+def mutation_result_failed(result, msg)
+  return result if result.ok?
+
+  message = if store.last_rollback || result.store_invalid?
+              "#{msg}\nfile failed validation after the edit — run `tasks check`"
+            else
+              msg
+            end
+  warn message
+  exit result.cli_exit_code
+end
+
+def result_touched_ids(result, fallback:)
+  result.touched_ids.empty? ? [fallback] : result.touched_ids
+end
+
+# Match Store's legacy top-level section lookup at the CLI boundary, then pass
+# only the section id into the location patch.
+def section_id_for(name)
+  want = name.strip.downcase
+  records = store.read_snapshot.live_records
+  sections = records.select { |record| record["type"] == "section" && !record["parent"] }
+  section = sections.find { |record| record["title"].to_s.downcase == want } ||
+            sections.find { |record| record["title"].to_s.downcase.include?(want) }
+  section && section["id"]
+end
+
+# Locate the task's nearest ancestor section by id without retaining a file
+# coordinate. Rootless tasks have no top-level destination, matching the old
+# move_top! refusal.
+def nearest_section_id_for(task_id)
+  records = store.read_snapshot.live_records
+  by_id = records.to_h { |record| [record["id"], record] }
+  record = by_id[task_id]
+  record = record && record["parent"] && by_id[record["parent"]]
+  record = record && by_id[record["parent"]] while record && record["type"] != "section"
+  record && record["id"]
 end
 
 # Pull known boolean flags out of args, returning [flags_hash, positional].
@@ -414,14 +502,13 @@ def resolve_ref(ref, include_done: false)
 end
 
 # After a mutation, print (or JSON-emit) every touched task's new headline.
-# Accepts a single line number or an Array of them (a cascade touches many):
-# a line stays put — one JSON record per line, each edit rewriting that record
-# in place — so unlike titles it can't be ambiguous. Prints one headline per
-# touched task in file order; `--json` emits them all under a `touched:` array.
-def report_touched(line_or_lines, json:)
+# Stable ids survive retitles and tree moves, and cascade results carry every
+# affected id. The CLI JSON keeps its historical line field as presentation,
+# never as a mutation locator.
+def report_touched(ids, json:)
   store.reload!
-  items = Array(line_or_lines)
-         .map { |ln| store.items.find { |i| i.line == ln } }
+  items = Array(ids)
+         .map { |id| store.items.find { |i| i.id == id } }
          .compact.sort_by(&:line)
   if json
     require "json"
@@ -453,12 +540,15 @@ def cmd_set_date(args, kind:, usage:)
   abort "unrecognized date: #{date_str}" unless date
 
   item = resolve_ref(ref, include_done: flags["--include-done"])
+  task_id = stable_id_for(item)
   if flags["--dry-run"]
     puts "would set #{key} <#{date.iso8601} #{date.strftime("%a")}> on: #{item_headline(item)}"
     return
   end
-  mutation_failed "failed to set #{key.downcase}" unless store.set_date!(item, date, kind: kind)
-  report_touched(item.line, json: flags["--json"])
+  result = patch_task_by_id(task_id, field: kind, value: date,
+                            label: "#{key.downcase} → #{date.iso8601}: #{item.title}")
+  mutation_result_failed(result, "failed to set #{key.downcase}")
+  report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"])
 end
 
 def cmd_due(args)      = cmd_set_date(args, kind: :deadline,  usage: "tasks due <ref> <date>")
@@ -474,12 +564,15 @@ def cmd_priority(args)
   abort "priority must be A, B, C, or none" unless pri.nil? || %w[A B C].include?(pri)
 
   item = resolve_ref(ref, include_done: flags["--include-done"])
+  task_id = stable_id_for(item)
   if flags["--dry-run"]
     puts "would set priority #{pri ? "[##{pri}]" : "(none)"} on: #{item_headline(item)}"
     return
   end
-  mutation_failed "failed to set priority" unless store.set_priority!(item, pri)
-  report_touched(item.line, json: flags["--json"])
+  label = pri ? "priority [##{pri}]: #{item.title}" : "clear priority: #{item.title}"
+  result = patch_task_by_id(task_id, field: :priority, value: pri, label: label)
+  mutation_result_failed(result, "failed to set priority")
+  report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"])
 end
 
 def cmd_undate(args)
@@ -499,13 +592,21 @@ def cmd_undate(args)
   abort %(usage: tasks undate <ref> [--kind deadline|scheduled]) if ref.nil? || ref.strip.empty?
 
   item = resolve_ref(ref, include_done: flags["--include-done"])
+  task_id = stable_id_for(item)
   if flags["--dry-run"]
     target = kind ? kind.to_s.upcase : "SCHEDULED/DEADLINE"
     puts "would remove #{target} from: #{item_headline(item)}"
     return
   end
-  mutation_failed "nothing to remove (no matching date stamp?)" unless store.undate!(item, kind: kind)
-  report_touched(item.line, json: flags["--json"])
+  label = kind ? "remove #{kind}: #{item.title}" : "remove dates: #{item.title}"
+  snapshot = store.edit_snapshot(task_id)
+  if snapshot && !(kind ? snapshot.public_send(kind) : snapshot.scheduled || snapshot.deadline)
+    mutation_failed "nothing to remove (no matching date stamp?)"
+  end
+  result = patch_task_by_id(task_id, field: :date_clear, value: kind, label: label,
+                            snapshot: snapshot)
+  mutation_result_failed(result, "nothing to remove (no matching date stamp?)")
+  report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"])
 end
 
 def cmd_show(args)
@@ -674,12 +775,15 @@ def cmd_retitle(args)
   abort %(usage: tasks retitle <ref> "new title") if ref.nil? || ref.strip.empty? || new_title.empty?
 
   item = resolve_ref(ref, include_done: flags["--include-done"])
+  task_id = stable_id_for(item)
   if flags["--dry-run"]
     puts "would retitle to #{new_title.inspect}: #{item_headline(item)}"
     return
   end
-  mutation_failed "failed to retitle" unless store.retitle!(item, new_title)
-  report_touched(item.line, json: flags["--json"])
+  result = patch_task_by_id(task_id, field: :title, value: new_title,
+                            label: "retitle → #{new_title}: #{item.title}")
+  mutation_result_failed(result, "failed to retitle")
+  report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"])
 end
 
 def cmd_tag(args)
@@ -700,13 +804,17 @@ def cmd_tag(args)
   end
 
   item = resolve_ref(ref, include_done: flags["--include-done"])
+  task_id = stable_id_for(item)
   if flags["--dry-run"]
     changes = (add.map { |t| "+#{t}" } + remove.map { |t| "-#{t}" }).join(" ")
     puts "would apply #{changes} to: #{item_headline(item)}"
     return
   end
-  mutation_failed "failed to update tags" unless store.set_tags!(item, add: add, remove: remove)
-  report_touched(item.line, json: flags["--json"])
+  result = patch_task_by_id(task_id, field: :tag_delta,
+                            value: { add: add, remove: remove },
+                            label: "tags: #{item.title}")
+  mutation_result_failed(result, "failed to update tags")
+  report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"])
 end
 
 def cmd_note(args)
@@ -716,12 +824,18 @@ def cmd_note(args)
   abort %(usage: tasks note <ref> "text") if ref.nil? || ref.strip.empty? || text.empty?
 
   item = resolve_ref(ref, include_done: flags["--include-done"])
+  task_id = stable_id_for(item)
   if flags["--dry-run"]
     puts "would add note to #{item_headline(item)}: #{text}"
     return
   end
-  mutation_failed "failed to add note" unless store.add_note!(item, text)
-  report_touched(item.line, json: flags["--json"])
+  snapshot = store.edit_snapshot(task_id)
+  body = snapshot&.body
+  result = patch_task_by_id(task_id, field: :body,
+                            value: body.nil? || body.empty? ? text.strip : "#{body}\n#{text.strip}",
+                            label: "note: #{item.title}", snapshot: snapshot)
+  mutation_result_failed(result, "failed to add note")
+  report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"])
 end
 
 # `defer` and `activate` toggle the semantic `defer` tag (someday/maybe).
@@ -733,12 +847,15 @@ def cmd_defer(args, deferred:, usage:, verb:)
   abort %(usage: #{usage}) if ref.nil? || ref.strip.empty?
 
   item = resolve_ref(ref, include_done: flags["--include-done"])
+  task_id = stable_id_for(item)
   if flags["--dry-run"]
     puts "would #{verb}: #{item_headline(item)}"
     return
   end
-  mutation_failed "failed to #{verb}" unless store.set_deferred!(item, deferred)
-  report_touched(item.line, json: flags["--json"])
+  label = deferred ? "defer: #{item.title}" : "activate: #{item.title}"
+  result = patch_task_by_id(task_id, field: :deferred, value: deferred, label: label)
+  mutation_result_failed(result, "failed to #{verb}")
+  report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"])
 end
 
 # Human-readable gloss of a repeater cookie, e.g. ".+1w" → "every 1 week, from
@@ -777,6 +894,7 @@ def cmd_recur(args)
   abort "unrecognized interval: #{interval} (try weekly, 2w, every 3 days, .+1m, or off)" if cookie.nil?
 
   item = resolve_ref(ref, include_done: flags["--include-done"])
+  task_id = stable_id_for(item)
   # A closed task with a live repeater is dead recurrence: `done` can't reach it
   # to roll it. Refuse to create one (clearing with `off` is always fine).
   if cookie != :off && DONE_STATES.include?(item.state)
@@ -802,15 +920,18 @@ def cmd_recur(args)
   end
 
   if noop_off
-    report_touched(item.line, json: flags["--json"])
+    report_touched([task_id], json: flags["--json"])
     return
   end
   if on_date && !has_date
-    mutation_failed "failed to seed date" unless store.set_date!(item, on_date, kind: :deadline)
-    item = store.items.find { |i| i.line == item.line } or abort "lost the task after dating it"
+    result = patch_task_by_id(task_id, field: :deadline, value: on_date,
+                              label: "deadline → #{on_date.iso8601}: #{item.title}")
+    mutation_result_failed(result, "failed to seed date")
   end
-  mutation_failed "failed to set recurrence (no date stamp?)" unless store.set_recur!(item, cookie)
-  report_touched(item.line, json: flags["--json"])
+  label = cookie == :off ? "recur off: #{item.title}" : "recur #{cookie}: #{item.title}"
+  result = patch_task_by_id(task_id, field: :recurrence, value: cookie, label: label)
+  mutation_result_failed(result, "failed to set recurrence (no date stamp?)")
+  report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"])
 end
 
 # Pull `--flag value` out of args in place, returning the value (or nil). Aborts
@@ -843,42 +964,49 @@ def cmd_move(args)
   abort %(usage: #{MOVE_USAGE}) unless [!section.empty?, !under.nil?, top].count(true) == 1
 
   item = resolve_ref(ref, include_done: flags["--include-done"])
+  task_id = stable_id_for(item)
 
   if top
     if flags["--dry-run"]
       puts "would unnest to top level: #{item_headline(item)}"
       return
     end
-    new_line = store.move_top!(item)
-    if new_line == false
-      mutation_failed "failed to unnest"
-    elsif new_line == 0
+    section_id = nearest_section_id_for(task_id)
+    mutation_failed "failed to unnest" unless section_id
+    result = patch_task_by_id(task_id, field: :location, value: section_id,
+                              label: "unnest: #{item.title}")
+    mutation_result_failed(result, "failed to unnest")
+    if result.no_change?
       # Already parented to its section — nothing to do (and no undo slot burned).
       puts "already at top level"
       puts item_headline(item)
     else
-      report_touched(new_line, json: flags["--json"])
+      report_touched([task_id], json: flags["--json"])
     end
   elsif under
     parent_item = resolve_ref(under)
+    parent_id = stable_id_for(parent_item)
     if flags["--dry-run"]
       puts %(would nest under "#{parent_item.title}": #{item_headline(item)})
       return
     end
-    new_line = store.move_under!(item, parent_item)
-    mutation_failed "would exceed max depth #{store.max_depth} (max_depth config / TASKS_MAX_DEPTH)" if new_line == :too_deep
-    mutation_failed "can't nest a task under its own subtree" if new_line == :cycle
-    mutation_failed %(could not nest under "#{parent_item.title}") unless new_line.is_a?(Integer) && new_line.positive?
-    report_touched(new_line, json: flags["--json"])
+    result = patch_task_by_id(task_id, field: :location, value: parent_id,
+                              label: "nest under #{parent_item.title}: #{item.title}", force: true)
+    mutation_failed "would exceed max depth #{store.max_depth} (max_depth config / TASKS_MAX_DEPTH)" if result.too_deep?
+    mutation_failed "can't nest a task under its own subtree" if result.cycle?
+    mutation_result_failed(result, %(could not nest under "#{parent_item.title}"))
+    report_touched([task_id], json: flags["--json"])
   else
     if flags["--dry-run"]
       puts "would move to #{section.inspect}: #{item_headline(item)}"
       return
     end
-    # move relocates the block, so its headline lands on a new line — report that.
-    new_line = store.move!(item, section)
-    mutation_failed %(could not move (no "#{section}" section?)) unless new_line && new_line.positive?
-    report_touched(new_line, json: flags["--json"])
+    section_id = section_id_for(section)
+    mutation_failed %(could not move (no "#{section}" section?)) unless section_id
+    result = patch_task_by_id(task_id, field: :location, value: section_id,
+                              label: "move → #{section}: #{item.title}", force: true)
+    mutation_result_failed(result, %(could not move (no "#{section}" section?)))
+    report_touched([task_id], json: flags["--json"])
   end
 end
 

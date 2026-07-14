@@ -7,20 +7,24 @@ module Tasks
   class TaskPatch
     FIELDS = EditSnapshot::FIELDS
 
-    attr_reader :id, :field, :value, :expected, :coalesce_key, :confirmation
+    attr_reader :id, :field, :value, :expected, :coalesce_key, :confirmation,
+                :history_label, :force
 
     alias target_id id
     alias field_key field
     alias confirmed_consequence confirmation
 
     def initialize(id: nil, target_id: nil, field:, value:, expected:,
-                   coalesce_key: nil, confirmation: nil, confirmed_consequence: nil)
+                   coalesce_key: nil, confirmation: nil, confirmed_consequence: nil,
+                   history_label: nil, force: false)
       @id = immutable(id || target_id)
       @field = normalize_field(field)
       @value = immutable(value)
       @expected = immutable(expected)
       @coalesce_key = immutable(coalesce_key)
       @confirmation = immutable(confirmation || confirmed_consequence)
+      @history_label = immutable(history_label)
+      @force = force == true
       freeze
     end
 

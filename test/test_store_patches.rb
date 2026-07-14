@@ -102,6 +102,20 @@ class TestStorePatches < Minitest::Test
     end
   end
 
+  def test_patch_can_preserve_an_adapter_supplied_history_label
+    with_patch_store do |store, _org|
+      snapshot = store.edit_snapshot("11110002")
+      request = Tasks::TaskPatch.new(
+        id: snapshot.id, field: :priority, value: "A",
+        expected: snapshot.expected_for(:priority),
+        history_label: "priority [#A]: Parent"
+      )
+
+      assert_equal :ok, store.patch_task!(request).status
+      assert_equal [:ok, "priority [#A]: Parent"], store.undo!
+    end
+  end
+
   def test_confirmation_expectations_atomically_guard_coupled_date_recurrence
     with_patch_store do |store, org|
       original = store.edit_snapshot("11110003")

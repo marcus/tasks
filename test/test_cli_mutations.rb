@@ -852,6 +852,10 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  def run_cli_at(org, archive, *args)
+    Open3.capture3({ "TASKS_FILE" => org, "TASKS_ARCHIVE" => archive }, "ruby", BIN, *args)
+  end
+
   def test_cli_due_sets_deadline
     run_cli("due", "Book flight", "2026-07-15") do |org, out, _err, st|
       assert st.success?
@@ -1679,6 +1683,88 @@ class TestCliMutations < Minitest::Test
       assert_equal 1, st.exitstatus
       assert_match(/can't nest a task under its own subtree/, err)
       assert_equal NEST_CLI, File.read(org, encoding: "UTF-8"), "nothing written"
+    end
+  end
+
+  # Phase 1c: CLI mutations must use stable task ids after ref resolution. The
+  # legacy Store methods remain for the TUI until Phase 1d, so this guards the
+  # adapter boundary rather than deleting those methods prematurely.
+  def test_cli_mutation_adapter_has_no_legacy_store_calls
+    source = File.read(BIN, encoding: "UTF-8")
+
+    refute_match(/store\.(?:set_state!|set_priority!|reschedule!|set_date!|undate!|retitle!|set_tags!|set_deferred!|set_recur!|add_note!|move!|move_under!|move_top!)/, source)
+  end
+
+  def test_cli_tag_patch_preserves_legacy_tag_order_and_undo_label
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, FIXTURE_ORG)
+
+      _out, err, status = run_cli_at(org, archive, "tag", "Review PR", "+urgent", "-important", "@home")
+      assert status.success?, err
+      assert_equal %w[@computer urgent @home], record_for(org, title: "Review PR backlog")["tags"]
+
+      out, undo_err, undo_status = run_cli_at(org, archive, "undo")
+      assert undo_status.success?, undo_err
+      assert_equal "undid: tags: Review PR backlog\n", out
+      assert_equal %w[@computer important], record_for(org, title: "Review PR backlog")["tags"]
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_undate_both_dates_remains_one_undoable_change_with_legacy_label
+    records = FIXTURE_RECORDS.map(&:dup)
+    flight = records.find { |record| record["id"] == FIX[:flight] }
+    flight["scheduled"] = "2026-06-30"
+    content = dump_fixture(records)
+
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, content)
+
+      _out, err, status = run_cli_at(org, archive, "undate", "Book flight")
+      assert status.success?, err
+      rec = record_for(org, title: "Book flight in Concur")
+      assert_nil rec["scheduled"]
+      assert_nil rec["deadline"]
+
+      out, undo_err, undo_status = run_cli_at(org, archive, "undo")
+      assert undo_status.success?, undo_err
+      assert_equal "undid: remove dates: Book flight in Concur\n", out
+      assert_equal content, File.read(org, encoding: "UTF-8")
+      _out, empty_err, empty_status = run_cli_at(org, archive, "undo")
+      assert_equal 1, empty_status.exitstatus
+      assert_match(/nothing to undo/, empty_err)
+    end
+  end
+
+  def test_cli_patch_adapter_maps_vanished_id_to_stale_while_initial_missing_ref_is_exit_two
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, FIXTURE_ORG)
+      env = { "TASKS_FILE" => org, "TASKS_ARCHIVE" => archive }
+
+      script = <<~RUBY
+        ARGV.replace(["help"])
+        load #{BIN.inspect}
+        fake = Object.new
+        fake.define_singleton_method(:edit_snapshot) { |_id| nil }
+        fake.define_singleton_method(:patch_task!) { |_patch| Tasks::MutationResult.new(status: :not_found) }
+        fake.define_singleton_method(:last_rollback) { nil }
+        @store = fake
+        result = patch_task_by_id("deadbeef", field: :title, value: "replacement", label: "retitle")
+        puts "\#{result.status}:\#{result.cli_exit_code}"
+      RUBY
+      out, err, status = Open3.capture3(env, "ruby", "-e", script)
+      assert status.success?, err
+      assert_equal "stale:1", out.lines.last.strip
+
+      _out, missing_err, missing_status = Open3.capture3(env, "ruby", BIN, "priority", "does not exist", "A")
+      assert_equal 2, missing_status.exitstatus
+      assert_match(/no match: does not exist/, missing_err)
     end
   end
 end

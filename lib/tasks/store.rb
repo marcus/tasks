@@ -480,7 +480,7 @@ module Tasks
 
           current = build_edit_snapshot(records, ri)
           field = normalize_patch_field(patch.field)
-          unless EditSnapshot::FIELDS.include?(field)
+          unless patch_field?(field)
             return MutationResult.new(status: :invalid, snapshot: current,
                                       errors: ["unknown editable field #{patch.field.inspect}"])
           end
@@ -489,13 +489,14 @@ module Tasks
             return MutationResult.new(status: :conflict, snapshot: current)
           end
 
-          actual = current.expected_for(field)
+          actual = patch_expected_for(current, field)
           unless semantic_patch_equal?(field, actual, patch.expected)
             return MutationResult.new(status: :conflict, snapshot: current)
           end
 
           original_records = Format.dump(records)
-          applied = apply_semantic_patch(records, ri, field, patch.value)
+          applied = apply_semantic_patch(records, ri, field, patch.value,
+                                         force: patch.respond_to?(:force) && patch.force)
           if applied[:status] != :ok
             return MutationResult.new(status: applied[:status], snapshot: current,
                                       errors: applied[:errors] || [], summary: applied[:summary])
@@ -511,7 +512,7 @@ module Tasks
                                     summary: applied[:summary])
         end
 
-        label = "edit #{field}: #{current.title}"
+        label = patch.respond_to?(:history_label) && patch.history_label || "edit #{field}: #{current.title}"
         begin
           write_records(@org, records)
           if (reason = post_write_failure)
@@ -689,6 +690,20 @@ module Tasks
       field
     end
 
+    # `tag_delta` is a CLI-only composite operation. It is intentionally not
+    # an editor field: the editor retains independent context/tag/defer slices.
+    def patch_field?(field)
+      EditSnapshot::FIELDS.include?(field) || %i[tag_delta date_clear].include?(field)
+    end
+
+    def patch_expected_for(snapshot, field)
+      case field
+      when :tag_delta then snapshot.metadata.fetch(:tag_sequence)
+      when :date_clear then snapshot.metadata.fetch(:date_state)
+      else snapshot.expected_for(field)
+      end
+    end
+
     def semantic_tags(rec)
       tags = rec["tags"]
       tags.is_a?(Array) ? tags.select { |tag| tag.is_a?(String) } : []
@@ -726,6 +741,10 @@ module Tasks
         },
         metadata: {
           line: rec["line"],
+          tag_sequence: tags,
+          date_state: {
+            scheduled: values[:scheduled], deadline: values[:deadline], recurrence: values[:recurrence],
+          },
           parent_type: parent && parent["type"],
           parent_title: parent && parent["title"],
           subtree_ids: records[ri...subtree_end(records, ri)].filter_map { |record| record["id"] },
@@ -766,8 +785,10 @@ module Tasks
       when :scheduled, :deadline
         normalized = normalize_patch_date(expected)
         normalized != :invalid && actual == normalized
-      when :contexts, :tags
+      when :contexts, :tags, :tag_delta
         actual == Array(expected)
+      when :date_clear
+        actual == expected
       else
         actual == expected
       end
@@ -841,18 +862,20 @@ module Tasks
       ri && build_edit_snapshot(records, ri)
     end
 
-    def apply_semantic_patch(records, ri, field, value)
+    def apply_semantic_patch(records, ri, field, value, force: false)
       case field
       when :title      then patch_title(records, ri, value)
       when :priority   then patch_priority(records, ri, value)
       when :deferred   then patch_deferred(records, ri, value)
       when :scheduled  then patch_date(records, ri, value, :scheduled)
       when :deadline   then patch_date(records, ri, value, :deadline)
+      when :date_clear then patch_date_clear(records, ri, value)
       when :recurrence then patch_recurrence(records, ri, value)
       when :contexts   then patch_tag_slice(records, ri, value, :contexts)
       when :tags       then patch_tag_slice(records, ri, value, :tags)
+      when :tag_delta  then patch_tag_delta(records, ri, value)
       when :body       then patch_body(records, ri, value)
-      when :location   then patch_location(records, ri, value)
+      when :location   then patch_location(records, ri, value, force: force)
       when :state      then patch_state(records, ri, value)
       end
     end
@@ -908,6 +931,22 @@ module Tasks
       patch_ok(rec)
     end
 
+    # `undate` owns both date fields and their coupled recurrence cookie. Keep
+    # that legacy CLI operation one checked write and one undo entry instead of
+    # exposing an observable intermediate state between two single-date patches.
+    def patch_date_clear(records, ri, value)
+      kind = value.is_a?(String) || value.is_a?(Symbol) ? value.to_sym : value
+      return patch_invalid("date clear kind must be deadline, scheduled, or nil") unless kind.nil? || %i[deadline scheduled].include?(kind)
+
+      rec = records[ri]
+      fields = kind ? [kind] : %i[scheduled deadline]
+      return patch_invalid("no matching date stamp") unless fields.any? { |field| rec[field.to_s] }
+
+      fields.each { |field| rec.delete(field.to_s) }
+      rec.delete("recur") unless rec["scheduled"] || rec["deadline"]
+      patch_ok(rec)
+    end
+
     def patch_recurrence(records, ri, value)
       rec = records[ri]
       return patch_invalid("recurrence requires a scheduled date or deadline") unless rec["scheduled"] || rec["deadline"]
@@ -941,6 +980,31 @@ module Tasks
       return patch_ok(rec) if existing.select(&owns) == proposed
       rec["tags"] = merge_owned_slice(existing, proposed, &owns)
       replace_optional(rec, "tags", rec["tags"])
+      patch_ok(rec)
+    end
+
+    # The CLI's `tag` verb owns the whole ordered tag sequence: it may add and
+    # remove contexts, plain tags, and the defer marker in one undoable write.
+    # The editor keeps narrower context/tag slices, so this private patch field
+    # preserves the CLI's historical order and atomic add/remove semantics
+    # without weakening those field boundaries.
+    def patch_tag_delta(records, ri, value)
+      return patch_invalid("tag changes must contain add and remove lists") unless value.is_a?(Hash)
+
+      add = value[:add] || value["add"]
+      remove = value[:remove] || value["remove"]
+      return patch_invalid("tag changes must contain add and remove lists") unless
+        add.is_a?(Array) && remove.is_a?(Array) &&
+        (add + remove).all? { |tag| tag.is_a?(String) }
+
+      add = add.map { |tag| utf8(tag) }
+      remove = remove.map { |tag| utf8(tag) }
+      rec = records[ri]
+      tags = semantic_tags(rec).reject { |tag| remove.include?(tag) }
+      add.each do |tag|
+        tags << tag unless tags.include?(tag)
+      end
+      replace_optional(rec, "tags", tags)
       patch_ok(rec)
     end
 
