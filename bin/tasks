@@ -23,6 +23,8 @@
 #   bin/tasks tag <ref> +t -t @ctx -@ctx   add/remove tags and contexts
 #   bin/tasks note <ref> "text"            append a body line under the task
 #   bin/tasks move <ref> ("Section"|--under <ref>|--top)  relocate/nest/unnest a subtree
+#   bin/tasks delete <ref>   hard-delete a task (needs --cascade if it has
+#                             subtasks); undoable — usually prefer cancel/archive
 #   bin/tasks recur <ref> <interval|off>   repeat on done (weekly, 2w, .+1m; off clears)
 #   bin/tasks defer|snooze <ref>           hide a task (someday/maybe)
 #   bin/tasks activate <ref>  bring a deferred task back (undefer/resume)
@@ -1062,6 +1064,51 @@ def cmd_move(args)
   end
 end
 
+DELETE_USAGE = %(tasks delete <ref> [--cascade] [--dry-run] [--json] [--include-done])
+
+# Hard-delete a task's subtree from the live file (not the archive). A task with
+# descendants is refused unless --cascade removes the whole subtree; deletion
+# never reparents children. Undoable via `tasks undo`. The removed tasks are
+# gone after the write, so capture their headlines BEFORE mutating and report
+# from that snapshot.
+def cmd_delete(args)
+  flags, rest = take_flags(args, "--cascade", "--dry-run", "--json", "--include-done")
+  ref = rest.shift
+  abort %(usage: #{DELETE_USAGE}) if ref.nil? || ref.strip.empty?
+
+  item = resolve_ref(ref, include_done: flags["--include-done"])
+  task_id = stable_id_for(item)
+  node = store.node_for(item)
+  removed = node ? node.each.map(&:item).compact : [item]
+  descendants = removed.length - 1
+
+  if flags["--dry-run"]
+    if descendants.positive?
+      puts "would delete #{removed.length} tasks (#{descendants} descendant#{"s" unless descendants == 1}): #{item_headline(item)}"
+    else
+      puts "would delete: #{item_headline(item)}"
+    end
+    return
+  end
+
+  result = application.delete_task(task_id, cascade: flags["--cascade"])
+  if result.conflict?
+    n = result.summary[:descendants]
+    m = result.summary[:open_descendants]
+    warn "refusing to delete: #{item.title.inspect} has #{n} descendant#{"s" unless n == 1} " \
+         "(#{m} open). Re-run with --cascade to remove the whole subtree."
+    exit 1
+  end
+  mutation_result_failed(result, "failed to delete")
+
+  if flags["--json"]
+    require "json"
+    puts({ deleted: removed.map { |i| item_json(i) } }.to_json)
+  else
+    removed.each { |i| puts item_headline(i) }
+  end
+end
+
 def cmd_archive
   result = store.archive_swept!
   if result.is_a?(Tasks::Store::ArchiveRefusal)
@@ -1311,6 +1358,10 @@ HELP = <<~USAGE
                                      --from schedule|completion · --on <date>
     defer   snooze <ref>             hide a task (someday/maybe)
     activate       <ref>             bring a deferred task back (undefer, resume)
+    delete         <ref>             hard-delete a task (no archive). Needs --cascade
+                                     if it has subtasks. Undoable via `undo`;
+                                     usually prefer cancel/archive — this is for
+                                     true mistakes.
 
   Lifecycle:
     archive   x              sweep DONE/CANCELLED to archive.jsonl
@@ -1358,6 +1409,7 @@ when "retitle", "rename" then cmd_retitle(ARGV[1..])
 when "tag"            then cmd_tag(ARGV[1..])
 when "note"           then cmd_note(ARGV[1..])
 when "move"           then cmd_move(ARGV[1..])
+when "delete"         then cmd_delete(ARGV[1..])
 when "recur", "repeat", "every" then cmd_recur(ARGV[1..])
 when "defer", "snooze" then cmd_defer(ARGV[1..], deferred: true,
                                       usage: "tasks defer <ref>", verb: "defer")

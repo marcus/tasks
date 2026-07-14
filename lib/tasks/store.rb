@@ -7,6 +7,7 @@ require "set"
 require_relative "atomic"
 require_relative "check"
 require_relative "create_task"
+require_relative "delete_task"
 require_relative "edit_snapshot"
 require_relative "format"
 require_relative "journal"
@@ -404,6 +405,107 @@ module Tasks
             snapshot: ri && build_edit_snapshot(@records, ri),
             touched_ids: [planned[:id]],
             summary: { parent_id: planned[:parent_id], inserted_id: planned[:id] }
+          )
+        rescue StandardError => e
+          @last_rollback = safe_patch_error(e)
+          restore(before)
+          MutationResult.new(status: :unavailable, errors: [safe_patch_error(e)])
+        end
+      end
+    end
+
+    # Hard-delete a task's subtree from the live file in one checked transaction.
+    # Follows apply_task_changeset!'s transaction shape (with_lock, snapshot,
+    # preflight refusal, atomic write, post-write rollback, one journal entry,
+    # reload). Deletion is never a repair route: an invalid file refuses. The
+    # archive is never consulted or written — an archived-only id is not found,
+    # and this is not an alias for CANCELLED.
+    def delete_task!(command)
+      unless command.is_a?(DeleteTask)
+        return MutationResult.new(status: :invalid, errors: ["expected a Tasks::DeleteTask"])
+      end
+
+      with_lock do
+        @last_rollback = nil
+        before = snapshot
+        current = nil
+        begin
+          unless command.id.is_a?(String) && !command.id.empty?
+            return MutationResult.new(status: :invalid, errors: ["task id is required"])
+          end
+          if !command.expected_revision.nil? && revision_components(command.expected_revision).nil?
+            return MutationResult.new(status: :invalid, errors: ["malformed expected_revision"])
+          end
+
+          # Check raw validity before parsing: deletion gets no repair mode, so
+          # any preflight failure refuses outright and writes nothing.
+          preflight = Check.check(@org)
+          unless preflight.ok?
+            return MutationResult.new(status: :store_invalid, errors: preflight.errors.map(&:last))
+          end
+
+          records = fresh_records(@org)
+          existing_index = records.index { |record| record["id"] == command.id }
+          # An archived-only id is absent from the live file: the archive is
+          # read-only, so it is simply not found here.
+          return MutationResult.new(status: :not_found) unless existing_index
+          unless records[existing_index]["type"] == "task"
+            return MutationResult.new(status: :invalid, errors: ["delete targets tasks"])
+          end
+
+          ri = existing_index
+          current = build_edit_snapshot(records, ri)
+
+          if command.expected_revision
+            revision_error = delete_revision_error(current, command.expected_revision)
+            return MutationResult.new(status: revision_error, snapshot: current) if revision_error
+          end
+
+          rj = subtree_end(records, ri)
+          removed = records[ri...rj]
+          removed_task_ids = removed.filter_map { |record| record["id"] if record["type"] == "task" }
+          descendant_tasks = removed.drop(1).select { |record| record["type"] == "task" }
+
+          unless command.cascade || descendant_tasks.empty?
+            return MutationResult.new(
+              status: :conflict, snapshot: current,
+              summary: {
+                descendants: descendant_tasks.length,
+                open_descendants: descendant_tasks.count { |record| OPEN_STATES.include?(record["state"]) },
+              }
+            )
+          end
+
+          title = records[ri]["title"]
+          working_records = duplicate_records(records)
+          working_records[ri...rj] = []
+          # Serialize before replacing the file so an encoding/JSON error is an
+          # invalid result, never a half-removed subtree.
+          Format.dump(working_records)
+        rescue JSON::GeneratorError, EncodingError, ArgumentError => e
+          return MutationResult.new(status: :invalid, snapshot: current, errors: [safe_patch_error(e)])
+        end
+
+        label = command.history_label || delete_history_label(title, removed_task_ids.length)
+        begin
+          write_records(@org, working_records)
+          if (reason = post_write_failure)
+            @last_rollback = reason
+            restore(before)
+            return MutationResult.new(status: :store_invalid,
+                                      snapshot: restored_edit_snapshot(command.id), errors: [reason])
+          end
+          after = snapshot
+          @journal.record(label: label, before: before, after: after)
+          reload!
+          MutationResult.new(
+            status: :ok,
+            touched_ids: removed_task_ids,
+            summary: {
+              removed: removed_task_ids.length,
+              descendants: descendant_tasks.length,
+              open_descendants: descendant_tasks.count { |record| OPEN_STATES.include?(record["state"]) },
+            }
           )
         rescue StandardError => e
           @last_rollback = safe_patch_error(e)
@@ -1149,6 +1251,24 @@ module Tasks
       return nil unless version == "v1" && [own, location, lifecycle].all? { |part| /\A[0-9a-f]{64}\z/.match?(part) }
 
       { own: own, location: location, lifecycle: lifecycle }
+    end
+
+    # A cascading delete must be refused if the task, its siblings, or any
+    # descendant changed since the revision was captured, so — unlike an
+    # ordinary field edit — it compares ALL THREE revision components. The
+    # supplied revision is already validated as parseable by the caller.
+    def delete_revision_error(current, expected_revision)
+      expected = revision_components(expected_revision)
+      return :invalid unless expected
+
+      actual = revision_components(current.revision)
+      %i[own location lifecycle].any? { |part| actual.fetch(part) != expected.fetch(part) } ? :stale : nil
+    end
+
+    def delete_history_label(title, removed_count)
+      return "delete: #{title}" if removed_count <= 1
+
+      "delete #{removed_count} tasks: #{title}"
     end
 
     def changeset_revision_error(current, changeset)

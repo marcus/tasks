@@ -2,6 +2,7 @@
 
 require_relative "store"
 require_relative "create_task"
+require_relative "delete_task"
 require_relative "operation_context"
 require_relative "task_changeset"
 require_relative "task_queries"
@@ -183,6 +184,26 @@ module Tasks
                     )
                   end
       store_factory.call.apply_changeset!(changeset)
+    end
+
+    # Typed deletion seam. An undoable hard delete of one live task; a task with
+    # descendants is refused unless cascade is true. expected_revision is
+    # optional — nil skips the concurrency check (CLI convenience), a supplied
+    # value guards the whole subtree. Accepts a prebuilt DeleteTask or an id.
+    def delete_task(id_or_command, cascade: false, expected_revision: nil,
+                    context: nil, history_label: nil)
+      validate_operation_context(context)
+      command = if id_or_command.is_a?(DeleteTask)
+                  unless cascade == false && expected_revision.nil? && history_label.nil?
+                    raise ArgumentError, "options are not accepted with a DeleteTask"
+                  end
+
+                  id_or_command
+                else
+                  DeleteTask.new(id: id_or_command, cascade: cascade,
+                                 expected_revision: expected_revision, history_label: history_label)
+                end
+      store_factory.call.delete_task!(command)
     end
 
     private

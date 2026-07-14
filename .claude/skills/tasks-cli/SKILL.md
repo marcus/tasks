@@ -61,7 +61,13 @@ bin/tasks recur "<ref>" weekly       # repeat on done: weekly/2w/.+1m; "off" cle
 bin/tasks defer "<ref>"              # hide as someday/maybe (adds defer tag)
 bin/tasks activate "<ref>"           # bring a deferred task back (undefer/resume)
 bin/tasks archive                    # sweep DONE/CANCELLED to archive.jsonl
+bin/tasks delete "<ref>"             # hard-delete a task (--cascade for subtasks); undoable
 ```
+
+`delete` hard-removes a task's subtree from the live file (it never touches the
+archive and is not the same as `cancel`). A task with subtasks needs `--cascade`.
+Prefer `cancel`/`archive` for normal "done with it" cases; `delete` is for a
+true mistake, and `bin/tasks undo` reverses it.
 
 Deferral is a semantic `defer` tag (like `important`/`urgent`): a deferred
 task keeps its state but drops out of `agenda`/`next`/`quadrants`/`inbox` and the

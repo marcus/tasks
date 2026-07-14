@@ -1952,4 +1952,105 @@ class TestCliMutations < Minitest::Test
       assert_equal "Recovered title", record_for(org, title: "Recovered title")["title"]
     end
   end
+
+  # -- delete (hard delete) ---------------------------------------------------
+
+  # A nested tree so `delete` has a parent-with-descendants to guard.
+  DELETE_TREE = dump_fixture([
+    { "type" => "meta", "version" => 1 },
+    { "type" => "section", "id" => "de1e0001", "title" => "Inbox" },
+    { "type" => "task", "id" => "de1e0002", "parent" => "de1e0001", "state" => "INBOX",
+      "title" => "loose thought" },
+    { "type" => "section", "id" => "de1e0003", "title" => "Projects" },
+    { "type" => "task", "id" => "de1e0004", "parent" => "de1e0003", "state" => "NEXT",
+      "title" => "Launch the site" },
+    { "type" => "task", "id" => "de1e0005", "parent" => "de1e0004", "state" => "TODO",
+      "title" => "Design the layout" },
+    { "type" => "task", "id" => "de1e0006", "parent" => "de1e0004", "state" => "NEXT",
+      "title" => "Build the pages" },
+  ]).freeze
+
+  def test_cli_delete_leaf_reports_and_exits_zero
+    run_cli("delete", "loose thought", content: DELETE_TREE) do |org, out, err, st|
+      assert st.success?, err
+      assert_nil record_for(org, title: "loose thought"), "the task is gone"
+      assert_match(/loose thought/, out, "reports the removed task's headline")
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_delete_leaf_json_shape_matches_other_mutations
+    run_cli("delete", "loose thought", "--json", content: DELETE_TREE) do |_org, out, _err, st|
+      assert st.success?
+      payload = JSON.parse(out)
+      row = payload.fetch("deleted").first
+      assert_equal "de1e0002", row.fetch("id")
+      assert_equal "loose thought", row.fetch("title")
+      # Same row shape as report_touched's item_json.
+      %w[id state priority title tags contexts scheduled deadline recur line source headline].each do |key|
+        assert row.key?(key), "delete JSON row missing #{key}"
+      end
+    end
+  end
+
+  def test_cli_delete_refuses_a_parent_without_cascade
+    run_cli("delete", "Launch the site", content: DELETE_TREE) do |org, out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_empty out
+      assert_match(/--cascade/, err)
+      assert_match(/2 descendants/, err)
+      refute_nil record_for(org, title: "Launch the site"), "nothing deleted on refusal"
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_delete_cascade_reports_every_removed_task
+    run_cli("delete", "Launch the site", "--cascade", content: DELETE_TREE) do |org, out, err, st|
+      assert st.success?, err
+      assert_nil record_for(org, title: "Launch the site")
+      assert_nil record_for(org, title: "Design the layout")
+      assert_nil record_for(org, title: "Build the pages")
+      %w[Launch\ the\ site Design\ the\ layout Build\ the\ pages].each do |title|
+        assert_match(/#{Regexp.escape(title.tr("\\", " "))}/, out)
+      end
+      refute_nil record_for(org, title: "loose thought"), "unrelated tasks survive"
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_delete_dry_run_writes_nothing
+    run_cli("delete", "Launch the site", "--cascade", "--dry-run", content: DELETE_TREE) do |org, out, _err, st|
+      assert st.success?
+      assert_match(/would delete/, out)
+      assert_match(/2 descendants/, out)
+      assert_equal DELETE_TREE, File.read(org), "dry-run writes nothing"
+    end
+  end
+
+  def test_cli_delete_unresolved_ref_exits_two
+    run_cli("delete", "no such task", content: DELETE_TREE) do |org, _out, err, st|
+      assert_equal 2, st.exitstatus
+      assert_match(/no match/, err)
+      assert_equal DELETE_TREE, File.read(org)
+    end
+  end
+
+  def test_cli_delete_is_undoable_across_processes
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, DELETE_TREE)
+      before = File.binread(org)
+
+      out, err, st = run_cli_at(org, archive, "delete", "Launch the site", "--cascade")
+      assert st.success?, err
+      refute_equal before, File.binread(org)
+      assert_match(/Launch the site/, out.force_encoding("UTF-8"))
+
+      out, err, st = run_cli_at(org, archive, "undo")
+      assert st.success?, err
+      assert_match(/undid: delete/, out.force_encoding("UTF-8"))
+      assert_equal before, File.binread(org), "undo restores the pre-delete file"
+    end
+  end
 end

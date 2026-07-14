@@ -105,6 +105,10 @@ say which ones matched.
   - review deferred:  `bin/tasks list --deferred`
   - inspect a task:   `bin/tasks show "<ref>" [--json]`
   - archive done:     `bin/tasks archive`
+  - delete a task:    `bin/tasks delete "<ref>"`  (hard delete; add `--cascade`
+                      if it has subtasks) — usually `cancel`/`archive` is the
+                      right call; reach for `delete` only for a true mistake.
+                      Undoable via `bin/tasks undo`.
   (full command set + roadmap: `docs/cli-spec.md`)
 - When you give an `INBOX` item a date, the CLI already promotes it to `TODO`
   (dated = processed) — no extra step.
