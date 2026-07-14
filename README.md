@@ -150,6 +150,34 @@ what an agent did to your list is `git diff`, and reverting it is `tasks undo`.
 Pick the default backend and add models in `~/.config/tasks/config`; see
 `docs/cli-spec.md` (LLM agent settings).
 
+### Remembered defaults
+
+An agent can keep a small file of durable, opt-in defaults for a task set —
+`agent-memory.md`, next to your `tasks.jsonl`, so it commits and clones right
+along with your tasks. Ask it to remember something once and later requests
+apply it without you repeating yourself:
+
+```sh
+tasks -p "water the garden; remember garden tasks use @home"
+# captures the task AND writes the rule — both show up in the diff
+tasks -p "water the garden"     # a later run tags it @home automatically
+```
+
+It's plain Markdown you can read and edit by hand:
+
+```markdown
+## Defaults
+
+- Garden-related tasks: add the `@home` context.
+```
+
+The current request always wins — "water the community plot, no context" obeys
+you and leaves the rule intact — and the agent only touches the file when you
+explicitly say "remember", "forget", or "change that rule", never by inferring a
+default from your edits. Relocate it with the `TASKS_MEMORY` env var or a
+`memory = …` line in the config; `tasks config` shows where it resolves and
+whether it exists.
+
 ## TUI
 
 `bin/tasks-tui` is a full-screen interactive view over the same file. It

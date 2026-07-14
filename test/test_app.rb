@@ -39,13 +39,14 @@ class TestApp < Minitest::Test
     def io = nil
   end
 
-  def app_with(agent: nil, agents: nil, input:)
+  def app_with(agent: nil, agents: nil, available: true, input:)
     Dir.mktmpdir do |dir|
       File.write(File.join(dir, "tasks.jsonl"), FIXTURE_ORG)
       pool = Array(agents || [agent])
       app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir),
                          llm_config: default_llm_config,
-                         agent_factory: ->(_entry) { pool.shift || agent })
+                         agent_factory: ->(_entry) { pool.shift || agent },
+                         agent_probe: ->(_entry) { available })
       app.instance_variable_set(:@input, Tui::TextInput.new(input))
       yield app
     end
@@ -81,7 +82,7 @@ class TestApp < Minitest::Test
 
   def test_submit_prompt_flashes_when_agent_unavailable
     fake = FakeAgent.new(running: false, available: false)
-    app_with(agent: fake, input: "do a thing") do |app|
+    app_with(agent: fake, available: false, input: "do a thing") do |app|
       app.send(:submit_prompt)
       assert_empty fake.started, "must not start an unavailable agent"
       assert_match(/not available/, app.instance_variable_get(:@flash))

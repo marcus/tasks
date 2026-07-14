@@ -31,16 +31,23 @@ module Tui
 
     Item = Struct.new(
       :id, :prompt, :entry, :status, :queued_at, :started_at, :finished_at,
-      :output, :exit_status, :error, :agent,
+      :output, :exit_status, :error,
       keyword_init: true
     ) do
       def finished? = FINISHED.include?(status)
     end
     private_constant :Item
 
-    def initialize(agent_factory:, clock: nil, max_pending: MAX_PENDING,
+    # agent_factory: entry -> a fresh adapter, built with the current system
+    # context only when a request actually starts. availability: entry -> bool,
+    # a lightweight probe run at enqueue so an unavailable provider is rejected
+    # immediately without building the (context-bearing, possibly failing)
+    # adapter. availability nil means "assume available"; start_next's re-check
+    # is the backstop either way.
+    def initialize(agent_factory:, availability: nil, clock: nil, max_pending: MAX_PENDING,
                    history_limit: HISTORY_LIMIT)
       @agent_factory = agent_factory
+      @availability = availability
       @clock = clock || -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
       @max_pending = Integer(max_pending)
       @history_limit = Integer(history_limit)
@@ -59,8 +66,7 @@ module Tui
         if pending_count >= @max_pending
 
       captured_entry = immutable_entry(entry)
-      agent = @agent_factory.call(captured_entry)
-      unless agent.available?
+      unless provider_available?(captured_entry)
         return Submission.new(
           request: nil,
           error: "#{captured_entry.provider} not available — check the CLI is installed and any local model server is running"
@@ -73,8 +79,7 @@ module Tui
         entry: captured_entry,
         status: :queued,
         queued_at: now,
-        output: +"",
-        agent: agent
+        output: +""
       )
       @next_id += 1
       @items << item
@@ -92,7 +97,11 @@ module Tui
 
       item = @pending.shift
       item.started_at = now
-      unless item.agent.available?
+      # Build the real adapter now, with context as it stands at start time — a
+      # factory error (e.g. oversize task-set memory) is caught below and
+      # reported as a failed request, never a crash.
+      agent = @agent_factory.call(item.entry)
+      unless agent.available?
         finish_item(item, status: :failed,
                           error: "#{item.entry.provider} became unavailable before start")
         return Event.new(type: :finished, request: snapshot(item))
@@ -100,7 +109,7 @@ module Tui
 
       item.status = :running
       @active = item
-      @agent = item.agent
+      @agent = agent
       @agent.start(item.prompt, model: item.entry.model)
       Event.new(type: :started, request: snapshot(item))
     rescue StandardError => e
@@ -188,6 +197,14 @@ module Tui
 
     def now = @clock.call
 
+    # No probe wired up means "assume available" — start_next still re-checks the
+    # live adapter, so this only affects the immediate-rejection UX at submit.
+    def provider_available?(entry)
+      return true unless @availability
+
+      @availability.call(entry)
+    end
+
     # LLM::Entry is intentionally mutable for registry/config assembly. Queue
     # requests are not: provider/model must remain exactly as submitted even if
     # the UI selection or a returned snapshot is mutated later.
@@ -208,7 +225,6 @@ module Tui
       item.output = output.to_s.dup
       item.exit_status = exit_status
       item.error = error
-      item.agent = nil
       trim_history
       item
     end

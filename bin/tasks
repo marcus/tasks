@@ -36,7 +36,8 @@
 #   bin/tasks -p "..."        hand a natural-language request to an LLM agent
 #                             (Claude or another configured harness), which acts
 #                             on your tasks and reports what changed
-#   bin/tasks config          show where tasks.jsonl/archive.jsonl resolve and why
+#   bin/tasks config          show where tasks.jsonl/archive.jsonl and the
+#                             agent-memory.md sidecar resolve, and why
 #   bin/tasks help|-h         full command reference
 #
 # Stdlib only — no bundler required. Reads tasks.jsonl (one JSON record/line).
@@ -53,7 +54,6 @@ require_relative "../lib/tasks/config"
 PATHS   = Tasks::Config.resolve(default_dir: ROOT)
 ORG     = PATHS.org
 ARCHIVE = PATHS.archive
-AGENTS  = File.join(ROOT, "AGENTS.md")
 
 # The model layer owns parsing and every mutation; the CLI adds dispatch,
 # ref resolution, and output. (Tasks::Item, Tasks::Format etc. live there.)
@@ -1239,13 +1239,16 @@ def cmd_prompt(args)
   abort %(usage: tasks -p [--provider NAME] [--model NAME] "do something with my tasks") if prompt.strip.empty?
 
   require_relative "../lib/llm/registry"
-  sys_prompt = File.exist?(AGENTS) ? File.read(AGENTS, encoding: "UTF-8") : ""
-  sys_prompt = "#{sys_prompt}\n\n#{PATHS.agent_context(cli_root: ROOT)}"
+  require_relative "../lib/tasks/agent_context"
   data_dir = File.dirname(ORG)
+  # Build the system context (AGENTS.md + file locations + task-set memory)
+  # before spawning: an oversize/unreadable agent-memory.md must abort with the
+  # path here, not run the agent without the user's saved defaults.
+  sys_prompt = Tasks::AgentContext.build(paths: PATHS, cli_root: ROOT)
 
   entry = LLM.default_entry(provider: provider, model: model)
   agent = LLM.build(entry, root: data_dir, system: sys_prompt)
-rescue ArgumentError => e
+rescue ArgumentError, Tasks::AgentContext::Error => e
   abort e.message
 else
   unless agent.available?
@@ -1272,15 +1275,25 @@ def extract_llm_flags(args)
   [provider, model, args]
 end
 
-# Show what the agent changed — only possible when the task files sit in a git repo.
+# Show what the agent changed — the task files plus the memory sidecar when it
+# lives in the same repo. Only possible when the task files sit in a git repo;
+# a memory sidecar relocated outside that repo can't be diffed here, so it gets
+# a one-line notice instead. Decision logic lives in Tasks::AgentDiff so it can
+# be tested against a real sandbox; this stays thin human formatting.
 def maybe_show_diff(data_dir)
-  in_git = system("git", "-C", data_dir, "rev-parse", "--is-inside-work-tree",
-                  out: File::NULL, err: File::NULL)
-  return unless in_git
-  diff = `git -C #{data_dir.shellescape} diff --stat -- #{ORG.shellescape} #{ARCHIVE.shellescape}`
-  unless diff.strip.empty?
+  require_relative "../lib/tasks/agent_diff"
+  result = Tasks::AgentDiff.compute(data_dir: data_dir, org: ORG, archive: ARCHIVE,
+                                    memory: PATHS.memory, color: $stdout.tty?)
+  return unless result
+
+  unless result.diff.strip.empty?
     puts "\n#{bold("Changes to task files:")}"
-    system("git", "-C", data_dir, "--no-pager", "diff", "--", ORG, ARCHIVE)
+    print result.diff
+    puts unless result.diff.end_with?("\n")
+  end
+  if result.notice
+    puts dim("Note: task-set memory at #{result.notice} is outside the task-data " \
+             "repo — review its changes there separately.")
   end
 end
 
@@ -1289,16 +1302,19 @@ def cmd_config(args)
   if args.include?("--json")
     require "json"
     puts({ org: ORG, archive: ARCHIVE,
+           memory: PATHS.memory,
            urgent_days: PATHS.urgent_days,
            max_depth: PATHS.max_depth,
            theme: PATHS.theme, colors: PATHS.colors,
            links: PATHS.links, link_systems: PATHS.link_systems,
            sources: PATHS.sources,
+           memory_exists: File.file?(PATHS.memory),
            config_file: PATHS.config_file,
            config_file_exists: File.file?(PATHS.config_file) }.to_json)
   else
     puts "org:         #{ORG}  #{dim("(#{PATHS.sources[:org]})")}"
     puts "archive:     #{ARCHIVE}  #{dim("(#{PATHS.sources[:archive]})")}"
+    puts "memory:      #{PATHS.memory}  #{dim("(#{PATHS.sources[:memory]}#{File.file?(PATHS.memory) ? "" : ", not present"})")}"
     puts "urgent_days: #{PATHS.urgent_days}  #{dim("(#{PATHS.sources[:urgent_days]})")}"
     puts "max_depth:   #{PATHS.max_depth}  #{dim("(#{PATHS.sources[:max_depth]})")}"
     puts "theme:       #{PATHS.theme}  #{dim("(#{PATHS.sources[:theme]})")}"

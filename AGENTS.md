@@ -119,9 +119,60 @@ say which ones matched.
   days or the `urgent` tag. To make something "urgent"/"important", prefer setting
   its deadline/priority over adding tags.
 
+## Task-set memory
+A task set may carry `agent-memory.md` — a small Markdown sidecar of durable,
+user-approved defaults for managing this list. Its absolute path is in "File
+locations for this run" below, and its contents, when present, are appended to
+this prompt inside a clearly delimited memory block. Treat it as standing
+preferences for filing tasks, never a transcript and never a licence to do more
+than the request asks.
+
+- Apply a saved default only when the request clearly falls in its stated
+  scope. A garden task takes a saved `@home` context; "call Garden State Bank"
+  does not — a name that merely contains a rule's word is not that rule's scope.
+- The current request wins over memory. An explicit "don't add a context", or a
+  different context named in the request, overrides a saved default for that one
+  request without changing the rule.
+- A more specific saved rule refines a general one when they don't conflict.
+  Conflicting rules, or a request whose relevance to a rule is genuinely
+  unclear, call for a clarifying question — never a guessed durable change.
+
+Create, edit, or remove memory **only** on an explicit request — "remember",
+"always", "by default", "forget", "change that rule". Never infer a new
+preference from one or many task edits: capturing three garden tasks with
+`@home` is not permission to save that as a default. On the first such request,
+create `agent-memory.md` from this template:
+
+```markdown
+# Task-set agent memory
+
+User-approved, durable defaults for agents managing this task set.
+Current request instructions override these defaults. Keep entries concise.
+
+## Defaults
+
+- Garden-related tasks: add the `@home` context.
+
+## Notes and exceptions
+
+<!-- Add narrow exceptions or rationale here when needed. -->
+```
+
+Otherwise edit it minimally — add, change, or remove the single rule in the
+right section rather than rewriting the file; the headings are a convention for
+people, not a parser. Store only stable task-management preferences: contexts,
+tags, projects, filing rules, recurrence preferences, and narrowly stated task
+wording conventions. Never store credentials, tokens, private facts a task
+doesn't need, transient deadlines, or a record of the conversation.
+
+Memory only supplies defaults while you carry out the requested list operation;
+it never authorizes the underlying work — the capture-by-default rule above
+still governs what you do with the task itself.
+
 ## Report
-End with ONE line listing every change made — including any external
-action (Slack, email) — so the caller has a full audit trail.
+End with ONE line listing every change made — including any memory-file change
+(name the exact rule added, changed, or removed) and any external action (Slack,
+email) — so the caller has a full audit trail.
 
 ---
 *Escape hatch: if the file is ever edited out-of-band (not by you), `bin/tasks

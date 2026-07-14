@@ -28,6 +28,7 @@ require_relative "screen_layout"
 require_relative "form_renderer"
 require_relative "task_editor_session"
 require_relative "../tasks/config"
+require_relative "../tasks/agent_context"
 require_relative "../tasks/application"
 require_relative "../tasks/opener"
 
@@ -49,24 +50,18 @@ module Tui
     PASTE_END   = "\e[201~"
     ESCAPE_WAIT = 0.01 # distinguish a lone Escape from a split CSI sequence
 
-    # The system-context string handed to any agent: the repo's AGENTS.md
-    # conventions plus the absolute file locations for this run. Provider-
-    # agnostic — each adapter injects it however its CLI allows.
-    def self.agent_system(paths:, cli_root:)
-      agents = File.join(cli_root, "AGENTS.md")
-      base = File.exist?(agents) ? File.read(agents, encoding: "UTF-8") : +""
-      [base, paths.agent_context(cli_root: cli_root)]
-        .reject { |s| s.to_s.strip.empty? }.join("\n\n")
-    end
-
     # paths:      injectable so tests can pin a sandbox dir; defaults to the
     #             user's configured task files (env / ~/.config/tasks/config).
     # llm_config: the resolved LLM config (provider/model defaults + per-provider
     #             settings). Read once here and threaded through the switcher, so
     #             both the entry list and each rebuilt agent agree. Injectable so
     #             tests are hermetic instead of reading the developer's real config.
+    # agent_factory: builds the real adapter (with fresh system context) when the
+    #             queue starts a request. agent_probe: the lightweight
+    #             availability check run at submit time. Both injectable so tests
+    #             stay off the developer's real CLI/models.
     def initialize(root:, paths: Tasks::Config.resolve(default_dir: root),
-                   llm_config: LLM::Config.load, agent_factory: nil)
+                   llm_config: LLM::Config.load, agent_factory: nil, agent_probe: nil)
       Theme.configure!(name: paths.theme, overrides: paths.colors || {})
       @paths = paths
       # Store remains the deliberately stateful mutation/editor session in
@@ -87,11 +82,14 @@ module Tui
       # entry and builds one adapter per accepted request, so later cycling can
       # never retarget queued or running work.
       @agent_root = File.dirname(paths.org)
-      @sys_prompt = App.agent_system(paths: paths, cli_root: root)
+      @cli_root   = root # where bin/tasks + AGENTS.md live (distinct from the data dir)
       @llm_config = llm_config
       @entries    = LLM.entries(llm_config)
       @entry_idx  = 0
-      @agent_queue = AgentQueue.new(agent_factory: agent_factory || method(:build_agent))
+      @agent_queue = AgentQueue.new(
+        agent_factory: agent_factory || method(:build_agent),
+        availability: agent_probe || method(:agent_available?)
+      )
       @ui = UiState.restore(saved: Session.load, views: Views::TABS.map(&:last), default_view: :agenda)
       @sel    = 0
       @input  = TextInput.new # prompt buffer
@@ -123,8 +121,22 @@ module Tui
 
     def current_entry = @entries[@entry_idx]
 
+    # Called by the queue when it starts a request — never at submit time — so
+    # every run gets context built from the memory sidecar as it stands right
+    # now. A saved default from an earlier request, or an external edit, is thus
+    # visible to the next queued request without restarting the TUI. A memory
+    # error (oversize/unreadable) raises here and the queue reports it as a
+    # failed request rather than crashing the event loop.
     def build_agent(entry)
-      LLM.build(entry, root: @agent_root, system: @sys_prompt, config: @llm_config)
+      system = Tasks::AgentContext.build(paths: @paths, cli_root: @cli_root)
+      LLM.build(entry, root: @agent_root, system: system, config: @llm_config)
+    end
+
+    # Lightweight availability probe used at submit time to reject an unavailable
+    # provider immediately. Deliberately context-free: it never reads the memory
+    # sidecar, so a submit can't fail on a memory error (that surfaces at start).
+    def agent_available?(entry)
+      LLM.build(entry, root: @agent_root, config: @llm_config).available?
     end
 
     def run

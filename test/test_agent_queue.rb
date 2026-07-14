@@ -72,13 +72,17 @@ class TestAgentQueue < Minitest::Test
     LLM::Entry.new(provider: provider, model: model)
   end
 
-  def queue_with(*agents, **options)
+  def queue_with(*agents, availability: nil, **options)
     built = []
     factory = lambda do |selected|
       built << selected
       agents.shift or raise "no fake agent left"
     end
-    [Q.new(agent_factory: factory, **options), built]
+    # Default probe = available: the enqueue-time rejection UX is exercised
+    # explicitly by passing availability:. start_next still re-checks the real
+    # adapter that the factory builds.
+    probe = availability || ->(_entry) { true }
+    [Q.new(agent_factory: factory, availability: probe, **options), built]
   end
 
   def test_runs_three_requests_fifo_with_only_one_live_adapter
@@ -113,12 +117,15 @@ class TestAgentQueue < Minitest::Test
     second = entry("qwen", provider: "hermes")
     queue.enqueue(prompt: "one", entry: first)
     queue.start_next
+    # The adapter is built at start time, so only the started request's entry
+    # has been handed to the factory so far — but both snapshots already carry
+    # their own frozen entry.
+    assert_equal [first], built
     queue.enqueue(prompt: "two", entry: second)
-
-    assert_equal [first, second], built
     assert_equal [first, second], queue.requests.map(&:entry)
     queue.pump
     queue.start_next
+    assert_equal [first, second], built
     assert_equal [["two", "qwen"]], agents[1].started
   end
 
@@ -143,12 +150,14 @@ class TestAgentQueue < Minitest::Test
   end
 
   def test_rejects_unavailable_or_over_capacity_without_recording_request
-    unavailable = FakeAgent.new(available: false)
-    queue, = queue_with(unavailable)
+    # An unavailable provider is rejected by the enqueue-time probe, before any
+    # adapter is built — so no fake agent is even consumed.
+    queue, built = queue_with(availability: ->(_entry) { false })
     rejected = queue.enqueue(prompt: "keep me", entry: entry)
     refute rejected.accepted?
     assert_match(/not available/, rejected.error)
     assert_empty queue.requests
+    assert_empty built, "a rejected request must not build an adapter"
 
     active = FakeAgent.new
     waiting = FakeAgent.new
@@ -178,9 +187,37 @@ class TestAgentQueue < Minitest::Test
     assert_equal [["good", "sonnet"]], good.started
   end
 
+  def test_factory_error_at_start_becomes_a_failed_event_not_a_crash
+    # A factory that raises models a memory-context build error (oversize/
+    # unreadable agent-memory.md). The first request fails carrying the message;
+    # a later request whose factory succeeds still starts.
+    good = FakeAgent.new
+    calls = 0
+    factory = lambda do |entry|
+      calls += 1
+      raise "task-set memory over budget" if calls == 1
+
+      good
+    end
+    queue = Q.new(agent_factory: factory, availability: ->(_entry) { true })
+    assert queue.enqueue(prompt: "first", entry: entry).accepted?
+    assert queue.enqueue(prompt: "second", entry: entry).accepted?
+
+    failed = queue.start_next
+    assert_equal :failed, failed.request.status
+    assert_match(/task-set memory over budget/, failed.request.error)
+    refute queue.active?
+
+    started = queue.start_next
+    assert_equal :started, started.type
+    assert_equal [["second", "sonnet"]], good.started
+  end
+
   def test_provider_becoming_unavailable_at_start_fails_one_request
-    agent = FakeAgent.new(available: [true, false])
-    queue, = queue_with(agent)
+    # The probe passes at enqueue, but the adapter built at start reports itself
+    # unavailable — the request fails cleanly rather than starting.
+    agent = FakeAgent.new(available: false)
+    queue, = queue_with(agent, availability: ->(_entry) { true })
     assert queue.enqueue(prompt: "later", entry: entry).accepted?
     event = queue.start_next
     assert_equal :failed, event.request.status

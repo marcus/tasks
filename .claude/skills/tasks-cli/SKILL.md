@@ -121,7 +121,25 @@ DONE/CANCELLED sets the `closed` date automatically — you don't manage those.
 If the file was somehow edited out-of-band (not by you), run `bin/tasks check`
 and fix whatever it reports before finishing.
 
+## Remembered defaults (`agent-memory.md`)
+
+A task set may carry `agent-memory.md` — a Markdown sidecar of durable,
+user-approved defaults (e.g. "garden tasks use `@home`") beside `tasks.jsonl`.
+When present, its contents are already injected into your system context; apply
+those defaults only where a request clearly falls in scope, and always let the
+current request override them. Find its resolved path with `bin/tasks config`
+(it can be relocated by the `TASKS_MEMORY` env var or the config `memory` key).
+
+Unlike `tasks.jsonl`, this sidecar is edited **directly** — it's plain Markdown,
+not a CLI store. Create, change, or remove a rule only when the user explicitly
+asks to remember / forget / change a default, editing minimally in the right
+section (create the file from its template on the first such request). Never
+infer a default from task edits, and never store secrets or transient facts. The
+full policy is in `AGENTS.md` (Task-set memory); report any change you make to
+the file alongside your task changes.
+
 ## Report
 
 End with one line listing every change made (the CLI prints resulting
-headlines — quote them). The caller uses this as the audit trail.
+headlines — quote them), including any `agent-memory.md` change. The caller uses
+this as the audit trail.

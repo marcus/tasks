@@ -21,7 +21,7 @@ module Tasks
   # window that marks a task "urgent" in the Covey quadrants (env
   # TASKS_URGENT_DAYS > config `urgent_days` > Quadrants::DEFAULT_URGENT_DAYS).
   module Config
-    PATH_KEYS = %w[dir file archive].freeze
+    PATH_KEYS = %w[dir file archive memory].freeze
 
     # Link settings live in two dotted namespaces (see Tasks::Links):
     #   link.<name>   = <url template with %s>  — shorthand: `jira:OPS-1` in a
@@ -32,22 +32,23 @@ module Tasks
     # shorthand that then matches prose.
     LINK_NAME = /\A[a-z][a-z0-9_-]*\z/
 
-    Paths = Struct.new(:org, :archive, :urgent_days, :max_depth, :theme, :colors,
+    Paths = Struct.new(:org, :archive, :memory, :urgent_days, :max_depth, :theme, :colors,
                        :links, :link_systems,
                        :sources, :config_file, keyword_init: true) do
       # Context block appended to an agent's system prompt so a headless harness
       # finds the CLI and the task files even when they live outside the repo.
       # Provider-agnostic — every backend (Claude CLI, Hermes, …) uses it.
+      # The memory sidecar path is always listed (even when the file does not
+      # exist yet) so an agent can create or edit it without guessing.
       def agent_context(cli_root:)
         <<~CTX
           File locations for this run (absolute; use these, not relative paths):
           - tasks CLI: #{File.join(cli_root, "bin", "tasks")}
           - tasks.jsonl: #{org}
           - archive.jsonl: #{archive}
+          - agent-memory.md: #{memory}
         CTX
       end
-      # Deprecated alias kept for one release; prefer #agent_context.
-      alias_method :claude_context, :agent_context
     end
 
     # Paths pinned to one directory, ignoring env and config file — for
@@ -55,11 +56,12 @@ module Tasks
     def self.for_dir(dir)
       Paths.new(
         org: File.join(dir, "tasks.jsonl"), archive: File.join(dir, "archive.jsonl"),
+        memory: File.join(dir, "agent-memory.md"),
         urgent_days: Quadrants::DEFAULT_URGENT_DAYS,
         max_depth: Tree::DEFAULT_MAX_DEPTH,
         theme: "default", colors: {},
         links: {}, link_systems: {},
-        sources: { org: "pinned", archive: "pinned", urgent_days: "default",
+        sources: { org: "pinned", archive: "pinned", memory: "pinned", urgent_days: "default",
                    max_depth: "default", theme: "default" },
         config_file: config_file
       )
@@ -80,20 +82,39 @@ module Tasks
 
       org,     org_source     = pick("tasks.jsonl",   "TASKS_FILE",    dir, dir_source, conf["file"],    env)
       archive, archive_source = pick("archive.jsonl", "TASKS_ARCHIVE", dir, dir_source, conf["archive"], env)
+      # Memory derives from the FINAL org path, not the base dir: a TASKS_FILE
+      # override must select its sibling agent-memory.md even when the dir/
+      # archive come from elsewhere. That's why it can't reuse `pick`, which
+      # defaults from the directory rather than the resolved file.
+      memory, memory_source = pick_memory(org, conf["memory"], env)
       urgent_days, urgent_source = pick_urgent_days(conf, env)
       max_depth,   max_depth_source = pick_max_depth(conf, env)
       theme, theme_source = pick_theme(conf, env)
 
       Paths.new(
-        org: org, archive: archive,
+        org: org, archive: archive, memory: memory,
         urgent_days: urgent_days, max_depth: max_depth,
         theme: theme, colors: conf["colors"] || {},
         links: conf.fetch(:links, {}), link_systems: conf.fetch(:link_systems, {}),
-        sources: { org: org_source, archive: archive_source, urgent_days: urgent_source,
-                   max_depth: max_depth_source, theme: theme_source },
+        sources: { org: org_source, archive: archive_source, memory: memory_source,
+                   urgent_days: urgent_source, max_depth: max_depth_source, theme: theme_source },
         config_file: file
       )
     end
+
+    # Resolve the agent-memory.md sidecar: TASKS_MEMORY env beats a config
+    # `memory` key beats agent-memory.md beside the resolved tasks.jsonl. The
+    # config value already carries `~`/relative expansion (memory is a PATH_KEY).
+    def self.pick_memory(org, file_value, env)
+      if env["TASKS_MEMORY"] && !env["TASKS_MEMORY"].empty?
+        [File.expand_path(env["TASKS_MEMORY"]), "TASKS_MEMORY env"]
+      elsif file_value
+        [file_value, "config file"]
+      else
+        [File.expand_path(File.join(File.dirname(org), "agent-memory.md")), "beside tasks.jsonl"]
+      end
+    end
+    private_class_method :pick_memory
 
     # TUI theme name. Env beats config file; NO_COLOR (when nothing explicit
     # is set) selects the attribute-only theme. Tui::Theme validates the name

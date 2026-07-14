@@ -65,7 +65,8 @@ class TestAppAgentQueue < Minitest::Test
         root: dir,
         paths: Tasks::Config.for_dir(dir),
         llm_config: default_llm_config,
-        agent_factory: ->(_entry) { pool.shift or raise "agent pool exhausted" }
+        agent_factory: ->(_entry) { pool.shift or raise "agent pool exhausted" },
+        agent_probe: ->(_entry) { true }
       )
       app.send(:rows)
       yield app, agents
@@ -165,6 +166,43 @@ class TestAppAgentQueue < Minitest::Test
 
       rendered = ui(app).modal.lines.map { |line| A.strip(line) }.join("\n")
       assert_includes rendered, "late transcript"
+    end
+  end
+
+  def test_queued_requests_build_fresh_context_so_a_memory_edit_hits_only_the_second
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, "tasks.jsonl"), FIXTURE_ORG)
+      File.write(File.join(dir, "AGENTS.md"), "# AGENTS\n")
+      memory = File.join(dir, "agent-memory.md")
+      File.write(memory, "- first default\n")
+
+      agents = [FakeAgent.new, FakeAgent.new]
+      pool = agents.dup
+      captured = []
+      # Intercept the real build_agent -> LLM.build path so we can inspect the
+      # system context each request was actually handed.
+      fake_build = lambda do |_entry, root:, system: nil, config: nil|
+        captured << system
+        pool.shift or raise "agent pool exhausted"
+      end
+
+      LLM.stub(:build, fake_build) do
+        app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir),
+                           llm_config: default_llm_config,
+                           agent_probe: ->(_entry) { true })
+        app.send(:rows)
+        submit(app, "first")            # starts immediately, builds context now
+        File.write(memory, "- second default\n") # edited while the first runs
+        submit(app, "second")           # queued behind the active first
+        agents[0].finish_with("done")
+        app.send(:pump_agent_queue)     # finishes first, then starts second
+      end
+
+      assert_equal 2, captured.size, "each request builds its own adapter at start"
+      assert_includes captured[0], "first default"
+      refute_includes captured[0], "second default"
+      assert_includes captured[1], "second default"
+      refute_includes captured[1], "first default"
     end
   end
 

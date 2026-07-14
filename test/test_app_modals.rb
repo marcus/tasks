@@ -25,7 +25,8 @@ class TestAppModals < Minitest::Test
     Dir.mktmpdir do |dir|
       File.write(File.join(dir, "tasks.jsonl"), content)
       app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir),
-                         llm_config: default_llm_config, agent_factory: agent_factory)
+                         llm_config: default_llm_config, agent_factory: agent_factory,
+                         agent_probe: ->(_entry) { true })
       app.send(:rows) # populate @rows like the paint loop does
       app.send(:clamp_selection)
       yield app

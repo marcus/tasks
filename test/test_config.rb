@@ -44,8 +44,9 @@ class TestConfig < Minitest::Test
     paths = resolve
     assert_equal "/repo/tasks.jsonl", paths.org
     assert_equal "/repo/archive.jsonl", paths.archive
-    assert_equal({ org: "default", archive: "default", urgent_days: "default",
-                   max_depth: "default", theme: "default" }, paths.sources)
+    assert_equal "/repo/agent-memory.md", paths.memory
+    assert_equal({ org: "default", archive: "default", memory: "beside tasks.jsonl",
+                   urgent_days: "default", max_depth: "default", theme: "default" }, paths.sources)
   end
 
   def test_tasks_dir_env_points_both_files
@@ -89,6 +90,57 @@ class TestConfig < Minitest::Test
   def test_empty_env_values_are_ignored
     paths = resolve(env: { "TASKS_DIR" => "", "TASKS_FILE" => "" })
     assert_equal "/repo/tasks.jsonl", paths.org
+  end
+
+  # -- memory sidecar (agent-memory.md resolution) ----------------------------
+
+  def test_memory_defaults_beside_resolved_tasks_file
+    paths = resolve
+    assert_equal "/repo/agent-memory.md", paths.memory
+    assert_equal "beside tasks.jsonl", paths.sources[:memory]
+  end
+
+  def test_memory_follows_tasks_dir
+    paths = resolve(env: { "TASKS_DIR" => "/data" })
+    assert_equal "/data/agent-memory.md", paths.memory
+  end
+
+  def test_memory_follows_the_final_tasks_file_override_not_the_base_dir
+    # A TASKS_FILE override must drag the sibling memory with it, even though
+    # the archive still resolves from TASKS_DIR.
+    paths = resolve(env: { "TASKS_DIR" => "/data", "TASKS_FILE" => "/elsewhere/my.jsonl" })
+    assert_equal "/elsewhere/agent-memory.md", paths.memory
+    assert_equal "/data/archive.jsonl", paths.archive
+  end
+
+  def test_memory_config_key_beats_sibling_default
+    write_config("memory = /notes/defaults.md\n")
+    paths = resolve
+    assert_equal "/notes/defaults.md", paths.memory
+    assert_equal "config file", paths.sources[:memory]
+  end
+
+  def test_memory_config_key_expands_tilde
+    write_config("memory = ~/defaults.md\n")
+    assert_equal File.join(Dir.home, "defaults.md"), resolve.memory
+  end
+
+  def test_tasks_memory_env_beats_config_key_and_sibling
+    write_config("memory = /notes/defaults.md\n")
+    paths = resolve(env: { "TASKS_MEMORY" => "/override/mem.md" })
+    assert_equal "/override/mem.md", paths.memory
+    assert_equal "TASKS_MEMORY env", paths.sources[:memory]
+  end
+
+  def test_tasks_memory_empty_env_is_ignored
+    write_config("memory = /notes/defaults.md\n")
+    assert_equal "/notes/defaults.md", resolve(env: { "TASKS_MEMORY" => "" }).memory
+  end
+
+  def test_for_dir_pins_memory_beside_the_sandbox
+    paths = Tasks::Config.for_dir("/sandbox")
+    assert_equal "/sandbox/agent-memory.md", paths.memory
+    assert_equal "pinned", paths.sources[:memory]
   end
 
   # -- config file parsing ----------------------------------------------------
@@ -279,8 +331,27 @@ class TestConfig < Minitest::Test
       assert_equal "default", j["sources"]["urgent_days"]
       assert_equal 4, j["max_depth"]
       assert_equal "default", j["sources"]["max_depth"]
+      assert_equal File.join(dir, "agent-memory.md"), j["memory"]
+      assert_equal "beside tasks.jsonl", j["sources"]["memory"]
+      assert_equal false, j["memory_exists"]
       assert_equal File.join(@xdg, "tasks", "config"), j["config_file"]
       assert_equal false, j["config_file_exists"]
+    end
+  end
+
+  def test_cli_config_reports_memory_from_tasks_file_sibling_and_existence
+    Dir.mktmpdir do |dir|
+      tasks_file = File.join(dir, "tasks.jsonl")
+      File.write(tasks_file, FIXTURE)
+      File.write(File.join(dir, "agent-memory.md"), "# defaults\n")
+      env = clean_env(@xdg).merge("TASKS_FILE" => tasks_file,
+                                  "TASKS_ARCHIVE" => File.join(dir, "archive.jsonl"))
+      out, _err, st = Open3.capture3(env, "ruby", BIN, "config", "--json")
+      assert st.success?
+      j = JSON.parse(out)
+      assert_equal File.join(dir, "agent-memory.md"), j["memory"]
+      assert_equal "beside tasks.jsonl", j["sources"]["memory"]
+      assert_equal true, j["memory_exists"]
     end
   end
 

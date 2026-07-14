@@ -328,6 +328,58 @@ distinct so agents can branch: refine the ref rather than abort.
 would introduce a structural error. `--dry-run` on any mutation prints what
 would change and writes nothing.
 
+### Task-set agent memory
+
+A task set may carry an optional Markdown sidecar, `agent-memory.md`, holding
+durable, user-approved defaults for managing that list ("garden tasks use
+`@home`"). It travels with the task data, not this checkout, so a private task
+repo can commit `tasks.jsonl`, `archive.jsonl`, and `agent-memory.md` together
+and cloning brings the right defaults along. The file is human-authored
+Markdown — read and diffable in Git; it is *not* a structured store and does not
+relax the CLI-only rule for `tasks.jsonl`/`archive.jsonl`.
+
+When present and non-empty, its contents are appended to the agent's system
+context (below `AGENTS.md`, inside a delimited block) on **every** `-p` run and
+every TUI request — read fresh each time, never cached, so a default saved by
+one request is visible to the next and an out-of-band edit or `git pull` is
+picked up without a restart. An absent file simply means "no saved defaults";
+the CLI never creates it as a side effect of running an agent. Agents create or
+edit it only when a user explicitly asks to remember, change, or forget a
+default (the policy lives in [`AGENTS.md`](../AGENTS.md)).
+
+Resolution adds `memory` to the config paths, highest precedence first:
+
+| Precedence | Location | Purpose |
+| --- | --- | --- |
+| 1 | `TASKS_MEMORY` env var | One-run or test override. |
+| 2 | `memory = /path/to/agent-memory.md` in the config file | Intentional nonstandard location (`~`/relative expanded). |
+| 3 | `agent-memory.md` beside the resolved `tasks.jsonl` | Normal per-task-set default. |
+
+The default is derived from the **final** `tasks.jsonl` path, so a `TASKS_FILE`
+override selects its sibling `agent-memory.md` even when the base dir or archive
+resolve elsewhere. An empty `TASKS_MEMORY` is ignored (falls through to the next
+level).
+
+**Size budget and errors.** Before injection the sidecar is capped at 16 KiB
+UTF-8. If it exists but is oversize, unreadable, invalid UTF-8, or contains one
+of the reserved `----- BEGIN/END AGENT MEMORY -----` delimiter lines (which
+could escape the fence that marks the block as data), the run fails loudly with
+the path and reason rather than silently dropping the user's defaults: `-p`
+aborts before starting the agent (exit 1), and in the TUI the request surfaces
+as a failed queue event carrying the same message — never a crash and never a
+run without the defaults.
+
+**Diff.** After a `-p` run in a git-backed task set, the change summary includes
+`agent-memory.md` alongside the task files, so a saved default shows up in the
+same diff as the captured task. A sidecar relocated by `TASKS_MEMORY`/`memory`
+to *outside* the task-data repo can't be diffed there; instead a one-line notice
+points at its path.
+
+**`tasks config`.** Reports the resolved memory path, its source, and whether
+the file exists. `--json` adds `memory` (the path), `memory_exists` (boolean),
+and `sources.memory` (`"TASKS_MEMORY env"` / `"config file"` /
+`"beside tasks.jsonl"`, or `"pinned"` under a hermetic sandbox).
+
 ## Read commands
 
 | Command | Alias | Status | Description |

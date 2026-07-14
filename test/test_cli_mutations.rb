@@ -5,6 +5,7 @@ require "json"
 require "open3"
 require "timeout"
 require "tasks/application"
+require "tasks/agent_diff"
 
 # Store-layer coverage for the CLI's due/state/priority mutations, plus
 # end-to-end CLI tests (arg parsing, ref resolution, exit codes) that shell
@@ -2051,6 +2052,151 @@ class TestCliMutations < Minitest::Test
       assert st.success?, err
       assert_match(/undid: delete/, out.force_encoding("UTF-8"))
       assert_equal before, File.binread(org), "undo restores the pre-delete file"
+    end
+  end
+
+  # -- agent memory guardrails (the `tasks -p` context builder) ----------------
+
+  def test_prompt_aborts_on_oversize_memory_before_running_the_agent
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, FIXTURE_ORG)
+      memory = File.join(dir, "agent-memory.md")
+      File.write(memory, "x" * (16 * 1024 + 1))
+      env = { "TASKS_FILE" => org, "TASKS_ARCHIVE" => File.join(dir, "archive.jsonl") }
+      _out, err, st = Open3.capture3(env, "ruby", BIN, "-p", "water the garden")
+      refute st.success?, "an oversize memory file must abort the agent run"
+      err = err.force_encoding("UTF-8")
+      assert_includes err, memory
+      assert_match(/budget/, err)
+    end
+  end
+
+  def test_config_reports_the_sibling_memory_path
+    run_cli("config") do |_org, out, _err, st|
+      assert st.success?
+      assert_match(/^memory:.*agent-memory\.md/, out)
+      assert_match(/beside tasks\.jsonl/, out)
+      assert_match(/not present/, out) # no sidecar in the sandbox
+    end
+  end
+
+  # Ordinary non-agent flows must never read or create the memory sidecar, even
+  # a malformed one: capture and list ignore it entirely.
+  def test_non_agent_flows_ignore_and_never_create_memory
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, FIXTURE_ORG)
+      memory = File.join(dir, "agent-memory.md")
+      # An oversize, would-be-fatal-for-the-agent memory file present the whole time.
+      File.write(memory, "y" * (16 * 1024 + 1))
+      env = { "TASKS_FILE" => org, "TASKS_ARCHIVE" => File.join(dir, "archive.jsonl") }
+
+      _out, err, st = Open3.capture3(env, "ruby", BIN, "capture", "buy stamps")
+      assert st.success?, err
+      _out, err, st = Open3.capture3(env, "ruby", BIN, "list", "-a")
+      assert st.success?, err
+
+      assert_equal 16 * 1024 + 1, File.size(memory), "non-agent flows must not touch memory"
+      refute File.exist?(File.join(dir, "agent-memory.md.bak"))
+    end
+  end
+
+  # -- the `tasks -p` post-run diff (Tasks::AgentDiff) --------------------------
+
+  # A git-backed sandbox data dir with tasks/archive/memory all committed, so a
+  # later edit shows up in `git diff` the way the CLI presents it after a run.
+  def with_git_task_repo
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      memory = File.join(dir, "agent-memory.md")
+      # Leave archive.jsonl absent: an empty 0-byte archive has no meta line and
+      # the capture path would reject it as invalid before writing.
+      File.write(org, FIXTURE_ORG)
+      File.write(memory, "## Defaults\n\n- Garden tasks: add @home.\n")
+      git = ->(*a) { assert system("git", "-C", dir, *a, out: File::NULL, err: File::NULL) }
+      git.call("init", "-q")
+      git.call("config", "user.email", "t@example.com")
+      git.call("config", "user.name", "Test")
+      git.call("add", "-A")
+      git.call("commit", "-qm", "seed")
+      yield dir, org, archive, memory
+    end
+  end
+
+  def test_diff_includes_a_committed_memory_edit_alongside_task_files
+    with_git_task_repo do |dir, org, archive, memory|
+      # Simulate the agent both capturing a task and saving a default.
+      File.write(memory, "## Defaults\n\n- Garden tasks: add @home and @weekend.\n")
+      run_cli_at(org, archive, "capture", "water the garden")
+
+      result = Tasks::AgentDiff.compute(data_dir: dir, org: org, archive: archive,
+                                        memory: memory, color: false)
+      refute_nil result
+      assert_nil result.notice, "an in-repo sidecar is diffed, not flagged"
+      assert_includes result.diff, "agent-memory.md"
+      assert_includes result.diff, "@weekend", "the memory edit is in the diff body"
+      assert_includes result.diff, "tasks.jsonl", "task files still diffed too"
+    end
+  end
+
+  # The first "remember ..." request CREATES the sidecar, so it is untracked and
+  # invisible to plain `git diff` — the create path must still show in the audit.
+  def test_diff_includes_a_newly_created_untracked_memory_file
+    with_git_task_repo do |dir, org, archive, memory|
+      File.delete(memory)
+      system("git", "-C", dir, "add", "-A", out: File::NULL, err: File::NULL)
+      system("git", "-C", dir, "commit", "-qm", "drop sidecar", out: File::NULL, err: File::NULL)
+
+      File.write(memory, "## Defaults\n\n- Garden tasks: add @home.\n")
+      result = Tasks::AgentDiff.compute(data_dir: dir, org: org, archive: archive,
+                                        memory: memory, color: false)
+      refute_nil result
+      assert_nil result.notice, "an in-repo sidecar is diffed, not flagged"
+      assert_includes result.diff, "agent-memory.md"
+      assert_includes result.diff, "@home", "the new file's contents are in the diff body"
+    end
+  end
+
+  def test_diff_is_nil_outside_a_git_work_tree
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, FIXTURE_ORG)
+      assert_nil Tasks::AgentDiff.compute(
+        data_dir: dir, org: org, archive: File.join(dir, "archive.jsonl"),
+        memory: File.join(dir, "agent-memory.md"), color: false
+      )
+    end
+  end
+
+  # A memory sidecar relocated outside the task-data repo can't be diffed there;
+  # if it exists (the agent could have edited it) it's flagged, not dropped.
+  def test_out_of_repo_memory_that_exists_is_flagged_not_diffed
+    with_git_task_repo do |dir, org, archive, _memory|
+      Dir.mktmpdir do |elsewhere|
+        outside = File.join(elsewhere, "agent-memory.md")
+        File.write(outside, "## Defaults\n\n- Relocated defaults.\n")
+        result = Tasks::AgentDiff.compute(data_dir: dir, org: org, archive: archive,
+                                          memory: outside, color: false)
+        refute_nil result
+        assert_equal outside, result.notice
+        refute_includes result.diff, "agent-memory.md",
+                        "an out-of-repo sidecar is not in the git diff"
+      end
+    end
+  end
+
+  # Out of repo AND absent: nothing to review, so no notice and no diff entry.
+  def test_out_of_repo_memory_that_is_absent_is_neither_diffed_nor_flagged
+    with_git_task_repo do |dir, org, archive, _memory|
+      outside = File.join(Dir.tmpdir, "no-such-tasks-memory-#{Process.pid}.md")
+      refute File.exist?(outside)
+      result = Tasks::AgentDiff.compute(data_dir: dir, org: org, archive: archive,
+                                        memory: outside, color: false)
+      refute_nil result
+      assert_nil result.notice
+      refute_includes result.diff, "agent-memory.md"
     end
   end
 end
