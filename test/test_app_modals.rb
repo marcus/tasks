@@ -480,7 +480,7 @@ class TestAppModals < Minitest::Test
       app.send(:handle_key, "d")
       app.send(:handle_paste, "2026-07-20")
       store = app.instance_variable_get(:@store)
-      store.stub(:reschedule!, false) do
+      store.stub(:patch_task!, Tasks::MutationResult.new(status: :conflict)) do
         app.send(:handle_key, "\r")
       end
 

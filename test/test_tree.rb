@@ -91,7 +91,7 @@ class TestTree < Minitest::Test
       body = store.body(billing).join("\n")
       assert_match(/incident thread/, body)
 
-      store.complete!(billing)
+      store.test_mutation.complete(billing)
       store.archive_swept!
       archived = store.archive_items.find { |i| i.title.include?("billing") }
       assert_match(/incident thread/, store.body(archived).join("\n"), "body works for archive items")

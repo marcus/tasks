@@ -1413,6 +1413,16 @@ class TestApp < Minitest::Test
     end
   end
 
+  def test_quick_tui_mutations_use_the_stable_patch_adapter
+    source = File.read(File.expand_path("../lib/tui/app.rb", __dir__), encoding: "UTF-8")
+    legacy = /@store\.(?:complete!|set_priority!|reschedule!|set_date!|set_state!|undate!|retitle!|set_tags!|set_deferred!|set_recur!|add_note!|move!|move_under!|move_top!)/
+
+    refute_match legacy, source
+    assert_match(/def patch_task\(item, field:, value:, label:\)/, source)
+    assert_match(/@store\.edit_snapshot\(item\.id\)/, source)
+    assert_match(/@store\.patch_task!/, source)
+  end
+
   # -- stable selection identity ---------------------------------------------
 
   SELECTION_FIXTURE = dump_fixture([

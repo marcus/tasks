@@ -91,7 +91,7 @@ class TestStore < Minitest::Test
   def test_complete_marks_done_with_closed_stamp
     with_store do |store, org, _archive|
       flight = find_item(store, "Book flight")
-      assert store.complete!(flight)
+      assert store.test_mutation.complete(flight)
       rec = record_for(org, title: "Book flight in Concur")
       assert_equal "DONE", rec["state"]
       assert_equal Date.today.iso8601, rec["closed"]
@@ -105,7 +105,7 @@ class TestStore < Minitest::Test
       stale = flight.dup
       stale.id = nil    # no id to relocate by...
       stale.line = 1    # ...and the line points at the meta record, not the flight
-      refute store.complete!(stale)
+      refute store.test_mutation.complete(stale)
       assert_equal "NEXT", record_for(org, title: "Book flight in Concur")["state"]
     end
   end
@@ -113,7 +113,7 @@ class TestStore < Minitest::Test
   def test_reschedule_updates_existing_deadline
     with_store do |store, org, _archive|
       flight = find_item(store, "Book flight")
-      assert store.reschedule!(flight, Date.new(2026, 7, 10))
+      assert store.test_mutation.reschedule(flight, Date.new(2026, 7, 10))
       assert_equal "2026-07-10", record_for(org, title: "Book flight in Concur")["deadline"]
       assert_equal Date.new(2026, 7, 10), find_item(store, "Book flight").deadline
     end
@@ -122,7 +122,7 @@ class TestStore < Minitest::Test
   def test_reschedule_updates_scheduled_when_no_deadline
     with_store do |store, org, _archive|
       eval = find_item(store, "self-eval")
-      assert store.reschedule!(eval, Date.new(2026, 7, 8))
+      assert store.test_mutation.reschedule(eval, Date.new(2026, 7, 8))
       rec = record_for(org, title: "Midyear self-eval")
       assert_equal "2026-07-08", rec["scheduled"]
       refute rec.key?("deadline"), "the self-eval must not have gained a DEADLINE"
@@ -132,7 +132,7 @@ class TestStore < Minitest::Test
   def test_reschedule_adds_deadline_when_item_has_no_stamp
     with_store do |store, org, _archive|
       plants = find_item(store, "Water the plants")
-      assert store.reschedule!(plants, Date.new(2026, 7, 5))
+      assert store.test_mutation.reschedule(plants, Date.new(2026, 7, 5))
       assert_equal Date.new(2026, 7, 5), find_item(store, "Water the plants").deadline
       assert_equal "2026-07-05", record_for(org, title: "Water the plants")["deadline"]
     end
@@ -142,7 +142,7 @@ class TestStore < Minitest::Test
     with_store do |store, org, _a|
       garden = find_item(store, "garden")
       assert_equal "INBOX", garden.state
-      assert store.reschedule!(garden, Date.new(2026, 7, 10))
+      assert store.test_mutation.reschedule(garden, Date.new(2026, 7, 10))
       fresh = find_item(store, "garden")
       assert_equal "TODO", fresh.state
       assert_equal Date.new(2026, 7, 10), fresh.deadline
@@ -153,7 +153,7 @@ class TestStore < Minitest::Test
   def test_reschedule_does_not_promote_non_inbox_states
     with_store do |store, _o, _a|
       waiting = find_item(store, "Travel desk")
-      assert store.reschedule!(waiting, Date.new(2026, 7, 9))
+      assert store.test_mutation.reschedule(waiting, Date.new(2026, 7, 9))
       assert_equal "WAITING", find_item(store, "Travel desk").state
     end
   end
@@ -161,7 +161,7 @@ class TestStore < Minitest::Test
   def test_reschedule_promotion_is_undoable
     with_store do |store, org, _a|
       before = File.read(org)
-      store.reschedule!(find_item(store, "garden"), Date.new(2026, 7, 10))
+      store.test_mutation.reschedule(find_item(store, "garden"), Date.new(2026, 7, 10))
       store.undo!
       assert_equal before, File.read(org)
       assert_equal "INBOX", find_item(store, "garden").state
@@ -171,7 +171,7 @@ class TestStore < Minitest::Test
   def test_reschedule_does_not_touch_other_items
     with_store do |store, _org, _archive|
       waiting = find_item(store, "Travel desk")
-      assert store.reschedule!(waiting, Date.new(2026, 7, 9))
+      assert store.test_mutation.reschedule(waiting, Date.new(2026, 7, 9))
       assert_equal Date.new(2026, 7, 2), find_item(store, "Book flight").deadline
       assert_equal Date.new(2026, 7, 9), find_item(store, "Travel desk").deadline
     end
@@ -518,7 +518,7 @@ class TestStore < Minitest::Test
   def test_set_priority_replaces_existing_cookie
     with_store do |store, org, _a|
       flight = find_item(store, "Book flight")
-      assert store.set_priority!(flight, "B")
+      assert store.test_mutation.set_priority(flight, "B")
       assert_equal "B", record_for(org, title: "Book flight in Concur")["priority"]
       assert_equal "B", find_item(store, "Book flight").priority
     end
@@ -527,7 +527,7 @@ class TestStore < Minitest::Test
   def test_set_priority_adds_cookie_to_unprioritized_item
     with_store do |store, org, _a|
       plants = find_item(store, "Water the plants")
-      assert store.set_priority!(plants, "C")
+      assert store.test_mutation.set_priority(plants, "C")
       assert_equal "C", record_for(org, title: "Water the plants")["priority"]
     end
   end
@@ -535,7 +535,7 @@ class TestStore < Minitest::Test
   def test_set_priority_nil_removes_cookie
     with_store do |store, org, _a|
       flight = find_item(store, "Book flight")
-      assert store.set_priority!(flight, nil)
+      assert store.test_mutation.set_priority(flight, nil)
       refute record_for(org, title: "Book flight in Concur").key?("priority")
       assert_nil find_item(store, "Book flight").priority
     end
@@ -546,7 +546,7 @@ class TestStore < Minitest::Test
       stale = find_item(store, "Book flight").dup
       stale.id = nil
       stale.line = 1
-      refute store.set_priority!(stale, "B")
+      refute store.test_mutation.set_priority(stale, "B")
       assert_equal "A", record_for(org, title: "Book flight in Concur")["priority"]
     end
   end
@@ -561,7 +561,7 @@ class TestStore < Minitest::Test
   def test_undo_and_redo_roundtrip_a_complete
     with_store do |store, org, _a|
       before = File.read(org)
-      store.complete!(find_item(store, "Book flight"))
+      store.test_mutation.complete(find_item(store, "Book flight"))
       after = File.read(org)
 
       kind, label = store.undo!
@@ -580,8 +580,8 @@ class TestStore < Minitest::Test
   def test_undo_stacks_multiple_mutations_in_order
     with_store do |store, org, _a|
       original = File.read(org)
-      store.set_priority!(find_item(store, "Book flight"), "B")
-      store.reschedule!(find_item(store, "Book flight"), Date.new(2026, 7, 20))
+      store.test_mutation.set_priority(find_item(store, "Book flight"), "B")
+      store.test_mutation.reschedule(find_item(store, "Book flight"), Date.new(2026, 7, 20))
       store.undo! # reschedule
       assert_equal "2026-07-02", record_for(org, title: "Book flight in Concur")["deadline"]
       assert_equal "B", record_for(org, title: "Book flight in Concur")["priority"]
@@ -592,16 +592,16 @@ class TestStore < Minitest::Test
 
   def test_new_mutation_clears_redo
     with_store do |store, _o, _a|
-      store.set_priority!(find_item(store, "Book flight"), "B")
+      store.test_mutation.set_priority(find_item(store, "Book flight"), "B")
       store.undo!
-      store.set_priority!(find_item(store, "Book flight"), "C")
+      store.test_mutation.set_priority(find_item(store, "Book flight"), "C")
       assert_equal [:empty], store.redo!
     end
   end
 
   def test_undo_refuses_after_external_edit
     with_store do |store, org, _a|
-      store.complete!(find_item(store, "Book flight"))
+      store.test_mutation.complete(find_item(store, "Book flight"))
       File.write(org, File.read(org) +
         dump_fixture([{ "type" => "task", "id" => "bbbb0002", "parent" => FIX[:work],
                         "state" => "TODO", "title" => "claude added this" }]))
@@ -632,7 +632,7 @@ class TestStore < Minitest::Test
       stale = find_item(store, "Book flight").dup
       stale.id = nil
       stale.line = 1
-      refute store.complete!(stale)
+      refute store.test_mutation.complete(stale)
       assert_equal [:empty], store.undo!
     end
   end
@@ -640,7 +640,7 @@ class TestStore < Minitest::Test
   def test_undo_history_is_capped
     with_store do |store, _o, _a|
       55.times do |i|
-        store.set_priority!(find_item(store, "Book flight"), %w[A B C][i % 3])
+        store.test_mutation.set_priority(find_item(store, "Book flight"), %w[A B C][i % 3])
       end
       undone = 0
       undone += 1 while store.undo!.first == :ok
@@ -661,7 +661,7 @@ class TestStore < Minitest::Test
   def test_set_deferred_adds_defer_tag_and_keeps_state
     with_store do |store, org, _a|
       plants = find_item(store, "Water the plants")
-      assert store.set_deferred!(plants, true)
+      assert store.test_mutation.set_deferred(plants, true)
       assert_equal %w[@home defer], record_for(org, title: "Water the plants")["tags"]
       fresh = find_item(store, "Water the plants")
       assert fresh.deferred?
@@ -673,7 +673,7 @@ class TestStore < Minitest::Test
   def test_set_deferred_preserves_existing_tags
     with_store do |store, org, _a|
       flight = find_item(store, "Book flight")
-      assert store.set_deferred!(flight, true)
+      assert store.test_mutation.set_deferred(flight, true)
       fresh = find_item(store, "Book flight")
       assert fresh.deferred?
       assert_includes fresh.tags, "@computer"
@@ -685,8 +685,8 @@ class TestStore < Minitest::Test
   def test_set_deferred_false_removes_defer_tag
     with_store do |store, org, _a|
       plants = find_item(store, "Water the plants")
-      store.set_deferred!(plants, true)
-      assert store.set_deferred!(find_item(store, "Water the plants"), false)
+      store.test_mutation.set_deferred(plants, true)
+      assert store.test_mutation.set_deferred(find_item(store, "Water the plants"), false)
       assert_equal %w[@home], record_for(org, title: "Water the plants")["tags"]
       refute find_item(store, "Water the plants").deferred?
       assert Tasks::Check.check(org).ok?
@@ -696,7 +696,7 @@ class TestStore < Minitest::Test
   def test_set_deferred_is_undoable
     with_store do |store, org, _a|
       plants = find_item(store, "Water the plants")
-      store.set_deferred!(plants, true)
+      store.test_mutation.set_deferred(plants, true)
       assert find_item(store, "Water the plants").deferred?
       assert_equal :ok, store.undo!.first
       refute find_item(store, "Water the plants").deferred?
@@ -709,15 +709,15 @@ class TestStore < Minitest::Test
       stale = find_item(store, "Book flight").dup
       stale.id = nil
       stale.line = 1
-      refute store.set_deferred!(stale, true)
+      refute store.test_mutation.set_deferred(stale, true)
     end
   end
 
   def test_completing_a_deferred_task_strips_the_defer_tag
     with_store do |store, org, _a|
       plants = find_item(store, "Water the plants")
-      store.set_deferred!(plants, true)
-      assert store.complete!(find_item(store, "Water the plants"))
+      store.test_mutation.set_deferred(plants, true)
+      assert store.test_mutation.complete(find_item(store, "Water the plants"))
       done = find_item(store, "Water the plants")
       assert_equal "DONE", done.state
       refute done.deferred?, "a completed task must not keep the someday/maybe marker"
@@ -729,8 +729,8 @@ class TestStore < Minitest::Test
   def test_cancelling_a_deferred_task_via_set_state_strips_the_defer_tag
     with_store do |store, org, _a|
       plants = find_item(store, "Water the plants")
-      store.set_deferred!(plants, true)
-      assert store.set_state!(find_item(store, "Water the plants"), "CANCELLED")
+      store.test_mutation.set_deferred(plants, true)
+      assert store.test_mutation.set_state(find_item(store, "Water the plants"), "CANCELLED")
       cancelled = find_item(store, "Water the plants")
       assert_equal "CANCELLED", cancelled.state
       refute cancelled.deferred?
@@ -773,7 +773,7 @@ class TestStore < Minitest::Test
 
   def test_set_recur_attaches_cookie_preserving_date
     with_recur_store do |store, org|
-      assert store.set_recur!(find_item(store, "Plain dated task"), ".+2w")
+      assert store.test_mutation.set_recur(find_item(store, "Plain dated task"), ".+2w")
       rec = record_for(org, title: "Plain dated task")
       assert_equal "2026-07-02", rec["deadline"]
       assert_equal ".+2w", rec["recur"]
@@ -783,7 +783,7 @@ class TestStore < Minitest::Test
 
   def test_set_recur_off_removes_cookie
     with_recur_store do |store, org|
-      assert store.set_recur!(find_item(store, "Pay rent"), :off)
+      assert store.test_mutation.set_recur(find_item(store, "Pay rent"), :off)
       rec = record_for(org, title: "Pay rent")
       assert_equal "2026-08-01", rec["deadline"]
       refute rec.key?("recur")
@@ -795,7 +795,7 @@ class TestStore < Minitest::Test
   def test_set_recur_rides_scheduled_when_no_deadline
     with_recur_store do |store, org|
       review = find_item(store, "Weekly review")
-      assert store.set_recur!(review, "+3d")
+      assert store.test_mutation.set_recur(review, "+3d")
       rec = record_for(org, title: "Weekly review")
       assert_equal "2026-06-20", rec["scheduled"]
       assert_equal "+3d", rec["recur"]
@@ -806,7 +806,7 @@ class TestStore < Minitest::Test
   def test_set_recur_on_undated_task_returns_false
     with_recur_store do |store, org|
       before = File.read(org)
-      refute store.set_recur!(find_item(store, "No date task"), ".+1w")
+      refute store.test_mutation.set_recur(find_item(store, "No date task"), ".+1w")
       assert_equal before, File.read(org)
     end
   end
@@ -816,14 +816,14 @@ class TestStore < Minitest::Test
       stale = find_item(store, "Plain dated task").dup
       stale.id = nil
       stale.line = 1
-      refute store.set_recur!(stale, ".+1w")
+      refute store.test_mutation.set_recur(stale, ".+1w")
     end
   end
 
   def test_complete_recurring_rolls_forward_and_stays_open
     with_recur_store do |store, org|
       rent = find_item(store, "Pay rent")
-      assert store.complete!(rent)
+      assert store.test_mutation.complete(rent)
       fresh = find_item(store, "Pay rent")
       assert_equal "NEXT", fresh.state, "recurring task stays open"
       assert_equal Date.new(2026, 9, 1), fresh.deadline # +1m fixed hop from 2026-08-01
@@ -838,7 +838,7 @@ class TestStore < Minitest::Test
   def test_complete_recurring_from_completion_uses_today
     with_recur_store do |store, org|
       review = find_item(store, "Weekly review") # .+1w
-      assert store.complete!(review)
+      assert store.test_mutation.complete(review)
       assert_equal Date.today + 7, find_item(store, "Weekly review").scheduled
       assert Tasks::Check.check(org).ok?
     end
@@ -847,7 +847,7 @@ class TestStore < Minitest::Test
   def test_done_via_set_state_also_rolls_recurring
     with_recur_store do |store, org|
       rent = find_item(store, "Pay rent")
-      assert store.set_state!(rent, "DONE")
+      assert store.test_mutation.set_state(rent, "DONE")
       assert_equal "NEXT", find_item(store, "Pay rent").state
       assert_equal Date.new(2026, 9, 1), find_item(store, "Pay rent").deadline
       assert Tasks::Check.check(org).ok?
@@ -857,7 +857,7 @@ class TestStore < Minitest::Test
   def test_cancel_recurring_truly_closes
     with_recur_store do |store, org|
       rent = find_item(store, "Pay rent")
-      assert store.set_state!(rent, "CANCELLED")
+      assert store.test_mutation.set_state(rent, "CANCELLED")
       assert_equal "CANCELLED", find_item(store, "Pay rent").state
       assert_equal Date.today.iso8601, record_for(org, title: "Pay rent")["closed"]
       assert Tasks::Check.check(org).ok?
@@ -867,7 +867,7 @@ class TestStore < Minitest::Test
   def test_complete_non_recurring_still_closes
     with_recur_store do |store, org|
       plain = find_item(store, "Plain dated task")
-      assert store.complete!(plain)
+      assert store.test_mutation.complete(plain)
       assert_equal "DONE", find_item(store, "Plain dated task").state
       assert_equal Date.today.iso8601, record_for(org, title: "Plain dated task")["closed"]
     end
@@ -876,7 +876,7 @@ class TestStore < Minitest::Test
   def test_complete_recurring_is_undoable
     with_recur_store do |store, org|
       before = File.read(org)
-      store.complete!(find_item(store, "Pay rent"))
+      store.test_mutation.complete(find_item(store, "Pay rent"))
       refute_equal before, File.read(org)
       store.undo!
       assert_equal before, File.read(org)
@@ -898,7 +898,7 @@ class TestStore < Minitest::Test
           "title" => "Child", "scheduled" => "2026-07-02", "recur" => "+1d" },
       ]))
       store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
-      assert store.complete!(store.items.find { |i| i.title == "Parent" })
+      assert store.test_mutation.complete(store.items.find { |i| i.title == "Parent" })
       assert_equal "2026-07-08", record_for(org, title: "Parent")["scheduled"], "parent rolled"
       # A recurring parent rolls forward and must NOT cascade — the child keeps
       # its own open state, date, and recur cookie.
@@ -924,7 +924,7 @@ class TestStore < Minitest::Test
           "title" => "Child", "deadline" => "2026-09-01" },
       ]))
       store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
-      assert store.set_recur!(store.items.find { |i| i.title == "Parent" }, "+1w")
+      assert store.test_mutation.set_recur(store.items.find { |i| i.title == "Parent" }, "+1w")
       assert_equal "+1w", record_for(org, title: "Parent")["recur"]
       child = record_for(org, title: "Child")
       refute child.key?("recur"), "child gains no recurrence"
@@ -935,7 +935,7 @@ class TestStore < Minitest::Test
   def test_set_date_preserves_repeater_cookie
     with_recur_store do |store, org|
       rent = find_item(store, "Pay rent") # +1m
-      assert store.set_date!(rent, Date.new(2026, 12, 25), kind: :deadline)
+      assert store.test_mutation.set_date(rent, Date.new(2026, 12, 25), kind: :deadline)
       rec = record_for(org, title: "Pay rent")
       assert_equal "2026-12-25", rec["deadline"]
       assert_equal "+1m", rec["recur"]
@@ -946,7 +946,7 @@ class TestStore < Minitest::Test
   def test_reschedule_preserves_repeater_cookie
     with_recur_store do |store, org|
       review = find_item(store, "Weekly review") # SCHEDULED .+1w
-      assert store.reschedule!(review, Date.new(2026, 7, 10))
+      assert store.test_mutation.reschedule(review, Date.new(2026, 7, 10))
       rec = record_for(org, title: "Weekly review")
       assert_equal "2026-07-10", rec["scheduled"]
       assert_equal ".+1w", rec["recur"]
@@ -967,7 +967,7 @@ class TestStore < Minitest::Test
           "recur" => "+1w" },
       ]))
       store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
-      assert store.complete!(store.items.find { |i| i.title == "Both dates" })
+      assert store.test_mutation.complete(store.items.find { |i| i.title == "Both dates" })
       rec = record_for(org, title: "Both dates")
       assert_equal "2026-08-08", rec["deadline"], "the owning (deadline) date rolls +1w"
       assert_equal "2026-07-01", rec["scheduled"], "the fixed scheduled date is untouched"
@@ -980,9 +980,9 @@ class TestStore < Minitest::Test
   # complete_impl) while still rolling its date.
   def test_recurring_completion_strips_defer_tag
     with_recur_store do |store, org|
-      store.set_deferred!(find_item(store, "Weekly review"), true)
+      store.test_mutation.set_deferred(find_item(store, "Weekly review"), true)
       assert find_item(store, "Weekly review").deferred?
-      assert store.complete!(find_item(store, "Weekly review")) # scheduled .+1w
+      assert store.test_mutation.complete(find_item(store, "Weekly review")) # scheduled .+1w
       fresh = find_item(store, "Weekly review")
       refute fresh.deferred?, "defer tag dropped on recurring completion"
       assert_equal Date.today + 7, fresh.scheduled, "date still rolled"
@@ -1008,7 +1008,7 @@ class TestStore < Minitest::Test
       rent = store.items.find { |i| i.title == "Rent" }
       refute rent.recurring?, "++0d must not register as recurrence (was an ArgumentError)"
       before = File.read(org)
-      refute store.complete!(rent), "post-write gate rolls back the still-invalid cookie"
+      refute store.test_mutation.complete(rent), "post-write gate rolls back the still-invalid cookie"
       assert_equal before, File.read(org), "file unchanged — but no raise"
       assert_match(/invalid recur cookie/, Tasks::Check.check(org).errors.map { |_l, m| m }.join)
     end
@@ -1031,14 +1031,14 @@ class TestStore < Minitest::Test
       store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
       assert_equal 2, store.items.size, "readers survive the integer id"
       before = File.read(org)
-      refute store.complete!(store.items.find { |i| i.title == "Valid task" })
+      refute store.test_mutation.complete(store.items.find { |i| i.title == "Valid task" })
       assert_equal before, File.read(org), "rolled back byte-for-byte"
     end
   end
 
-  # The shared single-record update path must retain Store's post-write gate,
-  # including a byte-identical rollback and the public false return contract.
-  def test_simple_record_update_rolls_back_on_invalid_store
+  # Stable patches preflight the complete store, so an invalid sibling rejects
+  # the update before bytes are written or an undo snapshot is recorded.
+  def test_simple_record_update_refuses_an_invalid_store_before_writing
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       File.write(org, dump_fixture([
@@ -1052,9 +1052,9 @@ class TestStore < Minitest::Test
       store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
       before = File.read(org)
 
-      refute store.set_priority!(store.items.find { |item| item.title == "Valid task" }, "A")
-      assert_equal before, File.read(org), "helper-backed update rolls back byte-for-byte"
-      assert_match(/id .*expected 8 hex chars/, store.last_rollback)
+      refute store.test_mutation.set_priority(store.items.find { |item| item.title == "Valid task" }, "A")
+      assert_equal before, File.read(org), "preflight leaves bytes untouched"
+      assert_nil store.last_rollback
     end
   end
 
@@ -1063,10 +1063,10 @@ class TestStore < Minitest::Test
   def test_simple_record_noop_does_not_consume_undo_history
     with_store do |store, org, _archive|
       pr = find_item(store, "Review PR")
-      assert store.set_priority!(pr, "A")
+      assert store.test_mutation.set_priority(pr, "A")
       after_priority = File.read(org)
 
-      assert store.set_tags!(find_item(store, "Review PR"), add: %w[important])
+      assert store.test_mutation.set_tags(find_item(store, "Review PR"), add: %w[important])
       assert_equal after_priority, File.read(org), "idempotent tag update leaves bytes unchanged"
       assert_equal [:ok, "priority [#A]: Review PR backlog"], store.undo!,
                    "undo skips the no-op and reaches the real mutation"
@@ -1084,14 +1084,14 @@ class TestStore < Minitest::Test
       records.find { |r| r["title"] == "Book flight in Concur" }["id"] = "ffff9999"
       File.write(org, Tasks::Format.dump(records))
       before = File.read(org)
-      refute store.retitle!(flight, "hijacked"), "id-bearing item must not match by line+title"
+      refute store.test_mutation.retitle(flight, "hijacked"), "id-bearing item must not match by line+title"
       assert_equal before, File.read(org), "the record at that line is untouched"
     end
   end
 
-  # M3: undo/redo restores are gated by Check. Repairing a pre-existing invalid
-  # field succeeds, but undoing back to the invalid state is refused.
-  def test_undo_refuses_to_restore_an_invalid_prior_state
+  # Stable patches do not use an update as an implicit repair operation: the
+  # preflight gate rejects malformed source before constructing a journal step.
+  def test_patch_refuses_to_repair_an_invalid_prior_state
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       File.write(org, dump_fixture([
@@ -1102,12 +1102,11 @@ class TestStore < Minitest::Test
       ]))
       store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
       refute Tasks::Check.check(org).ok?, "seed is invalid"
-      assert store.set_date!(store.items.find { |i| i.title == "Fix me" },
-                             Date.new(2026, 8, 1), kind: :scheduled)
-      assert Tasks::Check.check(org).ok?, "the mutation repaired the bad date"
-      repaired = File.read(org)
-      assert_equal :conflict, store.undo!.first, "undo to the invalid state is refused"
-      assert_equal repaired, File.read(org), "file stays valid after the refused undo"
+      before = File.read(org)
+      refute store.test_mutation.set_date(store.items.find { |i| i.title == "Fix me" },
+                                          Date.new(2026, 8, 1), kind: :scheduled)
+      assert_equal before, File.read(org), "invalid source is not partially repaired"
+      assert_equal :empty, store.undo!.first, "rejected patches create no journal step"
     end
   end
 
@@ -1169,7 +1168,7 @@ class TestStore < Minitest::Test
 
   def test_complete_cascades_open_descendants_at_all_depths
     with_cascade_store do |store, org|
-      lines = store.complete!(store.items.find { |i| i.title == "Project" })
+      lines = store.test_mutation.complete(store.items.find { |i| i.title == "Project" })
       assert_kind_of Array, lines
       today = Date.today.iso8601
 
@@ -1199,7 +1198,7 @@ class TestStore < Minitest::Test
 
   def test_complete_cascade_retires_recurring_descendant
     with_cascade_store do |store, org|
-      store.complete!(store.items.find { |i| i.title == "Project" })
+      store.test_mutation.complete(store.items.find { |i| i.title == "Project" })
       rec = record_for(org, title: "Recurring sub")
       assert_equal "DONE", rec["state"]
       assert_equal Date.today.iso8601, rec["closed"]
@@ -1214,7 +1213,7 @@ class TestStore < Minitest::Test
   def test_complete_cascade_is_one_undo_step_restoring_bytes
     with_cascade_store do |store, org|
       before = File.read(org)
-      store.complete!(store.items.find { |i| i.title == "Project" })
+      store.test_mutation.complete(store.items.find { |i| i.title == "Project" })
       refute_equal before, File.read(org)
       assert_equal [:ok, "complete: Project"], store.undo!
       assert_equal before, File.read(org), "one undo restores the subtree byte-identically"
@@ -1224,7 +1223,7 @@ class TestStore < Minitest::Test
 
   def test_set_state_done_cascades
     with_cascade_store do |store, org|
-      lines = store.set_state!(store.items.find { |i| i.title == "Project" }, "DONE")
+      lines = store.test_mutation.set_state(store.items.find { |i| i.title == "Project" }, "DONE")
       assert_kind_of Array, lines
       assert_equal 6, lines.size
       assert_equal "DONE", record_for(org, title: "Task A")["state"]
@@ -1236,7 +1235,7 @@ class TestStore < Minitest::Test
 
   def test_set_state_cancelled_does_not_cascade
     with_cascade_store do |store, org|
-      lines = store.set_state!(store.items.find { |i| i.title == "Project" }, "CANCELLED")
+      lines = store.test_mutation.set_state(store.items.find { |i| i.title == "Project" }, "CANCELLED")
       assert_equal 1, lines.size, "only the root touched"
       assert_equal "CANCELLED", record_for(org, title: "Project")["state"]
       # Open descendants keep their own open states.
@@ -1264,8 +1263,8 @@ class TestStore < Minitest::Test
       ]))
       store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
       parent = store.items.find { |i| i.title == "Closed parent" }
-      lines = store.set_state!(parent, "DONE")
-      assert_equal 1, lines.size, "no cascade off an already-DONE parent"
+      lines = store.test_mutation.set_state(parent, "DONE")
+      assert_empty lines, "a no-op DONE patch has no touched ids"
       assert_equal "TODO", record_for(org, title: "Stray open child")["state"]
       assert_equal "2026-06-01", record_for(org, title: "Closed parent")["closed"], "closed preserved"
       assert Tasks::Check.check(org).ok?
@@ -1288,7 +1287,7 @@ class TestStore < Minitest::Test
       org = File.join(dir, "tasks.jsonl")
       File.write(org, dump_fixture(recs))
       store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
-      lines = store.complete!(store.items.find { |i| i.title == "Level 0" })
+      lines = store.test_mutation.complete(store.items.find { |i| i.title == "Level 0" })
       assert_equal 6, lines.size, "root + 5 descendants"
       6.times { |n| assert_equal "DONE", record_for(org, title: "Level #{n}")["state"] }
       assert Tasks::Check.check(org).ok?
@@ -1300,9 +1299,9 @@ class TestStore < Minitest::Test
   def test_set_state_waiting_parent_to_done_cascades
     with_cascade_store do |store, org|
       project = store.items.find { |i| i.title == "Project" }
-      store.set_state!(project, "WAITING")
+      store.test_mutation.set_state(project, "WAITING")
       waiting = store.items.find { |i| i.title == "Project" }
-      lines = store.set_state!(waiting, "DONE")
+      lines = store.test_mutation.set_state(waiting, "DONE")
       assert_kind_of Array, lines
       assert_equal "DONE", record_for(org, title: "Project")["state"]
       assert_equal "DONE", record_for(org, title: "Task A")["state"], "open child cascaded"
@@ -1382,8 +1381,8 @@ class TestStore < Minitest::Test
       # Move Phase 1 (with Step A) under Solo — grandchild rides along, in order.
       phase1 = store.items.find { |i| i.title == "Phase 1" }
       solo = store.items.find { |i| i.title == "Solo" }
-      line = store.move_under!(phase1, solo)
-      assert_kind_of Integer, line
+      id = store.test_mutation.move_under(phase1, solo)
+      assert_equal "dddd0003", id
       assert_equal "dddd0006", record_for(org, title: "Phase 1")["parent"], "reparented to Solo"
       assert_equal "dddd0003", record_for(org, title: "Step A")["parent"], "child keeps its parent"
       order = title_order(org)
@@ -1401,12 +1400,12 @@ class TestStore < Minitest::Test
       solo = store.items.find { |i| i.title == "Solo" }
       step = store.items.find { |i| i.title == "Step A" }
       before = File.read(org)
-      assert_equal :too_deep, store.move_under!(solo, step)
+      assert_equal :too_deep, store.test_mutation.move_under(solo, step)
       assert_equal before, File.read(org), "refused move writes nothing"
 
       solo = store.items.find { |i| i.title == "Solo" }
       phase2 = store.items.find { |i| i.title == "Phase 2" }
-      assert_kind_of Integer, store.move_under!(solo, phase2)
+      assert_equal "dddd0006", store.test_mutation.move_under(solo, phase2)
       assert_equal "dddd0005", record_for(org, title: "Solo")["parent"]
       assert Tasks::Check.check(org).ok?
     end
@@ -1417,10 +1416,10 @@ class TestStore < Minitest::Test
       before = File.read(org)
       project = store.items.find { |i| i.title == "Project" }
       # Self: a task cannot nest under itself.
-      assert_equal :cycle, store.move_under!(project, project)
+      assert_equal :cycle, store.test_mutation.move_under(project, project)
       # Descendant: Project cannot nest under its own Step A.
       step = store.items.find { |i| i.title == "Step A" }
-      assert_equal :cycle, store.move_under!(project, step)
+      assert_equal :cycle, store.test_mutation.move_under(project, step)
       assert_equal before, File.read(org), "no write on either cycle"
     end
   end
@@ -1428,8 +1427,8 @@ class TestStore < Minitest::Test
   def test_move_top_reparents_to_nearest_section
     with_nest_store do |store, org|
       step = store.items.find { |i| i.title == "Step A" }
-      line = store.move_top!(step)
-      assert_kind_of Integer, line
+      id = store.test_mutation.move_top(step)
+      assert_equal "dddd0004", id
       assert_equal "dddd0001", record_for(org, title: "Step A")["parent"], "unnested to Work"
       # Lands at the end of Work's span (after Solo child, before the Home section).
       order = title_order(org)
@@ -1442,9 +1441,9 @@ class TestStore < Minitest::Test
   def test_move_top_on_top_level_task_is_a_noop_that_burns_no_undo
     with_nest_store do |store, _org|
       # A prior real mutation to prove the no-op doesn't shadow it in the journal.
-      store.set_priority!(store.items.find { |i| i.title == "Solo" }, "A")
+      store.test_mutation.set_priority(store.items.find { |i| i.title == "Solo" }, "A")
       solo = store.items.find { |i| i.title == "Solo" }
-      assert_equal 0, store.move_top!(solo), "already top-level → 0"
+      assert_equal "dddd0006", store.test_mutation.move_top(solo), "stable id survives a no-op"
       # Undo reaches PAST the no-op to the priority change (no slot burned).
       assert_equal [:ok, "priority [#A]: Solo"], store.undo!
     end
@@ -1465,9 +1464,9 @@ class TestStore < Minitest::Test
       store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
       before = File.read(org)
       Timeout.timeout(5) do
-        refute store.move_top!(store.items.find { |i| i.title == "Rootless" }),
+        refute store.test_mutation.move_top(store.items.find { |i| i.title == "Rootless" }),
                "no section to unnest to → false"
-        refute store.move_top!(store.items.find { |i| i.title == "Rootless child" }),
+        refute store.test_mutation.move_top(store.items.find { |i| i.title == "Rootless child" }),
                "descendant of a rootless task → false"
       end
       assert_equal before, File.read(org), "no write on the failure path"
@@ -1478,8 +1477,7 @@ class TestStore < Minitest::Test
     # Escape hatch: a subtree deeper than the cap is never depth-checked when the
     # destination is a section (move!). A 5-deep chain (cap 4) relocates freely.
     recs = [{ "type" => "meta", "version" => 1 },
-            { "type" => "section", "id" => "7777aaaa", "title" => "Deep" },
-            { "type" => "section", "id" => "7777bbbb", "title" => "Elsewhere" }]
+            { "type" => "section", "id" => "7777aaaa", "title" => "Deep" }]
     prev = "7777aaaa"
     5.times do |n|
       id = format("7777%04d", n)
@@ -1487,12 +1485,13 @@ class TestStore < Minitest::Test
                 "title" => "Level #{n}" }
       prev = id
     end
+    recs << { "type" => "section", "id" => "7777bbbb", "title" => "Elsewhere" }
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       File.write(org, dump_fixture(recs))
       store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"), max_depth: 4)
       # Level 0 heads a height-5 subtree; moving it to another section succeeds.
-      assert_kind_of Integer, store.move!(store.items.find { |i| i.title == "Level 0" }, "Elsewhere")
+      assert_equal "77770000", store.test_mutation.move(store.items.find { |i| i.title == "Level 0" }, "Elsewhere")
       assert_equal "7777bbbb", record_for(org, title: "Level 0")["parent"]
       assert Tasks::Check.check(org).ok?
     end
@@ -1505,14 +1504,14 @@ class TestStore < Minitest::Test
       stale.id = nil
       stale.line = 999
       parent = store.items.find { |i| i.title == "Solo" }
-      refute store.move_under!(stale, parent), "stale subject → false"
-      refute store.move_top!(stale), "stale subject → false"
+      refute store.test_mutation.move_under(stale, parent), "stale subject → false"
+      refute store.test_mutation.move_top(stale), "stale subject → false"
       # A live subject with a stale parent ref also fails.
       live = store.items.find { |i| i.title == "Step A" }
       stale_parent = store.items.find { |i| i.title == "Solo" }.dup
       stale_parent.id = nil
       stale_parent.line = 999
-      refute store.move_under!(live, stale_parent), "stale parent → false"
+      refute store.test_mutation.move_under(live, stale_parent), "stale parent → false"
       assert_equal before, File.read(org), "no write on any stale path"
     end
   end
@@ -1522,7 +1521,7 @@ class TestStore < Minitest::Test
       before = File.read(org)
       phase1 = store.items.find { |i| i.title == "Phase 1" }
       solo = store.items.find { |i| i.title == "Solo" }
-      store.move_under!(phase1, solo)
+      store.test_mutation.move_under(phase1, solo)
       refute_equal before, File.read(org)
       assert_equal [:ok, "nest under Solo: Phase 1"], store.undo!
       assert_equal before, File.read(org), "one undo restores the file exactly"
@@ -1534,8 +1533,8 @@ class TestStore < Minitest::Test
   # store.body splits them back into N lines.
   def test_multiple_notes_accumulate_in_body
     with_store do |store, org, _a|
-      store.add_note!(find_item(store, "Water the plants"), "first note")
-      store.add_note!(find_item(store, "Water the plants"), "second note")
+      store.test_mutation.add_note(find_item(store, "Water the plants"), "first note")
+      store.test_mutation.add_note(find_item(store, "Water the plants"), "second note")
       assert_equal "first note\nsecond note", record_for(org, title: "Water the plants")["body"]
       assert_equal ["first note", "second note"], store.body(find_item(store, "Water the plants"))
       assert Tasks::Check.check(org).ok?

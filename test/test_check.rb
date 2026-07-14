@@ -217,9 +217,9 @@ class TestCheck < Minitest::Test
 
   def test_all_store_mutations_leave_file_check_clean
     with_store do |store, org, _archive|
-      store.complete!(find_item(store, "Book flight"))
-      store.reschedule!(find_item(store, "garden"), Date.new(2026, 7, 10))
-      store.set_priority!(find_item(store, "Water the plants"), "B")
+      store.test_mutation.complete(find_item(store, "Book flight"))
+      store.test_mutation.reschedule(find_item(store, "garden"), Date.new(2026, 7, 10))
+      store.test_mutation.set_priority(find_item(store, "Water the plants"), "B")
       store.archive_swept!
       store.undo!
       store.redo!

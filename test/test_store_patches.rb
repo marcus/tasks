@@ -5,6 +5,18 @@ require "open3"
 require "rbconfig"
 
 class TestStorePatches < Minitest::Test
+  LEGACY_MUTATIONS = %i[
+    complete! set_priority! reschedule! set_date! set_state! undate! retitle!
+    set_tags! set_deferred! set_recur! add_note! move! move_under! move_top!
+  ].freeze
+
+  def test_store_exposes_only_the_stable_patch_protocol_for_existing_tasks
+    legacy = Tasks::Store.public_instance_methods(false) & LEGACY_MUTATIONS
+    assert_empty legacy, "legacy Store mutations must not return file coordinates"
+    assert_includes Tasks::Store.public_instance_methods(false), :edit_snapshot
+    assert_includes Tasks::Store.public_instance_methods(false), :patch_task!
+  end
+
   BIN = File.expand_path("../bin/tasks", __dir__)
   PATCH_TREE = [
     { "type" => "meta", "version" => 1 },
@@ -356,7 +368,7 @@ class TestStorePatches < Minitest::Test
       assert_equal "TODO", rec["state"]
       assert_equal "2026-08-01", rec["scheduled"]
 
-      store.set_recur!(find_item(store, "garden"), ".+1w")
+      store.test_mutation.set_recur(find_item(store, "garden"), ".+1w")
       snapshot = store.edit_snapshot(FIX[:garden])
       result = store.patch_task!(patch(snapshot, :scheduled, nil))
       assert_equal :ok, result.status
@@ -662,7 +674,7 @@ class TestStorePatches < Minitest::Test
       assert_equal :ok, first.status
       after_first = File.read(org)
       item = store.items.find { |candidate| candidate.id == "11110002" }
-      assert store.set_priority!(item, "A")
+      assert store.test_mutation.set_priority(item, "A")
       after_cli = File.read(org)
       second = store.patch_task!(patch(store.edit_snapshot("11110002"), :body, "replacement",
                                        coalesce_key: key))
@@ -737,7 +749,7 @@ class TestStorePatches < Minitest::Test
       assert_equal :ok, first.status
       after_first = File.read(org)
       item = store.items.find { |candidate| candidate.id == "11110002" }
-      assert store.set_priority!(item, "A")
+      assert store.test_mutation.set_priority(item, "A")
       assert_equal :ok, store.undo!.first
       second = store.patch_task!(patch(first.snapshot, :body, "replacement", coalesce_key: key))
       assert_equal :ok, second.status
@@ -817,7 +829,7 @@ class TestStorePatches < Minitest::Test
     with_patch_store do |store, org|
       parent = store.items.find { |item| item.id == "11110002" }
       destination = store.items.find { |item| item.id == "22220002" }
-      assert_kind_of Integer, store.move_under!(parent, destination)
+      assert_equal "11110002", store.test_mutation.move_under(parent, destination)
       assert_equal patch_bytes, File.read(org)
     end
   end
@@ -831,7 +843,7 @@ class TestStorePatches < Minitest::Test
     end
 
     with_patch_store do |store, org|
-      assert store.set_state!(store.items.find { |item| item.id == "11110002" }, "DONE")
+      assert store.test_mutation.set_state(store.items.find { |item| item.id == "11110002" }, "DONE")
       assert_equal patch_bytes, File.read(org)
     end
   end

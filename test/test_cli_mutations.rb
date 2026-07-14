@@ -13,7 +13,7 @@ class TestCliMutations < Minitest::Test
   def test_set_date_replaces_existing_deadline
     with_store do |store, org, _a|
       flight = find_item(store, "Book flight")
-      assert store.set_date!(flight, Date.new(2026, 7, 15), kind: :deadline)
+      assert store.test_mutation.set_date(flight, Date.new(2026, 7, 15), kind: :deadline)
       rec = record_for(org, title: "Book flight in Concur")
       assert_equal "2026-07-15", rec["deadline"]
       refute_equal "2026-07-02", rec["deadline"]
@@ -24,7 +24,7 @@ class TestCliMutations < Minitest::Test
   def test_set_date_adds_deadline_when_item_has_none
     with_store do |store, org, _a|
       plants = find_item(store, "Water the plants")
-      assert store.set_date!(plants, Date.new(2026, 7, 5), kind: :deadline)
+      assert store.test_mutation.set_date(plants, Date.new(2026, 7, 5), kind: :deadline)
       assert_equal Date.new(2026, 7, 5), find_item(store, "Water the plants").deadline
       assert Tasks::Check.check(org).ok?
     end
@@ -35,7 +35,7 @@ class TestCliMutations < Minitest::Test
       # self-eval has a SCHEDULED but no DEADLINE — `due` must add a DEADLINE,
       # leaving the SCHEDULED stamp intact.
       eval = find_item(store, "self-eval")
-      assert store.set_date!(eval, Date.new(2026, 7, 20), kind: :deadline)
+      assert store.test_mutation.set_date(eval, Date.new(2026, 7, 20), kind: :deadline)
       fresh = find_item(store, "self-eval")
       assert_equal Date.new(2026, 7, 20), fresh.deadline
       assert_equal Date.new(2026, 7, 3), fresh.scheduled
@@ -46,7 +46,7 @@ class TestCliMutations < Minitest::Test
   def test_set_date_promotes_inbox_to_todo
     with_store do |store, org, _a|
       garden = find_item(store, "garden")
-      assert store.set_date!(garden, Date.new(2026, 7, 10), kind: :deadline)
+      assert store.test_mutation.set_date(garden, Date.new(2026, 7, 10), kind: :deadline)
       assert_equal "TODO", find_item(store, "garden").state
       assert Tasks::Check.check(org).ok?
     end
@@ -57,7 +57,7 @@ class TestCliMutations < Minitest::Test
       stale = find_item(store, "Book flight").dup
       stale.id = nil
       stale.line = 1
-      refute store.set_date!(stale, Date.new(2026, 7, 15), kind: :deadline)
+      refute store.test_mutation.set_date(stale, Date.new(2026, 7, 15), kind: :deadline)
       assert_equal "2026-07-02", record_for(org, title: "Book flight in Concur")["deadline"]
     end
   end
@@ -65,7 +65,7 @@ class TestCliMutations < Minitest::Test
   def test_set_date_is_undoable
     with_store do |store, org, _a|
       before = File.read(org)
-      store.set_date!(find_item(store, "Book flight"), Date.new(2026, 7, 15), kind: :deadline)
+      store.test_mutation.set_date(find_item(store, "Book flight"), Date.new(2026, 7, 15), kind: :deadline)
       store.undo!
       assert_equal before, File.read(org)
     end
@@ -76,7 +76,7 @@ class TestCliMutations < Minitest::Test
   def test_set_date_scheduled_kind_sets_scheduled_not_deadline
     with_store do |store, org, _a|
       plants = find_item(store, "Water the plants")
-      assert store.set_date!(plants, Date.new(2026, 7, 20), kind: :scheduled)
+      assert store.test_mutation.set_date(plants, Date.new(2026, 7, 20), kind: :scheduled)
       fresh = find_item(store, "Water the plants")
       assert_equal Date.new(2026, 7, 20), fresh.scheduled
       assert_nil fresh.deadline
@@ -89,8 +89,8 @@ class TestCliMutations < Minitest::Test
   def test_undate_removes_both_when_no_kind
     with_store do |store, org, _a|
       flight = find_item(store, "Book flight")
-      store.set_date!(flight, Date.new(2026, 7, 20), kind: :scheduled)
-      assert store.undate!(find_item(store, "Book flight"))
+      store.test_mutation.set_date(flight, Date.new(2026, 7, 20), kind: :scheduled)
+      assert store.test_mutation.undate(find_item(store, "Book flight"))
       fresh = find_item(store, "Book flight")
       assert_nil fresh.deadline
       assert_nil fresh.scheduled
@@ -101,8 +101,8 @@ class TestCliMutations < Minitest::Test
   def test_undate_removes_specific_kind_only
     with_store do |store, org, _a|
       flight = find_item(store, "Book flight")
-      store.set_date!(flight, Date.new(2026, 7, 20), kind: :scheduled)
-      assert store.undate!(find_item(store, "Book flight"), kind: :deadline)
+      store.test_mutation.set_date(flight, Date.new(2026, 7, 20), kind: :scheduled)
+      assert store.test_mutation.undate(find_item(store, "Book flight"), kind: :deadline)
       fresh = find_item(store, "Book flight")
       assert_nil fresh.deadline
       assert_equal Date.new(2026, 7, 20), fresh.scheduled
@@ -113,7 +113,7 @@ class TestCliMutations < Minitest::Test
   def test_undate_returns_false_when_no_matching_stamp
     with_store do |store, org, _a|
       pr = find_item(store, "Review PR backlog")
-      refute store.undate!(pr)
+      refute store.test_mutation.undate(pr)
       assert_equal FIXTURE_ORG, File.read(org)
     end
   end
@@ -123,7 +123,7 @@ class TestCliMutations < Minitest::Test
       stale = find_item(store, "Book flight").dup
       stale.id = nil
       stale.line = 1
-      refute store.undate!(stale)
+      refute store.test_mutation.undate(stale)
       assert_equal "2026-07-02", record_for(org, title: "Book flight in Concur")["deadline"]
     end
   end
@@ -133,9 +133,9 @@ class TestCliMutations < Minitest::Test
       # undate clears only the date FIELD; a body note that merely mentions
       # "DEADLINE:" mid-sentence must survive as body text.
       flight = find_item(store, "Book flight")
-      store.add_note!(flight, "Waiting on the DEADLINE: confirmation from legal.")
+      store.test_mutation.add_note(flight, "Waiting on the DEADLINE: confirmation from legal.")
 
-      assert store.undate!(find_item(store, "Book flight"), kind: :deadline)
+      assert store.test_mutation.undate(find_item(store, "Book flight"), kind: :deadline)
       rec = record_for(org, title: "Book flight in Concur")
       assert_nil rec["deadline"]
       assert_match(/Waiting on the DEADLINE: confirmation/, rec["body"])
@@ -145,7 +145,7 @@ class TestCliMutations < Minitest::Test
   def test_undate_is_undoable
     with_store do |store, org, _a|
       before = File.read(org)
-      store.undate!(find_item(store, "Book flight"))
+      store.test_mutation.undate(find_item(store, "Book flight"))
       store.undo!
       assert_equal before, File.read(org)
     end
@@ -155,7 +155,7 @@ class TestCliMutations < Minitest::Test
 
   def test_set_state_open_to_open
     with_store do |store, org, _a|
-      assert store.set_state!(find_item(store, "Review PR"), "WAITING")
+      assert store.test_mutation.set_state(find_item(store, "Review PR"), "WAITING")
       assert_equal "WAITING", find_item(store, "Review PR").state
       rec = record_for(org, title: "Review PR backlog")
       assert_equal "WAITING", rec["state"]
@@ -166,7 +166,7 @@ class TestCliMutations < Minitest::Test
 
   def test_set_state_entering_done_adds_closed_stamp
     with_store do |store, org, _a|
-      assert store.set_state!(find_item(store, "Review PR"), "DONE")
+      assert store.test_mutation.set_state(find_item(store, "Review PR"), "DONE")
       rec = record_for(org, title: "Review PR backlog")
       assert_equal "DONE", rec["state"]
       assert_equal Date.today.iso8601, rec["closed"]
@@ -176,7 +176,7 @@ class TestCliMutations < Minitest::Test
 
   def test_set_state_cancelled_adds_closed_stamp
     with_store do |store, org, _a|
-      assert store.set_state!(find_item(store, "Travel desk"), "CANCELLED")
+      assert store.test_mutation.set_state(find_item(store, "Travel desk"), "CANCELLED")
       rec = record_for(org, title: "Travel desk reply")
       assert_equal "CANCELLED", rec["state"]
       assert_equal Date.today.iso8601, rec["closed"]
@@ -187,7 +187,7 @@ class TestCliMutations < Minitest::Test
   def test_set_state_leaving_done_removes_closed_stamp
     with_store do |store, org, _a|
       done = store.items.find { |i| i.title.include?("Old finished") }
-      assert store.set_state!(done, "TODO")
+      assert store.test_mutation.set_state(done, "TODO")
       assert_equal "TODO", store.items.find { |i| i.title.include?("Old finished") }.state
       assert_nil record_for(org, title: "Old finished thing")["closed"]
       assert Tasks::Check.check(org).ok?
@@ -197,7 +197,7 @@ class TestCliMutations < Minitest::Test
   def test_set_state_done_to_cancelled_keeps_single_closed_stamp
     with_store do |store, org, _a|
       done = store.items.find { |i| i.title.include?("Old finished") }
-      assert store.set_state!(done, "CANCELLED")
+      assert store.test_mutation.set_state(done, "CANCELLED")
       rec = record_for(org, title: "Old finished thing")
       assert_equal "CANCELLED", rec["state"]
       assert_equal "C", rec["priority"]
@@ -212,7 +212,7 @@ class TestCliMutations < Minitest::Test
       stale = find_item(store, "Review PR").dup
       stale.id = nil
       stale.line = 1
-      refute store.set_state!(stale, "DONE")
+      refute store.test_mutation.set_state(stale, "DONE")
       rec = record_for(org, title: "Review PR backlog")
       assert_equal "NEXT", rec["state"]
       assert_equal "B", rec["priority"]
@@ -222,7 +222,7 @@ class TestCliMutations < Minitest::Test
   def test_set_state_is_undoable
     with_store do |store, org, _a|
       before = File.read(org)
-      store.set_state!(find_item(store, "Review PR"), "DONE")
+      store.test_mutation.set_state(find_item(store, "Review PR"), "DONE")
       store.undo!
       assert_equal before, File.read(org)
     end
@@ -232,7 +232,7 @@ class TestCliMutations < Minitest::Test
 
   def test_retitle_replaces_title_only
     with_store do |store, org, _a|
-      assert store.retitle!(find_item(store, "Book flight"), "Rebook the flight")
+      assert store.test_mutation.retitle(find_item(store, "Book flight"), "Rebook the flight")
       fresh = find_item(store, "Rebook the flight")
       assert_equal "NEXT [#A] Rebook the flight :@computer:important:urgent:", store.headline(fresh)
       assert Tasks::Check.check(org).ok?
@@ -241,7 +241,7 @@ class TestCliMutations < Minitest::Test
 
   def test_retitle_preserves_headline_without_tags
     with_store do |store, org, _a|
-      assert store.retitle!(find_item(store, "garden"), "prune the roses")
+      assert store.test_mutation.retitle(find_item(store, "garden"), "prune the roses")
       assert_equal "INBOX prune the roses", store.headline(find_item(store, "prune the roses"))
       assert Tasks::Check.check(org).ok?
     end
@@ -252,7 +252,7 @@ class TestCliMutations < Minitest::Test
       stale = find_item(store, "Book flight").dup
       stale.id = nil
       stale.line = 1
-      refute store.retitle!(stale, "nope")
+      refute store.test_mutation.retitle(stale, "nope")
       assert record_for(org, title: "Book flight in Concur")
     end
   end
@@ -260,7 +260,7 @@ class TestCliMutations < Minitest::Test
   def test_retitle_is_undoable
     with_store do |store, org, _a|
       before = File.read(org)
-      store.retitle!(find_item(store, "Book flight"), "Rebook")
+      store.test_mutation.retitle(find_item(store, "Book flight"), "Rebook")
       store.undo!
       assert_equal before, File.read(org)
     end
@@ -271,7 +271,7 @@ class TestCliMutations < Minitest::Test
   def test_set_tags_adds_and_removes
     with_store do |store, org, _a|
       pr = find_item(store, "Review PR")
-      assert store.set_tags!(pr, add: %w[urgent @home], remove: %w[important])
+      assert store.test_mutation.set_tags(pr, add: %w[urgent @home], remove: %w[important])
       fresh = find_item(store, "Review PR")
       assert_includes fresh.tags, "urgent"
       assert_includes fresh.tags, "@home"
@@ -284,7 +284,7 @@ class TestCliMutations < Minitest::Test
   def test_set_tags_add_is_idempotent
     with_store do |store, org, _a|
       pr = find_item(store, "Review PR")
-      assert store.set_tags!(pr, add: %w[important])
+      assert store.test_mutation.set_tags(pr, add: %w[important])
       assert_equal 1, find_item(store, "Review PR").tags.count("important")
       assert Tasks::Check.check(org).ok?
     end
@@ -293,7 +293,7 @@ class TestCliMutations < Minitest::Test
   def test_set_tags_can_remove_all_leaving_bare_headline
     with_store do |store, org, _a|
       pr = find_item(store, "Review PR")
-      assert store.set_tags!(pr, remove: %w[@computer important])
+      assert store.test_mutation.set_tags(pr, remove: %w[@computer important])
       assert_equal "NEXT [#B] Review PR backlog", store.headline(find_item(store, "Review PR"))
       assert Tasks::Check.check(org).ok?
     end
@@ -304,7 +304,7 @@ class TestCliMutations < Minitest::Test
       stale = find_item(store, "Review PR").dup
       stale.id = nil
       stale.line = 1
-      refute store.set_tags!(stale, add: %w[urgent])
+      refute store.test_mutation.set_tags(stale, add: %w[urgent])
       assert_equal FIXTURE_ORG, File.read(org)
     end
   end
@@ -313,7 +313,7 @@ class TestCliMutations < Minitest::Test
 
   def test_add_note_appends_body_line
     with_store do |store, org, _a|
-      assert store.add_note!(find_item(store, "Review PR"), "ping the reviewers")
+      assert store.test_mutation.add_note(find_item(store, "Review PR"), "ping the reviewers")
       body = store.body(find_item(store, "Review PR"))
       assert_includes body.map(&:strip), "ping the reviewers"
       assert Tasks::Check.check(org).ok?
@@ -324,7 +324,7 @@ class TestCliMutations < Minitest::Test
     with_store do |store, org, _a|
       # A note appends to the target's own body field and cannot bleed into a
       # sibling record: garden gains the note, the next task (flight) does not.
-      assert store.add_note!(find_item(store, "garden"), "north bed")
+      assert store.test_mutation.add_note(find_item(store, "garden"), "north bed")
       assert_match(/north bed/, record_for(org, title: "random thought about the garden")["body"])
       assert_nil record_for(org, title: "Book flight in Concur")["body"]
       assert Tasks::Check.check(org).ok?
@@ -336,7 +336,7 @@ class TestCliMutations < Minitest::Test
       stale = find_item(store, "Review PR").dup
       stale.id = nil
       stale.line = 1
-      refute store.add_note!(stale, "nope")
+      refute store.test_mutation.add_note(stale, "nope")
       assert_equal FIXTURE_ORG, File.read(org)
     end
   end
@@ -344,7 +344,7 @@ class TestCliMutations < Minitest::Test
   def test_add_note_is_undoable
     with_store do |store, org, _a|
       before = File.read(org)
-      store.add_note!(find_item(store, "Review PR"), "a note")
+      store.test_mutation.add_note(find_item(store, "Review PR"), "a note")
       store.undo!
       assert_equal before, File.read(org)
     end
@@ -356,7 +356,7 @@ class TestCliMutations < Minitest::Test
     # Encoding::CompatibilityError when joined into the UTF-8 file lines.
     with_store do |store, org, _a|
       note = "follow up — see thread".dup.force_encoding("ASCII-8BIT")
-      assert store.add_note!(find_item(store, "Review PR"), note)
+      assert store.test_mutation.add_note(find_item(store, "Review PR"), note)
       assert_includes store.body(find_item(store, "Review PR")).map(&:strip),
                       "follow up — see thread"
       assert Tasks::Check.check(org).ok?
@@ -367,14 +367,13 @@ class TestCliMutations < Minitest::Test
 
   def test_move_relocates_block_under_target_section
     with_store do |store, org, _a|
-      line = store.move!(find_item(store, "garden"), "Work")
-      assert line.is_a?(Integer) && line.positive?
+      id = store.test_mutation.move(find_item(store, "garden"), "Work")
+      assert_equal FIX[:garden], id
       garden = record_for(org, title: "random thought about the garden")
       work = record_for(org, title: "Work")
       home = record_for(org, title: "Home")
       assert_equal work["id"], garden["parent"], "garden now sits inside Work"
       assert work["line"] < garden["line"] && garden["line"] < home["line"]
-      assert_equal line, garden["line"]
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -382,7 +381,7 @@ class TestCliMutations < Minitest::Test
   def test_move_carries_the_whole_block
     with_store do |store, org, _a|
       # self-eval's SCHEDULED date must travel with the moved record
-      store.move!(find_item(store, "self-eval"), "Home")
+      store.test_mutation.move(find_item(store, "self-eval"), "Home")
       rec = record_for(org, title: "Midyear self-eval")
       assert_equal "2026-07-03", rec["scheduled"]
       assert_equal record_for(org, title: "Home")["id"], rec["parent"]
@@ -392,7 +391,7 @@ class TestCliMutations < Minitest::Test
 
   def test_move_returns_false_for_unknown_section
     with_store do |store, org, _a|
-      refute store.move!(find_item(store, "garden"), "Nonexistent")
+      refute store.test_mutation.move(find_item(store, "garden"), "Nonexistent")
       assert_equal FIXTURE_ORG, File.read(org)
     end
   end
@@ -402,7 +401,7 @@ class TestCliMutations < Minitest::Test
       stale = find_item(store, "garden").dup
       stale.id = nil
       stale.line = 99
-      refute store.move!(stale, "Work")
+      refute store.test_mutation.move(stale, "Work")
       assert_equal FIXTURE_ORG, File.read(org)
     end
   end
@@ -410,7 +409,7 @@ class TestCliMutations < Minitest::Test
   def test_move_is_undoable
     with_store do |store, org, _a|
       before = File.read(org)
-      store.move!(find_item(store, "garden"), "Work")
+      store.test_mutation.move(find_item(store, "garden"), "Work")
       store.undo!
       assert_equal before, File.read(org)
     end
@@ -1686,13 +1685,13 @@ class TestCliMutations < Minitest::Test
     end
   end
 
-  # Phase 1c: CLI mutations must use stable task ids after ref resolution. The
-  # legacy Store methods remain for the TUI until Phase 1d, so this guards the
-  # adapter boundary rather than deleting those methods prematurely.
+  # Phase 1: CLI mutations must use stable task ids after ref resolution. The
+  # Store no longer exposes the line-addressed mutation protocol, so this
+  # guards the adapter boundary against reintroduction.
   def test_cli_mutation_adapter_has_no_legacy_store_calls
     source = File.read(BIN, encoding: "UTF-8")
 
-    refute_match(/store\.(?:set_state!|set_priority!|reschedule!|set_date!|undate!|retitle!|set_tags!|set_deferred!|set_recur!|add_note!|move!|move_under!|move_top!)/, source)
+    refute_match(/store\.(?:complete!|set_state!|set_priority!|reschedule!|set_date!|undate!|retitle!|set_tags!|set_deferred!|set_recur!|add_note!|move!|move_under!|move_top!)/, source)
   end
 
   def test_cli_tag_patch_preserves_legacy_tag_order_and_undo_label

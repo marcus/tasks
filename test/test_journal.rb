@@ -108,7 +108,7 @@ class TestJournal < Minitest::Test
       File.symlink(real, link)
       store = Tasks::Store.new(org: link, archive: File.join(dir, "archive.org"),
                                journal_dir: File.join(dir, "journal"))
-      assert store.complete!(store.items.find { |i| i.title.include?("Book flight") })
+      assert store.test_mutation.complete(store.items.find { |i| i.title.include?("Book flight") })
       assert File.symlink?(link), "a Dropbox/dotfiles symlink setup must survive a mutation"
       assert_match(/DONE.*Book flight/, File.read(real))
     end
@@ -120,7 +120,7 @@ class TestJournal < Minitest::Test
     with_journal_store do |build, org, _a|
       s1 = build.call
       before = File.read(org)
-      s1.complete!(s1.items.find { |i| i.title.include?("Book flight") })
+      s1.test_mutation.complete(s1.items.find { |i| i.title.include?("Book flight") })
       refute_equal before, File.read(org)
 
       # A brand-new Store (a fresh process, in effect) can still undo it.
@@ -135,7 +135,7 @@ class TestJournal < Minitest::Test
   def test_redo_survives_a_new_store_instance
     with_journal_store do |build, org, _a|
       s1 = build.call
-      s1.set_priority!(s1.items.find { |i| i.title.include?("Book flight") }, "C")
+      s1.test_mutation.set_priority(s1.items.find { |i| i.title.include?("Book flight") }, "C")
       after = File.read(org)
       s1.undo!
 
@@ -150,7 +150,7 @@ class TestJournal < Minitest::Test
     with_journal_store do |build, org, _a|
       original = File.read(org)
       # One "process" makes an edit...
-      build.call.set_priority!(build.call.items.find { |i| i.title.include?("Book flight") }, "B")
+      build.call.test_mutation.set_priority(build.call.items.find { |i| i.title.include?("Book flight") }, "B")
       # ...another undoes it.
       assert_equal :ok, build.call.undo!.first
       assert_equal original, File.read(org)
@@ -160,7 +160,7 @@ class TestJournal < Minitest::Test
   def test_journal_persists_only_between_matching_org
     # A journal keyed to one org path must not replay onto a different file.
     with_journal_store do |build, _org, _a, jdir|
-      build.call.set_priority!(build.call.items.find { |i| i.title.include?("Book flight") }, "C")
+      build.call.test_mutation.set_priority(build.call.items.find { |i| i.title.include?("Book flight") }, "C")
       Dir.mktmpdir do |other|
         o2 = File.join(other, "gtd.org")
         File.write(o2, FIXTURE_ORG)
@@ -175,7 +175,7 @@ class TestJournal < Minitest::Test
     with_journal_store do |build, _org, _a|
       55.times do |i|
         s = build.call
-        s.set_priority!(s.items.find { |it| it.title.include?("Book flight") }, %w[A B C][i % 3])
+        s.test_mutation.set_priority(s.items.find { |it| it.title.include?("Book flight") }, %w[A B C][i % 3])
       end
       s = build.call
       undone = 0
@@ -188,7 +188,7 @@ class TestJournal < Minitest::Test
     with_journal_store do |build, _org, _a, jdir|
       60.times do |i|
         s = build.call
-        s.set_priority!(s.items.find { |it| it.title.include?("Book flight") }, %w[A B C][i % 3])
+        s.test_mutation.set_priority(s.items.find { |it| it.title.include?("Book flight") }, %w[A B C][i % 3])
       end
       blobs = Dir.children(File.join(jdir, "blobs")).size
       # Capped to UNDO_LIMIT+1 states; blobs dedupe, so the count is bounded and
@@ -209,7 +209,7 @@ class TestJournal < Minitest::Test
       before = File.read(real)
 
       via_link = Tasks::Store.new(org: link, archive: archive)
-      via_link.complete!(via_link.items.find { |i| i.title.include?("Book flight") })
+      via_link.test_mutation.complete(via_link.items.find { |i| i.title.include?("Book flight") })
 
       via_real = Tasks::Store.new(org: real, archive: archive)
       assert_equal :ok, via_real.undo!.first, "the other spelling shares the history"
@@ -221,7 +221,7 @@ class TestJournal < Minitest::Test
 
   def test_corrupt_cursor_degrades_to_empty_not_crash
     with_journal_store do |build, _org, _a, jdir|
-      build.call.set_priority!(build.call.items.find { |i| i.title.include?("Book flight") }, "C")
+      build.call.test_mutation.set_priority(build.call.items.find { |i| i.title.include?("Book flight") }, "C")
       idx = File.join(jdir, "index.json")
       data = JSON.parse(File.read(idx))
       data["cursor"] = 999 # out of range — a hand-edit or truncated write
@@ -231,14 +231,14 @@ class TestJournal < Minitest::Test
       assert_equal [:empty], build.call.undo!
       # ...and a fresh mutation must still succeed (not crash in record()).
       s = build.call
-      assert s.set_priority!(s.items.find { |i| i.title.include?("Book flight") }, "B")
+      assert s.test_mutation.set_priority(s.items.find { |i| i.title.include?("Book flight") }, "B")
     end
   end
 
   def test_corrupt_state_metadata_degrades_to_fresh_safe_history
     with_journal_store do |build, org, _a, jdir|
       first = build.call
-      first.set_priority!(first.items.find { |i| i.title.include?("Book flight") }, "C")
+      first.test_mutation.set_priority(first.items.find { |i| i.title.include?("Book flight") }, "C")
       before_second = File.read(org)
       idx = File.join(jdir, "index.json")
       data = JSON.parse(File.read(idx))
@@ -246,7 +246,7 @@ class TestJournal < Minitest::Test
       File.write(idx, JSON.generate(data))
 
       second = build.call
-      second.set_priority!(second.items.find { |i| i.title.include?("Book flight") }, "B")
+      second.test_mutation.set_priority(second.items.find { |i| i.title.include?("Book flight") }, "B")
       assert_equal :ok, second.undo!.first
       assert_equal before_second, File.read(org)
       assert_equal [:empty], second.undo!
@@ -256,7 +256,7 @@ class TestJournal < Minitest::Test
   def test_corrupt_top_level_index_shape_degrades_to_empty
     with_journal_store do |build, _org, _a, jdir|
       store = build.call
-      store.set_priority!(store.items.find { |i| i.title.include?("Book flight") }, "C")
+      store.test_mutation.set_priority(store.items.find { |i| i.title.include?("Book flight") }, "C")
       File.write(File.join(jdir, "index.json"), "[]")
 
       assert_equal [:empty], build.call.undo!
@@ -265,7 +265,7 @@ class TestJournal < Minitest::Test
 
   def test_missing_blob_degrades_to_empty_not_crash
     with_journal_store do |build, _org, _a, jdir|
-      build.call.set_priority!(build.call.items.find { |i| i.title.include?("Book flight") }, "C")
+      build.call.test_mutation.set_priority(build.call.items.find { |i| i.title.include?("Book flight") }, "C")
       # A referenced blob vanishes (e.g. a partial crash) — undo must not ENOENT.
       Dir.children(File.join(jdir, "blobs")).each { |b| File.delete(File.join(jdir, "blobs", b)) }
       assert_equal [:empty], build.call.undo!
@@ -276,7 +276,7 @@ class TestJournal < Minitest::Test
     with_journal_store do |build, org, _a, jdir|
       first = build.call
       item = first.items.find { |i| i.title.include?("Book flight") }
-      assert first.set_priority!(item, "C")
+      assert first.test_mutation.set_priority(item, "C")
       before_second = File.binread(org)
       blob = current_org_blob(jdir)
       File.delete(blob)
@@ -287,7 +287,7 @@ class TestJournal < Minitest::Test
 
       second = build.call
       item = second.items.find { |i| i.title.include?("Book flight") }
-      assert second.set_priority!(item, "B")
+      assert second.test_mutation.set_priority(item, "B")
       assert File.file?(blob), "the next record replaces the empty directory with a blob"
       assert_equal :ok, second.undo!.first
       assert_equal before_second, File.binread(org)
@@ -298,7 +298,7 @@ class TestJournal < Minitest::Test
     with_journal_store do |build, org, _a, jdir|
       first = build.call
       item = first.items.find { |i| i.title.include?("Book flight") }
-      assert first.set_priority!(item, "C")
+      assert first.test_mutation.set_priority(item, "C")
       before_second = File.binread(org)
       blob = current_org_blob(jdir)
       sentinel = File.join(File.dirname(jdir), "journal-symlink-target")
@@ -312,7 +312,7 @@ class TestJournal < Minitest::Test
 
       second = build.call
       item = second.items.find { |i| i.title.include?("Book flight") }
-      assert second.set_priority!(item, "B")
+      assert second.test_mutation.set_priority(item, "B")
       assert File.file?(blob)
       refute File.symlink?(blob)
       assert_equal "do not read or replace me", File.read(sentinel)
@@ -325,7 +325,7 @@ class TestJournal < Minitest::Test
     with_journal_store do |build, org, _a, jdir|
       store = build.call
       item = store.items.find { |i| i.title.include?("Book flight") }
-      assert store.set_priority!(item, "C")
+      assert store.test_mutation.set_priority(item, "C")
       assert_equal :ok, store.undo!.first
       before_redo = File.binread(org)
       blob = current_org_blob(jdir)
@@ -341,7 +341,7 @@ class TestJournal < Minitest::Test
     with_journal_store do |build, org, _a, jdir|
       first = build.call
       item = first.items.find { |i| i.title.include?("Book flight") }
-      assert first.set_priority!(item, "C")
+      assert first.test_mutation.set_priority(item, "C")
       before_second = File.binread(org)
       index = File.join(jdir, "index.json")
       File.delete(index)
@@ -352,7 +352,7 @@ class TestJournal < Minitest::Test
 
       second = build.call
       item = second.items.find { |i| i.title.include?("Book flight") }
-      assert second.set_priority!(item, "B")
+      assert second.test_mutation.set_priority(item, "B")
       assert File.file?(index)
       assert_equal :ok, second.undo!.first
       assert_equal before_second, File.binread(org)
@@ -363,7 +363,7 @@ class TestJournal < Minitest::Test
     with_journal_store do |build, org, _a, jdir|
       store = build.call
       item = store.items.find { |i| i.title.include?("Book flight") }
-      assert store.set_priority!(item, "C")
+      assert store.test_mutation.set_priority(item, "C")
       live = File.binread(org)
       blob = current_org_blob(jdir)
       original = File.method(:binread)
@@ -392,7 +392,7 @@ class TestJournal < Minitest::Test
     with_journal_store do |build, org, _a, jdir|
       store = build.call
       item = store.items.find { |i| i.title.include?("Book flight") }
-      assert store.set_priority!(item, "C")
+      assert store.test_mutation.set_priority(item, "C")
       live = File.binread(org)
       index = File.join(jdir, "index.json")
       original = File.method(:read)
@@ -462,7 +462,7 @@ class TestJournal < Minitest::Test
     with_journal_store do |build, org, _archive, jdir|
       store = build.call
       item = store.items.find { |i| i.title.include?("Book flight") }
-      assert store.set_priority!(item, "C")
+      assert store.test_mutation.set_priority(item, "C")
       before = File.binread(org)
       cursor = journal_cursor(jdir)
 
@@ -514,7 +514,7 @@ class TestJournal < Minitest::Test
     with_journal_store do |build, org, _archive, jdir|
       store = build.call
       item = store.items.find { |i| i.title.include?("Book flight") }
-      assert store.set_priority!(item, "C")
+      assert store.test_mutation.set_priority(item, "C")
       before = File.binread(org)
       cursor = journal_cursor(jdir)
       index = File.join(jdir, "index.json")
@@ -541,7 +541,7 @@ class TestJournal < Minitest::Test
     with_journal_store do |build, org, _archive, jdir|
       store = build.call
       item = store.items.find { |i| i.title.include?("Book flight") }
-      assert store.set_priority!(item, "C")
+      assert store.test_mutation.set_priority(item, "C")
       before = File.binread(org)
       cursor = journal_cursor(jdir)
       index = File.join(jdir, "index.json")
@@ -606,7 +606,7 @@ class TestJournal < Minitest::Test
     with_journal_store do |build, org, _archive, jdir|
       store = build.call
       item = store.items.find { |i| i.title.include?("Book flight") }
-      assert store.set_priority!(item, "C")
+      assert store.test_mutation.set_priority(item, "C")
       before = File.binread(org)
       cursor = journal_cursor(jdir)
       index = File.join(jdir, "index.json")
@@ -628,13 +628,13 @@ class TestJournal < Minitest::Test
     with_journal_store do |build, _org, _a|
       s = build.call
       water = s.items.find { |i| i.title.include?("Water the plants") }
-      assert s.set_priority!(water, "B") # one real, undoable step
+      assert s.test_mutation.set_priority(water, "B") # one real, undoable step
 
       fresh = build.call
       w2 = fresh.items.find { |i| i.title.include?("Water the plants") }
       # It already has @home, so re-adding @home writes identical content —
       # a true no-op that must not create an undoable entry.
-      assert fresh.set_tags!(w2, add: ["@home"])
+      assert fresh.test_mutation.set_tags(w2, add: ["@home"])
 
       u = build.call
       assert_equal :ok, u.undo!.first, "the priority change is undoable"

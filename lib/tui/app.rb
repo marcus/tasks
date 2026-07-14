@@ -749,7 +749,8 @@ module Tui
       idx = PRIORITY_ORDER.index(item.priority)
       new_pri = PRIORITY_ORDER[(idx + delta).clamp(0, PRIORITY_ORDER.size - 1)]
       return if new_pri == item.priority # already at the end of the ladder
-      if @store.set_priority!(item, new_pri)
+      label = new_pri ? "priority [##{new_pri}]: #{item.title}" : "clear priority: #{item.title}"
+      if patch_task(item, field: :priority, value: new_pri, label: label).ok?
         flash(new_pri ? "priority: [##{new_pri}] #{item.title}" : "priority cleared: #{item.title}")
         reselect(item.id)
         refresh_detail_panel if detail_panel?
@@ -764,6 +765,20 @@ module Tui
     def reselect(id)
       @ui.selected_id = id
       rows
+    end
+
+    # TUI quick actions resolve their selected row to a stable id before
+    # writing. A fresh edit snapshot supplies the field-owned optimistic
+    # baseline, so a task can never be retargeted by an intervening line shift.
+    # Keep this thin adapter in the interface layer: TaskEditorSession owns the
+    # richer, save-on-blur workflow, while these keyboard actions retain their
+    # established confirmations, messages, and undo labels.
+    def patch_task(item, field:, value:, label:)
+      snapshot = @store.edit_snapshot(item.id)
+      return Tasks::MutationResult.new(status: :not_found) unless snapshot
+
+      @store.patch_task!(Tasks::TaskPatch.from(snapshot, field: field, value: value,
+                                                history_label: label))
     end
 
     def start_task_edit = enter_task_edit(:title)
@@ -842,7 +857,8 @@ module Tui
       item = current_item
       return flash("nothing selected") unless item
       to_deferred = !item.deferred?
-      if @store.set_deferred!(item, to_deferred)
+      label = to_deferred ? "defer: #{item.title}" : "activate: #{item.title}"
+      if patch_task(item, field: :deferred, value: to_deferred, label: label).ok?
         flash(to_deferred ? "⏸ deferred: #{item.title}" : "▸ activated: #{item.title}")
         # When newly deferred and the view hides deferred, the task leaves the
         # list and the persistent panel follows the next visible selection.
@@ -1597,8 +1613,8 @@ module Tui
       return flash("nothing selected") unless item
       return flash("already #{item.state}") unless item.open?
       recurring = item.recurring?
-      result = @store.complete!(item)
-      if result
+      result = patch_task(item, field: :state, value: "DONE", label: "complete: #{item.title}")
+      if result.ok?
         if recurring
           # A recurring task rolled forward and is still in the view — follow it.
           fresh = @store.items.find { |i| i.id == item.id }
@@ -1607,9 +1623,9 @@ module Tui
           reselect(item.id)
           refresh_detail_panel if detail_panel?
         else
-          # complete! returns every touched line; a parent cascade closes its
+          # The patch result carries every touched stable id; a parent cascade closes its
           # open descendants too — note how many rode along.
-          n = result.is_a?(Array) ? result.size - 1 : 0
+          n = result.touched_ids.size - 1
           subs = n > 0 ? " (+#{n} subtask#{"s" unless n == 1})" : ""
           flash("✓ DONE: #{item.title}#{subs} — x to archive")
           rows
@@ -1637,7 +1653,13 @@ module Tui
       ) do |raw|
         date = Dates.parse_when(raw)
         next "can't parse “#{raw}”" unless date
-        unless @store.reschedule!(item, date)
+        kind = if item.deadline     then :deadline
+               elsif item.scheduled then :scheduled
+               else                      :deadline
+               end
+        result = patch_task(item, field: kind, value: date,
+                            label: "reschedule → #{date.iso8601}: #{item.title}")
+        unless result.ok?
           reload_store
           next "file changed underneath — reopen"
         end
@@ -1673,7 +1695,8 @@ module Tui
       ) do |raw|
         cookie = Tasks::Recur.parse_interval(raw)
         next "can't parse “#{raw}”" if cookie.nil?
-        unless @store.set_recur!(item, cookie)
+        label = cookie == :off ? "recur off: #{item.title}" : "recur #{cookie}: #{item.title}"
+        unless patch_task(item, field: :recurrence, value: cookie, label: label).ok?
           reload_store
           next "file changed underneath — reopen"
         end

@@ -118,7 +118,7 @@ class TestIds < Minitest::Test
       ])
       File.write(org, %({"type":"meta","version":1}\n) +
                  prefix + FIXTURE.sub(%({"type":"meta","version":1}\n), ""))
-      assert store.set_priority!(flight, "C"), "stale line, but the id still finds it"
+      assert store.test_mutation.set_priority(flight, "C"), "stale line, but the id still finds it"
       assert_equal "C", find_item(store, "Book flight").priority
       assert_equal "TODO", find_item(store, "decoy task").state, "decoy untouched"
     end
@@ -130,7 +130,7 @@ class TestIds < Minitest::Test
       # The title (flight's fallback guard) changes out from under us...
       File.write(org, File.read(org).sub("Book flight in Concur", "Book a flight RENAMED"))
       # ...but the id still resolves it, where the title-substring guard wouldn't.
-      assert store.set_priority!(flight, "C")
+      assert store.test_mutation.set_priority(flight, "C")
       assert_equal "C", find_item(store, "RENAMED").priority
     end
   end
@@ -138,10 +138,10 @@ class TestIds < Minitest::Test
   def test_id_survives_move_and_archive
     with_store do |store, org, _archive|
       id = find_item(store, "Book flight").id
-      store.move!(find_item(store, "Book flight"), "Home")
+      store.test_mutation.move(find_item(store, "Book flight"), "Home")
       assert_equal id, find_item(store, "Book flight").id, "id rides along on move"
 
-      store.complete!(find_item(store, "Book flight"))
+      store.test_mutation.complete(find_item(store, "Book flight"))
       store.archive_swept!
       archived = store.archive_items.find { |i| i.title.include?("Book flight") }
       assert_equal id, archived.id, "id follows the subtree into the archive"
