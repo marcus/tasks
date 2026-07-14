@@ -1928,4 +1928,28 @@ class TestCliMutations < Minitest::Test
       assert_equal "Some note line.\nfollow up — ping the desk", travel["body"]
     end
   end
+
+  # A nil-title record is a prime repair target, so fuzzy ref resolution must
+  # degrade to "no match" (exit 2) instead of raising NoMethodError on
+  # title.downcase while scanning past it — and the record must stay
+  # addressable by exact id for the actual repair.
+  def test_cli_fuzzy_ref_tolerates_a_nil_title_record
+    broken = dump_fixture([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "aaaa0001", "title" => "Inbox" },
+      { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "TODO" },
+      { "type" => "task", "id" => "aaaa0003", "parent" => "aaaa0001", "state" => "TODO",
+        "title" => "Healthy task" },
+    ])
+    run_cli("retitle", "no such title", "New Title", content: broken) do |_org, _out, err, st|
+      assert_equal 2, st.exitstatus
+      assert_match(/no match/, err)
+      refute_match(/NoMethodError/, err)
+    end
+    run_cli("retitle", "aaaa0002", "Recovered title", content: broken) do |org, _out, err, st|
+      assert st.success?, "id-addressed repair of the nil-title record must work: #{err}"
+      assert Tasks::Check.check(org).ok?
+      assert_equal "Recovered title", record_for(org, title: "Recovered title")["title"]
+    end
+  end
 end

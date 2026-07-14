@@ -744,4 +744,43 @@ class TestJournal < Minitest::Test
       assert Tasks::Check.check(org).ok?, "file must stay structurally valid under concurrency"
     end
   end
+
+  # A coalesced follow-up edit replaces the repair step's state in place; the
+  # repair flag must survive that overwrite, or undoing the coalesced step hits
+  # the restore-validity gate and refuses to restore the invalid bytes.
+  def test_coalescing_onto_a_repair_step_keeps_the_undo_exemption
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, dump_fixture([
+        { "type" => "meta", "version" => 1 },
+        { "type" => "section", "id" => "aaaa0001", "title" => "W" },
+        { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "TODO",
+          "title" => "Fix me", "scheduled" => "not-a-date" },
+      ]))
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"),
+                               journal_dir: File.join(dir, "journal"))
+      refute Tasks::Check.check(org).ok?, "seed is invalid"
+      invalid_bytes = File.read(org)
+
+      repaired = store.patch_task!(Tasks::TaskPatch.new(
+        id: "aaaa0002", field: :scheduled, value: Date.new(2026, 8, 1), expected: nil,
+        coalesce_key: "edit-session"
+      ))
+      assert_equal :ok, repaired.status
+      assert Tasks::Check.check(org).ok?, "repair leaves the file clean"
+
+      followup = store.patch_task!(Tasks::TaskPatch.new(
+        id: "aaaa0002", field: :scheduled, value: Date.new(2026, 8, 2),
+        expected: Date.new(2026, 8, 1), coalesce_key: "edit-session"
+      ))
+      assert_equal :ok, followup.status
+
+      status, = store.undo!
+      assert_equal :ok, status, "undo of a coalesced repair step must not hit the validity gate"
+      assert_equal invalid_bytes, File.read(org), "undo restores the exact pre-repair bytes"
+
+      assert_equal :ok, store.redo!.first
+      assert Tasks::Check.check(org).ok?, "redo re-applies the coalesced repair"
+    end
+  end
 end

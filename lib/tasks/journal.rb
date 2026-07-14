@@ -123,6 +123,12 @@ module Tasks
       state[:repair] = true if repair
       state.merge!(coalesce_key: key, coalesce_scope: @coalesce_scope) if key
       if coalesce
+        # The repair flag marks a step whose BEFORE-state is invalid bytes, so
+        # its undo is exempt from the restore-validity gate. A coalesced
+        # follow-up edit replaces the step's content but keeps the same
+        # before-state — the exemption must survive the overwrite or undoing
+        # the coalesced step wrongly refuses to restore those bytes.
+        state[:repair] = true if states[cursor][:repair]
         states[cursor] = state
       else
         states << state

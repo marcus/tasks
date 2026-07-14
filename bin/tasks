@@ -528,7 +528,9 @@ def resolve_ref(ref, include_done: false)
   end
 
   q = ref.dup.force_encoding("UTF-8").strip.downcase
-  matches = items.select { |i| i.title.downcase.include?(q) }
+  # to_s: a nil-title record (a prime repair target) must be resolvable by
+  # fuzzy ref without a NoMethodError; it simply won't match any substring.
+  matches = items.select { |i| i.title.to_s.downcase.include?(q) }
   if matches.empty?
     warn "no match: #{ref}"
     exit 2
