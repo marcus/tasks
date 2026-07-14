@@ -114,6 +114,16 @@ module Tasks
       @name = name.to_sym
       @filter = filter
       @entries = entries.freeze
+      # Adapters call task_for/metadata_for once per emitted row, so lookup
+      # must be O(1); a scan per row makes every list/JSON emit quadratic.
+      @entries_by_identity = entries.each_with_object({}.compare_by_identity) do |entry, map|
+        map[entry.item] = entry
+      end
+      @entries_by_key = entries.each_with_object({}) do |entry, map|
+        item = entry.item
+        map[[item.source, item.id]] ||= entry if item.id
+        map[[item.source, item.line, item.title]] ||= entry
+      end
       freeze
     end
 
@@ -121,18 +131,21 @@ module Tasks
     def items = entries.map(&:item).freeze
 
     def task_for(item)
-      entries.find { |entry| same_item?(entry.item, item) }&.task
+      entry_for(item)&.task
     end
 
     def metadata_for(item)
-      entries.find { |entry| same_item?(entry.item, item) }&.metadata || {}
+      entry_for(item)&.metadata || {}
     end
 
     private
 
-    def same_item?(left, right)
-      left.equal?(right) || (left.id && right.id && left.id == right.id && left.source == right.source) ||
-        (left.line == right.line && left.source == right.source && left.title == right.title)
+    # Same matching semantics the old linear scan applied: object identity,
+    # then stable id within a source, then line+title within a source.
+    def entry_for(item)
+      @entries_by_identity[item] ||
+        (item.id && @entries_by_key[[item.source, item.id]]) ||
+        @entries_by_key[[item.source, item.line, item.title]]
     end
   end
 
@@ -179,6 +192,11 @@ module Tasks
     end
 
     def find(id, include_archive: false)
+      if include_archive && !snapshot.archive_loaded?
+        raise ArgumentError,
+              "archive lookup requires a snapshot built with include_archive: true"
+      end
+
       id = id.to_s
       items = include_archive ? snapshot.items + snapshot.archive_items : snapshot.items
       item = items.find { |candidate| candidate.id == id }
@@ -235,12 +253,22 @@ module Tasks
       filter.body_search && snapshot.body(item).join.downcase.include?(query)
     end
 
+    # Stable sorts: MRI's sort_by is unstable, so equal keys must carry the
+    # source index or ties reorder arbitrarily — visible as `tasks next`
+    # shuffling same-priority tasks, and as a nondeterministic canonical order
+    # for the future HTTP API. Ties keep DFS file order.
     def sort_named(items, name)
       case name
-      when :agenda then items.sort_by { |item| [item.deadline || item.scheduled, item.priority || "Z"] }
-      when :next then items.sort_by { |item| item.priority || "Z" }
+      when :agenda
+        stable_sort(items) { |item| [item.deadline || item.scheduled, item.priority || "Z"] }
+      when :next
+        stable_sort(items) { |item| [item.priority || "Z"] }
       else items
       end
+    end
+
+    def stable_sort(items)
+      items.each_with_index.sort_by { |item, index| [*yield(item), index] }.map(&:first)
     end
 
     def task_view(item)
@@ -270,7 +298,7 @@ module Tasks
     end
 
     def section_view(record)
-      node = snapshot.tree.flat_map { |root| root.each.to_a }.find { |candidate| candidate.line == record["line"] }
+      node = snapshot.nodes_by_line[record["line"]]
       children = node ? node.children : []
       SectionView.new(
         id: record["id"], title: record["title"], parent_id: record["parent"],

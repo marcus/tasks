@@ -119,4 +119,42 @@ class TestTaskQueries < Minitest::Test
     assert_raises(ArgumentError) { Tasks::OperationContext.new(operation_id: "request-42", source: " ") }
     assert_raises(ArgumentError) { Tasks::OperationContext.new(operation_id: "request-42", source: :webhook) }
   end
+
+  # MRI's sort_by is unstable: without an index tiebreak, equal-priority tasks
+  # reorder arbitrarily — visible in `tasks next` output and as a
+  # nondeterministic canonical order. Ties must keep DFS file order.
+  def test_next_view_keeps_file_order_for_equal_priorities
+    records = FIXTURE_RECORDS.map(&:dup)
+    tie_ids = Array.new(10) { |i| format("bbbb%04x", i) }
+    tie_ids.each do |id|
+      records << { "type" => "task", "id" => id, "parent" => FIX[:home],
+                   "state" => "NEXT", "title" => "tie #{id}", "tags" => %w[@home] }
+    end
+
+    with_query_store(records: records) do |store|
+      result = queries(store).view(:next)
+      assert_equal [FIX[:flight], FIX[:pr], FIX[:plants], *tie_ids],
+                   result.items.map(&:id)
+    end
+  end
+
+  # A snapshot built without archive records must refuse an archive lookup
+  # loudly; silently searching the empty archive turns "not loaded" into a
+  # wrong not-found answer (a 404 in the future HTTP adapter).
+  def test_find_with_include_archive_requires_an_archive_loaded_snapshot
+    archive_records = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "task", "id" => "dead0001", "state" => "DONE", "title" => "Archived report" },
+    ]
+
+    with_query_store(archive_records: archive_records) do |store|
+      error = assert_raises(ArgumentError) do
+        queries(store).find("dead0001", include_archive: true)
+      end
+      assert_match(/include_archive/, error.message)
+
+      loaded = queries(store, include_archive: true)
+      assert_equal "dead0001", loaded.find("dead0001", include_archive: true).id
+    end
+  end
 end
