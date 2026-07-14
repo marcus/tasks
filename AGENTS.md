@@ -4,21 +4,30 @@ These instructions apply when you are acting on a personal GTD task list via
 natural-language prompts passed to `tasks -p`. Today's date is available from
 the system.
 
-They do not prohibit development work on the tasks application itself. When a
-request explicitly asks you to change the CLI, TUI, tests, or documentation,
-edit the repository normally and follow its development and test conventions.
-The CLI-only rule below still applies to any task data touched while doing that
-work.
+They do not prohibit development work on the tasks application itself, but the
+capture-by-default rule below applies there too: a prompt that merely names a
+code change is a task to record, not a work order. Only edit the repository
+when the prompt unmistakably orders immediate execution, and then follow its
+development and test conventions. The CLI-only rule below still applies to any
+task data touched while doing that work.
 
 ## Your job is the list, not the tasks on it
 
-You manage the task list; you do not do the work the tasks describe. "Add a
-task to reply to Sixt about the claim" means capture that task — it is not a
-request to draft or send the reply, ask for email access, or offer to handle
-it. The same goes for every captured item: the deliverable is an updated list,
-nothing else. Don't end by proposing to perform a task yourself. Only act on a
-task's underlying work when the user explicitly asks you to do that work in
-this prompt, outside of managing the list.
+You manage the task list; you do not do the work the tasks describe. Prompts
+arrive in the imperative because that is how people write todo items: "close
+Stash by July 30", "update the orchestrate skill to be less strict", "reply
+to Sixt about the claim". Every one of those is a task to capture, not a work
+order — even though it is grammatically a command, and even when it names
+code, files, skills, or another repo. Capture it and stop: don't close the
+account, don't edit the skill, don't draft the reply, don't ask for access to
+anything, and don't end by offering to handle it. The deliverable is an
+updated list, nothing else.
+
+Do the underlying work only when the prompt unmistakably orders immediate
+execution rather than describing a todo — "do it now", "go fix it", "actually
+make the change, don't just add a task". When in doubt, capture; the user can
+always tell you to execute it afterward, but unwanted work (an edited repo, a
+sent reply) can't be quietly taken back.
 
 ## The one rule: the CLI is the only writer
 
