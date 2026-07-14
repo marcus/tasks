@@ -1179,10 +1179,12 @@ module Tasks
     def with_lock
       # `flock` is not reentrant across separately opened descriptors, but a
       # few locked operations legitimately call another locked read in the
-      # same Ruby thread (for example restore -> reload!). Reentrancy belongs
-      # to that owner only: a Store instance can be shared by threads, and a
-      # global depth counter would let a second thread skip the sidecar flock.
-      if @lock_owner.equal?(Thread.current)
+      # same Ruby execution context (for example restore -> reload!). An
+      # execution context is both the Thread and Fiber: a Store can be shared
+      # by threads, and a yielded owner Fiber must not let another Fiber on
+      # that thread skip the sidecar flock.
+      owner = [Thread.current, Fiber.current]
+      if @lock_owner == owner
         @lock_depth += 1
         begin
           return yield
@@ -1193,7 +1195,7 @@ module Tasks
 
       File.open(lock_path, File::RDWR | File::CREAT, 0o644) do |f|
         f.flock(File::LOCK_EX)
-        @lock_owner = Thread.current
+        @lock_owner = owner
         @lock_depth = 1
         begin
           yield

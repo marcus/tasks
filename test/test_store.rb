@@ -308,6 +308,65 @@ class TestStore < Minitest::Test
     end
   end
 
+  def test_with_lock_scopes_reentrancy_to_owning_fiber_and_cleans_up
+    with_store do |store, _org, _archive|
+      events = []
+      lock_opens = []
+      lock_path = store.send(:lock_path)
+      lock_attempt = Class.new(StandardError)
+      contender = nil
+      owner = Fiber.new do
+        begin
+          store.send(:with_lock) do
+            events << :owner_enter
+            store.send(:with_lock) { events << :owner_nested }
+            Fiber.yield
+            raise "owner failed"
+          end
+        rescue RuntimeError => error
+          raise unless error.message == "owner failed"
+
+          events << :owner_rescued
+        end
+      end
+      contender = Fiber.new do
+        begin
+          store.send(:with_lock) { events << :contender_enter }
+        rescue StandardError => error
+          raise unless error.is_a?(lock_attempt)
+        end
+      end
+      original_file_open = File.method(:open)
+
+      File.stub(:open, lambda { |path, *args, **kwargs, &block|
+        if path == lock_path
+          lock_opens << Fiber.current
+          raise lock_attempt, "contender reached sidecar lock" if Fiber.current.equal?(contender)
+        end
+        original_file_open.call(path, *args, **kwargs, &block)
+      }) do
+        owner.resume
+        contender.resume
+
+        # The distinct Fiber must try to acquire the sidecar lock instead of
+        # taking the owner's reentrant path. The nested call above remains
+        # reentrant because it runs in the owner Fiber.
+        assert_equal [owner, contender], lock_opens
+        assert_equal %i[owner_enter owner_nested], events
+
+        owner.resume
+        assert_equal %i[owner_enter owner_nested owner_rescued], events
+
+        successor = Fiber.new do
+          store.send(:with_lock) { events << :successor_enter }
+        end
+        successor.resume
+        assert_equal [owner, contender, successor], lock_opens
+        assert_equal %i[owner_enter owner_nested owner_rescued successor_enter], events
+      end
+    end
+  end
+
   def test_archive_nested_subtree_preserves_dfs_structure_and_undo
     with_archive_tree_store do |store, org, archive|
       before = File.read(org)
