@@ -1352,8 +1352,8 @@ class TestStore < Minitest::Test
   def test_capture_under_appends_as_last_child
     with_nest_store do |store, org|
       project = store.items.find { |i| i.title == "Project" }
-      line = store.capture!("New phase", under: project)
-      assert_kind_of Integer, line
+      result = store.create_task!(Tasks::CreateTask.new(title: "New phase", parent_id: project.id))
+      assert_equal :ok, result.status
       rec = record_for(org, title: "New phase")
       assert_equal "dddd0002", rec["parent"], "parented to Project"
       # Last child: lands after Project's existing descendants (Phase 1, Step A,
@@ -1370,7 +1370,8 @@ class TestStore < Minitest::Test
       before = File.read(org)
       # Step A is at depth 3; a child would be depth 4 > cap 3.
       step = store.items.find { |i| i.title == "Step A" }
-      assert_equal :too_deep, store.capture!("Too deep", under: step)
+      result = store.create_task!(Tasks::CreateTask.new(title: "Too deep", parent_id: step.id))
+      assert_equal :too_deep, result.status
       assert_equal before, File.read(org), "no write on refusal"
     end
   end

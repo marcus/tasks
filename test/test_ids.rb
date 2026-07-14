@@ -38,12 +38,12 @@ class TestIds < Minitest::Test
     end
   end
 
-  # -- capture mints a fresh, unique id ---------------------------------------
+  # -- CreateTask mints a fresh, unique id ------------------------------------
 
   def test_capture_assigns_a_unique_id
     with_store do |store, org, _a|
-      store.capture!("first thing")
-      store.capture!("second thing")
+      store.create_task!(Tasks::CreateTask.new(title: "first thing"))
+      store.create_task!(Tasks::CreateTask.new(title: "second thing"))
       ids = store.items.select { |i| ["first thing", "second thing"].include?(i.title) }.map(&:id)
       assert_equal 2, ids.compact.size, "both captures carry an id"
       assert_equal ids, ids.uniq, "ids are distinct"
@@ -66,7 +66,7 @@ class TestIds < Minitest::Test
       store = Tasks::Store.new(org: org, archive: archive)
       seq = ["dddd9999", "eeee0001"] # first hex collides with the archive
       SecureRandom.stub(:hex, ->(*) { seq.shift }) do
-        store.capture!("new task")
+        store.create_task!(Tasks::CreateTask.new(title: "new task"))
       end
       assert_equal "eeee0001", store.items.find { |i| i.title == "new task" }.id
     end

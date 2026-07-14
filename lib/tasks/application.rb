@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "store"
+require_relative "create_task"
 require_relative "operation_context"
 require_relative "task_changeset"
 require_relative "task_queries"
@@ -136,6 +137,22 @@ module Tasks
     # retain Store's mutable read cache between paints or external writes.
     def read_tasks
       TaskReadModel.new(store_factory.call.read_snapshot)
+    end
+
+    # Typed creation seam. Hash attributes are accepted for adapter convenience
+    # but immediately become an immutable CreateTask before Store takes the
+    # lock, so CLI, TUI, and a future HTTP adapter share one create transaction.
+    def create_task(command_or_attributes, context: nil)
+      validate_operation_context(context)
+      command = case command_or_attributes
+                when CreateTask
+                  command_or_attributes
+                when Hash
+                  CreateTask.new(**command_or_attributes.transform_keys(&:to_sym))
+                else
+                  raise ArgumentError, "create_task expects a Tasks::CreateTask or attributes mapping"
+                end
+      store_factory.call.create_task!(command)
     end
 
     # Typed command seam for transports that need an atomic multi-field update.

@@ -1,0 +1,140 @@
+# frozen_string_literal: true
+
+require_relative "test_helper"
+require "tasks/application"
+
+class TestCreateTask < Minitest::Test
+  def with_create_store(records: FIXTURE_RECORDS, max_depth: Tasks::Tree::DEFAULT_MAX_DEPTH)
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, dump_fixture(records))
+      yield Tasks::Store.new(org: org, archive: archive, max_depth: max_depth), org, archive
+    end
+  end
+
+  def command(**attributes)
+    Tasks::CreateTask.new(title: "Draft proposal", **attributes)
+  end
+
+  def test_create_task_is_immutable_and_copies_mutable_inputs
+    title = +"Draft proposal"
+    notes = [+"first", +"second"]
+    request = Tasks::CreateTask.new(title: title, notes: notes, recurrence: +".+1w")
+    title.replace("mutated")
+    notes.first.replace("mutated")
+
+    assert request.frozen?
+    assert request.title.frozen?
+    assert request.notes.frozen?
+    assert request.notes.first.frozen?
+    assert_equal "Draft proposal", request.title
+    assert_equal %w[first second], request.notes
+    assert_equal ".+1w", request.recurrence
+    refute_includes Tasks::Store.public_instance_methods(false), :capture!
+  end
+
+  def test_create_writes_all_fields_and_initial_notes_once_then_undoes_as_one_step
+    with_create_store do |store, org, _archive|
+      before = File.binread(org)
+      writes = 0
+      original_writer = store.method(:write_records)
+      writer = lambda do |path, records|
+        writes += 1
+        original_writer.call(path, records)
+      end
+      request = command(
+        priority: "A", tags: %w[@work important], scheduled: Date.new(2026, 8, 1),
+        deadline: Date.new(2026, 8, 8), state: "WAITING", project: "Work",
+        recurrence: ".+1w", notes: ["first supplied note", "second supplied note"]
+      )
+
+      result = store.stub(:write_records, writer) { store.create_task!(request) }
+
+      assert_equal :ok, result.status
+      assert_equal 1, writes
+      assert_equal [result.snapshot.id], result.touched_ids
+      record = record_for(org, title: "Draft proposal")
+      assert_equal FIX[:work], record["parent"]
+      assert_equal "A", record["priority"]
+      assert_equal %w[@work important], record["tags"]
+      assert_equal "2026-08-01", record["scheduled"]
+      assert_equal "2026-08-08", record["deadline"]
+      assert_equal ".+1w", record["recur"]
+      assert_equal "WAITING", record["state"]
+      assert_equal "Captured [#{Date.today}].\nfirst supplied note\nsecond supplied note", record["body"]
+      assert Tasks::Check.check(org).ok?
+
+      assert_equal [:ok, "capture: Draft proposal"], store.undo!
+      assert_equal before, File.binread(org), "one undo removes the complete create transaction"
+      assert_equal [:empty], store.undo!
+    end
+  end
+
+  def test_create_recurring_task_defaults_to_today_and_uses_the_processed_state
+    with_create_store do |store, org, _archive|
+      result = store.create_task!(command(recurrence: ".+1w"))
+
+      assert_equal :ok, result.status
+      record = record_for(org, title: "Draft proposal")
+      assert_equal Date.today.iso8601, record["scheduled"]
+      assert_equal "TODO", record["state"]
+      assert_equal ".+1w", record["recur"]
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_create_rejects_invalid_recurrence_or_ambiguous_initial_body_without_writing
+    with_create_store do |store, org, _archive|
+      before = File.binread(org)
+      invalid = command(recurrence: "weekly", body: "body", notes: ["note"])
+
+      result = store.create_task!(invalid)
+
+      assert_equal :invalid, result.status
+      assert_includes result.errors, "invalid recurrence cookie"
+      assert_includes result.errors, "body and notes cannot both be supplied"
+      assert_equal before, File.binread(org)
+      assert_equal [:empty], store.undo!
+    end
+  end
+
+  def test_post_write_check_failure_rolls_back_the_entire_create_without_history
+    with_create_store do |store, org, _archive|
+      before = File.binread(org)
+      original_writer = store.method(:write_records)
+      writer = lambda do |path, records|
+        original_writer.call(path, records)
+        File.write(path, "{not json}\n", encoding: "UTF-8")
+      end
+
+      result = store.stub(:write_records, writer) { store.create_task!(command(notes: ["never persists"])) }
+
+      assert_equal :store_invalid, result.status
+      assert_equal before, File.binread(org)
+      assert Tasks::Check.check(org).ok?
+      assert_equal [:empty], store.undo!
+    end
+  end
+
+  def test_application_accepts_attributes_or_a_typed_command_and_validates_context
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, FIXTURE)
+      app = Tasks::Application.new(
+        store_factory: Tasks::StoreFactory.new(org: org, archive: archive)
+      )
+      context = Tasks::OperationContext.new(operation_id: "capture-1", source: :cli)
+
+      first = app.create_task({ title: "Via attributes", project: "Home" }, context: context)
+      second = app.create_task(command(title: "Via command", parent_id: FIX[:flight]))
+
+      assert_equal :ok, first.status
+      assert_equal :ok, second.status
+      assert_equal FIX[:home], record_for(org, title: "Via attributes")["parent"]
+      assert_equal FIX[:flight], record_for(org, title: "Via command")["parent"]
+      assert_raises(ArgumentError) { app.create_task(command, context: :cli) }
+    end
+  end
+end

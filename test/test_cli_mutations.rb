@@ -416,12 +416,12 @@ class TestCliMutations < Minitest::Test
     end
   end
 
-  # -- capture! ---------------------------------------------------------------
+  # -- CreateTask -------------------------------------------------------------
 
   def test_capture_adds_inbox_item_by_default
     with_store do |store, org, _a|
-      line = store.capture!("call the plumber")
-      assert line.is_a?(Integer) && line.positive?
+      result = store.create_task!(Tasks::CreateTask.new(title: "call the plumber"))
+      assert_equal :ok, result.status
       fresh = store.items.find { |i| i.title == "call the plumber" }
       assert_equal "INBOX", fresh.state
       assert Tasks::Check.check(org).ok?
@@ -433,7 +433,7 @@ class TestCliMutations < Minitest::Test
     # multibyte char must survive being written into the UTF-8 file.
     with_store do |store, org, _a|
       text = "Draft — Q3 proposal".dup.force_encoding("ASCII-8BIT")
-      assert store.capture!(text)
+      assert store.create_task!(Tasks::CreateTask.new(title: text)).ok?
       assert_match(/Draft — Q3 proposal/, File.read(org, encoding: "UTF-8"))
       assert Tasks::Check.check(org).ok?
     end
@@ -441,7 +441,9 @@ class TestCliMutations < Minitest::Test
 
   def test_capture_with_date_lands_as_todo
     with_store do |store, org, _a|
-      store.capture!("file taxes", due: Date.new(2026, 7, 20), state: "TODO")
+      store.create_task!(Tasks::CreateTask.new(
+        title: "file taxes", deadline: Date.new(2026, 7, 20), state: "TODO"
+      ))
       fresh = store.items.find { |i| i.title == "file taxes" }
       assert_equal "TODO", fresh.state
       assert_equal Date.new(2026, 7, 20), fresh.deadline
@@ -451,7 +453,9 @@ class TestCliMutations < Minitest::Test
 
   def test_capture_under_named_project
     with_store do |store, org, _a|
-      store.capture!("refactor parser", state: "NEXT", tags: %w[@computer], project: "Work")
+      store.create_task!(Tasks::CreateTask.new(
+        title: "refactor parser", state: "NEXT", tags: %w[@computer], project: "Work"
+      ))
       rec = record_for(org, title: "refactor parser")
       work = record_for(org, title: "Work")
       home = record_for(org, title: "Home")
@@ -462,9 +466,10 @@ class TestCliMutations < Minitest::Test
     end
   end
 
-  def test_capture_returns_false_for_unknown_project
+  def test_capture_rejects_an_unknown_project
     with_store do |store, org, _a|
-      refute store.capture!("x", project: "Nonexistent")
+      result = store.create_task!(Tasks::CreateTask.new(title: "x", project: "Nonexistent"))
+      assert_equal :invalid, result.status
       assert_equal FIXTURE_ORG, File.read(org)
     end
   end
@@ -472,7 +477,7 @@ class TestCliMutations < Minitest::Test
   def test_capture_is_undoable
     with_store do |store, org, _a|
       before = File.read(org)
-      store.capture!("something")
+      assert store.create_task!(Tasks::CreateTask.new(title: "something")).ok?
       store.undo!
       assert_equal before, File.read(org)
     end
@@ -1527,6 +1532,28 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  def test_cli_capture_recurrence_is_one_undoable_transaction
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, RECUR_CONTENT)
+      before = File.binread(org)
+
+      _out, err, status = run_cli_at(org, archive, "capture", "water plants", "--recur", "weekly")
+      assert status.success?, err
+      assert_equal ".+1w", record_for(org, title: "water plants")["recur"]
+
+      undo_out, undo_err, undo_status = run_cli_at(org, archive, "undo")
+      assert undo_status.success?, undo_err
+      assert_equal "undid: capture: water plants\n", undo_out
+      assert_equal before, File.binread(org)
+
+      _out, empty_err, empty_status = run_cli_at(org, archive, "undo")
+      assert_equal 1, empty_status.exitstatus
+      assert_match(/nothing to undo/, empty_err)
+    end
+  end
+
   def test_cli_list_recurring_filters
     content = recur_content(pay_rent_recur: "+1m")
     run_cli("list", "--recurring", content: content) do |_org, out, _err, st|
@@ -1726,7 +1753,7 @@ class TestCliMutations < Minitest::Test
   def test_cli_mutation_adapter_has_no_legacy_store_calls
     source = File.read(BIN, encoding: "UTF-8")
 
-    refute_match(/store\.(?:complete!|set_state!|set_priority!|reschedule!|set_date!|undate!|retitle!|set_tags!|set_deferred!|set_recur!|add_note!|move!|move_under!|move_top!)/, source)
+    refute_match(/store\.(?:capture!|complete!|set_state!|set_priority!|reschedule!|set_date!|undate!|retitle!|set_tags!|set_deferred!|set_recur!|add_note!|move!|move_under!|move_top!)/, source)
   end
 
   def test_cli_tag_patch_preserves_legacy_tag_order_and_undo_label

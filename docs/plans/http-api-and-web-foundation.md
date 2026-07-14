@@ -545,8 +545,8 @@ unrelated work on the branch and pays off even if the API slips.
    parsing edge, and mutations return ids, snapshots, or typed results — never
    line numbers. `L<line>` remains user-facing input syntax only.
 
-Exit: the Store exposes one mutation protocol (only `capture!` and the archive
-sweep await their typed replacements in Phase 3), no mutation returns a file
+Exit: the Store exposes one mutation protocol (only the archive sweep awaits
+its typed replacement in Phase 3), no mutation returns a file
 coordinate, and CLI/TUI behavior is unchanged under golden tests.
 
 ### Phase 2: reusable application/query layer, no behavior change

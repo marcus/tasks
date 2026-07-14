@@ -6,6 +6,7 @@ require "securerandom"
 require "set"
 require_relative "atomic"
 require_relative "check"
+require_relative "create_task"
 require_relative "edit_snapshot"
 require_relative "format"
 require_relative "journal"
@@ -321,18 +322,68 @@ module Tasks
     def undo! = history_step(-1)
     def redo! = history_step(1)
 
-    # Create a new item under top-level section `project` (default "Inbox").
-    # Returns the new record's 1-based line number, or false if the section
-    # doesn't exist. A capture with a date is already "processed"; callers pass
-    # state: "TODO" in that case.
-    # `under:` (an Item) nests the new task as the last child of that task
-    # instead of filing it under a section; it is mutually exclusive with
-    # `project` (the CLI enforces that — the impl just prefers `under`). A capture
-    # `under` a parent already at the depth cap returns :too_deep before writing.
-    def capture!(text, due: nil, scheduled: nil, priority: nil, tags: [], state: "INBOX", project: nil, under: nil)
-      text = utf8(text)
-      tags = tags.map { |t| utf8(t) }
-      with_history("capture: #{text}") { capture_impl(text, due, scheduled, priority, tags, state, project, under) }
+    # Create one task from a complete typed command in one checked transaction.
+    # Unlike the retired capture! path, recurrence and initial notes are part of
+    # the same write and journal step as the new record itself.
+    def create_task!(command)
+      unless command.is_a?(CreateTask)
+        return MutationResult.new(status: :invalid, errors: ["expected a Tasks::CreateTask"])
+      end
+
+      with_lock do
+        @last_rollback = nil
+        before = snapshot
+        begin
+          preflight = create_preflight_failure
+          if preflight
+            return MutationResult.new(status: :store_invalid, errors: [preflight])
+          end
+
+          attributes, validation = normalize_create_task(command)
+          unless validation.empty?
+            return MutationResult.new(status: :invalid, errors: validation.values.flatten,
+                                      field_errors: validation)
+          end
+
+          records = fresh_records(@org)
+          working_records = duplicate_records(records)
+          planned = plan_create_task(working_records, attributes)
+          unless planned[:status] == :ok
+            return MutationResult.new(status: planned[:status], errors: planned[:errors] || [],
+                                      field_errors: planned[:field_errors] || {})
+          end
+
+          # Serialize before replacing the file so encoding/JSON errors are an
+          # invalid command result, never a partially installed task record.
+          Format.dump(planned[:records])
+        rescue JSON::GeneratorError, EncodingError, ArgumentError => e
+          return MutationResult.new(status: :invalid, errors: [safe_patch_error(e)])
+        end
+
+        begin
+          write_records(@org, planned[:records])
+          if (reason = post_write_failure)
+            @last_rollback = reason
+            restore(before)
+            return MutationResult.new(status: :store_invalid, errors: [reason])
+          end
+
+          after = snapshot
+          @journal.record(label: "capture: #{attributes[:title]}", before: before, after: after)
+          reload!
+          ri = locate_stable_index(@records, planned[:id])
+          MutationResult.new(
+            status: :ok,
+            snapshot: ri && build_edit_snapshot(@records, ri),
+            touched_ids: [planned[:id]],
+            summary: { parent_id: planned[:parent_id], inserted_id: planned[:id] }
+          )
+        rescue StandardError => e
+          @last_rollback = safe_patch_error(e)
+          restore(before)
+          MutationResult.new(status: :unavailable, errors: [safe_patch_error(e)])
+        end
+      end
     end
 
     def archive_swept!(expected_preview: nil)
@@ -506,6 +557,209 @@ module Tasks
     end
 
     private
+
+    # -- creation --------------------------------------------------------------
+
+    # Empty/missing live files are an intentional first-run state: creation
+    # bootstraps their meta and Inbox records. Any non-empty file (including an
+    # archive) must already validate before a create command is allowed to
+    # inspect or extend it.
+    def create_preflight_failure
+      [@org, (@archive if File.exist?(@archive))].compact.each do |path|
+        next if path == @org && (!File.exist?(path) || File.zero?(path))
+
+        result = Check.check(path)
+        return result.errors.first&.last || "validation failed" unless result.ok?
+      end
+      nil
+    end
+
+    def normalize_create_task(command)
+      errors = Hash.new { |fields, field| fields[field] = [] }
+      title = normalize_create_text(command.title, :title, errors, required: true)
+      priority = normalize_create_priority(command.priority, errors)
+      tags = normalize_create_tags(command.tags, errors)
+      scheduled = normalize_create_date(command.scheduled, :scheduled, errors)
+      deadline = normalize_create_date(command.deadline, :deadline, errors)
+      state = normalize_create_state(command.state, errors)
+      project = normalize_create_project(command.project, errors)
+      parent_id = normalize_create_parent_id(command.parent_id, errors)
+      recurrence = normalize_create_recurrence(command.recurrence, errors)
+      notes = normalize_create_notes(command, errors)
+
+      if project && parent_id
+        errors[:location] << "project and parent_id cannot both be supplied"
+      end
+
+      # Capturing with a recurrence has always meant "start repeating now" when
+      # a date was omitted. Keep that behavior in the command, not the CLI, so
+      # every transport gets one definition of a recurring create.
+      scheduled ||= Date.today if recurrence && !deadline
+      state ||= (scheduled || deadline ? "TODO" : "INBOX")
+      errors[:state] << "can't set recurrence on a #{state} task" if recurrence && DONE_STATES.include?(state)
+
+      [
+        {
+          title: title, priority: priority, tags: tags, scheduled: scheduled,
+          deadline: deadline, state: state, project: project, parent_id: parent_id,
+          recurrence: recurrence, notes: notes,
+        },
+        errors,
+      ]
+    end
+
+    def normalize_create_text(value, field, errors, required: false)
+      if value.nil?
+        errors[field] << "#{field} is required" if required
+        return nil
+      end
+      unless value.is_a?(String)
+        errors[field] << "#{field} must be text"
+        return nil
+      end
+
+      text = utf8(value)
+      unless text.valid_encoding?
+        errors[field] << "#{field} must be valid UTF-8 text"
+        return nil
+      end
+      text = text.strip if field == :title
+      if required && text.empty?
+        errors[field] << "#{field} cannot be blank"
+        return nil
+      end
+      text
+    end
+
+    def normalize_create_priority(value, errors)
+      return nil if value.nil?
+      return value if Check::PRIORITIES.include?(value)
+
+      errors[:priority] << "priority must be A, B, C, or nil"
+      nil
+    end
+
+    def normalize_create_tags(value, errors)
+      unless value.is_a?(Array)
+        errors[:tags] << "tags must be a list of tags"
+        return []
+      end
+      unless value.all? { |tag| tag.is_a?(String) }
+        errors[:tags] << "tags must be a list of tags"
+        return []
+      end
+
+      tags = value.map { |tag| utf8(tag) }
+      errors[:tags] << "tags must be valid UTF-8 text" unless tags.all?(&:valid_encoding?)
+      tags
+    end
+
+    def normalize_create_date(value, field, errors)
+      return nil if value.nil? || value == ""
+      return value if value.is_a?(Date)
+      return Date.iso8601(value) if value.is_a?(String)
+
+      errors[field] << "#{field} must be a date or nil"
+      nil
+    rescue ArgumentError, Date::Error
+      errors[field] << "#{field} must be a date or nil"
+      nil
+    end
+
+    def normalize_create_state(value, errors)
+      return nil if value.nil?
+      return value if Check::STATES.include?(value)
+
+      errors[:state] << "invalid task state"
+      nil
+    end
+
+    def normalize_create_project(value, errors)
+      return nil if value.nil?
+
+      project = normalize_create_text(value, :project, errors)
+      errors[:project] << "project cannot be blank" if project&.empty?
+      project&.empty? ? nil : project
+    end
+
+    def normalize_create_parent_id(value, errors)
+      return nil if value.nil?
+      unless value.is_a?(String) && Check::ID_RE.match?(value)
+        errors[:parent_id] << "parent_id must be a stable task id"
+        return nil
+      end
+
+      value
+    end
+
+    def normalize_create_recurrence(value, errors)
+      return nil if value.nil?
+      return value if value.is_a?(String) && Recur.cookie?(value)
+
+      errors[:recurrence] << "invalid recurrence cookie"
+      nil
+    end
+
+    def normalize_create_notes(command, errors)
+      if !command.body.nil? && !command.notes.nil?
+        errors[:body] << "body and notes cannot both be supplied"
+        return []
+      end
+
+      supplied = command.notes.nil? ? command.body : command.notes
+      return [] if supplied.nil?
+      supplied = supplied.split("\n", -1) if supplied.is_a?(String)
+      unless supplied.is_a?(Array) && supplied.all? { |note| note.is_a?(String) }
+        errors[:body] << "initial notes must be text or an ordered list of text"
+        return []
+      end
+
+      notes = supplied.map { |note| utf8(note) }
+      errors[:body] << "initial notes must be valid UTF-8 text" unless notes.all?(&:valid_encoding?)
+      notes
+    end
+
+    def plan_create_task(records, attributes)
+      if attributes[:parent_id]
+        pi = records.index { |record| record["id"] == attributes[:parent_id] }
+        return { status: :not_found } unless pi
+        return { status: :invalid, errors: ["parent_id must identify a task"] } unless records[pi]["type"] == "task"
+
+        by_id = records.to_h { |record| [record["id"], record] }
+        if task_depth(by_id, records[pi]) + 1 > @max_depth
+          return { status: :too_deep,
+                   errors: ["would exceed max depth #{@max_depth} (max_depth config / TASKS_MAX_DEPTH)"] }
+        end
+        parent_id = records[pi]["id"]
+        insert_at = subtree_end(records, pi)
+      elsif records.empty?
+        records = [meta_record,
+                   { "type" => "section", "id" => gen_id(archived_ids),
+                     "title" => (attributes[:project] || "Inbox") }]
+        si = records.length - 1
+        parent_id = records[si]["id"]
+        insert_at = subtree_end(records, si)
+      else
+        si = find_section(records, attributes[:project] || "Inbox")
+        return { status: :invalid, errors: ["capture project does not exist"] } unless si
+
+        parent_id = records[si]["id"]
+        insert_at = subtree_end(records, si)
+      end
+
+      id = gen_id(ids_of(records) + archived_ids)
+      rec = { "type" => "task", "id" => id, "parent" => parent_id,
+              "state" => attributes[:state], "title" => attributes[:title] }
+      rec["priority"] = attributes[:priority] if attributes[:priority]
+      rec["tags"] = attributes[:tags] unless attributes[:tags].empty?
+      rec["scheduled"] = attributes[:scheduled].iso8601 if attributes[:scheduled]
+      rec["deadline"] = attributes[:deadline].iso8601 if attributes[:deadline]
+      rec["recur"] = attributes[:recurrence] if attributes[:recurrence]
+      rec["body"] = (["Captured [#{Date.today}]."] + attributes[:notes]).join("\n")
+
+      records[insert_at, 0] = [rec]
+      { status: :ok, records: records, id: id, parent_id: parent_id }
+    end
 
     # -- reading ---------------------------------------------------------------
 
@@ -1508,47 +1762,6 @@ module Tasks
         return res.errors.first&.last || "validation failed" unless res.ok?
       end
       nil
-    end
-
-    def capture_impl(text, due, scheduled, priority, tags, state, project, under = nil)
-      records = fresh_records(@org)
-      if under
-        # Nest under an existing task: locate it (stale → false), enforce the
-        # depth cap BEFORE any write, then file the new task as its last child.
-        pi = locate_index(records, under) or return false
-        by_id = records.to_h { |r| [r["id"], r] }
-        return :too_deep if task_depth(by_id, records[pi]) + 1 > @max_depth
-        parent_id = records[pi]["id"]
-        insert_at = subtree_end(records, pi)
-      elsif records.empty?
-        # First run: a missing or empty file. Bootstrap a brand-new store — a
-        # meta line plus the target section (default "Inbox") — then insert into
-        # it. (A NAMED --project missing from a NON-empty file still fails below.)
-        records = [meta_record,
-                   { "type" => "section", "id" => gen_id(archived_ids),
-                     "title" => (project || "Inbox").strip }]
-        si = records.length - 1
-        parent_id = records[si]["id"]
-        insert_at = subtree_end(records, si)
-      else
-        si = find_section(records, project || "Inbox") or return false
-        parent_id = records[si]["id"]
-        insert_at = subtree_end(records, si)
-      end
-
-      rec = { "type" => "task", "id" => gen_id(ids_of(records) + archived_ids),
-              "parent" => parent_id, "state" => state }
-      rec["priority"] = priority if priority
-      rec["title"] = text.strip
-      rec["tags"] = tags unless tags.empty?
-      rec["scheduled"] = scheduled.iso8601 if scheduled
-      rec["deadline"] = due.iso8601 if due
-      rec["body"] = "Captured [#{Date.today}]."
-
-      records[insert_at, 0] = [rec]
-      write_records(@org, records)
-      reload!
-      insert_at + 1
     end
 
     # Move every fully closed DONE/CANCELLED task subtree to the archive file.

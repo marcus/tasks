@@ -231,7 +231,10 @@ def cmd_capture(args)
   all_tags = contexts.map { |c| c.start_with?("@") ? c : "@#{c}" } + tags
 
   # --under nests below an existing task (open-only ref, exit 2 on miss).
+  # Resolve the convenience ref here, then pass only its durable id across the
+  # application boundary.
   under_item = under && resolve_ref(under)
+  parent_id = under_item && stable_id_for(under_item)
 
   if dry
     head = +"#{st} "
@@ -247,20 +250,25 @@ def cmd_capture(args)
     return
   end
 
-  line = store.capture!(text, due: due_date, scheduled: scheduled_date,
-                        priority: pri, tags: all_tags, state: st,
-                        project: project, under: under_item)
-  mutation_failed "would exceed max depth #{store.max_depth} (max_depth config / TASKS_MAX_DEPTH)" if line == :too_deep
-  mutation_failed %(could not capture (no "#{project || "Inbox"}" section found?)) unless line && line.positive?
-  captured = store.items.find { |i| i.line == line }
-  mutation_failed "lost the captured task" unless captured&.id
-  captured_id = captured.id
-  if cookie
-    result = patch_task_by_id(captured_id, field: :recurrence, value: cookie,
-                              label: "recur #{cookie}: #{captured.title}")
-    mutation_result_failed(result, "failed to set recurrence on the new item")
+  command = Tasks::CreateTask.new(
+    title: text, deadline: due_date, scheduled: scheduled_date,
+    priority: pri, tags: all_tags, state: st, project: project,
+    parent_id: parent_id, recurrence: cookie
+  )
+  result = application.create_task(command)
+  if result.too_deep?
+    mutation_failed "would exceed max depth #{store.max_depth} (max_depth config / TASKS_MAX_DEPTH)"
   end
-  report_touched([captured_id], json: json)
+  # A parent can disappear after the CLI resolved --under. That is a stale
+  # mutation (exit 1), not a fresh ref-resolution miss (exit 2).
+  if result.not_found? && parent_id
+    result = Tasks::MutationResult.new(status: :stale, errors: result.errors,
+                                        field_errors: result.field_errors,
+                                        form_errors: result.form_errors,
+                                        touched_ids: result.touched_ids, summary: result.summary)
+  end
+  mutation_result_failed(result, "could not capture (no #{(project || "Inbox").inspect} section found?)")
+  report_touched(result.touched_ids, json: json)
 end
 
 # Core of the state-transition verbs. `state` passes the target as a
