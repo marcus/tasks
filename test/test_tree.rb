@@ -99,6 +99,63 @@ class TestTree < Minitest::Test
     end
   end
 
+  def test_read_snapshot_remains_coherent_and_immutable_across_store_reload
+    nested_store do |store, org, dir|
+      archive = File.join(dir, "archive.jsonl")
+      archived_records = [
+        { "type" => "meta", "version" => 1 },
+        { "type" => "task", "id" => "ffff0001", "state" => "DONE",
+          "title" => "Archived billing notes", "body" => "https://old.example.test/runbook" },
+      ]
+      File.write(archive, Tasks::Format.dump(archived_records))
+
+      snapshot = store.read_snapshot(include_archive: true)
+      billing = snapshot.items.find { |item| item.title.include?("billing") }
+      archived = snapshot.archive_items.first
+      billing_node = snapshot.node_for(billing)
+
+      assert snapshot.frozen?
+      assert snapshot.live_records.frozen?
+      assert snapshot.live_records.first.frozen?
+      assert snapshot.items.frozen?
+      assert billing.frozen?
+      assert billing.tags.frozen?
+      assert snapshot.tree.frozen?
+      assert billing_node.frozen?
+      assert snapshot.nodes_by_line.frozen?
+      assert_equal ["Context in [[https://acme.slack.com/archives/C042/p171][the incident thread]].",
+                    "Ticket: https://acme.atlassian.net/browse/OPS-1234."], snapshot.body(billing)
+      assert_equal %w[slack jira], snapshot.links(billing).map(&:system)
+      assert_equal ["https://old.example.test/runbook"], snapshot.body(archived)
+
+      revised_live = NESTED_RECORDS.map(&:dup)
+      revised_billing = revised_live.find { |record| record["id"] == "aaaa1111" }
+      revised_billing["title"] = "Fix replacement billing outage"
+      revised_billing["body"] = "https://new.example.test/runbook"
+      revised_archive = archived_records.map(&:dup)
+      revised_archive.last["body"] = "https://new.example.test/archive"
+      File.write(org, Tasks::Format.dump(revised_live))
+      File.write(archive, Tasks::Format.dump(revised_archive))
+
+      store.reload!(include_archive: true)
+      current = store.items.find { |item| item.id == billing.id }
+
+      # The held snapshot cannot combine the old title with replacement body
+      # data after the Store itself has reloaded.
+      assert_equal "Fix billing outage", billing.title
+      assert_equal "Fix billing outage", billing_node.title
+      assert_equal ["Context in [[https://acme.slack.com/archives/C042/p171][the incident thread]].",
+                    "Ticket: https://acme.atlassian.net/browse/OPS-1234."], snapshot.body(billing)
+      assert_equal %w[slack jira], snapshot.links(billing).map(&:system)
+      assert_equal ["https://old.example.test/runbook"], snapshot.body(archived)
+
+      assert_equal "Fix replacement billing outage", current.title
+      assert_equal ["https://new.example.test/runbook"], store.body(current)
+      assert_equal ["https://new.example.test/archive"],
+                   store.body(store.archive_items.first)
+    end
+  end
+
   # -- link extraction ---------------------------------------------------------
 
   def test_extract_org_links_with_labels

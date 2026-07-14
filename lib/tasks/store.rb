@@ -44,6 +44,114 @@ module Tasks
     OPEN_STATES = %w[INBOX TODO NEXT WAITING].freeze
     DONE_STATES = %w[DONE CANCELLED].freeze
 
+    # A coherent, immutable view of the task files. A caller can hold one of
+    # these while rendering a task and safely ask for its body, links, or tree
+    # node without mixing fields from a later file reload. Store builds it
+    # while holding the same sidecar lock as mutations.
+    class ReadSnapshot
+      attr_reader :items, :archive_items, :tree, :nodes_by_line, :live_records,
+                  :archive_records, :live_stat, :archive_stat
+
+      def initialize(live_records:, live_stat:, archive_records:, archive_stat:,
+                     archive_loaded:, item_builder:, link_shorthands:, link_systems:)
+        @live_records = immutable_copy(live_records)
+        @archive_records = immutable_copy(archive_records)
+        @live_stat = live_stat&.freeze
+        @archive_stat = archive_stat&.freeze
+        @archive_loaded = archive_loaded
+        @link_shorthands = immutable_copy(link_shorthands)
+        @link_systems = immutable_copy(link_systems)
+
+        @items = immutable_items(@live_records, :live, item_builder)
+        @archive_items = immutable_items(@archive_records, :archive, item_builder)
+        by_line = @items.to_h { |item| [item.line, item] }
+        @tree = Tree.build(@live_records, by_line)
+        @nodes_by_line = {}.tap do |map|
+          @tree.each { |root| root.each { |node| map[node.line] = node } }
+        end
+        freeze_tree(@tree)
+        @nodes_by_line.freeze
+        freeze
+      end
+
+      def archive_loaded? = @archive_loaded
+
+      # The item's own body lines. A snapshot deliberately never falls through
+      # to the current Store contents: held items stay coherent with their
+      # title, tree node, and link extraction even after a later reload.
+      def body(item)
+        record = locate(records_for(item), item)
+        value = record && record["body"]
+        value.is_a?(String) && !value.empty? ? value.split("\n") : []
+      end
+
+      def links(item)
+        Links.extract([item.title, *body(item)],
+                      shorthands: @link_shorthands, systems: @link_systems)
+      end
+
+      # The live tree node for an item, or nil for archive items. Prefer the
+      # record's current line, then recover stable-id items after line shifts;
+      # id-less held items never retarget a different title.
+      def node_for(item)
+        return nil unless item.source == :live
+        node = @nodes_by_line[item.line]
+        if node&.item
+          return node if item.id ? node.item.id == item.id : node.item.title == item.title
+        end
+        item.id ? @nodes_by_line.each_value.find { |candidate| candidate.item&.id == item.id } : nil
+      end
+
+      private
+
+      def records_for(item)
+        item.source == :archive ? @archive_records : @live_records
+      end
+
+      def locate(records, item)
+        return records.find { |record| record["id"] == item.id } if item.id
+        record = records.find { |candidate| candidate["line"] == item.line }
+        record if record && record["type"] == "task" && record["title"] == item.title
+      end
+
+      def immutable_items(records, source, item_builder)
+        records.select { |record| record["type"] == "task" }.map do |record|
+          item = item_builder.call(record, source)
+          item.tags.freeze
+          item.scheduled&.freeze
+          item.deadline&.freeze
+          item.closed&.freeze
+          item.freeze
+        end.freeze
+      end
+
+      def immutable_copy(value)
+        case value
+        when Hash
+          value.each_with_object({}) do |(key, child), copy|
+            copy[immutable_copy(key)] = immutable_copy(child)
+          end.freeze
+        when Array
+          value.map { |child| immutable_copy(child) }.freeze
+        when String
+          value.dup.freeze
+        else
+          value.freeze
+        end
+      end
+
+      def freeze_tree(nodes)
+        nodes.each do |node|
+          freeze_tree(node.children)
+          node.body.each(&:freeze)
+          node.body.freeze
+          node.children.freeze
+          node.freeze
+        end
+        nodes.freeze
+      end
+    end
+
     ArchiveBlock = Struct.new(:root_id, :root_title, :open_ids, :open_titles, keyword_init: true)
     ArchivePreview = Struct.new(:roots, :descendants, :blocks, :candidate_ids, :fingerprint, keyword_init: true) do
       def total = roots + descendants
@@ -86,28 +194,52 @@ module Tasks
       @archive = archive
       @max_depth = max_depth
       @stat = nil
+      @archive_stat = nil
       @cache = nil
       @records = nil
+      @read_snapshot = nil
       @link_shorthands = links
       @link_systems = link_systems
       @journal = Journal.new(dir: journal_dir || Journal.dir_for(org), org: org, limit: undo_limit)
     end
 
     def items
-      reload! if @cache.nil? || changed?
-      @cache
+      current_read_snapshot.items
     end
 
     def changed?
       stat_key(@org) != @stat
     end
 
-    def reload!
-      @stat = stat_key(@org)
-      @records = parse_records(@org)
-      @cache = @records.select { |r| r["type"] == "task" }.map { |r| build_item(r, :live) }
-      @tree = nil # derived from the same records; rebuild lazily on next ask
-      @nodes_by_line = nil
+    # Capture live records and, when requested, archive records together under
+    # the Store lock. The result never changes in place; request/render code
+    # should retain this object while it needs a coherent multi-field read.
+    def read_snapshot(include_archive: false)
+      with_lock do
+        live_records, live_stat = fresh_records_with_stat(@org)
+        archive_records, archive_stat = if include_archive
+                                          fresh_records_with_stat(@archive)
+                                        else
+                                          [[], nil]
+                                        end
+        ReadSnapshot.new(
+          live_records: live_records, live_stat: live_stat,
+          archive_records: archive_records, archive_stat: archive_stat,
+          archive_loaded: include_archive, item_builder: method(:build_item),
+          link_shorthands: @link_shorthands, link_systems: @link_systems
+        )
+      end
+    end
+
+    def reload!(include_archive: false)
+      snapshot = read_snapshot(include_archive: include_archive)
+      @read_snapshot = snapshot
+      @stat = snapshot.live_stat
+      @archive_stat = snapshot.archive_stat if snapshot.archive_loaded?
+      @records = snapshot.live_records
+      @cache = snapshot.items
+      @tree = snapshot.tree
+      @nodes_by_line = snapshot.nodes_by_line
       self
     end
 
@@ -116,8 +248,7 @@ module Tasks
     # own body lines. Rebuilt whenever the file changes (items() drives the
     # staleness check).
     def tree
-      items # ensures a fresh parse and clears @tree if the file changed
-      @tree ||= Tree.build(@records, @cache.to_h { |i| [i.line, i] })
+      current_read_snapshot.tree
     end
 
     # The tree node for an item (nil for archive items — the tree indexes the
@@ -125,24 +256,13 @@ module Tasks
     # the node at its line doesn't match (lines shifted underneath a held item),
     # fall back to finding its node by id — same preference locate applies.
     def node_for(item)
-      return nil unless item.source == :live
-      n = nodes_by_line[item.line]
-      if n&.item
-        # Same identity check the mutation paths apply: id when the item has
-        # one, title otherwise — a held id-less item whose line was taken over
-        # by a different task must degrade to nil, not to the wrong task.
-        return n if item.id ? n.item.id == item.id : n.item.title == item.title
-      end
-      item.id ? nodes_by_line.each_value.find { |x| x.item&.id == item.id } : nil
+      current_read_snapshot.node_for(item)
     end
 
     # Line-number => node map over the whole tree, built once per tree build so
     # per-item lookups (body, project) are O(1), not a tree walk each.
     def nodes_by_line
-      tree
-      @nodes_by_line ||= {}.tap do |map|
-        @tree.each { |root| root.each { |n| map[n.line] = n } }
-      end
+      current_read_snapshot.nodes_by_line
     end
 
     # The item's own body lines — the record's `body` string split back into
@@ -150,18 +270,14 @@ module Tasks
     # includes a child's body (children are separate records). Works for live
     # AND archive items (same record lookup for both).
     def body(item)
-      rec = locate(records_for(item), item)
-      return [] unless rec
-      b = rec["body"]
-      b.nil? || b.empty? ? [] : b.split("\n")
+      current_read_snapshot(include_archive: item.source == :archive).body(item)
     end
 
     # Links found in the item's title and body — org links, bare URLs, and
     # configured shorthands (jira:OPS-1) — classified by system (see
     # Tasks::Links).
     def links(item)
-      Links.extract([item.title, *body(item)],
-                    shorthands: @link_shorthands, systems: @link_systems)
+      current_read_snapshot(include_archive: item.source == :archive).links(item)
     end
 
     # The item's headline rendered from its fields, star-less: state, optional
@@ -433,12 +549,23 @@ module Tasks
     # Items parsed from the archive file (source: :archive). Not cached — the
     # archive is read rarely (`list -x/-a`) and appended rarely.
     def archive_items
-      parse_records(@archive).select { |r| r["type"] == "task" }.map { |r| build_item(r, :archive) }
+      current_read_snapshot(include_archive: true).archive_items
     end
 
     private
 
     # -- reading ---------------------------------------------------------------
+
+    # The cached Store-facing convenience reads all come from one snapshot. A
+    # caller that needs a stable multi-step read should keep the public
+    # #read_snapshot result instead; this cache only preserves the existing
+    # Store surface and its reload-on-live-change behavior.
+    def current_read_snapshot(include_archive: false)
+      needs_archive = include_archive &&
+                      (@read_snapshot.nil? || !@read_snapshot.archive_loaded? || archive_changed?)
+      reload!(include_archive: include_archive) if @read_snapshot.nil? || changed? || needs_archive
+      @read_snapshot
+    end
 
     # The staleness key for a file: [mtime, inode, size] — the same triple the
     # read cache keys on, so two out-of-band writes within one coarse mtime tick
@@ -449,6 +576,25 @@ module Tasks
       [st.mtime, st.ino, st.size]
     rescue Errno::ENOENT
       nil
+    end
+
+    def archive_changed?
+      stat_key(@archive) != @archive_stat
+    end
+
+    # A snapshot must capture the bytes and their staleness key from the same
+    # file descriptor. If Atomic.write installs a newer inode after this open,
+    # the later stat comparison notices it rather than claiming old bytes are
+    # current. Mutations intentionally retain their existing fresh_records
+    # path; this helper belongs only to immutable read snapshots.
+    def fresh_records_with_stat(path)
+      File.open(path, "r", encoding: "UTF-8") do |file|
+        stat = file.stat
+        records = Format.parse(file.read).records
+        [records, [stat.mtime, stat.ino, stat.size]]
+      end
+    rescue Errno::ENOENT
+      [[], nil]
     end
 
     # Read + parse a file into records via a small cache, so read surfaces that
@@ -476,10 +622,6 @@ module Tasks
       Format.parse(File.read(path, encoding: "UTF-8")).records
     rescue Errno::ENOENT
       []
-    end
-
-    def records_for(item)
-      item.source == :archive ? parse_records(@archive) : parse_records(@org)
     end
 
     # Build an Item, coercing defensively so a hand-edited/malformed record can
@@ -1035,9 +1177,23 @@ module Tasks
     # journal's conflict detection, and Atomic.write keeps even an unlocked
     # concurrent read from ever tearing.
     def with_lock
+      if @lock_depth.to_i.positive?
+        @lock_depth += 1
+        begin
+          return yield
+        ensure
+          @lock_depth -= 1
+        end
+      end
+
       File.open(lock_path, File::RDWR | File::CREAT, 0o644) do |f|
         f.flock(File::LOCK_EX)
-        yield
+        @lock_depth = 1
+        begin
+          yield
+        ensure
+          @lock_depth = 0
+        end
       end
     end
 
