@@ -127,7 +127,10 @@ def cmd_next(args = [])
   end
   by_ctx.sort.each do |ctx, list|
     puts bold(ctx)
-    list.sort_by { |i| i.priority || "Z" }.each do |i|
+    # The canonical :next order is already priority-sorted with file-order
+    # ties; a per-group re-sort here would re-break those ties (MRI sort_by
+    # is unstable).
+    list.each do |i|
       due = short_due(i)
       puts "  #{fmt(i)}#{due.empty? ? "" : "  #{due}"}"
     end
@@ -419,8 +422,12 @@ end
 def mutation_result_failed(result, msg)
   return result if result.ok?
 
-  message = if store.last_rollback || result.store_invalid?
+  # last_rollback distinguishes a write that failed validation and rolled back
+  # from a preflight refusal that never wrote (the file was already invalid).
+  message = if store.last_rollback
               "#{msg}\nfile failed validation after the edit — run `tasks check`"
+            elsif result.store_invalid?
+              "#{msg}\ntask file is already invalid — run `tasks check` (nothing was written)"
             else
               msg
             end
@@ -451,7 +458,12 @@ def nearest_section_id_for(task_id)
   by_id = records.to_h { |record| [record["id"], record] }
   record = by_id[task_id]
   record = record && record["parent"] && by_id[record["parent"]]
-  record = record && by_id[record["parent"]] while record && record["type"] != "section"
+  while record && record["type"] != "section"
+    # A nil parent must stop the walk (rootless ancestor chain) — without the
+    # guard, by_id[nil] resolves to the id-less meta record, whose parent is
+    # also nil, and the loop cycles on it forever.
+    record = record["parent"] && by_id[record["parent"]]
+  end
   record && record["id"]
 end
 
@@ -647,8 +659,10 @@ def cmd_show(args)
   ref = rest.shift
   abort %(usage: tasks show <ref>) if ref.nil? || ref.strip.empty?
   item = resolve_ref(ref, include_done: flags["--include-done"])
-  task = application.get_task(stable_id_for(item))
-  mutation_failed "lost the selected task" unless task
+  # Show is a pure read: build the view over one snapshot and fall back to the
+  # held item if a concurrent write removed it, instead of aborting with
+  # mutation-flavored error text (and a misleading rollback hint).
+  task = Tasks::TaskQueries.new(store.read_snapshot).task(item)
 
   closed = task.closed
   notes = task.body.map(&:strip).reject(&:empty?)
@@ -849,10 +863,20 @@ def cmd_tag(args)
   report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"])
 end
 
+# ARGV strings carry the locale's encoding (ASCII-8BIT under LANG=C, cron,
+# scripts); re-tag as UTF-8 before joining with snapshot text, or the
+# interpolation below raises Encoding::CompatibilityError on a non-ASCII body.
+# Same recovery Store#utf8 applies to the value once it reaches the patch.
+def utf8_arg(str)
+  return str if str.nil? || str.encoding == Encoding::UTF_8
+  recoded = str.dup.force_encoding(Encoding::UTF_8)
+  recoded.valid_encoding? ? recoded : str
+end
+
 def cmd_note(args)
   flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
   ref = rest.shift
-  text = rest.join(" ").strip
+  text = utf8_arg(rest.join(" ").strip)
   abort %(usage: tasks note <ref> "text") if ref.nil? || ref.strip.empty? || text.empty?
 
   item = resolve_ref(ref, include_done: flags["--include-done"])

@@ -29,7 +29,14 @@ class TestTasksRequireBoundary < Minitest::Test
       original_stdout = $stdout
       $stdout = StringIO.new
       ARGV.replace(["help"])
-      load File.join(ENV.fetch("TASKS_ROOT"), "bin", "tasks")
+      # Guard SystemExit: if the CLI ever exits from the help path, an
+      # uncaught exit(0) would skip every assertion below and the test would
+      # pass vacuously (the TUI launcher script guards the same way).
+      begin
+        load File.join(ENV.fetch("TASKS_ROOT"), "bin", "tasks")
+      rescue SystemExit => error
+        abort "CLI help exited #{error.status.inspect} before assertions ran" unless error.status.nil? || error.status.zero?
+      end
       abort "CLI did not load query layer" unless defined?(Tasks::TaskQueries)
       ARGV.replace(original_argv)
       $stdout = original_stdout

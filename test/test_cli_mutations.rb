@@ -3,6 +3,7 @@
 require_relative "test_helper"
 require "json"
 require "open3"
+require "timeout"
 require "tasks/application"
 
 # Store-layer coverage for the CLI's due/state/priority mutations, plus
@@ -1826,6 +1827,37 @@ class TestCliMutations < Minitest::Test
       _out, missing_err, missing_status = Open3.capture3(env, "ruby", BIN, "priority", "does not exist", "A")
       assert_equal 2, missing_status.exitstatus
       assert_match(/no match: does not exist/, missing_err)
+    end
+  end
+
+  # A rootless task's ancestor chain ends at a nil parent; the section walk
+  # must refuse cleanly, not resolve by_id[nil] to the id-less meta record and
+  # cycle on it forever. (Check accepts rootless tasks, so this file is valid.)
+  def test_cli_move_top_refuses_a_rootless_ancestor_chain_without_hanging
+    rootless = dump_fixture([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "aaaa0001", "title" => "Inbox" },
+      { "type" => "task", "id" => "aaaa0002", "state" => "TODO", "title" => "Rootless" },
+      { "type" => "task", "id" => "aaaa0003", "parent" => "aaaa0002", "state" => "TODO",
+        "title" => "Rootless child" },
+    ])
+    Timeout.timeout(15) do
+      run_cli("move", "Rootless child", "--top", content: rootless) do |org, _out, err, st|
+        assert_equal 1, st.exitstatus
+        assert_match(/failed to unnest/, err)
+        assert_equal rootless, File.read(org), "a refused unnest must not write"
+      end
+    end
+  end
+
+  # LC_ALL=C tags ARGV strings with a non-UTF-8 encoding; joining one onto a
+  # UTF-8 snapshot body must not raise Encoding::CompatibilityError.
+  def test_cli_note_appends_under_a_c_locale_to_a_non_ascii_body
+    run_cli("note", "Travel", "follow up — ping the desk",
+            env: { "LC_ALL" => "C", "LANG" => "C" }) do |org, _out, err, st|
+      assert st.success?, err
+      travel = record_for(org, title: "Travel desk reply")
+      assert_equal "Some note line.\nfollow up — ping the desk", travel["body"]
     end
   end
 end
