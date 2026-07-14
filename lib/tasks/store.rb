@@ -70,11 +70,18 @@ module Tasks
 
         @items = immutable_items(@live_records, :live, item_builder)
         @archive_items = immutable_items(@archive_records, :archive, item_builder)
+        @records_by_id = {
+          live: index_records_by_id(@live_records),
+          archive: index_records_by_id(@archive_records),
+        }.freeze
         by_line = @items.to_h { |item| [item.line, item] }
         @tree = Tree.build(@live_records, by_line)
         @nodes_by_line = {}.tap do |map|
           @tree.each { |root| root.each { |node| map[node.line] = node } }
         end
+        @nodes_by_id = @nodes_by_line.each_value.to_h do |node|
+          [node.item&.id, node]
+        end.tap { |map| map.delete(nil) }.freeze
         freeze_tree(@tree)
         @nodes_by_line.freeze
         freeze
@@ -114,7 +121,7 @@ module Tasks
         if node&.item
           return node if item.id ? node.item.id == item.id : node.item.title == item.title
         end
-        item.id ? @nodes_by_line.each_value.find { |candidate| candidate.item&.id == item.id } : nil
+        item.id ? @nodes_by_id[item.id] : nil
       end
 
       private
@@ -123,10 +130,22 @@ module Tasks
         item.source == :archive ? @archive_records : @live_records
       end
 
+      # O(1) per item: every read surface (body, links, TaskView building) runs
+      # this per task, so a linear scan here made whole-list reads quadratic.
       def locate(records, item)
-        return records.find { |record| record["id"] == item.id } if item.id
+        if item.id
+          source = records.equal?(@archive_records) ? :archive : :live
+          return @records_by_id.fetch(source)[item.id]
+        end
         record = records.find { |candidate| candidate["line"] == item.line }
         record if record && record["type"] == "task" && record["title"] == item.title
+      end
+
+      def index_records_by_id(records)
+        records.each_with_object({}) do |record, map|
+          id = record["id"]
+          map[id] = record if id
+        end.freeze
       end
 
       def immutable_items(records, source, item_builder)
@@ -251,14 +270,13 @@ module Tasks
     end
 
     def reload!(include_archive: false)
-      snapshot = read_snapshot(include_archive: include_archive)
-      @read_snapshot = snapshot
-      @stat = snapshot.live_stat
-      @archive_stat = snapshot.archive_stat if snapshot.archive_loaded?
-      @records = snapshot.live_records
-      @cache = snapshot.items
-      @tree = snapshot.tree
-      @nodes_by_line = snapshot.nodes_by_line
+      # Build AND publish under one lock acquisition. Publishing after the lock
+      # released let a descheduled reader clobber @records/@read_snapshot with
+      # pre-mutation state while a mutation on another thread was still reading
+      # them inside its own locked section.
+      with_lock do
+        publish_read_snapshot(read_snapshot(include_archive: include_archive))
+      end
       self
     end
 
@@ -767,22 +785,60 @@ module Tasks
     # caller that needs a stable multi-step read should keep the public
     # #read_snapshot result instead; this cache only preserves the existing
     # Store surface and its reload-on-live-change behavior.
+    #
+    # Returns the snapshot this call built or found, never a re-read of the
+    # ivar: a concurrent reader may replace @read_snapshot (last publish wins),
+    # but each caller must get a snapshot satisfying its own archive request.
     def current_read_snapshot(include_archive: false)
-      needs_archive = include_archive &&
-                      (@read_snapshot.nil? || !@read_snapshot.archive_loaded? || archive_changed?)
-      reload!(include_archive: include_archive) if @read_snapshot.nil? || changed? || needs_archive
-      @read_snapshot
+      snapshot = @read_snapshot
+      return snapshot unless read_snapshot_stale?(snapshot, include_archive)
+
+      with_lock do
+        # Re-check under the lock: another thread may have just reloaded.
+        snapshot = @read_snapshot
+        if read_snapshot_stale?(snapshot, include_archive)
+          snapshot = publish_read_snapshot(read_snapshot(include_archive: include_archive))
+        end
+        snapshot
+      end
+    end
+
+    def read_snapshot_stale?(snapshot, include_archive)
+      return true if snapshot.nil? || changed?
+
+      include_archive && (!snapshot.archive_loaded? || archive_changed?)
+    end
+
+    # Install a freshly built snapshot as the Store-wide read cache. Must run
+    # under the lock so a mutation's own locked reads of @records can never
+    # interleave with another thread's publication.
+    def publish_read_snapshot(snapshot)
+      @read_snapshot = snapshot
+      @stat = snapshot.live_stat
+      @archive_stat = snapshot.archive_stat if snapshot.archive_loaded?
+      @records = snapshot.live_records
+      @cache = snapshot.items
+      @tree = snapshot.tree
+      @nodes_by_line = snapshot.nodes_by_line
+      snapshot
     end
 
     # The staleness key for a file: [mtime, inode, size] — the same triple the
     # read cache keys on, so two out-of-band writes within one coarse mtime tick
     # (which bare mtime can't tell apart) still register as a change. nil when
     # the file is absent.
-    def stat_key(path)
+    # Public class-level form so a holder of a ReadSnapshot (whose live_stat
+    # uses this exact triple) can test its own staleness against the file
+    # without borrowing a Store instance's cache state.
+    def self.stat_key(path)
       st = File.stat(path)
       [st.mtime, st.ino, st.size]
     rescue Errno::ENOENT
       nil
+    end
+
+    def stat_key(path)
+      self.class.stat_key(path)
     end
 
     def archive_changed?
@@ -961,15 +1017,22 @@ module Tasks
       }
     end
 
-    def location_fingerprint(records, ri)
+    # `siblings_by_parent` is a bulk-computation index (see task_revisions); it
+    # must yield the exact id list the inline scan produces, or the same task
+    # would carry different revisions depending on which path built it.
+    def location_fingerprint(records, ri, siblings_by_parent: nil)
       rec = records[ri]
       rj = subtree_end(records, ri)
       structural = records[ri...rj].map do |record|
         [record["type"], record["id"], record["parent"]]
       end
-      siblings = records.filter_map do |record|
-        record["id"] if record["parent"] == rec["parent"]
-      end
+      siblings = if siblings_by_parent
+                   siblings_by_parent.fetch(rec["parent"], [])
+                 else
+                   records.filter_map do |record|
+                     record["id"] if record["parent"] == rec["parent"]
+                   end
+                 end
       semantic_digest([rec["parent"], siblings, structural])
     end
 
@@ -994,18 +1057,29 @@ module Tasks
     # change for a title-only update while still guarding moves and cascades.
     # Date values are normalized before hashing so equivalent Store snapshots
     # never depend on Ruby object identity or JSONL serialization details.
-    def task_revision(values, records, ri)
+    def task_revision(values, records, ri, siblings_by_parent: nil)
       own = semantic_digest(EditSnapshot::FIELDS.map { |field| [field, revision_value(values[field])] })
-      location = location_fingerprint(records, ri)
+      location = location_fingerprint(records, ri, siblings_by_parent: siblings_by_parent)
       lifecycle = lifecycle_fingerprint(records, ri)
       "v1.#{own}.#{location}.#{lifecycle}"
     end
 
     def task_revisions(records)
+      # One sibling index for the whole pass: the per-task inline sibling scan
+      # made every snapshot build quadratic in list size.
+      siblings = sibling_ids_by_parent(records)
       records.each_with_index.each_with_object({}) do |(record, index), revisions|
         next unless record["type"] == "task" && record["id"]
 
-        revisions[record["id"]] = task_revision(edit_values(record), records, index)
+        revisions[record["id"]] =
+          task_revision(edit_values(record), records, index, siblings_by_parent: siblings)
+      end
+    end
+
+    def sibling_ids_by_parent(records)
+      records.each_with_object({}) do |record, map|
+        id = record["id"]
+        (map[record["parent"]] ||= []) << id unless id.nil?
       end
     end
 
@@ -1577,17 +1651,22 @@ module Tasks
       # bypass the sidecar flock. It cannot wait on that flock either: a Fiber
       # that blocks its thread's scheduler prevents the owner from resuming to
       # release it, so reject that contention explicitly.
+      #
+      # Known limit: this guard is per Store INSTANCE. Two Stores on the same
+      # file in one thread (e.g. a locked mutation calling code that builds a
+      # fresh Store via StoreFactory) would deadlock in flock with no
+      # diagnostic — flock excludes across fds within one process. No such
+      # nesting exists today; a fiber-scheduler server (Falcon/async) would
+      # need a process-wide registry keyed on lock_path instead.
       owner = [Thread.current, Fiber.current]
-      if @lock_owner == owner
-        @lock_depth += 1
-        begin
-          return yield
-        ensure
-          @lock_depth -= 1
-        end
-      end
+      # Snapshot @lock_owner once per test: reading it twice (`@lock_owner &&
+      # @lock_owner.first...`) leaves an interrupt checkpoint between the reads
+      # where the releasing thread can nil it, turning a should-block contender
+      # into a NoMethodError on nil.
+      holder = @lock_owner
+      return yield if holder == owner
 
-      if @lock_owner && @lock_owner.first.equal?(Thread.current)
+      if holder && holder.first.equal?(Thread.current)
         raise CrossFiberLockError,
               "Store lock is held by another Fiber on this thread; resume the owner before locking"
       end
@@ -1595,11 +1674,9 @@ module Tasks
       File.open(lock_path, File::RDWR | File::CREAT, 0o644) do |f|
         f.flock(File::LOCK_EX)
         @lock_owner = owner
-        @lock_depth = 1
         begin
           yield
         ensure
-          @lock_depth = 0
           @lock_owner = nil
         end
       end

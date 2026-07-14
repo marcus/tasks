@@ -357,6 +357,40 @@ class TestStore < Minitest::Test
     end
   end
 
+  def test_shared_store_reads_stay_coherent_across_threads
+    # Regression stress for reload! publishing its snapshot ivars outside the
+    # lock: a thread's archive_items could receive an archive-less snapshot
+    # published by a concurrent live-only read (hit in well under a second
+    # before the fix). Publication now happens under the lock and each caller
+    # keeps the snapshot it built, so the archive count must never flicker.
+    with_store do |store, org, archive|
+      File.write(archive, dump_fixture([
+        { "type" => "meta", "version" => 1 },
+        { "type" => "task", "id" => "dead0001", "state" => "DONE", "title" => "Archived one" },
+      ]))
+
+      stop = false
+      wrong = nil
+      reader = Thread.new do
+        until stop
+          count = store.archive_items.length
+          wrong ||= count unless count == 1
+        end
+      end
+      toucher = Thread.new do
+        until stop
+          FileUtils.touch(org, mtime: Time.now)
+          store.items
+        end
+      end
+      sleep 1
+      stop = true
+      [reader, toucher].each(&:join)
+
+      assert_nil wrong, "archive_items observed #{wrong.inspect} archived tasks; a concurrent live-only read published an archive-less snapshot"
+    end
+  end
+
   def test_archive_nested_subtree_preserves_dfs_structure_and_undo
     with_archive_tree_store do |store, org, archive|
       before = File.read(org)
