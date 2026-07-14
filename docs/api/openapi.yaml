@@ -1,0 +1,1530 @@
+openapi: 3.1.0
+info:
+  title: Tasks local HTTP API
+  version: 1.0.0
+  summary: Loopback REST/JSON contract over the same tasks.jsonl the CLI and TUI use.
+  description: |
+    The v1 contract for the local-first Tasks HTTP API. It is another adapter
+    around `Tasks::Application`, not a second task implementation: every write
+    passes the same file lock, atomic writer, structural `Tasks::Check`,
+    rollback, and shared undo journal as the CLI and TUI.
+
+    Scope of this document is the accepted plan
+    (`docs/plans/http-api-and-web-foundation.md`) and its "HTTP contract",
+    "Task representation", "Status mapping", "Concurrency and revisions" (§5),
+    and "Delete semantics" (§4) sections. Design rationale lives in ADR-0005
+    through ADR-0008.
+
+    Conventions that hold for every operation:
+
+    - Stable eight-hex task ids are the only public task locator. Fuzzy titles
+      and `L<line>` refs are CLI-only conveniences and are never accepted here.
+    - Requests and responses are `application/json` only. A body with any other
+      content type on a mutation is `415`.
+    - Unknown request fields are rejected (`422` / `validation_failed`), never
+      silently ignored.
+    - Successful responses use the envelope `{ "data": ..., "meta": { ... } }`.
+      Errors use `{ "error": { "code", "message", "details", "request_id" } }`.
+    - `revision` is an opaque string. Its internal structure is deliberately
+      undocumented here; see ADR-0007. Clients compare it for equality only.
+    - Dates are ISO `YYYY-MM-DD` strings or `null`. Friendly date parsing is a
+      human CLI/TUI feature and is not part of this contract.
+    - The server never returns filesystem paths, journal locations, or
+      exception backtraces.
+
+servers:
+  - url: http://127.0.0.1:{port}/api/v1
+    description: Loopback API base. Bound to 127.0.0.1 in local mode.
+    variables:
+      port:
+        default: "4747"
+        description: Configured local port.
+
+tags:
+  - name: meta
+    description: Server capabilities and change token.
+  - name: sections
+    description: Ordered live sections for placement controls.
+  - name: tasks
+    description: Task resource CRUD.
+  - name: views
+    description: Canonical named selections (agenda, next, quadrants, inbox, projects).
+  - name: history
+    description: Shared undo/redo journal.
+  - name: archive
+    description: Archive sweep preview and application.
+  - name: events
+    description: Store-change invalidation stream.
+  - name: health
+    description: Liveness and readiness probes (outside /api/v1).
+
+paths:
+  /meta:
+    get:
+      tags: [meta]
+      operationId: getMeta
+      summary: Server capabilities, vocabularies, config-derived limits, and store revision.
+      description: |
+        Returns the enumerable vocabularies (states, priorities), config-derived
+        limits (`max_depth`, `urgent_days`), server mode, and the global
+        `store_revision`. Never returns filesystem paths. Conditional polling of
+        this endpoint is the v1 default for change detection; see `/events`.
+      responses:
+        "200":
+          description: Capabilities and current store revision.
+          headers:
+            ETag:
+              description: Current global store revision, also present in `meta.store_revision`.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Meta" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+              examples:
+                default:
+                  value:
+                    data:
+                      api_version: "v1"
+                      server_mode: "loopback"
+                      states: [INBOX, TODO, NEXT, WAITING, DONE, CANCELLED]
+                      open_states: [INBOX, TODO, NEXT, WAITING]
+                      closed_states: [DONE, CANCELLED]
+                      priorities: [A, B, C]
+                      max_depth: 4
+                      urgent_days: 3
+                      capabilities:
+                        undo: true
+                        redo: true
+                        archive_sweep: true
+                        events: false
+                    meta:
+                      store_revision: "s1.6f2a9c0b"
+        "503":
+          $ref: "#/components/responses/StoreInvalid"
+
+  /sections:
+    get:
+      tags: [sections]
+      operationId: listSections
+      summary: Ordered live sections for capture and placement.
+      description: |
+        Live section records in display order. Sections carry the same checked
+        eight-hex ids as tasks. Archive sections are not returned.
+      responses:
+        "200":
+          description: Ordered sections.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Section" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+              examples:
+                default:
+                  value:
+                    data:
+                      - id: "1a2b3c4d"
+                        title: "Inbox"
+                        parent_id: null
+                      - id: "9f8e7d6c"
+                        title: "Work"
+                        parent_id: null
+                    meta:
+                      store_revision: "s1.6f2a9c0b"
+        "503":
+          $ref: "#/components/responses/StoreInvalid"
+
+  /tasks:
+    get:
+      tags: [tasks]
+      operationId: listTasks
+      summary: Ordered task collection with composable filters.
+      description: |
+        Returns tasks in DFS display order. Filters compose and mirror
+        `Tasks::TaskFilter` / `tasks list`. The default scope is open live
+        tasks; deferred tasks are hidden from the default scope. Collection
+        order conveys display order only — `line` is never exposed and is not a
+        stable sort key.
+      parameters:
+        - name: scope
+          in: query
+          description: Which lifecycle/source slice to list. Default `open` (open live tasks).
+          required: false
+          schema:
+            type: string
+            enum: [open, done, archived, all]
+            default: open
+        - name: state
+          in: query
+          description: Restrict to one lifecycle state.
+          required: false
+          schema: { $ref: "#/components/schemas/State" }
+        - name: context
+          in: query
+          description: Filter by an `@context` (with or without the leading `@`).
+          required: false
+          schema: { type: string }
+        - name: tag
+          in: query
+          description: Filter by an ordinary tag (no leading `@`).
+          required: false
+          schema: { type: string }
+        - name: priority
+          in: query
+          description: Filter by priority.
+          required: false
+          schema: { $ref: "#/components/schemas/Priority" }
+        - name: text
+          in: query
+          description: Case-insensitive substring over titles (and bodies when `body=true`).
+          required: false
+          schema: { type: string }
+        - name: body
+          in: query
+          description: Widen `text` matching into task notes/body. Default false (title-only).
+          required: false
+          schema: { type: boolean, default: false }
+        - name: deferred
+          in: query
+          description: |
+            When true, list only deferred (someday/maybe) tasks. When false or
+            omitted under the default open scope, deferred tasks are hidden.
+          required: false
+          schema: { type: boolean }
+        - name: recurring
+          in: query
+          description: When true, list only tasks that carry a recurrence cookie.
+          required: false
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: Matching tasks in DFS order.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Task" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+              examples:
+                default:
+                  value:
+                    data:
+                      - id: "3c4d5e6f"
+                        revision: "v1.opaque-own.opaque-location.opaque-lifecycle"
+                        source: "live"
+                        parent_id: null
+                        section_id: "9f8e7d6c"
+                        depth: 0
+                        state: "NEXT"
+                        priority: "A"
+                        title: "Email the vendor about the renewal"
+                        contexts: ["@desk"]
+                        tags: ["billing"]
+                        deferred: false
+                        scheduled: "2026-07-20"
+                        deadline: null
+                        recurrence: null
+                        body: ["Captured 2026-07-14.", "Confirm the seat count first."]
+                        closed: null
+                        archived: false
+                        project: "Work"
+                        child_count: 0
+                        descendant_count: 0
+                        links:
+                          - system: "github"
+                            url: "https://github.com/acme/app/issues/12"
+                            label: "acme/app#12"
+                    meta:
+                      store_revision: "s1.6f2a9c0b"
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "503":
+          $ref: "#/components/responses/StoreInvalid"
+    post:
+      tags: [tasks]
+      operationId: createTask
+      summary: Atomically create one live task.
+      description: |
+        Creates one task in a single checked, journaled transaction (capture
+        plus any recurrence and initial notes). Mirrors `Tasks::CreateTask`. A
+        task created with a date lands processed as TODO unless `state`
+        overrides it; a recurrence implies a date. On success returns `201`
+        with a `Location` header, the created resource, and its `ETag`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateTaskRequest" }
+            examples:
+              minimal:
+                summary: Minimal capture (lands in INBOX).
+                value:
+                  title: "Email the vendor about the renewal"
+              full:
+                summary: Full attribute set.
+                value:
+                  title: "Weekly review"
+                  priority: "A"
+                  tags: ["review"]
+                  contexts: ["@desk"]
+                  scheduled: "2026-07-20"
+                  deadline: null
+                  state: "NEXT"
+                  project: "Work"
+                  parent_id: null
+                  recurrence: "weekly"
+                  body: "Captured 2026-07-14.\nClear the inbox to zero."
+      responses:
+        "201":
+          description: Task created.
+          headers:
+            Location:
+              description: Path of the created task resource.
+              schema: { type: string }
+            ETag:
+              description: Opaque revision of the created task.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Task" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+              examples:
+                created:
+                  value:
+                    data:
+                      id: "3c4d5e6f"
+                      revision: "v1.opaque-own.opaque-location.opaque-lifecycle"
+                      source: "live"
+                      parent_id: null
+                      section_id: "9f8e7d6c"
+                      depth: 0
+                      state: "NEXT"
+                      priority: "A"
+                      title: "Email the vendor about the renewal"
+                      contexts: ["@desk"]
+                      tags: ["billing"]
+                      deferred: false
+                      scheduled: "2026-07-20"
+                      deadline: null
+                      recurrence: null
+                      body: ["Captured 2026-07-14."]
+                      closed: null
+                      archived: false
+                      project: "Work"
+                      child_count: 0
+                      descendant_count: 0
+                      links: []
+                    meta:
+                      store_revision: "s1.7a1b2c3d"
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "409":
+          description: Structural refusal (cycle, excessive depth) building the task.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                too_deep:
+                  value:
+                    error:
+                      code: "too_deep"
+                      message: "Nesting the task would exceed the maximum depth."
+                      details: { max_depth: 4 }
+                      request_id: "req_5f3a"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "503":
+          $ref: "#/components/responses/StoreInvalid"
+
+  /tasks/{id}:
+    parameters:
+      - $ref: "#/components/parameters/TaskId"
+    get:
+      tags: [tasks]
+      operationId: getTask
+      summary: One full task resource.
+      description: |
+        Returns one live task by default. Pass `source=archive` to read an
+        archived resource; archived resources are read-only.
+      parameters:
+        - name: source
+          in: query
+          description: Read the live task (default) or an explicitly archived one.
+          required: false
+          schema:
+            type: string
+            enum: [live, archive]
+            default: live
+      responses:
+        "200":
+          description: The task resource.
+          headers:
+            ETag:
+              description: Opaque revision of this task.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Task" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+              examples:
+                default:
+                  value:
+                    data:
+                      id: "3c4d5e6f"
+                      revision: "v1.opaque-own.opaque-location.opaque-lifecycle"
+                      source: "live"
+                      parent_id: null
+                      section_id: "9f8e7d6c"
+                      depth: 0
+                      state: "NEXT"
+                      priority: "A"
+                      title: "Email the vendor about the renewal"
+                      contexts: ["@desk"]
+                      tags: ["billing"]
+                      deferred: false
+                      scheduled: "2026-07-20"
+                      deadline: null
+                      recurrence: null
+                      body: ["Captured 2026-07-14.", "Confirm the seat count first."]
+                      closed: null
+                      archived: false
+                      project: "Work"
+                      child_count: 0
+                      descendant_count: 0
+                      links:
+                        - system: "github"
+                          url: "https://github.com/acme/app/issues/12"
+                          label: "acme/app#12"
+                    meta:
+                      store_revision: "s1.6f2a9c0b"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/StoreInvalid"
+    patch:
+      tags: [tasks]
+      operationId: updateTask
+      summary: Atomically apply semantic partial changes.
+      description: |
+        Applies a `Tasks::TaskChangeset` in one checked transaction. Merge
+        semantics: an absent field is unchanged, an explicit `null` clears a
+        clearable field, and unknown fields are rejected. Fields are applied in
+        the deterministic order defined by `Tasks::TaskChangeset::FIELD_ORDER`
+        (scalar content, then tags, then dates, then recurrence, then location,
+        then lifecycle state); coupled cases are locked down by tests, and a
+        combination that cannot be made clear and atomic is rejected rather than
+        split.
+
+        `If-Match` is required. A semantically no-op change is a success: it
+        returns `200` with the unchanged resource and its current `ETag`, and
+        it does not burn an undo step.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchTaskRequest" }
+            examples:
+              multi_field:
+                summary: Retitle, raise priority, and reschedule at once.
+                value:
+                  title: "Email the vendor about the 2027 renewal"
+                  priority: "A"
+                  scheduled: "2026-07-21"
+              clear_deadline:
+                summary: Clear a clearable field with explicit null.
+                value:
+                  deadline: null
+              move:
+                summary: Move the subtree under a new parent.
+                value:
+                  parent_id: "9f8e7d6c"
+              complete:
+                summary: Lifecycle transition.
+                value:
+                  state: "DONE"
+      responses:
+        "200":
+          description: |
+            Updated resource, or — for a semantic no-op — the unchanged resource
+            with its current ETag.
+          headers:
+            ETag:
+              description: New opaque revision after the change (unchanged on a no-op).
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Task" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+              examples:
+                updated:
+                  value:
+                    data:
+                      id: "3c4d5e6f"
+                      revision: "v1.new-own.opaque-location.opaque-lifecycle"
+                      source: "live"
+                      parent_id: null
+                      section_id: "9f8e7d6c"
+                      depth: 0
+                      state: "NEXT"
+                      priority: "A"
+                      title: "Email the vendor about the 2027 renewal"
+                      contexts: ["@desk"]
+                      tags: ["billing"]
+                      deferred: false
+                      scheduled: "2026-07-21"
+                      deadline: null
+                      recurrence: null
+                      body: ["Captured 2026-07-14.", "Confirm the seat count first."]
+                      closed: null
+                      archived: false
+                      project: "Work"
+                      child_count: 0
+                      descendant_count: 0
+                      links: []
+                    meta:
+                      store_revision: "s1.8b2c3d4e"
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Structural refusal (cycle or excessive depth) applying a move.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                cycle:
+                  value:
+                    error:
+                      code: "cycle"
+                      message: "A task cannot be moved under itself or a descendant."
+                      details: { parent_id: "3c4d5e6f" }
+                      request_id: "req_6a1c"
+        "412":
+          $ref: "#/components/responses/StaleRevision"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "428":
+          $ref: "#/components/responses/MissingPrecondition"
+        "503":
+          $ref: "#/components/responses/StoreInvalid"
+    delete:
+      tags: [tasks]
+      operationId: deleteTask
+      summary: Undoable hard delete of a live task subtree.
+      description: |
+        Hard-deletes one live task from `tasks.jsonl` as one journal entry. It
+        is not an alias for `CANCELLED` and never edits archive history. A leaf
+        deletes directly; a task with descendants is refused with `409` unless
+        `cascade=true` removes the whole contiguous subtree. Deletion never
+        hoists or reparents children. Archived tasks are read-only and are not
+        deletable: an archived-only id is `404` because the live file is the
+        namespace. `If-Match` is required and is checked against all three
+        revision components so a changed descendant, sibling, or the task itself
+        refuses a stale cascade.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+        - name: cascade
+          in: query
+          description: Required to delete a task that still has descendants.
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        "204":
+          description: Task (and, with cascade, its subtree) deleted.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The task has descendants and `cascade` was not set.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                has_descendants:
+                  value:
+                    error:
+                      code: "conflict"
+                      message: "The task has descendants; retry with cascade=true to delete them."
+                      details:
+                        descendants: 3
+                        open_descendants: 2
+                      request_id: "req_7b2d"
+        "412":
+          $ref: "#/components/responses/StaleRevision"
+        "428":
+          $ref: "#/components/responses/MissingPrecondition"
+        "503":
+          $ref: "#/components/responses/StoreInvalid"
+
+  /views/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        description: Canonical named selection.
+        schema:
+          type: string
+          enum: [agenda, next, quadrants, inbox, projects]
+    get:
+      tags: [views]
+      operationId: getView
+      summary: A canonical named selection with grouping metadata.
+      description: |
+        Returns the same task selection and ordering as the CLI/TUI named views
+        so their semantics are not reimplemented in the browser. `quadrants`
+        adds a `quadrant` label per item; `projects` groups by nearest open
+        project.
+      responses:
+        "200":
+          description: The named selection.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [name, tasks]
+                    properties:
+                      name: { type: string }
+                      tasks:
+                        type: array
+                        items: { $ref: "#/components/schemas/Task" }
+                      groups:
+                        description: Optional grouping metadata (view-specific).
+                        type: array
+                        items:
+                          type: object
+                          additionalProperties: true
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+              examples:
+                agenda:
+                  value:
+                    data:
+                      name: "agenda"
+                      tasks:
+                        - id: "3c4d5e6f"
+                          revision: "v1.opaque-own.opaque-location.opaque-lifecycle"
+                          source: "live"
+                          parent_id: null
+                          section_id: "9f8e7d6c"
+                          depth: 0
+                          state: "NEXT"
+                          priority: "A"
+                          title: "Email the vendor about the renewal"
+                          contexts: ["@desk"]
+                          tags: ["billing"]
+                          deferred: false
+                          scheduled: "2026-07-20"
+                          deadline: null
+                          recurrence: null
+                          body: ["Captured 2026-07-14."]
+                          closed: null
+                          archived: false
+                          project: "Work"
+                          child_count: 0
+                          descendant_count: 0
+                          links: []
+                    meta:
+                      store_revision: "s1.6f2a9c0b"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/StoreInvalid"
+
+  /history:
+    get:
+      tags: [history]
+      operationId: getHistory
+      summary: Peek at the next undo and redo labels.
+      description: |
+        Non-mutating. Returns the next undo and redo labels (or null when a
+        direction is empty) plus the `store_revision` they apply to, so the
+        client can render labeled controls and supply the right precondition to
+        undo/redo.
+      responses:
+        "200":
+          description: Undo/redo peek.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [undo, redo, store_revision]
+                    properties:
+                      undo:
+                        type: [string, "null"]
+                        description: Label of the step a subsequent undo would revert.
+                      redo:
+                        type: [string, "null"]
+                        description: Label of the step a subsequent redo would reapply.
+                      store_revision:
+                        type: string
+                        description: The revision undo/redo must be conditioned on.
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+              examples:
+                default:
+                  value:
+                    data:
+                      undo: "capture: Weekly review"
+                      redo: null
+                      store_revision: "s1.6f2a9c0b"
+                    meta:
+                      store_revision: "s1.6f2a9c0b"
+        "503":
+          $ref: "#/components/responses/StoreInvalid"
+
+  /history/undo:
+    post:
+      tags: [history]
+      operationId: undo
+      summary: Apply the next undo step under a store-revision precondition.
+      description: |
+        Reverts the shared journal's next undo step. The request must carry the
+        `store_revision` the client last saw; a mismatch returns `409` instead
+        of undoing another surface's newer write.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HistoryStepRequest" }
+            examples:
+              default:
+                value:
+                  store_revision: "s1.6f2a9c0b"
+      responses:
+        "200":
+          description: The undo was applied.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HistoryStepResponse" }
+              examples:
+                undone:
+                  value:
+                    data:
+                      label: "capture: Weekly review"
+                      store_revision: "s1.5e1a2b3c"
+                    meta:
+                      store_revision: "s1.5e1a2b3c"
+        "409":
+          $ref: "#/components/responses/HistoryConflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "503":
+          $ref: "#/components/responses/StoreInvalid"
+
+  /history/redo:
+    post:
+      tags: [history]
+      operationId: redo
+      summary: Apply the next redo step under a store-revision precondition.
+      description: |
+        Reapplies the shared journal's next redo step under the same
+        `store_revision` precondition as undo.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HistoryStepRequest" }
+            examples:
+              default:
+                value:
+                  store_revision: "s1.5e1a2b3c"
+      responses:
+        "200":
+          description: The redo was applied.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HistoryStepResponse" }
+              examples:
+                redone:
+                  value:
+                    data:
+                      label: "capture: Weekly review"
+                      store_revision: "s1.6f2a9c0b"
+                    meta:
+                      store_revision: "s1.6f2a9c0b"
+        "409":
+          $ref: "#/components/responses/HistoryConflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "503":
+          $ref: "#/components/responses/StoreInvalid"
+
+  /archive-preview:
+    get:
+      tags: [archive]
+      operationId: archivePreview
+      summary: Preview the next archive sweep.
+      description: |
+        Returns the safe sweep preview (roots, descendant counts, blocked
+        roots) and an opaque `fingerprint`. A subsequent sweep must present the
+        same fingerprint.
+      responses:
+        "200":
+          description: Sweep preview and fingerprint.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [fingerprint, roots]
+                    properties:
+                      fingerprint:
+                        type: string
+                        description: Opaque token the sweep must match.
+                      roots:
+                        type: integer
+                        description: Number of closed roots the sweep would move.
+                      descendants:
+                        type: integer
+                      blocked:
+                        type: integer
+                        description: Closed roots whose subtree still holds open work.
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+              examples:
+                default:
+                  value:
+                    data:
+                      fingerprint: "sweep.a1b2c3"
+                      roots: 4
+                      descendants: 6
+                      blocked: 0
+                    meta:
+                      store_revision: "s1.6f2a9c0b"
+        "503":
+          $ref: "#/components/responses/StoreInvalid"
+
+  /archive-sweeps:
+    post:
+      tags: [archive]
+      operationId: createArchiveSweep
+      summary: Sweep closed tasks into the archive when the preview still matches.
+      description: |
+        Moves the previewed closed tasks into `archive.jsonl` as one journal
+        entry, but only when the supplied `fingerprint` still matches the
+        current preview. A changed preview returns `409`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fingerprint]
+              additionalProperties: false
+              properties:
+                fingerprint:
+                  type: string
+                  description: The fingerprint returned by `/archive-preview`.
+            examples:
+              default:
+                value:
+                  fingerprint: "sweep.a1b2c3"
+      responses:
+        "201":
+          description: Sweep applied.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [swept]
+                    properties:
+                      swept:
+                        type: integer
+                        description: Number of tasks moved to the archive.
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+              examples:
+                default:
+                  value:
+                    data:
+                      swept: 10
+                    meta:
+                      store_revision: "s1.9c3d4e5f"
+        "409":
+          description: The preview changed since the fingerprint was taken.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                changed_preview:
+                  value:
+                    error:
+                      code: "conflict"
+                      message: "The archive preview changed; refetch it and retry."
+                      details: { fingerprint: "sweep.a1b2c3" }
+                      request_id: "req_8c3e"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "503":
+          $ref: "#/components/responses/StoreInvalid"
+
+  /events:
+    get:
+      tags: [events]
+      operationId: streamEvents
+      summary: Server-sent store-change invalidation stream.
+      description: |
+        A `text/event-stream` that emits a `store.changed` event whenever a CLI,
+        TUI, or API write replaces either file. The event payload carries the
+        new global `store_revision`; clients then refetch affected queries with
+        ordinary GETs. This is invalidation, not event sourcing.
+
+        SSE is deferred behind conditional polling of `/meta` in v1: every open
+        SSE response pins one thread from Puma's small pool for its lifetime, so
+        the streaming path needs a sized thread budget before it ships. Polling
+        `/meta` (comparing `store_revision`) is the v1 default.
+      responses:
+        "200":
+          description: An event stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  SSE frames. Each `store.changed` event has a `data:` line whose
+                  JSON body is `{ "store_revision": "..." }`.
+              examples:
+                store_changed:
+                  summary: One store.changed frame.
+                  value: |
+                    event: store.changed
+                    data: {"store_revision":"s1.8b2c3d4e"}
+        "503":
+          $ref: "#/components/responses/StoreInvalid"
+
+  /healthz:
+    servers:
+      - url: http://127.0.0.1:{port}
+        variables:
+          port: { default: "4747" }
+    get:
+      tags: [health]
+      operationId: liveness
+      summary: Liveness probe (outside /api/v1).
+      description: Proves the process is serving. Does not touch the Store.
+      responses:
+        "200":
+          description: The process is live.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ok] }
+              examples:
+                default:
+                  value: { status: "ok" }
+
+  /readyz:
+    servers:
+      - url: http://127.0.0.1:{port}
+        variables:
+          port: { default: "4747" }
+    get:
+      tags: [health]
+      operationId: readiness
+      summary: Readiness probe (outside /api/v1).
+      description: |
+        Runs a non-mutating `Tasks::Check` and reports only a safe summary. No
+        filesystem paths are returned.
+      responses:
+        "200":
+          description: The backing store is structurally valid and ready.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ready] }
+              examples:
+                default:
+                  value: { status: "ready" }
+        "503":
+          description: The backing store failed its structural check.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                store_invalid:
+                  value:
+                    error:
+                      code: "store_invalid"
+                      message: "The task list failed structural validation."
+                      details: {}
+                      request_id: "req_9d4f"
+
+components:
+  parameters:
+    TaskId:
+      name: id
+      in: path
+      required: true
+      description: Stable eight-hex task id.
+      schema: { $ref: "#/components/schemas/TaskId" }
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: |
+        The opaque task `revision` (ETag) the client last saw. Required on
+        PATCH and DELETE. A missing header is `428`; a stale value is `412`.
+      schema: { type: string }
+
+  responses:
+    MalformedRequest:
+      description: Malformed JSON or an otherwise unparseable request.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          examples:
+            malformed:
+              value:
+                error:
+                  code: "malformed_request"
+                  message: "The request body is not valid JSON."
+                  details: {}
+                  request_id: "req_1a2b"
+    UnsupportedMediaType:
+      description: A mutation body was sent with a non-JSON content type.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          examples:
+            unsupported:
+              value:
+                error:
+                  code: "unsupported_media_type"
+                  message: "Request bodies must be application/json."
+                  details: {}
+                  request_id: "req_2b3c"
+    NotFound:
+      description: No such task in the requested source.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          examples:
+            not_found:
+              value:
+                error:
+                  code: "not_found"
+                  message: "No task with that id."
+                  details: {}
+                  request_id: "req_3c4d"
+    StaleRevision:
+      description: |
+        The supplied `If-Match` no longer matches the task's current revision.
+        The current resource is included when it is safe to disclose it.
+      headers:
+        ETag:
+          description: The task's current opaque revision.
+          schema: { type: string }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          examples:
+            stale:
+              value:
+                error:
+                  code: "stale_revision"
+                  message: "The task changed after it was loaded."
+                  details:
+                    current:
+                      id: "3c4d5e6f"
+                      revision: "v1.newer-own.opaque-location.opaque-lifecycle"
+                      source: "live"
+                      parent_id: null
+                      section_id: "9f8e7d6c"
+                      depth: 0
+                      state: "NEXT"
+                      priority: "B"
+                      title: "Email the vendor about the renewal"
+                      contexts: ["@desk"]
+                      tags: ["billing"]
+                      deferred: false
+                      scheduled: "2026-07-20"
+                      deadline: null
+                      recurrence: null
+                      body: ["Captured 2026-07-14."]
+                      closed: null
+                      archived: false
+                      project: "Work"
+                      child_count: 0
+                      descendant_count: 0
+                      links: []
+                  request_id: "req_4d5e"
+    MissingPrecondition:
+      description: A required `If-Match` header was absent.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          examples:
+            missing:
+              value:
+                error:
+                  code: "missing_precondition"
+                  message: "This write requires an If-Match header."
+                  details: {}
+                  request_id: "req_5e6f"
+    ValidationFailed:
+      description: |
+        A semantic value was invalid, or an unknown field was sent. `details`
+        carries per-field messages when available.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          examples:
+            validation:
+              value:
+                error:
+                  code: "validation_failed"
+                  message: "One or more fields are invalid."
+                  details:
+                    fields:
+                      priority: ["priority must be A, B, C, or null"]
+                      unknown: ["unknown editable field :colour"]
+                  request_id: "req_6f7a"
+    HistoryConflict:
+      description: |
+        The supplied `store_revision` no longer matches; another surface wrote
+        since it was observed.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          examples:
+            conflict:
+              value:
+                error:
+                  code: "conflict"
+                  message: "The store changed since that revision; refetch and retry."
+                  details: { store_revision: "s1.6f2a9c0b" }
+                  request_id: "req_7a8b"
+    StoreInvalid:
+      description: The backing store is structurally invalid; no read or write can proceed.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          examples:
+            store_invalid:
+              value:
+                error:
+                  code: "store_invalid"
+                  message: "The task list failed structural validation."
+                  details: {}
+                  request_id: "req_8b9c"
+
+  examples:
+    TaskResource:
+      summary: A representative task resource.
+      value:
+        id: "3c4d5e6f"
+        revision: "v1.opaque-own.opaque-location.opaque-lifecycle"
+        source: "live"
+        parent_id: null
+        section_id: "9f8e7d6c"
+        depth: 0
+        state: "NEXT"
+        priority: "A"
+        title: "Email the vendor about the renewal"
+        contexts: ["@desk"]
+        tags: ["billing"]
+        deferred: false
+        scheduled: "2026-07-20"
+        deadline: null
+        recurrence: null
+        body: ["Captured 2026-07-14.", "Confirm the seat count first."]
+        closed: null
+        archived: false
+        project: "Work"
+        child_count: 0
+        descendant_count: 0
+        links:
+          - system: "github"
+            url: "https://github.com/acme/app/issues/12"
+            label: "acme/app#12"
+
+  schemas:
+    TaskId:
+      type: string
+      pattern: "^[0-9a-f]{8}$"
+      description: Stable eight-hex task or section id.
+      example: "3c4d5e6f"
+
+    State:
+      type: string
+      enum: [INBOX, TODO, NEXT, WAITING, DONE, CANCELLED]
+
+    Priority:
+      type: [string, "null"]
+      enum: [A, B, C, null]
+      description: Task priority, or null when unset.
+
+    IsoDate:
+      type: [string, "null"]
+      pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+      description: ISO YYYY-MM-DD date, or null.
+
+    Link:
+      type: object
+      description: A derived, read-only link found in the task title or body.
+      required: [system, url, label]
+      additionalProperties: false
+      properties:
+        system:
+          type: [string, "null"]
+          description: Classified system (slack, jira, github, …) or host fallback.
+        url:
+          type: string
+        label:
+          type: [string, "null"]
+
+    ResponseMeta:
+      type: object
+      required: [store_revision]
+      additionalProperties: false
+      properties:
+        store_revision:
+          type: string
+          description: |
+            Opaque global change token. A refresh signal for browser queries,
+            not a per-task write precondition.
+
+    Meta:
+      type: object
+      description: Server capabilities and config-derived vocabularies. No paths.
+      required: [api_version, server_mode, states, priorities, max_depth, urgent_days]
+      properties:
+        api_version: { type: string }
+        server_mode:
+          type: string
+          enum: [loopback]
+        states:
+          type: array
+          items: { $ref: "#/components/schemas/State" }
+        open_states:
+          type: array
+          items: { $ref: "#/components/schemas/State" }
+        closed_states:
+          type: array
+          items: { $ref: "#/components/schemas/State" }
+        priorities:
+          type: array
+          items: { type: string, enum: [A, B, C] }
+        max_depth:
+          type: integer
+          description: Maximum nesting depth (max_depth config / TASKS_MAX_DEPTH).
+        urgent_days:
+          type: integer
+          description: Deadline horizon used by the quadrants view.
+        capabilities:
+          type: object
+          additionalProperties: { type: boolean }
+
+    Section:
+      type: object
+      description: A live section (project heading).
+      required: [id, title, parent_id]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/TaskId" }
+        title: { type: string }
+        parent_id:
+          oneOf:
+            - { $ref: "#/components/schemas/TaskId" }
+            - { type: "null" }
+
+    Task:
+      type: object
+      description: |
+        The canonical persistence-neutral task resource. It intentionally omits
+        physical JSONL coordinates (no `line`) and pre-rendered presentation
+        (no headline). Fields follow the accepted plan's representation list;
+        see ADR-0007 for the deltas from the current `Tasks::TaskView` that
+        Phase 4 must derive.
+      required:
+        - id
+        - revision
+        - source
+        - parent_id
+        - section_id
+        - depth
+        - state
+        - priority
+        - title
+        - contexts
+        - tags
+        - deferred
+        - scheduled
+        - deadline
+        - recurrence
+        - body
+        - closed
+        - archived
+        - project
+        - child_count
+        - descendant_count
+        - links
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/TaskId" }
+        revision:
+          type: string
+          description: |
+            Opaque optimistic-concurrency token, mirrored as the HTTP ETag.
+            Compare for equality only; the internal structure is not part of
+            this contract (see ADR-0007).
+        source:
+          type: string
+          enum: [live, archive]
+        parent_id:
+          description: Parent task id, or null when the task sits directly under a section.
+          oneOf:
+            - { $ref: "#/components/schemas/TaskId" }
+            - { type: "null" }
+        section_id:
+          description: Enclosing section id.
+          oneOf:
+            - { $ref: "#/components/schemas/TaskId" }
+            - { type: "null" }
+        depth:
+          type: integer
+          minimum: 0
+          description: Nesting depth below its section (0 for a top-level task).
+        state: { $ref: "#/components/schemas/State" }
+        priority: { $ref: "#/components/schemas/Priority" }
+        title:
+          type: string
+        contexts:
+          type: array
+          description: The task's `@context` tags. A distinct semantic field.
+          items: { type: string }
+        tags:
+          type: array
+          description: Ordinary tags only (no `@context`, no the `defer` marker).
+          items: { type: string }
+        deferred:
+          type: boolean
+          description: |
+            Whether the task carries the semantic defer (someday/maybe) marker.
+            A distinct field, not an ordinary tag.
+        scheduled: { $ref: "#/components/schemas/IsoDate" }
+        deadline: { $ref: "#/components/schemas/IsoDate" }
+        recurrence:
+          type: [string, "null"]
+          description: Recurrence cookie (e.g. `.+1w`), or null.
+        body:
+          type: array
+          description: The task's own notes, split to lines. A child's body never leaks in.
+          items: { type: string }
+        closed: { $ref: "#/components/schemas/IsoDate" }
+        archived:
+          type: boolean
+          description: True when this resource comes from the read-only archive.
+        project:
+          type: [string, "null"]
+          description: Nearest open project (a live parent task, else the enclosing section).
+        child_count:
+          type: integer
+          minimum: 0
+          description: Number of direct children.
+        descendant_count:
+          type: integer
+          minimum: 0
+          description: Number of tasks in the subtree below this one.
+        links:
+          type: array
+          items: { $ref: "#/components/schemas/Link" }
+
+    CreateTaskRequest:
+      type: object
+      description: |
+        Full create attribute set, mirroring `Tasks::CreateTask`. `parent_id`
+        and `project` are mutually exclusive placement inputs.
+      required: [title]
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          minLength: 1
+        priority: { $ref: "#/components/schemas/Priority" }
+        tags:
+          type: array
+          items: { type: string }
+        contexts:
+          type: array
+          items: { type: string }
+        scheduled: { $ref: "#/components/schemas/IsoDate" }
+        deadline: { $ref: "#/components/schemas/IsoDate" }
+        state: { $ref: "#/components/schemas/State" }
+        project:
+          type: [string, "null"]
+          description: Section heading to file under (default Inbox). Mutually exclusive with parent_id.
+        parent_id:
+          description: Nest as the last child of this task. Mutually exclusive with project.
+          oneOf:
+            - { $ref: "#/components/schemas/TaskId" }
+            - { type: "null" }
+        recurrence:
+          type: [string, "null"]
+          description: Recurrence interval (cookie or friendly form). Implies a date.
+        body:
+          description: |
+            Initial notes. Either one string (newlines allowed) or an ordered
+            array of note lines; supplying both spellings is rejected.
+          oneOf:
+            - { type: string }
+            - { type: array, items: { type: string } }
+            - { type: "null" }
+
+    PatchTaskRequest:
+      type: object
+      description: |
+        Merge-semantics partial update, mirroring the `Tasks::TaskChangeset`
+        editable field set. An absent field is unchanged; an explicit `null`
+        clears a clearable field; unknown fields are rejected. `parent_id` is
+        the location input (moving places the subtree as the last child of the
+        new parent). Fields apply in `TaskChangeset::FIELD_ORDER`.
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        title:
+          type: string
+          minLength: 1
+        priority: { $ref: "#/components/schemas/Priority" }
+        body:
+          oneOf:
+            - { type: string }
+            - { type: array, items: { type: string } }
+        contexts:
+          type: array
+          items: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        deferred:
+          type: boolean
+        scheduled: { $ref: "#/components/schemas/IsoDate" }
+        deadline: { $ref: "#/components/schemas/IsoDate" }
+        recurrence:
+          type: [string, "null"]
+        parent_id:
+          description: New location. Null unnests the subtree to the section level.
+          oneOf:
+            - { $ref: "#/components/schemas/TaskId" }
+            - { type: "null" }
+        state: { $ref: "#/components/schemas/State" }
+
+    HistoryStepRequest:
+      type: object
+      required: [store_revision]
+      additionalProperties: false
+      properties:
+        store_revision:
+          type: string
+          description: The store revision the client last saw. A mismatch returns 409.
+
+    HistoryStepResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          required: [label, store_revision]
+          properties:
+            label:
+              type: [string, "null"]
+              description: The label of the step that was applied.
+            store_revision:
+              type: string
+              description: The new global store revision after the step.
+        meta: { $ref: "#/components/schemas/ResponseMeta" }
+
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          additionalProperties: false
+          properties:
+            code: { $ref: "#/components/schemas/ErrorCode" }
+            message:
+              type: string
+              description: A safe, human-readable summary. Never contains paths or backtraces.
+            details:
+              type: object
+              description: Structured, code-specific context (per-field errors, counts, current resource).
+              additionalProperties: true
+            request_id:
+              type: string
+              description: Correlates the response with a server log line.
+
+    ErrorCode:
+      type: string
+      description: |
+        Stable machine error code. The set is derived from `MutationResult`
+        statuses (not_found, stale→stale_revision, invalid→validation_failed,
+        conflict, cycle, too_deep, store_invalid, unavailable) plus transport
+        errors (malformed_request, unsupported_media_type, payload_too_large,
+        missing_precondition, forbidden_origin). `ok`/`no_change` are successes,
+        not errors, and are not listed here.
+      enum:
+        - malformed_request
+        - forbidden_origin
+        - not_found
+        - conflict
+        - cycle
+        - too_deep
+        - stale_revision
+        - payload_too_large
+        - unsupported_media_type
+        - validation_failed
+        - missing_precondition
+        - store_invalid
+        - unavailable

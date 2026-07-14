@@ -513,9 +513,13 @@ allowlist without changing domain/application code.
 
 1. Confirm hard-delete semantics, local dependency policy, and same-origin
    hosting.
-2. Add focused ADRs for the application boundary, Rack/Puma transport, HTTP
-   concurrency/revision model, and delete behavior.
-3. Write and review `docs/api/openapi.yaml`, including examples and error codes.
+2. **Done.** Focused ADRs added for the application boundary (ADR-0005),
+   Rack/Puma transport (ADR-0006), HTTP concurrency/revision model (ADR-0007),
+   and delete behavior (ADR-0008) in `docs/adr/`.
+3. **Done.** `docs/api/openapi.yaml` written (OpenAPI 3.1), including examples
+   for every endpoint and the machine error-code enum. ADR-0007 carries the
+   task-resource deltas the HTTP representation must derive from the current
+   `Tasks::TaskView`.
 4. Add contract fixtures that can drive API implementation and later generate a
    typed web client.
 
@@ -575,6 +579,12 @@ be obtained without requiring executable code from `bin/tasks`.
 Exit: create/update/delete semantics are transport-independent, atomic, and
 covered through both application and existing CLI surfaces; no legacy mutation
 methods remain.
+
+Exit met: guarded, undoable, cascading delete shipped as `Tasks::DeleteTask` +
+`Store#delete_task!` with CLI `tasks delete` parity (see ADR-0008), alongside
+the `CreateTask`/`TaskChangeset` commands and the shared `MutationResult`
+vocabulary — the create/update/delete slice is transport-independent and
+CLI-covered.
 
 ### Phase 4: loopback HTTP adapter
 
