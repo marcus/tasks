@@ -9,9 +9,9 @@ class TestTasksRequireBoundary < Minitest::Test
 
   def test_query_layer_is_a_stdlib_only_library_boundary
     script = <<~'RUBY'
-      require "tasks/task_queries"
+      require "tasks/application"
       require "tasks/operation_context"
-      abort "missing query types" unless defined?(Tasks::TaskQueries) && defined?(Tasks::TaskFilter)
+      abort "missing application/query types" unless defined?(Tasks::Application) && defined?(Tasks::StoreFactory) && defined?(Tasks::TaskQueries) && defined?(Tasks::TaskFilter)
       abort "missing view types" unless defined?(Tasks::TaskView) && defined?(Tasks::SectionView)
       abort "missing context" unless defined?(Tasks::OperationContext)
       forbidden = $LOADED_FEATURES.grep(%r{(?:\A|/)(?:rack|puma)(?:/|\.rb\z)})

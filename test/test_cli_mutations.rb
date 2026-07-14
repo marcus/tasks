@@ -3,7 +3,7 @@
 require_relative "test_helper"
 require "json"
 require "open3"
-require "tasks/task_queries"
+require "tasks/application"
 
 # Store-layer coverage for the CLI's due/state/priority mutations, plus
 # end-to-end CLI tests (arg parsing, ref resolution, exit codes) that shell
@@ -832,27 +832,27 @@ class TestCliMutations < Minitest::Test
   end
 
   # The CLI adapter may keep its line-oriented JSON presentation, but its
-  # selected ids and order must come directly from the reusable query layer.
+  # selected ids and order must come directly from the application facade.
   # These end-to-end cases pin the adapter-to-library parity for every named
   # view and for composed list filters.
   def test_cli_json_query_paths_match_reusable_query_results
     cases = {
-      ["list", "@computer", "--json"] => ->(query) {
-        query.list(Tasks::TaskFilter.parse_cli(["@computer", "--json"]).filter)
+      ["list", "@computer", "--json"] => ->(app) {
+        app.list_tasks(Tasks::TaskFilter.parse_cli(["@computer", "--json"]).filter)
       },
-      ["agenda", "--json"] => ->(query) { query.view(:agenda) },
-      ["next", "--json"] => ->(query) { query.view(:next) },
-      ["quadrants", "--json"] => ->(query) { query.view(:quadrants) },
-      ["inbox", "--json"] => ->(query) { query.view(:inbox) },
+      ["agenda", "--json"] => ->(app) { app.view_tasks(:agenda) },
+      ["next", "--json"] => ->(app) { app.view_tasks(:next) },
+      ["quadrants", "--json"] => ->(app) { app.view_tasks(:quadrants) },
+      ["inbox", "--json"] => ->(app) { app.view_tasks(:inbox) },
     }
 
     cases.each do |args, build_result|
       run_cli(*args) do |org, out, err, status|
         assert status.success?, "#{args.join(" ")} failed: #{err}"
-        store = Tasks::Store.new(org: org, archive: File.join(File.dirname(org), "archive.jsonl"))
-        result = build_result.call(Tasks::TaskQueries.new(store.read_snapshot))
+        factory = Tasks::StoreFactory.new(org: org, archive: File.join(File.dirname(org), "archive.jsonl"))
+        result = build_result.call(Tasks::Application.new(store_factory: factory))
         assert_equal result.tasks.map(&:id), JSON.parse(out).map { |row| row.fetch("id") },
-                     "#{args.join(" ")} id selection/order drifted from TaskQueries"
+                     "#{args.join(" ")} id selection/order drifted from Tasks::Application"
       end
     end
   end

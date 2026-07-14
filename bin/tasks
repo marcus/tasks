@@ -56,7 +56,7 @@ AGENTS  = File.join(ROOT, "AGENTS.md")
 # The model layer owns parsing and every mutation; the CLI adds dispatch,
 # ref resolution, and output. (Tasks::Item, Tasks::Format etc. live there.)
 require_relative "../lib/tasks/store"
-require_relative "../lib/tasks/task_queries"
+require_relative "../lib/tasks/application"
 require_relative "../lib/tasks/opener"
 
 def contexts(item) = item.tags.select { |t| t.start_with?("@") }
@@ -117,7 +117,7 @@ def emit_json?(items, args, extra: nil, result: nil)
 end
 
 def cmd_next(args = [])
-  result = task_queries.view(:next)
+  result = application.view_tasks(:next)
   nexts = result.items
   return if emit_json?(nexts, args, result: result)
   by_ctx = Hash.new { |h, k| h[k] = [] }
@@ -136,7 +136,7 @@ def cmd_next(args = [])
 end
 
 def cmd_quadrants(args = [])
-  result = task_queries.view(:quadrants, urgent_days: PATHS.urgent_days)
+  result = application.view_tasks(:quadrants, urgent_days: PATHS.urgent_days)
   open_items = result.items
   return if emit_json?(open_items, args, result: result, extra: ->(i) { result.metadata_for(i) })
   by_q = open_items.group_by { |item| result.metadata_for(item).fetch(:quadrant) }
@@ -149,7 +149,7 @@ def cmd_quadrants(args = [])
 end
 
 def cmd_agenda(args = [])
-  result = task_queries.view(:agenda)
+  result = application.view_tasks(:agenda)
   dated = result.items
   return if emit_json?(dated, args, result: result)
   dated.each do |i|
@@ -164,7 +164,7 @@ def cmd_agenda(args = [])
 end
 
 def cmd_inbox(args = [])
-  result = task_queries.view(:inbox)
+  result = application.view_tasks(:inbox)
   inbox = result.items
   return if emit_json?(inbox, args, result: result)
   inbox.empty? ? (puts "Inbox empty. ✨") : inbox.each { |i| puts "  #{fmt(i)}" }
@@ -339,11 +339,16 @@ def store
                               max_depth: PATHS.max_depth)
 end
 
-# Every extracted query reads one immutable Store snapshot. The command layer
-# retains ref parsing and terminal formatting; reusable selection and resource
-# building live in Tasks::TaskQueries.
-def task_queries(include_archive: false)
-  Tasks::TaskQueries.new(store.read_snapshot(include_archive: include_archive))
+# The application keeps no Store instance: every query receives its own fresh
+# Store and immutable snapshot. The CLI's long-lived Store above remains only
+# for legacy ref resolution and mutations until their Phase 3 command facade.
+def application
+  @application ||= Tasks::Application.new(
+    store_factory: Tasks::StoreFactory.new(
+      org: ORG, archive: ARCHIVE, links: PATHS.links,
+      link_systems: PATHS.link_systems, max_depth: PATHS.max_depth
+    )
+  )
 end
 
 # Abort a failed mutation. A false return is usually a stale line, but it's also
@@ -634,7 +639,8 @@ def cmd_show(args)
   ref = rest.shift
   abort %(usage: tasks show <ref>) if ref.nil? || ref.strip.empty?
   item = resolve_ref(ref, include_done: flags["--include-done"])
-  task = task_queries.task(item)
+  task = application.get_task(stable_id_for(item))
+  mutation_failed "lost the selected task" unless task
 
   closed = task.closed
   notes = task.body.map(&:strip).reject(&:empty?)
@@ -1104,7 +1110,7 @@ def cmd_list(args)
   rescue ArgumentError => error
     abort error.message
   end
-  result = task_queries(include_archive: parsed.filter.include_archive?).list(parsed.filter)
+  result = application.list_tasks(parsed.filter)
   sel = result.items
 
   return if emit_json?(sel, [parsed.json ? "--json" : nil].compact, result: result)
