@@ -10,8 +10,11 @@ module Tasks
   # forward from an EditSnapshot rather than construct it from a file coordinate
   # or a wall-clock timestamp. It is optional — a nil revision skips the
   # optimistic-concurrency check (the CLI convenience), while a supplied value
-  # is checked against all three revision components so a cascading delete is
-  # refused when any descendant, sibling, or the task itself changed.
+  # is checked against all three revision components. Precisely: the guard
+  # trips on the task's own fields, subtree structure (descendant add/remove/
+  # move), descendant lifecycle changes (state/dates/defer/recur), and sibling
+  # identity changes. Descendant/sibling scalar edits (title, priority, body)
+  # sit outside every fingerprint and do not trip it — see ADR-0007.
   #
   # `cascade` opts into removing a task that still has descendants; without it a
   # task with a non-empty subtree is refused. Deleting never reparents children.

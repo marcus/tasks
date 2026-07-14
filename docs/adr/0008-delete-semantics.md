@@ -63,9 +63,13 @@ hard delete of a task's subtree from the live file. It is not an alias for
   preflight `Tasks::Check` failure refuses outright and writes nothing, rather
   than deleting a record to make an invalid file parse.
 - `If-Match` is required over HTTP and, when supplied, is checked against all
-  three revision components (see ADR-0007), so a changed descendant, sibling, or
-  the task itself refuses a stale cascade. On the CLI a nil expected revision
-  skips the concurrency check as a convenience.
+  three revision components. The guard trips on the task's own fields, subtree
+  structure (descendant add/remove/move), descendant lifecycle changes
+  (state/dates/defer/recur), and sibling identity changes; descendant or
+  sibling scalar edits (title, priority, body) sit outside every fingerprint
+  and do not trip it — the precise scope and its rationale live in ADR-0007.
+  On the CLI a nil expected revision skips the concurrency check as a
+  convenience.
 - The delete is undoable through the shared journal (`tasks undo`, TUI, and
   across CLI runs), restoring the exact prior bytes.
 

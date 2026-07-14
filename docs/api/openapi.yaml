@@ -164,7 +164,12 @@ paths:
             default: open
         - name: state
           in: query
-          description: Restrict to one lifecycle state.
+          description: |
+            Restrict to one lifecycle state. Intersects with `scope`: the
+            result contains only tasks whose state is in the scope's state set
+            AND equals this value, so `scope=open&state=DONE` is an empty
+            collection, not an error. (Implementation note: TaskFilter gains a
+            single-state filter in Phase 4 — see ADR-0007.)
           required: false
           schema: { $ref: "#/components/schemas/State" }
         - name: context
@@ -195,10 +200,12 @@ paths:
         - name: deferred
           in: query
           description: |
-            When true, list only deferred (someday/maybe) tasks. When false or
-            omitted under the default open scope, deferred tasks are hidden.
+            When true, list only deferred (someday/maybe) tasks — under any
+            scope. When false or omitted, the scope's default applies: the
+            `open` scope hides deferred tasks; `done`, `archived`, and `all`
+            include them. `false` and omitted are equivalent.
           required: false
-          schema: { type: boolean }
+          schema: { type: boolean, default: false }
         - name: recurring
           in: query
           description: When true, list only tasks that carry a recurrence cookie.
@@ -336,8 +343,21 @@ paths:
                       store_revision: "s1.7a1b2c3d"
         "400":
           $ref: "#/components/responses/MalformedRequest"
+        "404":
+          description: "`parent_id` does not identify an existing live task."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                missing_parent:
+                  value:
+                    error:
+                      code: "not_found"
+                      message: "parent_id does not identify a live task."
+                      details: { parent_id: "deadbeef" }
+                      request_id: "req_4c1a"
         "409":
-          description: Structural refusal (cycle, excessive depth) building the task.
+          description: Structural refusal (excessive depth) nesting the task.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -583,6 +603,21 @@ paths:
                       request_id: "req_7b2d"
         "412":
           $ref: "#/components/responses/StaleRevision"
+        "422":
+          description: |
+            The `If-Match` value is not a well-formed revision, or the id
+            addresses a section rather than a task.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                malformed_revision:
+                  value:
+                    error:
+                      code: "validation_failed"
+                      message: "If-Match is not a well-formed task revision."
+                      details: {}
+                      request_id: "req_9e3f"
         "428":
           $ref: "#/components/responses/MissingPrecondition"
         "503":
@@ -860,8 +895,8 @@ paths:
                 value:
                   fingerprint: "sweep.a1b2c3"
       responses:
-        "201":
-          description: Sweep applied.
+        "200":
+          description: Sweep applied. (200, not 201 — a sweep is an action with no addressable created resource.)
           content:
             application/json:
               schema:
@@ -1130,8 +1165,11 @@ components:
                   request_id: "req_6f7a"
     HistoryConflict:
       description: |
-        The supplied `store_revision` no longer matches; another surface wrote
-        since it was observed.
+        The step cannot be applied: the supplied `store_revision` no longer
+        matches (another surface wrote since it was observed), there is no
+        step in that direction, or the journal refused the step because the
+        files were edited out of band. `details.reason` distinguishes
+        `stale_store_revision`, `empty`, and `journal_conflict`.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -1141,10 +1179,23 @@ components:
                 error:
                   code: "conflict"
                   message: "The store changed since that revision; refetch and retry."
-                  details: { store_revision: "s1.6f2a9c0b" }
+                  details:
+                    reason: "stale_store_revision"
+                    store_revision: "s1.6f2a9c0b"
                   request_id: "req_7a8b"
+            empty:
+              value:
+                error:
+                  code: "conflict"
+                  message: "Nothing to undo."
+                  details: { reason: "empty" }
+                  request_id: "req_1d2e"
     StoreInvalid:
-      description: The backing store is structurally invalid; no read or write can proceed.
+      description: |
+        The operation could not proceed against the backing store: either the
+        store is structurally invalid (`store_invalid`, including a write that
+        failed post-write validation and was rolled back) or a write failed
+        for an environmental reason and was rolled back (`unavailable`).
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -1156,6 +1207,13 @@ components:
                   message: "The task list failed structural validation."
                   details: {}
                   request_id: "req_8b9c"
+            unavailable:
+              value:
+                error:
+                  code: "unavailable"
+                  message: "The write failed and was rolled back; retry."
+                  details: {}
+                  request_id: "req_2f4d"
 
   examples:
     TaskResource:
@@ -1393,9 +1451,16 @@ components:
         priority: { $ref: "#/components/schemas/Priority" }
         tags:
           type: array
+          description: |
+            Ordinary tags; entries must not start with `@` (contexts have
+            their own field) — an `@`-prefixed entry is rejected with 422.
           items: { type: string }
         contexts:
           type: array
+          description: |
+            `@contexts`; each entry must start with `@`. The adapter merges
+            contexts and tags into the stored tag list (`Tasks::CreateTask`
+            takes one array); the split fields keep the request unambiguous.
           items: { type: string }
         scheduled: { $ref: "#/components/schemas/IsoDate" }
         deadline: { $ref: "#/components/schemas/IsoDate" }
