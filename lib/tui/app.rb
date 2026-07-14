@@ -64,9 +64,9 @@ module Tui
                    llm_config: LLM::Config.load, agent_factory: nil, agent_probe: nil)
       Theme.configure!(name: paths.theme, overrides: paths.colors || {})
       @paths = paths
-      # Store remains the deliberately stateful mutation/editor session in
-      # Phase 2. TUI presentation reads travel through @application below so a
-      # held row can never combine this Store's mutable cache with later reads.
+      # Store remains the long-lived watcher, history/archive, and form-option
+      # source. TUI presentation reads and patch-style writes travel through
+      # @application so adapters do not own task mutation semantics.
       @store  = Store.new(org: paths.org, archive: paths.archive,
                           links: paths.links || {}, link_systems: paths.link_systems || {},
                           max_depth: paths.max_depth)
@@ -824,11 +824,11 @@ module Tui
     # richer, save-on-blur workflow, while these keyboard actions retain their
     # established confirmations, messages, and undo labels.
     def patch_task(item, field:, value:, label:)
-      snapshot = @store.edit_snapshot(item.id)
+      snapshot = @application.edit_snapshot(item.id)
       return Tasks::MutationResult.new(status: :not_found) unless snapshot
 
-      result = @store.patch_task!(Tasks::TaskPatch.from(snapshot, field: field, value: value,
-                                                         history_label: label))
+      result = @application.patch_task(Tasks::TaskPatch.from(snapshot, field: field, value: value,
+                                                              history_label: label))
       invalidate_read_model if result.ok?
       result
     end
@@ -859,7 +859,8 @@ module Tui
       editor = if resumed
                  @suspended_task_editor
                else
-                 TaskEditorSession.new(store: @store, target_id: item.id, focus: focus)
+                 TaskEditorSession.new(store: @store, application: @application,
+                                       target_id: item.id, focus: focus)
                end
       return flash("task no longer exists") if editor.missing?
 

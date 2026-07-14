@@ -61,6 +61,22 @@ class TestApplication < Minitest::Test
     end
   end
 
+  def test_patch_task_preserves_field_scoped_conflicts_without_exposing_a_store
+    with_application do |_org, _archive, app|
+      snapshot = app.edit_snapshot(FIX[:flight])
+      body_change = Tasks::TaskPatch.from(snapshot, field: :body, value: "A new note")
+      assert_equal :ok, app.patch_task(body_change).status
+
+      title_change = Tasks::TaskPatch.from(snapshot, field: :title, value: "Rebook flight")
+      result = app.patch_task(title_change)
+
+      assert_equal :ok, result.status
+      task = app.get_task(FIX[:flight])
+      assert_equal "Rebook flight", task.title
+      assert_equal ["A new note"], task.body
+    end
+  end
+
   def test_live_read_model_keeps_presentation_items_and_canonical_views_on_one_snapshot
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")

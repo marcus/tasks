@@ -11,6 +11,14 @@ require "tasks/agent_diff"
 # end-to-end CLI tests (arg parsing, ref resolution, exit codes) that shell
 # out to bin/tasks against a sandbox copy via TASKS_FILE/TASKS_ARCHIVE.
 class TestCliMutations < Minitest::Test
+  def test_patch_style_cli_commands_route_through_the_application_boundary
+    source = File.read(BIN, encoding: "UTF-8")
+
+    refute_match(/store\.patch_task!/, source)
+    assert_match(/application\.edit_snapshot\(task_id\)/, source)
+    assert_match(/application\.patch_task\(patch\)/, source)
+  end
+
   # -- set_date! (backs `due`) ------------------------------------------------
 
   def test_set_date_replaces_existing_deadline

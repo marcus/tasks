@@ -1420,8 +1420,9 @@ class TestApp < Minitest::Test
 
     refute_match legacy, source
     assert_match(/def patch_task\(item, field:, value:, label:\)/, source)
-    assert_match(/@store\.edit_snapshot\(item\.id\)/, source)
-    assert_match(/@store\.patch_task!/, source)
+    refute_match(/@store\.(?:edit_snapshot|patch_task!)/, source)
+    assert_match(/@application\.edit_snapshot\(item\.id\)/, source)
+    assert_match(/@application\.patch_task/, source)
   end
 
   def test_tui_presentation_reads_use_the_application_model_not_the_mutation_store

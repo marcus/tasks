@@ -353,8 +353,8 @@ def store
 end
 
 # The application keeps no Store instance: every query receives its own fresh
-# Store and immutable snapshot. The CLI's long-lived Store above remains only
-# for legacy ref resolution and mutations until their Phase 3 command facade.
+# Store and immutable snapshot. The CLI's long-lived Store above remains for
+# CLI-only ref resolution, presentation, and the remaining non-patch commands.
 def application
   @application ||= Tasks::Application.new(
     store_factory: Tasks::StoreFactory.new(
@@ -393,7 +393,7 @@ PATCH_SNAPSHOT_UNSET = Object.new.freeze
 # refs that are absent at resolution still exit 2 in resolve_ref.
 def patch_task_by_id(task_id, field:, value:, label:, expected: PATCH_EXPECTED_UNSET,
                      coalesce_key: nil, snapshot: PATCH_SNAPSHOT_UNSET, force: false)
-  snapshot = store.edit_snapshot(task_id) if snapshot.equal?(PATCH_SNAPSHOT_UNSET)
+  snapshot = application.edit_snapshot(task_id) if snapshot.equal?(PATCH_SNAPSHOT_UNSET)
   baseline = if expected.equal?(PATCH_EXPECTED_UNSET)
                snapshot && patch_expected(snapshot, field)
              else
@@ -402,7 +402,7 @@ def patch_task_by_id(task_id, field:, value:, label:, expected: PATCH_EXPECTED_U
   patch = Tasks::TaskPatch.new(id: task_id, field: field, value: value,
                                expected: baseline, history_label: label,
                                coalesce_key: coalesce_key, force: force)
-  result = store.patch_task!(patch)
+  result = application.patch_task(patch)
   return result unless result.not_found?
 
   Tasks::MutationResult.new(status: :stale, snapshot: result.snapshot,
@@ -642,7 +642,7 @@ def cmd_undate(args)
     return
   end
   label = kind ? "remove #{kind}: #{item.title}" : "remove dates: #{item.title}"
-  snapshot = store.edit_snapshot(task_id)
+  snapshot = application.edit_snapshot(task_id)
   if snapshot && !(kind ? snapshot.public_send(kind) : snapshot.scheduled || snapshot.deadline)
     mutation_failed "nothing to remove (no matching date stamp?)"
   end
@@ -883,7 +883,7 @@ def cmd_note(args)
     puts "would add note to #{item_headline(item)}: #{text}"
     return
   end
-  snapshot = store.edit_snapshot(task_id)
+  snapshot = application.edit_snapshot(task_id)
   body = snapshot&.body
   result = patch_task_by_id(task_id, field: :body,
                             value: body.nil? || body.empty? ? text.strip : "#{body}\n#{text.strip}",

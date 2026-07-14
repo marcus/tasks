@@ -72,7 +72,7 @@ module Tasks
       File.join(File.expand_path(dir), File.basename(org))
     end
 
-    def initialize(dir:, org:, limit:)
+    def initialize(dir:, org:, limit:, coalesce_scope: nil)
       @dir = dir
       # Canonical (symlink-resolved) so the index's org guard matches no matter
       # how a sharing process spelled the path — same rationale as dir_for's key.
@@ -81,7 +81,7 @@ module Tasks
       # Coalescing is deliberately local to one live Journal/Store instance.
       # Persisting this random scope on a keyed tip lets another instance share
       # undo history without accidentally extending the prior edit session.
-      @coalesce_scope = SecureRandom.hex(16)
+      @coalesce_scope = (coalesce_scope || SecureRandom.hex(16)).to_s.dup.freeze
     end
 
     # Record a completed mutation. `before`/`after` are {org:, archive:} hashes

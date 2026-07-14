@@ -62,7 +62,9 @@ one checked Store transaction and one journal entry:
 - `Tasks::TaskChangeset` (`lib/tasks/task_changeset.rb`) — an atomic multi-field
   update against one expected task revision, applied in a documented
   deterministic field order (`TaskChangeset::FIELD_ORDER`). `TaskPatch` remains
-  a one-field convenience that delegates to the same machinery.
+  a one-field convenience that delegates to the same machinery; adapters use
+  `Application#edit_snapshot` and `#patch_task` when they need its field-scoped
+  conflict behavior.
 - `Tasks::DeleteTask` (`lib/tasks/delete_task.rb`) — an undoable hard delete with
   a descendant guard.
 
@@ -81,8 +83,9 @@ presentation adapters that still need the legacy Items plus canonical
 `TaskReadModel`.
 
 The Store is created per operation by `Tasks::StoreFactory`, which owns only
-immutable construction settings and returns a new mutable Store from each
-`#call`. The existing sidecar file lock still serializes mutations across API
+immutable construction settings (including one private journal coalescing scope
+per application lifetime) and returns a new mutable Store from each `#call`.
+The existing sidecar file lock still serializes mutations across API
 requests, CLI processes, and the TUI, and atomic file replacement means readers
 see complete old or complete new bytes. If profiling later shows parsing to be
 material, a synchronized immutable snapshot cache can be added behind the

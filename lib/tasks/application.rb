@@ -1,10 +1,13 @@
 # frozen_string_literal: true
 
+require "securerandom"
+
 require_relative "store"
 require_relative "create_task"
 require_relative "delete_task"
 require_relative "operation_context"
 require_relative "task_changeset"
+require_relative "task_patch"
 require_relative "task_queries"
 
 module Tasks
@@ -71,18 +74,23 @@ module Tasks
       @links = immutable_copy(links)
       @link_systems = immutable_copy(link_systems)
       @max_depth = Integer(max_depth)
+      # Every Store built by one factory represents one adapter/application
+      # lifetime. Sharing this private scope preserves coalesced editor writes
+      # while each operation still receives its own mutable Store instance.
+      @coalesce_scope = SecureRandom.hex(16).freeze
       freeze
     end
 
     def call
       Store.new(org: org, archive: archive, journal_dir: journal_dir,
                 undo_limit: undo_limit, links: links, link_systems: link_systems,
-                max_depth: max_depth)
+                max_depth: max_depth, coalesce_scope: coalesce_scope)
     end
 
     private
 
-    attr_reader :org, :archive, :journal_dir, :undo_limit, :links, :link_systems, :max_depth
+    attr_reader :org, :archive, :journal_dir, :undo_limit, :links, :link_systems, :max_depth,
+                :coalesce_scope
 
     def frozen_text(value)
       value.to_s.dup.freeze
@@ -149,6 +157,13 @@ module Tasks
       TaskReadModel.new(store_factory.call.read_snapshot)
     end
 
+    # Field-scoped snapshot for adapters that preserve save-on-blur or
+    # single-field CLI conflict behavior. It is an immutable typed value, not
+    # an escape hatch to a Store instance.
+    def edit_snapshot(id)
+      store_factory.call.edit_snapshot(id)
+    end
+
     # Typed creation seam. Hash attributes are accepted for adapter convenience
     # but immediately become an immutable CreateTask before Store takes the
     # lock, so CLI, TUI, and a future HTTP adapter share one create transaction.
@@ -184,6 +199,19 @@ module Tasks
                     )
                   end
       store_factory.call.apply_changeset!(changeset)
+    end
+
+    # A single-field command keeps TaskPatch's field-owned expectation while
+    # sharing the Store transaction used by TaskChangeset. This lets existing
+    # adapters migrate behind the application boundary without turning an
+    # unrelated concurrent edit into a whole-task conflict.
+    def patch_task(patch, context: nil)
+      validate_operation_context(context)
+      unless patch.is_a?(TaskPatch)
+        raise ArgumentError, "patch_task expects a Tasks::TaskPatch"
+      end
+
+      store_factory.call.patch_task!(patch)
     end
 
     # Typed deletion seam. An undoable hard delete of one live task; a task with

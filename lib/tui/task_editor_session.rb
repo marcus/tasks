@@ -2,12 +2,14 @@
 
 require "securerandom"
 require_relative "task_edit_form"
+require_relative "../tasks/application"
 require_relative "../tasks/patch_result"
 require_relative "../tasks/task_patch"
 
 module Tui
   # Coordinates one durable task-edit pass. It translates TermForm transitions
-  # into typed Store patches while retaining all recoverable local state.
+  # into application-owned typed patches while retaining all recoverable local
+  # state.
   class TaskEditorSession
     Outcome = Data.define(:status, :form_transition, :patch_result, :message, :data) do
       def initialize(status:, form_transition: nil, patch_result: nil, message: nil, data: nil)
@@ -33,14 +35,15 @@ module Tui
     CTRL_S = "\x13"
     CTRL_O = "\x0f"
 
-    attr_reader :store, :target_id, :snapshot, :coalesce_key, :edit_form,
+    attr_reader :store, :application, :target_id, :snapshot, :coalesce_key, :edit_form,
                 :pending_confirmation, :conflict, :pending_revert, :kept_copy,
                 :last_result, :pending_quit_confirmation
 
     alias form_adapter edit_form
 
-    def initialize(store:, target: nil, target_id: nil, coalesce_key: nil, **form_options)
+    def initialize(store:, application:, target: nil, target_id: nil, coalesce_key: nil, **form_options)
       @store = store
+      @application = application
       @target_id = stable_id(target_id || target)
       raise ArgumentError, "task editor requires a stable target id" if @target_id.empty?
 
@@ -51,7 +54,7 @@ module Tui
       @conflict = nil
       @kept_copy = nil
       @last_result = nil
-      @snapshot = store.edit_snapshot(@target_id)
+      @snapshot = application.edit_snapshot(@target_id)
       @missing = @snapshot.nil?
       @edit_form = TaskEditForm.new(snapshot: @snapshot, store: store, **form_options) if @snapshot
     end
@@ -148,7 +151,7 @@ module Tui
     def refresh
       return outcome(:confirmation, data: pending_confirmation) if pending_confirmation
 
-      fresh = store.edit_snapshot(target_id)
+      fresh = application.edit_snapshot(target_id)
       return become_missing unless fresh
 
       @snapshot = fresh
@@ -220,7 +223,7 @@ module Tui
       return outcome(:handled) unless conflict
 
       field = conflict.field
-      fresh = store.edit_snapshot(target_id)
+      fresh = application.edit_snapshot(target_id)
       return become_missing unless fresh
 
       if pending_confirmation
@@ -276,11 +279,11 @@ module Tui
         coalesce_key: coalesce_key,
         confirmation: confirmation,
       )
-      result = store.patch_task!(patch)
+      result = application.patch_task(patch)
       @last_result = result
 
       if result.ok?
-        fresh = result.snapshot || store.edit_snapshot(target_id)
+        fresh = result.snapshot || application.edit_snapshot(target_id)
         return become_missing unless fresh
 
         @snapshot = fresh

@@ -238,7 +238,7 @@ module Tasks
     # the user's configured shorthand templates and custom host rows
     # (Config#links / #link_systems), consulted by #links. The keyword stays
     # `org:` for constructor compatibility though it now names the jsonl file.
-    def initialize(org:, archive:, journal_dir: nil, undo_limit: UNDO_LIMIT,
+    def initialize(org:, archive:, journal_dir: nil, undo_limit: UNDO_LIMIT, coalesce_scope: nil,
                    links: {}, link_systems: {}, max_depth: Tree::DEFAULT_MAX_DEPTH)
       @org = org
       @archive = archive
@@ -250,7 +250,8 @@ module Tasks
       @read_snapshot = nil
       @link_shorthands = links
       @link_systems = link_systems
-      @journal = Journal.new(dir: journal_dir || Journal.dir_for(org), org: org, limit: undo_limit)
+      @journal = Journal.new(dir: journal_dir || Journal.dir_for(org), org: org, limit: undo_limit,
+                             coalesce_scope: coalesce_scope)
     end
 
     def items

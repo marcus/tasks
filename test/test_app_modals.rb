@@ -480,10 +480,15 @@ class TestAppModals < Minitest::Test
       app.send(:handle_key, "\r")
       app.send(:handle_key, "d")
       app.send(:handle_paste, "2026-07-20")
-      store = app.instance_variable_get(:@store)
-      store.stub(:patch_task!, Tasks::MutationResult.new(status: :conflict)) do
-        app.send(:handle_key, "\r")
+      application = app.instance_variable_get(:@application)
+      conflict_application = Object.new
+      conflict_application.define_singleton_method(:edit_snapshot) { |id| application.edit_snapshot(id) }
+      conflict_application.define_singleton_method(:patch_task) do |_patch|
+        Tasks::MutationResult.new(status: :conflict)
       end
+      conflict_application.define_singleton_method(:read_tasks) { application.read_tasks }
+      app.instance_variable_set(:@application, conflict_application)
+      app.send(:handle_key, "\r")
 
       assert_equal :form, mode(app)
       assert_equal :detail, panel(app).kind

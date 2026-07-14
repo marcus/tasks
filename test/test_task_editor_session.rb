@@ -26,11 +26,22 @@ class TestTaskEditorSession < Minitest::Test
       archive = File.join(dir, "archive.jsonl")
       File.write(org, Tasks::Format.dump(EDIT_TREE))
       store = Tasks::Store.new(org: org, archive: archive)
+      application = Tasks::Application.new(
+        store_factory: Tasks::StoreFactory.new(org: org, archive: archive)
+      )
       session = Tui::TaskEditorSession.new(
-        store: store, target_id: "11110002", today: Date.new(2026, 7, 13),
+        store: store, application: application, target_id: "11110002", today: Date.new(2026, 7, 13),
       )
       yield session, store, org
     end
+  end
+
+  def test_editor_routes_snapshots_and_patches_through_the_application_boundary
+    source = File.read(File.expand_path("../lib/tui/task_editor_session.rb", __dir__), encoding: "UTF-8")
+
+    refute_match(/store\.(?:edit_snapshot|patch_task!)/, source)
+    assert_match(/application\.edit_snapshot/, source)
+    assert_match(/application\.patch_task\(patch\)/, source)
   end
 
   def record(path, id = "11110002")
@@ -94,11 +105,14 @@ class TestTaskEditorSession < Minitest::Test
       archive = File.join(dir, "archive.jsonl")
       File.write(org, Tasks::Format.dump(EDIT_TREE))
       store = Tasks::Store.new(org: org, archive: archive)
+      application = Tasks::Application.new(
+        store_factory: Tasks::StoreFactory.new(org: org, archive: archive)
+      )
       target = +"11110002"
       coalesce = +"editor-session"
       proposed = +"Bound title"
       session = Tui::TaskEditorSession.new(
-        store: store, target_id: target, coalesce_key: coalesce,
+        store: store, application: application, target_id: target, coalesce_key: coalesce,
         today: Date.new(2026, 7, 13),
       )
       session.form.set_value(:title, proposed)
