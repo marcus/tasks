@@ -1177,7 +1177,12 @@ module Tasks
     # journal's conflict detection, and Atomic.write keeps even an unlocked
     # concurrent read from ever tearing.
     def with_lock
-      if @lock_depth.to_i.positive?
+      # `flock` is not reentrant across separately opened descriptors, but a
+      # few locked operations legitimately call another locked read in the
+      # same Ruby thread (for example restore -> reload!). Reentrancy belongs
+      # to that owner only: a Store instance can be shared by threads, and a
+      # global depth counter would let a second thread skip the sidecar flock.
+      if @lock_owner.equal?(Thread.current)
         @lock_depth += 1
         begin
           return yield
@@ -1188,11 +1193,13 @@ module Tasks
 
       File.open(lock_path, File::RDWR | File::CREAT, 0o644) do |f|
         f.flock(File::LOCK_EX)
+        @lock_owner = Thread.current
         @lock_depth = 1
         begin
           yield
         ensure
           @lock_depth = 0
+          @lock_owner = nil
         end
       end
     end

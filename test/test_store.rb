@@ -227,6 +227,87 @@ class TestStore < Minitest::Test
     end
   end
 
+  def test_read_snapshot_cannot_mix_pre_sweep_live_with_post_sweep_archive
+    with_store do |store, org, _archive|
+      original_read = store.method(:fresh_records_with_stat)
+      live_read = Queue.new
+      resume_snapshot = Queue.new
+      snapshot_result = Queue.new
+      reader_ready = Queue.new
+      start_reader = Queue.new
+      mutation_ready = Queue.new
+      start_mutation = Queue.new
+      mutation_result = Queue.new
+      lock_opened = Queue.new
+      lock_path = store.send(:lock_path)
+      reader_thread = nil
+
+      read_with_barrier = lambda do |path|
+        result = original_read.call(path)
+        if path == org && Thread.current.equal?(reader_thread)
+          live_read << true
+          resume_snapshot.pop
+        end
+        result
+      end
+
+      store.stub(:fresh_records_with_stat, read_with_barrier) do
+        reader = Thread.new do
+          reader_ready << Thread.current
+          start_reader.pop
+          snapshot_result << [:ok, store.read_snapshot(include_archive: true)]
+        rescue StandardError => error
+          snapshot_result << [:error, error]
+        end
+        reader_thread = reader_ready.pop
+        start_reader << true
+        live_read.pop
+
+        mutator = Thread.new do
+          mutation_ready << Thread.current
+          start_mutation.pop
+          mutation_result << [:ok, store.archive_swept!]
+        rescue StandardError => error
+          mutation_result << [:error, error]
+        end
+        mutation_thread = mutation_ready.pop
+        original_file_open = File.method(:open)
+
+        File.stub(:open, lambda { |path, *args, **kwargs, &block|
+          lock_opened << true if path == lock_path && Thread.current.equal?(mutation_thread)
+          original_file_open.call(path, *args, **kwargs, &block)
+        }) do
+          start_mutation << true
+
+          # The mutation has reached its own flock attempt while the reader is
+          # paused after reading live records. It cannot get past that flock
+          # until the reader has captured archive records as well.
+          begin
+            Timeout.timeout(1) { lock_opened.pop }
+          ensure
+            # Leave both threads able to finish even when this assertion fails
+            # against a lock implementation that bypasses flock.
+            resume_snapshot << true
+            reader.join
+            mutator.join
+          end
+        end
+      end
+
+      snapshot_status, snapshot = snapshot_result.pop
+      assert_equal :ok, snapshot_status, snapshot.inspect
+      mutation_status, mutation = mutation_result.pop
+      assert_equal :ok, mutation_status, mutation.inspect
+      assert_equal 1, mutation
+
+      # The snapshot saw the DONE item before the sweep. If the mutation had
+      # bypassed its flock, its archive read could have picked up the moved
+      # copy as well, yielding the same stable id in both collections.
+      assert snapshot.items.any? { |item| item.id == FIX[:old] }
+      refute snapshot.archive_items.any? { |item| item.id == FIX[:old] }
+    end
+  end
+
   def test_archive_nested_subtree_preserves_dfs_structure_and_undo
     with_archive_tree_store do |store, org, archive|
       before = File.read(org)
