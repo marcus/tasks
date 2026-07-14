@@ -1123,9 +1123,69 @@ class TestStore < Minitest::Test
     end
   end
 
-  # Stable patches do not use an update as an implicit repair operation: the
-  # preflight gate rejects malformed source before constructing a journal step.
-  def test_patch_refuses_to_repair_an_invalid_prior_state
+  # A targeted patch may repair its OWN invalid record (all Check errors on the
+  # target's line), but must still refuse when the invalid record is a different
+  # one — repairing A can't be trusted to leave B's breakage clean.
+  def test_patch_repairs_only_when_every_error_is_on_the_targeted_record
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, dump_fixture([
+        { "type" => "meta", "version" => 1 },
+        { "type" => "section", "id" => "aaaa0001", "title" => "W" },
+        { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "TODO",
+          "title" => "Fix me", "scheduled" => "not-a-date" },
+        { "type" => "task", "id" => "aaaa0003", "parent" => "aaaa0001", "state" => "TODO",
+          "title" => "Bystander", "deadline" => "also-bad" },
+      ]))
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
+      refute Tasks::Check.check(org).ok?, "seed is invalid"
+      before = File.read(org)
+
+      # Targeting aaaa0002 refuses: aaaa0003 is also invalid, so a fix here would
+      # not leave the file clean.
+      blocked = store.patch_task!(Tasks::TaskPatch.new(
+        id: "aaaa0002", field: :scheduled, value: Date.new(2026, 8, 1), expected: nil
+      ))
+      assert_equal :store_invalid, blocked.status
+      assert_equal before, File.read(org), "a refusal writes nothing"
+      assert_equal :empty, store.undo!.first, "rejected patches create no journal step"
+
+      # Repair the bystander first, then the file's only remaining error is on
+      # aaaa0002 — now a patch targeting it repairs it and leaves the file clean.
+      fix_b = store.patch_task!(Tasks::TaskPatch.new(
+        id: "aaaa0003", field: :deadline, value: Date.new(2026, 9, 1), expected: nil
+      ))
+      assert_equal :store_invalid, fix_b.status, "still blocked while aaaa0002 is invalid"
+
+      # With aaaa0003 the sole invalid record, a patch on it succeeds and the
+      # file is only partially repaired — aaaa0002 is still bad, so re-check.
+      File.write(org, dump_fixture([
+        { "type" => "meta", "version" => 1 },
+        { "type" => "section", "id" => "aaaa0001", "title" => "W" },
+        { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "TODO",
+          "title" => "Fix me", "scheduled" => "not-a-date" },
+        { "type" => "task", "id" => "aaaa0003", "parent" => "aaaa0001", "state" => "TODO",
+          "title" => "Bystander" },
+      ]))
+      store.reload!
+      invalid_bytes = File.read(org)
+      result = store.patch_task!(Tasks::TaskPatch.new(
+        id: "aaaa0002", field: :scheduled, value: Date.new(2026, 8, 1), expected: nil,
+        history_label: "schedule → 2026-08-01: Fix me"
+      ))
+      assert_equal :ok, result.status
+      assert Tasks::Check.check(org).ok?, "the file is now fully valid"
+      assert_equal "2026-08-01", record_for(org, title: "Fix me")["scheduled"]
+
+      assert_equal :ok, store.undo!.first, "undo of a targeted repair is permitted"
+      assert_equal invalid_bytes, File.read(org), "undo restores the invalid bytes exactly"
+    end
+  end
+
+  # Repair mode is scoped to the patch path (strict_revision: false). A
+  # strict-revision changeset — the future HTTP transport — keeps refusing an
+  # invalid file outright: a revision computed over malformed data isn't trusted.
+  def test_strict_revision_changeset_never_repairs_an_invalid_file
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       File.write(org, dump_fixture([
@@ -1135,12 +1195,15 @@ class TestStore < Minitest::Test
           "title" => "Fix me", "scheduled" => "not-a-date" },
       ]))
       store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
-      refute Tasks::Check.check(org).ok?, "seed is invalid"
       before = File.read(org)
-      refute store.test_mutation.set_date(store.items.find { |i| i.title == "Fix me" },
-                                          Date.new(2026, 8, 1), kind: :scheduled)
-      assert_equal before, File.read(org), "invalid source is not partially repaired"
-      assert_equal :empty, store.undo!.first, "rejected patches create no journal step"
+      hex = "0" * 64
+      result = store.apply_changeset!(Tasks::TaskChangeset.new(
+        id: "aaaa0002", changes: { scheduled: Date.new(2026, 8, 1) },
+        expected_revision: "v1.#{hex}.#{hex}.#{hex}"
+      ))
+      assert_equal :store_invalid, result.status
+      assert_equal before, File.read(org), "strict-revision path never repairs"
+      assert_equal :empty, store.undo!.first
     end
   end
 

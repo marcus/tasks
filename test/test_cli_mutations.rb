@@ -904,6 +904,74 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  # -- targeted repair of an invalid record (repair mode) ----------------------
+
+  # A record with a malformed date makes the whole file invalid, and with
+  # hand-editing forbidden there is otherwise no way to fix it. Scheduling that
+  # same record rewrites the bad field and leaves the file fully valid.
+  INVALID_SCHEDULED = Tasks::Format.dump([
+    { "type" => "meta", "version" => 1 },
+    { "type" => "section", "id" => "aaaa0001", "title" => "Work" },
+    { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "TODO",
+      "title" => "Fix the widget", "scheduled" => "not-a-date" },
+  ]).freeze
+
+  def test_cli_schedule_repairs_its_own_malformed_date
+    run_cli("schedule", "Fix the widget", "2026-08-01", content: INVALID_SCHEDULED) do |org, out, err, st|
+      assert st.success?, "schedule should repair and exit 0: #{err}"
+      assert Tasks::Check.check(org).ok?, "file is fully valid after repair"
+      assert_equal "2026-08-01", record_for(org, title: "Fix the widget")["scheduled"]
+      assert_match(/Fix the widget/, out)
+    end
+  end
+
+  def test_cli_schedule_repair_is_one_journal_entry_undone_to_invalid_bytes
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, INVALID_SCHEDULED)
+
+      _o, err, st = run_cli_at(org, archive, "schedule", "Fix the widget", "2026-08-01")
+      assert st.success?, "schedule repaired: #{err}"
+      assert Tasks::Check.check(org).ok?
+      assert_equal "2026-08-01", record_for(org, title: "Fix the widget")["scheduled"]
+
+      _o2, _e2, undo_st = run_cli_at(org, archive, "undo")
+      assert undo_st.success?, "undo of a targeted repair succeeds"
+      assert_equal INVALID_SCHEDULED, File.read(org, encoding: "UTF-8"),
+                   "undo restores the invalid bytes exactly"
+    end
+  end
+
+  def test_cli_undate_removes_a_malformed_date_stamp
+    run_cli("undate", "Fix the widget", content: INVALID_SCHEDULED) do |org, _out, err, st|
+      assert st.success?, "undate should repair and exit 0: #{err}"
+      assert Tasks::Check.check(org).ok?, "file is fully valid after repair"
+      assert_nil record_for(org, title: "Fix the widget")["scheduled"]
+    end
+  end
+
+  # Repair is refused when the invalid record is a DIFFERENT one than the target:
+  # fixing A can't be trusted to leave B's breakage clean. The CLI prints the
+  # honest "already invalid" hint and writes nothing.
+  def test_cli_mutation_refuses_when_a_different_record_is_invalid
+    invalid = dump_fixture([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "aaaa0001", "title" => "Work" },
+      { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "TODO",
+        "title" => "Target task" },
+      { "type" => "task", "id" => "aaaa0003", "parent" => "aaaa0001", "state" => "TODO",
+        "title" => "Broken bystander", "deadline" => "not-a-date" },
+    ])
+    run_cli("schedule", "Target task", "2026-08-01", content: invalid) do |org, _out, err, st|
+      refute st.success?, "refuses while another record is invalid"
+      assert_equal 1, st.exitstatus
+      assert_equal invalid, File.read(org, encoding: "UTF-8"), "nothing is written"
+      assert_match(/already invalid/, err)
+      assert_match(/tasks check/, err)
+    end
+  end
+
   def test_cli_note_with_em_dash_under_non_utf8_locale
     # End-to-end regression: under a C locale the shell hands Ruby ASCII-8BIT
     # ARGV, so a note with an em-dash used to crash on the UTF-8 file write.

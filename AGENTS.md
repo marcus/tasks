@@ -121,4 +121,7 @@ action (Slack, email) — so the caller has a full audit trail.
 
 ---
 *Escape hatch: if the file is ever edited out-of-band (not by you), `bin/tasks
-check` reports any structural breakage. You should not be making such edits.*
+check` reports any structural breakage. You should not be making such edits — but
+if exactly one record is broken, a mutation targeting that record (e.g. `schedule
+<ref> <date>` or `undate <ref>` over a malformed date) repairs it in place; the
+write is refused unless it leaves the whole file valid.*

@@ -471,13 +471,23 @@ module Tasks
         @last_rollback = nil
         before = snapshot
         current = nil
+        repair = false
         begin
           # Check raw validity before parsing/building: Format.parse assumes a
           # valid UTF-8 String, while Check deliberately contains bad bytes.
           preflight = Check.check(@org)
           unless preflight.ok?
-            return MutationResult.new(status: :store_invalid,
-                                      errors: preflight.errors.map(&:last))
+            # Targeted repair: a field-owned patch (never a strict-revision
+            # changeset, never a create) may fix its OWN invalid record, but
+            # only when every preflight Check error is attributable to that one
+            # record (see repair_scope?). A revision or conflict baseline built
+            # over malformed data isn't trustworthy, so strict-revision callers
+            # keep refusing an invalid file outright.
+            repair = !strict_revision && repair_scope?(preflight, changeset.id)
+            unless repair
+              return MutationResult.new(status: :store_invalid,
+                                        errors: preflight.errors.map(&:last))
+            end
           end
 
           validation = validate_changeset(changeset)
@@ -497,11 +507,16 @@ module Tasks
             return MutationResult.new(status: revision_error, snapshot: current) if revision_error
           end
 
-          unless confirmation_matches?(current, changeset.confirmation)
+          # Repair mode's `current` snapshot is derived from malformed source,
+          # so the ordinary conflict gates (confirmation, field expectations)
+          # would compare live values against untrustworthy baselines. The
+          # post-write Check is the real safety net here: it must pass
+          # COMPLETELY or the write rolls back (see post_write_failure below).
+          unless repair || confirmation_matches?(current, changeset.confirmation)
             return MutationResult.new(status: :conflict, snapshot: current)
           end
 
-          if field_expectations
+          if field_expectations && !repair
             field_expectations.each do |field, expected|
               actual = patch_expected_for(current, field)
               unless semantic_patch_equal?(field, actual, expected)
@@ -540,7 +555,7 @@ module Tasks
           end
           after = snapshot
           @journal.record(label: label, before: before, after: after,
-                          coalesce_key: changeset.coalesce_key)
+                          coalesce_key: changeset.coalesce_key, repair: repair)
           reload!
           fresh_ri = locate_stable_index(@records, changeset.id)
           MutationResult.new(
@@ -939,6 +954,28 @@ module Tasks
     def locate_stable_index(records, id)
       return nil unless id.is_a?(String) && !id.empty?
       records.index { |record| record["type"] == "task" && record["id"] == id }
+    end
+
+    # Whether a preflight failure is repairable by a patch that targets `id`:
+    # true only when EVERY Check error lies on the single record that patch will
+    # rewrite. Raw-safety comes first — an invalid-UTF-8 file, or any line that
+    # isn't parseable JSON (Format.parse yields an error entry), keeps refusing
+    # even when it is the targeted line, because Format.parse/Check can't reason
+    # about bytes they would misparse. With the file parseable, locate the target
+    # by stable id and require each error's line to equal the target's line; an
+    # error anywhere else means the fix wouldn't leave the file fully clean, so
+    # we refuse exactly as before and the CLI shows the "already invalid" hint.
+    def repair_scope?(preflight, id)
+      return false unless id.is_a?(String) && !id.empty?
+      raw = File.read(@org, encoding: "UTF-8")
+      return false unless raw.valid_encoding?
+      parsed = Format.parse(raw)
+      return false unless parsed.errors.empty?
+      target = parsed.records.find { |record| record["type"] == "task" && record["id"] == id }
+      return false unless target
+      preflight.errors.all? { |line, _| line == target["line"] }
+    rescue Errno::ENOENT, SystemCallError, IOError
+      false
     end
 
     def normalize_patch_field(field)
@@ -1749,7 +1786,12 @@ module Tasks
           # a state that fails today's invariants. Gate the restored live file the
           # same way with_history gates a forward mutation. A nil target org is the
           # empty first-run state — no file to validate — so skip the gate there.
-          if step[:target][:org] && !Check.check(@org).ok?
+          # A step marked `repair` is the exception: it recorded a deliberate
+          # targeted repair whose `before` was the malformed record the user asked
+          # to fix, so undo must faithfully restore those invalid bytes rather
+          # than refuse (the automatic ensure_id! repair is never so marked, so
+          # its undo stays gated).
+          if step[:target][:org] && !step[:repair] && !Check.check(@org).ok?
             rollback_history_files(before)
             return [:conflict, step[:label]]
           end

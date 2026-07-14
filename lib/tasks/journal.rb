@@ -93,7 +93,12 @@ module Tasks
     # since the last record; the stale chain can no longer be safely replayed
     # (undoing across it would clobber that edit), so we discard it and start a
     # fresh baseline at `before`.
-    def record(label:, before:, after:, coalesce_key: nil)
+    # `repair: true` marks the produced state as the result of a targeted repair
+    # of a previously-invalid record. It rides on the after-state so `plan` can
+    # tell Store that undoing this step is *meant* to restore the malformed
+    # `before` bytes — the one case where reverting to a Check-invalid state is
+    # the user's intent rather than a hazard to gate.
+    def record(label:, before:, after:, coalesce_key: nil, repair: false)
       ensure_directory(blobs_dir)
       idx = load
       tip_matches = !idx[:states].empty? &&
@@ -115,6 +120,7 @@ module Tasks
       end
 
       state = intern(after).merge(label: label)
+      state[:repair] = true if repair
       state.merge!(coalesce_key: key, coalesce_scope: @coalesce_scope) if key
       if coalesce
         states[cursor] = state
@@ -152,8 +158,10 @@ module Tasks
       return nil unless to.between?(0, idx[:states].length - 1)
       # The label lives on the higher-indexed of the two states — the mutation
       # that sits *between* them (undo reverts it, redo replays it).
-      label = idx[:states][[from, to].max][:label]
-      { label: label, expect: content(idx[:states][from]), target: content(idx[:states][to]),
+      tip = idx[:states][[from, to].max]
+      label = tip[:label]
+      { label: label, repair: tip[:repair] == true,
+        expect: content(idx[:states][from]), target: content(idx[:states][to]),
         commit: lambda {
           # Undo and redo are explicit history boundaries. Strip all segment
           # metadata so even a redo back to the exact former tip cannot resume
@@ -208,6 +216,7 @@ module Tasks
           (state[key].is_a?(String) && state[key].match?(/\A[0-9a-f]{64}\z/))
       end
       return false unless state[:label].nil? || state[:label].is_a?(String)
+      return false unless state[:repair].nil? || state[:repair] == true || state[:repair] == false
       return false unless state[:coalesce_key].nil? || state[:coalesce_key].is_a?(String)
       state[:coalesce_scope].nil? || state[:coalesce_scope].is_a?(String)
     end
@@ -245,6 +254,7 @@ module Tasks
     def compact(state)
       h = { org_sha: state[:org_sha], archive_sha: state[:archive_sha] }
       h[:label] = state[:label] if state[:label]
+      h[:repair] = true if state[:repair]
       h[:coalesce_key] = state[:coalesce_key] if state[:coalesce_key]
       h[:coalesce_scope] = state[:coalesce_scope] if state[:coalesce_scope]
       h

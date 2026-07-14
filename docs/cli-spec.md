@@ -341,7 +341,7 @@ would change and writes nothing.
 | `id <ref> [--json]` | | ✅ | Print a task's stable `id`, minting one if absent (post-migration every record already has one — this is the repair path). Idempotent. Resolves refs regardless of state. |
 | `links [<ref>]` | `urls` | ✅ | Links found in task titles/notes, classified by system (`slack`, `jira`, `github`, …; unknown hosts fall back to the host name; Confluence-on-Atlassian is told apart from Jira by its `/wiki` path). One task's links with `<ref>`; every open task's otherwise. `--system <name>` filters (case-insensitive), `--all` widens the listing to done + archived (`<ref>` resolution itself stays live-file only), `--json` emits `{links: [{url, label, system, task, id, line, source}]}`. Recognizes org links `[[url][label]]`, bare URLs, and configured shorthands (below), in file order; org-internal targets (`[[id:…]]`, `[[file:…]]`, headline links) are org navigation, not links. |
 | `open <ref> [n]` | `o` | ✅ | Open a task's link in the browser (macOS `open` / `xdg-open`; `TASKS_OPENER` overrides). One link opens directly; several are listed numbered (exit 1) unless picked by 1-based `n` or `--system <name>`. `--print` prints the URL instead of launching. Resolves refs regardless of state (live file). |
-| `check [--json]` | `k` | ✅ | Validate `tasks.jsonl` structure (records, ids, DFS order, dates). Exit 1 if errors. The escape hatch after any out-of-band edit. |
+| `check [--json]` | `k` | ✅ | Validate `tasks.jsonl` structure (records, ids, DFS order, dates). Exit 1 if errors. The escape hatch after any out-of-band edit — and see Repairing an invalid record below for how a mutation can fix the broken record it names. |
 
 JSON list shape (`--json` on list/agenda/next/quadrants/inbox) — a flat array,
 already sorted the way the text view sorts:
@@ -374,6 +374,31 @@ is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or `nul
 | `recur <ref> <interval>` | `repeat`, `every` | ✅ | Attach/replace the `recur` cookie on the task's date. `<interval>`: a cookie (`.+1w`/`+2d`/`++1m`) or friendly form (`weekly`/`daily`/`monthly`/`yearly`/`2w`/`every 3 days`); `off`/`none` clears it. `--from schedule\|completion` picks `+`/`.+` for a bare interval (default `completion` → `.+`). `--on <date>` seeds a `deadline` when the task has no date yet (else it errors). `--dry-run`/`--json`. |
 | `defer <ref>` | `snooze` | ✅ | Mark a task deferred (someday/maybe) by adding a semantic `defer` tag. Deferred tasks keep their state but drop out of `agenda`/`next`/`quadrants`/`inbox` and the default `list` until reactivated. Idempotent. |
 | `activate <ref>` | `undefer`, `resume` | ✅ | Clear the `defer` tag, returning the task to the active views. Resolves deferred (open) tasks. |
+
+### Repairing an invalid record
+
+Every mutation preflights the whole file and normally refuses with a "task file
+is already invalid — run `tasks check` (nothing was written)" hint when it finds
+breakage, since editing on top of a broken file isn't trustworthy. The one
+exception is a **targeted repair**: an update command (`schedule`, `undate`,
+`due`, `retitle`, …) whose `<ref>` resolves to the *only* broken record may fix
+it. Because hand-editing is forbidden and `check` only reports, this is the
+supported way to clear a malformed field (e.g. `schedule <ref> 2026-08-01` over
+a record with `"scheduled":"not-a-date"`, or `undate <ref>` to drop a bad
+stamp).
+
+The contract is narrow:
+
+- Repair engages only when **every** `check` error is on the record the command
+  targets. If any other record is also broken, the command still refuses with
+  the "already invalid" hint and writes nothing — fix the others first (each via
+  its own targeted mutation).
+- Raw-safety comes first: a file that isn't valid UTF-8, or that has a line which
+  isn't parseable JSON, always refuses — even when that line is the target.
+- After the write the file must validate **completely**, or the change rolls back
+  (exit 1). A repair can't leave the file partially broken.
+- `undo` of a repair faithfully restores the prior (invalid) bytes, so you can
+  retry a different fix.
 
 ## Lifecycle / meta
 

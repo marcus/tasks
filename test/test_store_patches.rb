@@ -532,6 +532,23 @@ class TestStorePatches < Minitest::Test
     end
   end
 
+  # Raw-safety precedes repair: a line that isn't parseable JSON refuses even
+  # when it is the very record the patch targets — Format.parse/Check can't
+  # reason about bytes they would misparse, so repair mode never engages.
+  def test_unparseable_target_line_is_never_repaired
+    with_patch_store do |store, org|
+      bytes = File.read(org).sub(/^\{"type":"task","id":"11110002".*$/, "{not valid json")
+      File.write(org, bytes)
+      before = File.binread(org)
+      result = store.patch_task!(Tasks::TaskPatch.new(
+        id: "11110002", field: :title, value: "Renamed", expected: nil
+      ))
+      assert_equal :store_invalid, result.status
+      assert_equal before, File.binread(org), "nothing is written"
+      assert_equal [:empty], store.undo!
+    end
+  end
+
   def test_invalid_utf8_live_bytes_are_contained_and_preserved
     with_patch_store do |store, org|
       bytes = File.binread(org).sub("Parent", "Par\xFFent".b)
