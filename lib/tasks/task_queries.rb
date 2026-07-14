@@ -307,13 +307,9 @@ module Tasks
       )
     end
 
-    def headline_for(item)
-      text = +"#{item.state} "
-      text << "[##{item.priority}] " if item.priority
-      text << item.title.to_s
-      text << " :#{item.tags.join(":")}:" unless item.tags.empty?
-      text
-    end
+    # Delegates to the single definition on the item (see Item#headline). Kept
+    # as a public method because task_view builds TaskView#headline from it.
+    def headline_for(item) = item.headline
 
     def ancestor_ids(node)
       ancestors = []

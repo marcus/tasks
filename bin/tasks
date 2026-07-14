@@ -488,26 +488,20 @@ def item_headline(item)
 end
 
 def item_json(item, task: nil)
-  unless task
-    return {
-      id: item.id,
-      state: item.state, priority: item.priority, title: item.title,
-      tags: item.tags.reject { |tag| tag.start_with?("@") },
-      contexts: contexts(item),
-      scheduled: item.scheduled&.iso8601, deadline: item.deadline&.iso8601,
-      recur: item.recur,
-      line: item.line, source: item.source, headline: item_headline(item),
-    }
-  end
-
+  # One map, one insertion order. When a TaskView is present every semantic
+  # field is read from it (source/headline/contexts included); otherwise the
+  # Item supplies them — both respond to the same readers, so adding or
+  # renaming a field can't split the JSON shape between read commands and
+  # mutation reporting. `line` is always the item's physical line.
+  src = task || item
   {
-    id: task.id,
-    state: task.state, priority: task.priority, title: task.title,
-    tags: task.tags.reject { |tag| tag.start_with?("@") },
-    contexts: task.contexts,
-    scheduled: task.scheduled&.iso8601, deadline: task.deadline&.iso8601,
-    recur: task.recur,
-    line: item.line, source: task.source, headline: task.headline,
+    id: src.id,
+    state: src.state, priority: src.priority, title: src.title,
+    tags: src.tags.reject { |tag| tag.start_with?("@") },
+    contexts: src.contexts,
+    scheduled: src.scheduled&.iso8601, deadline: src.deadline&.iso8601,
+    recur: src.recur,
+    line: item.line, source: src.source, headline: src.headline,
   }
 end
 

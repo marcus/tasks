@@ -33,6 +33,21 @@ module Tasks
     # non-recurring so completion closes the task normally — Check still reports
     # the bad cookie. Guards Recur.next_date from raising on a junk value.
     def recurring? = Recur.cookie?(recur)
+
+    # The item's headline rendered from its own fields, star-less: state,
+    # optional priority cookie, title, trailing tag cluster (stored order).
+    # The single source of the summary the CLI and TUI show; Store#headline and
+    # TaskQueries#headline_for both delegate here so the string can never fork
+    # between read commands and mutation reporting. Derives purely from item
+    # fields, so it belongs on the item itself. `title.to_s` keeps a malformed
+    # (nil-title) record from crashing a reader before Check reports it.
+    def headline
+      s = +"#{state} "
+      s << "[##{priority}] " if priority
+      s << title.to_s
+      s << " :#{tags.join(":")}:" unless tags.empty?
+      s
+    end
   end
 
   # Owns tasks.jsonl: parsing records into Items, change detection, and the
@@ -317,16 +332,10 @@ module Tasks
       current_read_snapshot(include_archive: item.source == :archive).links(item)
     end
 
-    # The item's headline rendered from its fields, star-less: state, optional
-    # priority cookie, title, trailing tag cluster (stored order). The single
-    # rendered summary the CLI and TUI show — works for live and archive items.
-    def headline(item)
-      s = +"#{item.state} "
-      s << "[##{item.priority}] " if item.priority
-      s << item.title
-      s << " :#{item.tags.join(":")}:" unless item.tags.empty?
-      s
-    end
+    # The item's headline rendered from its fields — see Item#headline, the
+    # single definition this delegates to. Kept as a Store method because the
+    # TUI and tests call store.headline(item); works for live and archive items.
+    def headline(item) = item.headline
 
     # -- undo/redo -------------------------------------------------------------
     #
