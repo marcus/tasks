@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require_relative "store"
+require_relative "operation_context"
+require_relative "task_changeset"
 require_relative "task_queries"
 
 module Tasks
@@ -136,12 +138,40 @@ module Tasks
       TaskReadModel.new(store_factory.call.read_snapshot)
     end
 
+    # Typed command seam for transports that need an atomic multi-field update.
+    # CLI/TUI mutation routing stays untouched in Phase 3a; this gives the
+    # future HTTP adapter and command tests the same Store transaction directly.
+    def update_task(id_or_changeset, changes = nil, expected_revision: nil, context: nil,
+                    coalesce_key: nil, confirmation: nil, history_label: nil, force: false)
+      validate_operation_context(context)
+      changeset = if id_or_changeset.is_a?(TaskChangeset)
+                    raise ArgumentError, "changes are not accepted with a TaskChangeset" unless changes.nil?
+                    raise ArgumentError, "expected_revision is not accepted with a TaskChangeset" unless expected_revision.nil?
+
+                    id_or_changeset
+                  else
+                    TaskChangeset.new(
+                      id: id_or_changeset, changes: changes, expected_revision: expected_revision,
+                      coalesce_key: coalesce_key, confirmation: confirmation,
+                      history_label: history_label, force: force
+                    )
+                  end
+      store_factory.call.apply_changeset!(changeset)
+    end
+
     private
 
     attr_reader :store_factory
 
     def queries(include_archive: false)
       TaskQueries.new(store_factory.call.read_snapshot(include_archive: include_archive))
+    end
+
+    def validate_operation_context(context)
+      return if context.nil?
+      return if defined?(OperationContext) && context.is_a?(OperationContext)
+
+      raise ArgumentError, "context must be a Tasks::OperationContext"
     end
   end
 end

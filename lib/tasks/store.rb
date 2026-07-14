@@ -57,12 +57,13 @@ module Tasks
                   :archive_records, :live_stat, :archive_stat
 
       def initialize(live_records:, live_stat:, archive_records:, archive_stat:,
-                     archive_loaded:, item_builder:, link_shorthands:, link_systems:)
+                     archive_loaded:, item_builder:, task_revisions:, link_shorthands:, link_systems:)
         @live_records = immutable_copy(live_records)
         @archive_records = immutable_copy(archive_records)
         @live_stat = live_stat&.freeze
         @archive_stat = archive_stat&.freeze
         @archive_loaded = archive_loaded
+        @task_revisions = immutable_copy(task_revisions)
         @link_shorthands = immutable_copy(link_shorthands)
         @link_systems = immutable_copy(link_systems)
 
@@ -79,6 +80,15 @@ module Tasks
       end
 
       def archive_loaded? = @archive_loaded
+
+      # The canonical representation and edit snapshot share this exact
+      # Store-produced token. There is deliberately no line-number fallback:
+      # an id-less legacy item has no API-safe revision.
+      def revision_for(item)
+        return nil unless item&.id
+
+        @task_revisions.fetch(item.source, {}).fetch(item.id, nil)
+      end
 
       # The item's own body lines. A snapshot deliberately never falls through
       # to the current Store contents: held items stay coherent with their
@@ -230,6 +240,10 @@ module Tasks
           live_records: live_records, live_stat: live_stat,
           archive_records: archive_records, archive_stat: archive_stat,
           archive_loaded: include_archive, item_builder: method(:build_item),
+          task_revisions: {
+            live: task_revisions(live_records),
+            archive: include_archive ? task_revisions(archive_records) : {},
+          },
           link_shorthands: @link_shorthands, link_systems: @link_systems
         )
       end
@@ -349,13 +363,39 @@ module Tasks
       end
     end
 
-    # Apply one field-owned semantic change. Every outcome is typed; only :ok
-    # writes or records history, and the write/check/journal sequence rolls back
-    # to the exact prior bytes on any validation or writer failure.
+    # Apply an atomic multi-field semantic change. TaskChangeset's revision is
+    # Store-produced and semantic: the field baseline digest never includes a
+    # line number or mtime, while location and lifecycle digests protect the
+    # wider effects of a move or state change.
+    def apply_changeset!(changeset)
+      apply_task_changeset!(changeset, strict_revision: true)
+    end
+
+    # Apply one field-owned semantic change. TaskPatch remains the adapter
+    # convenience for existing CLI/TUI save-on-blur paths; it delegates all
+    # mutation work to the same changeset transaction below, retaining its
+    # established narrow expected-value conflict check.
     def patch_task!(patch)
       unless patch.respond_to?(:id) && patch.respond_to?(:field) &&
              patch.respond_to?(:value) && patch.respond_to?(:expected)
         return MutationResult.new(status: :invalid, errors: ["expected a Tasks::TaskPatch"])
+      end
+
+      changeset = patch.respond_to?(:to_changeset) ? patch.to_changeset : TaskChangeset.from_patch(patch)
+      field = normalize_patch_field(patch.field)
+      apply_task_changeset!(
+        changeset,
+        strict_revision: false,
+        field_expectations: { field => patch.expected }
+      )
+    end
+
+    # Shared transaction for TaskChangeset and TaskPatch. All field changes are
+    # first applied to a detached records copy; an invalid later field therefore
+    # cannot leak a partial in-memory mutation into a file write or journal step.
+    def apply_task_changeset!(changeset, strict_revision:, field_expectations: nil)
+      unless changeset.is_a?(TaskChangeset)
+        return MutationResult.new(status: :invalid, errors: ["expected a Tasks::TaskChangeset"])
       end
 
       with_lock do
@@ -372,33 +412,41 @@ module Tasks
           end
 
           records = fresh_records(@org)
-          ri = locate_stable_index(records, patch.id)
+          ri = locate_stable_index(records, changeset.id)
           return MutationResult.new(status: :not_found) unless ri
 
           current = build_edit_snapshot(records, ri)
-          field = normalize_patch_field(patch.field)
-          unless patch_field?(field)
-            return MutationResult.new(status: :invalid, snapshot: current,
-                                      errors: ["unknown editable field #{patch.field.inspect}"])
+          validation = validate_changeset(changeset)
+          unless validation.empty?
+            return MutationResult.new(status: :invalid, snapshot: current, errors: validation)
           end
 
-          unless confirmation_matches?(current, patch.respond_to?(:confirmation) && patch.confirmation)
+          if strict_revision
+            revision_error = changeset_revision_error(current, changeset)
+            return MutationResult.new(status: revision_error, snapshot: current) if revision_error
+          end
+
+          unless confirmation_matches?(current, changeset.confirmation)
             return MutationResult.new(status: :conflict, snapshot: current)
           end
 
-          actual = patch_expected_for(current, field)
-          unless semantic_patch_equal?(field, actual, patch.expected)
-            return MutationResult.new(status: :conflict, snapshot: current)
+          if field_expectations
+            field_expectations.each do |field, expected|
+              actual = patch_expected_for(current, field)
+              unless semantic_patch_equal?(field, actual, expected)
+                return MutationResult.new(status: :conflict, snapshot: current)
+              end
+            end
           end
 
           original_records = Format.dump(records)
-          applied = apply_semantic_patch(records, ri, field, patch.value,
-                                         force: patch.respond_to?(:force) && patch.force)
+          working_records = duplicate_records(records)
+          applied = apply_changeset_fields(working_records, changeset)
           if applied[:status] != :ok
             return MutationResult.new(status: applied[:status], snapshot: current,
                                       errors: applied[:errors] || [], summary: applied[:summary])
           end
-          proposed_records = Format.dump(records)
+          proposed_records = Format.dump(working_records)
         rescue JSON::GeneratorError, EncodingError, ArgumentError => e
           return MutationResult.new(status: :invalid, snapshot: current,
                                     errors: [safe_patch_error(e)])
@@ -409,21 +457,21 @@ module Tasks
                                     summary: applied[:summary])
         end
 
-        label = patch.respond_to?(:history_label) && patch.history_label || "edit #{field}: #{current.title}"
+        label = changeset.history_label || changeset_history_label(changeset, current)
         begin
-          write_records(@org, records)
+          write_records(@org, working_records)
           if (reason = post_write_failure)
             @last_rollback = reason
             restore(before)
             return MutationResult.new(status: :store_invalid,
-                                      snapshot: restored_edit_snapshot(patch.id),
+                                      snapshot: restored_edit_snapshot(changeset.id),
                                       errors: [reason])
           end
           after = snapshot
           @journal.record(label: label, before: before, after: after,
-                          coalesce_key: patch.coalesce_key)
+                          coalesce_key: changeset.coalesce_key)
           reload!
-          fresh_ri = locate_stable_index(@records, patch.id)
+          fresh_ri = locate_stable_index(@records, changeset.id)
           MutationResult.new(
             status: :ok,
             snapshot: fresh_ri && build_edit_snapshot(@records, fresh_ri),
@@ -434,11 +482,12 @@ module Tasks
           @last_rollback = safe_patch_error(e)
           restore(before)
           MutationResult.new(status: :unavailable,
-                             snapshot: restored_edit_snapshot(patch.id),
+                             snapshot: restored_edit_snapshot(changeset.id),
                              errors: [safe_patch_error(e)])
         end
       end
     end
+    private :apply_task_changeset!
 
     # Ensure the item carries a stable id, returning it. Idempotent: an item
     # that already has one is returned untouched (no write). Post-migration ids
@@ -612,7 +661,36 @@ module Tasks
       contexts = tags.select { |tag| tag.start_with?("@") }
       ordinary_tags = tags.reject { |tag| tag.start_with?("@") || tag == DEFER_TAG }
       parent = records.find { |record| record["id"] == rec["parent"] }
-      values = {
+      values = edit_values(rec, tags: tags, contexts: contexts, ordinary_tags: ordinary_tags)
+      EditSnapshot.new(
+        id: rec["id"], title: values[:title], priority: values[:priority],
+        deferred: values[:deferred], scheduled: values[:scheduled],
+        deadline: values[:deadline], recurrence: values[:recurrence],
+        contexts: contexts, tags: ordinary_tags, body: values[:body],
+        parent: rec["parent"], state: rec["state"], closed: to_date(rec["closed"]),
+        baselines: values,
+        fingerprints: {
+          location: location_fingerprint(records, ri),
+          state: lifecycle_fingerprint(records, ri),
+        },
+        revision: task_revision(values, records, ri),
+        metadata: {
+          line: rec["line"],
+          tag_sequence: tags,
+          date_state: {
+            scheduled: values[:scheduled], deadline: values[:deadline], recurrence: values[:recurrence],
+          },
+          parent_type: parent && parent["type"],
+          parent_title: parent && parent["title"],
+          subtree_ids: records[ri...subtree_end(records, ri)].filter_map { |record| record["id"] },
+        }
+      )
+    end
+
+    def edit_values(rec, tags: semantic_tags(rec), contexts: nil, ordinary_tags: nil)
+      contexts ||= tags.select { |tag| tag.start_with?("@") }
+      ordinary_tags ||= tags.reject { |tag| tag.start_with?("@") || tag == DEFER_TAG }
+      {
         title: rec["title"],
         priority: rec["priority"],
         deferred: tags.include?(DEFER_TAG),
@@ -625,28 +703,6 @@ module Tasks
         location: rec["parent"],
         state: rec["state"],
       }
-      EditSnapshot.new(
-        id: rec["id"], title: values[:title], priority: values[:priority],
-        deferred: values[:deferred], scheduled: values[:scheduled],
-        deadline: values[:deadline], recurrence: values[:recurrence],
-        contexts: contexts, tags: ordinary_tags, body: values[:body],
-        parent: rec["parent"], state: rec["state"], closed: to_date(rec["closed"]),
-        baselines: values,
-        fingerprints: {
-          location: location_fingerprint(records, ri),
-          state: lifecycle_fingerprint(records, ri),
-        },
-        metadata: {
-          line: rec["line"],
-          tag_sequence: tags,
-          date_state: {
-            scheduled: values[:scheduled], deadline: values[:deadline], recurrence: values[:recurrence],
-          },
-          parent_type: parent && parent["type"],
-          parent_title: parent && parent["title"],
-          subtree_ids: records[ri...subtree_end(records, ri)].filter_map { |record| record["id"] },
-        }
-      )
     end
 
     def location_fingerprint(records, ri)
@@ -675,6 +731,121 @@ module Tasks
 
     def semantic_digest(value)
       Digest::SHA256.hexdigest(JSON.generate(value))
+    end
+
+    # Revision strings stay opaque at the application boundary, but keeping
+    # their three semantic components separate lets Store ignore a sibling list
+    # change for a title-only update while still guarding moves and cascades.
+    # Date values are normalized before hashing so equivalent Store snapshots
+    # never depend on Ruby object identity or JSONL serialization details.
+    def task_revision(values, records, ri)
+      own = semantic_digest(EditSnapshot::FIELDS.map { |field| [field, revision_value(values[field])] })
+      location = location_fingerprint(records, ri)
+      lifecycle = lifecycle_fingerprint(records, ri)
+      "v1.#{own}.#{location}.#{lifecycle}"
+    end
+
+    def task_revisions(records)
+      records.each_with_index.each_with_object({}) do |(record, index), revisions|
+        next unless record["type"] == "task" && record["id"]
+
+        revisions[record["id"]] = task_revision(edit_values(record), records, index)
+      end
+    end
+
+    def revision_value(value)
+      case value
+      when Date
+        value.iso8601
+      when Hash
+        value.keys.sort_by(&:to_s).map { |key| [key.to_s, revision_value(value[key])] }
+      when Array
+        value.map { |item| revision_value(item) }
+      else
+        value
+      end
+    end
+
+    def revision_components(revision)
+      return nil unless revision.is_a?(String)
+
+      version, own, location, lifecycle = revision.split(".", -1)
+      return nil unless version == "v1" && [own, location, lifecycle].all? { |part| /\A[0-9a-f]{64}\z/.match?(part) }
+
+      { own: own, location: location, lifecycle: lifecycle }
+    end
+
+    def changeset_revision_error(current, changeset)
+      expected = revision_components(changeset.expected_revision)
+      return :invalid unless expected
+
+      actual = revision_components(current.revision)
+      required = [:own]
+      fields = changeset.ordered_fields
+      required << :location if fields.include?(:location)
+      required << :lifecycle if fields.include?(:state)
+      required.uniq.any? { |part| actual.fetch(part) != expected.fetch(part) } ? :stale : nil
+    end
+
+    def validate_changeset(changeset)
+      errors = []
+      unless changeset.id.is_a?(String) && !changeset.id.empty?
+        errors << "task id is required"
+      end
+      unless changeset.changes.is_a?(Hash) && !changeset.changes.empty?
+        errors << "changes must be a non-empty mapping"
+        return errors
+      end
+      unless changeset.duplicate_fields.empty?
+        errors << "changes repeat #{changeset.duplicate_fields.map(&:inspect).join(", ")}"
+      end
+
+      fields = changeset.ordered_fields
+      unknown = fields.reject { |field| patch_field?(field) }
+      errors.concat(unknown.map { |field| "unknown editable field #{field.inspect}" })
+
+      tag_fields = %i[contexts tags deferred]
+      if fields.include?(:tag_delta) && !(fields & tag_fields).empty?
+        errors << "tag_delta cannot be combined with tag slice changes"
+      end
+      if fields.include?(:date_clear) && !(fields & %i[scheduled deadline]).empty?
+        errors << "date_clear cannot be combined with scheduled or deadline"
+      end
+      errors
+    end
+
+    def duplicate_records(records)
+      JSON.parse(JSON.generate(records))
+    end
+
+    def apply_changeset_fields(records, changeset)
+      touched_ids = []
+      summaries = {}
+      changeset.ordered_fields.each do |field|
+        ri = locate_stable_index(records, changeset.id)
+        return { status: :not_found } unless ri
+
+        applied = apply_semantic_patch(records, ri, field, changeset.changes.fetch(field), force: changeset.force)
+        return applied unless applied[:status] == :ok
+
+        touched_ids.concat(applied[:touched_ids] || [])
+        summaries[field] = applied[:summary] if applied[:summary]
+      end
+
+      fields = changeset.ordered_fields
+      summary = if fields.length == 1
+                  summaries[fields.first]
+                else
+                  { fields: fields, by_field: summaries }
+                end
+      { status: :ok, touched_ids: touched_ids.uniq, summary: summary }
+    end
+
+    def changeset_history_label(changeset, current)
+      fields = changeset.ordered_fields
+      return "edit #{fields.first}: #{current.title}" if fields.length == 1
+
+      "edit #{fields.join(", ")}: #{current.title}"
     end
 
     def semantic_patch_equal?(field, actual, expected)

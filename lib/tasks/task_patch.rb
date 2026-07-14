@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "edit_snapshot"
+require_relative "task_changeset"
 
 module Tasks
   # One normalized editor mutation plus the semantic value it was based on.
@@ -32,6 +33,11 @@ module Tasks
       new(id: snapshot.id, field: field, value: value,
           expected: snapshot.expected_for(field), **options)
     end
+
+    # One-field callers use the exact same atomic changeset machinery as a
+    # multi-field command. Store supplies the narrow, field-owned expectation
+    # that preserves existing CLI/TUI conflict semantics.
+    def to_changeset = TaskChangeset.from_patch(self)
 
     private
 

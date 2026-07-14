@@ -256,7 +256,8 @@ module Tasks
           body: snapshot.body(item), links: snapshot.links(item), headline: headline_for(item),
           parent_id: record && record["parent"], ancestor_ids: ancestor_ids(node),
           child_ids: child_ids(node), section_id: section && section["id"],
-          section_title: section && section["title"], project: node&.open_project&.title
+          section_title: section && section["title"], project: node&.open_project&.title,
+          revision: snapshot.revision_for(item)
         )
       end
     end

@@ -12,14 +12,14 @@ module Tasks
 
     attr_reader :id, :title, :priority, :deferred, :scheduled, :deadline,
                 :recurrence, :contexts, :tags, :body, :parent, :state, :closed,
-                :baselines, :fingerprints, :metadata
+                :baselines, :fingerprints, :metadata, :revision
 
     alias recur recurrence
     alias parent_id parent
 
     def initialize(id:, title:, priority:, deferred:, scheduled:, deadline:,
                    recurrence:, contexts:, tags:, body:, parent:, state:, closed:,
-                   baselines:, fingerprints:, metadata: {})
+                   baselines:, fingerprints:, revision:, metadata: {})
       @id = immutable(id)
       @title = immutable(title)
       @priority = immutable(priority)
@@ -35,6 +35,7 @@ module Tasks
       @closed = closed
       @baselines = immutable(baselines)
       @fingerprints = immutable(fingerprints)
+      @revision = immutable(revision)
       @metadata = immutable(metadata)
       freeze
     end

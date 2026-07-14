@@ -12,11 +12,11 @@ module Tasks
     attr_reader :id, :state, :priority, :title, :tags, :contexts, :scheduled,
                 :deadline, :recur, :closed, :source, :body, :links, :headline,
                 :parent_id, :ancestor_ids, :child_ids, :section_id,
-                :section_title, :project
+                :section_title, :project, :revision
 
     def initialize(id:, state:, priority:, title:, tags:, scheduled:, deadline:,
                    recur:, closed:, source:, body:, links:, headline:, parent_id:,
-                   ancestor_ids:, child_ids:, section_id:, section_title:, project:)
+                   ancestor_ids:, child_ids:, section_id:, section_title:, project:, revision: nil)
       @id = frozen_text(id)
       @state = frozen_text(state)
       @priority = frozen_text(priority)
@@ -37,6 +37,7 @@ module Tasks
       @section_id = frozen_text(section_id)
       @section_title = frozen_text(section_title)
       @project = frozen_text(project)
+      @revision = frozen_text(revision)
       freeze
     end
 
@@ -54,6 +55,7 @@ module Tasks
         body: body, links: links.map(&:to_h), parent_id: parent_id,
         ancestor_ids: ancestor_ids, child_ids: child_ids, section_id: section_id,
         section_title: section_title, project: project, headline: headline,
+        revision: revision,
       }
     end
 
