@@ -60,6 +60,7 @@ module Tasks
   class Store
     OPEN_STATES = %w[INBOX TODO NEXT WAITING].freeze
     DONE_STATES = %w[DONE CANCELLED].freeze
+    REVISION_OWN_FIELDS = (EditSnapshot::FIELDS - [:location]).freeze
     # A different Fiber on the same thread cannot wait on the sidecar flock:
     # doing so would block the thread's scheduler before the owning Fiber can
     # resume and release it. Callers must resume the owner first.
@@ -708,7 +709,9 @@ module Tasks
           applied = apply_changeset_fields(working_records, changeset, today: today)
           if applied[:status] != :ok
             return MutationResult.new(status: applied[:status], snapshot: current,
-                                      errors: applied[:errors] || [], summary: applied[:summary])
+                                      errors: applied[:errors] || [],
+                                      field_errors: applied[:field_errors] || {},
+                                      summary: applied[:summary])
           end
           proposed_records = Format.dump(working_records)
         rescue JSON::GeneratorError, EncodingError, ArgumentError => e
@@ -1357,7 +1360,7 @@ module Tasks
     # Date values are normalized before hashing so equivalent Store snapshots
     # never depend on Ruby object identity or JSONL serialization details.
     def task_revision(values, records, ri, siblings_by_parent: nil)
-      own = semantic_digest(EditSnapshot::FIELDS.map { |field| [field, revision_value(values[field])] })
+      own = semantic_digest(REVISION_OWN_FIELDS.map { |field| [field, revision_value(values[field])] })
       location = location_fingerprint(records, ri, siblings_by_parent: siblings_by_parent)
       lifecycle = lifecycle_fingerprint(records, ri)
       "v1.#{own}.#{location}.#{lifecycle}"
@@ -1429,7 +1432,9 @@ module Tasks
       actual = revision_components(current.revision)
       required = [:own]
       fields = changeset.ordered_fields
-      required << :location if fields.include?(:location)
+      if fields.include?(:location) && !changeset.changes[:location].is_a?(TaskPlacement)
+        required << :location
+      end
       required << :lifecycle if fields.include?(:state)
       required.uniq.any? { |part| actual.fetch(part) != expected.fetch(part) } ? :stale : nil
     end
@@ -1806,7 +1811,10 @@ module Tasks
       value.nil? || (value.respond_to?(:empty?) && value.empty?) ? rec.delete(key) : rec[key] = value
     end
 
-    def patch_location(records, ri, parent_id, force: false)
+    def patch_location(records, ri, location, force: false)
+      return patch_placement(records, ri, location) if location.is_a?(TaskPlacement)
+
+      parent_id = location
       rec = records[ri]
       parent_id = enclosing_section_id(records, rec) if parent_id.equal?(TaskChangeset::UNNEST)
       return patch_invalid("location must be a parent id") unless parent_id.is_a?(String)
@@ -1838,6 +1846,81 @@ module Tasks
       records.replace(rest)
       patch_ok(subtree[0], touched_ids: moved_ids,
                summary: { from: from, to: parent_id, moved_ids: moved_ids })
+    end
+
+    def patch_placement(records, ri, placement)
+      rec = records[ri]
+      from = rec["parent"]
+      parent_id = placement.parent_id
+      before_id = placement.before_id
+      summary = { from: from, to: parent_id, before: before_id }
+
+      pi = records.index do |record|
+        record["id"] == parent_id && %w[section task].include?(record["type"])
+      end
+      ai = if before_id
+             records.index { |record| record["id"] == before_id && record["type"] == "task" }
+           end
+      unless pi
+        message = "parent_id does not identify a live task or section"
+        return { status: :not_found, errors: [message], field_errors: { parent_id: [message] },
+                 summary: summary }
+      end
+      if before_id && !ai
+        message = "before_id does not identify a live task"
+        return { status: :not_found, errors: [message], field_errors: { before_id: [message] },
+                 summary: summary }
+      end
+
+      rj = subtree_end(records, ri)
+      if (pi >= ri && pi < rj) || (ai && ai >= ri && ai < rj)
+        return { status: :cycle, summary: summary }
+      end
+      if ai && records[ai]["parent"] != parent_id
+        return {
+          status: :conflict,
+          summary: summary.merge(current_parent_id: records[ai]["parent"]),
+        }
+      end
+
+      by_id = records.to_h { |record| [record["id"], record] }
+      if records[pi]["type"] == "task" &&
+         task_depth(by_id, records[pi]) + subtree_height(records, ri) > @max_depth
+        return { status: :too_deep, summary: summary }
+      end
+
+      moved_ids = records[ri...rj].filter_map do |record|
+        record["id"] if record["type"] == "task"
+      end
+      if placement_satisfied?(records, rec, parent_id, before_id)
+        return patch_ok(rec, touched_ids: [], summary: summary.merge(moved_ids: []))
+      end
+
+      subtree = records[ri...rj].map(&:dup)
+      rest = records[0...ri] + records[rj..]
+      new_pi = rest.index { |record| record["id"] == parent_id }
+      insert_at = if before_id
+                    rest.index { |record| record["id"] == before_id }
+                  else
+                    subtree_end(rest, new_pi)
+                  end
+      subtree[0]["parent"] = parent_id
+      rest[insert_at, 0] = subtree
+      records.replace(rest)
+      patch_ok(subtree[0], touched_ids: moved_ids,
+               summary: summary.merge(moved_ids: moved_ids))
+    end
+
+    def placement_satisfied?(records, rec, parent_id, before_id)
+      return false unless rec["parent"] == parent_id
+
+      siblings = records.filter_map do |record|
+        record["id"] if record["type"] == "task" && record["parent"] == parent_id
+      end
+      current_index = siblings.index(rec["id"])
+      remaining = siblings.reject { |id| id == rec["id"] }
+      desired_index = before_id ? remaining.index(before_id) : remaining.length
+      current_index == desired_index
     end
 
     def enclosing_section_id(records, record)
