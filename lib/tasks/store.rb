@@ -354,7 +354,7 @@ module Tasks
     # Create one task from a complete typed command in one checked transaction.
     # Unlike the retired capture! path, recurrence and initial notes are part of
     # the same write and journal step as the new record itself.
-    def create_task!(command)
+    def create_task!(command, today: Date.today)
       unless command.is_a?(CreateTask)
         return MutationResult.new(status: :invalid, errors: ["expected a Tasks::CreateTask"])
       end
@@ -368,7 +368,7 @@ module Tasks
             return MutationResult.new(status: :store_invalid, errors: [preflight])
           end
 
-          attributes, validation = normalize_create_task(command)
+          attributes, validation = normalize_create_task(command, today: today)
           unless validation.empty?
             return MutationResult.new(status: :invalid, errors: validation.values.flatten,
                                       field_errors: validation)
@@ -376,7 +376,7 @@ module Tasks
 
           records = fresh_records(@org)
           working_records = duplicate_records(records)
-          planned = plan_create_task(working_records, attributes)
+          planned = plan_create_task(working_records, attributes, today: today)
           unless planned[:status] == :ok
             return MutationResult.new(status: planned[:status], errors: planned[:errors] || [],
                                       field_errors: planned[:field_errors] || {})
@@ -548,15 +548,15 @@ module Tasks
     # Store-produced and semantic: the field baseline digest never includes a
     # line number or mtime, while location and lifecycle digests protect the
     # wider effects of a move or state change.
-    def apply_changeset!(changeset)
-      apply_task_changeset!(changeset, strict_revision: true)
+    def apply_changeset!(changeset, today: Date.today)
+      apply_task_changeset!(changeset, strict_revision: true, today: today)
     end
 
     # Apply one field-owned semantic change. TaskPatch remains the adapter
     # convenience for existing CLI/TUI save-on-blur paths; it delegates all
     # mutation work to the same changeset transaction below, retaining its
     # established narrow expected-value conflict check.
-    def patch_task!(patch)
+    def patch_task!(patch, today: Date.today)
       unless patch.respond_to?(:id) && patch.respond_to?(:field) &&
              patch.respond_to?(:value) && patch.respond_to?(:expected)
         return MutationResult.new(status: :invalid, errors: ["expected a Tasks::TaskPatch"])
@@ -567,14 +567,15 @@ module Tasks
       apply_task_changeset!(
         changeset,
         strict_revision: false,
-        field_expectations: { field => patch.expected }
+        field_expectations: { field => patch.expected },
+        today: today
       )
     end
 
     # Shared transaction for TaskChangeset and TaskPatch. All field changes are
     # first applied to a detached records copy; an invalid later field therefore
     # cannot leak a partial in-memory mutation into a file write or journal step.
-    def apply_task_changeset!(changeset, strict_revision:, field_expectations: nil)
+    def apply_task_changeset!(changeset, strict_revision:, today:, field_expectations: nil)
       unless changeset.is_a?(TaskChangeset)
         return MutationResult.new(status: :invalid, errors: ["expected a Tasks::TaskChangeset"])
       end
@@ -639,7 +640,7 @@ module Tasks
 
           original_records = Format.dump(records)
           working_records = duplicate_records(records)
-          applied = apply_changeset_fields(working_records, changeset)
+          applied = apply_changeset_fields(working_records, changeset, today: today)
           if applied[:status] != :ok
             return MutationResult.new(status: applied[:status], snapshot: current,
                                       errors: applied[:errors] || [], summary: applied[:summary])
@@ -719,7 +720,7 @@ module Tasks
       nil
     end
 
-    def normalize_create_task(command)
+    def normalize_create_task(command, today:)
       errors = Hash.new { |fields, field| fields[field] = [] }
       title = normalize_create_text(command.title, :title, errors, required: true)
       priority = normalize_create_priority(command.priority, errors)
@@ -739,7 +740,7 @@ module Tasks
       # Capturing with a recurrence has always meant "start repeating now" when
       # a date was omitted. Keep that behavior in the command, not the CLI, so
       # every transport gets one definition of a recurring create.
-      scheduled ||= Date.today if recurrence && !deadline
+      scheduled ||= today if recurrence && !deadline
       state ||= (scheduled || deadline ? "TODO" : "INBOX")
       errors[:state] << "can't set recurrence on a #{state} task" if recurrence && DONE_STATES.include?(state)
 
@@ -864,7 +865,7 @@ module Tasks
       notes
     end
 
-    def plan_create_task(records, attributes)
+    def plan_create_task(records, attributes, today:)
       if attributes[:parent_id]
         pi = records.index { |record| record["id"] == attributes[:parent_id] }
         return { status: :not_found } unless pi
@@ -900,7 +901,7 @@ module Tasks
       rec["scheduled"] = attributes[:scheduled].iso8601 if attributes[:scheduled]
       rec["deadline"] = attributes[:deadline].iso8601 if attributes[:deadline]
       rec["recur"] = attributes[:recurrence] if attributes[:recurrence]
-      rec["body"] = (["Captured [#{Date.today}]."] + attributes[:notes]).join("\n")
+      rec["body"] = (["Captured [#{today}]."] + attributes[:notes]).join("\n")
 
       records[insert_at, 0] = [rec]
       { status: :ok, records: records, id: id, parent_id: parent_id }
@@ -1315,14 +1316,16 @@ module Tasks
       JSON.parse(JSON.generate(records))
     end
 
-    def apply_changeset_fields(records, changeset)
+    def apply_changeset_fields(records, changeset, today:)
       touched_ids = []
       summaries = {}
       changeset.ordered_fields.each do |field|
         ri = locate_stable_index(records, changeset.id)
         return { status: :not_found } unless ri
 
-        applied = apply_semantic_patch(records, ri, field, changeset.changes.fetch(field), force: changeset.force)
+        applied = apply_semantic_patch(
+          records, ri, field, changeset.changes.fetch(field), force: changeset.force, today: today
+        )
         return applied unless applied[:status] == :ok
 
         touched_ids.concat(applied[:touched_ids] || [])
@@ -1427,7 +1430,7 @@ module Tasks
       ri && build_edit_snapshot(records, ri)
     end
 
-    def apply_semantic_patch(records, ri, field, value, force: false)
+    def apply_semantic_patch(records, ri, field, value, force: false, today:)
       case field
       when :title      then patch_title(records, ri, value)
       when :priority   then patch_priority(records, ri, value)
@@ -1441,7 +1444,7 @@ module Tasks
       when :tag_delta  then patch_tag_delta(records, ri, value)
       when :body       then patch_body(records, ri, value)
       when :location   then patch_location(records, ri, value, force: force)
-      when :state      then patch_state(records, ri, value)
+      when :state      then patch_state(records, ri, value, today: today)
       end
     end
 
@@ -1640,12 +1643,12 @@ module Tasks
                summary: { from: from, to: parent_id, moved_ids: moved_ids })
     end
 
-    def patch_state(records, ri, value)
+    def patch_state(records, ri, value, today:)
       return patch_invalid("invalid task state") unless Check::STATES.include?(value)
       rec = records[ri]
       from = rec["state"]
       if value == "DONE" && Recur.cookie?(rec["recur"])
-        result = advance_recurrence_records(records, ri)
+        result = advance_recurrence_records(records, ri, today: today)
         return result unless result[:status] == :ok
         result[:summary] = { from: from, to: from, recurrence_advanced: true, cascaded_ids: [] }
         return result
@@ -1657,9 +1660,9 @@ module Tasks
       if DONE_STATES.include?(value) && !DONE_STATES.include?(from)
         rec["tags"] = semantic_tags(rec) - [DEFER_TAG]
         replace_optional(rec, "tags", rec["tags"])
-        rec["closed"] ||= Date.today.iso8601
+        rec["closed"] ||= today.iso8601
         if value == "DONE"
-          cascaded_ids = close_open_descendants(records, ri)
+          cascaded_ids = close_open_descendants(records, ri, today: today)
           touched_ids.concat(cascaded_ids)
         end
       elsif DONE_STATES.include?(from) && !DONE_STATES.include?(value)
@@ -1670,17 +1673,28 @@ module Tasks
                           cascaded_ids: cascaded_ids })
     end
 
-    def advance_recurrence_records(records, ri)
+    def advance_recurrence_records(records, ri, today:)
       rec = records[ri]
       cookie = rec["recur"]
       return patch_invalid("invalid recurrence cookie") unless Recur.cookie?(cookie)
-      field = rec["deadline"] ? "deadline" : ("scheduled" if rec["scheduled"])
-      base = field && to_date(rec[field])
-      return patch_invalid("recurrence requires a valid date") unless base
-      rec[field] = Recur.next_date(cookie, from: base).iso8601
+      deadline = to_date(rec["deadline"])
+      scheduled = to_date(rec["scheduled"])
+      return patch_invalid("recurrence requires a valid date") unless deadline || scheduled
+
+      if deadline
+        next_deadline = Recur.next_date(cookie, from: deadline, today: today)
+        if rec["scheduled"]
+          return patch_invalid("recurrence requires a valid date") unless scheduled
+
+          rec["scheduled"] = (scheduled + (next_deadline - deadline)).iso8601
+        end
+        rec["deadline"] = next_deadline.iso8601
+      else
+        rec["scheduled"] = Recur.next_date(cookie, from: scheduled, today: today).iso8601
+      end
       rec["tags"] = semantic_tags(rec) - [DEFER_TAG]
       replace_optional(rec, "tags", rec["tags"])
-      rec["body"] = append_body(rec["body"], "- Did [#{Date.today}].")
+      rec["body"] = append_body(rec["body"], "- Did [#{today}].")
       patch_ok(rec)
     end
 
@@ -1755,13 +1769,13 @@ module Tasks
     # NOT advanced (no date roll, no body log): completing the parent completes
     # it. DONE/CANCELLED descendants are left untouched (their prior `closed`
     # stands). Returns the touched records' stable IDs, in file order.
-    def close_open_descendants(records, ri)
+    def close_open_descendants(records, ri, today: Date.today)
       rj = subtree_end(records, ri)
-      today = Date.today.iso8601
+      closed_on = today.iso8601
       records[(ri + 1)...rj].each_with_object([]) do |rec, touched|
         next unless rec["type"] == "task" && OPEN_STATES.include?(rec["state"])
         rec["state"] = "DONE"
-        rec["closed"] = today
+        rec["closed"] = closed_on
         rec["tags"] = (rec["tags"] || []) - [DEFER_TAG]
         rec.delete("recur")
         touched << rec["id"]

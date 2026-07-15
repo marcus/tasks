@@ -12,11 +12,13 @@ module Tasks
     attr_reader :id, :state, :priority, :title, :tags, :contexts, :scheduled,
                 :deadline, :recur, :closed, :source, :body, :links, :headline,
                 :parent_id, :ancestor_ids, :child_ids, :section_id,
-                :section_title, :project, :revision
+                :section_title, :project, :revision, :availability_reason,
+                :availability_blocker_id
 
     def initialize(id:, state:, priority:, title:, tags:, scheduled:, deadline:,
                    recur:, closed:, source:, body:, links:, headline:, parent_id:,
-                   ancestor_ids:, child_ids:, section_id:, section_title:, project:, revision: nil)
+                   ancestor_ids:, child_ids:, section_id:, section_title:, project:,
+                   availability:, revision: nil)
       @id = frozen_text(id)
       @state = frozen_text(state)
       @priority = frozen_text(priority)
@@ -38,19 +40,26 @@ module Tasks
       @section_title = frozen_text(section_title)
       @project = frozen_text(project)
       @revision = frozen_text(revision)
+      @available = availability.available?
+      @availability_reason = availability.reason
+      @availability_blocker_id = frozen_text(availability.blocker_id)
       freeze
     end
 
     def open? = Store::OPEN_STATES.include?(state)
     def deferred? = tags.include?(Store::DEFER_TAG)
     def recurring? = Recur.cookie?(recur)
+    def available? = @available
 
     # The canonical JSON-ready representation. Dates are strings because this
     # object is also the future HTTP resource; the Ruby accessors retain Dates.
     def to_h
       {
         id: id, state: state, priority: priority, title: title, tags: tags,
-        contexts: contexts, scheduled: scheduled&.iso8601, deadline: deadline&.iso8601,
+        contexts: contexts, deferred: deferred?, scheduled: scheduled&.iso8601,
+        deadline: deadline&.iso8601, available: available?,
+        availability_reason: availability_reason.to_s,
+        availability_blocker_id: availability_blocker_id,
         recur: recur, closed: closed&.iso8601, source: source,
         body: body, links: links.map(&:to_h), parent_id: parent_id,
         ancestor_ids: ancestor_ids, child_ids: child_ids, section_id: section_id,

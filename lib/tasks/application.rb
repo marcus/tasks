@@ -21,9 +21,9 @@ module Tasks
   class TaskReadModel
     attr_reader :items, :tree, :tasks
 
-    def initialize(snapshot)
+    def initialize(snapshot, today: Date.today)
       @snapshot = snapshot
-      @queries = TaskQueries.new(snapshot)
+      @queries = TaskQueries.new(snapshot, today: today)
       @items = snapshot.items
       @tree = snapshot.tree
       @tasks = items.map { |item| @queries.task(item) }.freeze
@@ -54,7 +54,7 @@ module Tasks
     # Named results remain canonical TaskQueryResults. Keeping this on the
     # model means a multi-read adapter can ask for an individual view without
     # parsing a second Store snapshot.
-    def view_tasks(name, today: Date.today, urgent_days: Quadrants::DEFAULT_URGENT_DAYS)
+    def view_tasks(name, today: @queries.today, urgent_days: Quadrants::DEFAULT_URGENT_DAYS)
       @queries.view(name, today: today, urgent_days: urgent_days)
     end
   end
@@ -124,26 +124,26 @@ module Tasks
       freeze
     end
 
-    def list_tasks(filter)
+    def list_tasks(filter, today: Date.today)
       unless filter.is_a?(TaskFilter)
         raise ArgumentError, "filter must be a Tasks::TaskFilter"
       end
 
-      queries(include_archive: filter.include_archive?).list(filter)
+      queries(include_archive: filter.include_archive?, today: today).list(filter)
     end
 
     # The named selections are kept here so adapters do not each recreate
     # agenda/next/inbox/quadrant semantics. The return value retains the legacy
     # Items for presentation while exposing canonical immutable TaskViews.
     def view_tasks(name, today: Date.today, urgent_days: Quadrants::DEFAULT_URGENT_DAYS)
-      queries.view(name, today: today, urgent_days: urgent_days)
+      queries(today: today).view(name, urgent_days: urgent_days)
     end
 
     # Stable IDs are the application boundary; fuzzy title and L<line>
     # resolution are CLI-only conveniences. A missing id is an ordinary nil
     # result so a later HTTP adapter can map it to its own not-found response.
-    def get_task(id, include_archive: false)
-      queries(include_archive: include_archive).find(id, include_archive: include_archive)
+    def get_task(id, include_archive: false, today: Date.today)
+      queries(include_archive: include_archive, today: today).find(id, include_archive: include_archive)
     end
 
     def list_sections
@@ -153,8 +153,8 @@ module Tasks
     # A single live read for presentation adapters. It deliberately receives a
     # new Store just like every other Application query, so the TUI cannot
     # retain Store's mutable read cache between paints or external writes.
-    def read_tasks
-      TaskReadModel.new(store_factory.call.read_snapshot)
+    def read_tasks(today: Date.today)
+      TaskReadModel.new(store_factory.call.read_snapshot, today: today)
     end
 
     # Field-scoped snapshot for adapters that preserve save-on-blur or
@@ -167,7 +167,7 @@ module Tasks
     # Typed creation seam. Hash attributes are accepted for adapter convenience
     # but immediately become an immutable CreateTask before Store takes the
     # lock, so CLI, TUI, and a future HTTP adapter share one create transaction.
-    def create_task(command_or_attributes, context: nil)
+    def create_task(command_or_attributes, context: nil, today: Date.today)
       validate_operation_context(context)
       command = case command_or_attributes
                 when CreateTask
@@ -177,14 +177,15 @@ module Tasks
                 else
                   raise ArgumentError, "create_task expects a Tasks::CreateTask or attributes mapping"
                 end
-      store_factory.call.create_task!(command)
+      store_factory.call.create_task!(command, today: today)
     end
 
     # Typed command seam for transports that need an atomic multi-field update.
     # CLI/TUI mutation routing stays untouched in Phase 3a; this gives the
     # future HTTP adapter and command tests the same Store transaction directly.
     def update_task(id_or_changeset, changes = nil, expected_revision: nil, context: nil,
-                    coalesce_key: nil, confirmation: nil, history_label: nil, force: false)
+                    coalesce_key: nil, confirmation: nil, history_label: nil, force: false,
+                    today: Date.today)
       validate_operation_context(context)
       changeset = if id_or_changeset.is_a?(TaskChangeset)
                     raise ArgumentError, "changes are not accepted with a TaskChangeset" unless changes.nil?
@@ -198,20 +199,20 @@ module Tasks
                       history_label: history_label, force: force
                     )
                   end
-      store_factory.call.apply_changeset!(changeset)
+      store_factory.call.apply_changeset!(changeset, today: today)
     end
 
     # A single-field command keeps TaskPatch's field-owned expectation while
     # sharing the Store transaction used by TaskChangeset. This lets existing
     # adapters migrate behind the application boundary without turning an
     # unrelated concurrent edit into a whole-task conflict.
-    def patch_task(patch, context: nil)
+    def patch_task(patch, context: nil, today: Date.today)
       validate_operation_context(context)
       unless patch.is_a?(TaskPatch)
         raise ArgumentError, "patch_task expects a Tasks::TaskPatch"
       end
 
-      store_factory.call.patch_task!(patch)
+      store_factory.call.patch_task!(patch, today: today)
     end
 
     # Typed deletion seam. An undoable hard delete of one live task; a task with
@@ -238,8 +239,8 @@ module Tasks
 
     attr_reader :store_factory
 
-    def queries(include_archive: false)
-      TaskQueries.new(store_factory.call.read_snapshot(include_archive: include_archive))
+    def queries(include_archive: false, today: Date.today)
+      TaskQueries.new(store_factory.call.read_snapshot(include_archive: include_archive), today: today)
     end
 
     def validate_operation_context(context)

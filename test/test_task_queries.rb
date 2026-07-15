@@ -16,8 +16,8 @@ class TestTaskQueries < Minitest::Test
     end
   end
 
-  def queries(store, include_archive: false)
-    Tasks::TaskQueries.new(store.read_snapshot(include_archive: include_archive))
+  def queries(store, include_archive: false, today: Date.new(2026, 7, 14))
+    Tasks::TaskQueries.new(store.read_snapshot(include_archive: include_archive), today: today)
   end
 
   def test_filter_parser_preserves_cli_scope_and_filter_composition
@@ -155,6 +155,132 @@ class TestTaskQueries < Minitest::Test
 
       loaded = queries(store, include_archive: true)
       assert_equal "dead0001", loaded.find("dead0001", include_archive: true).id
+    end
+  end
+
+  AVAILABILITY_RECORDS = [
+    { "type" => "meta", "version" => 1 },
+    { "type" => "section", "id" => "aa000001", "title" => "Work" },
+    { "type" => "task", "id" => "aa000002", "parent" => "aa000001", "state" => "NEXT",
+      "title" => "Future parent", "scheduled" => "2026-07-15" },
+    { "type" => "task", "id" => "aa000003", "parent" => "aa000002", "state" => "NEXT",
+      "title" => "Inherited child" },
+  ].freeze
+
+  def test_timed_availability_is_inclusive_and_filters_default_and_named_views
+    with_query_store(records: AVAILABILITY_RECORDS) do |store|
+      before = queries(store, today: Date.new(2026, 7, 14))
+      parent = before.snapshot.items.find { |item| item.id == "aa000002" }
+      child = before.snapshot.items.find { |item| item.id == "aa000003" }
+
+      assert_equal :scheduled, before.availability(parent).reason
+      assert_equal "aa000002", before.availability(parent).blocker_id
+      assert_equal :ancestor_scheduled, before.availability(child).reason
+      assert_equal "aa000002", before.availability(child).blocker_id
+      assert_equal Date.new(2026, 7, 15), before.availability(child).scheduled
+      assert_empty before.view(:next).tasks
+      assert_empty before.list(Tasks::TaskFilter.new).tasks
+      assert_equal %w[aa000002 aa000003],
+                   before.list(Tasks::TaskFilter.new(deferred_only: true)).tasks.map(&:id)
+
+      on_date = queries(store, today: Date.new(2026, 7, 15))
+      assert on_date.availability(parent).available?
+      assert on_date.availability(child).available?
+      assert_equal %w[aa000002 aa000003], on_date.view(:next).tasks.map(&:id)
+      assert_equal %w[aa000002 aa000003], on_date.list(Tasks::TaskFilter.new).tasks.map(&:id)
+    end
+  end
+
+  def test_blocker_precedence_is_hold_then_latest_date_then_nearest
+    records = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "bb000001", "title" => "Work" },
+      { "type" => "task", "id" => "bb000002", "parent" => "bb000001", "state" => "TODO",
+        "title" => "Held root", "tags" => %w[defer], "scheduled" => "2026-07-30" },
+      { "type" => "task", "id" => "bb000003", "parent" => "bb000002", "state" => "TODO",
+        "title" => "Timed middle", "scheduled" => "2026-08-01" },
+      { "type" => "task", "id" => "bb000004", "parent" => "bb000003", "state" => "TODO",
+        "title" => "Timed leaf", "scheduled" => "2026-08-01" },
+      { "type" => "task", "id" => "bb000005", "parent" => "bb000001", "state" => "TODO",
+        "title" => "Latest root", "scheduled" => "2026-08-02" },
+      { "type" => "task", "id" => "bb000006", "parent" => "bb000005", "state" => "TODO",
+        "title" => "Earlier leaf", "scheduled" => "2026-08-01" },
+    ]
+
+    with_query_store(records: records) do |store|
+      query = queries(store)
+      leaf = query.snapshot.items.find { |item| item.id == "bb000004" }
+      earlier = query.snapshot.items.find { |item| item.id == "bb000006" }
+
+      held = query.availability(leaf)
+      assert_equal :ancestor_on_hold, held.reason
+      assert_equal "bb000002", held.blocker_id
+      assert_nil held.scheduled
+
+      latest = query.availability(earlier)
+      assert_equal :ancestor_scheduled, latest.reason
+      assert_equal "bb000005", latest.blocker_id
+      assert_equal Date.new(2026, 8, 2), latest.scheduled
+
+      records_without_hold = records.map(&:dup)
+      records_without_hold.find { |record| record["id"] == "bb000002" }.delete("tags")
+      with_query_store(records: records_without_hold) do |unheld_store|
+        unheld = queries(unheld_store)
+        timed_leaf = unheld.snapshot.items.find { |item| item.id == "bb000004" }
+        result = unheld.availability(timed_leaf)
+        assert_equal :scheduled, result.reason, "self wins an equal-date tie"
+        assert_equal "bb000004", result.blocker_id
+      end
+    end
+  end
+
+  def test_closed_ancestors_are_hoisted_but_their_blockers_still_apply
+    records = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "cc000001", "title" => "Work" },
+      { "type" => "task", "id" => "cc000002", "parent" => "cc000001", "state" => "DONE",
+        "title" => "Transparent closed", "closed" => "2026-07-01" },
+      { "type" => "task", "id" => "cc000003", "parent" => "cc000002", "state" => "NEXT",
+        "title" => "Visible child" },
+      { "type" => "task", "id" => "cc000004", "parent" => "cc000001", "state" => "DONE",
+        "title" => "Timed closed", "scheduled" => "2026-07-20", "closed" => "2026-07-01" },
+      { "type" => "task", "id" => "cc000005", "parent" => "cc000004", "state" => "NEXT",
+        "title" => "Timed hidden child" },
+      { "type" => "task", "id" => "cc000006", "parent" => "cc000001", "state" => "DONE",
+        "title" => "Held closed", "tags" => %w[defer], "closed" => "2026-07-01" },
+      { "type" => "task", "id" => "cc000007", "parent" => "cc000006", "state" => "NEXT",
+        "title" => "Held hidden child" },
+    ]
+
+    with_query_store(records: records) do |store|
+      query = queries(store)
+      by_id = query.snapshot.items.to_h { |item| [item.id, item] }
+
+      assert query.availability(by_id["cc000003"]).available?
+      assert_equal :ancestor_scheduled, query.availability(by_id["cc000005"]).reason
+      assert_equal "cc000004", query.availability(by_id["cc000005"]).blocker_id
+      assert_equal :ancestor_on_hold, query.availability(by_id["cc000007"]).reason
+      assert_equal ["cc000003"], query.view(:next).tasks.map(&:id)
+      assert_equal :closed, query.availability(by_id["cc000004"]).reason
+      assert_nil query.availability(by_id["cc000004"]).blocker_id
+
+      done_held = Tasks::TaskFilter.new(scope: :done, deferred_only: true)
+      assert_equal ["cc000006"], query.list(done_held).tasks.map(&:id)
+    end
+  end
+
+  def test_task_resource_exposes_own_marker_and_effective_availability_separately
+    with_query_store(records: AVAILABILITY_RECORDS) do |store|
+      task = queries(store).find("aa000003")
+      json = task.to_h
+
+      assert_equal false, json[:deferred]
+      assert_equal false, json[:available]
+      assert_equal "ancestor_scheduled", json[:availability_reason]
+      assert_equal "aa000002", json[:availability_blocker_id]
+      assert_nil json[:scheduled], "stored scheduled remains the task's own field"
+      assert_equal 1, Tasks::Format::VERSION
+      assert task.frozen?
     end
   end
 end

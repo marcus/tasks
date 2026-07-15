@@ -145,4 +145,31 @@ class TestApplication < Minitest::Test
       refute app.read_tasks.stale?(org), "a rebuilt model over the new bytes is current"
     end
   end
+
+  def test_application_injects_one_today_into_list_view_and_resource_reads
+    records = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "dd000001", "title" => "Work" },
+      { "type" => "task", "id" => "dd000002", "parent" => "dd000001", "state" => "NEXT",
+        "title" => "Tomorrow", "scheduled" => "2026-07-15" },
+    ]
+
+    with_application(records: records) do |_org, _archive, app|
+      before = Date.new(2026, 7, 14)
+      on_date = Date.new(2026, 7, 15)
+
+      assert_empty app.list_tasks(Tasks::TaskFilter.new, today: before).tasks
+      assert_empty app.view_tasks(:next, today: before).tasks
+      blocked = app.get_task("dd000002", today: before)
+      refute blocked.available?
+      assert_equal "scheduled", blocked.to_h[:availability_reason]
+
+      assert_equal ["dd000002"], app.list_tasks(Tasks::TaskFilter.new, today: on_date).tasks.map(&:id)
+      assert_equal ["dd000002"], app.view_tasks(:next, today: on_date).tasks.map(&:id)
+      assert app.get_task("dd000002", today: on_date).available?
+      model = app.read_tasks(today: before)
+      refute model.task_for("dd000002").available?
+      assert_empty model.view_tasks(:next).tasks
+    end
+  end
 end

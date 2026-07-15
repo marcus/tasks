@@ -988,9 +988,9 @@ class TestStore < Minitest::Test
     end
   end
 
-  # M1: the single `recur` field belongs to the DEADLINE when both dates are
-  # present. Only that owning date rolls; the fixed SCHEDULED is left untouched.
-  def test_recurring_completion_rolls_only_the_owning_date
+  # When both dates exist, recurrence is computed from the deadline and the
+  # exact calendar-day delta is also applied to available-from.
+  def test_recurring_completion_preserves_the_availability_to_due_window
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       File.write(org, dump_fixture([
@@ -1003,9 +1003,39 @@ class TestStore < Minitest::Test
       store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
       assert store.test_mutation.complete(store.items.find { |i| i.title == "Both dates" })
       rec = record_for(org, title: "Both dates")
-      assert_equal "2026-08-08", rec["deadline"], "the owning (deadline) date rolls +1w"
-      assert_equal "2026-07-01", rec["scheduled"], "the fixed scheduled date is untouched"
+      assert_equal "2026-08-08", rec["deadline"], "deadline rolls +1w"
+      assert_equal "2026-07-08", rec["scheduled"], "available-from shifts by the same seven days"
       assert_equal "NEXT", rec["state"], "recurring task stays open"
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_recurring_both_date_completion_uses_one_injected_today_for_delta_and_note
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, dump_fixture([
+        { "type" => "meta", "version" => 1 },
+        { "type" => "section", "id" => "ab000001", "title" => "W" },
+        { "type" => "task", "id" => "ab000002", "parent" => "ab000001", "state" => "NEXT",
+          "title" => "Completion cadence", "scheduled" => "2026-07-03", "deadline" => "2026-07-10",
+          "recur" => ".+1w" },
+      ]))
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
+      snapshot = store.edit_snapshot("ab000002")
+      patch = Tasks::TaskPatch.from(
+        snapshot, field: :state, value: "DONE", history_label: "complete: Completion cadence"
+      )
+
+      result = store.patch_task!(patch, today: Date.new(2026, 8, 10))
+
+      assert result.ok?
+      rec = record_for(org, title: "Completion cadence")
+      assert_equal "2026-08-17", rec["deadline"]
+      assert_equal "2026-08-10", rec["scheduled"]
+      assert_match(/- Did \[2026-08-10\]/, rec["body"])
+      assert_equal [:ok, "complete: Completion cadence"], store.undo!
+      assert_equal "2026-07-10", record_for(org, title: "Completion cadence")["deadline"]
+      assert_equal "2026-07-03", record_for(org, title: "Completion cadence")["scheduled"]
       assert Tasks::Check.check(org).ok?
     end
   end

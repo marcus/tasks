@@ -155,13 +155,37 @@ module Tasks
   class TaskQueries
     NAMED_VIEWS = %i[agenda next quadrants inbox].freeze
 
-    attr_reader :snapshot
+    # One immutable, derived answer shared by every read surface. `scheduled`
+    # is the effective release date when a timed blocker wins; it is nil for an
+    # indefinite hold, a closed task, or an available task.
+    class Availability
+      REASONS = %i[
+        available scheduled on_hold ancestor_scheduled ancestor_on_hold closed
+      ].freeze
 
-    def initialize(snapshot)
+      attr_reader :reason, :blocker_id, :scheduled
+
+      def initialize(reason:, blocker_id: nil, scheduled: nil)
+        @reason = reason.to_sym
+        raise ArgumentError, "unknown availability reason: #{reason}" unless REASONS.include?(@reason)
+
+        @blocker_id = blocker_id&.to_s&.dup&.freeze
+        @scheduled = scheduled&.freeze
+        freeze
+      end
+
+      def available? = reason == :available
+    end
+
+    attr_reader :snapshot, :today
+
+    def initialize(snapshot, today: Date.today)
       @snapshot = snapshot
+      @today = today.freeze
       @records_by_source_and_id = records_by_source_and_id
       @records_by_source_and_line = records_by_source_and_line
       @task_views = {}
+      @availability = {}
     end
 
     def list(filter)
@@ -169,16 +193,20 @@ module Tasks
       result(:list, items, filter: filter)
     end
 
-    def view(name, today: Date.today, urgent_days: Quadrants::DEFAULT_URGENT_DAYS)
+    def view(name, today: self.today, urgent_days: Quadrants::DEFAULT_URGENT_DAYS)
+      unless today == self.today
+        return self.class.new(snapshot, today: today).view(name, urgent_days: urgent_days)
+      end
+
       name = name.to_sym
       raise ArgumentError, "unknown task view: #{name}" unless NAMED_VIEWS.include?(name)
 
       items = snapshot.items.select do |item|
         case name
-        when :agenda then item.open? && !item.deferred? && (item.deadline || item.scheduled)
-        when :next then item.state == "NEXT" && !item.deferred?
-        when :quadrants then item.open? && !item.deferred?
-        when :inbox then item.state == "INBOX" && !item.deferred?
+        when :agenda then item.open? && availability(item).available? && (item.deadline || item.scheduled)
+        when :next then item.state == "NEXT" && availability(item).available?
+        when :quadrants then item.open? && availability(item).available?
+        when :inbox then item.state == "INBOX" && availability(item).available?
         end
       end
       items = sort_named(items, name)
@@ -189,6 +217,15 @@ module Tasks
 
     def task(item)
       task_view(current_item_for(item) || item)
+    end
+
+    # Effective availability includes the task and every task ancestor. Closed
+    # ancestors stay transparent to lifecycle/view hoisting, but their own
+    # timed or indefinite blocker still participates in this walk.
+    def availability(item)
+      item = current_item_for(item) || item
+      key = [item.source, item.id || item.line, item.title]
+      @availability[key] ||= build_availability(item)
     end
 
     def find(id, include_archive: false)
@@ -239,8 +276,8 @@ module Tasks
     end
 
     def deferred_match?(item, filter)
-      return item.deferred? if filter.deferred_only
-      return !item.deferred? if filter.scope == :open
+      return filter.scope == :open ? !availability(item).available? : item.deferred? if filter.deferred_only
+      return availability(item).available? if filter.scope == :open
 
       true
     end
@@ -285,9 +322,48 @@ module Tasks
           parent_id: record && record["parent"], ancestor_ids: ancestor_ids(node),
           child_ids: child_ids(node), section_id: section && section["id"],
           section_title: section && section["title"], project: node&.open_project&.title,
-          revision: snapshot.revision_for(item)
+          revision: snapshot.revision_for(item), availability: availability(item)
         )
       end
+    end
+
+    def build_availability(item)
+      return Availability.new(reason: :closed) if item.source == :archive || !item.open?
+
+      candidates = [[item, 0]]
+      current = snapshot.node_for(item)&.parent
+      distance = 1
+      while current
+        if current.task? && current.item
+          candidates << [current.item, distance]
+          distance += 1
+        end
+        current = current.parent
+      end
+
+      held = candidates.find { |candidate, _distance| candidate.deferred? }
+      if held
+        blocker, distance = held
+        return Availability.new(
+          reason: distance.zero? ? :on_hold : :ancestor_on_hold,
+          blocker_id: blocker.id
+        )
+      end
+
+      timed = candidates.select do |candidate, _distance|
+        candidate.scheduled && candidate.scheduled > today
+      end.max_by do |candidate, distance|
+        [candidate.scheduled.jd, -distance]
+      end
+      if timed
+        blocker, distance = timed
+        return Availability.new(
+          reason: distance.zero? ? :scheduled : :ancestor_scheduled,
+          blocker_id: blocker.id, scheduled: blocker.scheduled
+        )
+      end
+
+      Availability.new(reason: :available)
     end
 
     def current_item_for(item)

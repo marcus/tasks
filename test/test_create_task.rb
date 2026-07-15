@@ -73,13 +73,14 @@ class TestCreateTask < Minitest::Test
 
   def test_create_recurring_task_defaults_to_today_and_uses_the_processed_state
     with_create_store do |store, org, _archive|
-      result = store.create_task!(command(recurrence: ".+1w"))
+      result = store.create_task!(command(recurrence: ".+1w"), today: Date.new(2026, 9, 4))
 
       assert_equal :ok, result.status
       record = record_for(org, title: "Draft proposal")
-      assert_equal Date.today.iso8601, record["scheduled"]
+      assert_equal "2026-09-04", record["scheduled"]
       assert_equal "TODO", record["state"]
       assert_equal ".+1w", record["recur"]
+      assert_match(/Captured \[2026-09-04\]/, record["body"])
       assert Tasks::Check.check(org).ok?
     end
   end
