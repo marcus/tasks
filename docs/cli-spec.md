@@ -156,8 +156,9 @@ INBOX/recurrence side effects; Recurrence owns
 exact raw `body`; and State owns `state`, `closed`, recurrence completion, and
 documented lifecycle effects. State is last, keeping high-impact changes out of
 ordinary traversal. Parent/subtree placement is not an editor field: nesting is
-handled at the store/move level (`tasks move --under/--top`), pending a
-dedicated indent/outdent affordance in the tree views.
+handled at the store/move level. Manual ordering will use dedicated structure
+actions in the unfiltered Outline tab described under [Nesting](#nesting), not
+an editable form field.
 
 Panel sizing uses named modes with content-cell breakpoints: 48 or more cells
 may render short labels and controls inline; 32–47 cells stack them; 32 cells is
@@ -356,6 +357,45 @@ node climbs to the parent), and `H`/`L` collapse/expand every subtree at once.
 The collapsed set persists across restarts alongside the active view (pruned to
 tasks that still exist), in `$XDG_STATE_HOME/tasks/tui.json`.
 
+**Manual sibling placement (planned).** The exact CLI forms are:
+
+```text
+tasks move <ref> --before <anchor-ref>
+tasks move <ref> --under <parent-ref> --before <anchor-ref>
+tasks move <ref> "Section" --before <anchor-ref>
+```
+
+`--before` alone infers the anchor's current direct parent. With `--under` or a
+positional section, the anchor must be a direct child of that explicit
+destination. `--before` cannot be combined with `--top`; at most one explicit
+destination is allowed. Existing `move <ref> --under <ref>`, `move <ref>
+--top`, and positional section moves remain append operations.
+
+Source, parent, and anchor task refs use normal exact-id/line/fuzzy resolution:
+no match or ambiguity exits 2. Missing flag values, contradictory destinations,
+a missing section, a self-anchor, an anchor outside the requested parent,
+cycles, and excessive depth exit 1 and write nothing. A placement that already
+describes the exact slot succeeds with exit 0, writes nothing, and creates no
+undo entry.
+
+Successful human output prints a summary followed by the moved task's standard
+post-write headline. The summary names the task and destination and ends with
+`before "<anchor>"` or `at end`. `--dry-run` prefixes that summary with `would`,
+prints the current headline, and writes nothing; it takes precedence over
+`--json` and remains human-readable. Non-dry-run `--json` keeps the standard
+`touched` array and adds `placement` with `parent_id`, `parent_type`
+(`task`/`section`), `parent_title`, nullable `before_id`, and nullable
+`before_title`.
+
+No current TUI tab is eligible for ordering: Agenda, Next, Quadrants, Inbox,
+and Projects all filter, regroup, or sort away live siblings. Phase 4 adds a
+sixth **Outline** tab that renders every live section and task in canonical DFS
+order, including closed and unavailable tasks. Only collapse may hide
+descendants. `Alt+↑`/`Alt+k`, `Alt+↓`/`Alt+j`, `>`, and `<` reorder, indent,
+and outdent in that unfiltered tab. In another tab, or while `/` text or `@`
+context filtering is active, those keys are consumed and the footer directs
+the user to the unfiltered Outline tab.
+
 **Output.** Human-readable by default. Read commands and mutations accept
 `--json`; shapes below. Mutations always print (or return in JSON) the full
 new headline of every task they touched — a single mutation may touch several
@@ -467,6 +507,7 @@ is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or `nul
 | `tag <ref> +foo -bar @ctx -@old` | | ✅ | Add/remove tags and contexts in one call. `+t`/`@ctx` add, `-t`/`-@ctx` remove. |
 | `note <ref> "text"` | | ✅ | Append a line to the task's `body`. |
 | `move <ref> ("Section" \| --under <ref> \| --top)` | | ✅ | Relocate a task's whole subtree by re-pointing its `parent`. Exactly one destination: a positional **section** name (out of `Inbox` into `Work`; matched case-insensitively, exact then substring), `--under <ref>` to **nest** below another task, or `--top` to **unnest** to the section level. Section and `--top` moves are never depth-checked; `--under` is capped at `max_depth` (over-cap exits 1 with a depth message). Nesting under itself or a descendant exits 1 (cycle). `--top` on an already-top-level task prints "already at top level" (exit 0, no-op). See Nesting. |
+| `move <ref> ["Section" \| --under <ref>] --before <ref>` | | 🚧 | Place the whole subtree before a stable sibling. Without an explicit destination, infer the anchor's current parent; otherwise require the anchor to be a direct child of the named task/section. Not combinable with `--top`. Exact errors and human/JSON/dry-run output are frozen under Manual sibling placement above. |
 | `recur <ref> <interval>` | `repeat`, `every` | ✅ | Attach/replace the `recur` cookie on the task's date. `<interval>`: a cookie (`.+1w`/`+2d`/`++1m`) or friendly form (`weekly`/`daily`/`monthly`/`yearly`/`2w`/`every 3 days`); `off`/`none` clears it. `--from schedule\|completion` picks `+`/`.+` for a bare interval (default `completion` → `.+`). `--on <date>` seeds a `deadline` when the task has no date yet (else it errors). `--dry-run`/`--json`. |
 | `defer <ref> [date]` | `snooze` | ✅ | With a date, atomically set `scheduled` to the parsed available-from date and clear the task's own indefinite marker, preserving `deadline`; before that date the task is unavailable. Without a date, backward-compatibly put it On Hold indefinitely. Output and `--dry-run` report effective ancestor-aware availability. |
 | `someday <ref>` | | ✅ | Canonical spelling for an indefinite Someday/Maybe / On Hold task. Adds the own `defer` marker without changing either date. Idempotent. |

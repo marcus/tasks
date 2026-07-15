@@ -17,9 +17,10 @@ overwriting newer CLI or TUI writes. Every task response therefore carries an
 opaque `revision`, and the HTTP layer reuses it as the ETag; a write echoes it
 back in `If-Match`.
 
-A task's editable identity is not just its own fields. A move depends on the
-destination's sibling list, and a cascading delete or a completion depends on
-the whole subtree's lifecycle. If the revision were a single hash over own
+A task's editable identity is not just its own fields. The legacy location
+guard for a move depends on the ordered sibling list under the moving task's
+source parent at snapshot time, and a cascading delete or a completion depends
+on the whole subtree's lifecycle. If the revision were a single hash over own
 fields plus location and lifecycle fingerprints, then capturing an unrelated
 sibling or completing an unrelated descendant would change the hash, and an
 ordinary title edit conditioned on the old value would then fail with a spurious
@@ -29,8 +30,10 @@ ordinary title edit conditioned on the old value would then fail with a spurious
 
 - Clients treat the revision as opaque and compare it only for equality.
 - An ordinary field edit must not fail because a sibling or descendant changed.
-- A move must still fail if the destination's siblings changed; a state change
-  or cascading delete must still fail if the affected subtree changed.
+- A legacy location move must still fail if the source parent's siblings
+  changed; a state change or cascading delete must still fail if the affected
+  subtree changed. Anchor-relative placement is specified separately in
+  ADR-0009.
 - The precondition must derive from semantic baselines, never from a JSONL line
   number, mtime alone, or a client-supplied payload.
 
@@ -56,7 +59,7 @@ part is a SHA-256 hex digest:
   dates normalized before hashing so equivalent snapshots never depend on Ruby
   object identity or JSONL serialization.
 - `location` — the location fingerprint, including the sibling id list under the
-  task's parent.
+  task's current (source) parent at snapshot time.
 - `lifecycle` — the lifecycle fingerprint spanning the whole subtree (state,
   closed, dates, recurrence, defer marker).
 
@@ -68,7 +71,9 @@ OpenAPI contract — clients must not parse it — and lives here instead.
 
 - An ordinary field edit checks only `own`.
 - A state change additionally checks `lifecycle`.
-- A move additionally checks `location`.
+- A legacy location move additionally checks `location`. Anchor-relative
+  `TaskPlacement` instead checks `own` and validates its live parent/anchor
+  under the mutation lock, as decided in ADR-0009.
 - A cascading delete checks all three (`own`, `location`, `lifecycle`), so a
   changed descendant, sibling, or the task itself refuses a stale cascade.
 

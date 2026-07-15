@@ -85,6 +85,45 @@ class TestApiToolchain < Minitest::Test
     assert_match(/unexpected/, result.error.message)
   end
 
+  def test_task_placement_schema_accepts_stable_anchors_and_rejects_ambiguous_shapes
+    placement = @document.dig("components", "schemas", "TaskPlacement")
+    assert_equal ["parent_id"], placement.fetch("required")
+    assert_equal false, placement.fetch("additionalProperties")
+
+    valid = [
+      { "placement" => { "parent_id" => "9f8e7d6c" } },
+      { "placement" => { "parent_id" => "9f8e7d6c", "before_id" => nil } },
+      { "placement" => { "parent_id" => "9f8e7d6c", "before_id" => "4d5e6f7a" } },
+    ]
+    valid.each do |body|
+      result = @definition.validate_request(rack_request("/tasks/3c4d5e6f", "patch", body: body))
+      assert result.valid?, "expected valid placement #{body.inspect}: #{result.error&.message}"
+    end
+
+    invalid = [
+      { "placement" => nil },
+      { "placement" => {} },
+      { "placement" => { "parent_id" => "9f8e7d6c", "after_id" => "4d5e6f7a" } },
+      { "parent_id" => "9f8e7d6c", "placement" => { "parent_id" => "9f8e7d6c" } },
+    ]
+    invalid.each do |body|
+      result = @definition.validate_request(rack_request("/tasks/3c4d5e6f", "patch", body: body))
+      refute result.valid?, "expected invalid placement #{body.inspect}"
+    end
+  end
+
+  def test_patch_contract_freezes_placement_examples_statuses_and_revision_scope
+    patch = @document.dig("paths", "/tasks/{id}", "patch")
+    description = patch.fetch("description")
+    assert_includes description, "Placement compares\nthe `own` component"
+    assert_includes description, "Legacy\n`parent_id` keeps its existing `own` plus `location` comparison"
+
+    example_names = patch.dig("requestBody", "content", "application/json", "examples").keys
+    assert_includes example_names, "place_before"
+    assert_includes example_names, "place_at_end"
+    %w[404 409 412 422 428].each { |status| assert patch.fetch("responses").key?(status), status }
+  end
+
   def test_unknown_query_fields_require_an_explicit_adapter_guard
     request = rack_request("/tasks?unexpected=true", "get")
 

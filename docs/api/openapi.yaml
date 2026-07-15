@@ -13,7 +13,8 @@ info:
     (`docs/plans/http-api-and-web-foundation.md`) and its "HTTP contract",
     "Task representation", "Status mapping", "Concurrency and revisions" (§5),
     and "Delete semantics" (§4) sections. Design rationale lives in ADR-0005
-    through ADR-0008.
+    through ADR-0009. Manual anchor-relative placement is specified by
+    `docs/plans/manual-task-ordering.md` and ADR-0009.
 
     Conventions that hold for every operation:
 
@@ -503,6 +504,13 @@ paths:
         `If-Match` is required. A semantically no-op change is a success: it
         returns `200` with the unchanged resource and its current `ETag`, and
         it does not burn an undo step.
+
+        `placement` moves the whole subtree before a stable direct-child anchor,
+        or appends it when `before_id` is omitted/null. It is mutually exclusive
+        with the legacy top-level `parent_id` location input. Placement compares
+        the `own` component of the subject task revision only, then validates
+        the live parent and anchor under the Store mutation lock. Legacy
+        `parent_id` keeps its existing `own` plus `location` comparison.
       parameters:
         - $ref: "#/components/parameters/IfMatch"
       requestBody:
@@ -534,6 +542,18 @@ paths:
                 summary: Move the subtree under a new parent.
                 value:
                   parent_id: "9f8e7d6c"
+              place_before:
+                summary: Place the subtree before a stable sibling under an explicit parent.
+                value:
+                  placement:
+                    parent_id: "9f8e7d6c"
+                    before_id: "4d5e6f7a"
+              place_at_end:
+                summary: Append the subtree as the last child of an explicit parent.
+                value:
+                  placement:
+                    parent_id: "9f8e7d6c"
+                    before_id: null
               complete:
                 summary: Lifecycle transition.
                 value:
@@ -589,13 +609,48 @@ paths:
         "400":
           $ref: "#/components/responses/MalformedRequest"
         "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          description: Structural refusal (cycle or excessive depth) applying a move.
+          description: The moving task, placement parent, or placement anchor is absent from the live store.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
               examples:
+                missing_task:
+                  value:
+                    error:
+                      code: "not_found"
+                      message: "No live task with that id."
+                      details: { field: "id", id: "deadbeef" }
+                      request_id: "req_6a0a"
+                missing_parent:
+                  value:
+                    error:
+                      code: "not_found"
+                      message: "placement.parent_id does not identify a live task or section."
+                      details: { field: "placement.parent_id", parent_id: "deadbeef" }
+                      request_id: "req_6a0b"
+                missing_anchor:
+                  value:
+                    error:
+                      code: "not_found"
+                      message: "placement.before_id does not identify a live task."
+                      details: { field: "placement.before_id", before_id: "deadbeef" }
+                      request_id: "req_6a0c"
+        "409":
+          description: Structural refusal applying a move or ordered placement.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                anchor_parent_changed:
+                  value:
+                    error:
+                      code: "conflict"
+                      message: "The placement anchor is no longer a direct child of the requested parent."
+                      details:
+                        parent_id: "9f8e7d6c"
+                        before_id: "4d5e6f7a"
+                        current_parent_id: "7a8b9c0d"
+                      request_id: "req_6a1b"
                 cycle:
                   value:
                     error:
@@ -603,6 +658,13 @@ paths:
                       message: "A task cannot be moved under itself or a descendant."
                       details: { parent_id: "3c4d5e6f" }
                       request_id: "req_6a1c"
+                too_deep:
+                  value:
+                    error:
+                      code: "too_deep"
+                      message: "The placement would exceed max_depth."
+                      details: { max_depth: 4 }
+                      request_id: "req_6a1d"
         "412":
           $ref: "#/components/responses/StaleRevision"
         "415":
@@ -612,7 +674,30 @@ paths:
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
         "422":
-          $ref: "#/components/responses/ValidationFailed"
+          description: Malformed fields, unknown placement members, or mutually exclusive location inputs.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                conflicting_location_inputs:
+                  value:
+                    error:
+                      code: "validation_failed"
+                      message: "placement and parent_id cannot be supplied together."
+                      details:
+                        fields:
+                          placement: ["cannot be combined with parent_id"]
+                          parent_id: ["cannot be combined with placement"]
+                      request_id: "req_6a2a"
+                malformed_placement:
+                  value:
+                    error:
+                      code: "validation_failed"
+                      message: "placement is invalid."
+                      details:
+                        fields:
+                          placement: ["must contain only parent_id and before_id"]
+                      request_id: "req_6a2b"
         "428":
           $ref: "#/components/responses/MissingPrecondition"
         "503":
@@ -1627,6 +1712,23 @@ components:
             - { type: array, items: { type: string } }
             - { type: "null" }
 
+    TaskPlacement:
+      type: object
+      description: |
+        Stable anchor-relative placement for a whole task subtree. `parent_id`
+        identifies the destination live task or section. `before_id`, when
+        present and non-null, identifies a live direct-child task of that
+        parent; omitting it or sending null appends as the last child.
+      required: [parent_id]
+      additionalProperties: false
+      properties:
+        parent_id:
+          $ref: "#/components/schemas/TaskId"
+        before_id:
+          oneOf:
+            - { $ref: "#/components/schemas/TaskId" }
+            - { type: "null" }
+
     PatchTaskRequest:
       type: object
       description: |
@@ -1634,9 +1736,14 @@ components:
         editable field set. An absent field is unchanged; an explicit `null`
         clears a clearable field; unknown fields are rejected. `parent_id` is
         the location input (moving places the subtree as the last child of the
-        new parent). Fields apply in `TaskChangeset::FIELD_ORDER`.
+        new parent). `placement` supplies an exact parent/anchor location and
+        cannot be combined with `parent_id`. Fields apply in
+        `TaskChangeset::FIELD_ORDER`.
       additionalProperties: false
       minProperties: 1
+      allOf:
+        - not:
+            required: [parent_id, placement]
       properties:
         title:
           type: string
@@ -1670,6 +1777,8 @@ components:
           oneOf:
             - { $ref: "#/components/schemas/TaskId" }
             - { type: "null" }
+        placement:
+          $ref: "#/components/schemas/TaskPlacement"
         state: { $ref: "#/components/schemas/State" }
 
     HistoryStepRequest:
