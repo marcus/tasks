@@ -74,7 +74,7 @@ tail, exactly as you'd expect.
 `Tasks::Store` owns the file: parsing, change detection, mutations. Above it,
 a persistence-neutral `Tasks::Application` facade serves immutable read
 snapshots and typed views; the CLI and TUI are thin adapters on that seam, and
-an HTTP adapter would sit at the same one. Because a snapshot is immutable and
+the local HTTP API sits at the same one. Because a snapshot is immutable and
 coherent, a renderer holding one can ask for a task's body, links, or tree
 position without ever mixing fields from a later reload.
 
@@ -100,11 +100,12 @@ automatic release. The quadrant view computes urgency from your configured
 window. See [`docs/conventions.md`](docs/conventions.md) for the full format and
 methodology spec.
 
-### No dependencies
+### No dependencies for CLI and TUI
 
 Ruby 3.4 stdlib only — the CLI, the TUI, its theme engine, and the embedded
 `TermForm` editor component. No gems to install, no bundler, no version
-conflicts with whatever else is on your machine.
+conflicts with whatever else is on your machine. The optional HTTP API has its
+own Bundler-isolated Rack/Puma runtime and never enters those boot paths.
 
 ## Where your tasks live
 
@@ -225,17 +226,45 @@ per-slot overrides like `color.accent = magenta` in `~/.config/tasks/config`.
 `NO_COLOR` is honored. See `docs/cli-spec.md` (TUI colors) for the slot
 vocabulary.
 
+## Local HTTP API
+
+`bin/tasks-api` serves the same resolved task files and
+`Tasks::Application` semantics as the CLI and TUI. It is intentionally local:
+the launcher binds only to `127.0.0.1`, validates Host and browser mutation
+Origin headers, rejects forwarded-host ambiguity, and has no remote/auth mode.
+
+```sh
+bundle install
+bin/tasks-api                 # http://127.0.0.1:4747
+bin/tasks-api --port 8787     # choose another loopback port
+curl http://127.0.0.1:4747/healthz
+curl http://127.0.0.1:4747/api/v1/tasks
+```
+
+The first slice provides health/readiness, capabilities, sections, filtered
+task reads, and task create/PATCH/DELETE under `/api/v1`. PATCH and DELETE use
+the task response's quoted `ETag` as a required `If-Match` precondition. JSON
+request bodies are limited to 64 KiB. The complete wire contract is
+[`docs/api/openapi.yaml`](docs/api/openapi.yaml).
+
+Named manager views, history/archive endpoints, events, static client hosting,
+authentication, and non-loopback serving are intentionally deferred.
+
 ## Development
 
 ```sh
 ruby test/all.rb
 bundle install
+bundle check
 bundle exec ruby test/api/all.rb
+bin/tasks check
+git diff --check
 ```
 
 The core suite is stdlib-only like the CLI and TUI. The separate Bundler-backed
-API gate proves the locked Rack/Puma runtime and validates the OpenAPI 3.1
-contract; web dependencies are never required for `ruby test/all.rb`. Design
+API gate validates route traffic against OpenAPI 3.1 and boots the real Puma
+entrypoint for cross-process locking, stale-write, undo, refresh-token, and
+invalid-store proof. Web dependencies are never required for `ruby test/all.rb`. Design
 decisions are recorded as ADRs in
 [`docs/adr/`](docs/adr), the CLI's behavior contract is
 [`docs/cli-spec.md`](docs/cli-spec.md), and the backlog of feature ideas lives

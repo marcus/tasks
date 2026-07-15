@@ -1,37 +1,32 @@
 # HTTP API current-state snapshot
 
-Status: ready for CRUD adapter implementation
+Status: first local CRUD API implemented
 
 Date: 2026-07-15
 
-## Review outcome
+## Implementation outcome
 
-The architecture is ready for a loopback REST API. The checked read boundary,
-query-contract parity, and locked Rack/Puma/OpenAPI toolchain were completed and
-reviewed on 2026-07-15. The original plan's Store, stable-id, query, application,
-changeset, capture, and delete phases are also implemented; none is repeated
-here as future work.
+The loopback REST API is implemented. The checked read boundary,
+query-contract parity, Store-backed CRUD commands, Rack/Puma entrypoint,
+OpenAPI-validated route adapter, local security policy, and cross-process proof
+were completed on 2026-07-15.
 
-**Readiness decision: yes.** No architectural or foundation prerequisite remains
-before implementation of the loopback CRUD API described in this document. Work
-can start directly with the production Rack adapter and its route-level tests.
-Use `docs/plans/http-api-implementation-prompt.md` as the self-contained work
-order for that implementation.
+**First-slice decision: complete.** `bin/tasks-api` serves the CRUD and health
+surface described below on `127.0.0.1`, over the same resolved files and
+`Tasks::Application` semantics as the CLI and TUI.
 
-“Ready to implement” does not mean “ready to ship.” The adapter, launcher,
-security guards, HTTP representations, route contract tests, and cross-process
-proof are the implementation itself and remain required before the local API is
-complete. Manager features and remote deployment are later scopes, not blockers
-for the first local API.
+Completing the local CRUD slice does not make the service remote-ready. Manager
+features and remote deployment remain later scopes; non-loopback serving still
+needs its own authentication, authorization, proxy, and persistence decisions.
 
 Do not do another broad CLI/TUI-to-Application migration before starting HTTP
 work. Task CRUD is already transport-independent. The remaining direct Store
 uses are the TUI's intentional long-lived editor/history/archive seams and the
 CLI/TUI archive sweep path, which belongs to the later manager-support slice.
 
-The next implementation slice is the production CRUD adapter. It does not
-require a new database, web framework, authentication system, or redesign of
-`Tasks::Store`.
+The next optional product slice is manager support. It does not require a new
+database or redesign of `Tasks::Store`, but it should extend the same typed
+application boundary rather than placing manager logic in HTTP routes.
 
 ## Current boundary
 
@@ -63,27 +58,27 @@ The codebase currently provides:
 - isolated boot tests proving the core CLI, TUI, and application layer do not
   load Rack or Puma.
 
-There is no production HTTP adapter yet: `config.ru`, `bin/tasks-api`, route
-code, HTTP representation mapping, security guards, and route-level integration
-tests are the outstanding first slice. The committed Puma fixture is only a
-toolchain proof and must not become the production application by accretion.
+The production adapter lives in `config.ru`, `bin/tasks-api`, and
+`lib/tasks/api/`. Its in-process suite validates emitted traffic against
+OpenAPI; its black-box suite boots Puma and proves CLI/API locking, stale-write
+refusal, cross-process undo, refresh-token changes, and invalid-store refusal.
 
 ## Outstanding work
 
 | Order | Slice | Scope | Required for first local API? |
 |---:|---|---|---|
-| 1 | Core HTTP adapter | production runtime, routing, representations, security guards, CRUD | Yes |
-| 2 | Black-box proof | cross-process concurrency, stale writes, undo, invalid-store refusal | Yes |
+| 1 | Core HTTP adapter | production runtime, routing, representations, security guards, CRUD | Complete |
+| 2 | Black-box proof | cross-process concurrency, stale writes, undo, invalid-store refusal | Complete |
 | 3 | Manager support | named views, history, archive, polling/SSE, static client | No |
 | 4 | Remote deployment | auth, authorization, TLS, rate limits, persistence review | No |
 
-API construction can begin without another architecture phase.
+Later manager work can begin without another foundation phase.
 
 ## CRUD adapter slice
 
 ### Runtime and dependency boundary
 
-Add the production adapter files:
+The production adapter files are:
 
 ```text
 config.ru

@@ -1,14 +1,14 @@
 # ADR-0007: Composite opaque revisions and HTTP optimistic concurrency
 
-Status: Accepted
+Status: Accepted and implemented
 
 Date: 2026-07-14
 
-Implementation note: the revision generation this ADR describes is implemented
-in `Tasks::Store` (`task_revision`, `revision_components`, `changeset_revision_
-error`, `delete_revision_error`). The HTTP ETag/`If-Match` mapping and the
-`store_revision` change token are the Phase 4 adapter's job; the Phase 0
-contract (`docs/api/openapi.yaml`) is written against the model recorded here.
+Implementation note: revision generation is implemented in `Tasks::Store`
+(`task_revision`, `revision_components`, `changeset_revision_error`,
+`delete_revision_error`). The loopback API now maps task revisions to quoted
+ETag/`If-Match` headers and returns the separate `store_revision` refresh token
+from the same coherent snapshot as each resource response.
 
 ## Context
 

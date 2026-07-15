@@ -5,10 +5,9 @@ Status: Accepted and implemented
 Date: 2026-07-14
 
 Implementation note: implemented as `Tasks::DeleteTask` +
-`Tasks::Store#delete_task!` and the CLI `tasks delete` command
-(`docs/cli-spec.md`). The HTTP `DELETE /api/v1/tasks/{id}` mapping is Phase 4;
-the Phase 0 contract in `docs/api/openapi.yaml` is written against the semantics
-recorded here.
+`Tasks::Store#delete_task!`, the CLI `tasks delete` command
+(`docs/cli-spec.md`), and `DELETE /api/v1/tasks/{id}` in the loopback HTTP
+adapter. All three surfaces share the same guarded, journaled Store mutation.
 
 ## Context
 

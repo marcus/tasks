@@ -1,14 +1,14 @@
 # ADR-0006: Rack 3 and Puma behind bin/tasks-api, no web framework
 
-Status: Accepted
+Status: Accepted and implemented
 
 Date: 2026-07-14
 
-Implementation note: the dependency/toolchain foundation is implemented in the
-committed Gemfile and lockfile. The Bundler-backed gate boots a real Puma server
-through a Rack::Lint `config.ru` fixture and validates the OpenAPI 3.1 contract
-and its embedded examples with `openapi_first`. The production `config.ru`,
-`bin/tasks-api`, and Rack adapter still land with the CRUD transport slice.
+Implementation note: the dependency/toolchain foundation and production CRUD
+transport are implemented. `bin/tasks-api` resolves configuration once and
+starts the committed `config.ru` on loopback; the Bundler-backed API gate boots
+that real entrypoint and validates route traffic against the OpenAPI 3.1
+contract with `openapi_first`.
 
 ## Context
 
