@@ -20,7 +20,7 @@ class TestTaskEditorSession < Minitest::Test
       "title" => "Destination" },
   ].freeze
 
-  def with_editor
+  def with_editor(today: Date.new(2026, 7, 13))
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       archive = File.join(dir, "archive.jsonl")
@@ -30,7 +30,7 @@ class TestTaskEditorSession < Minitest::Test
         store_factory: Tasks::StoreFactory.new(org: org, archive: archive)
       )
       session = Tui::TaskEditorSession.new(
-        store: store, application: application, target_id: "11110002", today: Date.new(2026, 7, 13),
+        store: store, application: application, target_id: "11110002", today: today,
       )
       yield session, store, org
     end
@@ -41,7 +41,7 @@ class TestTaskEditorSession < Minitest::Test
 
     refute_match(/store\.(?:edit_snapshot|patch_task!)/, source)
     assert_match(/application\.edit_snapshot/, source)
-    assert_match(/application\.patch_task\(patch\)/, source)
+    assert_match(/application\.patch_task\(patch, today: operation_today\)/, source)
   end
 
   def record(path, id = "11110002")
@@ -239,21 +239,17 @@ class TestTaskEditorSession < Minitest::Test
   end
 
   def test_state_recurrence_and_coupled_date_changes_require_confirmation
-    # The form's injected clock controls date parsing; Store deliberately uses
-    # Date.today for .+ recurrence completion, so pin that Store clock here.
-    Date.stub(:today, Date.new(2026, 7, 13)) do
-      with_editor do |session, _store, org|
-        session.form.focus(:state)
-        session.form.set_value(:state, "DONE")
-        pending = session.save
-        assert pending.confirmation?
-        assert_match(/advances its recurrence/, pending.message)
-        assert_equal "NEXT", record(org)["state"]
-        accepted = session.confirm!
-        assert_equal :ok, accepted.status
-        assert_equal "NEXT", record(org)["state"]
-        assert_equal "2026-07-20", record(org)["scheduled"]
-      end
+    with_editor do |session, _store, org|
+      session.form.focus(:state)
+      session.form.set_value(:state, "DONE")
+      pending = session.save
+      assert pending.confirmation?
+      assert_match(/advances its recurrence/, pending.message)
+      assert_equal "NEXT", record(org)["state"]
+      accepted = session.confirm!
+      assert_equal :ok, accepted.status
+      assert_equal "NEXT", record(org)["state"]
+      assert_equal "2026-07-20", record(org)["scheduled"]
     end
 
     with_editor do |session, _store, org|
@@ -268,6 +264,22 @@ class TestTaskEditorSession < Minitest::Test
       consequence = session.save
       assert consequence.confirmation?
       assert_match(/clears recurrence/, consequence.message)
+    end
+  end
+
+  def test_recurring_completion_uses_the_editor_operation_date_for_advance_and_log
+    with_editor(today: Date.new(2030, 1, 1)) do |session, _store, org|
+      session.form.focus(:state)
+      session.form.set_value(:state, "DONE")
+
+      assert session.save.confirmation?
+      accepted = session.confirm!
+
+      assert_equal :ok, accepted.status
+      assert_equal "NEXT", record(org)["state"]
+      assert_equal "2030-01-08", record(org)["scheduled"]
+      assert_match(/- Did \[2030-01-01\]/, record(org).fetch("body"))
+      assert Tasks::Check.check(org).ok?
     end
   end
 

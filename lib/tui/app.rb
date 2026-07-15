@@ -871,7 +871,8 @@ module Tui
                  @suspended_task_editor
                else
                  TaskEditorSession.new(store: @store, application: @application,
-                                       target_id: item.id, focus: focus)
+                                       target_id: item.id, focus: focus,
+                                       today: method(:current_date))
                end
       return flash("task no longer exists") if editor.missing?
 

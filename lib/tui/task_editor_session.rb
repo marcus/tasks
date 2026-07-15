@@ -271,6 +271,7 @@ module Tui
 
     def persist(request, value:, confirmation: nil, finish: false,
                 retain_pending_on_conflict: false)
+      operation_today = edit_form.today.call
       patch = Tasks::TaskPatch.new(
         id: target_id,
         field: request.field_key,
@@ -279,7 +280,7 @@ module Tui
         coalesce_key: coalesce_key,
         confirmation: confirmation,
       )
-      result = application.patch_task(patch)
+      result = application.patch_task(patch, today: operation_today)
       @last_result = result
 
       if result.ok?
