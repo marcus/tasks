@@ -238,12 +238,15 @@ semantic `defer` marker now means an indefinite **On Hold** state
 unavailable.
 
 Availability is ancestor-aware. A task is available only when neither it nor
-any open task ancestor has a future available-from date or an On Hold marker.
-When several timed ancestors block it, the latest date wins; an On Hold marker
-wins over every date. `defer <ref> <date>` sets timed availability without
-moving `deadline`; `someday <ref>` holds indefinitely; `activate <ref>` clears
-the task's own hold and any own future available-from date. `list --unavailable`
-(`--deferred/-D` compatibility alias) reviews all effective blockers, while
+any task ancestor has a future available-from date or an On Hold marker. Closed
+ancestor rows are skipped for lifecycle rendering and their open descendants
+are hoisted, but those ancestors remain in the ancestry chain for availability:
+their timed and On Hold constraints still propagate. When several timed
+ancestors block a task, the latest date wins; an On Hold marker wins over every
+date. `defer <ref> <date>` sets timed availability without moving `deadline`;
+`someday <ref>` holds indefinitely; `activate <ref>` clears the task's own hold
+and any own future available-from date. `list --unavailable` (`--deferred/-D`
+compatibility alias) reviews all effective blockers, while
 `list --someday`/`--on-hold` matches only an own indefinite marker. In the TUI,
 `Z` reveals unavailable rows and `z` accepts a date, `someday`, or `now`.
 
@@ -316,7 +319,10 @@ is **hoisted** to top level rather than dropped with its pruned parent — so a
 reopened child, or a task captured under a since-completed project, still shows.
 An *unavailable* ancestor is different: it still hides its whole subtree (unless
 `Z` reveals unavailable tasks), and availability hiding wins over hoisting — a
-closed node below an unavailable parent stays hidden with it.
+closed node below an unavailable parent stays hidden with it. Conversely, a
+closed ancestor that itself owns a future date or On Hold marker remains an
+availability blocker even though its row is transparent and its open descendants
+would otherwise be hoisted.
 
 `h`/`l` collapse/expand the selected subtree (a collapsed node shows `▸` and a
 dim count of hidden descendants; a second `h` on a leaf or already-collapsed
