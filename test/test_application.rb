@@ -232,4 +232,25 @@ class TestApplication < Minitest::Test
       assert_equal "file not found", missing.errors.first[:message]
     end
   end
+
+  def test_checked_task_lookup_is_exact_to_the_requested_source
+    shared_id = FIX[:flight]
+    archive_records = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "task", "id" => shared_id, "state" => "DONE", "title" => "Archived flight" },
+    ]
+
+    with_application(archive_records: archive_records) do |_org, _archive, app|
+      live = app.get_task_result(shared_id)
+      archived = app.get_task_result(shared_id, source: :archive)
+
+      assert live.ok?
+      assert_equal :live, live.data.source
+      assert_equal "Book flight in Concur", live.data.title
+      assert archived.ok?
+      assert_equal :archive, archived.data.source
+      assert_equal "Archived flight", archived.data.title
+      assert_raises(ArgumentError) { app.get_task_result(shared_id, source: :other) }
+    end
+  end
 end

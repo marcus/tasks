@@ -21,11 +21,11 @@ module Tasks
     end
 
     attr_reader :scope, :deferred_only, :unavailable_only, :someday_only,
-                :recurring_only, :body_search, :contexts, :tags, :priority, :text
+                :recurring_only, :body_search, :contexts, :tags, :priority, :state, :text
 
     def initialize(scope: :open, deferred_only: false, unavailable_only: false,
                    someday_only: false, recurring_only: false, body_search: false,
-                   contexts: [], tags: [], priority: nil, text: [])
+                   contexts: [], tags: [], priority: nil, state: nil, text: [])
       @scope = scope.to_s.to_sym
       raise ArgumentError, "unknown task scope: #{scope}" unless SCOPES.include?(@scope)
 
@@ -46,6 +46,11 @@ module Tasks
       raise ArgumentError, "priority must be A, B, C, or none" if @priority && !%w[A B C].include?(@priority)
 
       @priority&.freeze
+      @state = state&.to_s&.upcase
+      if @state && !STATE_ORDER.include?(@state)
+        raise ArgumentError, "state must be one of #{STATE_ORDER.join(", ")}"
+      end
+      @state&.freeze
       @text = frozen_strings(text)
       freeze
     end
@@ -92,11 +97,12 @@ module Tasks
     def include_archive? = %i[archived all].include?(scope)
 
     def states
-      case scope
-      when :open then Store::OPEN_STATES
-      when :done then Store::DONE_STATES
-      else STATE_ORDER
-      end
+      scoped = case scope
+               when :open then Store::OPEN_STATES
+               when :done then Store::DONE_STATES
+               else STATE_ORDER
+               end
+      state ? scoped.select { |candidate| candidate == state }.freeze : scoped
     end
 
     def text_query = text.join(" ").downcase
@@ -248,14 +254,25 @@ module Tasks
       build_availability(item, own_deferred: deferred, own_scheduled: scheduled)
     end
 
-    def find(id, include_archive: false)
-      if include_archive && !snapshot.archive_loaded?
+    def find(id, include_archive: false, source: nil)
+      source = source&.to_s&.to_sym
+      unless source.nil? || %i[live archive].include?(source)
+        raise ArgumentError, "source must be live or archive"
+      end
+      if source && include_archive
+        raise ArgumentError, "source and include_archive are mutually exclusive"
+      end
+      if (include_archive || source == :archive) && !snapshot.archive_loaded?
         raise ArgumentError,
               "archive lookup requires a snapshot built with include_archive: true"
       end
 
       id = id.to_s
-      items = include_archive ? snapshot.items + snapshot.archive_items : snapshot.items
+      items = case source
+              when :archive then snapshot.archive_items
+              when :live then snapshot.items
+              else include_archive ? snapshot.items + snapshot.archive_items : snapshot.items
+              end
       item = items.find { |candidate| candidate.id == id }
       item && task_view(item)
     end

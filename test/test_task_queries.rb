@@ -35,6 +35,7 @@ class TestTaskQueries < Minitest::Test
     assert_equal ["@computer"], filter.contexts
     assert_equal ["important"], filter.tags
     assert_equal "A", filter.priority
+    assert_nil filter.state
     assert_equal ["flight", "plans"], filter.text
     assert_equal "flight plans", filter.text_query
     assert_raises(ArgumentError) { Tasks::TaskFilter.parse_cli(["--not-a-list-flag"]) }
@@ -96,6 +97,19 @@ class TestTaskQueries < Minitest::Test
 
       all = Tasks::TaskFilter.parse_cli(["--all"]).filter
       assert_includes queries(store, include_archive: true).list(all).tasks.map(&:id), "dead0001"
+    end
+  end
+
+  def test_state_filter_intersects_scope_and_validates_values
+    with_query_store do |store|
+      query = queries(store)
+
+      assert_equal [FIX[:flight], FIX[:pr], FIX[:plants]],
+                   query.list(Tasks::TaskFilter.new(scope: :open, state: :next)).tasks.map(&:id)
+      assert_empty query.list(Tasks::TaskFilter.new(scope: :open, state: :done)).tasks
+      assert_equal [FIX[:old]],
+                   query.list(Tasks::TaskFilter.new(scope: :done, state: "done")).tasks.map(&:id)
+      assert_raises(ArgumentError) { Tasks::TaskFilter.new(state: "BLOCKED") }
     end
   end
 
@@ -174,6 +188,12 @@ class TestTaskQueries < Minitest::Test
 
       loaded = queries(store, include_archive: true)
       assert_equal "dead0001", loaded.find("dead0001", include_archive: true).id
+      assert_equal :archive, loaded.find("dead0001", source: :archive).source
+      assert_nil loaded.find("dead0001", source: :live)
+      assert_raises(ArgumentError) { loaded.find("dead0001", source: :other) }
+      assert_raises(ArgumentError) do
+        loaded.find("dead0001", include_archive: true, source: :archive)
+      end
     end
   end
 

@@ -162,9 +162,9 @@ module Tasks
       checked_query(today: today) { |query| query.list(filter) }
     end
 
-    def get_task_result(id, include_archive: false, today: Date.today)
+    def get_task_result(id, source: :live, today: Date.today)
       checked_query(today: today) do |query|
-        query.find(id, include_archive: include_archive)
+        query.find(id, source: source)
       end
     end
 
