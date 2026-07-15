@@ -665,7 +665,7 @@ paths:
                   value:
                     error:
                       code: "cycle"
-                      message: "The placement anchor cannot be the moving task or its descendant."
+                      message: "The placement parent or anchor cannot be the moving task or its descendant."
                       details:
                         parent_id: "9f8e7d6c"
                         before_id: "5e6f7a8b"

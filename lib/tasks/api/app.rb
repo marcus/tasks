@@ -25,8 +25,9 @@ module Tasks
         title priority tags contexts deferred scheduled deadline state project parent_id recurrence body
       ].freeze
       PATCH_FIELDS = %w[
-        title priority body contexts tags deferred scheduled deadline recurrence parent_id state
+        title priority body contexts tags deferred scheduled deadline recurrence parent_id placement state
       ].freeze
+      PLACEMENT_FIELDS = %w[parent_id before_id].freeze
       FORWARDED_HEADERS = %w[
         HTTP_FORWARDED HTTP_X_FORWARDED_HOST HTTP_X_FORWARDED_PROTO HTTP_X_FORWARDED_PORT
       ].freeze
@@ -248,7 +249,7 @@ module Tasks
           id, changes, expected_revision: expected_revision,
           context: OperationContext.new(operation_id: request_id, source: :api)
         )
-        mutation_failure!(result, request_id, id: id)
+        mutation_failure!(result, request_id, id: id, placement: changes[:location])
         resource_result = application.task_result_from_mutation(result, id)
         view = resource_result.data
         [
@@ -285,6 +286,14 @@ module Tasks
           # observed by a separate adapter read.
           changes[:location] = body["parent_id"].nil? ? TaskChangeset::UNNEST : body["parent_id"]
         end
+        if body.key?("placement")
+          placement = body.fetch("placement")
+          changes.delete(:placement)
+          changes[:location] = TaskPlacement.new(
+            parent_id: placement.fetch("parent_id"),
+            before_id: placement["before_id"]
+          )
+        end
         changes
       end
 
@@ -296,7 +305,39 @@ module Tasks
         end
       end
 
-      def validate_patch_body!(body) = validate_common_body!(body, create: false)
+      def validate_patch_body!(body)
+        validate_common_body!(body, create: false)
+        if body.key?("placement") && body.key?("parent_id")
+          validation!(
+            placement: ["cannot be combined with parent_id"],
+            parent_id: ["cannot be combined with placement"]
+          )
+        end
+        validate_placement!(body["placement"]) if body.key?("placement")
+      end
+
+      def validate_placement!(placement)
+        unless placement.is_a?(Hash)
+          validation!(placement: ["must be an object"])
+        end
+
+        unknown = placement.keys - PLACEMENT_FIELDS
+        unless unknown.empty?
+          validation!(placement: ["must contain only parent_id and before_id"])
+        end
+        unless placement.key?("parent_id")
+          validation!("placement.parent_id" => ["is required"])
+        end
+
+        parent_id = placement["parent_id"]
+        unless parent_id.is_a?(String) && parent_id.match?(TASK_ID)
+          validation!("placement.parent_id" => ["must be a stable task or section id"])
+        end
+        before_id = placement["before_id"]
+        unless before_id.nil? || (before_id.is_a?(String) && before_id.match?(TASK_ID))
+          validation!("placement.before_id" => ["must be a stable task id or null"])
+        end
+      end
 
       def validate_common_body!(body, create:)
         if body.key?("title") && (!body["title"].is_a?(String) || body["title"].strip.empty?)
@@ -365,11 +406,24 @@ module Tasks
         value.is_a?(Array) ? value.join("\n") : value
       end
 
-      def mutation_failure!(result, request_id, parent_id: nil, id: nil)
+      def mutation_failure!(result, request_id, parent_id: nil, id: nil, placement: nil)
         return if result.ok?
 
         case result.status
         when :not_found
+          if placement.is_a?(TaskPlacement)
+            field = placement_missing_field(result)
+            details = placement_details(placement)
+            if field
+              value_key = field == "placement.parent_id" ? :parent_id : :before_id
+              details = { field: field, value_key => details.fetch(value_key) }
+              message = "#{field} does not identify a live #{value_key == :parent_id ? "task or section" : "task"}."
+            else
+              details = { field: "id", id: id }
+              message = "No live task with that id."
+            end
+            raise HttpError.new(404, :not_found, message, details: details)
+          end
           details = parent_id ? { parent_id: parent_id } : {}
           message = parent_id ? "parent_id does not identify a live task." : Errors.message(:not_found)
           raise HttpError.new(404, :not_found, message, details: details)
@@ -387,6 +441,13 @@ module Tasks
           details = result.field_errors.empty? ? {} : { fields: result.field_errors }
           raise HttpError.new(422, :validation_failed, Errors.message(:validation_failed), details: details)
         when :conflict
+          if placement.is_a?(TaskPlacement)
+            raise HttpError.new(
+              409, :conflict,
+              "The placement anchor is no longer a direct child of the requested parent.",
+              details: placement_details(placement, result.summary, include_current_parent: true)
+            )
+          end
           message = if result.summary.is_a?(Hash) && result.summary[:descendants].to_i.positive?
                       "The task has descendants; retry with cascade=true to delete them."
                     else
@@ -394,14 +455,42 @@ module Tasks
                     end
           raise HttpError.new(409, :conflict, message, details: result.summary || {})
         when :cycle, :too_deep
-          details = result.summary || {}
+          details = if placement.is_a?(TaskPlacement)
+                      placement_details(placement, result.summary)
+                    else
+                      result.summary || {}
+                    end
           details = details.merge(max_depth: @max_depth) if result.too_deep?
-          raise HttpError.new(409, result.status, Errors.message(result.status), details: details)
+          message = if placement.is_a?(TaskPlacement) && result.cycle?
+                      "The placement parent or anchor cannot be the moving task or its descendant."
+                    elsif placement.is_a?(TaskPlacement) && result.too_deep?
+                      "The placement would exceed max_depth."
+                    else
+                      Errors.message(result.status)
+                    end
+          raise HttpError.new(409, result.status, message, details: details)
         when :store_invalid, :unavailable
           raise HttpError.new(503, result.status, Errors.message(result.status))
         else
           raise HttpError.new(503, :unavailable, Errors.message(:unavailable))
         end
+      end
+
+      def placement_missing_field(result)
+        fields = result.field_errors.keys.map(&:to_s)
+        return "placement.parent_id" if fields.include?("parent_id")
+        return "placement.before_id" if fields.include?("before_id")
+
+        nil
+      end
+
+      def placement_details(placement, summary = nil, include_current_parent: false)
+        details = { parent_id: placement.parent_id }
+        details[:before_id] = placement.before_id if placement.before_id
+        if include_current_parent && summary.is_a?(Hash) && summary.key?(:current_parent_id)
+          details[:current_parent_id] = summary[:current_parent_id]
+        end
+        details
       end
 
       def read_failure!(result, _request_id)

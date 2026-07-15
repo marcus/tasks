@@ -71,7 +71,7 @@ class TestApiApp < Minitest::Test
   def test_list_supports_every_documented_filter_and_rejects_unknown_queries
     cases = {
       "scope=done" => [FIX[:old]],
-      "scope=all&state=DONE" => [FIX[:old], FIX[:pr]],
+      "scope=all&state=DONE" => [FIX[:old], FIX[:pr], "dddd0001"],
       "context=computer" => [FIX[:flight], FIX[:pr], FIX[:eval]],
       "tag=important" => [FIX[:flight], FIX[:pr], FIX[:eval]],
       "priority=B" => [FIX[:pr]],
@@ -217,6 +217,215 @@ class TestApiApp < Minitest::Test
     assert_equal FIX[:home], current_resource.fetch("section_id")
   end
 
+  def test_ordered_placement_accepts_before_null_and_omitted_anchors_from_one_fetch
+    eval_loaded = get("/api/v1/tasks/#{FIX[:eval]}")
+    travel_loaded = get("/api/v1/tasks/#{FIX[:travel]}")
+
+    first = json_request(
+      "PATCH", "/api/v1/tasks/#{FIX[:travel]}",
+      { placement: { parent_id: FIX[:work], before_id: FIX[:flight] } },
+      { "HTTP_IF_MATCH" => travel_loaded["etag"] }
+    )
+    assert_equal 200, first.status, first.body
+    first_payload = JSON.parse(first.body)
+    assert_equal FIX[:work], first_payload.dig("data", "section_id")
+    assert_nil first_payload.dig("data", "parent_id")
+    assert_equal first["etag"], quote(first_payload.dig("data", "revision"))
+    assert_match(/\As1\.[0-9a-f]{64}\z/, first_payload.dig("meta", "store_revision"))
+    assert_equal [FIX[:travel], FIX[:flight], FIX[:pr], FIX[:eval], FIX[:old]], work_task_ids
+    assert_contract_response(first)
+
+    # The first reorder churned every Work sibling's location fingerprint, but
+    # an anchor-relative placement fetched before that churn still compares only
+    # the moving task's own component.
+    appended_with_null = json_request(
+      "PATCH", "/api/v1/tasks/#{FIX[:eval]}",
+      { placement: { parent_id: FIX[:work], before_id: nil } },
+      { "HTTP_IF_MATCH" => eval_loaded["etag"] }
+    )
+    assert_equal 200, appended_with_null.status, appended_with_null.body
+    assert_equal [FIX[:travel], FIX[:flight], FIX[:pr], FIX[:old], FIX[:eval]], work_task_ids
+    assert_contract_response(appended_with_null)
+
+    # Reusing the same pre-drag ETag is accepted again. Omitting before_id is
+    # also append, and the already-satisfied placement is a successful no-op.
+    appended_omitted = json_request(
+      "PATCH", "/api/v1/tasks/#{FIX[:eval]}",
+      { placement: { parent_id: FIX[:work] } },
+      { "HTTP_IF_MATCH" => eval_loaded["etag"] }
+    )
+    assert_equal 200, appended_omitted.status, appended_omitted.body
+    assert_equal appended_with_null["etag"], appended_omitted["etag"]
+    assert_equal [FIX[:travel], FIX[:flight], FIX[:pr], FIX[:old], FIX[:eval]], work_task_ids
+    assert_contract_response(appended_omitted)
+    assert Tasks::Check.check(@org).ok?
+  end
+
+  def test_ordered_placement_moves_a_whole_subtree_across_sections_before_an_anchor
+    loaded = get("/api/v1/tasks/#{FIX[:pr]}")
+    moved = json_request(
+      "PATCH", "/api/v1/tasks/#{FIX[:pr]}",
+      { placement: { parent_id: FIX[:home], before_id: FIX[:plants] } },
+      { "HTTP_IF_MATCH" => loaded["etag"] }
+    )
+
+    assert_equal 200, moved.status, moved.body
+    payload = JSON.parse(moved.body)
+    assert_nil payload.dig("data", "parent_id")
+    assert_equal FIX[:home], payload.dig("data", "section_id")
+    assert_equal 0, payload.dig("data", "depth")
+    assert_equal moved["etag"], quote(payload.dig("data", "revision"))
+    assert_match(/\As1\.[0-9a-f]{64}\z/, payload.dig("meta", "store_revision"))
+
+    records = Tasks::Format.parse(File.read(@org, encoding: "UTF-8")).records
+    home_index = records.index { |record| record["id"] == FIX[:home] }
+    assert_equal [FIX[:home], FIX[:pr], "bbbb0001", "bbbb0002", FIX[:plants]],
+                 records[home_index, 5].map { |record| record["id"] }
+    assert_equal FIX[:pr], records.find { |record| record["id"] == "bbbb0001" }.fetch("parent")
+    assert_equal "bbbb0001", records.find { |record| record["id"] == "bbbb0002" }.fetch("parent")
+    assert_contract_response(moved)
+    assert Tasks::Check.check(@org).ok?
+  end
+
+  def test_placement_rejects_malformed_and_mutually_exclusive_inputs
+    current = get("/api/v1/tasks/#{FIX[:flight]}")
+    cases = [
+      [{ placement: nil }, "placement"],
+      [{ placement: [] }, "placement"],
+      [{ placement: {} }, "placement.parent_id"],
+      [{ placement: { parent_id: nil } }, "placement.parent_id"],
+      [{ placement: { parent_id: FIX[:work], before_id: "short" } }, "placement.before_id"],
+      [{ placement: { parent_id: FIX[:work], after_id: FIX[:eval] } }, "placement"],
+    ]
+    cases.each do |body, field|
+      response = json_request(
+        "PATCH", "/api/v1/tasks/#{FIX[:flight]}", body,
+        { "HTTP_IF_MATCH" => current["etag"] }
+      )
+      assert_error response, 422, "validation_failed"
+      assert JSON.parse(response.body).dig("error", "details", "fields").key?(field), body.inspect
+      assert_contract_request response, valid: false
+    end
+
+    exclusive = json_request(
+      "PATCH", "/api/v1/tasks/#{FIX[:flight]}",
+      { parent_id: FIX[:home], placement: { parent_id: FIX[:work] } },
+      { "HTTP_IF_MATCH" => current["etag"] }
+    )
+    assert_error exclusive, 422, "validation_failed"
+    assert_equal %w[parent_id placement],
+                 JSON.parse(exclusive.body).dig("error", "details", "fields").keys.sort
+    assert_contract_request exclusive, valid: false
+
+    missing_precondition = json_request(
+      "PATCH", "/api/v1/tasks/#{FIX[:flight]}",
+      { placement: { parent_id: FIX[:work], before_id: FIX[:eval] } }
+    )
+    assert_error missing_precondition, 428, "missing_precondition"
+  end
+
+  def test_placement_maps_missing_subject_parent_and_anchor_with_safe_fields
+    current = get("/api/v1/tasks/#{FIX[:flight]}")
+    cases = [
+      ["deadbeef", { parent_id: FIX[:work] }, "id", "deadbeef"],
+      [FIX[:flight], { parent_id: "deadbeef" }, "placement.parent_id", "deadbeef"],
+      [FIX[:flight], { parent_id: FIX[:work], before_id: "deadbeef" }, "placement.before_id", "deadbeef"],
+      [FIX[:flight], { parent_id: FIX[:work], before_id: "dddd0001" }, "placement.before_id", "dddd0001"],
+    ]
+    cases.each do |id, placement, field, value|
+      response = json_request(
+        "PATCH", "/api/v1/tasks/#{id}", { placement: placement },
+        { "HTTP_IF_MATCH" => current["etag"] }
+      )
+      assert_error response, 404, "not_found"
+      details = JSON.parse(response.body).dig("error", "details")
+      assert_equal field, details.fetch("field")
+      assert_equal value, details.fetch(field == "id" ? "id" : field.split(".").last)
+      assert_contract_response(response)
+    end
+  end
+
+  def test_placement_maps_cycle_anchor_conflict_and_depth_refusals
+    pr = get("/api/v1/tasks/#{FIX[:pr]}")
+    parent_cycle = json_request(
+      "PATCH", "/api/v1/tasks/#{FIX[:pr]}",
+      { placement: { parent_id: "bbbb0001" } },
+      { "HTTP_IF_MATCH" => pr["etag"] }
+    )
+    assert_error parent_cycle, 409, "cycle"
+    assert_equal "bbbb0001", JSON.parse(parent_cycle.body).dig("error", "details", "parent_id")
+    assert_contract_response(parent_cycle)
+
+    anchor_cycle = json_request(
+      "PATCH", "/api/v1/tasks/#{FIX[:pr]}",
+      { placement: { parent_id: FIX[:work], before_id: "bbbb0002" } },
+      { "HTTP_IF_MATCH" => pr["etag"] }
+    )
+    assert_error anchor_cycle, 409, "cycle"
+    anchor_error = JSON.parse(anchor_cycle.body).fetch("error")
+    assert_equal "bbbb0002", anchor_error.dig("details", "before_id")
+    assert_equal "The placement parent or anchor cannot be the moving task or its descendant.",
+                 anchor_error.fetch("message")
+    assert_contract_response(anchor_cycle)
+
+    flight = get("/api/v1/tasks/#{FIX[:flight]}")
+    conflict = json_request(
+      "PATCH", "/api/v1/tasks/#{FIX[:flight]}",
+      { placement: { parent_id: FIX[:home], before_id: FIX[:eval] } },
+      { "HTTP_IF_MATCH" => flight["etag"] }
+    )
+    assert_error conflict, 409, "conflict"
+    assert_equal(
+      { "parent_id" => FIX[:home], "before_id" => FIX[:eval], "current_parent_id" => FIX[:work] },
+      JSON.parse(conflict.body).dig("error", "details")
+    )
+    assert_contract_response(conflict)
+
+    add_deep_destination
+    too_deep = json_request(
+      "PATCH", "/api/v1/tasks/#{FIX[:pr]}",
+      { placement: { parent_id: "dddd0003" } },
+      { "HTTP_IF_MATCH" => pr["etag"] }
+    )
+    assert_error too_deep, 409, "too_deep"
+    assert_equal 4, JSON.parse(too_deep.body).dig("error", "details", "max_depth")
+    assert_contract_response(too_deep)
+    assert Tasks::Check.check(@org).ok?
+  end
+
+  def test_placement_stales_on_own_edit_while_legacy_parent_move_still_guards_location
+    flight = get("/api/v1/tasks/#{FIX[:flight]}")
+    store = Tasks::Store.new(org: @org, archive: @archive)
+    snapshot = store.edit_snapshot(FIX[:flight])
+    edited = store.apply_changeset!(Tasks::TaskChangeset.from(snapshot, changes: { title: "CLI edited" }))
+    assert edited.ok?
+
+    stale_placement = json_request(
+      "PATCH", "/api/v1/tasks/#{FIX[:flight]}",
+      { placement: { parent_id: FIX[:home] } },
+      { "HTTP_IF_MATCH" => flight["etag"] }
+    )
+    assert_error stale_placement, 412, "stale_revision"
+    assert_equal "CLI edited", JSON.parse(stale_placement.body).dig("error", "details", "current", "title")
+    assert_contract_response(stale_placement)
+
+    eval_loaded = get("/api/v1/tasks/#{FIX[:eval]}")
+    travel_loaded = get("/api/v1/tasks/#{FIX[:travel]}")
+    churn = json_request(
+      "PATCH", "/api/v1/tasks/#{FIX[:travel]}",
+      { placement: { parent_id: FIX[:work], before_id: FIX[:eval] } },
+      { "HTTP_IF_MATCH" => travel_loaded["etag"] }
+    )
+    assert_equal 200, churn.status, churn.body
+
+    legacy = json_request(
+      "PATCH", "/api/v1/tasks/#{FIX[:eval]}", { parent_id: FIX[:home] },
+      { "HTTP_IF_MATCH" => eval_loaded["etag"] }
+    )
+    assert_error legacy, 412, "stale_revision"
+    assert_contract_response(legacy)
+  end
+
   def test_preconditions_stale_current_and_delete_cascade_conflict
     missing = json_request("PATCH", "/api/v1/tasks/#{FIX[:pr]}", { title: "x" })
     assert_error missing, 428, "missing_precondition"
@@ -339,7 +548,26 @@ class TestApiApp < Minitest::Test
       { "type" => "section", "id" => "cccc0001", "title" => "Archive" },
       { "type" => "task", "id" => FIX[:pr], "parent" => "cccc0001", "state" => "DONE",
         "title" => "Archived duplicate", "closed" => "2026-07-01" },
+      { "type" => "task", "id" => "dddd0001", "parent" => "cccc0001", "state" => "DONE",
+        "title" => "Archived anchor", "closed" => "2026-07-02" },
     ])
+  end
+
+  def work_task_ids
+    Tasks::Format.parse(File.read(@org, encoding: "UTF-8")).records.filter_map do |record|
+      record["id"] if record["type"] == "task" && record["parent"] == FIX[:work]
+    end
+  end
+
+  def add_deep_destination
+    records = Tasks::Format.parse(File.read(@org, encoding: "UTF-8")).records
+    records.concat([
+      { "type" => "task", "id" => "dddd0002", "parent" => FIX[:plants], "state" => "TODO",
+        "title" => "Deep child" },
+      { "type" => "task", "id" => "dddd0003", "parent" => "dddd0002", "state" => "TODO",
+        "title" => "Deep grandchild" },
+    ])
+    File.write(@org, Tasks::Format.dump(records))
   end
 
   def get(path, env = {}) = request("GET", path, env)
