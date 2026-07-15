@@ -1892,10 +1892,6 @@ module Tasks
       moved_ids = records[ri...rj].filter_map do |record|
         record["id"] if record["type"] == "task"
       end
-      if placement_satisfied?(records, rec, parent_id, before_id)
-        return patch_ok(rec, touched_ids: [], summary: summary.merge(moved_ids: []))
-      end
-
       subtree = records[ri...rj].map(&:dup)
       rest = records[0...ri] + records[rj..]
       new_pi = rest.index { |record| record["id"] == parent_id }
@@ -1904,6 +1900,10 @@ module Tasks
                   else
                     subtree_end(rest, new_pi)
                   end
+      if placement_satisfied?(rec, parent_id, source_index: ri, insertion_index: insert_at)
+        return patch_ok(rec, touched_ids: [], summary: summary.merge(moved_ids: []))
+      end
+
       subtree[0]["parent"] = parent_id
       rest[insert_at, 0] = subtree
       records.replace(rest)
@@ -1911,16 +1911,13 @@ module Tasks
                summary: summary.merge(moved_ids: moved_ids))
     end
 
-    def placement_satisfied?(records, rec, parent_id, before_id)
-      return false unless rec["parent"] == parent_id
-
-      siblings = records.filter_map do |record|
-        record["id"] if record["type"] == "task" && record["parent"] == parent_id
-      end
-      current_index = siblings.index(rec["id"])
-      remaining = siblings.reject { |id| id == rec["id"] }
-      desired_index = before_id ? remaining.index(before_id) : remaining.length
-      current_index == desired_index
+    # After removing the moving span, its old physical boundary is still
+    # `source_index` in the detached array. The placement is satisfied only
+    # when the freshly resolved insertion boundary is that exact slot. This
+    # includes section subtrees between task children even though sections are
+    # never valid moving resources or before-anchors themselves.
+    def placement_satisfied?(rec, parent_id, source_index:, insertion_index:)
+      rec["parent"] == parent_id && source_index == insertion_index
     end
 
     def enclosing_section_id(records, record)

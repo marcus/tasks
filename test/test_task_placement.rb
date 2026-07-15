@@ -28,11 +28,33 @@ class TestTaskPlacement < Minitest::Test
     { "type" => "section", "id" => IDS[:three], "title" => "Three" },
   ].freeze
 
-  def with_placement_store(max_depth: Tasks::Tree::DEFAULT_MAX_DEPTH)
+  MIXED_IDS = {
+    parent: "40000001", a: "41000001", section: "42000001", section_child: "42000002",
+    b: "43000001", trailing_section: "44000001", trailing_child: "44000002",
+  }.freeze
+
+  MIXED_TREE = [
+    { "type" => "meta", "version" => 1 },
+    { "type" => "section", "id" => MIXED_IDS[:parent], "title" => "Parent" },
+    { "type" => "task", "id" => MIXED_IDS[:a], "parent" => MIXED_IDS[:parent],
+      "state" => "TODO", "title" => "A" },
+    { "type" => "section", "id" => MIXED_IDS[:section], "parent" => MIXED_IDS[:parent],
+      "title" => "Child section" },
+    { "type" => "task", "id" => MIXED_IDS[:section_child], "parent" => MIXED_IDS[:section],
+      "state" => "TODO", "title" => "Section child" },
+    { "type" => "task", "id" => MIXED_IDS[:b], "parent" => MIXED_IDS[:parent],
+      "state" => "TODO", "title" => "B" },
+    { "type" => "section", "id" => MIXED_IDS[:trailing_section], "parent" => MIXED_IDS[:parent],
+      "title" => "Trailing section" },
+    { "type" => "task", "id" => MIXED_IDS[:trailing_child], "parent" => MIXED_IDS[:trailing_section],
+      "state" => "TODO", "title" => "Trailing child" },
+  ].freeze
+
+  def with_placement_store(records: TREE, max_depth: Tasks::Tree::DEFAULT_MAX_DEPTH)
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       archive = File.join(dir, "archive.jsonl")
-      File.write(org, Tasks::Format.dump(TREE))
+      File.write(org, Tasks::Format.dump(records))
       yield Tasks::Store.new(org: org, archive: archive, max_depth: max_depth), org, archive
     end
   end
@@ -45,6 +67,10 @@ class TestTaskPlacement < Minitest::Test
     parsed(path).filter_map do |record|
       record["id"] if record["type"] == "task" && record["parent"] == parent_id
     end
+  end
+
+  def direct_child_ids(path, parent_id)
+    parsed(path).filter_map { |record| record["id"] if record["parent"] == parent_id }
   end
 
   def request(store, id, parent_id:, before_id: nil, snapshot: nil, changes: nil)
@@ -213,6 +239,50 @@ class TestTaskPlacement < Minitest::Test
         assert_equal before, File.binread(org)
         assert_equal [:empty], store.undo!
       end
+    end
+  end
+
+  def test_before_slot_moves_across_child_section_subtree_then_becomes_noop
+    with_placement_store(records: MIXED_TREE) do |store, org, _archive|
+      original = File.binread(org)
+      result = place(
+        store, MIXED_IDS[:a], parent_id: MIXED_IDS[:parent], before_id: MIXED_IDS[:b]
+      )
+      moved = File.binread(org)
+
+      assert_equal :ok, result.status
+      assert_equal MIXED_IDS.values_at(:section, :a, :b, :trailing_section),
+                   direct_child_ids(org, MIXED_IDS[:parent])
+      assert_checked(org)
+
+      no_change = place(
+        store, MIXED_IDS[:a], parent_id: MIXED_IDS[:parent], before_id: MIXED_IDS[:b]
+      )
+      assert_equal :no_change, no_change.status
+      assert_equal moved, File.binread(org)
+      assert_equal :ok, store.undo!.first
+      assert_equal original, File.binread(org)
+      assert_equal [:empty], store.undo!
+    end
+  end
+
+  def test_append_slot_moves_after_trailing_child_section_then_becomes_noop
+    with_placement_store(records: MIXED_TREE) do |store, org, _archive|
+      original = File.binread(org)
+      result = place(store, MIXED_IDS[:b], parent_id: MIXED_IDS[:parent])
+      moved = File.binread(org)
+
+      assert_equal :ok, result.status
+      assert_equal MIXED_IDS.values_at(:a, :section, :trailing_section, :b),
+                   direct_child_ids(org, MIXED_IDS[:parent])
+      assert_checked(org)
+
+      no_change = place(store, MIXED_IDS[:b], parent_id: MIXED_IDS[:parent])
+      assert_equal :no_change, no_change.status
+      assert_equal moved, File.binread(org)
+      assert_equal :ok, store.undo!.first
+      assert_equal original, File.binread(org)
+      assert_equal [:empty], store.undo!
     end
   end
 
