@@ -46,8 +46,9 @@ array. A task reference resolves as a case-insensitive title substring, an
 exact 8-hex id, or an `L<line>` file position; an ambiguous reference is an
 error that lists the candidates rather than a guess. Command synonyms are
 accepted where an agent would plausibly reach for them (`done` / `complete` /
-`close`). [`AGENTS.md`](AGENTS.md) is the standing contract that keeps any
-agent consistent with the format and the methodology.
+`close`). [`TASK_AGENT.md`](TASK_AGENT.md) is the standing contract injected into
+`tasks -p` / TUI list agents; [`AGENTS.md`](AGENTS.md) is for coding agents in
+this repo.
 
 ### Writes you can trust
 
@@ -140,7 +141,7 @@ Filter sigils: `@context`  `/text` (or a bare word)  `+tag`  `-A|-B|-C` (priorit
 ## Working with an agent
 
 `tasks -p "..."` hands a natural-language request to an autonomous agent with
-`AGENTS.md` as context. It acts on your tasks right where you're working,
+`TASK_AGENT.md` as context. It acts on your tasks right where you're working,
 auto-applies changes, and prints a git diff of the task files plus a one-line
 summary of what it did:
 

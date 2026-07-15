@@ -382,14 +382,14 @@ Markdown — read and diffable in Git; it is *not* a structured store and does n
 relax the CLI-only rule for `tasks.jsonl`/`archive.jsonl`.
 
 When present and non-empty, its contents are appended to the agent's system
-context (below `AGENTS.md` and the Current environment / file-locations blocks,
-inside a delimited block) on **every** `-p` run and
+context (below `TASK_AGENT.md` and the Current environment / file-locations
+blocks, inside a delimited block) on **every** `-p` run and
 every TUI request — read fresh each time, never cached, so a default saved by
 one request is visible to the next and an out-of-band edit or `git pull` is
 picked up without a restart. An absent file simply means "no saved defaults";
 the CLI never creates it as a side effect of running an agent. Agents create or
 edit it only when a user explicitly asks to remember, change, or forget a
-default (the policy lives in [`AGENTS.md`](../AGENTS.md)).
+default (the policy lives in [`TASK_AGENT.md`](../TASK_AGENT.md)).
 
 Resolution adds `memory` to the config paths, highest precedence first:
 

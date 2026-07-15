@@ -8,12 +8,15 @@ module Tasks
   # path and the TUI queue both build through here, so they can never disagree
   # about what an agent sees. In order:
   #
-  #   1. the repository AGENTS.md contract (the versioned agent instructions),
+  #   1. the repository TASK_AGENT.md contract (list-agent instructions),
   #   2. a short Current environment block (datetime, hostname, …) when enabled,
   #   3. the absolute file locations for this run (CLI, task files, memory),
   #   4. a short pointer to the task-set memory policy, and
   #   5. the current contents of agent-memory.md, clearly delimited as
   #      user-approved defaults, when that sidecar exists and is nonempty.
+  #
+  # Coding-agent instructions live in AGENTS.md and are intentionally not
+  # injected here — workspace tools load that file separately.
   #
   # The memory sidecar is read fresh on every call — never cached — so a default
   # saved by one request is visible to the next, and an external edit or Git
@@ -25,6 +28,9 @@ module Tasks
     # message and abort the run rather than proceed without the user's defaults.
     Error = Class.new(StandardError)
 
+    # Versioned list-agent contract in the application checkout (not the data dir).
+    CONTRACT = "TASK_AGENT.md"
+
     # Prompt-injection budget for the memory sidecar. A larger file is a
     # configuration mistake, so fail loudly with the path instead of silently
     # truncating a default the agent would then only half-apply.
@@ -35,23 +41,23 @@ module Tasks
     MEMORY_BEGIN = "----- BEGIN AGENT MEMORY -----"
     MEMORY_END   = "----- END AGENT MEMORY -----"
 
-    # A short pointer only. The full policy prose lives in AGENTS.md (item 1),
-    # the versioned agent contract, so it is never duplicated as a Ruby string
+    # A short pointer only. The full policy prose lives in TASK_AGENT.md (item 1),
+    # the versioned list-agent contract, so it is never duplicated as a Ruby string
     # that would drift out of sync.
     MEMORY_POINTER = "Task-set memory: apply the agent-memory.md defaults per the memory " \
-                     "policy in AGENTS.md — add, change, or remove them only on an explicit " \
-                     "request, and report any change alongside task changes."
+                     "policy in TASK_AGENT.md — add, change, or remove them only on an " \
+                     "explicit request, and report any change alongside task changes."
 
     module_function
 
     # paths:    a Tasks::Config::Paths (org/archive/memory + prompt_facts).
-    # cli_root: the application checkout, where bin/tasks and AGENTS.md live —
+    # cli_root: the application checkout, where bin/tasks and TASK_AGENT.md live —
     #           distinct from the task-data directory the harness runs in.
     # clock / hostname: injectable for tests; production uses Time.now /
     #           Socket.gethostname inside PromptFacts.
     def build(paths:, cli_root:, clock: -> { Time.now }, hostname: -> { Socket.gethostname })
-      agents = File.join(cli_root, "AGENTS.md")
-      base = File.file?(agents) ? File.read(agents, encoding: "UTF-8") : +""
+      contract = File.join(cli_root, CONTRACT)
+      base = File.file?(contract) ? File.read(contract, encoding: "UTF-8") : +""
       facts = PromptFacts.render(paths.prompt_facts || PromptFacts.resolve,
                                  clock: clock, hostname: hostname)
       sections = [base, facts, paths.agent_context(cli_root: cli_root), MEMORY_POINTER]

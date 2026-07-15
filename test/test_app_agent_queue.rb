@@ -172,7 +172,7 @@ class TestAppAgentQueue < Minitest::Test
   def test_queued_requests_build_fresh_context_so_a_memory_edit_hits_only_the_second
     Dir.mktmpdir do |dir|
       File.write(File.join(dir, "tasks.jsonl"), FIXTURE_ORG)
-      File.write(File.join(dir, "AGENTS.md"), "# AGENTS\n")
+      File.write(File.join(dir, "TASK_AGENT.md"), "# TASK_AGENT\n")
       memory = File.join(dir, "agent-memory.md")
       File.write(memory, "- first default\n")
 

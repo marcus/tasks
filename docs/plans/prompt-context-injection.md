@@ -58,12 +58,14 @@ a raw map, then `PromptFacts.resolve` merges registry defaults onto
 ### Injection point
 
 [`lib/tasks/agent_context.rb`](../../lib/tasks/agent_context.rb) inserts the
-facts block immediately after `AGENTS.md` and before the file-locations block.
-Both `tasks -p` and the TUI queue already build through `AgentContext.build`.
+facts block immediately after `TASK_AGENT.md` and before the file-locations
+block. Both `tasks -p` and the TUI queue already build through
+`AgentContext.build`. Coding-agent instructions stay in `AGENTS.md` and are not
+injected here.
 
 Order:
 
-1. AGENTS.md
+1. TASK_AGENT.md
 2. Current environment (omitted entirely if empty)
 3. File locations
 4. Memory policy pointer

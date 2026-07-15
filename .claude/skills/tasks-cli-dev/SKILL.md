@@ -65,8 +65,8 @@ Never bypass it with a raw `File.write` — write through `Format.dump`.
    - `.claude/skills/tasks-cli/SKILL.md`: add the command to the right
      section (Read/Mutate) with a one-line example — future agents only use
      what that skill teaches, and the CLI is their only writer
-   - `AGENTS.md` (the `tasks -p` system prompt): add the command to the CLI
-     bullet list
+   - `TASK_AGENT.md` (the `tasks -p` / TUI list-agent prompt): add the command
+     to the CLI bullet list
    - usage comment block at the top of `bin/tasks`
 
 ## Testing requirements (non-negotiable)

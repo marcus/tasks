@@ -30,7 +30,7 @@ module LLM
     attr_reader :output, :io, :process_status
 
     # root:    working directory the harness runs in (where tasks.jsonl lives).
-    # system:  fully-resolved system-context string (AGENTS.md + file
+    # system:  fully-resolved system-context string (TASK_AGENT.md + file
     #          locations), or nil. Adapters inject it however their CLI allows.
     # command: binary name/path — lets config point at a non-default install.
     def initialize(root:, system: nil, command: nil, **_opts)

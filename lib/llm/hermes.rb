@@ -43,10 +43,10 @@ module LLM
         @inference_provider = inference_provider.to_s.strip
       end
 
-      # Hermes has no --append-system-prompt, so prepend our context (AGENTS.md +
-      # file locations) to the prompt text. Hermes also auto-injects any AGENTS.md
-      # it finds in cwd; the overlap is harmless and our copy is authoritative
-      # about the absolute file locations, which Hermes can't otherwise know.
+      # Hermes has no --append-system-prompt, so prepend our context (TASK_AGENT.md +
+      # file locations) to the prompt text. Hermes may also auto-inject any AGENTS.md
+      # it finds in cwd; the data dir should not carry one — our injected copy is
+      # authoritative about the contract and absolute file locations.
       def command(prompt, model:, stream: true)
         full = @system ? "#{@system}\n\n#{prompt}" : prompt
         args = stream ? [@command, "chat", "-q", full] : [@command, "-z", full]

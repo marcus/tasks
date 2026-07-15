@@ -147,7 +147,7 @@ not a CLI store. Create, change, or remove a rule only when the user explicitly
 asks to remember / forget / change a default, editing minimally in the right
 section (create the file from its template on the first such request). Never
 infer a default from task edits, and never store secrets or transient facts. The
-full policy is in `AGENTS.md` (Task-set memory); report any change you make to
+full policy is in `TASK_AGENT.md` (Task-set memory); report any change you make to
 the file alongside your task changes.
 
 ## Report

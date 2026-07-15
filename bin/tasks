@@ -1431,7 +1431,7 @@ def cmd_check(args)
   exit(res.ok? ? 0 : 1)
 end
 
-# Hand a natural-language prompt to an LLM agent with AGENTS.md as context.
+# Hand a natural-language prompt to an LLM agent with TASK_AGENT.md as context.
 # Runs the configured harness headless; auto-applies, then shows the file diff.
 # `--provider`/`--model` (leading flags) override the config default for one run.
 def cmd_prompt(args)
@@ -1442,7 +1442,7 @@ def cmd_prompt(args)
   require_relative "../lib/llm/registry"
   require_relative "../lib/tasks/agent_context"
   data_dir = File.dirname(ORG)
-  # Build the system context (AGENTS.md + file locations + task-set memory)
+  # Build the system context (TASK_AGENT.md + file locations + task-set memory)
   # before spawning: an oversize/unreadable agent-memory.md must abort with the
   # path here, not run the agent without the user's saved defaults.
   sys_prompt = Tasks::AgentContext.build(paths: PATHS, cli_root: ROOT)

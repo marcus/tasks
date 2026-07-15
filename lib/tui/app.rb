@@ -86,7 +86,7 @@ module Tui
       # entry and builds one adapter per accepted request, so later cycling can
       # never retarget queued or running work.
       @agent_root = File.dirname(paths.org)
-      @cli_root   = root # where bin/tasks + AGENTS.md live (distinct from the data dir)
+      @cli_root   = root # where bin/tasks + TASK_AGENT.md live (distinct from the data dir)
       @llm_config = llm_config
       @entries    = LLM.entries(llm_config)
       @entry_idx  = 0

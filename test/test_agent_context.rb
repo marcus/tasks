@@ -11,7 +11,7 @@ class TestAgentContext < Minitest::Test
   def setup
     @cli_root = Dir.mktmpdir("agent-context-cli")
     @data_dir = Dir.mktmpdir("agent-context-data")
-    File.write(File.join(@cli_root, "AGENTS.md"), "# AGENTS\nContract prose here.\n")
+    File.write(File.join(@cli_root, "TASK_AGENT.md"), "# TASK_AGENT\nContract prose here.\n")
     @paths = Tasks::Config.for_dir(@data_dir)
   end
 
@@ -63,7 +63,7 @@ class TestAgentContext < Minitest::Test
 
   def test_includes_the_memory_policy_pointer
     assert_includes build, Tasks::AgentContext::MEMORY_POINTER
-    assert_includes build, "AGENTS.md"
+    assert_includes build, "TASK_AGENT.md"
   end
 
   def test_absent_memory_file_omits_the_section_and_creates_nothing
@@ -151,8 +151,8 @@ class TestAgentContext < Minitest::Test
     refute_includes second, "rule one"
   end
 
-  def test_missing_agents_file_still_builds_from_paths_and_pointer
-    FileUtils.rm_f(File.join(@cli_root, "AGENTS.md"))
+  def test_missing_contract_file_still_builds_from_paths_and_pointer
+    FileUtils.rm_f(File.join(@cli_root, "TASK_AGENT.md"))
     ctx = build
     refute_includes ctx, "Contract prose here."
     assert_includes ctx, File.join(@data_dir, "tasks.jsonl")

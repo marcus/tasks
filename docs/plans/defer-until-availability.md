@@ -516,12 +516,12 @@ Expected files:
 - `README.md`
 - `docs/ideas.md` where wording is affected
 - `docs/api/openapi.yaml`
-- `AGENTS.md`
+- `TASK_AGENT.md`
 - `.agents/skills/tasks-cli/SKILL.md`
 - `.claude/skills/tasks-cli/SKILL.md`
 - the usage block in `bin/tasks` if not already complete
 
-Both skill copies must teach the same behavior. `AGENTS.md` must explicitly
+Both skill copies must teach the same behavior. `TASK_AGENT.md` must explicitly
 prevent the original failure: “defer four days” is timed availability, not a
 deadline shift and not merely an indefinite tag.
 
