@@ -1,735 +1,291 @@
-# Plan: local-first HTTP API and web-client foundation
-
-Status: proposed for discussion
-
-Date: 2026-07-13
-
-## Decision summary
-
-Add the API as another adapter around the existing task system, not as a second
-implementation of it. Keep the repository a Ruby modular monolith and keep
-`tasks.jsonl`, `archive.jsonl`, `Tasks::Store`, `Tasks::Check`, atomic writes,
-the file lock, and the shared undo journal as the first implementation's source
-of truth.
-
-The material architectural change is a reusable application boundary between
-the user interfaces and `Tasks::Store`. The CLI, TUI, and HTTP adapter should
-all call the same typed task queries and commands. HTTP-specific code should be
-limited to routing, JSON parsing, authentication policy, request metadata, and
-mapping application results to responses.
-
-The proposed transport is a versioned REST/JSON API documented with OpenAPI.
-Implement it as a small [Rack 3 application](https://rack.github.io/rack/main/index.html)
-served locally by [Puma](https://puma.io/puma/). Rack keeps the application
-portable across Ruby servers, while Puma provides a maintained HTTP runtime.
-The CLI and TUI remain stdlib-only at runtime; only `bin/tasks-api` and API tests
-load the web dependencies. WEBrick is not a compelling way to retain a
-"stdlib-only" label because it has not been part of Ruby itself since Ruby 3.0.
-
-Start with a loopback-only server and same-origin web client. Preserve a clean
-authentication and persistence seam for a future remote deployment, but do not
-build multi-user storage, OAuth, or cloud infrastructure before it is needed.
-
-## Outcome
-
-After the first complete slice:
-
-- `bin/tasks-api` starts a local server over the same configured task files as
-  `bin/tasks` and `bin/tasks-tui`.
-- A browser client can create, list, inspect, edit, move, and delete live tasks
-  through stable IDs.
-- API mutations retain the current lifecycle, recurrence, nesting, validation,
-  rollback, and undo behavior.
-- A CLI write appears in the browser without restarting the server, and a web
-  write appears in the CLI and TUI.
-- Stale browser edits are refused with a machine-readable conflict instead of
-  overwriting newer CLI or TUI changes.
-- The HTTP contract is independent of JSONL line numbers and does not expose
-  raw persistence records, so a later database-backed server can preserve the
-  client contract.
-
-## Current architecture and reuse seams
-
-The repository already contains most of the difficult correctness machinery:
-
-- `lib/tasks/store.rb` owns task parsing, tree-aware mutations, the sidecar
-  `flock`, atomic read-modify-write behavior, post-write validation, rollback,
-  and undo-journal integration.
-- `lib/tasks/atomic.rb`, `lib/tasks/check.rb`, `lib/tasks/format.rb`, and
-  `lib/tasks/journal.rb` form a durable persistence boundary. The API must not
-  bypass it.
-- Stable eight-hex task IDs already survive retitles and tree moves.
-- `Tasks::EditSnapshot`, `Tasks::TaskPatch`, and `Tasks::PatchResult` already
-  provide semantic field ownership, stable-ID lookup, affected-subtree
-  fingerprints, typed conflicts, and fresh post-mutation snapshots.
-- The TUI aliases and directly consumes the same `Tasks::Store`; it does not
-  maintain a competing model.
-- `Tasks::Config.resolve` already guarantees that CLI and TUI choose the same
-  live and archive paths. The server should use it unchanged.
-- The CLI already has useful query, filtering, ref-resolution, and JSON
-  presentation behavior, but much of it is still implemented as top-level
-  functions in `bin/tasks`. That code cannot be safely reused by an in-process
-  HTTP adapter until it is extracted.
-
-There are also constraints that matter for a long-lived threaded server:
-
-- A `Tasks::Store` instance has mutable read caches and reload state. Its file
-  mutations are serialized, but the object itself is not a documented
-  thread-safe shared service.
-- Store mutation return values are intentionally useful to the existing CLI but
-  inconsistent as an application protocol: methods return combinations of
-  booleans, symbols, line numbers, arrays, structs, and typed patch results.
-- `capture` with recurrence currently performs capture and recurrence as two
-  Store mutations. An API `POST` should be one validated, journaled transaction.
-- There is no permanent task-delete command. Cancellation and archival are
-  lifecycle operations, not deletion.
-
-These are reasons to add an application boundary, not reasons to replace the
-working persistence layer.
-
-## Goals
-
-- Reuse the current task semantics and persistence guarantees from every
-  interface.
-- Make stable IDs the only public task locator in the HTTP API.
-- Give the web client a complete, deterministic task representation rather than
-  the CLI's presentation-oriented JSON.
-- Support atomic create, partial update, move, and delete operations.
-- Detect concurrent edits across the server, CLI, TUI, and external writers.
-- Keep the local setup small: one Ruby process, the current JSONL files, and no
-  separate database or queue.
-- Keep the contract and application layer usable if a remote deployment later
-  replaces JSONL with another persistence adapter.
-- Preserve normal CLI/TUI startup without Bundler or web gems.
-
-## Non-goals for the first implementation
-
-- Building the web UI itself beyond serving a placeholder or compiled static
-  directory as an integration proof.
-- Multi-user accounts, teams, permissions, sync between machines, or offline
-  merge.
-- Replacing JSONL with SQLite or PostgreSQL preemptively.
-- GraphQL, gRPC, event sourcing, CQRS infrastructure, background jobs, or a
-  message broker.
-- Letting HTTP clients address tasks by fuzzy title or transient line number.
-- Raw record editing or an endpoint that writes arbitrary JSONL.
-- Section CRUD, arbitrary sibling reordering, or archive-record editing in v1.
-- An HTTP endpoint that forwards natural-language prompts to the LLM harness
-  (`tasks -p` parity). The web client will eventually want the TUI's prompt
-  box, but exposing an LLM agent over HTTP has its own security and
-  process-lifecycle design questions and must not ride along with CRUD.
-- Preserving API compatibility before the v1 OpenAPI contract is reviewed and
-  accepted.
-
-## Proposed architecture
-
-```mermaid
-flowchart LR
-    Browser["Browser client"] --> HTTP["Rack HTTP adapter"]
-    CLI["CLI adapter"] --> App["Tasks::Application"]
-    TUI["TUI adapter"] --> App
-    HTTP --> App
-    Agent["LLM harness"] --> CLI
-    App --> Queries["Task queries and views"]
-    App --> Commands["Typed task commands"]
-    Queries --> Store["Tasks::Store"]
-    Commands --> Store
-    Store --> Safety["Format + Atomic + Check + Journal"]
-    Safety --> Live["tasks.jsonl"]
-    Safety --> Archive["archive.jsonl"]
-```
-
-### 1. Application boundary
-
-Add a persistence-neutral entry point, tentatively `Tasks::Application`, with
-narrow query and command methods. It should accept Ruby values and return typed,
-immutable results; it must not know about ARGV, terminal output, Rack request
-objects, status codes, or browser concerns.
-
-Representative interface:
-
-```ruby
-app.list_tasks(filter)
-app.get_task(id)
-app.list_sections
-app.create_task(attributes, context:)
-app.update_task(id, changes, expected_revision:, context:)
-app.delete_task(id, cascade:, expected_revision:, context:)
-app.history_preview
-app.undo(expected_store_revision:, context:)
-app.redo(expected_store_revision:, context:)
-app.archive_preview
-app.archive(expected_fingerprint:, context:)
-```
-
-`context` should begin small: request/operation ID, source (`cli`, `tui`, or
-`api`), and optional actor. It allows structured logs and future audit metadata
-without teaching domain commands about authentication.
-
-The application layer owns:
-
-- input normalization that should be identical across interfaces;
-- command orchestration and one-command/one-journal-entry behavior;
-- stable-ID lookup;
-- converting Store outcomes into a single result vocabulary;
-- building canonical task and section views;
-- named task views whose semantics should not be reimplemented in JavaScript.
-
-The Store continues to own:
-
-- reading and writing JSONL;
-- lock and atomic-write scope;
-- structural and lifecycle invariants;
-- recurrence, cascade, nesting, and archive mechanics;
-- exact rollback and undo snapshots.
-
-Do not begin with a big-bang rewrite of `Tasks::Store`. First unify its two
-mutation generations onto the stable-id patch protocol as serial,
-individually-landable changes (Phase 1), then add the application facade and
-extract reusable queries and representations. Beyond that unification, improve
-Store primitives only where a complete command cannot currently be performed as
-one transaction.
-
-### 2. Query model
-
-Add an immutable Store read snapshot that parses the live and, when requested,
-archive files together under the Store lock. Build task resources from that
-snapshot instead of combining a held `Item` with later per-field reads.
-
-Extract the reusable parts of the CLI's current behavior into `lib/tasks/`:
-
-- task filtering by state, text, body, priority, context, tag, deferred status,
-  recurrence, and source;
-- agenda, next, inbox, quadrants, and project/tree view selection;
-- nearest-open-project and parent/child metadata;
-- link extraction;
-- canonical task and section representations.
-
-Keep human formatting in `bin/tasks`. The existing CLI JSON shape is already an
-interface and should remain compatible; it can map the richer canonical view
-down to its current fields. The HTTP representation should not inherit unstable
-CLI details such as `line` or a pre-rendered ANSI-oriented headline.
-
-Fuzzy title and `L<line>` resolution remain CLI conveniences. Extract them into
-a reusable CLI-side resolver if needed, but make the resolved stable ID the
-application command input. The API never performs fuzzy resolution.
-
-### 3. Command model and result vocabulary
-
-Normalize all public command outcomes to a typed result such as:
-
-```text
-ok · no_change · not_found · stale · invalid · conflict · cycle · too_deep
-store_invalid · unavailable
-```
-
-The result carries the new resource when one exists, touched IDs, structured
-field/form errors, and a consequence summary for cascade/recurrence/move/delete
-operations. CLI exit codes and TUI messages are adapter mappings over that
-result rather than separate interpretations of Store return values.
-
-Add two Store-level transaction inputs:
-
-- `CreateTask`: all create fields, including recurrence and initial body, are
-  validated and written under one lock as one journal entry. Preserve the
-  existing `Captured [date].` provenance line, with supplied notes added in a
-  deterministic order.
-- `TaskChangeset`: multiple semantic field changes are validated against one
-  expected task revision, applied in a documented deterministic order, checked,
-  and written once. `TaskPatch` remains a one-field convenience and can delegate
-  to the same machinery so the TUI keeps save-on-blur behavior.
-
-Field application order must be explicit because fields interact. A reasonable
-order is scalar content, tags, dates, recurrence, location, then lifecycle state;
-tests must lock down all coupled cases. If a combination cannot be made clear
-and atomic, reject it rather than silently splitting the request.
-
-### 4. Delete semantics
-
-The recommended meaning of `DELETE /tasks/{id}` is an undoable hard delete from
-the live file. It is not an alias for `CANCELLED`, and it does not edit archive
-history.
-
-- A leaf task can be deleted with a matching revision.
-- A task with descendants returns a conflict unless the caller explicitly sends
-  `cascade=true`.
-- A cascading delete removes the contiguous task subtree as one journal entry.
-- Deleting a parent never silently hoists or reparents its children.
-- Archived tasks are read-only and cannot be deleted in v1.
-- Add a matching `tasks delete` command and CLI spec entry before exposing the
-  behavior over HTTP, so the API does not become the only route to a domain
-  mutation.
-
-This is the one genuinely new lifecycle operation required by "CRUD" and should
-be confirmed before implementation. If permanent deletion is unwanted, omit
-HTTP `DELETE` and use explicit state cancellation instead; do not overload the
-word delete with cancel semantics.
-
-### 5. Concurrency and revisions
-
-Every task response includes an opaque `revision`, and the HTTP response uses
-the same value as an ETag. Derive it from the Store-produced edit snapshot's
-semantic baselines and the location/lifecycle fingerprints. Do not derive it
-from line number, mtime alone, or a client-supplied payload.
-
-The revision must be internally composite — opaque to clients, but not one
-monolithic hash. The location fingerprint includes the sibling id list and the
-lifecycle fingerprint spans the whole subtree, so a single digest over
-baselines plus fingerprints would change whenever a sibling is captured or a
-descendant is completed, and an unrelated title edit would then fail with
-`412`. Encode three digests in the one revision string — own-field baselines,
-location fingerprint, lifecycle fingerprint — and compare only the parts an
-operation depends on: ordinary field edits check the baseline digest; state
-changes add the lifecycle fingerprint; moves add the location fingerprint;
-cascading delete checks all three.
-
-- `PATCH` and `DELETE` require `If-Match`; missing preconditions return `428`.
-- A stale revision returns `412 Precondition Failed` with the current task
-  resource when it is safe to disclose it.
-- Ordinary edits are conservative whole-task HTTP conflicts, even though the
-  TUI may continue using narrower per-field conflicts. This makes multi-field
-  browser saves understandable and atomic.
-- State, location, and delete revisions include the affected structural or
-  lifecycle fingerprint, so a changed descendant cannot be silently cascaded,
-  moved, or deleted from a stale confirmation.
-- `POST` returns the created resource and its revision. Retry idempotency keys
-  can be added when the server becomes remote; they do not justify a second
-  local state store in v1.
-
-Also expose an opaque global `store_revision` in list/meta responses. It is a
-change token for refreshing browser queries, not a write precondition for an
-individual task.
-
-### 6. Request-scoped Store use
-
-Create a fresh `Tasks::Store`/application unit per request in v1. JSONL task
-lists are small, and this avoids sharing the Store's mutable caches across Puma
-threads. The existing sidecar file lock still serializes mutations across API
-requests, CLI processes, and the TUI. Atomic file replacement means readers see
-complete old or complete new bytes.
-
-If profiling later shows parsing to be material, add a synchronized immutable
-snapshot cache behind the application boundary. Do not make a shared Store
-instance thread-safe speculatively.
-
-## HTTP contract
-
-Write `docs/api/openapi.yaml` before implementing routes. Use `/api/v1` from the
-first release, accept and return `application/json`, reject unknown fields, and
-use one response envelope:
-
-```json
-{
-  "data": {},
-  "meta": { "store_revision": "opaque-value" }
-}
-```
-
-Errors use stable machine codes:
-
-```json
-{
-  "error": {
-    "code": "stale_revision",
-    "message": "Task changed after it was loaded.",
-    "details": {},
-    "request_id": "..."
-  }
-}
-```
-
-The minimum resource endpoints are:
-
-| Method | Path | Behavior |
-|---|---|---|
-| `GET` | `/api/v1/meta` | Capabilities, states, priorities, config-derived limits, server mode, and global store revision; never return filesystem paths. |
-| `GET` | `/api/v1/sections` | Ordered live sections for capture and placement controls — stable id, title, and parent id each (section records already carry the same checked eight-hex ids as tasks). |
-| `GET` | `/api/v1/tasks` | Ordered task collection with composable filters for scope, state, context, tag, priority, text/body search, deferred, and recurring. The default scope is open live tasks, matching `tasks list`. |
-| `POST` | `/api/v1/tasks` | Atomically create one task; return `201`, `Location`, resource, and ETag. |
-| `GET` | `/api/v1/tasks/{id}` | Full live or explicitly requested archived task resource. |
-| `PATCH` | `/api/v1/tasks/{id}` | Atomically apply semantic partial changes with required `If-Match`. |
-| `DELETE` | `/api/v1/tasks/{id}` | Undoable live delete; descendants require explicit `cascade=true` and matching `If-Match`. |
-
-The first web-manager support endpoints should follow without changing the task
-resource contract:
-
-| Method | Path | Behavior |
-|---|---|---|
-| `GET` | `/api/v1/views/{name}` | Canonical `agenda`, `next`, `quadrants`, `inbox`, and `projects` results, including grouping metadata. |
-| `GET` | `/api/v1/history` | Peek at the next undo and redo labels plus the store revision they apply to, so the client can render labeled controls without mutating anything. |
-| `POST` | `/api/v1/history/undo` | Apply the shared journal's next undo step and return the affected label plus new store revision. Requires the `store_revision` the client last saw; a mismatch returns `409` instead of undoing a different surface's newer write. |
-| `POST` | `/api/v1/history/redo` | Apply the shared journal's next redo step, under the same `store_revision` precondition. |
-| `GET` | `/api/v1/archive-preview` | Return the existing safe sweep preview and fingerprint. |
-| `POST` | `/api/v1/archive-sweeps` | Sweep only when the preview fingerprint still matches. |
-| `GET` | `/api/v1/events` | Server-sent `store.changed` events; clients refetch affected queries. |
-
-The event endpoint is invalidation, not event sourcing. A small watcher can poll
-the Store stat key and publish the new global revision when CLI, TUI, or API
-writes replace either file. The browser still obtains authoritative state with
-normal GET requests. Ship conditional polling against `/meta` first: it is one
-local user polling a small file, and every open SSE response pins one thread
-from Puma's small pool for its whole lifetime, so SSE needs a sized thread
-budget (or a dedicated streaming path) before a few idle tabs can starve the
-API. Add SSE after CRUD is proven, not as part of the first slice.
-
-### Task representation
-
-A full task resource should include:
-
-```text
-id, revision, source, parent_id, section_id, depth,
-state, priority, title, contexts, tags, deferred,
-scheduled, deadline, recurrence, body, closed, archived,
-project, child_count, descendant_count, links
-```
-
-Rules:
-
-- `contexts`, ordinary `tags`, and `deferred` remain distinct semantic fields,
-  matching the TUI editor's ownership model.
-- `PATCH` bodies use merge semantics: an absent field is unchanged, an explicit
-  `null` clears a clearable field, and unknown fields are rejected, not ignored.
-- Changing `parent_id`/`section_id` places the moved subtree as the last child
-  of the new parent, matching Store move semantics. There is no sibling-order
-  parameter in v1.
-- Dates are ISO `YYYY-MM-DD` or `null`. Friendly date parsing remains a human
-  CLI/TUI feature, not an HTTP contract.
-- `source` is `live` or `archive`; archived resources are read-only.
-- Collection order conveys DFS display order. Do not expose `line` as identity
-  or promise it as a stable sort key.
-- `project` and counts are derived read fields.
-- Links are derived from title/body and config, never accepted as a second
-  source of task content.
-- Responses may add fields compatibly, but existing fields are not renamed or
-  removed inside `/v1`.
-
-### Status mapping
-
-| Condition | HTTP status |
-|---|---:|
-| Success read/update | `200` |
-| Successful create | `201` |
-| Successful delete with no response body | `204` |
-| Malformed JSON, wrong content type, unknown field | `400` / `415` |
-| Missing task | `404` |
-| Missing `If-Match` | `428` |
-| Stale revision | `412` |
-| Invalid semantic value | `422` |
-| Cycle, excessive depth, non-cascade parent delete, changed archive preview | `409` |
-| Structurally invalid backing store | `503` with `store_invalid` |
-
-A semantically no-op `PATCH` (the `no_change` result) returns `200` with the
-unchanged resource and its current ETag; it is a success, not an error, and it
-must not burn an undo step.
-
-## HTTP runtime and dependency boundary
-
-Add a committed `Gemfile` and lockfile for the API runtime, initially limited to
-Rack and Puma (Puma loads `config.ru` itself, so the separate `rackup` gem is
-not needed). Test-only gems — `rack-test` and an OpenAPI validator such as
-`committee` — belong in the Gemfile's test group and do not extend the runtime
-dependency set. Implement routing directly in a small Rack app; the route count
-does not justify Rails, Sinatra, or another framework yet.
-
-Proposed entry points:
+# HTTP API current-state snapshot
+
+Status: approved with three focused prerequisites
+
+Date: 2026-07-15
+
+## Review outcome
+
+The architecture is ready for a loopback REST API once the read boundary is
+made as coherent and typed as the write boundary. The original plan's Store,
+stable-id, query, application, changeset, capture, and delete phases are already
+implemented; they are not repeated here as future work.
+
+Do not do another broad CLI/TUI-to-Application migration before starting HTTP
+work. Task CRUD is already transport-independent. The remaining direct Store
+uses are the TUI's intentional long-lived editor/history/archive seams and the
+CLI/TUI archive sweep path, which belongs to the later manager-support slice.
+
+The review decision is **approved with conditions**: complete the three
+prerequisites below, then build the CRUD adapter. None requires a new database,
+web framework, authentication system, or redesign of `Tasks::Store`.
+
+## Current boundary
+
+The codebase currently provides:
+
+- `Tasks::Store` as the correctness boundary for JSONL parsing, the sidecar
+  lock, atomic writes, post-write checking, rollback, and the shared journal;
+- immutable `Store::ReadSnapshot`s and canonical `TaskView`/`SectionView`
+  resources built by `TaskQueries`;
+- `Tasks::Application` over a fresh-Store-per-operation `StoreFactory`;
+- typed, one-transaction `CreateTask`, `TaskChangeset`, `TaskPatch`, and
+  `DeleteTask` commands with one `MutationResult` vocabulary;
+- stable task ids and opaque composite task revisions suitable for ETag/
+  `If-Match` concurrency;
+- CLI/TUI coverage for atomic create, update, guarded cascade delete, undo, and
+  cross-surface visibility;
+- accepted ADRs for the application boundary, Rack/Puma transport, revision
+  semantics, and hard delete;
+- an OpenAPI 3.1 contract at `docs/api/openapi.yaml`, including effective task
+  availability; and
+- isolated boot tests proving the core CLI, TUI, and application layer do not
+  load Rack or Puma.
+
+There is no HTTP runtime yet: no Gemfile, Rack application, Puma launcher,
+route code, HTTP representation mapper, or API integration test suite exists.
+
+## Prerequisites before route implementation
+
+### P1. Add a checked, revision-bearing application read result
+
+This is the only substantial foundation gap.
+
+The OpenAPI contract puts `meta.store_revision` on every successful response
+and maps a structurally invalid store to `503 store_invalid`. Current
+application reads return a `TaskQueryResult`, `TaskView`, or section array
+without the change token from the exact snapshot that produced those resources.
+`Store#read_snapshot` also parses coherent bytes but does not expose a typed
+structural-check outcome. Computing either value in a later Rack call would
+create a race and would make the HTTP adapter understand persistence details.
+
+Add one immutable, transport-neutral read result or query snapshot that:
+
+- captures live and archive bytes under the existing Store lock;
+- validates those exact captured records rather than checking the path in a
+  separate read;
+- carries an opaque global `store_revision` derived from the captured content;
+- exposes list, exact-source get, section, and safe meta/readiness results from
+  that same snapshot;
+- distinguishes `ok`, `not_found`, `store_invalid`, and `unavailable` without
+  exposing paths or backtraces; and
+- keeps existing CLI/TUI query methods compatible while the HTTP adapter uses
+  the stronger result.
+
+The global revision covers both live and archive content. It is a refresh token,
+not a task-write precondition. Tests must prove that the resource data and token
+cannot straddle an external write, that an archive-only change advances the
+token, and that invalid captured records produce the typed refusal.
+
+This same seam should power `/meta` and readiness. Do not implement readiness by
+calling `Tasks::Check.check(path)` and then performing a second unlocked read.
+
+### P2. Close the two query-contract deltas
+
+The OpenAPI list contract has a single-state filter, while `TaskFilter` currently
+derives states only from `scope`. Add an optional validated state to
+`TaskFilter`, intersect it with the scope, and cover empty intersections such as
+`scope=open&state=DONE`.
+
+Also make task lookup source-exact at the application boundary. The contract's
+`source=archive` means archive only; a boolean `include_archive` lookup that
+searches live and archive together is too implicit for that promise. Preserve
+the current convenience method if CLI callers need it, but give the HTTP
+adapter an unambiguous `live` or `archive` query.
+
+The existing availability filter already rejects unavailable-only queries
+outside the open scope. HTTP parsing should map that typed validation failure to
+the contract's `422 validation_failed` rather than reimplementing the rule.
+
+### P3. Prove the dependency and OpenAPI validation toolchain
+
+Before locking gems, run a small compatibility spike against the actual
+`docs/api/openapi.yaml`:
+
+- choose supported Rack 3 and Puma versions for Ruby 3.4 and boot a minimal app
+  through `config.ru` under `Rack::Lint`;
+- choose a validator that demonstrably supports the OpenAPI 3.1 and JSON Schema
+  constructs used by this document, including nullable union types and local
+  references;
+- validate the complete contract plus every embedded request/response example;
+- verify strict unknown query/body-field behavior can be enabled or implemented
+  explicitly; and
+- only then commit `Gemfile` and `Gemfile.lock`.
+
+Do not assume that a tool describing support for "OpenAPI 3" implements all
+OpenAPI 3.1/JSON Schema 2020-12 behavior. The selected validator is a test
+dependency; runtime request handling remains ordinary Rack code.
+
+## Outstanding work
+
+| Order | Slice | Scope | Blocks CRUD routes? |
+|---:|---|---|---|
+| 1 | Coherent API read result | checked snapshot, global revision, typed read failures, safe meta/readiness | Yes |
+| 2 | Query parity | single-state filtering and exact-source lookup | Yes |
+| 3 | Dependency spike | Rack/Puma boot and real OpenAPI 3.1 example validation | Yes |
+| 4 | Core HTTP adapter | runtime, routing, representations, security guards, CRUD | — |
+| 5 | Black-box proof | cross-process concurrency, stale writes, undo, invalid-store refusal | — |
+| 6 | Manager support | named views, history, archive, polling/SSE, static client | No |
+| 7 | Remote deployment | auth, authorization, TLS, rate limits, persistence review | No |
+
+The first three are small enough to land as separate reviewed changes. After
+they pass the core test gate, API construction can begin without another
+architecture phase.
+
+## CRUD adapter slice
+
+### Runtime and dependency boundary
+
+Add:
 
 ```text
 Gemfile
 Gemfile.lock
 config.ru
 bin/tasks-api
-lib/tasks/application.rb
-lib/tasks/task_query.rb
-lib/tasks/task_changeset.rb
-lib/tasks/task_result.rb
-lib/tasks/task_view.rb
 lib/tasks/api/app.rb
 lib/tasks/api/representation.rb
 lib/tasks/api/errors.rb
 ```
 
-Keep this layout coarse. Split files only when responsibilities become
-independently testable; do not create one class per endpoint.
+Keep routing in a small Rack application served by a non-clustered Puma process.
+`bin/tasks-api` resolves `Tasks::Config` once, defaults to `127.0.0.1`, prints
+only safe source labels, and fails clearly when API gems are unavailable. Rack,
+Puma, and validator dependencies must remain outside the normal CLI/TUI boot
+paths and `ruby test/all.rb`.
 
-`bin/tasks-api` should resolve configuration exactly once, print the selected
-safe bind/port and data source labels, then launch the Rack app. It must default
-to `127.0.0.1`, use a non-clustered Puma process, and fail with a clear install
-message if API gems are absent. Running `bin/tasks`, `bin/tasks-tui`, and the
-core tests must not require Rack or Puma.
+The representation mapper is intentionally HTTP-specific. It converts the
+canonical task view to the accepted schema by:
 
-## Local security and remote-ready boundaries
+- separating ordinary tags, contexts, and the own indefinite-hold marker;
+- mapping `recur` to `recurrence`;
+- deriving `depth`, `archived`, `child_count`, and `descendant_count`; and
+- omitting `headline`, `ancestor_ids`, `child_ids`, `section_title`, physical
+  lines, and filesystem data.
 
-Localhost is not a reason to omit a security posture: a browser can be induced
-to contact local services.
+Do not expand `TaskView#to_h` into the HTTP contract and thereby change the
+existing CLI/TUI representation.
 
-For local mode:
+### Routes in the first slice
+
+Implement only the resource and health surface needed for complete CRUD:
+
+| Method | Path | Behavior |
+|---|---|---|
+| `GET` | `/healthz/live` | Process liveness only. |
+| `GET` | `/healthz/ready` | Safe checked-read readiness summary. |
+| `GET` | `/api/v1/meta` | Capabilities and global store revision; never paths. |
+| `GET` | `/api/v1/sections` | Ordered live placement resources. |
+| `GET` | `/api/v1/tasks` | Ordered filtered resources. |
+| `POST` | `/api/v1/tasks` | Atomic create; `201`, `Location`, and ETag. |
+| `GET` | `/api/v1/tasks/{id}` | Exact live or requested archive resource. |
+| `PATCH` | `/api/v1/tasks/{id}` | Atomic changeset with required `If-Match`. |
+| `DELETE` | `/api/v1/tasks/{id}` | Undoable live delete; explicit cascade for descendants. |
+
+The OpenAPI document is authoritative for fields, examples, status codes, and
+machine error codes. Route code parses transport input, creates an
+`OperationContext`, calls `Tasks::Application`, and maps the typed result. It
+must not call CLI functions, fuzzy-resolve titles, or mutate Store directly.
+
+### HTTP concurrency
+
+- Set each task response's ETag from its opaque task revision.
+- Require `If-Match` for PATCH and DELETE; missing is `428`, stale is `412`.
+- Return a no-op PATCH as `200` without creating a journal entry.
+- Return the same-snapshot global revision in response metadata.
+- Keep task revisions and the global store revision distinct: the former is a
+  write precondition, the latter is an invalidation token.
+
+### Local security
+
+Loopback is local, not trusted. The first adapter must:
 
 - bind only to `127.0.0.1` by default;
-- allow only expected Host values and reject suspicious forwarded-host input;
-- accept mutation bodies only as JSON;
-- validate `Origin` on browser mutation requests;
-- serve the future web client from the same origin;
+- enforce expected Host values and reject forwarded-host ambiguity;
+- accept mutation bodies only as bounded `application/json`;
+- reject untrusted browser mutation Origins;
 - send no wildcard CORS headers;
-- set response size and request body limits;
-- never return configured file paths, journal paths, or exception backtraces;
-- log request IDs, method, route, status, and duration, but not task bodies.
+- reject unknown request fields;
+- emit request ids and safe structured method/route/status/duration logs; and
+- never return task bodies in logs, configured paths, journal paths,
+  backtraces, or raw exception messages.
 
-One accepted limitation to document: loopback is shared by every OS user on the
-machine, not per-user. Local mode assumes a single-user machine; if that
-assumption ever fails, promote the bearer-token mode described below rather
-than inventing a weaker local guard.
+The accepted local mode assumes a single-user machine. Non-loopback startup
+remains unsupported until the separate remote design exists.
 
-Add liveness and readiness endpoints outside `/api/v1`: liveness proves the
-process is serving; readiness runs a non-mutating Store check and reports only a
-safe summary.
+## Required proof for CRUD
 
-For a future non-loopback mode, make the server refuse startup unless explicit
-remote configuration and authentication are present. The first remote option
-may be a bearer token behind a TLS reverse proxy, but authentication belongs in
-Rack middleware that creates the application `context`; it must not leak into
-task commands. A real multi-user deployment requires a separate design for
-identity, authorization, per-user stores, audit retention, TLS, backup, and
-rate limiting before it is advertised as supported.
+### In-process contract tests
 
-## Web-client integration boundary
+- Every route, content type, query/body validation rule, status, header, and
+  machine error code.
+- Request and response validation against OpenAPI, including all examples.
+- Exact source lookup, unavailable/state filters, unknown fields, malformed
+  ids, body limits, Host/Origin guards, and safe exception mapping.
+- HTTP representation fixtures proving no CLI-only or persistence fields leak.
 
-Keep frontend source independent of the Ruby application, but deploy its built
-static files through the same local server by default:
+### Cross-process tests
 
-```text
-web/                 frontend source and its own toolchain
-web/dist/            ignored/generated build output
-lib/tasks/api/app.rb /api/v1 plus static-file fallback
-```
-
-The frontend framework is deliberately not selected by this plan. The API
-contract, ETags, and same-origin deployment matter first. A future remote setup
-may host the static client separately and enable a narrow configured CORS
-allowlist without changing domain/application code.
-
-## Implementation phases
-
-### Phase 0: decisions and contract
-
-1. Confirm hard-delete semantics, local dependency policy, and same-origin
-   hosting.
-2. **Done.** Focused ADRs added for the application boundary (ADR-0005),
-   Rack/Puma transport (ADR-0006), HTTP concurrency/revision model (ADR-0007),
-   and delete behavior (ADR-0008) in `docs/adr/`.
-3. **Done.** `docs/api/openapi.yaml` written (OpenAPI 3.1), including examples
-   for every endpoint and the machine error-code enum. ADR-0007 carries the
-   task-resource deltas the HTTP representation must derive from the current
-   `Tasks::TaskView`.
-4. Add contract fixtures that can drive API implementation and later generate a
-   typed web client.
-
-Exit: the resource model and every v1 status/error outcome are reviewable before
-server code exists.
-
-### Phase 1: one mutation protocol and id-only plumbing
-
-The Store currently exposes two generations of mutation API: the line-addressed
-methods returning booleans, symbols, and line numbers, and the stable-id
-`edit_snapshot`/`patch_task!` path with typed results. Unify them before any
-API work. Every step in this phase is justified on current-codebase grounds
-alone and lands as its own small change, which keeps merge pain low against
-unrelated work on the branch and pays off even if the API slips.
-
-1. Add the immutable Store read snapshot and move `body`, `links`, and tree
-   reads onto it. This fixes today's latent inconsistency where a held `Item`
-   plus later per-field reads can straddle a reload; the API inherits it later.
-2. Normalize mutation outcomes to the shared result vocabulary (section 3) over
-   the existing patch machinery, mapping CLI exit codes and TUI messages from it.
-3. Migrate the line-addressed mutation call sites in the CLI and TUI (state,
-   priority, title, tags, dates, recurrence, defer, notes, and moves) onto
-   `edit_snapshot` plus `patch_task!`, deleting each legacy Store method as its
-   last call site moves. Deletion is the exit criterion, not incidental cleanup;
-   new work must not land on the legacy protocol while the migration runs.
-4. Make stable ids the only internal locator: refs resolve to ids at the CLI
-   parsing edge, and mutations return ids, snapshots, or typed results — never
-   line numbers. `L<line>` remains user-facing input syntax only.
-
-Exit: the Store exposes one mutation protocol (only the archive sweep awaits
-its typed replacement in Phase 3), no mutation returns a file
-coordinate, and CLI/TUI behavior is unchanged under golden tests.
-
-### Phase 2: reusable application/query layer, no behavior change
-
-1. Add typed task views, filters, query results, and operation context.
-2. Extract list/view/filter logic and canonical representation from `bin/tasks`.
-3. Add `Tasks::Application` over a Store factory.
-4. Migrate CLI JSON/query paths and TUI read paths incrementally, preserving
-   output and keyboard behavior with golden tests.
-
-Exit: CLI and TUI behavior is unchanged, and all data needed by an HTTP GET can
-be obtained without requiring executable code from `bin/tasks`.
-
-### Phase 3: atomic typed CRUD commands
-
-1. Add `CreateTask`, `TaskChangeset`, and task revision generation over the
-   Phase 1 result vocabulary.
-2. Refactor one-field `TaskPatch` to share the same semantic patch helpers.
-3. Make capture plus recurrence/initial notes one checked, undoable write, and
-   retire `capture!` in favor of `CreateTask`.
-4. Add guarded, cascading Store deletion and CLI `delete` parity.
-5. Point the CLI's already-typed mutation paths at application commands — a
-   thin re-mapping after Phase 1 — retaining exit codes, dry-run behavior, JSON
-   output, and undo labels, and delete the last legacy Store methods.
-
-Exit: create/update/delete semantics are transport-independent, atomic, and
-covered through both application and existing CLI surfaces; no legacy mutation
-methods remain.
-
-Exit met: guarded, undoable, cascading delete shipped as `Tasks::DeleteTask` +
-`Store#delete_task!` with CLI `tasks delete` parity (see ADR-0008), alongside
-the `CreateTask`/`TaskChangeset` commands and the shared `MutationResult`
-vocabulary — the create/update/delete slice is transport-independent and
-CLI-covered.
-
-### Phase 4: loopback HTTP adapter
-
-1. Add the Gemfile/lockfile, Rack app, Puma entry point, request-scoped Store
-   factory, JSON/error helpers, origin/host guards, and health checks.
-2. Implement `/meta`, `/sections`, and task GET/POST/PATCH/DELETE against the
-   application boundary.
-3. Add ETag/`If-Match`, request IDs, safe structured logs, and body limits.
-4. Validate responses and status codes against OpenAPI.
-5. Prove simultaneous CLI/API writes and stale browser writes end to end.
-
-Exit: a local client can perform complete task CRUD without shelling out, and
-all writes remain visible and undoable across CLI and TUI.
-
-### Phase 5: full web-manager support
-
-1. Add named views, undo/redo, and the archive preview/sweep protocol.
-2. Add global revisions and conditional polling, then SSE invalidation.
-3. Serve a static placeholder/client build at the same origin.
-4. Document startup, config resolution, backup expectations, and local service
-   management without making the API daemon mandatory for CLI users.
-
-Exit: the API supports the existing manager's important read/lifecycle flows
-and stays live as other interfaces modify the files.
-
-### Phase 6: remote deployment only when requested
-
-1. Threat-model the actual deployment and users.
-2. Choose identity/authentication and authorization.
-3. Decide whether JSONL plus file locking still fits the availability,
-   multi-user, and backup requirements; replace persistence behind the
-   application boundary if not.
-4. Add TLS/proxy configuration, audit metadata, rate limits, deployment health,
-   and migration/rollback procedures.
-5. Load-test the chosen deployment rather than importing cloud architecture by
-   default.
-
-## Test and proof strategy
-
-### Application and Store tests
-
-- Every command: happy path, invalid input, missing ID, stale revision,
-  no-change, undo/redo, and clean `Tasks::Check` result.
-- Create: all optional fields, Inbox promotion, recurrence/date coupling,
-  nesting depth, initial notes, and exactly one undo step.
-- Update: atomic multi-field success, no partial write on any failed field,
-  tag-slice ownership, recurrence/state side effects, move cycles/depth, and
-  affected-subtree conflicts.
-- Delete: leaf, refused parent, explicit cascade, archived refusal, undo/redo,
-  and DFS integrity.
-- Query parity: CLI filters/views and application filters/views select and order
-  the same IDs.
-
-### API request tests
-
-- Exercise the Rack app in-process for every route, content type, status, body,
-  ETag, and error code.
-- Validate example and test responses against the OpenAPI schema.
-- Reject fuzzy IDs, unknown fields, oversized bodies, untrusted Host/Origin,
-  missing preconditions, and attempts to mutate archive resources.
-- Verify exceptions become safe errors without paths, task bodies, or
-  backtraces.
-
-### Cross-process and black-box tests
-
-- Race concurrent CLI capture and API create/update operations; all successful
-  writes survive and both files remain valid.
-- Load a task through HTTP, mutate it through CLI/TUI, then prove the old ETag is
-  rejected.
-- Perform a web mutation and undo it through a fresh CLI process, then redo it
-  through HTTP.
-- Make an external invalid edit and prove mutations refuse safely without
-  overwriting it.
-- Start the real Puma entry point on an ephemeral port and smoke-test health,
-  CRUD, shutdown, and external-file refresh.
-- Prove polling/SSE reports CLI, TUI, archive, undo, and redo changes.
+- Start the real Puma entry point on an ephemeral port and stop it cleanly.
+- Race CLI capture with API create/update and prove all successful writes
+  survive `Tasks::Check`.
+- Load through HTTP, mutate through a fresh CLI process, and reject the old
+  ETag.
+- Mutate through HTTP, undo through a fresh CLI process, and verify the exact
+  bytes/resource return.
+- Modify live or archive data externally and prove both refresh-token behavior
+  and fresh reads.
+- Introduce an invalid external edit and prove reads/mutations refuse without
+  overwriting it or leaking a path.
 
 ### Repository gates
 
-- Preserve `ruby test/all.rb` as the core stdlib gate.
-- Add a Bundler-backed API gate for application, Rack, OpenAPI, and real-server
-  tests.
-- Run `bin/tasks check` against a sandbox after every mutation suite; never use
-  the developer's live task files in tests.
-- Require `git diff --check` and dependency-boundary tests proving core CLI/TUI
-  files do not load Rack or Puma.
+```sh
+ruby test/all.rb
+bundle exec ruby test/api/all.rb
+bin/tasks check
+git diff --check
+```
 
-## Compatibility and migration
+The API suite must use sandbox files. Add isolated real-entrypoint tests for
+`bin/tasks`, `bin/tasks-tui`, `lib/tui/app`, and `bin/tasks-api` so the
+stdlib/web dependency boundary is proved at the processes users launch.
 
-- No data migration is required for the local API: it uses the same format
-  version and files.
-- Existing CLI commands, aliases, output, exit codes, env/config precedence,
-  TUI behavior, journal location, and LLM-agent workflow remain compatible.
-- Application-layer migration should be serial and behavior-preserving; do not
-  replace all Store calls in one change.
-- Public HTTP resources use stable IDs and semantic fields, so a later
-  persistence migration does not expose JSONL schema, line order, lock files, or
-  journal internals.
-- If remote requirements force a database later, write a one-way import plus
-  verified backup/rollback tooling; do not make both JSONL and a database
-  writable sources of truth.
+## Later manager support
 
-## Main risks and mitigations
+After CRUD is proven, extend the application and HTTP adapter with:
 
-| Risk | Mitigation |
-|---|---|
-| Domain rules drift between CLI, TUI, and API | Route all commands and named views through the application boundary; retain cross-surface parity tests. |
-| A long-lived server serves stale cached data | Use a Store/read snapshot per request first; add only synchronized immutable caching after measurement. |
-| Browser overwrites a newer CLI/TUI edit | Stable IDs plus required task ETags and affected-subtree fingerprints. |
-| Multi-field PATCH partially applies | One lock, one changeset validation, one write, one Check, one journal entry. |
-| Parent deletion loses hidden work | Refuse descendants by default; require explicit cascade and make the operation undoable. |
-| Local API is reachable from hostile browser content | Loopback bind, strict Host/Origin checks, JSON-only writes, same-origin client, no wildcard CORS. |
-| Web dependencies burden the current CLI | Keep Rack/Puma behind `bin/tasks-api`; dependency-boundary tests preserve stdlib CLI/TUI startup. |
-| Premature remote abstractions make local work slow | Keep one modular monolith and JSONL Store; make only the application, auth-context, and HTTP contracts replaceable. |
-| API contract accidentally exposes file implementation | Omit line numbers and paths; use semantic resources, opaque revisions, and OpenAPI review. |
+1. named views needed by the web manager, including any missing projects view;
+2. typed history preview plus revision-guarded undo/redo;
+3. typed archive preview/sweep, replacing the remaining direct adapter calls;
+4. conditional polling on `/meta`;
+5. SSE invalidation only after a Puma thread-budget test; and
+6. same-origin static client hosting and operator documentation.
 
-## Acceptance criteria for the first complete slice
+These are not prerequisites for the first API. In particular, do not block CRUD
+on a frontend framework, SSE, service management, or a complete browser task
+manager.
 
-- `bin/tasks-api` binds to loopback by default and resolves the exact same task
-  and archive files as the CLI and TUI.
-- OpenAPI documents every implemented endpoint, schema, example, status, and
-  machine error code.
-- Task CRUD uses stable IDs and never shells out to `bin/tasks`.
-- Create with recurrence and initial notes is one undoable transaction.
-- PATCH is atomic and rejects stale `If-Match` values.
-- DELETE is explicit, guarded for descendants, and undoable.
-- All API writes pass the existing file lock, atomic writer, structural Check,
-  rollback, and shared journal.
-- Current CLI/TUI behavior and core stdlib startup remain intact.
-- CLI/API concurrency, cross-surface undo, external writes, and invalid-store
+## Remote deployment remains a separate decision
+
+Do not advertise or enable non-loopback mode by configuration alone. A remote
+deployment needs its own threat model and decisions for identity,
+authorization, per-user data, TLS/proxy trust, audit retention, backups, rate
+limits, and whether JSONL plus file locking still satisfies availability and
+multi-user requirements. Persistence can change behind `Tasks::Application`
+without changing the v1 resource contract.
+
+## CRUD acceptance criteria
+
+- The three prerequisites above are implemented and reviewed.
+- `bin/tasks-api` starts on loopback over the same resolved files as CLI/TUI.
+- Every implemented request and response validates against OpenAPI 3.1.
+- Stable ids are the only HTTP locators; no route shells out to `bin/tasks`.
+- GET data and `store_revision` come from one checked snapshot.
+- Create, PATCH, and DELETE retain one transaction, one Check, one journal
+  entry, rollback, recurrence, nesting, and cascade behavior.
+- PATCH/DELETE enforce ETags without weakening the TUI's field-level conflict
+  behavior.
+- CLI/API concurrency, cross-process undo, external refresh, and invalid-store
   refusal have black-box proof.
-- The browser can refresh after external changes through a global revision,
-  with SSE added before calling the web-manager integration complete.
-
-## Recommended discussion decisions
-
-Unless discussion changes them, proceed with these defaults:
-
-1. `DELETE` means an undoable hard delete, with explicit cascade for descendants;
-   cancellation remains `PATCH state=CANCELLED`.
-2. Add Rack and Puma as API-only dependencies; do not adopt Rails or a database.
-3. Serve the eventual compiled web client from the API origin locally.
-4. Require whole-task ETags for HTTP writes while retaining field-level TUI
-   conflict checks.
-5. Ship loopback mode first. Treat non-loopback operation as unsupported until
-   its authentication and threat-model phase is complete.
-6. Ship conditional polling before SSE; add SSE only after CRUD is proven and
-   the streaming thread budget is sized.
+- Core CLI/TUI startup and `ruby test/all.rb` remain free of web dependencies.
