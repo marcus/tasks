@@ -77,6 +77,7 @@ to build on the existing parser; useful for motivation and review.
 ## 8. Smaller polish
 
 - **Agenda overdue summary** — a one-line header ("3 overdue, 2 due today").
-- **`next` / `list` scheduled dates** ✅ — now shown as `~M/D`.
+- **`next` / `list` available-from dates** ✅ — future dates now hide tasks;
+  reveal mode shows the timed availability marker.
 - **Project view** — list every project heading and whether it has a `NEXT`
   (a lighter-weight slice of the review helper).

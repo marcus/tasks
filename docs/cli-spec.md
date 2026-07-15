@@ -123,8 +123,9 @@ Repeated quit keys do not confirm that prompt; `y`/Return confirms and
 `n`/Escape cancels while retaining the draft.
 
 Field ownership and order are contractual: Title owns `title`; Priority owns
-`priority`; Deferred owns only the `defer` tag; Scheduled and Deadline each own
-their date plus documented INBOX/recurrence side effects; Recurrence owns
+`priority`; Available from owns `scheduled`; On hold owns only the indefinite
+`defer` marker; Deadline owns `deadline`; each date owns its documented
+INBOX/recurrence side effects; Recurrence owns
 `recur`; Contexts owns `@` tags; Tags owns other non-`defer` tags; Notes owns
 exact raw `body`; and State owns `state`, `closed`, recurrence completion, and
 documented lifecycle effects. State is last, keeping high-impact changes out of
@@ -228,13 +229,23 @@ wrong task. IDs must be unique — `check` reports a collision as an error.
 `fri`/`friday`, `today`, `tomorrow`, `+3` (days from today). Same parser as
 the TUI (`lib/tasks/dates.rb`). Bare month-day in the past rolls forward a year.
 
-**Deferral.** A task is *deferred* (someday/maybe) when it carries the semantic
-`defer` tag — the same mechanism by which `important`/`urgent` tags drive the
-quadrants view. Deferred tasks retain their state (a deferred `NEXT` is still a
-`NEXT`) but are filtered out of the active views (`agenda`, `next`, `quadrants`,
-`inbox`, and the default `list` scope) so they stop competing for attention.
-`defer`/`activate` toggle the tag; `list --deferred` reviews them. The TUI hides
-them too, with `Z` to show/hide and `z` to defer/activate the selected task.
+**Availability and deferral.** `scheduled` is the task's single
+available-from/start/defer-until date; `deadline` is its independent due date.
+An open task is available on and after `scheduled`, and a future date filters it
+out of `agenda`, `next`, `quadrants`, `inbox`, and the default `list`. The
+semantic `defer` marker now means an indefinite **On Hold** state
+(Someday/Maybe), not another date. A task retains its lifecycle state while
+unavailable.
+
+Availability is ancestor-aware. A task is available only when neither it nor
+any open task ancestor has a future available-from date or an On Hold marker.
+When several timed ancestors block it, the latest date wins; an On Hold marker
+wins over every date. `defer <ref> <date>` sets timed availability without
+moving `deadline`; `someday <ref>` holds indefinitely; `activate <ref>` clears
+the task's own hold and any own future available-from date. `list --unavailable`
+(`--deferred/-D` compatibility alias) reviews all effective blockers, while
+`list --someday`/`--on-hold` matches only an own indefinite marker. In the TUI,
+`Z` reveals unavailable rows and `z` accepts a date, `someday`, or `now`.
 
 **Recurrence.** A task *recurs* when it carries a `recur` cookie alongside a
 `scheduled`/`deadline` date: `.+1w`, `++1m`, `+2d`. The prefix sets what the
@@ -303,9 +314,9 @@ depth (see Cascading completion).
 In the TUI tree views, an open task under a *closed* (DONE/CANCELLED) ancestor
 is **hoisted** to top level rather than dropped with its pruned parent — so a
 reopened child, or a task captured under a since-completed project, still shows.
-A *deferred* ancestor is different: it still hides its whole subtree (unless `Z`
-reveals deferred tasks), and defer-hiding wins over hoisting — a closed node
-under a hidden deferred parent stays hidden with it.
+An *unavailable* ancestor is different: it still hides its whole subtree (unless
+`Z` reveals unavailable tasks), and availability hiding wins over hoisting — a
+closed node below an unavailable parent stays hidden with it.
 
 `h`/`l` collapse/expand the selected subtree (a collapsed node shows `▸` and a
 dim count of hidden descendants; a second `h` on a leaf or already-collapsed
@@ -384,12 +395,12 @@ and `sources.memory` (`"TASKS_MEMORY env"` / `"config file"` /
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `list [filters]` | `l` | ✅ | All tasks grouped by state. Filters compose: `@context`, `+tag`, `/text` or bare word, `-A/-B/-C`, scope `--open/-o` (default) `--done/-d` `--archived/-x` `--all/-a`. Deferred tasks are hidden from the default open scope; `--deferred/-D` lists only them (a someday/maybe review); `--recurring/-R` lists only tasks with a repeater. `--body/-b` widens the text match into task notes (title-only otherwise, keeping refs predictable). `--json` |
-| `agenda` | `a` | ✅ | Dated items, soonest first. `--json` |
+| `list [filters]` | `l` | ✅ | All tasks grouped by state. Filters compose: `@context`, `+tag`, `/text` or bare word, `-A/-B/-C`, scope `--open/-o` (default) `--done/-d` `--archived/-x` `--all/-a`. Effectively unavailable tasks are hidden from the default open scope; `--unavailable` (compatibility alias `--deferred/-D`) lists timed, inherited, and indefinite blockers; `--someday/--on-hold` selects tasks carrying their own indefinite marker. Those two filters are mutually exclusive. With a closed/archive scope, legacy `--deferred` and `--someday` filter the own marker; explicit `--unavailable` is rejected because every closed task is unavailable for lifecycle reasons. `--recurring/-R` lists tasks with a repeater. `--body/-b` widens text matching into notes. `--json` |
+| `agenda` | `a` | ✅ | Available dated items, soonest first. `--json` |
 | `next` | `n` | ✅ | NEXT actions by context. `--json` |
 | `quadrants` | `q` | ✅ | Covey 2×2 from priority (A/B ⇒ important) + a `DEADLINE` within `urgent_days` (default 3, overdue counts) ⇒ urgent, with `important`/`urgent` tags as overrides. `--json` adds `quadrant`. |
 | `inbox` | `i` | ✅ | Unprocessed INBOX items. `--json` |
-| `show <ref>` | `s` | ✅ | One task in full: rendered headline + body/notes + links. `--json` shape: `{id, state, priority, title, tags, contexts, scheduled, deadline, recur, closed, line, notes: [..], project, links: [{url, label, system}]}`. `notes` is the task's `body` split to lines (a child's body never leaks in — children are separate records); `project` is the nearest OPEN ancestor — a live parent task, else the enclosing section; closed ancestors are skipped (same rule as the TUI's Projects view and detail panel). |
+| `show <ref>` | `s` | ✅ | One task in full: rendered headline + body/notes + links. Human output labels `scheduled` as `available from` and reports effective availability. `--json` includes `{..., deferred, scheduled, deadline, available, availability_reason, availability_blocker_id, ...}`; reasons are `available`, `scheduled`, `on_hold`, `ancestor_scheduled`, `ancestor_on_hold`, or `closed`. `notes` is the task's `body` split to lines (a child's body never leaks in — children are separate records); `project` is the nearest OPEN ancestor — a live parent task, else the enclosing section; closed ancestors are skipped. |
 | `id <ref> [--json]` | | ✅ | Print a task's stable `id`, minting one if absent (post-migration every record already has one — this is the repair path). Idempotent. Resolves refs regardless of state. |
 | `links [<ref>]` | `urls` | ✅ | Links found in task titles/notes, classified by system (`slack`, `jira`, `github`, …; unknown hosts fall back to the host name; Confluence-on-Atlassian is told apart from Jira by its `/wiki` path). One task's links with `<ref>`; every open task's otherwise. `--system <name>` filters (case-insensitive), `--all` widens the listing to done + archived (`<ref>` resolution itself stays live-file only), `--json` emits `{links: [{url, label, system, task, id, line, source}]}`. Recognizes org links `[[url][label]]`, bare URLs, and configured shorthands (below), in file order; org-internal targets (`[[id:…]]`, `[[file:…]]`, headline links) are org navigation, not links. |
 | `open <ref> [n]` | `o` | ✅ | Open a task's link in the browser (macOS `open` / `xdg-open`; `TASKS_OPENER` overrides). One link opens directly; several are listed numbered (exit 1) unless picked by 1-based `n` or `--system <name>`. `--print` prints the URL instead of launching. Resolves refs regardless of state (live file). |
@@ -397,7 +408,7 @@ and `sources.memory` (`"TASKS_MEMORY env"` / `"config file"` /
 
 JSON list shape (`--json` on list/agenda/next/quadrants/inbox) — a flat array,
 already sorted the way the text view sorts:
-`[{"state": "NEXT", "priority": "A", "title": "…", "tags": [..], "contexts": [..], "scheduled": null, "deadline": "2026-07-02", "recur": null, "line": 17, "source": "live", "headline": "NEXT [#A] …"}]`
+`[{"state": "NEXT", "priority": "A", "title": "…", "tags": [..], "contexts": [..], "deferred": false, "scheduled": null, "deadline": "2026-07-02", "available": true, "availability_reason": "available", "availability_blocker_id": null, "recur": null, "line": 17, "source": "live", "headline": "NEXT [#A] …"}]`
 (`headline` is the star-less summary rendered from the record's fields; `source`
 is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or `null`.)
 `quadrants --json` adds `"quadrant": "Q1".."Q4"` per item. Empty result → `[]`.
@@ -406,7 +417,7 @@ is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or `nul
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `capture "text"` | `add`, `c` | ✅ | New INBOX item. Flags: `--due <date>`, `--scheduled <date>`, `--priority A\|B\|C`, `--tag t` (repeatable), `--context @x` (repeatable), `--state STATE`, `--project "Heading"`, `--under <ref>`, `--recur <interval>`, plus `--dry-run`/`--json`. A capture with a date lands already-processed as TODO (override with `--state`); `--recur` implies a date (defaults to scheduling it today) and lands it repeating; `--project` files it under that top-level heading (default: Inbox). `--under <ref>` instead nests it as the last child of an existing task (mutually exclusive with `--project`; exit 1 if both) — capped at `max_depth` (over-cap exits 1 with a depth message, writes nothing; see Nesting). |
+| `capture "text"` | `add`, `c` | ✅ | New INBOX item. Flags: `--due <date>`, `--scheduled <date>` (available from), `--priority A\|B\|C`, `--tag t` (repeatable), `--context @x` (repeatable), `--state STATE`, `--project "Heading"`, `--under <ref>`, `--recur <interval>`, plus `--dry-run`/`--json`. A capture with a date lands already-processed as TODO (override with `--state`); a future `--scheduled` task remains unavailable until that day. `--recur` implies a date (defaults to scheduling it today) and lands it repeating; `--project` files it under that top-level heading (default: Inbox). `--under <ref>` instead nests it as the last child of an existing task (mutually exclusive with `--project`; exit 1 if both) — capped at `max_depth`. |
 
 ## Update (all take `<ref>`, all support `--dry-run`)
 
@@ -416,7 +427,7 @@ is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or `nul
 | `cancel <ref>` | `drop` | ✅ | Mark CANCELLED + `closed` date. |
 | `state <ref> <STATE>` | `mv` | ✅ | Any state transition (INBOX/TODO/NEXT/WAITING/DONE/CANCELLED). Enforces: entering DONE/CANCELLED sets `closed`; leaving them clears it. Entering DONE cascades to open descendants (see Cascading completion); entering CANCELLED does not. Resolves refs across open *and* closed tasks so you can reopen a DONE item (reopening does not reopen cascaded descendants). |
 | `due <ref> <date>` | `deadline`, `reschedule` | ✅ | Set/replace `deadline`. INBOX items promote to TODO. |
-| `schedule <ref> <date>` | | ✅ | Set/replace `scheduled`. Same INBOX promotion. |
+| `schedule <ref> <date>` | | ✅ | Set/replace the available-from/start date (`scheduled`) only. A future date hides the task, but this command does not clear an On Hold marker; callers that mean timed deferral use `defer`. Same INBOX promotion. |
 | `undate <ref>` | | ✅ | Remove `scheduled` and/or `deadline` (`--kind deadline\|scheduled` to pick one). |
 | `priority <ref> <A\|B\|C\|none>` | `pri` | ✅ | Set or clear the `priority` field. |
 | `retitle <ref> "new title"` | `rename` | ✅ | Replace the `title`; tags/priority/state untouched. |
@@ -424,8 +435,9 @@ is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or `nul
 | `note <ref> "text"` | | ✅ | Append a line to the task's `body`. |
 | `move <ref> ("Section" \| --under <ref> \| --top)` | | ✅ | Relocate a task's whole subtree by re-pointing its `parent`. Exactly one destination: a positional **section** name (out of `Inbox` into `Work`; matched case-insensitively, exact then substring), `--under <ref>` to **nest** below another task, or `--top` to **unnest** to the section level. Section and `--top` moves are never depth-checked; `--under` is capped at `max_depth` (over-cap exits 1 with a depth message). Nesting under itself or a descendant exits 1 (cycle). `--top` on an already-top-level task prints "already at top level" (exit 0, no-op). See Nesting. |
 | `recur <ref> <interval>` | `repeat`, `every` | ✅ | Attach/replace the `recur` cookie on the task's date. `<interval>`: a cookie (`.+1w`/`+2d`/`++1m`) or friendly form (`weekly`/`daily`/`monthly`/`yearly`/`2w`/`every 3 days`); `off`/`none` clears it. `--from schedule\|completion` picks `+`/`.+` for a bare interval (default `completion` → `.+`). `--on <date>` seeds a `deadline` when the task has no date yet (else it errors). `--dry-run`/`--json`. |
-| `defer <ref>` | `snooze` | ✅ | Mark a task deferred (someday/maybe) by adding a semantic `defer` tag. Deferred tasks keep their state but drop out of `agenda`/`next`/`quadrants`/`inbox` and the default `list` until reactivated. Idempotent. |
-| `activate <ref>` | `undefer`, `resume` | ✅ | Clear the `defer` tag, returning the task to the active views. Resolves deferred (open) tasks. |
+| `defer <ref> [date]` | `snooze` | ✅ | With a date, atomically set `scheduled` to the parsed available-from date and clear the task's own indefinite marker, preserving `deadline`; before that date the task is unavailable. Without a date, backward-compatibly put it On Hold indefinitely. Output and `--dry-run` report effective ancestor-aware availability. |
+| `someday <ref>` | | ✅ | Canonical spelling for an indefinite Someday/Maybe / On Hold task. Adds the own `defer` marker without changing either date. Idempotent. |
+| `activate <ref>` | `undefer`, `resume` | ✅ | Make the task available now: clear its own indefinite marker and clear its own `scheduled` only when that date is in the future. A blocker inherited from an ancestor remains effective and is reported. Resolves unavailable open tasks. |
 
 ### Repairing an invalid record
 

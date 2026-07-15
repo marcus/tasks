@@ -7,7 +7,7 @@ commands you use. The whole thing runs on the Ruby standard library — `git clo
 is the install.
 
 ```sh
-tasks agenda            # (a) what's due / scheduled, soonest first
+tasks agenda            # (a) available dated work, soonest first
 tasks next              # (n) next actions grouped by context (@computer, @email, …)
 tasks quadrants         # (q) Covey Important/Urgent 2x2
 tasks inbox             # (i) unprocessed captures
@@ -92,10 +92,12 @@ protocol slots in via `~/.config/tasks/config`.
 GTD and Covey's Important/Urgent matrix aren't conventions you're trusted to
 maintain; the tooling enforces them. Dating an `INBOX` item promotes it to
 `TODO` (a date means you've processed it). Completing a recurring task rolls
-its date forward instead of closing it. Someday/maybe is a defer tag that
-rides alongside the real state. The quadrant view computes urgency from your
-configured window. See [`docs/conventions.md`](docs/conventions.md) for the
-full format and methodology spec.
+its date forward instead of closing it. `scheduled` is the available-from date:
+future work stays out of active views until that day, while `deadline` remains
+the separate due date. Someday/Maybe is an indefinite On Hold marker with no
+automatic release. The quadrant view computes urgency from your configured
+window. See [`docs/conventions.md`](docs/conventions.md) for the full format and
+methodology spec.
 
 ### No dependencies
 
@@ -128,6 +130,8 @@ tasks list -d                    # done items still in tasks.jsonl
 tasks list -x                    # archived items
 tasks list -a                    # everything, both files
 tasks list @computer -A /denver  # compose: context, priority, text — all at once
+tasks list --unavailable         # timed, inherited, and indefinite blockers
+tasks list --someday             # own indefinite On Hold tasks only
 ```
 
 Scope flags: `--open/-o` (default) `--done/-d` `--archived/-x` `--all/-a`.
@@ -142,6 +146,7 @@ summary of what it did:
 
 ```sh
 tasks -p "close the Drew review task and push the Denver flight deadline to next Friday"
+tasks -p "defer the Fox task four days" # hides it for four days; deadline is unchanged
 tasks -p --provider hermes "capture: renew passport"   # a local Ollama-backed harness
 ```
 
@@ -191,8 +196,8 @@ of it:
 ↑↓ / jk    select a task; an open detail panel follows the selection
 h / l      collapse / expand the selected subtree (H / L for all)
 return     open the read-only task detail panel; e edits it in place
-c d r      complete · reschedule (fri, +3, 07-15, …) · recur (weekly, 2w, off)
-z J K      defer (someday/maybe) · lower / raise priority
+c d r      complete · reschedule deadline · recur (weekly, 2w, off)
+z Z J K    defer (date/someday/now) · show unavailable · lower / raise priority
 /          live text filter; enter keeps it, esc clears
 u ctrl-r   undo / redo — the same journal the CLI uses
 o y p      open task link · yank ref / markdown · paste ref into the agent prompt

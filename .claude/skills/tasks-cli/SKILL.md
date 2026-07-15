@@ -17,7 +17,8 @@ marks each command ✅ implemented / 🚧 planned).
 
 ```sh
 bin/tasks list -a          # everything incl. archive; filters: @ctx +tag /text -A
-bin/tasks list --deferred  # only deferred (someday/maybe) tasks — a review list
+bin/tasks list --unavailable # timed, inherited, and indefinite unavailability
+bin/tasks list --someday   # tasks with their own indefinite On Hold marker
 bin/tasks agenda           # dated items, soonest first
 bin/tasks next             # NEXT actions grouped by context
 bin/tasks quadrants        # Covey 2×2 (see note below); --json adds "quadrant"
@@ -46,7 +47,7 @@ bin/tasks capture "text"             # new INBOX item (see flags below)
 bin/tasks done "<ref>"               # mark DONE + closed date (cascades to open subtasks)
 bin/tasks cancel "<ref>"             # mark CANCELLED + closed date
 bin/tasks due "<ref>" fri            # set/replace deadline (INBOX → TODO)
-bin/tasks schedule "<ref>" +3        # set/replace scheduled (INBOX → TODO)
+bin/tasks schedule "<ref>" +3        # set/replace available-from/start date
 bin/tasks undate "<ref>"             # remove dates; --kind deadline|scheduled
 bin/tasks state "<ref>" WAITING      # any state; DONE/CANCELLED manage closed
 bin/tasks priority "<ref>" A         # A|B|C|none
@@ -58,8 +59,9 @@ bin/tasks move "<ref>" "Section"     # relocate the block under a top-level head
 bin/tasks move "<ref>" --under "<ref>"  # nest the subtree below another task
 bin/tasks move "<ref>" --top         # unnest the subtree back to the section level
 bin/tasks recur "<ref>" weekly       # repeat on done: weekly/2w/.+1m; "off" clears
-bin/tasks defer "<ref>"              # hide as someday/maybe (adds defer tag)
-bin/tasks activate "<ref>"           # bring a deferred task back (undefer/resume)
+bin/tasks defer "<ref>" +4           # hide until available four days from today
+bin/tasks someday "<ref>"            # hold indefinitely (someday/maybe/on hold)
+bin/tasks activate "<ref>"           # make available now (undefer/resume)
 bin/tasks archive                    # sweep DONE/CANCELLED to archive.jsonl
 bin/tasks delete "<ref>"             # hard-delete a task (--cascade for subtasks); undoable
 ```
@@ -69,9 +71,19 @@ archive and is not the same as `cancel`). A task with subtasks needs `--cascade`
 Prefer `cancel`/`archive` for normal "done with it" cases; `delete` is for a
 true mistake, and `bin/tasks undo` reverses it.
 
-Deferral is a semantic `defer` tag (like `important`/`urgent`): a deferred
-task keeps its state but drops out of `agenda`/`next`/`quadrants`/`inbox` and the
-default `list` until you `activate` it. Review the backlog with `list --deferred`.
+`scheduled` is the task's available-from/start/defer-until date; `deadline` is
+its separate due date. A future available-from date hides the task from active
+views until that day. Translate "defer TASK 4 days" to `defer "TASK" +4` and
+"defer TASK until Friday" to `defer "TASK" fri`: this atomically sets
+`scheduled`, clears an own indefinite hold, and never moves `deadline`.
+
+"Someday", "maybe", "on hold", and "indefinitely" mean `someday "TASK"`:
+an indefinite On Hold marker with no release date. The backward-compatible
+`defer "TASK"` spelling does the same thing, but prefer `someday` when that is
+what the user means. `activate` removes the own hold and clears an own future
+available-from date. An unavailable ancestor can still block the task. Review
+all effective unavailability with `list --unavailable` (`--deferred` alias), or
+only tasks carrying their own On Hold marker with `list --someday`.
 
 Recurrence is a `recur` cookie alongside the task's date (`.+1w`, `++1m`, `+2d`).
 `recur "<ref>" weekly` (or `2w`, `.+1m`, `every 3 days`) sets it; `off` clears it.

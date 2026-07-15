@@ -29,6 +29,9 @@ info:
       undocumented here; see ADR-0007. Clients compare it for equality only.
     - Dates are ISO `YYYY-MM-DD` strings or `null`. Friendly date parsing is a
       human CLI/TUI feature and is not part of this contract.
+    - `scheduled` is the available-from/start/defer-until date; `deadline` is
+      the separate due date. `deferred` means the task's own indefinite On Hold
+      marker. Derived effective availability is ancestor-aware.
     - The server never returns filesystem paths, journal locations, or
       exception backtraces.
 
@@ -150,9 +153,9 @@ paths:
       description: |
         Returns tasks in DFS display order. Filters compose and mirror
         `Tasks::TaskFilter` / `tasks list`. The default scope is open live
-        tasks; deferred tasks are hidden from the default scope. Collection
-        order conveys display order only — `line` is never exposed and is not a
-        stable sort key.
+        tasks; effectively unavailable tasks are hidden from the default scope.
+        Collection order conveys display order only — `line` is never exposed
+        and is not a stable sort key.
       parameters:
         - name: scope
           in: query
@@ -200,12 +203,22 @@ paths:
         - name: deferred
           in: query
           description: |
-            When true, list only deferred (someday/maybe) tasks — under any
-            scope. When false or omitted, the scope's default applies: the
-            `open` scope hides deferred tasks; `done`, `archived`, and `all`
-            include them. `false` and omitted are equivalent.
+            When true, filter by the task's own indefinite On Hold marker under
+            any scope. This is not a synonym for effective unavailability and
+            does not include timed or inherited blockers. When false or omitted,
+            the scope's default applies. `false` and omitted are equivalent.
           required: false
           schema: { type: boolean, default: false }
+        - name: available
+          in: query
+          description: |
+            Filter by effective, ancestor-aware availability. `available=false`
+            is the timed/inherited/indefinite review for open live tasks and is
+            rejected with `scope=done|archived|all`; closed resources report
+            `available: false` only when fetched directly. Omitted means the
+            selected scope's default behavior.
+          required: false
+          schema: { type: boolean }
         - name: recurring
           in: query
           description: When true, list only tasks that carry a recurrence cookie.
@@ -240,8 +253,11 @@ paths:
                         contexts: ["@desk"]
                         tags: ["billing"]
                         deferred: false
-                        scheduled: "2026-07-20"
+                        scheduled: null
                         deadline: null
+                        available: true
+                        availability_reason: "available"
+                        availability_blocker_id: null
                         recurrence: null
                         body: ["Captured 2026-07-14.", "Confirm the seat count first."]
                         closed: null
@@ -288,6 +304,7 @@ paths:
                   priority: "A"
                   tags: ["review"]
                   contexts: ["@desk"]
+                  deferred: false
                   scheduled: "2026-07-20"
                   deadline: null
                   state: "NEXT"
@@ -331,6 +348,9 @@ paths:
                       deferred: false
                       scheduled: "2026-07-20"
                       deadline: null
+                      available: false
+                      availability_reason: "scheduled"
+                      availability_blocker_id: "3c4d5e6f"
                       recurrence: null
                       body: ["Captured 2026-07-14."]
                       closed: null
@@ -428,6 +448,9 @@ paths:
                       deferred: false
                       scheduled: "2026-07-20"
                       deadline: null
+                      available: false
+                      availability_reason: "scheduled"
+                      availability_blocker_id: "3c4d5e6f"
                       recurrence: null
                       body: ["Captured 2026-07-14.", "Confirm the seat count first."]
                       closed: null
@@ -476,6 +499,15 @@ paths:
                   title: "Email the vendor about the 2027 renewal"
                   priority: "A"
                   scheduled: "2026-07-21"
+              defer_until:
+                summary: Set timed availability and clear an own indefinite hold.
+                value:
+                  scheduled: "2026-07-21"
+                  deferred: false
+              put_on_hold:
+                summary: Hold indefinitely without changing either date.
+                value:
+                  deferred: true
               clear_deadline:
                 summary: Clear a clearable field with explicit null.
                 value:
@@ -523,6 +555,9 @@ paths:
                       deferred: false
                       scheduled: "2026-07-21"
                       deadline: null
+                      available: false
+                      availability_reason: "scheduled"
+                      availability_blocker_id: "3c4d5e6f"
                       recurrence: null
                       body: ["Captured 2026-07-14.", "Confirm the seat count first."]
                       closed: null
@@ -683,8 +718,11 @@ paths:
                           contexts: ["@desk"]
                           tags: ["billing"]
                           deferred: false
-                          scheduled: "2026-07-20"
-                          deadline: null
+                          scheduled: null
+                          deadline: "2026-07-20"
+                          available: true
+                          availability_reason: "available"
+                          availability_blocker_id: null
                           recurrence: null
                           body: ["Captured 2026-07-14."]
                           closed: null
@@ -1123,6 +1161,9 @@ components:
                       deferred: false
                       scheduled: "2026-07-20"
                       deadline: null
+                      available: false
+                      availability_reason: "scheduled"
+                      availability_blocker_id: "3c4d5e6f"
                       recurrence: null
                       body: ["Captured 2026-07-14."]
                       closed: null
@@ -1233,6 +1274,9 @@ components:
         deferred: false
         scheduled: "2026-07-20"
         deadline: null
+        available: false
+        availability_reason: "scheduled"
+        availability_blocker_id: "3c4d5e6f"
         recurrence: null
         body: ["Captured 2026-07-14.", "Confirm the seat count first."]
         closed: null
@@ -1340,9 +1384,8 @@ components:
       description: |
         The canonical persistence-neutral task resource. It intentionally omits
         physical JSONL coordinates (no `line`) and pre-rendered presentation
-        (no headline). Fields follow the accepted plan's representation list;
-        see ADR-0007 for the deltas from the current `Tasks::TaskView` that
-        Phase 4 must derive.
+        (no headline). Writable own fields (`scheduled`, `deadline`,
+        `deferred`) are distinct from the derived effective availability fields.
       required:
         - id
         - revision
@@ -1358,6 +1401,9 @@ components:
         - deferred
         - scheduled
         - deadline
+        - available
+        - availability_reason
+        - availability_blocker_id
         - recurrence
         - body
         - closed
@@ -1407,10 +1453,32 @@ components:
         deferred:
           type: boolean
           description: |
-            Whether the task carries the semantic defer (someday/maybe) marker.
-            A distinct field, not an ordinary tag.
-        scheduled: { $ref: "#/components/schemas/IsoDate" }
-        deadline: { $ref: "#/components/schemas/IsoDate" }
+            Whether this task itself carries the indefinite On Hold
+            (Someday/Maybe) marker. This own writable field is not an ordinary
+            tag and is not a synonym for `available == false`.
+        scheduled:
+          allOf:
+            - { $ref: "#/components/schemas/IsoDate" }
+          description: Own available-from/start/defer-until date, or null.
+        deadline:
+          allOf:
+            - { $ref: "#/components/schemas/IsoDate" }
+          description: Independent due date, or null.
+        available:
+          type: boolean
+          readOnly: true
+          description: Effective, ancestor-aware availability as of this response.
+        availability_reason:
+          type: string
+          readOnly: true
+          enum: [available, scheduled, on_hold, ancestor_scheduled, ancestor_on_hold, closed]
+          description: Why the task is or is not effectively available.
+        availability_blocker_id:
+          readOnly: true
+          description: Stable id of the task that owns the blocker, or null when available/closed.
+          oneOf:
+            - { $ref: "#/components/schemas/TaskId" }
+            - { type: "null" }
         recurrence:
           type: [string, "null"]
           description: Recurrence cookie (e.g. `.+1w`), or null.
@@ -1462,8 +1530,18 @@ components:
             contexts and tags into the stored tag list (`Tasks::CreateTask`
             takes one array); the split fields keep the request unambiguous.
           items: { type: string }
-        scheduled: { $ref: "#/components/schemas/IsoDate" }
-        deadline: { $ref: "#/components/schemas/IsoDate" }
+        deferred:
+          type: boolean
+          description: Create with an own indefinite On Hold marker. Default false.
+          default: false
+        scheduled:
+          allOf:
+            - { $ref: "#/components/schemas/IsoDate" }
+          description: Available-from/start date; a future value makes the task unavailable.
+        deadline:
+          allOf:
+            - { $ref: "#/components/schemas/IsoDate" }
+          description: Independent due date.
         state: { $ref: "#/components/schemas/State" }
         project:
           type: [string, "null"]
@@ -1512,8 +1590,15 @@ components:
           items: { type: string }
         deferred:
           type: boolean
-        scheduled: { $ref: "#/components/schemas/IsoDate" }
-        deadline: { $ref: "#/components/schemas/IsoDate" }
+          description: Set or clear the task's own indefinite On Hold marker.
+        scheduled:
+          allOf:
+            - { $ref: "#/components/schemas/IsoDate" }
+          description: Set/clear the available-from date without moving deadline.
+        deadline:
+          allOf:
+            - { $ref: "#/components/schemas/IsoDate" }
+          description: Set/clear the independent due date.
         recurrence:
           type: [string, "null"]
         parent_id:

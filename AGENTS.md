@@ -42,9 +42,11 @@ back a bad one.
 - `tasks.jsonl` — the live list. One JSON record per line: a `meta` header, then
   `section` records (GTD lists / project headings) and `task` records, tree-ordered
   by `parent` id. Task fields: `state` ∈ INBOX|TODO|NEXT|WAITING|DONE|CANCELLED,
-  optional `priority` A|B|C, `title`, `tags` (array, includes `@contexts`),
-  `scheduled`/`deadline`/`closed` dates (`"YYYY-MM-DD"`), `recur` cookie, `body`
-  notes. Read it via the CLI's `--json`, never by parsing the file yourself.
+  optional `priority` A|B|C, `title`, `tags` (array, includes `@contexts` and
+  the internal `defer` On Hold marker), `scheduled`/`deadline`/`closed` dates
+  (`"YYYY-MM-DD"`), `recur` cookie, `body` notes. `scheduled` is the
+  available-from/start date; `deadline` is the due date. Read it via the CLI's
+  `--json`, never by parsing the file yourself.
   Links in notes (Slack, Jira, PRs, docs) are first-class — `[[url][label]]`, bare
   URLs, or configured shorthands like `jira:OPS-1234`. `tasks links` lists them by
   system and `list --body /text` searches note text.
@@ -88,7 +90,7 @@ say which ones matched.
                       --priority/--tag/--context/--state/--project/--under/--recur)
   - nest a new task:  `bin/tasks capture "<text>" --under "<ref>"`  (child of a task; ≤ max_depth)
   - set a deadline:   `bin/tasks due "<ref>" <date>`  (fri, +3, 07-15, …)
-  - set scheduled:    `bin/tasks schedule "<ref>" <date>`
+  - set available from: `bin/tasks schedule "<ref>" <date>`
   - remove dates:     `bin/tasks undate "<ref>" [--kind deadline|scheduled]`
   - change state:     `bin/tasks state "<ref>" <STATE>`
   - cancel a task:    `bin/tasks cancel "<ref>"`
@@ -100,9 +102,11 @@ say which ones matched.
   - nest a subtree:   `bin/tasks move "<ref>" --under "<ref>"`  (below another task; ≤ max_depth)
   - unnest a subtree: `bin/tasks move "<ref>" --top`  (back to the section level)
   - make it recur:    `bin/tasks recur "<ref>" weekly`  (2w/.+1m/…; "off" clears)
-  - defer a task:     `bin/tasks defer "<ref>"`   (someday/maybe; hides it)
-  - reactivate:       `bin/tasks activate "<ref>"`  (undefer/resume)
-  - review deferred:  `bin/tasks list --deferred`
+  - defer until date: `bin/tasks defer "<ref>" <date>`  (hide until date; preserves deadline)
+  - hold indefinitely: `bin/tasks someday "<ref>"`  (someday/maybe/on hold)
+  - reactivate now:   `bin/tasks activate "<ref>"`  (clears own hold/future start)
+  - review unavailable: `bin/tasks list --unavailable`  (`--deferred` is an alias)
+  - review own holds: `bin/tasks list --someday`
   - inspect a task:   `bin/tasks show "<ref>" [--json]`
   - archive done:     `bin/tasks archive`
   - delete a task:    `bin/tasks delete "<ref>"`  (hard delete; add `--cascade`
@@ -114,6 +118,13 @@ say which ones matched.
   (dated = processed) — no extra step.
 - Resolve relative dates ("next Friday", "tomorrow") — the CLI's date parser
   takes them directly.
+- Interpret deferral literally: "defer TASK 4 days" means
+  `bin/tasks defer "TASK" +4`, and "defer TASK until Friday" means
+  `bin/tasks defer "TASK" fri`. Timed deferral writes the available-from
+  (`scheduled`) date, hides the task until that date, and never moves its
+  `deadline`. Requests saying "someday", "maybe", "on hold", or
+  "indefinitely" use `bin/tasks someday "TASK"` instead. A plain `schedule`
+  changes only the available-from date; use `defer` when the user asks to defer.
 - Quadrants (`bin/tasks quadrants`) are computed, not stored: **important** =
   priority `A`/`B` or the `important` tag; **urgent** = a `deadline` within a few
   days or the `urgent` tag. To make something "urgent"/"important", prefer setting

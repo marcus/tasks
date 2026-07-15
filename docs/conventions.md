@@ -76,10 +76,11 @@ type id parent state priority title tags scheduled deadline recur closed archive
 - **`tags`** — a JSON array including `@contexts` (e.g.
   `["@computer","important"]`). See [Tags](#tags).
 - **`scheduled`** / **`deadline`** / **`closed`** / **`archived`** —
-  `"YYYY-MM-DD"` strings (no day-of-week, no `< >`). `scheduled` is the day you
-  intend to *start*; `deadline` the day it's *due*; `closed` is stamped when a
-  task enters DONE/CANCELLED; `archived` is stamped on a subtree root when it's
-  swept to `archive.jsonl`.
+  `"YYYY-MM-DD"` strings (no day-of-week, no `< >`). `scheduled` is the single
+  available-from/start/defer-until date: an open task is unavailable before it
+  and available on it. `deadline` is the separate due date; `closed` is stamped
+  when a task enters DONE/CANCELLED; `archived` is stamped on a subtree root
+  when it's swept to `archive.jsonl`.
 - **`recur`** — an org-style repeater cookie (`.+1w`, `++1m`, `+2d`) on a dated
   task. See [Recurrence](#recurrence).
 - **`body`** — free-text notes as a single `\n`-joined string; omitted when
@@ -124,10 +125,18 @@ the `TASKS_URGENT_DAYS` env var.
 
 ## Dates
 
-- `scheduled` — the day you intend to *start* / work on it.
-- `deadline` — the day it's *due*.
+- `scheduled` — the first day the task is available to *start* / work on.
+- `deadline` — the separate day it's *due*.
 - All dates are ISO `"YYYY-MM-DD"` strings. The CLI/TUI accept fuzzy input
   (`fri`, `+3`, `07-15`, `tomorrow`) and write the canonical form.
+
+A future `scheduled` date removes the task from active views until that date;
+it does not make the task urgent. The semantic `defer` tag means **On Hold
+indefinitely**, not a dated deferral. Effective availability is ancestor-aware:
+an On Hold or future-scheduled parent also hides its descendants. Use
+`defer <ref> <date>` for a timed release, `someday <ref>` for an indefinite
+hold, and `activate <ref>` to make the task available now. None of those moves a
+`deadline`.
 
 ## Recurrence
 
