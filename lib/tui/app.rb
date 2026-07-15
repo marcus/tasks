@@ -23,6 +23,7 @@ require_relative "session"
 require_relative "text_input"
 require_relative "form"
 require_relative "action_palette"
+require_relative "context_palette"
 require_relative "ui_state"
 require_relative "screen_layout"
 require_relative "form_renderer"
@@ -179,7 +180,7 @@ module Tui
     # Reload external writes without losing the selected task to a new physical
     # row. An open detail panel follows whichever task selection remains visible.
     def reload_store
-      overlay_mode = @ui.mode if %i[form palette task_edit].include?(@ui.mode)
+      overlay_mode = @ui.mode if %i[form palette context_palette task_edit].include?(@ui.mode)
       @store.reload!
       reload_read_model
       editor = @ui.task_editor || @suspended_task_editor
@@ -199,6 +200,9 @@ module Tui
       restore_form if overlay_mode == :form && @ui.form
       if overlay_mode == :palette && @ui.action_palette
         restore_action_palette(@ui.action_palette)
+      end
+      if overlay_mode == :context_palette && @ui.context_palette
+        restore_context_palette(@ui.context_palette)
       end
     end
 
@@ -282,9 +286,14 @@ module Tui
       read ||= read_model
       today ||= @read_model_today
       items = read.items
+      if (ctx = active_context_filter)
+        items = items.select { |i| i.contexts.include?(ctx) }
+      end
       if (q = active_filter)
         q = q.downcase
         items = items.select { |i| i.title.downcase.include?(q) }
+      end
+      if active_context_filter || active_filter
         @rows = Views.rows(@ui.view, items, show_deferred: @ui.show_deferred,
                                            today: today,
                                            urgent_days: @urgent_days, reader: read)
@@ -304,6 +313,13 @@ module Tui
       s = @ui.mode == :filter ? @ui.filter_input : @ui.filter
       s = s.to_s unless s.nil?
       s.nil? || s.strip.empty? ? nil : s
+    end
+
+    def active_context_filter
+      ctx = @ui.context_filter
+      return nil if ctx.nil?
+
+      ContextPalette.normalize(ctx)
     end
 
     def header(w)
@@ -351,12 +367,16 @@ module Tui
         n = (@rows || []).count(&:item)
         f << T.paint(:muted, " / #{@ui.filter} · #{n} match#{n == 1 ? "" : "es"} · esc clears · / edits")
       end
+      if @ui.context_filter && mode != :context_palette
+        n = (@rows || []).count(&:item)
+        f << T.paint(:muted, " #{@ui.context_filter} · #{n} match#{n == 1 ? "" : "es"} · esc clears · @ changes")
+      end
       # Active text entry owns the scarce footer row on short terminals. Forms,
       # palettes, and the modal filter render their input in their own overlay;
       # the task-list filter renders it here. Keeping :modal_filter's footer
       # identical to :modal's also pins the body height across the two modes, so
       # opening the filter can't jog the modal box.
-      f.concat(prompt_lines(w)) unless %i[filter form palette task_edit].include?(mode)
+      f.concat(prompt_lines(w)) unless %i[filter form palette context_palette task_edit].include?(mode)
       f
     end
 
@@ -447,6 +467,9 @@ module Tui
       when :palette
         [@ui.action_palette&.popup(row: 0, col: 0, max_width: layout.body_width, max_height: layout.body_height,
                                inline_input: method(:inline_input)), 3]
+      when :context_palette
+        [@ui.context_palette&.popup(row: 0, col: 0, max_width: layout.body_width, max_height: layout.body_height,
+                                    inline_input: method(:inline_input)), 3]
       end
       layout.place_popup(popup, preferred_col: preferred_col)
     end
@@ -589,6 +612,7 @@ module Tui
       when :form   then @ui.form&.paste(text)
       when :task_edit then process_task_edit_outcome(@ui.task_editor&.handle(TermForm::Event.paste(text)))
       when :palette then @ui.action_palette&.paste(text)
+      when :context_palette then @ui.context_palette&.paste(text)
       when :filter then @ui.filter_input.insert(text)
       when :modal_filter then @ui.modal_filter_input.insert(text); @ui.modal.filter = @ui.modal_filter_input.to_s
       else
@@ -608,6 +632,7 @@ module Tui
       when :prompt then prompt_key(k)
       when :form   then form_key(k)
       when :palette then palette_key(k)
+      when :context_palette then context_palette_key(k)
       when :modal  then modal_key(k)
       when :modal_filter then modal_filter_key(k)
       when :filter then filter_key(k)
@@ -721,6 +746,16 @@ module Tui
       restore_action_palette(palette, error: "#{label} failed: #{e.message}")
     end
 
+    def context_palette_key(k)
+      palette = @ui.context_palette
+      result = palette&.handle_key(k)
+      return close_context_palette if result == :cancelled
+      return unless result.is_a?(Array) && result.first == :apply
+
+      apply_context_filter(result.last)
+      close_context_palette
+    end
+
     # -- shortcut actions (dispatched from Shortcuts::REGISTRY) ----------------
 
     def action_available? = true
@@ -796,6 +831,43 @@ module Tui
         @ui.mode = :palette
         @ui.action_palette.fail!(error) if error
       end
+    end
+
+    def open_context_palette
+      contexts = read_model.items.flat_map(&:contexts)
+      @ui.context_palette = ContextPalette.new(
+        contexts: contexts,
+        current: @ui.context_filter
+      )
+      @ui.mode = :context_palette
+    end
+
+    def close_context_palette
+      return unless @ui.context_palette
+
+      @ui.mode = :list
+      @ui.context_palette = nil
+    end
+
+    def restore_context_palette(palette)
+      return unless palette
+
+      contexts = read_model.items.flat_map(&:contexts)
+      palette.refresh_options(contexts: contexts, current: @ui.context_filter)
+      @ui.context_palette = palette
+      @ui.mode = :context_palette
+    end
+
+    def apply_context_filter(option)
+      previous = @ui.context_filter
+      next_filter = option.id # nil clears
+      @ui.context_filter = next_filter
+      if next_filter.nil?
+        flash(previous ? "context filter cleared" : "no context filter")
+      else
+        flash("context: #{next_filter}")
+      end
+      rows
     end
 
     # Priority ladder: A is highest, nil (no cookie) lowest.
@@ -1749,7 +1821,8 @@ module Tui
 
     def save_session
       live_ids = read_model.items.map(&:id).compact
-      Session.save(@ui.session_hash(live_ids: live_ids))
+      live_contexts = read_model.items.flat_map(&:contexts).uniq
+      Session.save(@ui.session_hash(live_ids: live_ids, live_contexts: live_contexts))
     end
 
     def complete_selected
@@ -2010,6 +2083,10 @@ module Tui
       elsif @ui.filter
         @ui.filter = nil
         flash("filter cleared")
+      elsif @ui.context_filter
+        @ui.context_filter = nil
+        flash("context filter cleared")
+        rows
       elsif detail_panel?
         close_panel
       end

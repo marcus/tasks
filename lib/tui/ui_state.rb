@@ -10,23 +10,24 @@ module Tui
   class UiState
     class InvalidTransition < ArgumentError; end
 
-    MODES = %i[list prompt filter modal modal_filter form palette task_edit].freeze
+    MODES = %i[list prompt filter modal modal_filter form palette context_palette task_edit].freeze
     PANEL_MODES = %i[compact standard wide focus].freeze
     TRANSITIONS = {
-      list:         %i[list prompt filter modal form palette task_edit],
-      prompt:       %i[prompt list modal],
-      filter:       %i[filter list],
-      modal:        %i[modal list modal_filter form palette],
-      modal_filter: %i[modal_filter modal list],
-      form:         %i[form list modal],
-      palette:      %i[palette list modal],
-      task_edit:    %i[task_edit list],
+      list:             %i[list prompt filter modal form palette context_palette task_edit],
+      prompt:           %i[prompt list modal],
+      filter:           %i[filter list],
+      modal:            %i[modal list modal_filter form palette context_palette],
+      modal_filter:     %i[modal_filter modal list],
+      form:             %i[form list modal],
+      palette:          %i[palette list modal],
+      context_palette:  %i[context_palette list modal],
+      task_edit:        %i[task_edit list],
     }.freeze
 
     attr_reader :mode, :panel_offset
-    attr_accessor :view, :selected_id, :filter, :collapsed, :show_deferred,
+    attr_accessor :view, :selected_id, :filter, :context_filter, :collapsed, :show_deferred,
                   :modal, :panel, :archive_preview, :form,
-                  :form_success, :action_palette, :filter_input,
+                  :form_success, :action_palette, :context_palette, :filter_input,
                   :modal_filter_input, :task_editor, :panel_mode
 
     def self.restore(saved:, views:, default_view:)
@@ -45,14 +46,18 @@ module Tui
       panel_mode = PANEL_MODES.include?(saved_panel_mode) ? saved_panel_mode : :standard
       saved_offset = saved[:panel_offset]
       panel_offset = saved_offset.is_a?(Integer) ? saved_offset : 0
-      new(view: view, collapsed: collapsed, panel_mode: panel_mode, panel_offset: panel_offset)
+      context_filter = restore_context_filter(saved[:context_filter])
+      new(view: view, collapsed: collapsed, panel_mode: panel_mode, panel_offset: panel_offset,
+          context_filter: context_filter)
     end
 
-    def initialize(view:, collapsed: Set.new, panel_mode: :standard, panel_offset: 0)
+    def initialize(view:, collapsed: Set.new, panel_mode: :standard, panel_offset: 0,
+                   context_filter: nil)
       @view = view
       @selected_id = nil
       @mode = :list
       @filter = nil
+      @context_filter = context_filter
       @collapsed = collapsed
       @show_deferred = false
       @modal = nil
@@ -61,6 +66,7 @@ module Tui
       @form = nil
       @form_success = nil
       @action_palette = nil
+      @context_palette = nil
       @task_editor = nil
       @panel_mode = PANEL_MODES.include?(panel_mode.to_sym) ? panel_mode.to_sym : :standard
       @panel_offset = panel_offset.to_i
@@ -89,6 +95,8 @@ module Tui
         if @action_palette.return_mode == :modal && !@modal
           raise InvalidTransition, "palette returning to modal requires a retained modal"
         end
+      when :context_palette
+        raise InvalidTransition, "context_palette mode requires a context palette" unless @context_palette
       when :task_edit
         raise InvalidTransition, "task_edit mode requires a task editor" unless @task_editor
       end
@@ -136,6 +144,16 @@ module Tui
       force_list! if value.nil? && @mode == :palette
     end
 
+    def context_palette=(value)
+      @context_palette = value
+      force_list! if value.nil? && @mode == :context_palette
+    end
+
+    def context_filter=(value)
+      @context_filter = value.nil? ? nil : value.to_s
+      @context_filter = nil if @context_filter&.strip&.empty?
+    end
+
     def task_editor=(value)
       @task_editor = value
       force_list! if value.nil? && @mode == :task_edit
@@ -159,14 +177,33 @@ module Tui
       @show_deferred = !@show_deferred
     end
 
-    def session_hash(live_ids:)
-      {
+    def session_hash(live_ids:, live_contexts: nil)
+      hash = {
         "view" => @view.to_s,
         "collapsed" => (@collapsed & live_ids.to_set).to_a,
         "panel_mode" => @panel_mode.to_s,
         "panel_offset" => @panel_offset,
       }
+      ctx = @context_filter
+      if ctx
+        ctx = nil if live_contexts && !live_contexts.include?(ctx)
+        hash["context_filter"] = ctx if ctx
+      end
+      hash
     end
+
+    def self.restore_context_filter(value)
+      return nil unless value.is_a?(String)
+
+      token = value.strip
+      return nil if token.empty?
+
+      token = "@#{token}" unless token.start_with?("@")
+      return nil if token.length < 2
+
+      token
+    end
+    private_class_method :restore_context_filter
 
     private
 

@@ -195,4 +195,71 @@ class TestSession < Minitest::Test
       end
     end
   end
+
+  # -- context filter ----------------------------------------------------------
+
+  def test_context_filter_persists_across_app_instances
+    with_state_home do
+      Dir.mktmpdir do |dir|
+        app = app_on_fixture(dir)
+        ui(app).context_filter = "@home"
+        app.send(:save_session)
+        assert_equal "@home", ui(app_on_fixture(dir)).context_filter
+      end
+    end
+  end
+
+  def test_context_filter_normalizes_on_restore
+    with_state_home do
+      Tui::Session.save({ "view" => "next", "context_filter" => "work" })
+      Dir.mktmpdir do |dir|
+        assert_equal "@work", ui(app_on_fixture(dir)).context_filter
+      end
+    end
+  end
+
+  def test_save_session_prunes_stale_context_filter
+    with_state_home do
+      Dir.mktmpdir do |dir|
+        app = app_on_fixture(dir)
+        ui(app).context_filter = "@gone"
+        app.send(:save_session)
+        assert_nil Tui::Session.load[:context_filter], "stale context pruned on save"
+      end
+    end
+  end
+
+  def test_legacy_session_without_context_filter_loads_nil
+    with_state_home do
+      Tui::Session.save({ "view" => "next" })
+      Dir.mktmpdir do |dir|
+        assert_nil ui(app_on_fixture(dir)).context_filter
+      end
+    end
+  end
+
+  def test_corrupt_context_filter_falls_back_to_nil
+    with_state_home do
+      FileUtils.mkdir_p(File.dirname(Tui::Session.path))
+      File.write(Tui::Session.path, JSON.generate(version: 1, view: "agenda", context_filter: 123))
+      Dir.mktmpdir do |dir|
+        assert_nil ui(app_on_fixture(dir)).context_filter
+      end
+    end
+  end
+
+  def test_clearing_context_filter_removes_it_from_session
+    with_state_home do
+      Dir.mktmpdir do |dir|
+        app = app_on_fixture(dir)
+        ui(app).context_filter = "@home"
+        app.send(:save_session)
+        assert_equal "@home", Tui::Session.load[:context_filter]
+
+        ui(app).context_filter = nil
+        app.send(:save_session)
+        assert_nil Tui::Session.load[:context_filter]
+      end
+    end
+  end
 end

@@ -13,6 +13,7 @@ class TestUiState < Minitest::Test
     ui = state
     assert_raises(Tui::UiState::InvalidTransition) { ui.mode = :form }
     assert_raises(Tui::UiState::InvalidTransition) { ui.mode = :palette }
+    assert_raises(Tui::UiState::InvalidTransition) { ui.mode = :context_palette }
     assert_raises(Tui::UiState::InvalidTransition) { ui.mode = :modal }
     assert_raises(Tui::UiState::InvalidTransition) { ui.mode = :task_edit }
   end
@@ -78,10 +79,26 @@ class TestUiState < Minitest::Test
     ui.action_palette = nil
     assert_equal :list, ui.mode
 
+    ui.context_palette = Object.new
+    ui.mode = :context_palette
+    ui.context_palette = nil
+    assert_equal :list, ui.mode
+
     ui.modal = Tui::Modal.new(title: "help", lines: [], kind: :help, filterable: true)
     ui.mode = :modal
     ui.modal = nil
     assert_equal :list, ui.mode
+  end
+
+  def test_context_palette_can_round_trip_through_modal
+    ui = state
+    ui.context_palette = Object.new
+    ui.mode = :context_palette
+    ui.modal = Tui::Modal.new(title: "quit?", lines: [], kind: :agent_quit_confirm)
+    ui.mode = :modal
+    ui.modal = nil
+    ui.mode = :context_palette
+    assert_equal :context_palette, ui.mode
   end
 
   def test_removing_retained_modal_invalidates_dependent_overlay

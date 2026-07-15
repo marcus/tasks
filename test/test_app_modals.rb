@@ -655,6 +655,115 @@ class TestAppModals < Minitest::Test
     end
   end
 
+  def test_at_opens_context_palette_and_filters_by_selected_context
+    with_app do |app|
+      app.send(:handle_key, "2") # Next — undated @home tasks are not on Agenda
+      app.send(:handle_key, "@")
+      assert_equal :context_palette, mode(app)
+      assert ui(app).context_palette
+
+      "home".chars.each { |c| app.send(:handle_key, c) }
+      app.send(:handle_key, "\r")
+      assert_equal :list, mode(app)
+      assert_equal "@home", ui(app).context_filter
+      titles = app.send(:rows).select(&:item).map { |r| r.item.title }
+      assert_equal ["Water the plants"], titles
+      assert_match(/context: @home/, app.instance_variable_get(:@flash))
+    end
+  end
+
+  def test_context_filter_survives_view_switch_and_composes_with_text_filter
+    with_app do |app|
+      app.send(:handle_key, "@")
+      "comp".chars.each { |c| app.send(:handle_key, c) }
+      app.send(:handle_key, "\r")
+      assert_equal "@computer", ui(app).context_filter
+
+      app.send(:handle_key, "2") # Next
+      titles = app.instance_variable_get(:@rows).select(&:item).map { |r| r.item.title }
+      assert_includes titles, "Book flight in Concur"
+      assert_includes titles, "Review PR backlog"
+      refute_includes titles, "Water the plants"
+
+      app.send(:handle_key, "/")
+      "flight".chars.each { |c| app.send(:handle_key, c) }
+      app.send(:handle_key, "\r")
+      titles = app.send(:rows).select(&:item).map { |r| r.item.title }
+      assert_equal ["Book flight in Concur"], titles
+    end
+  end
+
+  def test_clear_row_and_esc_clear_context_filter
+    with_app do |app|
+      app.send(:handle_key, "@")
+      "home".chars.each { |c| app.send(:handle_key, c) }
+      app.send(:handle_key, "\r")
+      assert_equal "@home", ui(app).context_filter
+
+      app.send(:handle_key, "@")
+      assert_equal "@home", ui(app).context_palette.current.id
+      # Clear is first; type to find it explicitly then apply.
+      ui(app).context_palette.input.replace("")
+      ui(app).context_palette.instance_variable_set(:@selected, 0)
+      app.send(:handle_key, "\r")
+      assert_nil ui(app).context_filter
+      assert_match(/context filter cleared/, app.instance_variable_get(:@flash))
+
+      app.send(:handle_key, "@")
+      "home".chars.each { |c| app.send(:handle_key, c) }
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "\e")
+      assert_nil ui(app).context_filter
+      assert_match(/context filter cleared/, app.instance_variable_get(:@flash))
+    end
+  end
+
+  def test_esc_cancels_context_palette_without_changing_filter
+    with_app do |app|
+      app.send(:handle_key, "@")
+      "home".chars.each { |c| app.send(:handle_key, c) }
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "@")
+      app.send(:handle_key, "\e")
+      assert_equal :list, mode(app)
+      assert_nil ui(app).context_palette
+      assert_equal "@home", ui(app).context_filter
+    end
+  end
+
+  def test_reload_refreshes_open_context_palette_options
+    with_app do |app|
+      app.send(:handle_key, "@")
+      assert_includes ui(app).context_palette.options.map(&:id), "@home"
+      rewrite_records(app) do |records|
+        plants = records.find { |r| r["id"] == FIX[:plants] }
+        plants["tags"] = %w[@garden]
+      end
+      assert_equal :context_palette, mode(app)
+      ids = ui(app).context_palette.options.map(&:id)
+      assert_includes ids, "@garden"
+      refute_includes ids, "@home"
+    end
+  end
+
+  def test_esc_clears_text_filter_before_context_filter
+    with_app do |app|
+      app.send(:handle_key, "@")
+      "comp".chars.each { |c| app.send(:handle_key, c) }
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "/")
+      "flight".chars.each { |c| app.send(:handle_key, c) }
+      app.send(:handle_key, "\r")
+
+      app.send(:handle_key, "\e")
+      assert_nil ui(app).filter
+      assert_equal "@computer", ui(app).context_filter
+
+      app.send(:handle_key, "\e")
+      assert_nil ui(app).context_filter
+    end
+  end
+
   def test_no_match_filter_shows_empty_view_not_crash
     with_app do |app|
       app.send(:handle_key, "/")

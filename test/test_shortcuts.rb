@@ -54,6 +54,12 @@ class TestShortcuts < Minitest::Test
     assert_equal :close_modal, S.match("q", :modal).handler
   end
 
+  def test_at_opens_context_palette_from_list
+    assert_equal :open_context_palette, S.match("@", :list).handler
+    assert_nil S.match("@", :detail)
+    assert_nil S.match("@", :modal)
+  end
+
   def test_unknown_lookup_context_is_rejected
     error = assert_raises(ArgumentError) { S.entries(:bogus) }
     assert_match(/unknown shortcut context/, error.message)

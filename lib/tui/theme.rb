@@ -41,6 +41,7 @@ module Tui
       panel_title:   "bold",           # persistent right-panel heading
       context:       "bold cyan",      # context group headers
       context_selected: "bold cyan",
+      context_filter_active: "bold green", # active @context in the filter picker
       project:       "magenta",
       project_selected: "bold magenta",
       title:         "none",
@@ -96,7 +97,7 @@ module Tui
         tab_quadrants_active: "reverse", tab_inbox_active: "reverse",
         tab_projects_active: "reverse",
         prompt: "bold", modal_title: "bold", panel_title: "bold", context: "bold",
-        context_selected: "bold", project: "none", project_selected: "bold",
+        context_selected: "bold", context_filter_active: "bold", project: "none", project_selected: "bold",
         title: "none", title_selected: "bold", muted: "dim", muted_selected: "dim",
         outline_thread: "dim",
         note: "dim", description: "dim", detail_label: "bold", link_system: "none",

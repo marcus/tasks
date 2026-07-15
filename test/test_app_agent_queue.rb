@@ -315,4 +315,21 @@ class TestAppAgentQueue < Minitest::Test
       assert_equal %i[cancelled cancelled], queue(app).requests.map(&:status)
     end
   end
+
+  def test_agent_quit_confirmation_restores_context_palette
+    with_app(agent_count: 1) do |app, _agents|
+      submit(app, "active")
+      app.send(:handle_key, "@")
+      assert_equal :context_palette, ui(app).mode
+      palette = ui(app).context_palette
+
+      app.send(:quit)
+      assert_equal :agent_quit_confirm, ui(app).modal.kind
+      app.send(:agent_quit_confirmation_key, "n")
+
+      assert_equal :context_palette, ui(app).mode
+      assert_same palette, ui(app).context_palette
+      refute app.instance_variable_get(:@quit)
+    end
+  end
 end

@@ -6,9 +6,9 @@ require_relative "../tasks/atomic"
 require_relative "../tasks/config"
 
 module Tui
-  # Persists small bits of TUI state across runs — today the active view, so
-  # the TUI reopens where you left it; later candidates ride the same file
-  # (e.g. a theme choice). Deliberately dumb: a flat, versioned JSON hash at
+  # Persists small bits of TUI state across runs — the active view, collapsed
+  # set, panel mode/offset, and context filter — so the TUI reopens where you
+  # left it. Deliberately dumb: a flat, versioned JSON hash at
   # $XDG_STATE_HOME/tasks/tui.json. UI preference, not task data — so one file
   # per user (not per org file), and losing it costs nothing but a default.
   #
