@@ -15,6 +15,8 @@ here as future work.
 **Readiness decision: yes.** No architectural or foundation prerequisite remains
 before implementation of the loopback CRUD API described in this document. Work
 can start directly with the production Rack adapter and its route-level tests.
+Use `docs/plans/http-api-implementation-prompt.md` as the self-contained work
+order for that implementation.
 
 “Ready to implement” does not mean “ready to ship.” The adapter, launcher,
 security guards, HTTP representations, route contract tests, and cross-process
@@ -115,8 +117,8 @@ Implement only the resource and health surface needed for complete CRUD:
 
 | Method | Path | Behavior |
 |---|---|---|
-| `GET` | `/healthz/live` | Process liveness only. |
-| `GET` | `/healthz/ready` | Safe checked-read readiness summary. |
+| `GET` | `/healthz` | Process liveness only. |
+| `GET` | `/readyz` | Safe checked-read readiness summary. |
 | `GET` | `/api/v1/meta` | Capabilities and global store revision; never paths. |
 | `GET` | `/api/v1/sections` | Ordered live placement resources. |
 | `GET` | `/api/v1/tasks` | Ordered filtered resources. |

@@ -1041,8 +1041,8 @@ paths:
       operationId: readiness
       summary: Readiness probe (outside /api/v1).
       description: |
-        Runs a non-mutating `Tasks::Check` and reports only a safe summary. No
-        filesystem paths are returned.
+        Uses the same coherent checked-read boundary as API resources and
+        reports only a safe summary. No filesystem paths are returned.
       responses:
         "200":
           description: The backing store is structurally valid and ready.
