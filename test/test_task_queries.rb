@@ -356,4 +356,84 @@ class TestTaskQueries < Minitest::Test
       assert task.frozen?
     end
   end
+
+  def test_version_one_boundary_matrix_is_inclusive_inherited_and_read_only
+    records = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "bd000001", "title" => "Work" },
+      { "type" => "task", "id" => "bd000002", "parent" => "bd000001", "state" => "NEXT",
+        "title" => "Yesterday", "scheduled" => "2026-07-13" },
+      { "type" => "task", "id" => "bd000003", "parent" => "bd000001", "state" => "NEXT",
+        "title" => "Today", "scheduled" => "2026-07-14" },
+      { "type" => "task", "id" => "bd000004", "parent" => "bd000001", "state" => "TODO",
+        "title" => "Tomorrow parent", "scheduled" => "2026-07-15" },
+      { "type" => "task", "id" => "bd000005", "parent" => "bd000004", "state" => "DONE",
+        "title" => "Closed middle", "closed" => "2026-07-01" },
+      { "type" => "task", "id" => "bd000006", "parent" => "bd000005", "state" => "NEXT",
+        "title" => "Inherited grandchild" },
+      { "type" => "task", "id" => "bd000007", "parent" => "bd000001", "state" => "NEXT",
+        "title" => "Held despite old date", "tags" => %w[defer], "scheduled" => "2026-07-13" },
+    ]
+
+    with_query_store(records: records) do |store|
+      path = store.org
+      before = File.binread(path)
+      today = queries(store, today: Date.new(2026, 7, 14))
+      by_id = today.snapshot.items.to_h { |item| [item.id, item] }
+
+      assert today.availability(by_id["bd000002"]).available?, "yesterday is already available"
+      assert today.availability(by_id["bd000003"]).available?, "the boundary date is inclusive"
+      inherited = today.availability(by_id["bd000006"])
+      assert_equal :ancestor_scheduled, inherited.reason
+      assert_equal "bd000004", inherited.blocker_id
+      assert_equal Date.new(2026, 7, 15), inherited.scheduled
+      assert_equal :on_hold, today.availability(by_id["bd000007"]).reason,
+                   "an own indefinite hold wins even when its own date is in the past"
+      assert_equal %w[bd000002 bd000003], today.view(:next).tasks.map(&:id)
+
+      tomorrow = queries(store, today: Date.new(2026, 7, 15))
+      assert tomorrow.availability(tomorrow.snapshot.items.find { |item| item.id == "bd000006" }).available?
+      assert_includes tomorrow.view(:next).tasks.map(&:id), "bd000006"
+      assert_equal before, File.binread(path), "derived availability never migrates or rewrites descendants"
+      assert_equal 1, Tasks::Format.parse(File.read(path)).records.first["version"]
+      assert Tasks::Check.check(path).ok?
+    end
+  end
+
+  def test_closed_and_archived_scopes_keep_legacy_own_hold_filtering
+    live = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "lc000001", "title" => "Work" },
+      { "type" => "task", "id" => "lc000002", "parent" => "lc000001", "state" => "DONE",
+        "title" => "Live held", "tags" => %w[defer], "closed" => "2026-07-01" },
+      { "type" => "task", "id" => "lc000003", "parent" => "lc000001", "state" => "DONE",
+        "title" => "Live timed only", "scheduled" => "2026-08-01", "closed" => "2026-07-01" },
+    ]
+    archived = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "task", "id" => "ac000001", "state" => "DONE", "title" => "Archived held",
+        "tags" => %w[defer], "closed" => "2026-06-01" },
+      { "type" => "task", "id" => "ac000002", "state" => "DONE", "title" => "Archived timed only",
+        "scheduled" => "2026-08-01", "closed" => "2026-06-01" },
+    ]
+
+    with_query_store(records: live, archive_records: archived) do |store|
+      query = queries(store, include_archive: true)
+      expectations = {
+        ["--done", "--deferred"] => %w[lc000002],
+        ["--done", "--someday"] => %w[lc000002],
+        ["--archived", "--deferred"] => %w[ac000001],
+        ["--archived", "--someday"] => %w[ac000001],
+        ["--all", "--deferred"] => %w[lc000002 ac000001],
+        ["--all", "--on-hold"] => %w[lc000002 ac000001],
+      }
+      expectations.each do |args, ids|
+        filter = Tasks::TaskFilter.parse_cli(args).filter
+        assert_equal ids, query.list(filter).tasks.map(&:id), args.join(" ")
+      end
+
+      assert_raises(ArgumentError) { Tasks::TaskFilter.parse_cli(%w[--archived --unavailable]) }
+      assert_raises(ArgumentError) { Tasks::TaskFilter.parse_cli(%w[--all --unavailable]) }
+    end
+  end
 end

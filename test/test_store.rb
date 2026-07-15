@@ -1040,6 +1040,69 @@ class TestStore < Minitest::Test
     end
   end
 
+  def test_injected_recurrence_matrix_advances_each_date_shape_and_undoes_byte_exactly
+    cases = [
+      {
+        title: "Scheduled only", scheduled: "2026-07-10", recur: "+1w",
+        expected_scheduled: "2026-07-17", expected_deadline: nil,
+      },
+      {
+        title: "Deadline only", deadline: "2026-07-10", recur: "+1w",
+        expected_scheduled: nil, expected_deadline: "2026-07-17",
+      },
+      {
+        title: "Both dates", scheduled: "2026-07-03", deadline: "2026-07-10", recur: ".+1w",
+        expected_scheduled: "2026-07-14", expected_deadline: "2026-07-21",
+      },
+    ]
+
+    cases.each_with_index do |entry, index|
+      Dir.mktmpdir do |dir|
+        org = File.join(dir, "tasks.jsonl")
+        task = {
+          "type" => "task", "id" => format("d10000%02x", index), "parent" => "d0000001",
+          "state" => "NEXT", "title" => entry.fetch(:title), "recur" => entry.fetch(:recur),
+        }
+        task["scheduled"] = entry[:scheduled] if entry[:scheduled]
+        task["deadline"] = entry[:deadline] if entry[:deadline]
+        content = dump_fixture([
+          { "type" => "meta", "version" => 1 },
+          { "type" => "section", "id" => "d0000001", "title" => "Work" },
+          task,
+        ])
+        File.write(org, content)
+        store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
+        snapshot = store.edit_snapshot(task.fetch("id"))
+        result = store.patch_task!(Tasks::TaskPatch.from(
+          snapshot, field: :state, value: "DONE", history_label: "complete: #{entry.fetch(:title)}"
+        ), today: Date.new(2026, 7, 14))
+
+        assert result.ok?, entry.fetch(:title)
+        record = record_for(org, title: entry.fetch(:title))
+        if entry[:expected_scheduled]
+          assert_equal entry[:expected_scheduled], record["scheduled"], entry.fetch(:title)
+        else
+          assert_nil record["scheduled"], entry.fetch(:title)
+        end
+        if entry[:expected_deadline]
+          assert_equal entry[:expected_deadline], record["deadline"], entry.fetch(:title)
+        else
+          assert_nil record["deadline"], entry.fetch(:title)
+        end
+        assert_equal "NEXT", record["state"], "recurring occurrence stays open"
+        assert_match(/- Did \[2026-07-14\]/, record["body"])
+        if entry.fetch(:title) == "Both dates"
+          assert_equal 7, (Date.iso8601(record.fetch("deadline")) - Date.iso8601(record.fetch("scheduled"))).to_i,
+                       "the availability-to-due lead window is preserved"
+        end
+        assert Tasks::Check.check(org).ok?
+        assert_equal [:ok, "complete: #{entry.fetch(:title)}"], store.undo!
+        assert_equal content, File.binread(org), "#{entry.fetch(:title)} undo restores v1 bytes"
+        assert Tasks::Check.check(org).ok?
+      end
+    end
+  end
+
   # m1: a deferred recurring task, once completed, drops the defer marker (like
   # complete_impl) while still rolling its date.
   def test_recurring_completion_strips_defer_tag

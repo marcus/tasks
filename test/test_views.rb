@@ -346,6 +346,80 @@ class TestViews < Minitest::Test
     end
   end
 
+  def test_availability_matrix_keeps_flat_tree_reveal_and_project_counts_aligned
+    records = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "fa000001", "title" => "Work" },
+      { "type" => "task", "id" => "fa000002", "parent" => "fa000001", "state" => "NEXT",
+        "title" => "Timed next", "scheduled" => "2026-07-05" },
+      { "type" => "task", "id" => "fa000003", "parent" => "fa000002", "state" => "WAITING",
+        "title" => "Timed next rider" },
+      { "type" => "task", "id" => "fa000004", "parent" => "fa000001", "state" => "INBOX",
+        "title" => "Held inbox", "tags" => %w[defer] },
+      { "type" => "task", "id" => "fa000005", "parent" => "fa000004", "state" => "TODO",
+        "title" => "Held inbox rider" },
+      { "type" => "task", "id" => "fa000006", "parent" => "fa000001", "state" => "DONE",
+        "title" => "Closed transparent", "closed" => "2026-06-01" },
+      { "type" => "task", "id" => "fa000007", "parent" => "fa000006", "state" => "NEXT",
+        "title" => "Hoisted next" },
+      { "type" => "task", "id" => "fa000008", "parent" => "fa000001", "state" => "TODO",
+        "title" => "Dated available", "deadline" => "2026-07-02" },
+      { "type" => "task", "id" => "fa000009", "parent" => "fa000008", "state" => "TODO",
+        "title" => "Agenda rider" },
+    ]
+
+    with_records(records) do |store|
+      %i[agenda next quadrants inbox projects].each do |view|
+        [false, true].each do |revealed|
+          query = V.view_query(
+            view, today: TODAY, urgent_days: 3, show_deferred: revealed, store: store
+          )
+          eligible = query.select(store.items).map(&:id).to_set
+          flat = V.rows(
+            view, store.items, today: TODAY, urgent_days: 3,
+            show_deferred: revealed, store: store
+          ).filter_map { |row| row.item&.id }
+          tree = V.rows(
+            view, store.items, tree: store.tree, today: TODAY, urgent_days: 3,
+            show_deferred: revealed, store: store
+          ).filter_map { |row| row.item&.id }
+
+          assert_equal eligible, flat.to_set,
+                       "flat/filter #{view} reveal=#{revealed} uses canonical eligibility"
+          assert eligible.subset?(tree.to_set),
+                 "tree #{view} reveal=#{revealed} contains every canonical anchor"
+          assert_equal tree.uniq, tree, "tree #{view} reveal=#{revealed} renders no duplicate anchors/riders"
+        end
+      end
+
+      hidden_next = tree_rows(store, :next).filter_map { |row| row.item&.id }
+      refute_includes hidden_next, "fa000002"
+      refute_includes hidden_next, "fa000003"
+      assert_includes hidden_next, "fa000007", "open descendant hoists through a closed ancestor"
+      shown_next = tree_rows(store, :next, show_deferred: true).filter_map { |row| row.item&.id }
+      assert_equal %w[fa000002 fa000003], shown_next & %w[fa000002 fa000003],
+                   "a revealed unavailable Next anchor carries its nonmatching rider"
+
+      hidden_agenda = tree_rows(store, :agenda).filter_map { |row| row.item&.id }
+      assert_equal %w[fa000008 fa000009], hidden_agenda,
+                   "an available dated anchor carries its undated agenda rider"
+      shown_inbox = tree_rows(store, :inbox, show_deferred: true).filter_map { |row| row.item&.id }
+      assert_equal %w[fa000004 fa000005], shown_inbox,
+                   "a revealed held Inbox anchor carries its nonmatching rider"
+
+      [false, true].each do |revealed|
+        rows = V.rows(
+          :projects, store.items, tree: store.tree, today: TODAY,
+          show_deferred: revealed, store: store
+        )
+        header = rows.find { |row| !row.item && !row.node && A.strip(row.text).start_with?("Work") }
+        refute_nil header
+        assert_equal rows.count(&:item), A.strip(header.text)[/(\d+) open/, 1].to_i,
+                     "project header count matches the same hidden/revealed body"
+      end
+    end
+  end
+
   # Hierarchy remains a presentation concern: an agenda anchor brings its open,
   # undated descendants along for context, while flat/filter mode stays a strict
   # list of dated query matches.

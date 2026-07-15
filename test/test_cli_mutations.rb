@@ -688,6 +688,96 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  def test_cli_timed_defer_accepts_relative_date_forms_as_checked_undoable_changes
+    today = Date.today
+    friday_delta = (5 - today.wday) % 7
+    friday_delta = 7 if friday_delta.zero?
+    month_day = today + 30
+    cases = {
+      "+4" => today + 4,
+      "tomorrow" => today + 1,
+      "fri" => today + friday_delta,
+      month_day.strftime("%m-%d") => month_day,
+      (today + 45).iso8601 => today + 45,
+    }
+
+    cases.each do |input, expected|
+      Dir.mktmpdir do |dir|
+        org = File.join(dir, "tasks.jsonl")
+        archive = File.join(dir, "archive.jsonl")
+        content = deferred_fixture
+        File.write(org, content)
+
+        out, err, status = run_cli_at(org, archive, "defer", "Water the plants", input)
+        assert status.success?, "#{input}: #{err}"
+        record = record_for(org, title: "Water the plants")
+        assert_equal expected.iso8601, record["scheduled"], input
+        refute_includes record.fetch("tags", []), "defer", input
+        assert_match(/until #{Regexp.escape(expected.iso8601)}/, out, input)
+        assert Tasks::Check.check(org).ok?, input
+
+        _undo_out, undo_err, undo_status = run_cli_at(org, archive, "undo")
+        assert undo_status.success?, "#{input}: #{undo_err}"
+        assert_equal content, File.binread(org), "#{input}: one undo restores the v1 fixture"
+        assert Tasks::Check.check(org).ok?, input
+      end
+    end
+  end
+
+  def test_cli_timed_defer_dry_run_and_output_report_inherited_effective_blockers
+    today = Date.today
+    own_date = today + 4
+    cases = [
+      {
+        parent: { "tags" => %w[defer] },
+        summary: /still on hold indefinitely via "Parent blocker" \[da000002\]/,
+      },
+      {
+        parent: { "scheduled" => (today + 10).iso8601 },
+        summary: /unavailable until #{Regexp.escape((today + 10).iso8601)} via "Parent blocker" \[da000002\]/,
+      },
+    ]
+
+    cases.each do |entry|
+      records = [
+        { "type" => "meta", "version" => 1 },
+        { "type" => "section", "id" => "da000001", "title" => "Work" },
+        { "type" => "task", "id" => "da000002", "parent" => "da000001", "state" => "TODO",
+          "title" => "Parent blocker", **entry.fetch(:parent) },
+        { "type" => "task", "id" => "da000003", "parent" => "da000002", "state" => "NEXT",
+          "title" => "Child target", "tags" => %w[defer] },
+      ]
+      content = dump_fixture(records)
+      Dir.mktmpdir do |dir|
+        org = File.join(dir, "tasks.jsonl")
+        archive = File.join(dir, "archive.jsonl")
+        File.write(org, content)
+
+        dry_out, dry_err, dry_status = run_cli_at(
+          org, archive, "defer", "Child target", "+4", "--dry-run"
+        )
+        assert dry_status.success?, dry_err
+        assert_match(/would defer "Child target" until #{Regexp.escape(own_date.iso8601)}/, dry_out)
+        assert_match entry.fetch(:summary), dry_out
+        assert_equal content, File.binread(org), "dry-run is read-only under inherited blockers"
+
+        out, err, status = run_cli_at(org, archive, "defer", "Child target", "+4")
+        assert status.success?, err
+        assert_match(/defer "Child target" until #{Regexp.escape(own_date.iso8601)}/, out)
+        assert_match entry.fetch(:summary), out
+        child = record_for(org, title: "Child target")
+        assert_equal own_date.iso8601, child["scheduled"], "the child still stores its own requested date"
+        refute_includes child.fetch("tags", []), "defer"
+        assert Tasks::Check.check(org).ok?
+
+        _undo_out, undo_err, undo_status = run_cli_at(org, archive, "undo")
+        assert undo_status.success?, undo_err
+        assert_equal content, File.binread(org)
+        assert Tasks::Check.check(org).ok?
+      end
+    end
+  end
+
   def test_cli_someday_is_canonical_indefinite_alias_and_rejects_a_date
     run_cli("someday", "Water the plants") do |org, out, err, status|
       assert status.success?, err
@@ -717,6 +807,43 @@ class TestCliMutations < Minitest::Test
       _undo_out, undo_err, undo_status = run_cli_at(org, archive, "undo")
       assert_equal 1, undo_status.exitstatus
       assert_match(/nothing to undo/, undo_err)
+    end
+  end
+
+  def test_cli_someday_and_scheduled_undate_are_independently_undoable
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      original = FIXTURE_ORG
+      File.write(org, original)
+
+      _out, err, status = run_cli_at(org, archive, "someday", "Water the plants")
+      assert status.success?, err
+      held = File.binread(org)
+      assert_includes record_for(org, title: "Water the plants").fetch("tags"), "defer"
+      assert Tasks::Check.check(org).ok?
+      _undo_out, undo_err, undo_status = run_cli_at(org, archive, "undo")
+      assert undo_status.success?, undo_err
+      assert_equal original, File.binread(org)
+      assert Tasks::Check.check(org).ok?
+
+      File.write(org, held)
+      _out, err, status = run_cli_at(org, archive, "schedule", "Water the plants", "+4")
+      assert status.success?, err
+      dated_hold = File.binread(org)
+      assert Tasks::Check.check(org).ok?
+      _out, err, status = run_cli_at(
+        org, archive, "undate", "Water the plants", "--kind", "scheduled"
+      )
+      assert status.success?, err
+      record = record_for(org, title: "Water the plants")
+      assert_nil record["scheduled"]
+      assert_includes record.fetch("tags"), "defer", "undate does not activate an indefinite hold"
+      assert Tasks::Check.check(org).ok?
+      _undo_out, undo_err, undo_status = run_cli_at(org, archive, "undo")
+      assert undo_status.success?, undo_err
+      assert_equal dated_hold, File.binread(org), "undate undo restores only the scheduled field"
+      assert Tasks::Check.check(org).ok?
     end
   end
 

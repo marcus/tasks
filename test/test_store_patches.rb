@@ -645,6 +645,34 @@ class TestStorePatches < Minitest::Test
     end
   end
 
+  def test_atomic_availability_changeset_rejects_stale_revision_without_overwriting_or_journaling
+    with_patch_store do |store, org|
+      initial = File.binread(org)
+      stale = store.edit_snapshot("11110002")
+      external = store.patch_task!(patch(stale, :scheduled, Date.new(2026, 7, 20)))
+      assert_equal :ok, external.status
+      assert Tasks::Check.check(org).ok?
+      externally_changed = File.binread(org)
+
+      request = Tasks::TaskChangeset.from(
+        stale,
+        changes: { deferred: false, scheduled: Date.new(2026, 7, 18) },
+        history_label: "defer until 2026-07-18: Parent"
+      )
+      result = store.apply_changeset!(request, today: Date.new(2026, 7, 14))
+
+      assert_equal :stale, result.status
+      assert_equal externally_changed, File.binread(org),
+                   "a stale timed-defer pair cannot clear the hold or overwrite the external date"
+      assert Tasks::Check.check(org).ok?
+      assert_equal [:ok, "edit scheduled: Parent"], store.undo!,
+                   "only the successful external mutation owns a journal entry"
+      assert_equal initial, File.binread(org)
+      assert Tasks::Check.check(org).ok?
+      assert_equal [:empty], store.undo!
+    end
+  end
+
   def test_byte_contiguous_patches_with_one_session_key_are_one_undo_step
     with_patch_store do |store, org|
       key = "edit-session-1"
