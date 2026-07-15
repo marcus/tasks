@@ -53,10 +53,10 @@ module Tasks
     }.freeze
 
     attr_reader :status, :snapshot, :read_snapshot, :errors, :field_errors,
-                :form_errors, :touched_ids, :summary
+                :form_errors, :touched_ids, :summary, :store_revision
 
     def initialize(status:, snapshot: nil, read_snapshot: nil, errors: [], field_errors: {},
-                   form_errors: nil, touched_ids: [], summary: nil)
+                   form_errors: nil, touched_ids: [], summary: nil, store_revision: nil)
       @status = self.class.normalize_status(status)
 
       @snapshot = snapshot
@@ -66,6 +66,7 @@ module Tasks
       @form_errors = immutable(form_errors.nil? ? Array(errors) : Array(form_errors))
       @touched_ids = immutable(Array(touched_ids))
       @summary = immutable(summary)
+      @store_revision = immutable(store_revision)
       freeze
     end
 

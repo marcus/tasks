@@ -14,7 +14,8 @@ class TestMutationResult < Minitest::Test
       errors: ["unchanged"],
       field_errors: { title: ["unchanged"] },
       touched_ids: ["1234abcd"],
-      summary: { nested: ["value"] }
+      summary: { nested: ["value"] },
+      store_revision: "s1.abc"
     )
 
     assert result.frozen?
@@ -22,6 +23,8 @@ class TestMutationResult < Minitest::Test
     assert result.field_errors.frozen?
     assert result.touched_ids.frozen?
     assert result.summary.frozen?
+    assert_equal "s1.abc", result.store_revision
+    assert result.store_revision.frozen?
   end
 
   def test_patch_result_legacy_name_normalizes_missing_to_not_found

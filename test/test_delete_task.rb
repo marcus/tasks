@@ -279,10 +279,12 @@ class TestDeleteTask < Minitest::Test
 
       ok = app.delete_task(IDS[:parent], cascade: true, context: context)
       assert_equal :ok, ok.status
+      assert_match(/\As1\.[0-9a-f]{64}\z/, ok.store_revision)
+      assert_equal app.read_status_result.store_revision, ok.store_revision
       assert_equal [IDS[:parent], IDS[:design], IDS[:build], IDS[:test_gc]], ok.touched_ids
 
-      assert_equal 2, built.length
-      assert_equal 2, built.uniq.length
+      assert_equal 3, built.length
+      assert_equal 3, built.uniq.length
       assert_raises(ArgumentError) { app.delete_task(IDS[:garden], context: :cli) }
     end
   end

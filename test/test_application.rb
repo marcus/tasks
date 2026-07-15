@@ -172,4 +172,64 @@ class TestApplication < Minitest::Test
       assert_empty model.view_tasks(:next).tasks
     end
   end
+
+  def test_checked_results_carry_data_and_global_revision_from_one_snapshot
+    archive_records = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "task", "id" => "dead0001", "state" => "DONE", "title" => "Archived report" },
+    ]
+
+    with_application(archive_records: archive_records) do |_org, archive, app|
+      filter = Tasks::TaskFilter.new(scope: :all)
+      first = app.list_tasks_result(filter, today: Date.new(2026, 7, 14))
+
+      assert first.ok?
+      assert_match(/\As1\.[0-9a-f]{64}\z/, first.store_revision)
+      assert_equal [FIX[:garden], FIX[:flight], FIX[:pr], FIX[:eval], FIX[:travel],
+                    FIX[:old], FIX[:plants], "dead0001"], first.data.tasks.map(&:id)
+
+      changed_archive = archive_records.map(&:dup)
+      changed_archive.last["title"] = "Archived update"
+      File.write(archive, dump_fixture(changed_archive))
+      second = app.list_tasks_result(filter, today: Date.new(2026, 7, 14))
+
+      refute_equal first.store_revision, second.store_revision
+      assert_equal "Archived update", second.data.tasks.last.title
+      assert first.frozen?
+      assert first.errors.frozen?
+      assert first.warnings.frozen?
+    end
+  end
+
+  def test_checked_results_return_typed_safe_invalid_and_not_found_outcomes
+    with_application do |org, _archive, app|
+      missing = app.get_task_result("ffffffff")
+      assert missing.not_found?
+      assert_nil missing.data
+      assert_match(/\As1\./, missing.store_revision)
+
+      File.write(org, "not json\n")
+      invalid = app.list_sections_result
+
+      assert invalid.store_invalid?
+      assert_nil invalid.data
+      assert_equal :live, invalid.errors.first[:source]
+      assert_equal 1, invalid.errors.first[:line]
+      refute_includes invalid.errors.first[:message], org
+      assert_match(/invalid JSON/, invalid.errors.first[:message])
+    end
+  end
+
+  def test_checked_status_treats_a_missing_archive_as_empty_but_requires_live_file
+    with_application do |org, _archive, app|
+      status = app.read_status_result
+      assert status.ok?
+      assert_equal({}, status.data)
+
+      File.delete(org)
+      missing = app.read_status_result
+      assert missing.store_invalid?
+      assert_equal "file not found", missing.errors.first[:message]
+    end
+  end
 end

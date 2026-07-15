@@ -278,9 +278,11 @@ class TestTaskChangeset < Minitest::Test
 
       first = app.update_task("11110002", { title: "Via values" }, expected_revision: revision)
       assert_equal :ok, first.status
+      assert_match(/\As1\.[0-9a-f]{64}\z/, first.store_revision)
       typed = Tasks::TaskChangeset.from(first.snapshot, changes: { body: "Via command" })
       second = app.update_task(typed)
       assert_equal :ok, second.status
+      assert_equal app.read_status_result.store_revision, second.store_revision
       assert_equal "Via command", app.get_task("11110002").body.first
       assert_equal second.snapshot.revision, app.get_task("11110002").revision
     end

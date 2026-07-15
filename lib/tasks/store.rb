@@ -202,6 +202,46 @@ module Tasks
       end
     end
 
+    # Typed result of the checked, API-grade read path. Unlike ReadSnapshot,
+    # this can represent an invalid or unavailable store without attempting to
+    # build a tree from untrusted records. Errors carry only source, line, and a
+    # safe validation message — never configured filesystem paths.
+    class CheckedRead
+      STATUSES = %i[ok store_invalid unavailable].freeze
+
+      attr_reader :status, :snapshot, :store_revision, :errors, :warnings
+
+      def initialize(status:, snapshot: nil, store_revision: nil, errors: [], warnings: [])
+        @status = status.to_sym
+        raise ArgumentError, "unknown checked-read status #{@status.inspect}" unless STATUSES.include?(@status)
+
+        @snapshot = snapshot
+        @store_revision = store_revision&.dup&.freeze
+        @errors = immutable(errors)
+        @warnings = immutable(warnings)
+        freeze
+      end
+
+      def ok? = status == :ok
+      def store_invalid? = status == :store_invalid
+      def unavailable? = status == :unavailable
+
+      private
+
+      def immutable(value)
+        case value
+        when Hash
+          value.each_with_object({}) { |(key, child), copy| copy[key] = immutable(child) }.freeze
+        when Array
+          value.map { |child| immutable(child) }.freeze
+        when String
+          value.dup.freeze
+        else
+          value.freeze
+        end
+      end
+    end
+
     ArchiveBlock = Struct.new(:root_id, :root_title, :open_ids, :open_titles, keyword_init: true)
     ArchivePreview = Struct.new(:roots, :descendants, :blocks, :candidate_ids, :fingerprint, keyword_init: true) do
       def total = roots + descendants
@@ -267,23 +307,45 @@ module Tasks
     # should retain this object while it needs a coherent multi-field read.
     def read_snapshot(include_archive: false)
       with_lock do
-        live_records, live_stat = fresh_records_with_stat(@org)
-        archive_records, archive_stat = if include_archive
-                                          fresh_records_with_stat(@archive)
-                                        else
-                                          [[], nil]
-                                        end
-        ReadSnapshot.new(
-          live_records: live_records, live_stat: live_stat,
-          archive_records: archive_records, archive_stat: archive_stat,
-          archive_loaded: include_archive, item_builder: method(:build_item),
-          task_revisions: {
-            live: task_revisions(live_records),
-            archive: include_archive ? task_revisions(archive_records) : {},
-          },
-          link_shorthands: @link_shorthands, link_systems: @link_systems
+        live = capture_read_source(@org)
+        archive = include_archive ? capture_read_source(@archive, optional: true) : empty_read_source
+        build_read_snapshot(live, archive, include_archive: include_archive)
+      end
+    end
+
+    # Capture and validate both files under one Store lock, returning canonical
+    # resources and a content-derived global revision from those exact bytes.
+    # The archive is optional, matching the existing first-run behavior; the
+    # live file is required. Invalid records never reach Tree/TaskQueries.
+    def checked_read_snapshot
+      with_lock do
+        live = capture_read_source(@org)
+        archive = capture_read_source(@archive, optional: true)
+        store_revision = store_revision_for_contents(live[:raw], archive[:raw])
+        errors = annotated_check_entries(live[:check].errors, :live) +
+                 annotated_check_entries(archive[:check].errors, :archive)
+        warnings = annotated_check_entries(live[:check].warnings, :live) +
+                   annotated_check_entries(archive[:check].warnings, :archive)
+
+        unless errors.empty?
+          return CheckedRead.new(
+            status: :store_invalid, store_revision: store_revision,
+            errors: errors, warnings: warnings
+          )
+        end
+
+        CheckedRead.new(
+          status: :ok,
+          snapshot: build_read_snapshot(live, archive, include_archive: true),
+          store_revision: store_revision,
+          warnings: warnings
         )
       end
+    rescue SystemCallError
+      CheckedRead.new(
+        status: :unavailable,
+        errors: [{ source: nil, line: 0, message: "task store unavailable" }]
+      )
     end
 
     def reload!(include_archive: false)
@@ -405,6 +467,7 @@ module Tasks
             status: :ok,
             snapshot: ri && build_edit_snapshot(@records, ri),
             read_snapshot: @read_snapshot,
+            store_revision: store_revision_for(after),
             touched_ids: [planned[:id]],
             summary: { parent_id: planned[:parent_id], inserted_id: planned[:id] }
           )
@@ -502,6 +565,7 @@ module Tasks
           reload!
           MutationResult.new(
             status: :ok,
+            store_revision: store_revision_for(after),
             touched_ids: removed_task_ids,
             summary: {
               removed: removed_task_ids.length,
@@ -655,7 +719,9 @@ module Tasks
         if proposed_records == original_records
           reload!
           return MutationResult.new(status: :no_change, snapshot: current,
-                                    read_snapshot: @read_snapshot, summary: applied[:summary])
+                                    read_snapshot: @read_snapshot,
+                                    store_revision: store_revision_for(before),
+                                    summary: applied[:summary])
         end
 
         label = changeset.history_label || changeset_history_label(changeset, current)
@@ -677,6 +743,7 @@ module Tasks
             status: :ok,
             snapshot: fresh_ri && build_edit_snapshot(@records, fresh_ri),
             read_snapshot: @read_snapshot,
+            store_revision: store_revision_for(after),
             touched_ids: applied[:touched_ids],
             summary: applied[:summary]
           )
@@ -985,19 +1052,87 @@ module Tasks
       stat_key(@archive) != @archive_stat
     end
 
-    # A snapshot must capture the bytes and their staleness key from the same
-    # file descriptor. If Atomic.write installs a newer inode after this open,
-    # the later stat comparison notices it rather than claiming old bytes are
-    # current. Mutations intentionally retain their existing fresh_records
-    # path; this helper belongs only to immutable read snapshots.
-    def fresh_records_with_stat(path)
+    # A snapshot captures bytes, parsed records, validation, and its staleness
+    # key from one file descriptor. If Atomic.write installs a newer inode after
+    # this open, the later stat comparison notices it rather than claiming old
+    # bytes are current. Missing archive files are an empty optional history;
+    # the live file is required by checked reads.
+    def capture_read_source(path, optional: false)
       File.open(path, "r", encoding: "UTF-8") do |file|
         stat = file.stat
-        records = Format.parse(file.read).records
-        [records, [stat.mtime, stat.ino, stat.size]]
+        raw = file.read
+        if raw.valid_encoding?
+          parsed = Format.parse(raw)
+          check = Check.check_parsed(parsed)
+          records = parsed.records
+        else
+          records = []
+          check = Check::Result.new([[0, "file is not valid UTF-8"]], [])
+        end
+        {
+          raw: raw.freeze,
+          records: records,
+          stat: [stat.mtime, stat.ino, stat.size].freeze,
+          check: check,
+        }.freeze
       end
     rescue Errno::ENOENT
-      [[], nil]
+      return empty_read_source if optional
+
+      {
+        raw: nil,
+        records: [],
+        stat: nil,
+        check: Check::Result.new([[0, "file not found"]], []),
+      }.freeze
+    end
+
+    def empty_read_source
+      {
+        raw: nil,
+        records: [],
+        stat: nil,
+        check: Check::Result.new([], []),
+      }.freeze
+    end
+
+    def build_read_snapshot(live, archive, include_archive:)
+      live_records = live[:records]
+      archive_records = include_archive ? archive[:records] : []
+      ReadSnapshot.new(
+        live_records: live_records, live_stat: live[:stat],
+        archive_records: archive_records,
+        archive_stat: include_archive ? archive[:stat] : nil,
+        archive_loaded: include_archive, item_builder: method(:build_item),
+        task_revisions: {
+          live: task_revisions(live_records),
+          archive: include_archive ? task_revisions(archive_records) : {},
+        },
+        link_shorthands: @link_shorthands, link_systems: @link_systems
+      )
+    end
+
+    def annotated_check_entries(entries, source)
+      entries.map do |line, message|
+        { source: source, line: line, message: message }
+      end
+    end
+
+    def store_revision_for_contents(live, archive)
+      digest = Digest::SHA256.new
+      [live, archive].each do |content|
+        if content.nil?
+          digest << [-1].pack("q>")
+        else
+          bytes = content.b
+          digest << [bytes.bytesize].pack("q>") << bytes
+        end
+      end
+      "s1.#{digest.hexdigest}"
+    end
+
+    def store_revision_for(snapshot)
+      store_revision_for_contents(snapshot[:org], snapshot[:archive])
     end
 
     # Read + parse a file into records via a small cache, so read surfaces that

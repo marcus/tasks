@@ -174,6 +174,9 @@ class TestCreateTask < Minitest::Test
 
       assert_equal :ok, first.status
       assert_equal :ok, second.status
+      assert_match(/\As1\.[0-9a-f]{64}\z/, first.store_revision)
+      assert_match(/\As1\.[0-9a-f]{64}\z/, second.store_revision)
+      assert_equal app.read_status_result.store_revision, second.store_revision
       assert_equal FIX[:home], record_for(org, title: "Via attributes")["parent"]
       assert_equal FIX[:flight], record_for(org, title: "Via command")["parent"]
       assert_raises(ArgumentError) { app.create_task(command, context: :cli) }

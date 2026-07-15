@@ -50,9 +50,23 @@ module Tasks
       return Result.new([[0, "file not found: #{path}"]], []) unless File.exist?(path)
 
       raw = File.read(path, encoding: "UTF-8")
+      check_text(raw)
+    end
+
+    # Validate bytes already captured by a caller. Store's API-grade read path
+    # uses this while holding its sidecar lock so validation and the canonical
+    # resources are derived from the same read, rather than checking a path and
+    # reopening it afterward.
+    def check_text(raw)
       return Result.new([[0, "file is not valid UTF-8"]], []) unless raw.valid_encoding?
 
-      parsed = Format.parse(raw)
+      check_parsed(Format.parse(raw))
+    end
+
+    # Validate one Format parse result without reparsing or rereading. This is
+    # public for Store's coherent read capture; callers should normally prefer
+    # #check or #check_text.
+    def check_parsed(parsed)
       errors = parsed.errors.dup # unparseable / blank lines fold in as errors
       warnings = []
       records = parsed.records

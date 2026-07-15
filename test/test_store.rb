@@ -229,7 +229,7 @@ class TestStore < Minitest::Test
 
   def test_read_snapshot_cannot_mix_pre_sweep_live_with_post_sweep_archive
     with_store do |store, org, _archive|
-      original_read = store.method(:fresh_records_with_stat)
+      original_read = store.method(:capture_read_source)
       live_read = Queue.new
       resume_snapshot = Queue.new
       snapshot_result = Queue.new
@@ -242,8 +242,8 @@ class TestStore < Minitest::Test
       lock_path = store.send(:lock_path)
       reader_thread = nil
 
-      read_with_barrier = lambda do |path|
-        result = original_read.call(path)
+      read_with_barrier = lambda do |path, optional: false|
+        result = original_read.call(path, optional: optional)
         if path == org && Thread.current.equal?(reader_thread)
           live_read << true
           resume_snapshot.pop
@@ -251,7 +251,7 @@ class TestStore < Minitest::Test
         result
       end
 
-      store.stub(:fresh_records_with_stat, read_with_barrier) do
+      store.stub(:capture_read_source, read_with_barrier) do
         reader = Thread.new do
           reader_ready << Thread.current
           start_reader.pop

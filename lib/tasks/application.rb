@@ -3,6 +3,7 @@
 require "securerandom"
 
 require_relative "store"
+require_relative "application_read_result"
 require_relative "create_task"
 require_relative "delete_task"
 require_relative "operation_context"
@@ -150,6 +151,33 @@ module Tasks
       queries.sections
     end
 
+    # API-grade reads return canonical data plus the global live+archive
+    # revision produced by the exact checked snapshot behind that data. The
+    # existing direct query methods stay compatible for CLI/TUI callers.
+    def list_tasks_result(filter, today: Date.today)
+      unless filter.is_a?(TaskFilter)
+        raise ArgumentError, "filter must be a Tasks::TaskFilter"
+      end
+
+      checked_query(today: today) { |query| query.list(filter) }
+    end
+
+    def get_task_result(id, include_archive: false, today: Date.today)
+      checked_query(today: today) do |query|
+        query.find(id, include_archive: include_archive)
+      end
+    end
+
+    def list_sections_result(today: Date.today)
+      checked_query(today: today) { |query| query.sections }
+    end
+
+    # Safe foundation for /meta and readiness. Transport/config capabilities
+    # can be added by the adapter; store health and its change token stay here.
+    def read_status_result(today: Date.today)
+      checked_query(today: today) { {}.freeze }
+    end
+
     # A single live read for presentation adapters. It deliberately receives a
     # new Store just like every other Application query, so the TUI cannot
     # retain Store's mutable read cache between paints or external writes.
@@ -241,6 +269,24 @@ module Tasks
 
     def queries(include_archive: false, today: Date.today)
       TaskQueries.new(store_factory.call.read_snapshot(include_archive: include_archive), today: today)
+    end
+
+    def checked_query(today:)
+      checked = store_factory.call.checked_read_snapshot
+      unless checked.ok?
+        return ApplicationReadResult.new(
+          status: checked.status, store_revision: checked.store_revision,
+          errors: checked.errors, warnings: checked.warnings
+        )
+      end
+
+      data = yield TaskQueries.new(checked.snapshot, today: today)
+      ApplicationReadResult.new(
+        status: data.nil? ? :not_found : :ok,
+        data: data,
+        store_revision: checked.store_revision,
+        warnings: checked.warnings
+      )
     end
 
     def validate_operation_context(context)
