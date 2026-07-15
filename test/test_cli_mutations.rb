@@ -16,7 +16,7 @@ class TestCliMutations < Minitest::Test
 
     refute_match(/store\.patch_task!/, source)
     assert_match(/application\.edit_snapshot\(task_id\)/, source)
-    assert_match(/application\.patch_task\(patch\)/, source)
+    assert_match(/application\.patch_task\(patch, today: today\)/, source)
   end
 
   # -- set_date! (backs `due`) ------------------------------------------------
@@ -1339,6 +1339,11 @@ class TestCliMutations < Minitest::Test
     Open3.capture3({ "TASKS_FILE" => org, "TASKS_ARCHIVE" => archive }, "ruby", BIN, *args)
   end
 
+  def sequenced_today_env(*dates)
+    support = File.expand_path("support/sequenced_today.rb", __dir__)
+    { "RUBYOPT" => "-r#{support}", "TASKS_TEST_TODAY_SEQUENCE" => dates.join(",") }
+  end
+
   def test_cli_due_sets_deadline
     run_cli("due", "Book flight", "2026-07-15") do |org, out, _err, st|
       assert st.success?
@@ -1365,6 +1370,17 @@ class TestCliMutations < Minitest::Test
       assert Tasks::Check.check(org).ok?, "file is fully valid after repair"
       assert_equal "2026-08-01", record_for(org, title: "Fix the widget")["scheduled"]
       assert_match(/Fix the widget/, out)
+    end
+  end
+
+  def test_cli_schedule_uses_one_today_for_parse_mutation_and_json
+    env = sequenced_today_env("2026-07-14", "2026-07-15")
+    run_cli("schedule", "Water the plants", "tomorrow", "--json", env: env) do |org, out, err, st|
+      assert st.success?, err
+      task = JSON.parse(out).fetch("touched").fetch(0)
+      assert_equal "2026-07-15", record_for(org, title: "Water the plants")["scheduled"]
+      assert_equal false, task.fetch("available")
+      assert_equal "scheduled", task.fetch("availability_reason")
     end
   end
 
@@ -1608,6 +1624,53 @@ class TestCliMutations < Minitest::Test
       assert st.success?
       assert_match(/Book flight/, out)
       assert_match(/deadline:\s+2026-07-02/, out)
+      assert_match(/availability:\s+available now/, out)
+    end
+  end
+
+  def test_cli_show_human_availability_covers_own_inherited_hold_timed_and_closed_states
+    content = dump_fixture([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "db000001", "title" => "Work" },
+      { "type" => "task", "id" => "db000002", "parent" => "db000001", "state" => "TODO",
+        "title" => "Timed parent", "scheduled" => "2099-07-20" },
+      { "type" => "task", "id" => "db000003", "parent" => "db000002", "state" => "NEXT",
+        "title" => "Timed child" },
+      { "type" => "task", "id" => "db000004", "parent" => "db000001", "state" => "TODO",
+        "title" => "Held parent", "tags" => ["defer"] },
+      { "type" => "task", "id" => "db000005", "parent" => "db000004", "state" => "NEXT",
+        "title" => "Held child" },
+      { "type" => "task", "id" => "db000006", "parent" => "db000001", "state" => "NEXT",
+        "title" => "Own hold", "tags" => ["defer"] },
+      { "type" => "task", "id" => "db000007", "parent" => "db000001", "state" => "DONE",
+        "title" => "Closed task", "closed" => "2026-07-01" },
+    ])
+
+    run_cli("show", "Timed parent", content: content) do |_org, out, err, st|
+      assert st.success?, err
+      assert_match(/available from:\s+2099-07-20/, out)
+      refute_match(/scheduled:/, out)
+      assert_match(/availability:\s+unavailable until 2099-07-20/, out)
+    end
+    run_cli("show", "Timed child", content: content) do |_org, out, err, st|
+      assert st.success?, err
+      assert_match(/availability:.*unavailable until 2099-07-20.*Timed parent.*db000002/, out)
+    end
+    run_cli("show", "Held parent", content: content) do |_org, out, err, st|
+      assert st.success?, err
+      assert_match(/availability:\s+on hold indefinitely/, out)
+    end
+    run_cli("show", "Held child", content: content) do |_org, out, err, st|
+      assert st.success?, err
+      assert_match(/availability:.*still on hold indefinitely.*Held parent.*db000004/, out)
+    end
+    run_cli("show", "Own hold", content: content) do |_org, out, err, st|
+      assert st.success?, err
+      assert_match(/availability:\s+on hold indefinitely/, out)
+    end
+    run_cli("show", "Closed task", "--include-done", content: content) do |_org, out, err, st|
+      assert st.success?, err
+      assert_match(/availability:\s+closed/, out)
     end
   end
 
@@ -1855,6 +1918,39 @@ class TestCliMutations < Minitest::Test
       assert_equal 1, touched.size
       assert_equal "shiny new task", touched[0]["title"]
       assert_equal "INBOX", touched[0]["state"]
+    end
+  end
+
+  def test_cli_capture_uses_one_today_for_parse_create_log_and_json
+    env = sequenced_today_env("2026-07-14", "2026-07-15")
+    run_cli("capture", "Midnight task", "--scheduled", "tomorrow", "--project", "Work", "--json",
+            env: env) do |org, out, err, st|
+      assert st.success?, err
+      record = record_for(org, title: "Midnight task")
+      task = JSON.parse(out).fetch("touched").fetch(0)
+      assert_equal "2026-07-15", record["scheduled"]
+      assert_match(/Captured \[2026-07-14\]/, record.fetch("body"))
+      assert_equal false, task.fetch("available")
+      assert_equal "scheduled", task.fetch("availability_reason")
+    end
+  end
+
+  def test_cli_recurring_completion_uses_one_today_for_advance_log_and_json
+    content = dump_fixture([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "da000001", "title" => "Work" },
+      { "type" => "task", "id" => "da000002", "parent" => "da000001", "state" => "NEXT",
+        "title" => "Completion clock", "scheduled" => "2026-07-10", "recur" => ".+1w" },
+    ])
+    env = sequenced_today_env("2030-01-01", "2026-07-14")
+    run_cli("done", "Completion clock", "--json", content: content, env: env) do |org, out, err, st|
+      assert st.success?, err
+      record = record_for(org, title: "Completion clock")
+      task = JSON.parse(out).fetch("touched").fetch(0)
+      assert_equal "2030-01-08", record["scheduled"]
+      assert_match(/- Did \[2030-01-01\]/, record.fetch("body"))
+      assert_equal false, task.fetch("available")
+      assert_equal "scheduled", task.fetch("availability_reason")
     end
   end
 

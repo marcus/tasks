@@ -483,7 +483,7 @@ class TestAppModals < Minitest::Test
       application = app.instance_variable_get(:@application)
       conflict_application = Object.new
       conflict_application.define_singleton_method(:edit_snapshot) { |id| application.edit_snapshot(id) }
-      conflict_application.define_singleton_method(:patch_task) do |_patch|
+      conflict_application.define_singleton_method(:patch_task) do |_patch, **_options|
         Tasks::MutationResult.new(status: :conflict)
       end
       conflict_application.define_singleton_method(:read_tasks) do |**options|

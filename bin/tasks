@@ -185,6 +185,7 @@ CAPTURE_USAGE = %(usage: tasks capture "text" [--due d] [--scheduled d] [--prior
 
 def cmd_capture(args)
   require_relative "../lib/tasks/dates"
+  today = Date.today
   tags = []
   contexts = []
   due = scheduled = priority = state = project = recur = under = nil
@@ -226,8 +227,8 @@ def cmd_capture(args)
     scheduled ||= "today" unless due
   end
 
-  due_date = due && (Tasks::Dates.parse_when(due) || abort("unrecognized date: #{due}"))
-  scheduled_date = scheduled && (Tasks::Dates.parse_when(scheduled) || abort("unrecognized date: #{scheduled}"))
+  due_date = due && (Tasks::Dates.parse_when(due, today: today) || abort("unrecognized date: #{due}"))
+  scheduled_date = scheduled && (Tasks::Dates.parse_when(scheduled, today: today) || abort("unrecognized date: #{scheduled}"))
 
   pri = priority&.upcase
   pri = nil if pri && %w[NONE CLEAR -].include?(pri)
@@ -266,7 +267,7 @@ def cmd_capture(args)
     priority: pri, tags: all_tags, state: st, project: project,
     parent_id: parent_id, recurrence: cookie
   )
-  result = application.create_task(command)
+  result = application.create_task(command, today: today)
   if result.too_deep?
     mutation_failed "would exceed max depth #{store.max_depth} (max_depth config / TASKS_MAX_DEPTH)"
   end
@@ -280,7 +281,7 @@ def cmd_capture(args)
                                         touched_ids: result.touched_ids, summary: result.summary)
   end
   mutation_result_failed(result, "could not capture (no #{(project || "Inbox").inspect} section found?)")
-  report_touched(result.touched_ids, json: json, read_snapshot: result.read_snapshot)
+  report_touched(result.touched_ids, json: json, today: today, read_snapshot: result.read_snapshot)
 end
 
 # Core of the state-transition verbs. `state` passes the target as a
@@ -290,6 +291,7 @@ end
 # resolution to closed tasks — always for `state` (so you can reopen a DONE
 # item), on demand elsewhere via --include-done.
 def change_state(args, usage:, resolve_closed:, to: nil, dry_verb: nil, archive_hint: false, recur_aware: false)
+  today = Date.today
   flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
   ref = rest.shift
   target = to || rest.join(" ").strip.upcase
@@ -303,7 +305,7 @@ def change_state(args, usage:, resolve_closed:, to: nil, dry_verb: nil, archive_
   recurring_done = recur_aware && target == "DONE" && item.recurring?
   if flags["--dry-run"]
     if recurring_done
-      puts "would recur → #{recur_next(item).iso8601}: #{item_headline(item)}"
+      puts "would recur → #{recur_next(item, today: today).iso8601}: #{item_headline(item)}"
     else
       puts "would #{dry_verb || "set state #{target} on"}: #{item_headline(item)}"
       # Completing an open parent cascades to its open descendants; preview how
@@ -317,7 +319,7 @@ def change_state(args, usage:, resolve_closed:, to: nil, dry_verb: nil, archive_
   end
   task_id = stable_id_for(item)
   result = patch_task_by_id(task_id, field: :state, value: target,
-                            label: "state → #{target}: #{item.title}")
+                            label: "state → #{target}: #{item.title}", today: today)
   mutation_result_failed(result, "failed to set state")
   if recurring_done && !flags["--json"]
     fresh = result.read_snapshot&.items&.find { |i| i.id == task_id }
@@ -325,16 +327,16 @@ def change_state(args, usage:, resolve_closed:, to: nil, dry_verb: nil, archive_
     puts "↻ #{item.title}#{d ? " → next #{d.iso8601} (#{d.strftime("%a")})" : ""}"
   end
   report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"],
-                 read_snapshot: result.read_snapshot)
+                 today: today, read_snapshot: result.read_snapshot)
   puts "Run `tasks archive` to move it out of tasks.jsonl." if archive_hint && !recurring_done && !flags["--json"]
 end
 
 # The date a recurring item's next occurrence would land on, from its precedence
 # stamp (DEADLINE over SCHEDULED, matching the Store). For `done` preview output.
-def recur_next(item)
+def recur_next(item, today: Date.today)
   require_relative "../lib/tasks/recur"
   base = item.deadline || item.scheduled
-  Tasks::Recur.next_date(item.recur, from: base)
+  Tasks::Recur.next_date(item.recur, from: base, today: today)
 end
 
 # `done` and `cancel` are sugar for the DONE/CANCELLED transitions; they resolve
@@ -400,7 +402,8 @@ PATCH_SNAPSHOT_UNSET = Object.new.freeze
 # after the CLI resolved it; that is the legacy stale-edit case (exit 1), while
 # refs that are absent at resolution still exit 2 in resolve_ref.
 def patch_task_by_id(task_id, field:, value:, label:, expected: PATCH_EXPECTED_UNSET,
-                     coalesce_key: nil, snapshot: PATCH_SNAPSHOT_UNSET, force: false)
+                     coalesce_key: nil, snapshot: PATCH_SNAPSHOT_UNSET, force: false,
+                     today: Date.today)
   snapshot = application.edit_snapshot(task_id) if snapshot.equal?(PATCH_SNAPSHOT_UNSET)
   baseline = if expected.equal?(PATCH_EXPECTED_UNSET)
                snapshot && patch_expected(snapshot, field)
@@ -410,7 +413,7 @@ def patch_task_by_id(task_id, field:, value:, label:, expected: PATCH_EXPECTED_U
   patch = Tasks::TaskPatch.new(id: task_id, field: field, value: value,
                                expected: baseline, history_label: label,
                                coalesce_key: coalesce_key, force: force)
-  result = application.patch_task(patch)
+  result = application.patch_task(patch, today: today)
   return result unless result.not_found?
 
   Tasks::MutationResult.new(status: :stale, snapshot: result.snapshot,
@@ -618,12 +621,13 @@ end
 # Shared implementation for `due` (DEADLINE) and `schedule` (SCHEDULED).
 def cmd_set_date(args, kind:, usage:)
   require_relative "../lib/tasks/dates"
+  today = Date.today
   key = kind == :scheduled ? "SCHEDULED" : "DEADLINE"
   flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
   ref = rest.shift
   date_str = rest.join(" ")
   abort %(usage: #{usage}) if ref.nil? || date_str.strip.empty?
-  date = Tasks::Dates.parse_when(date_str)
+  date = Tasks::Dates.parse_when(date_str, today: today)
   abort "unrecognized date: #{date_str}" unless date
 
   item = resolve_ref(ref, include_done: flags["--include-done"])
@@ -633,10 +637,10 @@ def cmd_set_date(args, kind:, usage:)
     return
   end
   result = patch_task_by_id(task_id, field: kind, value: date,
-                            label: "#{key.downcase} → #{date.iso8601}: #{item.title}")
+                            label: "#{key.downcase} → #{date.iso8601}: #{item.title}", today: today)
   mutation_result_failed(result, "failed to set #{key.downcase}")
   report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"],
-                 read_snapshot: result.read_snapshot)
+                 today: today, read_snapshot: result.read_snapshot)
 end
 
 def cmd_due(args)      = cmd_set_date(args, kind: :deadline,  usage: "tasks due <ref> <date>")
@@ -665,6 +669,7 @@ def cmd_priority(args)
 end
 
 def cmd_undate(args)
+  today = Date.today
   args = args.dup
   kind = nil
   if (idx = args.index("--kind"))
@@ -693,13 +698,14 @@ def cmd_undate(args)
     mutation_failed "nothing to remove (no matching date stamp?)"
   end
   result = patch_task_by_id(task_id, field: :date_clear, value: kind, label: label,
-                            snapshot: snapshot)
+                            snapshot: snapshot, today: today)
   mutation_result_failed(result, "nothing to remove (no matching date stamp?)")
   report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"],
-                 read_snapshot: result.read_snapshot)
+                 today: today, read_snapshot: result.read_snapshot)
 end
 
 def cmd_show(args)
+  today = Date.today
   flags, rest = take_flags(args, "--json", "--include-done")
   ref = rest.shift
   abort %(usage: tasks show <ref>) if ref.nil? || ref.strip.empty?
@@ -707,7 +713,8 @@ def cmd_show(args)
   # Show is a pure read: build the view over one snapshot and fall back to the
   # held item if a concurrent write removed it, instead of aborting with
   # mutation-flavored error text (and a misleading rollback hint).
-  task = Tasks::TaskQueries.new(store.read_snapshot).task(item)
+  query = Tasks::TaskQueries.new(store.read_snapshot, today: today)
+  task = query.task(item)
 
   closed = task.closed
   notes = task.body.map(&:strip).reject(&:empty?)
@@ -724,8 +731,9 @@ def cmd_show(args)
     puts task.headline
     puts "  id:        #{task.id}" if task.id
     puts "  project:   #{project}" if project
-    puts "  scheduled: #{task.scheduled.iso8601}" if task.scheduled
+    puts "  available from: #{task.scheduled.iso8601}" if task.scheduled
     puts "  deadline:  #{task.deadline.iso8601}" if task.deadline
+    puts "  availability: #{availability_summary(query, query.availability(item))}"
     puts "  recur:     #{task.recur} #{dim("(#{recur_summary(task.recur)})")}" if task.recur
     puts "  closed:    #{closed.iso8601}" if closed
     notes.each { |n| puts "  #{n}" }
@@ -1090,12 +1098,13 @@ end
 def cmd_recur(args)
   require_relative "../lib/tasks/dates"
   require_relative "../lib/tasks/recur"
+  today = Date.today
   args = args.dup
 
   from = extract_value(args, "--from")
   abort "--from must be schedule or completion" unless from.nil? || %w[schedule completion].include?(from)
   on = extract_value(args, "--on")
-  on_date = on && (Tasks::Dates.parse_when(on) || abort("unrecognized date: #{on}"))
+  on_date = on && (Tasks::Dates.parse_when(on, today: today) || abort("unrecognized date: #{on}"))
 
   flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
   ref = rest.shift
@@ -1133,19 +1142,19 @@ def cmd_recur(args)
   end
 
   if noop_off
-    report_touched([task_id], json: flags["--json"])
+    report_touched([task_id], json: flags["--json"], today: today)
     return
   end
   if on_date && !has_date
     result = patch_task_by_id(task_id, field: :deadline, value: on_date,
-                              label: "deadline → #{on_date.iso8601}: #{item.title}")
+                              label: "deadline → #{on_date.iso8601}: #{item.title}", today: today)
     mutation_result_failed(result, "failed to seed date")
   end
   label = cookie == :off ? "recur off: #{item.title}" : "recur #{cookie}: #{item.title}"
-  result = patch_task_by_id(task_id, field: :recurrence, value: cookie, label: label)
+  result = patch_task_by_id(task_id, field: :recurrence, value: cookie, label: label, today: today)
   mutation_result_failed(result, "failed to set recurrence (no date stamp?)")
   report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"],
-                 read_snapshot: result.read_snapshot)
+                 today: today, read_snapshot: result.read_snapshot)
 end
 
 # Pull `--flag value` out of args in place, returning the value (or nil). Aborts

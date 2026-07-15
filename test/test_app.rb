@@ -1657,12 +1657,30 @@ class TestApp < Minitest::Test
     end
   end
 
+  def test_complete_selected_uses_the_injected_operation_date_for_completion_recurrence
+    content = dump_fixture([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "dc000001", "title" => "Work" },
+      { "type" => "task", "id" => "dc000002", "parent" => "dc000001", "state" => "NEXT",
+        "title" => "Injected cadence", "scheduled" => "2026-07-10", "recur" => ".+1w" },
+    ])
+    app_on(view: :agenda, select: "Injected cadence", content: content,
+           date_provider: -> { Date.new(2030, 1, 1) }) do |app|
+      app.send(:complete_selected)
+      record = app.instance_variable_get(:@store).read_snapshot.live_records
+                  .find { |candidate| candidate["id"] == "dc000002" }
+      assert_equal "2030-01-08", record["scheduled"]
+      assert_match(/- Did \[2030-01-01\]/, record.fetch("body"))
+      assert_match(/2030-01-08/, app.instance_variable_get(:@flash))
+    end
+  end
+
   def test_quick_tui_mutations_use_the_stable_patch_adapter
     source = File.read(File.expand_path("../lib/tui/app.rb", __dir__), encoding: "UTF-8")
     legacy = /@store\.(?:complete!|set_priority!|reschedule!|set_date!|set_state!|undate!|retitle!|set_tags!|set_deferred!|set_recur!|add_note!|move!|move_under!|move_top!)/
 
     refute_match legacy, source
-    assert_match(/def patch_task\(item, field:, value:, label:\)/, source)
+    assert_match(/def patch_task\(item, field:, value:, label:, today: current_date\)/, source)
     refute_match(/@store\.(?:edit_snapshot|patch_task!)/, source)
     assert_match(/@application\.edit_snapshot\(item\.id\)/, source)
     assert_match(/@application\.patch_task/, source)

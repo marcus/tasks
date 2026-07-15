@@ -834,12 +834,12 @@ module Tui
     # Keep this thin adapter in the interface layer: TaskEditorSession owns the
     # richer, save-on-blur workflow, while these keyboard actions retain their
     # established confirmations, messages, and undo labels.
-    def patch_task(item, field:, value:, label:)
+    def patch_task(item, field:, value:, label:, today: current_date)
       snapshot = @application.edit_snapshot(item.id)
       return Tasks::MutationResult.new(status: :not_found) unless snapshot
 
       result = @application.patch_task(Tasks::TaskPatch.from(snapshot, field: field, value: value,
-                                                              history_label: label))
+                                                              history_label: label), today: today)
       invalidate_read_model if result.ok?
       result
     end
@@ -1756,7 +1756,9 @@ module Tui
       return flash("nothing selected") unless item
       return flash("already #{item.state}") unless item.open?
       recurring = item.recurring?
-      result = patch_task(item, field: :state, value: "DONE", label: "complete: #{item.title}")
+      operation_today = current_date
+      result = patch_task(item, field: :state, value: "DONE", label: "complete: #{item.title}",
+                                today: operation_today)
       if result.ok?
         if recurring
           # A recurring task rolled forward and is still in the view — follow it.
@@ -1794,14 +1796,16 @@ module Tui
         hint: "fri · +3 · 07-15 · esc cancels", min_width: 36,
         return_mode: :list, target_id: item.id, field: field
       ) do |raw|
-        date = Dates.parse_when(raw)
+        operation_today = current_date
+        date = Dates.parse_when(raw, today: operation_today)
         next "can't parse “#{raw}”" unless date
         kind = if item.deadline     then :deadline
                elsif item.scheduled then :scheduled
                else                      :deadline
                end
         result = patch_task(item, field: kind, value: date,
-                            label: "reschedule → #{date.iso8601}: #{item.title}")
+                            label: "reschedule → #{date.iso8601}: #{item.title}",
+                            today: operation_today)
         unless result.ok?
           reload_store
           next "file changed underneath — reopen"

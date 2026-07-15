@@ -8,9 +8,10 @@ module Tasks
   # `body` is the canonical initial note input. It accepts either one String
   # (including embedded newlines) or an ordered Array of note strings. `notes`
   # is a descriptive alias for Array callers. Store rejects requests that try
-  # to supply both, so the persisted order is never implicit.
+  # to supply both, so the persisted order is never implicit. `deferred` owns
+  # the task's initial indefinite On Hold marker and must be boolean.
   class CreateTask
-    attr_reader :title, :priority, :tags, :scheduled, :deadline, :state,
+    attr_reader :title, :priority, :tags, :deferred, :scheduled, :deadline, :state,
                 :project, :parent_id, :recurrence, :body, :notes
 
     alias text title
@@ -18,13 +19,14 @@ module Tasks
     alias under parent_id
     alias recur recurrence
 
-    def initialize(title: nil, text: nil, priority: nil, tags: [],
+    def initialize(title: nil, text: nil, priority: nil, tags: [], deferred: false,
                    scheduled: nil, deadline: nil, due: nil, state: nil,
                    project: nil, parent_id: nil, under: nil,
                    recurrence: nil, recur: nil, body: nil, notes: nil)
       @title = immutable(title.nil? ? text : title)
       @priority = immutable(priority)
       @tags = immutable(tags)
+      @deferred = immutable(deferred)
       @scheduled = immutable(scheduled)
       @deadline = immutable(deadline.nil? ? due : deadline)
       @state = immutable(state)

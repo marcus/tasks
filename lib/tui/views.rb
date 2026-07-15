@@ -584,11 +584,10 @@ module Tui
       !id.nil? && collapsed.include?(id)
     end
 
-    # The date the agenda sorts an anchor by: its own deadline/scheduled if it
-    # has one, else the earliest date among its visible dated descendants.
+    # The date the agenda sorts an anchor by: the earliest deadline-first date
+    # anywhere in its visible subtree. An anchor's later own date must not hide
+    # an earlier qualifying descendant date.
     def agenda_anchor_date(node, show_deferred, reader: nil, today: Date.today)
-      own = node.item.deadline || node.item.scheduled
-      return own if own
       subtree_dates(node, show_deferred, reader: reader, today: today).min
     end
 

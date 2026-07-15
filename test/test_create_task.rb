@@ -85,6 +85,47 @@ class TestCreateTask < Minitest::Test
     end
   end
 
+  def test_application_create_accepts_own_indefinite_hold_atomically
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, FIXTURE)
+      app = Tasks::Application.new(
+        store_factory: Tasks::StoreFactory.new(org: org, archive: archive)
+      )
+      before = File.binread(org)
+
+      result = app.create_task(
+        { title: "Held from creation", project: "Work", deferred: true },
+        today: Date.new(2026, 7, 14)
+      )
+
+      assert result.ok?
+      record = record_for(org, title: "Held from creation")
+      assert_includes record.fetch("tags"), Tasks::Store::DEFER_TAG
+      task = Tasks::TaskQueries.new(result.read_snapshot, today: Date.new(2026, 7, 14))
+                                .find(result.touched_ids.fetch(0))
+      refute task.available?
+      assert_equal :on_hold, task.availability_reason
+      store = Tasks::Store.new(org: org, archive: archive)
+      assert_equal [:ok, "capture: Held from creation"], store.undo!
+      assert_equal before, File.binread(org)
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_create_rejects_non_boolean_deferred_without_writing
+    with_create_store do |store, org, _archive|
+      before = File.binread(org)
+
+      result = store.create_task!(command(deferred: "yes"))
+
+      assert_equal :invalid, result.status
+      assert_includes result.field_errors.fetch(:deferred), "deferred must be true or false"
+      assert_equal before, File.binread(org)
+    end
+  end
+
   def test_create_rejects_invalid_recurrence_or_ambiguous_initial_body_without_writing
     with_create_store do |store, org, _archive|
       before = File.binread(org)

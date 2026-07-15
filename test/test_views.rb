@@ -464,6 +464,23 @@ class TestViews < Minitest::Test
     end
   end
 
+  def test_agenda_tree_orders_a_dated_anchor_by_its_earlier_visible_descendant
+    records = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "ad000001", "title" => "Work" },
+      { "type" => "task", "id" => "ad000002", "parent" => "ad000001", "state" => "TODO",
+        "title" => "Later dated parent", "deadline" => "2026-07-30" },
+      { "type" => "task", "id" => "ad000003", "parent" => "ad000002", "state" => "NEXT",
+        "title" => "Earlier dated child", "deadline" => "2026-07-15" },
+      { "type" => "task", "id" => "ad000004", "parent" => "ad000001", "state" => "NEXT",
+        "title" => "Middle root", "deadline" => "2026-07-20" },
+    ]
+    with_records(records) do |store|
+      ids = tree_rows(store, :agenda).filter_map { |row| row.item&.id }
+      assert_equal %w[ad000002 ad000003 ad000004], ids
+    end
+  end
+
   def test_badges_are_shared_between_flat_and_tree_renderers
     records = NESTED.map(&:dup)
     ship = records.find { |record| record["id"] == "p1" }

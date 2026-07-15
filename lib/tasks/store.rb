@@ -728,6 +728,8 @@ module Tasks
       title = normalize_create_text(command.title, :title, errors, required: true)
       priority = normalize_create_priority(command.priority, errors)
       tags = normalize_create_tags(command.tags, errors)
+      deferred = normalize_create_deferred(command.deferred, errors)
+      tags << DEFER_TAG if deferred && !tags.include?(DEFER_TAG)
       scheduled = normalize_create_date(command.scheduled, :scheduled, errors)
       deadline = normalize_create_date(command.deadline, :deadline, errors)
       state = normalize_create_state(command.state, errors)
@@ -801,6 +803,13 @@ module Tasks
       tags = value.map { |tag| utf8(tag) }
       errors[:tags] << "tags must be valid UTF-8 text" unless tags.all?(&:valid_encoding?)
       tags
+    end
+
+    def normalize_create_deferred(value, errors)
+      return value if value == true || value == false
+
+      errors[:deferred] << "deferred must be true or false"
+      false
     end
 
     def normalize_create_date(value, field, errors)
