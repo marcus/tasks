@@ -2,6 +2,7 @@
 
 require_relative "quadrants"
 require_relative "tree"
+require_relative "prompt_facts"
 
 module Tasks
   # Resolves where tasks.jsonl and archive.jsonl live, so the task data can sit
@@ -11,7 +12,7 @@ module Tasks
   #   2. TASKS_DIR env var (a directory holding tasks.jsonl + archive.jsonl)
   #   3. config file at $XDG_CONFIG_HOME/tasks/config (default ~/.config/tasks/
   #      config), `key = value` lines with keys dir / file / archive /
-  #      urgent_days / max_depth / theme / color.<slot>
+  #      urgent_days / max_depth / theme / color.<slot> / prompt.<fact>
   #   4. default_dir — the repo root, matching the original layout
   #
   # Every consumer (CLI, TUI) goes through Config.resolve so they can never
@@ -33,7 +34,7 @@ module Tasks
     LINK_NAME = /\A[a-z][a-z0-9_-]*\z/
 
     Paths = Struct.new(:org, :archive, :memory, :urgent_days, :max_depth, :theme, :colors,
-                       :links, :link_systems,
+                       :links, :link_systems, :prompt_facts,
                        :sources, :config_file, keyword_init: true) do
       # Context block appended to an agent's system prompt so a headless harness
       # finds the CLI and the task files even when they live outside the repo.
@@ -61,6 +62,7 @@ module Tasks
         max_depth: Tree::DEFAULT_MAX_DEPTH,
         theme: "default", colors: {},
         links: {}, link_systems: {},
+        prompt_facts: PromptFacts.resolve,
         sources: { org: "pinned", archive: "pinned", memory: "pinned", urgent_days: "default",
                    max_depth: "default", theme: "default" },
         config_file: config_file
@@ -96,6 +98,7 @@ module Tasks
         urgent_days: urgent_days, max_depth: max_depth,
         theme: theme, colors: conf["colors"] || {},
         links: conf.fetch(:links, {}), link_systems: conf.fetch(:link_systems, {}),
+        prompt_facts: PromptFacts.resolve(conf.fetch(:prompt_facts, {})),
         sources: { org: org_source, archive: archive_source, memory: memory_source,
                    urgent_days: urgent_source, max_depth: max_depth_source, theme: theme_source },
         config_file: file
@@ -215,7 +218,9 @@ module Tasks
     # validation so the vocabulary lives in one place.
     # Dotted link keys (`link.jira = …`, `system.gitlab = …`) collect into the
     # :links / :link_systems maps (symbol keys so they can't collide with the
-    # flat string keys above).
+    # flat string keys above). `prompt.<fact> = on|off` toggles agent prompt
+    # facts (see PromptFacts); unknown names are kept for forward compatibility
+    # but only registered facts affect the resolved map.
     def self.parse_file(path)
       return {} unless File.file?(path)
 
@@ -248,6 +253,9 @@ module Tasks
           (conf[:links] ||= {})[m[1]] = value
         elsif (m = key.match(/\Asystem\.(.+)\z/)) && m[1].match?(LINK_NAME)
           (conf[:link_systems] ||= {})[m[1]] = value
+        elsif (m = key.match(/\Aprompt\.(.+)\z/)) && m[1].match?(PromptFacts::FACT_NAME)
+          toggle = PromptFacts.parse_toggle(value)
+          (conf[:prompt_facts] ||= {})[m[1]] = toggle unless toggle.nil?
         end
       end
     end

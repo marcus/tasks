@@ -307,6 +307,57 @@ class TestConfig < Minitest::Test
     assert_equal({}, resolve.colors)
   end
 
+  # -- prompt facts (agent Current environment block) -------------------------
+
+  def test_prompt_facts_default_datetime_and_hostname_on
+    paths = resolve
+    assert_equal({ "datetime" => true, "hostname" => true }, paths.prompt_facts)
+  end
+
+  def test_prompt_facts_from_config_file
+    write_config(<<~CONF)
+      prompt.datetime = off
+      prompt.hostname = on
+    CONF
+    paths = resolve
+    assert_equal({ "datetime" => false, "hostname" => true }, paths.prompt_facts)
+  end
+
+  def test_prompt_facts_unknown_name_ignored_at_resolve
+    write_config("prompt.weather = on\nprompt.datetime = off\n")
+    paths = resolve
+    refute paths.prompt_facts.key?("weather")
+    assert_equal false, paths.prompt_facts["datetime"]
+    assert_equal true, paths.prompt_facts["hostname"]
+  end
+
+  def test_prompt_facts_invalid_toggle_falls_through_to_default
+    write_config("prompt.datetime = maybe\n")
+    assert_equal true, resolve.prompt_facts["datetime"]
+  end
+
+  def test_prompt_facts_bare_dot_key_ignored
+    write_config("prompt. = on\n")
+    assert_equal({ "datetime" => true, "hostname" => true }, resolve.prompt_facts)
+  end
+
+  def test_for_dir_uses_default_prompt_facts
+    assert_equal({ "datetime" => true, "hostname" => true },
+                 Tasks::Config.for_dir("/sandbox").prompt_facts)
+  end
+
+  def test_cli_config_reports_prompt_facts
+    Dir.mktmpdir do |dir|
+      write_config("prompt.hostname = off\n")
+      env = clean_env(@xdg).merge("TASKS_DIR" => dir)
+      File.write(File.join(dir, "tasks.jsonl"), FIXTURE)
+      out, _err, st = Open3.capture3(env, "ruby", BIN, "config", "--json")
+      assert st.success?
+      j = JSON.parse(out)
+      assert_equal({ "datetime" => true, "hostname" => false }, j["prompt_facts"])
+    end
+  end
+
   # -- for_dir (test sandboxing) ---------------------------------------------
 
   def test_for_dir_pins_both_files_ignoring_env_and_config

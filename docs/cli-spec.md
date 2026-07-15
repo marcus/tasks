@@ -40,6 +40,23 @@ quadrants urgency window (see `quadrants`), overridable by the `TASKS_URGENT_DAY
 env var, default 3. `max_depth = N` caps how deeply tasks may nest (integer ≥ 1),
 overridable by the `TASKS_MAX_DEPTH` env var, default 4.
 
+A dotted `prompt.<name>` namespace toggles short facts injected into every agent
+system prompt under a **Current environment** heading (see
+[`prompt-context-injection.md`](plans/prompt-context-injection.md)):
+
+```
+prompt.datetime = on     # default: on — local `2026-07-15 Wed 08:41 PDT`
+prompt.hostname = on     # default: on — Socket.gethostname
+# prompt.weather = on    # future providers default off until registered as default-on
+```
+
+Truthy: `on` / `true` / `1` (case-insensitive). Falsy: `off` / `false` / `0`.
+An invalid value is ignored (falls through to the registry default). Unknown
+`prompt.*` names are ignored at resolve time (forward compatibility). A provider
+that errors or returns blank is omitted silently; the rest of the block still
+injects. Both `tasks -p` and the TUI queue assemble this through
+`Tasks::AgentContext`.
+
 Two dotted namespaces configure links (see `links`/`open`):
 
 ```
@@ -80,7 +97,8 @@ detail-panel slots like `panel_title`, `detail_label`, `description`, `link`, `l
   lines are exempt from inline `#` comments.
 
 `tasks config` prints the resolved paths, `urgent_days`, `max_depth`, `theme`
-(+ any `color.*` and link overrides), and where each came from.
+(+ any `color.*`, link, and `prompt.*` overrides), and where each came from.
+`--json` includes `prompt_facts` (the effective name→boolean map).
 
 **TUI interaction.** With no task panel open, `Tab` focuses the agent prompt.
 `:` opens the searchable, context-aware action palette; typing filters the
@@ -364,7 +382,8 @@ Markdown — read and diffable in Git; it is *not* a structured store and does n
 relax the CLI-only rule for `tasks.jsonl`/`archive.jsonl`.
 
 When present and non-empty, its contents are appended to the agent's system
-context (below `AGENTS.md`, inside a delimited block) on **every** `-p` run and
+context (below `AGENTS.md` and the Current environment / file-locations blocks,
+inside a delimited block) on **every** `-p` run and
 every TUI request — read fresh each time, never cached, so a default saved by
 one request is visible to the next and an out-of-band edit or `git pull` is
 picked up without a restart. An absent file simply means "no saved defaults";
@@ -487,7 +506,7 @@ The contract is narrow:
 | `undo` | | ✅ | Revert the last mutation via the on-disk journal (`Tasks::Journal`, under `$XDG_STATE_HOME/tasks/journal/`), shared with the TUI and across CLI runs. Refuses (exit 1) if `tasks.jsonl` changed out-of-band since that edit — resolve with `git diff` / `git checkout -- tasks.jsonl`. |
 | `redo` | | ✅ | Replay the last undone mutation; same shared journal and conflict guard as `undo`. |
 | `-p [--provider N] [--model N] "prompt"` | | ✅ | Natural-language request via a headless LLM agent (Claude CLI by default, or any configured harness). Leading `--provider`/`--model` override the config default for one run; see [LLM agent settings](#llm-agent-settings). |
-| `config [--json]` | | ✅ | Print resolved file paths (tasks file, archive, config file), `urgent_days`, `max_depth`, `theme` (+ any `color.*` overrides), and the source of each (`TASKS_FILE env`, `TASKS_DIR env`, `TASKS_URGENT_DAYS env`, `TASKS_MAX_DEPTH env`, `TASKS_THEME env`, `NO_COLOR env`, `config file`, `default`). |
+| `config [--json]` | | ✅ | Print resolved file paths (tasks file, archive, config file), `urgent_days`, `max_depth`, `theme` (+ any `color.*` overrides), `prompt_facts` (effective `prompt.*` toggles), and the source of each (`TASKS_FILE env`, `TASKS_DIR env`, `TASKS_URGENT_DAYS env`, `TASKS_MAX_DEPTH env`, `TASKS_THEME env`, `NO_COLOR env`, `config file`, `default`). |
 | `help` | `-h`, `--help` | ✅ | Grouped command reference. Also printed (to stderr, exit 1) on an unknown/absent command. |
 
 Ideas beyond this spec live in `docs/ideas.md`.

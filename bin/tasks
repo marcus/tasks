@@ -1508,6 +1508,7 @@ def cmd_config(args)
            max_depth: PATHS.max_depth,
            theme: PATHS.theme, colors: PATHS.colors,
            links: PATHS.links, link_systems: PATHS.link_systems,
+           prompt_facts: PATHS.prompt_facts,
            sources: PATHS.sources,
            memory_exists: File.file?(PATHS.memory),
            config_file: PATHS.config_file,
@@ -1524,6 +1525,7 @@ def cmd_config(args)
     # shorthand expand?" — show what actually resolved.
     PATHS.links.each { |n, t| puts "link.#{n}:   #{t}" }
     PATHS.link_systems.each { |n, h| puts "system.#{n}: #{h}" }
+    PATHS.prompt_facts.each { |n, on| puts "prompt.#{n}: #{on ? "on" : "off"}" }
     puts "config:      #{PATHS.config_file}#{File.file?(PATHS.config_file) ? "" : dim(" (not present)")}"
   end
 end

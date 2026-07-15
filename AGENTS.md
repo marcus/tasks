@@ -1,8 +1,10 @@
 # AGENTS.md — tasks repo
 
 These instructions apply when you are acting on a personal GTD task list via
-natural-language prompts passed to `tasks -p`. Today's date is available from
-the system.
+natural-language prompts passed to `tasks -p`. A **Current environment** block
+(datetime, hostname, and any other enabled `prompt.*` facts) is injected into
+your system context when those facts are on — use that datetime for relative
+dates (`today`, `tomorrow`, `fri`), not a guessed clock.
 
 They do not prohibit development work on the tasks application itself, but the
 capture-by-default rule below applies there too: a prompt that merely names a

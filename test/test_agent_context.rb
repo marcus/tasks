@@ -21,7 +21,14 @@ class TestAgentContext < Minitest::Test
   end
 
   def memory_path = File.join(@data_dir, "agent-memory.md")
-  def build = Tasks::AgentContext.build(paths: @paths, cli_root: @cli_root)
+  def build(**opts)
+    Tasks::AgentContext.build(
+      paths: @paths, cli_root: @cli_root,
+      clock: -> { Time.new(2026, 7, 15, 8, 41, 0) },
+      hostname: -> { "test-host.local" },
+      **opts
+    )
+  end
 
   def test_includes_agents_contract_and_absolute_paths
     ctx = build
@@ -32,6 +39,26 @@ class TestAgentContext < Minitest::Test
     assert_includes ctx, memory_path
     # Every listed path is absolute.
     assert_match(/tasks CLI: \//, ctx)
+  end
+
+  def test_includes_current_environment_before_file_locations
+    ctx = build
+    assert_includes ctx, "Current environment:"
+    assert_includes ctx, "- datetime: 2026-07-15 Wed 08:41"
+    assert_includes ctx, "- hostname: test-host.local"
+    agents_at = ctx.index("Contract prose here.")
+    facts_at = ctx.index("Current environment:")
+    paths_at = ctx.index("File locations for this run")
+    assert agents_at < facts_at
+    assert facts_at < paths_at
+  end
+
+  def test_omits_current_environment_when_all_prompt_facts_off
+    @paths.prompt_facts = { "datetime" => false, "hostname" => false }
+    ctx = build
+    refute_includes ctx, "Current environment:"
+    refute_includes ctx, "test-host.local"
+    assert_includes ctx, "File locations for this run"
   end
 
   def test_includes_the_memory_policy_pointer

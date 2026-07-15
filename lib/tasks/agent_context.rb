@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "config"
+require_relative "prompt_facts"
 
 module Tasks
   # Assembles the system-context string handed to any agent — the CLI `tasks -p`
@@ -8,9 +9,10 @@ module Tasks
   # about what an agent sees. In order:
   #
   #   1. the repository AGENTS.md contract (the versioned agent instructions),
-  #   2. the absolute file locations for this run (CLI, task files, memory),
-  #   3. a short pointer to the task-set memory policy, and
-  #   4. the current contents of agent-memory.md, clearly delimited as
+  #   2. a short Current environment block (datetime, hostname, …) when enabled,
+  #   3. the absolute file locations for this run (CLI, task files, memory),
+  #   4. a short pointer to the task-set memory policy, and
+  #   5. the current contents of agent-memory.md, clearly delimited as
   #      user-approved defaults, when that sidecar exists and is nonempty.
   #
   # The memory sidecar is read fresh on every call — never cached — so a default
@@ -42,13 +44,17 @@ module Tasks
 
     module_function
 
-    # paths:    a Tasks::Config::Paths (org/archive/memory + agent_context).
+    # paths:    a Tasks::Config::Paths (org/archive/memory + prompt_facts).
     # cli_root: the application checkout, where bin/tasks and AGENTS.md live —
     #           distinct from the task-data directory the harness runs in.
-    def build(paths:, cli_root:)
+    # clock / hostname: injectable for tests; production uses Time.now /
+    #           Socket.gethostname inside PromptFacts.
+    def build(paths:, cli_root:, clock: -> { Time.now }, hostname: -> { Socket.gethostname })
       agents = File.join(cli_root, "AGENTS.md")
       base = File.file?(agents) ? File.read(agents, encoding: "UTF-8") : +""
-      sections = [base, paths.agent_context(cli_root: cli_root), MEMORY_POINTER]
+      facts = PromptFacts.render(paths.prompt_facts || PromptFacts.resolve,
+                                 clock: clock, hostname: hostname)
+      sections = [base, facts, paths.agent_context(cli_root: cli_root), MEMORY_POINTER]
       sections << memory_section(paths.memory)
       sections.reject { |section| section.to_s.strip.empty? }.join("\n\n")
     end
