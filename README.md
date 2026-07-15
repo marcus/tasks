@@ -229,10 +229,14 @@ vocabulary.
 
 ```sh
 ruby test/all.rb
+bundle install
+bundle exec ruby test/api/all.rb
 ```
 
-The suite is ~1,100 minitest tests across 47 files, stdlib only like
-everything else. Design decisions are recorded as ADRs in
+The core suite is stdlib-only like the CLI and TUI. The separate Bundler-backed
+API gate proves the locked Rack/Puma runtime and validates the OpenAPI 3.1
+contract; web dependencies are never required for `ruby test/all.rb`. Design
+decisions are recorded as ADRs in
 [`docs/adr/`](docs/adr), the CLI's behavior contract is
 [`docs/cli-spec.md`](docs/cli-spec.md), and the backlog of feature ideas lives
 in [`docs/ideas.md`](docs/ideas.md).
