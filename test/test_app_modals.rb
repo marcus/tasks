@@ -486,7 +486,9 @@ class TestAppModals < Minitest::Test
       conflict_application.define_singleton_method(:patch_task) do |_patch|
         Tasks::MutationResult.new(status: :conflict)
       end
-      conflict_application.define_singleton_method(:read_tasks) { application.read_tasks }
+      conflict_application.define_singleton_method(:read_tasks) do |**options|
+        application.read_tasks(**options)
+      end
       app.instance_variable_set(:@application, conflict_application)
       app.send(:handle_key, "\r")
 

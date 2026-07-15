@@ -61,7 +61,8 @@ module Tui
     #             availability check run at submit time. Both injectable so tests
     #             stay off the developer's real CLI/models.
     def initialize(root:, paths: Tasks::Config.resolve(default_dir: root),
-                   llm_config: LLM::Config.load, agent_factory: nil, agent_probe: nil)
+                   llm_config: LLM::Config.load, agent_factory: nil, agent_probe: nil,
+                   date_provider: -> { Date.today })
       Theme.configure!(name: paths.theme, overrides: paths.colors || {})
       @paths = paths
       # Store remains the long-lived watcher, history/archive, and form-option
@@ -77,6 +78,8 @@ module Tui
         )
       )
       @read_model = nil
+      @read_model_today = nil
+      @date_provider = date_provider.respond_to?(:call) ? date_provider : -> { date_provider }
       @urgent_days = paths.urgent_days # deadline window for the quadrants view
       # The (provider, model) switcher cycles these. AgentQueue snapshots an
       # entry and builds one adapter per accepted request, so later cycling can
@@ -246,7 +249,12 @@ module Tui
     # journal operations. Every presentation read instead comes from this one
     # immutable application result, refreshed after a known or observed write.
     def read_model
-      @read_model ||= @application.read_tasks
+      day = current_date
+      if @read_model.nil? || @read_model_today != day
+        @read_model = @application.read_tasks(today: day)
+        @read_model_today = day
+      end
+      @read_model
     end
 
     # @store.changed? alone is not a safe reload gate: an editor-session read
@@ -259,12 +267,16 @@ module Tui
     end
 
     def reload_read_model
-      @read_model = @application.read_tasks
+      @read_model_today = current_date
+      @read_model = @application.read_tasks(today: @read_model_today)
     end
 
     def invalidate_read_model
       @read_model = nil
+      @read_model_today = nil
     end
+
+    def current_date = @date_provider.call
 
     def rows
       read = read_model
@@ -273,10 +285,12 @@ module Tui
         q = q.downcase
         items = items.select { |i| i.title.downcase.include?(q) }
         @rows = Views.rows(@ui.view, items, show_deferred: @ui.show_deferred,
+                                           today: @read_model_today,
                                            urgent_days: @urgent_days, reader: read)
       else
         @rows = Views.rows(@ui.view, items, tree: read.tree, collapsed: @ui.collapsed,
-                                         show_deferred: @ui.show_deferred, urgent_days: @urgent_days,
+                                         show_deferred: @ui.show_deferred, today: @read_model_today,
+                                         urgent_days: @urgent_days,
                                          reader: read)
       end
       sync_selection
@@ -906,7 +920,6 @@ module Tui
     def defer_selected
       item = current_item
       return flash("nothing selected") unless item
-      today = Date.today
       field = TermForm::Fields::Input.new(
         key: :value, value: +"", label: "defer until",
       )
@@ -915,8 +928,9 @@ module Tui
         hint: "fri · +3 · 07-15 · someday · now · esc cancels", min_width: 50,
         return_mode: :list, target_id: item.id, field: field
       ) do |raw|
+        operation_today = current_date
         choice = raw.to_s.strip.downcase
-        date = Dates.parse_when(raw, today: today)
+        date = Dates.parse_when(raw, today: operation_today)
         unless %w[someday now].include?(choice) || date
           next "can't parse “#{raw}”; use a date, someday, or now"
         end
@@ -924,21 +938,23 @@ module Tui
         snapshot = @application.edit_snapshot(item.id)
         next "task no longer exists" unless snapshot
 
-        changes, label, message = defer_until_changes(snapshot, choice, date, item.title, today: today)
+        changes, label = defer_until_changes(choice, date, item.title)
         command = Tasks::TaskChangeset.from(
           snapshot, changes: changes, history_label: label
         )
-        result = @application.update_task(command, today: today)
+        result = @application.update_task(command, today: operation_today)
         unless result.ok?
           reload_store
           next result.conflict? ? "file changed underneath — reopen" : result.tui_message
         end
         invalidate_read_model
+        fresh_read = read_model
+        fresh_task = fresh_read.task_for(item.id)
+        message = availability_flash(fresh_task, reader: fresh_read)
 
         @ui.form_success = lambda do
           flash(message)
-          if !@ui.show_deferred && choice != "now" &&
-             !read_model.task_for(item.id)&.available?
+          if !@ui.show_deferred && fresh_task && !fresh_task.available?
             rows
             clamp_selection
             refresh_detail_panel if detail_panel?
@@ -952,20 +968,37 @@ module Tui
       @ui.mode = :form
     end
 
-    def defer_until_changes(snapshot, choice, date, title, today: Date.today)
+    def defer_until_changes(choice, date, title)
       case choice
       when "someday"
-        [{ deferred: true }, "on hold: #{title}", "⏸ on hold: #{title}"]
+        [{ deferred: true }, "on hold: #{title}"]
       when "now"
-        changes = { deferred: false }
-        changes[:scheduled] = nil if snapshot.scheduled && snapshot.scheduled > today
-        [changes, "activate: #{title}", "▸ available now: #{title}"]
+        [{ activate: true }, "activate: #{title}"]
       else
         [
           { deferred: false, scheduled: date },
           "defer until #{date.iso8601}: #{title}",
-          "⏳ #{title} available #{date.iso8601} (#{date.strftime("%a")})",
         ]
+      end
+    end
+
+    def availability_flash(task, reader: read_model)
+      return "task no longer exists" unless task
+      return "▸ available now: #{task.title}" if task.available?
+
+      blocker = task.availability_blocker_id && reader.task_for(task.availability_blocker_id)
+      case task.availability_reason
+      when :scheduled
+        "⏳ #{task.title} unavailable until #{task.scheduled.iso8601}"
+      when :ancestor_scheduled
+        date = blocker&.scheduled&.iso8601 || "a parent date"
+        "⏳ #{task.title} unavailable until #{date} via parent#{blocker ? " #{blocker.title}" : ""}"
+      when :on_hold
+        "⏸ on hold: #{task.title}"
+      when :ancestor_on_hold
+        "⏸ #{task.title} on hold via parent#{blocker ? " #{blocker.title}" : ""}"
+      else
+        "#{task.title} unavailable"
       end
     end
 
@@ -1108,7 +1141,8 @@ module Tui
       content_width ||= detail_panel_content_width
       @detail_panel_content_width = content_width
       content = TaskDetails.build(
-        task, task.body, content_width, links: task.links, project: task.project,
+        task, task.body, content_width, today: @read_model_today,
+        links: task.links, project: task.project,
         availability_blocker: task.availability_blocker_id &&
           read_model.task_for(task.availability_blocker_id)
       )
@@ -1229,7 +1263,8 @@ module Tui
       Views::TABS.each do |_label, view|
         candidates = Views.rows(
           view, read_model.items, tree: read_model.tree, collapsed: Set.new,
-          show_deferred: @ui.show_deferred, urgent_days: @urgent_days, reader: read_model,
+          show_deferred: @ui.show_deferred, today: @read_model_today,
+          urgent_days: @urgent_days, reader: read_model,
         )
         return view if candidates.any? { |row| row.item&.id == editor.target_id }
       end

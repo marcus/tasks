@@ -1237,11 +1237,11 @@ class TestApp < Minitest::Test
 
   # Build an app on a sandbox gtd.org (optionally a modified fixture), park it
   # on a given view, and select the row whose item title includes `select`.
-  def app_on(view:, select:, content: FIXTURE_ORG)
+  def app_on(view:, select:, content: FIXTURE_ORG, date_provider: -> { Date.today })
     Dir.mktmpdir do |dir|
       File.write(File.join(dir, "tasks.jsonl"), content)
       app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir),
-                         llm_config: default_llm_config)
+                         llm_config: default_llm_config, date_provider: date_provider)
       ui(app).view = view
       app.send(:rows)
       rws = app.instance_variable_get(:@rows)
@@ -1372,6 +1372,107 @@ class TestApp < Minitest::Test
       refute task.deferred?
       assert_nil task.scheduled
       assert task.open?
+    end
+  end
+
+  def test_defer_until_now_preserves_scheduled_only_recurrence
+    future = (Date.today + 4).iso8601
+    recs = FIXTURE_RECORDS.map(&:dup)
+    plants = recs.find { |record| record["id"] == FIX[:plants] }
+    plants["scheduled"] = future
+    plants["recur"] = "+1w"
+
+    app_on(view: :next, select: "Review PR", content: dump_fixture(recs)) do |app|
+      app.send(:toggle_deferred_view)
+      idx = app.instance_variable_get(:@rows).index { |row| row.item&.id == FIX[:plants] }
+      app.send(:select_row, idx)
+      app.send(:defer_selected)
+      ui(app).form.input.replace("now")
+      app.send(:handle_key, "\r")
+
+      task = app.instance_variable_get(:@store).items.find { |item| item.id == FIX[:plants] }
+      assert_nil task.scheduled
+      assert_equal "+1w", task.recur, "activation owns availability without stopping recurrence"
+      assert_match(/available now/, app.instance_variable_get(:@flash))
+    end
+  end
+
+  def test_defer_success_reports_effective_ancestor_hold
+    records = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "aaaa0001", "title" => "Work" },
+      { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "NEXT",
+        "title" => "held parent", "tags" => %w[defer] },
+      { "type" => "task", "id" => "aaaa0003", "parent" => "aaaa0002", "state" => "NEXT",
+        "title" => "blocked child" },
+      { "type" => "task", "id" => "aaaa0004", "parent" => "aaaa0001", "state" => "NEXT",
+        "title" => "visible sibling" },
+    ]
+
+    app_on(view: :next, select: "visible sibling", content: dump_fixture(records)) do |app|
+      app.send(:toggle_deferred_view)
+      idx = app.instance_variable_get(:@rows).index { |row| row.item&.id == "aaaa0003" }
+      app.send(:select_row, idx)
+      app.send(:defer_selected)
+      ui(app).form.input.replace("now")
+      app.send(:handle_key, "\r")
+
+      assert_match(/on hold via parent held parent/, app.instance_variable_get(:@flash))
+      refute_match(/available now/, app.instance_variable_get(:@flash))
+    end
+  end
+
+  def test_defer_success_reports_later_effective_ancestor_date
+    day = Date.new(2026, 7, 14)
+    records = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "bbbb0001", "title" => "Work" },
+      { "type" => "task", "id" => "bbbb0002", "parent" => "bbbb0001", "state" => "NEXT",
+        "title" => "later parent", "scheduled" => "2026-07-24" },
+      { "type" => "task", "id" => "bbbb0003", "parent" => "bbbb0002", "state" => "NEXT",
+        "title" => "blocked child" },
+      { "type" => "task", "id" => "bbbb0004", "parent" => "bbbb0001", "state" => "NEXT",
+        "title" => "visible sibling" },
+    ]
+
+    app_on(view: :next, select: "visible sibling", content: dump_fixture(records),
+           date_provider: -> { day }) do |app|
+      app.send(:toggle_deferred_view)
+      idx = app.instance_variable_get(:@rows).index { |row| row.item&.id == "bbbb0003" }
+      app.send(:select_row, idx)
+      app.send(:defer_selected)
+      ui(app).form.input.replace("+4")
+      app.send(:handle_key, "\r")
+
+      assert_match(/unavailable until 2026-07-24 via parent later parent/,
+                   app.instance_variable_get(:@flash))
+      task = app.instance_variable_get(:@store).items.find { |item| item.id == "bbbb0003" }
+      assert_equal Date.new(2026, 7, 18), task.scheduled
+    end
+  end
+
+  def test_memoized_read_model_refreshes_when_local_date_rolls_over
+    day = Date.new(2026, 7, 14)
+    records = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "cccc0001", "title" => "Work" },
+      { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001", "state" => "NEXT",
+        "title" => "release tomorrow", "scheduled" => "2026-07-15" },
+      { "type" => "task", "id" => "cccc0003", "parent" => "cccc0001", "state" => "NEXT",
+        "title" => "visible sibling" },
+    ]
+
+    app_on(view: :next, select: "visible sibling", content: dump_fixture(records),
+           date_provider: -> { day }) do |app|
+      before = app.send(:read_model)
+      refute_includes row_titles(app), "release tomorrow"
+
+      day = Date.new(2026, 7, 15)
+      app.send(:rows)
+
+      assert_includes row_titles(app), "release tomorrow"
+      refute_same before, app.send(:read_model)
+      assert_equal day, app.instance_variable_get(:@read_model_today)
     end
   end
 
