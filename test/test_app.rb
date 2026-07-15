@@ -1476,6 +1476,57 @@ class TestApp < Minitest::Test
     end
   end
 
+  def test_defer_response_keeps_mutation_day_snapshot_across_midnight_rollover
+    day = Date.new(2026, 7, 14)
+    records = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "dddd0001", "title" => "Work" },
+      { "type" => "task", "id" => "dddd0002", "parent" => "dddd0001", "state" => "NEXT",
+        "title" => "releases tomorrow", "scheduled" => "2026-07-15" },
+      { "type" => "task", "id" => "dddd0003", "parent" => "dddd0002", "state" => "NEXT",
+        "title" => "blocked child" },
+      { "type" => "task", "id" => "dddd0004", "parent" => "dddd0001", "state" => "NEXT",
+        "title" => "visible sibling" },
+    ]
+
+    app_on(view: :next, select: "visible sibling", content: dump_fixture(records),
+           date_provider: -> { day }) do |app|
+      app.send(:toggle_deferred_view)
+      idx = app.instance_variable_get(:@rows).index { |row| row.item&.id == "dddd0003" }
+      app.send(:select_row, idx)
+      app.send(:defer_selected)
+
+      application = app.instance_variable_get(:@application)
+      rollover_application = Object.new
+      rollover_application.define_singleton_method(:edit_snapshot) do |id|
+        application.edit_snapshot(id)
+      end
+      rollover_application.define_singleton_method(:update_task) do |*args, **options|
+        result = application.update_task(*args, **options)
+        day = Date.new(2026, 7, 15)
+        result
+      end
+      rollover_application.define_singleton_method(:read_tasks) do |**options|
+        application.read_tasks(**options)
+      end
+      app.instance_variable_set(:@application, rollover_application)
+      ui(app).show_deferred = false
+
+      ui(app).form.input.replace("now")
+      app.send(:handle_key, "\r")
+
+      assert_match(/unavailable until 2026-07-15 via parent releases tomorrow/,
+                   app.instance_variable_get(:@flash))
+      refute_includes row_titles(app), "blocked child",
+                      "response visibility stays on the Jul 14 mutation snapshot"
+      assert_equal Date.new(2026, 7, 14), app.instance_variable_get(:@read_model_today)
+
+      app.send(:rows)
+      assert_includes row_titles(app), "blocked child",
+                      "the next ordinary render advances to the provider's Jul 15"
+    end
+  end
+
   def test_header_counts_only_effectively_available_open_tasks_and_labels_reveal
     future = (Date.today + 4).iso8601
     recs = FIXTURE_RECORDS.map(&:dup)

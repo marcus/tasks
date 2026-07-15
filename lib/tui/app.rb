@@ -278,18 +278,19 @@ module Tui
 
     def current_date = @date_provider.call
 
-    def rows
-      read = read_model
+    def rows(read: nil, today: nil)
+      read ||= read_model
+      today ||= @read_model_today
       items = read.items
       if (q = active_filter)
         q = q.downcase
         items = items.select { |i| i.title.downcase.include?(q) }
         @rows = Views.rows(@ui.view, items, show_deferred: @ui.show_deferred,
-                                           today: @read_model_today,
+                                           today: today,
                                            urgent_days: @urgent_days, reader: read)
       else
         @rows = Views.rows(@ui.view, items, tree: read.tree, collapsed: @ui.collapsed,
-                                         show_deferred: @ui.show_deferred, today: @read_model_today,
+                                         show_deferred: @ui.show_deferred, today: today,
                                          urgent_days: @urgent_days,
                                          reader: read)
       end
@@ -947,19 +948,21 @@ module Tui
           reload_store
           next result.conflict? ? "file changed underneath — reopen" : result.tui_message
         end
-        invalidate_read_model
-        fresh_read = read_model
+        fresh_read = Tasks::TaskReadModel.new(result.read_snapshot, today: operation_today)
+        @read_model = fresh_read
+        @read_model_today = operation_today
         fresh_task = fresh_read.task_for(item.id)
         message = availability_flash(fresh_task, reader: fresh_read)
 
         @ui.form_success = lambda do
           flash(message)
           if !@ui.show_deferred && fresh_task && !fresh_task.available?
-            rows
+            rows(read: fresh_read, today: operation_today)
             clamp_selection
             refresh_detail_panel if detail_panel?
           else
-            reselect(item.id)
+            @ui.selected_id = item.id
+            rows(read: fresh_read, today: operation_today)
             refresh_detail_panel if detail_panel?
           end
         end
