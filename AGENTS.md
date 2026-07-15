@@ -1,6 +1,6 @@
 # AGENTS.md — tasks application (coding)
 
-This checkout is the **tasks CLI/TUI application** (Ruby). Instructions here are
+This checkout is the **tasks CLI/TUI/API application** (Ruby). Instructions here are
 for agents developing this repo — implementing features, fixing bugs, running
 tests, updating docs.
 
@@ -23,6 +23,7 @@ edit source/tests here — do **not** capture a todo instead of doing the work.
 ## Developing this application
 
 - Spec and architecture: [`docs/cli-spec.md`](docs/cli-spec.md),
+  [`docs/api/openapi.yaml`](docs/api/openapi.yaml),
   [`docs/conventions.md`](docs/conventions.md), [`README.md`](README.md).
 - How to add or change CLI commands: skill `tasks-cli-dev`
   (`.claude/skills/tasks-cli-dev/` or `.agents/skills/tasks-cli-dev/`).
@@ -32,6 +33,33 @@ edit source/tests here — do **not** capture a todo instead of doing the work.
   project’s existing patterns; never test against the user’s real task files.
 - The CLI is Ruby 3.4 and uses endless methods (`def foo(x) = bar(x)`) — valid
   syntax, not a bug.
+
+## CLI/API parity is the default
+
+The CLI and loopback HTTP API are thin adapters over the same
+`Tasks::Application` commands and checked query views. When adding or changing
+user-visible task behavior, keep the CLI and API semantically equivalent by
+default:
+
+- Put shared reads, validation, mutations, locking, undo, revisions, and task
+  semantics in `lib/tasks/`, behind `Tasks::Application`; do not reimplement
+  domain behavior independently in `bin/tasks` or `lib/tasks/api/`.
+- Update both [`docs/cli-spec.md`](docs/cli-spec.md) and
+  [`docs/api/openapi.yaml`](docs/api/openapi.yaml) when a capability is exposed
+  by both adapters, and add parity tests at the application/adapter boundaries.
+- Surface-specific mechanics may differ: CLI fuzzy refs, friendly input and
+  terminal output; HTTP stable ids, JSON representations, status codes,
+  Host/Origin policy, and ETag preconditions. Preserve those adapter contracts
+  without changing the shared outcome.
+- An intentional CLI-only or API-only capability needs a specifically discussed
+  product or security reason. Record that decision in the relevant spec and,
+  when architectural, an ADR or plan; do not let parity drift silently.
+- Keep Rack/Puma/OpenAPI dependencies isolated to `bin/tasks-api`,
+  `lib/tasks/api/`, and `test/api/`. `bin/tasks`, `bin/tasks-tui`, and
+  `ruby test/all.rb` must remain free of web dependencies.
+
+For changes that affect the HTTP surface, run `bundle exec ruby test/api/all.rb`
+in addition to the core test suite.
 
 ## Task data while coding
 

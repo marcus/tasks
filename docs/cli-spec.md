@@ -523,3 +523,11 @@ Ideas beyond this spec live in `docs/ideas.md`.
 6. Tests required: happy path, ref-not-found, ref-ambiguous, and
    `Tasks::Check.check` clean after every mutating test (the test helper's
    fixture makes this a one-liner).
+7. **CLI/API parity by default**: user-visible task semantics belong behind
+   `Tasks::Application` and should be exposed consistently by `bin/tasks` and
+   the loopback HTTP API. Keep this spec and `docs/api/openapi.yaml` synchronized
+   whenever both adapters expose the capability. CLI-only or API-only behavior
+   requires an explicitly discussed product/security reason documented in the
+   relevant spec (and an ADR or plan when architectural). Adapter mechanics may
+   differ — fuzzy refs and friendly input on CLI, stable ids/JSON/ETags over
+   HTTP — but the resulting domain behavior must not drift.

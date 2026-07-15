@@ -22,8 +22,11 @@ lib/tasks/config.rb Tasks::Config.resolve — where tasks.jsonl/archive.jsonl li
                     pin sandboxes with Config.for_dir.
 lib/tasks/dates.rb  Tasks::Dates.parse_when — fuzzy date parsing.
 lib/tui/            the TUI; consumes the same Store via compat shims.
+lib/tasks/api/      thin Rack adapter over Tasks::Application; HTTP policy only.
 docs/cli-spec.md    the interface contract. SPEC FIRST — update it before code.
+docs/api/openapi.yaml the HTTP contract; keep shared behavior in parity.
 test/               minitest; run with: ruby test/all.rb
+test/api/           Bundler-backed route/OpenAPI/Puma proof.
 ```
 
 `tasks.jsonl` is a JSONL store: one explicit JSON record per line, tree carried by
@@ -33,6 +36,29 @@ meaning; Check owns validation. The whole design keeps the file unmangled:
 `Store#with_history` snapshots before/after every mutation, runs `Check.check`
 after the write, and **rolls back automatically** if it would break an invariant.
 Never bypass it with a raw `File.write` — write through `Format.dump`.
+
+## CLI/API parity is the default
+
+The CLI and local HTTP API are adapters over the same `Tasks::Application`
+boundary. A new or changed user-visible task capability should normally be
+available with equivalent semantics through both surfaces.
+
+- Put the shared query or command in `lib/tasks/` and route it through
+  `Tasks::Application`; keep argument parsing, rendering, HTTP validation, and
+  status/error mapping in their adapters.
+- Keep `docs/cli-spec.md` and `docs/api/openapi.yaml` synchronized when both
+  adapters expose the capability. Add application-level parity coverage plus
+  focused CLI and API adapter tests.
+- CLI fuzzy refs, friendly dates, terminal output, and exit codes may differ
+  from HTTP stable ids, strict JSON/ISO values, ETags, and status codes. Those
+  are transport differences, not permission for domain behavior to diverge.
+- A deliberate CLI-only or API-only capability requires a specifically
+  discussed product or security reason, documented in the relevant spec and
+  an ADR/plan when it changes architecture.
+- Do not pull Rack, Puma, or OpenAPI tooling into the core CLI/TUI boot paths.
+
+Run `bundle exec ruby test/api/all.rb` whenever shared behavior or the HTTP
+surface changes, in addition to `ruby test/all.rb`.
 
 ## Adding a command — the pattern
 
@@ -68,6 +94,8 @@ Never bypass it with a raw `File.write` — write through `Format.dump`.
    - `TASK_AGENT.md` (the `tasks -p` / TUI list-agent prompt): add the command
      to the CLI bullet list
    - usage comment block at the top of `bin/tasks`
+   - when the capability is or should be exposed over HTTP,
+     `docs/api/openapi.yaml`, the Rack adapter, and API parity tests
 
 ## Testing requirements (non-negotiable)
 
