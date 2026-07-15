@@ -1,6 +1,6 @@
 # ADR-0007: Composite opaque revisions and HTTP optimistic concurrency
 
-Status: Accepted and implemented
+Status: Accepted; ADR-0009 amendment pending implementation
 
 Date: 2026-07-14
 
@@ -8,7 +8,10 @@ Implementation note: revision generation is implemented in `Tasks::Store`
 (`task_revision`, `revision_components`, `changeset_revision_error`,
 `delete_revision_error`). The loopback API now maps task revisions to quoted
 ETag/`If-Match` headers and returns the separate `store_revision` refresh token
-from the same coherent snapshot as each resource response.
+from the same coherent snapshot as each resource response. The current
+`task_revision` still includes `location` in `own`; ADR-0009's accepted
+amendment removes that duplicate structural input when placement is
+implemented.
 
 ## Context
 
@@ -55,17 +58,20 @@ Choose option 3.
 The revision is the opaque string `v1.<own>.<location>.<lifecycle>`, where each
 part is a SHA-256 hex digest:
 
-- `own` — the task's own editable-field baselines (`EditSnapshot::FIELDS`), with
+- `own` — the task's own non-location editable-field baselines
+  (`EditSnapshot::FIELDS - [:location]` after the ADR-0009 amendment), with
   dates normalized before hashing so equivalent snapshots never depend on Ruby
-  object identity or JSONL serialization.
+  object identity or JSONL serialization. `state` remains included; only
+  structural location is excluded.
 - `location` — the location fingerprint, including the sibling id list under the
   task's current (source) parent at snapshot time.
 - `lifecycle` — the lifecycle fingerprint spanning the whole subtree (state,
   closed, dates, recurrence, defer marker).
 
 The three-part shape is opaque to clients but lets the Store compare only the
-parts an operation depends on. This is deliberately NOT documented in the
-OpenAPI contract — clients must not parse it — and lives here instead.
+parts an operation depends on. OpenAPI names the semantic `own` and `location`
+guards to specify operation-level precondition scope, but it does not expose
+component positions or digest recipes; clients must not parse the revision.
 
 ### Piecewise comparison per operation
 
@@ -79,6 +85,12 @@ OpenAPI contract — clients must not parse it — and lives here instead.
 
 `changeset_revision_error` selects the required parts from the changeset's
 ordered fields; `delete_revision_error` always compares all three.
+
+ADR-0009 changes the digest recipe without changing the opaque three-component
+shape. A task ETag cached before that deployment will conservatively fail once
+with `412`; clients refetch on API reconnect and retry with the current ETag.
+Because the backing JSONL need not change, `store_revision` alone is not a
+deployment-version signal.
 
 ### HTTP mapping
 

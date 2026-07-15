@@ -378,14 +378,21 @@ cycles, and excessive depth exit 1 and write nothing. A placement that already
 describes the exact slot succeeds with exit 0, writes nothing, and creates no
 undo entry.
 
-Successful human output prints a summary followed by the moved task's standard
-post-write headline. The summary names the task and destination and ends with
-`before "<anchor>"` or `at end`. `--dry-run` prefixes that summary with `would`,
-prints the current headline, and writes nothing; it takes precedence over
-`--json` and remains human-readable. Non-dry-run `--json` keeps the standard
-`touched` array and adds `placement` with `parent_id`, `parent_type`
-(`task`/`section`), `parent_title`, nullable `before_id`, and nullable
-`before_title`.
+Every new `--before` form has a non-null anchor. Its successful human output
+prints a summary followed by the moved task's standard post-write headline; the
+summary names the task and destination and ends with `before "<anchor>"`.
+`--dry-run` prefixes that summary with `would`, prints the current headline,
+and writes nothing; it takes precedence over `--json` and remains
+human-readable. Non-dry-run `--json` keeps the standard `touched` array and adds
+`placement` with `parent_id`, `parent_type` (`task`/`section`), `parent_title`,
+and non-null `before_id` and `before_title`.
+
+The legacy positional section, `--under`, and `--top` forms continue to build
+their existing append/unnest location values and keep their current human,
+JSON, and dry-run output. They do not emit the new placement summary or
+`placement` JSON member. Appending through `TaskPlacement` remains available to
+the API/TUI via an omitted/null `before_id`; no CLI grammar for that conversion
+is added in this slice.
 
 No current TUI tab is eligible for ordering: Agenda, Next, Quadrants, Inbox,
 and Projects all filter, regroup, or sort away live siblings. Phase 4 adds a

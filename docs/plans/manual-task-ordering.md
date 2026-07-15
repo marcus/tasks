@@ -155,10 +155,10 @@ The Store validates all placement inputs under its mutation lock:
 
 1. The moving id must resolve to one live task.
 2. `parent_id` must resolve to one live task or section.
-3. `before_id`, when present, must resolve to a live task whose direct parent is
-   `parent_id`.
-4. The destination parent and anchor cannot be inside the moving subtree.
-5. The anchor cannot equal the moving task.
+3. `before_id`, when present, must resolve to a live task.
+4. The destination parent and anchor cannot equal the moving task or be inside
+   its subtree.
+5. The anchor's direct parent must be `parent_id`.
 6. Nesting under a task must satisfy the existing `max_depth` calculation using
    the moving subtree's full height.
 7. The final record sequence must pass `Tasks::Check` before the mutation is
@@ -175,6 +175,14 @@ The Store must remove the moving span before it locates the final insertion
 index. This avoids stale array indexes when the source precedes the destination
 and makes it impossible to insert relative to a descendant that was part of the
 removed span.
+
+Validation precedence is contractual. Resolve the three ids first (`404` for a
+missing live resource), then check whether the resolved parent or anchor is the
+moving task or lies inside its subtree (`409 cycle`), and only then check the
+anchor's direct parent (`409 conflict`). Thus a descendant anchor is always a
+cycle even though it also cannot be a direct child of an external destination;
+`conflict` is reserved for an ordinary anchor outside the moving subtree whose
+live parent no longer matches `parent_id`.
 
 ## HTTP Contract
 
@@ -210,8 +218,8 @@ Keep existing error vocabulary where it already fits:
 | Condition | HTTP result |
 |---|---|
 | Moving task, parent, or anchor is absent from the live store | `404 not_found`, with the failing field in details |
-| Anchor is not a direct child of `parent_id` | `409 conflict`, with current anchor parent when available |
-| Parent or anchor is inside the moving subtree | `409 cycle` |
+| Parent or anchor equals the moving task or is inside its subtree | `409 cycle` |
+| Anchor outside the moving subtree is not a direct child of `parent_id` | `409 conflict`, with current anchor parent when available |
 | Result would exceed `max_depth` | `409 too_deep` |
 | Both `placement` and legacy `parent_id` are supplied | `422 validation_failed` |
 | Placement object is malformed or contains unknown fields | `422 validation_failed` |
@@ -225,9 +233,12 @@ endpoint does not need transport-specific security behavior.
 ## Concurrency Decision
 
 `If-Match` remains required and carries the moving task's opaque revision, but
-a `placement` change compares only the `own` component of that revision. It
-does not compare the `location` component. Placement concurrency is uniformly
-anchor-relative, for same-parent reorders and cross-parent moves alike:
+a `placement` change compares only the `own` component of that revision. The
+accepted fingerprint amendment in ADR-0009 removes `location` from the values
+hashed into `own`; structural location lives only in the separate `location`
+component. Placement does not compare that component. Its concurrency is
+uniformly anchor-relative, for same-parent reorders and cross-parent moves
+alike:
 
 - resolve `parent_id` and `before_id` from the live records under the Store lock;
 - proceed when the anchor is still a direct child of that parent;
@@ -255,7 +266,8 @@ global `store_revision` precondition — can be added later without changing the
 request shape; the first slice does not need it.
 
 Legacy top-level `parent_id` moves keep their current behavior unchanged: they
-continue to compare the `location` component exactly as today.
+continue to compare the location-free `own` component plus the separate
+`location` component.
 
 Add an ADR for anchor-relative placement. It must correct the statement in
 ADR-0007 that a move revision guards destination siblings — the location
@@ -319,12 +331,32 @@ occupying the requested position — never the parent id alone.
 
 ### Revision Fingerprints
 
-Keep the current opaque revision shape and fingerprint composition. A
-structural reorder still changes the affected sibling sequences, so refreshed
-task resources receive new location components without exposing order
-internals to clients — the change is confined to which components a
-`placement` write compares (see Concurrency Decision), implemented in
-`changeset_revision_error`.
+Keep the opaque revision shape `v1.<own>.<location>.<lifecycle>`, but amend the
+fingerprint composition so structural location is represented once, not in
+both `own` and `location`. Today `task_revision` hashes every
+`EditSnapshot::FIELDS` entry into `own`, and that list includes `location`.
+Phase 1 must introduce an explicit revision-own field set equivalent to
+`EditSnapshot::FIELDS - [:location]`; `state` and every other existing own
+field remain included. The separate `location` fingerprint remains unchanged:
+it covers the current parent, that parent's ordered sibling ids, and the moving
+subtree's structure. Legacy location writes continue to compare `own` plus
+`location`; placement compares only the location-free `own` component and then
+validates its live structural anchors under the Store lock.
+
+The string shape and `v1` prefix do not change because clients treat the value
+as opaque, but deployment changes the computed `own` digest for existing tasks.
+There is no persisted-data migration. An `If-Match` cached before the upgrade
+will conservatively receive one `412 stale_revision` even when the task did not
+change; the response supplies the current resource/ETag for retry. A client
+must invalidate cached task resources and refetch after reconnecting to a
+restarted/upgraded local API instead of relying only on `store_revision`, which
+may remain unchanged because the JSONL bytes did not change. Once refreshed,
+legacy and placement component selection behaves as specified above.
+
+A structural reorder still changes affected tasks' location components, so
+refreshed resources reflect sibling changes without exposing order internals to
+clients. The implementation change is the revision-own field set plus
+placement-aware component selection in `changeset_revision_error`.
 
 Add focused tests for which resources change revision after same-parent and
 cross-parent moves, and for what a placement precondition tolerates: a client
@@ -359,15 +391,15 @@ destination is a usage/domain error (exit 1). Source, parent, and anchor task
 refs use the normal exact-id/line/fuzzy resolution and keep exit 2 for no match
 or ambiguity; a missing positional section remains exit 1.
 
-All forms support the existing `--dry-run` and `--json` conventions. Successful
-human output prints a placement summary followed by the moved task's standard
-post-write headline. The summary names the task and destination and ends with
-either `before "<anchor>"` or `at end`; a no-op prints the same current-state
-summary and headline without creating an undo entry. `--dry-run` prefixes the
-summary with `would`, prints the current headline, and writes nothing; as with
-the existing mutation commands, `--dry-run` takes precedence over `--json` and
-stays human-readable. Non-dry-run `--json` keeps the standard `touched` array
-and adds:
+The three new `--before` forms always resolve a non-null anchor and support the
+existing `--dry-run` and `--json` conventions. Successful human output prints a
+placement summary followed by the moved task's standard post-write headline.
+The summary names the task and destination and ends with `before "<anchor>"`;
+a no-op prints the same current-state summary and headline without creating an
+undo entry. `--dry-run` prefixes the summary with `would`, prints the current
+headline, and writes nothing; as with the existing mutation commands,
+`--dry-run` takes precedence over `--json` and stays human-readable. Non-dry-run
+`--json` keeps the standard `touched` array and adds:
 
 ```json
 {
@@ -381,9 +413,12 @@ and adds:
 }
 ```
 
-`parent_type` is `task` or `section`; `before_id` and `before_title` are null
-for an append. Fuzzy refs and section names remain CLI conveniences; the
-application receives only stable ids.
+`parent_type` is `task` or `section`; `before_id` and `before_title` are
+non-null for every `--before` invocation. Fuzzy refs and section names remain
+CLI conveniences; the application receives only stable ids. Existing
+positional section, `--under`, and `--top` append/unnest forms continue to build
+legacy location values and keep their current human, JSON, and dry-run output.
+They do not gain a placement summary or `placement` JSON member in this slice.
 
 ## TUI Reordering
 
@@ -534,7 +569,8 @@ run once against the core placement command.
 - Move a nested task to a section and a top-level task under another task.
 - Preserve descendant order and parent ids.
 - Reject self anchors, descendant anchors, cycles, bad parents, and excessive
-  depth without writing.
+  depth without writing; classify a descendant anchor as `cycle` before testing
+  its direct parent, while an unrelated wrongly-parented anchor is `conflict`.
 - Reject an anchor whose live parent no longer matches the request.
 - Treat an already-satisfied placement as a no-op with no journal entry.
 - Refuse, not no-op, an invalid anchor even when the task already occupies the

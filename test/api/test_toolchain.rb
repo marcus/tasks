@@ -115,8 +115,14 @@ class TestApiToolchain < Minitest::Test
   def test_patch_contract_freezes_placement_examples_statuses_and_revision_scope
     patch = @document.dig("paths", "/tasks/{id}", "patch")
     description = patch.fetch("description")
-    assert_includes description, "Placement compares\nthe `own` component"
-    assert_includes description, "Legacy\n`parent_id` keeps its existing `own` plus `location` comparison"
+    assert_includes description, "content-only `own` component"
+    assert_includes description, "`own` digest excludes structural location"
+    assert_includes description, "Legacy `parent_id` keeps its\nexisting `own` plus separate `location` comparison"
+    assert_includes description, "descendant anchor is `409 cycle`"
+
+    conflicts = patch.dig("responses", "409", "content", "application/json", "examples")
+    assert_equal "cycle", conflicts.dig("descendant_anchor_cycle", "value", "error", "code")
+    assert_equal "conflict", conflicts.dig("anchor_parent_changed", "value", "error", "code")
 
     example_names = patch.dig("requestBody", "content", "application/json", "examples").keys
     assert_includes example_names, "place_before"

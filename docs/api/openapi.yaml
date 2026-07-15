@@ -29,8 +29,12 @@ info:
       silently ignored.
     - Successful responses use the envelope `{ "data": ..., "meta": { ... } }`.
       Errors use `{ "error": { "code", "message", "details", "request_id" } }`.
-    - `revision` is an opaque string. Its internal structure is deliberately
-      undocumented here; see ADR-0007. Clients compare it for equality only.
+    - `revision` is an opaque string. Operation descriptions name semantic
+      precondition scopes, but component positions and digest recipes are not
+      part of this contract; see ADR-0007. Clients compare it for equality only.
+      Clients refetch task resources after reconnecting to a restarted API;
+      `store_revision` tracks backing-store bytes, not server-side ETag recipe
+      changes, so a pre-upgrade `If-Match` may receive a conservative `412`.
     - Dates are ISO `YYYY-MM-DD` strings or `null`. Friendly date parsing is a
       human CLI/TUI feature and is not part of this contract.
     - `scheduled` is the available-from/start/defer-until date; `deadline` is
@@ -508,9 +512,13 @@ paths:
         `placement` moves the whole subtree before a stable direct-child anchor,
         or appends it when `before_id` is omitted/null. It is mutually exclusive
         with the legacy top-level `parent_id` location input. Placement compares
-        the `own` component of the subject task revision only, then validates
-        the live parent and anchor under the Store mutation lock. Legacy
-        `parent_id` keeps its existing `own` plus `location` comparison.
+        the content-only `own` component of the subject task revision; the
+        server's `own` digest excludes structural location. It then validates
+        the live parent and anchor under the Store mutation lock. After id
+        resolution, self/descendant cycle checks run before anchor
+        direct-parentage, so a descendant anchor is `409 cycle`; an unrelated
+        wrongly-parented anchor is `409 conflict`. Legacy `parent_id` keeps its
+        existing `own` plus separate `location` comparison.
       parameters:
         - $ref: "#/components/parameters/IfMatch"
       requestBody:
@@ -636,7 +644,9 @@ paths:
                       details: { field: "placement.before_id", before_id: "deadbeef" }
                       request_id: "req_6a0c"
         "409":
-          description: Structural refusal applying a move or ordered placement.
+          description: |
+            Structural refusal applying a move or ordered placement. After id
+            resolution, cycle detection precedes anchor-parent validation.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -651,6 +661,15 @@ paths:
                         before_id: "4d5e6f7a"
                         current_parent_id: "7a8b9c0d"
                       request_id: "req_6a1b"
+                descendant_anchor_cycle:
+                  value:
+                    error:
+                      code: "cycle"
+                      message: "The placement anchor cannot be the moving task or its descendant."
+                      details:
+                        parent_id: "9f8e7d6c"
+                        before_id: "5e6f7a8b"
+                      request_id: "req_6a1a"
                 cycle:
                   value:
                     error:
