@@ -15,6 +15,7 @@ module Tasks
     FIELD_ORDER = %i[
       title priority body
       contexts tags deferred tag_delta
+      activate
       scheduled deadline date_clear
       recurrence
       location
@@ -22,7 +23,7 @@ module Tasks
     ].freeze
 
     EDIT_FIELDS = EditSnapshot::FIELDS.freeze
-    SPECIAL_FIELDS = %i[tag_delta date_clear].freeze
+    SPECIAL_FIELDS = %i[tag_delta activate date_clear].freeze
     FIELDS = (EDIT_FIELDS + SPECIAL_FIELDS).freeze
 
     attr_reader :id, :changes, :expected_revision, :coalesce_key, :confirmation,

@@ -769,6 +769,59 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  def test_cli_activate_preserves_scheduled_only_recurrence_and_undo_restores_date
+    today = Date.today
+    content = dump_fixture([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "af000001", "title" => "Work" },
+      { "type" => "task", "id" => "af000002", "parent" => "af000001", "state" => "NEXT",
+        "title" => "Weekly planning", "scheduled" => (today + 4).iso8601,
+        "recur" => ".+1w", "tags" => %w[defer] },
+    ])
+
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, content)
+
+      out, err, status = run_cli_at(org, archive, "activate", "Weekly planning")
+      assert status.success?, err
+      record = record_for(org, title: "Weekly planning")
+      assert_nil record["scheduled"]
+      assert_equal ".+1w", record["recur"], "activation must not discard unrelated recurrence"
+      refute_includes(record["tags"] || [], "defer")
+      assert_match(/available now/, out)
+      assert Tasks::Check.check(org).ok?
+
+      _undo_out, undo_err, undo_status = run_cli_at(org, archive, "undo")
+      assert undo_status.success?, undo_err
+      assert_equal content, File.read(org), "one undo restores date, hold, and recurrence bytes"
+    end
+  end
+
+  def test_changeset_result_carries_immutable_post_write_read_snapshot
+    with_store do |store, org, _archive|
+      today = Date.new(2026, 7, 14)
+      snapshot = store.edit_snapshot(FIX[:plants])
+      result = store.apply_changeset!(Tasks::TaskChangeset.from(
+        snapshot, changes: { deferred: false, scheduled: Date.new(2026, 7, 18) }
+      ), today: today)
+
+      assert result.ok?
+      refute_nil result.read_snapshot
+      task = Tasks::TaskQueries.new(result.read_snapshot, today: today).find(FIX[:plants])
+      assert_equal Date.new(2026, 7, 18), task.scheduled
+      refute task.available?
+
+      records = Tasks::Format.parse(File.read(org, encoding: "UTF-8")).records
+      records.find { |record| record["id"] == FIX[:plants] }["title"] = "Changed later"
+      File.write(org, dump_fixture(records))
+      retained = Tasks::TaskQueries.new(result.read_snapshot, today: today).find(FIX[:plants])
+      assert_equal "Water the plants", retained.title,
+                   "mutation reporting snapshot is not a later Store reread"
+    end
+  end
+
   def test_cli_activate_reports_remaining_ancestor_hold
     content = dump_fixture([
       { "type" => "meta", "version" => 1 },
@@ -1007,6 +1060,18 @@ class TestCliMutations < Minitest::Test
     run_cli("list", "zzznope", "--json") do |_org, out, _err, st|
       assert st.success?
       assert_equal [], JSON.parse(out)
+    end
+  end
+
+  def test_cli_id_json_includes_canonical_derived_availability
+    run_cli("id", "Book flight", "--json") do |_org, out, err, status|
+      assert status.success?, err
+      row = JSON.parse(out).fetch("touched").fetch(0)
+      assert_equal FIX[:flight], row["id"]
+      assert_equal false, row["deferred"]
+      assert_equal true, row["available"]
+      assert_equal "available", row["availability_reason"]
+      assert_nil row["availability_blocker_id"]
     end
   end
 
@@ -2238,9 +2303,12 @@ class TestCliMutations < Minitest::Test
       assert_equal "de1e0002", row.fetch("id")
       assert_equal "loose thought", row.fetch("title")
       # Same row shape as report_touched's item_json.
-      %w[id state priority title tags contexts scheduled deadline recur line source headline].each do |key|
+      %w[id state priority title tags contexts deferred scheduled deadline available
+         availability_reason availability_blocker_id recur line source headline].each do |key|
         assert row.key?(key), "delete JSON row missing #{key}"
       end
+      assert_equal true, row["available"]
+      assert_equal "available", row["availability_reason"]
     end
   end
 

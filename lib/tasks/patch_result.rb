@@ -52,14 +52,15 @@ module Tasks
       unavailable: "task list unavailable",
     }.freeze
 
-    attr_reader :status, :snapshot, :errors, :field_errors, :form_errors,
-                :touched_ids, :summary
+    attr_reader :status, :snapshot, :read_snapshot, :errors, :field_errors,
+                :form_errors, :touched_ids, :summary
 
-    def initialize(status:, snapshot: nil, errors: [], field_errors: {},
+    def initialize(status:, snapshot: nil, read_snapshot: nil, errors: [], field_errors: {},
                    form_errors: nil, touched_ids: [], summary: nil)
       @status = self.class.normalize_status(status)
 
       @snapshot = snapshot
+      @read_snapshot = read_snapshot
       @errors = immutable(Array(errors))
       @field_errors = immutable(field_errors)
       @form_errors = immutable(form_errors.nil? ? Array(errors) : Array(form_errors))

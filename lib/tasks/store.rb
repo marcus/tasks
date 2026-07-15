@@ -404,6 +404,7 @@ module Tasks
           MutationResult.new(
             status: :ok,
             snapshot: ri && build_edit_snapshot(@records, ri),
+            read_snapshot: @read_snapshot,
             touched_ids: [planned[:id]],
             summary: { parent_id: planned[:parent_id], inserted_id: planned[:id] }
           )
@@ -652,8 +653,9 @@ module Tasks
         end
 
         if proposed_records == original_records
+          reload!
           return MutationResult.new(status: :no_change, snapshot: current,
-                                    summary: applied[:summary])
+                                    read_snapshot: @read_snapshot, summary: applied[:summary])
         end
 
         label = changeset.history_label || changeset_history_label(changeset, current)
@@ -674,6 +676,7 @@ module Tasks
           MutationResult.new(
             status: :ok,
             snapshot: fresh_ri && build_edit_snapshot(@records, fresh_ri),
+            read_snapshot: @read_snapshot,
             touched_ids: applied[:touched_ids],
             summary: applied[:summary]
           )
@@ -1098,10 +1101,10 @@ module Tasks
       field
     end
 
-    # `tag_delta` is a CLI-only composite operation. It is intentionally not
-    # an editor field: the editor retains independent context/tag/defer slices.
+    # Composite commands are not editor fields: tag_delta owns a tag-set delta,
+    # activate owns the availability pair, and date_clear owns coupled dates.
     def patch_field?(field)
-      EditSnapshot::FIELDS.include?(field) || %i[tag_delta date_clear].include?(field)
+      EditSnapshot::FIELDS.include?(field) || %i[tag_delta activate date_clear].include?(field)
     end
 
     def patch_expected_for(snapshot, field)
@@ -1309,6 +1312,9 @@ module Tasks
       if fields.include?(:date_clear) && !(fields & %i[scheduled deadline]).empty?
         errors[:changes] << "date_clear cannot be combined with scheduled or deadline"
       end
+      if fields.include?(:activate) && !(fields & %i[deferred scheduled]).empty?
+        errors[:changes] << "activate cannot be combined with deferred or scheduled"
+      end
       errors
     end
 
@@ -1435,6 +1441,7 @@ module Tasks
       when :title      then patch_title(records, ri, value)
       when :priority   then patch_priority(records, ri, value)
       when :deferred   then patch_deferred(records, ri, value)
+      when :activate   then patch_activate(records, ri, value, today: today)
       when :scheduled  then patch_date(records, ri, value, :scheduled)
       when :deadline   then patch_date(records, ri, value, :deadline)
       when :date_clear then patch_date_clear(records, ri, value)
@@ -1481,6 +1488,23 @@ module Tasks
         tags.delete(DEFER_TAG)
       end
       replace_optional(rec, "tags", tags)
+      patch_ok(rec)
+    end
+
+    # Composite "available now" operation. Unlike generic date editing, this
+    # intentionally preserves recurrence when a future scheduled date was its
+    # only anchor: activation owns availability, not the recurrence contract.
+    # A later completion will require the user to establish a new occurrence
+    # date, but activation must never silently discard the cookie.
+    def patch_activate(records, ri, value, today:)
+      return patch_invalid("activate must be true") unless value == true
+
+      rec = records[ri]
+      tags = semantic_tags(rec)
+      tags.delete(DEFER_TAG)
+      replace_optional(rec, "tags", tags)
+      scheduled = to_date(rec["scheduled"])
+      rec.delete("scheduled") if scheduled && scheduled > today
       patch_ok(rec)
     end
 

@@ -274,12 +274,13 @@ def cmd_capture(args)
   # mutation (exit 1), not a fresh ref-resolution miss (exit 2).
   if result.not_found? && parent_id
     result = Tasks::MutationResult.new(status: :stale, errors: result.errors,
+                                        read_snapshot: result.read_snapshot,
                                         field_errors: result.field_errors,
                                         form_errors: result.form_errors,
                                         touched_ids: result.touched_ids, summary: result.summary)
   end
   mutation_result_failed(result, "could not capture (no #{(project || "Inbox").inspect} section found?)")
-  report_touched(result.touched_ids, json: json)
+  report_touched(result.touched_ids, json: json, read_snapshot: result.read_snapshot)
 end
 
 # Core of the state-transition verbs. `state` passes the target as a
@@ -319,11 +320,12 @@ def change_state(args, usage:, resolve_closed:, to: nil, dry_verb: nil, archive_
                             label: "state → #{target}: #{item.title}")
   mutation_result_failed(result, "failed to set state")
   if recurring_done && !flags["--json"]
-    fresh = store.items.find { |i| i.id == task_id }
+    fresh = result.read_snapshot&.items&.find { |i| i.id == task_id }
     d = fresh && (fresh.deadline || fresh.scheduled)
     puts "↻ #{item.title}#{d ? " → next #{d.iso8601} (#{d.strftime("%a")})" : ""}"
   end
-  report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"])
+  report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"],
+                 read_snapshot: result.read_snapshot)
   puts "Run `tasks archive` to move it out of tasks.jsonl." if archive_hint && !recurring_done && !flags["--json"]
 end
 
@@ -430,6 +432,7 @@ def changeset_task_by_id(task_id, changes:, label:, today:, snapshot: nil)
   return result unless result.not_found?
 
   Tasks::MutationResult.new(status: :stale, snapshot: result.snapshot,
+                            read_snapshot: result.read_snapshot,
                             errors: result.errors, field_errors: result.field_errors,
                             form_errors: result.form_errors,
                             touched_ids: result.touched_ids, summary: result.summary)
@@ -581,15 +584,22 @@ end
 # Stable ids survive retitles and tree moves, and cascade results carry every
 # affected id. The CLI JSON keeps its historical line field as presentation,
 # never as a mutation locator.
-def report_touched(ids, json:, today: Date.today)
-  store.reload!
-  items = Array(ids)
-         .map { |id| store.items.find { |i| i.id == id } }
-         .compact.sort_by(&:line)
+def report_touched(ids, json:, today: Date.today, read_snapshot: nil)
+  if read_snapshot
+    query = Tasks::TaskQueries.new(read_snapshot, today: today)
+    items = Array(ids)
+           .map { |id| read_snapshot.items.find { |item| item.id == id } }
+           .compact.sort_by(&:line)
+  else
+    store.reload!
+    items = Array(ids)
+           .map { |id| store.items.find { |item| item.id == id } }
+           .compact.sort_by(&:line)
+  end
   if json
     require "json"
-    model = application.read_tasks(today: today)
-    puts({ touched: items.map { |i| item_json(i, task: model.task_for(i.id)) } }.to_json)
+    query ||= Tasks::TaskQueries.new(store.read_snapshot, today: today)
+    puts({ touched: items.map { |item| item_json(item, task: query.task(item)) } }.to_json)
   else
     items.each { |i| puts item_headline(i) }
   end
@@ -625,7 +635,8 @@ def cmd_set_date(args, kind:, usage:)
   result = patch_task_by_id(task_id, field: kind, value: date,
                             label: "#{key.downcase} → #{date.iso8601}: #{item.title}")
   mutation_result_failed(result, "failed to set #{key.downcase}")
-  report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"])
+  report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"],
+                 read_snapshot: result.read_snapshot)
 end
 
 def cmd_due(args)      = cmd_set_date(args, kind: :deadline,  usage: "tasks due <ref> <date>")
@@ -649,7 +660,8 @@ def cmd_priority(args)
   label = pri ? "priority [##{pri}]: #{item.title}" : "clear priority: #{item.title}"
   result = patch_task_by_id(task_id, field: :priority, value: pri, label: label)
   mutation_result_failed(result, "failed to set priority")
-  report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"])
+  report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"],
+                 read_snapshot: result.read_snapshot)
 end
 
 def cmd_undate(args)
@@ -683,7 +695,8 @@ def cmd_undate(args)
   result = patch_task_by_id(task_id, field: :date_clear, value: kind, label: label,
                             snapshot: snapshot)
   mutation_result_failed(result, "nothing to remove (no matching date stamp?)")
-  report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"])
+  report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"],
+                 read_snapshot: result.read_snapshot)
 end
 
 def cmd_show(args)
@@ -861,7 +874,8 @@ def cmd_retitle(args)
   result = patch_task_by_id(task_id, field: :title, value: new_title,
                             label: "retitle → #{new_title}: #{item.title}")
   mutation_result_failed(result, "failed to retitle")
-  report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"])
+  report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"],
+                 read_snapshot: result.read_snapshot)
 end
 
 def cmd_tag(args)
@@ -892,7 +906,8 @@ def cmd_tag(args)
                             value: { add: add, remove: remove },
                             label: "tags: #{item.title}")
   mutation_result_failed(result, "failed to update tags")
-  report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"])
+  report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"],
+                 read_snapshot: result.read_snapshot)
 end
 
 # ARGV strings carry the locale's encoding (ASCII-8BIT under LANG=C, cron,
@@ -923,16 +938,16 @@ def cmd_note(args)
                             value: body.nil? || body.empty? ? text.strip : "#{body}\n#{text.strip}",
                             label: "note: #{item.title}", snapshot: snapshot)
   mutation_result_failed(result, "failed to add note")
-  report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"])
+  report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"],
+                 read_snapshot: result.read_snapshot)
 end
 
 # Build the canonical availability answer from one read snapshot. The optional
 # own-field override is used only for dry-run; ancestor precedence still comes
 # from Tasks::TaskQueries rather than being duplicated in the CLI.
-def availability_context(task_id, today:, deferred: PATCH_EXPECTED_UNSET,
+def availability_context(task_id, today:, read_snapshot:, deferred: PATCH_EXPECTED_UNSET,
                          scheduled: PATCH_EXPECTED_UNSET)
-  store.reload!
-  query = Tasks::TaskQueries.new(store.read_snapshot, today: today)
+  query = Tasks::TaskQueries.new(read_snapshot, today: today)
   item = query.snapshot.items.find { |candidate| candidate.id == task_id }
   mutation_failed "task changed before availability could be read" unless item
   availability = if deferred.equal?(PATCH_EXPECTED_UNSET) && scheduled.equal?(PATCH_EXPECTED_UNSET)
@@ -961,10 +976,12 @@ def availability_summary(query, availability)
 end
 
 def print_availability_change(task_id, today:, own_text:, dry_run: false,
+                              read_snapshot:,
                               deferred: PATCH_EXPECTED_UNSET,
                               scheduled: PATCH_EXPECTED_UNSET)
   query, _item, availability = availability_context(
-    task_id, today: today, deferred: deferred, scheduled: scheduled
+    task_id, today: today, read_snapshot: read_snapshot,
+    deferred: deferred, scheduled: scheduled
   )
   puts "#{dry_run ? "would " : ""}#{own_text} — #{availability_summary(query, availability)}"
 end
@@ -991,8 +1008,10 @@ def cmd_defer(args, someday: false)
                     %(put "#{item.title}" on hold (Someday/Maybe))
 
   if flags["--dry-run"]
+    read_snapshot = store.read_snapshot
     print_availability_change(
       task_id, today: today, own_text: own_text, dry_run: true,
+      read_snapshot: read_snapshot,
       deferred: changes.fetch(:deferred),
       scheduled: changes.fetch(:scheduled, PATCH_EXPECTED_UNSET)
     )
@@ -1002,10 +1021,13 @@ def cmd_defer(args, someday: false)
   label = date ? "defer until #{date.iso8601}: #{item.title}" : "someday: #{item.title}"
   result = changeset_task_by_id(task_id, changes: changes, label: label, today: today)
   mutation_result_failed(result, "failed to defer")
+  mutation_failed "defer succeeded without a result snapshot" unless result.read_snapshot
   if flags["--json"]
-    report_touched(result_touched_ids(result, fallback: task_id), json: true, today: today)
+    report_touched(result_touched_ids(result, fallback: task_id), json: true, today: today,
+                   read_snapshot: result.read_snapshot)
   else
-    print_availability_change(task_id, today: today, own_text: own_text)
+    print_availability_change(task_id, today: today, own_text: own_text,
+                              read_snapshot: result.read_snapshot)
   end
 end
 
@@ -1022,13 +1044,13 @@ def cmd_activate(args)
   snapshot = application.edit_snapshot(task_id)
   mutation_failed "task changed before activation" unless snapshot
   scheduled = snapshot.scheduled && snapshot.scheduled > today ? nil : snapshot.scheduled
-  changes = { deferred: false }
-  changes[:scheduled] = nil if snapshot.scheduled && snapshot.scheduled > today
+  changes = { activate: true }
   own_text = %(activate "#{item.title}")
 
   if flags["--dry-run"]
     print_availability_change(
       task_id, today: today, own_text: own_text, dry_run: true,
+      read_snapshot: store.read_snapshot,
       deferred: false, scheduled: scheduled
     )
     return
@@ -1039,10 +1061,13 @@ def cmd_activate(args)
     snapshot: snapshot
   )
   mutation_result_failed(result, "failed to activate")
+  mutation_failed "activate succeeded without a result snapshot" unless result.read_snapshot
   if flags["--json"]
-    report_touched(result_touched_ids(result, fallback: task_id), json: true, today: today)
+    report_touched(result_touched_ids(result, fallback: task_id), json: true, today: today,
+                   read_snapshot: result.read_snapshot)
   else
-    print_availability_change(task_id, today: today, own_text: own_text)
+    print_availability_change(task_id, today: today, own_text: own_text,
+                              read_snapshot: result.read_snapshot)
   end
 end
 
@@ -1119,7 +1144,8 @@ def cmd_recur(args)
   label = cookie == :off ? "recur off: #{item.title}" : "recur #{cookie}: #{item.title}"
   result = patch_task_by_id(task_id, field: :recurrence, value: cookie, label: label)
   mutation_result_failed(result, "failed to set recurrence (no date stamp?)")
-  report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"])
+  report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"],
+                 read_snapshot: result.read_snapshot)
 end
 
 # Pull `--flag value` out of args in place, returning the value (or nil). Aborts
@@ -1169,7 +1195,7 @@ def cmd_move(args)
       puts "already at top level"
       puts item_headline(item)
     else
-      report_touched([task_id], json: flags["--json"])
+      report_touched([task_id], json: flags["--json"], read_snapshot: result.read_snapshot)
     end
   elsif under
     parent_item = resolve_ref(under)
@@ -1183,7 +1209,7 @@ def cmd_move(args)
     mutation_failed "would exceed max depth #{store.max_depth} (max_depth config / TASKS_MAX_DEPTH)" if result.too_deep?
     mutation_failed "can't nest a task under its own subtree" if result.cycle?
     mutation_result_failed(result, %(could not nest under "#{parent_item.title}"))
-    report_touched([task_id], json: flags["--json"])
+    report_touched([task_id], json: flags["--json"], read_snapshot: result.read_snapshot)
   else
     if flags["--dry-run"]
       puts "would move to #{section.inspect}: #{item_headline(item)}"
@@ -1194,7 +1220,7 @@ def cmd_move(args)
     result = patch_task_by_id(task_id, field: :location, value: section_id,
                               label: "move → #{section}: #{item.title}", force: true)
     mutation_result_failed(result, %(could not move (no "#{section}" section?)))
-    report_touched([task_id], json: flags["--json"])
+    report_touched([task_id], json: flags["--json"], read_snapshot: result.read_snapshot)
   end
 end
 
@@ -1206,14 +1232,19 @@ DELETE_USAGE = %(tasks delete <ref> [--cascade] [--dry-run] [--json] [--include-
 # gone after the write, so capture their headlines BEFORE mutating and report
 # from that snapshot.
 def cmd_delete(args)
+  today = Date.today
   flags, rest = take_flags(args, "--cascade", "--dry-run", "--json", "--include-done")
   ref = rest.shift
   abort %(usage: #{DELETE_USAGE}) if ref.nil? || ref.strip.empty?
 
   item = resolve_ref(ref, include_done: flags["--include-done"])
   task_id = stable_id_for(item)
-  node = store.node_for(item)
-  removed = node ? node.each.map(&:item).compact : [item]
+  query = Tasks::TaskQueries.new(store.read_snapshot, today: today)
+  snapshot_item = query.snapshot.items.find { |candidate| candidate.id == task_id }
+  mutation_failed "task changed before delete" unless snapshot_item
+  node = query.snapshot.node_for(snapshot_item)
+  removed = node ? node.each.map(&:item).compact : [snapshot_item]
+  expected_revision = query.task(snapshot_item).revision
   descendants = removed.length - 1
 
   if flags["--dry-run"]
@@ -1225,7 +1256,8 @@ def cmd_delete(args)
     return
   end
 
-  result = application.delete_task(task_id, cascade: flags["--cascade"])
+  result = application.delete_task(task_id, cascade: flags["--cascade"],
+                                   expected_revision: expected_revision)
   if result.conflict?
     n = result.summary[:descendants]
     m = result.summary[:open_descendants]
@@ -1237,7 +1269,9 @@ def cmd_delete(args)
 
   if flags["--json"]
     require "json"
-    puts({ deleted: removed.map { |i| item_json(i) } }.to_json)
+    puts({ deleted: removed.map { |removed_item|
+      item_json(removed_item, task: query.task(removed_item))
+    } }.to_json)
   else
     removed.each { |i| puts item_headline(i) }
   end
@@ -1284,6 +1318,7 @@ def cmd_redo = run_history(:redo!, verb: "redo", past: "redid")
 # Print a task's stable :ID:, assigning one (a PROPERTIES drawer) if it has none.
 # Idempotent — a task that already carries an id is printed without a rewrite.
 def cmd_id(args)
+  today = Date.today
   flags, rest = take_flags(args, "--json")
   ref = rest.shift
   abort "usage: tasks id <ref>" if ref.nil? || ref.strip.empty?
@@ -1294,7 +1329,8 @@ def cmd_id(args)
   fresh = store.items.find { |i| i.id == id }
   if flags["--json"]
     require "json"
-    puts({ id: id, touched: fresh ? [item_json(fresh)] : [] }.to_json)
+    query = Tasks::TaskQueries.new(store.read_snapshot, today: today)
+    puts({ id: id, touched: fresh ? [item_json(fresh, task: query.task(fresh))] : [] }.to_json)
   else
     puts id
     puts item_headline(fresh) if fresh
