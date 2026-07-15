@@ -13,12 +13,12 @@ module Tasks
                 :deadline, :recur, :closed, :source, :body, :links, :headline,
                 :parent_id, :ancestor_ids, :child_ids, :section_id,
                 :section_title, :project, :revision, :availability_reason,
-                :availability_blocker_id
+                :availability_blocker_id, :descendant_count
 
     def initialize(id:, state:, priority:, title:, tags:, scheduled:, deadline:,
                    recur:, closed:, source:, body:, links:, headline:, parent_id:,
                    ancestor_ids:, child_ids:, section_id:, section_title:, project:,
-                   availability:, revision: nil)
+                   availability:, revision: nil, descendant_count: 0)
       @id = frozen_text(id)
       @state = frozen_text(state)
       @priority = frozen_text(priority)
@@ -43,6 +43,7 @@ module Tasks
       @available = availability.available?
       @availability_reason = availability.reason
       @availability_blocker_id = frozen_text(availability.blocker_id)
+      @descendant_count = Integer(descendant_count)
       freeze
     end
 

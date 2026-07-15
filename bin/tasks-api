@@ -1,0 +1,54 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "json"
+require "optparse"
+
+ROOT = File.expand_path("..", __dir__)
+$LOAD_PATH.unshift File.join(ROOT, "lib")
+require "tasks/config"
+
+options = { bind: "127.0.0.1", port: 4747 }
+parser = OptionParser.new do |opts|
+  opts.banner = "Usage: bin/tasks-api [--port PORT]"
+  opts.on("--bind ADDRESS", "Bind address (127.0.0.1 only)") { |value| options[:bind] = value }
+  opts.on("--port PORT", Integer, "Loopback port (default 4747)") { |value| options[:port] = value }
+  opts.on("-h", "--help", "Show help") do
+    puts opts
+    exit 0
+  end
+end
+parser.parse!(ARGV)
+abort "tasks-api does not accept positional arguments" unless ARGV.empty?
+abort "tasks-api supports only the 127.0.0.1 loopback bind" unless options[:bind] == "127.0.0.1"
+abort "tasks-api port must be between 1 and 65535" unless (1..65_535).cover?(options[:port])
+
+begin
+  require "bundler/setup"
+  require "rack"
+  require "puma"
+rescue LoadError
+  abort "tasks-api dependencies are unavailable; run `bundle install` in #{ROOT}"
+end
+
+paths = Tasks::Config.resolve(default_dir: ROOT)
+ENV["TASKS_API_RESOLVED_CONFIG"] = JSON.generate(
+  org: paths.org,
+  archive: paths.archive,
+  urgent_days: paths.urgent_days,
+  max_depth: paths.max_depth,
+  links: paths.links,
+  link_systems: paths.link_systems,
+  port: options[:port]
+)
+
+$stdout.sync = true
+puts "tasks-api listening on http://127.0.0.1:#{options[:port]}"
+puts "tasks source: #{paths.sources.fetch(:org)}; archive source: #{paths.sources.fetch(:archive)}"
+
+exec(
+  "bundle", "exec", "puma", File.join(ROOT, "config.ru"),
+  "--bind", "tcp://127.0.0.1:#{options[:port]}",
+  "--threads", "0:5",
+  "--workers", "0"
+)

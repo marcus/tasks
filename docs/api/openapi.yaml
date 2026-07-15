@@ -21,6 +21,8 @@ info:
       and `L<line>` refs are CLI-only conveniences and are never accepted here.
     - Requests and responses are `application/json` only. A body with any other
       content type on a mutation is `415`.
+    - JSON request bodies are limited to 65536 bytes (64 KiB). Larger bodies
+      are rejected with `413` / `payload_too_large` before JSON parsing.
     - Unknown request fields are rejected (`422` / `validation_failed`), never
       silently ignored.
     - Successful responses use the envelope `{ "data": ..., "meta": { ... } }`.
@@ -108,6 +110,10 @@ paths:
                       store_revision: "s1.6f2a9c0b"
         "503":
           $ref: "#/components/responses/StoreInvalid"
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
 
   /sections:
     get:
@@ -144,6 +150,10 @@ paths:
                       store_revision: "s1.6f2a9c0b"
         "503":
           $ref: "#/components/responses/StoreInvalid"
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
 
   /tasks:
     get:
@@ -390,6 +400,10 @@ paths:
                       request_id: "req_5f3a"
         "415":
           $ref: "#/components/responses/UnsupportedMediaType"
+        "403":
+          $ref: "#/components/responses/ForbiddenOrigin"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/ValidationFailed"
         "503":
@@ -465,6 +479,10 @@ paths:
                       store_revision: "s1.6f2a9c0b"
         "404":
           $ref: "#/components/responses/NotFound"
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
         "503":
           $ref: "#/components/responses/StoreInvalid"
     patch:
@@ -588,6 +606,10 @@ paths:
           $ref: "#/components/responses/StaleRevision"
         "415":
           $ref: "#/components/responses/UnsupportedMediaType"
+        "403":
+          $ref: "#/components/responses/ForbiddenOrigin"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/ValidationFailed"
         "428":
@@ -654,6 +676,10 @@ paths:
                       request_id: "req_9e3f"
         "428":
           $ref: "#/components/responses/MissingPrecondition"
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenOrigin"
         "503":
           $ref: "#/components/responses/StoreInvalid"
 
@@ -1030,6 +1056,10 @@ paths:
               examples:
                 default:
                   value: { status: "ok" }
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
 
   /readyz:
     servers:
@@ -1069,6 +1099,10 @@ paths:
                       message: "The task list failed structural validation."
                       details: {}
                       request_id: "req_9d4f"
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
 
 components:
   parameters:
@@ -1114,6 +1148,32 @@ components:
                   message: "Request bodies must be application/json."
                   details: {}
                   request_id: "req_2b3c"
+    ForbiddenOrigin:
+      description: A browser mutation supplied an Origin outside the expected loopback origins.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          examples:
+            forbidden:
+              value:
+                error:
+                  code: "forbidden_origin"
+                  message: "This origin is not allowed to mutate tasks."
+                  details: {}
+                  request_id: "req_2c3d"
+    PayloadTooLarge:
+      description: The JSON request body exceeded the 65536-byte limit.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          examples:
+            too_large:
+              value:
+                error:
+                  code: "payload_too_large"
+                  message: "The request body is too large."
+                  details: {}
+                  request_id: "req_2d3e"
     NotFound:
       description: No such task in the requested source.
       content:

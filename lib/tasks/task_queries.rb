@@ -202,6 +202,7 @@ module Tasks
       @today = today.freeze
       @records_by_source_and_id = records_by_source_and_id
       @records_by_source_and_line = records_by_source_and_line
+      @children_by_source_and_parent = children_by_source_and_parent
       @task_views = {}
       @availability = {}
     end
@@ -357,16 +358,18 @@ module Tasks
       @task_views[key] ||= begin
         record = record_for(item)
         node = snapshot.node_for(item)
-        section = section_for(node)
+        section = section_for(record, item.source)
+        child_ids = child_ids_for(item)
         TaskView.new(
           id: item.id, state: item.state, priority: item.priority, title: item.title,
           tags: item.tags, scheduled: item.scheduled, deadline: item.deadline,
           recur: item.recur, closed: item.closed, source: item.source,
           body: snapshot.body(item), links: snapshot.links(item), headline: headline_for(item),
-          parent_id: record && record["parent"], ancestor_ids: ancestor_ids(node),
-          child_ids: child_ids(node), section_id: section && section["id"],
+          parent_id: record && record["parent"], ancestor_ids: ancestor_ids(record, item.source),
+          child_ids: child_ids, section_id: section && section["id"],
           section_title: section && section["title"], project: node&.open_project&.title,
-          revision: snapshot.revision_for(item), availability: availability(item)
+          revision: snapshot.revision_for(item), availability: availability(item),
+          descendant_count: descendant_count(item.id, item.source)
         )
       end
     end
@@ -436,27 +439,37 @@ module Tasks
     # as a public method because task_view builds TaskView#headline from it.
     def headline_for(item) = item.headline
 
-    def ancestor_ids(node)
+    def ancestor_ids(record, source)
       ancestors = []
-      current = node&.parent
+      by_id = @records_by_source_and_id.fetch(source)
+      current = record && by_id[record["parent"]]
       while current
-        id = record_at_line(:live, current.line)&.fetch("id", nil)
-        ancestors << id if id
-        current = current.parent
+        ancestors << current["id"] if current["id"]
+        current = by_id[current["parent"]]
       end
       ancestors.reverse
     end
 
-    def child_ids(node)
-      return [] unless node
-
-      node.children.filter(&:task?).filter_map { |child| child.item&.id }
+    def child_ids_for(item)
+      @children_by_source_and_parent.fetch(item.source).fetch(item.id, []).filter_map do |record|
+        record["id"] if record["type"] == "task"
+      end
     end
 
-    def section_for(node)
-      current = node
-      current = current.parent while current && current.task?
-      current && record_at_line(:live, current.line)
+    def section_for(record, source)
+      current = record
+      by_id = @records_by_source_and_id.fetch(source)
+      current = by_id[current["parent"]] while current && current["type"] == "task"
+      current if current && current["type"] == "section"
+    end
+
+    def descendant_count(id, source)
+      return 0 unless id
+
+      children = @children_by_source_and_parent.fetch(source).fetch(id, [])
+      children.sum do |record|
+        record["type"] == "task" ? 1 + descendant_count(record["id"], source) : 0
+      end
     end
 
     def record_for(item)
@@ -479,6 +492,16 @@ module Tasks
         live: snapshot.live_records.to_h { |record| [record["line"], record] },
         archive: snapshot.archive_records.to_h { |record| [record["line"], record] },
       }
+    end
+
+    def children_by_source_and_parent
+      { live: children_index(snapshot.live_records), archive: children_index(snapshot.archive_records) }
+    end
+
+    def children_index(records)
+      records.each_with_object(Hash.new { |hash, key| hash[key] = [] }) do |record, index|
+        index[record["parent"]] << record if record["parent"]
+      end
     end
 
     def index_records(records)

@@ -263,6 +263,26 @@ module Tasks
       store_factory.call.delete_task!(command)
     end
 
+    # Rebuild a canonical task resource from the immutable post-mutation
+    # snapshot carried by MutationResult. This keeps an HTTP response and its
+    # global revision tied to the exact same write instead of racing a second
+    # Store read after the lock is released.
+    def task_result_from_mutation(result, id, today: Date.today)
+      unless result.is_a?(MutationResult)
+        raise ArgumentError, "result must be a Tasks::MutationResult"
+      end
+      unless result.ok? && result.read_snapshot && result.store_revision
+        raise ArgumentError, "mutation result has no coherent task snapshot"
+      end
+
+      task = TaskQueries.new(result.read_snapshot, today: today).find(id, source: :live)
+      ApplicationReadResult.new(
+        status: task ? :ok : :not_found,
+        data: task,
+        store_revision: result.store_revision
+      )
+    end
+
     private
 
     attr_reader :store_factory
