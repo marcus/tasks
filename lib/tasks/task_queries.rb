@@ -20,15 +20,24 @@ module Tasks
       end
     end
 
-    attr_reader :scope, :deferred_only, :recurring_only, :body_search, :contexts,
-                :tags, :priority, :text
+    attr_reader :scope, :deferred_only, :unavailable_only, :someday_only,
+                :recurring_only, :body_search, :contexts, :tags, :priority, :text
 
-    def initialize(scope: :open, deferred_only: false, recurring_only: false,
-                   body_search: false, contexts: [], tags: [], priority: nil, text: [])
+    def initialize(scope: :open, deferred_only: false, unavailable_only: false,
+                   someday_only: false, recurring_only: false, body_search: false,
+                   contexts: [], tags: [], priority: nil, text: [])
       @scope = scope.to_s.to_sym
       raise ArgumentError, "unknown task scope: #{scope}" unless SCOPES.include?(@scope)
 
       @deferred_only = !!deferred_only
+      @unavailable_only = !!unavailable_only
+      @someday_only = !!someday_only
+      if @deferred_only && @someday_only
+        raise ArgumentError, "--deferred and --someday are mutually exclusive"
+      end
+      if @unavailable_only && @scope != :open
+        raise ArgumentError, "--unavailable is only valid with --open"
+      end
       @recurring_only = !!recurring_only
       @body_search = !!body_search
       @contexts = frozen_strings(contexts)
@@ -44,7 +53,7 @@ module Tasks
     def self.parse_cli(args)
       scope = :open
       json = false
-      deferred_only = recurring_only = body_search = false
+      deferred_only = unavailable_only = someday_only = recurring_only = body_search = false
       contexts = []
       tags = []
       priority = nil
@@ -57,6 +66,8 @@ module Tasks
         when "--archived", "-x" then scope = :archived
         when "--all", "-a" then scope = :all
         when "--deferred", "-D" then deferred_only = true
+        when "--unavailable" then unavailable_only = true
+        when "--someday", "--on-hold" then someday_only = true
         when "--recurring", "-R" then recurring_only = true
         when "--body", "-b" then body_search = true
         when "--json" then json = true
@@ -70,9 +81,10 @@ module Tasks
       end
 
       Parsed.new(
-        filter: new(scope: scope, deferred_only: deferred_only, recurring_only: recurring_only,
-                    body_search: body_search, contexts: contexts, tags: tags,
-                    priority: priority, text: text),
+        filter: new(scope: scope, deferred_only: deferred_only,
+                    unavailable_only: unavailable_only, someday_only: someday_only,
+                    recurring_only: recurring_only, body_search: body_search,
+                    contexts: contexts, tags: tags, priority: priority, text: text),
         json: json
       )
     end
@@ -228,6 +240,14 @@ module Tasks
       @availability[key] ||= build_availability(item)
     end
 
+    # Preview the canonical effective availability after changing only the
+    # subject task's two availability fields. CLI/TUI dry-runs use this instead
+    # of reimplementing ancestor precedence or writing a temporary record.
+    def availability_after(item, deferred:, scheduled:)
+      item = current_item_for(item) || item
+      build_availability(item, own_deferred: deferred, own_scheduled: scheduled)
+    end
+
     def find(id, include_archive: false)
       if include_archive && !snapshot.archive_loaded?
         raise ArgumentError,
@@ -276,6 +296,13 @@ module Tasks
     end
 
     def deferred_match?(item, filter)
+      if filter.someday_only
+        return false unless item.deferred?
+        return !availability(item).available? if filter.unavailable_only
+
+        return true
+      end
+      return !availability(item).available? if filter.unavailable_only
       return filter.scope == :open ? !availability(item).available? : item.deferred? if filter.deferred_only
       return availability(item).available? if filter.scope == :open
 
@@ -327,7 +354,7 @@ module Tasks
       end
     end
 
-    def build_availability(item)
+    def build_availability(item, own_deferred: item.deferred?, own_scheduled: item.scheduled)
       return Availability.new(reason: :closed) if item.source == :archive || !item.open?
 
       candidates = [[item, 0]]
@@ -341,7 +368,9 @@ module Tasks
         current = current.parent
       end
 
-      held = candidates.find { |candidate, _distance| candidate.deferred? }
+      held = candidates.find do |candidate, distance|
+        distance.zero? ? own_deferred : candidate.deferred?
+      end
       if held
         blocker, distance = held
         return Availability.new(
@@ -351,15 +380,18 @@ module Tasks
       end
 
       timed = candidates.select do |candidate, _distance|
-        candidate.scheduled && candidate.scheduled > today
+        scheduled = candidate.equal?(item) ? own_scheduled : candidate.scheduled
+        scheduled && scheduled > today
       end.max_by do |candidate, distance|
-        [candidate.scheduled.jd, -distance]
+        scheduled = candidate.equal?(item) ? own_scheduled : candidate.scheduled
+        [scheduled.jd, -distance]
       end
       if timed
         blocker, distance = timed
+        scheduled = distance.zero? ? own_scheduled : blocker.scheduled
         return Availability.new(
           reason: distance.zero? ? :scheduled : :ancestor_scheduled,
-          blocker_id: blocker.id, scheduled: blocker.scheduled
+          blocker_id: blocker.id, scheduled: scheduled
         )
       end
 

@@ -534,7 +534,8 @@ class TestCliMutations < Minitest::Test
     run_cli("defer", "Water the plants") do |org, out, _err, st|
       assert st.success?
       assert_equal %w[@home defer], record_for(org, title: "Water the plants")["tags"]
-      assert_match(/:defer:/, out) # prints the resulting headline
+      assert_match(/put "Water the plants" on hold \(Someday\/Maybe\)/, out)
+      assert_match(/on hold indefinitely/, out)
       assert Tasks::Check.check(org).ok?
     end
   end
@@ -563,7 +564,7 @@ class TestCliMutations < Minitest::Test
     run_cli("list", "--deferred", content: deferred) do |_org, out, _err, st|
       assert st.success?
       assert_match(/Water the plants/, out)
-      assert_match(/\(deferred\)/, out)
+      assert_match(/\(on hold\)/, out)
       refute_match(/Book flight/, out, "non-deferred tasks are excluded from --deferred")
     end
   end
@@ -583,7 +584,244 @@ class TestCliMutations < Minitest::Test
     run_cli("defer", "Water the plants", "--dry-run") do |org, out, _err, st|
       assert st.success?
       assert_equal FIXTURE_ORG, File.read(org)
-      assert_match(/would defer/, out)
+      assert_match(/would put "Water the plants" on hold/, out)
+    end
+  end
+
+  def test_cli_timed_defer_sets_available_from_preserves_due_and_clears_hold
+    records = FIXTURE_RECORDS.map(&:dup)
+    flight = records.find { |record| record["id"] == FIX[:flight] }
+    flight["tags"] = flight.fetch("tags") + ["defer"]
+    content = dump_fixture(records)
+    expected = Date.today + 4
+
+    run_cli("defer", "Book flight", "+4", content: content) do |org, out, err, status|
+      assert status.success?, err
+      record = record_for(org, title: "Book flight in Concur")
+      assert_equal expected.iso8601, record["scheduled"]
+      assert_equal "2026-07-02", record["deadline"], "due date is independent and must not move"
+      refute_includes record.fetch("tags"), "defer", "timed defer replaces an indefinite hold"
+      assert_match(/defer "Book flight in Concur" until #{expected.iso8601}/, out)
+      assert_match(/unavailable until #{expected.iso8601}/, out)
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_timed_defer_promotes_inbox_and_is_one_undoable_change
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, FIXTURE_ORG)
+      before = File.binread(org)
+
+      _out, err, status = run_cli_at(org, archive, "defer", "random thought", "+4")
+      assert status.success?, err
+      record = record_for(org, title: "random thought about the garden")
+      assert_equal "TODO", record["state"]
+      assert_equal (Date.today + 4).iso8601, record["scheduled"]
+      assert Tasks::Check.check(org).ok?
+
+      undo_out, undo_err, undo_status = run_cli_at(org, archive, "undo")
+      assert undo_status.success?, undo_err
+      assert_match(/undid: defer until/, undo_out)
+      assert_equal before, File.binread(org), "one undo restores both state/date and hold marker bytes"
+    end
+  end
+
+  def test_cli_timed_defer_hides_active_views_and_unavailable_review_finds_it
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, FIXTURE_ORG)
+
+      _out, err, status = run_cli_at(org, archive, "defer", "Water the plants", "+4")
+      assert status.success?, err
+      default_out, = run_cli_at(org, archive, "list")
+      next_out, = run_cli_at(org, archive, "next")
+      unavailable_out, unavailable_err, unavailable_status =
+        run_cli_at(org, archive, "list", "--unavailable")
+      deferred_out, deferred_err, deferred_status =
+        run_cli_at(org, archive, "list", "--deferred")
+
+      refute_match(/Water the plants/, default_out)
+      refute_match(/Water the plants/, next_out)
+      assert unavailable_status.success?, unavailable_err
+      assert_match(/Water the plants/, unavailable_out)
+      assert_match(/unavailable until #{(Date.today + 4).iso8601}/, unavailable_out)
+      assert deferred_status.success?, deferred_err
+      assert_match(/Water the plants/, deferred_out,
+                   "legacy --deferred broadens to timed unavailability in open scope")
+    end
+  end
+
+  def test_cli_timed_defer_json_reports_derived_availability
+    run_cli("defer", "Water the plants", "+4", "--json") do |org, out, err, status|
+      assert status.success?, err
+      row = JSON.parse(out).fetch("touched").fetch(0)
+      assert_equal (Date.today + 4).iso8601, row["scheduled"]
+      assert_equal false, row["deferred"]
+      assert_equal false, row["available"]
+      assert_equal "scheduled", row["availability_reason"]
+      assert_equal FIX[:plants], row["availability_blocker_id"]
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_timed_defer_dry_run_is_hypothetical_and_writes_nothing
+    content = deferred_fixture
+    expected = Date.today + 4
+    run_cli("defer", "Water the plants", "+4", "--dry-run", content: content) do |org, out, err, status|
+      assert status.success?, err
+      assert_equal content, File.read(org)
+      assert_match(/would defer "Water the plants" until #{expected.iso8601}/, out)
+      assert_match(/unavailable until #{expected.iso8601}/, out)
+      refute_match(/on hold indefinitely/, out, "preview accounts for clearing the own hold")
+    end
+  end
+
+  def test_cli_timed_defer_rejects_bad_date_without_writing
+    run_cli("defer", "Water the plants", "not-a-date") do |org, out, err, status|
+      assert_equal 1, status.exitstatus
+      assert_empty out
+      assert_match(/unrecognized date: not-a-date/, err)
+      assert_equal FIXTURE_ORG, File.read(org)
+    end
+  end
+
+  def test_cli_someday_is_canonical_indefinite_alias_and_rejects_a_date
+    run_cli("someday", "Water the plants") do |org, out, err, status|
+      assert status.success?, err
+      assert_includes record_for(org, title: "Water the plants").fetch("tags"), "defer"
+      assert_match(/Someday\/Maybe/, out)
+      assert Tasks::Check.check(org).ok?
+    end
+    run_cli("someday", "Water the plants", "+4") do |org, _out, err, status|
+      assert_equal 1, status.exitstatus
+      assert_match(/usage: tasks someday <ref>/, err)
+      assert_equal FIXTURE_ORG, File.read(org)
+    end
+  end
+
+  def test_cli_someday_noop_does_not_consume_an_undo_entry
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      content = deferred_fixture
+      File.write(org, content)
+
+      out, err, status = run_cli_at(org, archive, "someday", "Water the plants")
+      assert status.success?, err
+      assert_match(/on hold indefinitely/, out)
+      assert_equal content, File.read(org)
+
+      _undo_out, undo_err, undo_status = run_cli_at(org, archive, "undo")
+      assert_equal 1, undo_status.exitstatus
+      assert_match(/nothing to undo/, undo_err)
+    end
+  end
+
+  def test_cli_timed_defer_include_done_preserves_closed_lifecycle
+    expected = Date.today + 4
+    run_cli("defer", "Old finished", "+4", "--include-done", "--json") do |org, out, err, status|
+      assert status.success?, err
+      record = record_for(org, title: "Old finished thing")
+      assert_equal "DONE", record["state"]
+      assert_equal "2026-06-20", record["closed"]
+      assert_equal expected.iso8601, record["scheduled"]
+      row = JSON.parse(out).fetch("touched").fetch(0)
+      assert_equal false, row["available"]
+      assert_equal "closed", row["availability_reason"]
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_activate_clears_future_available_from_and_hold_but_preserves_due
+    records = FIXTURE_RECORDS.map(&:dup)
+    flight = records.find { |record| record["id"] == FIX[:flight] }
+    flight["tags"] = flight.fetch("tags") + ["defer"]
+    flight["scheduled"] = (Date.today + 4).iso8601
+    content = dump_fixture(records)
+
+    run_cli("activate", "Book flight", content: content) do |org, out, err, status|
+      assert status.success?, err
+      record = record_for(org, title: "Book flight in Concur")
+      assert_nil record["scheduled"]
+      assert_equal "2026-07-02", record["deadline"]
+      refute_includes record.fetch("tags"), "defer"
+      assert_match(/activate "Book flight in Concur" — available now/, out)
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_activate_retains_past_available_from_history
+    records = FIXTURE_RECORDS.map(&:dup)
+    plants = records.find { |record| record["id"] == FIX[:plants] }
+    plants["tags"] = plants.fetch("tags") + ["defer"]
+    plants["scheduled"] = (Date.today - 1).iso8601
+
+    run_cli("activate", "Water the plants", content: dump_fixture(records)) do |org, out, err, status|
+      assert status.success?, err
+      record = record_for(org, title: "Water the plants")
+      assert_equal (Date.today - 1).iso8601, record["scheduled"]
+      refute_includes record.fetch("tags"), "defer"
+      assert_match(/available now/, out)
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_activate_reports_remaining_ancestor_hold
+    content = dump_fixture([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "ab000001", "title" => "Work" },
+      { "type" => "task", "id" => "ab000002", "parent" => "ab000001", "state" => "TODO",
+        "title" => "Held project", "tags" => %w[defer] },
+      { "type" => "task", "id" => "ab000003", "parent" => "ab000002", "state" => "NEXT",
+        "title" => "Child task", "tags" => %w[defer], "scheduled" => (Date.today + 4).iso8601 },
+    ])
+
+    run_cli("activate", "Child task", content: content) do |org, out, err, status|
+      assert status.success?, err
+      record = record_for(org, title: "Child task")
+      assert_nil record["scheduled"]
+      refute_includes(record["tags"] || [], "defer")
+      assert_match(/still on hold indefinitely via "Held project" \[ab000002\]/, out)
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_list_someday_filters_own_marker_not_inherited_blockers
+    content = dump_fixture([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "ac000001", "title" => "Work" },
+      { "type" => "task", "id" => "ac000002", "parent" => "ac000001", "state" => "TODO",
+        "title" => "Held parent", "tags" => %w[defer] },
+      { "type" => "task", "id" => "ac000003", "parent" => "ac000002", "state" => "NEXT",
+        "title" => "Inherited child" },
+    ])
+    run_cli("list", "--someday", content: content) do |_org, out, err, status|
+      assert status.success?, err
+      assert_match(/Held parent/, out)
+      refute_match(/Inherited child/, out)
+    end
+    run_cli("list", "--on-hold", content: content) do |_org, out, err, status|
+      assert status.success?, err
+      assert_match(/Held parent/, out)
+      refute_match(/Inherited child/, out)
+    end
+  end
+
+  def test_cli_unavailable_rejects_non_open_scopes_and_filter_conflicts_are_clear
+    [["--unavailable", "--done"], ["--unavailable", "--all"]].each do |args|
+      run_cli("list", *args) do |_org, out, err, status|
+        assert_equal 1, status.exitstatus
+        assert_empty out
+        assert_match(/--unavailable is only valid with --open/, err)
+      end
+    end
+    run_cli("list", "--deferred", "--someday") do |_org, out, err, status|
+      assert_equal 1, status.exitstatus
+      assert_empty out
+      assert_match(/mutually exclusive/, err)
     end
   end
 
@@ -628,6 +866,10 @@ class TestCliMutations < Minitest::Test
       assert st.success?
       assert_match(/capture/, out)
       assert_match(/archive/, out)
+      assert_match(/defer\s+snooze <ref> \[date\]/, out)
+      assert_match(/someday\s+<ref>/, out)
+      assert_match(/--unavailable/, out)
+      assert_match(/Available from/, out)
       assert_match(/Full spec: docs\/cli-spec\.md/, out)
     end
   end

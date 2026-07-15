@@ -40,6 +40,25 @@ class TestTaskQueries < Minitest::Test
     assert_raises(ArgumentError) { Tasks::TaskFilter.parse_cli(["--not-a-list-flag"]) }
   end
 
+  def test_filter_parser_supports_unavailable_and_own_hold_filters
+    unavailable = Tasks::TaskFilter.parse_cli(["--unavailable"]).filter
+    assert unavailable.unavailable_only
+    refute unavailable.someday_only
+
+    someday = Tasks::TaskFilter.parse_cli(["--on-hold"]).filter
+    assert someday.someday_only
+    refute someday.unavailable_only
+
+    error = assert_raises(ArgumentError) do
+      Tasks::TaskFilter.parse_cli(["--done", "--unavailable"])
+    end
+    assert_match(/only valid with --open/, error.message)
+    error = assert_raises(ArgumentError) do
+      Tasks::TaskFilter.parse_cli(["--deferred", "--someday"])
+    end
+    assert_match(/mutually exclusive/, error.message)
+  end
+
   def test_list_filter_uses_snapshot_bodies_and_never_exposes_lines_in_resources
     with_query_store do |store|
       filter = Tasks::TaskFilter.parse_cli(["--body", "/some note"]).filter
@@ -188,6 +207,60 @@ class TestTaskQueries < Minitest::Test
       assert on_date.availability(child).available?
       assert_equal %w[aa000002 aa000003], on_date.view(:next).tasks.map(&:id)
       assert_equal %w[aa000002 aa000003], on_date.list(Tasks::TaskFilter.new).tasks.map(&:id)
+    end
+  end
+
+  def test_unavailable_and_someday_filters_distinguish_effective_from_own_hold
+    records = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "ad000001", "title" => "Work" },
+      { "type" => "task", "id" => "ad000002", "parent" => "ad000001", "state" => "TODO",
+        "title" => "Held parent", "tags" => %w[defer] },
+      { "type" => "task", "id" => "ad000003", "parent" => "ad000002", "state" => "NEXT",
+        "title" => "Inherited child" },
+      { "type" => "task", "id" => "ad000004", "parent" => "ad000001", "state" => "NEXT",
+        "title" => "Timed task", "scheduled" => "2026-07-20" },
+      { "type" => "task", "id" => "ad000005", "parent" => "ad000001", "state" => "DONE",
+        "title" => "Closed hold", "tags" => %w[defer], "closed" => "2026-07-01" },
+    ]
+
+    with_query_store(records: records) do |store|
+      query = queries(store)
+      unavailable = Tasks::TaskFilter.parse_cli(["--unavailable"]).filter
+      assert_equal %w[ad000002 ad000003 ad000004], query.list(unavailable).tasks.map(&:id)
+
+      someday = Tasks::TaskFilter.parse_cli(["--someday"]).filter
+      assert_equal ["ad000002"], query.list(someday).tasks.map(&:id)
+
+      done_deferred = Tasks::TaskFilter.parse_cli(["--done", "--deferred"]).filter
+      assert_equal ["ad000005"], query.list(done_deferred).tasks.map(&:id)
+      done_someday = Tasks::TaskFilter.parse_cli(["--done", "--someday"]).filter
+      assert_equal ["ad000005"], query.list(done_someday).tasks.map(&:id)
+    end
+  end
+
+  def test_availability_after_previews_own_fields_with_canonical_ancestor_precedence
+    records = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "ae000001", "title" => "Work" },
+      { "type" => "task", "id" => "ae000002", "parent" => "ae000001", "state" => "TODO",
+        "title" => "Later parent", "scheduled" => "2026-07-30" },
+      { "type" => "task", "id" => "ae000003", "parent" => "ae000002", "state" => "NEXT",
+        "title" => "Held child", "tags" => %w[defer] },
+    ]
+
+    with_query_store(records: records) do |store|
+      query = queries(store)
+      child = query.snapshot.items.find { |item| item.id == "ae000003" }
+      preview = query.availability_after(
+        child, deferred: false, scheduled: Date.new(2026, 7, 18)
+      )
+
+      assert_equal :ancestor_scheduled, preview.reason
+      assert_equal "ae000002", preview.blocker_id
+      assert_equal Date.new(2026, 7, 30), preview.scheduled
+      assert child.deferred?, "preview never mutates the held snapshot"
+      assert_nil child.scheduled
     end
   end
 
