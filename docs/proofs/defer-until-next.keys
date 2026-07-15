@@ -1,0 +1,14 @@
+@set:cols:112
+@set:rows:24
+@set:delay:150
+@set:output:docs/proofs
+@require:termshot
+
+@sleep:1000
+2
+@sleep:500
+Z
+@wait:unavailable shown
+@sleep:500
+@capture:defer-until-next.png
+q
