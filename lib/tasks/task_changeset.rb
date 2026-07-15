@@ -12,6 +12,12 @@ module Tasks
   # (dates and recurrence, moves and lifecycle state), so Store applies a
   # changeset in this exact sequence instead of accepting Hash insertion order.
   class TaskChangeset
+    # Explicit transport-neutral command for "move to the task's current
+    # enclosing section." A plain nil remains invalid: legacy adapters can
+    # produce nil from a stale/missing parent, and that must never retarget a
+    # task as an accidental unnest.
+    UNNEST = Object.new.freeze
+
     FIELD_ORDER = %i[
       title priority body
       contexts tags deferred tag_delta

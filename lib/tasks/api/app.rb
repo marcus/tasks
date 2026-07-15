@@ -242,7 +242,7 @@ module Tasks
         reject_unknown_fields!(body, PATCH_FIELDS)
         validation!(changes: ["must contain at least one field"]) if body.empty?
         validate_patch_body!(body)
-        changes = normalize_patch_changes(body, id, request_id)
+        changes = normalize_patch_changes(body)
         ensure_store_ready!(request_id)
         result = application.update_task(
           id, changes, expected_revision: expected_revision,
@@ -259,6 +259,7 @@ module Tasks
       end
 
       def delete_task(request, id, request_id)
+        reject_delete_body!(request)
         expected_revision = if_match!(request)
         query = query_params(request, DELETE_QUERY_KEYS)
         cascade = boolean_query(query, "cascade", default: false)
@@ -271,21 +272,18 @@ module Tasks
         [204, {}, nil]
       end
 
-      def normalize_patch_changes(body, id, request_id)
+      def normalize_patch_changes(body)
         changes = body.transform_keys(&:to_sym)
         changes[:body] = normalize_body(body["body"]) if body.key?("body")
         if body.key?("recurrence")
           changes[:recurrence] = normalize_recurrence(body["recurrence"], allow_off: true)
         end
         if body.key?("parent_id")
-          parent_id = body["parent_id"]
-          if parent_id.nil?
-            current = application.get_task_result(id, source: :live)
-            read_failure!(current, request_id) unless current.ok?
-            parent_id = current.data.section_id
-          end
           changes.delete(:parent_id)
-          changes[:location] = parent_id
+          # Store resolves nil to the enclosing section under the mutation
+          # lock, so a concurrent ancestor move cannot reuse a stale section
+          # observed by a separate adapter read.
+          changes[:location] = body["parent_id"].nil? ? TaskChangeset::UNNEST : body["parent_id"]
         end
         changes
       end
@@ -435,7 +433,12 @@ module Tasks
         if length && length > BODY_LIMIT
           raise HttpError.new(413, :payload_too_large, Errors.message(:payload_too_large))
         end
-        raw = request.body.read(BODY_LIMIT + 1)
+        input = request.body
+        unless input
+          raise HttpError.new(400, :malformed_request, "The request body is not valid JSON.")
+        end
+
+        raw = input.read(BODY_LIMIT + 1)
         if raw.bytesize > BODY_LIMIT
           raise HttpError.new(413, :payload_too_large, Errors.message(:payload_too_large))
         end
@@ -446,6 +449,32 @@ module Tasks
         parsed
       rescue JSON::ParserError
         raise HttpError.new(400, :malformed_request, "The request body is not valid JSON.")
+      end
+
+      def reject_delete_body!(request)
+        length = request.content_length
+        begin
+          length = Integer(length, 10) if length
+        rescue ArgumentError
+          raise HttpError.new(400, :malformed_request, "Content-Length is malformed.")
+        end
+        if length && length > BODY_LIMIT
+          raise HttpError.new(413, :payload_too_large, Errors.message(:payload_too_large))
+        end
+
+        input = request.body
+        return unless input
+
+        raw = input.read(BODY_LIMIT + 1)
+        if raw.bytesize > BODY_LIMIT
+          raise HttpError.new(413, :payload_too_large, Errors.message(:payload_too_large))
+        end
+        return if raw.empty?
+
+        unless request.media_type == "application/json"
+          raise HttpError.new(415, :unsupported_media_type, Errors.message(:unsupported_media_type))
+        end
+        raise HttpError.new(400, :malformed_request, "DELETE requests do not accept a body.")
       end
 
       def reject_unknown_fields!(body, allowed)

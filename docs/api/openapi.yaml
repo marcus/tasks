@@ -23,6 +23,7 @@ info:
       content type on a mutation is `415`.
     - JSON request bodies are limited to 65536 bytes (64 KiB). Larger bodies
       are rejected with `413` / `payload_too_large` before JSON parsing.
+      DELETE has no request body; a non-empty body is rejected.
     - Unknown request fields are rejected (`422` / `validation_failed`), never
       silently ignored.
     - Successful responses use the envelope `{ "data": ..., "meta": { ... } }`.
@@ -680,6 +681,10 @@ paths:
           $ref: "#/components/responses/MalformedRequest"
         "403":
           $ref: "#/components/responses/ForbiddenOrigin"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
         "503":
           $ref: "#/components/responses/StoreInvalid"
 

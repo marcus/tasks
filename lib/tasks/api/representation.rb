@@ -12,7 +12,7 @@ module Tasks
           id: view.id,
           revision: view.revision,
           source: view.source.to_s,
-          parent_id: view.parent_id,
+          parent_id: view.parent_id == view.section_id ? nil : view.parent_id,
           section_id: view.section_id,
           depth: view.ancestor_ids.count { |id| id != view.section_id },
           state: view.state,

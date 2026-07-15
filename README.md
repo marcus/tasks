@@ -244,7 +244,8 @@ curl http://127.0.0.1:4747/api/v1/tasks
 The first slice provides health/readiness, capabilities, sections, filtered
 task reads, and task create/PATCH/DELETE under `/api/v1`. PATCH and DELETE use
 the task response's quoted `ETag` as a required `If-Match` precondition. JSON
-request bodies are limited to 64 KiB. The complete wire contract is
+request bodies are limited to 64 KiB, and DELETE accepts no request body. The
+complete wire contract is
 [`docs/api/openapi.yaml`](docs/api/openapi.yaml).
 
 Named manager views, history/archive endpoints, events, static client hosting,

@@ -107,6 +107,8 @@ class TestApiApp < Minitest::Test
     ]
     assert_equal expected_keys, task.keys.sort
     assert_equal "live", task.fetch("source")
+    assert_nil task.fetch("parent_id"), "top-level tasks expose no task parent"
+    assert_equal FIX[:work], task.fetch("section_id")
     assert_equal ["important"], task.fetch("tags")
     refute task.key?("line")
     refute task.key?("headline")
@@ -139,6 +141,7 @@ class TestApiApp < Minitest::Test
     assert_equal ".+1w", resource.fetch("recurrence")
     assert_equal ["@desk"], resource.fetch("contexts")
     assert_equal ["api"], resource.fetch("tags")
+    assert_nil resource.fetch("parent_id")
     assert_equal ["Captured [2026-07-15].", "one", "two"], resource.fetch("body")
     assert_contract_response(created)
 
@@ -181,13 +184,37 @@ class TestApiApp < Minitest::Test
     assert_equal 2, parent_resource.fetch("descendant_count")
 
     child = get("/api/v1/tasks/bbbb0001")
+    child_resource = JSON.parse(child.body).fetch("data")
+    assert_equal FIX[:pr], child_resource.fetch("parent_id")
+    assert_equal 1, child_resource.fetch("depth")
     moved = json_request(
       "PATCH", "/api/v1/tasks/bbbb0001", { parent_id: nil },
       { "HTTP_IF_MATCH" => child["etag"] }
     )
     resource = JSON.parse(moved.body).fetch("data")
-    assert_equal FIX[:work], resource.fetch("parent_id")
+    assert_nil resource.fetch("parent_id")
+    assert_equal FIX[:work], resource.fetch("section_id")
     assert_equal 0, resource.fetch("depth")
+
+    # The child's ETag deliberately does not change when only an ancestor is
+    # moved. A later unnest must therefore resolve the CURRENT enclosing
+    # section under the Store lock, not reuse the adapter's earlier read.
+    grandchild = get("/api/v1/tasks/bbbb0002")
+    old_etag = grandchild["etag"]
+    ancestor_snapshot = Tasks::Store.new(org: @org, archive: @archive).edit_snapshot("bbbb0001")
+    ancestor_move = Tasks::Store.new(org: @org, archive: @archive).apply_changeset!(
+      Tasks::TaskChangeset.from(ancestor_snapshot, changes: { location: FIX[:home] })
+    )
+    assert ancestor_move.ok?
+    assert_equal old_etag, get("/api/v1/tasks/bbbb0002")["etag"]
+    current_unnest = json_request(
+      "PATCH", "/api/v1/tasks/bbbb0002", { parent_id: nil },
+      { "HTTP_IF_MATCH" => old_etag }
+    )
+    assert_equal 200, current_unnest.status, current_unnest.body
+    current_resource = JSON.parse(current_unnest.body).fetch("data")
+    assert_nil current_resource.fetch("parent_id")
+    assert_equal FIX[:home], current_resource.fetch("section_id")
   end
 
   def test_preconditions_stale_current_and_delete_cascade_conflict
@@ -224,14 +251,40 @@ class TestApiApp < Minitest::Test
   end
 
   def test_transport_validation_body_limit_host_origin_and_forwarded_headers
-    assert_error request("POST", "/api/v1/tasks", input: "{}", "CONTENT_TYPE" => "text/plain"), 415, "unsupported_media_type"
-    assert_error request("POST", "/api/v1/tasks", input: "{", "CONTENT_TYPE" => "application/json"), 400, "malformed_request"
-    assert_error json_request("POST", "/api/v1/tasks", title: "ok", unknown: true), 422, "validation_failed"
+    unsupported = request("POST", "/api/v1/tasks", input: "{}", "CONTENT_TYPE" => "text/plain")
+    assert_error unsupported, 415, "unsupported_media_type"
+    assert_contract_request unsupported, valid: false
+    malformed = request("POST", "/api/v1/tasks", input: "{", "CONTENT_TYPE" => "application/json")
+    assert_error malformed, 400, "malformed_request"
+    assert_contract_request malformed, valid: false
+    unknown = json_request("POST", "/api/v1/tasks", title: "ok", unknown: true)
+    assert_error unknown, 422, "validation_failed"
+    assert_contract_request unknown, valid: false
     assert_error json_request("POST", "/api/v1/tasks", title: "ok", contexts: ["desk"]), 422, "validation_failed"
-    assert_error json_request("PATCH", "/api/v1/tasks/#{FIX[:pr]}", {}, { "HTTP_IF_MATCH" => get("/api/v1/tasks/#{FIX[:pr]}")["etag"] }), 422, "validation_failed"
+    empty_patch = json_request("PATCH", "/api/v1/tasks/#{FIX[:pr]}", {}, { "HTTP_IF_MATCH" => get("/api/v1/tasks/#{FIX[:pr]}")["etag"] })
+    assert_error empty_patch, 422, "validation_failed"
+    assert_contract_request empty_patch, valid: false
 
     huge = JSON.generate(title: "x" * Tasks::Api::App::BODY_LIMIT)
-    assert_error request("POST", "/api/v1/tasks", input: huge, "CONTENT_TYPE" => "application/json"), 413, "payload_too_large"
+    huge_response = request("POST", "/api/v1/tasks", input: huge, "CONTENT_TYPE" => "application/json")
+    assert_error huge_response, 413, "payload_too_large"
+    assert_contract_response huge_response
+
+    current = get("/api/v1/tasks/#{FIX[:pr]}")
+    delete_media = request(
+      "DELETE", "/api/v1/tasks/#{FIX[:pr]}",
+      input: "not json", "CONTENT_TYPE" => "text/plain", "HTTP_IF_MATCH" => current["etag"]
+    )
+    assert_error delete_media, 415, "unsupported_media_type"
+    assert_contract_response delete_media
+    delete_huge = request(
+      "DELETE", "/api/v1/tasks/#{FIX[:pr]}",
+      input: "x" * (Tasks::Api::App::BODY_LIMIT + 1),
+      "CONTENT_TYPE" => "application/json", "HTTP_IF_MATCH" => current["etag"]
+    )
+    assert_error delete_huge, 413, "payload_too_large"
+    assert_contract_response delete_huge
+    assert Tasks::Store.new(org: @org, archive: @archive).items.any? { |item| item.id == FIX[:pr] }
 
     bad_host = request("GET", "/healthz", "HTTP_HOST" => "evil.example")
     assert_error bad_host, 400, "malformed_request"
@@ -239,8 +292,10 @@ class TestApiApp < Minitest::Test
     assert_error forwarded, 400, "malformed_request"
     origin = json_request("POST", "/api/v1/tasks", { title: "blocked" }, { "HTTP_ORIGIN" => "https://evil.example" })
     assert_error origin, 403, "forbidden_origin"
+    assert_contract_response origin
     allowed = json_request("POST", "/api/v1/tasks", { title: "allowed" }, { "HTTP_ORIGIN" => "http://#{HOST}" })
     assert_equal 201, allowed.status
+    assert_contract_response allowed
 
     [bad_host, forwarded, origin, allowed].each { |response| refute_equal "*", response["access-control-allow-origin"] }
   end
@@ -302,9 +357,15 @@ class TestApiApp < Minitest::Test
 
   def request(method, path, env = {})
     env = { "HTTP_HOST" => HOST }.merge(env)
+    contract_request = {
+      method: method,
+      path: path,
+      input: (env[:input] || env["input"])&.dup,
+      content_type: env["CONTENT_TYPE"],
+      if_match: env["HTTP_IF_MATCH"],
+    }
     response = @request.request(method, path, env)
-    response.instance_variable_set(:@tasks_contract_method, method)
-    response.instance_variable_set(:@tasks_contract_path, path)
+    response.instance_variable_set(:@tasks_contract_request, contract_request)
     response
   end
 
@@ -326,24 +387,33 @@ class TestApiApp < Minitest::Test
   end
 
   def assert_contract_response(response)
-    method = response.instance_variable_get(:@tasks_contract_method)
-    path = response.instance_variable_get(:@tasks_contract_path)
-    contract_path = path.sub(%r{\A/api/v1}, "")
-    request_env = { method: method }
-    if %w[POST PATCH].include?(method)
-      request_env[:input] = JSON.generate(method == "POST" ? { title: "Contract task" } : { title: "Contract update" })
-      request_env["CONTENT_TYPE"] = "application/json"
-    end
-    request_env["HTTP_IF_MATCH"] = '"v1.opaque"' if %w[PATCH DELETE].include?(method)
-    env = Rack::MockRequest.env_for(contract_path, request_env)
-    rack_request = Rack::Request.new(env)
-    validated_request = @definition.validate_request(rack_request)
-    assert validated_request.valid?, "#{method} #{path} request: #{validated_request.error&.message}"
+    request_data, rack_request = contract_request_for(response)
+    assert_contract_request response, valid: true
     rack_response = Rack::Response.new(
       response.body.empty? ? [] : [response.body], response.status, response.headers
     )
     validated = @definition.validate_response(rack_request, rack_response)
-    assert validated&.valid?, "#{method} #{path}: #{validated&.error&.message || "not matched"}"
+    assert validated&.valid?, "#{request_data[:method]} #{request_data[:path]}: #{validated&.error&.message || "not matched"}"
+  end
+
+  def assert_contract_request(response, valid:)
+    request_data, rack_request = contract_request_for(response)
+    validated = @definition.validate_request(rack_request)
+    if valid
+      assert validated.valid?, "#{request_data[:method]} #{request_data[:path]} request: #{validated.error&.message}"
+    else
+      refute validated.valid?, "#{request_data[:method]} #{request_data[:path]} unexpectedly matched the contract"
+    end
+  end
+
+  def contract_request_for(response)
+    data = response.instance_variable_get(:@tasks_contract_request)
+    path = data.fetch(:path).sub(%r{\A/api/v1}, "")
+    env = { method: data.fetch(:method) }
+    env[:input] = data[:input] unless data[:input].nil?
+    env["CONTENT_TYPE"] = data[:content_type] if data[:content_type]
+    env["HTTP_IF_MATCH"] = data[:if_match] if data[:if_match]
+    [data, Rack::Request.new(Rack::MockRequest.env_for(path, env))]
   end
 
   def quote(value) = %Q("#{value}")

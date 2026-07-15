@@ -1781,8 +1781,9 @@ module Tasks
     end
 
     def patch_location(records, ri, parent_id, force: false)
-      return patch_invalid("location must be a parent id") unless parent_id.is_a?(String)
       rec = records[ri]
+      parent_id = enclosing_section_id(records, rec) if parent_id.equal?(TaskChangeset::UNNEST)
+      return patch_invalid("location must be a parent id") unless parent_id.is_a?(String)
       if !force && rec["parent"] == parent_id
         return patch_ok(rec, summary: { from: rec["parent"], to: parent_id, moved_ids: [] })
       end
@@ -1811,6 +1812,17 @@ module Tasks
       records.replace(rest)
       patch_ok(subtree[0], touched_ids: moved_ids,
                summary: { from: from, to: parent_id, moved_ids: moved_ids })
+    end
+
+    def enclosing_section_id(records, record)
+      by_id = records.to_h { |candidate| [candidate["id"], candidate] }
+      current = record
+      while current && (parent = by_id[current["parent"]])
+        return parent["id"] if parent["type"] == "section"
+
+        current = parent
+      end
+      nil
     end
 
     def patch_state(records, ri, value, today:)

@@ -71,6 +71,28 @@ class TestTaskChangeset < Minitest::Test
     end
   end
 
+  def test_nil_location_resolves_current_enclosing_section_under_mutation_lock
+    with_changeset_store do |store, org, _archive|
+      child_snapshot = store.edit_snapshot("11110003")
+      ancestor_snapshot = store.edit_snapshot("11110002")
+
+      moved = store.apply_changeset!(
+        changeset(ancestor_snapshot, location: "22220001")
+      )
+      assert moved.ok?
+      assert_equal child_snapshot.revision, store.edit_snapshot("11110003").revision,
+                   "ancestor-only moves deliberately leave the child revision unchanged"
+
+      unnested = store.apply_changeset!(
+        changeset(child_snapshot, location: Tasks::TaskChangeset::UNNEST)
+      )
+      assert unnested.ok?
+      child = records(org).find { |record| record["id"] == "11110003" }
+      assert_equal "22220001", child["parent"]
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
   def test_multi_field_changeset_applies_in_documented_order_as_one_checked_undoable_write
     with_changeset_store do |store, org, _archive|
       snapshot = store.edit_snapshot("11110002")
