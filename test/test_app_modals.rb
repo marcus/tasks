@@ -337,14 +337,14 @@ class TestAppModals < Minitest::Test
   def test_left_right_cycle_views_in_list_mode
     with_app do |app|
       views = []
-      5.times do
+      6.times do
         views << ui(app).view
         app.send(:handle_key, "\e[C")
       end
-      assert_equal %i[agenda next quadrants inbox projects], views
+      assert_equal %i[agenda next quadrants inbox projects outline], views
       assert_equal :agenda, ui(app).view, "wraps around"
       app.send(:handle_key, "\e[D")
-      assert_equal :projects, ui(app).view, "left wraps backward"
+      assert_equal :outline, ui(app).view, "left wraps backward"
     end
   end
 
@@ -359,10 +359,10 @@ class TestAppModals < Minitest::Test
     end
   end
 
-  def test_detail_panel_remains_available_across_all_five_views
+  def test_detail_panel_remains_available_across_all_six_views
     with_app do |app|
       app.send(:handle_key, "\r")
-      (1..5).each do |number|
+      (1..6).each do |number|
         app.send(:handle_key, number.to_s)
         assert_equal Tui::Views::TABS[number - 1].last, ui(app).view
         assert_equal :detail, panel(app).kind

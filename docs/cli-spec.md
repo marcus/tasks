@@ -136,10 +136,10 @@ Edit-mode keys are fixed as follows:
 | `Ctrl-K` / `Ctrl-L` | Grow/shrink through compact → standard → wide → focus without blur; in task-edit text fields `Ctrl-K` intentionally shadows kill-to-end, while the agent prompt keeps its current `Ctrl-K`. |
 | `Escape` | Close an inner picker first. A dirty field requires a confirming second Escape before only that buffer is reverted; a clean field leaves edit mode. |
 
-The key reader treats `Shift-Tab` (`\e[Z`) and other CSI keys as complete
-sequences, including when input arrives across reads, so a partial sequence
-cannot become a destructive lone Escape. The editor is bound to the selected
-task's stable ID. External changes to the same owned semantic slice conflict;
+The key reader treats `Shift-Tab` (`\e[Z`), CSI keys, and ESC-prefixed Alt
+bindings as complete sequences, including when input arrives across reads, so
+a partial sequence cannot become a destructive lone Escape. The editor is
+bound to the selected task's stable ID. External changes to the same owned semantic slice conflict;
 unrelated task or same-task field changes may be adopted without overwriting an
 active buffer. Missing targets are never rebound to a neighboring row.
 
@@ -394,14 +394,17 @@ JSON, and dry-run output. They do not emit the new placement summary or
 the API/TUI via an omitted/null `before_id`; no CLI grammar for that conversion
 is added in this slice.
 
-No current TUI tab is eligible for ordering: Agenda, Next, Quadrants, Inbox,
-and Projects all filter, regroup, or sort away live siblings. Phase 4 adds a
-sixth **Outline** tab that renders every live section and task in canonical DFS
-order, including closed and unavailable tasks. Only collapse may hide
+Agenda, Next, Quadrants, Inbox, and Projects are not eligible for ordering:
+they filter, regroup, or sort away live siblings. The sixth **Outline** tab
+renders every live section and task in canonical DFS order, including closed
+and unavailable tasks. Only collapse may hide
 descendants. `Alt+↑`/`Alt+k`, `Alt+↓`/`Alt+j`, `>`, and `<` reorder, indent,
 and outdent in that unfiltered tab. In another tab, or while `/` text or `@`
 context filtering is active, those keys are consumed and the footer directs
-the user to the unfiltered Outline tab.
+the user to the unfiltered Outline tab. Up/down stay within the current direct
+sibling list; indent appends under the preceding sibling; outdent places the
+subtree immediately after its old parent. Each action is one checked placement
+changeset and one undo entry, while boundary/refusal cases write nothing.
 
 **Output.** Human-readable by default. Read commands and mutations accept
 `--json`; shapes below. Mutations always print (or return in JSON) the full

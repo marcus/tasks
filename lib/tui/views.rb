@@ -35,6 +35,7 @@ module Tui
       ["3 Quadrants", :quadrants],
       ["4 Inbox",     :inbox],
       ["5 Projects",  :projects],
+      ["6 Outline",   :outline],
     ].freeze
 
     # Visible width of the agenda date stamp ("MM-DD KIND (when....)"), so an
@@ -160,6 +161,9 @@ module Tui
              today: Date.today, urgent_days: Tasks::Quadrants::DEFAULT_URGENT_DAYS,
              reader: nil, store: nil)
       reader ||= store
+      if view == :outline
+        return outline(items, tree: tree, collapsed: collapsed, today: today, reader: reader)
+      end
       if view == :projects
         return projects(items, tree: tree, collapsed: collapsed, show_deferred: show_deferred,
                                today: today, reader: reader)
@@ -193,6 +197,69 @@ module Tui
     # -- flat builders (tree: nil) -------------------------------------------
     # These render exactly as before the outliner existed; the `/` filter view
     # relies on their output shape.
+
+    # The structural Outline is the only reorder-safe TUI surface. With a tree
+    # it renders every live record in canonical DFS order: section rows are
+    # non-selectable and task rows retain their real nodes. The flat path is
+    # used only while `/` or `@` filtering is active; ordering is gated there,
+    # so it deliberately shows just the matching tasks without pretending the
+    # reduced list is a structural outline.
+    def outline(items, tree: nil, collapsed: Set.new, today: Date.today, reader: nil)
+      unless tree
+        return items.map do |item|
+          Row.new("  #{outline_body(item, today: today, reader: reader)}", item)
+        end
+      end
+
+      rows = []
+      tree.each { |node| append_outline_node(rows, node, 0, collapsed: collapsed,
+                                                             today: today, reader: reader) }
+      rows
+    end
+
+    def append_outline_node(rows, node, depth, collapsed:, today:, reader:)
+      indent = "  " * depth
+      if node.section?
+        rows << Row.new("#{indent}#{T.paint(:section, node.title)}", nil)
+        node.children.each do |child|
+          append_outline_node(rows, child, depth + 1, collapsed: collapsed,
+                                                        today: today, reader: reader)
+        end
+        return
+      end
+
+      folded = node.item.id && collapsed.include?(node.item.id) && !node.children.empty?
+      marker = if node.children.empty?
+                 MARK_LEAF
+               elsif folded
+                 MARK_COLLAPSED
+               else
+                 MARK_EXPANDED
+               end
+      body = outline_body(node.item, today: today, reader: reader)
+      body = T.composite_over(:outline_container, body) unless node.children.empty?
+      text = +"#{indent}#{marker}#{body}"
+      text << T.paint(:muted, " (#{outline_descendant_count(node)})") if folded
+      rows << Row.new(text, node.item, node)
+      return if folded
+
+      node.children.each do |child|
+        append_outline_node(rows, child, depth + 1, collapsed: collapsed,
+                                                      today: today, reader: reader)
+      end
+    end
+
+    def outline_descendant_count(node)
+      node.children.sum do |child|
+        (child.task? ? 1 : 0) + outline_descendant_count(child)
+      end
+    end
+
+    def outline_body(item, today:, reader:)
+      state_slot = item.open? ? :accent : :muted
+      "#{T.paint(state_slot, item.state.ljust(9))} #{decorated_title(item)}" \
+        "#{badge(item, reader: reader, today: today)}"
+    end
 
     def agenda(items, today: Date.today, show_deferred: true, reader: nil, store: nil)
       query = view_query(:agenda, today: today, show_deferred: show_deferred, reader: reader || store)

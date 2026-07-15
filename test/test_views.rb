@@ -306,6 +306,53 @@ class TestViews < Minitest::Test
     end
   end
 
+  def test_outline_renders_every_live_section_and_task_in_canonical_dfs_order
+    with_records(NESTED) do |store|
+      rs = tree_rows(store, :outline)
+      assert_equal [
+        nil, "Ship release", "write notes", "grandchild next", "undated rider",
+        "old subtask", nil, "plan trip", "book hotel",
+      ], rs.map { |row| row.item&.title }
+      assert_equal ["Work", "Home"], rs.reject(&:item).map { |row| A.strip(row.text).strip }
+      assert_includes A.strip(find_row(rs, "old subtask").text), "DONE"
+      assert_includes A.strip(find_row(rs, "book hotel").text), "TODO"
+      assert rs.reject(&:item).all? { |row| row.node.nil? }, "sections remain non-selectable structure rows"
+    end
+  end
+
+  def test_outline_collapse_hides_closed_and_unavailable_descendants_without_reordering_siblings
+    with_records(NESTED) do |store|
+      rs = tree_rows(store, :outline, collapsed: Set["p1"])
+      assert_equal ["Ship release", "plan trip", "book hotel"], rs.filter_map { |row| row.item&.title }
+      ship = find_row(rs, "Ship release")
+      assert_includes A.strip(ship.text), "(4)"
+    end
+  end
+
+  def test_filtered_outline_is_flat_and_contains_only_supplied_matches
+    with_records(NESTED) do |store|
+      matches = store.items.select { |item| item.title.include?("task") || item.title.include?("notes") }
+      rs = V.rows(:outline, matches, today: TODAY, store: store)
+      assert_equal matches.map(&:id), rs.map { |row| row.item.id }
+      assert rs.all? { |row| row.node.nil? }
+    end
+  end
+
+  def test_outline_keeps_nested_sections_as_non_selectable_structure_rows
+    records = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "aa000001", "title" => "Projects" },
+      { "type" => "section", "id" => "aa000002", "parent" => "aa000001", "title" => "Launch" },
+      { "type" => "task", "id" => "aa000003", "parent" => "aa000002", "state" => "DONE",
+        "title" => "Shipped", "closed" => "2026-07-10" },
+    ]
+    with_records(records) do |store|
+      rs = tree_rows(store, :outline)
+      assert_equal [nil, nil, "Shipped"], rs.map { |row| row.item&.title }
+      assert_equal ["Projects", "Launch"], rs.reject(&:item).map { |row| A.strip(row.text).strip }
+    end
+  end
+
   # tree: nil must reproduce the pre-outliner flat output exactly — no markers,
   # no node member, identical to the direct flat-builder call.
   def test_flat_path_regression

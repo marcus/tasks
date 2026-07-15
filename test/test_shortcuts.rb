@@ -60,6 +60,21 @@ class TestShortcuts < Minitest::Test
     assert_nil S.match("@", :modal)
   end
 
+  def test_ordering_bindings_cover_csi_and_escape_prefixed_alt_variants
+    up = ["\e[1;3A", "\e\e[A", "\ek"]
+    down = ["\e[1;3B", "\e\e[B", "\ej"]
+    up.each { |sequence| assert_equal :move_subtree_up, S.match(sequence, :list).handler }
+    down.each { |sequence| assert_equal :move_subtree_down, S.match(sequence, :list).handler }
+    assert_equal :indent_subtree, S.match(">", :list).handler
+    assert_equal :outdent_subtree, S.match("<", :list).handler
+  end
+
+  def test_sixth_view_has_a_direct_jump_key
+    entry = S.match("6", :list)
+    assert_equal :jump_view, entry.handler
+    assert_equal "1-6", entry.display_key
+  end
+
   def test_unknown_lookup_context_is_rejected
     error = assert_raises(ArgumentError) { S.entries(:bogus) }
     assert_match(/unknown shortcut context/, error.message)

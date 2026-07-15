@@ -239,13 +239,14 @@ class TestApp < Minitest::Test
     end
   end
 
-  def test_task_editor_opens_on_a_stable_target_in_all_five_views
+  def test_task_editor_opens_on_a_stable_target_in_all_six_views
     targets = {
       agenda: "Book flight",
       next: "Book flight",
       quadrants: "Book flight",
       inbox: "random thought",
       projects: "Book flight",
+      outline: "Book flight",
     }
     targets.each do |view, title|
       app_on(view: view, select: title) do |app|
@@ -751,8 +752,8 @@ class TestApp < Minitest::Test
       assert_equal "draft for externally done task", editor.edit_form.value(:title)
       refute_equal target_id, ui(app).selected_id
       assert_equal :suspended_task_edit, ui(app).panel.kind
-      assert_match(/hidden from the canonical views/, ui(app).panel.lines.first)
-      assert_nil app.send(:suspended_target_canonical_view)
+      assert_match(/switch to outline/, ui(app).panel.lines.first)
+      assert_equal :outline, app.send(:suspended_target_canonical_view)
 
       before = File.binread(app.instance_variable_get(:@store).org)
       app.send(:handle_key, "\x13")
@@ -929,8 +930,8 @@ class TestApp < Minitest::Test
       end
 
       assert_equal :suspended_task_edit, ui(app).panel.kind
-      assert_nil app.send(:suspended_target_canonical_view)
-      assert_match(/not selectable/, app.instance_variable_get(:@flash))
+      assert_equal :outline, app.send(:suspended_target_canonical_view)
+      assert_match(/switch to outline/, app.instance_variable_get(:@flash))
 
       app.send(:handle_key, "Z")
       assert ui(app).show_deferred
@@ -1820,6 +1821,266 @@ class TestApp < Minitest::Test
       app.send(:rows)
       assert_equal second_occurrence, app.instance_variable_get(:@sel)
       assert_equal "5e1e0003", ui(app).selected_id
+    end
+  end
+
+  # -- structural Outline ordering ------------------------------------------
+
+  ORDERING_APP = dump_fixture([
+    { "type" => "meta", "version" => 1 },
+    { "type" => "section", "id" => "0d000001", "title" => "Work" },
+    { "type" => "task", "id" => "0d000002", "parent" => "0d000001", "state" => "NEXT",
+      "title" => "Alpha" },
+    { "type" => "task", "id" => "0d000003", "parent" => "0d000002", "state" => "DONE",
+      "title" => "Alpha child", "closed" => "2026-07-10" },
+    { "type" => "task", "id" => "0d000004", "parent" => "0d000001", "state" => "TODO",
+      "title" => "Beta" },
+    { "type" => "task", "id" => "0d000005", "parent" => "0d000004", "state" => "TODO",
+      "title" => "Beta child" },
+    { "type" => "task", "id" => "0d000006", "parent" => "0d000001", "state" => "WAITING",
+      "title" => "Gamma", "tags" => ["defer"] },
+    { "type" => "task", "id" => "0d000007", "parent" => "0d000001", "state" => "CANCELLED",
+      "title" => "Delta", "closed" => "2026-07-11" },
+  ])
+
+  def ordering_ids(app)
+    app.send(:read_model).tasks.map(&:id)
+  end
+
+  def test_outline_ordering_alt_up_encodings_move_a_collapsed_subtree_and_keep_selection
+    ["\e[1;3A", "\e\e[A", "\ek"].each do |sequence|
+      app_on(view: :outline, select: "Beta", content: ORDERING_APP) do |app|
+        ui(app).collapsed.add("0d000004")
+        app.send(:rows)
+        app.send(:handle_key, sequence)
+
+        assert_equal %w[0d000004 0d000005 0d000002 0d000003 0d000006 0d000007],
+                     ordering_ids(app), sequence.inspect
+        assert_equal "0d000004", app.send(:current_item).id
+        assert_includes ui(app).collapsed, "0d000004"
+        assert_match(/move up: Beta/, app.instance_variable_get(:@flash))
+      end
+    end
+  end
+
+  def test_outline_move_down_uses_the_sibling_after_next_or_appends
+    app_on(view: :outline, select: "Beta", content: ORDERING_APP) do |app|
+      app.send(:move_subtree_down)
+      assert_equal %w[0d000002 0d000003 0d000006 0d000004 0d000005 0d000007], ordering_ids(app)
+    end
+
+    app_on(view: :outline, select: "Gamma", content: ORDERING_APP) do |app|
+      app.send(:move_subtree_down)
+      assert_equal %w[0d000002 0d000003 0d000004 0d000005 0d000007 0d000006], ordering_ids(app)
+    end
+  end
+
+  def test_outline_first_down_and_last_up_use_exact_neighbor_slots
+    app_on(view: :outline, select: "Alpha", content: ORDERING_APP) do |app|
+      app.send(:move_subtree_down)
+      assert_equal %w[0d000004 0d000005 0d000002 0d000003 0d000006 0d000007], ordering_ids(app)
+    end
+
+    app_on(view: :outline, select: "Delta", content: ORDERING_APP) do |app|
+      app.send(:move_subtree_up)
+      assert_equal %w[0d000002 0d000003 0d000004 0d000005 0d000007 0d000006], ordering_ids(app)
+    end
+  end
+
+  def test_outline_indent_appends_under_previous_sibling_and_outdent_restores_after_parent
+    app_on(view: :outline, select: "Beta", content: ORDERING_APP) do |app|
+      original = File.binread(app.instance_variable_get(:@store).org)
+      ui(app).collapsed.add("0d000002")
+      app.send(:indent_subtree)
+
+      beta = app.send(:read_model).task_for("0d000004")
+      assert_equal "0d000002", beta.parent_id
+      assert_equal %w[0d000003 0d000004],
+                   app.send(:read_model).tasks.select { |task| task.parent_id == "0d000002" }.map(&:id)
+      assert_equal "0d000004", app.send(:current_item).id
+      refute_includes ui(app).collapsed, "0d000002", "indent expands the new parent to retain selection"
+
+      app.send(:outdent_subtree)
+      assert_equal original, File.binread(app.instance_variable_get(:@store).org)
+      assert_equal "0d000004", app.send(:current_item).id
+    end
+  end
+
+  def test_outline_last_indent_and_outdent_from_middle_or_last_parent_use_exact_slots
+    app_on(view: :outline, select: "Delta", content: ORDERING_APP) do |app|
+      original = File.binread(app.instance_variable_get(:@store).org)
+      app.send(:indent_subtree)
+      assert_equal "0d000006", app.send(:read_model).task_for("0d000007").parent_id
+      assert_equal %w[0d000002 0d000003 0d000004 0d000005 0d000006 0d000007], ordering_ids(app)
+
+      app.send(:outdent_subtree)
+      assert_equal original, File.binread(app.instance_variable_get(:@store).org),
+                   "outdent from the last parent appends immediately after it"
+    end
+
+    app_on(view: :outline, select: "Beta child", content: ORDERING_APP) do |app|
+      app.send(:outdent_subtree)
+      assert_equal "0d000001", app.send(:read_model).task_for("0d000005").parent_id
+      assert_equal %w[0d000002 0d000003 0d000004 0d000005 0d000006 0d000007], ordering_ids(app)
+      top_level = app.send(:read_model).tasks.select { |task| task.parent_id == "0d000001" }.map(&:id)
+      assert_equal %w[0d000002 0d000004 0d000005 0d000006 0d000007], top_level,
+                   "outdent from a middle parent anchors before its next sibling"
+    end
+  end
+
+  def test_outline_ordering_boundaries_do_not_write_or_create_history
+    cases = [
+      ["Alpha", :move_subtree_up, /already first/],
+      ["Delta", :move_subtree_down, /already last/],
+      ["Alpha", :indent_subtree, /preceding sibling/],
+      ["Alpha", :outdent_subtree, /section level/],
+    ]
+    cases.each do |title, action, message|
+      app_on(view: :outline, select: title, content: ORDERING_APP) do |app|
+        before = File.binread(app.instance_variable_get(:@store).org)
+        app.send(action)
+        assert_equal before, File.binread(app.instance_variable_get(:@store).org), action
+        assert_match message, app.instance_variable_get(:@flash), action
+        assert_equal [:empty], app.instance_variable_get(:@store).undo!, action
+      end
+    end
+  end
+
+  def test_outline_reorder_is_one_journal_entry_and_u_restores_exact_bytes
+    app_on(view: :outline, select: "Beta", content: ORDERING_APP) do |app|
+      original = File.binread(app.instance_variable_get(:@store).org)
+      app.send(:move_subtree_up)
+      refute_equal original, File.binread(app.instance_variable_get(:@store).org)
+
+      app.send(:handle_key, "u")
+      assert_equal original, File.binread(app.instance_variable_get(:@store).org)
+      assert_match(/undid: move up: Beta/, app.instance_variable_get(:@flash))
+      assert_equal [:empty], app.instance_variable_get(:@store).undo!
+    end
+  end
+
+  def test_ordering_keys_are_consumed_with_guidance_outside_unfiltered_outline
+    app_on(view: :agenda, select: "Beta", content: SELECTION_FIXTURE) do |app|
+      selected = app.send(:current_item).id
+      app.send(:handle_key, "\ej")
+      assert_equal selected, app.send(:current_item).id
+      assert_match(/unfiltered Outline tab/, app.instance_variable_get(:@flash))
+    end
+
+    app_on(view: :outline, select: "Beta", content: ORDERING_APP) do |app|
+      before = File.binread(app.instance_variable_get(:@store).org)
+      ui(app).filter = "Beta"
+      app.send(:rows)
+      app.send(:handle_key, ">")
+      assert_equal before, File.binread(app.instance_variable_get(:@store).org)
+      assert_match(/unfiltered Outline tab/, app.instance_variable_get(:@flash))
+
+      ui(app).filter = nil
+      ui(app).context_filter = "@work"
+      app.send(:rows)
+      app.send(:handle_key, "<")
+      assert_equal before, File.binread(app.instance_variable_get(:@store).org)
+      assert_match(/unfiltered Outline tab/, app.instance_variable_get(:@flash))
+    end
+  end
+
+  def test_ordering_palette_entries_exist_only_in_unfiltered_outline
+    handlers = Tui::App::ORDERING_HANDLERS
+    app_on(view: :outline, select: "Beta", content: ORDERING_APP) do |app|
+      app.send(:open_action_palette)
+      assert_equal handlers, ui(app).action_palette.entries.map(&:handler) & handlers
+      app.send(:close_action_palette)
+
+      ui(app).filter = "Beta"
+      app.send(:rows)
+      app.send(:open_action_palette)
+      assert_empty ui(app).action_palette.entries.map(&:handler) & handlers
+    end
+
+    app_on(view: :agenda, select: "Beta", content: SELECTION_FIXTURE) do |app|
+      app.send(:open_action_palette)
+      assert_empty ui(app).action_palette.entries.map(&:handler) & handlers
+    end
+  end
+
+  def test_escape_prefixed_alt_sequences_stay_atomic_across_split_reads
+    cases = [
+      [["\e".b, "k".b], "\ek"],
+      [["\e".b, "\e".b, "[A".b], "\e\e[A"],
+      [["\e[".b, "1;3".b, "A".b], "\e[1;3A"],
+    ]
+    cases.each do |chunks, expected|
+      app_with(agent: FakeAgent.new(running: false), input: "") do |app|
+        dispatched = []
+        reader = Object.new
+        reader.define_singleton_method(:read_nonblock) { |_size| chunks.shift }
+        original_stdin = $stdin
+        $stdin = reader
+        begin
+          IO.stub(:select, [[reader], [], []]) do
+            app.stub(:handle_key, ->(key) { dispatched << key }) { app.send(:read_keys) }
+          end
+        ensure
+          $stdin = original_stdin
+        end
+        assert_equal [expected], dispatched
+        assert_equal "", app.instance_variable_get(:@key_data)
+      end
+    end
+  end
+
+  def test_coalesced_escape_and_non_alt_followup_remain_separate_keys
+    app_with(agent: FakeAgent.new(running: false), input: "") do |app|
+      ["\eq", "\e\r"].each do |input|
+        dispatched = []
+        app.instance_variable_set(:@key_data, input)
+        app.stub(:handle_key, ->(key) { dispatched << key }) { app.send(:drain_key_data) }
+        assert_equal ["\e", input[1..]], dispatched
+      end
+    end
+  end
+
+  TOO_DEEP_ORDERING_APP = dump_fixture([
+    { "type" => "meta", "version" => 1 },
+    { "type" => "section", "id" => "de000001", "title" => "Deep" },
+    { "type" => "task", "id" => "de000002", "parent" => "de000001", "state" => "TODO", "title" => "Depth one" },
+    { "type" => "task", "id" => "de000003", "parent" => "de000002", "state" => "TODO", "title" => "Depth two" },
+    { "type" => "task", "id" => "de000004", "parent" => "de000003", "state" => "TODO", "title" => "Depth three" },
+    { "type" => "task", "id" => "de000005", "parent" => "de000004", "state" => "TODO", "title" => "Depth four A" },
+    { "type" => "task", "id" => "de000006", "parent" => "de000004", "state" => "TODO", "title" => "Depth four B" },
+  ])
+
+  def test_indent_past_max_depth_is_visible_and_writes_nothing
+    app_on(view: :outline, select: "Depth four B", content: TOO_DEEP_ORDERING_APP) do |app|
+      before = File.binread(app.instance_variable_get(:@store).org)
+      app.send(:indent_subtree)
+      assert_equal before, File.binread(app.instance_variable_get(:@store).org)
+      assert_match(/maximum task depth/, app.instance_variable_get(:@flash))
+      assert_equal [:empty], app.instance_variable_get(:@store).undo!
+    end
+  end
+
+  def test_cycle_stale_and_anchor_refusals_are_visible_without_writes
+    expectations = {
+      cycle: /own subtree/,
+      stale: /changed underneath/,
+      conflict: /anchor moved underneath/,
+      not_found: /no longer exists/,
+    }
+    expectations.each do |status, message|
+      app_on(view: :outline, select: "Beta", content: ORDERING_APP) do |app|
+        before = File.binread(app.instance_variable_get(:@store).org)
+        application = app.instance_variable_get(:@application)
+        result = Tasks::MutationResult.new(status: status)
+        rejecting = Object.new
+        rejecting.define_singleton_method(:edit_snapshot) { |id| application.edit_snapshot(id) }
+        rejecting.define_singleton_method(:read_tasks) { |today:| application.read_tasks(today: today) }
+        rejecting.define_singleton_method(:update_task) { |_command, today:| result }
+        app.instance_variable_set(:@application, rejecting)
+        app.send(:move_subtree_up)
+        assert_equal before, File.binread(app.instance_variable_get(:@store).org), status
+        assert_match message, app.instance_variable_get(:@flash), status
+      end
     end
   end
 

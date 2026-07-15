@@ -50,6 +50,12 @@ module Tui
     PASTE_START = "\e[200~"
     PASTE_END   = "\e[201~"
     ESCAPE_WAIT = 0.01 # distinguish a lone Escape from a split CSI sequence
+    ORDERING_HANDLERS = %i[
+      move_subtree_up move_subtree_down indent_subtree outdent_subtree
+    ].freeze
+    ATOMIC_ALT_SEQUENCES = Shortcuts::REGISTRY.flat_map(&:sequences).select do |sequence|
+      sequence.match?(/\A\e[^\e\[O]/)
+    end.freeze
 
     # paths:      injectable so tests can pin a sandbox dir; defaults to the
     #             user's configured task files (env / ~/.config/tasks/config).
@@ -604,7 +610,7 @@ module Tui
       deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + ESCAPE_WAIT
       loop do
         drain_key_data(flush_incomplete_escape: false)
-        break unless @key_data == "\e"
+        break unless incomplete_escape_sequence?
 
         remaining = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
         break unless remaining.positive? && IO.select([$stdin], nil, nil, remaining)
@@ -686,7 +692,11 @@ module Tui
         elsif @key_data.start_with?("\e")
           break if !flush_incomplete_escape && incomplete_escape_sequence?
 
-          seq = @key_data[/\A\e\[[0-9;?]*[A-Za-z~]/] || @key_data[/\A\eO[A-Za-z]/]
+          seq = @key_data[/\A\e\e\[[0-9;?]*[A-Za-z~]/] ||
+                @key_data[/\A\e\eO[A-Za-z]/] ||
+                @key_data[/\A\e\[[0-9;?]*[A-Za-z~]/] ||
+                @key_data[/\A\eO[A-Za-z]/] ||
+                ATOMIC_ALT_SEQUENCES.find { |candidate| @key_data.start_with?(candidate) }
           seq ||= "\e"
           handle_key(seq)
           @key_data = @key_data[seq.length..] || +""
@@ -701,7 +711,10 @@ module Tui
     def incomplete_escape_sequence?
       @key_data == "\e" ||
         @key_data.match?(/\A\e\[[0-9;?]*\z/) ||
-        @key_data == "\eO"
+        @key_data == "\eO" ||
+        @key_data == "\e\e" ||
+        @key_data.match?(/\A\e\e\[[0-9;?]*\z/) ||
+        @key_data == "\e\eO"
     end
 
     def handle_paste(text)
@@ -769,7 +782,10 @@ module Tui
     def dispatch_action(k, context)
       entry = Shortcuts.match(k, context)
       return false unless entry
-      return true unless Shortcuts.available?(entry, self)
+      unless Shortcuts.available?(entry, self)
+        unavailable_action(entry)
+        return true
+      end
 
       m = method(entry.handler)
       m.arity.zero? ? m.call : m.call(k)
@@ -862,6 +878,9 @@ module Tui
     def agent_activity_available? = @agent_queue.any?
     def pending_agent_requests_available? = @agent_queue.pending?
     def selected_action_available? = !current_item.nil?
+    def ordering_action_available?
+      @ui.view == :outline && !active_filter && !active_context_filter && !current_item.nil?
+    end
     def recurrence_action_available?
       item = current_item
       !!(item && (item.scheduled || item.deadline))
@@ -876,6 +895,10 @@ module Tui
     def prev_view      = cycle_view(-1)
     def next_view      = cycle_view(1)
     def jump_view(k)   = switch_view(k.to_i)
+    def move_subtree_up = reorder_selected(:up)
+    def move_subtree_down = reorder_selected(:down)
+    def indent_subtree = reorder_selected(:indent)
+    def outdent_subtree = reorder_selected(:outdent)
     def focus_prompt
       detail_panel? ? start_task_edit : @ui.mode = :prompt
     end
@@ -1012,6 +1035,102 @@ module Tui
                                                               history_label: label), today: today)
       invalidate_read_model if result.ok?
       result
+    end
+
+    # Org-style ordering is a thin adapter over the shared placement command.
+    # Parent and sibling relationships come from one immutable read model; the
+    # Store resolves those stable ids again under its mutation lock.
+    def reorder_selected(action)
+      item = current_item
+      return unavailable_ordering unless ordering_action_available?
+
+      read = read_model
+      task = read.task_for(item)
+      return flash("task no longer exists — refresh and try again") unless task
+
+      placement = ordering_placement(action, task, read)
+      return unless placement
+
+      snapshot = @application.edit_snapshot(item.id)
+      return flash("task no longer exists — refresh and try again") unless snapshot
+
+      label = "#{ordering_label(action)}: #{item.title}"
+      command = Tasks::TaskChangeset.from(
+        snapshot, changes: { location: placement }, history_label: label
+      )
+      operation_today = current_date
+      result = @application.update_task(command, today: operation_today)
+      unless result.ok?
+        reload_store
+        return flash(ordering_failure_message(result, action))
+      end
+
+      @read_model_today = operation_today
+      @read_model = Tasks::TaskReadModel.new(result.read_snapshot, today: @read_model_today)
+      @ui.collapsed.delete(placement.parent_id) if action == :indent
+      @ui.selected_id = item.id
+      rows(read: @read_model, today: @read_model_today)
+      refresh_detail_panel if detail_panel?
+      flash(result.no_change? ? "already in that position: #{item.title}" : "#{ordering_label(action)}: #{item.title}")
+    end
+
+    def ordering_placement(action, task, read)
+      siblings = read.tasks.select { |candidate| candidate.parent_id == task.parent_id }
+      index = siblings.index { |candidate| candidate.id == task.id }
+      return ordering_notice("task placement changed — refresh and try again") unless index
+
+      case action
+      when :up
+        return ordering_notice("already first among siblings") if index.zero?
+        Tasks::TaskPlacement.new(parent_id: task.parent_id, before_id: siblings[index - 1].id)
+      when :down
+        return ordering_notice("already last among siblings") if index == siblings.length - 1
+        Tasks::TaskPlacement.new(parent_id: task.parent_id, before_id: siblings[index + 2]&.id)
+      when :indent
+        return ordering_notice("can't indent without a preceding sibling") if index.zero?
+        Tasks::TaskPlacement.new(parent_id: siblings[index - 1].id)
+      when :outdent
+        parent = read.task_for(task.parent_id)
+        return ordering_notice("already at section level") unless parent
+
+        parent_siblings = read.tasks.select { |candidate| candidate.parent_id == parent.parent_id }
+        parent_index = parent_siblings.index { |candidate| candidate.id == parent.id }
+        return ordering_notice("parent placement changed — refresh and try again") unless parent_index
+        Tasks::TaskPlacement.new(
+          parent_id: parent.parent_id, before_id: parent_siblings[parent_index + 1]&.id
+        )
+      else
+        raise ArgumentError, "unknown ordering action #{action.inspect}"
+      end
+    end
+
+    def ordering_notice(message)
+      flash(message)
+      nil
+    end
+
+    def ordering_label(action)
+      { up: "move up", down: "move down", indent: "indent", outdent: "outdent" }.fetch(action)
+    end
+
+    def ordering_failure_message(result, action)
+      case result.status
+      when :not_found then "task or placement anchor no longer exists — refresh and try again"
+      when :stale then "task changed underneath — try again"
+      when :conflict then "placement anchor moved underneath — try again"
+      when :cycle then "can't move a task into its own subtree"
+      when :too_deep then action == :indent ? "can't indent — maximum task depth reached" : "move exceeds maximum task depth"
+      when :invalid then result.errors.first || "invalid task placement"
+      else result.tui_message
+      end
+    end
+
+    def unavailable_action(entry)
+      unavailable_ordering if ORDERING_HANDLERS.include?(entry.handler)
+    end
+
+    def unavailable_ordering
+      flash("ordering requires the unfiltered Outline tab")
     end
 
     def start_task_edit = enter_task_edit(:title)
@@ -1283,7 +1402,7 @@ module Tui
     end
 
     # Build the persistent detail panel for the current item. The app stays in
-    # list mode, so moving through any of the five views updates this panel.
+    # list mode, so moving through any of the six views updates this panel.
     def show_detail
       item = current_item
       return close_panel unless item
@@ -1890,7 +2009,7 @@ module Tui
       node = @rows[@sel]&.node
       return unless node&.item
       item = node.item
-      if Views.visible_children(node, @ui.show_deferred, reader: read_model).any? &&
+      if collapsible_children?(node) &&
          item.id && !@ui.collapsed.include?(item.id)
         @ui.collapsed.add(item.id)
         reselect(item.id)
@@ -1914,7 +2033,12 @@ module Tui
     def collapse_all
       read_model.tree.each do |root|
         root.each do |n|
-          @ui.collapsed.add(n.item.id) if n.task? && n.item.id && n.children.any?(&:task?)
+          has_collapsible_children = if @ui.view == :outline && !active_filter && !active_context_filter
+                                       n.children.any?
+                                     else
+                                       n.children.any?(&:task?)
+                                     end
+          @ui.collapsed.add(n.item.id) if n.task? && n.item.id && has_collapsible_children
         end
       end
       rows
@@ -1933,6 +2057,14 @@ module Tui
       return unless parent&.task? && parent.item
       idx = @rows.each_index.find { |i| @rows[i].item&.id == parent.item.id }
       select_row(idx) if idx
+    end
+
+    def collapsible_children?(node)
+      if @ui.view == :outline && !active_filter && !active_context_filter
+        node.children.any?
+      else
+        Views.visible_children(node, @ui.show_deferred, reader: read_model).any?
+      end
     end
 
     def save_session
