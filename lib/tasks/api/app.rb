@@ -137,7 +137,10 @@ module Tasks
           priorities: Check::PRIORITIES,
           max_depth: @max_depth,
           urgent_days: @urgent_days,
-          capabilities: { undo: true, redo: true, archive_sweep: true, events: false },
+          # Capabilities advertise what THIS server routes, not the store's
+          # abilities. undo/redo/archive_sweep flip to true when the Phase 3
+          # manager endpoints (/history, /archive-sweeps) are dispatched.
+          capabilities: { undo: false, redo: false, archive_sweep: false, events: false },
         }
         [200, { "etag" => etag(result.store_revision) }, Representation.success(data, result.store_revision)]
       end

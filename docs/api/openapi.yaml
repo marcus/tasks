@@ -108,9 +108,9 @@ paths:
                       max_depth: 4
                       urgent_days: 3
                       capabilities:
-                        undo: true
-                        redo: true
-                        archive_sweep: true
+                        undo: false
+                        redo: false
+                        archive_sweep: false
                         events: false
                     meta:
                       store_revision: "s1.6f2a9c0b"
@@ -1532,6 +1532,11 @@ components:
           description: Deadline horizon used by the quadrants view.
         capabilities:
           type: object
+          description: |
+            Feature flags for the running server. A capability is true only when
+            its backing endpoints are routed by this server, not merely when the
+            store supports the operation. undo/redo/archive_sweep are false until
+            the manager endpoints (/history, /archive-sweeps) are implemented.
           additionalProperties: { type: boolean }
 
     Section:
