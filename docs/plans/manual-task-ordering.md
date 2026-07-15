@@ -1,15 +1,15 @@
 # Manual Task And Subtask Ordering
 
-Status: accepted implementation plan
+Status: implemented
 
 Date: 2026-07-15
 
-Architecture review outcome: approved with conditions
+Architecture review outcome: implemented as approved; conditions satisfied
 
-The implementation may proceed after the placement contract and concurrency
-semantics in this plan are recorded in OpenAPI and an ADR. Ordering must remain
-a shared application capability. The HTTP adapter must not splice JSONL records
-or reconstruct Store rules itself.
+The placement contract and anchor-relative concurrency semantics in this plan
+are recorded in OpenAPI and ADR-0009. Ordering is implemented as a shared
+application capability; the HTTP, CLI, and TUI adapters do not splice JSONL
+records or reconstruct Store rules themselves.
 
 ## Goal
 
@@ -657,6 +657,57 @@ The feature is complete when:
 - existing `parent_id` PATCH and `tasks move` callers keep their append behavior;
 - OpenAPI, CLI docs, ADRs, and tests agree with the implementation; and
 - all core and API gates pass with no Rack/Puma leakage into stdlib surfaces.
+
+## Implementation Evidence
+
+Implemented on `main` in the inclusive range `4effb52^..7410d7e`. Every
+implementation task was independently reviewed before closure; cumulative
+adversarial review `td-4f2d29` rejected the first complete pass, remediation
+`td-bff290` was independently approved, and the repeated audit at `7410d7e`
+found no remaining actionable issue.
+
+| Phase | td task | Commits |
+|---|---|---|
+| Contract and ADR | `td-a5253b` | `4effb52`, `582382a` |
+| Typed placement | `td-4897a2` | `3e8f0f5` |
+| Store/Application | `td-fd8a7b` | `9f5da12`, `103b7b3` |
+| HTTP adapter | `td-246bae` | `d7712d7` |
+| CLI adapter | `td-5c412a` | `f229c80`, `e656687` |
+| Cross-process proof | `td-0bc53b` | `161ef96` |
+| TUI ordering | `td-adb25c` | `3345810` |
+| Adversarial remediation | `td-bff290` | `7410d7e` |
+
+Final verification for `td-207991` on 2026-07-15:
+
+- `ruby test/all.rb`: 1,345 runs, 17,096 assertions, zero failures/errors/skips.
+- `bundle exec ruby test/api/all.rb`: 31 runs, 882 assertions, zero
+  failures/errors/skips.
+- `ruby test/test_tasks_require_boundary.rb`: 3 runs, 4 assertions; proves
+  `bin/tasks`, `bin/tasks-tui`, and `lib/tui/app` boot without Rack/Puma.
+- `bundle exec ruby test/api/test_black_box.rb`: 8 runs, 131 assertions through
+  the real `bin/tasks-api` process, including cross-process anchor churn,
+  API/CLI byte parity, coherent revisions, and byte-exact undo/redo.
+- `ruby test/test_task_placement.rb`: 21 runs, 139 assertions; placement
+  validation, no-op/journal behavior, rollback, revision precedence, and exact
+  undo/redo bytes.
+- `ruby test/test_cli_mutations.rb`: 218 runs, 1,267 assertions; stable-anchor
+  resolution and human/JSON/dry-run CLI behavior.
+- `ruby test/test_shortcuts.rb`, `ruby test/test_text_input.rb`,
+  `ruby test/test_views.rb`, and `ruby test/test_app.rb`: 187 runs and 2,609
+  assertions total; shortcut encodings, split input, Outline gating, all four
+  structural moves, boundary notices, selection, and single-entry undo.
+- A generated isolated JSONL fixture passed
+  `TASKS_FILE=$tmp/tasks.jsonl TASKS_ARCHIVE=$tmp/archive.jsonl bin/tasks check`
+  with `ok — 1 task parsed, no structural errors`; no configured user task data
+  was read or written. `git diff --check` passed and the pre-closure worktree
+  was clean.
+
+Adversarial review findings resolved before the final gates included placement
+target resolution before stale-own comparison, exact OpenAPI/runtime validation
+messages, current ADR revision semantics, the documented sixth Outline view,
+complete CLI positional-section guidance, atomic ESC-prefixed Alt parsing, and
+first/middle/last TUI placement coverage. The final proof task is `td-207991`;
+the parent epic is `td-f62256`.
 
 ## Out Of Scope
 
