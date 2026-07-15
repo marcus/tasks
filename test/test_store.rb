@@ -242,8 +242,8 @@ class TestStore < Minitest::Test
       lock_path = store.send(:lock_path)
       reader_thread = nil
 
-      read_with_barrier = lambda do |path, optional: false|
-        result = original_read.call(path, optional: optional)
+      read_with_barrier = lambda do |path, optional: false, validate: false|
+        result = original_read.call(path, optional: optional, validate: validate)
         if path == org && Thread.current.equal?(reader_thread)
           live_read << true
           resume_snapshot.pop
@@ -305,6 +305,16 @@ class TestStore < Minitest::Test
       # copy as well, yielding the same stable id in both collections.
       assert snapshot.items.any? { |item| item.id == FIX[:old] }
       refute snapshot.archive_items.any? { |item| item.id == FIX[:old] }
+    end
+  end
+
+  def test_ordinary_read_snapshot_does_not_run_the_api_structural_check
+    with_store do |store, _org, _archive|
+      fail_if_checked = ->(_parsed) { raise "ordinary reads must not run Check" }
+
+      snapshot = Tasks::Check.stub(:check_parsed, fail_if_checked) { store.read_snapshot }
+
+      assert_equal 7, snapshot.items.length
     end
   end
 

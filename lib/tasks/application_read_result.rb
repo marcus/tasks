@@ -13,7 +13,7 @@ module Tasks
       @status = status.to_sym
       raise ArgumentError, "unknown application-read status #{@status.inspect}" unless STATUSES.include?(@status)
 
-      @data = data
+      @data = immutable(data)
       @store_revision = store_revision&.dup&.freeze
       @errors = immutable(errors)
       @warnings = immutable(warnings)
@@ -30,7 +30,9 @@ module Tasks
     def immutable(value)
       case value
       when Hash
-        value.each_with_object({}) { |(key, child), copy| copy[key] = immutable(child) }.freeze
+        value.each_with_object({}) do |(key, child), copy|
+          copy[immutable(key)] = immutable(child)
+        end.freeze
       when Array
         value.map { |child| immutable(child) }.freeze
       when String

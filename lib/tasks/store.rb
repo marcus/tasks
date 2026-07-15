@@ -319,8 +319,8 @@ module Tasks
     # live file is required. Invalid records never reach Tree/TaskQueries.
     def checked_read_snapshot
       with_lock do
-        live = capture_read_source(@org)
-        archive = capture_read_source(@archive, optional: true)
+        live = capture_read_source(@org, validate: true)
+        archive = capture_read_source(@archive, optional: true, validate: true)
         store_revision = store_revision_for_contents(live[:raw], archive[:raw])
         errors = annotated_check_entries(live[:check].errors, :live) +
                  annotated_check_entries(archive[:check].errors, :archive)
@@ -1052,22 +1052,24 @@ module Tasks
       stat_key(@archive) != @archive_stat
     end
 
-    # A snapshot captures bytes, parsed records, validation, and its staleness
-    # key from one file descriptor. If Atomic.write installs a newer inode after
-    # this open, the later stat comparison notices it rather than claiming old
-    # bytes are current. Missing archive files are an empty optional history;
-    # the live file is required by checked reads.
-    def capture_read_source(path, optional: false)
+    # A snapshot captures bytes, parsed records, and its staleness key from one
+    # file descriptor. API-grade reads additionally validate that exact parse;
+    # ordinary CLI/TUI snapshots avoid paying for a structural Check they do not
+    # consume. If Atomic.write installs a newer inode after this open, the later
+    # stat comparison notices it rather than claiming old bytes are current.
+    # Missing archive files are an empty optional history; the live file is
+    # required by checked reads.
+    def capture_read_source(path, optional: false, validate: false)
       File.open(path, "r", encoding: "UTF-8") do |file|
         stat = file.stat
         raw = file.read
         if raw.valid_encoding?
           parsed = Format.parse(raw)
-          check = Check.check_parsed(parsed)
+          check = Check.check_parsed(parsed) if validate
           records = parsed.records
         else
           records = []
-          check = Check::Result.new([[0, "file is not valid UTF-8"]], [])
+          check = Check::Result.new([[0, "file is not valid UTF-8"]], []) if validate
         end
         {
           raw: raw.freeze,
@@ -1077,22 +1079,22 @@ module Tasks
         }.freeze
       end
     rescue Errno::ENOENT
-      return empty_read_source if optional
+      return empty_read_source(validate: validate) if optional
 
       {
         raw: nil,
         records: [],
         stat: nil,
-        check: Check::Result.new([[0, "file not found"]], []),
+        check: validate ? Check::Result.new([[0, "file not found"]], []) : nil,
       }.freeze
     end
 
-    def empty_read_source
+    def empty_read_source(validate: false)
       {
         raw: nil,
         records: [],
         stat: nil,
-        check: Check::Result.new([], []),
+        check: validate ? Check::Result.new([], []) : nil,
       }.freeze
     end
 

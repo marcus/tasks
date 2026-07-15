@@ -285,6 +285,12 @@ class TestTaskChangeset < Minitest::Test
       assert_equal app.read_status_result.store_revision, second.store_revision
       assert_equal "Via command", app.get_task("11110002").body.first
       assert_equal second.snapshot.revision, app.get_task("11110002").revision
+
+      no_change = app.update_task(
+        "11110002", { body: "Via command" }, expected_revision: second.snapshot.revision
+      )
+      assert_equal :no_change, no_change.status
+      assert_equal app.read_status_result.store_revision, no_change.store_revision
     end
   end
 end

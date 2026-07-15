@@ -196,6 +196,7 @@ class TestApplication < Minitest::Test
       refute_equal first.store_revision, second.store_revision
       assert_equal "Archived update", second.data.tasks.last.title
       assert first.frozen?
+      assert first.data.frozen?
       assert first.errors.frozen?
       assert first.warnings.frozen?
     end
@@ -252,5 +253,20 @@ class TestApplication < Minitest::Test
       assert_equal "Archived flight", archived.data.title
       assert_raises(ArgumentError) { app.get_task_result(shared_id, source: :other) }
     end
+  end
+
+  def test_checked_result_owns_an_immutable_copy_of_plain_payloads
+    key = +"items"
+    value = +"one"
+    payload = { key => [value] }
+    result = Tasks::ApplicationReadResult.new(status: :ok, data: payload)
+    key.replace("changed")
+    value.replace("changed")
+    payload.values.first << "two"
+
+    assert_equal({ "items" => ["one"] }, result.data)
+    assert result.data.frozen?
+    assert result.data["items"].frozen?
+    assert result.data["items"].first.frozen?
   end
 end
