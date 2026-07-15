@@ -81,8 +81,10 @@ the field and “Defer until” for the action.
 ### Availability is derived
 
 Availability is not persisted. It is evaluated with an explicit `today`
-argument, defaulting at the application edge to `Date.today` in the configured
-local timezone.
+argument. At the outer edge of each CLI command, TUI action/save, or future HTTP
+request, the application captures Ruby's process-local `Date.today` exactly
+once. That one immutable value is passed through the entire operation; there is
+no separate tasks timezone setting and no UTC-date conversion.
 
 For an open task considered by itself:
 
@@ -102,23 +104,53 @@ The boundary is inclusive: a task scheduled for July 18 is hidden through July
 17 and becomes available at the first read on July 18. No midnight writer or
 record mutation is required.
 
+The one-operation date snapshot is a cross-layer invariant. The same `today`
+must reach fuzzy parsing (`Tasks::Dates.parse_when`), availability reads,
+`activate`'s future-date comparison, Store mutations, recurrence advancement
+(`Tasks::Recur.next_date`), and the recurring completion note. No downstream
+method may call `Date.today` again after the operation has captured it. A TUI
+picker may stay open across midnight, but Return begins the save operation and
+captures the date used for both parsing and mutation at that point. Tests inject
+the snapshot rather than changing the process clock.
+
 ### Task ancestors block a subtree
 
-An open task is effectively available only when both conditions hold:
+An open task is effectively available only when neither it nor any task ancestor
+owns an availability blocker. A future-scheduled or On Hold parent therefore
+hides its whole task subtree. This inheritance is computed from parent pointers;
+descendants are never rewritten. A descendant may retain its own later
+available-from date or On Hold marker. Activating the parent exposes only
+descendants whose remaining own/ancestor blockers have also cleared.
 
-1. its own row is available by the truth table above; and
-2. every task ancestor is open and available by that same rule.
+Ancestor lifecycle and ancestor availability are deliberately separate. A
+closed task ancestor is transparent for tree hoisting: it does not by itself
+hide an open descendant, become a rendered contextual row, or prevent that
+descendant from anchoring a view. Its own `defer` marker or future `scheduled`
+date still participates in the descendant's blocker chain, however. Traversal
+must therefore continue through closed task ancestors for both purposes: skip
+them when choosing visible rows/anchors, but inspect and propagate their timed or
+On Hold blockers. Sections never carry availability fields and do not block.
 
-A future-scheduled or On Hold parent therefore hides its whole task subtree.
-This inheritance is computed from parent pointers; descendants are never
-rewritten. A descendant may retain its own later available-from date or On Hold
-marker. Activating the parent exposes only descendants whose own conditions are
-also available.
+The primary diagnostic blocker is deterministic. Build candidates from the
+task and every task ancestor (including closed ancestors), then apply this exact
+precedence:
 
-When several ancestors block a task, use the nearest blocking ancestor for the
-diagnostic reason and blocker id. An indefinite hold dominates a dated estimate
-for “available on”: the effective availability date is unknown until that hold
-is removed. Sections never carry availability fields and do not block tasks.
+1. If the subject task is closed or archived, return `closed` with no blocker id.
+2. If one or more candidates carry On Hold, On Hold wins over every timed
+   blocker. Choose the subject itself when it is On Hold; otherwise choose the
+   nearest On Hold ancestor. Return `on_hold` for self or `ancestor_on_hold` for
+   an ancestor, with that candidate's id.
+3. Otherwise, if one or more candidates have `scheduled > today`, choose the
+   candidate with the latest scheduled date because that date is the effective
+   gate. On equal dates choose the subject itself, then the nearest ancestor.
+   Return `scheduled` for self or `ancestor_scheduled` for an ancestor, with
+   that candidate's id.
+4. Otherwise return `available` with no blocker id.
+
+Thus an indefinite hold always prevents a misleading dated availability claim,
+while multiple timed blockers identify the date that actually controls release.
+The same result object drives filtering, JSON diagnostics, TUI badges, and
+activation output.
 
 The canonical availability calculation must live above the JSONL shape, beside
 the tree-aware query/read model, so flat CLI queries, TUI tree queries, and a
@@ -206,23 +238,50 @@ also needs to be removed.
   indefinite marker only. It does not include a descendant merely blocked by a
   parent.
 - Explicit `--done`, `--archived`, and `--all` scopes continue to show their
-  selected lifecycle records; availability filtering applies only when an
-  unavailable/deferred filter is explicitly requested.
+  selected lifecycle records without applying active availability filtering.
+  A closed resource still reports `available: false` / `closed`, but that fact
+  never makes it a deferred-review match.
 - `--deferred` and `--someday` are mutually exclusive to avoid an unclear
   intersection.
+- `--deferred` or `--someday` combined with `--done`, `--archived`, or `--all`
+  is invalid (exit 1) rather than silently treating every closed row as
+  unavailable. Both review filters always mean live, open tasks.
+
+The planned HTTP collection follows the same order: lifecycle scope is selected
+first; `available=false` is an open-live unavailable review and is rejected with
+`scope=done|archived|all`. `deferred=true` remains the own On Hold marker filter
+and has the same open-live restriction. Direct `GET` resources still expose the
+derived `closed` result for done/archived tasks.
 
 ## View behavior
 
-Every active view uses effective availability, including inherited blockers:
+Every active view uses effective availability, including inherited blockers,
+but tree views must distinguish **anchor eligibility** from **contextual subtree
+riders**. The view predicate decides which task causes a branch to appear. Once
+that branch is anchored, its other open, effectively visible task rows may ride
+for hierarchy/context even when they do not independently match the view
+predicate. A rider never creates a duplicate anchor.
 
-| View | Available selection | Reveal behavior |
+Lifecycle traversal and availability traversal stay separate: closed task rows
+are never anchors or riders, but open descendants are hoisted through them. Any
+timed/On Hold blocker owned by a skipped closed ancestor still hides the hoisted
+descendant unless reveal mode is on.
+
+| View | Anchor eligibility | Contextual riders |
 |---|---|---|
-| Agenda | Available open task with `deadline` or `scheduled`; sort by deadline first, else scheduled. | Revealed unavailable rows still need a date to belong to Agenda. |
-| Next | Available `NEXT` tasks. | Reveal shows unavailable `NEXT` rows. |
-| Quadrants | Available open tasks; urgency still comes only from deadline/tag. | Reveal shows unavailable open tasks in their computed quadrant. |
-| Inbox | Available `INBOX` tasks. | Reveal shows unavailable `INBOX` rows. |
-| Projects | Available open project task subtrees. | Reveal restores blocked roots and descendants without changing records. |
-| Default list | Available open tasks. | `--deferred` is the explicit unavailable review. |
+| Agenda | A visible open branch qualifies when it contains at least one visible open task with `deadline` or `scheduled`; branch ordering uses the earliest qualifying date under existing deadline-first row semantics. | Render the branch's visible open hierarchy, including undated ancestors and descendants around the dated task. An undated row may ride but cannot make an Agenda branch appear by itself. |
+| Next | A visible `NEXT` task seeds a branch; nested matching tasks collapse under the topmost matching visible anchor as today. | Visible open descendants ride even when they are TODO/WAITING/etc.; closed ancestors are skipped and matching open descendants hoist. |
+| Quadrants | Existing visible open roots seed/classify branches; urgency continues to use only deadline/tag. | Visible open descendants ride under the classified root; future scheduled dates never create urgency. |
+| Inbox | A visible `INBOX` task seeds a branch, with existing duplicate-anchor suppression. | Visible open descendants ride regardless of their own state; closed ancestors are skipped and matching open descendants hoist. |
+| Projects | A project/section branch appears only when its rendered subtree contains at least one visible open task; header counts come from that same rendered set. | Every visible open task in the branch rides in DFS order; unavailable-only projects disappear when reveal is off and return coherently when reveal is on. |
+| Default list | Flat per-row selection: available open tasks only. | None; `--deferred` is the explicit flat unavailable review. |
+
+Reveal mode changes only the availability gate for open task nodes. It does not
+make closed tasks anchors/riders, change the per-view anchor predicate, or let an
+undated unavailable task create an Agenda branch alone. Once an unavailable
+anchor or unavailable branch member is revealed, its open subtree rides under
+the same hierarchy/collapse rules. Counts, project headers, flat filtering, and
+tree bodies must all use the same revealed row set.
 
 A future `scheduled` date never makes a task urgent. A deadline may become
 overdue while a later available-from date still hides the task; the explicit
@@ -265,9 +324,12 @@ accepted by create/patch requests. Create and patch keep `scheduled`,
 `deferred=true` query remains the own indefinite-marker filter for wire
 compatibility; an inherited/timed review uses `available=false`.
 
-Application/query entry points that return derived fields accept an injected
-`today` for deterministic tests. One operation uses one date snapshot so a read
-cannot cross midnight with internally inconsistent rows.
+Application/query entry points that return derived fields accept the operation's
+injected `today` for deterministic tests. CLI/TUI/API adapters capture it once
+and pass it through query construction and every returned task resource, so one
+response cannot cross midnight with internally inconsistent rows. Mutation
+responses reuse the same snapshot used for parsing and writing rather than
+capturing a second date for the post-write read.
 
 ## Recurrence contract
 
@@ -294,6 +356,8 @@ descendants outright without advancing either date. Cancel still closes the
 task and stops recurrence.
 
 All multi-date recurrence writes are one checked transaction and one undo entry.
+The recurrence base calculation, `.+`/`++` catch-up, next availability result,
+and `- Did [YYYY-MM-DD]` note all consume the operation's single `today` value.
 
 ## TUI contract
 
@@ -406,7 +470,13 @@ Expected files:
 
 Add hermetic cross-surface tests for date boundaries, old version-1 fixtures,
 ancestor inheritance, lifecycle scopes, recurrence, flat/tree parity, undo, and
-conflict behavior. Tests must never point at the real task files.
+conflict behavior. The hierarchy matrix must include an open child beneath a
+closed ancestor with no blocker (hoisted), a timed closed ancestor (hidden until
+date), and an On Hold closed ancestor (hidden until activation). It must also
+cover own-plus-ancestor and multi-ancestor blocker precedence, contextual
+undated riders in Agenda, nonmatching riders in Next/Inbox, project header/count
+parity, reveal behavior, and invalid closed/archive/unavailable filter
+combinations. Tests must never point at the real task files.
 
 ### 6. Documentation and prompts — `td-ba19e5`
 
