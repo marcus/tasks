@@ -57,6 +57,16 @@ class TestContextPalette < Minitest::Test
     assert_empty p.results # query "wor" matches neither remaining context
   end
 
+  def test_refresh_options_preserves_clear_row_selection
+    p = palette(contexts: %w[@home @work], current: "@home")
+    assert_equal "@home", p.current.id, "current filter preselects its own row"
+    p.handle_key("\e[A")
+    assert_nil p.current.id, "arrow-up from the active context lands on Clear"
+
+    p.refresh_options(contexts: %w[@home @work @new], current: "@home")
+    assert_nil p.current.id, "Clear row selection must survive an external reload"
+  end
+
   def test_enter_applies_and_escape_cancels
     p = palette
     event = p.handle_key("\r")

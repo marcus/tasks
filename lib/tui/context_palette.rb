@@ -62,12 +62,14 @@ module Tui
 
     def refresh_options(contexts:, current: @current_filter)
       query = @input.to_s
-      selected_id = self.current&.id
+      # Hold the Option, not its id — the Clear row's id is nil, which a bare
+      # id check can't tell apart from "nothing selected".
+      selected_option = self.current
       @current_filter = normalize(current)
       @options = build_options(contexts).freeze
       @input.replace(query)
       matches = results
-      idx = selected_id && matches.index { |option| option.id == selected_id }
+      idx = selected_option && matches.index { |option| option.id == selected_option.id }
       @selected = idx || [[initial_selection, matches.size - 1].min, 0].max
       self
     end
