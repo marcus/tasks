@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "edit_snapshot"
+require_relative "task_placement"
 
 module Tasks
   # An immutable, transport-neutral request to change one task in one checked

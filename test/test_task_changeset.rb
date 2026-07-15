@@ -52,6 +52,32 @@ class TestTaskChangeset < Minitest::Test
     assert_equal %i[title recurrence], request.ordered_fields
   end
 
+  def test_task_placement_is_immutable_and_changeset_preserves_the_typed_value
+    parent_id = +"11110001"
+    before_id = +"11110004"
+    placement = Tasks::TaskPlacement.new(parent_id: parent_id, before_id: before_id)
+    request = Tasks::TaskChangeset.new(
+      id: "11110002", changes: { location: placement }, expected_revision: "v1.invalid"
+    )
+    parent_id.replace("22220001")
+    before_id.replace("22220002")
+
+    assert placement.frozen?
+    assert placement.parent_id.frozen?
+    assert placement.before_id.frozen?
+    assert_equal "11110001", placement.parent_id
+    assert_equal "11110004", placement.before_id
+    assert_same placement, request.changes[:location]
+    assert_equal [:location], request.ordered_fields
+  end
+
+  def test_task_placement_nil_before_id_means_append
+    placement = Tasks::TaskPlacement.new(parent_id: "11110001")
+
+    assert_nil placement.before_id
+    assert placement.frozen?
+  end
+
   def test_store_revision_is_semantic_immutable_and_not_a_line_or_mtime_token
     with_changeset_store do |store, org, _archive|
       before = store.edit_snapshot("11110002")
@@ -185,6 +211,56 @@ class TestTaskChangeset < Minitest::Test
       assert_equal 0, writes
       assert_equal before, File.binread(org)
       assert_equal [:empty], store.undo!
+    end
+  end
+
+  def test_location_accepts_legacy_values_and_rejects_malformed_typed_ids_before_lookup
+    with_changeset_store do |store, org, _archive|
+      before = File.binread(org)
+      valid_revision = "v1.#{"0" * 64}.#{"0" * 64}.#{"0" * 64}"
+
+      legacy_parent = Tasks::TaskChangeset.new(
+        id: "missing0", changes: { location: "11110001" }, expected_revision: valid_revision
+      )
+      unnest = Tasks::TaskChangeset.new(
+        id: "missing0", changes: { location: Tasks::TaskChangeset::UNNEST },
+        expected_revision: valid_revision
+      )
+      assert_equal :not_found, store.apply_changeset!(legacy_parent).status
+      assert_equal :not_found, store.apply_changeset!(unnest).status
+
+      invalid_locations = [
+        [nil, { location: ["location must be a stable parent id, UNNEST, or Tasks::TaskPlacement"] }],
+        ["not-an-id", { location: ["location must be a stable parent id, UNNEST, or Tasks::TaskPlacement"] }],
+        [Object.new, { location: ["location must be a stable parent id, UNNEST, or Tasks::TaskPlacement"] }],
+        [Tasks::TaskPlacement.new(parent_id: nil),
+         { parent_id: ["parent_id must be a stable id"] }],
+        [Tasks::TaskPlacement.new(parent_id: "NOTANID!", before_id: "11110004"),
+         { parent_id: ["parent_id must be a stable id"] }],
+        [Tasks::TaskPlacement.new(parent_id: "11110001", before_id: "short"),
+         { before_id: ["before_id must be a stable id or nil"] }],
+        [Tasks::TaskPlacement.new(parent_id: [], before_id: {}),
+         { parent_id: ["parent_id must be a stable id"],
+           before_id: ["before_id must be a stable id or nil"] }],
+        [Tasks::TaskPlacement.new(parent_id: "\xFF".b.force_encoding(Encoding::UTF_8)),
+         { parent_id: ["parent_id must be a stable id"] }],
+        [Tasks::TaskPlacement.new(
+          parent_id: "11110001", before_id: "\xFF".b.force_encoding(Encoding::UTF_8)
+        ), { before_id: ["before_id must be a stable id or nil"] }],
+      ]
+
+      invalid_locations.each do |location, expected_errors|
+        request = Tasks::TaskChangeset.new(
+          id: "missing0", changes: { location: location }, expected_revision: valid_revision
+        )
+        result = store.apply_changeset!(request)
+
+        assert_equal :invalid, result.status
+        assert_equal expected_errors, result.field_errors
+        assert_equal expected_errors.values.flatten, result.errors
+        assert_equal before, File.binread(org)
+        assert_equal [:empty], store.undo!
+      end
     end
   end
 

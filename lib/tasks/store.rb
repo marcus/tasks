@@ -1461,7 +1461,33 @@ module Tasks
       if fields.include?(:activate) && !(fields & %i[deferred scheduled]).empty?
         errors[:changes] << "activate cannot be combined with deferred or scheduled"
       end
+      validate_changeset_location(changeset.changes[:location], errors) if fields.include?(:location)
       errors
+    end
+
+    def validate_changeset_location(location, errors)
+      return if location.equal?(TaskChangeset::UNNEST)
+
+      if location.is_a?(TaskPlacement)
+        unless stable_task_id?(location.parent_id)
+          errors[:parent_id] << "parent_id must be a stable id"
+        end
+        unless location.before_id.nil? || stable_task_id?(location.before_id)
+          errors[:before_id] << "before_id must be a stable id or nil"
+        end
+        return
+      end
+
+      unless stable_task_id?(location)
+        errors[:location] << "location must be a stable parent id, UNNEST, or Tasks::TaskPlacement"
+      end
+    end
+
+    def stable_task_id?(value)
+      value.is_a?(String) && value.valid_encoding? && value.encoding.ascii_compatible? &&
+        Check::ID_RE.match?(value)
+    rescue ArgumentError, Encoding::CompatibilityError
+      false
     end
 
     def duplicate_records(records)
