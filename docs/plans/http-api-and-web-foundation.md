@@ -12,6 +12,16 @@ reviewed on 2026-07-15. The original plan's Store, stable-id, query, application
 changeset, capture, and delete phases are also implemented; none is repeated
 here as future work.
 
+**Readiness decision: yes.** No architectural or foundation prerequisite remains
+before implementation of the loopback CRUD API described in this document. Work
+can start directly with the production Rack adapter and its route-level tests.
+
+“Ready to implement” does not mean “ready to ship.” The adapter, launcher,
+security guards, HTTP representations, route contract tests, and cross-process
+proof are the implementation itself and remain required before the local API is
+complete. Manager features and remote deployment are later scopes, not blockers
+for the first local API.
+
 Do not do another broad CLI/TUI-to-Application migration before starting HTTP
 work. Task CRUD is already transport-independent. The remaining direct Store
 uses are the TUI's intentional long-lived editor/history/archive seams and the
@@ -58,10 +68,10 @@ toolchain proof and must not become the production application by accretion.
 
 ## Outstanding work
 
-| Order | Slice | Scope | Blocks CRUD routes? |
+| Order | Slice | Scope | Required for first local API? |
 |---:|---|---|---|
-| 1 | Core HTTP adapter | production runtime, routing, representations, security guards, CRUD | — |
-| 2 | Black-box proof | cross-process concurrency, stale writes, undo, invalid-store refusal | — |
+| 1 | Core HTTP adapter | production runtime, routing, representations, security guards, CRUD | Yes |
+| 2 | Black-box proof | cross-process concurrency, stale writes, undo, invalid-store refusal | Yes |
 | 3 | Manager support | named views, history, archive, polling/SSE, static client | No |
 | 4 | Remote deployment | auth, authorization, TLS, rate limits, persistence review | No |
 

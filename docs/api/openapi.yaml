@@ -171,8 +171,7 @@ paths:
             Restrict to one lifecycle state. Intersects with `scope`: the
             result contains only tasks whose state is in the scope's state set
             AND equals this value, so `scope=open&state=DONE` is an empty
-            collection, not an error. (Implementation note: TaskFilter gains a
-            single-state filter in Phase 4 — see ADR-0007.)
+            collection, not an error.
           required: false
           schema: { $ref: "#/components/schemas/State" }
         - name: context
