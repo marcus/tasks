@@ -95,8 +95,21 @@ module Tui
     end
 
     # Visible display width in terminal cells (ignores escape codes, counts
-    # wide/emoji graphemes as two cells).
-    def vislen(s) = strip(s).each_grapheme_cluster.sum { |g| cluster_width(g) }
+    # wide/emoji graphemes as two cells). Plain ASCII with no SGR is just
+    # bytesize — the common case for muted chrome and unstyled fragments.
+    def vislen(s)
+      text = normalize(s)
+      return text.bytesize if plain_ascii?(text)
+
+      strip(text).each_grapheme_cluster.sum { |g| cluster_width(g) }
+    end
+
+    # Printable ASCII only (no ESC, no controls, no DEL). Those bytes are all
+    # width-1, so grapheme/Unicode tables are pure overhead.
+    def plain_ascii?(s)
+      s.each_byte.all? { |b| b >= 0x20 && b <= 0x7E }
+    end
+    private_class_method :plain_ascii?
 
     # Return the visible cell window [start, start + width) without splitting
     # grapheme clusters. ANSI SGR styling is retained and closed at the slice

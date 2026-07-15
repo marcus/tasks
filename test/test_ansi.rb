@@ -5,6 +5,12 @@ require_relative "test_helper"
 class TestAnsi < Minitest::Test
   A = Tui::Ansi
 
+  def test_vislen_plain_ascii_matches_bytesize
+    assert_equal 5, A.vislen("hello")
+    assert_equal 0, A.vislen("")
+    assert_equal "hello world!".bytesize, A.vislen("hello world!")
+  end
+
   def test_vislen_ignores_escape_codes
     assert_equal 5, A.vislen(A.bold(A.red("hello")))
   end

@@ -40,8 +40,9 @@ module Tui
         end
       end
       body.map! { |line| A.vpad(A.vtrunc(line, list_w), list_w) }
-      body.fill("", body.size...body_h)
-      body.map! { |line| A.vpad(line, list_w) }
+      # Empty filler rows are pre-padded so we don't pay a second full-body
+      # vpad pass just to expand a short viewport.
+      body.fill(" " * list_w, body.size...body_h)
 
       render_panel!(body, panel, layout) if panel
 

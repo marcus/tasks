@@ -107,6 +107,18 @@ module Tui
       @flash_until = nil
       @tick = 0
       @quit = false
+      @paint_dirty = true # first frame must draw before any key arrives
+      @rows = nil
+      @rows_fingerprint = nil
+      @row_item_count = 0
+      @title_haystack = nil
+      @title_haystack_model = nil
+      @open_count = nil
+      @open_count_model = nil
+      @detail_panel_width = nil
+      @detail_panel_model = nil
+      @detail_panel_id = nil
+      @last_paint_size = nil
       @task_edit_message = nil
       @suspended_task_editor = nil
       @suspended_task_panel = nil
@@ -160,21 +172,50 @@ module Tui
 
     def loop_once
       @tick += 1
-      clear_flash_if_expired
-      paint
+      @paint_dirty = true if clear_flash_if_expired
+      @paint_dirty = true if idle_layout_changed?
+      paint_if_needed
 
       ios = [$stdin]
       ios << @agent_queue.io if @agent_queue.io
       ready = IO.select(ios, nil, nil, TICK)
+      dirty = false
       (ready&.first || []).each do |io|
         io == $stdin ? read_keys : pump_agent_queue
+        dirty = true
       end
       if external_change? # picks up Claude edits + external edits
         reload_store
         res = Tasks::Check.check(@paths.org)
         flash(T.paint(:error, "⚠ tasks.jsonl: #{res.errors.size} format error(s) — run `tasks check`")) unless res.ok?
+        dirty = true
       end
       clamp_selection
+      @paint_dirty = true if dirty
+    end
+
+    # Idle ticks still poll the file watch, but skip a full redraw unless
+    # something changed or the footer/spinner is animating.
+    def paint_if_needed
+      return unless @paint_dirty || animated_paint?
+
+      paint
+      @paint_dirty = false
+    end
+
+    def animated_paint?
+      !@agent_queue.active_request.nil? ||
+        (@ui.modal&.kind == :agent_activity && @agent_queue.active?)
+    end
+
+    # Cheap idle checks that used to fall out of painting every tick: terminal
+    # resize and local-date rollover (agenda/availability depend on "today").
+    def idle_layout_changed?
+      height, width = terminal_size
+      size = [height, width]
+      changed = @last_paint_size && size != @last_paint_size
+      changed ||= !@read_model_today.nil? && current_date != @read_model_today
+      changed
     end
 
     # Reload external writes without losing the selected task to a new physical
@@ -210,9 +251,10 @@ module Tui
 
     def paint
       height, width = terminal_size
-      # A blocking modal freezes the task list beneath it, so reuse the last
-      # computed rows instead of rebuilding the whole view tree on every
-      # keystroke — that rebuild was the bulk of modal-filter redraw latency.
+      @last_paint_size = [height, width]
+      # Row builders are memoized via rows_fingerprint; the modal path still
+      # prefers an already-warmed @rows so filter typing never rebuilds the
+      # frozen list underneath the box.
       frame_rows = @ui.modal ? (@rows || rows) : rows
       visual_selection = @ui.mode == :prompt ? nil : @sel
       layout = screen_layout(width: width, height: height, selected: visual_selection,
@@ -273,11 +315,26 @@ module Tui
     def reload_read_model
       @read_model_today = current_date
       @read_model = @application.read_tasks(today: @read_model_today)
+      clear_row_caches
     end
 
     def invalidate_read_model
       @read_model = nil
       @read_model_today = nil
+      clear_row_caches
+    end
+
+    def clear_row_caches
+      @rows = nil
+      @rows_fingerprint = nil
+      @row_item_count = 0
+      @title_haystack = nil
+      @title_haystack_model = nil
+      @open_count = nil
+      @open_count_model = nil
+      @detail_panel_width = nil
+      @detail_panel_model = nil
+      @detail_panel_id = nil
     end
 
     def current_date = @date_provider.call
@@ -285,13 +342,20 @@ module Tui
     def rows(read: nil, today: nil)
       read ||= read_model
       today ||= @read_model_today
+      fingerprint = rows_fingerprint(read, today)
+      if @rows && @rows_fingerprint == fingerprint
+        sync_selection
+        return @rows
+      end
+
       items = read.items
       if (ctx = active_context_filter)
         items = items.select { |i| i.contexts.include?(ctx) }
       end
       if (q = active_filter)
         q = q.downcase
-        items = items.select { |i| i.title.downcase.include?(q) }
+        hay = title_haystack(read)
+        items = items.select { |i| (hay[i.id] || i.title.downcase).include?(q) }
       end
       if active_context_filter || active_filter
         @rows = Views.rows(@ui.view, items, show_deferred: @ui.show_deferred,
@@ -303,8 +367,42 @@ module Tui
                                          urgent_days: @urgent_days,
                                          reader: read)
       end
+      @rows_fingerprint = fingerprint
+      @row_item_count = @rows.count(&:item)
       sync_selection
       @rows
+    end
+
+    # Inputs that change what Views.rows would emit. Selection is intentionally
+    # excluded — j/k reuses the painted row list and only moves the highlight.
+    def rows_fingerprint(read, today)
+      [
+        read.object_id,
+        today,
+        @ui.view,
+        @ui.show_deferred,
+        @urgent_days,
+        active_filter,
+        active_context_filter,
+        @ui.collapsed.hash,
+      ]
+    end
+
+    # Downcased titles keyed by task id, rebuilt once per read-model identity —
+    # same idea as Modal#haystack so `/` typing is substring scans, not
+    # title.downcase across the whole list on every keystroke.
+    def title_haystack(read)
+      return @title_haystack if @title_haystack_model.equal?(read) && @title_haystack
+
+      @title_haystack_model = read
+      @title_haystack = read.items.to_h { |item| [item.id, item.title.downcase] }
+    end
+
+    def open_task_count(read)
+      return @open_count if @open_count_model.equal?(read) && !@open_count.nil?
+
+      @open_count_model = read
+      @open_count = read.tasks.count { |task| task.open? && task.available? }
     end
 
     # The filter narrowing the views right now: the live buffer while
@@ -328,7 +426,7 @@ module Tui
         slot = key == @ui.view ? :tab_active : :tab_inactive unless T.slot?(slot)
         T.paint(slot, " #{label} ")
       end.join(" ")
-      open_n = read_model.tasks.count { |task| task.open? && task.available? }
+      open_n = open_task_count(read_model)
       unavailable_note = @ui.show_deferred ? "#{T.paint(:warning, "unavailable shown")}#{T.paint(:muted, " · ")}" : ""
       count = "#{T.paint(:muted, "#{open_n} open · ")}#{unavailable_note}#{T.paint(:accent, current_entry.to_s)}#{T.paint(:muted, " · ? help")}"
       gap = [w - A.vislen(tabs) - A.vislen(count) - 2, 1].max
@@ -364,11 +462,11 @@ module Tui
       if mode == :filter
         f << " #{T.paint(:prompt, "/ ")}#{inline_input(@ui.filter_input)}#{T.paint(:muted, "  enter keeps · esc clears")}"
       elsif @ui.filter
-        n = (@rows || []).count(&:item)
+        n = @row_item_count
         f << T.paint(:muted, " / #{@ui.filter} · #{n} match#{n == 1 ? "" : "es"} · esc clears · / edits")
       end
       if @ui.context_filter && mode != :context_palette
-        n = (@rows || []).count(&:item)
+        n = @row_item_count
         f << T.paint(:muted, " #{@ui.context_filter} · #{n} match#{n == 1 ? "" : "es"} · esc clears · @ changes")
       end
       # Active text entry owns the scarce footer row on short terminals. Forms,
@@ -1215,7 +1313,19 @@ module Tui
       return close_panel unless task
 
       content_width ||= detail_panel_content_width
+      # Skip rebuild when the same task/read-model/width is already shown —
+      # paint and select_row both call here, and selection moves dominate.
+      if detail_panel? &&
+         @detail_panel_id == item.id &&
+         @detail_panel_width == content_width &&
+         @detail_panel_model.equal?(@read_model)
+        return
+      end
+
       @detail_panel_content_width = content_width
+      @detail_panel_width = content_width
+      @detail_panel_id = item.id
+      @detail_panel_model = @read_model
       content = TaskDetails.build(
         task, task.body, content_width, today: @read_model_today,
         links: task.links, project: task.project,
@@ -1239,6 +1349,9 @@ module Tui
     def close_panel
       @ui.panel = nil
       @detail_panel_content_width = nil
+      @detail_panel_width = nil
+      @detail_panel_model = nil
+      @detail_panel_id = nil
     end
 
     def task_editing? = @ui.mode == :task_edit && !@ui.task_editor.nil?
@@ -1709,8 +1822,11 @@ module Tui
     end
 
     def select_row(index)
+      id = @rows[index]&.item&.id
+      return if @sel == index && @ui.selected_id == id
+
       @sel = index
-      @ui.selected_id = @rows[@sel]&.item&.id
+      @ui.selected_id = id
       refresh_detail_panel if detail_panel?
     end
 
@@ -2097,10 +2213,16 @@ module Tui
     def flash(msg)
       @flash = msg
       @flash_until = Time.now + 3
+      @paint_dirty = true
     end
 
+    # Returns true when a visible flash was cleared, so the idle loop can
+    # schedule one more paint without waiting for the next keystroke.
     def clear_flash_if_expired
-      @flash = nil if @flash && Time.now > @flash_until
+      return false unless @flash && Time.now > @flash_until
+
+      @flash = nil
+      true
     end
   end
 end
