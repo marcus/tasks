@@ -882,7 +882,7 @@ class TestAppModals < Minitest::Test
   def test_palette_filters_and_executes_existing_form_action
     with_app do |app|
       app.send(:handle_key, ":")
-      app.send(:handle_paste, "reschedule")
+      app.send(:handle_paste, "Available from")
       palette = ui(app).action_palette
       assert_equal [:open_date_popup], palette.results.map(&:handler)
       app.send(:handle_key, "\r")
@@ -901,12 +901,23 @@ class TestAppModals < Minitest::Test
       assert_equal :detail, panel(app).kind
 
       app.send(:handle_key, ":")
-      app.send(:handle_paste, "reschedule")
+      app.send(:handle_paste, "Available from")
       app.send(:handle_key, "\r")
       assert_equal :form, mode(app)
       app.send(:handle_key, "\e")
       assert_equal :list, mode(app)
       assert_equal :detail, panel(app).kind
+    end
+  end
+
+  def test_palette_defer_action_opens_the_same_defer_until_form
+    with_app do |app|
+      app.send(:handle_key, ":")
+      app.send(:handle_paste, "defer until")
+      assert_equal [:defer_selected], ui(app).action_palette.results.map(&:handler)
+      app.send(:handle_key, "\r")
+      assert_equal :form, mode(app)
+      assert_equal :defer_until, ui(app).form.kind
     end
   end
 

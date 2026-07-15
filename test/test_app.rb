@@ -1256,14 +1256,49 @@ class TestApp < Minitest::Test
     (app.instance_variable_get(:@rows) || []).map { |r| r.item&.title }.compact
   end
 
-  def test_defer_selected_marks_task_and_hides_it
+  def test_defer_until_date_sets_available_from_clears_hold_and_hides_task
     app_on(view: :next, select: "Water the plants") do |app|
       app.send(:defer_selected)
+      assert_equal :defer_until, ui(app).form.kind
+      ui(app).form.input.replace("+4")
+      app.send(:handle_key, "\r")
+
       store = app.instance_variable_get(:@store)
-      assert store.items.find { |i| i.title.include?("Water the plants") }.deferred?
-      # hidden by default (show_deferred is off), so it leaves the Next view
+      task = store.items.find { |i| i.title.include?("Water the plants") }
+      refute task.deferred?
+      assert_equal Date.today + 4, task.scheduled
       refute_includes row_titles(app), "Water the plants"
-      assert_match(/deferred/, app.instance_variable_get(:@flash))
+      refute_equal task.id, ui(app).selected_id, "selection recovers to a visible neighbor"
+      assert_match(/available/, app.instance_variable_get(:@flash))
+    end
+  end
+
+  def test_defer_until_someday_adds_indefinite_hold_and_hides_task
+    app_on(view: :next, select: "Water the plants") do |app|
+      app.send(:defer_selected)
+      ui(app).form.input.replace("someday")
+      app.send(:handle_key, "\r")
+
+      task = app.instance_variable_get(:@store).items.find { |i| i.title.include?("Water the plants") }
+      assert task.deferred?
+      assert_nil task.scheduled
+      refute_includes row_titles(app), "Water the plants"
+      assert_match(/on hold/, app.instance_variable_get(:@flash))
+    end
+  end
+
+  def test_defer_until_invalid_input_stays_open_and_escape_writes_nothing
+    app_on(view: :next, select: "Water the plants") do |app|
+      app.send(:defer_selected)
+      ui(app).form.input.replace("eventually-ish")
+      app.send(:handle_key, "\r")
+      assert_equal :form, ui(app).mode
+      assert_match(/can't parse/, ui(app).form.error)
+
+      app.send(:handle_key, "\e")
+      task = app.instance_variable_get(:@store).items.find { |i| i.title.include?("Water the plants") }
+      refute task.deferred?
+      assert_nil task.scheduled
     end
   end
 
@@ -1303,16 +1338,72 @@ class TestApp < Minitest::Test
     end
   end
 
-  def test_defer_selected_reactivates_when_already_deferred
+  def test_defer_until_now_reactivates_indefinite_task
     app_on(view: :next, select: "Review PR", content: deferred_fixture) do |app|
       ui(app).show_deferred = true # so the deferred task is selectable
       app.send(:rows)
       idx = app.instance_variable_get(:@rows).index { |r| r.item&.title&.include?("Water the plants") }
       app.send(:select_row, idx)
       app.send(:defer_selected)
+      ui(app).form.input.replace("now")
+      app.send(:handle_key, "\r")
       store = app.instance_variable_get(:@store)
       refute store.items.find { |i| i.title.include?("Water the plants") }.deferred?
-      assert_match(/activated/, app.instance_variable_get(:@flash))
+      assert_match(/available now/, app.instance_variable_get(:@flash))
+    end
+  end
+
+  def test_defer_until_now_clears_future_available_from
+    future = (Date.today + 4).iso8601
+    recs = FIXTURE_RECORDS.map(&:dup)
+    plants = recs.find { |record| record["id"] == FIX[:plants] }
+    plants["tags"] = plants["tags"] + ["defer"]
+    plants["scheduled"] = future
+
+    app_on(view: :next, select: "Review PR", content: dump_fixture(recs)) do |app|
+      app.send(:toggle_deferred_view)
+      idx = app.instance_variable_get(:@rows).index { |row| row.item&.id == FIX[:plants] }
+      app.send(:select_row, idx)
+      app.send(:defer_selected)
+      ui(app).form.input.replace("now")
+      app.send(:handle_key, "\r")
+
+      task = app.instance_variable_get(:@store).items.find { |item| item.id == FIX[:plants] }
+      refute task.deferred?
+      assert_nil task.scheduled
+      assert task.open?
+    end
+  end
+
+  def test_header_counts_only_effectively_available_open_tasks_and_labels_reveal
+    future = (Date.today + 4).iso8601
+    recs = FIXTURE_RECORDS.map(&:dup)
+    recs.find { |record| record["id"] == FIX[:plants] }["scheduled"] = future
+
+    app_on(view: :next, select: "Review PR", content: dump_fixture(recs)) do |app|
+      available_open = app.send(:read_model).tasks.count { |task| task.open? && task.available? }
+      header = Tui::Ansi.strip(app.send(:header, 180))
+      assert_includes header, "#{available_open} open"
+      refute_includes header, "unavailable shown"
+
+      app.send(:toggle_deferred_view)
+      assert_includes Tui::Ansi.strip(app.send(:header, 180)), "unavailable shown"
+    end
+  end
+
+  def test_timed_deferral_atomically_replaces_own_hold
+    app_on(view: :next, select: "Review PR", content: deferred_fixture) do |app|
+      ui(app).show_deferred = true
+      app.send(:rows)
+      idx = app.instance_variable_get(:@rows).index { |r| r.item&.title&.include?("Water the plants") }
+      app.send(:select_row, idx)
+      app.send(:defer_selected)
+      ui(app).form.input.replace("+4")
+      app.send(:handle_key, "\r")
+
+      task = app.instance_variable_get(:@store).items.find { |i| i.title.include?("Water the plants") }
+      refute task.deferred?
+      assert_equal Date.today + 4, task.scheduled
     end
   end
 
@@ -1367,7 +1458,7 @@ class TestApp < Minitest::Test
     app_on(view: :next, select: "Standup notes", content: RECUR_FIXTURE) do |app|
       app.send(:open_recur_popup)
       assert_equal :list, ui(app).mode, "no popup for a task with no date"
-      assert_match(/schedule it first/, app.instance_variable_get(:@flash))
+      assert_match(/Available from date or deadline/, app.instance_variable_get(:@flash))
     end
   end
 

@@ -2,6 +2,7 @@
 
 require_relative "test_helper"
 require "set"
+require "tasks/application"
 
 class TestViews < Minitest::Test
   V = Tui::Views
@@ -108,15 +109,19 @@ class TestViews < Minitest::Test
     end
   end
 
-  def test_children_render_indented_in_inbox
+  def test_future_available_from_child_is_hidden_under_visible_inbox_parent
     with_records(NESTED) do |store|
       rs = tree_rows(store, :inbox)
       pi = rs.index { |r| A.strip(r.text).include?("plan trip") }
       ci = rs.index { |r| A.strip(r.text).include?("book hotel") }
       refute_nil pi
-      assert_equal pi + 1, ci
-      assert_operator rs[ci].node.level, :>, rs[pi].node.level, "child nests deeper"
-      assert_includes rs[ci].text, "│", "nested row carries the thread glyph"
+      assert_nil ci, "future child stays unavailable before its Available from date"
+
+      revealed = tree_rows(store, :inbox, show_deferred: true)
+      revealed_parent = revealed.index { |r| A.strip(r.text).include?("plan trip") }
+      revealed_child = revealed.index { |r| A.strip(r.text).include?("book hotel") }
+      assert_equal revealed_parent + 1, revealed_child
+      assert_operator revealed[revealed_child].node.level, :>, revealed[revealed_parent].node.level
     end
   end
 
@@ -136,9 +141,16 @@ class TestViews < Minitest::Test
 
   # Undated parent, dated child: the parent anchors at the child's date and both
   # render, parent first with a blanked stamp column.
-  def test_agenda_fallback_anchor
+  def test_unavailable_dated_child_only_anchors_agenda_when_revealed
     with_records(NESTED) do |store|
       t = tree_texts(store, :agenda)
+      trip  = t.index { |s| s.include?("plan trip") }
+      hotel = t.index { |s| s.include?("book hotel") }
+      ship  = t.index { |s| s.include?("Ship release") }
+      assert_nil trip
+      assert_nil hotel
+
+      t = tree_texts(store, :agenda, show_deferred: true)
       trip  = t.index { |s| s.include?("plan trip") }
       hotel = t.index { |s| s.include?("book hotel") }
       ship  = t.index { |s| s.include?("Ship release") }
@@ -146,10 +158,10 @@ class TestViews < Minitest::Test
       assert_equal trip + 1, hotel, "parent first, child beneath"
       # anchored at the child's 07-02 (earlier than Ship release's 07-03)
       assert_operator trip, :<, ship
-      # parent's own stamp column is blank (no DUE/STRT on the parent row)
-      refute_includes t[trip], "STRT"
+      # parent's own stamp column is blank (no DUE/AVL on the parent row)
+      refute_includes t[trip], "AVL"
       refute_includes t[trip], "DUE"
-      assert_includes t[hotel], "STRT"
+      assert_includes t[hotel], "AVL"
     end
   end
 
@@ -199,6 +211,61 @@ class TestViews < Minitest::Test
       refute_nil ship
       assert_includes ship, "⏸", "deferred styling preserved"
       assert shown.any? { |s| s.include?("write notes") }, "subtree revealed"
+    end
+  end
+
+  def test_available_from_boundary_and_reveal_badges_use_canonical_availability
+    records = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "s1", "title" => "Work" },
+      { "type" => "task", "id" => "past", "parent" => "s1", "state" => "NEXT",
+        "title" => "past release", "scheduled" => "2026-06-30" },
+      { "type" => "task", "id" => "today", "parent" => "s1", "state" => "NEXT",
+        "title" => "today release", "scheduled" => "2026-07-01" },
+      { "type" => "task", "id" => "future", "parent" => "s1", "state" => "NEXT",
+        "title" => "future release", "scheduled" => "2026-07-05" },
+      { "type" => "task", "id" => "held", "parent" => "s1", "state" => "NEXT",
+        "title" => "indefinite hold", "tags" => %w[defer] },
+    ]
+    with_records(records) do |store|
+      reader = Tasks::TaskReadModel.new(store.read_snapshot, today: TODAY)
+      visible = texts(V.rows(:next, store.items, tree: store.tree, today: TODAY,
+                                    show_deferred: false, reader: reader))
+      assert visible.any? { |text| text.include?("past release") }
+      assert visible.any? { |text| text.include?("today release") }
+      refute visible.any? { |text| text.include?("future release") }
+      refute visible.any? { |text| text.include?("indefinite hold") }
+
+      revealed = texts(V.rows(:next, store.items, tree: store.tree, today: TODAY,
+                                     show_deferred: true, reader: reader))
+      assert_includes revealed.find { |text| text.include?("future release") }, "⏳ 7/5"
+      assert_includes revealed.find { |text| text.include?("indefinite hold") }, "⏸"
+      refute_includes revealed.find { |text| text.include?("today release") }, "⏳"
+    end
+  end
+
+  def test_ancestor_availability_hides_descendants_through_closed_hoisting
+    records = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "s1", "title" => "Work" },
+      { "type" => "task", "id" => "parent", "parent" => "s1", "state" => "DONE",
+        "title" => "closed timed parent", "scheduled" => "2026-07-09", "closed" => "2026-06-01" },
+      { "type" => "task", "id" => "child", "parent" => "parent", "state" => "NEXT",
+        "title" => "hoisted blocked child", "deadline" => "2026-07-02" },
+    ]
+    with_records(records) do |store|
+      reader = Tasks::TaskReadModel.new(store.read_snapshot, today: TODAY)
+      hidden = texts(V.rows(:next, store.items, tree: store.tree, today: TODAY,
+                                   show_deferred: false, reader: reader))
+      refute hidden.any? { |text| text.include?("hoisted blocked child") }
+
+      revealed_rows = V.rows(:next, store.items, tree: store.tree, today: TODAY,
+                                    show_deferred: true, reader: reader)
+      child = revealed_rows.find { |row| row.item&.id == "child" }
+      refute_nil child
+      refute_includes A.strip(child.text), "│", "closed ancestor is skipped and child is hoisted"
+      assert_includes A.strip(child.text), "⏳ 7/9 ↑"
+      refute texts(revealed_rows).any? { |text| text.include?("closed timed parent") }
     end
   end
 
@@ -265,7 +332,7 @@ class TestViews < Minitest::Test
   def test_flat_and_tree_modes_share_canonical_eligibility
     with_records(NESTED) do |store|
       %i[agenda next quadrants inbox projects].each do |view|
-        query = V.view_query(view, today: TODAY, urgent_days: 3, store: store)
+        query = V.view_query(view, today: TODAY, urgent_days: 3, show_deferred: false, store: store)
         eligible = query.select(store.items).map(&:id).to_set
         flat = V.rows(view, store.items, today: TODAY, urgent_days: 3, store: store)
                 .filter_map { |row| row.item&.id }.to_set
@@ -288,8 +355,8 @@ class TestViews < Minitest::Test
                   .filter_map { |row| row.item&.id }.to_set
       tree_ids = tree_rows(store, :agenda).filter_map { |row| row.item&.id }.to_set
 
-      assert_equal Set["p1", "c1", "c4"], flat_ids
-      assert_equal Set["p2", "g1", "c2"], tree_ids - flat_ids,
+      assert_equal Set["p1", "c1"], flat_ids
+      assert_equal Set["g1", "c2"], tree_ids - flat_ids,
                    "undated ancestors/descendants ride the matching dated subtree"
     end
   end
@@ -368,12 +435,17 @@ class TestViews < Minitest::Test
 
   def test_agenda_sorted_soonest_first_and_selectable
     rs = rows(:agenda)
-    assert_equal 2, rs.size # flight (deadline) + self-eval (scheduled)
+    assert_equal 1, rs.size # future Available from rows stay unavailable
     assert_includes rs[0].text, "Book flight"
     assert_includes rs[0].text, "DUE"
-    assert_includes rs[1].text, "self-eval"
-    assert_includes rs[1].text, "STRT"
     assert rs.all?(&:item), "agenda rows are all selectable"
+
+    with_store do |store, _o, _a|
+      revealed = V.rows(:agenda, store.items, today: TODAY, show_deferred: true)
+      self_eval = revealed.find { |row| row.item&.title&.include?("self-eval") }
+      assert_includes self_eval.text, "AVL"
+      assert_includes A.strip(self_eval.text), "⏳ 7/3"
+    end
   end
 
   def test_next_groups_by_context_with_unselectable_headers
@@ -427,9 +499,16 @@ class TestViews < Minitest::Test
       q4 = rs.index { |t| t.start_with?("Q4") }
       assert rs[q1...q2].any? { |t| t.include?("beta") },    "B + near deadline → Q1"
       assert rs[q2...q3].any? { |t| t.include?("alpha") },   "A, no date → Q2"
-      assert rs[q2...q3].any? { |t| t.include?("epsilon") }, "scheduled-only is not urgent → Q2"
+      refute rs.any? { |t| t.include?("epsilon") }, "future Available from is unavailable"
       assert rs[q3...q4].any? { |t| t.include?("gamma") },   "C + near deadline → Q3"
       assert rs[q4..].any?   { |t| t.include?("delta") },    "far deadline → Q4"
+
+      revealed = texts(V.rows(:quadrants, store.items, today: TODAY, urgent_days: 3,
+                                                   show_deferred: true))
+      rq2 = revealed.index { |t| t.start_with?("Q2") }
+      rq3 = revealed.index { |t| t.start_with?("Q3") }
+      assert revealed[rq2...rq3].any? { |t| t.include?("epsilon") },
+             "revealed future Available from remains important but not urgent"
     end
   end
 
@@ -480,7 +559,7 @@ class TestViews < Minitest::Test
       home = stripped.index { |t| t.start_with?("Home") }
       assert work, "Work project header is shown"
       assert home, "Home project header is shown"
-      assert_includes stripped[work], "4 open"
+      assert_includes stripped[work], "3 open"
       assert_includes stripped[work], "2 next"
       assert stripped[work...home].any? { |t| t.include?("Book flight") }
       assert stripped[home..].any? { |t| t.include?("Water the plants") }
@@ -871,9 +950,9 @@ class TestViews < Minitest::Test
       # quadrants shows every open non-deferred task exactly once.
       quad = tree_texts(store, :quadrants)
       all_open = ["alpha next", "alpha sub todo", "alpha sub next", "alpha hoisted todo",
-                  "alpha hoisted next", "beta todo", "gamma inbox", "gamma sub todo", "gamma sub inbox"]
+                  "alpha hoisted next", "beta todo", "gamma inbox", "gamma sub inbox"]
       all_open.each { |t| assert_equal 1, count(quad, t), "#{t} once in quadrants" }
-      hidden.each { |t| assert_equal 0, count(quad, t), "#{t} absent from quadrants" }
+      ["gamma sub todo", *hidden].each { |t| assert_equal 0, count(quad, t), "#{t} absent from quadrants" }
 
       # next: every open task under a maximal-NEXT anchor (n1's subtree) plus the
       # hoisted NEXT (n3), each once; nothing else.
@@ -887,19 +966,22 @@ class TestViews < Minitest::Test
 
       # inbox: the maximal-INBOX anchor and its subtree, each once.
       inb = tree_texts(store, :inbox)
-      ["gamma inbox", "gamma sub todo", "gamma sub inbox"].each do |t|
+      ["gamma inbox", "gamma sub inbox"].each do |t|
         assert_equal 1, count(inb, t), "#{t} once in inbox"
       end
-      ["alpha next", "beta todo", *hidden].each { |t| assert_equal 0, count(inb, t), "#{t} not in inbox" }
+      ["alpha next", "beta todo", "gamma sub todo", *hidden].each do |t|
+        assert_equal 0, count(inb, t), "#{t} not in inbox"
+      end
 
       # agenda: every open task belonging to a dated-containing subtree, once.
       ag = tree_texts(store, :agenda)
-      ["alpha next", "alpha sub todo", "alpha sub next", "alpha hoisted todo",
-       "gamma inbox", "gamma sub todo", "gamma sub inbox"].each do |t|
+      ["alpha next", "alpha sub todo", "alpha sub next", "alpha hoisted todo"].each do |t|
         assert_equal 1, count(ag, t), "#{t} once in agenda"
       end
       # undated leaves with no dated descendant don't reach the agenda.
-      ["alpha hoisted next", "beta todo", *hidden].each { |t| assert_equal 0, count(ag, t), "#{t} not in agenda" }
+      ["alpha hoisted next", "beta todo", "gamma inbox", "gamma sub todo", "gamma sub inbox", *hidden].each do |t|
+        assert_equal 0, count(ag, t), "#{t} not in agenda"
+      end
     end
   end
 

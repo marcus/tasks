@@ -17,7 +17,12 @@ module Tui
       md << "- state: #{item.state}"
       md << "- priority: #{item.priority}" if item.priority
       md << "- deadline: #{item.deadline.iso8601}"   if item.deadline
-      md << "- scheduled: #{item.scheduled.iso8601}" if item.scheduled
+      md << "- available from: #{item.scheduled.iso8601}" if item.scheduled
+      md << "- on hold: yes" if item.deferred?
+      if item.respond_to?(:available?) && !item.available?
+        reason = item.availability_reason.to_s.tr("_", " ")
+        md << "- availability: #{reason}#{item.availability_blocker_id ? " via #{item.availability_blocker_id}" : ""}"
+      end
       md << "- closed: #{item.closed.iso8601}"       if item.closed
       ctx  = item.contexts
       tags = item.tags - ctx

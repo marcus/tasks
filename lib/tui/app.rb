@@ -270,10 +270,6 @@ module Tui
       read = read_model
       items = read.items
       if (q = active_filter)
-        # Filter mode renders a flat list. Deferred (someday/maybe) tasks stay
-        # out until Z reveals them — the reject lives here because the tree path
-        # applies the same rule inside its walker instead.
-        items = items.reject(&:deferred?) unless @ui.show_deferred
         q = q.downcase
         items = items.select { |i| i.title.downcase.include?(q) }
         @rows = Views.rows(@ui.view, items, show_deferred: @ui.show_deferred,
@@ -301,9 +297,9 @@ module Tui
         slot = key == @ui.view ? :tab_active : :tab_inactive unless T.slot?(slot)
         T.paint(slot, " #{label} ")
       end.join(" ")
-      open_n = read_model.tasks.count { |task| task.open? && !task.deferred? }
-      deferred_note = @ui.show_deferred ? "#{T.paint(:warning, "⏸ deferred shown")}#{T.paint(:muted, " · ")}" : ""
-      count = "#{T.paint(:muted, "#{open_n} open · ")}#{deferred_note}#{T.paint(:accent, current_entry.to_s)}#{T.paint(:muted, " · ? help")}"
+      open_n = read_model.tasks.count { |task| task.open? && task.available? }
+      unavailable_note = @ui.show_deferred ? "#{T.paint(:warning, "unavailable shown")}#{T.paint(:muted, " · ")}" : ""
+      count = "#{T.paint(:muted, "#{open_n} open · ")}#{unavailable_note}#{T.paint(:accent, current_entry.to_s)}#{T.paint(:muted, " · ? help")}"
       gap = [w - A.vislen(tabs) - A.vislen(count) - 2, 1].max
       " #{tabs}#{" " * gap}#{count} "
     end
@@ -894,38 +890,82 @@ module Tui
       flash("task panel: #{realized} cols")
     end
 
-    # Z reveals/hides deferred (someday/maybe) tasks across every view.
+    # Z reveals/hides every effectively unavailable task across every view.
     def toggle_deferred_view
       @ui.toggle_deferred!
       @ui.selected_id = @suspended_task_editor.target_id if resumable_suspended_editor?
       rows
       reconcile_suspended_after_navigation
       refresh_detail_panel if detail_panel? && !@suspended_task_editor
-      flash(@ui.show_deferred ? "showing deferred tasks" : "hiding deferred tasks")
+      flash(@ui.show_deferred ? "showing unavailable tasks" : "hiding unavailable tasks")
     end
 
-    # z defers the selected task, or reactivates it if it's already deferred —
-    # a snooze toggle on the item itself (distinct from Z, which toggles the view).
+    # z is the OmniFocus-style availability action. A fuzzy date atomically
+    # sets Available from and clears an own On Hold marker; someday adds the
+    # indefinite marker; now clears only blockers owned by this task.
     def defer_selected
       item = current_item
       return flash("nothing selected") unless item
-      to_deferred = !item.deferred?
-      label = to_deferred ? "defer: #{item.title}" : "activate: #{item.title}"
-      if patch_task(item, field: :deferred, value: to_deferred, label: label).ok?
-        flash(to_deferred ? "⏸ deferred: #{item.title}" : "▸ activated: #{item.title}")
-        # When newly deferred and the view hides deferred, the task leaves the
-        # list and the persistent panel follows the next visible selection.
-        if to_deferred && !@ui.show_deferred
-          rows
-          clamp_selection
-          refresh_detail_panel if detail_panel?
-        else
-          reselect(item.id)
-          refresh_detail_panel if detail_panel?
+      today = Date.today
+      field = TermForm::Fields::Input.new(
+        key: :value, value: +"", label: "defer until",
+      )
+      @ui.form = Form.new(
+        kind: :defer_until, title: "Defer until", prompt: "date / choice",
+        hint: "fri · +3 · 07-15 · someday · now · esc cancels", min_width: 50,
+        return_mode: :list, target_id: item.id, field: field
+      ) do |raw|
+        choice = raw.to_s.strip.downcase
+        date = Dates.parse_when(raw, today: today)
+        unless %w[someday now].include?(choice) || date
+          next "can't parse “#{raw}”; use a date, someday, or now"
         end
+
+        snapshot = @application.edit_snapshot(item.id)
+        next "task no longer exists" unless snapshot
+
+        changes, label, message = defer_until_changes(snapshot, choice, date, item.title, today: today)
+        command = Tasks::TaskChangeset.from(
+          snapshot, changes: changes, history_label: label
+        )
+        result = @application.update_task(command, today: today)
+        unless result.ok?
+          reload_store
+          next result.conflict? ? "file changed underneath — reopen" : result.tui_message
+        end
+        invalidate_read_model
+
+        @ui.form_success = lambda do
+          flash(message)
+          if !@ui.show_deferred && choice != "now" &&
+             !read_model.task_for(item.id)&.available?
+            rows
+            clamp_selection
+            refresh_detail_panel if detail_panel?
+          else
+            reselect(item.id)
+            refresh_detail_panel if detail_panel?
+          end
+        end
+        nil
+      end
+      @ui.mode = :form
+    end
+
+    def defer_until_changes(snapshot, choice, date, title, today: Date.today)
+      case choice
+      when "someday"
+        [{ deferred: true }, "on hold: #{title}", "⏸ on hold: #{title}"]
+      when "now"
+        changes = { deferred: false }
+        changes[:scheduled] = nil if snapshot.scheduled && snapshot.scheduled > today
+        [changes, "activate: #{title}", "▸ available now: #{title}"]
       else
-        reload_store
-        flash("file changed underneath — try again")
+        [
+          { deferred: false, scheduled: date },
+          "defer until #{date.iso8601}: #{title}",
+          "⏳ #{title} available #{date.iso8601} (#{date.strftime("%a")})",
+        ]
       end
     end
 
@@ -971,7 +1011,7 @@ module Tui
     end
 
     def yank_markdown
-      yank { |item, notes| Export.markdown(item, notes) }
+      yank { |_item, notes, task| Export.markdown(task, notes) }
     end
 
     def yank
@@ -979,7 +1019,7 @@ module Tui
       return flash("nothing selected") unless item
       task = current_task
       return flash("task no longer exists") unless task
-      text = yield(item, task.body)
+      text = yield(item, task.body, task)
       if Clipboard.copy(text)
         flash("yanked: “#{item.title}”")
       else
@@ -1068,7 +1108,9 @@ module Tui
       content_width ||= detail_panel_content_width
       @detail_panel_content_width = content_width
       content = TaskDetails.build(
-        task, task.body, content_width, links: task.links, project: task.project
+        task, task.body, content_width, links: task.links, project: task.project,
+        availability_blocker: task.availability_blocker_id &&
+          read_model.task_for(task.availability_blocker_id)
       )
       if detail_panel?
         @ui.panel.replace(title: content[:title], lines: content[:lines], identity: item.id)
@@ -1621,7 +1663,8 @@ module Tui
       node = @rows[@sel]&.node
       return unless node&.item
       item = node.item
-      if Views.visible_children(node, @ui.show_deferred).any? && item.id && !@ui.collapsed.include?(item.id)
+      if Views.visible_children(node, @ui.show_deferred, reader: read_model).any? &&
+         item.id && !@ui.collapsed.include?(item.id)
         @ui.collapsed.add(item.id)
         reselect(item.id)
       else
@@ -1703,13 +1746,13 @@ module Tui
       item = current_item
       return flash("nothing selected") unless item
 
-      target = item.deadline ? "deadline" : item.scheduled ? "scheduled" : "deadline (new)"
+      target = item.deadline ? "Deadline" : item.scheduled ? "Available from" : "Deadline (new)"
       field = TermForm::Fields::DateInput.new(
         key: :value, value: +"", label: "new #{target}",
         parser: ->(raw, _today) { Dates.parse_when(raw) },
       )
       @ui.form = Form.new(
-        kind: :date, title: "reschedule", prompt: "new #{target}",
+        kind: :date, title: "edit date", prompt: "new #{target}",
         hint: "fri · +3 · 07-15 · esc cancels", min_width: 36,
         return_mode: :list, target_id: item.id, field: field
       ) do |raw|
@@ -1743,7 +1786,7 @@ module Tui
     def open_recur_popup
       item = current_item
       return flash("nothing selected") unless item
-      return flash("schedule it first — recurrence needs a date") unless item.scheduled || item.deadline
+      return flash("add an Available from date or deadline first — recurrence needs a date") unless item.scheduled || item.deadline
 
       current = item.recur ? "now #{item.recur}" : "not repeating"
       field = TermForm::Fields::Input.new(

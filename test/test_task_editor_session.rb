@@ -69,7 +69,7 @@ class TestTaskEditorSession < Minitest::Test
       ], session.edit_form.field_order
       refute_includes session.edit_form.field_order, :location
       assert_equal [
-        "Title", "Priority", "Deferred", "Scheduled", "Deadline", "Recurrence",
+        "Title", "Priority", "On hold", "Available from", "Deadline", "Recurrence",
         "Contexts", "Tags", "Notes", "State",
       ], session.render_model.rows.map(&:label)
       assert_equal({ id: "11110002", closed: nil }, session.read_only)

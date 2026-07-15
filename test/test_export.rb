@@ -36,6 +36,12 @@ class TestExport < Minitest::Test
     assert_includes md, "Some note line."
   end
 
+  def test_markdown_calls_scheduled_available_from
+    md = export_for("self-eval") { |i, b| E.markdown(i, b) }
+    assert_includes md, "- available from: 2026-07-03"
+    refute_includes md, "- scheduled:"
+  end
+
   def test_markdown_includes_closed_date
     md = export_for("Old finished thing") { |i, b| E.markdown(i, b) }
     assert_includes md, "- closed: 2026-06-20"

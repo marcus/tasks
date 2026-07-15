@@ -25,14 +25,18 @@ module Tui
 
     LINK_SPAN = Regexp.union(Tasks::Links::ORG_LINK, Tasks::Links::BARE_URL)
 
-    def build(item, notes, width, today: Date.today, links: [], project: nil)
+    def build(item, notes, width, today: Date.today, links: [], project: nil,
+              availability_blocker: nil)
       w = [width, 1].max
       lines = A.wrap(item.title, w).map { |line| T.paint(:section, line) }
       lines << ""
       lines << row("state", STATE_SLOT.key?(item.state) ? T.paint(STATE_SLOT[item.state], item.state) : item.state)
       lines << row("priority", item.priority ? "[##{item.priority}]" : T.paint(:muted, "—"))
       lines << row("deadline", date_value(item.deadline, today)) if item.deadline
-      lines << row("scheduled", date_value(item.scheduled, today)) if item.scheduled
+      lines << row("available from", date_value(item.scheduled, today)) if item.scheduled
+      if item.respond_to?(:availability_reason) && item.availability_reason != :available
+        lines << row("availability", availability_value(item, availability_blocker, today))
+      end
       lines << row("closed", item.closed.iso8601) if item.closed
       lines << row("project", T.paint(:project, project)) if project
       contexts = item.contexts
@@ -79,6 +83,25 @@ module Tui
       days = (date - today).to_i
       relative = days.negative? ? "#{-days}d ago" : days.zero? ? "today" : "in #{days}d"
       T.paint(Views.due_slot(days), "#{date.iso8601} #{date.strftime("%a")} · #{relative}")
+    end
+
+    def availability_value(item, blocker, today)
+      case item.availability_reason
+      when :scheduled
+        "unavailable until #{date_value(item.scheduled, today)}"
+      when :ancestor_scheduled
+        date = blocker&.scheduled
+        suffix = blocker ? " via parent #{blocker.title}" : " via parent"
+        date ? "unavailable until #{date_value(date, today)}#{suffix}" : "unavailable#{suffix}"
+      when :on_hold
+        "on hold"
+      when :ancestor_on_hold
+        blocker ? "on hold via parent #{blocker.title}" : "on hold via parent"
+      when :closed
+        "closed"
+      else
+        "available now"
+      end
     end
   end
 end

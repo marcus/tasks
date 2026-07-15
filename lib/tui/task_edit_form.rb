@@ -161,9 +161,9 @@ module Tui
           options: PRIORITY_OPTIONS, searchable: false,
         ),
         TermForm::Fields::Confirm.new(
-          key: :deferred, label: "Deferred", value: values[:deferred],
+          key: :deferred, label: "On hold", value: values[:deferred],
         ),
-        date_field(:scheduled, "Scheduled", values[:scheduled]),
+        date_field(:scheduled, "Available from", values[:scheduled]),
         date_field(:deadline, "Deadline", values[:deadline]),
         TermForm::Fields::Input.new(
           key: :recurrence, label: "Recurrence", value: values[:recurrence],
@@ -203,7 +203,7 @@ module Tui
       raw = value.to_s.strip
       return nil if raw.empty?
       if context.dirty?(:recurrence) && !context[:scheduled].is_a?(Date) && !context[:deadline].is_a?(Date)
-        return "Recurrence requires a scheduled date or deadline"
+        return "Recurrence requires an Available from date or deadline"
       end
       return "Recurrence is not valid" unless Tasks::Recur.parse_interval(raw)
 

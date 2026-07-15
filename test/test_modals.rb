@@ -2,6 +2,7 @@
 
 require_relative "test_helper"
 require "tui/task_details"
+require "tasks/application"
 
 class TestTaskDetails < Minitest::Test
   D = Tui::TaskDetails
@@ -29,8 +30,32 @@ class TestTaskDetails < Minitest::Test
 
   def test_detail_scheduled_item_has_no_deadline_row
     lines = texts(detail_for("self-eval"))
-    assert lines.any? { |l| l =~ /scheduled\s+2026-07-03 Fri · in 2d/ }
+    assert lines.any? { |l| l =~ /available from\s+2026-07-03 Fri · in 2d/ }
     refute lines.any? { |l| l.start_with?("deadline") }
+  end
+
+  def test_detail_distinguishes_available_from_and_inherited_on_hold
+    records = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "s1", "title" => "Work" },
+      { "type" => "task", "id" => "p1", "parent" => "s1", "state" => "TODO",
+        "title" => "held parent", "tags" => %w[defer] },
+      { "type" => "task", "id" => "c1", "parent" => "p1", "state" => "NEXT",
+        "title" => "blocked child", "scheduled" => "2026-07-01" },
+    ]
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, dump_fixture(records))
+      store = Tui::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
+      reader = Tasks::TaskReadModel.new(store.read_snapshot, today: TODAY)
+      child = reader.task_for("c1")
+      parent = reader.task_for("p1")
+      lines = texts(D.build(child, child.body, 80, today: TODAY,
+                            availability_blocker: parent))
+
+      assert lines.any? { |line| line =~ /available from\s+2026-07-01/ }
+      assert lines.any? { |line| line.include?("on hold via parent held parent") }
+    end
   end
 
   def test_detail_includes_notes_but_not_stamps
