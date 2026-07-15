@@ -178,11 +178,23 @@ tasks defer "file taxes" 2026-07-31
 - Preserve `deadline`, `recur`, state (apart from existing INBOX promotion),
   priority, notes, descendants, and all other tags.
 - Promote `INBOX` to `TODO`, matching every other dated mutation.
-- A future date hides the task; today or a past date is stored but is available
-  immediately.
-- Human output says `Deferred "title" until YYYY-MM-DD` and, for today/past,
-  makes clear that the task is available now. JSON returns the post-write task
-  resource and touched ids through the existing mutation-reporting convention.
+- The mutation changes the task's own timed blocker: a future own date blocks
+  until that date, while today or a past own date does not block. Effective
+  availability is then recomputed across the full ancestor chain; the command
+  must not claim the task is available or released on its own date when an
+  ancestor still controls it.
+- Human output first states the own mutation, for example `Deferred "title"
+  until YYYY-MM-DD`, then states the effective post-write result from the
+  canonical availability object: `available now`, `unavailable until DATE via
+  <ancestor ref>`, or `still on hold via <ancestor ref>`. A later timed ancestor
+  therefore reports the ancestor's later effective release date; an On Hold
+  ancestor reports no automatic release date.
+- `--dry-run` computes the same hypothetical two-field change (`scheduled` plus
+  clearing the own marker) against the current ancestor snapshot and prints the
+  same own-mutation/effective-result pair prefixed with `would`; it does not
+  simplify the answer to the supplied date. JSON returns the post-write task
+  resource, including its effective blocker fields, and touched ids through the
+  existing mutation-reporting convention.
 - An unrecognized date exits 1 without writing. Missing/ambiguous refs retain
   existing exit-2 behavior.
 
@@ -231,27 +243,34 @@ also needs to be removed.
 ### Review filters
 
 - Default `list` shows effectively available open tasks only.
-- `list --deferred` remains the familiar review entry point but broadens to all
-  effectively unavailable open tasks: own timed deferral, own On Hold, or an
-  inherited blocker.
+- In the default/open scope, `list --deferred` remains the familiar review entry
+  point but broadens to all effectively unavailable open tasks: own timed
+  deferral, own On Hold, or an inherited blocker. Add `--unavailable` as the
+  unambiguous canonical spelling for this new open-lifecycle review.
 - Add `list --someday` (alias `--on-hold`) for tasks carrying their own legacy
   indefinite marker only. It does not include a descendant merely blocked by a
-  parent.
+  parent and composes with every lifecycle scope.
 - Explicit `--done`, `--archived`, and `--all` scopes continue to show their
   selected lifecycle records without applying active availability filtering.
   A closed resource still reports `available: false` / `closed`, but that fact
   never makes it a deferred-review match.
+- For backward compatibility, `list --deferred` combined with `--done`,
+  `--archived`, or `--all` retains its pre-feature meaning: filter that explicit
+  lifecycle scope by the task's own `defer` marker. It does not broaden to timed
+  or inherited blockers outside open scope. This keeps a closed task marked via
+  `defer --include-done` discoverable.
 - `--deferred` and `--someday` are mutually exclusive to avoid an unclear
   intersection.
-- `--deferred` or `--someday` combined with `--done`, `--archived`, or `--all`
-  is invalid (exit 1) rather than silently treating every closed row as
-  unavailable. Both review filters always mean live, open tasks.
+- The explicitly effective `--unavailable` filter combined with `--done`,
+  `--archived`, or `--all` is invalid (exit 1) rather than silently treating
+  every closed row as unavailable.
 
 The planned HTTP collection follows the same order: lifecycle scope is selected
 first; `available=false` is an open-live unavailable review and is rejected with
-`scope=done|archived|all`. `deferred=true` remains the own On Hold marker filter
-and has the same open-live restriction. Direct `GET` resources still expose the
-derived `closed` result for done/archived tasks.
+`scope=done|archived|all`. `deferred=true` remains the task's own On Hold marker
+filter and continues to compose with open, done, archived, and all scopes exactly
+as the accepted OpenAPI contract already specifies. Direct `GET` resources still
+expose the derived `closed` result for done/archived tasks.
 
 ## View behavior
 
@@ -339,7 +358,7 @@ behaves as follows:
 | Dates on recurring task | Completion behavior |
 |---|---|
 | `scheduled` only | Advance `scheduled` by the cookie. The new occurrence stays hidden until that date. |
-| `deadline` only | Advance `deadline` by the cookie. The new occurrence is available immediately. |
+| `deadline` only | Advance `deadline` by the cookie. This adds no own timed blocker; effective availability still depends on own On Hold and ancestor blockers. |
 | both | Advance `deadline` by the cookie, compute the day delta between old and new deadline, and shift `scheduled` by that same delta. |
 
 Shifting both dates preserves the occurrence’s availability-to-due window. For
@@ -402,16 +421,21 @@ There is no file migration and no `Format::VERSION` bump:
   semantic correction, not a data rewrite.
 - Every existing `defer` tag remains an indefinite hidden task.
 - Existing callers of `defer <ref>`, `snooze <ref>`, `schedule`, `activate`, and
-  `list --deferred` remain accepted. `list --deferred` intentionally broadens
-  from own-tag rows to all effectively unavailable open rows.
+  `list --deferred` remain accepted. `list --deferred` broadens to effective
+  unavailability only in default/open scope; under done/archive/all it preserves
+  legacy own-marker filtering. `--someday` and HTTP `deferred=true` also keep the
+  own marker reachable in every lifecycle scope.
 - Unknown JSON keys still round-trip under the existing forward-compatible
   formatter behavior; no new stored key is introduced.
 - Archived records load unchanged. Derived availability never changes archive
   bytes.
 - Undo/redo restores byte-identical pre-feature-compatible records.
 
-The release notes and agent prompts must call out the one visible behavior
-change: future scheduled tasks no longer compete in active views.
+The release notes and agent prompts must call out all intentional visible
+changes: future scheduled tasks no longer compete in active views; `defer` gains
+an optional timed date and ancestor-aware output; open-scope `--deferred`
+broadens while explicit non-open scopes preserve marker filtering; the TUI uses
+Available from/On hold language; and two-date recurrence preserves its window.
 
 ## Implementation slices and touched files
 
@@ -476,7 +500,12 @@ date), and an On Hold closed ancestor (hidden until activation). It must also
 cover own-plus-ancestor and multi-ancestor blocker precedence, contextual
 undated riders in Agenda, nonmatching riders in Next/Inbox, project header/count
 parity, reveal behavior, and invalid closed/archive/unavailable filter
-combinations. Tests must never point at the real task files.
+combinations. CLI output/dry-run coverage must include a timed defer under an On
+Hold ancestor and under a later-timed ancestor, asserting both the own mutation
+date and the inherited effective blocker/release result. Lifecycle-filter tests
+must prove `--unavailable`/HTTP `available=false` reject non-open scopes while
+legacy `--deferred`, `--someday`, and HTTP `deferred=true` can still retrieve own
+markers under done/archive/all. Tests must never point at the real task files.
 
 ### 6. Documentation and prompts — `td-ba19e5`
 
