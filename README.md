@@ -194,9 +194,12 @@ same subtrees collapsed. Press `?` inside for the complete keymap; the shape
 of it:
 
 ```
-1-5 / ←→   switch view: Agenda · Next · Quadrants · Inbox · Projects
+1-6 / ←→   switch view: Agenda · Next · Quadrants · Inbox · Projects · Outline
 ↑↓ / jk    select a task; an open detail panel follows the selection
 h / l      collapse / expand the selected subtree (H / L for all)
+alt-↑/alt-k move a subtree up among siblings in the unfiltered Outline view
+alt-↓/alt-j move a subtree down among siblings in the unfiltered Outline view
+> / <      indent under the preceding sibling / outdent after the parent (Outline)
 return     open the read-only task detail panel; e edits it in place
 c d r      complete · reschedule deadline · recur (weekly, 2w, off)
 z Z J K    defer (date/someday/now) · show unavailable · lower / raise priority

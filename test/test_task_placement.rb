@@ -376,6 +376,40 @@ class TestTaskPlacement < Minitest::Test
     end
   end
 
+  def test_missing_placement_targets_precede_stale_own_revision_but_legacy_order_is_unchanged
+    with_placement_store do |store, org, _archive|
+      stale = store.edit_snapshot(IDS[:c])
+      edited = store.apply_changeset!(Tasks::TaskChangeset.from(
+        stale, changes: { title: "C edited" }
+      ))
+      assert_equal :ok, edited.status
+
+      missing_parent = place(
+        store, IDS[:c], parent_id: "deadbeef", before_id: nil, snapshot: stale
+      )
+      assert_equal :not_found, missing_parent.status
+      assert_equal({ parent_id: ["parent_id does not identify a live task or section"] },
+                   missing_parent.field_errors)
+
+      missing_anchor = place(
+        store, IDS[:c], parent_id: IDS[:two], before_id: "deadbeef", snapshot: stale
+      )
+      assert_equal :not_found, missing_anchor.status
+      assert_equal({ before_id: ["before_id does not identify a live task"] },
+                   missing_anchor.field_errors)
+
+      valid_destination = place(
+        store, IDS[:c], parent_id: IDS[:two], before_id: IDS[:f], snapshot: stale
+      )
+      assert_equal :stale, valid_destination.status
+
+      legacy_missing = Tasks::TaskChangeset.from(stale, changes: { location: "deadbeef" })
+      assert_equal :stale, store.apply_changeset!(legacy_missing).status
+      assert_equal "C edited", store.edit_snapshot(IDS[:c]).title
+      assert_checked(org)
+    end
+  end
+
   def test_ordinary_field_edit_ignores_a_concurrent_location_change
     with_placement_store do |store, _org, _archive|
       original = store.edit_snapshot(IDS[:a])
@@ -413,6 +447,38 @@ class TestTaskPlacement < Minitest::Test
       assert_equal %i[title location], result.summary[:fields]
       assert_equal [IDS[:a], IDS[:a_child], IDS[:a_grand]], result.touched_ids
       assert_match(/\As1\.[0-9a-f]{64}\z/, result.store_revision)
+      assert_checked(org)
+    end
+  end
+
+  def test_application_preserves_placement_missing_target_precedence
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, Tasks::Format.dump(TREE))
+      app = Tasks::Application.new(
+        store_factory: Tasks::StoreFactory.new(org: org, archive: archive)
+      )
+      stale = app.edit_snapshot(IDS[:c])
+      edited = app.update_task(Tasks::TaskChangeset.from(stale, changes: { title: "C edited" }))
+      assert_equal :ok, edited.status
+
+      missing_parent = app.update_task(request(
+        app, IDS[:c], parent_id: "deadbeef", snapshot: stale
+      ))
+      assert_equal :not_found, missing_parent.status
+      assert_equal [:parent_id], missing_parent.field_errors.keys
+
+      missing_anchor = app.update_task(request(
+        app, IDS[:c], parent_id: IDS[:two], before_id: "deadbeef", snapshot: stale
+      ))
+      assert_equal :not_found, missing_anchor.status
+      assert_equal [:before_id], missing_anchor.field_errors.keys
+
+      valid_destination = app.update_task(request(
+        app, IDS[:c], parent_id: IDS[:two], before_id: IDS[:f], snapshot: stale
+      ))
+      assert_equal :stale, valid_destination.status
       assert_checked(org)
     end
   end

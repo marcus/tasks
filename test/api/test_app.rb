@@ -313,8 +313,9 @@ class TestApiApp < Minitest::Test
       { "HTTP_IF_MATCH" => current["etag"] }
     )
     assert_error exclusive, 422, "validation_failed"
-    assert_equal %w[parent_id placement],
-                 JSON.parse(exclusive.body).dig("error", "details", "fields").keys.sort
+    exclusive_error = JSON.parse(exclusive.body).fetch("error")
+    assert_equal "One or more fields are invalid.", exclusive_error.fetch("message")
+    assert_equal %w[parent_id placement], exclusive_error.dig("details", "fields").keys.sort
     assert_contract_request exclusive, valid: false
 
     missing_precondition = json_request(
@@ -399,6 +400,30 @@ class TestApiApp < Minitest::Test
     snapshot = store.edit_snapshot(FIX[:flight])
     edited = store.apply_changeset!(Tasks::TaskChangeset.from(snapshot, changes: { title: "CLI edited" }))
     assert edited.ok?
+
+    missing_parent = json_request(
+      "PATCH", "/api/v1/tasks/#{FIX[:flight]}",
+      { placement: { parent_id: "deadbeef" } },
+      { "HTTP_IF_MATCH" => flight["etag"] }
+    )
+    assert_error missing_parent, 404, "not_found"
+    assert_equal(
+      { "field" => "placement.parent_id", "parent_id" => "deadbeef" },
+      JSON.parse(missing_parent.body).dig("error", "details")
+    )
+    assert_contract_response(missing_parent)
+
+    missing_anchor = json_request(
+      "PATCH", "/api/v1/tasks/#{FIX[:flight]}",
+      { placement: { parent_id: FIX[:home], before_id: "deadbeef" } },
+      { "HTTP_IF_MATCH" => flight["etag"] }
+    )
+    assert_error missing_anchor, 404, "not_found"
+    assert_equal(
+      { "field" => "placement.before_id", "before_id" => "deadbeef" },
+      JSON.parse(missing_anchor.body).dig("error", "details")
+    )
+    assert_contract_response(missing_anchor)
 
     stale_placement = json_request(
       "PATCH", "/api/v1/tasks/#{FIX[:flight]}",

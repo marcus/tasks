@@ -1,17 +1,19 @@
 # ADR-0007: Composite opaque revisions and HTTP optimistic concurrency
 
-Status: Accepted; ADR-0009 amendment pending implementation
+Status: Accepted; amended by implemented ADR-0009
 
 Date: 2026-07-14
 
-Implementation note: revision generation is implemented in `Tasks::Store`
+Implementation note: revision generation and ADR-0009's placement amendment are
+implemented in `Tasks::Store`
 (`task_revision`, `revision_components`, `changeset_revision_error`,
 `delete_revision_error`). The loopback API now maps task revisions to quoted
 ETag/`If-Match` headers and returns the separate `store_revision` refresh token
-from the same coherent snapshot as each resource response. The current
-`task_revision` still includes `location` in `own`; ADR-0009's accepted
-amendment removes that duplicate structural input when placement is
-implemented.
+from the same coherent snapshot as each resource response. `task_revision`
+excludes `location` from `own` and carries structural location only in the
+separate `location` component. Anchor-relative placement compares `own` and
+validates its live destination under the mutation lock; legacy location changes
+continue to compare both `own` and `location`.
 
 ## Context
 

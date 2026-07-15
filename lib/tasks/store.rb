@@ -680,6 +680,15 @@ module Tasks
           return MutationResult.new(status: :not_found) unless ri
 
           current = build_edit_snapshot(records, ri)
+          placement_targets = resolve_changeset_placement_targets(records, current, changeset)
+          if placement_targets && placement_targets[:status] != :ok
+            return MutationResult.new(
+              status: placement_targets[:status], snapshot: current,
+              errors: placement_targets[:errors] || [],
+              field_errors: placement_targets[:field_errors] || {},
+              summary: placement_targets[:summary]
+            )
+          end
 
           if strict_revision
             revision_error = changeset_revision_error(current, changeset)
@@ -706,7 +715,9 @@ module Tasks
 
           original_records = Format.dump(records)
           working_records = duplicate_records(records)
-          applied = apply_changeset_fields(working_records, changeset, today: today)
+          applied = apply_changeset_fields(
+            working_records, changeset, today: today, placement_targets: placement_targets
+          )
           if applied[:status] != :ok
             return MutationResult.new(status: applied[:status], snapshot: current,
                                       errors: applied[:errors] || [],
@@ -1499,7 +1510,7 @@ module Tasks
       JSON.parse(JSON.generate(records))
     end
 
-    def apply_changeset_fields(records, changeset, today:)
+    def apply_changeset_fields(records, changeset, today:, placement_targets: nil)
       touched_ids = []
       summaries = {}
       changeset.ordered_fields.each do |field|
@@ -1507,7 +1518,8 @@ module Tasks
         return { status: :not_found } unless ri
 
         applied = apply_semantic_patch(
-          records, ri, field, changeset.changes.fetch(field), force: changeset.force, today: today
+          records, ri, field, changeset.changes.fetch(field), force: changeset.force,
+          today: today, placement_targets: placement_targets
         )
         return applied unless applied[:status] == :ok
 
@@ -1613,7 +1625,7 @@ module Tasks
       ri && build_edit_snapshot(records, ri)
     end
 
-    def apply_semantic_patch(records, ri, field, value, force: false, today:)
+    def apply_semantic_patch(records, ri, field, value, force: false, today:, placement_targets: nil)
       case field
       when :title      then patch_title(records, ri, value)
       when :priority   then patch_priority(records, ri, value)
@@ -1627,7 +1639,7 @@ module Tasks
       when :tags       then patch_tag_slice(records, ri, value, :tags)
       when :tag_delta  then patch_tag_delta(records, ri, value)
       when :body       then patch_body(records, ri, value)
-      when :location   then patch_location(records, ri, value, force: force)
+      when :location   then patch_location(records, ri, value, force: force, placement_targets: placement_targets)
       when :state      then patch_state(records, ri, value, today: today)
       end
     end
@@ -1811,8 +1823,10 @@ module Tasks
       value.nil? || (value.respond_to?(:empty?) && value.empty?) ? rec.delete(key) : rec[key] = value
     end
 
-    def patch_location(records, ri, location, force: false)
-      return patch_placement(records, ri, location) if location.is_a?(TaskPlacement)
+    def patch_location(records, ri, location, force: false, placement_targets: nil)
+      if location.is_a?(TaskPlacement)
+        return patch_placement(records, ri, location, targets: placement_targets)
+      end
 
       parent_id = location
       rec = records[ri]
@@ -1848,13 +1862,17 @@ module Tasks
                summary: { from: from, to: parent_id, moved_ids: moved_ids })
     end
 
-    def patch_placement(records, ri, placement)
-      rec = records[ri]
-      from = rec["parent"]
+    def resolve_changeset_placement_targets(records, current, changeset)
+      location = changeset.changes[:location]
+      return nil unless location.is_a?(TaskPlacement)
+
+      resolve_placement_targets(records, location, from: current.parent_id)
+    end
+
+    def resolve_placement_targets(records, placement, from:)
       parent_id = placement.parent_id
       before_id = placement.before_id
       summary = { from: from, to: parent_id, before: before_id }
-
       pi = records.index do |record|
         record["id"] == parent_id && %w[section task].include?(record["type"])
       end
@@ -1871,6 +1889,21 @@ module Tasks
         return { status: :not_found, errors: [message], field_errors: { before_id: [message] },
                  summary: summary }
       end
+
+      { status: :ok, parent_index: pi, before_index: ai }
+    end
+
+    def patch_placement(records, ri, placement, targets: nil)
+      rec = records[ri]
+      from = rec["parent"]
+      parent_id = placement.parent_id
+      before_id = placement.before_id
+      summary = { from: from, to: parent_id, before: before_id }
+      targets ||= resolve_placement_targets(records, placement, from: from)
+      return targets unless targets[:status] == :ok
+
+      pi = targets.fetch(:parent_index)
+      ai = targets.fetch(:before_index)
 
       rj = subtree_end(records, ri)
       if (pi >= ri && pi < rj) || (ai && ai >= ri && ai < rj)

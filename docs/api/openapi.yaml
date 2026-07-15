@@ -702,7 +702,7 @@ paths:
                   value:
                     error:
                       code: "validation_failed"
-                      message: "placement and parent_id cannot be supplied together."
+                      message: "One or more fields are invalid."
                       details:
                         fields:
                           placement: ["cannot be combined with parent_id"]
@@ -712,7 +712,7 @@ paths:
                   value:
                     error:
                       code: "validation_failed"
-                      message: "placement is invalid."
+                      message: "One or more fields are invalid."
                       details:
                         fields:
                           placement: ["must contain only parent_id and before_id"]

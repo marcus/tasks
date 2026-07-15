@@ -124,6 +124,12 @@ class TestApiToolchain < Minitest::Test
     assert_equal "cycle", conflicts.dig("descendant_anchor_cycle", "value", "error", "code")
     assert_equal "conflict", conflicts.dig("anchor_parent_changed", "value", "error", "code")
 
+    validation = patch.dig("responses", "422", "content", "application/json", "examples")
+    assert_equal "One or more fields are invalid.",
+                 validation.dig("conflicting_location_inputs", "value", "error", "message")
+    assert_equal "One or more fields are invalid.",
+                 validation.dig("malformed_placement", "value", "error", "message")
+
     example_names = patch.dig("requestBody", "content", "application/json", "examples").keys
     assert_includes example_names, "place_before"
     assert_includes example_names, "place_at_end"
