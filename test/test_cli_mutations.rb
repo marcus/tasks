@@ -1843,6 +1843,244 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  ORDER_CLI = Tasks::Format.dump([
+    { "type" => "meta", "version" => 1 },
+    { "type" => "section", "id" => "ab000001", "title" => "Work" },
+    { "type" => "task", "id" => "ab000002", "parent" => "ab000001", "state" => "TODO",
+      "title" => "Alpha root" },
+    { "type" => "task", "id" => "ab000003", "parent" => "ab000002", "state" => "NEXT",
+      "title" => "Alpha child" },
+    { "type" => "task", "id" => "ab000004", "parent" => "ab000003", "state" => "TODO",
+      "title" => "Deep anchor" },
+    { "type" => "task", "id" => "ab000005", "parent" => "ab000001", "state" => "TODO",
+      "title" => "Beta task" },
+    { "type" => "task", "id" => "ab000006", "parent" => "ab000001", "state" => "TODO",
+      "title" => "Gamma task" },
+    { "type" => "task", "id" => "ab000007", "parent" => "ab000001", "state" => "DONE",
+      "title" => "Closed anchor", "closed" => "2026-07-14" },
+    { "type" => "task", "id" => "ab000008", "parent" => "ab000001", "state" => "TODO",
+      "title" => "Twin first" },
+    { "type" => "task", "id" => "ab000009", "parent" => "ab000001", "state" => "TODO",
+      "title" => "Twin second" },
+    { "type" => "section", "id" => "ab000010", "title" => "Home" },
+    { "type" => "task", "id" => "ab000011", "parent" => "ab000010", "state" => "TODO",
+      "title" => "Home parent" },
+    { "type" => "task", "id" => "ab000012", "parent" => "ab000011", "state" => "NEXT",
+      "title" => "Home child" },
+    { "type" => "task", "id" => "ab000013", "parent" => "ab000011", "state" => "TODO",
+      "title" => "Home sibling" },
+  ])
+
+  def test_cli_move_before_infers_anchor_section_and_preserves_subtree
+    run_cli("move", "Gamma task", "--before", "Beta task", content: ORDER_CLI) do |org, out, err, st|
+      assert st.success?, err
+      records = Tasks::Format.parse(File.read(org, encoding: "UTF-8")).records
+      ids = records.filter_map { |record| record["id"] }
+      assert_operator ids.index("ab000006"), :<, ids.index("ab000005")
+      assert_equal "ab000001", record_for(org, title: "Gamma task")["parent"]
+      assert_match(/moved "Gamma task" in section "Work" before "Beta task"\n/, out)
+      assert_match(/TODO Gamma task/, out)
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_move_before_explicit_task_parent_reparents_at_exact_slot
+    run_cli("move", "Gamma task", "--under", "Home parent", "--before", "Home child",
+            content: ORDER_CLI) do |org, out, err, st|
+      assert st.success?, err
+      records = Tasks::Format.parse(File.read(org, encoding: "UTF-8")).records
+      ids = records.filter_map { |record| record["id"] }
+      assert_equal "ab000011", record_for(org, title: "Gamma task")["parent"]
+      assert_operator ids.index("ab000006"), :<, ids.index("ab000012")
+      assert_match(/under task "Home parent" before "Home child"/, out)
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_move_before_positional_section_reparents_at_exact_slot
+    run_cli("move", "Home child", "Work", "--before", "Beta task", content: ORDER_CLI) do |org, out, err, st|
+      assert st.success?, err
+      records = Tasks::Format.parse(File.read(org, encoding: "UTF-8")).records
+      ids = records.filter_map { |record| record["id"] }
+      assert_equal "ab000001", record_for(org, title: "Home child")["parent"]
+      assert_operator ids.index("ab000012"), :<, ids.index("ab000005")
+      assert_match(/in section "Work" before "Beta task"/, out)
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_move_before_json_names_stable_placement_and_touched_task
+    run_cli("move", "Gamma task", "--before", "Beta task", "--json", content: ORDER_CLI) do |_org, out, err, st|
+      assert st.success?, err
+      payload = JSON.parse(out)
+      assert_equal ["ab000006"], payload.fetch("touched").map { |row| row.fetch("id") }
+      assert_equal(
+        {
+          "parent_id" => "ab000001", "parent_type" => "section", "parent_title" => "Work",
+          "before_id" => "ab000005", "before_title" => "Beta task",
+        },
+        payload.fetch("placement")
+      )
+    end
+  end
+
+  def test_cli_move_before_dry_run_is_human_readable_and_writes_nothing
+    run_cli("move", "Gamma task", "--before", "Beta task", "--dry-run", "--json",
+            content: ORDER_CLI) do |org, out, err, st|
+      assert st.success?, err
+      assert_equal ORDER_CLI, File.read(org, encoding: "UTF-8")
+      assert_equal <<~OUT, out
+        would move "Gamma task" in section "Work" before "Beta task"
+        TODO Gamma task
+      OUT
+      refute_match(/\A\{/, out)
+    end
+  end
+
+  def test_cli_move_before_noop_writes_no_journal_entry
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, ORDER_CLI)
+
+      out, err, status = run_cli_at(org, archive, "move", "Beta task", "--before", "Gamma task")
+      assert status.success?, err
+      assert_match(/already placed "Beta task"/, out)
+      assert_equal ORDER_CLI, File.read(org, encoding: "UTF-8")
+
+      _undo_out, undo_err, undo_status = run_cli_at(org, archive, "undo")
+      assert_equal 1, undo_status.exitstatus
+      assert_match(/nothing to undo/, undo_err)
+    end
+  end
+
+  def test_cli_move_before_is_one_undoable_integrity_checked_change
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, ORDER_CLI)
+
+      _out, err, status = run_cli_at(org, archive, "move", "Gamma task", "--before", "Beta task")
+      assert status.success?, err
+      assert Tasks::Check.check(org).ok?
+
+      undo_out, undo_err, undo_status = run_cli_at(org, archive, "undo")
+      assert undo_status.success?, undo_err
+      assert_equal "undid: move before Beta task: Gamma task\n", undo_out
+      assert_equal ORDER_CLI, File.binread(org)
+
+      _out, empty_err, empty_status = run_cli_at(org, archive, "undo")
+      assert_equal 1, empty_status.exitstatus
+      assert_match(/nothing to undo/, empty_err)
+    end
+  end
+
+  def test_cli_move_before_rejects_wrong_parent_anchor_and_contradictory_destinations
+    cases = [
+      [["move", "Gamma task", "--under", "Home parent", "--before", "Beta task"], /not a direct child/],
+      [["move", "Gamma task", "--top", "--before", "Beta task"], /usage: tasks move/],
+      [["move", "Gamma task", "Work", "--under", "Home parent", "--before", "Beta task"], /usage: tasks move/],
+    ]
+    cases.each do |args, error|
+      run_cli(*args, content: ORDER_CLI) do |org, _out, err, st|
+        assert_equal 1, st.exitstatus, args.join(" ")
+        assert_match error, err
+        assert_equal ORDER_CLI, File.read(org, encoding: "UTF-8")
+      end
+    end
+  end
+
+  def test_cli_move_before_rejects_missing_value_section_self_cycle_and_depth
+    cases = [
+      [["move", "Gamma task", "--before"], /missing value for --before/, {}],
+      [["move", "Gamma task", "Nowhere", "--before", "Beta task"], /no "Nowhere" section/, {}],
+      [["move", "Gamma task", "--before", "Gamma task"], /before itself/, {}],
+      [["move", "Alpha root", "--under", "Alpha child", "--before", "Deep anchor"], /own subtree/, {}],
+      [["move", "Alpha root", "--under", "Home parent", "--before", "Home child"], /max depth 2/,
+       { "TASKS_MAX_DEPTH" => "2" }],
+      [["move", "Alpha root", "--under", "Home parent", "--before", "Home child", "--dry-run"],
+       /max depth 2/, { "TASKS_MAX_DEPTH" => "2" }],
+    ]
+    cases.each do |args, error, env|
+      run_cli(*args, content: ORDER_CLI, env: env) do |org, _out, err, st|
+        assert_equal 1, st.exitstatus, args.join(" ")
+        assert_match error, err
+        assert_equal ORDER_CLI, File.read(org, encoding: "UTF-8")
+      end
+    end
+  end
+
+  def test_cli_move_before_missing_and_ambiguous_task_refs_exit_two
+    cases = [
+      ["Missing source", "--before", "Beta task"],
+      ["Gamma task", "--before", "Missing anchor"],
+      ["Gamma task", "--before", "Twin"],
+      ["Gamma task", "--under", "Home", "--before", "Home child"],
+    ]
+    cases.each do |args|
+      run_cli("move", *args, content: ORDER_CLI) do |org, _out, err, st|
+        assert_equal 2, st.exitstatus, args.join(" ")
+        assert_match(/no match|ambiguous/, err)
+        assert_equal ORDER_CLI, File.read(org, encoding: "UTF-8")
+      end
+    end
+  end
+
+  def test_cli_move_before_resolves_all_refs_then_checks_cycle_before_anchor_parent
+    run_cli("move", "Gamma task", "--under", "Missing parent", "--before", "Gamma task",
+            content: ORDER_CLI) do |org, _out, err, st|
+      assert_equal 2, st.exitstatus
+      assert_match(/no match: Missing parent/, err)
+      refute_match(/before itself/, err)
+      assert_equal ORDER_CLI, File.read(org, encoding: "UTF-8")
+    end
+
+    [
+      ["move", "Alpha root", "--under", "Home parent", "--before", "Deep anchor"],
+      ["move", "Alpha root", "--under", "Alpha child", "--before", "Beta task"],
+    ].each do |args|
+      run_cli(*args, content: ORDER_CLI) do |org, _out, err, st|
+        assert_equal 1, st.exitstatus
+        assert_match(/own subtree/, err)
+        refute_match(/not a direct child/, err)
+        assert_equal ORDER_CLI, File.read(org, encoding: "UTF-8")
+      end
+    end
+  end
+
+  def test_cli_move_before_include_done_and_line_refs_resolve_to_stable_ids
+    run_cli("move", "L7", "--before", "L8", "--include-done", content: ORDER_CLI) do |org, out, err, st|
+      assert st.success?, err
+      assert_match(/"Gamma task".*before "Closed anchor"/, out)
+      records = Tasks::Format.parse(File.read(org, encoding: "UTF-8")).records
+      ids = records.filter_map { |record| record["id"] }
+      assert_operator ids.index("ab000006"), :<, ids.index("ab000007")
+      assert Tasks::Check.check(org).ok?
+    end
+
+    run_cli("move", "Gamma task", "--before", "Closed anchor", content: ORDER_CLI) do |org, _out, err, st|
+      assert_equal 2, st.exitstatus
+      assert_match(/no match: Closed anchor/, err)
+      assert_equal ORDER_CLI, File.read(org, encoding: "UTF-8")
+    end
+  end
+
+  def test_cli_legacy_move_forms_still_append
+    run_cli("move", "Beta task", "--under", "Home parent", content: ORDER_CLI) do |org, _out, err, st|
+      assert st.success?, err
+      records = Tasks::Format.parse(File.read(org, encoding: "UTF-8")).records
+      ids = records.filter_map { |record| record["id"] }
+      assert_operator ids.index("ab000013"), :<, ids.index("ab000005")
+    end
+
+    run_cli("move", "Beta task", "Home", content: ORDER_CLI) do |org, _out, err, st|
+      assert st.success?, err
+      records = Tasks::Format.parse(File.read(org, encoding: "UTF-8")).records
+      ids = records.filter_map { |record| record["id"] }
+      assert_operator ids.index("ab000011"), :<, ids.index("ab000005")
+    end
+  end
+
   # -- capture ----------------------------------------------------------------
 
   def test_cli_capture_default_inbox
@@ -2362,6 +2600,8 @@ class TestCliMutations < Minitest::Test
     source = File.read(BIN, encoding: "UTF-8")
 
     refute_match(/store\.(?:capture!|complete!|set_state!|set_priority!|reschedule!|set_date!|undate!|retitle!|set_tags!|set_deferred!|set_recur!|add_note!|move!|move_under!|move_top!)/, source)
+    assert_match(/Tasks::TaskPlacement\.new\(parent_id: parent_id, before_id: anchor_id\)/, source)
+    assert_match(/changeset_task_by_id\(/, source)
   end
 
   def test_cli_tag_patch_preserves_legacy_tag_order_and_undo_label

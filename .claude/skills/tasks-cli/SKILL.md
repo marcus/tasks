@@ -58,6 +58,8 @@ bin/tasks capture "sub" --under "<ref>" # nest a new task below an existing one
 bin/tasks move "<ref>" "Section"     # relocate the block under a top-level heading
 bin/tasks move "<ref>" --under "<ref>"  # nest the subtree below another task
 bin/tasks move "<ref>" --top         # unnest the subtree back to the section level
+bin/tasks move "<ref>" --before "<ref>" # reorder before a sibling (infers its parent)
+bin/tasks move "<ref>" --under "<parent>" --before "<sibling>" # reparent at an exact slot
 bin/tasks recur "<ref>" weekly       # repeat on done: weekly/2w/.+1m; "off" clears
 bin/tasks defer "<ref>" +4           # hide until available four days from today
 bin/tasks someday "<ref>"            # hold indefinitely (someday/maybe/on hold)
@@ -109,6 +111,11 @@ write nothing; nesting a task under its own subtree is a cycle (exit 1). Moving
 to a section or `move --top` (unnest) is never depth-checked, so it's the escape
 hatch for a file already deeper than the cap. `move --top` on an already
 top-level task is a harmless no-op.
+
+Use `move "<ref>" --before "<sibling>"` for exact manual ordering; it infers the
+sibling's current parent. Add `--under "<parent>"` or a positional section name
+to reparent at the same time. The anchor must be a direct child of that explicit
+destination. `--before` cannot be combined with `--top`.
 
 Mutations accept `--dry-run` (print, don't write), `--json` (structured
 result), and dates in any form: `fri`, `+3`, `07-15`, `2026-07-15`, `today`.

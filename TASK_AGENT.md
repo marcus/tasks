@@ -94,6 +94,8 @@ say which ones matched.
   - move a task:      `bin/tasks move "<ref>" "<Section>"`
   - nest a subtree:   `bin/tasks move "<ref>" --under "<ref>"`  (below another task; ≤ max_depth)
   - unnest a subtree: `bin/tasks move "<ref>" --top`  (back to the section level)
+  - reorder a subtree:`bin/tasks move "<ref>" --before "<sibling-ref>"`  (infers the sibling's parent)
+  - place a subtree:  `bin/tasks move "<ref>" --under "<parent-ref>" --before "<sibling-ref>"`
   - make it recur:    `bin/tasks recur "<ref>" weekly`  (2w/.+1m/…; "off" clears)
   - defer until date: `bin/tasks defer "<ref>" <date>`  (hide until date; preserves deadline)
   - hold indefinitely: `bin/tasks someday "<ref>"`  (someday/maybe/on hold)

@@ -23,6 +23,7 @@
 #   bin/tasks tag <ref> +t -t @ctx -@ctx   add/remove tags and contexts
 #   bin/tasks note <ref> "text"            append a body line under the task
 #   bin/tasks move <ref> ("Section"|--under <ref>|--top)  relocate/nest/unnest a subtree
+#   bin/tasks move <ref> ["Section"|--under <ref>] --before <ref>  place before a sibling
 #   bin/tasks delete <ref>   hard-delete a task (needs --cascade if it has
 #                             subtasks); undoable — usually prefer cancel/archive
 #   bin/tasks recur <ref> <interval|off>   repeat on done (weekly, 2w, .+1m; off clears)
@@ -473,14 +474,15 @@ end
 
 # Match Store's legacy top-level section lookup at the CLI boundary, then pass
 # only the section id into the location patch.
-def section_id_for(name)
+def section_record_for(name)
   want = name.strip.downcase
   records = store.read_snapshot.live_records
   sections = records.select { |record| record["type"] == "section" && !record["parent"] }
-  section = sections.find { |record| record["title"].to_s.downcase == want } ||
-            sections.find { |record| record["title"].to_s.downcase.include?(want) }
-  section && section["id"]
+  sections.find { |record| record["title"].to_s.downcase == want } ||
+    sections.find { |record| record["title"].to_s.downcase.include?(want) }
 end
+
+def section_id_for(name) = section_record_for(name)&.fetch("id")
 
 # Locate the task's nearest ancestor section by id without retaining a file
 # coordinate. Rootless tasks have no top-level destination, matching the old
@@ -587,7 +589,7 @@ end
 # Stable ids survive retitles and tree moves, and cascade results carry every
 # affected id. The CLI JSON keeps its historical line field as presentation,
 # never as a mutation locator.
-def report_touched(ids, json:, today: Date.today, read_snapshot: nil)
+def report_touched(ids, json:, today: Date.today, read_snapshot: nil, extra: nil)
   if read_snapshot
     query = Tasks::TaskQueries.new(read_snapshot, today: today)
     items = Array(ids)
@@ -602,7 +604,9 @@ def report_touched(ids, json:, today: Date.today, read_snapshot: nil)
   if json
     require "json"
     query ||= Tasks::TaskQueries.new(store.read_snapshot, today: today)
-    puts({ touched: items.map { |item| item_json(item, task: query.task(item)) } }.to_json)
+    payload = { touched: items.map { |item| item_json(item, task: query.task(item)) } }
+    payload.merge!(extra) if extra
+    puts payload.to_json
   else
     items.each { |i| puts item_headline(i) }
   end
@@ -1170,7 +1174,51 @@ def extract_value(args, flag)
   val
 end
 
-MOVE_USAGE = %(tasks move <ref> ("Section" | --under <ref> | --top))
+MOVE_USAGE = %(tasks move <ref> ("Section" | --under <ref> | --top | ["Section" | --under <ref>] --before <ref>))
+
+def placement_destination(parent)
+  kind = parent.fetch("type") == "task" ? "under task" : "in section"
+  %(#{kind} "#{parent["title"]}")
+end
+
+def placement_record(id)
+  store.read_snapshot.live_records.find do |record|
+    record["id"] == id && %w[task section].include?(record["type"])
+  end
+end
+
+# Validate a dry-run through the exact Application/Store placement path against
+# an isolated byte-for-byte copy. This keeps depth, cycle, anchor, and Check
+# rules in the model while guaranteeing the configured task files and journal
+# remain untouched.
+def preview_task_placement(task_id, placement:, snapshot:, label:)
+  require "tmpdir"
+  Dir.mktmpdir("tasks-move-preview") do |dir|
+    preview_org = File.join(dir, "tasks.jsonl")
+    preview_archive = File.join(dir, "archive.jsonl")
+    File.binwrite(preview_org, File.binread(ORG))
+    File.binwrite(preview_archive, File.binread(ARCHIVE)) if File.exist?(ARCHIVE)
+    preview_application = Tasks::Application.new(
+      store_factory: Tasks::StoreFactory.new(
+        org: preview_org, archive: preview_archive, journal_dir: File.join(dir, "journal"),
+        links: PATHS.links, link_systems: PATHS.link_systems, max_depth: PATHS.max_depth
+      )
+    )
+    changeset = Tasks::TaskChangeset.from(
+      snapshot, changes: { location: placement }, history_label: label
+    )
+    preview_application.update_task(changeset, today: Date.today)
+  end
+end
+
+def placement_result_failed(result, anchor_item:, parent:)
+  mutation_failed "would exceed max depth #{store.max_depth} (max_depth config / TASKS_MAX_DEPTH)" if result.too_deep?
+  mutation_failed "can't place a task relative to its own subtree" if result.cycle?
+  if result.conflict?
+    mutation_failed %("#{anchor_item.title}" is not a direct child of #{placement_destination(parent)})
+  end
+  mutation_result_failed(result, "could not place task before anchor")
+end
 
 # Relocate a task's subtree. Exactly one destination: a positional section
 # name, --under <ref> (nest below another task, depth-capped), or --top (unnest
@@ -1178,18 +1226,98 @@ MOVE_USAGE = %(tasks move <ref> ("Section" | --under <ref> | --top))
 def cmd_move(args)
   args = args.dup
   under = extract_value(args, "--under")
+  before = extract_value(args, "--before")
   flags, rest = take_flags(args, "--dry-run", "--json", "--include-done", "--top")
   ref = rest.shift
   section = rest.join(" ").strip
   top = flags["--top"]
   abort %(usage: #{MOVE_USAGE}) if ref.nil? || ref.strip.empty?
-  # Exactly one destination.
-  abort %(usage: #{MOVE_USAGE}) unless [!section.empty?, !under.nil?, top].count(true) == 1
+
+  explicit_destinations = [!section.empty?, !under.nil?, top].count(true)
+  if before
+    # An anchor can infer its parent, or one explicit parent may constrain it.
+    abort %(usage: #{MOVE_USAGE}) if top || explicit_destinations > 1
+  else
+    # Legacy append forms continue to require exactly one destination.
+    abort %(usage: #{MOVE_USAGE}) unless explicit_destinations == 1
+  end
 
   item = resolve_ref(ref, include_done: flags["--include-done"])
   task_id = stable_id_for(item)
 
-  if top
+  if before
+    anchor_item = resolve_ref(before, include_done: flags["--include-done"])
+    anchor_id = stable_id_for(anchor_item)
+
+    anchor_record = placement_record(anchor_id)
+    mutation_failed "anchor task no longer exists" unless anchor_record
+
+    parent = if under
+               parent_item = resolve_ref(under, include_done: flags["--include-done"])
+               placement_record(stable_id_for(parent_item))
+             elsif !section.empty?
+               section_record_for(section)
+             else
+               placement_record(anchor_record["parent"])
+             end
+    missing_parent = if under
+                       %(destination task "#{under}" no longer exists)
+                     elsif !section.empty?
+                       %(could not move (no "#{section}" section?))
+                     else
+                       "anchor has no live task or section parent"
+                     end
+    mutation_failed missing_parent unless parent
+    parent_id = parent.fetch("id")
+
+    snapshot = application.edit_snapshot(task_id)
+    mutation_failed "task no longer exists" unless snapshot
+    subtree_ids = snapshot.metadata.fetch(:subtree_ids)
+    if anchor_id == task_id
+      abort "can't place a task before itself"
+    elsif subtree_ids.include?(parent_id) || subtree_ids.include?(anchor_id)
+      abort "can't place a task relative to its own subtree"
+    end
+    if anchor_record["parent"] != parent_id
+      abort %("#{anchor_item.title}" is not a direct child of #{placement_destination(parent)})
+    end
+
+    summary = %(move "#{item.title}" #{placement_destination(parent)} before "#{anchor_item.title}")
+    label = "move before #{anchor_item.title}: #{item.title}"
+    placement = Tasks::TaskPlacement.new(parent_id: parent_id, before_id: anchor_id)
+    if flags["--dry-run"]
+      preview = preview_task_placement(task_id, placement: placement, snapshot: snapshot, label: label)
+      placement_result_failed(preview, anchor_item: anchor_item, parent: parent)
+      puts "would #{summary}"
+      puts item_headline(item)
+      return
+    end
+
+    result = changeset_task_by_id(
+      task_id,
+      changes: { location: placement },
+      label: label,
+      today: Date.today,
+      snapshot: snapshot
+    )
+    placement_result_failed(result, anchor_item: anchor_item, parent: parent)
+
+    if flags["--json"]
+      placement_json = {
+        parent_id: parent_id,
+        parent_type: parent.fetch("type"),
+        parent_title: parent["title"],
+        before_id: anchor_id,
+        before_title: anchor_item.title,
+      }
+      report_touched([task_id], json: true, read_snapshot: result.read_snapshot,
+                     extra: { placement: placement_json })
+    else
+      verb = result.no_change? ? "already placed" : "moved"
+      puts %(#{verb} "#{item.title}" #{placement_destination(parent)} before "#{anchor_item.title}")
+      report_touched([task_id], json: false, read_snapshot: result.read_snapshot)
+    end
+  elsif top
     if flags["--dry-run"]
       puts "would unnest to top level: #{item_headline(item)}"
       return
@@ -1574,6 +1702,8 @@ HELP = <<~USAGE
     move         <ref> "Section"     relocate the subtree under a heading
                  <ref> --under <ref> nest the subtree below another task (≤ max_depth)
                  <ref> --top         unnest the subtree back to the section level
+                 <ref> ["Section"|--under <ref>] --before <ref>
+                                     place the subtree before a stable sibling
     recur repeat <ref> <interval>    repeat on done: weekly · 2w · .+1m · off
                                      --from schedule|completion · --on <date>
     defer   snooze <ref> [date]      defer until date; no date holds indefinitely
