@@ -365,9 +365,13 @@ class TestAppModals < Minitest::Test
       (1..6).each do |number|
         app.send(:handle_key, number.to_s)
         assert_equal Tui::Views::TABS[number - 1].last, ui(app).view
-        assert_equal :detail, panel(app).kind
-        assert_equal app.send(:current_item).id, panel(app).identity
-        assert_includes panel_text(app).tr("\n", " "), selected_title(app)
+        # The Projects tab may land on a project header, whose panel is the
+        # project-detail counterpart; every other view shows a task detail.
+        selected = app.send(:current_item) || app.send(:current_project)
+        expected_kind = app.send(:current_project) ? :project_detail : :detail
+        assert_equal expected_kind, panel(app).kind
+        assert_equal selected.id || selected.title, panel(app).identity
+        assert_includes panel_text(app).tr("\n", " "), selected.title
       end
     end
   end

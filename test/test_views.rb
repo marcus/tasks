@@ -3,6 +3,7 @@
 require_relative "test_helper"
 require "set"
 require "tasks/application"
+require "tui/project_details"
 
 class TestViews < Minitest::Test
   V = Tui::Views
@@ -40,6 +41,12 @@ class TestViews < Minitest::Test
   def tree_texts(store, view, collapsed: Set.new, show_deferred: false)
     tree_rows(store, view, collapsed: collapsed, show_deferred: show_deferred)
       .map { |r| A.strip(r.text) }
+  end
+
+  # The App-supplied project read model the Projects tab renders (list_projects
+  # by another name), built straight off the store snapshot the view already has.
+  def project_views_for(store)
+    Tasks::TaskQueries.new(store.read_snapshot, today: TODAY).projects
   end
 
   # A nested fixture: Work → "Ship release" (NEXT/A, due 07-03) with subtasks
@@ -378,7 +385,7 @@ class TestViews < Minitest::Test
   # additionally show open descendants as contextual riders.
   def test_flat_and_tree_modes_share_canonical_eligibility
     with_records(NESTED) do |store|
-      %i[agenda next quadrants inbox projects].each do |view|
+      %i[agenda next quadrants inbox].each do |view|
         query = V.view_query(view, today: TODAY, urgent_days: 3, show_deferred: false, store: store)
         eligible = query.select(store.items).map(&:id).to_set
         flat = V.rows(view, store.items, today: TODAY, urgent_days: 3, store: store)
@@ -416,7 +423,7 @@ class TestViews < Minitest::Test
     ]
 
     with_records(records) do |store|
-      %i[agenda next quadrants inbox projects].each do |view|
+      %i[agenda next quadrants inbox].each do |view|
         [false, true].each do |revealed|
           query = V.view_query(
             view, today: TODAY, urgent_days: 3, show_deferred: revealed, store: store
@@ -454,15 +461,18 @@ class TestViews < Minitest::Test
       assert_equal %w[fa000004 fa000005], shown_inbox,
                    "a revealed held Inbox anchor carries its nonmatching rider"
 
+      # The Projects tab renders the Phase-1 read model: the "Work" area's
+      # rolled-up open count is the ProjectView's, independent of the reveal
+      # toggle (deferral exclusion lives in the read model, not show_deferred).
       [false, true].each do |revealed|
         rows = V.rows(
           :projects, store.items, tree: store.tree, today: TODAY,
-          show_deferred: revealed, store: store
+          show_deferred: revealed, store: store, projects: project_views_for(store)
         )
-        header = rows.find { |row| !row.item && !row.node && A.strip(row.text).start_with?("Work") }
+        header = rows.find { |row| row.project&.title == "Work" }
         refute_nil header
-        assert_equal rows.count(&:item), A.strip(header.text)[/(\d+) open/, 1].to_i,
-                     "project header count matches the same hidden/revealed body"
+        assert_equal header.project.open_count, A.strip(header.text)[/(\d+) open/, 1].to_i,
+                     "project header count matches its ProjectView roll-up"
       end
     end
   end
@@ -479,35 +489,6 @@ class TestViews < Minitest::Test
       assert_equal Set["p1", "c1"], flat_ids
       assert_equal Set["g1", "c2"], tree_ids - flat_ids,
                    "undated ancestors/descendants ride the matching dated subtree"
-    end
-  end
-
-  def test_project_grouping_is_identical_in_flat_and_tree_modes
-    with_records(PROJ_DEFERRED) do |store|
-      flat = V.rows(:projects, store.items, show_deferred: true, today: TODAY, store: store)
-      tree = V.rows(:projects, store.items, tree: store.tree, show_deferred: true,
-                                     today: TODAY, store: store)
-      assert_equal ["Work"], project_header_titles(flat)
-      assert_equal project_header_titles(flat), project_header_titles(tree)
-    end
-  end
-
-  def test_project_group_order_uses_earliest_descendant_date_in_both_modes
-    records = [
-      { "type" => "meta", "version" => 1 },
-      { "type" => "section", "id" => "s1", "title" => "Alpha" },
-      { "type" => "task", "id" => "p1", "parent" => "s1", "state" => "TODO", "title" => "parent" },
-      { "type" => "task", "id" => "c1", "parent" => "p1", "state" => "NEXT", "title" => "dated child",
-        "deadline" => "2026-07-02" },
-      { "type" => "section", "id" => "s2", "title" => "Beta" },
-      { "type" => "task", "id" => "p2", "parent" => "s2", "state" => "NEXT", "title" => "later root",
-        "deadline" => "2026-07-03" },
-    ]
-    with_records(records) do |store|
-      flat = V.rows(:projects, store.items, today: TODAY, store: store)
-      tree = V.rows(:projects, store.items, tree: store.tree, today: TODAY, store: store)
-      assert_equal %w[Alpha Beta], project_header_titles(flat)
-      assert_equal project_header_titles(flat), project_header_titles(tree)
     end
   end
 
@@ -779,10 +760,12 @@ class TestViews < Minitest::Test
 
   # -- Projects view, tree mode --------------------------------------------
 
-  # Tree-mode Projects rows (nesting-aware body, unlike the flat `/`-filter path).
+  # Tree-mode Projects rows: the Phase-1 read-model view (Projects/Areas groups
+  # with selectable header rows), distinct from the flat `/`-filter path.
   def projects_rows(store, collapsed: Set.new, show_deferred: false)
     V.rows(:projects, store.items, tree: store.tree, collapsed: collapsed,
-                                   show_deferred: show_deferred, today: TODAY, store: store)
+                                   show_deferred: show_deferred, today: TODAY, store: store,
+                                   projects: project_views_for(store))
   end
 
   # A project with a parent task and its own child, plus a leaf sibling.
@@ -797,29 +780,22 @@ class TestViews < Minitest::Test
       "title" => "leaf sibling" },
   ].freeze
 
-  def test_projects_tree_renders_child_directly_below_parent
+  # The tree-mode Projects builder renders the enclosing SECTION as a selectable
+  # header carrying its ProjectView, then its open tasks as flat rows beneath it
+  # (no thread glyphs, no per-task nesting — the outliner nesting lives in the
+  # Outline tab now).
+  def test_projects_tree_renders_selectable_header_then_task_rows
     with_records(PROJ_NESTED) do |store|
       rs = projects_rows(store)
-      pi = rs.index { |r| A.strip(r.text).include?("parent task") }
-      ci = rs.index { |r| A.strip(r.text).include?("child task") }
-      refute_nil pi
-      assert_equal pi + 1, ci, "child renders on the row immediately after its parent (DFS)"
-      assert_operator rs[ci].node.level, :>, rs[pi].node.level, "child nests deeper"
-      assert_includes rs[ci].text, "│", "nested child row carries the thread glyph"
-    end
-  end
-
-  def test_projects_tree_bolds_containers_not_leaves
-    with_records(PROJ_NESTED) do |store|
-      rs = projects_rows(store)
-      parent = rs.find { |r| A.strip(r.text).include?("parent task") }
-      child  = rs.find { |r| A.strip(r.text).include?("child task") }
-      leaf   = rs.find { |r| A.strip(r.text).include?("leaf sibling") }
-      bold = Tui::Theme.sgr(:outline_container) # "\e[1m" by default
-      refute bold.empty?, "outline_container must carry an SGR for this test"
-      assert_includes parent.text, bold, "a parent (container) row is bolded"
-      refute_includes child.text, bold, "a leaf child row is not bolded"
-      refute_includes leaf.text, bold, "a leaf sibling row is not bolded"
+      header = rs.find { |r| r.project&.title == "Work" }
+      refute_nil header, "the section heads a selectable project row"
+      assert header.selectable?, "project header rows are selectable"
+      assert_nil header.item, "a project header carries no task item"
+      rs.each { |r| refute_includes r.text, "│", "projects tab has no thread glyph" }
+      stripped = rs.map { |r| A.strip(r.text) }
+      assert stripped.any? { |t| t.include?("parent task") }
+      assert stripped.any? { |t| t.include?("child task") }
+      assert stripped.any? { |t| t.include?("leaf sibling") }
     end
   end
 
@@ -883,85 +859,124 @@ class TestViews < Minitest::Test
       .map { |t| t.sub(/  \d+ open.*\z/, "") }
   end
 
-  # Bug 1 regression: a task with a nested open child (Work → "parent task"
-  # (NEXT) → "child task" (TODO)) must NOT spawn a spurious project header named
-  # after the parent task. The old code grouped the child by open_project (its
-  # nearest OPEN ancestor = "parent task"), so groups gained a bogus "parent
-  # task" key with an empty body — a dangling header. Grouping by the enclosing
-  # SECTION instead lands the child under "Work" (nested beneath its parent), so
-  # the ONLY header is "Work".
-  def test_projects_tree_no_spurious_header_for_intermediate_task
-    with_records(PROJ_NESTED) do |store|
-      rs = projects_rows(store)
-      assert_equal ["Work"], project_header_titles(rs),
-                   "only the enclosing section heads a group — no pseudo-project per open parent task"
+  # -- Projects view over the Phase-1 read model (PROJECTS_FIXTURE) ----------
+
+  # Build a Store on PROJECTS_FIXTURE and yield tree-mode Projects rows.
+  def with_projects_fixture
+    with_records(PROJECTS_FIXTURE_RECORDS) { |store| yield store, projects_rows(store) }
+  end
+
+  # The group label rows ("Projects" / "Areas"), in order.
+  def group_labels(rs)
+    rs.select { |r| !r.selectable? && !A.strip(r.text).empty? }
+      .map { |r| A.strip(r.text) }
+      .select { |t| %w[Projects Areas].include?(t) }
+  end
+
+  def test_projects_lists_projects_group_before_areas_group
+    with_projects_fixture do |_store, rs|
+      assert_equal %w[Projects Areas], group_labels(rs)
+      projects_idx = rs.index { |r| A.strip(r.text) == "Projects" }
+      areas_idx = rs.index { |r| A.strip(r.text) == "Areas" }
+      assert_operator projects_idx, :<, areas_idx
+      site = rs.index { |r| r.project&.title == "Site launch" }
+      tasks = rs.index { |r| r.project&.title == "Tasks" }
+      assert rs[projects_idx...areas_idx].include?(rs[site]), "Site launch is a project"
+      assert_operator areas_idx, :<, tasks, "Tasks is an area, below the Areas label"
     end
   end
 
-  # A project with one live task and one deferred task.
-  PROJ_MIXED_DEFER = [
-    { "type" => "meta", "version" => 1 },
-    { "type" => "section", "id" => "s1", "title" => "Work" },
-    { "type" => "task", "id" => "t1", "parent" => "s1", "state" => "TODO",
-      "title" => "live task", "deadline" => "2026-07-03" },
-    { "type" => "task", "id" => "t2", "parent" => "s1", "state" => "TODO",
-      "title" => "someday task", "tags" => %w[defer] },
-  ].freeze
-
-  # A project whose every open task is deferred.
-  PROJ_ALL_DEFERRED = [
-    { "type" => "meta", "version" => 1 },
-    { "type" => "section", "id" => "s1", "title" => "Work" },
-    { "type" => "task", "id" => "t1", "parent" => "s1", "state" => "TODO",
-      "title" => "someday one", "tags" => %w[defer] },
-    { "type" => "task", "id" => "t2", "parent" => "s1", "state" => "TODO",
-      "title" => "someday two", "tags" => %w[defer] },
-  ].freeze
-
-  # Bug 2 regression: header stats must be computed from the SAME (deferred-
-  # respecting) traversal as the body, so the stated open-count always matches
-  # the actual number of body rows. The old code counted ALL open items
-  # (deferred included) for the header but hid deferred tasks from the body when
-  # show_deferred was false — an overcount with no matching row.
-  def test_projects_tree_header_count_matches_body_when_deferred_hidden
-    with_records(PROJ_MIXED_DEFER) do |store|
-      rs = projects_rows(store, show_deferred: false)
-      header = rs.find { |r| r.item.nil? && r.node.nil? && A.strip(r.text).start_with?("Work") }
-      refute_nil header, "Work project header present"
-      open_count = A.strip(header.text)[/(\d+) open/, 1].to_i
-      body_rows = rs.count { |r| r.item }
-      assert_equal 1, body_rows, "only the live task renders (deferred hidden)"
-      assert_equal body_rows, open_count, "header open-count matches rendered body rows"
-    end
-  end
-
-  def test_projects_tree_header_count_matches_body_when_deferred_shown
-    with_records(PROJ_MIXED_DEFER) do |store|
-      rs = projects_rows(store, show_deferred: true)
-      header = rs.find { |r| r.item.nil? && r.node.nil? && A.strip(r.text).start_with?("Work") }
+  def test_projects_header_rows_are_selectable_and_carry_the_project_view
+    with_projects_fixture do |_store, rs|
+      header = rs.find { |r| r.project&.title == "Site launch" }
       refute_nil header
-      open_count = A.strip(header.text)[/(\d+) open/, 1].to_i
-      body_rows = rs.count { |r| r.item }
-      assert_equal 2, body_rows, "both tasks render when deferred shown"
-      assert_equal body_rows, open_count, "header open-count matches rendered body rows"
-      assert rs.any? { |r| r.item && A.strip(r.text).include?("someday task") },
-             "the deferred task appears in the body when show_deferred"
+      assert header.selectable?, "a project header row is selectable"
+      assert_equal header.project.id, header.id, "row id follows the section id"
+      assert_nil header.item, "a project header carries no task item"
+      # Its open tasks render as selectable task rows immediately beneath it.
+      assert rs.any? { |r| r.item&.title == "Pick a static-site generator" }
     end
   end
 
-  # Bug 2, degenerate case: a project whose only open tasks are all deferred must
-  # NOT print a bare header (with zero body rows) when show_deferred is false —
-  # it should vanish entirely, exactly like a project with no anchors.
-  def test_projects_tree_all_deferred_project_hidden_when_deferred_hidden
-    with_records(PROJ_ALL_DEFERRED) do |store|
-      hidden = projects_rows(store, show_deferred: false)
-      refute hidden.any? { |r| A.strip(r.text).start_with?("Work") },
-             "an all-deferred project shows no dangling header when deferred hidden"
+  def test_projects_marks_stuck_and_lists_zero_open_projects
+    with_projects_fixture do |_store, rs|
+      empty = rs.find { |r| r.project&.title == "Empty project" }
+      refute_nil empty, "a project with no open tasks is still listed"
+      assert_equal 0, empty.project.open_count
+      assert_includes A.strip(empty.text), "stuck"
 
-      shown = projects_rows(store, show_deferred: true)
-      assert shown.any? { |r| A.strip(r.text).start_with?("Work") },
-             "the project reappears once deferred tasks are revealed"
-      assert_equal 2, shown.count { |r| r.item }, "both deferred tasks render when shown"
+      reno = rs.find { |r| r.project&.title == "Stuck reno" }
+      assert_includes A.strip(reno.text), "stuck", "a project with no NEXT action is stuck"
+
+      site = rs.find { |r| r.project&.title == "Site launch" }
+      refute_includes A.strip(site.text), "stuck", "a project with a NEXT action is not stuck"
+    end
+  end
+
+  def test_projects_areas_exclude_inbox_and_done_only_sections
+    with_projects_fixture do |_store, rs|
+      titles = rs.filter_map { |r| r.project&.title }
+      assert_includes titles, "Tasks", "an open top-level list is an area"
+      refute_includes titles, "Inbox", "Inbox is never an area"
+      refute_includes titles, "Done pile", "a done-only section is not an area"
+      refute_includes titles, "Projects", "the Projects heading is not itself a project row"
+    end
+  end
+
+  def test_projects_empty_state_when_no_project_sections
+    records = [
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "s1", "title" => "Inbox" },
+      { "type" => "task", "id" => "t1", "parent" => "s1", "state" => "INBOX", "title" => "loose note" },
+    ]
+    with_records(records) do |store|
+      rs = projects_rows(store)
+      assert_equal 1, rs.size
+      refute rs.first.selectable?
+      assert_includes A.strip(rs.first.text), "No projects"
+    end
+  end
+
+  def test_projects_empty_state_when_nothing_at_all
+    records = [{ "type" => "meta", "version" => 1 }]
+    with_records(records) do |store|
+      rs = projects_rows(store)
+      assert_equal 1, rs.size
+      assert_includes A.strip(rs.first.text), "No active projects"
+    end
+  end
+
+  # -- ProjectDetails builder -----------------------------------------------
+
+  def test_project_details_builds_header_notes_and_open_task_list
+    with_records(PROJECTS_FIXTURE_RECORDS) do |store|
+      queries = Tasks::TaskQueries.new(store.read_snapshot, today: TODAY)
+      project = queries.projects.find { |p| p.title == "Site launch" }
+      tasks = project.task_ids.map { |id| queries.find(id) }
+      content = Tui::ProjectDetails.build(project, tasks, 60, today: TODAY)
+      lines = content[:lines].map { |line| A.strip(line) }
+
+      assert_equal "project", content[:title]
+      assert_includes lines, "Site launch"
+      assert lines.any? { |l| l.start_with?("kind") && l.include?("project") }
+      assert lines.any? { |l| l.start_with?("open") && l.include?("3") }
+      assert lines.any? { |l| l.start_with?("next") && l.include?("1") }
+      assert_includes lines, "notes"
+      assert lines.any? { |l| l.include?("ship the personal site") }, "section body renders"
+      assert_includes lines, "open tasks"
+      assert lines.any? { |l| l.include?("Pick a static-site generator") }
+    end
+  end
+
+  def test_project_details_shows_stuck_and_no_notes_for_a_bare_project
+    with_records(PROJECTS_FIXTURE_RECORDS) do |store|
+      queries = Tasks::TaskQueries.new(store.read_snapshot, today: TODAY)
+      project = queries.projects.find { |p| p.title == "Stuck reno" }
+      tasks = project.task_ids.map { |id| queries.find(id) }
+      lines = Tui::ProjectDetails.build(project, tasks, 60, today: TODAY)[:lines].map { |line| A.strip(line) }
+
+      assert lines.any? { |l| l.start_with?("stuck") }, "a project with no NEXT shows the stuck row"
+      refute_includes lines, "notes", "no notes row without a section body"
     end
   end
 

@@ -17,6 +17,7 @@ require_relative "modal"
 require_relative "modals"
 require_relative "right_panel"
 require_relative "task_details"
+require_relative "project_details"
 require_relative "clipboard"
 require_relative "export"
 require_relative "session"
@@ -124,6 +125,12 @@ module Tui
       @detail_panel_width = nil
       @detail_panel_model = nil
       @detail_panel_id = nil
+      @project_views = nil
+      @project_views_model = nil
+      @project_detail_id = nil
+      @project_detail_width = nil
+      @project_detail_model = nil
+      @pending_project = nil
       @last_paint_size = nil
       @task_edit_message = nil
       @suspended_task_editor = nil
@@ -242,7 +249,7 @@ module Tui
       elsif @suspended_task_editor
         reconcile_suspended_editor(edit_outcome)
       else
-        refresh_detail_panel if detail_panel?
+        refresh_open_panel if panel_detail?
       end
       restore_form if overlay_mode == :form && @ui.form
       if overlay_mode == :palette && @ui.action_palette
@@ -273,7 +280,11 @@ module Tui
       elsif task_editing?
         refresh_task_edit_panel(layout: layout)
       end
-      refresh_detail_panel(content_width: layout.panel_content_width) if detail_panel?
+      if detail_panel?
+        refresh_detail_panel(content_width: layout.panel_content_width)
+      elsif project_detail? && current_project
+        refresh_project_detail_panel(current_project, content_width: layout.panel_content_width)
+      end
       lines = Frame.build(
         width: width, height: height,
         header: header(width - 2),
@@ -341,6 +352,22 @@ module Tui
       @detail_panel_width = nil
       @detail_panel_model = nil
       @detail_panel_id = nil
+      @project_views = nil
+      @project_views_model = nil
+      @project_detail_id = nil
+      @project_detail_width = nil
+      @project_detail_model = nil
+    end
+
+    # The Phase-1 project read model behind the Projects tab. Rolled up once per
+    # read-model identity — like title_haystack — so navigation reuses the list
+    # instead of rebuilding a fresh Store snapshot on every keystroke. A project
+    # mutation invalidates the read model, which recomputes this in step.
+    def project_views(read, today)
+      return @project_views if @project_views_model.equal?(read) && @project_views
+
+      @project_views_model = read
+      @project_views = @application.list_projects(today: today)
     end
 
     def current_date = @date_provider.call
@@ -368,10 +395,11 @@ module Tui
                                            today: today,
                                            urgent_days: @urgent_days, reader: read)
       else
+        projects = @ui.view == :projects ? project_views(read, today) : nil
         @rows = Views.rows(@ui.view, items, tree: read.tree, collapsed: @ui.collapsed,
                                          show_deferred: @ui.show_deferred, today: today,
                                          urgent_days: @urgent_days,
-                                         reader: read)
+                                         reader: read, projects: projects)
       end
       @rows_fingerprint = fingerprint
       @row_item_count = @rows.count(&:item)
@@ -798,6 +826,8 @@ module Tui
       return archive_confirm_key(k) if @ui.modal&.kind == :archive_confirm
       return archive_blocked_key(k) if @ui.modal&.kind == :archive_blocked
       return cancel_queued_agent_requests_key(k) if @ui.modal&.kind == :agent_queue_cancel_confirm
+      return project_complete_confirm_key(k) if @ui.modal&.kind == :project_complete_confirm
+      return project_archive_confirm_key(k) if @ui.modal&.kind == :project_archive_confirm
       dispatch_action(k, :modal)
     end
 
@@ -836,7 +866,8 @@ module Tui
     end
 
     def restore_form
-      target_missing = @ui.form.target_id && current_item&.id != @ui.form.target_id
+      selected_id = current_item&.id || current_project&.id
+      target_missing = @ui.form.target_id && selected_id != @ui.form.target_id
       if target_missing || (@ui.form.return_mode == :modal && !@ui.modal)
         @ui.form = nil
         @ui.form_success = nil
@@ -878,6 +909,7 @@ module Tui
     def agent_activity_available? = @agent_queue.any?
     def pending_agent_requests_available? = @agent_queue.pending?
     def selected_action_available? = !current_item.nil?
+    def project_selected? = !current_project.nil?
     def ordering_action_available?
       @ui.view == :outline && !active_filter && !active_context_filter && !current_item.nil?
     end
@@ -998,6 +1030,8 @@ module Tui
     def lower_priority = bump_priority(1)
 
     def bump_priority(delta)
+      return needs_task if current_project
+
       item = current_item
       return flash("nothing selected") unless item
       idx = PRIORITY_ORDER.index(item.priority)
@@ -1129,6 +1163,12 @@ module Tui
       unavailable_ordering if ORDERING_HANDLERS.include?(entry.handler)
     end
 
+    # A project header is selected but the pressed action only applies to a task.
+    # The key is still consumed (the caller returns), never falling through.
+    def needs_task
+      flash("select a task for that")
+    end
+
     def unavailable_ordering
       flash("ordering requires the unfiltered Outline tab")
     end
@@ -1209,6 +1249,8 @@ module Tui
     # sets Available from and clears an own On Hold marker; someday adds the
     # indefinite marker; now clears only blockers owned by this task.
     def defer_selected
+      return needs_task if current_project
+
       item = current_item
       return flash("nothing selected") unless item
       field = TermForm::Fields::Input.new(
@@ -1324,6 +1366,8 @@ module Tui
     end
 
     def paste_ref
+      return needs_task if current_project
+
       item = current_item
       return flash("nothing selected") unless item
       close_modal if @ui.modal
@@ -1341,6 +1385,8 @@ module Tui
     end
 
     def yank
+      return needs_task if current_project
+
       item = current_item
       return flash("nothing selected") unless item
       task = current_task
@@ -1397,7 +1443,11 @@ module Tui
     end
 
     def open_detail
+      if (project = current_project)
+        return project_detail? ? close_panel : show_project_detail(project)
+      end
       return flash("nothing selected") unless current_item
+
       detail_panel? ? close_panel : show_detail
     end
 
@@ -1410,10 +1460,45 @@ module Tui
       refresh_detail_panel(content_width: detail_panel_content_width)
     end
 
+    # The right-panel project counterpart to show_detail: a ProjectDetails view
+    # of the selected heading, refreshed like task detail as the cursor moves.
+    def show_project_detail(project = current_project)
+      return close_panel unless project
+
+      refresh_project_detail_panel(project, content_width: detail_panel_content_width)
+    end
+
+    def refresh_project_detail_panel(project, content_width: nil)
+      return close_panel unless project
+
+      content_width ||= detail_panel_content_width
+      if project_detail? &&
+         @project_detail_id == project.id &&
+         @project_detail_width == content_width &&
+         @project_detail_model.equal?(@read_model)
+        return
+      end
+
+      @project_detail_id = project.id
+      @project_detail_width = content_width
+      @project_detail_model = @read_model
+      tasks = project.task_ids.filter_map { |id| read_model.task_for(id) }
+      content = ProjectDetails.build(project, tasks, content_width, today: @read_model_today)
+      if project_detail?
+        @ui.panel.replace(title: content[:title], lines: content[:lines], identity: project.id)
+      else
+        @ui.panel = RightPanel.new(
+          title: content[:title], lines: content[:lines], kind: :project_detail, identity: project.id
+        )
+      end
+    end
+
     # Open the selected task's first link in the browser (`o`, list or detail
     # mode). Deliberately the FIRST link: notes lead with the primary reference;
     # the CLI (`tasks open <ref> <n>`) handles precise picking.
     def open_link
+      return needs_task if current_project
+
       task = current_task or return
       links = task.links
       return flash("no links on this task") if links.empty?
@@ -1471,6 +1556,9 @@ module Tui
       @detail_panel_width = nil
       @detail_panel_model = nil
       @detail_panel_id = nil
+      @project_detail_id = nil
+      @project_detail_width = nil
+      @project_detail_model = nil
     end
 
     def task_editing? = @ui.mode == :task_edit && !@ui.task_editor.nil?
@@ -1869,6 +1957,22 @@ module Tui
     end
 
     def detail_panel? = @ui.panel&.kind == :detail
+    def project_detail? = @ui.panel&.kind == :project_detail
+    def panel_detail? = detail_panel? || project_detail?
+
+    # Keep whichever detail panel is open following the selection: a project row
+    # shows project detail, a task row shows task detail, and a non-selectable
+    # landing closes the panel. Navigation calls this so the panel swaps kind as
+    # the cursor crosses between headings and their tasks.
+    def refresh_open_panel
+      if (project = current_project)
+        show_project_detail(project)
+      elsif current_item
+        refresh_detail_panel
+      else
+        close_panel
+      end
+    end
 
     def open_modal(content, kind:)
       @ui.modal = Modal.new(title: content[:title], lines: content[:lines],
@@ -1931,9 +2035,12 @@ module Tui
 
     # -- actions ---------------------------------------------------------------
 
-    def selectable_indexes = @rows.each_index.select { |i| @rows[i].item }
+    def selectable_indexes = @rows.each_index.select { |i| @rows[i].selectable? }
 
     def current_item = @rows[@sel]&.item
+
+    # The selected project header's ProjectView, or nil on a task/header row.
+    def current_project = @rows[@sel]&.project
 
     def current_task
       item = current_item
@@ -1941,12 +2048,12 @@ module Tui
     end
 
     def select_row(index)
-      id = @rows[index]&.item&.id
+      id = @rows[index]&.id
       return if @sel == index && @ui.selected_id == id
 
       @sel = index
       @ui.selected_id = id
-      refresh_detail_panel if detail_panel?
+      refresh_open_panel if panel_detail?
     end
 
     def move(delta)
@@ -1975,8 +2082,8 @@ module Tui
       # A task with multiple contexts can appear more than once in the Next
       # view. Keep the current occurrence when it still represents the id;
       # otherwise choose the first visible occurrence deterministically.
-      idx = @sel if @ui.selected_id && sels.include?(@sel) && @rows[@sel].item&.id == @ui.selected_id
-      idx ||= @ui.selected_id && sels.find { |i| @rows[i].item&.id == @ui.selected_id }
+      idx = @sel if @ui.selected_id && sels.include?(@sel) && @rows[@sel].id == @ui.selected_id
+      idx ||= @ui.selected_id && sels.find { |i| @rows[i].id == @ui.selected_id }
       idx ||= sels.min_by { |i| [(i - @sel).abs, i] }
       select_row(idx)
     end
@@ -2074,6 +2181,8 @@ module Tui
     end
 
     def complete_selected
+      return confirm_complete_project(current_project) if current_project
+
       item = current_item
       return flash("nothing selected") unless item
       return flash("already #{item.state}") unless item.open?
@@ -2105,6 +2214,8 @@ module Tui
     end
 
     def open_date_popup
+      return needs_task if current_project
+
       item = current_item
       return flash("nothing selected") unless item
 
@@ -2148,6 +2259,8 @@ module Tui
     # current cookie. Recurrence rides a date stamp, so a task with no date
     # can't repeat — flash and refuse rather than open a popup that must fail.
     def open_recur_popup
+      return needs_task if current_project
+
       item = current_item
       return flash("nothing selected") unless item
       return flash("add an Available from date or deadline first — recurrence needs a date") unless item.scheduled || item.deadline
@@ -2193,6 +2306,8 @@ module Tui
     end
 
     def archive_sweep
+      return confirm_archive_project(current_project) if current_project
+
       preview = @store.archive_preview
       if preview.roots.zero?
         return flash("archive preview: 0 roots · 0 descendants — nothing to archive")
@@ -2248,6 +2363,162 @@ module Tui
 
     def archive_blocked_key(k)
       close_modal if ["n", "N", "\e", "q", "\r", "\n"].include?(k)
+    end
+
+    # -- project actions -------------------------------------------------------
+
+    # c on a project header: confirm, then close every open task in the section.
+    def confirm_complete_project(project)
+      return flash("select a project") unless project
+
+      n = project.open_count
+      @pending_project = project
+      open_modal(
+        {
+          title: "Complete project",
+          lines: [
+            "Complete #{n} open task#{n == 1 ? "" : "s"} in #{project.title}?",
+            "",
+            T.paint(:muted, "Press y to complete · n / esc cancels"),
+          ],
+        },
+        kind: :project_complete_confirm
+      )
+    end
+
+    def project_complete_confirm_key(k)
+      case k
+      when "y", "Y", "\r", "\n"
+        project = @pending_project
+        @pending_project = nil
+        close_modal
+        result = @application.complete_project(project.id, today: current_date)
+        unless result.ok?
+          reload_store
+          return flash("project no longer exists")
+        end
+
+        invalidate_read_model
+        closed = result.summary&.fetch(:closed, 0) || 0
+        flash("✓ closed #{closed} in #{project.title}")
+        reselect(project.id)
+        refresh_open_panel if panel_detail?
+      when "n", "N", "\e", "q"
+        @pending_project = nil
+        close_modal
+        flash("complete cancelled")
+      end
+    end
+
+    # x on a project header: confirm (surfacing open work), then archive the
+    # whole section subtree.
+    def confirm_archive_project(project)
+      return flash("select a project") unless project
+
+      n = project.open_count
+      open_note = n.positive? ? " with #{n} open task#{n == 1 ? "" : "s"}" : ""
+      @pending_project = project
+      open_modal(
+        {
+          title: "Archive project",
+          lines: [
+            "Archive #{project.title}#{open_note}?",
+            "",
+            T.paint(:muted, "Press y to archive · n / esc cancels"),
+          ],
+        },
+        kind: :project_archive_confirm
+      )
+    end
+
+    def project_archive_confirm_key(k)
+      case k
+      when "y", "Y", "\r", "\n"
+        project = @pending_project
+        @pending_project = nil
+        close_modal
+        result = @application.archive_project(project.id)
+        unless result.ok?
+          reload_store
+          return flash("project no longer exists")
+        end
+
+        moved = result.summary&.fetch(:archived, nil) || result.touched_ids.size
+        close_panel if project_detail? && @ui.panel&.identity == project.id
+        invalidate_read_model
+        flash("⤓ archived #{project.title} (#{moved})")
+        rows
+        clamp_selection
+        refresh_open_panel if panel_detail?
+      when "n", "N", "\e", "q"
+        @pending_project = nil
+        close_modal
+        flash("archive cancelled")
+      end
+    end
+
+    # e on a project header: rename via the single-field popup, prefilled with
+    # the current title. Blank titles surface the form's own error path.
+    def rename_project
+      project = current_project
+      return needs_task unless project
+
+      field = TermForm::Fields::Input.new(key: :value, value: project.title, label: "title")
+      @ui.form = Form.new(
+        kind: :project_rename, title: "rename project", prompt: "title",
+        hint: "esc cancels", min_width: 40, return_mode: :list,
+        initial: project.title, target_id: project.id, field: field
+      ) do |raw|
+        result = @application.rename_project(project.id, title: raw)
+        next "title cannot be blank" if result.invalid?
+        unless result.ok?
+          reload_store
+          next "project no longer exists"
+        end
+
+        @ui.form_success = lambda do
+          invalidate_read_model
+          flash("renamed: #{raw.strip}")
+          reselect(project.id)
+          refresh_open_panel if panel_detail?
+        end
+        nil
+      end
+      @ui.mode = :form
+    end
+
+    # a on a project header: capture a new TODO appended into the section.
+    def capture_into_project
+      project = current_project
+      return needs_task unless project
+
+      field = TermForm::Fields::Input.new(key: :value, value: +"", label: "task")
+      @ui.form = Form.new(
+        kind: :project_capture, title: "capture into “#{project.title}”", prompt: "task",
+        hint: "esc cancels", min_width: 44, return_mode: :list,
+        target_id: project.id, field: field
+      ) do |raw|
+        title = raw.to_s.strip
+        next "task title cannot be blank" if title.empty?
+
+        result = @application.create_task(
+          { title: title, state: "TODO", parent_id: project.id }, today: current_date
+        )
+        unless result.ok?
+          reload_store
+          next result.errors.first || result.tui_message
+        end
+
+        new_id = result.touched_ids.first
+        @ui.form_success = lambda do
+          invalidate_read_model
+          flash("+ #{title}")
+          reselect(new_id || project.id)
+          refresh_open_panel if panel_detail?
+        end
+        nil
+      end
+      @ui.mode = :form
     end
 
     # -- agent queue -----------------------------------------------------------
@@ -2335,7 +2606,7 @@ module Tui
         @ui.context_filter = nil
         flash("context filter cleared")
         rows
-      elsif detail_panel?
+      elsif panel_detail?
         close_panel
       end
     end

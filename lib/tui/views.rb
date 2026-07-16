@@ -8,18 +8,25 @@ require_relative "store"
 require_relative "../tasks/quadrants"
 
 module Tui
-  # Builds the rows for each tab. A Row with an item is selectable
-  # (actions apply to it); a Row with item: nil is a header/blank. In tree
-  # mode a task Row also carries its Tasks::Tree node (nil for headers, blanks,
-  # and every flat-mode row) so the App can answer hierarchy questions
-  # (collapse/expand) without re-deriving them.
+  # Builds the rows for each tab. A Row is selectable (actions apply to it)
+  # when it carries an item OR a project; a Row with both nil is a header/blank.
+  # In tree mode a task Row also carries its Tasks::Tree node (nil for headers,
+  # blanks, and every flat-mode row) so the App can answer hierarchy questions
+  # (collapse/expand) without re-deriving them. A project header Row carries its
+  # Tasks::ProjectView in `project` (item/node nil) so the Projects tab can
+  # select a heading and act on the whole rolled-up section. #id returns the
+  # durable id — a task id or a section id — that selection follows across
+  # re-renders (both live in the same 8-hex space).
   #
   # Rows never name a color: builders paint text through Theme slots
   # (:context, :section, :muted, the due ladder, …) so the active theme and
   # any per-slot config overrides decide the final look. Frame highlights the
   # selected row by reversing the plain text over the :selection slot.
   module Views
-    Row = Struct.new(:text, :item, :node)
+    Row = Struct.new(:text, :item, :node, :project) do
+      def selectable? = !item.nil? || !project.nil?
+      def id = item&.id || project&.id
+    end
     FallbackAvailability = Data.define(
       :available, :availability_reason, :availability_blocker_id, :scheduled
     ) do
@@ -159,14 +166,14 @@ module Tui
     # retained as a compatibility spelling for direct unit callers.
     def rows(view, items, tree: nil, collapsed: Set.new, show_deferred: false,
              today: Date.today, urgent_days: Tasks::Quadrants::DEFAULT_URGENT_DAYS,
-             reader: nil, store: nil)
+             reader: nil, store: nil, projects: nil)
       reader ||= store
       if view == :outline
         return outline(items, tree: tree, collapsed: collapsed, today: today, reader: reader)
       end
       if view == :projects
         return projects(items, tree: tree, collapsed: collapsed, show_deferred: show_deferred,
-                               today: today, reader: reader)
+                               today: today, reader: reader, projects: projects)
       end
 
       if tree
@@ -312,54 +319,59 @@ module Tui
       matched.map { |i| Row.new("  #{inbox_body(i, reader: reader || store, today: today)}", i) }
     end
 
-    # The projects view groups tasks under their enclosing project SECTION. In
-    # tree mode (below) grouping is by project_section — the nearest SECTION
-    # ancestor, climbing past every task ancestor — so a subtask of an open
-    # parent task lands under its grandparent project, never as a pseudo-project
-    # named after its parent. The header stats (open / NEXT counts, soonest date)
-    # and the body rows are both derived from the SAME anchor traversal, so they
-    # can never disagree. Flat/filter mode uses the same enclosing-SECTION
-    # resolver, preventing a nested open task from becoming a pseudo-project.
-    #
-    # In tree mode the group body rides the outliner walker like the other four
-    # tabs: a project's root tasks sort by date/priority/title, then each root's
-    # own subtree renders depth-first beneath it (file order for descendants) so
-    # thread-lines and bold containers line up with actual parent/child ties.
-    # `tree` nil (the `/` filter path) falls back to the flat builder, which
-    # sorts every descendant together by nearest date — no nesting.
+    # The Projects tab renders the Phase-1 project read model: a "Projects" group
+    # (the sections under the top-level "Projects" heading, listed even when they
+    # hold no open work) followed by an "Areas" group (the other top-level lists
+    # that currently carry open tasks). Each project/area is a SELECTABLE header
+    # row (carrying its ProjectView) showing the rolled-up stats, then its open
+    # task rows in the shared next_body idiom. A blank row separates the two
+    # groups. `projects` is the App-supplied Array<Tasks::ProjectView>
+    # (application.list_projects) — Views never reaches into the application
+    # itself. `tree` nil (the `/`/`@` filter path) still falls back to the flat
+    # enclosing-section builder, whose shape the filter view relies on.
     def projects(items, tree: nil, collapsed: Set.new, show_deferred: false, today: Date.today,
-                 reader: nil, store: nil)
+                 reader: nil, store: nil, projects: nil)
       reader ||= store
-      return [Row.new(T.paint(:muted, "Project data needs the task tree."), nil)] unless reader
       return projects_flat(items, today: today, show_deferred: show_deferred, reader: reader) unless tree
+      return [Row.new(T.paint(:muted, "Project data needs the task tree."), nil)] if projects.nil?
 
-      query = view_query(:projects, today: today, show_deferred: show_deferred, reader: reader)
-      roots_by_project = query.grouped(anchor_roots(tree, show_deferred, reader: reader, today: today)) { |node| node.item }
-      return [Row.new(T.paint(:muted, "No active projects."), nil)] if roots_by_project.empty?
-
-      # Header stats derive from the SAME anchors plus their full visible
-      # subtrees (the exact items the body will emit), so open/next counts and
-      # the soonest date match the rows below by construction.
-      items_for = lambda do |anchors|
-        anchors.flat_map { |a| subtree_items(a, show_deferred, reader: reader, today: today) }
+      if projects.empty?
+        message = items.empty? ? "No active projects." : "No projects — add sections under Projects."
+        return [Row.new(T.paint(:muted, message), nil)]
       end
 
-      rows = query.sorted_groups(roots_by_project) do |node|
-        subtree_items(node, show_deferred, reader: reader, today: today)
-      end
-             .flat_map do |name, anchors|
-        rows = [Row.new(project_header(name, items_for.call(anchors), today), nil)]
-        anchors.each do |anchor|
-          append_subtree(rows, anchor, "  ", collapsed: collapsed, show_deferred: show_deferred,
-                         reader: reader, today: today) do |item|
-            next_body(item, today, reader: reader)
+      items_by_id = items.each_with_object({}) { |item, index| index[item.id] = item if item.id }
+      groups = [["Projects", projects.select { |view| view.kind == "project" }],
+                ["Areas",    projects.select { |view| view.kind == "area" }]]
+      rows = []
+      groups.each do |label, group|
+        next if group.empty?
+
+        rows << Row.new(T.paint(:section, label), nil)
+        group.each do |project|
+          rows << Row.new(project_row(project, today), nil, nil, project)
+          project.task_ids.each do |id|
+            item = items_by_id[id]
+            rows << Row.new("  #{next_body(item, today, reader: reader)}", item) if item
           end
         end
         rows << Row.new("", nil)
-        rows
       end
       rows.pop
       rows
+    end
+
+    # A selectable project/area header: the rolled-up stats already computed on
+    # the ProjectView (open / next counts, soonest date) plus a themed stuck
+    # marker when the section has no open NEXT action.
+    def project_row(project, today)
+      head = +"#{T.paint(:project, project.title)}  #{T.paint(:muted, "#{project.open_count} open")}"
+      head << T.paint(project.next_count.zero? ? :warning : :muted, " · #{project.next_count} next")
+      if (upcoming = project.next_date)
+        head << T.paint(due_slot((upcoming - today).to_i), " · next #{upcoming.strftime("%m-%d")}")
+      end
+      head << T.paint(:warning, " ⚠ stuck") if project.stuck
+      head
     end
 
     # The enclosing project SECTION for a tree node — climbs past every task

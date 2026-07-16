@@ -1246,7 +1246,7 @@ class TestApp < Minitest::Test
       ui(app).view = view
       app.send(:rows)
       rws = app.instance_variable_get(:@rows)
-      idx = rws.index { |r| r.item&.title&.include?(select) }
+      idx = rws.index { |r| r.item&.title&.include?(select) || r.project&.title&.include?(select) }
       raise "no selectable row for #{select.inspect}" unless idx
       app.send(:select_row, idx)
       yield app
@@ -2258,6 +2258,128 @@ class TestApp < Minitest::Test
       app.send(:reload_store)
       refute app.send(:external_change?)
       assert_includes app.send(:read_model).items.map(&:title), "External write"
+    end
+  end
+
+  # -- Projects tab actions ----------------------------------------------------
+
+  PROJ_DATE = -> { Date.new(2026, 7, 20) }
+
+  def on_project(select, &blk)
+    app_on(view: :projects, select: select, content: PROJECTS_FIXTURE,
+           date_provider: PROJ_DATE, &blk)
+  end
+
+  def org_path(app) = app.instance_variable_get(:@store).org
+  def archive_path(app) = app.instance_variable_get(:@paths).archive
+
+  def test_enter_on_project_row_opens_project_detail_and_nav_refreshes_it
+    on_project("Site launch") do |app|
+      app.send(:handle_key, "\r")
+      assert_equal :project_detail, ui(app).panel.kind
+      assert_equal PFIX[:site], ui(app).panel.identity
+      assert_includes ui(app).panel.lines.map { |l| Tui::Ansi.strip(l) }.join("\n"), "Site launch"
+
+      # Navigating to another project header refreshes the same panel to it.
+      app.send(:reselect, PFIX[:reno])
+      assert_equal :project_detail, ui(app).panel.kind
+      assert_equal PFIX[:reno], ui(app).panel.identity
+    end
+  end
+
+  def test_complete_project_confirms_then_closes_open_descendants
+    on_project("Site launch") do |app|
+      app.send(:handle_key, "c")
+      assert_equal :project_complete_confirm, ui(app).modal.kind
+      app.send(:handle_key, "y")
+
+      assert_equal "DONE", record_for(org_path(app), title: "Pick a static-site generator")["state"]
+      assert_equal "DONE", record_for(org_path(app), title: "Draft the about page")["state"]
+      assert Tasks::Check.check(org_path(app)).ok?, "file stays valid after completing a project"
+      assert_match(/closed \d+ in Site launch/, app.instance_variable_get(:@flash))
+      assert_equal PFIX[:site], ui(app).selected_id, "selection stays on the project"
+    end
+  end
+
+  def test_archive_project_confirms_then_moves_subtree_to_archive_file
+    on_project("Site launch") do |app|
+      app.send(:handle_key, "x")
+      assert_equal :project_archive_confirm, ui(app).modal.kind
+      assert_includes ui(app).modal.lines.join(" "), "open task"
+      app.send(:handle_key, "y")
+
+      assert_nil record_for(org_path(app), title: "Site launch"), "swept out of the live file"
+      assert record_for(archive_path(app), title: "Site launch"), "moved into archive.jsonl"
+      assert_match(/archived Site launch/, app.instance_variable_get(:@flash))
+    end
+  end
+
+  def test_rename_project_prefills_submits_and_follows_the_id
+    on_project("Stuck reno") do |app|
+      app.send(:handle_key, "e")
+      assert_equal :project_rename, ui(app).form.kind
+      assert_equal "Stuck reno", ui(app).form.input.to_s, "form prefilled with the title"
+      ui(app).form.input.replace("Kitchen reno")
+      app.send(:handle_key, "\r")
+
+      assert_equal "Kitchen reno", record_for(org_path(app), title: "Kitchen reno")["title"]
+      assert_equal PFIX[:reno], ui(app).selected_id, "selection follows the renamed project id"
+      assert_match(/renamed: Kitchen reno/, app.instance_variable_get(:@flash))
+    end
+  end
+
+  def test_rename_project_blank_title_errors_and_writes_nothing
+    on_project("Stuck reno") do |app|
+      app.send(:handle_key, "e")
+      ui(app).form.input.replace("   ")
+      app.send(:handle_key, "\r")
+
+      refute_nil ui(app).form, "form stays open on a blank title"
+      assert_equal "title cannot be blank", ui(app).form.error
+      assert_equal "Stuck reno", record_for(org_path(app), title: "Stuck reno")["title"]
+    end
+  end
+
+  def test_capture_into_project_creates_a_todo_under_the_section
+    on_project("Stuck reno") do |app|
+      app.send(:handle_key, "a")
+      assert_equal :project_capture, ui(app).form.kind
+      ui(app).form.input.replace("Order the tiles")
+      app.send(:handle_key, "\r")
+
+      record = record_for(org_path(app), title: "Order the tiles")
+      refute_nil record, "the new task exists"
+      assert_equal "TODO", record["state"]
+      assert_equal PFIX[:reno], record["parent"], "appended under the section"
+      assert_includes row_titles(app), "Order the tiles", "visible under the project"
+    end
+  end
+
+  def test_task_only_action_on_a_project_row_flashes_and_does_nothing
+    on_project("Site launch") do |app|
+      before = File.read(org_path(app))
+      app.send(:handle_key, "d") # edit date — a task-only action
+      assert_equal :list, ui(app).mode, "no popup opens"
+      assert_nil ui(app).form
+      assert_match(/select a task for that/, app.instance_variable_get(:@flash))
+      assert_equal before, File.read(org_path(app)), "nothing was written"
+    end
+  end
+
+  def test_palette_availability_splits_project_and_task_actions
+    on_project("Site launch") do |app|
+      handlers = Tui::Shortcuts.palette_entries(:list, app).map(&:handler)
+      assert_includes handlers, :rename_project, "project actions show for a project row"
+      assert_includes handlers, :capture_into_project
+      refute_includes handlers, :open_date_popup, "task-only actions hide for a project row"
+
+      # Move onto a task row under the project; the split flips.
+      task_idx = app.instance_variable_get(:@rows)
+                    .index { |r| r.item&.title == "Pick a static-site generator" }
+      app.send(:select_row, task_idx)
+      task_handlers = Tui::Shortcuts.palette_entries(:list, app).map(&:handler)
+      refute_includes task_handlers, :rename_project, "project actions hide for a task row"
+      assert_includes task_handlers, :open_date_popup, "task actions show for a task row"
     end
   end
 end

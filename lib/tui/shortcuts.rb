@@ -57,6 +57,8 @@ module Tui
       entry(sequences: ["d"],          key: "d",       description: "edit Deadline / Available from date", contexts: %i[list detail], handler: :open_date_popup, palette: :selected_action_available?, form: :date),
       entry(sequences: ["r"],          key: "r",       description: "recur — weekly · 2w · .+1m · off", contexts: %i[list detail], handler: :open_recur_popup, palette: :recurrence_action_available?, form: :recurrence),
       entry(sequences: ["x"],          key: "x",       description: "archive DONE/CANCELLED items",     contexts: [:list], handler: :archive_sweep, palette: true, confirmation: :archive_preview),
+      entry(sequences: ["e"],          key: "e",       description: "rename selected project",          contexts: [:list], handler: :rename_project, availability: :project_selected?, palette: :project_selected?, form: :project_rename),
+      entry(sequences: ["a"],          key: "a",       description: "capture a task into the project",  contexts: [:list], handler: :capture_into_project, availability: :project_selected?, palette: :project_selected?, form: :project_capture),
       entry(sequences: ["z"],          key: "z",       description: "defer until — date · someday · now", contexts: %i[list detail], handler: :defer_selected, palette: :selected_action_available?, form: :defer_until),
       entry(sequences: ["Z"],          key: "Z",       description: "show / hide unavailable tasks",    contexts: [:list], handler: :toggle_deferred_view, palette: true),
       entry(sequences: ["K"],          key: "K",       description: "raise priority (→ A)",             contexts: %i[list detail], handler: :raise_priority, palette: :selected_action_available?),
