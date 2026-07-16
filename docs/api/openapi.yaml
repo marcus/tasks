@@ -58,6 +58,8 @@ tags:
     description: Ordered live sections for placement controls.
   - name: tasks
     description: Task resource CRUD.
+  - name: projects
+    description: Projects and areas rolled up over their open tasks.
   - name: views
     description: Canonical named selections (agenda, next, quadrants, inbox, projects).
   - name: history
@@ -108,6 +110,7 @@ paths:
                       max_depth: 4
                       urgent_days: 3
                       capabilities:
+                        projects: true
                         undo: false
                         redo: false
                         archive_sweep: false
@@ -789,6 +792,391 @@ paths:
           $ref: "#/components/responses/PayloadTooLarge"
         "415":
           $ref: "#/components/responses/UnsupportedMediaType"
+        "503":
+          $ref: "#/components/responses/StoreInvalid"
+
+  /projects:
+    get:
+      tags: [projects]
+      operationId: listProjects
+      summary: Projects and areas rolled up over their open tasks.
+      description: |
+        Returns projects (the section children of the top-level "Projects"
+        heading, listed even when empty) followed by areas (other top-level
+        sections that currently hold open, non-deferred work; Inbox excluded).
+        Each entry carries an open count, a NEXT count, the soonest
+        deadline-or-scheduled date, and a `stuck` flag (no open NEXT). Ordered
+        projects-before-areas, then by soonest date (nil last), then title.
+        `line` is never exposed.
+      responses:
+        "200":
+          description: Projects then areas, in display order.
+          headers:
+            ETag:
+              description: Current global store revision, also present in `meta.store_revision`.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Project" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+              examples:
+                default:
+                  value:
+                    data:
+                      - id: "cccc0004"
+                        title: "Site launch"
+                        parent_id: "cccc0003"
+                        kind: "project"
+                        open_count: 3
+                        next_count: 1
+                        next_date: "2026-07-25"
+                        stuck: false
+                        held_count: 1
+                        body: "Goal: ship the personal site."
+                        task_ids: ["cccc0005", "cccc0006", "cccc0008"]
+                      - id: "cccc000d"
+                        title: "Tasks"
+                        parent_id: null
+                        kind: "area"
+                        open_count: 2
+                        next_count: 1
+                        next_date: null
+                        stuck: false
+                        held_count: 0
+                        body: null
+                        task_ids: ["cccc000e", "cccc000f"]
+                    meta:
+                      store_revision: "s1.6f2a9c0b"
+        "503":
+          $ref: "#/components/responses/StoreInvalid"
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    post:
+      tags: [projects]
+      operationId: createProject
+      summary: Create a new empty project.
+      description: |
+        Creates a new empty project — a section filed under the top-level
+        "Projects" root. When the store has no such root yet (an empty or
+        rootless file), the root is created first, then the project beneath it.
+        A blank or missing `title` is `422`; a `title` that duplicates an
+        existing project or area (case-insensitive — the project candidate set,
+        so a duplicate would make later refs ambiguous) is also `422`. Like the
+        other project mutations, no `If-Match` precondition is required.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateProjectRequest" }
+            examples:
+              create:
+                summary: Start a fresh project.
+                value:
+                  title: "Mid-year Reviews"
+      responses:
+        "201":
+          description: The newly created project resource.
+          headers:
+            Location:
+              description: Path of the created project.
+              schema: { type: string }
+            ETag:
+              description: Current global store revision.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Project" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+              examples:
+                created:
+                  value:
+                    data:
+                      id: "cccc00a1"
+                      title: "Mid-year Reviews"
+                      parent_id: "cccc0003"
+                      kind: "project"
+                      open_count: 0
+                      next_count: 0
+                      next_date: null
+                      stuck: true
+                      held_count: 0
+                      body: null
+                      task_ids: []
+                    meta:
+                      store_revision: "s2.9e8d7c6b"
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenOrigin"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "503":
+          $ref: "#/components/responses/StoreInvalid"
+
+  /projects/{id}:
+    parameters:
+      - $ref: "#/components/parameters/TaskId"
+    get:
+      tags: [projects]
+      operationId: getProject
+      summary: One project or area rolled up over its open tasks.
+      description: |
+        Returns a single project or area by its section id. An id that is not a
+        project or area (a task, Inbox, the Projects heading, a nested
+        sub-section, or an area with no open work today) is `404`.
+      responses:
+        "200":
+          description: The project resource.
+          headers:
+            ETag:
+              description: Current global store revision.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Project" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+              examples:
+                default:
+                  value:
+                    data:
+                      id: "cccc0004"
+                      title: "Site launch"
+                      parent_id: "cccc0003"
+                      kind: "project"
+                      open_count: 3
+                      next_count: 1
+                      next_date: "2026-07-25"
+                      stuck: false
+                      held_count: 1
+                      body: "Goal: ship the personal site."
+                      task_ids: ["cccc0005", "cccc0006", "cccc0008"]
+                    meta:
+                      store_revision: "s1.6f2a9c0b"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "503":
+          $ref: "#/components/responses/StoreInvalid"
+    patch:
+      tags: [projects]
+      operationId: renameProject
+      summary: Rename a project or area section.
+      description: |
+        Replaces the section title (leading/trailing whitespace trimmed). A
+        blank or missing `title` is `422`; an id that is not a project or area
+        (a task, Inbox, the "Projects" heading, a done-pile section) is `404`
+        before any write. A rename that moves an area out of scope (e.g.
+        retitled "Inbox") still returns its `200` post-state, never a `404`
+        after the write committed. Unlike task writes, project mutations carry
+        no per-resource revision, so no `If-Match` precondition is required;
+        this is a deliberate transport difference under CLI/API parity (design
+        rule 7).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RenameProjectRequest" }
+            examples:
+              rename:
+                summary: Give the project a clearer title.
+                value:
+                  title: "Kitchen renovation"
+      responses:
+        "200":
+          description: The renamed project resource.
+          headers:
+            ETag:
+              description: Current global store revision.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Project" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+              examples:
+                renamed:
+                  value:
+                    data:
+                      id: "cccc000a"
+                      title: "Kitchen renovation"
+                      parent_id: "cccc0003"
+                      kind: "project"
+                      open_count: 1
+                      next_count: 0
+                      next_date: null
+                      stuck: true
+                      held_count: 0
+                      body: null
+                      task_ids: ["cccc000b"]
+                    meta:
+                      store_revision: "s2.1a2b3c4d"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenOrigin"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "503":
+          $ref: "#/components/responses/StoreInvalid"
+
+  /projects/{id}/complete:
+    parameters:
+      - $ref: "#/components/parameters/TaskId"
+    post:
+      tags: [projects]
+      operationId: completeProject
+      summary: Close every open task in the project.
+      description: |
+        Closes every open descendant task of the project — the same cascade as
+        completing each task: DONE + today's `closed` date, `defer` dropped, and
+        a recurring descendant retired (cookie removed, no roll-forward). The
+        section itself remains. Returns the project resource with its refreshed
+        counts (`open_count` now 0); a completed area that no longer surfaces in
+        the read model still returns its `200` post-state, never a `404` after
+        the write committed. An id that is not a project or area (a task, Inbox,
+        the "Projects" heading, a done-pile section) is `404` before any write.
+        The request takes no body. No `If-Match` precondition (see the rename
+        note).
+      responses:
+        "200":
+          description: The project resource after completion (open_count now 0).
+          headers:
+            ETag:
+              description: Current global store revision.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Project" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+              examples:
+                completed:
+                  value:
+                    data:
+                      id: "cccc0004"
+                      title: "Site launch"
+                      parent_id: "cccc0003"
+                      kind: "project"
+                      open_count: 0
+                      next_count: 0
+                      next_date: null
+                      stuck: true
+                      held_count: 0
+                      body: "Goal: ship the personal site."
+                      task_ids: []
+                    meta:
+                      store_revision: "s2.1a2b3c4d"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenOrigin"
+        "503":
+          $ref: "#/components/responses/StoreInvalid"
+
+  /projects/{id}/archive:
+    parameters:
+      - $ref: "#/components/parameters/TaskId"
+    post:
+      tags: [projects]
+      operationId: archiveProject
+      summary: Sweep the project's whole subtree to the archive.
+      description: |
+        Moves the project's entire section subtree to the archive: the root
+        section drops its `parent` and gains today's `archived` stamp. Refuses
+        with `409 conflict` while the project still has open work unless
+        `force=true` — deferred/held tasks (`held_count`) count as open work
+        too, so a parked-but-open project also refuses. The request takes no
+        body. No `If-Match` precondition (see the rename note). The project
+        resource is gone after this succeeds, so the response is a small archive
+        summary rather than a project.
+      parameters:
+        - name: force
+          in: query
+          description: Archive even while open tasks remain. Default false.
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: The archive summary.
+          headers:
+            ETag:
+              description: Current global store revision.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/ArchiveProjectResult" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+              examples:
+                archived:
+                  value:
+                    data:
+                      id: "cccc000a"
+                      archived: 2
+                      moved_ids: ["cccc000a", "cccc000b"]
+                    meta:
+                      store_revision: "s2.1a2b3c4d"
+        "409":
+          description: The project still has open work and `force` was not set.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                open_tasks:
+                  value:
+                    error:
+                      code: "conflict"
+                      message: "The project still has open tasks; retry with force=true to archive them."
+                      details:
+                        open_count: 3
+                        held_count: 0
+                      request_id: "req_5e6f"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenOrigin"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
         "503":
           $ref: "#/components/responses/StoreInvalid"
 
@@ -1551,6 +1939,104 @@ components:
           oneOf:
             - { $ref: "#/components/schemas/TaskId" }
             - { type: "null" }
+
+    Project:
+      type: object
+      description: |
+        A project or area rolled up over its open, non-deferred tasks. A project
+        is a section under the top-level "Projects" heading; an area is another
+        top-level section holding open work. Every field is always present;
+        `parent_id`, `next_date`, and `body` are null when absent. No physical
+        `line`.
+      required:
+        - id
+        - title
+        - parent_id
+        - kind
+        - open_count
+        - next_count
+        - next_date
+        - stuck
+        - held_count
+        - body
+        - task_ids
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/TaskId" }
+        title: { type: string }
+        parent_id:
+          description: The "Projects" heading id for a project, null for a top-level area.
+          oneOf:
+            - { $ref: "#/components/schemas/TaskId" }
+            - { type: "null" }
+        kind:
+          type: string
+          enum: [project, area]
+        open_count:
+          type: integer
+          minimum: 0
+          description: Open, non-deferred descendant tasks at any depth.
+        next_count:
+          type: integer
+          minimum: 0
+          description: How many of the open tasks are NEXT actions.
+        next_date:
+          allOf:
+            - { $ref: "#/components/schemas/IsoDate" }
+          description: Soonest deadline-or-scheduled date across the open tasks, or null.
+        stuck:
+          type: boolean
+          description: True when the project/area has no open NEXT action (including when empty).
+        held_count:
+          type: integer
+          minimum: 0
+          description: >
+            Open descendant tasks excluded from the rollup because they are
+            deferred/held (own or inherited hold). Archive counts these as open
+            work: `open_count + held_count > 0` blocks it without `force=true`.
+        body:
+          type: [string, "null"]
+          description: The section's body note, or null.
+        task_ids:
+          type: array
+          description: Ids of the rolled-up open, non-deferred tasks in DFS order.
+          items: { $ref: "#/components/schemas/TaskId" }
+
+    CreateProjectRequest:
+      type: object
+      description: Create a new empty project under the "Projects" root.
+      required: [title]
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          minLength: 1
+
+    RenameProjectRequest:
+      type: object
+      description: Rename a project or area section.
+      required: [title]
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          minLength: 1
+
+    ArchiveProjectResult:
+      type: object
+      description: Summary of a project archive sweep. The project resource no longer exists.
+      required: [id, archived, moved_ids]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/TaskId" }
+        archived:
+          type: integer
+          minimum: 0
+          description: Number of records (section + descendants) moved to the archive.
+        moved_ids:
+          type: array
+          description: Stable ids moved to the archive, root section first.
+          items: { $ref: "#/components/schemas/TaskId" }
 
     Task:
       type: object

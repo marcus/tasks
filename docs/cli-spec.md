@@ -483,6 +483,7 @@ and `sources.memory` (`"TASKS_MEMORY env"` / `"config file"` /
 | `next` | `n` | ✅ | NEXT actions by context. `--json` |
 | `quadrants` | `q` | ✅ | Covey 2×2 from priority (A/B ⇒ important) + a `DEADLINE` within `urgent_days` (default 3, overdue counts) ⇒ urgent, with `important`/`urgent` tags as overrides. `--json` adds `quadrant`. |
 | `inbox` | `i` | ✅ | Unprocessed INBOX items. `--json` |
+| `projects` | `pj` | ✅ | Projects and areas rolled up over their open, non-deferred tasks (at any depth). Projects are the section children of the top-level "Projects" heading (listed even when empty); areas are the other top-level sections that currently hold open work (Inbox excluded). Each carries an open count, a NEXT count, the soonest deadline-or-scheduled date, and a `stuck` flag (no open NEXT — including an empty project). Ordered projects-before-areas, then by soonest date (nil last), then title. `--json` is an array of project objects `{id, title, parent_id, kind, open_count, next_count, next_date, stuck, held_count, body, task_ids}` (nil-valued keys omitted; `held_count` — open descendant tasks excluded from the rollup because deferred/held — is always present; dates ISO). |
 | `show <ref>` | `s` | ✅ | One task in full: rendered headline + body/notes + links. Human output labels `scheduled` as `available from` and reports effective availability. `--json` includes `{..., deferred, scheduled, deadline, available, availability_reason, availability_blocker_id, ...}`; reasons are `available`, `scheduled`, `on_hold`, `ancestor_scheduled`, `ancestor_on_hold`, or `closed`. `notes` is the task's `body` split to lines (a child's body never leaks in — children are separate records); `project` is the nearest OPEN ancestor — a live parent task, else the enclosing section; closed ancestors are skipped. |
 | `id <ref> [--json]` | | ✅ | Print a task's stable `id`, minting one if absent (post-migration every record already has one — this is the repair path). Idempotent. Resolves refs regardless of state. |
 | `links [<ref>]` | `urls` | ✅ | Links found in task titles/notes, classified by system (`slack`, `jira`, `github`, …; unknown hosts fall back to the host name; Confluence-on-Atlassian is told apart from Jira by its `/wiki` path). One task's links with `<ref>`; every open task's otherwise. `--system <name>` filters (case-insensitive), `--all` widens the listing to done + archived (`<ref>` resolution itself stays live-file only), `--json` emits `{links: [{url, label, system, task, id, line, source}]}`. Recognizes org links `[[url][label]]`, bare URLs, and configured shorthands (below), in file order; org-internal targets (`[[id:…]]`, `[[file:…]]`, headline links) are org navigation, not links. |
@@ -500,7 +501,7 @@ is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or `nul
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `capture "text"` | `add`, `c` | ✅ | New INBOX item. Flags: `--due <date>`, `--scheduled <date>` (available from), `--priority A\|B\|C`, `--tag t` (repeatable), `--context @x` (repeatable), `--state STATE`, `--project "Heading"`, `--under <ref>`, `--recur <interval>`, plus `--dry-run`/`--json`. A capture with a date lands already-processed as TODO (override with `--state`); a future `--scheduled` task remains unavailable until that day. `--recur` implies a date (defaults to scheduling it today) and lands it repeating; `--project` files it under that top-level heading (default: Inbox). `--under <ref>` instead nests it as the last child of an existing task (mutually exclusive with `--project`; exit 1 if both) — capped at `max_depth`. |
+| `capture "text"` | `add`, `c` | ✅ | New INBOX item. Flags: `--due <date>`, `--scheduled <date>` (available from), `--priority A\|B\|C`, `--tag t` (repeatable), `--context @x` (repeatable), `--state STATE`, `--project "Heading"`, `--under <ref>`, `--recur <interval>`, plus `--dry-run`/`--json`. A capture with a date lands already-processed as TODO (override with `--state`); a future `--scheduled` task remains unavailable until that day. `--recur` implies a date (defaults to scheduling it today) and lands it repeating; `--project` files it under a section matched by name — top-level **or** nested (exact title, then substring; default: Inbox). `--under <ref>` instead nests it as the last child of an existing task (mutually exclusive with `--project`; exit 1 if both) — capped at `max_depth`. |
 
 ## Update (all take `<ref>`, all support `--dry-run`)
 
@@ -516,7 +517,7 @@ is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or `nul
 | `retitle <ref> "new title"` | `rename` | ✅ | Replace the `title`; tags/priority/state untouched. |
 | `tag <ref> +foo -bar @ctx -@old` | | ✅ | Add/remove tags and contexts in one call. `+t`/`@ctx` add, `-t`/`-@ctx` remove. |
 | `note <ref> "text"` | | ✅ | Append a line to the task's `body`. |
-| `move <ref> ("Section" \| --under <ref> \| --top)` | | ✅ | Relocate a task's whole subtree by re-pointing its `parent`. Exactly one destination: a positional **section** name (out of `Inbox` into `Work`; matched case-insensitively, exact then substring), `--under <ref>` to **nest** below another task, or `--top` to **unnest** to the section level. Section and `--top` moves are never depth-checked; `--under` is capped at `max_depth` (over-cap exits 1 with a depth message). Nesting under itself or a descendant exits 1 (cycle). `--top` on an already-top-level task prints "already at top level" (exit 0, no-op). See Nesting. |
+| `move <ref> ("Section" \| --under <ref> \| --top)` | | ✅ | Relocate a task's whole subtree by re-pointing its `parent`. Exactly one destination: a positional **section** name (out of `Inbox` into `Work`), `--under <ref>` to **nest** below another task, or `--top` to **unnest** to the section level. A section name resolves in the same widening tiers as `capture --project` (exact top-level, exact any-level, substring top-level, substring any-level; case-insensitive), so a **nested project sub-section** — e.g. a project under the "Projects" root — is a valid destination, not just a top-level heading. Section and `--top` moves are never depth-checked; `--under` is capped at `max_depth` (over-cap exits 1 with a depth message). Nesting under itself or a descendant exits 1 (cycle). `--top` on an already-top-level task prints "already at top level" (exit 0, no-op). See Nesting. |
 | `move <ref> ["Section" \| --under <ref>] --before <ref>` | | ✅ | Place the whole subtree before a stable sibling. Without an explicit destination, infer the anchor's current parent; otherwise require the anchor to be a direct child of the named task/section. Not combinable with `--top`. Exact errors and human/JSON/dry-run output are frozen under Manual sibling placement above. |
 | `recur <ref> <interval>` | `repeat`, `every` | ✅ | Attach/replace the `recur` cookie on the task's date. `<interval>`: a cookie (`.+1w`/`+2d`/`++1m`) or friendly form (`weekly`/`daily`/`monthly`/`yearly`/`2w`/`every 3 days`); `off`/`none` clears it. `--from schedule\|completion` picks `+`/`.+` for a bare interval (default `completion` → `.+`). `--on <date>` seeds a `deadline` when the task has no date yet (else it errors). `--dry-run`/`--json`. |
 | `defer <ref> [date]` | `snooze` | ✅ | With a date, atomically set `scheduled` to the parsed available-from date and clear the task's own indefinite marker, preserving `deadline`; before that date the task is unavailable. Without a date, backward-compatibly put it On Hold indefinitely. Output and `--dry-run` report effective ancestor-aware availability. |
@@ -547,6 +548,34 @@ The contract is narrow:
   (exit 1). A repair can't leave the file partially broken.
 - `undo` of a repair faithfully restores the prior (invalid) bytes, so you can
   retry a different fix.
+
+## Projects
+
+`projects` (alias `pj`) lists projects and areas; the `project <verb>` command
+group reads and mutates a single project or area. A fixed verb set avoids the
+title ambiguity a bare `project "<ref>"` would create.
+
+| Command | Synonyms | Status | Description |
+|---|---|---|---|
+| `project create <title> [--json] [--dry-run]` | `project new` | ✅ | Create a new empty project — a section filed under the top-level "Projects" root (created first if the store has none yet, so an empty/rootless file still works). A blank title, or one that duplicates an existing project or area (case-insensitive; the project-ref candidate set, so a duplicate would make later refs ambiguous), exits 1 with the reason. Success prints the new project row (`--json` emits the project object). `--dry-run` writes nothing. Then `move <ref> "<title>"` files tasks into it. |
+| `project show <ref> [--json]` | | ✅ | One project/area in full: title, kind, rolled-up open/NEXT counts, soonest date, and body note. `--json` is the project object (same shape as a `projects` element). |
+| `project complete <ref>` | `project done` | ✅ | Close every open descendant task of the project — the same cascade as `done`: DONE + today's `closed` date, `defer` dropped, and a recurring descendant retired (its cookie removed, no roll-forward). Prints every touched task's new headline (identified by line). |
+| `project archive <ref> [--force]` | | ✅ | Sweep the project's whole section subtree to `archive.jsonl` (the root section drops its `parent` and gains today's `archived` stamp). Refuses with exit 1 while the project still has open work unless `--force`; deferred/held tasks (`held_count`) count as open work too, so a parked-but-open project also refuses (parity with `project complete`, which closes them). |
+| `project rename <ref> <new title>` | | ✅ | Replace the section title (leading/trailing space trimmed). |
+
+**Project refs.** A `<ref>` resolves against the `projects` listing: an exact
+8-hex section id (case-insensitive) wins, then an `L<line>` section line, then a
+case-insensitive title substring across both projects and areas. Zero matches or
+an ambiguous substring exits 2, listing candidates as `L<line>: <title>` — the
+same contract as task refs. All four commands accept `--json`; the three
+mutations accept `--dry-run` and write nothing in that mode.
+
+Over the HTTP API the same capability is `GET /api/v1/projects`,
+`POST /api/v1/projects` (create — `{"title": …}` → 201 with the project; 422 on
+a blank/duplicate title), `GET/PATCH /api/v1/projects/{id}`, and
+`POST /api/v1/projects/{id}/complete` and `…/archive` — strict 8-hex ids only,
+no fuzzy refs (a transport difference per design rule 7). See
+`docs/api/openapi.yaml`.
 
 ## Lifecycle / meta
 

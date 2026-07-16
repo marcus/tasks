@@ -8,6 +8,10 @@
 #   bin/tasks next|n          list NEXT actions grouped by context
 #   bin/tasks quadrants|q     Covey 2x2 from priority+deadline (or important/urgent tags)
 #   bin/tasks inbox|i         show unprocessed INBOX items
+#   bin/tasks projects|pj     list projects & areas rolled up over open tasks
+#   bin/tasks project create|show|complete|archive|rename <title|ref>  make/read/
+#                             mutate one project (create makes an empty project
+#                             section; complete aka done; archive --force past open)
 #   bin/tasks capture|c "..." append a new item (flags: --due/--scheduled/
 #                             --priority/--tag/--context/--state/--project/--under)
 #   bin/tasks done|d <ref>    mark a matching open item DONE (complete/close);
@@ -472,15 +476,12 @@ def result_touched_ids(result, fallback:)
   result.touched_ids.empty? ? [fallback] : result.touched_ids
 end
 
-# Match Store's legacy top-level section lookup at the CLI boundary, then pass
-# only the section id into the location patch.
-def section_record_for(name)
-  want = name.strip.downcase
-  records = store.read_snapshot.live_records
-  sections = records.select { |record| record["type"] == "section" && !record["parent"] }
-  sections.find { |record| record["title"].to_s.downcase == want } ||
-    sections.find { |record| record["title"].to_s.downcase.include?(want) }
-end
+# Resolve a move destination section by name at the CLI boundary, then pass only
+# the section id into the location patch. Delegates to Store#section_named, which
+# resolves in the same widening tiers capture uses (exact top-level, exact
+# any-level, substring top-level, substring any-level) — so a nested project
+# sub-section is reachable by name, not just a top-level heading.
+def section_record_for(name) = store.section_named(name)
 
 def section_id_for(name) = section_record_for(name)&.fetch("id")
 
@@ -1658,6 +1659,242 @@ def cmd_config(args)
   end
 end
 
+# --- Projects (projects + project <verb>) -----------------------------------
+#
+# A project is a rolled-up section: the ProjectView read model (open/NEXT
+# counts, soonest date, stuck flag) is produced by Tasks::Application, so
+# bin/tasks only resolves the ref and renders. Project refs resolve against the
+# `projects` listing — an exact id, an L<line> section line, then a title
+# substring across projects and areas — mirroring task refs (exit 2 on
+# no-match/ambiguous).
+
+PROJECT_USAGE = "usage: tasks project <create|show|complete|archive|rename> <title|ref> [...]"
+
+# Short "M/D" date (no leading zeros), matching short_due, for project rows.
+def project_date(date) = date ? "#{date.month}/#{date.day}" : nil
+
+# One project/area summary: "3 open · 1 next · next 7/25" plus a stuck marker.
+def project_summary(view)
+  parts = ["#{view.open_count} open", "#{view.next_count} next"]
+  parts << "next #{project_date(view.next_date)}" if view.next_date
+  "#{dim(parts.join(" · "))}#{view.stuck ? "  #{yellow("(stuck)")}" : ""}"
+end
+
+def project_row(view, width: 0) = "#{view.title.to_s.ljust(width)}  #{project_summary(view)}"
+
+def cmd_projects(args)
+  today = Date.today
+  flags, rest = take_flags(args, "--json")
+  abort "usage: tasks projects [--json]" unless rest.empty?
+  result = application.list_projects_result(today: today)
+  abort "task file is invalid — run `tasks check`" unless result.ok?
+  views = result.data
+
+  if flags["--json"]
+    require "json"
+    puts JSON.generate(views.map(&:to_h))
+    return
+  end
+  if views.empty?
+    puts "No projects or areas."
+    return
+  end
+  width = views.map { |v| v.title.to_s.length }.max
+  { "project" => "Projects", "area" => "Areas" }.each do |kind, label|
+    group = views.select { |v| v.kind == kind }
+    next if group.empty?
+    puts bold(label)
+    group.each { |v| puts "  #{project_row(v, width: width)}" }
+    puts
+  end
+end
+
+def cmd_project(args)
+  verb = args.shift
+  case verb
+  when "create", "new"    then project_create(args)
+  when "show"             then project_show(args)
+  when "complete", "done" then project_complete(args)
+  when "archive"          then project_archive(args)
+  when "rename"           then project_rename(args)
+  when nil                then abort PROJECT_USAGE
+  else abort "unknown project command: #{verb.inspect}\n#{PROJECT_USAGE}"
+  end
+end
+
+# Create a new empty project section under the top-level "Projects" root
+# (bootstrapping the root when absent). The title is positional; a blank or
+# duplicate title exits 1 with the reason.
+def project_create(args)
+  today = Date.today
+  flags, rest = take_flags(args, "--dry-run", "--json")
+  title = utf8_arg(rest.join(" ").strip)
+  abort "usage: tasks project create <title>" if title.empty?
+  if flags["--dry-run"]
+    puts %(would create project "#{title}")
+    return
+  end
+  result = application.create_project(title: title, today: today)
+  if result.invalid?
+    warn(result.errors.first || "invalid project title")
+    exit result.cli_exit_code
+  end
+  mutation_result_failed(result, "failed to create project")
+  new_id = result.summary && result.summary[:created_id]
+  emit_project(new_id, json: flags["--json"], today: today, human: %(created "#{title}"))
+end
+
+# Resolve a project <ref> to one ProjectView, or exit 2. An exact 8-hex section
+# id wins, then an L<line> section line, then a case-insensitive title substring
+# across projects and areas. The `projects` listing is the candidate set, so an
+# empty area (no open work) is not addressable — matching what `projects` shows.
+def resolve_project(ref, today: Date.today)
+  abort "missing <ref>" if ref.nil? || ref.strip.empty?
+  result = application.list_projects_result(today: today)
+  abort "task file is invalid — run `tasks check`" unless result.ok?
+  views = result.data
+
+  if (m = ref.match(/\AL(\d+)\z/i))
+    view = views.find { |v| v.line == m[1].to_i }
+    unless view
+      warn "no project section on line #{m[1]}"
+      exit 2
+    end
+    return view
+  end
+
+  if (view = views.find { |v| v.id && v.id.casecmp?(ref.strip) })
+    return view
+  end
+
+  q = ref.dup.force_encoding("UTF-8").strip.downcase
+  matches = views.select { |v| v.title.to_s.downcase.include?(q) }
+  if matches.empty?
+    warn "no match: #{ref}"
+    exit 2
+  elsif matches.size > 1
+    warn "ambiguous: #{ref} — matches #{matches.size} projects:"
+    matches.each { |v| warn "  L#{v.line}: #{v.title}" }
+    exit 2
+  end
+  matches.first
+end
+
+def project_show(args)
+  today = Date.today
+  flags, rest = take_flags(args, "--json")
+  ref = rest.shift
+  abort "usage: tasks project show <ref> [--json]" if ref.nil? || ref.strip.empty? || !rest.empty?
+  view = resolve_project(ref, today: today)
+  if flags["--json"]
+    require "json"
+    puts JSON.generate(view.to_h)
+    return
+  end
+  puts "#{bold(view.title)}  #{dim("[#{view.kind}]")}"
+  puts "  id:        #{view.id}"
+  puts "  #{project_summary(view)}"
+  puts "  #{view.body}" if view.body && !view.body.empty?
+end
+
+def project_rename(args)
+  today = Date.today
+  flags, rest = take_flags(args, "--dry-run", "--json")
+  ref = rest.shift
+  new_title = utf8_arg(rest.join(" ").strip)
+  abort %(usage: tasks project rename <ref> <new title>) if ref.nil? || ref.strip.empty? || new_title.empty?
+  view = resolve_project(ref, today: today)
+  if flags["--dry-run"]
+    puts %(would rename "#{view.title}" → "#{new_title}")
+    return
+  end
+  result = application.rename_project(view.id, title: new_title)
+  mutation_result_failed(result, "failed to rename project")
+  emit_project(result.touched_ids.first, json: flags["--json"], today: today,
+               human: %(renamed "#{view.title}" → "#{new_title}"))
+end
+
+def project_complete(args)
+  today = Date.today
+  flags, rest = take_flags(args, "--dry-run", "--json")
+  ref = rest.shift
+  abort "usage: tasks project complete <ref>" if ref.nil? || ref.strip.empty? || !rest.empty?
+  view = resolve_project(ref, today: today)
+  # The touched tasks are the project's open descendants; capture them before
+  # the cascade so their post-close headlines can be reported by line.
+  touched = open_descendant_task_ids(view.id)
+  if flags["--dry-run"]
+    n = touched.length
+    puts %(would complete "#{view.title}": close #{n} open task#{"s" unless n == 1})
+    return
+  end
+  result = application.complete_project(view.id, today: today)
+  mutation_result_failed(result, "failed to complete project")
+  closed = (result.summary && result.summary[:closed]) || touched.length
+  puts %(completed "#{view.title}" (closed #{closed})) unless flags["--json"]
+  report_touched(touched, json: flags["--json"], today: today)
+end
+
+def project_archive(args)
+  today = Date.today
+  flags, rest = take_flags(args, "--dry-run", "--json", "--force")
+  ref = rest.shift
+  abort "usage: tasks project archive <ref> [--force]" if ref.nil? || ref.strip.empty? || !rest.empty?
+  view = resolve_project(ref, today: today)
+  # Deferred/held tasks are still open work, so they block archive too (parity
+  # with complete's cascade, which closes them). Refuse unless --force.
+  blocking = view.open_count + view.held_count
+  if blocking.positive? && !flags["--force"]
+    held_note = view.held_count.positive? ? " (#{view.held_count} deferred)" : ""
+    warn %(refusing to archive "#{view.title}": #{blocking} open task#{"s" unless blocking == 1}#{held_note} remain. Complete them or re-run with --force.)
+    exit 1
+  end
+  if flags["--dry-run"]
+    puts %(would archive "#{view.title}" and its subtree to archive.jsonl)
+    return
+  end
+  result = application.archive_project(view.id)
+  mutation_result_failed(result, "failed to archive project")
+  archived = (result.summary && result.summary[:archived]) || result.touched_ids.length
+  if flags["--json"]
+    require "json"
+    puts JSON.generate({ archived: archived, moved_ids: result.touched_ids })
+  else
+    puts %(archived "#{view.title}" — #{archived} record#{"s" unless archived == 1} moved to archive.jsonl)
+  end
+end
+
+# After a project mutation, re-read and render the (now current) project. The
+# project mutations return only touched ids and a summary, so the fresh view
+# comes from a follow-up read pinned to the same `today`.
+def emit_project(id, json:, today:, human:)
+  view = id && application.get_project(id, today: today)
+  if json
+    require "json"
+    puts JSON.generate(view ? view.to_h : {})
+  else
+    puts human
+    puts "  #{project_row(view)}" if view
+  end
+end
+
+# The open descendant task ids of a section, at any depth — the tasks a project
+# completion cascade closes. Walks the live parent pointers (order is irrelevant;
+# report_touched re-sorts by line before printing).
+def open_descendant_task_ids(section_id)
+  records = store.read_snapshot.live_records
+  by_parent = Hash.new { |h, k| h[k] = [] }
+  records.each { |record| by_parent[record["parent"]] << record }
+  ids = []
+  queue = by_parent[section_id].dup
+  until queue.empty?
+    record = queue.shift
+    queue.concat(by_parent[record["id"]])
+    ids << record["id"] if record["type"] == "task" && OPEN_STATES.include?(record["state"])
+  end
+  ids
+end
+
 require "shellwords"
 
 HELP = <<~USAGE
@@ -1668,6 +1905,8 @@ HELP = <<~USAGE
     next      n              NEXT actions grouped by context
     quadrants q              Covey 2x2: priority (A/B) + near deadline, or tags
     inbox     i              unprocessed INBOX items
+    projects  pj             projects & areas rolled up over their open tasks
+                             (open/NEXT counts, soonest date, stuck flag)
     list      l [filters]    tasks by state. Filters: @context /text +tag -A|-B|-C
                              Scope: --open/-o (default) --done/-d --archived/-x --all/-a
                              --deferred/-D all unavailable · --unavailable canonical spelling
@@ -1700,6 +1939,7 @@ HELP = <<~USAGE
     tag          <ref> +t -t @ctx -@ctx   add/remove tags and contexts
     note         <ref> "text"        append a body line
     move         <ref> "Section"     relocate the subtree under a heading
+                                     (top-level or a nested project section)
                  <ref> --under <ref> nest the subtree below another task (≤ max_depth)
                  <ref> --top         unnest the subtree back to the section level
                  <ref> ["Section"|--under <ref>] --before <ref>
@@ -1713,6 +1953,16 @@ HELP = <<~USAGE
                                      if it has subtasks. Undoable via `undo`;
                                      usually prefer cancel/archive — this is for
                                      true mistakes.
+
+  Projects (a project/area is a rolled-up section):
+    projects  pj             list projects & areas (see Read above)
+    project create "title"   new empty project under the "Projects" root
+    project show <ref>       one project/area in full
+    project complete <ref>   close every open task in the project (aka done)
+    project archive <ref>    sweep the project's subtree to archive.jsonl
+                             (--force past remaining open tasks)
+    project rename <ref> "title"   retitle the section
+                             (refs: id · L<line> · title substring · --json/--dry-run)
 
   Lifecycle:
     archive   x              sweep DONE/CANCELLED to archive.jsonl
@@ -1748,6 +1998,8 @@ when "next", "n"      then cmd_next(ARGV[1..])
 when "quadrants", "q" then cmd_quadrants(ARGV[1..])
 when "agenda", "a"    then cmd_agenda(ARGV[1..])
 when "inbox", "i"     then cmd_inbox(ARGV[1..])
+when "projects", "pj" then cmd_projects(ARGV[1..])
+when "project"        then cmd_project(ARGV[1..])
 when "capture", "add", "c" then cmd_capture(ARGV[1..])
 when "done", "complete", "close", "d" then cmd_done(ARGV[1..])
 when "due", "deadline", "reschedule" then cmd_due(ARGV[1..])

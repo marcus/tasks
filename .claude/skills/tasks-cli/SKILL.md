@@ -23,6 +23,8 @@ bin/tasks agenda           # dated items, soonest first
 bin/tasks next             # NEXT actions grouped by context
 bin/tasks quadrants        # Covey 2×2 (see note below); --json adds "quadrant"
 bin/tasks inbox            # unprocessed captures
+bin/tasks projects         # projects & areas rolled up over open tasks (pj); --json
+bin/tasks project show "<ref>"  # one project/area in full (counts, date, body); --json
 bin/tasks show "<ref>"     # one task in full (fields + notes); --json
 bin/tasks check            # is the file structurally sound? (exit 1 = no)
 bin/tasks config           # where tasks.jsonl/archive.jsonl resolve + urgent_days; --json
@@ -55,7 +57,7 @@ bin/tasks retitle "<ref>" "new"      # replace the title; tags/state untouched
 bin/tasks tag "<ref>" +foo -bar @ctx # add/remove tags & contexts (-@ctx removes)
 bin/tasks note "<ref>" "text"        # append a body line under the task
 bin/tasks capture "sub" --under "<ref>" # nest a new task below an existing one
-bin/tasks move "<ref>" "Section"     # relocate the block under a top-level heading
+bin/tasks move "<ref>" "Section"     # relocate the block under a heading (top-level OR nested project)
 bin/tasks move "<ref>" --under "<ref>"  # nest the subtree below another task
 bin/tasks move "<ref>" --top         # unnest the subtree back to the section level
 bin/tasks move "<ref>" --before "<ref>" # reorder before a sibling (infers its parent)
@@ -66,7 +68,28 @@ bin/tasks someday "<ref>"            # hold indefinitely (someday/maybe/on hold)
 bin/tasks activate "<ref>"           # make available now (undefer/resume)
 bin/tasks archive                    # sweep DONE/CANCELLED to archive.jsonl
 bin/tasks delete "<ref>"             # hard-delete a task (--cascade for subtasks); undoable
+bin/tasks project create "New project"  # new empty project under the "Projects" root
+bin/tasks project complete "<ref>"   # close every open task in a project (aka done)
+bin/tasks project rename "<ref>" "new"  # retitle a project/area section
+bin/tasks project archive "<ref>"    # sweep a project's subtree to archive (--force past open tasks)
 ```
+
+**Make a project, then fill it.** To collect tasks into a brand-new project,
+`project create "Name"` first (it creates the empty section, bootstrapping the
+"Projects" root if needed), then `move "<task-ref>" "Name"` each task in — the
+positional section name reaches a nested project, so no manual filing is needed:
+
+```sh
+bin/tasks project create "Mid-year Reviews"
+bin/tasks move "prep slides" "Mid-year Reviews"   # lands under the new project
+```
+
+A **project** ref resolves against `projects`: an 8-hex section id, `L<line>`,
+or a title substring across projects and areas (exit 2 on no-match/ambiguous).
+`project create` rejects a blank or duplicate title (exit 1); `project complete`
+closes the whole open subtree; `project archive` refuses while open tasks remain
+unless `--force`. All `project` verbs take `--json`;
+the three mutations take `--dry-run`.
 
 `delete` hard-removes a task's subtree from the live file (it never touches the
 archive and is not the same as `cancel`). A task with subtasks needs `--cascade`.

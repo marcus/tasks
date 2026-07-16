@@ -109,6 +109,23 @@ module Tasks
           return delete_task(request, id, request_id) if method == "DELETE"
         end
 
+        return list_projects(request, request_id) if method == "GET" && path == "/api/v1/projects"
+        return create_project(request, request_id) if method == "POST" && path == "/api/v1/projects"
+
+        project = path.match(%r{\A/api/v1/projects/([^/]+?)(/complete|/archive)?\z})
+        if project
+          id = valid_task_id!(project[1])
+          case project[2]
+          when nil
+            return get_project(request, id, request_id) if method == "GET"
+            return rename_project(request, id, request_id) if method == "PATCH"
+          when "/complete"
+            return complete_project(request, id, request_id) if method == "POST"
+          when "/archive"
+            return archive_project(request, id, request_id) if method == "POST"
+          end
+        end
+
         raise HttpError.new(404, :not_found, Errors.message(:not_found))
       end
 
@@ -138,9 +155,10 @@ module Tasks
           max_depth: @max_depth,
           urgent_days: @urgent_days,
           # Capabilities advertise what THIS server routes, not the store's
-          # abilities. undo/redo/archive_sweep flip to true when the Phase 3
+          # abilities. `projects` is true because the project routes below are
+          # dispatched; undo/redo/archive_sweep flip to true when the Phase 3
           # manager endpoints (/history, /archive-sweeps) are dispatched.
-          capabilities: { undo: false, redo: false, archive_sweep: false, events: false },
+          capabilities: { projects: true, undo: false, redo: false, archive_sweep: false, events: false },
         }
         [200, { "etag" => etag(result.store_revision) }, Representation.success(data, result.store_revision)]
       end
@@ -274,6 +292,191 @@ module Tasks
         )
         mutation_failure!(result, request_id, id: id)
         [204, {}, nil]
+      end
+
+      # Projects and areas are rolled-up sections. Reads mirror the CLI's
+      # `projects`/`project show`; mutations map the shared MutationResult
+      # vocabulary. Project mutations carry no per-resource revision (the domain
+      # exposes none for a section retitle/cascade/sweep), so — unlike task
+      # writes — no If-Match precondition is required; the parity difference is
+      # documented in the OpenAPI contract.
+      def list_projects(request, request_id)
+        query_params(request, [])
+        result = application.list_projects_result
+        read_failure!(result, request_id) unless result.ok?
+        data = result.data.map { |view| Representation.project(view) }
+        [200, { "etag" => etag(result.store_revision) }, Representation.success(data, result.store_revision)]
+      end
+
+      # Create a new empty project section under the top-level "Projects" root
+      # (bootstrapped when absent). A blank/missing title is 422 at the adapter;
+      # a duplicate title (an existing project or area) is the domain's :invalid,
+      # mapped to 422 by project_mutation_failure!. Responds 201 with the new
+      # project resource re-read from the committed snapshot.
+      def create_project(request, request_id)
+        query_params(request, [])
+        body = json_body(request)
+        reject_unknown_fields!(body, %w[title])
+        validation!(title: ["is required"]) unless body.key?("title")
+        unless body["title"].is_a?(String) && !body["title"].strip.empty?
+          validation!(title: ["must be non-empty text"])
+        end
+        ensure_store_ready!(request_id)
+        result = application.create_project(title: body["title"])
+        project_mutation_failure!(result, nil)
+        id = result.summary.fetch(:created_id)
+        read = application.project_result(id)
+        read_failure!(read, request_id) unless read.ok?
+        [
+          201,
+          { "location" => "/api/v1/projects/#{id}", "etag" => etag(read.store_revision) },
+          Representation.success(Representation.project(read.data), read.store_revision),
+        ]
+      end
+
+      def get_project(request, id, request_id)
+        query_params(request, [])
+        result = application.project_result(id)
+        read_failure!(result, request_id) unless result.ok?
+        [
+          200,
+          { "etag" => etag(result.store_revision) },
+          Representation.success(Representation.project(result.data), result.store_revision),
+        ]
+      end
+
+      def rename_project(request, id, request_id)
+        query_params(request, [])
+        body = json_body(request)
+        reject_unknown_fields!(body, %w[title])
+        validation!(title: ["is required"]) unless body.key?("title")
+        unless body["title"].is_a?(String) && !body["title"].strip.empty?
+          validation!(title: ["must be non-empty text"])
+        end
+        ensure_store_ready!(request_id)
+        # Pre-validate like archive: a non-project/area id (Inbox, the "Projects"
+        # root, a done-pile section, a task) is 404 before any write, so the
+        # store's mechanical section retitle never mutates a non-project section.
+        before = application.project_result(id)
+        read_failure!(before, request_id) unless before.ok?
+        result = application.rename_project(id, title: body["title"])
+        project_mutation_failure!(result, id)
+        title = body["title"].strip
+        project_after_mutation(id, request_id) { renamed_project_view(before.data, title) }
+      end
+
+      def complete_project(request, id, request_id)
+        query_params(request, [])
+        reject_action_body!(request)
+        ensure_store_ready!(request_id)
+        # Pre-validate like archive: a non-project/area id is 404 before any
+        # write, so completing Inbox, the "Projects" root, or a done-pile section
+        # is impossible rather than closing its tasks and then 404-ing.
+        before = application.project_result(id)
+        read_failure!(before, request_id) unless before.ok?
+        result = application.complete_project(id)
+        project_mutation_failure!(result, id)
+        project_after_mutation(id, request_id) { completed_project_view(before.data) }
+      end
+
+      def archive_project(request, id, request_id)
+        query = query_params(request, %w[force])
+        force = boolean_query(query, "force", default: false)
+        reject_action_body!(request)
+        ensure_store_ready!(request_id)
+        # Mirror the CLI refusal: an archive that would carry live open work
+        # needs an explicit force. Deferred/held tasks are still open work, so
+        # they block too (parity with complete's cascade, which closes them).
+        # The store sweep is mechanical, so this policy lives in the adapter
+        # (see also the CLI's `project archive --force`).
+        view = application.project_result(id)
+        read_failure!(view, request_id) unless view.ok?
+        open_count = view.data.open_count
+        held_count = view.data.held_count
+        if (open_count + held_count).positive? && !force
+          raise HttpError.new(
+            409, :conflict,
+            "The project still has open tasks; retry with force=true to archive them.",
+            details: { open_count: open_count, held_count: held_count }
+          )
+        end
+        result = application.archive_project(id)
+        project_mutation_failure!(result, id)
+        status = application.read_status_result
+        data = {
+          id: id,
+          archived: result.summary ? result.summary[:archived] : result.touched_ids.length,
+          moved_ids: result.touched_ids,
+        }
+        [200, { "etag" => etag(status.store_revision) }, Representation.success(data, status.store_revision)]
+      end
+
+      # Shape a successful complete/rename response. Prefer the post-mutation
+      # re-read: a project stays in the read model, so its refreshed counts come
+      # from a coherent checked snapshot. When the section no longer surfaces
+      # there — a completed area drops out (no open work), a rename moves an area
+      # out of scope (e.g. retitled "Inbox") — the write already committed, so we
+      # must NOT 404. The block yields a ProjectView synthesized from the
+      # pre-read with the post-state applied, paired with the current revision.
+      def project_after_mutation(id, request_id)
+        read = application.project_result(id)
+        return project_response(read.data, read.store_revision) if read.ok?
+
+        status = application.read_status_result
+        read_failure!(status, request_id) unless status.ok?
+        project_response(yield, status.store_revision)
+      end
+
+      def project_response(view, revision)
+        [
+          200,
+          { "etag" => etag(revision) },
+          Representation.success(Representation.project(view), revision),
+        ]
+      end
+
+      # The pre-read project as it stands after a completing cascade: every open
+      # task (deferred included) is closed, so the rollups are zero and it is
+      # stuck. Consistent with the Project schema.
+      def completed_project_view(view)
+        ProjectView.new(
+          id: view.id, title: view.title, parent_id: view.parent_id, kind: view.kind,
+          line: view.line, open_count: 0, next_count: 0, next_date: nil, stuck: true,
+          body: view.body, task_ids: [], held_count: 0
+        )
+      end
+
+      # The pre-read project with only its title replaced — the rollups are
+      # unchanged by a retitle.
+      def renamed_project_view(view, title)
+        ProjectView.new(
+          id: view.id, title: title, parent_id: view.parent_id, kind: view.kind,
+          line: view.line, open_count: view.open_count, next_count: view.next_count,
+          next_date: view.next_date, stuck: view.stuck, body: view.body,
+          task_ids: view.task_ids, held_count: view.held_count
+        )
+      end
+
+      def project_mutation_failure!(result, id)
+        return if result.ok?
+
+        case result.status
+        when :not_found
+          raise HttpError.new(404, :not_found, "No project with that id.", details: { id: id })
+        when :invalid
+          details = result.field_errors.empty? ? {} : { fields: result.field_errors }
+          raise HttpError.new(422, :validation_failed, Errors.message(:validation_failed), details: details)
+        when :store_invalid, :unavailable
+          raise HttpError.new(503, result.status, Errors.message(result.status))
+        else
+          raise HttpError.new(503, :unavailable, Errors.message(:unavailable))
+        end
+      end
+
+      # A parameterless action POST (complete/archive) accepts no request body;
+      # a non-empty one is rejected the same way DELETE rejects a body.
+      def reject_action_body!(request)
+        reject_delete_body!(request, subject: "Project action requests")
       end
 
       def normalize_patch_changes(body)
@@ -543,7 +746,7 @@ module Tasks
         raise HttpError.new(400, :malformed_request, "The request body is not valid JSON.")
       end
 
-      def reject_delete_body!(request)
+      def reject_delete_body!(request, subject: "DELETE requests")
         length = request.content_length
         begin
           length = Integer(length, 10) if length
@@ -557,7 +760,8 @@ module Tasks
         input = request.body
         return unless input
 
-        raw = input.read(BODY_LIMIT + 1)
+        # IO#read(n) returns nil at EOF, so an empty body reads as nil, not "".
+        raw = input.read(BODY_LIMIT + 1) || ""
         if raw.bytesize > BODY_LIMIT
           raise HttpError.new(413, :payload_too_large, Errors.message(:payload_too_large))
         end
@@ -566,7 +770,7 @@ module Tasks
         unless request.media_type == "application/json"
           raise HttpError.new(415, :unsupported_media_type, Errors.message(:unsupported_media_type))
         end
-        raise HttpError.new(400, :malformed_request, "DELETE requests do not accept a body.")
+        raise HttpError.new(400, :malformed_request, "#{subject} do not accept a body.")
       end
 
       def reject_unknown_fields!(body, allowed)
@@ -663,8 +867,11 @@ module Tasks
 
       def route_name(request)
         path = request.path_info
-        return path if %w[/healthz /readyz /api/v1/meta /api/v1/sections /api/v1/tasks].include?(path)
+        return path if %w[/healthz /readyz /api/v1/meta /api/v1/sections /api/v1/tasks /api/v1/projects].include?(path)
         return "/api/v1/tasks/{id}" if path.match?(%r{\A/api/v1/tasks/[^/]+\z})
+        return "/api/v1/projects/{id}/complete" if path.match?(%r{\A/api/v1/projects/[^/]+/complete\z})
+        return "/api/v1/projects/{id}/archive" if path.match?(%r{\A/api/v1/projects/[^/]+/archive\z})
+        return "/api/v1/projects/{id}" if path.match?(%r{\A/api/v1/projects/[^/]+\z})
 
         "unmatched"
       end

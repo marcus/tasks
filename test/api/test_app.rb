@@ -47,11 +47,12 @@ class TestApiApp < Minitest::Test
     assert_equal "loopback", payload.dig("data", "server_mode")
     assert_equal %w[INBOX TODO NEXT WAITING DONE CANCELLED], payload.dig("data", "states")
     assert_equal 4, payload.dig("data", "max_depth")
-    # Capabilities advertise only what App#dispatch routes. undo/redo/
-    # archive_sweep/events stay false until their endpoints are implemented;
-    # flipping any to true without routing it (see App#meta) must fail here.
+    # Capabilities advertise only what App#dispatch routes. `projects` is true
+    # (the project routes are dispatched); undo/redo/archive_sweep/events stay
+    # false until their endpoints are implemented; flipping any of those to true
+    # without routing it (see App#meta) must fail here.
     assert_equal(
-      { "undo" => false, "redo" => false, "archive_sweep" => false, "events" => false },
+      { "projects" => true, "undo" => false, "redo" => false, "archive_sweep" => false, "events" => false },
       payload.dig("data", "capabilities")
     )
     assert_equal quote(payload.dig("meta", "store_revision")), meta["etag"]

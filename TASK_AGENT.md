@@ -56,6 +56,7 @@ back a bad one.
 - `bin/tasks list -a` — everything, grouped by state (filters: `@ctx +tag /text -A`).
 - `bin/tasks agenda` — dated items, soonest first.
 - `bin/tasks show "<ref>"` — one task in full (fields + notes + links).
+- `bin/tasks projects` (`pj`) — projects & areas rolled up over their open tasks.
 - All read commands accept `--json` (a flat, pre-sorted array).
 
 **Refs.** A `<ref>` resolves as: a case-insensitive substring of the title; an
@@ -91,7 +92,7 @@ say which ones matched.
   - retitle a task:   `bin/tasks retitle "<ref>" "<new title>"`
   - edit tags:        `bin/tasks tag "<ref>" +tag -tag @ctx -@ctx`
   - add a note:       `bin/tasks note "<ref>" "<text>"`
-  - move a task:      `bin/tasks move "<ref>" "<Section>"`
+  - move a task:      `bin/tasks move "<ref>" "<Section>"`  (top-level or nested project section)
   - nest a subtree:   `bin/tasks move "<ref>" --under "<ref>"`  (below another task; ≤ max_depth)
   - unnest a subtree: `bin/tasks move "<ref>" --top`  (back to the section level)
   - reorder a subtree:`bin/tasks move "<ref>" --before "<sibling-ref>"`  (infers the sibling's parent)
@@ -105,6 +106,11 @@ say which ones matched.
   - review own holds: `bin/tasks list --someday`
   - inspect a task:   `bin/tasks show "<ref>" [--json]`
   - archive done:     `bin/tasks archive`
+  - create a project: `bin/tasks project create "<title>"`  (new empty project;
+                      then `bin/tasks move "<ref>" "<title>"` files tasks into it)
+  - complete a project: `bin/tasks project complete "<ref>"`  (closes its whole open subtree)
+  - rename a project: `bin/tasks project rename "<ref>" "<new title>"`
+  - archive a project: `bin/tasks project archive "<ref>"`  (add `--force` past open tasks)
   - delete a task:    `bin/tasks delete "<ref>"`  (hard delete; add `--cascade`
                       if it has subtasks) — usually `cancel`/`archive` is the
                       right call; reach for `delete` only for a true mistake.

@@ -41,6 +41,26 @@ module Tasks
         { id: view.id, title: view.title, parent_id: view.parent_id }
       end
 
+      # A project/area resource rolled up over its open tasks. Unlike
+      # ProjectView#to_h (which omits nil keys for the on-disk-lean CLI shape),
+      # every field is present with an explicit null so the HTTP schema can be
+      # strict. Physical `line` is never exposed.
+      def project(view)
+        {
+          id: view.id,
+          title: view.title,
+          parent_id: view.parent_id,
+          kind: view.kind,
+          open_count: view.open_count,
+          next_count: view.next_count,
+          next_date: view.next_date&.iso8601,
+          stuck: view.stuck,
+          held_count: view.held_count,
+          body: view.body,
+          task_ids: view.task_ids,
+        }
+      end
+
       def success(data, store_revision)
         { data: data, meta: { store_revision: store_revision } }
       end
