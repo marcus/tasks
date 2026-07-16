@@ -2,6 +2,7 @@
 
 require "date"
 require "set"
+require "time"
 require_relative "ansi"
 require_relative "theme"
 require_relative "store"
@@ -67,13 +68,14 @@ module Tui
       attr_reader :view
 
       def initialize(view, today:, urgent_days:, show_deferred:, project_resolver: nil,
-                     availability_resolver: nil)
+                     availability_resolver: nil, temporal_context: nil)
         @view = view
         @today = today
         @urgent_days = urgent_days
         @show_deferred = show_deferred
         @project_resolver = project_resolver
         @availability_resolver = availability_resolver
+        @temporal_context = temporal_context
       end
 
       def eligible?(item)
@@ -107,11 +109,11 @@ module Tui
       def sort_key(item)
         case view
         when :agenda
-          [item.deadline || item.scheduled, item.priority || "Z"]
+          [Views.temporal_sort_key(item, @temporal_context), item.priority || "Z"]
         when :next
           [item.priority || "Z"]
         when :projects
-          [item.deadline || item.scheduled || FAR_FUTURE, item.priority || "Z", item.title]
+          [Views.temporal_sort_key(item, @temporal_context), item.priority || "Z", item.title]
         else
           [item.line || Float::INFINITY]
         end
@@ -143,7 +145,7 @@ module Tui
               resolved = yield entry
               resolved.is_a?(Array) ? resolved : [resolved]
             end
-            [items.filter_map { |item| item.deadline || item.scheduled }.min || FAR_FUTURE, key]
+            [items.map { |item| Views.temporal_sort_key(item, @temporal_context) }.min, key]
           else
             [key.to_s]
           end
@@ -271,7 +273,7 @@ module Tui
     def agenda(items, today: Date.today, show_deferred: true, reader: nil, store: nil)
       query = view_query(:agenda, today: today, show_deferred: show_deferred, reader: reader || store)
       query.sort(query.select(items)).map do |i|
-        Row.new("#{agenda_stamp(i, today)} #{decorated_title(i)}#{badge(i, reader: reader || store, today: today)}", i)
+        Row.new("#{agenda_stamp(i, today, reader: reader || store)} #{decorated_title(i)}#{badge(i, reader: reader || store, today: today)}", i)
       end
     end
 
@@ -368,7 +370,8 @@ module Tui
       head = +"#{T.paint(:project, project.title)}  #{T.paint(:muted, "#{project.open_count} open")}"
       head << T.paint(project.next_count.zero? ? :warning : :muted, " · #{project.next_count} next")
       if (upcoming = project.next_date)
-        head << T.paint(due_slot((upcoming - today).to_i), " · next #{upcoming.strftime("%m-%d")}")
+        label = project.next_time&.fetch(:local, nil) || upcoming.strftime("%m-%d")
+        head << T.paint(due_slot((upcoming - today).to_i), " · next #{label}")
       end
       head << T.paint(:warning, " ⚠ stuck") if project.stuck
       head
@@ -446,7 +449,7 @@ module Tui
       anchors.each do |anchor|
         append_subtree(rows, anchor, "", collapsed: collapsed, show_deferred: show_deferred,
                        reader: reader, today: today) do |item|
-          "#{agenda_stamp(item, today)} #{decorated_title(item)}#{badge(item, reader: reader, today: today)}"
+          "#{agenda_stamp(item, today, reader: reader)} #{decorated_title(item)}#{badge(item, reader: reader, today: today)}"
         end
       end
       rows
@@ -672,8 +675,9 @@ module Tui
 
     def subtree_dates(node, show_deferred, reader: nil, today: Date.today)
       dates = []
-      d = node.item.deadline || node.item.scheduled
-      dates << d if d
+      context = reader&.respond_to?(:temporal_context) && reader.temporal_context
+      d = temporal_sort_key(node.item, context)
+      dates << d if d < Float::INFINITY
       visible_children(node, show_deferred, reader: reader, today: today).each do |child|
         dates.concat(subtree_dates(child, show_deferred, reader: reader, today: today))
       end
@@ -698,17 +702,26 @@ module Tui
 
     # The agenda date stamp for a dated item, or a blank column of the same
     # width for an undated rider so its title lines up under dated siblings.
-    def agenda_stamp(item, today)
+    def agenda_stamp(item, today, reader: nil)
       d = item.deadline || item.scheduled
       return " " * AGENDA_STAMP_W unless d
       kind = item.deadline ? "DUE " : "AVL "
+      value_method = item.deadline ? :deadline_value : :scheduled_value
+      value = item.respond_to?(value_method) && item.public_send(value_method)
+      if value&.local_time && reader&.respond_to?(:temporal_context)
+        projected = value.projected(reader.temporal_context)
+        d = projected.fetch(:date)
+        stamp = projected.fetch(:local)
+      else
+        stamp = value&.local_time || d.strftime("%m-%d")
+      end
       days = (d - today).to_i
       when_s = days.negative? ? "#{-days}d ago" : days.zero? ? "today" : "in #{days}d"
-      T.paint(due_slot(days), "#{d.strftime("%m-%d")} #{kind} #{("(" + when_s + ")").ljust(8)}")
+      T.paint(due_slot(days), "#{stamp.rjust(5)} #{kind} #{("(" + when_s + ")").ljust(8)}")
     end
 
     def next_body(item, today, reader: nil)
-      due = short_due(item, today)
+      due = short_due(item, today, reader: reader)
       "#{pri(item)}#{T.paint(:title, item.title)}#{due.empty? ? "" : "  #{due}"}#{badge(item, reader: reader, today: today)}"
     end
 
@@ -731,10 +744,49 @@ module Tui
       end
     end
 
-    def short_due(item, today)
+    def short_due(item, today, reader: nil)
       return "" unless item.deadline
-      days = (item.deadline - today).to_i
-      T.paint(due_slot(days), "#{item.deadline.month}/#{item.deadline.day}")
+      date = item.deadline
+      value = item.respond_to?(:deadline_value) && item.deadline_value
+      if value&.local_time && reader&.respond_to?(:temporal_context)
+        projected = value.projected(reader.temporal_context)
+        date = projected.fetch(:date)
+        label = projected.fetch(:local)
+        abbr = fixed_zone_abbr(value, reader.temporal_context)
+        label = "#{label}·#{abbr}" if abbr
+      else
+        label = value&.local_time || "#{date.month}/#{date.day}"
+      end
+      days = (date - today).to_i
+      T.paint(due_slot(days), label)
+    end
+
+    # Zone abbreviation for a fixed value anchored outside the evaluation zone
+    # — presentation only, never stored identity. Nil when floating, all-day,
+    # or fixed to the evaluation zone itself.
+    def fixed_zone_abbr(value, context)
+      return nil unless value&.fixed? && value.timezone != context.timezone_id
+
+      zone = Tasks::Timezones.get(value.timezone)
+      zone.period_for_utc(value.instant(context)).abbreviation.to_s
+    rescue Tasks::Timezones::Error, ArgumentError
+      nil
+    end
+
+    def temporal_sort_key(item, context = nil)
+      value = item.respond_to?(:deadline_value) && item.deadline_value
+      kind = :deadline
+      unless value
+        value = item.respond_to?(:scheduled_value) && item.scheduled_value
+        kind = :scheduled
+      end
+      return Float::INFINITY unless value
+
+      context ||= Tasks::TemporalContext.new(
+        now: Time.utc(value.date.year, value.date.month, value.date.day, 12), timezone: "Etc/UTC"
+      )
+      boundary = kind == :deadline ? value.due_boundary(context) : value.release_instant(context)
+      boundary.to_f
     end
 
     def pri(item) = item.priority ? T.paint(:priority, "[#{item.priority}] ") : ""
@@ -748,9 +800,9 @@ module Tui
       availability = availability_for(item, reader: reader, today: today)
       case availability.availability_reason
       when :scheduled
-        b << T.paint(:muted, " ⏳ #{availability_date(item, availability, reader)&.strftime("%-m/%-d")}")
+        b << T.paint(:muted, " ⏳ #{availability_stamp(item, availability, reader)}")
       when :ancestor_scheduled
-        b << T.paint(:muted, " ⏳ #{availability_date(item, availability, reader)&.strftime("%-m/%-d")} ↑")
+        b << T.paint(:muted, " ⏳ #{availability_stamp(item, availability, reader)} ↑")
       when :on_hold
         b << T.paint(:muted, " ⏸")
       when :ancestor_on_hold
@@ -769,8 +821,10 @@ module Tui
       reader ||= store
       resolver = ->(item) { project_name(item, reader) } if view == :projects
       availability_resolver = ->(item) { availability_for(item, reader: reader, today: today) }
+      temporal_context = reader&.respond_to?(:temporal_context) && reader.temporal_context
       Query.new(view, today: today, urgent_days: urgent_days, show_deferred: show_deferred,
-                     project_resolver: resolver, availability_resolver: availability_resolver)
+                     project_resolver: resolver, availability_resolver: availability_resolver,
+                     temporal_context: temporal_context)
     end
 
     def available?(item, reader: nil, today: Date.today)
@@ -830,6 +884,22 @@ module Tui
       return item.scheduled if availability.availability_blocker_id == item.id
 
       reader&.respond_to?(:task_for) && reader.task_for(availability.availability_blocker_id)&.scheduled
+    end
+
+    def availability_stamp(item, availability, reader)
+      blocker = if availability.availability_blocker_id == item.id
+                  reader&.respond_to?(:task_for) ? reader.task_for(item) : item
+                elsif reader&.respond_to?(:task_for)
+                  reader.task_for(availability.availability_blocker_id)
+                end
+      value = blocker&.respond_to?(:scheduled_value) && blocker.scheduled_value
+      if value&.local_time
+        context = reader&.respond_to?(:temporal_context) && reader.temporal_context
+        projected = context ? value.projected(context) : { local: value.local_time }
+        return projected.fetch(:local)
+      end
+
+      availability_date(item, availability, reader)&.strftime("%-m/%-d")
     end
 
     def project_name(item, reader)

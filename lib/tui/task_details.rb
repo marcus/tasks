@@ -25,17 +25,17 @@ module Tui
 
     LINK_SPAN = Regexp.union(Tasks::Links::ORG_LINK, Tasks::Links::BARE_URL)
 
-    def build(item, notes, width, today: Date.today, links: [], project: nil,
+    def build(item, notes, width, today: Date.today, temporal_context: nil, links: [], project: nil,
               availability_blocker: nil)
       w = [width, 1].max
       lines = A.wrap(item.title, w).map { |line| T.paint(:section, line) }
       lines << ""
       lines << row("state", STATE_SLOT.key?(item.state) ? T.paint(STATE_SLOT[item.state], item.state) : item.state)
       lines << row("priority", item.priority ? "[##{item.priority}]" : T.paint(:muted, "—"))
-      lines << row("deadline", date_value(item.deadline, today)) if item.deadline
-      lines << row("available from", date_value(item.scheduled, today)) if item.scheduled
+      lines << row("deadline", temporal_value(item, :deadline, today, temporal_context)) if item.deadline
+      lines << row("available from", temporal_value(item, :scheduled, today, temporal_context)) if item.scheduled
       if item.respond_to?(:availability_reason) && item.availability_reason != :available
-        lines << row("availability", availability_value(item, availability_blocker, today))
+        lines << row("availability", availability_value(item, availability_blocker, today, temporal_context))
       end
       lines << row("closed", item.closed.iso8601) if item.closed
       lines << row("project", T.paint(:project, project)) if project
@@ -85,14 +85,54 @@ module Tui
       T.paint(Views.due_slot(days), "#{date.iso8601} #{date.strftime("%a")} · #{relative}")
     end
 
-    def availability_value(item, blocker, today)
+    def temporal_value(item, field, today, context)
+      value = item.respond_to?("#{field}_value") && item.public_send("#{field}_value")
+      return date_value(item.public_send(field), today) unless value&.local_time
+
+      date = value.date
+      text = "#{date.iso8601} #{value.local_time}"
+      text += " #{value.timezone}" if value.fixed?
+      text += " floating" if value.floating?
+      text += " · later fold" if value.fold == 1
+      if context && value.fixed? && value.timezone != context.timezone_id
+        projected = value.projected(context)
+        text += " → #{projected.fetch(:date).iso8601} #{projected.fetch(:local)} #{context.timezone_id}"
+        date = projected.fetch(:date)
+      end
+      text += " · #{temporal_relative(value, field, context)}" if context
+      days = (date - today).to_i
+      T.paint(Views.due_slot(days), text)
+    end
+
+    def temporal_relative(value, field, context)
+      boundary = field == :deadline ? value.due_boundary(context) : value.release_instant(context)
+      seconds = boundary - context.now
+      return field == :deadline ? "due now" : "available now" if seconds.abs < 60
+
+      duration = compact_duration(seconds.abs)
+      if seconds.positive?
+        field == :deadline ? "due in #{duration}" : "available in #{duration}"
+      elsif field == :deadline
+        "overdue by #{duration}"
+      else
+        "available for #{duration}"
+      end
+    end
+
+    def compact_duration(seconds)
+      minutes = [(seconds / 60).floor, 1].max
+      return "#{minutes}m" if minutes < 60
+      hours, remainder = minutes.divmod(60)
+      remainder.zero? ? "#{hours}h" : "#{hours}h #{remainder}m"
+    end
+
+    def availability_value(item, blocker, today, context = nil)
       case item.availability_reason
       when :scheduled
-        "unavailable until #{date_value(item.scheduled, today)}"
+        "unavailable until #{temporal_value(item, :scheduled, today, context)}"
       when :ancestor_scheduled
-        date = blocker&.scheduled
         suffix = blocker ? " via parent #{blocker.title}" : " via parent"
-        date ? "unavailable until #{date_value(date, today)}#{suffix}" : "unavailable#{suffix}"
+        blocker&.scheduled ? "unavailable until #{temporal_value(blocker, :scheduled, today, context)}#{suffix}" : "unavailable#{suffix}"
       when :on_hold
         "on hold"
       when :ancestor_on_hold

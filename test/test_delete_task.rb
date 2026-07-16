@@ -22,7 +22,7 @@ class TestDeleteTask < Minitest::Test
   }.freeze
 
   NESTED_RECORDS = [
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => IDS[:inbox], "title" => "Inbox" },
     { "type" => "task", "id" => IDS[:garden], "parent" => IDS[:inbox], "state" => "INBOX",
       "title" => "random garden thought" },
@@ -223,7 +223,7 @@ class TestDeleteTask < Minitest::Test
 
   def test_archived_only_id_is_not_found_and_archive_is_left_alone
     archive_records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "task", "id" => "arc00001", "state" => "DONE", "title" => "Archived thing",
         "archived" => "2026-06-01", "closed" => "2026-06-01" },
     ]
@@ -245,7 +245,7 @@ class TestDeleteTask < Minitest::Test
 
   def test_invalid_file_is_store_invalid_and_writes_nothing
     invalid = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "cccc0001", "title" => "Work" },
       { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001", "state" => "TODO",
         "title" => "Fix widget", "scheduled" => "not-a-date" },

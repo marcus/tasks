@@ -22,10 +22,12 @@ module Tasks
       TASK_QUERY_KEYS = %w[source].freeze
       DELETE_QUERY_KEYS = %w[cascade].freeze
       CREATE_FIELDS = %w[
-        title priority tags contexts deferred scheduled deadline state project parent_id recurrence body
+        title priority tags contexts deferred scheduled scheduled_time deadline deadline_time
+        state project parent_id recurrence body
       ].freeze
       PATCH_FIELDS = %w[
-        title priority body contexts tags deferred scheduled deadline recurrence parent_id placement state
+        title priority body contexts tags deferred scheduled scheduled_time deadline deadline_time
+        recurrence parent_id placement state
       ].freeze
       PLACEMENT_FIELDS = %w[parent_id before_id].freeze
       FORWARDED_HEADERS = %w[
@@ -39,19 +41,28 @@ module Tasks
           max_depth: paths.max_depth
         )
         new(
-          application: Application.new(store_factory: factory),
+          application: Application.new(
+            store_factory: factory,
+            temporal_context_factory: -> {
+              TemporalContext.capture(timezone: paths.timezone, time_format: paths.time_format)
+            }
+          ),
           port: port, max_depth: paths.max_depth,
-          urgent_days: paths.urgent_days, logger: logger
+          urgent_days: paths.urgent_days, logger: logger,
+          timezone: paths.timezone, time_format: paths.time_format
         )
       end
 
       def initialize(application:, port: 4747, max_depth: Tree::DEFAULT_MAX_DEPTH,
                      urgent_days: Quadrants::DEFAULT_URGENT_DAYS, logger: $stderr,
-                     request_id_generator: nil, clock: nil)
+                     request_id_generator: nil, clock: nil,
+                     timezone: "Etc/UTC", time_format: 12)
         @application = application
         @port = Integer(port)
         @max_depth = Integer(max_depth)
         @urgent_days = Integer(urgent_days)
+        @timezone = timezone
+        @time_format = Integer(time_format)
         @logger = logger
         @request_id_generator = request_id_generator || -> { "req_#{SecureRandom.hex(8)}" }
         @clock = clock || -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
@@ -74,6 +85,15 @@ module Tasks
           status = error.status
           headers = error.headers
           body = Representation.error(error.code, error.message, request_id, error.details)
+        rescue Timezones::Error => error
+          status = 503
+          headers = {}
+          body = Representation.error(
+            :store_invalid,
+            "A floating task time is invalid in the configured time zone.",
+            request_id,
+            { temporal_error: error.message }
+          )
         rescue StandardError
           status = 503
           headers = {}
@@ -154,6 +174,10 @@ module Tasks
           priorities: Check::PRIORITIES,
           max_depth: @max_depth,
           urgent_days: @urgent_days,
+          timezone: @timezone,
+          time_format: @time_format,
+          tzdb_version: Timezones.tzdb_version,
+          temporal_precision: "minute",
           # Capabilities advertise what THIS server routes, not the store's
           # abilities. `projects` is true because the project routes below are
           # dispatched; undo/redo/archive_sweep flip to true when the Phase 3
@@ -209,6 +233,8 @@ module Tasks
         tasks = tasks.select(&:available?) if available == true
         data = tasks.map { |view| Representation.task(view) }
         [200, {}, Representation.success(data, result.store_revision)]
+      rescue Timezones::Error
+        raise
       rescue ArgumentError => error
         validation!(query: [safe_argument_message(error)])
       end
@@ -228,6 +254,7 @@ module Tasks
       end
 
       def create_task(request, request_id)
+        temporal = request_temporal_context
         query_params(request, [])
         body = json_body(request)
         reject_unknown_fields!(body, CREATE_FIELDS)
@@ -237,18 +264,20 @@ module Tasks
           title: body["title"], priority: body["priority"],
           tags: Array(body["tags"]) + Array(body["contexts"]),
           deferred: body.fetch("deferred", false),
-          scheduled: body["scheduled"], deadline: body["deadline"], state: body["state"],
+          scheduled: temporal_input(body, "scheduled", context: temporal),
+          deadline: temporal_input(body, "deadline", context: temporal), state: body["state"],
           project: body["project"], parent_id: body["parent_id"], recurrence: recurrence,
           body: normalize_body(body["body"]),
         }
         ensure_store_ready!(request_id)
         result = application.create_task(
           attributes,
-          context: OperationContext.new(operation_id: request_id, source: :api)
+          context: OperationContext.new(operation_id: request_id, source: :api,
+                                        temporal_context: temporal)
         )
         mutation_failure!(result, request_id, parent_id: body["parent_id"])
         id = result.touched_ids.fetch(0)
-        resource_result = application.task_result_from_mutation(result, id)
+        resource_result = application.task_result_from_mutation(result, id, temporal_context: temporal)
         view = resource_result.data
         [
           201,
@@ -258,20 +287,28 @@ module Tasks
       end
 
       def update_task(request, id, request_id)
+        temporal = request_temporal_context
         query_params(request, [])
         expected_revision = if_match!(request)
         body = json_body(request)
         reject_unknown_fields!(body, PATCH_FIELDS)
         validation!(changes: ["must contain at least one field"]) if body.empty?
-        validate_patch_body!(body)
-        changes = normalize_patch_changes(body)
+        current = application.get_task_result(id, source: :live)
+        if current.status == :not_found
+          raise HttpError.new(404, :not_found, "No live task with that id.",
+                              details: { field: "id", id: id })
+        end
+        read_failure!(current, request_id) unless current.ok?
+        validate_patch_body!(body, current: current.data)
+        changes = normalize_patch_changes(body, current: current.data, context: temporal)
         ensure_store_ready!(request_id)
         result = application.update_task(
           id, changes, expected_revision: expected_revision,
-          context: OperationContext.new(operation_id: request_id, source: :api)
+          context: OperationContext.new(operation_id: request_id, source: :api,
+                                        temporal_context: temporal)
         )
         mutation_failure!(result, request_id, id: id, placement: changes[:location])
-        resource_result = application.task_result_from_mutation(result, id)
+        resource_result = application.task_result_from_mutation(result, id, temporal_context: temporal)
         view = resource_result.data
         [
           200,
@@ -479,8 +516,13 @@ module Tasks
         reject_delete_body!(request, subject: "Project action requests")
       end
 
-      def normalize_patch_changes(body)
+      def normalize_patch_changes(body, current:, context:)
         changes = body.transform_keys(&:to_sym)
+        %w[scheduled deadline].each do |field|
+          next unless body.key?(field) || body.key?("#{field}_time")
+          changes.delete("#{field}_time".to_sym)
+          changes[field.to_sym] = temporal_patch_value(body, field, current: current, context: context)
+        end
         changes[:body] = normalize_body(body["body"]) if body.key?("body")
         if body.key?("recurrence")
           changes[:recurrence] = normalize_recurrence(body["recurrence"], allow_off: true)
@@ -511,8 +553,12 @@ module Tasks
         end
       end
 
-      def validate_patch_body!(body)
+      def validate_patch_body!(body, current:)
         validate_common_body!(body, create: false)
+        %w[scheduled deadline].each do |field|
+          next unless body["#{field}_time"] && !body.key?(field)
+          validation!("#{field}_time" => ["requires #{field}"]) unless current.public_send(field)
+        end
         if body.key?("placement") && body.key?("parent_id")
           validation!(
             placement: ["cannot be combined with parent_id"],
@@ -560,6 +606,13 @@ module Tasks
         end
         %w[scheduled deadline].each do |field|
           validate_iso_date!(field, body[field]) if body.key?(field)
+          validate_time_input!("#{field}_time", body["#{field}_time"]) if body.key?("#{field}_time")
+          if create && body.key?("#{field}_time") && !body.key?(field)
+            validation!("#{field}_time" => ["requires #{field}"])
+          end
+          if body[field].nil? && body.key?(field) && body["#{field}_time"]
+            validation!("#{field}_time" => ["cannot be set when #{field} is null"])
+          end
         end
         %w[tags contexts].each do |field|
           next unless body.key?(field)
@@ -597,6 +650,66 @@ module Tasks
         Date.iso8601(value)
       rescue Date::Error
         validation!(field => ["must be a real calendar date"])
+      end
+
+      def validate_time_input!(field, value)
+        return if value.nil?
+        validation!(field => ["must be an object or null"]) unless value.is_a?(Hash)
+        unknown = value.keys - %w[local timezone fold]
+        validation!(field => ["contains unknown fields: #{unknown.join(", ")}"]) unless unknown.empty?
+        validation!("#{field}.local" => ["is required"]) unless value.key?("local")
+        unless value["local"].is_a?(String) && TemporalValue::LOCAL_RE.match?(value["local"])
+          validation!("#{field}.local" => ["must use HH:MM minute precision"])
+        end
+        if value.key?("timezone") && !value["timezone"].nil?
+          begin
+            Timezones.get(value["timezone"])
+          rescue Timezones::Error => e
+            validation!("#{field}.timezone" => [e.message])
+          end
+        end
+        if value.key?("fold") && ![0, 1].include?(value["fold"])
+          validation!("#{field}.fold" => ["must be 0 or 1"])
+        end
+      end
+
+      def temporal_input(body, field, context:)
+        date = body[field]
+        return nil if date.nil?
+        time = body["#{field}_time"]
+        return TemporalValue.new(date: date) unless time
+        TemporalValue.new(date: date, local_time: time.fetch("local"),
+                          timezone: time["timezone"], fold: time.fetch("fold", 0)).tap do |value|
+          value.instant(context) if value.floating?
+        end
+      rescue ArgumentError, Timezones::Error => e
+        validation!("#{field}_time" => [e.message])
+      end
+
+      def temporal_patch_value(body, field, current:, context:)
+        date_key = body.key?(field)
+        time_key = body.key?("#{field}_time")
+        date = date_key ? body[field] : current.public_send(field)&.iso8601
+        return nil if date.nil?
+        if time_key
+          time = body["#{field}_time"]
+          return TemporalValue.new(date: date) if time.nil?
+          return temporal_input({ field => date, "#{field}_time" => time }, field, context: context)
+        end
+        existing = current.public_send("#{field}_value")
+        begin
+          value = existing ? existing.with_date(Date.iso8601(date)) : TemporalValue.new(date: date)
+          value.instant(context) if value.floating?
+          value
+        rescue ArgumentError, Timezones::Error => e
+          # Moving the date under preserved time metadata can land the kept
+          # local time in a DST gap — a client-input problem, not a store one.
+          validation!(field => [e.message])
+        end
+      end
+
+      def request_temporal_context
+        TemporalContext.capture(timezone: @timezone, time_format: @time_format)
       end
 
       def normalize_recurrence(value, allow_off:)
@@ -703,6 +816,11 @@ module Tasks
         case result.status
         when :not_found
           raise HttpError.new(404, :not_found, Errors.message(:not_found))
+        when :migration_required
+          raise HttpError.new(
+            409, :schema_migration_required, Errors.message(:schema_migration_required),
+            details: { current_version: 1, required_version: Format::VERSION, command: "tasks migrate" }
+          )
         when :store_invalid, :unavailable
           raise HttpError.new(503, result.status, Errors.message(result.status))
         else

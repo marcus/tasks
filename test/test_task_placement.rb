@@ -12,7 +12,7 @@ class TestTaskPlacement < Minitest::Test
   }.freeze
 
   TREE = [
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => IDS[:one], "title" => "One" },
     { "type" => "task", "id" => IDS[:a], "parent" => IDS[:one], "state" => "TODO", "title" => "A" },
     { "type" => "task", "id" => IDS[:a_child], "parent" => IDS[:a], "state" => "TODO", "title" => "A child" },
@@ -34,7 +34,7 @@ class TestTaskPlacement < Minitest::Test
   }.freeze
 
   MIXED_TREE = [
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => MIXED_IDS[:parent], "title" => "Parent" },
     { "type" => "task", "id" => MIXED_IDS[:a], "parent" => MIXED_IDS[:parent],
       "state" => "TODO", "title" => "A" },

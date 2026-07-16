@@ -5,6 +5,8 @@ require_relative "quadrants"
 require_relative "recur"
 require_relative "store"
 require_relative "task_view"
+require_relative "temporal_context"
+require_relative "temporal_value"
 
 module Tasks
   # Typed selection inputs shared by CLI, TUI, and the forthcoming application
@@ -181,25 +183,28 @@ module Tasks
         available scheduled on_hold ancestor_scheduled ancestor_on_hold closed
       ].freeze
 
-      attr_reader :reason, :blocker_id, :scheduled
+      attr_reader :reason, :blocker_id, :scheduled, :temporal_value, :available_at
 
-      def initialize(reason:, blocker_id: nil, scheduled: nil)
+      def initialize(reason:, blocker_id: nil, scheduled: nil, temporal_value: nil, available_at: nil)
         @reason = reason.to_sym
         raise ArgumentError, "unknown availability reason: #{reason}" unless REASONS.include?(@reason)
 
         @blocker_id = blocker_id&.to_s&.dup&.freeze
         @scheduled = scheduled&.freeze
+        @temporal_value = temporal_value&.freeze
+        @available_at = available_at&.utc&.freeze
         freeze
       end
 
       def available? = reason == :available
     end
 
-    attr_reader :snapshot, :today
+    attr_reader :snapshot, :today, :temporal_context
 
-    def initialize(snapshot, today: Date.today)
+    def initialize(snapshot, today: Date.today, temporal_context: nil)
       @snapshot = snapshot
-      @today = today.freeze
+      @temporal_context = temporal_context || legacy_context(today)
+      @today = @temporal_context.local_date.freeze
       @records_by_source_and_id = records_by_source_and_id
       @records_by_source_and_line = records_by_source_and_line
       @children_by_source_and_parent = children_by_source_and_parent
@@ -378,7 +383,7 @@ module Tasks
     def sort_named(items, name)
       case name
       when :agenda
-        stable_sort(items) { |item| [item.deadline || item.scheduled, item.priority || "Z"] }
+        stable_sort(items) { |item| [agenda_sort_key(item), item.priority || "Z"] }
       when :next
         stable_sort(items) { |item| [item.priority || "Z"] }
       else items
@@ -399,18 +404,20 @@ module Tasks
         TaskView.new(
           id: item.id, state: item.state, priority: item.priority, title: item.title,
           tags: item.tags, scheduled: item.scheduled, deadline: item.deadline,
+          scheduled_value: item.scheduled_value, deadline_value: item.deadline_value,
           recur: item.recur, closed: item.closed, source: item.source,
           body: snapshot.body(item), links: snapshot.links(item), headline: headline_for(item),
           parent_id: record && record["parent"], ancestor_ids: ancestor_ids(record, item.source),
           child_ids: child_ids, section_id: section && section["id"],
           section_title: section && section["title"], project: node&.open_project&.title,
           revision: snapshot.revision_for(item), availability: availability(item),
+          temporal_context: temporal_context,
           descendant_count: descendant_count(item.id, item.source)
         )
       end
     end
 
-    def build_availability(item, own_deferred: item.deferred?, own_scheduled: item.scheduled)
+    def build_availability(item, own_deferred: item.deferred?, own_scheduled: item.scheduled_value || item.scheduled)
       return Availability.new(reason: :closed) if item.source == :archive || !item.open?
 
       candidates = [[item, 0]]
@@ -436,18 +443,19 @@ module Tasks
       end
 
       timed = candidates.select do |candidate, _distance|
-        scheduled = candidate.equal?(item) ? own_scheduled : candidate.scheduled
-        scheduled && scheduled > today
+        scheduled = candidate.equal?(item) ? temporalize(own_scheduled) : candidate.scheduled_value
+        scheduled && scheduled.release_instant(temporal_context) > temporal_context.now
       end.max_by do |candidate, distance|
-        scheduled = candidate.equal?(item) ? own_scheduled : candidate.scheduled
-        [scheduled.jd, -distance]
+        scheduled = candidate.equal?(item) ? temporalize(own_scheduled) : candidate.scheduled_value
+        [scheduled.release_instant(temporal_context), -distance]
       end
       if timed
         blocker, distance = timed
-        scheduled = distance.zero? ? own_scheduled : blocker.scheduled
+        value = distance.zero? ? temporalize(own_scheduled) : blocker.scheduled_value
         return Availability.new(
           reason: distance.zero? ? :scheduled : :ancestor_scheduled,
-          blocker_id: blocker.id, scheduled: scheduled
+          blocker_id: blocker.id, scheduled: value.date,
+          temporal_value: value, available_at: value.release_instant(temporal_context)
         )
       end
 
@@ -524,11 +532,16 @@ module Tasks
     def build_project_view(record, kind)
       open_items = project_open_tasks(record)
       next_items = open_items.select { |item| item.state == "NEXT" }
-      next_date = open_items.filter_map { |item| item.deadline || item.scheduled }.min
+      next_item, next_value = open_items.filter_map do |item|
+        value = item.deadline_value || item.scheduled_value
+        [item, value] if value
+      end.min_by { |item, _value| agenda_sort_key(item) }
       ProjectView.new(
         id: record["id"], title: record["title"], parent_id: record["parent"],
         kind: kind, line: record["line"], open_count: open_items.length,
-        next_count: next_items.length, next_date: next_date,
+        next_count: next_items.length, next_date: next_value&.date,
+        next_time: next_value&.api_time(temporal_context),
+        next_at: next_value && temporal_boundary(next_item, next_value),
         stuck: next_items.empty?, body: record["body"],
         task_ids: open_items.map(&:id), held_count: project_held_tasks(record).length
       )
@@ -540,6 +553,25 @@ module Tasks
         [kind_rank.fetch(view.kind), view.next_date ? 0 : 1,
          view.next_date&.jd || 0, view.title.to_s, index]
       end.map(&:first)
+    end
+
+    def agenda_sort_key(item)
+      value = item.deadline_value || item.scheduled_value
+      return Time.utc(9999, 12, 31) unless value
+      temporal_boundary(item, value)
+    end
+
+    def temporal_boundary(item, value)
+      item.deadline_value ? value.due_boundary(temporal_context) : value.release_instant(temporal_context)
+    end
+
+    def temporalize(value)
+      return value if value.is_a?(TemporalValue)
+      value && TemporalValue.new(date: value)
+    end
+
+    def legacy_context(date)
+      TemporalContext.new(now: Time.utc(date.year, date.month, date.day, 12), timezone: "Etc/UTC")
     end
 
     def section_view(record)

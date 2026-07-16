@@ -26,7 +26,11 @@ module Tui
       lines << row("open", project.open_count.to_s)
       lines << row("next", project.next_count.to_s)
       lines << row("stuck", T.paint(:warning, "no open next action")) if project.stuck
-      lines << row("next date", TaskDetails.date_value(project.next_date, today)) if project.next_date
+      if project.next_date
+        next_label = project.next_time ? "#{project.next_date.iso8601} #{project.next_time[:local]}" : nil
+        lines << row("next date", next_label || TaskDetails.date_value(project.next_date, today))
+      end
+      lines << row("next at", project.next_at.iso8601) if project.next_at
       lines << row("id", T.paint(:muted, project.id)) if project.id
 
       notes = project.body.to_s.split("\n").map(&:strip).reject(&:empty?)
@@ -53,7 +57,10 @@ module Tui
       state = TaskDetails::STATE_SLOT.key?(task.state) ? T.paint(TaskDetails::STATE_SLOT[task.state], task.state) : task.state
       pri = task.priority ? T.paint(:priority, "[##{task.priority}] ") : ""
       date = task.deadline || task.scheduled
-      stamp = date ? "  #{T.paint(Views.due_slot((date - today).to_i), date.strftime("%m-%d"))}" : ""
+      method = task.deadline ? :deadline_value : :scheduled_value
+      value = task.respond_to?(method) && task.public_send(method)
+      label = value&.local_time || date&.strftime("%m-%d")
+      stamp = date ? "  #{T.paint(Views.due_slot((date - today).to_i), label)}" : ""
       "#{state} #{pri}#{T.paint(:title, task.title)}#{stamp}"
     end
   end

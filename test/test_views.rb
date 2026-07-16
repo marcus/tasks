@@ -54,7 +54,7 @@ class TestViews < Minitest::Test
   # "undated rider" (TODO), and a DONE "old subtask"; Home → "plan trip"
   # (INBOX) → "book hotel" (TODO, scheduled 07-02).
   NESTED = [
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "s1", "title" => "Work" },
     { "type" => "task", "id" => "p1", "parent" => "s1", "state" => "NEXT", "priority" => "A",
       "title" => "Ship release", "tags" => %w[@computer], "deadline" => "2026-07-03" },
@@ -89,6 +89,74 @@ class TestViews < Minitest::Test
       assert_operator rs[ci].node.level, :>, rs[pi].node.level, "child nests deeper"
       assert_includes rs[ci].text, "│", "nested row carries the thread glyph"
       refute_includes rs[pi].text, "│", "the depth-0 anchor has no thread glyph"
+    end
+  end
+
+  def test_agenda_projects_fixed_time_into_reader_zone
+    records = [
+      { "type" => "meta", "version" => 2 },
+      { "type" => "section", "id" => "s1", "title" => "Work" },
+      { "type" => "task", "id" => "t1", "parent" => "s1", "state" => "NEXT",
+        "title" => "London call", "deadline" => "2026-07-02",
+        "deadline_time" => { "local" => "17:00", "timezone" => "Europe/London" } },
+    ]
+    with_records(records) do |store|
+      context = Tasks::TemporalContext.new(
+        now: Time.utc(2026, 7, 1, 19), timezone: "America/Los_Angeles"
+      )
+      reader = Tasks::TaskReadModel.new(store.read_snapshot, temporal_context: context)
+      row = V.rows(:agenda, reader.items, today: TODAY, reader: reader).find(&:item)
+
+      assert_includes A.strip(row.text), "09:00 DUE"
+    end
+  end
+
+  def test_next_rows_mark_fixed_values_outside_the_reader_zone
+    records = [
+      { "type" => "meta", "version" => 2 },
+      { "type" => "section", "id" => "s1", "title" => "Work" },
+      { "type" => "task", "id" => "t1", "parent" => "s1", "state" => "NEXT",
+        "title" => "London call", "deadline" => "2026-07-02",
+        "deadline_time" => { "local" => "17:00", "timezone" => "Europe/London" } },
+      { "type" => "task", "id" => "t2", "parent" => "s1", "state" => "NEXT",
+        "title" => "Local floating", "deadline" => "2026-07-02",
+        "deadline_time" => { "local" => "09:00" } },
+    ]
+    with_records(records) do |store|
+      context = Tasks::TemporalContext.new(
+        now: Time.utc(2026, 7, 1, 19), timezone: "America/Los_Angeles"
+      )
+      reader = Tasks::TaskReadModel.new(store.read_snapshot, temporal_context: context)
+      rows = V.rows(:next, reader.items, today: TODAY, reader: reader)
+      texts = rows.filter_map { |row| row.item && A.strip(row.text) }
+
+      fixed_row = texts.find { |text| text.include?("London call") }
+      floating_row = texts.find { |text| text.include?("Local floating") }
+      assert_includes fixed_row, "09:00·BST",
+                      "a fixed value outside the reader zone carries a zone abbreviation"
+      assert_includes floating_row, "09:00"
+      refute_includes floating_row, "·", "floating values carry no zone marker"
+    end
+  end
+
+  def test_agenda_sorts_timed_items_by_exact_boundary_not_file_order
+    records = [
+      { "type" => "meta", "version" => 2 },
+      { "type" => "section", "id" => "s1", "title" => "Work" },
+      { "type" => "task", "id" => "aaaaaaa1", "parent" => "s1", "state" => "NEXT",
+        "title" => "Late", "deadline" => "2026-07-02",
+        "deadline_time" => { "local" => "17:00" } },
+      { "type" => "task", "id" => "aaaaaaa2", "parent" => "s1", "state" => "NEXT",
+        "title" => "Early", "deadline" => "2026-07-02",
+        "deadline_time" => { "local" => "09:00" } },
+    ]
+    with_records(records) do |store|
+      context = Tasks::TemporalContext.new(now: Time.utc(2026, 7, 1, 12), timezone: "Etc/UTC")
+      reader = Tasks::TaskReadModel.new(store.read_snapshot, temporal_context: context)
+
+      rows = V.rows(:agenda, reader.items, today: TODAY, reader: reader)
+
+      assert_equal %w[Early Late], rows.filter_map { |row| row.item&.title }
     end
   end
 
@@ -223,7 +291,7 @@ class TestViews < Minitest::Test
 
   def test_available_from_boundary_and_reveal_badges_use_canonical_availability
     records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "s1", "title" => "Work" },
       { "type" => "task", "id" => "past", "parent" => "s1", "state" => "NEXT",
         "title" => "past release", "scheduled" => "2026-06-30" },
@@ -253,7 +321,7 @@ class TestViews < Minitest::Test
 
   def test_ancestor_availability_hides_descendants_through_closed_hoisting
     records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "s1", "title" => "Work" },
       { "type" => "task", "id" => "parent", "parent" => "s1", "state" => "DONE",
         "title" => "closed timed parent", "scheduled" => "2026-07-09", "closed" => "2026-06-01" },
@@ -347,7 +415,7 @@ class TestViews < Minitest::Test
 
   def test_outline_keeps_nested_sections_as_non_selectable_structure_rows
     records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "aa000001", "title" => "Projects" },
       { "type" => "section", "id" => "aa000002", "parent" => "aa000001", "title" => "Launch" },
       { "type" => "task", "id" => "aa000003", "parent" => "aa000002", "state" => "DONE",
@@ -402,7 +470,7 @@ class TestViews < Minitest::Test
 
   def test_availability_matrix_keeps_flat_tree_reveal_and_project_counts_aligned
     records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "fa000001", "title" => "Work" },
       { "type" => "task", "id" => "fa000002", "parent" => "fa000001", "state" => "NEXT",
         "title" => "Timed next", "scheduled" => "2026-07-05" },
@@ -494,7 +562,7 @@ class TestViews < Minitest::Test
 
   def test_agenda_tree_orders_a_dated_anchor_by_its_earlier_visible_descendant
     records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "ad000001", "title" => "Work" },
       { "type" => "task", "id" => "ad000002", "parent" => "ad000001", "state" => "TODO",
         "title" => "Later dated parent", "deadline" => "2026-07-30" },
@@ -529,7 +597,7 @@ class TestViews < Minitest::Test
 
   def test_agenda_same_date_sorts_by_priority
     jsonl = dump_fixture([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "cccc0001", "title" => "Work" },
       { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001", "state" => "NEXT",
         "priority" => "B", "title" => "beta task tomorrow", "deadline" => "2026-07-02" },
@@ -594,7 +662,7 @@ class TestViews < Minitest::Test
   # important/urgent tags at all.
   def test_quadrants_derived_from_priority_and_deadline
     jsonl = dump_fixture([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "cccc0001", "title" => "Work" },
       { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001", "state" => "NEXT",
         "priority" => "A", "title" => "alpha no date" },
@@ -634,7 +702,7 @@ class TestViews < Minitest::Test
   # A wider urgent_days window pulls a far-out deadline into the urgent column.
   def test_quadrants_urgent_days_widens_window
     jsonl = dump_fixture([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "cccc0001", "title" => "Work" },
       { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001", "state" => "NEXT",
         "priority" => "A", "title" => "far deadline task", "deadline" => "2026-07-20" },
@@ -692,7 +760,7 @@ class TestViews < Minitest::Test
   # "done middle" header appears, matching the outliner's hoisting through closed
   # ancestors.
   PROJ_DONE_PARENT = [
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "s1", "title" => "Work" },
     { "type" => "task", "id" => "done1", "parent" => "s1", "state" => "DONE",
       "title" => "done middle", "closed" => "2026-06-01" },
@@ -715,7 +783,7 @@ class TestViews < Minitest::Test
   # child has no project and drops out of the Projects view entirely — like a
   # bare top-level task. It stays visible in the other views.
   PROJ_ORPHAN = [
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "task", "id" => "done1", "state" => "DONE",
       "title" => "done root", "closed" => "2026-06-01" },
     { "type" => "task", "id" => "oc", "parent" => "done1", "state" => "NEXT",
@@ -737,7 +805,7 @@ class TestViews < Minitest::Test
   # Flat and tree modes both group it and its child under the enclosing SECTION
   # instead of promoting the parent task to a pseudo-project.
   PROJ_DEFERRED = [
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "s1", "title" => "Work" },
     { "type" => "task", "id" => "dp", "parent" => "s1", "state" => "TODO",
       "title" => "deferred project", "tags" => %w[defer] },
@@ -770,7 +838,7 @@ class TestViews < Minitest::Test
 
   # A project with a parent task and its own child, plus a leaf sibling.
   PROJ_NESTED = [
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "s1", "title" => "Work" },
     { "type" => "task", "id" => "p1", "parent" => "s1", "state" => "NEXT",
       "title" => "parent task", "deadline" => "2026-07-03" },
@@ -825,7 +893,7 @@ class TestViews < Minitest::Test
   # pre-existing bug, not introduced by the nesting-visuals change, but one
   # this change's Projects rewrite would otherwise have inherited/surfaced.
   PROJ_DOUBLE_NESTED = [
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "s1", "title" => "Projects" },
     { "type" => "section", "id" => "s2", "parent" => "s1", "title" => "Launch the site" },
     { "type" => "task", "id" => "t1", "parent" => "s2", "state" => "NEXT",
@@ -925,7 +993,7 @@ class TestViews < Minitest::Test
 
   def test_projects_empty_state_when_no_project_sections
     records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "s1", "title" => "Inbox" },
       { "type" => "task", "id" => "t1", "parent" => "s1", "state" => "INBOX", "title" => "loose note" },
     ]
@@ -938,7 +1006,7 @@ class TestViews < Minitest::Test
   end
 
   def test_projects_empty_state_when_nothing_at_all
-    records = [{ "type" => "meta", "version" => 1 }]
+    records = [{ "type" => "meta", "version" => 2 }]
     with_records(records) do |store|
       rs = projects_rows(store)
       assert_equal 1, rs.size
@@ -1015,7 +1083,7 @@ class TestViews < Minitest::Test
   # exactly once, while the DONE parent itself stays pruned. A closed node under
   # a hidden DEFERRED parent, by contrast, stays hidden — defer-hiding wins.
   HOIST = [
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "s1", "title" => "Work" },
     { "type" => "task", "id" => "done1", "parent" => "s1", "state" => "DONE",
       "title" => "done project", "closed" => "2026-06-01" },
@@ -1073,7 +1141,7 @@ class TestViews < Minitest::Test
   # grandchildren (hoisted), a deferred branch (hidden), single-context anchors,
   # dated and undated. Each view renders its qualifying open tasks exactly once.
   BROAD = [
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "s1", "title" => "Work" },
     { "type" => "task", "id" => "n1", "parent" => "s1", "state" => "NEXT",
       "title" => "alpha next", "tags" => %w[@work], "deadline" => "2026-07-03" },
@@ -1142,7 +1210,7 @@ class TestViews < Minitest::Test
   # subtree once under EACH context group (the subtree rides per group).
   def test_multi_context_next_anchor_duplicates_subtree_per_group
     recs = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "s1", "title" => "Work" },
       { "type" => "task", "id" => "m1", "parent" => "s1", "state" => "NEXT",
         "title" => "multi anchor", "tags" => %w[@alpha @beta] },
@@ -1160,7 +1228,7 @@ class TestViews < Minitest::Test
 
   def test_recurring_task_gets_a_badge
     jsonl = dump_fixture([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "cccc0001", "title" => "Work" },
       { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001", "state" => "NEXT",
         "title" => "Pay rent", "tags" => %w[@home], "deadline" => "2026-07-02", "recur" => "+1m" },

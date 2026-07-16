@@ -16,12 +16,15 @@ require_relative "patch_result"
 require_relative "quadrants"
 require_relative "recur"
 require_relative "task_patch"
+require_relative "temporal_value"
+require_relative "temporal_context"
 require_relative "tree"
 require_relative "update_stamp"
 
 module Tasks
   Item = Struct.new(
-    :state, :priority, :title, :tags, :scheduled, :deadline, :line, :source,
+    :state, :priority, :title, :tags, :scheduled, :deadline,
+    :scheduled_value, :deadline_value, :line, :source,
     :recur, :id, :closed, keyword_init: true
   ) do
     def open?    = Store::OPEN_STATES.include?(state)
@@ -209,7 +212,7 @@ module Tasks
     # build a tree from untrusted records. Errors carry only source, line, and a
     # safe validation message — never configured filesystem paths.
     class CheckedRead
-      STATUSES = %i[ok store_invalid unavailable].freeze
+      STATUSES = %i[ok migration_required store_invalid unavailable].freeze
 
       attr_reader :status, :snapshot, :store_revision, :errors, :warnings
 
@@ -225,6 +228,7 @@ module Tasks
       end
 
       def ok? = status == :ok
+      def migration_required? = status == :migration_required
       def store_invalid? = status == :store_invalid
       def unavailable? = status == :unavailable
 
@@ -252,6 +256,10 @@ module Tasks
       def open_descendants = blocks.sum { |block| block.open_ids.length }
     end
     ArchiveRefusal = Struct.new(:reason, :preview, :details, keyword_init: true)
+    MigrationResult = Struct.new(:status, :from_version, :to_version, :files, :backups, :errors,
+                                 keyword_init: true) do
+      def ok? = status == :ok || status == :already_current
+    end
 
     ArchivePlan = Struct.new(:kept, :moved, :preview, keyword_init: true)
     private_constant :ArchivePlan
@@ -331,6 +339,17 @@ module Tasks
                  annotated_check_entries(archive[:check].errors, :archive)
         warnings = annotated_check_entries(live[:check].warnings, :live) +
                    annotated_check_entries(archive[:check].warnings, :archive)
+
+        versions = [live, archive].filter_map do |source|
+          source[:records].first&.fetch("version", nil) if source[:records].first&.fetch("type", nil) == "meta"
+        end
+        if versions.include?(1)
+          return CheckedRead.new(
+            status: :migration_required, store_revision: store_revision,
+            errors: [{ source: nil, line: 1, message: "schema version 1 requires `tasks migrate`" }],
+            warnings: warnings
+          )
+        end
 
         unless errors.empty?
           return CheckedRead.new(
@@ -433,9 +452,75 @@ module Tasks
     # left behind — an out-of-band edit (Claude, another process) makes the step
     # unsafe and it is refused, not forced.
 
-    # Returns [:ok, label] | [:empty] | [:conflict, label]
+    # Returns [:ok, label] | [:empty] | [:conflict, label] | [:migration_required]
     def undo! = history_step(-1)
     def redo! = history_step(1)
+
+    def migrate_schema!(dry_run: false)
+      with_lock do
+        before = snapshot
+        sources = { org: @org, archive: @archive }.select { |_kind, path| File.exist?(path) }
+        return MigrationResult.new(status: :invalid, errors: ["tasks.jsonl does not exist"], files: []) unless sources.key?(:org)
+
+        versions = {}
+        errors = []
+        sources.each do |kind, path|
+          raw = File.read(path, encoding: "UTF-8")
+          if raw.empty? && kind == :archive
+            versions[kind] = 1
+            next
+          end
+          parsed = Format.parse(raw)
+          version = parsed.records.first&.fetch("version", nil)
+          versions[kind] = version
+          unless [1, Format::VERSION].include?(version)
+            errors << "#{kind}: unsupported meta version #{version.inspect}"
+            next
+          end
+          check = Check.check_text(raw, version: version)
+          errors.concat(check.errors.map { |line, message| "#{kind} line #{line}: #{message}" }) unless check.ok?
+          if version == 1 && parsed.records.any? { |record| record["scheduled_time"] || record["deadline_time"] }
+            errors << "#{kind}: version 1 must not contain time metadata"
+          end
+        end
+        return MigrationResult.new(status: :invalid, from_version: versions.values.min,
+                                   to_version: Format::VERSION, files: sources.keys, errors: errors) unless errors.empty?
+        if versions.values.all? { |version| version == Format::VERSION }
+          return MigrationResult.new(status: :already_current, from_version: Format::VERSION,
+                                     to_version: Format::VERSION, files: sources.keys, backups: [], errors: [])
+        end
+        migrating = versions.filter_map { |kind, version| kind if version == 1 }
+        return MigrationResult.new(status: :dry_run, from_version: 1, to_version: Format::VERSION,
+                                   files: migrating, backups: [], errors: []) if dry_run
+
+        backups = []
+        begin
+          sources.each do |kind, path|
+            next unless versions[kind] == 1
+            backup = "#{path}.v1.bak"
+            Atomic.write(backup, before.fetch(kind))
+            backups << backup
+            records = before.fetch(kind).to_s.empty? ? [{ "type" => "meta", "version" => Format::VERSION }] :
+                      Format.parse(before.fetch(kind)).records
+            records.first["version"] = Format::VERSION
+            Atomic.write(path, Format.dump(records))
+          end
+          sources.each_value do |path|
+            result = Check.check(path)
+            raise ArgumentError, result.errors.map(&:last).join("; ") unless result.ok?
+          end
+          after = snapshot
+          @journal.barrier(after)
+          reload!
+          MigrationResult.new(status: :ok, from_version: 1, to_version: Format::VERSION,
+                              files: migrating, backups: backups, errors: [])
+        rescue StandardError => e
+          restore(before)
+          MigrationResult.new(status: :rolled_back, from_version: 1, to_version: Format::VERSION,
+                              files: migrating, backups: backups, errors: [safe_patch_error(e)])
+        end
+      end
+    end
 
     # Create one task from a complete typed command in one checked transaction.
     # Unlike the retired capture! path, recurrence and initial notes are part of
@@ -448,6 +533,9 @@ module Tasks
       with_lock do
         @last_rollback = nil
         before = snapshot
+        if schema_migration_required?
+          return MutationResult.new(status: :migration_required, errors: ["run `tasks migrate`"])
+        end
         begin
           preflight = create_preflight_failure
           if preflight
@@ -517,6 +605,9 @@ module Tasks
       with_lock do
         @last_rollback = nil
         before = snapshot
+        if schema_migration_required?
+          return MutationResult.new(status: :migration_required, errors: ["run `tasks migrate`"])
+        end
         current = nil
         begin
           unless command.id.is_a?(String) && !command.id.empty?
@@ -688,15 +779,16 @@ module Tasks
     # Store-produced and semantic: the field baseline digest never includes a
     # line number or mtime, while location and lifecycle digests protect the
     # wider effects of a move or state change.
-    def apply_changeset!(changeset, today: Date.today)
-      apply_task_changeset!(changeset, strict_revision: true, today: today)
+    def apply_changeset!(changeset, today: Date.today, temporal_context: nil)
+      apply_task_changeset!(changeset, strict_revision: true, today: today,
+                            temporal_context: temporal_context)
     end
 
     # Apply one field-owned semantic change. TaskPatch remains the adapter
     # convenience for existing CLI/TUI save-on-blur paths; it delegates all
     # mutation work to the same changeset transaction below, retaining its
     # established narrow expected-value conflict check.
-    def patch_task!(patch, today: Date.today)
+    def patch_task!(patch, today: Date.today, temporal_context: nil)
       unless patch.respond_to?(:id) && patch.respond_to?(:field) &&
              patch.respond_to?(:value) && patch.respond_to?(:expected)
         return MutationResult.new(status: :invalid, errors: ["expected a Tasks::TaskPatch"])
@@ -708,14 +800,15 @@ module Tasks
         changeset,
         strict_revision: false,
         field_expectations: { field => patch.expected },
-        today: today
+        today: today, temporal_context: temporal_context
       )
     end
 
     # Shared transaction for TaskChangeset and TaskPatch. All field changes are
     # first applied to a detached records copy; an invalid later field therefore
     # cannot leak a partial in-memory mutation into a file write or journal step.
-    def apply_task_changeset!(changeset, strict_revision:, today:, field_expectations: nil)
+    def apply_task_changeset!(changeset, strict_revision:, today:, field_expectations: nil,
+                              temporal_context: nil)
       unless changeset.is_a?(TaskChangeset)
         return MutationResult.new(status: :invalid, errors: ["expected a Tasks::TaskChangeset"])
       end
@@ -725,6 +818,9 @@ module Tasks
         before = snapshot
         current = nil
         repair = false
+        if schema_migration_required?
+          return MutationResult.new(status: :migration_required, errors: ["run `tasks migrate`"])
+        end
         begin
           # Check raw validity before parsing/building: Format.parse assumes a
           # valid UTF-8 String, while Check deliberately contains bad bytes.
@@ -790,7 +886,8 @@ module Tasks
           original_records = Format.dump(records)
           working_records = duplicate_records(records)
           applied = apply_changeset_fields(
-            working_records, changeset, today: today, placement_targets: placement_targets
+            working_records, changeset, today: today, temporal_context: temporal_context,
+            placement_targets: placement_targets
           )
           if applied[:status] != :ok
             return MutationResult.new(status: applied[:status], snapshot: current,
@@ -860,6 +957,11 @@ module Tasks
       current_read_snapshot(include_archive: true).archive_items
     end
 
+    # Lightweight schema deployment check for legacy adapter mutations whose
+    # own transaction has more specific invalid-store diagnostics. This reads
+    # only meta versions; it does not replace the mutation's validation gate.
+    def migration_required? = schema_migration_required?
+
     private
 
     # -- creation --------------------------------------------------------------
@@ -878,6 +980,16 @@ module Tasks
       nil
     end
 
+    def schema_migration_required?
+      [@org, (@archive if File.exist?(@archive))].compact.any? do |path|
+        next false if File.zero?(path)
+        records = fresh_records(path)
+        records.first&.fetch("type", nil) == "meta" && records.first["version"] == 1
+      end
+    rescue StandardError
+      false
+    end
+
     def normalize_create_task(command, today:)
       errors = Hash.new { |fields, field| fields[field] = [] }
       title = normalize_create_text(command.title, :title, errors, required: true)
@@ -885,8 +997,8 @@ module Tasks
       tags = normalize_create_tags(command.tags, errors)
       deferred = normalize_create_deferred(command.deferred, errors)
       tags << DEFER_TAG if deferred && !tags.include?(DEFER_TAG)
-      scheduled = normalize_create_date(command.scheduled, :scheduled, errors)
-      deadline = normalize_create_date(command.deadline, :deadline, errors)
+      scheduled = normalize_create_temporal(command.scheduled, :scheduled, errors)
+      deadline = normalize_create_temporal(command.deadline, :deadline, errors)
       state = normalize_create_state(command.state, errors)
       project = normalize_create_project(command.project, errors)
       parent_id = normalize_create_parent_id(command.parent_id, errors)
@@ -900,7 +1012,7 @@ module Tasks
       # Capturing with a recurrence has always meant "start repeating now" when
       # a date was omitted. Keep that behavior in the command, not the CLI, so
       # every transport gets one definition of a recurring create.
-      scheduled ||= today if recurrence && !deadline
+      scheduled ||= TemporalValue.new(date: today) if recurrence && !deadline
       state ||= (scheduled || deadline ? "TODO" : "INBOX")
       errors[:state] << "can't set recurrence on a #{state} task" if recurrence && DONE_STATES.include?(state)
 
@@ -967,15 +1079,15 @@ module Tasks
       false
     end
 
-    def normalize_create_date(value, field, errors)
+    def normalize_create_temporal(value, field, errors)
       return nil if value.nil? || value == ""
-      return value if value.is_a?(Date)
-      return Date.iso8601(value) if value.is_a?(String)
+      return value if value.is_a?(TemporalValue)
+      return TemporalValue.new(date: value) if value.is_a?(Date) || value.is_a?(String)
 
-      errors[field] << "#{field} must be a date or nil"
+      errors[field] << "#{field} must be a temporal value or nil"
       nil
-    rescue ArgumentError, Date::Error
-      errors[field] << "#{field} must be a date or nil"
+    rescue ArgumentError, Date::Error => e
+      errors[field] << "#{field} #{e.message}"
       nil
     end
 
@@ -1073,8 +1185,8 @@ module Tasks
               "state" => attributes[:state], "title" => attributes[:title] }
       rec["priority"] = attributes[:priority] if attributes[:priority]
       rec["tags"] = attributes[:tags] unless attributes[:tags].empty?
-      rec["scheduled"] = attributes[:scheduled].iso8601 if attributes[:scheduled]
-      rec["deadline"] = attributes[:deadline].iso8601 if attributes[:deadline]
+      write_temporal(rec, "scheduled", attributes[:scheduled]) if attributes[:scheduled]
+      write_temporal(rec, "deadline", attributes[:deadline]) if attributes[:deadline]
       rec["recur"] = attributes[:recurrence] if attributes[:recurrence]
       rec["body"] = (["Captured [#{today}]."] + attributes[:notes]).join("\n")
 
@@ -1271,6 +1383,8 @@ module Tasks
         state: rec["state"], priority: rec["priority"], title: rec["title"],
         tags: tags,
         scheduled: to_date(rec["scheduled"]), deadline: to_date(rec["deadline"]),
+        scheduled_value: TemporalValue.from_record(rec, :scheduled),
+        deadline_value: TemporalValue.from_record(rec, :deadline),
         recur: rec["recur"], id: rec["id"]&.to_s, closed: to_date(rec["closed"]),
         line: rec["line"], source: source
       )
@@ -1369,10 +1483,13 @@ module Tasks
       ordinary_tags = tags.reject { |tag| tag.start_with?("@") || tag == DEFER_TAG }
       parent = records.find { |record| record["id"] == rec["parent"] }
       values = edit_values(rec, tags: tags, contexts: contexts, ordinary_tags: ordinary_tags)
+      scheduled_value = TemporalValue.from_record(rec, :scheduled)
+      deadline_value = TemporalValue.from_record(rec, :deadline)
       EditSnapshot.new(
         id: rec["id"], title: values[:title], priority: values[:priority],
         deferred: values[:deferred], scheduled: values[:scheduled],
-        deadline: values[:deadline], recurrence: values[:recurrence],
+        deadline: values[:deadline], scheduled_value: scheduled_value,
+        deadline_value: deadline_value, recurrence: values[:recurrence],
         contexts: contexts, tags: ordinary_tags, body: values[:body],
         parent: rec["parent"], state: rec["state"], closed: to_date(rec["closed"]),
         baselines: values,
@@ -1385,7 +1502,8 @@ module Tasks
           line: rec["line"],
           tag_sequence: tags,
           date_state: {
-            scheduled: values[:scheduled], deadline: values[:deadline], recurrence: values[:recurrence],
+            scheduled: temporal_expectation(scheduled_value),
+            deadline: temporal_expectation(deadline_value), recurrence: values[:recurrence],
           },
           parent_type: parent && parent["type"],
           parent_title: parent && parent["title"],
@@ -1410,6 +1528,10 @@ module Tasks
         location: rec["parent"],
         state: rec["state"],
       }
+    end
+
+    def temporal_expectation(value)
+      value&.all_day? ? value.date : value
     end
 
     # `siblings_by_parent` is a bulk-computation index (see task_revisions); it
@@ -1437,7 +1559,8 @@ module Tasks
         next unless record["type"] == "task"
         tags = semantic_tags(record)
         [record["id"], record["parent"], record["state"], record["closed"],
-         record["scheduled"], record["deadline"], record["recur"],
+         record["scheduled"], record["scheduled_time"],
+         record["deadline"], record["deadline_time"], record["recur"],
          tags.include?(DEFER_TAG)]
       end
       semantic_digest(owned)
@@ -1453,7 +1576,15 @@ module Tasks
     # Date values are normalized before hashing so equivalent Store snapshots
     # never depend on Ruby object identity or JSONL serialization details.
     def task_revision(values, records, ri, siblings_by_parent: nil)
-      own = semantic_digest(REVISION_OWN_FIELDS.map { |field| [field, revision_value(values[field])] })
+      rec = records[ri]
+      own_fields = REVISION_OWN_FIELDS.map { |field| [field, revision_value(values[field])] }
+      # Time metadata is part of the task's own semantic value: a stale
+      # zone/time edit must fail exactly like a stale date edit. Normalized
+      # stored objects only — never derived instants, so a tzdata update
+      # cannot invalidate revisions.
+      own_fields << [:scheduled_time, revision_value(rec["scheduled_time"])]
+      own_fields << [:deadline_time, revision_value(rec["deadline_time"])]
+      own = semantic_digest(own_fields)
       location = location_fingerprint(records, ri, siblings_by_parent: siblings_by_parent)
       lifecycle = lifecycle_fingerprint(records, ri)
       "v1.#{own}.#{location}.#{lifecycle}"
@@ -1592,7 +1723,8 @@ module Tasks
       JSON.parse(JSON.generate(records))
     end
 
-    def apply_changeset_fields(records, changeset, today:, placement_targets: nil)
+    def apply_changeset_fields(records, changeset, today:, temporal_context: nil,
+                               placement_targets: nil)
       touched_ids = []
       summaries = {}
       changeset.ordered_fields.each do |field|
@@ -1601,7 +1733,7 @@ module Tasks
 
         applied = apply_semantic_patch(
           records, ri, field, changeset.changes.fetch(field), force: changeset.force,
-          today: today, placement_targets: placement_targets
+          today: today, temporal_context: temporal_context, placement_targets: placement_targets
         )
         return applied unless applied[:status] == :ok
 
@@ -1694,11 +1826,19 @@ module Tasks
 
     def normalize_patch_date(value)
       return nil if value.nil? || value == ""
+      return value if value.is_a?(TemporalValue)
       return value if value.is_a?(Date)
       return Date.iso8601(value) if value.is_a?(String)
       :invalid
     rescue ArgumentError, Date::Error
       :invalid
+    end
+
+    def write_temporal(record, key, value)
+      record[key] = value.date.iso8601
+      metadata = value.time_metadata
+      metadata ? record["#{key}_time"] = metadata : record.delete("#{key}_time")
+      record
     end
 
     def restored_edit_snapshot(id)
@@ -1707,12 +1847,13 @@ module Tasks
       ri && build_edit_snapshot(records, ri)
     end
 
-    def apply_semantic_patch(records, ri, field, value, force: false, today:, placement_targets: nil)
+    def apply_semantic_patch(records, ri, field, value, force: false, today:, temporal_context: nil,
+                             placement_targets: nil)
       case field
       when :title      then patch_title(records, ri, value)
       when :priority   then patch_priority(records, ri, value)
       when :deferred   then patch_deferred(records, ri, value)
-      when :activate   then patch_activate(records, ri, value, today: today)
+      when :activate   then patch_activate(records, ri, value, today: today, temporal_context: temporal_context)
       when :scheduled  then patch_date(records, ri, value, :scheduled)
       when :deadline   then patch_date(records, ri, value, :deadline)
       when :date_clear then patch_date_clear(records, ri, value)
@@ -1722,7 +1863,7 @@ module Tasks
       when :tag_delta  then patch_tag_delta(records, ri, value)
       when :body       then patch_body(records, ri, value)
       when :location   then patch_location(records, ri, value, force: force, placement_targets: placement_targets)
-      when :state      then patch_state(records, ri, value, today: today)
+      when :state      then patch_state(records, ri, value, today: today, temporal_context: temporal_context)
       end
     end
 
@@ -1767,28 +1908,38 @@ module Tasks
     # only anchor: activation owns availability, not the recurrence contract.
     # A later completion will require the user to establish a new occurrence
     # date, but activation must never silently discard the cookie.
-    def patch_activate(records, ri, value, today:)
+    def patch_activate(records, ri, value, today:, temporal_context: nil)
       return patch_invalid("activate must be true") unless value == true
 
       rec = records[ri]
       tags = semantic_tags(rec)
       tags.delete(DEFER_TAG)
       replace_optional(rec, "tags", tags)
-      scheduled = to_date(rec["scheduled"])
-      rec.delete("scheduled") if scheduled && scheduled > today
+      scheduled = TemporalValue.from_record(rec, :scheduled, validate: false)
+      future = if scheduled&.local_time && temporal_context
+                 scheduled.release_instant(temporal_context) > temporal_context.now
+               else
+                 scheduled && scheduled.date > today
+               end
+      if future
+        rec.delete("scheduled")
+        rec.delete("scheduled_time")
+      end
       patch_ok(rec)
     end
 
     def patch_date(records, ri, value, kind)
       date = normalize_patch_date(value)
-      return patch_invalid("#{kind} must be a date or nil") if date == :invalid
+      return patch_invalid("#{kind} must be a date/time or nil") if date == :invalid
       rec = records[ri]
       key = kind.to_s
       if date
-        rec[key] = date.iso8601
+        temporal = date.is_a?(TemporalValue) ? date : TemporalValue.new(date: date)
+        write_temporal(rec, key, temporal)
         rec["state"] = "TODO" if rec["state"] == "INBOX"
       else
         rec.delete(key)
+        rec.delete("#{key}_time")
         rec.delete("recur") unless rec["scheduled"] || rec["deadline"]
       end
       patch_ok(rec)
@@ -1805,7 +1956,10 @@ module Tasks
       fields = kind ? [kind] : %i[scheduled deadline]
       return patch_invalid("no matching date stamp") unless fields.any? { |field| rec[field.to_s] }
 
-      fields.each { |field| rec.delete(field.to_s) }
+      fields.each do |field|
+        rec.delete(field.to_s)
+        rec.delete("#{field}_time")
+      end
       rec.delete("recur") unless rec["scheduled"] || rec["deadline"]
       patch_ok(rec)
     end
@@ -2046,12 +2200,13 @@ module Tasks
       nil
     end
 
-    def patch_state(records, ri, value, today:)
+    def patch_state(records, ri, value, today:, temporal_context: nil)
       return patch_invalid("invalid task state") unless Check::STATES.include?(value)
       rec = records[ri]
       from = rec["state"]
       if value == "DONE" && Recur.cookie?(rec["recur"])
-        result = advance_recurrence_records(records, ri, today: today)
+        result = advance_recurrence_records(records, ri, today: today,
+                                            temporal_context: temporal_context)
         return result unless result[:status] == :ok
         result[:summary] = { from: from, to: from, recurrence_advanced: true, cascaded_ids: [] }
         return result
@@ -2076,7 +2231,7 @@ module Tasks
                           cascaded_ids: cascaded_ids })
     end
 
-    def advance_recurrence_records(records, ri, today:)
+    def advance_recurrence_records(records, ri, today:, temporal_context: nil)
       rec = records[ri]
       cookie = rec["recur"]
       return patch_invalid("invalid recurrence cookie") unless Recur.cookie?(cookie)
@@ -2084,8 +2239,19 @@ module Tasks
       scheduled = to_date(rec["scheduled"])
       return patch_invalid("recurrence requires a valid date") unless deadline || scheduled
 
+      context = temporal_context || TemporalContext.new(
+        now: Time.utc(today.year, today.month, today.day, 12), timezone: "Etc/UTC"
+      )
+
       if deadline
-        next_deadline = Recur.next_date(cookie, from: deadline, today: today)
+        deadline_value = TemporalValue.from_record(rec, :deadline, validate: false)
+        next_deadline = Recur.next_temporal_date(
+          cookie, value: deadline_value, kind: :deadline, context: context
+        ) do |candidate|
+          !scheduled || temporal_candidate_valid?(
+            rec, "scheduled", candidate + (scheduled - deadline), context
+          )
+        end
         if rec["scheduled"]
           return patch_invalid("recurrence requires a valid date") unless scheduled
 
@@ -2093,12 +2259,32 @@ module Tasks
         end
         rec["deadline"] = next_deadline.iso8601
       else
-        rec["scheduled"] = Recur.next_date(cookie, from: scheduled, today: today).iso8601
+        scheduled_value = TemporalValue.from_record(rec, :scheduled, validate: false)
+        next_scheduled = Recur.next_temporal_date(
+          cookie, value: scheduled_value, kind: :scheduled, context: context
+        )
+        rec["scheduled"] = next_scheduled.iso8601
       end
       rec["tags"] = semantic_tags(rec) - [DEFER_TAG]
       replace_optional(rec, "tags", rec["tags"])
       rec["body"] = append_body(rec["body"], "- Did [#{today}].")
       patch_ok(rec)
+    rescue ArgumentError, Timezones::Error => error
+      patch_invalid(error.message)
+    end
+
+    def temporal_candidate_valid?(record, field, date, temporal_context)
+      metadata = record["#{field}_time"]
+      return true unless metadata
+      value = TemporalValue.new(date: date, local_time: metadata["local"],
+                                timezone: metadata["timezone"], fold: metadata.fetch("fold", 0),
+                                validate: false)
+      zone_context = temporal_context || TemporalContext.new(now: Time.utc(date.year, date.month, date.day),
+                                                             timezone: "Etc/UTC")
+      value.instant(zone_context)
+      true
+    rescue ArgumentError, Timezones::Error
+      false
     end
 
     # -- id minting ------------------------------------------------------------
@@ -2428,6 +2614,8 @@ module Tasks
     # the lock so the plan and its commit can't race another writer.
     def history_step(delta)
       with_lock do
+        return [:migration_required] if schema_migration_required?
+
         step = @journal.plan(delta)
         return [:empty] unless step
         return [:conflict, step[:label]] unless snapshot == step[:expect]
@@ -2543,6 +2731,8 @@ module Tasks
     # equal archived copy; partial or mismatched overlap refuses safely. Returns
     # the count of roots swept, or ArchiveRefusal when a safety gate blocks it.
     def archive_swept_impl(expected_preview)
+      return ArchiveRefusal.new(reason: :migration_required) if schema_migration_required?
+
       plan = archive_plan(fresh_records(@org))
       if expected_preview && (expected_preview.candidate_ids != plan.preview.candidate_ids ||
                               expected_preview.fingerprint != plan.preview.fingerprint)

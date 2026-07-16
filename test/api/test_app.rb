@@ -75,6 +75,24 @@ class TestApiApp < Minitest::Test
     assert_contract_response(response)
   end
 
+  def test_readiness_reports_a_typed_schema_migration_requirement
+    records = Tasks::Format.parse(File.read(@org)).records.map(&:dup)
+    records.first["version"] = 1
+    File.write(@org, records.map { |record| JSON.generate(record) }.join("\n") + "\n")
+
+    response = get("/readyz")
+    assert_error response, 409, "schema_migration_required"
+    details = JSON.parse(response.body).dig("error", "details")
+    assert_equal 1, details.fetch("current_version")
+    assert_equal 2, details.fetch("required_version")
+    assert_equal "tasks migrate", details.fetch("command")
+    assert_contract_response(response)
+
+    tasks = get("/api/v1/tasks")
+    assert_error tasks, 409, "schema_migration_required"
+    assert_contract_response(tasks)
+  end
+
   def test_list_supports_every_documented_filter_and_rejects_unknown_queries
     cases = {
       "scope=done" => [FIX[:old]],
@@ -108,9 +126,9 @@ class TestApiApp < Minitest::Test
     assert_equal 200, live.status
     task = JSON.parse(live.body).fetch("data")
     expected_keys = %w[
-      archived availability_blocker_id availability_reason available body child_count closed contexts
-      deadline deferred depth descendant_count id links parent_id priority project recurrence revision
-      scheduled section_id source state tags title
+      archived availability_blocker_id availability_reason available available_at body child_count closed contexts
+      deadline deadline_time deferred depth descendant_count id links parent_id priority project recurrence revision
+      scheduled scheduled_time section_id source state tags title
     ]
     assert_equal expected_keys, task.keys.sort
     assert_equal "live", task.fetch("source")
@@ -559,6 +577,114 @@ class TestApiApp < Minitest::Test
     assert_equal "/readyz", entry.fetch("route")
   end
 
+  def test_temporal_create_and_patch_pair_semantics
+    created = json_request(
+      "POST", "/api/v1/tasks",
+      { title: "Customer call", project: "Work", deadline: "2026-07-20",
+        deadline_time: { local: "17:00", timezone: "Europe/London", fold: 0 } }
+    )
+    assert_equal 201, created.status, created.body
+    task = JSON.parse(created.body).fetch("data")
+    assert_equal "2026-07-20T16:00:00Z", task.dig("deadline_time", "instant")
+    assert_equal "Europe/London", task.dig("deadline_time", "effective_timezone")
+    assert_contract_request created, valid: true
+    assert_contract_response created
+
+    id = task.fetch("id")
+    moved = json_request(
+      "PATCH", "/api/v1/tasks/#{id}", { deadline: "2026-07-21" },
+      { "HTTP_IF_MATCH" => created["etag"] }
+    )
+    assert_equal 200, moved.status, moved.body
+    moved_task = JSON.parse(moved.body).fetch("data")
+    assert_equal "2026-07-21", moved_task.fetch("deadline")
+    assert_equal "17:00", moved_task.dig("deadline_time", "local"), "date-only PATCH preserves time intent"
+
+    all_day = json_request(
+      "PATCH", "/api/v1/tasks/#{id}", { deadline_time: nil },
+      { "HTTP_IF_MATCH" => moved["etag"] }
+    )
+    assert_equal 200, all_day.status, all_day.body
+    assert_nil JSON.parse(all_day.body).fetch("data").fetch("deadline_time")
+
+    invalid = json_request(
+      "PATCH", "/api/v1/tasks/#{id}",
+      { deadline: nil, deadline_time: { local: "09:00" } },
+      { "HTTP_IF_MATCH" => all_day["etag"] }
+    )
+    assert_error invalid, 422, "validation_failed"
+
+    orphan = json_request(
+      "PATCH", "/api/v1/tasks/#{id}", { scheduled_time: { local: "09:00" } },
+      { "HTTP_IF_MATCH" => all_day["etag"] }
+    )
+    assert_error orphan, 422, "validation_failed"
+  end
+
+  def test_temporal_api_rejects_derived_fields_unknown_zones_and_dst_gaps
+    current = get("/api/v1/tasks/#{FIX[:flight]}")
+    bad_values = [
+      { deadline_time: { local: "09:00", instant: "2026-07-20T09:00:00Z" } },
+      { deadline_time: { local: "09:00", timezone: "PST" } },
+      { deadline: "2026-03-08", deadline_time:
+        { local: "02:30", timezone: "America/Los_Angeles" } },
+    ]
+    bad_values.each do |body|
+      response = json_request(
+        "PATCH", "/api/v1/tasks/#{FIX[:flight]}", body,
+        { "HTTP_IF_MATCH" => current["etag"] }
+      )
+      assert_error response, 422, "validation_failed"
+    end
+  end
+
+  def test_patching_only_the_date_onto_a_dst_gap_is_a_field_error_not_a_server_error
+    current = get("/api/v1/tasks/#{FIX[:flight]}")
+    seeded = json_request(
+      "PATCH", "/api/v1/tasks/#{FIX[:flight]}",
+      { deadline: "2026-03-01",
+        deadline_time: { local: "02:30", timezone: "America/Los_Angeles" } },
+      { "HTTP_IF_MATCH" => current["etag"] }
+    )
+    assert_equal 200, seeded.status
+
+    fresh = get("/api/v1/tasks/#{FIX[:flight]}")
+    # Moving only the date preserves 02:30 America/Los_Angeles, which does not
+    # exist on the spring-forward date — a client-input 422, never a 503.
+    response = json_request(
+      "PATCH", "/api/v1/tasks/#{FIX[:flight]}", { deadline: "2026-03-08" },
+      { "HTTP_IF_MATCH" => fresh["etag"] }
+    )
+    assert_error response, 422, "validation_failed"
+  end
+
+  def test_api_returns_a_safe_error_when_configured_zone_creates_a_floating_gap
+    records = Tasks::Format.parse(File.read(@org)).records
+    task = records.find { |record| record["id"] == FIX[:flight] }
+    task["deadline"] = "2026-03-08"
+    task["deadline_time"] = { "local" => "02:30" }
+    File.write(@org, Tasks::Format.dump(records))
+    application = Tasks::Application.new(
+      store_factory: Tasks::StoreFactory.new(org: @org, archive: @archive),
+      temporal_context_factory: -> {
+        Tasks::TemporalContext.new(
+          now: Time.utc(2026, 3, 8, 9), timezone: "America/Los_Angeles"
+        )
+      }
+    )
+    app = Tasks::Api::App.new(
+      application: application, timezone: "America/Los_Angeles", logger: StringIO.new
+    )
+
+    response = Rack::MockRequest.new(app).get(
+      "/api/v1/tasks", "HTTP_HOST" => HOST
+    )
+
+    assert_error response, 503, "store_invalid"
+    assert_match(/first valid time is 03:00/, response.body)
+    refute_match(/lib\/tasks|tasks\.jsonl/, response.body)
+  end
+
   private
 
   def api_fixture
@@ -576,7 +702,7 @@ class TestApiApp < Minitest::Test
 
   def archive_fixture
     Tasks::Format.dump([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "cccc0001", "title" => "Archive" },
       { "type" => "task", "id" => FIX[:pr], "parent" => "cccc0001", "state" => "DONE",
         "title" => "Archived duplicate", "closed" => "2026-07-01" },

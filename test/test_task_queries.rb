@@ -82,7 +82,7 @@ class TestTaskQueries < Minitest::Test
 
   def test_list_filter_preserves_deferred_and_archive_scope_behavior
     archive_records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "task", "id" => "dead0001", "state" => "DONE", "title" => "Archived report" },
     ]
 
@@ -176,7 +176,7 @@ class TestTaskQueries < Minitest::Test
   # wrong not-found answer (a 404 in the future HTTP adapter).
   def test_find_with_include_archive_requires_an_archive_loaded_snapshot
     archive_records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "task", "id" => "dead0001", "state" => "DONE", "title" => "Archived report" },
     ]
 
@@ -198,7 +198,7 @@ class TestTaskQueries < Minitest::Test
   end
 
   AVAILABILITY_RECORDS = [
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "aa000001", "title" => "Work" },
     { "type" => "task", "id" => "aa000002", "parent" => "aa000001", "state" => "NEXT",
       "title" => "Future parent", "scheduled" => "2026-07-15" },
@@ -232,7 +232,7 @@ class TestTaskQueries < Minitest::Test
 
   def test_unavailable_and_someday_filters_distinguish_effective_from_own_hold
     records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "ad000001", "title" => "Work" },
       { "type" => "task", "id" => "ad000002", "parent" => "ad000001", "state" => "TODO",
         "title" => "Held parent", "tags" => %w[defer] },
@@ -261,7 +261,7 @@ class TestTaskQueries < Minitest::Test
 
   def test_availability_after_previews_own_fields_with_canonical_ancestor_precedence
     records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "ae000001", "title" => "Work" },
       { "type" => "task", "id" => "ae000002", "parent" => "ae000001", "state" => "TODO",
         "title" => "Later parent", "scheduled" => "2026-07-30" },
@@ -286,7 +286,7 @@ class TestTaskQueries < Minitest::Test
 
   def test_blocker_precedence_is_hold_then_latest_date_then_nearest
     records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "bb000001", "title" => "Work" },
       { "type" => "task", "id" => "bb000002", "parent" => "bb000001", "state" => "TODO",
         "title" => "Held root", "tags" => %w[defer], "scheduled" => "2026-07-30" },
@@ -329,7 +329,7 @@ class TestTaskQueries < Minitest::Test
 
   def test_closed_ancestors_are_hoisted_but_their_blockers_still_apply
     records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "cc000001", "title" => "Work" },
       { "type" => "task", "id" => "cc000002", "parent" => "cc000001", "state" => "DONE",
         "title" => "Transparent closed", "closed" => "2026-07-01" },
@@ -372,14 +372,14 @@ class TestTaskQueries < Minitest::Test
       assert_equal "ancestor_scheduled", json[:availability_reason]
       assert_equal "aa000002", json[:availability_blocker_id]
       assert_nil json[:scheduled], "stored scheduled remains the task's own field"
-      assert_equal 1, Tasks::Format::VERSION
+      assert_equal 2, Tasks::Format::VERSION
       assert task.frozen?
     end
   end
 
-  def test_version_one_boundary_matrix_is_inclusive_inherited_and_read_only
+  def test_date_only_boundary_matrix_is_inclusive_inherited_and_read_only
     records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "bd000001", "title" => "Work" },
       { "type" => "task", "id" => "bd000002", "parent" => "bd000001", "state" => "NEXT",
         "title" => "Yesterday", "scheduled" => "2026-07-13" },
@@ -415,14 +415,14 @@ class TestTaskQueries < Minitest::Test
       assert tomorrow.availability(tomorrow.snapshot.items.find { |item| item.id == "bd000006" }).available?
       assert_includes tomorrow.view(:next).tasks.map(&:id), "bd000006"
       assert_equal before, File.binread(path), "derived availability never migrates or rewrites descendants"
-      assert_equal 1, Tasks::Format.parse(File.read(path)).records.first["version"]
+      assert_equal 2, Tasks::Format.parse(File.read(path)).records.first["version"]
       assert Tasks::Check.check(path).ok?
     end
   end
 
   def test_closed_and_archived_scopes_keep_legacy_own_hold_filtering
     live = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "lc000001", "title" => "Work" },
       { "type" => "task", "id" => "lc000002", "parent" => "lc000001", "state" => "DONE",
         "title" => "Live held", "tags" => %w[defer], "closed" => "2026-07-01" },
@@ -430,7 +430,7 @@ class TestTaskQueries < Minitest::Test
         "title" => "Live timed only", "scheduled" => "2026-08-01", "closed" => "2026-07-01" },
     ]
     archived = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "task", "id" => "ac000001", "state" => "DONE", "title" => "Archived held",
         "tags" => %w[defer], "closed" => "2026-06-01" },
       { "type" => "task", "id" => "ac000002", "state" => "DONE", "title" => "Archived timed only",

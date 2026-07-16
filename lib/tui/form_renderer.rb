@@ -256,6 +256,9 @@ module Tui
     def render_picker(row, width:)
       picker = row.metadata[:picker]
       return [] unless row.metadata[:picker_open] && picker
+      if picker[:kind] == :temporal
+        return Array(picker[:lines]).map { |line| inline_text(line) }
+      end
 
       month = picker.fetch(:month)
       selected = picker.fetch(:selected)

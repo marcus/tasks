@@ -39,7 +39,7 @@ class TestStore < Minitest::Test
   def test_closed_is_per_record_parent_and_child
     with_store do |store, org, _archive|
       File.write(org, dump_fixture([
-        { "type" => "meta", "version" => 1 },
+        { "type" => "meta", "version" => 2 },
         { "type" => "section", "id" => "cccc0001", "title" => "Work" },
         { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001", "state" => "DONE",
           "title" => "Parent", "closed" => "2026-06-20" },
@@ -192,7 +192,7 @@ class TestStore < Minitest::Test
   end
 
   ARCHIVE_TREE_RECORDS = [
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "accc0001", "title" => "Projects" },
     { "type" => "task", "id" => "accc0002", "parent" => "accc0001", "state" => "DONE",
       "title" => "Closed project", "closed" => "2026-07-01" },
@@ -375,7 +375,7 @@ class TestStore < Minitest::Test
     # keeps the snapshot it built, so the archive count must never flicker.
     with_store do |store, org, archive|
       File.write(archive, dump_fixture([
-        { "type" => "meta", "version" => 1 },
+        { "type" => "meta", "version" => 2 },
         { "type" => "task", "id" => "dead0001", "state" => "DONE", "title" => "Archived one" },
       ]))
 
@@ -456,7 +456,7 @@ class TestStore < Minitest::Test
       archived.first.delete("parent")
       archived.first["archived"] = Date.today.iso8601
       archived.first["title"] = "Stale project title"
-      File.write(archive, dump_fixture([{ "type" => "meta", "version" => 1 }] + archived))
+      File.write(archive, dump_fixture([{ "type" => "meta", "version" => 2 }] + archived))
 
       result = store.archive_swept!
 
@@ -476,7 +476,7 @@ class TestStore < Minitest::Test
       root = ARCHIVE_TREE_RECORDS[2].dup
       root.delete("parent")
       root["archived"] = Date.today.iso8601
-      File.write(archive, dump_fixture([{ "type" => "meta", "version" => 1 }, root]))
+      File.write(archive, dump_fixture([{ "type" => "meta", "version" => 2 }, root]))
 
       result = store.archive_swept!
 
@@ -493,7 +493,7 @@ class TestStore < Minitest::Test
 
   def test_archive_expected_preview_is_validated_atomically_by_candidate_fingerprint
     records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "accc2001", "title" => "Projects" },
       { "type" => "task", "id" => "accc2002", "parent" => "accc2001", "state" => "DONE",
         "title" => "Candidate A", "closed" => "2026-07-09" },
@@ -785,7 +785,7 @@ class TestStore < Minitest::Test
   # -- recurrence ------------------------------------------------------------
 
   RECUR_RECORDS = [
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "dddd0001", "title" => "Work" },
     { "type" => "task", "id" => "dddd0002", "parent" => "dddd0001", "state" => "NEXT",
       "title" => "Pay rent", "tags" => %w[@home], "deadline" => "2026-08-01", "recur" => "+1m" },
@@ -888,6 +888,60 @@ class TestStore < Minitest::Test
     end
   end
 
+  def test_timed_completion_recurrence_uses_the_fixed_values_local_date
+    records = [
+      { "type" => "meta", "version" => 2 },
+      { "type" => "section", "id" => "aa000001", "title" => "Work" },
+      { "type" => "task", "id" => "aa000002", "parent" => "aa000001", "state" => "NEXT",
+        "title" => "LA evening recurrence", "deadline" => "2026-07-19",
+        "deadline_time" => { "local" => "17:00", "timezone" => "America/Los_Angeles" },
+        "recur" => ".+1d" },
+    ]
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, dump_fixture(records))
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
+      context = Tasks::TemporalContext.new(
+        now: Time.utc(2026, 7, 20, 0, 30), timezone: "Asia/Tokyo"
+      )
+      snapshot = store.edit_snapshot("aa000002")
+
+      result = store.patch_task!(Tasks::TaskPatch.from(
+        snapshot, field: :state, value: "DONE", history_label: "complete fixed recurrence"
+      ), today: context.local_date, temporal_context: context)
+
+      assert result.ok?
+      assert_equal "2026-07-20", record_for(org, title: "LA evening recurrence")["deadline"]
+    end
+  end
+
+  def test_timed_catch_up_keeps_a_candidate_later_on_the_completion_day
+    records = [
+      { "type" => "meta", "version" => 2 },
+      { "type" => "section", "id" => "bb000001", "title" => "Work" },
+      { "type" => "task", "id" => "bb000002", "parent" => "bb000001", "state" => "NEXT",
+        "title" => "Late UTC recurrence", "deadline" => "2026-07-19",
+        "deadline_time" => { "local" => "23:00", "timezone" => "Etc/UTC" },
+        "recur" => "++1d" },
+    ]
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, dump_fixture(records))
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
+      context = Tasks::TemporalContext.new(
+        now: Time.utc(2026, 7, 20, 0, 30), timezone: "Etc/UTC"
+      )
+      snapshot = store.edit_snapshot("bb000002")
+
+      result = store.patch_task!(Tasks::TaskPatch.from(
+        snapshot, field: :state, value: "DONE", history_label: "complete catch-up recurrence"
+      ), today: context.local_date, temporal_context: context)
+
+      assert result.ok?
+      assert_equal "2026-07-20", record_for(org, title: "Late UTC recurrence")["deadline"]
+    end
+  end
+
   def test_done_via_set_state_also_rolls_recurring
     with_recur_store do |store, org|
       rent = find_item(store, "Pay rent")
@@ -934,7 +988,7 @@ class TestStore < Minitest::Test
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       File.write(org, dump_fixture([
-        { "type" => "meta", "version" => 1 },
+        { "type" => "meta", "version" => 2 },
         { "type" => "section", "id" => "eeee0001", "title" => "W" },
         { "type" => "task", "id" => "eeee0002", "parent" => "eeee0001", "state" => "NEXT",
           "title" => "Parent", "scheduled" => "2026-07-01", "recur" => "+1w" },
@@ -960,7 +1014,7 @@ class TestStore < Minitest::Test
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       File.write(org, dump_fixture([
-        { "type" => "meta", "version" => 1 },
+        { "type" => "meta", "version" => 2 },
         { "type" => "section", "id" => "ffff0001", "title" => "W" },
         { "type" => "task", "id" => "ffff0002", "parent" => "ffff0001", "state" => "NEXT",
           "title" => "Parent", "scheduled" => "2026-07-01" },
@@ -1004,7 +1058,7 @@ class TestStore < Minitest::Test
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       File.write(org, dump_fixture([
-        { "type" => "meta", "version" => 1 },
+        { "type" => "meta", "version" => 2 },
         { "type" => "section", "id" => "aaaa0001", "title" => "W" },
         { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "NEXT",
           "title" => "Both dates", "scheduled" => "2026-07-01", "deadline" => "2026-08-01",
@@ -1024,7 +1078,7 @@ class TestStore < Minitest::Test
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       File.write(org, dump_fixture([
-        { "type" => "meta", "version" => 1 },
+        { "type" => "meta", "version" => 2 },
         { "type" => "section", "id" => "ab000001", "title" => "W" },
         { "type" => "task", "id" => "ab000002", "parent" => "ab000001", "state" => "NEXT",
           "title" => "Completion cadence", "scheduled" => "2026-07-03", "deadline" => "2026-07-10",
@@ -1076,7 +1130,7 @@ class TestStore < Minitest::Test
         task["scheduled"] = entry[:scheduled] if entry[:scheduled]
         task["deadline"] = entry[:deadline] if entry[:deadline]
         content = dump_fixture([
-          { "type" => "meta", "version" => 1 },
+          { "type" => "meta", "version" => 2 },
           { "type" => "section", "id" => "d0000001", "title" => "Work" },
           task,
         ])
@@ -1136,7 +1190,7 @@ class TestStore < Minitest::Test
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       File.write(org, dump_fixture([
-        { "type" => "meta", "version" => 1 },
+        { "type" => "meta", "version" => 2 },
         { "type" => "section", "id" => "aaaa0001", "title" => "W" },
         { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "NEXT",
           "title" => "Rent", "deadline" => "2020-01-01", "recur" => "++0d" },
@@ -1158,7 +1212,7 @@ class TestStore < Minitest::Test
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       File.write(org, dump_fixture([
-        { "type" => "meta", "version" => 1 },
+        { "type" => "meta", "version" => 2 },
         { "type" => "section", "id" => "aaaa0001", "title" => "W" },
         { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "NEXT",
           "title" => "Valid task" },
@@ -1179,7 +1233,7 @@ class TestStore < Minitest::Test
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       File.write(org, dump_fixture([
-        { "type" => "meta", "version" => 1 },
+        { "type" => "meta", "version" => 2 },
         { "type" => "section", "id" => "aaaa0001", "title" => "W" },
         { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "NEXT",
           "title" => "Valid task" },
@@ -1233,7 +1287,7 @@ class TestStore < Minitest::Test
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       File.write(org, dump_fixture([
-        { "type" => "meta", "version" => 1 },
+        { "type" => "meta", "version" => 2 },
         { "type" => "section", "id" => "aaaa0001", "title" => "W" },
         { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "TODO",
           "title" => "Fix me", "scheduled" => "not-a-date" },
@@ -1263,7 +1317,7 @@ class TestStore < Minitest::Test
       # With aaaa0003 the sole invalid record, a patch on it succeeds and the
       # file is only partially repaired — aaaa0002 is still bad, so re-check.
       File.write(org, dump_fixture([
-        { "type" => "meta", "version" => 1 },
+        { "type" => "meta", "version" => 2 },
         { "type" => "section", "id" => "aaaa0001", "title" => "W" },
         { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "TODO",
           "title" => "Fix me", "scheduled" => "not-a-date" },
@@ -1292,7 +1346,7 @@ class TestStore < Minitest::Test
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       File.write(org, dump_fixture([
-        { "type" => "meta", "version" => 1 },
+        { "type" => "meta", "version" => 2 },
         { "type" => "section", "id" => "aaaa0001", "title" => "W" },
         { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "TODO",
           "title" => "Fix me", "scheduled" => "not-a-date" },
@@ -1333,7 +1387,7 @@ class TestStore < Minitest::Test
   # recurring child (cascade retires it, does NOT roll it), and a sibling
   # subtree that must stay untouched.
   CASCADE_RECORDS = [
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "cccc0001", "title" => "Work" },
     { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001", "state" => "TODO",
       "title" => "Project" },
@@ -1453,7 +1507,7 @@ class TestStore < Minitest::Test
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       File.write(org, dump_fixture([
-        { "type" => "meta", "version" => 1 },
+        { "type" => "meta", "version" => 2 },
         { "type" => "section", "id" => "99990001", "title" => "W" },
         { "type" => "task", "id" => "99990002", "parent" => "99990001", "state" => "DONE",
           "title" => "Closed parent", "closed" => "2026-06-01" },
@@ -1473,7 +1527,7 @@ class TestStore < Minitest::Test
   def test_cascade_works_on_a_six_deep_file
     # Depth cap is a mutation-only concern (Stage 3); cascade itself walks any
     # depth. A 6-level chain closes end to end from the root.
-    recs = [{ "type" => "meta", "version" => 1 },
+    recs = [{ "type" => "meta", "version" => 2 },
             { "type" => "section", "id" => "8888aaaa", "title" => "Deep" }]
     prev = "8888aaaa"
     6.times do |n|
@@ -1515,7 +1569,7 @@ class TestStore < Minitest::Test
   # height-2 anchor for the depth-math tests) and a second section (Home) to
   # unnest into.
   NEST_RECORDS = [
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "dddd0001", "title" => "Work" },
     { "type" => "task", "id" => "dddd0002", "parent" => "dddd0001", "state" => "TODO",
       "title" => "Project" },
@@ -1653,7 +1707,7 @@ class TestStore < Minitest::Test
     # A task with no parent at all is Check-valid but has no ancestor section.
     # The ancestor walk must stop at the nil parent (not resolve by_id[nil] to
     # the id-less meta record and spin forever holding the lock).
-    recs = [{ "type" => "meta", "version" => 1 },
+    recs = [{ "type" => "meta", "version" => 2 },
             { "type" => "task", "id" => "8888aaaa", "state" => "TODO", "title" => "Rootless" },
             { "type" => "task", "id" => "8888bbbb", "parent" => "8888aaaa", "state" => "TODO",
               "title" => "Rootless child" }]
@@ -1676,7 +1730,7 @@ class TestStore < Minitest::Test
   def test_move_over_cap_height_subtree_still_moves_to_a_section
     # Escape hatch: a subtree deeper than the cap is never depth-checked when the
     # destination is a section (move!). A 5-deep chain (cap 4) relocates freely.
-    recs = [{ "type" => "meta", "version" => 1 },
+    recs = [{ "type" => "meta", "version" => 2 },
             { "type" => "section", "id" => "7777aaaa", "title" => "Deep" }]
     prev = "7777aaaa"
     5.times do |n|

@@ -5,7 +5,7 @@ module Tasks
   # HTTP adapter can map this vocabulary to 200/404/503 without receiving a
   # Store, a path, or a second change-token read.
   class ApplicationReadResult
-    STATUSES = %i[ok not_found store_invalid unavailable].freeze
+    STATUSES = %i[ok not_found migration_required store_invalid unavailable].freeze
 
     attr_reader :status, :data, :store_revision, :errors, :warnings
 
@@ -22,6 +22,7 @@ module Tasks
 
     def ok? = status == :ok
     def not_found? = status == :not_found
+    def migration_required? = status == :migration_required
     def store_invalid? = status == :store_invalid
     def unavailable? = status == :unavailable
 

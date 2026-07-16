@@ -37,6 +37,8 @@ ENV["TASKS_API_RESOLVED_CONFIG"] = JSON.generate(
   archive: paths.archive,
   urgent_days: paths.urgent_days,
   max_depth: paths.max_depth,
+  timezone: paths.timezone,
+  time_format: paths.time_format,
   links: paths.links,
   link_systems: paths.link_systems,
   port: options[:port]

@@ -2,6 +2,8 @@
 
 require "io/console"
 require "date"
+require "json"
+require "securerandom"
 require "set"
 require_relative "ansi"
 require_relative "theme"
@@ -70,7 +72,7 @@ module Tui
     #             stay off the developer's real CLI/models.
     def initialize(root:, paths: Tasks::Config.resolve(default_dir: root),
                    llm_config: LLM::Config.load, agent_factory: nil, agent_probe: nil,
-                   date_provider: -> { Date.today })
+                   date_provider: nil, time_provider: nil)
       Theme.configure!(name: paths.theme, overrides: paths.colors || {})
       @paths = paths
       # Store remains the long-lived watcher, history/archive, and form-option
@@ -79,15 +81,34 @@ module Tui
       @store  = Store.new(org: paths.org, archive: paths.archive,
                           links: paths.links || {}, link_systems: paths.link_systems || {},
                           max_depth: paths.max_depth)
+      @time_provider_injected = !time_provider.nil?
+      @time_provider = if time_provider.nil?
+                         -> { Time.now.utc }
+                       elsif time_provider.respond_to?(:call)
+                         time_provider
+                       else
+                         -> { time_provider }
+                       end
+      @date_provider_injected = !date_provider.nil?
+      @date_provider = if date_provider.nil?
+                         -> { Tasks::Timezones.local_time(current_time, paths.timezone).to_date }
+                       elsif date_provider.respond_to?(:call)
+                         date_provider
+                       else
+                         -> { date_provider }
+                       end
       @application = Tasks::Application.new(
         store_factory: Tasks::StoreFactory.new(
           org: paths.org, archive: paths.archive, links: paths.links || {},
           link_systems: paths.link_systems || {}, max_depth: paths.max_depth
-        )
+        ),
+        temporal_context_factory: -> {
+          temporal_context
+        }
       )
       @read_model = nil
       @read_model_today = nil
-      @date_provider = date_provider.respond_to?(:call) ? date_provider : -> { date_provider }
+      @read_model_minute = nil
       @urgent_days = paths.urgent_days # deadline window for the quadrants view
       # The (provider, model) switcher cycles these. AgentQueue snapshots an
       # entry and builds one adapter per accepted request, so later cycling can
@@ -144,6 +165,7 @@ module Tui
       @agent_quit_return_mode = nil
       @agent_activity_width = nil
       @agent_activity_second = nil
+      show_schema_migration_prompt if schema_migration_required?
     end
 
     # -- agent selection -----------------------------------------------------
@@ -182,6 +204,32 @@ module Tui
     end
 
     private
+
+    def schema_migration_required?
+      [@paths.org, @paths.archive].any? do |path|
+        next false unless File.exist?(path)
+
+        first = JSON.parse(File.open(path, "r", encoding: "UTF-8", &:readline))
+        first["type"] == "meta" && first["version"] == 1
+      rescue JSON::ParserError, EOFError, SystemCallError
+        false
+      end
+    end
+
+    def show_schema_migration_prompt
+      @ui.modal = Modal.new(
+        title: "Task data migration required",
+        kind: :migration_required,
+        lines: [
+          "This task store uses schema v1. Run the migration before editing.",
+          "Preview: tasks migrate --dry-run",
+          "Apply:   tasks migrate",
+          "The migration writes .v1.bak backups before replacing either file.",
+          "Press y or Return to migrate now; Escape leaves the files unchanged.",
+        ],
+      )
+      @ui.mode = :modal
+    end
 
     def loop_once
       @tick += 1
@@ -228,6 +276,12 @@ module Tui
       size = [height, width]
       changed = @last_paint_size && size != @last_paint_size
       changed ||= !@read_model_today.nil? && current_date != @read_model_today
+      minute = current_time.to_i / 60
+      if @read_model_minute && minute != @read_model_minute
+        invalidate_read_model
+        changed = true
+      end
+      @read_model_minute = minute
       changed
     end
 
@@ -312,9 +366,10 @@ module Tui
     # journal operations. Every presentation read instead comes from this one
     # immutable application result, refreshed after a known or observed write.
     def read_model
-      day = current_date
+      context = temporal_context
+      day = context.local_date
       if @read_model.nil? || @read_model_today != day
-        @read_model = @application.read_tasks(today: day)
+        @read_model = read_tasks_with_temporal_fallback(context)
         @read_model_today = day
       end
       @read_model
@@ -330,14 +385,17 @@ module Tui
     end
 
     def reload_read_model
-      @read_model_today = current_date
-      @read_model = @application.read_tasks(today: @read_model_today)
+      context = temporal_context
+      @read_model_today = context.local_date
+      @read_model_minute = context.now.to_i / 60
+      @read_model = read_tasks_with_temporal_fallback(context)
       clear_row_caches
     end
 
     def invalidate_read_model
       @read_model = nil
       @read_model_today = nil
+      @read_model_minute = nil
       clear_row_caches
     end
 
@@ -367,10 +425,54 @@ module Tui
       return @project_views if @project_views_model.equal?(read) && @project_views
 
       @project_views_model = read
-      @project_views = @application.list_projects(today: today)
+      @project_views = @application.list_projects(
+        today: today, context: tui_operation_context(read.temporal_context)
+      )
     end
 
     def current_date = @date_provider.call
+    def current_time = @time_provider.call.utc
+    def temporal_context
+      now = if @date_provider_injected && !@time_provider_injected
+              date = current_date
+              Time.utc(date.year, date.month, date.day, 12)
+            else
+              current_time
+            end
+      Tasks::TemporalContext.new(now: now, timezone: @paths.timezone, time_format: @paths.time_format)
+    end
+
+    def tui_operation_context(context)
+      Tasks::OperationContext.new(
+        operation_id: "tui_#{SecureRandom.hex(8)}", source: :tui, temporal_context: context
+      )
+    end
+
+    def read_tasks_with_temporal_fallback(context)
+      @application.read_tasks(
+        today: context.local_date, context: tui_operation_context(context)
+      )
+    rescue Tasks::Timezones::Error => error
+      fallback = Tasks::TemporalContext.new(
+        now: context.now, timezone: "Etc/UTC", time_format: context.time_format
+      )
+      unless @ui.modal&.kind == :temporal_context_invalid
+        @ui.modal = Modal.new(
+          title: "Time zone makes a floating time invalid",
+          kind: :temporal_context_invalid,
+          lines: [
+            error.message,
+            "Tasks are shown with a temporary UTC fallback so you can edit the value.",
+            "Choose a valid local time or change timezone in the tasks config.",
+            "Press Escape to continue.",
+          ],
+        )
+        @ui.mode = :modal
+      end
+      @application.read_tasks(
+        today: fallback.local_date, context: tui_operation_context(fallback)
+      )
+    end
 
     def rows(read: nil, today: nil)
       read ||= read_model
@@ -823,12 +925,28 @@ module Tui
     # Modal navigation is reserved for blocking overlays such as help and
     # archive confirmation. Task details remain in list mode in the right panel.
     def modal_key(k)
+      return schema_migration_key(k) if @ui.modal&.kind == :migration_required
       return archive_confirm_key(k) if @ui.modal&.kind == :archive_confirm
       return archive_blocked_key(k) if @ui.modal&.kind == :archive_blocked
       return cancel_queued_agent_requests_key(k) if @ui.modal&.kind == :agent_queue_cancel_confirm
       return project_complete_confirm_key(k) if @ui.modal&.kind == :project_complete_confirm
       return project_archive_confirm_key(k) if @ui.modal&.kind == :project_archive_confirm
       dispatch_action(k, :modal)
+    end
+
+    def schema_migration_key(key)
+      return close_modal if key == "\e"
+      return unless ["y", "Y", "\r", "\n"].include?(key)
+
+      result = @application.migrate_schema
+      if result.ok?
+        @store.reload!
+        invalidate_read_model
+        close_modal
+        flash("task data migrated to schema v#{result.to_version}; .v1.bak backups created")
+      else
+        flash("migration failed: #{Array(result.errors).first || result.status}")
+      end
     end
 
     def prompt_key(k)
@@ -1201,7 +1319,7 @@ module Tui
                else
                  TaskEditorSession.new(store: @store, application: @application,
                                        target_id: item.id, focus: focus,
-                                       today: method(:current_date))
+                                       today: method(:current_date), temporal_context: temporal_context)
                end
       return flash("task no longer exists") if editor.missing?
 
@@ -1263,15 +1381,17 @@ module Tui
       ) do |raw|
         operation_today = current_date
         choice = raw.to_s.strip.downcase
-        date = Dates.parse_when(raw, today: operation_today)
-        unless %w[someday now].include?(choice) || date
-          next "can't parse “#{raw}”; use a date, someday, or now"
+        value = unless %w[someday now].include?(choice)
+                  TaskEditForm.parse_temporal(raw, operation_today, context: temporal_context)
+                end
+        unless %w[someday now].include?(choice) || value
+          next "can't parse “#{raw}”; use a date/time, someday, or now"
         end
 
         snapshot = @application.edit_snapshot(item.id)
         next "task no longer exists" unless snapshot
 
-        changes, label = defer_until_changes(choice, date, item.title)
+        changes, label = defer_until_changes(choice, value, item.title)
         command = Tasks::TaskChangeset.from(
           snapshot, changes: changes, history_label: label
         )
@@ -1303,7 +1423,7 @@ module Tui
       @ui.mode = :form
     end
 
-    def defer_until_changes(choice, date, title)
+    def defer_until_changes(choice, value, title)
       case choice
       when "someday"
         [{ deferred: true }, "on hold: #{title}"]
@@ -1311,8 +1431,8 @@ module Tui
         [{ activate: true }, "activate: #{title}"]
       else
         [
-          { deferred: false, scheduled: date },
-          "defer until #{date.iso8601}: #{title}",
+          { deferred: false, scheduled: value },
+          "defer until #{TaskEditForm.format_temporal(value)}: #{title}",
         ]
       end
     end
@@ -1324,7 +1444,7 @@ module Tui
       blocker = task.availability_blocker_id && reader.task_for(task.availability_blocker_id)
       case task.availability_reason
       when :scheduled
-        "⏳ #{task.title} unavailable until #{task.scheduled.iso8601}"
+        "⏳ #{task.title} unavailable until #{TaskEditForm.format_temporal(task.scheduled_value)}"
       when :ancestor_scheduled
         date = blocker&.scheduled&.iso8601 || "a parent date"
         "⏳ #{task.title} unavailable until #{date} via parent#{blocker ? " #{blocker.title}" : ""}"
@@ -1355,6 +1475,7 @@ module Tui
     def history_op(op, verb)
       kind, label = @store.public_send(op)
       case kind
+      when :migration_required then show_schema_migration_prompt
       when :empty    then flash("nothing to #{verb == "undid" ? "undo" : "redo"}")
       when :conflict then flash("file changed externally — can't #{op.to_s.chomp("!")} “#{label}”")
       else
@@ -1532,6 +1653,7 @@ module Tui
       @detail_panel_model = @read_model
       content = TaskDetails.build(
         task, task.body, content_width, today: @read_model_today,
+        temporal_context: temporal_context,
         links: task.links, project: task.project,
         availability_blocker: task.availability_blocker_id &&
           read_model.task_for(task.availability_blocker_id)
@@ -2220,24 +2342,27 @@ module Tui
       return flash("nothing selected") unless item
 
       target = item.deadline ? "Deadline" : item.scheduled ? "Available from" : "Deadline (new)"
-      field = TermForm::Fields::DateInput.new(
+      field = TaskEditForm::TemporalInput.new(
         key: :value, value: +"", label: "new #{target}",
-        parser: ->(raw, _today) { Dates.parse_when(raw) },
+        parser: ->(raw, today) { TaskEditForm.parse_temporal(raw, today, context: temporal_context) },
+        formatter: TaskEditForm.method(:format_temporal), today: method(:current_date),
+        expose_parse_errors: true,
       )
       @ui.form = Form.new(
         kind: :date, title: "edit date", prompt: "new #{target}",
-        hint: "fri · +3 · 07-15 · esc cancels", min_width: 36,
+        hint: "fri · tomorrow 9am · date time Zone · esc cancels", min_width: 50,
         return_mode: :list, target_id: item.id, field: field
       ) do |raw|
         operation_today = current_date
-        date = Dates.parse_when(raw, today: operation_today)
-        next "can't parse “#{raw}”" unless date
+        value = TaskEditForm.parse_temporal(raw, operation_today, context: temporal_context)
+        next "can't parse “#{raw}”" unless value
         kind = if item.deadline     then :deadline
                elsif item.scheduled then :scheduled
                else                      :deadline
                end
-        result = patch_task(item, field: kind, value: date,
-                            label: "reschedule → #{date.iso8601}: #{item.title}",
+        label_value = TaskEditForm.format_temporal(value)
+        result = patch_task(item, field: kind, value: value,
+                            label: "reschedule → #{label_value}: #{item.title}",
                             today: operation_today)
         unless result.ok?
           reload_store
@@ -2246,7 +2371,7 @@ module Tui
 
         @ui.form_success = lambda do
           promoted = item.state == "INBOX" ? " · INBOX → TODO" : ""
-          flash("→ #{item.title}: #{date.iso8601} (#{date.strftime("%a")})#{promoted}")
+          flash("→ #{item.title}: #{label_value}#{promoted}")
           reselect(item.id)
           refresh_detail_panel if detail_panel?
         end
@@ -2306,6 +2431,7 @@ module Tui
     end
 
     def archive_sweep
+      return show_schema_migration_prompt if schema_migration_required?
       return confirm_archive_project(current_project) if current_project
 
       preview = @store.archive_preview
@@ -2344,6 +2470,8 @@ module Tui
         close_modal
         if result.is_a?(Tasks::Store::ArchiveRefusal)
           case result.reason
+          when :migration_required
+            show_schema_migration_prompt
           when :preview_changed
             flash("task list changed — press x to review the updated archive preview")
           when :archive_conflict

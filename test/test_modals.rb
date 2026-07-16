@@ -34,9 +34,34 @@ class TestTaskDetails < Minitest::Test
     refute lines.any? { |l| l.start_with?("deadline") }
   end
 
+  def test_detail_shows_stored_fixed_time_and_configured_zone_projection
+    records = [
+      { "type" => "meta", "version" => 2 },
+      { "type" => "section", "id" => "s1", "title" => "Work" },
+      { "type" => "task", "id" => "t1", "parent" => "s1", "state" => "NEXT",
+        "title" => "London call", "deadline" => "2026-07-02",
+        "deadline_time" => { "local" => "17:00", "timezone" => "Europe/London" } },
+    ]
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, dump_fixture(records))
+      store = Tui::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
+      context = Tasks::TemporalContext.new(
+        now: Time.utc(2026, 7, 1, 19), timezone: "America/Los_Angeles"
+      )
+      reader = Tasks::TaskReadModel.new(store.read_snapshot, temporal_context: context)
+      task = reader.task_for("t1")
+      lines = texts(D.build(task, task.body, 100, today: TODAY, temporal_context: context))
+
+      assert lines.any? { |line| line.include?("2026-07-02 17:00 Europe/London") }
+      assert lines.any? { |line| line.include?("→ 2026-07-02 09:00 America/Los_Angeles") }
+      assert lines.any? { |line| line.include?("due in 21h") }
+    end
+  end
+
   def test_detail_distinguishes_available_from_and_inherited_on_hold
     records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "s1", "title" => "Work" },
       { "type" => "task", "id" => "p1", "parent" => "s1", "state" => "TODO",
         "title" => "held parent", "tags" => %w[defer] },
@@ -84,7 +109,7 @@ class TestTaskDetails < Minitest::Test
   def test_detail_wraps_long_titles
     with_store do |store, org, _a|
       File.write(org, dump_fixture([
-                        { "type" => "meta", "version" => 1 },
+                        { "type" => "meta", "version" => 2 },
                         { "type" => "section", "id" => "cccc0001", "title" => "X" },
                         { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001",
                           "state" => "TODO", "title" => "very long title word " * 10,

@@ -40,6 +40,13 @@ quadrants urgency window (see `quadrants`), overridable by the `TASKS_URGENT_DAY
 env var, default 3. `max_depth = N` caps how deeply tasks may nest (integer ≥ 1),
 overridable by the `TASKS_MAX_DEPTH` env var, default 4.
 
+`timezone = Area/Location` sets the evaluation/display zone for floating times
+and all-day boundaries. Resolution is `TASKS_TIMEZONE`, config, a valid IANA
+`TZ`, the host `/etc/localtime` zoneinfo link, then `Etc/UTC` with a fallback
+warning. `time_format = 12|24` controls human output; JSON always uses `HH:MM`
+and RFC 3339. Full IANA identifiers are accepted for stored fixed values;
+abbreviations such as `PST` are rejected.
+
 A dotted `prompt.<name>` namespace toggles short facts injected into every agent
 system prompt under a **Current environment** heading (see
 [`prompt-context-injection.md`](plans/implemented/prompt-context-injection.md)):
@@ -96,7 +103,8 @@ detail-panel slots like `panel_title`, `detail_label`, `description`, `link`, `l
   default rather than erroring. Because a hex token follows a space, `color.*`
   lines are exempt from inline `#` comments.
 
-`tasks config` prints the resolved paths, `urgent_days`, `max_depth`, `theme`
+`tasks config` prints the resolved paths, `urgent_days`, `max_depth`, `theme`,
+the effective IANA `timezone`, `time_format` (12 or 24), and tzdb version
 (+ any `color.*`, link, and `prompt.*` overrides), and where each came from.
 `--json` includes `prompt_facts` (the effective name→boolean map).
 
@@ -152,6 +160,13 @@ Edit-mode keys are fixed as follows:
 | `Ctrl-O` | Save the focused field if needed and finish editing, returning to the read panel. |
 | `Ctrl-K` / `Ctrl-L` | Grow/shrink through compact → standard → wide → focus without blur; in task-edit text fields `Ctrl-K` intentionally shadows kill-to-end, while the agent prompt keeps its current `Ctrl-K`. |
 | `Escape` | Close an inner picker first. A dirty field requires a confirming second Escape before only that buffer is reverted; a clean field leaves edit mode. |
+
+Return on a scheduled or deadline row opens one structured temporal control.
+It combines a calendar, 15-minute time adjustment, all-day/floating/fixed mode,
+searchable full IANA zones, and an earlier/later fold choice that appears only
+for an ambiguous civil time. Closing the control changes only the field buffer;
+the complete temporal value is validated and saved atomically by the normal
+save-on-blur rules. Direct text entry remains available.
 
 The key reader treats `Shift-Tab` (`\e[Z`), CSI keys, and ESC-prefixed Alt
 bindings as complete sequences, including when input arrives across reads, so
@@ -269,13 +284,26 @@ missing one. Mutations locate their target by id (falling back to line + title
 otherwise), so an out-of-band reflow or retitle can't misfire an edit onto the
 wrong task. IDs must be unique — `check` reports a collision as an error.
 
-**Dates.** Anywhere a date is accepted: `2026-07-15`, `07-15`, `7/15`,
+**Dates and times.** Anywhere a date is accepted: `2026-07-15`, `07-15`, `7/15`,
 `fri`/`friday`, `today`, `tomorrow`, `+3` (days from today). Same parser as
 the TUI (`lib/tasks/dates.rb`). Bare month-day in the past rolls forward a year.
 
+`due`, `schedule`, and timed `defer` also accept `today 5pm`, `tomorrow at
+09:30`, `fri noon`, `2026-07-20 17:00`, and `2026-07-20T17:00`. A time without
+a zone is floating in the configured evaluation zone. `--timezone
+Europe/London` makes it fixed; `--floating` explicitly selects floating mode;
+`--fold later` selects the later instant during an ambiguous DST fold. A bare
+time is rejected, as are seconds, abbreviations, numeric offsets, unknown IANA
+zones, and nonexistent local times. `TASKS_TIMEZONE` overrides the config's
+`timezone`; `time_format = 12|24` affects human output only.
+If a later configuration-zone change makes a stored floating civil time
+nonexistent, CLI/API reads fail safely with a corrective error instead of a
+trace or partial result. The TUI reports the same error and temporarily
+projects in UTC so the value can be edited.
+
 **Availability and deferral.** `scheduled` is the task's single
-available-from/start/defer-until date; `deadline` is its independent due date.
-An open task is available on and after `scheduled`, and a future date filters it
+available-from/start/defer-until value; `deadline` is its independent due value.
+An open task is available on and after the exact `scheduled` boundary, and a future value filters it
 out of `agenda`, `next`, `quadrants`, `inbox`, and the default `list`. The
 semantic `defer` marker now means an indefinite **On Hold** state
 (Someday/Maybe), not another date. A task retains its lifecycle state while
@@ -286,20 +314,29 @@ any task ancestor has a future available-from date or an On Hold marker. Closed
 ancestor rows are skipped for lifecycle rendering and their open descendants
 are hoisted, but those ancestors remain in the ancestry chain for availability:
 their timed and On Hold constraints still propagate. When several timed
-ancestors block a task, the latest date wins; an On Hold marker wins over every
-date. `defer <ref> <date>` sets timed availability without moving `deadline`;
+ancestors block a task, the latest boundary wins; an On Hold marker wins over every
+date or time. `defer <ref> <date-or-date-time>` sets availability without moving `deadline`;
 `someday <ref>` holds indefinitely; `activate <ref>` clears the task's own hold
 and any own future available-from date. `list --unavailable` (`--deferred/-D`
 compatibility alias) reviews all effective blockers, while
 `list --someday`/`--on-hold` matches only an own indefinite marker. In the TUI,
-`Z` reveals unavailable rows and `z` accepts a date, `someday`, or `now`.
+`Z` reveals unavailable rows and `z` accepts a date/time, `someday`, or `now`.
+
+Date-only deadlines remain on time for their whole calendar date. Timed
+deadlines become overdue strictly after their resolved instant and sort by that
+instant; same-day all-day deadlines sort after timed ones. Times affect task
+semantics only. They do not schedule reminders or notifications.
 
 **Recurrence.** A task *recurs* when it carries a `recur` cookie alongside a
 `scheduled`/`deadline` date: `.+1w`, `++1m`, `+2d`. The prefix sets what the
 interval is measured from on completion — `+` fixed (stored date + interval, one
 hop), `++` catch-up (repeated until strictly future), `.+` from-completion (today
 + interval) — and the suffix is a count plus a unit (`d`/`w`/`m`/`y`; months/years
-step by calendar with day-clamp, so Jan 31 `+1m` → Feb 28). Completing a recurring
+step by calendar with day-clamp, so Jan 31 `+1m` → Feb 28). Timed `++` catch-up
+compares the exact release/due boundary, and `.+` uses the completion date in
+the value's effective zone. A nonexistent recurring wall time is skipped by
+another whole interval without changing its clock time or fixed zone.
+Completing a recurring
 task (`done`, or `state … DONE`) rolls its date forward and **leaves it open**
 instead of setting `closed`; it logs a `- Did [date]` line to the body since the
 task never closes. `cancel` still truly closes it
@@ -500,8 +537,8 @@ and `sources.memory` (`"TASKS_MEMORY env"` / `"config file"` /
 | `next` | `n` | ✅ | NEXT actions by context. `--json` |
 | `quadrants` | `q` | ✅ | Covey 2×2 from priority (A/B ⇒ important) + a `DEADLINE` within `urgent_days` (default 3, overdue counts) ⇒ urgent, with `important`/`urgent` tags as overrides. `--json` adds `quadrant`. |
 | `inbox` | `i` | ✅ | Unprocessed INBOX items. `--json` |
-| `projects` | `pj` | ✅ | Projects and areas rolled up over their open, non-deferred tasks (at any depth). Projects are the section children of the top-level "Projects" heading (listed even when empty); areas are the other top-level sections that currently hold open work (Inbox excluded). Each carries an open count, a NEXT count, the soonest deadline-or-scheduled date, and a `stuck` flag (no open NEXT — including an empty project). Ordered projects-before-areas, then by soonest date (nil last), then title. `--json` is an array of project objects `{id, title, parent_id, kind, open_count, next_count, next_date, stuck, held_count, body, task_ids}` (nil-valued keys omitted; `held_count` — open descendant tasks excluded from the rollup because deferred/held — is always present; dates ISO). |
-| `show <ref>` | `s` | ✅ | One task in full: rendered headline + body/notes + links. Human output labels `scheduled` as `available from` and reports effective availability. `--json` includes `{..., deferred, scheduled, deadline, available, availability_reason, availability_blocker_id, ...}`; reasons are `available`, `scheduled`, `on_hold`, `ancestor_scheduled`, `ancestor_on_hold`, or `closed`. `notes` is the task's `body` split to lines (a child's body never leaks in — children are separate records); `project` is the nearest OPEN ancestor — a live parent task, else the enclosing section; closed ancestors are skipped. |
+| `projects` | `pj` | ✅ | Projects and areas rolled up over their open, non-deferred tasks (at any depth). Projects are the section children of the top-level "Projects" heading (listed even when empty); areas are the other top-level sections that currently hold open work (Inbox excluded). Each carries an open count, a NEXT count, the soonest deadline-or-scheduled value, and a `stuck` flag (no open NEXT — including an empty project). Ordered projects-before-areas, then by soonest boundary (nil last), then title. `--json` adds `next_time` and `next_at` beside the compatibility `next_date`. |
+| `show <ref>` | `s` | ✅ | One task in full: rendered headline + body/notes + links. Human output labels `scheduled` as `available from` and reports exact effective availability. `--json` keeps nullable ISO `scheduled`/`deadline` and adds nullable `scheduled_time`/`deadline_time` plus `available_at`; time objects carry `local`, stored `timezone`, `fold`, `effective_timezone`, and derived UTC `instant`. Reasons remain `available`, `scheduled`, `on_hold`, `ancestor_scheduled`, `ancestor_on_hold`, or `closed`. |
 | `id <ref> [--json]` | | ✅ | Print a task's stable `id`, minting one if absent (post-migration every record already has one — this is the repair path). Idempotent. Resolves refs regardless of state. |
 | `links [<ref>]` | `urls` | ✅ | Links found in task titles/notes, classified by system (`slack`, `jira`, `github`, …; unknown hosts fall back to the host name; Confluence-on-Atlassian is told apart from Jira by its `/wiki` path). One task's links with `<ref>`; every open task's otherwise. `--system <name>` filters (case-insensitive), `--all` widens the listing to done + archived (`<ref>` resolution itself stays live-file only), `--json` emits `{links: [{url, label, system, task, id, line, source}]}`. Recognizes org links `[[url][label]]`, bare URLs, and configured shorthands (below), in file order; org-internal targets (`[[id:…]]`, `[[file:…]]`, headline links) are org navigation, not links. |
 | `open <ref> [n]` | `o` | ✅ | Open a task's link in the browser (macOS `open` / `xdg-open`; `TASKS_OPENER` overrides). One link opens directly; several are listed numbered (exit 1) unless picked by 1-based `n` or `--system <name>`. `--print` prints the URL instead of launching. Resolves refs regardless of state (live file). |
@@ -509,7 +546,7 @@ and `sources.memory` (`"TASKS_MEMORY env"` / `"config file"` /
 
 JSON list shape (`--json` on list/agenda/next/quadrants/inbox) — a flat array,
 already sorted the way the text view sorts:
-`[{"state": "NEXT", "priority": "A", "title": "…", "tags": [..], "contexts": [..], "deferred": false, "scheduled": null, "deadline": "2026-07-02", "available": true, "availability_reason": "available", "availability_blocker_id": null, "recur": null, "line": 17, "source": "live", "headline": "NEXT [#A] …"}]`
+`[{"state": "NEXT", "priority": "A", "title": "…", "tags": [..], "contexts": [..], "deferred": false, "scheduled": null, "scheduled_time": null, "deadline": "2026-07-02", "deadline_time": null, "available": true, "available_at": null, "availability_reason": "available", "availability_blocker_id": null, "recur": null, "line": 17, "source": "live", "headline": "NEXT [#A] …"}]`
 (`headline` is the star-less summary rendered from the record's fields; `source`
 is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or `null`.)
 `quadrants --json` adds `"quadrant": "Q1".."Q4"` per item. Empty result → `[]`.
@@ -518,7 +555,7 @@ is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or `nul
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `capture "text"` | `add`, `c` | ✅ | New INBOX item. Flags: `--due <date>`, `--scheduled <date>` (available from), `--priority A\|B\|C`, `--tag t` (repeatable), `--context @x` (repeatable), `--state STATE`, `--project "Heading"`, `--under <ref>`, `--recur <interval>`, plus `--dry-run`/`--json`. A capture with a date lands already-processed as TODO (override with `--state`); a future `--scheduled` task remains unavailable until that day. `--recur` implies a date (defaults to scheduling it today) and lands it repeating; `--project` files it under a section matched by name — top-level **or** nested (exact title, then substring; default: Inbox). `--under <ref>` instead nests it as the last child of an existing task (mutually exclusive with `--project`; exit 1 if both) — capped at `max_depth`. |
+| `capture "text"` | `add`, `c` | ✅ | New INBOX item. `--due` and `--scheduled` accept complete date/time expressions. Each has independent `--due-timezone`/`--scheduled-timezone`, `--due-floating`/`--scheduled-floating`, and `--due-fold`/`--scheduled-fold` modifiers; a modifier without its matching value is rejected. Other flags remain `--priority`, repeatable tags/contexts, state, project/under, recurrence, dry-run, and JSON. A capture with either temporal value lands as TODO unless state is explicit. |
 
 ## Update (all take `<ref>`, all support `--dry-run`)
 
@@ -527,8 +564,8 @@ is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or `nul
 | `done <ref>` | `complete`, `close`, `d` | ✅ | Mark DONE + `closed` date, cascading to every open descendant (see Cascading completion); recurring descendants close outright and their recur cookie is retired. A recurring task (recur cookie on its date) rolls forward and stays open instead — output shows `↻ <title> → next <date>` — and does **not** cascade. `--dry-run` also previews how many open descendants would close. |
 | `cancel <ref>` | `drop` | ✅ | Mark CANCELLED + `closed` date. |
 | `state <ref> <STATE>` | `mv` | ✅ | Any state transition (INBOX/TODO/NEXT/WAITING/DONE/CANCELLED). Enforces: entering DONE/CANCELLED sets `closed`; leaving them clears it. Entering DONE cascades to open descendants (see Cascading completion); entering CANCELLED does not. Resolves refs across open *and* closed tasks so you can reopen a DONE item (reopening does not reopen cascaded descendants). |
-| `due <ref> <date>` | `deadline`, `reschedule` | ✅ | Set/replace `deadline`. INBOX items promote to TODO. |
-| `schedule <ref> <date>` | | ✅ | Set/replace the available-from/start date (`scheduled`) only. A future date hides the task, but this command does not clear an On Hold marker; callers that mean timed deferral use `defer`. Same INBOX promotion. |
+| `due <ref> <date-or-date-time>` | `deadline`, `reschedule` | ✅ | Atomically replace `deadline`; accepts `--timezone ZONE` or `--floating`, plus `--fold earlier\|later`. Omitting time creates an all-day value and clears old time metadata. INBOX items promote to TODO. |
+| `schedule <ref> <date-or-date-time>` | | ✅ | Atomically replace `scheduled` with the same temporal flags. A future exact boundary hides the task, but this command does not clear an On Hold marker; callers that mean deferral use `defer`. Same INBOX promotion. |
 | `undate <ref>` | | ✅ | Remove `scheduled` and/or `deadline` (`--kind deadline\|scheduled` to pick one). |
 | `priority <ref> <A\|B\|C\|none>` | `pri` | ✅ | Set or clear the `priority` field. |
 | `retitle <ref> "new title"` | `rename` | ✅ | Replace the `title`; tags/priority/state untouched. |
@@ -537,7 +574,7 @@ is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or `nul
 | `move <ref> ("Section" \| --under <ref> \| --top)` | | ✅ | Relocate a task's whole subtree by re-pointing its `parent`. Exactly one destination: a positional **section** name (out of `Inbox` into `Work`), `--under <ref>` to **nest** below another task, or `--top` to **unnest** to the section level. A section name resolves in the same widening tiers as `capture --project` (exact top-level, exact any-level, substring top-level, substring any-level; case-insensitive), so a **nested project sub-section** — e.g. a project under the "Projects" root — is a valid destination, not just a top-level heading. Section and `--top` moves are never depth-checked; `--under` is capped at `max_depth` (over-cap exits 1 with a depth message). Nesting under itself or a descendant exits 1 (cycle). `--top` on an already-top-level task prints "already at top level" (exit 0, no-op). See Nesting. |
 | `move <ref> ["Section" \| --under <ref>] --before <ref>` | | ✅ | Place the whole subtree before a stable sibling. Without an explicit destination, infer the anchor's current parent; otherwise require the anchor to be a direct child of the named task/section. Not combinable with `--top`. Exact errors and human/JSON/dry-run output are frozen under Manual sibling placement above. |
 | `recur <ref> <interval>` | `repeat`, `every` | ✅ | Attach/replace the `recur` cookie on the task's date. `<interval>`: a cookie (`.+1w`/`+2d`/`++1m`) or friendly form (`weekly`/`daily`/`monthly`/`yearly`/`2w`/`every 3 days`); `off`/`none` clears it. `--from schedule\|completion` picks `+`/`.+` for a bare interval (default `completion` → `.+`). `--on <date>` seeds a `deadline` when the task has no date yet (else it errors). `--dry-run`/`--json`. |
-| `defer <ref> [date]` | `snooze` | ✅ | With a date, atomically set `scheduled` to the parsed available-from date and clear the task's own indefinite marker, preserving `deadline`; before that date the task is unavailable. Without a date, backward-compatibly put it On Hold indefinitely. Output and `--dry-run` report effective ancestor-aware availability. |
+| `defer <ref> [date-or-date-time]` | `snooze` | ✅ | With a value, atomically set `scheduled` and clear the task's own indefinite marker, preserving `deadline`; accepts the same temporal flags as `schedule`. Without a value, put it On Hold indefinitely. Output and `--dry-run` report exact ancestor-aware availability. |
 | `someday <ref>` | | ✅ | Canonical spelling for an indefinite Someday/Maybe / On Hold task. Adds the own `defer` marker without changing either date. Idempotent. |
 | `activate <ref>` | `undefer`, `resume` | ✅ | Make the task available now: clear its own indefinite marker and clear its own `scheduled` only when that date is in the future. A blocker inherited from an ancestor remains effective and is reported. Resolves unavailable open tasks. |
 
@@ -602,8 +639,9 @@ no fuzzy refs (a transport difference per design rule 7). See
 | `delete <ref>` | | ✅ | Undoable **hard delete** of a task's subtree from the live file — not an alias for `CANCELLED`, and it never touches `archive.jsonl`. A leaf deletes directly; a task that still has descendants is refused (exit 1) unless `--cascade` removes the whole contiguous subtree as one journal entry. Deleting never hoists or reparents children. Archived-only ids are not found (exit 2 via ref resolution / `not_found`); a section id is rejected (delete targets tasks). Resolves open tasks by default; `--include-done` widens to closed live tasks (they are still live records). Reports every removed task's pre-delete headline (`--json` → `{deleted: [..]}`); `--dry-run` prints what would be deleted, including the descendant count when cascading, and writes nothing. Undoable via `tasks undo` (restores the exact prior bytes). Cancellation/archival is usually the right call — `delete` is for genuine mistakes. |
 | `undo` | | ✅ | Revert the last mutation via the on-disk journal (`Tasks::Journal`, under `$XDG_STATE_HOME/tasks/journal/`), shared with the TUI and across CLI runs. Refuses (exit 1) if `tasks.jsonl` changed out-of-band since that edit — resolve with `git diff` / `git checkout -- tasks.jsonl`. |
 | `redo` | | ✅ | Replay the last undone mutation; same shared journal and conflict guard as `undo`. |
+| `migrate [--dry-run] [--json]` | | ✅ | Check and migrate schema-v1 live/archive files to v2 under the Store lock. The migration changes only each meta version, writes `.v1.bak` backups for every existing source (including a zero-byte backup for an empty archive), validates both outputs, rolls both back on failure, and establishes an undo-journal schema barrier. It is idempotent. Preview with `--dry-run` before upgrading every machine; old binaries refuse v2. Before any v2 edits, explicit recovery may restore live and archive backups together; after v2 edits, reconcile them first because backup restoration discards later work. |
 | `-p [--provider N] [--model N] "prompt"` | | ✅ | Natural-language request via a headless LLM agent (Claude CLI by default, or any configured harness). Leading `--provider`/`--model` override the config default for one run; see [LLM agent settings](#llm-agent-settings). |
-| `config [--json]` | | ✅ | Print resolved file paths (tasks file, archive, config file), `urgent_days`, `max_depth`, `theme` (+ any `color.*` overrides), `prompt_facts` (effective `prompt.*` toggles), and the source of each (`TASKS_FILE env`, `TASKS_DIR env`, `TASKS_URGENT_DAYS env`, `TASKS_MAX_DEPTH env`, `TASKS_THEME env`, `NO_COLOR env`, `config file`, `default`). |
+| `config [--json]` | | ✅ | Print resolved file paths, `urgent_days`, `max_depth`, theme/colors, effective `timezone`, `time_format`, tzdb version, fallback warning, prompt facts, and each setting's source. |
 | `help` | `-h`, `--help` | ✅ | Grouped command reference. Also printed (to stderr, exit 1) on an unknown/absent command. |
 
 Ideas beyond this spec live in `docs/ideas.md`.

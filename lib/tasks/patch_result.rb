@@ -6,7 +6,7 @@ module Tasks
   # outcome consistently for a CLI, TUI, or a future transport.
   class MutationResult
     STATUSES = %i[
-      ok no_change not_found stale invalid conflict cycle too_deep store_invalid unavailable
+      ok no_change not_found stale invalid conflict cycle too_deep migration_required store_invalid unavailable
     ].freeze
 
     # `missing` was the patch-only spelling before Store results became a
@@ -24,6 +24,7 @@ module Tasks
       conflict: 1,
       cycle: 1,
       too_deep: 1,
+      migration_required: 1,
       store_invalid: 1,
       unavailable: 1,
     }.freeze
@@ -37,6 +38,7 @@ module Tasks
       conflict: :conflict,
       cycle: :invalid,
       too_deep: :invalid,
+      migration_required: :invalid,
       store_invalid: :invalid,
       unavailable: :invalid,
     }.freeze
@@ -48,6 +50,7 @@ module Tasks
       conflict: "Field changed externally",
       cycle: "cycle",
       too_deep: "too deep",
+      migration_required: "task data migration required; run `tasks migrate`",
       store_invalid: "task list failed validation",
       unavailable: "task list unavailable",
     }.freeze
@@ -80,6 +83,7 @@ module Tasks
     def invalid? = status == :invalid
     def cycle? = status == :cycle
     def too_deep? = status == :too_deep
+    def migration_required? = status == :migration_required
     def store_invalid? = status == :store_invalid
     def unavailable? = status == :unavailable
 

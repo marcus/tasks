@@ -24,15 +24,27 @@ module Tasks
     MergeError = Class.new(StandardError)
     EXCLUDED_FIELDS = Set["line", "updated"].freeze
     STATE_FIELDS = Set["state", "closed"].freeze
-    SPECIAL_FIELDS = (EXCLUDED_FIELDS + STATE_FIELDS + Set["tags", "body"]).freeze
+    # A date and its nested time metadata are one logical value; resolving them
+    # independently could attach one side's clock/zone to the other side's date.
+    TEMPORAL_PAIRS = { "scheduled" => "scheduled_time", "deadline" => "deadline_time" }.freeze
+    SPECIAL_FIELDS = (EXCLUDED_FIELDS + STATE_FIELDS + Set["tags", "body"] +
+                      TEMPORAL_PAIRS.keys + TEMPORAL_PAIRS.values).freeze
     TERMINAL_STATES = Set["DONE", "CANCELLED"].freeze
 
     module_function
 
     def merge(base_text:, ours_text:, theirs_text:)
-      base = parse_side("base", base_text, allow_empty: true)
       ours = parse_side("ours", ours_text)
       theirs = parse_side("theirs", theirs_text)
+      version = declared_version(ours)
+      unless declared_version(theirs) == version
+        raise MergeError, "ours is schema v#{version} but theirs is v#{declared_version(theirs)}; " \
+                          "run `tasks migrate` on both clones before merging"
+      end
+      if version && version > Format::VERSION
+        raise MergeError, "sides are schema v#{version}, newer than this binary supports (v#{Format::VERSION})"
+      end
+      base = parse_side("base", base_text, allow_empty: true, max_version: version)
       events = []
       base_by_id = index_by_id(base)
       ours_by_id = index_by_id(ours)
@@ -52,7 +64,7 @@ module Tasks
 
       records = order_records(merged_by_id, ours, theirs, base)
       text = Format.dump(records)
-      validation = Check.check_text(text)
+      validation = Check.check_text(text, version: version || Format::VERSION)
       unless validation.ok?
         details = validation.errors.map { |line, message| "line #{line}: #{message}" }.join("; ")
         raise MergeError, "merged output is invalid: #{details}"
@@ -63,7 +75,11 @@ module Tasks
       Result.new(text: nil, events: [].freeze, error: error.message)
     end
 
-    def parse_side(label, text, allow_empty: false)
+    # A side validates against its own declared schema version so the common
+    # ancestor of two already-migrated clones (still v1) does not abort the
+    # merge. `max_version` caps how old a side may lag: the base may trail
+    # ours/theirs across the migration boundary, but never lead them.
+    def parse_side(label, text, allow_empty: false, max_version: nil)
       utf8 = text.dup.force_encoding(Encoding::UTF_8)
       raise MergeError, "#{label} is not valid UTF-8" unless utf8.valid_encoding?
       return [] if allow_empty && utf8.empty?
@@ -73,13 +89,23 @@ module Tasks
         details = parsed.errors.map { |line, message| "line #{line}: #{message}" }.join("; ")
         raise MergeError, "#{label} cannot be parsed: #{details}"
       end
-      validation = Check.check_parsed(parsed)
+      version = declared_version(parsed.records)
+      if max_version && version && version > max_version
+        raise MergeError, "#{label} is schema v#{version}, newer than the sides being merged (v#{max_version})"
+      end
+      validation = Check.check_parsed(parsed, version: version || Format::VERSION)
       unless validation.ok?
         details = validation.errors.map { |line, message| "line #{line}: #{message}" }.join("; ")
         raise MergeError, "#{label} is invalid: #{details}"
       end
 
       parsed.records
+    end
+
+    def declared_version(records)
+      meta = records.find { |record| record["line"] == 1 } || records.first
+      version = meta && meta["type"] == "meta" ? meta["version"] : nil
+      version.is_a?(Integer) ? version : nil
     end
 
     # Deleting a subtree on one side while the other edits a descendant keeps
@@ -198,6 +224,12 @@ module Tasks
         assign(merged, field, value)
       end
 
+      TEMPORAL_PAIRS.each do |date_field, time_field|
+        next unless keys.include?(date_field) || keys.include?(time_field)
+
+        merge_temporal_pair!(merged, date_field, time_field, base, ours, theirs, event)
+      end
+
       if keys.include?("tags")
         assign(merged, "tags", merge_tags(value_of(base, "tags"), value_of(ours, "tags"),
                                             value_of(theirs, "tags")))
@@ -224,6 +256,25 @@ module Tasks
       event[:conflicts] << field
       winner = lww_side(ours, theirs, event, field)
       winner == :ours ? ours_value : theirs_value
+    end
+
+    # Resolve a date and its time metadata as one unit: the classic 3-way rules
+    # apply to the [date, time] tuple, and a genuine conflict is decided once,
+    # with the winning side supplying both halves.
+    def merge_temporal_pair!(merged, date_field, time_field, base, ours, theirs, event)
+      base_pair = [value_of(base, date_field), value_of(base, time_field)]
+      ours_pair = [value_of(ours, date_field), value_of(ours, time_field)]
+      theirs_pair = [value_of(theirs, date_field), value_of(theirs, time_field)]
+
+      winner = if ours_pair == theirs_pair then ours_pair
+               elsif ours_pair == base_pair then theirs_pair
+               elsif theirs_pair == base_pair then ours_pair
+               else
+                 event[:conflicts] << date_field
+                 lww_side(ours, theirs, event, date_field) == :ours ? ours_pair : theirs_pair
+               end
+      assign(merged, date_field, winner[0])
+      assign(merged, time_field, winner[1])
     end
 
     def merge_tags(base_tags, ours_tags, theirs_tags)

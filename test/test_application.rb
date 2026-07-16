@@ -18,7 +18,7 @@ class TestApplication < Minitest::Test
 
   def test_query_methods_return_phase_two_views_without_exposing_a_store
     archive_records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "task", "id" => "dead0001", "state" => "DONE", "title" => "Archived report" },
     ]
 
@@ -148,7 +148,7 @@ class TestApplication < Minitest::Test
 
   def test_application_injects_one_today_into_list_view_and_resource_reads
     records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "dd000001", "title" => "Work" },
       { "type" => "task", "id" => "dd000002", "parent" => "dd000001", "state" => "NEXT",
         "title" => "Tomorrow", "scheduled" => "2026-07-15" },
@@ -175,7 +175,7 @@ class TestApplication < Minitest::Test
 
   def test_checked_results_carry_data_and_global_revision_from_one_snapshot
     archive_records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "task", "id" => "dead0001", "state" => "DONE", "title" => "Archived report" },
     ]
 
@@ -237,7 +237,7 @@ class TestApplication < Minitest::Test
   def test_checked_task_lookup_is_exact_to_the_requested_source
     shared_id = FIX[:flight]
     archive_records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "task", "id" => shared_id, "state" => "DONE", "title" => "Archived flight" },
     ]
 

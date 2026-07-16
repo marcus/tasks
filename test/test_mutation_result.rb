@@ -6,7 +6,7 @@ require "tasks/patch_result"
 class TestMutationResult < Minitest::Test
   def test_the_shared_vocabulary_is_complete_and_immutable
     assert_equal %i[
-      ok no_change not_found stale invalid conflict cycle too_deep store_invalid unavailable
+      ok no_change not_found stale invalid conflict cycle too_deep migration_required store_invalid unavailable
     ], Tasks::MutationResult::STATUSES
 
     result = Tasks::MutationResult.new(
@@ -40,6 +40,7 @@ class TestMutationResult < Minitest::Test
     assert_equal 0, Tasks::MutationResult.new(status: :ok).cli_exit_code
     assert_equal 0, Tasks::MutationResult.new(status: :no_change).cli_exit_code
     assert_equal 2, Tasks::MutationResult.new(status: :not_found).cli_exit_code
+    assert_equal 1, Tasks::MutationResult.new(status: :migration_required).cli_exit_code
     assert_equal 1, Tasks::MutationResult.new(status: :unavailable).cli_exit_code
 
     missing = Tasks::MutationResult.new(status: :not_found)

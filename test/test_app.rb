@@ -14,6 +14,73 @@ class TestApp < Minitest::Test
     app.send(:screen_layout, width: width, height: height, panel: true).panel_width
   end
 
+  def test_idle_minute_boundary_rebuilds_availability_without_a_file_change
+    Dir.mktmpdir do |dir|
+      today = Date.today
+      records = FIXTURE_RECORDS.map(&:dup)
+      task = records.find { |record| record["id"] == FIX[:plants] }
+      task["scheduled"] = today.iso8601
+      task["scheduled_time"] = { "local" => "09:31", "timezone" => "UTC" }
+      File.write(File.join(dir, "tasks.jsonl"), Tasks::Format.dump(records))
+      now = Time.utc(today.year, today.month, today.day, 9, 30)
+      app = Tui::App.new(
+        root: dir, paths: Tasks::Config.for_dir(dir), llm_config: default_llm_config,
+        date_provider: -> { today }, time_provider: -> { now }
+      )
+
+      refute app.send(:read_model).task_for(FIX[:plants]).available?
+      app.send(:idle_layout_changed?)
+      now += 60
+      assert app.send(:idle_layout_changed?)
+      assert app.send(:read_model).task_for(FIX[:plants]).available?
+    end
+  end
+
+  def test_schema_v1_opens_with_a_non_destructive_migration_prompt
+    Dir.mktmpdir do |dir|
+      records = FIXTURE_RECORDS.map(&:dup)
+      records.first["version"] = 1
+      raw = records.map { |record| JSON.generate(record) }.join("\n") + "\n"
+      path = File.join(dir, "tasks.jsonl")
+      File.write(path, raw)
+
+      app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir), llm_config: default_llm_config)
+      assert_equal :modal, ui(app).mode
+      assert_equal :migration_required, ui(app).modal.kind
+      text = ui(app).modal.lines.join("\n")
+      assert_includes text, "tasks migrate --dry-run"
+      assert_includes text, ".v1.bak"
+      assert_equal raw, File.read(path)
+
+      app.send(:modal_key, "y")
+      assert_equal :list, ui(app).mode
+      migrated = Tasks::Format.parse(File.read(path)).records
+      assert_equal 2, migrated.first.fetch("version")
+      assert_equal raw, File.read("#{path}.v1.bak")
+    end
+  end
+
+  def test_dismissed_schema_v1_prompt_keeps_archive_and_history_read_only
+    Dir.mktmpdir do |dir|
+      records = FIXTURE_RECORDS.map(&:dup)
+      records.first["version"] = 1
+      raw = records.map { |record| JSON.generate(record) }.join("\n") + "\n"
+      path = File.join(dir, "tasks.jsonl")
+      File.write(path, raw)
+
+      app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir), llm_config: default_llm_config)
+      app.send(:modal_key, "\e")
+      assert_equal :list, ui(app).mode
+
+      app.send(:archive_sweep)
+      assert_equal :migration_required, ui(app).modal.kind
+      app.send(:modal_key, "\e")
+      app.send(:undo_last)
+      assert_equal :migration_required, ui(app).modal.kind
+      assert_equal raw, File.read(path)
+    end
+  end
+
   # Single-run adapter fake used behind AgentQueue's injected factory.
   class FakeAgent
     attr_reader :started, :output, :process_status, :exit_status
@@ -602,7 +669,7 @@ class TestApp < Minitest::Test
       assert_same editor, ui(app).task_editor
       assert_equal :deadline, editor.focused_key
       assert editor.form.field(:deadline).picker_open?
-      assert_equal Date.new(2026, 7, 20), editor.edit_form.value(:deadline)
+      assert_equal Date.new(2026, 7, 20), editor.edit_form.value(:deadline).date
       assert_equal coalesce_key, editor.coalesce_key
       assert_equal before, File.binread(app.instance_variable_get(:@store).org)
     end
@@ -1317,7 +1384,7 @@ class TestApp < Minitest::Test
 
   def test_filter_respects_deferred_parent_visibility
     content = dump_fixture([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "aaaa0001", "title" => "Work" },
       { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "NEXT",
         "title" => "deferred parent", "tags" => %w[defer] },
@@ -1400,7 +1467,7 @@ class TestApp < Minitest::Test
 
   def test_defer_success_reports_effective_ancestor_hold
     records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "aaaa0001", "title" => "Work" },
       { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "NEXT",
         "title" => "held parent", "tags" => %w[defer] },
@@ -1426,7 +1493,7 @@ class TestApp < Minitest::Test
   def test_defer_success_reports_later_effective_ancestor_date
     day = Date.new(2026, 7, 14)
     records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "bbbb0001", "title" => "Work" },
       { "type" => "task", "id" => "bbbb0002", "parent" => "bbbb0001", "state" => "NEXT",
         "title" => "later parent", "scheduled" => "2026-07-24" },
@@ -1455,7 +1522,7 @@ class TestApp < Minitest::Test
   def test_memoized_read_model_refreshes_when_local_date_rolls_over
     day = Date.new(2026, 7, 14)
     records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "cccc0001", "title" => "Work" },
       { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001", "state" => "NEXT",
         "title" => "release tomorrow", "scheduled" => "2026-07-15" },
@@ -1477,10 +1544,58 @@ class TestApp < Minitest::Test
     end
   end
 
+  def test_read_model_uses_one_clock_snapshot_for_date_and_exact_times
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, "tasks.jsonl"), FIXTURE_ORG)
+      calls = 0
+      clock = lambda do
+        calls += 1
+        Time.utc(2026, 7, 14, 20, 30)
+      end
+      paths = Tasks::Config.for_dir(dir)
+      app = Tui::App.new(
+        root: dir, paths: paths, llm_config: default_llm_config, time_provider: clock
+      )
+      app.send(:invalidate_read_model)
+      calls = 0
+
+      model = app.send(:read_model)
+
+      assert_equal 1, calls
+      assert_equal Time.utc(2026, 7, 14, 20, 30), model.temporal_context.now
+      assert_equal Date.new(2026, 7, 14), app.instance_variable_get(:@read_model_today)
+    end
+  end
+
+  def test_read_model_falls_back_safely_when_configured_zone_creates_a_floating_gap
+    records = [
+      { "type" => "meta", "version" => 2 },
+      { "type" => "section", "id" => "aa000001", "title" => "Work" },
+      { "type" => "task", "id" => "aa000002", "parent" => "aa000001", "state" => "NEXT",
+        "title" => "Gap task", "deadline" => "2026-03-08",
+        "deadline_time" => { "local" => "02:30" } },
+    ]
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, "tasks.jsonl"), dump_fixture(records))
+      paths = Tasks::Config.for_dir(dir).dup
+      paths.timezone = "America/Los_Angeles"
+      app = Tui::App.new(
+        root: dir, paths: paths, llm_config: default_llm_config,
+        time_provider: Time.utc(2026, 3, 8, 9)
+      )
+
+      model = app.send(:read_model)
+
+      assert_equal "Gap task", model.items.first.title
+      assert_equal :temporal_context_invalid, ui(app).modal.kind
+      assert_includes ui(app).modal.lines.join(" "), "first valid time is 03:00"
+    end
+  end
+
   def test_defer_response_keeps_mutation_day_snapshot_across_midnight_rollover
     day = Date.new(2026, 7, 14)
     records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "dddd0001", "title" => "Work" },
       { "type" => "task", "id" => "dddd0002", "parent" => "dddd0001", "state" => "NEXT",
         "title" => "releases tomorrow", "scheduled" => "2026-07-15" },
@@ -1563,7 +1678,7 @@ class TestApp < Minitest::Test
   # -- recurrence ------------------------------------------------------------
 
   RECUR_FIXTURE = dump_fixture([
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "cccc0001", "title" => "Work" },
     { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001", "state" => "NEXT",
       "title" => "Pay rent", "tags" => %w[@home], "deadline" => "2026-08-01", "recur" => "+1m" },
@@ -1581,16 +1696,30 @@ class TestApp < Minitest::Test
     end
   end
 
-  def test_open_date_popup_uses_term_form_date_input_without_changing_quick_submit
+  def test_open_date_popup_uses_atomic_temporal_input_without_changing_date_only_submit
     app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE) do |app|
       app.send(:open_date_popup)
-      assert_instance_of TermForm::Fields::DateInput, ui(app).form.field
+      assert_instance_of Tui::TaskEditForm::TemporalInput, ui(app).form.field
 
       ui(app).form.input.replace("2026-08-14")
       app.send(:handle_key, "\r")
 
       assert_equal :list, ui(app).mode
       assert_equal Date.new(2026, 8, 14), app.send(:current_item).deadline
+    end
+  end
+
+
+  def test_quick_date_popup_accepts_a_fixed_timed_value
+    app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE) do |app|
+      app.send(:open_date_popup)
+      ui(app).form.input.replace("2026-11-01 1:30am America/New_York fold=later")
+      app.send(:handle_key, "\r")
+
+      value = app.send(:current_item).deadline_value
+      assert_equal "01:30", value.local_time
+      assert_equal "America/New_York", value.timezone
+      assert_equal 1, value.fold
     end
   end
 
@@ -1660,7 +1789,7 @@ class TestApp < Minitest::Test
 
   def test_complete_selected_uses_the_injected_operation_date_for_completion_recurrence
     content = dump_fixture([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "dc000001", "title" => "Work" },
       { "type" => "task", "id" => "dc000002", "parent" => "dc000001", "state" => "NEXT",
         "title" => "Injected cadence", "scheduled" => "2026-07-10", "recur" => ".+1w" },
@@ -1712,7 +1841,7 @@ class TestApp < Minitest::Test
   # -- stable selection identity ---------------------------------------------
 
   SELECTION_FIXTURE = dump_fixture([
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "5e1e0001", "title" => "Work" },
     { "type" => "task", "id" => "5e1e0002", "parent" => "5e1e0001", "state" => "NEXT",
       "title" => "Alpha", "deadline" => "2026-07-11" },
@@ -1827,7 +1956,7 @@ class TestApp < Minitest::Test
   # -- structural Outline ordering ------------------------------------------
 
   ORDERING_APP = dump_fixture([
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "0d000001", "title" => "Work" },
     { "type" => "task", "id" => "0d000002", "parent" => "0d000001", "state" => "NEXT",
       "title" => "Alpha" },
@@ -2049,7 +2178,7 @@ class TestApp < Minitest::Test
   end
 
   TOO_DEEP_ORDERING_APP = dump_fixture([
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "de000001", "title" => "Deep" },
     { "type" => "task", "id" => "de000002", "parent" => "de000001", "state" => "TODO", "title" => "Depth one" },
     { "type" => "task", "id" => "de000003", "parent" => "de000002", "state" => "TODO", "title" => "Depth two" },
@@ -2082,7 +2211,7 @@ class TestApp < Minitest::Test
         result = Tasks::MutationResult.new(status: status)
         rejecting = Object.new
         rejecting.define_singleton_method(:edit_snapshot) { |id| application.edit_snapshot(id) }
-        rejecting.define_singleton_method(:read_tasks) { |today:| application.read_tasks(today: today) }
+        rejecting.define_singleton_method(:read_tasks) { |**options| application.read_tasks(**options) }
         rejecting.define_singleton_method(:update_task) { |_command, today:| result }
         app.instance_variable_set(:@application, rejecting)
         app.send(:move_subtree_up)
@@ -2099,7 +2228,7 @@ class TestApp < Minitest::Test
   # leaf. Rendered in agenda the rows are, in order: Ship release, write notes,
   # grandchild task, undated rider, solo top.
   NESTED_APP = dump_fixture([
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "aaaa0001", "title" => "Work" },
     { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "NEXT",
       "title" => "Ship release", "deadline" => "2026-07-10" },

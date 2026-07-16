@@ -136,6 +136,45 @@ class TestApiToolchain < Minitest::Test
     %w[404 409 412 422 428].each { |status| assert patch.fetch("responses").key?(status), status }
   end
 
+  def test_409_contracts_have_unique_keys_and_compose_migration_with_domain_conflicts
+    counts = Hash.new(0)
+    path = method = nil
+    in_responses = false
+    File.foreach(CONTRACT) do |line|
+      if (match = line.match(%r{^  (/[^:]+):}))
+        path = match[1]
+        method = nil
+        in_responses = false
+      elsif (match = line.match(/^    (get|post|patch|delete):/))
+        method = match[1]
+        in_responses = false
+      elsif line.match?(/^      responses:/)
+        in_responses = true
+      elsif in_responses && (match = line.match(/^        "([0-9]+)":/))
+        counts[[path, method, match[1]]] += 1
+      end
+    end
+    assert_empty counts.select { |_key, occurrences| occurrences > 1 },
+                 "an OpenAPI operation cannot contain duplicate response keys"
+
+    conflict_operations = [
+      ["/tasks", "post"],
+      ["/tasks/{id}", "patch"],
+      ["/tasks/{id}", "delete"],
+      ["/projects/{id}/archive", "post"],
+      ["/history/undo", "post"],
+      ["/history/redo", "post"],
+      ["/archive-sweeps", "post"],
+    ]
+    conflict_operations.each do |operation_path, operation_method|
+      response = resolve(@document.dig("paths", operation_path, operation_method, "responses", "409"))
+      content = response.dig("content", "application/json")
+      codes = examples(content).values.map { |value| value.dig("error", "code") }
+      assert_includes codes, "schema_migration_required", "#{operation_method.upcase} #{operation_path}"
+      assert_operator codes.uniq.length, :>, 1, "#{operation_method.upcase} #{operation_path} must retain its domain conflict"
+    end
+  end
+
   def test_unknown_query_fields_require_an_explicit_adapter_guard
     request = rack_request("/tasks?unexpected=true", "get")
 

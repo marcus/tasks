@@ -100,7 +100,7 @@ class TestProjects < Minitest::Test
     # A live task under a deferred parent task is itself effectively held, so it
     # counts toward held_count, not open_count.
     fixture = Tasks::Format.dump([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "eeee0001", "title" => "Projects" },
       { "type" => "section", "id" => "eeee0002", "parent" => "eeee0001", "title" => "Blocked" },
       { "type" => "task", "id" => "eeee0003", "parent" => "eeee0002", "state" => "TODO",
@@ -385,7 +385,7 @@ class TestProjects < Minitest::Test
       org = File.join(dir, "tasks.jsonl")
       archive = File.join(dir, "archive.jsonl")
       File.write(org, dump_fixture([
-        { "type" => "meta", "version" => 1 },
+        { "type" => "meta", "version" => 2 },
         { "type" => "section", "id" => "eeee0001", "title" => "Inbox" },
       ]))
       app = Tasks::Application.new(
@@ -441,7 +441,7 @@ class TestProjects < Minitest::Test
       org = File.join(dir, "tasks.jsonl")
       archive = File.join(dir, "archive.jsonl")
       File.write(org, dump_fixture([
-        { "type" => "meta", "version" => 1 },
+        { "type" => "meta", "version" => 2 },
         { "type" => "section", "id" => "aaaa0001", "title" => "Projects" },
         { "type" => "section", "id" => "aaaa0002", "parent" => "aaaa0001", "title" => "Ship it" },
         { "type" => "task", "id" => "aaaa0003", "parent" => "aaaa0002", "state" => "NEXT",

@@ -16,7 +16,7 @@ class TestCliMutations < Minitest::Test
 
     refute_match(/store\.patch_task!/, source)
     assert_match(/application\.edit_snapshot\(task_id\)/, source)
-    assert_match(/application\.patch_task\(patch, today: today\)/, source)
+    assert_match(/application\.patch_task\(patch, today: today, context: context\)/, source)
   end
 
   # -- set_date! (backs `due`) ------------------------------------------------
@@ -740,7 +740,7 @@ class TestCliMutations < Minitest::Test
 
     cases.each do |entry|
       records = [
-        { "type" => "meta", "version" => 1 },
+        { "type" => "meta", "version" => 2 },
         { "type" => "section", "id" => "da000001", "title" => "Work" },
         { "type" => "task", "id" => "da000002", "parent" => "da000001", "state" => "TODO",
           "title" => "Parent blocker", **entry.fetch(:parent) },
@@ -899,7 +899,7 @@ class TestCliMutations < Minitest::Test
   def test_cli_activate_preserves_scheduled_only_recurrence_and_undo_restores_date
     today = Date.today
     content = dump_fixture([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "af000001", "title" => "Work" },
       { "type" => "task", "id" => "af000002", "parent" => "af000001", "state" => "NEXT",
         "title" => "Weekly planning", "scheduled" => (today + 4).iso8601,
@@ -951,7 +951,7 @@ class TestCliMutations < Minitest::Test
 
   def test_cli_activate_reports_remaining_ancestor_hold
     content = dump_fixture([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "ab000001", "title" => "Work" },
       { "type" => "task", "id" => "ab000002", "parent" => "ab000001", "state" => "TODO",
         "title" => "Held project", "tags" => %w[defer] },
@@ -971,7 +971,7 @@ class TestCliMutations < Minitest::Test
 
   def test_cli_list_someday_filters_own_marker_not_inherited_blockers
     content = dump_fixture([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "ac000001", "title" => "Work" },
       { "type" => "task", "id" => "ac000002", "parent" => "ac000001", "state" => "TODO",
         "title" => "Held parent", "tags" => %w[defer] },
@@ -1046,7 +1046,7 @@ class TestCliMutations < Minitest::Test
       assert st.success?
       assert_match(/capture/, out)
       assert_match(/archive/, out)
-      assert_match(/defer\s+snooze <ref> \[date\]/, out)
+      assert_match(%r{defer\s+snooze <ref> \[date/time\]}, out)
       assert_match(/someday\s+<ref>/, out)
       assert_match(/--unavailable/, out)
       assert_match(/Available from/, out)
@@ -1084,7 +1084,7 @@ class TestCliMutations < Minitest::Test
 
   def test_cli_archive_refuses_open_descendants_with_actionable_error
     records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "accc1001", "title" => "Projects" },
       { "type" => "task", "id" => "accc1002", "parent" => "accc1001", "state" => "CANCELLED",
         "title" => "Cancelled project", "closed" => "2026-07-01" },
@@ -1108,7 +1108,7 @@ class TestCliMutations < Minitest::Test
 
   def test_cli_archive_conflict_preserves_live_data_and_explains_recovery
     stale_archive = dump_fixture([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "task", "id" => FIX[:old], "state" => "DONE",
         "title" => "Stale archived copy", "closed" => "2026-06-20", "archived" => "2026-07-09" },
     ])
@@ -1127,7 +1127,7 @@ class TestCliMutations < Minitest::Test
 
   def test_cli_archive_child_only_overlap_reports_conflict_instead_of_crashing
     live = dump_fixture([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "accc3001", "title" => "Projects" },
       { "type" => "task", "id" => "accc3002", "parent" => "accc3001", "state" => "DONE",
         "title" => "Closed parent", "closed" => "2026-07-08" },
@@ -1135,7 +1135,7 @@ class TestCliMutations < Minitest::Test
         "title" => "Closed child", "closed" => "2026-07-08" },
     ])
     child_only_archive = dump_fixture([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "task", "id" => "accc3003", "parent" => "accc3002", "state" => "DONE",
         "title" => "Closed child", "closed" => "2026-07-08" },
     ])
@@ -1155,7 +1155,7 @@ class TestCliMutations < Minitest::Test
                   "title" => "Old finished thing", "priority" => "C", "tags" => %w[@computer],
                   "closed" => "2026-06-20", "archived" => "2026-07-09" }
     duplicate_archive = dump_fixture([
-      { "type" => "meta", "version" => 1 }, duplicate, duplicate.dup,
+      { "type" => "meta", "version" => 2 }, duplicate, duplicate.dup,
     ])
 
     run_cli("archive", archive_content: duplicate_archive) do |org, out, err, st|
@@ -1247,7 +1247,7 @@ class TestCliMutations < Minitest::Test
   def test_cli_quadrants_honors_urgent_days_window
     far = Date.today + 20
     content = dump_fixture([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "dddd0001", "title" => "Work" },
       { "type" => "task", "id" => "dddd0002", "parent" => "dddd0001", "state" => "NEXT",
         "priority" => "A", "title" => "distant milestone", "deadline" => far.iso8601 },
@@ -1358,7 +1358,7 @@ class TestCliMutations < Minitest::Test
   # hand-editing forbidden there is otherwise no way to fix it. Scheduling that
   # same record rewrites the bad field and leaves the file fully valid.
   INVALID_SCHEDULED = Tasks::Format.dump([
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "aaaa0001", "title" => "Work" },
     { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "TODO",
       "title" => "Fix the widget", "scheduled" => "not-a-date" },
@@ -1381,6 +1381,115 @@ class TestCliMutations < Minitest::Test
       assert_equal "2026-07-15", record_for(org, title: "Water the plants")["scheduled"]
       assert_equal false, task.fetch("available")
       assert_equal "scheduled", task.fetch("availability_reason")
+    end
+  end
+
+  def test_cli_due_supports_floating_and_fixed_time_values
+    run_cli("due", "Book flight", "2026-07-20 5pm", "--timezone", "Europe/London", "--json",
+            env: { "TASKS_TIMEZONE" => "America/Los_Angeles" }) do |org, out, err, st|
+      assert st.success?, err
+      record = record_for(org, title: "Book flight in Concur")
+      assert_equal "2026-07-20", record["deadline"]
+      assert_equal({ "local" => "17:00", "timezone" => "Europe/London" }, record["deadline_time"])
+      time = JSON.parse(out).dig("touched", 0, "deadline_time")
+      assert_equal "2026-07-20T16:00:00Z", time.fetch("instant")
+      assert_equal "Europe/London", time.fetch("effective_timezone")
+    end
+
+    run_cli("schedule", "Book flight", "2026-07-20 9am", "--json",
+            env: { "TASKS_TIMEZONE" => "America/Los_Angeles" }) do |org, out, err, st|
+      assert st.success?, err
+      assert_equal({ "local" => "09:00" }, record_for(org, title: "Book flight in Concur")["scheduled_time"])
+      assert_equal "America/Los_Angeles",
+                   JSON.parse(out).dig("touched", 0, "scheduled_time", "effective_timezone")
+    end
+  end
+
+  def test_cli_temporal_flags_validate_dst_gap_and_fold
+    run_cli("due", "Book flight", "2026-03-08 2:30am", "--timezone", "America/Los_Angeles") do |org, _out, err, st|
+      refute st.success?
+      assert_match(/does not exist/, err)
+      assert_nil record_for(org, title: "Book flight in Concur")["deadline_time"]
+    end
+
+    run_cli("due", "Book flight", "2026-11-01 1:30am", "--timezone", "America/Los_Angeles",
+            "--fold", "later") do |org, _out, err, st|
+      assert st.success?, err
+      assert_equal 1, record_for(org, title: "Book flight in Concur").dig("deadline_time", "fold")
+    end
+  end
+
+  def test_post_mutation_json_uses_the_configured_zone_for_floating_times
+    records = FIXTURE_RECORDS.map(&:dup)
+    flight = records.find { |record| record["id"] == FIX[:flight] }
+    flight["deadline"] = "2026-07-20"
+    flight["deadline_time"] = { "local" => "09:00" }
+
+    run_cli("priority", "Book flight", "A", "--json", content: dump_fixture(records),
+            env: { "TASKS_TIMEZONE" => "America/Los_Angeles" }) do |_org, out, err, st|
+      assert st.success?, err
+      time = JSON.parse(out).dig("touched", 0, "deadline_time")
+      assert_equal "America/Los_Angeles", time.fetch("effective_timezone")
+      assert_equal "2026-07-20T16:00:00Z", time.fetch("instant")
+    end
+  end
+
+  def test_read_reports_a_safe_error_when_a_zone_change_creates_a_floating_gap
+    records = FIXTURE_RECORDS.map(&:dup)
+    flight = records.find { |record| record["id"] == FIX[:flight] }
+    flight["deadline"] = "2026-03-08"
+    flight["deadline_time"] = { "local" => "02:30" }
+
+    run_cli("agenda", content: dump_fixture(records),
+            env: { "TASKS_TIMEZONE" => "America/Los_Angeles" }) do |_org, _out, err, st|
+      refute st.success?
+      assert_match(/temporal value is invalid/, err)
+      assert_match(/first valid time is 03:00/, err)
+      refute_match(/bin\/tasks:|lib\/tasks\//, err)
+    end
+  end
+
+  def test_cli_capture_supports_independent_temporal_modes
+    run_cli("capture", "Mixed clocks", "--scheduled", "2026-07-20 9am",
+            "--scheduled-timezone", "Asia/Tokyo", "--due", "2026-07-20 5pm",
+            "--due-floating", "--project", "Work") do |org, _out, err, st|
+      assert st.success?, err
+      record = record_for(org, title: "Mixed clocks")
+      assert_equal({ "local" => "09:00", "timezone" => "Asia/Tokyo" }, record["scheduled_time"])
+      assert_equal({ "local" => "17:00" }, record["deadline_time"])
+    end
+  end
+
+  def test_cli_migrate_dry_run_and_install
+    v1 = Tasks::Format.dump([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "aa000001", "title" => "Work" },
+    ])
+    run_cli("migrate", "--dry-run", content: v1) do |org, out, err, st|
+      assert st.success?, err
+      assert_match(/would migrate/, out)
+      assert_equal 1, JSON.parse(File.foreach(org).first)["version"]
+    end
+    run_cli("migrate", content: v1) do |org, out, err, st|
+      assert st.success?, err
+      assert_match(/migrated/, out)
+      assert_equal 2, JSON.parse(File.foreach(org).first)["version"]
+      assert File.exist?("#{org}.v1.bak")
+    end
+  end
+
+  def test_cli_mutation_against_v1_store_names_the_migration_it_needs
+    v1 = Tasks::Format.dump([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "aa000001", "title" => "Work" },
+      { "type" => "task", "id" => "aa000002", "parent" => "aa000001", "state" => "TODO",
+        "title" => "Old task", "deadline" => "2026-07-20" },
+    ])
+    run_cli("due", "aa000002", "2026-08-01", content: v1) do |org, _out, err, st|
+      refute st.success?
+      assert_match(/tasks migrate/, err)
+      assert_equal 1, JSON.parse(File.foreach(org).first)["version"]
+      assert_equal "2026-07-20", record_for(org, title: "Old task")["deadline"]
     end
   end
 
@@ -1415,7 +1524,7 @@ class TestCliMutations < Minitest::Test
   # honest "already invalid" hint and writes nothing.
   def test_cli_mutation_refuses_when_a_different_record_is_invalid
     invalid = dump_fixture([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "aaaa0001", "title" => "Work" },
       { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "TODO",
         "title" => "Target task" },
@@ -1488,7 +1597,7 @@ class TestCliMutations < Minitest::Test
     # Records ordered so the NEXT copy lands on physical line 3 (meta=1,
     # section=2, NEXT=3, TODO=4); L3 targets the NEXT copy.
     dup_org = dump_fixture([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "eeee0001", "title" => "W" },
       { "type" => "task", "id" => "eeee0002", "parent" => "eeee0001", "state" => "NEXT",
         "title" => "pay the bill", "tags" => %w[@computer] },
@@ -1630,7 +1739,7 @@ class TestCliMutations < Minitest::Test
 
   def test_cli_show_human_availability_covers_own_inherited_hold_timed_and_closed_states
     content = dump_fixture([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "db000001", "title" => "Work" },
       { "type" => "task", "id" => "db000002", "parent" => "db000001", "state" => "TODO",
         "title" => "Timed parent", "scheduled" => "2099-07-20" },
@@ -1696,7 +1805,7 @@ class TestCliMutations < Minitest::Test
     # `project` follows the nearest-OPEN-ancestor rule shared with the TUI's
     # Projects view and detail panel: a DONE parent is skipped, an open one isn't.
     nested = dump_fixture(
-      [{ "type" => "meta", "version" => 1 },
+      [{ "type" => "meta", "version" => 2 },
        { "type" => "section", "id" => "cccc0001", "title" => "Work" },
        { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001", "state" => "DONE",
          "title" => "Done parent", "closed" => "2026-07-01" },
@@ -1844,7 +1953,7 @@ class TestCliMutations < Minitest::Test
   end
 
   ORDER_CLI = Tasks::Format.dump([
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "ab000001", "title" => "Work" },
     { "type" => "task", "id" => "ab000002", "parent" => "ab000001", "state" => "TODO",
       "title" => "Alpha root" },
@@ -2175,7 +2284,7 @@ class TestCliMutations < Minitest::Test
 
   def test_cli_recurring_completion_uses_one_today_for_advance_log_and_json
     content = dump_fixture([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "da000001", "title" => "Work" },
       { "type" => "task", "id" => "da000002", "parent" => "da000001", "state" => "NEXT",
         "title" => "Completion clock", "scheduled" => "2026-07-10", "recur" => ".+1w" },
@@ -2197,7 +2306,7 @@ class TestCliMutations < Minitest::Test
   # A fixture with a dated task (Pay rent) to attach recurrence to, and an
   # undated one (Standup notes) for the no-date paths.
   RECUR_RECORDS = [
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "cccc0001", "title" => "Inbox" },
     { "type" => "section", "id" => "cccc0002", "title" => "Work" },
     { "type" => "task", "id" => "cccc0003", "parent" => "cccc0002", "state" => "NEXT",
@@ -2307,7 +2416,7 @@ class TestCliMutations < Minitest::Test
 
   # A nested project fixture: "Ship release" over two open children.
   CASCADE_CONTENT = Tasks::Format.dump([
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "cccd0001", "title" => "Work" },
     { "type" => "task", "id" => "cccd0002", "parent" => "cccd0001", "state" => "TODO",
       "title" => "Ship release" },
@@ -2351,7 +2460,7 @@ class TestCliMutations < Minitest::Test
 
   def test_cli_done_recurring_parent_prints_roll_and_does_not_cascade
     content = Tasks::Format.dump([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "cccd0011", "title" => "Work" },
       { "type" => "task", "id" => "cccd0012", "parent" => "cccd0011", "state" => "NEXT",
         "title" => "Weekly sync", "deadline" => "2026-08-01", "recur" => "+1m" },
@@ -2456,7 +2565,7 @@ class TestCliMutations < Minitest::Test
   # reader coerces the id, so the CLI still renders every task.
   def test_cli_list_survives_a_non_string_id
     bad = dump_fixture([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "aaaa0001", "title" => "W" },
       { "type" => "task", "id" => 12345678, "parent" => "aaaa0001", "state" => "NEXT",
         "title" => "Int id task" },
@@ -2472,7 +2581,7 @@ class TestCliMutations < Minitest::Test
   # underfoot"), exit 1, and leave the file untouched.
   def test_cli_mutation_on_invalid_file_hints_at_check
     dup = dump_fixture([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "aaaa0001", "title" => "W" },
       { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "NEXT",
         "title" => "Alpha" },
@@ -2513,7 +2622,7 @@ class TestCliMutations < Minitest::Test
   # A small nested fixture: Work > Parent > Child, plus a second top-level task
   # and a Home section, so the CLI nesting paths have somewhere to move things.
   NEST_CLI = Tasks::Format.dump([
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "ffff0001", "title" => "Work" },
     { "type" => "task", "id" => "ffff0002", "parent" => "ffff0001", "state" => "TODO",
       "title" => "Parent task" },
@@ -2682,7 +2791,7 @@ class TestCliMutations < Minitest::Test
   # cycle on it forever. (Check accepts rootless tasks, so this file is valid.)
   def test_cli_move_top_refuses_a_rootless_ancestor_chain_without_hanging
     rootless = dump_fixture([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "aaaa0001", "title" => "Inbox" },
       { "type" => "task", "id" => "aaaa0002", "state" => "TODO", "title" => "Rootless" },
       { "type" => "task", "id" => "aaaa0003", "parent" => "aaaa0002", "state" => "TODO",
@@ -2714,7 +2823,7 @@ class TestCliMutations < Minitest::Test
   # addressable by exact id for the actual repair.
   def test_cli_fuzzy_ref_tolerates_a_nil_title_record
     broken = dump_fixture([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "aaaa0001", "title" => "Inbox" },
       { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "TODO" },
       { "type" => "task", "id" => "aaaa0003", "parent" => "aaaa0001", "state" => "TODO",
@@ -2736,7 +2845,7 @@ class TestCliMutations < Minitest::Test
 
   # A nested tree so `delete` has a parent-with-descendants to guard.
   DELETE_TREE = dump_fixture([
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "de1e0001", "title" => "Inbox" },
     { "type" => "task", "id" => "de1e0002", "parent" => "de1e0001", "state" => "INBOX",
       "title" => "loose thought" },

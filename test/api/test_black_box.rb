@@ -181,8 +181,9 @@ class TestApiBlackBox < Minitest::Test
       "move", FIX[:plants], "--before", FIX[:flight]
     )
     assert cli_cross_parent.fetch(:status).success?, cli_cross_parent.fetch(:stderr)
-    assert_equal after_both, File.binread(cli_org),
-                 "equivalent stable-id API and CLI placements must serialize identically"
+    assert_equal without_update_stamps(after_both, FIX[:travel], FIX[:plants]),
+                 without_update_stamps(File.binread(cli_org), FIX[:travel], FIX[:plants]),
+                 "equivalent stable-id API and CLI placements must serialize identically apart from wall-clock stamps"
 
     assert_equal [FIX[:eval], FIX[:plants], FIX[:flight], FIX[:travel], FIX[:pr], FIX[:old]],
                  direct_child_ids(FIX[:work]).reject { |id| id == task_id_for_title("Cross-process sibling") }
@@ -292,6 +293,43 @@ class TestApiBlackBox < Minitest::Test
     assert_equal JSON.parse(before.body).fetch("data"), JSON.parse(restored.body).fetch("data")
   end
 
+  def test_temporal_cli_and_api_writes_are_mutually_visible_and_cli_undoable
+    cli_due = run_cli("due", FIX[:pr], "2026-07-20 5pm", "--timezone", "Europe/London", "--json")
+    assert cli_due.fetch(:status).success?, cli_due.fetch(:stderr)
+
+    loaded = http("GET", "/api/v1/tasks/#{FIX[:pr]}")
+    assert_contract_exchange(loaded)
+    resource = JSON.parse(loaded.body).fetch("data")
+    assert_equal "2026-07-20", resource.fetch("deadline")
+    assert_equal "Europe/London", resource.dig("deadline_time", "timezone")
+    assert_equal "2026-07-20T16:00:00Z", resource.dig("deadline_time", "instant")
+
+    before_api = File.binread(@org)
+    updated = http(
+      "PATCH", "/api/v1/tasks/#{FIX[:pr]}",
+      json: {
+        scheduled: "2026-07-21",
+        scheduled_time: { local: "09:30", timezone: "America/New_York", fold: 0 },
+      },
+      headers: { "If-Match" => loaded["etag"] }
+    )
+    assert_equal "200", updated.code, updated.body
+    assert_contract_exchange(updated)
+
+    shown = run_cli("show", FIX[:pr], "--json")
+    assert shown.fetch(:status).success?, shown.fetch(:stderr)
+    cli_resource = JSON.parse(shown.fetch(:stdout))
+    assert_equal "America/New_York", cli_resource.dig("scheduled_time", "timezone")
+    assert_equal "2026-07-21T13:30:00Z", cli_resource.dig("scheduled_time", "instant")
+
+    undo = run_cli("undo")
+    assert undo.fetch(:status).success?, undo.fetch(:stderr)
+    assert_equal before_api, File.binread(@org)
+    restored = JSON.parse(http("GET", "/api/v1/tasks/#{FIX[:pr]}").body).fetch("data")
+    assert_nil restored.fetch("scheduled")
+    assert_nil restored.fetch("scheduled_time")
+  end
+
   def test_live_and_archive_external_changes_advance_refresh_token_and_reads_are_fresh
     first_revision = store_revision
     capture = run_cli("capture", "Fresh CLI task")
@@ -302,7 +340,7 @@ class TestApiBlackBox < Minitest::Test
     assert_equal ["Fresh CLI task"], JSON.parse(list.body).fetch("data").map { |task| task.fetch("title") }
 
     File.write(@archive, Tasks::Format.dump([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "dddd0001", "title" => "Archive" },
       { "type" => "task", "id" => "dddd0002", "parent" => "dddd0001", "state" => "DONE",
         "title" => "External archive task", "closed" => "2026-07-01" },
@@ -371,6 +409,15 @@ class TestApiBlackBox < Minitest::Test
     Tasks::Format.parse(File.read(@org, encoding: "UTF-8")).records
       .find { |record| record["title"] == title }
       .fetch("id")
+  end
+
+  def without_update_stamps(bytes, *ids)
+    records = Tasks::Format.parse(bytes).records.map do |record|
+      next record unless ids.include?(record["id"])
+
+      record.except("updated", "line")
+    end
+    Tasks::Format.dump(records.map { |record| record.except("line") })
   end
 
   def assert_api_error(response, status, code)

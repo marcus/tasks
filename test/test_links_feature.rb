@@ -125,7 +125,7 @@ class TestLinksFeature < Minitest::Test
   BIN = File.expand_path("../bin/tasks", __dir__)
 
   ORG_WITH_LINKS = dump_fixture([
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "cccc0001", "title" => "Work" },
     { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001", "state" => "NEXT",
       "title" => "One-link task", "body" => "Ticket jira:OPS-7" },

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "date"
+require_relative "timezones"
 
 module Tasks
   # Recurrence for task timestamps, using org-mode's native repeater cookies.
@@ -92,6 +93,36 @@ module Tasks
         d = step(d, n, unit) while d <= today
         d
       end
+    end
+
+    # Exact civil-time counterpart used by recurrence completion and previews.
+    # The caller supplies whether the value is a deadline or available-from
+    # stamp because all-day boundaries differ. A validation block can veto a
+    # candidate when a paired field would land in a DST gap.
+    def next_temporal_date(cookie, value:, kind:, context:)
+      m = cookie.to_s.strip.match(COOKIE)
+      raise ArgumentError, "not a repeater cookie: #{cookie.inspect}" unless m
+      prefix, count, unit = m[1], m[2].to_i, m[3]
+      base = if prefix == ".+"
+               Timezones.local_time(context.now, value.effective_zone(context)).to_date
+             else
+               value.date
+             end
+      candidate = step(base, count, unit)
+
+      1_000.times do
+        begin
+          candidate_value = value.with_date(candidate)
+          boundary = kind.to_sym == :deadline ? candidate_value.due_boundary(context) :
+                                                candidate_value.release_instant(context)
+          valid = !block_given? || yield(candidate)
+          return candidate if valid && (prefix != "++" || boundary > context.now)
+        rescue Timezones::Error, ArgumentError
+          # A nonexistent civil candidate advances by another calendar interval.
+        end
+        candidate = step(candidate, count, unit)
+      end
+      raise ArgumentError, "recurrence could not find a valid local date/time"
     end
 
     # Advance `date` by n units. Months/years use Date#>> (calendar step with

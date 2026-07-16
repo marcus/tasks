@@ -10,7 +10,7 @@ class TestFormat < Minitest::Test
   # the golden regression: any change to key order, spacing, or omission rules
   # shifts these exact bytes and fails here.
   GOLDEN_RECORDS = [
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "a1b2c3d4", "title" => "Inbox" },
     { "type" => "task", "id" => "0f9e8d7c", "parent" => "a1b2c3d4", "state" => "INBOX",
       "title" => "Random thought", "body" => "Captured [2026-07-01]." },
@@ -28,7 +28,7 @@ class TestFormat < Minitest::Test
   ].freeze
 
   GOLDEN_TEXT = <<~JSONL
-    {"type":"meta","version":1}
+    {"type":"meta","version":2}
     {"type":"section","id":"a1b2c3d4","title":"Inbox"}
     {"type":"task","id":"0f9e8d7c","parent":"a1b2c3d4","state":"INBOX","title":"Random thought","body":"Captured [2026-07-01]."}
     {"type":"section","id":"b2c3d4e5","title":"Projects"}
@@ -57,7 +57,7 @@ class TestFormat < Minitest::Test
   def test_dump_record_returns_single_line_no_newline
     line = F.dump_record(GOLDEN_RECORDS[0])
     refute_includes line, "\n"
-    assert_equal '{"type":"meta","version":1}', line
+    assert_equal '{"type":"meta","version":2}', line
   end
 
   # -- key order -------------------------------------------------------------
@@ -74,8 +74,8 @@ class TestFormat < Minitest::Test
   end
 
   def test_symbol_keys_accepted
-    assert_equal '{"type":"meta","version":1}',
-                 F.dump_record({ type: "meta", version: 1 })
+    assert_equal '{"type":"meta","version":2}',
+                 F.dump_record({ type: "meta", version: 2 })
   end
 
   # -- unknown keys ----------------------------------------------------------
@@ -132,7 +132,7 @@ class TestFormat < Minitest::Test
 
   def test_lenient_parse_skips_bad_lines_and_reports_them
     text = <<~JSONL
-      {"type":"meta","version":1}
+      {"type":"meta","version":2}
       this is not json
       {"type":"task","title":"good one"}
       42
@@ -178,7 +178,7 @@ class TestFormat < Minitest::Test
   end
 
   def test_blank_line_between_records_reported_with_line_number
-    text = "{\"type\":\"meta\",\"version\":1}\n\n{\"type\":\"task\",\"title\":\"T\"}\n"
+    text = "{\"type\":\"meta\",\"version\":2}\n\n{\"type\":\"task\",\"title\":\"T\"}\n"
     res = F.parse(text)
     assert_equal 2, res.records.size
     assert_equal [[2, "blank line"]], res.errors

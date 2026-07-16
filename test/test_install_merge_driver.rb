@@ -55,7 +55,7 @@ class TestInstallMergeDriver < Minitest::Test
                  "tasks.jsonl merge=tasksjsonl\narchive.jsonl merge=tasksjsonl\n")
       File.write(File.join(repo, ".gitignore"), ".tasks-merge.log\n")
       base = [
-        { "type" => "meta", "version" => 1 },
+        { "type" => "meta", "version" => 2 },
         { "type" => "section", "id" => "30000001", "title" => "Work" },
         { "type" => "task", "id" => "30000002", "parent" => "30000001", "state" => "NEXT",
           "title" => "Book Sixt", "tags" => ["@computer"], "scheduled" => "2026-07-18" },

@@ -187,6 +187,16 @@ module Tasks
       nil
     end
 
+    # Establish a schema barrier: the current files become the only journal
+    # baseline, so ordinary undo can never restore an older schema.
+    def barrier(snapshot)
+      state = intern(snapshot)
+      persist(0, [state], gc: true)
+      true
+    rescue SystemCallError, IOError
+      false
+    end
+
     private
 
     def index_path = File.join(@dir, "index.json")

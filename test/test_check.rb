@@ -19,7 +19,7 @@ class TestCheck < Minitest::Test
     end
   end
 
-  def meta = { "type" => "meta", "version" => 1 }
+  def meta = { "type" => "meta", "version" => 2 }
   def section(id, title, **extra) = { "type" => "section", "id" => id, "title" => title, **extra }
   def task(id, parent, state, title, **extra)
     { "type" => "task", "id" => id, "parent" => parent, "state" => state, "title" => title, **extra }
@@ -222,10 +222,10 @@ class TestCheck < Minitest::Test
   # A non-Integer version (the float 1.0 that `1.0 == 1` would wave through) is
   # unsupported, not a matching version. (m7)
   def test_float_meta_version_is_unsupported
-    res = check_records([{ "type" => "meta", "version" => 1.0 },
+    res = check_records([{ "type" => "meta", "version" => 2.0 },
                          section("aaaa0001", "W")])
     refute res.ok?
-    assert_match(/unsupported meta version 1\.0/, res.errors.map { |_l, m| m }.join)
+    assert_match(/unsupported meta version 2\.0/, res.errors.map { |_l, m| m }.join)
   end
 
   # A string tags value crashes readers before Check runs; Check must still
@@ -262,7 +262,7 @@ class TestCheck < Minitest::Test
   def test_unparseable_line_folds_in_as_error
     Dir.mktmpdir do |dir|
       path = File.join(dir, "tasks.jsonl")
-      File.write(path, %({"type":"meta","version":1}\nthis is not json\n))
+      File.write(path, %({"type":"meta","version":2}\nthis is not json\n))
       res = C.check(path)
       refute res.ok?
       assert_match(/invalid JSON/, res.errors.map { |_l, m| m }.join)
