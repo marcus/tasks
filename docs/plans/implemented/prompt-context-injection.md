@@ -32,7 +32,7 @@ compatibility). Invalid toggle values fall through to the registry default.
 
 ### Registry of providers
 
-[`lib/tasks/prompt_facts.rb`](../../lib/tasks/prompt_facts.rb) — small,
+[`lib/tasks/prompt_facts.rb`](../../../lib/tasks/prompt_facts.rb) — small,
 testable registry:
 
 - **datetime** (default on): local `2026-07-15 Wed 08:41 PDT`
@@ -51,13 +51,13 @@ Current environment:
 
 ### Config wiring
 
-[`lib/tasks/config.rb`](../../lib/tasks/config.rb) parses `prompt.<name>` into
+[`lib/tasks/config.rb`](../../../lib/tasks/config.rb) parses `prompt.<name>` into
 a raw map, then `PromptFacts.resolve` merges registry defaults onto
 `Paths#prompt_facts`. `tasks config` / `--json` report the effective map.
 
 ### Injection point
 
-[`lib/tasks/agent_context.rb`](../../lib/tasks/agent_context.rb) inserts the
+[`lib/tasks/agent_context.rb`](../../../lib/tasks/agent_context.rb) inserts the
 facts block immediately after `TASK_AGENT.md` and before the file-locations
 block. Both `tasks -p` and the TUI queue already build through
 `AgentContext.build`. Coding-agent instructions stay in `AGENTS.md` and are not

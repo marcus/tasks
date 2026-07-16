@@ -25,7 +25,7 @@ Treat these as authoritative, in this order:
 1. `AGENTS.md` and the injected repository instructions.
 2. `docs/api/openapi.yaml` for paths, payloads, headers, status codes, and error
    codes.
-3. `docs/plans/http-api-and-web-foundation.md` for first-slice scope, security,
+3. `docs/plans/implemented/http-api-and-web-foundation.md` for first-slice scope, security,
    testing, and explicit later work.
 4. `docs/adr/0005-application-boundary.md` through
    `docs/adr/0008-delete-semantics.md` for the accepted architectural decisions.

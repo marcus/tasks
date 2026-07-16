@@ -42,7 +42,7 @@ overridable by the `TASKS_MAX_DEPTH` env var, default 4.
 
 A dotted `prompt.<name>` namespace toggles short facts injected into every agent
 system prompt under a **Current environment** heading (see
-[`prompt-context-injection.md`](plans/prompt-context-injection.md)):
+[`prompt-context-injection.md`](plans/implemented/prompt-context-injection.md)):
 
 ```
 prompt.datetime = on     # default: on — local `2026-07-15 Wed 08:41 PDT`

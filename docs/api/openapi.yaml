@@ -10,11 +10,11 @@ info:
     rollback, and shared undo journal as the CLI and TUI.
 
     Scope of this document is the accepted plan
-    (`docs/plans/http-api-and-web-foundation.md`) and its "HTTP contract",
+    (`docs/plans/implemented/http-api-and-web-foundation.md`) and its "HTTP contract",
     "Task representation", "Status mapping", "Concurrency and revisions" (§5),
     and "Delete semantics" (§4) sections. Design rationale lives in ADR-0005
     through ADR-0009. Manual anchor-relative placement is specified by
-    `docs/plans/manual-task-ordering.md` and ADR-0009.
+    `docs/plans/implemented/manual-task-ordering.md` and ADR-0009.
 
     Conventions that hold for every operation:
 
