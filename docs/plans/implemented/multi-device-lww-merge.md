@@ -1,5 +1,28 @@
 # Plan: multi-device merge — per-record timestamps (C) + a JSONL merge driver (B)
 
+Status: implemented (2026-07-16); independent review complete
+
+Implementation summary:
+
+- `Tasks::Store#write_records` stamps only semantically changed task records;
+  `Tasks::UpdateStamp` owns validation, device normalization, formatting, and
+  comparison. Undo/redo remains a raw-byte restore and task revisions exclude
+  `updated`.
+- `Tasks::JsonlMerge` performs the checked, deterministic record/field merge;
+  `tasks merge-driver` is the Git plumbing adapter and
+  `bin/install-merge-driver` writes repository-local config with an absolute
+  CLI path.
+- The `tasks-marcus` data repo registers both JSONL files in `.gitattributes`,
+  ignores `.tasks-merge.log`, documents per-machine setup, and validates both
+  files before commit and again after rebase before push.
+- The driver is installed in the current `tasks-marcus` checkout. Each
+  additional syncing machine must run `~/code/tasks/bin/install-merge-driver
+  ~/code/tasks-marcus` once after pulling these changes.
+- Existing records remain migration-free and acquire stamps lazily. Until an
+  actively edited record has stamps from both writers, a genuine same-field
+  pre-C conflict remains deterministic ours-wins and is called out as
+  low-confidence in `.tasks-merge.log`.
+
 ## Problem
 
 `tasks.jsonl` is synced between two machines (work, home) via a git

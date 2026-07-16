@@ -124,6 +124,27 @@ then `TASKS_DIR`, then the config file (`dir = …`, or per-file `file = …` /
 `archive = …`), then the repo root. Env vars make one-off sandboxes easy:
 `TASKS_FILE=/tmp/scratch.jsonl tasks capture "test"`.
 
+### Git sync across devices
+
+Every changed task record carries an `updated` value such as
+`2026-07-16T14:03:11Z#home`. Set `TASKS_DEVICE` if the hostname-derived device
+slug is not unique. A data repo can use the bundled field-aware Git merge
+driver instead of line-based conflict resolution:
+
+```sh
+printf 'tasks.jsonl merge=tasksjsonl\narchive.jsonl merge=tasksjsonl\n' >> ~/tasks/.gitattributes
+bin/install-merge-driver ~/tasks
+```
+
+The installer writes repository-local Git config with the absolute path to
+this checkout's `bin/tasks`, which makes it work from launchd and other minimal
+shell environments. Install it once on every machine that syncs the data repo.
+The driver performs a checked three-way merge by stable id, unions tags,
+prefers progressed states, uses the newest `updated` stamp only for genuine
+same-field conflicts, preserves ours-first sibling order, and records decisions
+in the data repo's ignored `.tasks-merge.log`. A malformed input or invalid
+result exits nonzero without replacing Git's ours file.
+
 ## Filtering with `list`
 
 ```sh

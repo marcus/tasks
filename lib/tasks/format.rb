@@ -25,7 +25,7 @@ module Tasks
     # (forward-compat), and an older reader round-trips them untouched.
     KEY_ORDER = %w[
       type id parent state priority title tags scheduled deadline recur
-      closed archived body
+      closed archived body updated
     ].freeze
 
     # The physical 1-based line number `parse` stamps onto each record so the

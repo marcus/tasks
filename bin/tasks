@@ -45,6 +45,7 @@
 #                             on your tasks and reports what changed
 #   bin/tasks config          show where tasks.jsonl/archive.jsonl and the
 #                             agent-memory.md sidecar resolve, and why
+#   bin/tasks merge-driver <base> <ours> <theirs> <path>  internal Git plumbing
 #   bin/tasks help|-h         full command reference
 #
 # Stdlib only — no bundler required. Reads tasks.jsonl (one JSON record/line).
@@ -55,6 +56,15 @@ require "date"
 require "shellwords"
 
 ROOT    = File.expand_path("..", __dir__)
+
+# Git invokes this plumbing command with temporary merge-stage paths. Dispatch
+# before resolving a configured task store so the driver depends only on the
+# three explicit files Git supplied.
+if ARGV.first == "merge-driver"
+  require_relative "../lib/tasks/merge_driver_command"
+  exit Tasks::MergeDriverCommand.run(ARGV.drop(1))
+end
+
 # Task files are configurable (env vars, ~/.config/tasks/config) so the data
 # can live outside this repo. See lib/tasks/config.rb for precedence.
 require_relative "../lib/tasks/config"
@@ -1543,16 +1553,21 @@ end
 
 # Validate tasks.jsonl structure. Exit 0 clean, 1 errors found.
 def cmd_check(args)
-  res = Tasks::Check.check(ORG)
-  if args.include?("--json")
+  flags, rest = take_flags(args, "--json", "--all-files")
+  abort "usage: tasks check [--json] [--all-files]" unless rest.empty?
+  all_files = flags["--all-files"]
+  res = all_files ? store.check_files : Tasks::Check.check(ORG)
+  if flags["--json"]
     require "json"
     puts res.to_h.to_json
   else
     res.errors.each   { |line, msg| puts "#{red("error")}  line #{line}: #{msg}" }
     res.warnings.each { |line, msg| puts "#{yellow("warn")}   line #{line}: #{msg}" }
     if res.ok?
-      n = store.items.size
-      puts "ok — #{n} task#{n == 1 ? "" : "s"} parsed, no structural errors#{res.warnings.empty? ? "" : " (#{res.warnings.size} warning#{res.warnings.size == 1 ? "" : "s"})"}"
+      snapshot = store.read_snapshot(include_archive: all_files)
+      n = snapshot.items.size + (all_files ? snapshot.archive_items.size : 0)
+      noun = all_files ? "record" : "task"
+      puts "ok — #{n} #{noun}#{n == 1 ? "" : "s"} parsed, no structural errors#{res.warnings.empty? ? "" : " (#{res.warnings.size} warning#{res.warnings.size == 1 ? "" : "s"})"}"
     else
       puts "#{res.errors.size} error(s), #{res.warnings.size} warning(s)"
     end

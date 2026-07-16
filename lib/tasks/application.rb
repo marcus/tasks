@@ -67,7 +67,8 @@ module Tasks
   # settings; each #call returns a new mutable Store.
   class StoreFactory
     def initialize(org:, archive:, journal_dir: nil, undo_limit: Store::UNDO_LIMIT,
-                   links: {}, link_systems: {}, max_depth: Tree::DEFAULT_MAX_DEPTH)
+                   links: {}, link_systems: {}, max_depth: Tree::DEFAULT_MAX_DEPTH,
+                   now: -> { Time.now.utc }, device: nil)
       @org = frozen_text(org)
       @archive = frozen_text(archive)
       @journal_dir = journal_dir && frozen_text(journal_dir)
@@ -75,6 +76,8 @@ module Tasks
       @links = immutable_copy(links)
       @link_systems = immutable_copy(link_systems)
       @max_depth = Integer(max_depth)
+      @now = now
+      @device = UpdateStamp.slug(device || UpdateStamp.device).freeze
       # Every Store built by one factory represents one adapter/application
       # lifetime. Sharing this private scope preserves coalesced editor writes
       # while each operation still receives its own mutable Store instance.
@@ -85,13 +88,14 @@ module Tasks
     def call
       Store.new(org: org, archive: archive, journal_dir: journal_dir,
                 undo_limit: undo_limit, links: links, link_systems: link_systems,
-                max_depth: max_depth, coalesce_scope: coalesce_scope)
+                max_depth: max_depth, coalesce_scope: coalesce_scope,
+                now: now, device: device)
     end
 
     private
 
     attr_reader :org, :archive, :journal_dir, :undo_limit, :links, :link_systems, :max_depth,
-                :coalesce_scope
+                :coalesce_scope, :now, :device
 
     def frozen_text(value)
       value.to_s.dup.freeze

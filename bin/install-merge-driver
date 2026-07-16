@@ -1,0 +1,43 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "open3"
+require "shellwords"
+
+ROOT = File.expand_path("..", __dir__)
+TASKS_BIN = File.join(ROOT, "bin", "tasks")
+
+def git_config(repo, key, value)
+  _stdout, stderr, status = Open3.capture3("git", "-C", repo, "config", key, value)
+  abort "git config #{key} failed: #{stderr.strip}" unless status.success?
+end
+
+repo = ARGV.shift
+abort "usage: bin/install-merge-driver [task-data-repo]" unless ARGV.empty?
+
+unless repo
+  require_relative "../lib/tasks/config"
+  paths = Tasks::Config.resolve(default_dir: ROOT)
+  repo = File.dirname(paths.org)
+end
+repo = File.expand_path(repo)
+
+_top, stderr, status = Open3.capture3("git", "-C", repo, "rev-parse", "--show-toplevel")
+abort "not a git repository: #{repo}#{stderr.empty? ? "" : " (#{stderr.strip})"}" unless status.success?
+
+attributes = File.join(repo, ".gitattributes")
+attribute_text = File.file?(attributes) ? File.read(attributes, encoding: "UTF-8") : ""
+missing = %w[tasks.jsonl archive.jsonl].reject do |pathname|
+  attribute_text.match?(/^\s*#{Regexp.escape(pathname)}\s+merge=tasksjsonl(?:\s|$)/)
+end
+unless missing.empty?
+  abort "#{attributes} must select merge=tasksjsonl for both tasks.jsonl and archive.jsonl " \
+        "(missing: #{missing.join(", ")})"
+end
+
+driver = "#{Shellwords.escape(TASKS_BIN)} merge-driver %O %A %B %P"
+git_config(repo, "merge.tasksjsonl.name", "tasks jsonl 3-way record merge")
+git_config(repo, "merge.tasksjsonl.driver", driver)
+
+puts "installed tasksjsonl merge driver in #{repo}"
+puts "  #{driver}"

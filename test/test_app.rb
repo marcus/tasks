@@ -1847,6 +1847,12 @@ class TestApp < Minitest::Test
     app.send(:read_model).tasks.map(&:id)
   end
 
+  def ordering_semantics(text)
+    Tasks::Format.parse(text).records.map do |record|
+      record.reject { |key, _| key == "line" || key == "updated" }
+    end
+  end
+
   def test_outline_ordering_alt_up_encodings_move_a_collapsed_subtree_and_keep_selection
     ["\e[1;3A", "\e\e[A", "\ek"].each do |sequence|
       app_on(view: :outline, select: "Beta", content: ORDERING_APP) do |app|
@@ -1901,7 +1907,8 @@ class TestApp < Minitest::Test
       refute_includes ui(app).collapsed, "0d000002", "indent expands the new parent to retain selection"
 
       app.send(:outdent_subtree)
-      assert_equal original, File.binread(app.instance_variable_get(:@store).org)
+      assert_equal ordering_semantics(original),
+                   ordering_semantics(File.binread(app.instance_variable_get(:@store).org))
       assert_equal "0d000004", app.send(:current_item).id
     end
   end
@@ -1914,7 +1921,8 @@ class TestApp < Minitest::Test
       assert_equal %w[0d000002 0d000003 0d000004 0d000005 0d000006 0d000007], ordering_ids(app)
 
       app.send(:outdent_subtree)
-      assert_equal original, File.binread(app.instance_variable_get(:@store).org),
+      assert_equal ordering_semantics(original),
+                   ordering_semantics(File.binread(app.instance_variable_get(:@store).org)),
                    "outdent from the last parent appends immediately after it"
     end
 

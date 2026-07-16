@@ -100,6 +100,23 @@ detail-panel slots like `panel_title`, `detail_label`, `description`, `link`, `l
 (+ any `color.*`, link, and `prompt.*` overrides), and where each came from.
 `--json` includes `prompt_facts` (the effective name→boolean map).
 
+**Multi-device Git merge plumbing.** Every Store write stamps only task records
+whose semantic fields changed with `updated=<RFC3339 UTC second>#<device>`, for
+example `2026-07-16T14:03:11Z#home`. The device is the first alphanumeric token
+of `TASKS_DEVICE` or the hostname's first DNS label. Existing records without a
+stamp remain valid and are treated as oldest during a merge. `updated` is not
+part of task revision/ETag fingerprints, and undo/redo restores exact journal
+bytes without re-stamping.
+
+`tasks merge-driver <base> <ours> <theirs> <pathname>` is an internal,
+Git-invoked CLI-only adapter. It performs a deterministic field-level 3-way
+merge by stable id and writes valid canonical JSONL to `<ours>`; hard failure
+leaves `<ours>` untouched and exits 1. `bin/install-merge-driver [data-repo]`
+registers the absolute command in that repository's local Git config after
+verifying `.gitattributes` selects `merge=tasksjsonl`. This is intentionally
+not an HTTP capability: it is local Git transport plumbing, not user-visible
+task behavior. See the root README for setup and audit-log details.
+
 **TUI interaction.** With no task panel open, `Tab` focuses the agent prompt.
 `:` opens the searchable, context-aware action palette; typing filters the
 available actions, the arrow keys choose one, Return runs it, and Escape
@@ -488,7 +505,7 @@ and `sources.memory` (`"TASKS_MEMORY env"` / `"config file"` /
 | `id <ref> [--json]` | | ✅ | Print a task's stable `id`, minting one if absent (post-migration every record already has one — this is the repair path). Idempotent. Resolves refs regardless of state. |
 | `links [<ref>]` | `urls` | ✅ | Links found in task titles/notes, classified by system (`slack`, `jira`, `github`, …; unknown hosts fall back to the host name; Confluence-on-Atlassian is told apart from Jira by its `/wiki` path). One task's links with `<ref>`; every open task's otherwise. `--system <name>` filters (case-insensitive), `--all` widens the listing to done + archived (`<ref>` resolution itself stays live-file only), `--json` emits `{links: [{url, label, system, task, id, line, source}]}`. Recognizes org links `[[url][label]]`, bare URLs, and configured shorthands (below), in file order; org-internal targets (`[[id:…]]`, `[[file:…]]`, headline links) are org navigation, not links. |
 | `open <ref> [n]` | `o` | ✅ | Open a task's link in the browser (macOS `open` / `xdg-open`; `TASKS_OPENER` overrides). One link opens directly; several are listed numbered (exit 1) unless picked by 1-based `n` or `--system <name>`. `--print` prints the URL instead of launching. Resolves refs regardless of state (live file). |
-| `check [--json]` | `k` | ✅ | Validate `tasks.jsonl` structure (records, ids, DFS order, dates). Exit 1 if errors. The escape hatch after any out-of-band edit — and see Repairing an invalid record below for how a mutation can fix the broken record it names. |
+| `check [--json] [--all-files]` | `k` | ✅ | Validate `tasks.jsonl` structure (records, ids, DFS order, dates). `--all-files` also validates `archive.jsonl` and rejects any stable id present in both files; sync automation uses this after a merge. Exit 1 if errors. The escape hatch after any out-of-band edit — and see Repairing an invalid record below for how a mutation can fix the broken record it names. |
 
 JSON list shape (`--json` on list/agenda/next/quadrants/inbox) — a flat array,
 already sorted the way the text view sorts:

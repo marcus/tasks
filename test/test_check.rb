@@ -1,6 +1,9 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require "json"
+require "open3"
+require "rbconfig"
 require "tasks/check"
 require "tasks/format"
 
@@ -136,6 +139,65 @@ class TestCheck < Minitest::Test
                          task("aaaa0002", "aaaa0001", "NEXT", "two")])
     refute res.ok?
     assert_match(/duplicate id/, res.errors.map { |_l, m| m }.join)
+  end
+
+  def test_check_store_rejects_id_shared_by_live_and_archive
+    Dir.mktmpdir do |dir|
+      live = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(live, Tasks::Format.dump([
+        meta, section("aaaa0001", "Work"), task("aaaa0002", "aaaa0001", "NEXT", "Edited live")
+      ]))
+      File.write(archive, Tasks::Format.dump([
+        meta, section("bbbb0001", "Archive"),
+        task("aaaa0002", "bbbb0001", "DONE", "Archived copy", "closed" => "2026-07-16")
+      ]))
+
+      result = C.check_store(live, archive)
+
+      refute result.ok?
+      assert_includes result.errors.map(&:last).join("\n"),
+                      'id "aaaa0002" appears in both tasks.jsonl line 3 and archive.jsonl line 3'
+    end
+  end
+
+  def test_check_store_allows_missing_archive_and_disjoint_ids
+    Dir.mktmpdir do |dir|
+      live = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(live, Tasks::Format.dump([meta, section("aaaa0001", "Work")]))
+
+      assert C.check_store(live, archive).ok?
+
+      File.write(archive, Tasks::Format.dump([meta, section("bbbb0001", "Archive")]))
+      assert C.check_store(live, archive).ok?
+    end
+  end
+
+  def test_cli_all_files_reports_cross_file_duplicate_as_json
+    Dir.mktmpdir do |dir|
+      live = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(live, Tasks::Format.dump([
+        meta, section("aaaa0001", "Work"), task("aaaa0002", "aaaa0001", "NEXT", "Edited live")
+      ]))
+      File.write(archive, Tasks::Format.dump([
+        meta, section("bbbb0001", "Archive"),
+        task("aaaa0002", "bbbb0001", "DONE", "Archived copy", "closed" => "2026-07-16")
+      ]))
+      bin = File.expand_path("../bin/tasks", __dir__)
+      stdout, stderr, status = Open3.capture3(
+        { "TASKS_FILE" => live, "TASKS_ARCHIVE" => archive,
+          "XDG_STATE_HOME" => ENV.fetch("XDG_STATE_HOME") },
+        RbConfig.ruby, bin, "check", "--all-files", "--json"
+      )
+
+      refute status.success?
+      assert_empty stderr
+      payload = JSON.parse(stdout)
+      refute payload.fetch("ok")
+      assert_includes payload.fetch("errors").first.fetch("message"), "appears in both"
+    end
   end
 
   def test_malformed_id_is_an_error

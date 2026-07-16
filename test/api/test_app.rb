@@ -149,7 +149,7 @@ class TestApiApp < Minitest::Test
     assert_equal ["@desk"], resource.fetch("contexts")
     assert_equal ["api"], resource.fetch("tags")
     assert_nil resource.fetch("parent_id")
-    assert_equal ["Captured [2026-07-15].", "one", "two"], resource.fetch("body")
+    assert_equal ["Captured [#{Date.today.iso8601}].", "one", "two"], resource.fetch("body")
     assert_contract_response(created)
 
     updated = json_request(

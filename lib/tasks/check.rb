@@ -3,6 +3,7 @@
 require "date"
 require "set"
 require_relative "format"
+require_relative "update_stamp"
 
 module Tasks
   # Structural linter for a tasks.jsonl (or archive.jsonl) file. Format keeps a
@@ -51,6 +52,33 @@ module Tasks
 
       raw = File.read(path, encoding: "UTF-8")
       check_text(raw)
+    end
+
+    # Validate the live/archive pair and enforce the Store-wide ID invariant.
+    # Each file can be structurally valid on its own while a concurrent
+    # archive-vs-edit merge leaves the same task in both; sync automation must
+    # refuse that pair before it reaches a remote.
+    def check_store(live_path, archive_path)
+      live = check(live_path)
+      archive = File.exist?(archive_path) ? check(archive_path) : Result.new([], [])
+      errors = annotate(live.errors, "tasks.jsonl") + annotate(archive.errors, "archive.jsonl")
+      warnings = annotate(live.warnings, "tasks.jsonl") + annotate(archive.warnings, "archive.jsonl")
+
+      live_ids = records_with_ids(live_path)
+      archive_ids = records_with_ids(archive_path)
+      errors.concat(cross_file_duplicate_errors(live_ids, archive_ids))
+
+      Result.new(errors.sort_by(&:first), warnings.sort_by(&:first))
+    end
+
+    def cross_file_duplicate_errors(live_records_or_ids, archive_records_or_ids)
+      live_ids = id_lines(live_records_or_ids)
+      archive_ids = id_lines(archive_records_or_ids)
+      (live_ids.keys & archive_ids.keys).sort.map do |id|
+        [archive_ids[id],
+         "id #{id.inspect} appears in both tasks.jsonl line #{live_ids[id]} " \
+         "and archive.jsonl line #{archive_ids[id]}"]
+      end
     end
 
     # Validate bytes already captured by a caller. Store's API-grade read path
@@ -116,6 +144,32 @@ module Tasks
       end
 
       Result.new(errors.sort_by(&:first), warnings.sort_by(&:first))
+    end
+
+    def annotate(entries, source)
+      entries.map { |line, message| [line, "#{source}: #{message}"] }
+    end
+
+    def records_with_ids(path)
+      return {} unless File.exist?(path)
+
+      raw = File.read(path, encoding: "UTF-8")
+      return {} unless raw.valid_encoding?
+
+      Format.parse(raw).records.each_with_object({}) do |record, ids|
+        ids[record["id"]] ||= record["line"] if record["id"].is_a?(String)
+      end
+    rescue SystemCallError, IOError
+      {}
+    end
+
+
+    def id_lines(records_or_ids)
+      return records_or_ids if records_or_ids.is_a?(Hash)
+
+      records_or_ids.each_with_object({}) do |record, ids|
+        ids[record["id"]] ||= record["line"] if record["id"].is_a?(String)
+      end
     end
 
     # Line 1 must be a well-formed meta record at the current schema version.
@@ -203,6 +257,9 @@ module Tasks
         errors << [line, "tags must be an array"]
       elsif r["tags"].is_a?(Array) && r["tags"].any? { |t| !t.is_a?(String) }
         errors << [line, "tags must all be strings"]
+      end
+      if r.key?("updated") && !UpdateStamp.valid?(r["updated"])
+        errors << [line, "updated #{r["updated"].inspect} is not an RFC3339 UTC timestamp with device slug"]
       end
     end
 

@@ -17,6 +17,7 @@ require_relative "quadrants"
 require_relative "recur"
 require_relative "task_patch"
 require_relative "tree"
+require_relative "update_stamp"
 
 module Tasks
   Item = Struct.new(
@@ -280,7 +281,8 @@ module Tasks
     # (Config#links / #link_systems), consulted by #links. The keyword stays
     # `org:` for constructor compatibility though it now names the jsonl file.
     def initialize(org:, archive:, journal_dir: nil, undo_limit: UNDO_LIMIT, coalesce_scope: nil,
-                   links: {}, link_systems: {}, max_depth: Tree::DEFAULT_MAX_DEPTH)
+                   links: {}, link_systems: {}, max_depth: Tree::DEFAULT_MAX_DEPTH,
+                   now: -> { Time.now.utc }, device: nil)
       @org = org
       @archive = archive
       @max_depth = max_depth
@@ -291,6 +293,8 @@ module Tasks
       @read_snapshot = nil
       @link_shorthands = links
       @link_systems = link_systems
+      @now = now
+      @device = UpdateStamp.slug(device || UpdateStamp.device)
       @journal = Journal.new(dir: journal_dir || Journal.dir_for(org), org: org, limit: undo_limit,
                              coalesce_scope: coalesce_scope)
     end
@@ -347,6 +351,25 @@ module Tasks
         status: :unavailable,
         errors: [{ source: nil, line: 0, message: "task store unavailable" }]
       )
+    end
+
+    # Coherent sync-safety validation over live and archive. Unlike the API's
+    # checked read, this deliberately rejects even retry-safe transient copies
+    # shared across both files: a git push must wait until an archive operation
+    # converges to one durable location.
+    def check_files
+      with_lock do
+        live = capture_read_source(@org, validate: true)
+        archive = capture_read_source(@archive, optional: true, validate: true)
+        errors = live[:check].errors.map { |line, message| [line, "tasks.jsonl: #{message}"] } +
+                 archive[:check].errors.map { |line, message| [line, "archive.jsonl: #{message}"] } +
+                 Check.cross_file_duplicate_errors(live[:records], archive[:records])
+        warnings = live[:check].warnings.map { |line, message| [line, "tasks.jsonl: #{message}"] } +
+                   archive[:check].warnings.map { |line, message| [line, "archive.jsonl: #{message}"] }
+        Check::Result.new(errors.sort_by(&:first), warnings.sort_by(&:first))
+      end
+    rescue SystemCallError
+      Check::Result.new([[0, "task store unavailable"]], [])
     end
 
     def reload!(include_archive: false)
@@ -2252,7 +2275,35 @@ module Tasks
     # -- write plumbing --------------------------------------------------------
 
     def write_records(path, records)
+      stamp_changed_tasks!(fresh_records(path), records)
       Atomic.write(path, Format.dump(records))
+    end
+
+    def stamp_changed_tasks!(original_records, proposed_records)
+      original_by_id = original_records.each_with_object({}) do |record, by_id|
+        by_id[record["id"]] = record if record["id"]
+      end
+      changed_ids = proposed_records.each_with_object(Set.new) do |record, ids|
+        next false unless record["type"] == "task"
+
+        original = original_by_id[record["id"]]
+        ids << record["id"] if original.nil? || stamp_semantics(original) != stamp_semantics(record)
+      end
+      stamp = UpdateStamp.format(@now.call, @device) unless changed_ids.empty?
+
+      proposed_records.each do |record|
+        next unless record["type"] == "task"
+
+        if changed_ids.include?(record["id"])
+          record["updated"] = stamp
+        elsif (original = original_by_id[record["id"]])
+          original.key?("updated") ? record["updated"] = original["updated"] : record.delete("updated")
+        end
+      end
+    end
+
+    def stamp_semantics(record)
+      Format.dump_record(record.reject { |key, _| key == "line" || key == "updated" })
     end
 
     def meta_record = { "type" => "meta", "version" => Format::VERSION }
@@ -2546,8 +2597,11 @@ module Tasks
       expected = expected.reject { |key, _| key == "line" }
       actual = actual.reject { |key, _| key == "line" }
       # The first archive write owns the timestamp. A retry after midnight must
-      # not conflict solely because today's proposed stamp has advanced.
+      # not conflict solely because today's proposed archive/update stamps have
+      # advanced. Moving into the archive is a write for every task in the
+      # subtree, so the durable archive copy also owns each task's `updated`.
       expected["archived"] = actual["archived"] if expected["archived"] && actual["archived"]
+      expected["updated"] = actual["updated"] if actual["updated"]
       expected == actual
     end
 
