@@ -13,9 +13,12 @@ module Tasks
                 :deadline, :recur, :closed, :source, :body, :links, :headline,
                 :parent_id, :ancestor_ids, :child_ids, :section_id,
                 :section_title, :project, :revision, :availability_reason,
-                :availability_blocker_id, :descendant_count
+                :availability_blocker_id, :descendant_count,
+                :scheduled_value, :deadline_value, :scheduled_time, :deadline_time,
+                :available_at
 
     def initialize(id:, state:, priority:, title:, tags:, scheduled:, deadline:,
+                   scheduled_value: nil, deadline_value: nil, temporal_context: nil,
                    recur:, closed:, source:, body:, links:, headline:, parent_id:,
                    ancestor_ids:, child_ids:, section_id:, section_title:, project:,
                    availability:, revision: nil, descendant_count: 0)
@@ -27,6 +30,10 @@ module Tasks
       @contexts = @tags.select { |tag| tag.start_with?("@") }.freeze
       @scheduled = scheduled&.freeze
       @deadline = deadline&.freeze
+      @scheduled_value = scheduled_value&.freeze
+      @deadline_value = deadline_value&.freeze
+      @scheduled_time = scheduled_value&.api_time(temporal_context)&.freeze
+      @deadline_time = deadline_value&.api_time(temporal_context)&.freeze
       @recur = frozen_text(recur)
       @closed = closed&.freeze
       @source = source&.to_sym
@@ -43,6 +50,7 @@ module Tasks
       @available = availability.available?
       @availability_reason = availability.reason
       @availability_blocker_id = frozen_text(availability.blocker_id)
+      @available_at = availability.available_at&.iso8601&.freeze
       @descendant_count = Integer(descendant_count)
       freeze
     end
@@ -58,7 +66,8 @@ module Tasks
       {
         id: id, state: state, priority: priority, title: title, tags: tags,
         contexts: contexts, deferred: deferred?, scheduled: scheduled&.iso8601,
-        deadline: deadline&.iso8601, available: available?,
+        scheduled_time: scheduled_time, deadline: deadline&.iso8601,
+        deadline_time: deadline_time, available: available?, available_at: available_at,
         availability_reason: availability_reason.to_s,
         availability_blocker_id: availability_blocker_id,
         recur: recur, closed: closed&.iso8601, source: source,
@@ -103,10 +112,10 @@ module Tasks
     KINDS = %w[project area].freeze
 
     attr_reader :id, :title, :parent_id, :kind, :line, :open_count, :next_count,
-                :next_date, :stuck, :body, :task_ids, :held_count
+                :next_date, :next_time, :next_at, :stuck, :body, :task_ids, :held_count
 
     def initialize(id:, title:, parent_id:, kind:, line:, open_count:, next_count:,
-                   next_date:, stuck:, body:, task_ids:, held_count: 0)
+                   next_date:, next_time: nil, next_at: nil, stuck:, body:, task_ids:, held_count: 0)
       @id = frozen_text(id)
       @title = frozen_text(title)
       @parent_id = frozen_text(parent_id)
@@ -117,6 +126,8 @@ module Tasks
       @open_count = Integer(open_count)
       @next_count = Integer(next_count)
       @next_date = next_date&.freeze
+      @next_time = next_time&.freeze
+      @next_at = next_at&.utc&.freeze
       @stuck = !!stuck
       @body = frozen_text(body)
       @task_ids = frozen_array(task_ids)
@@ -132,7 +143,8 @@ module Tasks
       {
         id: id, title: title, parent_id: parent_id, kind: kind,
         open_count: open_count, next_count: next_count,
-        next_date: next_date&.iso8601, stuck: stuck, held_count: held_count,
+        next_date: next_date&.iso8601, next_time: next_time,
+        next_at: next_at&.iso8601, stuck: stuck, held_count: held_count,
         body: body, task_ids: task_ids,
       }.reject { |_, value| value.nil? }
     end

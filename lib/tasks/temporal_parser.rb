@@ -9,7 +9,7 @@ module Tasks
 
     module_function
 
-    def parse(expression, today:, timezone: nil, floating: false, fold: 0)
+    def parse(expression, today:, timezone: nil, floating: false, fold: 0, context: nil)
       input = expression.to_s.strip
       return nil if input.empty?
       raise ArgumentError, "--timezone and --floating are mutually exclusive" if timezone && floating
@@ -19,7 +19,10 @@ module Tasks
       return nil unless date
       raise ArgumentError, "a time is required with --timezone or --fold" if !local && (timezone || fold.to_i == 1)
 
-      TemporalValue.new(date: date, local_time: local, timezone: (floating ? nil : timezone), fold: fold)
+      value = TemporalValue.new(date: date, local_time: local,
+                                timezone: (floating ? nil : timezone), fold: fold)
+      value.instant(context) if local && context
+      value
     end
 
     def split(input)

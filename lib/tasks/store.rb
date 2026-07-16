@@ -17,6 +17,7 @@ require_relative "quadrants"
 require_relative "recur"
 require_relative "task_patch"
 require_relative "temporal_value"
+require_relative "temporal_context"
 require_relative "tree"
 require_relative "update_stamp"
 
@@ -211,7 +212,7 @@ module Tasks
     # build a tree from untrusted records. Errors carry only source, line, and a
     # safe validation message — never configured filesystem paths.
     class CheckedRead
-      STATUSES = %i[ok store_invalid unavailable].freeze
+      STATUSES = %i[ok migration_required store_invalid unavailable].freeze
 
       attr_reader :status, :snapshot, :store_revision, :errors, :warnings
 
@@ -227,6 +228,7 @@ module Tasks
       end
 
       def ok? = status == :ok
+      def migration_required? = status == :migration_required
       def store_invalid? = status == :store_invalid
       def unavailable? = status == :unavailable
 
@@ -337,6 +339,17 @@ module Tasks
                  annotated_check_entries(archive[:check].errors, :archive)
         warnings = annotated_check_entries(live[:check].warnings, :live) +
                    annotated_check_entries(archive[:check].warnings, :archive)
+
+        versions = [live, archive].filter_map do |source|
+          source[:records].first&.fetch("version", nil) if source[:records].first&.fetch("type", nil) == "meta"
+        end
+        if versions.include?(1)
+          return CheckedRead.new(
+            status: :migration_required, store_revision: store_revision,
+            errors: [{ source: nil, line: 1, message: "schema version 1 requires `tasks migrate`" }],
+            warnings: warnings
+          )
+        end
 
         unless errors.empty?
           return CheckedRead.new(
@@ -760,15 +773,16 @@ module Tasks
     # Store-produced and semantic: the field baseline digest never includes a
     # line number or mtime, while location and lifecycle digests protect the
     # wider effects of a move or state change.
-    def apply_changeset!(changeset, today: Date.today)
-      apply_task_changeset!(changeset, strict_revision: true, today: today)
+    def apply_changeset!(changeset, today: Date.today, temporal_context: nil)
+      apply_task_changeset!(changeset, strict_revision: true, today: today,
+                            temporal_context: temporal_context)
     end
 
     # Apply one field-owned semantic change. TaskPatch remains the adapter
     # convenience for existing CLI/TUI save-on-blur paths; it delegates all
     # mutation work to the same changeset transaction below, retaining its
     # established narrow expected-value conflict check.
-    def patch_task!(patch, today: Date.today)
+    def patch_task!(patch, today: Date.today, temporal_context: nil)
       unless patch.respond_to?(:id) && patch.respond_to?(:field) &&
              patch.respond_to?(:value) && patch.respond_to?(:expected)
         return MutationResult.new(status: :invalid, errors: ["expected a Tasks::TaskPatch"])
@@ -780,14 +794,15 @@ module Tasks
         changeset,
         strict_revision: false,
         field_expectations: { field => patch.expected },
-        today: today
+        today: today, temporal_context: temporal_context
       )
     end
 
     # Shared transaction for TaskChangeset and TaskPatch. All field changes are
     # first applied to a detached records copy; an invalid later field therefore
     # cannot leak a partial in-memory mutation into a file write or journal step.
-    def apply_task_changeset!(changeset, strict_revision:, today:, field_expectations: nil)
+    def apply_task_changeset!(changeset, strict_revision:, today:, field_expectations: nil,
+                              temporal_context: nil)
       unless changeset.is_a?(TaskChangeset)
         return MutationResult.new(status: :invalid, errors: ["expected a Tasks::TaskChangeset"])
       end
@@ -862,7 +877,8 @@ module Tasks
           original_records = Format.dump(records)
           working_records = duplicate_records(records)
           applied = apply_changeset_fields(
-            working_records, changeset, today: today, placement_targets: placement_targets
+            working_records, changeset, today: today, temporal_context: temporal_context,
+            placement_targets: placement_targets
           )
           if applied[:status] != :ok
             return MutationResult.new(status: applied[:status], snapshot: current,
@@ -1443,10 +1459,13 @@ module Tasks
       ordinary_tags = tags.reject { |tag| tag.start_with?("@") || tag == DEFER_TAG }
       parent = records.find { |record| record["id"] == rec["parent"] }
       values = edit_values(rec, tags: tags, contexts: contexts, ordinary_tags: ordinary_tags)
+      scheduled_value = TemporalValue.from_record(rec, :scheduled)
+      deadline_value = TemporalValue.from_record(rec, :deadline)
       EditSnapshot.new(
         id: rec["id"], title: values[:title], priority: values[:priority],
         deferred: values[:deferred], scheduled: values[:scheduled],
-        deadline: values[:deadline], recurrence: values[:recurrence],
+        deadline: values[:deadline], scheduled_value: scheduled_value,
+        deadline_value: deadline_value, recurrence: values[:recurrence],
         contexts: contexts, tags: ordinary_tags, body: values[:body],
         parent: rec["parent"], state: rec["state"], closed: to_date(rec["closed"]),
         baselines: values,
@@ -1459,7 +1478,8 @@ module Tasks
           line: rec["line"],
           tag_sequence: tags,
           date_state: {
-            scheduled: values[:scheduled], deadline: values[:deadline], recurrence: values[:recurrence],
+            scheduled: temporal_expectation(scheduled_value),
+            deadline: temporal_expectation(deadline_value), recurrence: values[:recurrence],
           },
           parent_type: parent && parent["type"],
           parent_title: parent && parent["title"],
@@ -1484,6 +1504,10 @@ module Tasks
         location: rec["parent"],
         state: rec["state"],
       }
+    end
+
+    def temporal_expectation(value)
+      value&.all_day? ? value.date : value
     end
 
     # `siblings_by_parent` is a bulk-computation index (see task_revisions); it
@@ -1667,7 +1691,8 @@ module Tasks
       JSON.parse(JSON.generate(records))
     end
 
-    def apply_changeset_fields(records, changeset, today:, placement_targets: nil)
+    def apply_changeset_fields(records, changeset, today:, temporal_context: nil,
+                               placement_targets: nil)
       touched_ids = []
       summaries = {}
       changeset.ordered_fields.each do |field|
@@ -1676,7 +1701,7 @@ module Tasks
 
         applied = apply_semantic_patch(
           records, ri, field, changeset.changes.fetch(field), force: changeset.force,
-          today: today, placement_targets: placement_targets
+          today: today, temporal_context: temporal_context, placement_targets: placement_targets
         )
         return applied unless applied[:status] == :ok
 
@@ -1790,12 +1815,13 @@ module Tasks
       ri && build_edit_snapshot(records, ri)
     end
 
-    def apply_semantic_patch(records, ri, field, value, force: false, today:, placement_targets: nil)
+    def apply_semantic_patch(records, ri, field, value, force: false, today:, temporal_context: nil,
+                             placement_targets: nil)
       case field
       when :title      then patch_title(records, ri, value)
       when :priority   then patch_priority(records, ri, value)
       when :deferred   then patch_deferred(records, ri, value)
-      when :activate   then patch_activate(records, ri, value, today: today)
+      when :activate   then patch_activate(records, ri, value, today: today, temporal_context: temporal_context)
       when :scheduled  then patch_date(records, ri, value, :scheduled)
       when :deadline   then patch_date(records, ri, value, :deadline)
       when :date_clear then patch_date_clear(records, ri, value)
@@ -1805,7 +1831,7 @@ module Tasks
       when :tag_delta  then patch_tag_delta(records, ri, value)
       when :body       then patch_body(records, ri, value)
       when :location   then patch_location(records, ri, value, force: force, placement_targets: placement_targets)
-      when :state      then patch_state(records, ri, value, today: today)
+      when :state      then patch_state(records, ri, value, today: today, temporal_context: temporal_context)
       end
     end
 
@@ -1850,15 +1876,20 @@ module Tasks
     # only anchor: activation owns availability, not the recurrence contract.
     # A later completion will require the user to establish a new occurrence
     # date, but activation must never silently discard the cookie.
-    def patch_activate(records, ri, value, today:)
+    def patch_activate(records, ri, value, today:, temporal_context: nil)
       return patch_invalid("activate must be true") unless value == true
 
       rec = records[ri]
       tags = semantic_tags(rec)
       tags.delete(DEFER_TAG)
       replace_optional(rec, "tags", tags)
-      scheduled = to_date(rec["scheduled"])
-      if scheduled && scheduled > today
+      scheduled = TemporalValue.from_record(rec, :scheduled, validate: false)
+      future = if scheduled&.local_time && temporal_context
+                 scheduled.release_instant(temporal_context) > temporal_context.now
+               else
+                 scheduled && scheduled.date > today
+               end
+      if future
         rec.delete("scheduled")
         rec.delete("scheduled_time")
       end
@@ -2137,12 +2168,13 @@ module Tasks
       nil
     end
 
-    def patch_state(records, ri, value, today:)
+    def patch_state(records, ri, value, today:, temporal_context: nil)
       return patch_invalid("invalid task state") unless Check::STATES.include?(value)
       rec = records[ri]
       from = rec["state"]
       if value == "DONE" && Recur.cookie?(rec["recur"])
-        result = advance_recurrence_records(records, ri, today: today)
+        result = advance_recurrence_records(records, ri, today: today,
+                                            temporal_context: temporal_context)
         return result unless result[:status] == :ok
         result[:summary] = { from: from, to: from, recurrence_advanced: true, cascaded_ids: [] }
         return result
@@ -2167,7 +2199,7 @@ module Tasks
                           cascaded_ids: cascaded_ids })
     end
 
-    def advance_recurrence_records(records, ri, today:)
+    def advance_recurrence_records(records, ri, today:, temporal_context: nil)
       rec = records[ri]
       cookie = rec["recur"]
       return patch_invalid("invalid recurrence cookie") unless Recur.cookie?(cookie)
@@ -2177,6 +2209,11 @@ module Tasks
 
       if deadline
         next_deadline = Recur.next_date(cookie, from: deadline, today: today)
+        next_deadline = advance_past_temporal_gaps(
+          cookie, next_deadline, rec, "deadline", temporal_context,
+          paired: scheduled && ["scheduled", scheduled - deadline]
+        )
+        return next_deadline if next_deadline.is_a?(Hash)
         if rec["scheduled"]
           return patch_invalid("recurrence requires a valid date") unless scheduled
 
@@ -2184,12 +2221,41 @@ module Tasks
         end
         rec["deadline"] = next_deadline.iso8601
       else
-        rec["scheduled"] = Recur.next_date(cookie, from: scheduled, today: today).iso8601
+        next_scheduled = Recur.next_date(cookie, from: scheduled, today: today)
+        next_scheduled = advance_past_temporal_gaps(cookie, next_scheduled, rec, "scheduled", temporal_context)
+        return next_scheduled if next_scheduled.is_a?(Hash)
+        rec["scheduled"] = next_scheduled.iso8601
       end
       rec["tags"] = semantic_tags(rec) - [DEFER_TAG]
       replace_optional(rec, "tags", rec["tags"])
       rec["body"] = append_body(rec["body"], "- Did [#{today}].")
       patch_ok(rec)
+    end
+
+    def advance_past_temporal_gaps(cookie, candidate, record, field, temporal_context, paired: nil)
+      count, unit = cookie.match(Recur::COOKIE).captures.values_at(1, 2)
+      1_000.times do
+        pair_date = paired && candidate + paired[1]
+        valid = temporal_candidate_valid?(record, field, candidate, temporal_context)
+        valid &&= temporal_candidate_valid?(record, paired[0], pair_date, temporal_context) if paired
+        return candidate if valid
+        candidate = Recur.step(candidate, count.to_i, unit)
+      end
+      patch_invalid("recurrence could not find a valid local date/time")
+    end
+
+    def temporal_candidate_valid?(record, field, date, temporal_context)
+      metadata = record["#{field}_time"]
+      return true unless metadata
+      value = TemporalValue.new(date: date, local_time: metadata["local"],
+                                timezone: metadata["timezone"], fold: metadata.fetch("fold", 0),
+                                validate: false)
+      zone_context = temporal_context || TemporalContext.new(now: Time.utc(date.year, date.month, date.day),
+                                                             timezone: "Etc/UTC")
+      value.instant(zone_context)
+      true
+    rescue ArgumentError, Timezones::Error
+      false
     end
 
     # -- id minting ------------------------------------------------------------

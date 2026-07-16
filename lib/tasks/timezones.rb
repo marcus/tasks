@@ -29,7 +29,11 @@ module Tasks
       hour, minute = local.split(":", 2).map(&:to_i)
       wall = Time.utc(date.year, date.month, date.day, hour, minute)
       periods = resolve(zone).periods_for_local(wall)
-      raise NonexistentLocalTime, "#{date} #{local} does not exist in #{resolve(zone).identifier}" if periods.empty?
+      if periods.empty?
+        next_local = first_valid_local_after(date, local, zone)
+        hint = next_local ? "; first valid time is #{next_local}" : ""
+        raise NonexistentLocalTime, "#{date} #{local} does not exist in #{resolve(zone).identifier}#{hint}"
+      end
 
       instants = periods.map { |period| wall - period.observed_utc_offset }.sort
       (fold.to_i == 1 ? instants.last : instants.first).utc
@@ -50,6 +54,16 @@ module Tasks
     def ambiguous?(date, local, zone)
       hour, minute = local.split(":", 2).map(&:to_i)
       resolve(zone).periods_for_local(Time.utc(date.year, date.month, date.day, hour, minute)).length > 1
+    end
+
+    def first_valid_local_after(date, local, zone)
+      hour, minute = local.split(":", 2).map(&:to_i)
+      start = hour * 60 + minute
+      (start + 1).upto(1_439) do |candidate|
+        wall = Time.utc(date.year, date.month, date.day, candidate / 60, candidate % 60)
+        return format("%02d:%02d", candidate / 60, candidate % 60) unless resolve(zone).periods_for_local(wall).empty?
+      end
+      nil
     end
 
     def detect(env: ENV, localtime: "/etc/localtime")

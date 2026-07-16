@@ -10,6 +10,7 @@ require_relative "operation_context"
 require_relative "task_changeset"
 require_relative "task_patch"
 require_relative "task_queries"
+require_relative "temporal_context"
 
 module Tasks
   # One coherent, immutable live read for adapters that need both the legacy
@@ -22,9 +23,9 @@ module Tasks
   class TaskReadModel
     attr_reader :items, :tree, :tasks
 
-    def initialize(snapshot, today: Date.today)
+    def initialize(snapshot, today: Date.today, temporal_context: nil)
       @snapshot = snapshot
-      @queries = TaskQueries.new(snapshot, today: today)
+      @queries = TaskQueries.new(snapshot, today: today, temporal_context: temporal_context)
       @items = snapshot.items
       @tree = snapshot.tree
       @tasks = items.map { |item| @queries.task(item) }.freeze
@@ -120,12 +121,13 @@ module Tasks
   # objects. Adapter concerns such as ARGV, terminal rendering, Rack request
   # objects, and HTTP status mapping deliberately remain outside this class.
   class Application
-    def initialize(store_factory:)
+    def initialize(store_factory:, temporal_context_factory: nil)
       unless store_factory.respond_to?(:call)
         raise ArgumentError, "store_factory must respond to #call"
       end
 
       @store_factory = store_factory
+      @temporal_context_factory = temporal_context_factory
       freeze
     end
 
@@ -210,7 +212,8 @@ module Tasks
     # new Store just like every other Application query, so the TUI cannot
     # retain Store's mutable read cache between paints or external writes.
     def read_tasks(today: Date.today)
-      TaskReadModel.new(store_factory.call.read_snapshot, today: today)
+      TaskReadModel.new(store_factory.call.read_snapshot, today: today,
+                        temporal_context: context_for(today: today))
     end
 
     # Field-scoped snapshot for adapters that preserve save-on-blur or
@@ -218,6 +221,12 @@ module Tasks
     # an escape hatch to a Store instance.
     def edit_snapshot(id)
       store_factory.call.edit_snapshot(id)
+    end
+
+    # Schema deployment is an operator action, but TUI and CLI entry points use
+    # the same checked Store migration rather than editing either JSONL file.
+    def migrate_schema(dry_run: false)
+      store_factory.call.migrate_schema!(dry_run: dry_run)
     end
 
     # Typed creation seam. Hash attributes are accepted for adapter convenience
@@ -233,7 +242,7 @@ module Tasks
                 else
                   raise ArgumentError, "create_task expects a Tasks::CreateTask or attributes mapping"
                 end
-      store_factory.call.create_task!(command, today: today)
+      store_factory.call.create_task!(command, today: operation_today(today, context))
     end
 
     # Typed command seam for transports that need an atomic multi-field update.
@@ -255,7 +264,9 @@ module Tasks
                       history_label: history_label, force: force
                     )
                   end
-      store_factory.call.apply_changeset!(changeset, today: today)
+      temporal = context_for(today: today, operation_context: context)
+      store_factory.call.apply_changeset!(changeset, today: temporal.local_date,
+                                          temporal_context: temporal)
     end
 
     # A single-field command keeps TaskPatch's field-owned expectation while
@@ -268,7 +279,9 @@ module Tasks
         raise ArgumentError, "patch_task expects a Tasks::TaskPatch"
       end
 
-      store_factory.call.patch_task!(patch, today: today)
+      temporal = context_for(today: today, operation_context: context)
+      store_factory.call.patch_task!(patch, today: temporal.local_date,
+                                     temporal_context: temporal)
     end
 
     # Typed deletion seam. An undoable hard delete of one live task; a task with
@@ -368,7 +381,7 @@ module Tasks
     # snapshot carried by MutationResult. This keeps an HTTP response and its
     # global revision tied to the exact same write instead of racing a second
     # Store read after the lock is released.
-    def task_result_from_mutation(result, id, today: Date.today)
+    def task_result_from_mutation(result, id, today: Date.today, temporal_context: nil)
       unless result.is_a?(MutationResult)
         raise ArgumentError, "result must be a Tasks::MutationResult"
       end
@@ -376,7 +389,8 @@ module Tasks
         raise ArgumentError, "mutation result has no coherent task snapshot"
       end
 
-      task = TaskQueries.new(result.read_snapshot, today: today).find(id, source: :live)
+      task = TaskQueries.new(result.read_snapshot, today: today,
+                             temporal_context: temporal_context || context_for(today: today)).find(id, source: :live)
       ApplicationReadResult.new(
         status: task ? :ok : :not_found,
         data: task,
@@ -386,7 +400,7 @@ module Tasks
 
     private
 
-    attr_reader :store_factory
+    attr_reader :store_factory, :temporal_context_factory
 
     # The id of the top-level "Projects" root section (case-insensitive, same
     # rule TaskQueries#projects uses), read from the given store's live snapshot,
@@ -407,7 +421,8 @@ module Tasks
     end
 
     def queries(include_archive: false, today: Date.today)
-      TaskQueries.new(store_factory.call.read_snapshot(include_archive: include_archive), today: today)
+      TaskQueries.new(store_factory.call.read_snapshot(include_archive: include_archive), today: today,
+                      temporal_context: context_for(today: today))
     end
 
     def checked_query(today:)
@@ -419,7 +434,8 @@ module Tasks
         )
       end
 
-      data = yield TaskQueries.new(checked.snapshot, today: today)
+      data = yield TaskQueries.new(checked.snapshot, today: today,
+                                   temporal_context: context_for(today: today))
       ApplicationReadResult.new(
         status: data.nil? ? :not_found : :ok,
         data: data,
@@ -433,6 +449,16 @@ module Tasks
       return if defined?(OperationContext) && context.is_a?(OperationContext)
 
       raise ArgumentError, "context must be a Tasks::OperationContext"
+    end
+
+    def context_for(today:, operation_context: nil)
+      return operation_context.temporal_context if operation_context&.respond_to?(:temporal_context) && operation_context.temporal_context
+      return temporal_context_factory.call if temporal_context_factory
+      TemporalContext.new(now: Time.utc(today.year, today.month, today.day, 12), timezone: "Etc/UTC")
+    end
+
+    def operation_today(fallback, operation_context)
+      context_for(today: fallback, operation_context: operation_context).local_date
     end
   end
 end

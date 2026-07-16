@@ -7,14 +7,15 @@ module Tasks
   class OperationContext
     SOURCES = %i[cli tui api].freeze
 
-    attr_reader :operation_id, :source, :actor
+    attr_reader :operation_id, :source, :actor, :temporal_context
 
-    def initialize(operation_id:, source:, actor: nil)
+    def initialize(operation_id:, source:, actor: nil, temporal_context: nil)
       @operation_id = required_text(operation_id, "operation_id")
       source_name = required_text(source, "source")
       @source = SOURCES.find { |candidate| candidate.to_s == source_name }
       raise ArgumentError, "unknown operation source: #{source_name}" unless @source
       @actor = optional_text(actor)
+      @temporal_context = temporal_context
       freeze
     end
 

@@ -11,6 +11,7 @@ module Tasks
     ].freeze
 
     attr_reader :id, :title, :priority, :deferred, :scheduled, :deadline,
+                :scheduled_value, :deadline_value,
                 :recurrence, :contexts, :tags, :body, :parent, :state, :closed,
                 :baselines, :fingerprints, :metadata, :revision
 
@@ -18,6 +19,7 @@ module Tasks
     alias parent_id parent
 
     def initialize(id:, title:, priority:, deferred:, scheduled:, deadline:,
+                   scheduled_value: scheduled, deadline_value: deadline,
                    recurrence:, contexts:, tags:, body:, parent:, state:, closed:,
                    baselines:, fingerprints:, revision:, metadata: {})
       @id = immutable(id)
@@ -26,6 +28,8 @@ module Tasks
       @deferred = deferred
       @scheduled = scheduled
       @deadline = deadline
+      @scheduled_value = scheduled_value
+      @deadline_value = deadline_value
       @recurrence = immutable(recurrence)
       @contexts = immutable(contexts)
       @tags = immutable(tags)
@@ -46,6 +50,8 @@ module Tasks
     # expected value is an affected-structure fingerprint.
     def expected_for(field)
       field = normalize_field(field)
+      return temporal_expectation(scheduled_value) if field == :scheduled
+      return temporal_expectation(deadline_value) if field == :deadline
       @fingerprints.fetch(field) { @baselines.fetch(field) }
     end
     alias expected expected_for
@@ -58,6 +64,10 @@ module Tasks
     end
 
     private
+
+    def temporal_expectation(value)
+      value.respond_to?(:all_day?) && value.all_day? ? value.date : value
+    end
 
     def normalize_field(field)
       field = field.to_sym
