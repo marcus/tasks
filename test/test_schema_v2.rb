@@ -147,6 +147,44 @@ class TestSchemaV2 < Minitest::Test
     end
   end
 
+  def test_legacy_archive_and_history_mutations_return_migration_required
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, Tasks::Format.dump([
+        { "type" => "meta", "version" => 1 },
+        { "type" => "task", "id" => "aaaa0001", "state" => "DONE", "title" => "Existing" },
+      ]))
+      store = Tasks::Store.new(org: org, archive: archive)
+
+      assert_equal [:migration_required], store.undo!
+      refusal = store.archive_swept!
+      assert_instance_of Tasks::Store::ArchiveRefusal, refusal
+      assert_equal :migration_required, refusal.reason
+      refute File.exist?(archive)
+    end
+  end
+
+  def test_migration_backs_up_an_existing_empty_archive_for_exact_recovery
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, Tasks::Format.dump([{ "type" => "meta", "version" => 1 }]))
+      File.write(archive, "")
+      store = Tasks::Store.new(org: org, archive: archive)
+
+      result = store.migrate_schema!
+
+      assert result.ok?, result.errors.inspect
+      assert_includes result.backups, "#{archive}.v1.bak"
+      assert_equal "", File.binread("#{archive}.v1.bak")
+      FileUtils.cp("#{org}.v1.bak", org)
+      FileUtils.cp("#{archive}.v1.bak", archive)
+      assert_equal 1, JSON.parse(File.foreach(org).first).fetch("version")
+      assert_equal "", File.binread(archive)
+    end
+  end
+
   def test_migration_rolls_both_files_back_when_installation_fails
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")

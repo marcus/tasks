@@ -410,7 +410,16 @@ module Tui
 
         hour, minute = current.local_time.split(":").map(&:to_i)
         total = (hour * 60 + minute + direction * 15) % 1_440
-        rebuild(current, local_time: format("%02d:%02d", total / 60, total % 60))
+        candidate = format("%02d:%02d", total / 60, total % 60)
+        rebuild(current, local_time: candidate)
+      rescue Tasks::Timezones::NonexistentLocalTime
+        raise unless direction.positive?
+
+        zone = current.timezone || @temporal_context&.timezone
+        next_local = zone && Tasks::Timezones.first_valid_local_after(current.date, candidate, zone)
+        raise unless next_local
+
+        rebuild(current, local_time: next_local)
       end
 
       def adjust_mode(current, direction)
@@ -419,10 +428,12 @@ module Tui
         case mode
         when :all_day then Tasks::TemporalValue.new(date: current.date)
         when :floating
-          Tasks::TemporalValue.new(date: current.date, local_time: current.local_time || "09:00")
+          Tasks::TemporalValue.new(date: current.date, local_time: current.local_time || "09:00",
+                                   fold: current.fold)
         when :fixed
           zone = current.timezone || @temporal_context&.timezone_id || "Etc/UTC"
-          Tasks::TemporalValue.new(date: current.date, local_time: current.local_time || "09:00", timezone: zone)
+          Tasks::TemporalValue.new(date: current.date, local_time: current.local_time || "09:00",
+                                   timezone: zone, fold: current.fold)
         end
       end
 
@@ -431,11 +442,6 @@ module Tui
         rebuilt = Tasks::TemporalValue.new(
           date: date, local_time: local_time, timezone: timezone, fold: fold
         )
-        if rebuilt.local_time && !ambiguous?(rebuilt) && rebuilt.fold == 1
-          rebuilt = Tasks::TemporalValue.new(
-            date: rebuilt.date, local_time: rebuilt.local_time, timezone: rebuilt.timezone, fold: 0
-          )
-        end
         rebuilt.instant(@temporal_context) if rebuilt.floating? && @temporal_context
         rebuilt
       end

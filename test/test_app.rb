@@ -60,6 +60,27 @@ class TestApp < Minitest::Test
     end
   end
 
+  def test_dismissed_schema_v1_prompt_keeps_archive_and_history_read_only
+    Dir.mktmpdir do |dir|
+      records = FIXTURE_RECORDS.map(&:dup)
+      records.first["version"] = 1
+      raw = records.map { |record| JSON.generate(record) }.join("\n") + "\n"
+      path = File.join(dir, "tasks.jsonl")
+      File.write(path, raw)
+
+      app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir), llm_config: default_llm_config)
+      app.send(:modal_key, "\e")
+      assert_equal :list, ui(app).mode
+
+      app.send(:archive_sweep)
+      assert_equal :migration_required, ui(app).modal.kind
+      app.send(:modal_key, "\e")
+      app.send(:undo_last)
+      assert_equal :migration_required, ui(app).modal.kind
+      assert_equal raw, File.read(path)
+    end
+  end
+
   # Single-run adapter fake used behind AgentQueue's injected factory.
   class FakeAgent
     attr_reader :started, :output, :process_status, :exit_status

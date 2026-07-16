@@ -1475,6 +1475,7 @@ module Tui
     def history_op(op, verb)
       kind, label = @store.public_send(op)
       case kind
+      when :migration_required then show_schema_migration_prompt
       when :empty    then flash("nothing to #{verb == "undid" ? "undo" : "redo"}")
       when :conflict then flash("file changed externally — can't #{op.to_s.chomp("!")} “#{label}”")
       else
@@ -2430,6 +2431,7 @@ module Tui
     end
 
     def archive_sweep
+      return show_schema_migration_prompt if schema_migration_required?
       return confirm_archive_project(current_project) if current_project
 
       preview = @store.archive_preview
@@ -2468,6 +2470,8 @@ module Tui
         close_modal
         if result.is_a?(Tasks::Store::ArchiveRefusal)
           case result.reason
+          when :migration_required
+            show_schema_migration_prompt
           when :preview_changed
             flash("task list changed — press x to review the updated archive preview")
           when :archive_conflict

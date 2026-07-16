@@ -127,8 +127,6 @@ paths:
           $ref: "#/components/responses/MigrationRequired"
         "503":
           $ref: "#/components/responses/StoreInvalid"
-        "409":
-          $ref: "#/components/responses/MigrationRequired"
         "400":
           $ref: "#/components/responses/MalformedRequest"
         "422":
@@ -417,7 +415,7 @@ paths:
                       details: { parent_id: "deadbeef" }
                       request_id: "req_4c1a"
         "409":
-          description: Structural refusal (excessive depth) nesting the task.
+          description: Structural refusal nesting the task, or schema migration required.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -429,6 +427,8 @@ paths:
                       message: "Nesting the task would exceed the maximum depth."
                       details: { max_depth: 4 }
                       request_id: "req_5f3a"
+                migration_required:
+                  $ref: "#/components/examples/MigrationRequiredError"
         "415":
           $ref: "#/components/responses/UnsupportedMediaType"
         "403":
@@ -437,8 +437,6 @@ paths:
           $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/ValidationFailed"
-        "409":
-          $ref: "#/components/responses/MigrationRequired"
         "503":
           $ref: "#/components/responses/StoreInvalid"
 
@@ -684,7 +682,8 @@ paths:
         "409":
           description: |
             Structural refusal applying a move or ordered placement. After id
-            resolution, cycle detection precedes anchor-parent validation.
+            resolution, cycle detection precedes anchor-parent validation. The
+            same status reports a required schema migration before mutation.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -722,6 +721,8 @@ paths:
                       message: "The placement would exceed max_depth."
                       details: { max_depth: 4 }
                       request_id: "req_6a1d"
+                migration_required:
+                  $ref: "#/components/examples/MigrationRequiredError"
         "412":
           $ref: "#/components/responses/StaleRevision"
         "415":
@@ -786,7 +787,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: The task has descendants and `cascade` was not set.
+          description: The task has descendants without `cascade`, or schema migration is required.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -800,6 +801,8 @@ paths:
                         descendants: 3
                         open_descendants: 2
                       request_id: "req_7b2d"
+                migration_required:
+                  $ref: "#/components/examples/MigrationRequiredError"
         "412":
           $ref: "#/components/responses/StaleRevision"
         "422":
@@ -1212,7 +1215,7 @@ paths:
                     meta:
                       store_revision: "s2.1a2b3c4d"
         "409":
-          description: The project still has open work and `force` was not set.
+          description: The project has open work without `force`, or schema migration is required.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -1226,6 +1229,8 @@ paths:
                         open_count: 3
                         held_count: 0
                       request_id: "req_5e6f"
+                migration_required:
+                  $ref: "#/components/examples/MigrationRequiredError"
         "404":
           $ref: "#/components/responses/NotFound"
         "400":
@@ -1541,7 +1546,7 @@ paths:
                     meta:
                       store_revision: "s1.9c3d4e5f"
         "409":
-          description: The preview changed since the fingerprint was taken.
+          description: The preview changed, or schema migration is required.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -1553,6 +1558,8 @@ paths:
                       message: "The archive preview changed; refetch it and retry."
                       details: { fingerprint: "sweep.a1b2c3" }
                       request_id: "req_8c3e"
+                migration_required:
+                  $ref: "#/components/examples/MigrationRequiredError"
         "422":
           $ref: "#/components/responses/ValidationFailed"
         "503":
@@ -1832,8 +1839,10 @@ components:
         The step cannot be applied: the supplied `store_revision` no longer
         matches (another surface wrote since it was observed), there is no
         step in that direction, or the journal refused the step because the
-        files were edited out of band. `details.reason` distinguishes
-        `stale_store_revision`, `empty`, and `journal_conflict`.
+        files were edited out of band. A v1 store also returns this status with
+        `schema_migration_required`. `details.reason` distinguishes
+        `stale_store_revision`, `empty`, and `journal_conflict` for history
+        conflicts.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -1854,6 +1863,8 @@ components:
                   message: "Nothing to undo."
                   details: { reason: "empty" }
                   request_id: "req_1d2e"
+            migration_required:
+              $ref: "#/components/examples/MigrationRequiredError"
     StoreInvalid:
       description: |
         The operation could not proceed against the backing store: either the
@@ -1891,6 +1902,14 @@ components:
               request_id: "req_8b9d"
 
   examples:
+    MigrationRequiredError:
+      summary: The store must be migrated before the operation can proceed.
+      value:
+        error:
+          code: "schema_migration_required"
+          message: "The task store uses schema v1; run `tasks migrate` before starting the API."
+          details: { current_version: 1, required_version: 2, command: "tasks migrate" }
+          request_id: "req_8b9d"
     TaskResource:
       summary: A representative task resource.
       value:

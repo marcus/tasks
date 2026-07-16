@@ -452,7 +452,7 @@ module Tasks
     # left behind — an out-of-band edit (Claude, another process) makes the step
     # unsafe and it is refused, not forced.
 
-    # Returns [:ok, label] | [:empty] | [:conflict, label]
+    # Returns [:ok, label] | [:empty] | [:conflict, label] | [:migration_required]
     def undo! = history_step(-1)
     def redo! = history_step(1)
 
@@ -498,8 +498,8 @@ module Tasks
           sources.each do |kind, path|
             next unless versions[kind] == 1
             backup = "#{path}.v1.bak"
-            Atomic.write(backup, before.fetch(kind)) unless before.fetch(kind).to_s.empty?
-            backups << backup unless before.fetch(kind).to_s.empty?
+            Atomic.write(backup, before.fetch(kind))
+            backups << backup
             records = before.fetch(kind).to_s.empty? ? [{ "type" => "meta", "version" => Format::VERSION }] :
                       Format.parse(before.fetch(kind)).records
             records.first["version"] = Format::VERSION
@@ -2606,6 +2606,8 @@ module Tasks
     # the lock so the plan and its commit can't race another writer.
     def history_step(delta)
       with_lock do
+        return [:migration_required] if schema_migration_required?
+
         step = @journal.plan(delta)
         return [:empty] unless step
         return [:conflict, step[:label]] unless snapshot == step[:expect]
@@ -2721,6 +2723,8 @@ module Tasks
     # equal archived copy; partial or mismatched overlap refuses safely. Returns
     # the count of roots swept, or ArchiveRefusal when a safety gate blocks it.
     def archive_swept_impl(expected_preview)
+      return ArchiveRefusal.new(reason: :migration_required) if schema_migration_required?
+
       plan = archive_plan(fresh_records(@org))
       if expected_preview && (expected_preview.candidate_ids != plan.preview.candidate_ids ||
                               expected_preview.fingerprint != plan.preview.fingerprint)

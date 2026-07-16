@@ -77,9 +77,11 @@ The cross-surface case boots the real `bin/tasks-api` Puma entrypoint and fresh
 
 Old binaries intentionally refuse schema v2 before writing. Before any v2 task
 changes, recovery means stopping every tasks process, restoring the live and
-archive `.v1.bak` files together, and checking them with the old binary. Never
-restore only one side. Once v2 changes exist, restoring those backups would
-discard work; export or reconcile the newer records first.
+archive `.v1.bak` files together, and checking them with the old binary. Every
+existing source gets a backup; an originally empty archive produces a zero-byte
+backup that must be restored exactly. Never restore only one side. Once v2
+changes exist, restoring those backups would discard work; export or reconcile
+the newer records first.
 
 The end-to-end automated gates and independent review are recorded in the
 implementation commits for `docs/plans/timed-task-values-and-timezones.md`.

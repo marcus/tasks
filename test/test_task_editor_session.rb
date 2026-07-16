@@ -114,6 +114,47 @@ class TestTaskEditorSession < Minitest::Test
     end
   end
 
+  def test_structured_temporal_picker_preserves_later_fold_preference_on_unambiguous_dates_and_modes
+    context = Tasks::TemporalContext.new(
+      now: Time.utc(2026, 10, 1), timezone: "America/Los_Angeles", time_format: 12
+    )
+    with_editor(today: Date.new(2026, 10, 1), temporal_context: context) do |session, _store, org|
+      session.form.focus(:scheduled)
+      session.form.set_value(:scheduled, "2026-11-02 1:30am America/New_York fold=later")
+      session.handle("\r")
+      session.handle("\e[C")     # Date: Nov 2 -> Nov 3 (both unambiguous).
+      session.handle("\e[B")
+      session.handle("\e[B")     # Mode row.
+      session.handle("\e[D")     # Fixed -> floating.
+      assert_equal 1, session.edit_form.value(:scheduled).fold
+      session.handle("\e[C")     # Floating -> fixed.
+      session.handle("\e")
+
+      assert_equal :ok, session.save.status
+      time = record(org).fetch("scheduled_time")
+      assert_equal "America/Los_Angeles", time.fetch("timezone")
+      assert_equal 1, time.fetch("fold")
+    end
+  end
+
+  def test_structured_time_step_offers_the_first_valid_time_after_a_dst_gap
+    context = Tasks::TemporalContext.new(
+      now: Time.utc(2026, 3, 1), timezone: "America/Los_Angeles", time_format: 12
+    )
+    with_editor(today: Date.new(2026, 3, 1), temporal_context: context) do |session, _store, org|
+      session.form.focus(:scheduled)
+      session.form.set_value(:scheduled, "2026-03-08 1:45am America/Los_Angeles")
+      session.handle("\r")
+      session.handle("\e[B")     # Time row.
+      session.handle("\e[C")     # 02:00 is a gap, so offer/apply 03:00.
+
+      assert_equal "03:00", session.edit_form.value(:scheduled).local_time
+      session.handle("\e")
+      assert_equal :ok, session.save.status
+      assert_equal "03:00", record(org).dig("scheduled_time", "local")
+    end
+  end
+
   def test_temporal_control_rejects_a_nonexistent_fixed_local_time
     context = Tasks::TemporalContext.new(
       now: Time.utc(2026, 3, 1), timezone: "America/Los_Angeles", time_format: 12
