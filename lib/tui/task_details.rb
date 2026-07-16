@@ -99,8 +99,31 @@ module Tui
         text += " → #{projected.fetch(:date).iso8601} #{projected.fetch(:local)} #{context.timezone_id}"
         date = projected.fetch(:date)
       end
+      text += " · #{temporal_relative(value, field, context)}" if context
       days = (date - today).to_i
       T.paint(Views.due_slot(days), text)
+    end
+
+    def temporal_relative(value, field, context)
+      boundary = field == :deadline ? value.due_boundary(context) : value.release_instant(context)
+      seconds = boundary - context.now
+      return field == :deadline ? "due now" : "available now" if seconds.abs < 60
+
+      duration = compact_duration(seconds.abs)
+      if seconds.positive?
+        field == :deadline ? "due in #{duration}" : "available in #{duration}"
+      elsif field == :deadline
+        "overdue by #{duration}"
+      else
+        "available for #{duration}"
+      end
+    end
+
+    def compact_duration(seconds)
+      minutes = [(seconds / 60).floor, 1].max
+      return "#{minutes}m" if minutes < 60
+      hours, remainder = minutes.divmod(60)
+      remainder.zero? ? "#{hours}h" : "#{hours}h #{remainder}m"
     end
 
     def availability_value(item, blocker, today, context = nil)

@@ -150,7 +150,11 @@ tasks migrate
 
 The migration changes only the meta version and writes `.v1.bak` copies of the
 live and existing archive files. It is idempotent. Older binaries refuse schema
-v2, so keep those backups until every machine has upgraded.
+v2, so keep those backups until every machine has upgraded. To roll back before
+making any v2 task changes, stop every tasks process and restore the live and
+archive `.v1.bak` files as a pair, then run the old binary's `tasks check`.
+Never restore only one file. If v2 changes already exist, restoring the backups
+would discard them; export or reconcile those changes before recovery instead.
 
 ### Git sync across devices
 
@@ -268,8 +272,11 @@ Task editing is save-on-blur: moving between fields validates and saves,
 consecutive saves in one edit session coalesce into a single undo step, and if
 an external write changes the field you're editing, your buffer stays copyable
 and the save reports a conflict instead of clobbering either side. Date rows
-save the date, time, floating/fixed mode, zone, and fold as one value. The editor
-is the embedded `TermForm` component
+save the date, time, floating/fixed mode, zone, and fold as one value. Return on
+a date row opens its structured control: a calendar, 15-minute time steps,
+all-day/floating/fixed mode, searchable IANA zones, and an earlier/later choice
+only when the selected civil time is ambiguous. Free-text date/time input is
+still available. The editor is the embedded `TermForm` component
 (`ruby examples/term_form_demo.rb` shows it running with no task code loaded).
 
 The agent prompt runs asynchronously — the UI stays live while requests queue

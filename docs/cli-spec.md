@@ -161,6 +161,13 @@ Edit-mode keys are fixed as follows:
 | `Ctrl-K` / `Ctrl-L` | Grow/shrink through compact → standard → wide → focus without blur; in task-edit text fields `Ctrl-K` intentionally shadows kill-to-end, while the agent prompt keeps its current `Ctrl-K`. |
 | `Escape` | Close an inner picker first. A dirty field requires a confirming second Escape before only that buffer is reverted; a clean field leaves edit mode. |
 
+Return on a scheduled or deadline row opens one structured temporal control.
+It combines a calendar, 15-minute time adjustment, all-day/floating/fixed mode,
+searchable full IANA zones, and an earlier/later fold choice that appears only
+for an ambiguous civil time. Closing the control changes only the field buffer;
+the complete temporal value is validated and saved atomically by the normal
+save-on-blur rules. Direct text entry remains available.
+
 The key reader treats `Shift-Tab` (`\e[Z`), CSI keys, and ESC-prefixed Alt
 bindings as complete sequences, including when input arrives across reads, so
 a partial sequence cannot become a destructive lone Escape. The editor is
@@ -289,6 +296,10 @@ Europe/London` makes it fixed; `--floating` explicitly selects floating mode;
 time is rejected, as are seconds, abbreviations, numeric offsets, unknown IANA
 zones, and nonexistent local times. `TASKS_TIMEZONE` overrides the config's
 `timezone`; `time_format = 12|24` affects human output only.
+If a later configuration-zone change makes a stored floating civil time
+nonexistent, CLI/API reads fail safely with a corrective error instead of a
+trace or partial result. The TUI reports the same error and temporarily
+projects in UTC so the value can be edited.
 
 **Availability and deferral.** `scheduled` is the task's single
 available-from/start/defer-until value; `deadline` is its independent due value.
@@ -321,7 +332,11 @@ semantics only. They do not schedule reminders or notifications.
 interval is measured from on completion — `+` fixed (stored date + interval, one
 hop), `++` catch-up (repeated until strictly future), `.+` from-completion (today
 + interval) — and the suffix is a count plus a unit (`d`/`w`/`m`/`y`; months/years
-step by calendar with day-clamp, so Jan 31 `+1m` → Feb 28). Completing a recurring
+step by calendar with day-clamp, so Jan 31 `+1m` → Feb 28). Timed `++` catch-up
+compares the exact release/due boundary, and `.+` uses the completion date in
+the value's effective zone. A nonexistent recurring wall time is skipped by
+another whole interval without changing its clock time or fixed zone.
+Completing a recurring
 task (`done`, or `state … DONE`) rolls its date forward and **leaves it open**
 instead of setting `closed`; it logs a `- Did [date]` line to the body since the
 task never closes. `cancel` still truly closes it
@@ -624,7 +639,7 @@ no fuzzy refs (a transport difference per design rule 7). See
 | `delete <ref>` | | ✅ | Undoable **hard delete** of a task's subtree from the live file — not an alias for `CANCELLED`, and it never touches `archive.jsonl`. A leaf deletes directly; a task that still has descendants is refused (exit 1) unless `--cascade` removes the whole contiguous subtree as one journal entry. Deleting never hoists or reparents children. Archived-only ids are not found (exit 2 via ref resolution / `not_found`); a section id is rejected (delete targets tasks). Resolves open tasks by default; `--include-done` widens to closed live tasks (they are still live records). Reports every removed task's pre-delete headline (`--json` → `{deleted: [..]}`); `--dry-run` prints what would be deleted, including the descendant count when cascading, and writes nothing. Undoable via `tasks undo` (restores the exact prior bytes). Cancellation/archival is usually the right call — `delete` is for genuine mistakes. |
 | `undo` | | ✅ | Revert the last mutation via the on-disk journal (`Tasks::Journal`, under `$XDG_STATE_HOME/tasks/journal/`), shared with the TUI and across CLI runs. Refuses (exit 1) if `tasks.jsonl` changed out-of-band since that edit — resolve with `git diff` / `git checkout -- tasks.jsonl`. |
 | `redo` | | ✅ | Replay the last undone mutation; same shared journal and conflict guard as `undo`. |
-| `migrate [--dry-run] [--json]` | | ✅ | Check and migrate schema-v1 live/archive files to v2 under the Store lock. The migration changes only each meta version, writes `.v1.bak` backups, validates both outputs, rolls both back on failure, and establishes an undo-journal schema barrier. It is idempotent. Preview with `--dry-run` before upgrading every machine; old binaries refuse v2. |
+| `migrate [--dry-run] [--json]` | | ✅ | Check and migrate schema-v1 live/archive files to v2 under the Store lock. The migration changes only each meta version, writes `.v1.bak` backups, validates both outputs, rolls both back on failure, and establishes an undo-journal schema barrier. It is idempotent. Preview with `--dry-run` before upgrading every machine; old binaries refuse v2. Before any v2 edits, explicit recovery may restore live and archive backups together; after v2 edits, reconcile them first because backup restoration discards later work. |
 | `-p [--provider N] [--model N] "prompt"` | | ✅ | Natural-language request via a headless LLM agent (Claude CLI by default, or any configured harness). Leading `--provider`/`--model` override the config default for one run; see [LLM agent settings](#llm-agent-settings). |
 | `config [--json]` | | ✅ | Print resolved file paths, `urgent_days`, `max_depth`, theme/colors, effective `timezone`, `time_format`, tzdb version, fallback warning, prompt facts, and each setting's source. |
 | `help` | `-h`, `--help` | ✅ | Grouped command reference. Also printed (to stderr, exit 1) on an unknown/absent command. |

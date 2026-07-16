@@ -365,7 +365,7 @@ def change_state(args, usage:, resolve_closed:, to: nil, dry_verb: nil, archive_
   recurring_done = recur_aware && target == "DONE" && item.recurring?
   if flags["--dry-run"]
     if recurring_done
-      puts "would recur → #{recur_next(item, today: today).iso8601}: #{item_headline(item)}"
+      puts "would recur → #{recur_next(item, context: context).iso8601}: #{item_headline(item)}"
     else
       puts "would #{dry_verb || "set state #{target} on"}: #{item_headline(item)}"
       # Completing an open parent cascades to its open descendants; preview how
@@ -388,16 +388,26 @@ def change_state(args, usage:, resolve_closed:, to: nil, dry_verb: nil, archive_
     puts "↻ #{item.title}#{d ? " → next #{d.iso8601} (#{d.strftime("%a")})" : ""}"
   end
   report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"],
-                 today: today, read_snapshot: result.read_snapshot)
+                 today: today, read_snapshot: result.read_snapshot, temporal_context: context)
   puts "Run `tasks archive` to move it out of tasks.jsonl." if archive_hint && !recurring_done && !flags["--json"]
 end
 
 # The date a recurring item's next occurrence would land on, from its precedence
 # stamp (DEADLINE over SCHEDULED, matching the Store). For `done` preview output.
-def recur_next(item, today: Date.today)
+def recur_next(item, context: temporal_context)
   require_relative "../lib/tasks/recur"
-  base = item.deadline || item.scheduled
-  Tasks::Recur.next_date(item.recur, from: base, today: today)
+  value = item.deadline_value || item.scheduled_value
+  kind = item.deadline_value ? :deadline : :scheduled
+  paired = item.deadline_value && item.scheduled_value ? item.scheduled_value : nil
+  delta = paired && (paired.date - value.date)
+  Tasks::Recur.next_temporal_date(item.recur, value: value, kind: kind, context: context) do |candidate|
+    next true unless paired
+
+    paired.with_date(candidate + delta).instant(context)
+    true
+  rescue Tasks::Timezones::Error, ArgumentError
+    false
+  end
 end
 
 # `done` and `cancel` are sugar for the DONE/CANCELLED transitions; they resolve
@@ -653,7 +663,9 @@ end
 # Stable ids survive retitles and tree moves, and cascade results carry every
 # affected id. The CLI JSON keeps its historical line field as presentation,
 # never as a mutation locator.
-def report_touched(ids, json:, today: Date.today, read_snapshot: nil, extra: nil, temporal_context: nil)
+def report_touched(ids, json:, today: nil, read_snapshot: nil, extra: nil, temporal_context: nil)
+  temporal_context ||= method(:temporal_context).call
+  today ||= temporal_context.local_date
   if read_snapshot
     query = Tasks::TaskQueries.new(read_snapshot, today: today, temporal_context: temporal_context)
     items = Array(ids)
@@ -740,7 +752,8 @@ def cmd_priority(args)
 end
 
 def cmd_undate(args)
-  today = Date.today
+  context = temporal_context
+  today = context.local_date
   args = args.dup
   kind = nil
   if (idx = args.index("--kind"))
@@ -772,7 +785,7 @@ def cmd_undate(args)
                             snapshot: snapshot, today: today)
   mutation_result_failed(result, "nothing to remove (no matching date stamp?)")
   report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"],
-                 today: today, read_snapshot: result.read_snapshot)
+                 today: today, read_snapshot: result.read_snapshot, temporal_context: context)
 end
 
 def cmd_show(args)
@@ -1542,6 +1555,7 @@ def cmd_delete(args)
 end
 
 def cmd_archive
+  require_current_schema_for_mutation!
   result = store.archive_swept!
   if result.is_a?(Tasks::Store::ArchiveRefusal)
     preview = result.preview
@@ -1587,6 +1601,7 @@ def cmd_id(args)
   ref = rest.shift
   abort "usage: tasks id <ref>" if ref.nil? || ref.strip.empty?
   item = resolve_ref(ref, include_done: true) # referenceable regardless of state
+  require_current_schema_for_mutation!
   id = store.ensure_id!(item)
   mutation_failed "failed to assign id" unless id
   store.reload!
@@ -1602,12 +1617,19 @@ def cmd_id(args)
 end
 
 def run_history(op, verb:, past:)
+  require_current_schema_for_mutation!
   kind, label = store.public_send(op)
   case kind
   when :empty    then abort "nothing to #{verb}"
   when :conflict then abort "tasks.jsonl changed since that edit — refusing to #{verb} “#{label}”"
   else                puts "#{past}: #{label}"
   end
+end
+
+def require_current_schema_for_mutation!
+  return unless store.migration_required?
+
+  mutation_failed "task data migration required; run `tasks migrate`"
 end
 
 STATE_ORDER = Tasks::TaskFilter::STATE_ORDER
@@ -2159,6 +2181,7 @@ def cmd_help(io = $stdout) = io.puts(HELP)
 
 # each branch reads via the store on demand — `check` must be able to run
 # (and report) on a file the parser would choke on
+begin
 case ARGV[0]
 when "-p", "--prompt" then cmd_prompt(ARGV[1..]); exit
 when "next", "n"      then cmd_next(ARGV[1..])
@@ -2199,5 +2222,10 @@ when "help", "-h", "--help" then cmd_help
 else
   warn "unknown command: #{ARGV[0].inspect}\n\n" if ARGV[0]
   cmd_help($stderr)
+  exit 1
+end
+rescue Tasks::Timezones::Error => e
+  warn "temporal value is invalid in #{PATHS.timezone}: #{e.message}"
+  warn "choose a valid local time or change the configured timezone"
   exit 1
 end

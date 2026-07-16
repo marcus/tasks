@@ -56,6 +56,64 @@ class TestTaskEditorSession < Minitest::Test
     end
   end
 
+  def test_structured_temporal_picker_edits_date_time_and_mode_atomically
+    context = Tasks::TemporalContext.new(
+      now: Time.utc(2026, 7, 13, 12), timezone: "America/Los_Angeles", time_format: 12
+    )
+    with_editor(temporal_context: context) do |session, _store, _org|
+      session.form.focus(:scheduled)
+      assert_equal :handled, session.handle("\r").status
+      assert session.form.field(:scheduled).picker_open?
+
+      session.handle("\r")       # Date row opens the calendar.
+      session.handle("\e[C")     # Move one day.
+      session.handle("\r")       # Apply the calendar date.
+      session.handle("\e[B")     # Time row.
+      session.handle("\e[C")     # All day -> 09:00 floating.
+      session.handle("\e[B")     # Mode row.
+      session.handle("\e[C")     # Floating -> fixed in configured zone.
+
+      value = session.edit_form.value(:scheduled)
+      assert_equal Date.new(2026, 7, 14), value.date
+      assert_equal "09:00", value.local_time
+      assert_equal "America/Los_Angeles", value.timezone
+      assert session.dirty?(:scheduled)
+    end
+  end
+
+  def test_structured_temporal_picker_searches_iana_zones_and_exposes_fold_only_when_ambiguous
+    context = Tasks::TemporalContext.new(
+      now: Time.utc(2026, 10, 1), timezone: "America/Los_Angeles", time_format: 12
+    )
+    with_editor(today: Date.new(2026, 10, 1), temporal_context: context) do |session, _store, org|
+      session.form.focus(:scheduled)
+      session.form.set_value(:scheduled, "2026-11-01 1:30am")
+      session.handle("\r")
+      picker = session.form.render_model.groups.flat_map(&:rows).find { |field| field.key == :scheduled }
+      assert_equal :temporal, picker.metadata.dig(:picker, :kind)
+
+      session.handle("\e[B")
+      session.handle("\e[B")     # Mode row.
+      session.handle("\e[C")     # Floating -> fixed.
+      session.handle("\e[B")     # Zone row.
+      zone_row = session.form.render_model.groups.flat_map(&:rows).find { |field| field.key == :scheduled }
+      assert_equal :zone, zone_row.metadata.dig(:picker, :row)
+      session.handle("\r")
+      session.handle(TermForm::Event.paste("New_York"))
+      zone_picker = session.form.render_model.groups.flat_map(&:rows).find { |field| field.key == :scheduled }
+      assert_equal "New_York", zone_picker.metadata.dig(:picker, :zone_search)
+      session.handle("\r")
+      session.handle("\e[B")     # Fold row, present because 01:30 is ambiguous.
+      session.handle("\e[C")     # Earlier -> later.
+      session.handle("\e")       # Close structured picker.
+      assert_equal :ok, session.save.status
+
+      time = record(org).fetch("scheduled_time")
+      assert_equal "America/New_York", time.fetch("timezone")
+      assert_equal 1, time.fetch("fold")
+    end
+  end
+
   def test_temporal_control_rejects_a_nonexistent_fixed_local_time
     context = Tasks::TemporalContext.new(
       now: Time.utc(2026, 3, 1), timezone: "America/Los_Angeles", time_format: 12

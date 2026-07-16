@@ -85,6 +85,15 @@ module Tasks
           status = error.status
           headers = error.headers
           body = Representation.error(error.code, error.message, request_id, error.details)
+        rescue Timezones::Error => error
+          status = 503
+          headers = {}
+          body = Representation.error(
+            :store_invalid,
+            "A floating task time is invalid in the configured time zone.",
+            request_id,
+            { temporal_error: error.message }
+          )
         rescue StandardError
           status = 503
           headers = {}
@@ -224,6 +233,8 @@ module Tasks
         tasks = tasks.select(&:available?) if available == true
         data = tasks.map { |view| Representation.task(view) }
         [200, {}, Representation.success(data, result.store_revision)]
+      rescue Timezones::Error
+        raise
       rescue ArgumentError => error
         validation!(query: [safe_argument_message(error)])
       end
@@ -282,13 +293,13 @@ module Tasks
         body = json_body(request)
         reject_unknown_fields!(body, PATCH_FIELDS)
         validation!(changes: ["must contain at least one field"]) if body.empty?
-        validate_patch_body!(body)
         current = application.get_task_result(id, source: :live)
         if current.status == :not_found
           raise HttpError.new(404, :not_found, "No live task with that id.",
                               details: { field: "id", id: id })
         end
         read_failure!(current, request_id) unless current.ok?
+        validate_patch_body!(body, current: current.data)
         changes = normalize_patch_changes(body, current: current.data, context: temporal)
         ensure_store_ready!(request_id)
         result = application.update_task(
@@ -542,8 +553,12 @@ module Tasks
         end
       end
 
-      def validate_patch_body!(body)
+      def validate_patch_body!(body, current:)
         validate_common_body!(body, create: false)
+        %w[scheduled deadline].each do |field|
+          next unless body["#{field}_time"] && !body.key?(field)
+          validation!("#{field}_time" => ["requires #{field}"]) unless current.public_send(field)
+        end
         if body.key?("placement") && body.key?("parent_id")
           validation!(
             placement: ["cannot be combined with parent_id"],

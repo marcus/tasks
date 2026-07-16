@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require "tasks/application"
 require "tasks/temporal_value"
 
 class TestSchemaV2 < Minitest::Test
@@ -86,6 +87,8 @@ class TestSchemaV2 < Minitest::Test
       assert_equal 2, JSON.parse(File.foreach(org).first)["version"]
       assert_equal 2, JSON.parse(File.foreach(archive).first)["version"]
       assert_equal live_records.drop(1), Tasks::Format.parse(File.read(org)).records.drop(1).map { |r| r.except("line") }
+      assert_equal archived_records.drop(1),
+                   Tasks::Format.parse(File.read(archive)).records.drop(1).map { |r| r.except("line") }
       assert File.exist?("#{org}.v1.bak")
       assert File.exist?("#{archive}.v1.bak")
       assert_equal :empty, store.undo!.first
@@ -106,6 +109,41 @@ class TestSchemaV2 < Minitest::Test
       assert_equal :migration_required, result.status
       assert result.migration_required?
       assert_equal 1, JSON.parse(File.foreach(org).first).fetch("version")
+    end
+  end
+
+  def test_project_mutation_against_v1_returns_typed_migration_requirement
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, Tasks::Format.dump([{ "type" => "meta", "version" => 1 }]))
+      application = Tasks::Application.new(
+        store_factory: Tasks::StoreFactory.new(org: org, archive: archive)
+      )
+
+      result = application.create_project(title: "New project")
+
+      assert_equal :migration_required, result.status
+      assert_equal 1, JSON.parse(File.foreach(org).first).fetch("version")
+    end
+  end
+
+  def test_task_mutation_refuses_a_v1_archive_beside_a_v2_live_store
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, Tasks::Format.dump([
+        { "type" => "meta", "version" => 2 },
+        { "type" => "task", "id" => "aaaa0001", "state" => "NEXT", "title" => "Existing" },
+      ]))
+      File.write(archive, Tasks::Format.dump([{ "type" => "meta", "version" => 1 }]))
+      store = Tasks::Store.new(org: org, archive: archive)
+      patch = Tasks::TaskPatch.new(id: "aaaa0001", field: :priority, value: "A", expected: nil)
+
+      result = store.patch_task!(patch)
+
+      assert_equal :migration_required, result.status
+      assert_nil JSON.parse(File.readlines(org)[1]).fetch("priority", nil)
     end
   end
 

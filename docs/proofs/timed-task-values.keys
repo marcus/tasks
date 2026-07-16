@@ -18,12 +18,19 @@ Z
 @capture:timed-task-values.png
 Down
 Down
-Down
 Enter
 @sleep:500
 Tab
 @wait:task · editing
 @sleep:500
+Tab
+Tab
+Tab
+Tab
+Enter
+@wait:Temporal value
+@sleep:500
 @capture:timed-task-values-editor.png
+Escape
 Escape
 q

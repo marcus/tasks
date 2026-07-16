@@ -1523,6 +1523,54 @@ class TestApp < Minitest::Test
     end
   end
 
+  def test_read_model_uses_one_clock_snapshot_for_date_and_exact_times
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, "tasks.jsonl"), FIXTURE_ORG)
+      calls = 0
+      clock = lambda do
+        calls += 1
+        Time.utc(2026, 7, 14, 20, 30)
+      end
+      paths = Tasks::Config.for_dir(dir)
+      app = Tui::App.new(
+        root: dir, paths: paths, llm_config: default_llm_config, time_provider: clock
+      )
+      app.send(:invalidate_read_model)
+      calls = 0
+
+      model = app.send(:read_model)
+
+      assert_equal 1, calls
+      assert_equal Time.utc(2026, 7, 14, 20, 30), model.temporal_context.now
+      assert_equal Date.new(2026, 7, 14), app.instance_variable_get(:@read_model_today)
+    end
+  end
+
+  def test_read_model_falls_back_safely_when_configured_zone_creates_a_floating_gap
+    records = [
+      { "type" => "meta", "version" => 2 },
+      { "type" => "section", "id" => "aa000001", "title" => "Work" },
+      { "type" => "task", "id" => "aa000002", "parent" => "aa000001", "state" => "NEXT",
+        "title" => "Gap task", "deadline" => "2026-03-08",
+        "deadline_time" => { "local" => "02:30" } },
+    ]
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, "tasks.jsonl"), dump_fixture(records))
+      paths = Tasks::Config.for_dir(dir).dup
+      paths.timezone = "America/Los_Angeles"
+      app = Tui::App.new(
+        root: dir, paths: paths, llm_config: default_llm_config,
+        time_provider: Time.utc(2026, 3, 8, 9)
+      )
+
+      model = app.send(:read_model)
+
+      assert_equal "Gap task", model.items.first.title
+      assert_equal :temporal_context_invalid, ui(app).modal.kind
+      assert_includes ui(app).modal.lines.join(" "), "first valid time is 03:00"
+    end
+  end
+
   def test_defer_response_keeps_mutation_day_snapshot_across_midnight_rollover
     day = Date.new(2026, 7, 14)
     records = [
@@ -2142,7 +2190,7 @@ class TestApp < Minitest::Test
         result = Tasks::MutationResult.new(status: status)
         rejecting = Object.new
         rejecting.define_singleton_method(:edit_snapshot) { |id| application.edit_snapshot(id) }
-        rejecting.define_singleton_method(:read_tasks) { |today:| application.read_tasks(today: today) }
+        rejecting.define_singleton_method(:read_tasks) { |**options| application.read_tasks(**options) }
         rejecting.define_singleton_method(:update_task) { |_command, today:| result }
         app.instance_variable_set(:@application, rejecting)
         app.send(:move_subtree_up)

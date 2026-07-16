@@ -332,13 +332,14 @@ module Tasks
         return MutationResult.new(status: :invalid, errors: ["title cannot be blank"],
                                   field_errors: { title: ["cannot be blank"] })
       end
+      store = store_factory.call
+      return migration_required_mutation if store.checked_read_snapshot.migration_required?
       if list_projects(today: today).any? { |view| view.title.to_s.strip.casecmp?(title) }
         message = "a project or area named #{title.inspect} already exists"
         return MutationResult.new(status: :invalid, errors: [message],
                                   field_errors: { title: [message] })
       end
 
-      store = store_factory.call
       root_id = project_root_id(store)
       created_root = root_id.nil?
       if created_root
@@ -360,12 +361,15 @@ module Tasks
         return MutationResult.new(status: :invalid, errors: ["title cannot be blank"])
       end
 
-      touched = store_factory.call.rename_section!(id: id, to: title)
+      store = store_factory.call
+      return migration_required_mutation if store.checked_read_snapshot.migration_required?
+      touched = store.rename_section!(id: id, to: title)
       touched ? MutationResult.new(status: :ok, touched_ids: [touched]) : MutationResult.new(status: :not_found)
     end
 
     def complete_project(id, today: Date.today)
       store = store_factory.call
+      return migration_required_mutation if store.checked_read_snapshot.migration_required?
       closed = store.complete_project!(id: id, today: today)
       return MutationResult.new(status: :not_found) unless closed
 
@@ -381,7 +385,9 @@ module Tasks
     end
 
     def archive_project(id)
-      moved = store_factory.call.archive_project!(id: id)
+      store = store_factory.call
+      return migration_required_mutation if store.checked_read_snapshot.migration_required?
+      moved = store.archive_project!(id: id)
       return MutationResult.new(status: :not_found) unless moved
 
       MutationResult.new(status: :ok, touched_ids: moved, summary: { archived: moved.length })
@@ -465,6 +471,10 @@ module Tasks
       return operation_context.temporal_context if operation_context&.respond_to?(:temporal_context) && operation_context.temporal_context
       return temporal_context_factory.call if temporal_context_factory
       TemporalContext.new(now: Time.utc(today.year, today.month, today.day, 12), timezone: "Etc/UTC")
+    end
+
+    def migration_required_mutation
+      MutationResult.new(status: :migration_required, errors: ["run `tasks migrate`"])
     end
 
     def operation_today(fallback, operation_context)

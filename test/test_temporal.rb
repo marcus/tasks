@@ -56,6 +56,15 @@ class TestTemporal < Minitest::Test
     assert_nil value.time_metadata
   end
 
+  def test_timed_deadline_becomes_overdue_immediately_after_its_exact_minute
+    value = Tasks::TemporalValue.new(date: "2026-07-20", local_time: "09:00",
+                                     timezone: "America/Los_Angeles")
+
+    refute value.overdue?(context(now: Time.utc(2026, 7, 20, 15, 59)))
+    refute value.overdue?(context(now: Time.utc(2026, 7, 20, 16, 0)))
+    assert value.overdue?(context(now: Time.utc(2026, 7, 20, 16, 0, 1)))
+  end
+
   def test_gap_is_rejected_and_fold_round_trips_both_instants
     assert_raises(Tasks::Timezones::NonexistentLocalTime) do
       Tasks::TemporalValue.new(date: "2026-03-08", local_time: "02:30",

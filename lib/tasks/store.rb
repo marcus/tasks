@@ -957,6 +957,11 @@ module Tasks
       current_read_snapshot(include_archive: true).archive_items
     end
 
+    # Lightweight schema deployment check for legacy adapter mutations whose
+    # own transaction has more specific invalid-store diagnostics. This reads
+    # only meta versions; it does not replace the mutation's validation gate.
+    def migration_required? = schema_migration_required?
+
     private
 
     # -- creation --------------------------------------------------------------
@@ -976,8 +981,11 @@ module Tasks
     end
 
     def schema_migration_required?
-      records = fresh_records(@org)
-      records.first&.fetch("type", nil) == "meta" && records.first["version"] == 1
+      [@org, (@archive if File.exist?(@archive))].compact.any? do |path|
+        next false if File.zero?(path)
+        records = fresh_records(path)
+        records.first&.fetch("type", nil) == "meta" && records.first["version"] == 1
+      end
     rescue StandardError
       false
     end
@@ -2223,13 +2231,19 @@ module Tasks
       scheduled = to_date(rec["scheduled"])
       return patch_invalid("recurrence requires a valid date") unless deadline || scheduled
 
+      context = temporal_context || TemporalContext.new(
+        now: Time.utc(today.year, today.month, today.day, 12), timezone: "Etc/UTC"
+      )
+
       if deadline
-        next_deadline = Recur.next_date(cookie, from: deadline, today: today)
-        next_deadline = advance_past_temporal_gaps(
-          cookie, next_deadline, rec, "deadline", temporal_context,
-          paired: scheduled && ["scheduled", scheduled - deadline]
-        )
-        return next_deadline if next_deadline.is_a?(Hash)
+        deadline_value = TemporalValue.from_record(rec, :deadline, validate: false)
+        next_deadline = Recur.next_temporal_date(
+          cookie, value: deadline_value, kind: :deadline, context: context
+        ) do |candidate|
+          !scheduled || temporal_candidate_valid?(
+            rec, "scheduled", candidate + (scheduled - deadline), context
+          )
+        end
         if rec["scheduled"]
           return patch_invalid("recurrence requires a valid date") unless scheduled
 
@@ -2237,27 +2251,18 @@ module Tasks
         end
         rec["deadline"] = next_deadline.iso8601
       else
-        next_scheduled = Recur.next_date(cookie, from: scheduled, today: today)
-        next_scheduled = advance_past_temporal_gaps(cookie, next_scheduled, rec, "scheduled", temporal_context)
-        return next_scheduled if next_scheduled.is_a?(Hash)
+        scheduled_value = TemporalValue.from_record(rec, :scheduled, validate: false)
+        next_scheduled = Recur.next_temporal_date(
+          cookie, value: scheduled_value, kind: :scheduled, context: context
+        )
         rec["scheduled"] = next_scheduled.iso8601
       end
       rec["tags"] = semantic_tags(rec) - [DEFER_TAG]
       replace_optional(rec, "tags", rec["tags"])
       rec["body"] = append_body(rec["body"], "- Did [#{today}].")
       patch_ok(rec)
-    end
-
-    def advance_past_temporal_gaps(cookie, candidate, record, field, temporal_context, paired: nil)
-      count, unit = cookie.match(Recur::COOKIE).captures.values_at(1, 2)
-      1_000.times do
-        pair_date = paired && candidate + paired[1]
-        valid = temporal_candidate_valid?(record, field, candidate, temporal_context)
-        valid &&= temporal_candidate_valid?(record, paired[0], pair_date, temporal_context) if paired
-        return candidate if valid
-        candidate = Recur.step(candidate, count.to_i, unit)
-      end
-      patch_invalid("recurrence could not find a valid local date/time")
+    rescue ArgumentError, Timezones::Error => error
+      patch_invalid(error.message)
     end
 
     def temporal_candidate_valid?(record, field, date, temporal_context)

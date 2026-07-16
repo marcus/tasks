@@ -3,6 +3,7 @@
 require "io/console"
 require "date"
 require "json"
+require "securerandom"
 require "set"
 require_relative "ansi"
 require_relative "theme"
@@ -365,9 +366,10 @@ module Tui
     # journal operations. Every presentation read instead comes from this one
     # immutable application result, refreshed after a known or observed write.
     def read_model
-      day = current_date
+      context = temporal_context
+      day = context.local_date
       if @read_model.nil? || @read_model_today != day
-        @read_model = @application.read_tasks(today: day)
+        @read_model = read_tasks_with_temporal_fallback(context)
         @read_model_today = day
       end
       @read_model
@@ -383,9 +385,10 @@ module Tui
     end
 
     def reload_read_model
-      @read_model_today = current_date
-      @read_model_minute = current_time.to_i / 60
-      @read_model = @application.read_tasks(today: @read_model_today)
+      context = temporal_context
+      @read_model_today = context.local_date
+      @read_model_minute = context.now.to_i / 60
+      @read_model = read_tasks_with_temporal_fallback(context)
       clear_row_caches
     end
 
@@ -422,19 +425,53 @@ module Tui
       return @project_views if @project_views_model.equal?(read) && @project_views
 
       @project_views_model = read
-      @project_views = @application.list_projects(today: today)
+      @project_views = @application.list_projects(
+        today: today, context: tui_operation_context(read.temporal_context)
+      )
     end
 
     def current_date = @date_provider.call
     def current_time = @time_provider.call.utc
     def temporal_context
-      date = current_date
-      now = if !@date_provider_injected || @time_provider_injected
-              current_time
-            else
+      now = if @date_provider_injected && !@time_provider_injected
+              date = current_date
               Time.utc(date.year, date.month, date.day, 12)
+            else
+              current_time
             end
       Tasks::TemporalContext.new(now: now, timezone: @paths.timezone, time_format: @paths.time_format)
+    end
+
+    def tui_operation_context(context)
+      Tasks::OperationContext.new(
+        operation_id: "tui_#{SecureRandom.hex(8)}", source: :tui, temporal_context: context
+      )
+    end
+
+    def read_tasks_with_temporal_fallback(context)
+      @application.read_tasks(
+        today: context.local_date, context: tui_operation_context(context)
+      )
+    rescue Tasks::Timezones::Error => error
+      fallback = Tasks::TemporalContext.new(
+        now: context.now, timezone: "Etc/UTC", time_format: context.time_format
+      )
+      unless @ui.modal&.kind == :temporal_context_invalid
+        @ui.modal = Modal.new(
+          title: "Time zone makes a floating time invalid",
+          kind: :temporal_context_invalid,
+          lines: [
+            error.message,
+            "Tasks are shown with a temporary UTC fallback so you can edit the value.",
+            "Choose a valid local time or change timezone in the tasks config.",
+            "Press Escape to continue.",
+          ],
+        )
+        @ui.mode = :modal
+      end
+      @application.read_tasks(
+        today: fallback.local_date, context: tui_operation_context(fallback)
+      )
     end
 
     def rows(read: nil, today: nil)

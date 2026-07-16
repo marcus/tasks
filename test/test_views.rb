@@ -111,6 +111,27 @@ class TestViews < Minitest::Test
     end
   end
 
+  def test_agenda_sorts_timed_items_by_exact_boundary_not_file_order
+    records = [
+      { "type" => "meta", "version" => 2 },
+      { "type" => "section", "id" => "s1", "title" => "Work" },
+      { "type" => "task", "id" => "aaaaaaa1", "parent" => "s1", "state" => "NEXT",
+        "title" => "Late", "deadline" => "2026-07-02",
+        "deadline_time" => { "local" => "17:00" } },
+      { "type" => "task", "id" => "aaaaaaa2", "parent" => "s1", "state" => "NEXT",
+        "title" => "Early", "deadline" => "2026-07-02",
+        "deadline_time" => { "local" => "09:00" } },
+    ]
+    with_records(records) do |store|
+      context = Tasks::TemporalContext.new(now: Time.utc(2026, 7, 1, 12), timezone: "Etc/UTC")
+      reader = Tasks::TaskReadModel.new(store.read_snapshot, temporal_context: context)
+
+      rows = V.rows(:agenda, reader.items, today: TODAY, reader: reader)
+
+      assert_equal %w[Early Late], rows.filter_map { |row| row.item&.title }
+    end
+  end
+
   def test_children_render_indented_in_next
     with_records(NESTED) do |store|
       rs = tree_rows(store, :next)

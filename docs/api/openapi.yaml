@@ -123,6 +123,8 @@ paths:
                         events: false
                     meta:
                       store_revision: "s1.6f2a9c0b"
+        "409":
+          $ref: "#/components/responses/MigrationRequired"
         "503":
           $ref: "#/components/responses/StoreInvalid"
         "409":
@@ -165,6 +167,8 @@ paths:
                         parent_id: null
                     meta:
                       store_revision: "s1.6f2a9c0b"
+        "409":
+          $ref: "#/components/responses/MigrationRequired"
         "503":
           $ref: "#/components/responses/StoreInvalid"
         "400":
@@ -304,6 +308,8 @@ paths:
           $ref: "#/components/responses/MalformedRequest"
         "422":
           $ref: "#/components/responses/ValidationFailed"
+        "409":
+          $ref: "#/components/responses/MigrationRequired"
         "503":
           $ref: "#/components/responses/StoreInvalid"
     post:
@@ -431,6 +437,8 @@ paths:
           $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/ValidationFailed"
+        "409":
+          $ref: "#/components/responses/MigrationRequired"
         "503":
           $ref: "#/components/responses/StoreInvalid"
 
@@ -511,6 +519,8 @@ paths:
           $ref: "#/components/responses/MalformedRequest"
         "422":
           $ref: "#/components/responses/ValidationFailed"
+        "409":
+          $ref: "#/components/responses/MigrationRequired"
         "503":
           $ref: "#/components/responses/StoreInvalid"
     patch:
@@ -882,6 +892,8 @@ paths:
                         task_ids: ["cccc000e", "cccc000f"]
                     meta:
                       store_revision: "s1.6f2a9c0b"
+        "409":
+          $ref: "#/components/responses/MigrationRequired"
         "503":
           $ref: "#/components/responses/StoreInvalid"
         "400":
@@ -957,6 +969,8 @@ paths:
           $ref: "#/components/responses/UnsupportedMediaType"
         "422":
           $ref: "#/components/responses/ValidationFailed"
+        "409":
+          $ref: "#/components/responses/MigrationRequired"
         "503":
           $ref: "#/components/responses/StoreInvalid"
 
@@ -1009,6 +1023,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "400":
           $ref: "#/components/responses/MalformedRequest"
+        "409":
+          $ref: "#/components/responses/MigrationRequired"
         "503":
           $ref: "#/components/responses/StoreInvalid"
     patch:
@@ -1081,6 +1097,8 @@ paths:
           $ref: "#/components/responses/UnsupportedMediaType"
         "422":
           $ref: "#/components/responses/ValidationFailed"
+        "409":
+          $ref: "#/components/responses/MigrationRequired"
         "503":
           $ref: "#/components/responses/StoreInvalid"
 
@@ -1142,6 +1160,8 @@ paths:
           $ref: "#/components/responses/MalformedRequest"
         "403":
           $ref: "#/components/responses/ForbiddenOrigin"
+        "409":
+          $ref: "#/components/responses/MigrationRequired"
         "503":
           $ref: "#/components/responses/StoreInvalid"
 
@@ -1297,6 +1317,8 @@ paths:
                       store_revision: "s1.6f2a9c0b"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/MigrationRequired"
         "503":
           $ref: "#/components/responses/StoreInvalid"
 

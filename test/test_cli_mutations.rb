@@ -1419,6 +1419,36 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  def test_post_mutation_json_uses_the_configured_zone_for_floating_times
+    records = FIXTURE_RECORDS.map(&:dup)
+    flight = records.find { |record| record["id"] == FIX[:flight] }
+    flight["deadline"] = "2026-07-20"
+    flight["deadline_time"] = { "local" => "09:00" }
+
+    run_cli("priority", "Book flight", "A", "--json", content: dump_fixture(records),
+            env: { "TASKS_TIMEZONE" => "America/Los_Angeles" }) do |_org, out, err, st|
+      assert st.success?, err
+      time = JSON.parse(out).dig("touched", 0, "deadline_time")
+      assert_equal "America/Los_Angeles", time.fetch("effective_timezone")
+      assert_equal "2026-07-20T16:00:00Z", time.fetch("instant")
+    end
+  end
+
+  def test_read_reports_a_safe_error_when_a_zone_change_creates_a_floating_gap
+    records = FIXTURE_RECORDS.map(&:dup)
+    flight = records.find { |record| record["id"] == FIX[:flight] }
+    flight["deadline"] = "2026-03-08"
+    flight["deadline_time"] = { "local" => "02:30" }
+
+    run_cli("agenda", content: dump_fixture(records),
+            env: { "TASKS_TIMEZONE" => "America/Los_Angeles" }) do |_org, _out, err, st|
+      refute st.success?
+      assert_match(/temporal value is invalid/, err)
+      assert_match(/first valid time is 03:00/, err)
+      refute_match(/bin\/tasks:|lib\/tasks\//, err)
+    end
+  end
+
   def test_cli_capture_supports_independent_temporal_modes
     run_cli("capture", "Mixed clocks", "--scheduled", "2026-07-20 9am",
             "--scheduled-timezone", "Asia/Tokyo", "--due", "2026-07-20 5pm",

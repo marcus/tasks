@@ -87,6 +87,10 @@ class TestApiApp < Minitest::Test
     assert_equal 2, details.fetch("required_version")
     assert_equal "tasks migrate", details.fetch("command")
     assert_contract_response(response)
+
+    tasks = get("/api/v1/tasks")
+    assert_error tasks, 409, "schema_migration_required"
+    assert_contract_response(tasks)
   end
 
   def test_list_supports_every_documented_filter_and_rejects_unknown_queries
@@ -609,6 +613,12 @@ class TestApiApp < Minitest::Test
       { "HTTP_IF_MATCH" => all_day["etag"] }
     )
     assert_error invalid, 422, "validation_failed"
+
+    orphan = json_request(
+      "PATCH", "/api/v1/tasks/#{id}", { scheduled_time: { local: "09:00" } },
+      { "HTTP_IF_MATCH" => all_day["etag"] }
+    )
+    assert_error orphan, 422, "validation_failed"
   end
 
   def test_temporal_api_rejects_derived_fields_unknown_zones_and_dst_gaps
@@ -626,6 +636,33 @@ class TestApiApp < Minitest::Test
       )
       assert_error response, 422, "validation_failed"
     end
+  end
+
+  def test_api_returns_a_safe_error_when_configured_zone_creates_a_floating_gap
+    records = Tasks::Format.parse(File.read(@org)).records
+    task = records.find { |record| record["id"] == FIX[:flight] }
+    task["deadline"] = "2026-03-08"
+    task["deadline_time"] = { "local" => "02:30" }
+    File.write(@org, Tasks::Format.dump(records))
+    application = Tasks::Application.new(
+      store_factory: Tasks::StoreFactory.new(org: @org, archive: @archive),
+      temporal_context_factory: -> {
+        Tasks::TemporalContext.new(
+          now: Time.utc(2026, 3, 8, 9), timezone: "America/Los_Angeles"
+        )
+      }
+    )
+    app = Tasks::Api::App.new(
+      application: application, timezone: "America/Los_Angeles", logger: StringIO.new
+    )
+
+    response = Rack::MockRequest.new(app).get(
+      "/api/v1/tasks", "HTTP_HOST" => HOST
+    )
+
+    assert_error response, 503, "store_invalid"
+    assert_match(/first valid time is 03:00/, response.body)
+    refute_match(/lib\/tasks|tasks\.jsonl/, response.body)
   end
 
   private

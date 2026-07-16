@@ -47,6 +47,30 @@ class TestTemporalQueries < Minitest::Test
     end
   end
 
+  def test_timed_availability_releases_at_its_instant_without_writing
+    before_context = Tasks::TemporalContext.new(now: Time.utc(2026, 7, 20, 15, 59),
+                                                timezone: "America/Los_Angeles")
+    at_context = Tasks::TemporalContext.new(now: Time.utc(2026, 7, 20, 16),
+                                            timezone: "America/Los_Angeles")
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, Tasks::Format.dump(RECORDS))
+      factory = Tasks::StoreFactory.new(org: org, archive: archive,
+                                        journal_dir: File.join(dir, "journal"))
+      bytes = File.binread(org)
+
+      before = Tasks::Application.new(store_factory: factory,
+                                      temporal_context_factory: -> { before_context })
+      at = Tasks::Application.new(store_factory: factory,
+                                  temporal_context_factory: -> { at_context })
+      refute_includes before.view_tasks(:next).items.map(&:title), "Released"
+      assert_includes at.view_tasks(:next).items.map(&:title), "Released"
+      assert_equal bytes, File.binread(org)
+      refute File.exist?(File.join(dir, "journal", "index.json"))
+    end
+  end
+
   def test_activate_clears_a_later_today_time_without_touching_due
     context = Tasks::TemporalContext.new(now: Time.utc(2026, 7, 20, 16),
                                          timezone: "America/Los_Angeles")

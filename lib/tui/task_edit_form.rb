@@ -216,12 +216,303 @@ module Tui
     end
 
     class TemporalInput < TermForm::Fields::DateInput
+      PICKER_ROWS = %i[date time mode zone fold].freeze
+      TemporalPickerState = Struct.new(:open, :row, :calendar, :zone_search, :zone_index, :value, :error)
+
+      def initialize(temporal_context: nil, **options)
+        @temporal_context = temporal_context
+        @temporal_state = TemporalPickerState.new(false, 0, nil, nil, 0, nil, nil)
+        super(**options)
+      end
+
+      def picker_open? = @temporal_state.open || super
+
+      def handle_event(event, value, context)
+        return handle_temporal_picker(event, value) if @temporal_state.open
+
+        if TermForm::Fields::DecodedEvent.command?(event, :commit, "\r", "\n")
+          @temporal_state.open = true
+          @temporal_state.value = temporal_value(value)
+          @temporal_state.row = 0
+          @temporal_state.error = nil
+          return TermForm::Field::Result.new(:handled, value)
+        end
+
+        super
+      end
+
+      def cursor_for(value, context) = @temporal_state.open ? nil : super
+
+      def metadata_for(value, context)
+        return super unless @temporal_state.open
+
+        metadata.merge(
+          text: text,
+          preview: @temporal_state.value && format_date(@temporal_state.value),
+          picker_open: true,
+          suggestions: Array(TermForm::Support.property(@suggestion_source, context)).map { |entry|
+            entry.to_s.dup.freeze
+          }.freeze,
+          picker: {
+            kind: :temporal,
+            row: visible_rows(@temporal_state.value).fetch(@temporal_state.row),
+            mode: temporal_mode(@temporal_state.value),
+            zone_search: @temporal_state.zone_search,
+            lines: temporal_picker_lines(@temporal_state.value, 200),
+          }.freeze,
+        ).freeze
+      end
+
+      def render(width:, height: nil)
+        return super unless @temporal_state.open
+
+        width = [Integer(width), 1].max
+        lines = temporal_picker_lines(@temporal_state.value, width)
+        if height
+          height = [Integer(height), 1].max
+          lines = lines.first(height)
+        else
+          height = lines.length
+        end
+        lines += [""] * (height - lines.length)
+        TermForm::Fields::View.new(
+          lines: lines.map(&:freeze).freeze, cursor_row: 0, cursor_column: 0,
+          virtual_cursor_row: 0, virtual_cursor_column: 0,
+          row_offset: 0, column_offset: 0, width: width, height: height
+        )
+      end
+
       private
 
       def parsed_value?(value) = value.is_a?(Tasks::TemporalValue)
       def date_for_value(value) = value.is_a?(Tasks::TemporalValue) ? value.date : super
       def value_for_date(date, current)
         current.is_a?(Tasks::TemporalValue) ? current.with_date(date) : Tasks::TemporalValue.new(date: date)
+      end
+
+      def handle_temporal_picker(event, value)
+        key = temporal_picker_key(event)
+        return handle_zone_search(event, value) unless @temporal_state.zone_search.nil?
+        return handle_temporal_calendar(key, value) if @temporal_state.calendar
+
+        if TermForm::Fields::DecodedEvent.command?(event, :cancel, "\e")
+          @temporal_state.open = false
+          return TermForm::Field::Result.new(:handled, value)
+        end
+
+        rows = visible_rows(@temporal_state.value)
+        case key
+        when "\e[A"
+          @temporal_state.row = (@temporal_state.row - 1) % rows.length
+        when "\e[B"
+          @temporal_state.row = (@temporal_state.row + 1) % rows.length
+        when "\e[D"
+          return adjust_temporal(rows.fetch(@temporal_state.row), -1, value)
+        when "\e[C"
+          return adjust_temporal(rows.fetch(@temporal_state.row), 1, value)
+        when "\r", "\n"
+          return activate_temporal_row(rows.fetch(@temporal_state.row), value)
+        else
+          return nil
+        end
+        TermForm::Field::Result.new(:handled, value)
+      end
+
+      def handle_temporal_calendar(key, value)
+        case key
+        when "\e"
+          @temporal_state.calendar = nil
+          return TermForm::Field::Result.new(:handled, value)
+        when "\r", "\n"
+          updated = rebuild(@temporal_state.value, date: @temporal_state.calendar)
+          @temporal_state.calendar = nil
+          return set_picker_value(updated, value)
+        when "\e[D" then @temporal_state.calendar -= 1
+        when "\e[C" then @temporal_state.calendar += 1
+        when "\e[A" then @temporal_state.calendar -= 7
+        when "\e[B" then @temporal_state.calendar += 7
+        when "\e[5~" then @temporal_state.calendar = shift_month(@temporal_state.calendar, -1)
+        when "\e[6~" then @temporal_state.calendar = shift_month(@temporal_state.calendar, 1)
+        when "t", "T" then @temporal_state.calendar = today
+        else return nil
+        end
+        TermForm::Field::Result.new(:handled, value)
+      rescue Tasks::Timezones::Error, ArgumentError => error
+        @temporal_state.error = error.message
+        TermForm::Field::Result.new(:handled, value)
+      end
+
+      def handle_zone_search(event, value)
+        key = temporal_picker_key(event)
+        matches = zone_matches
+        case key
+        when "\e"
+          @temporal_state.zone_search = nil
+          @temporal_state.zone_index = 0
+        when "\e[A"
+          @temporal_state.zone_index = [@temporal_state.zone_index - 1, 0].max
+        when "\e[B"
+          @temporal_state.zone_index = [@temporal_state.zone_index + 1, [matches.length - 1, 0].max].min
+        when "\r", "\n"
+          return TermForm::Field::Result.new(:handled, value) if matches.empty?
+          updated = rebuild(@temporal_state.value, timezone: matches.fetch(@temporal_state.zone_index))
+          @temporal_state.zone_search = nil
+          @temporal_state.zone_index = 0
+          return set_picker_value(updated, value)
+        when "\x7f", "\b"
+          @temporal_state.zone_search = @temporal_state.zone_search[0...-1]
+          @temporal_state.zone_index = 0
+        else
+          text = event.type == :paste ? event.text : key
+          return nil unless text&.match?(/\A[[:alnum:]_+\-\/.]+\z/)
+          @temporal_state.zone_search << text
+          @temporal_state.zone_index = 0
+        end
+        TermForm::Field::Result.new(:handled, value)
+      rescue Tasks::Timezones::Error, ArgumentError => error
+        @temporal_state.error = error.message
+        TermForm::Field::Result.new(:handled, value)
+      end
+
+      def activate_temporal_row(row, value)
+        case row
+        when :date
+          @temporal_state.calendar = @temporal_state.value.date
+          TermForm::Field::Result.new(:handled, value)
+        when :zone
+          if temporal_mode(@temporal_state.value) == :fixed
+            @temporal_state.zone_search = +""
+            @temporal_state.zone_index = 0
+          end
+          TermForm::Field::Result.new(:handled, value)
+        else
+          adjust_temporal(row, 1, value)
+        end
+      end
+
+      def adjust_temporal(row, direction, value)
+        updated = case row
+                  when :date then rebuild(@temporal_state.value, date: @temporal_state.value.date + direction)
+                  when :time then adjust_time(@temporal_state.value, direction)
+                  when :mode then adjust_mode(@temporal_state.value, direction)
+                  when :zone
+                    return activate_temporal_row(:zone, value)
+                  when :fold then rebuild(@temporal_state.value, fold: @temporal_state.value.fold == 1 ? 0 : 1)
+                  end
+        set_picker_value(updated, value)
+      rescue Tasks::Timezones::Error, ArgumentError => error
+        @temporal_state.error = error.message
+        TermForm::Field::Result.new(:handled, value)
+      end
+
+      def adjust_time(current, direction)
+        return Tasks::TemporalValue.new(date: current.date, local_time: "09:00") if current.all_day?
+
+        hour, minute = current.local_time.split(":").map(&:to_i)
+        total = (hour * 60 + minute + direction * 15) % 1_440
+        rebuild(current, local_time: format("%02d:%02d", total / 60, total % 60))
+      end
+
+      def adjust_mode(current, direction)
+        modes = %i[all_day floating fixed]
+        mode = modes[(modes.index(temporal_mode(current)) + direction) % modes.length]
+        case mode
+        when :all_day then Tasks::TemporalValue.new(date: current.date)
+        when :floating
+          Tasks::TemporalValue.new(date: current.date, local_time: current.local_time || "09:00")
+        when :fixed
+          zone = current.timezone || @temporal_context&.timezone_id || "Etc/UTC"
+          Tasks::TemporalValue.new(date: current.date, local_time: current.local_time || "09:00", timezone: zone)
+        end
+      end
+
+      def rebuild(current, date: current.date, local_time: current.local_time,
+                  timezone: current.timezone, fold: current.fold)
+        rebuilt = Tasks::TemporalValue.new(
+          date: date, local_time: local_time, timezone: timezone, fold: fold
+        )
+        if rebuilt.local_time && !ambiguous?(rebuilt) && rebuilt.fold == 1
+          rebuilt = Tasks::TemporalValue.new(
+            date: rebuilt.date, local_time: rebuilt.local_time, timezone: rebuilt.timezone, fold: 0
+          )
+        end
+        rebuilt.instant(@temporal_context) if rebuilt.floating? && @temporal_context
+        rebuilt
+      end
+
+      def set_picker_value(updated, old_value)
+        @temporal_state.value = updated
+        @temporal_state.error = nil
+        @state.editor.replace(format_date(updated))
+        @temporal_state.row = [@temporal_state.row, visible_rows(updated).length - 1].min
+        TermForm::Field::Result.new(updated == old_value ? :handled : :changed, updated)
+      end
+
+      def temporal_value(value)
+        candidate = value if value.is_a?(Tasks::TemporalValue)
+        candidate ||= parse_text(text)
+        candidate || Tasks::TemporalValue.new(date: today)
+      end
+
+      def temporal_mode(value)
+        return :all_day if value.all_day?
+        value.fixed? ? :fixed : :floating
+      end
+
+      def visible_rows(value)
+        rows = %i[date time mode]
+        rows << :zone if temporal_mode(value) == :fixed
+        rows << :fold if value.local_time && ambiguous?(value)
+        rows.freeze
+      end
+
+      def ambiguous?(value)
+        zone = value.timezone || @temporal_context&.timezone
+        zone && Tasks::Timezones.ambiguous?(value.date, value.local_time, zone)
+      end
+
+      def zone_matches
+        query = @temporal_state.zone_search.to_s.downcase
+        TZInfo::Timezone.all_identifiers.select { |identifier| identifier.downcase.include?(query) }
+      end
+
+      def temporal_picker_lines(value, width)
+        if @temporal_state.calendar
+          return (["Date picker · arrows move · Enter selects · Esc returns"] +
+                  calendar_lines(@temporal_state.calendar, width)).map { |line| TermForm::Text.cell_slice(line, 0, width) }
+        end
+        if !@temporal_state.zone_search.nil?
+          matches = zone_matches
+          lines = ["Zone search: #{@temporal_state.zone_search}", "type to filter · ↑/↓ choose · Enter selects · Esc returns"]
+          lines.concat(matches.first(6).each_with_index.map do |zone, index|
+            "#{index == @temporal_state.zone_index ? "›" : " "} #{zone}"
+          end)
+          lines << "  no matching IANA zones" if matches.empty?
+          return lines.map { |line| TermForm::Text.cell_slice(line, 0, width) }
+        end
+
+        rows = visible_rows(value)
+        lines = ["Temporal value · ↑/↓ field · ←/→ change · Enter opens · Esc closes"]
+        rows.each_with_index do |row, index|
+          marker = index == @temporal_state.row ? "›" : " "
+          label = case row
+                  when :date then "Date: #{value.date.iso8601}"
+                  when :time then "Time: #{value.local_time || "All day"}"
+                  when :mode then "Mode: #{temporal_mode(value).to_s.tr("_", " ").capitalize}"
+                  when :zone then "Zone: #{value.timezone} (Enter to search)"
+                  when :fold then "Fold: #{value.fold == 1 ? "Later" : "Earlier"}"
+                  end
+          lines << "#{marker} #{label}"
+        end
+        lines << "Error: #{@temporal_state.error}" if @temporal_state.error
+        lines.map { |line| TermForm::Text.cell_slice(line, 0, width) }
+      end
+
+      def temporal_picker_key(event)
+        return "\r" if TermForm::Fields::DecodedEvent.command?(event, :commit, "\r", "\n")
+        return "\e" if TermForm::Fields::DecodedEvent.command?(event, :cancel, "\e")
+
+        TermForm::Fields::DecodedEvent.key(event)
       end
     end
 
@@ -230,6 +521,7 @@ module Tui
         key: key, label: label, value: value,
         parser: ->(text, today) { self.class.parse_temporal(text, today, context: @temporal_context) },
         formatter: self.class.method(:format_temporal), today: @today,
+        temporal_context: @temporal_context,
         expose_parse_errors: true,
         suggestions: DATE_SUGGESTIONS,
       )

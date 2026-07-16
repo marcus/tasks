@@ -888,6 +888,60 @@ class TestStore < Minitest::Test
     end
   end
 
+  def test_timed_completion_recurrence_uses_the_fixed_values_local_date
+    records = [
+      { "type" => "meta", "version" => 2 },
+      { "type" => "section", "id" => "aa000001", "title" => "Work" },
+      { "type" => "task", "id" => "aa000002", "parent" => "aa000001", "state" => "NEXT",
+        "title" => "LA evening recurrence", "deadline" => "2026-07-19",
+        "deadline_time" => { "local" => "17:00", "timezone" => "America/Los_Angeles" },
+        "recur" => ".+1d" },
+    ]
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, dump_fixture(records))
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
+      context = Tasks::TemporalContext.new(
+        now: Time.utc(2026, 7, 20, 0, 30), timezone: "Asia/Tokyo"
+      )
+      snapshot = store.edit_snapshot("aa000002")
+
+      result = store.patch_task!(Tasks::TaskPatch.from(
+        snapshot, field: :state, value: "DONE", history_label: "complete fixed recurrence"
+      ), today: context.local_date, temporal_context: context)
+
+      assert result.ok?
+      assert_equal "2026-07-20", record_for(org, title: "LA evening recurrence")["deadline"]
+    end
+  end
+
+  def test_timed_catch_up_keeps_a_candidate_later_on_the_completion_day
+    records = [
+      { "type" => "meta", "version" => 2 },
+      { "type" => "section", "id" => "bb000001", "title" => "Work" },
+      { "type" => "task", "id" => "bb000002", "parent" => "bb000001", "state" => "NEXT",
+        "title" => "Late UTC recurrence", "deadline" => "2026-07-19",
+        "deadline_time" => { "local" => "23:00", "timezone" => "Etc/UTC" },
+        "recur" => "++1d" },
+    ]
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, dump_fixture(records))
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
+      context = Tasks::TemporalContext.new(
+        now: Time.utc(2026, 7, 20, 0, 30), timezone: "Etc/UTC"
+      )
+      snapshot = store.edit_snapshot("bb000002")
+
+      result = store.patch_task!(Tasks::TaskPatch.from(
+        snapshot, field: :state, value: "DONE", history_label: "complete catch-up recurrence"
+      ), today: context.local_date, temporal_context: context)
+
+      assert result.ok?
+      assert_equal "2026-07-20", record_for(org, title: "Late UTC recurrence")["deadline"]
+    end
+  end
+
   def test_done_via_set_state_also_rolls_recurring
     with_recur_store do |store, org|
       rent = find_item(store, "Pay rent")

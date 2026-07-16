@@ -55,6 +55,7 @@ class TestTaskDetails < Minitest::Test
 
       assert lines.any? { |line| line.include?("2026-07-02 17:00 Europe/London") }
       assert lines.any? { |line| line.include?("→ 2026-07-02 09:00 America/Los_Angeles") }
+      assert lines.any? { |line| line.include?("due in 21h") }
     end
   end
 

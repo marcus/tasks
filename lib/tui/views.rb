@@ -68,13 +68,14 @@ module Tui
       attr_reader :view
 
       def initialize(view, today:, urgent_days:, show_deferred:, project_resolver: nil,
-                     availability_resolver: nil)
+                     availability_resolver: nil, temporal_context: nil)
         @view = view
         @today = today
         @urgent_days = urgent_days
         @show_deferred = show_deferred
         @project_resolver = project_resolver
         @availability_resolver = availability_resolver
+        @temporal_context = temporal_context
       end
 
       def eligible?(item)
@@ -108,11 +109,11 @@ module Tui
       def sort_key(item)
         case view
         when :agenda
-          [Views.temporal_sort_key(item), item.priority || "Z"]
+          [Views.temporal_sort_key(item, @temporal_context), item.priority || "Z"]
         when :next
           [item.priority || "Z"]
         when :projects
-          [Views.temporal_sort_key(item), item.priority || "Z", item.title]
+          [Views.temporal_sort_key(item, @temporal_context), item.priority || "Z", item.title]
         else
           [item.line || Float::INFINITY]
         end
@@ -144,7 +145,7 @@ module Tui
               resolved = yield entry
               resolved.is_a?(Array) ? resolved : [resolved]
             end
-            [items.map { |item| Views.temporal_sort_key(item) }.min, key]
+            [items.map { |item| Views.temporal_sort_key(item, @temporal_context) }.min, key]
           else
             [key.to_s]
           end
@@ -674,7 +675,8 @@ module Tui
 
     def subtree_dates(node, show_deferred, reader: nil, today: Date.today)
       dates = []
-      d = temporal_sort_key(node.item)
+      context = reader&.respond_to?(:temporal_context) && reader.temporal_context
+      d = temporal_sort_key(node.item, context)
       dates << d if d < Float::INFINITY
       visible_children(node, show_deferred, reader: reader, today: today).each do |child|
         dates.concat(subtree_dates(child, show_deferred, reader: reader, today: today))
@@ -757,20 +759,20 @@ module Tui
       T.paint(due_slot(days), label)
     end
 
-    def temporal_sort_key(item)
-      if item.deadline
-        time = item.respond_to?(:deadline_time) && item.deadline_time
-        return Time.iso8601(time[:instant] || time["instant"]).to_f if time
-        date = item.deadline + 1
-        return Time.utc(date.year, date.month, date.day).to_f
+    def temporal_sort_key(item, context = nil)
+      value = item.respond_to?(:deadline_value) && item.deadline_value
+      kind = :deadline
+      unless value
+        value = item.respond_to?(:scheduled_value) && item.scheduled_value
+        kind = :scheduled
       end
-      if item.scheduled
-        time = item.respond_to?(:scheduled_time) && item.scheduled_time
-        return Time.iso8601(time[:instant] || time["instant"]).to_f if time
-        date = item.scheduled
-        return Time.utc(date.year, date.month, date.day).to_f
-      end
-      Float::INFINITY
+      return Float::INFINITY unless value
+
+      context ||= Tasks::TemporalContext.new(
+        now: Time.utc(value.date.year, value.date.month, value.date.day, 12), timezone: "Etc/UTC"
+      )
+      boundary = kind == :deadline ? value.due_boundary(context) : value.release_instant(context)
+      boundary.to_f
     end
 
     def pri(item) = item.priority ? T.paint(:priority, "[#{item.priority}] ") : ""
@@ -805,8 +807,10 @@ module Tui
       reader ||= store
       resolver = ->(item) { project_name(item, reader) } if view == :projects
       availability_resolver = ->(item) { availability_for(item, reader: reader, today: today) }
+      temporal_context = reader&.respond_to?(:temporal_context) && reader.temporal_context
       Query.new(view, today: today, urgent_days: urgent_days, show_deferred: show_deferred,
-                     project_resolver: resolver, availability_resolver: availability_resolver)
+                     project_resolver: resolver, availability_resolver: availability_resolver,
+                     temporal_context: temporal_context)
     end
 
     def available?(item, reader: nil, today: Date.today)
