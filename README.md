@@ -128,8 +128,11 @@ then `TASKS_DIR`, then the config file (`dir = …`, or per-file `file = …` /
 
 Every changed task record carries an `updated` value such as
 `2026-07-16T14:03:11Z#home`. Set `TASKS_DEVICE` if the hostname-derived device
-slug is not unique. A data repo can use the bundled field-aware Git merge
-driver instead of line-based conflict resolution:
+slug is not unique. See [Set up multi-device Git sync](docs/multi-device-sync.md)
+for a from-scratch guide to creating your own private data repo, connecting
+each machine, checking the installation, and syncing safely. A data repo can
+use the bundled field-aware Git merge driver instead of line-based conflict
+resolution:
 
 ```sh
 printf 'tasks.jsonl merge=tasksjsonl\narchive.jsonl merge=tasksjsonl\n' >> ~/tasks/.gitattributes
