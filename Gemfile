@@ -1,6 +1,6 @@
 source "https://rubygems.org"
 
-ruby ">= 3.4.0", "< 4.0"
+ruby ">= 3.4.0", "< 5.0"
 
 # Loaded only by bin/tasks-api and the Bundler-backed API test gate. The core
 # CLI/TUI remain standard-library-only and do not require this bundle.

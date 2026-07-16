@@ -102,7 +102,7 @@ methodology spec.
 
 ### No dependencies for CLI and TUI
 
-Ruby 3.4 stdlib only — the CLI, the TUI, its theme engine, and the embedded
+Ruby 3.4 or Ruby 4.x stdlib only — the CLI, the TUI, its theme engine, and the embedded
 `TermForm` editor component. No gems to install, no bundler, no version
 conflicts with whatever else is on your machine. The optional HTTP API has its
 own Bundler-isolated Rack/Puma runtime and never enters those boot paths.

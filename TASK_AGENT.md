@@ -69,7 +69,7 @@ say which ones matched.
 - Change task **data**, not the tool. Do not read, "fix", or edit the CLI's
   source (`bin/tasks`, anything under `lib/`) or other project code as a
   workaround for a task-data operation; just run `bin/tasks`.
-- The tasks CLI is known-good (Ruby 3.4). It uses Ruby endless methods like
+- The tasks CLI is known-good on Ruby 3.4 and Ruby 4.x. It uses Ruby endless methods like
   `def foo(x) = bar(x)` — valid syntax, NOT a bug. Always invoke it by the
   absolute path given below. If a command seems to error, re-run it with that
   absolute path; never conclude the CLI is broken or hand-edit files as a

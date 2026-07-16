@@ -31,7 +31,7 @@ edit source/tests here — do **not** capture a todo instead of doing the work.
   `tasks-cli`, and the full contract in `TASK_AGENT.md`.
 - Tests: `ruby test/all.rb` (or a focused `ruby test/test_*.rb`). Prefer the
   project’s existing patterns; never test against the user’s real task files.
-- The CLI is Ruby 3.4 and uses endless methods (`def foo(x) = bar(x)`) — valid
+- The CLI supports Ruby 3.4 and Ruby 4.x and uses endless methods (`def foo(x) = bar(x)`) — valid
   syntax, not a bug.
 
 ## CLI/API parity is the default
