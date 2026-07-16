@@ -11,7 +11,7 @@ layer → CLI dispatch → docs → tests).
 The TUI now has a read-by-default task panel with an explicit editable view,
 responsive panel widths, and an embedded task-agnostic reactive form component.
 The implementation record and remaining independent-review gate live in
-[`docs/plans/editable-task-panel.md`](plans/editable-task-panel.md).
+[`docs/plans/active/editable-task-panel.md`](plans/active/editable-task-panel.md).
 
 ## 1. Weekly-review helper — `tasks review`
 

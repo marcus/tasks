@@ -11,10 +11,10 @@ of the delivered feature.
 
 Related decisions:
 
-- [ADR-0001: Build the form system as an embedded, extractable library](../adr/0001-embedded-terminal-form-library.md)
-- [ADR-0002: Commit validated task fields on blur through semantic Store patches](../adr/0002-save-task-fields-on-blur.md)
-- [ADR-0003: Coalesce one task-edit session into a usable undo step](../adr/0003-task-edit-session-undo-coalescing.md)
-- [ADR-0004: Use responsive named widths for the task panel](../adr/0004-responsive-task-panel-layout.md)
+- [ADR-0001: Build the form system as an embedded, extractable library](../../adr/0001-embedded-terminal-form-library.md)
+- [ADR-0002: Commit validated task fields on blur through semantic Store patches](../../adr/0002-save-task-fields-on-blur.md)
+- [ADR-0003: Coalesce one task-edit session into a usable undo step](../../adr/0003-task-edit-session-undo-coalescing.md)
+- [ADR-0004: Use responsive named widths for the task panel](../../adr/0004-responsive-task-panel-layout.md)
 
 ## Outcome
 
