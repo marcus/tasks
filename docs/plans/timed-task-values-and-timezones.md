@@ -350,8 +350,9 @@ the resolved evaluation zone, and passes the same frozen context through:
 - API list/resource representation.
 
 No downstream domain method may call `Date.today` or `Time.now`. Presentation-
-only elapsed timers such as the TUI's three-second flash may continue to use a
-monotonic clock and are not part of task semantics.
+only elapsed timers such as the TUI's three-second flash (today wall-clock
+`Time.now`, ideally monotonic) are not part of task semantics and may keep
+their own clock.
 
 `OperationContext` remains provenance (`cli`, `tui`, `api`, operation id,
 actor). It should carry or reference the temporal snapshot rather than absorb
@@ -414,7 +415,8 @@ once overdue.
 Define shared sort keys in the temporal value layer. Do not rebuild them in the
 CLI, TUI, and project queries.
 
-- Agenda sorts by deadline before available-from as it does now, then by exact
+- Agenda keeps keying each task by its deadline when present, otherwise its
+  available-from date (the existing coalesced sort key), extended to the exact
   instant; all-day deadlines sort at the end of their date.
 - Short list rows include a time when present: `7/20 9:00a`, with a compact
   zone indicator when the value is fixed outside the evaluation zone.
@@ -486,9 +488,10 @@ Add `--scheduled-floating`, `--due-floating`, `--scheduled-fold`, and
 date flag is absent.
 
 `undate` clears the date and its time metadata together. `undate --kind
-scheduled|deadline` clears only that complete temporal value. `activate`,
-recurrence commands, dry-run, undo/redo, and mutation output use the shared
-application command and temporal context.
+deadline|scheduled` (the existing flag) clears only that complete temporal
+value. `defer` with no date continues to mean On Hold and takes no temporal
+flags. `activate`, recurrence commands, dry-run, undo/redo, and mutation
+output use the shared application command and temporal context.
 
 ### CLI JSON
 
@@ -550,9 +553,10 @@ mutations.
 - timed own and inherited availability badges include the release time.
 - project rows and counts use the same exact temporal query result as flat
   views.
-- Markdown export writes an unambiguous civil form, such as
-  `deadline: 2026-07-20 17:00 [Europe/London]`; date-only export stays
-  `deadline: 2026-07-20`.
+- Markdown export writes an unambiguous civil form on the existing bullet
+  lines, such as `- deadline: 2026-07-20 17:00 [Europe/London]` and
+  `- available from: 2026-07-20 09:00`; date-only export stays
+  `- deadline: 2026-07-20`.
 
 The minute-boundary refresh must preserve selection, scroll position, open
 editor drafts, reveal mode, and collapse state just like an external-file
@@ -596,8 +600,9 @@ Response time objects contain:
 - `instant`: RFC 3339 UTC timestamp derived using the request's single temporal
   context.
 
-Date-only values return null time objects. Add `availability_at` as a nullable
-derived RFC 3339 instant for the winning timed/date release boundary. Project
+Date-only values return null time objects. Add `available_at` (the same name
+the availability query exposes) as a nullable derived RFC 3339 instant for the
+winning timed/date release boundary. Project
 resources retain `next_date` and add nullable `next_time` plus `next_at`.
 
 `GET /api/v1/meta` adds:
@@ -647,8 +652,9 @@ Request rules:
   the existing structured field-error envelope.
 
 `TaskChangeset::FIELD_ORDER` treats each date/time pair as one logical field.
-ETag `own` and `lifecycle` revision components include all stored time metadata;
-a stale zone/time edit must fail exactly like a stale date edit.
+The task revision's `own` component (the existing ETag structure is
+`v1.<own>.<location>.<lifecycle>`) includes all stored time metadata; a stale
+zone/time edit must fail exactly like a stale date edit (412 `stale_revision`).
 
 This is an additive JSON expansion of `/api/v1`, but strict clients generated
 from the old `additionalProperties: false` response schema may need
@@ -660,9 +666,12 @@ remain intact.
 
 Update every embedded OpenAPI example, component, POST/PATCH schema, project
 resource, meta resource, and error example. Route-produced traffic and all
-examples must continue to validate through `openapi_first`. The Rack adapter
-does only transport shape validation and mapping; zone resolution and temporal
-semantics stay in shared domain/application code.
+examples must continue to validate through the `openapi_first`-backed test
+gates (`test/api/test_app.rb` contract assertions and
+`test/api/test_toolchain.rb`); the server keeps its own hand-rolled request
+validation, as today. The Rack adapter does only transport shape validation
+and mapping; zone resolution and temporal semantics stay in shared
+domain/application code.
 
 ## Recurrence contract
 
@@ -738,7 +747,9 @@ boundary belongs in release notes and backup instructions.
   cross back to v1 after v2 time metadata exists; restoring the backup is an
   explicit operator recovery that first verifies no later changes would be
   discarded.
-- Task mutations continue to be one line per changed task and one undo entry.
+- Each task remains a single JSONL line (time metadata is inline, never a
+  separate record) and each mutation remains one undo entry; the journal keeps
+  its whole-file content-addressed snapshots as today.
 - Unknown JSON keys retain the formatter's forward-compatible round-trip
   behavior, while known time objects use canonical nested key order.
 - Archive sweep preserves time metadata byte-for-byte and version 2 archives
@@ -800,6 +811,9 @@ Expected files:
 - `lib/tasks/task_patch.rb`
 - `lib/tasks/quadrants.rb`
 - `lib/tasks/recur.rb`
+- `lib/tasks/store.rb` again — the activate patch (`patch_activate`) and
+  recurrence advancement (`advance_recurrence_records`) semantics live here,
+  not in `application.rb`
 - shared command/query/resource/revision tests
 
 Replace semantic `Date.today` defaults, group date/time patches, implement exact
@@ -848,7 +862,8 @@ Expected files:
 - `lib/tasks/api/representation.rb`
 - `lib/tasks/api/errors.rb`
 - `test/api/test_app.rb`
-- `test/api/test_contract.rb`
+- `test/api/test_toolchain.rb`
+- `test/api/test_projects.rb`
 - `test/api/test_black_box.rb`
 
 Add input/output schemas, strict request validation, meta fields, exact
