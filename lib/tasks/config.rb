@@ -3,6 +3,7 @@
 require_relative "quadrants"
 require_relative "tree"
 require_relative "prompt_facts"
+require_relative "timezones"
 
 module Tasks
   # Resolves where tasks.jsonl and archive.jsonl live, so the task data can sit
@@ -34,6 +35,7 @@ module Tasks
     LINK_NAME = /\A[a-z][a-z0-9_-]*\z/
 
     Paths = Struct.new(:org, :archive, :memory, :urgent_days, :max_depth, :theme, :colors,
+                       :timezone, :time_format, :timezone_fallback_warning,
                        :links, :link_systems, :prompt_facts,
                        :sources, :config_file, keyword_init: true) do
       # Context block appended to an agent's system prompt so a headless harness
@@ -61,10 +63,11 @@ module Tasks
         urgent_days: Quadrants::DEFAULT_URGENT_DAYS,
         max_depth: Tree::DEFAULT_MAX_DEPTH,
         theme: "default", colors: {},
+        timezone: Timezones::FALLBACK, time_format: 12, timezone_fallback_warning: false,
         links: {}, link_systems: {},
         prompt_facts: PromptFacts.resolve,
         sources: { org: "pinned", archive: "pinned", memory: "pinned", urgent_days: "default",
-                   max_depth: "default", theme: "default" },
+                   max_depth: "default", theme: "default", timezone: "pinned", time_format: "default" },
         config_file: config_file
       )
     end
@@ -92,15 +95,19 @@ module Tasks
       urgent_days, urgent_source = pick_urgent_days(conf, env)
       max_depth,   max_depth_source = pick_max_depth(conf, env)
       theme, theme_source = pick_theme(conf, env)
+      timezone, timezone_source, timezone_warning = pick_timezone(conf, env)
+      time_format, time_format_source = pick_time_format(conf, env)
 
       Paths.new(
         org: org, archive: archive, memory: memory,
         urgent_days: urgent_days, max_depth: max_depth,
         theme: theme, colors: conf["colors"] || {},
+        timezone: timezone, time_format: time_format, timezone_fallback_warning: timezone_warning,
         links: conf.fetch(:links, {}), link_systems: conf.fetch(:link_systems, {}),
         prompt_facts: PromptFacts.resolve(conf.fetch(:prompt_facts, {})),
         sources: { org: org_source, archive: archive_source, memory: memory_source,
-                   urgent_days: urgent_source, max_depth: max_depth_source, theme: theme_source },
+                   urgent_days: urgent_source, max_depth: max_depth_source, theme: theme_source,
+                   timezone: timezone_source, time_format: time_format_source },
         config_file: file
       )
     end
@@ -134,6 +141,27 @@ module Tasks
       end
     end
     private_class_method :pick_theme
+
+    def self.pick_timezone(conf, env)
+      if env["TASKS_TIMEZONE"] && !env["TASKS_TIMEZONE"].empty?
+        [Timezones.get(env["TASKS_TIMEZONE"]).identifier, "TASKS_TIMEZONE env", false]
+      elsif conf["timezone"]
+        [Timezones.get(conf["timezone"]).identifier, "config file", false]
+      else
+        Timezones.detect(env: env)
+      end
+    rescue Timezones::Error
+      Timezones.detect(env: env.reject { |key, _| key == "TZ" })
+    end
+    private_class_method :pick_timezone
+
+    def self.pick_time_format(conf, env)
+      raw = env["TASKS_TIME_FORMAT"]
+      return [raw.to_i, "TASKS_TIME_FORMAT env"] if %w[12 24].include?(raw)
+      return [conf["time_format"], "config file"] if conf.key?("time_format")
+      [12, "default"]
+    end
+    private_class_method :pick_time_format
 
     # Deadline window (in days) for the "urgent" axis. Env beats config file
     # beats the built-in default; an empty or non-integer value is ignored so
@@ -247,6 +275,14 @@ module Tasks
           conf[key] = n
         elsif key == "theme"
           conf[key] = value
+        elsif key == "timezone"
+          begin
+            conf[key] = Timezones.get(value).identifier
+          rescue Timezones::Error
+            next
+          end
+        elsif key == "time_format" && %w[12 24].include?(value)
+          conf[key] = value.to_i
         elsif key.start_with?("color.") && key.length > 6
           (conf["colors"] ||= {})[key.delete_prefix("color.")] = value
         elsif (m = key.match(/\Alink\.(.+)\z/)) && m[1].match?(LINK_NAME)

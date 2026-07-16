@@ -15,12 +15,13 @@ class TestConfig < Minitest::Test
   def clean_env(xdg)
     { "TASKS_FILE" => nil, "TASKS_ARCHIVE" => nil, "TASKS_DIR" => nil,
       "TASKS_URGENT_DAYS" => nil, "TASKS_MAX_DEPTH" => nil,
-      "TASKS_THEME" => nil, "NO_COLOR" => nil, "XDG_CONFIG_HOME" => xdg }
+      "TASKS_THEME" => nil, "TASKS_TIMEZONE" => nil, "TASKS_TIME_FORMAT" => nil,
+      "TZ" => nil, "NO_COLOR" => nil, "XDG_CONFIG_HOME" => xdg }
   end
 
   def resolve(env: {}, default: "/repo")
     # Route the config file into a throwaway XDG dir unless the test sets one
-    env = { "XDG_CONFIG_HOME" => @xdg }.merge(env)
+    env = { "XDG_CONFIG_HOME" => @xdg, "TZ" => "Etc/UTC" }.merge(env)
     Tasks::Config.resolve(default_dir: default, env: env)
   end
 
@@ -46,7 +47,8 @@ class TestConfig < Minitest::Test
     assert_equal "/repo/archive.jsonl", paths.archive
     assert_equal "/repo/agent-memory.md", paths.memory
     assert_equal({ org: "default", archive: "default", memory: "beside tasks.jsonl",
-                   urgent_days: "default", max_depth: "default", theme: "default" }, paths.sources)
+                   urgent_days: "default", max_depth: "default", theme: "default",
+                   timezone: "TZ env", time_format: "default" }, paths.sources)
   end
 
   def test_tasks_dir_env_points_both_files
@@ -260,6 +262,30 @@ class TestConfig < Minitest::Test
 
   def test_for_dir_uses_default_max_depth
     assert_equal 4, Tasks::Config.for_dir("/sandbox").max_depth
+  end
+
+  # -- temporal settings -----------------------------------------------------
+
+  def test_timezone_resolution_precedence_and_time_format
+    write_config("timezone = Europe/London\ntime_format = 24\n")
+    configured = resolve(env: { "TZ" => "Asia/Tokyo" })
+    assert_equal "Europe/London", configured.timezone
+    assert_equal "config file", configured.sources[:timezone]
+    assert_equal 24, configured.time_format
+
+    overridden = resolve(env: { "TASKS_TIMEZONE" => "America/New_York",
+                                "TASKS_TIME_FORMAT" => "12" })
+    assert_equal "America/New_York", overridden.timezone
+    assert_equal "TASKS_TIMEZONE env", overridden.sources[:timezone]
+    assert_equal 12, overridden.time_format
+  end
+
+  def test_timezone_uses_tz_and_detector_reports_utc_fallback
+    assert_equal "Asia/Tokyo", resolve(env: { "TZ" => "Asia/Tokyo" }).timezone
+    zone, source, warning = Tasks::Timezones.detect(env: {}, localtime: "/missing/localtime")
+    assert_equal "Etc/UTC", zone
+    assert_equal "UTC fallback", source
+    assert warning
   end
 
   # -- theme + colors (TUI appearance) ----------------------------------------
