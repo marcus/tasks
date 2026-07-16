@@ -5,7 +5,9 @@ require_relative "temporal_value"
 
 module Tasks
   module TemporalParser
-    TIME_TOKEN = /(?:noon|midnight|(?:[01]?\d|2[0-3])(?::[0-5]\d)?(?:am|pm)?)/i
+    # A bare digit is not a time: "fri 5" must be rejected, not stored as
+    # 05:00. Minutes may be omitted only when a meridiem disambiguates (5pm).
+    TIME_TOKEN = /(?:noon|midnight|(?:[01]?\d|2[0-3]):[0-5]\d(?:am|pm)?|(?:1[0-2]|0?[1-9])(?:am|pm))/i
 
     module_function
 
@@ -17,7 +19,9 @@ module Tasks
       date_text, local = split(input)
       date = Dates.parse_when(date_text, today: today)
       return nil unless date
-      raise ArgumentError, "a time is required with --timezone or --fold" if !local && (timezone || fold.to_i == 1)
+      if !local && (timezone || floating || fold.to_i == 1)
+        raise ArgumentError, "a time is required with --timezone, --floating, or --fold"
+      end
 
       value = TemporalValue.new(date: date, local_time: local,
                                 timezone: (floating ? nil : timezone), fold: fold)

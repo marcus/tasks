@@ -752,11 +752,25 @@ module Tui
         projected = value.projected(reader.temporal_context)
         date = projected.fetch(:date)
         label = projected.fetch(:local)
+        abbr = fixed_zone_abbr(value, reader.temporal_context)
+        label = "#{label}·#{abbr}" if abbr
       else
         label = value&.local_time || "#{date.month}/#{date.day}"
       end
       days = (date - today).to_i
       T.paint(due_slot(days), label)
+    end
+
+    # Zone abbreviation for a fixed value anchored outside the evaluation zone
+    # — presentation only, never stored identity. Nil when floating, all-day,
+    # or fixed to the evaluation zone itself.
+    def fixed_zone_abbr(value, context)
+      return nil unless value&.fixed? && value.timezone != context.timezone_id
+
+      zone = Tasks::Timezones.get(value.timezone)
+      zone.period_for_utc(value.instant(context)).abbreviation.to_s
+    rescue Tasks::Timezones::Error, ArgumentError
+      nil
     end
 
     def temporal_sort_key(item, context = nil)

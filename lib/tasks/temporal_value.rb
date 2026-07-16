@@ -42,7 +42,11 @@ module Tasks
       all_day? ? Timezones.earliest_on(date + 1, context.timezone) : instant(context)
     end
 
-    def overdue?(context) = context.now > due_boundary(context)
+    # Date-only: overdue the moment the local date passes (>= the next day's
+    # first instant). Timed: on time at the exact instant, overdue strictly after.
+    def overdue?(context)
+      all_day? ? context.now >= due_boundary(context) : context.now > due_boundary(context)
+    end
     def released?(context) = context.now >= release_instant(context)
 
     def projected(context)
@@ -85,6 +89,7 @@ module Tasks
       raw_date = record[field.to_s]
       return nil unless raw_date
       time = record["#{field}_time"]
+      time = nil unless time.is_a?(Hash)
       new(date: raw_date, local_time: time&.fetch("local", nil),
           timezone: time&.fetch("timezone", nil), fold: time&.fetch("fold", 0), validate: validate)
     rescue ArgumentError, KeyError, TypeError

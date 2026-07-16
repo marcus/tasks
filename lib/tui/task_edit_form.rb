@@ -296,6 +296,9 @@ module Tui
         return handle_temporal_calendar(key, value) if @temporal_state.calendar
 
         if TermForm::Fields::DecodedEvent.command?(event, :cancel, "\e")
+          # The picker is a live control: arrow adjustments already edited the
+          # field value, so Escape only closes the overlay. Discarding the
+          # whole field draft is the editor-level Escape's job.
           @temporal_state.open = false
           return TermForm::Field::Result.new(:handled, value)
         end
@@ -479,7 +482,11 @@ module Tui
 
       def zone_matches
         query = @temporal_state.zone_search.to_s.downcase
-        TZInfo::Timezone.all_identifiers.select { |identifier| identifier.downcase.include?(query) }
+        # Offer only identifiers Tasks::Timezones.get accepts (Area/Location or
+        # UTC): a slashless link like "Japan" would fail validation on save.
+        TZInfo::Timezone.all_identifiers
+                        .select { |identifier| identifier.include?("/") || identifier == "UTC" }
+                        .select { |identifier| identifier.downcase.include?(query) }
       end
 
       def temporal_picker_lines(value, width)

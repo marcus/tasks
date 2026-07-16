@@ -111,6 +111,34 @@ class TestViews < Minitest::Test
     end
   end
 
+  def test_next_rows_mark_fixed_values_outside_the_reader_zone
+    records = [
+      { "type" => "meta", "version" => 2 },
+      { "type" => "section", "id" => "s1", "title" => "Work" },
+      { "type" => "task", "id" => "t1", "parent" => "s1", "state" => "NEXT",
+        "title" => "London call", "deadline" => "2026-07-02",
+        "deadline_time" => { "local" => "17:00", "timezone" => "Europe/London" } },
+      { "type" => "task", "id" => "t2", "parent" => "s1", "state" => "NEXT",
+        "title" => "Local floating", "deadline" => "2026-07-02",
+        "deadline_time" => { "local" => "09:00" } },
+    ]
+    with_records(records) do |store|
+      context = Tasks::TemporalContext.new(
+        now: Time.utc(2026, 7, 1, 19), timezone: "America/Los_Angeles"
+      )
+      reader = Tasks::TaskReadModel.new(store.read_snapshot, temporal_context: context)
+      rows = V.rows(:next, reader.items, today: TODAY, reader: reader)
+      texts = rows.filter_map { |row| row.item && A.strip(row.text) }
+
+      fixed_row = texts.find { |text| text.include?("London call") }
+      floating_row = texts.find { |text| text.include?("Local floating") }
+      assert_includes fixed_row, "09:00·BST",
+                      "a fixed value outside the reader zone carries a zone abbreviation"
+      assert_includes floating_row, "09:00"
+      refute_includes floating_row, "·", "floating values carry no zone marker"
+    end
+  end
+
   def test_agenda_sorts_timed_items_by_exact_boundary_not_file_order
     records = [
       { "type" => "meta", "version" => 2 },

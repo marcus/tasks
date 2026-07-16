@@ -142,16 +142,23 @@ module Tasks
     end
     private_class_method :pick_theme
 
+    # Each source falls through independently on an invalid zone: a typo'd
+    # TASKS_TIMEZONE must not silently skip past a valid config-file zone.
     def self.pick_timezone(conf, env)
-      if env["TASKS_TIMEZONE"] && !env["TASKS_TIMEZONE"].empty?
-        [Timezones.get(env["TASKS_TIMEZONE"]).identifier, "TASKS_TIMEZONE env", false]
-      elsif conf["timezone"]
-        [Timezones.get(conf["timezone"]).identifier, "config file", false]
-      else
-        Timezones.detect(env: env)
+      candidates = [
+        [env["TASKS_TIMEZONE"], "TASKS_TIMEZONE env"],
+        [conf["timezone"], "config file"],
+      ]
+      candidates.each do |value, source|
+        next if value.nil? || value.empty?
+
+        begin
+          return [Timezones.get(value).identifier, source, false]
+        rescue Timezones::Error
+          warn "tasks: ignoring invalid time zone #{value.inspect} from #{source}"
+        end
       end
-    rescue Timezones::Error
-      Timezones.detect(env: env.reject { |key, _| key == "TZ" })
+      Timezones.detect(env: env)
     end
     private_class_method :pick_timezone
 

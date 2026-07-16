@@ -1576,7 +1576,15 @@ module Tasks
     # Date values are normalized before hashing so equivalent Store snapshots
     # never depend on Ruby object identity or JSONL serialization details.
     def task_revision(values, records, ri, siblings_by_parent: nil)
-      own = semantic_digest(REVISION_OWN_FIELDS.map { |field| [field, revision_value(values[field])] })
+      rec = records[ri]
+      own_fields = REVISION_OWN_FIELDS.map { |field| [field, revision_value(values[field])] }
+      # Time metadata is part of the task's own semantic value: a stale
+      # zone/time edit must fail exactly like a stale date edit. Normalized
+      # stored objects only — never derived instants, so a tzdata update
+      # cannot invalidate revisions.
+      own_fields << [:scheduled_time, revision_value(rec["scheduled_time"])]
+      own_fields << [:deadline_time, revision_value(rec["deadline_time"])]
+      own = semantic_digest(own_fields)
       location = location_fingerprint(records, ri, siblings_by_parent: siblings_by_parent)
       lifecycle = lifecycle_fingerprint(records, ri)
       "v1.#{own}.#{location}.#{lifecycle}"

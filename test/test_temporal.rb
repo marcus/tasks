@@ -23,6 +23,21 @@ class TestTemporal < Minitest::Test
     end
   end
 
+  def test_parser_rejects_a_bare_digit_as_a_time
+    # "fri 5" must not silently become 05:00; minutes may be omitted only
+    # when a meridiem disambiguates.
+    assert_nil Tasks::TemporalParser.parse("tomorrow 5", today: TODAY)
+    assert_nil Tasks::TemporalParser.parse("fri 17", today: TODAY)
+    assert_equal "17:00", Tasks::TemporalParser.parse("fri 5pm", today: TODAY).local_time
+    assert_equal "17:00", Tasks::TemporalParser.parse("fri 17:00", today: TODAY).local_time
+  end
+
+  def test_parser_requires_a_time_for_floating_flag
+    assert_raises(ArgumentError) do
+      Tasks::TemporalParser.parse("2026-07-20", today: TODAY, floating: true)
+    end
+  end
+
   def test_parser_rejects_bare_time_and_mutually_exclusive_modes
     assert_nil Tasks::TemporalParser.parse("9am", today: TODAY)
     assert_raises(ArgumentError) do

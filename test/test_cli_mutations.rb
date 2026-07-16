@@ -1478,6 +1478,21 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  def test_cli_mutation_against_v1_store_names_the_migration_it_needs
+    v1 = Tasks::Format.dump([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "aa000001", "title" => "Work" },
+      { "type" => "task", "id" => "aa000002", "parent" => "aa000001", "state" => "TODO",
+        "title" => "Old task", "deadline" => "2026-07-20" },
+    ])
+    run_cli("due", "aa000002", "2026-08-01", content: v1) do |org, _out, err, st|
+      refute st.success?
+      assert_match(/tasks migrate/, err)
+      assert_equal 1, JSON.parse(File.foreach(org).first)["version"]
+      assert_equal "2026-07-20", record_for(org, title: "Old task")["deadline"]
+    end
+  end
+
   def test_cli_schedule_repair_is_one_journal_entry_undone_to_invalid_bytes
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")

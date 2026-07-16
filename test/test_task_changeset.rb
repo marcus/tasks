@@ -328,6 +328,31 @@ class TestTaskChangeset < Minitest::Test
     end
   end
 
+  def test_changeset_returns_stale_for_a_concurrent_time_or_zone_change
+    with_changeset_store do |store, org, _archive|
+      seeded = records(org)
+      seeded.find { |record| record["id"] == "11110002" }.merge!(
+        "scheduled" => "2026-07-20",
+        "scheduled_time" => { "local" => "09:00", "timezone" => "Europe/London" }
+      )
+      File.write(org, Tasks::Format.dump(seeded))
+      store.reload!
+      snapshot = store.edit_snapshot("11110002")
+
+      # A concurrent edit changes only the zone: same date, same local time.
+      source = records(org)
+      source.find { |record| record["id"] == "11110002" }["scheduled_time"] =
+        { "local" => "09:00", "timezone" => "Asia/Tokyo" }
+      File.write(org, Tasks::Format.dump(source))
+      before = File.binread(org)
+
+      result = store.apply_changeset!(changeset(snapshot, title: "Renamed"))
+
+      assert_equal :stale, result.status, "a stale zone edit must fail exactly like a stale date edit"
+      assert_equal before, File.binread(org)
+    end
+  end
+
   def test_title_only_changeset_ignores_a_sibling_change_but_state_guards_lifecycle
     with_changeset_store do |store, org, _archive|
       title_snapshot = store.edit_snapshot("11110002")

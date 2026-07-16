@@ -279,11 +279,11 @@ def cmd_capture(args)
   end
 
   due_date = due && parse_temporal(
-    due, context: context,
+    due, context: context, field: "--due",
     options: { timezone: due_timezone, floating: due_floating, fold: due_fold == "later" ? 1 : 0 }
   )
   scheduled_date = scheduled && parse_temporal(
-    scheduled, context: context,
+    scheduled, context: context, field: "--scheduled",
     options: { timezone: scheduled_timezone, floating: scheduled_floating,
                fold: scheduled_fold == "later" ? 1 : 0 }
   )
@@ -532,6 +532,8 @@ def mutation_result_failed(result, msg)
   # from a preflight refusal that never wrote (the file was already invalid).
   message = if store.last_rollback
               "#{msg}\nfile failed validation after the edit — run `tasks check`"
+            elsif result.respond_to?(:migration_required?) && result.migration_required?
+              "#{msg}\ntask data migration required; run `tasks migrate` (nothing was written)"
             elsif result.store_invalid?
               "#{msg}\ntask file is already invalid — run `tasks check` (nothing was written)"
             else
@@ -1297,13 +1299,13 @@ def extract_temporal_options(args, timezone_flag: "--timezone", floating_flag: "
     modified: !!(timezone || floating || fold_name) }
 end
 
-def parse_temporal(expression, context:, options: {})
+def parse_temporal(expression, context:, options: {}, field: nil)
   require_relative "../lib/tasks/temporal_parser"
   Tasks::TemporalParser.parse(expression, today: context.local_date, context: context,
                               timezone: options[:timezone], floating: options[:floating],
                               fold: options.fetch(:fold, 0)) || abort("unrecognized date: #{expression}")
 rescue ArgumentError, Tasks::Timezones::Error => e
-  abort e.message
+  abort field ? "#{field}: #{e.message}" : e.message
 end
 
 def temporal_label(value)

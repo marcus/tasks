@@ -697,7 +697,15 @@ module Tasks
           return temporal_input({ field => date, "#{field}_time" => time }, field, context: context)
         end
         existing = current.public_send("#{field}_value")
-        existing ? existing.with_date(Date.iso8601(date)) : TemporalValue.new(date: date)
+        begin
+          value = existing ? existing.with_date(Date.iso8601(date)) : TemporalValue.new(date: date)
+          value.instant(context) if value.floating?
+          value
+        rescue ArgumentError, Timezones::Error => e
+          # Moving the date under preserved time metadata can land the kept
+          # local time in a DST gap — a client-input problem, not a store one.
+          validation!(field => [e.message])
+        end
       end
 
       def request_temporal_context

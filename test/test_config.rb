@@ -280,6 +280,17 @@ class TestConfig < Minitest::Test
     assert_equal 12, overridden.time_format
   end
 
+  def test_invalid_timezone_env_falls_through_to_config_zone_with_a_warning
+    write_config("timezone = Europe/London\n")
+    configured = nil
+    _out, err = capture_io do
+      configured = resolve(env: { "TASKS_TIMEZONE" => "Bogus/NotAZone" })
+    end
+    assert_equal "Europe/London", configured.timezone
+    assert_equal "config file", configured.sources[:timezone]
+    assert_match(/ignoring invalid time zone "Bogus\/NotAZone"/, err)
+  end
+
   def test_timezone_uses_tz_and_detector_reports_utc_fallback
     assert_equal "Asia/Tokyo", resolve(env: { "TZ" => "Asia/Tokyo" }).timezone
     zone, source, warning = Tasks::Timezones.detect(env: {}, localtime: "/missing/localtime")

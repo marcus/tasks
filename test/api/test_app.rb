@@ -638,6 +638,26 @@ class TestApiApp < Minitest::Test
     end
   end
 
+  def test_patching_only_the_date_onto_a_dst_gap_is_a_field_error_not_a_server_error
+    current = get("/api/v1/tasks/#{FIX[:flight]}")
+    seeded = json_request(
+      "PATCH", "/api/v1/tasks/#{FIX[:flight]}",
+      { deadline: "2026-03-01",
+        deadline_time: { local: "02:30", timezone: "America/Los_Angeles" } },
+      { "HTTP_IF_MATCH" => current["etag"] }
+    )
+    assert_equal 200, seeded.status
+
+    fresh = get("/api/v1/tasks/#{FIX[:flight]}")
+    # Moving only the date preserves 02:30 America/Los_Angeles, which does not
+    # exist on the spring-forward date — a client-input 422, never a 503.
+    response = json_request(
+      "PATCH", "/api/v1/tasks/#{FIX[:flight]}", { deadline: "2026-03-08" },
+      { "HTTP_IF_MATCH" => fresh["etag"] }
+    )
+    assert_error response, 422, "validation_failed"
+  end
+
   def test_api_returns_a_safe_error_when_configured_zone_creates_a_floating_gap
     records = Tasks::Format.parse(File.read(@org)).records
     task = records.find { |record| record["id"] == FIX[:flight] }

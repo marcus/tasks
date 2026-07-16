@@ -84,6 +84,96 @@ class TestJsonlMerge < Minitest::Test
     assert_includes result.log_lines.join("\n"), "low-confidence=title"
   end
 
+  def test_temporal_pair_conflict_takes_the_whole_pair_from_the_lww_winner
+    base = change(base_records, "10000002",
+                  scheduled: "2026-07-20", scheduled_time: { "local" => "09:00", "timezone" => "America/Los_Angeles" })
+    ours = change(base, "10000002", scheduled: "2026-07-21", updated: HOME_STAMP)
+    theirs = change(base, "10000002",
+                    scheduled: "2026-07-25", scheduled_time: { "local" => "14:00" }, updated: WORK_STAMP)
+
+    records, result = merge(base, ours, theirs)
+    task = find(records, "10000002")
+
+    assert_equal "2026-07-25", task["scheduled"]
+    assert_equal({ "local" => "14:00" }, task["scheduled_time"])
+    assert_includes result.events.first[:conflicts], "scheduled"
+
+    reverse_records, = merge(base, theirs, ours)
+    assert_equal Tasks::Format.dump(records), Tasks::Format.dump(reverse_records)
+  end
+
+  def test_temporal_pair_single_side_change_wins_without_conflict
+    base = change(base_records, "10000002",
+                  scheduled: "2026-07-20", scheduled_time: { "local" => "09:00" })
+    ours = change(base, "10000002", tags: ["@computer", "travel"], updated: HOME_STAMP)
+    theirs = change(base, "10000002",
+                    scheduled: "2026-07-22", scheduled_time: { "local" => "17:00", "timezone" => "Europe/London" },
+                    updated: WORK_STAMP)
+
+    records, result = merge(base, ours, theirs)
+    task = find(records, "10000002")
+
+    assert_equal "2026-07-22", task["scheduled"]
+    assert_equal({ "local" => "17:00", "timezone" => "Europe/London" }, task["scheduled_time"])
+    assert_equal ["@computer", "travel"], task["tags"]
+    assert_empty result.events.first[:conflicts]
+  end
+
+  def test_undate_vs_retime_never_emits_orphan_time_metadata
+    base = change(base_records, "10000002",
+                  scheduled: "2026-07-20", scheduled_time: { "local" => "09:00", "timezone" => "Europe/London" })
+    ours = change(base, "10000002", scheduled: nil, scheduled_time: nil, updated: WORK_STAMP)
+    theirs = change(base, "10000002", scheduled_time: { "local" => "10:30", "timezone" => "Europe/London" },
+                    updated: HOME_STAMP)
+
+    records, result = merge(base, ours, theirs)
+    task = find(records, "10000002")
+
+    refute task.key?("scheduled"), "ours undate should win the whole pair"
+    refute task.key?("scheduled_time"), "orphan time metadata must never survive"
+    assert_includes result.events.first[:conflicts], "scheduled"
+  end
+
+  def test_v1_merge_base_between_two_migrated_sides_merges_cleanly
+    v1_base = copy(base_records)
+    v1_base.first["version"] = 1
+    ours = change(base_records, "10000002", tags: ["@computer", "travel"], updated: HOME_STAMP)
+    theirs = change(base_records, "10000002", scheduled: "2026-07-19", updated: WORK_STAMP)
+
+    records, = merge(v1_base, ours, theirs)
+    task = find(records, "10000002")
+
+    assert_equal 2, records.first["version"]
+    assert_equal ["@computer", "travel"], task["tags"]
+    assert_equal "2026-07-19", task["scheduled"]
+  end
+
+  def test_mixed_schema_versions_between_sides_refuse_with_migrate_hint
+    v1_theirs = change(base_records, "10000003", title: "Call utility")
+    v1_theirs.first["version"] = 1
+
+    result = Tasks::JsonlMerge.merge(
+      base_text: Tasks::Format.dump(base_records),
+      ours_text: Tasks::Format.dump(base_records),
+      theirs_text: Tasks::Format.dump(v1_theirs)
+    )
+
+    refute result.ok?
+    assert_includes result.error, "tasks migrate"
+  end
+
+  def test_two_v1_sides_still_merge_to_a_v1_file
+    v1 = copy(base_records)
+    v1.first["version"] = 1
+    ours = change(v1, "10000002", tags: ["@computer", "travel"], updated: HOME_STAMP)
+    theirs = change(v1, "10000003", title: "Call utility", updated: WORK_STAMP)
+
+    records, = merge(v1, ours, theirs)
+
+    assert_equal 1, records.first["version"]
+    assert_equal "Call utility", find(records, "10000003")["title"]
+  end
+
   def test_tags_union_preserves_base_order_and_sorts_concurrent_additions
     base = change(base_records, "10000002", tags: %w[@computer important])
     ours = change(base, "10000002", tags: %w[@computer important zeta], updated: HOME_STAMP)
