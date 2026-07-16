@@ -109,6 +109,10 @@ paths:
                       priorities: [A, B, C]
                       max_depth: 4
                       urgent_days: 3
+                      timezone: "America/Los_Angeles"
+                      time_format: 12
+                      tzdb_version: "zoneinfo"
+                      temporal_precision: "minute"
                       capabilities:
                         projects: true
                         undo: false
@@ -119,6 +123,8 @@ paths:
                       store_revision: "s1.6f2a9c0b"
         "503":
           $ref: "#/components/responses/StoreInvalid"
+        "409":
+          $ref: "#/components/responses/MigrationRequired"
         "400":
           $ref: "#/components/responses/MalformedRequest"
         "422":
@@ -272,10 +278,13 @@ paths:
                         tags: ["billing"]
                         deferred: false
                         scheduled: null
+                        scheduled_time: null
                         deadline: null
+                        deadline_time: null
                         available: true
                         availability_reason: "available"
                         availability_blocker_id: null
+                        available_at: null
                         recurrence: null
                         body: ["Captured 2026-07-14.", "Confirm the seat count first."]
                         closed: null
@@ -324,7 +333,9 @@ paths:
                   contexts: ["@desk"]
                   deferred: false
                   scheduled: "2026-07-20"
+                  scheduled_time: null
                   deadline: null
+                  deadline_time: null
                   state: "NEXT"
                   project: "Work"
                   parent_id: null
@@ -365,10 +376,13 @@ paths:
                       tags: ["billing"]
                       deferred: false
                       scheduled: "2026-07-20"
+                      scheduled_time: null
                       deadline: null
+                      deadline_time: null
                       available: false
                       availability_reason: "scheduled"
                       availability_blocker_id: "3c4d5e6f"
+                      available_at: null
                       recurrence: null
                       body: ["Captured 2026-07-14."]
                       closed: null
@@ -469,10 +483,13 @@ paths:
                       tags: ["billing"]
                       deferred: false
                       scheduled: "2026-07-20"
+                      scheduled_time: null
                       deadline: null
+                      deadline_time: null
                       available: false
                       availability_reason: "scheduled"
                       availability_blocker_id: "3c4d5e6f"
+                      available_at: null
                       recurrence: null
                       body: ["Captured 2026-07-14.", "Confirm the seat count first."]
                       closed: null
@@ -536,10 +553,12 @@ paths:
                   title: "Email the vendor about the 2027 renewal"
                   priority: "A"
                   scheduled: "2026-07-21"
+                  scheduled_time: null
               defer_until:
                 summary: Set timed availability and clear an own indefinite hold.
                 value:
                   scheduled: "2026-07-21"
+                  scheduled_time: null
                   deferred: false
               put_on_hold:
                 summary: Hold indefinitely without changing either date.
@@ -549,6 +568,7 @@ paths:
                 summary: Clear a clearable field with explicit null.
                 value:
                   deadline: null
+                  deadline_time: null
               move:
                 summary: Move the subtree under a new parent.
                 value:
@@ -603,10 +623,13 @@ paths:
                       tags: ["billing"]
                       deferred: false
                       scheduled: "2026-07-21"
+                      scheduled_time: null
                       deadline: null
+                      deadline_time: null
                       available: false
                       availability_reason: "scheduled"
                       availability_blocker_id: "3c4d5e6f"
+                      available_at: null
                       recurrence: null
                       body: ["Captured 2026-07-14.", "Confirm the seat count first."]
                       closed: null
@@ -836,6 +859,8 @@ paths:
                         open_count: 3
                         next_count: 1
                         next_date: "2026-07-25"
+                        next_time: null
+                        next_at: null
                         stuck: false
                         held_count: 1
                         body: "Goal: ship the personal site."
@@ -847,6 +872,8 @@ paths:
                         open_count: 2
                         next_count: 1
                         next_date: null
+                        next_time: null
+                        next_at: null
                         stuck: false
                         held_count: 0
                         body: null
@@ -910,6 +937,8 @@ paths:
                       open_count: 0
                       next_count: 0
                       next_date: null
+                      next_time: null
+                      next_at: null
                       stuck: true
                       held_count: 0
                       body: null
@@ -966,6 +995,8 @@ paths:
                       open_count: 3
                       next_count: 1
                       next_date: "2026-07-25"
+                      next_time: null
+                      next_at: null
                       stuck: false
                       held_count: 1
                       body: "Goal: ship the personal site."
@@ -1028,6 +1059,8 @@ paths:
                       open_count: 1
                       next_count: 0
                       next_date: null
+                      next_time: null
+                      next_at: null
                       stuck: true
                       held_count: 0
                       body: null
@@ -1093,6 +1126,8 @@ paths:
                       open_count: 0
                       next_count: 0
                       next_date: null
+                      next_time: null
+                      next_at: null
                       stuck: true
                       held_count: 0
                       body: "Goal: ship the personal site."
@@ -1241,10 +1276,13 @@ paths:
                           tags: ["billing"]
                           deferred: false
                           scheduled: null
+                          scheduled_time: null
                           deadline: "2026-07-20"
+                          deadline_time: null
                           available: true
                           availability_reason: "available"
                           availability_blocker_id: null
+                          available_at: null
                           recurrence: null
                           body: ["Captured 2026-07-14."]
                           closed: null
@@ -1596,6 +1634,8 @@ paths:
                       message: "The task list failed structural validation."
                       details: {}
                       request_id: "req_9d4f"
+        "409":
+          $ref: "#/components/responses/MigrationRequired"
         "400":
           $ref: "#/components/responses/MalformedRequest"
         "422":
@@ -1716,10 +1756,13 @@ components:
                       tags: ["billing"]
                       deferred: false
                       scheduled: "2026-07-20"
+                      scheduled_time: null
                       deadline: null
+                      deadline_time: null
                       available: false
                       availability_reason: "scheduled"
                       availability_blocker_id: "3c4d5e6f"
+                      available_at: null
                       recurrence: null
                       body: ["Captured 2026-07-14."]
                       closed: null
@@ -1811,6 +1854,17 @@ components:
                   message: "The write failed and was rolled back; retry."
                   details: {}
                   request_id: "req_2f4d"
+    MigrationRequired:
+      description: The backing files still use schema v1 and must be migrated before the API can serve them.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error:
+              code: "schema_migration_required"
+              message: "The task store uses schema v1; run `tasks migrate` before starting the API."
+              details: { current_version: 1, required_version: 2, command: "tasks migrate" }
+              request_id: "req_8b9d"
 
   examples:
     TaskResource:
@@ -1829,10 +1883,13 @@ components:
         tags: ["billing"]
         deferred: false
         scheduled: "2026-07-20"
+        scheduled_time: null
         deadline: null
+        deadline_time: null
         available: false
         availability_reason: "scheduled"
         availability_blocker_id: "3c4d5e6f"
+        available_at: null
         recurrence: null
         body: ["Captured 2026-07-14.", "Confirm the seat count first."]
         closed: null
@@ -1866,6 +1923,35 @@ components:
       pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
       description: ISO YYYY-MM-DD date, or null.
 
+    TaskTimeInput:
+      type: [object, "null"]
+      description: Optional civil clock metadata. Null converts the paired date to all-day.
+      required: [local]
+      additionalProperties: false
+      properties:
+        local:
+          type: string
+          pattern: "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+        timezone:
+          type: [string, "null"]
+          description: IANA zone id; null or absent means floating in the server evaluation zone.
+        fold:
+          type: integer
+          enum: [0, 1]
+          default: 0
+
+    TaskTime:
+      type: [object, "null"]
+      readOnly: true
+      required: [local, timezone, fold, effective_timezone, instant]
+      additionalProperties: false
+      properties:
+        local: { type: string, pattern: "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$" }
+        timezone: { type: [string, "null"] }
+        fold: { type: integer, enum: [0, 1] }
+        effective_timezone: { type: string }
+        instant: { type: string, format: date-time }
+
     Link:
       type: object
       description: A derived, read-only link found in the task title or body.
@@ -1894,7 +1980,9 @@ components:
     Meta:
       type: object
       description: Server capabilities and config-derived vocabularies. No paths.
-      required: [api_version, server_mode, states, priorities, max_depth, urgent_days]
+      required: [api_version, server_mode, states, priorities, max_depth, urgent_days,
+                 timezone, time_format, tzdb_version, temporal_precision]
+      additionalProperties: false
       properties:
         api_version: { type: string }
         server_mode:
@@ -1918,6 +2006,10 @@ components:
         urgent_days:
           type: integer
           description: Deadline horizon used by the quadrants view.
+        timezone: { type: string }
+        time_format: { type: integer, enum: [12, 24] }
+        tzdb_version: { type: string }
+        temporal_precision: { type: string, enum: [minute] }
         capabilities:
           type: object
           description: |
@@ -1956,6 +2048,8 @@ components:
         - open_count
         - next_count
         - next_date
+        - next_time
+        - next_at
         - stuck
         - held_count
         - body
@@ -1984,6 +2078,11 @@ components:
           allOf:
             - { $ref: "#/components/schemas/IsoDate" }
           description: Soonest deadline-or-scheduled date across the open tasks, or null.
+        next_time:
+          $ref: "#/components/schemas/TaskTime"
+        next_at:
+          type: [string, "null"]
+          format: date-time
         stuck:
           type: boolean
           description: True when the project/area has no open NEXT action (including when empty).
@@ -2059,10 +2158,13 @@ components:
         - tags
         - deferred
         - scheduled
+        - scheduled_time
         - deadline
+        - deadline_time
         - available
         - availability_reason
         - availability_blocker_id
+        - available_at
         - recurrence
         - body
         - closed
@@ -2119,10 +2221,14 @@ components:
           allOf:
             - { $ref: "#/components/schemas/IsoDate" }
           description: Own available-from/start/defer-until date, or null.
+        scheduled_time:
+          $ref: "#/components/schemas/TaskTime"
         deadline:
           allOf:
             - { $ref: "#/components/schemas/IsoDate" }
           description: Independent due date, or null.
+        deadline_time:
+          $ref: "#/components/schemas/TaskTime"
         available:
           type: boolean
           readOnly: true
@@ -2138,6 +2244,10 @@ components:
           oneOf:
             - { $ref: "#/components/schemas/TaskId" }
             - { type: "null" }
+        available_at:
+          type: [string, "null"]
+          format: date-time
+          readOnly: true
         recurrence:
           type: [string, "null"]
           description: Recurrence cookie (e.g. `.+1w`), or null.
@@ -2197,10 +2307,12 @@ components:
           allOf:
             - { $ref: "#/components/schemas/IsoDate" }
           description: Available-from/start date; a future value makes the task unavailable.
+        scheduled_time: { $ref: "#/components/schemas/TaskTimeInput" }
         deadline:
           allOf:
             - { $ref: "#/components/schemas/IsoDate" }
           description: Independent due date.
+        deadline_time: { $ref: "#/components/schemas/TaskTimeInput" }
         state: { $ref: "#/components/schemas/State" }
         project:
           type: [string, "null"]
@@ -2276,10 +2388,12 @@ components:
           allOf:
             - { $ref: "#/components/schemas/IsoDate" }
           description: Set/clear the available-from date without moving deadline.
+        scheduled_time: { $ref: "#/components/schemas/TaskTimeInput" }
         deadline:
           allOf:
             - { $ref: "#/components/schemas/IsoDate" }
           description: Set/clear the independent due date.
+        deadline_time: { $ref: "#/components/schemas/TaskTimeInput" }
         recurrence:
           type: [string, "null"]
         parent_id:
@@ -2359,5 +2473,6 @@ components:
         - unsupported_media_type
         - validation_failed
         - missing_precondition
+        - schema_migration_required
         - store_invalid
         - unavailable

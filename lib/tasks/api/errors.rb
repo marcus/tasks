@@ -27,6 +27,7 @@ module Tasks
         unsupported_media_type: "Request bodies must be application/json.",
         validation_failed: "One or more fields are invalid.",
         missing_precondition: "This write requires an If-Match header.",
+        schema_migration_required: "The task store uses schema v1; run `tasks migrate` before starting the API.",
         store_invalid: "The task list failed structural validation.",
         unavailable: "The task store is unavailable; retry.",
       }.freeze
