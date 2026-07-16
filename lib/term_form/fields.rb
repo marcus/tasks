@@ -564,21 +564,23 @@ module TermForm
       end
     end
 
-    DateState = Struct.new(:editor, :picker_open, :anchor, :column_offset)
+    DateState = Struct.new(:editor, :picker_open, :anchor, :column_offset, :parse_error)
 
     class DateInput < Field
       attr_reader :state
 
       def initialize(key:, value: nil, parser: nil, formatter: nil, today: -> { Date.today },
-                     suggestions: [], default_anchor: nil, metadata: {}, **field_options)
+                     suggestions: [], default_anchor: nil, expose_parse_errors: false,
+                     metadata: {}, **field_options)
         @parser = parser || ->(text, _today) { Date.iso8601(text) }
         @formatter = formatter || ->(date) { date.iso8601 }
         @today_source = today
         @suggestion_source = suggestions.respond_to?(:call) ? suggestions : Support.frozen_copy(suggestions)
         @default_anchor = default_anchor
+        @expose_parse_errors = expose_parse_errors
         normalized = normalize_value(value)
-        text = normalized.is_a?(Date) ? format_date(normalized) : value.to_s
-        @state = DateState.new(TextEditor.new(text, multiline: false, kill_to_end: false), false, nil, 0)
+        text = parsed_value?(normalized) ? format_date(normalized) : value.to_s
+        @state = DateState.new(TextEditor.new(text, multiline: false, kill_to_end: false), false, nil, 0, nil)
         if field_options.key?(:baseline)
           field_options = field_options.merge(baseline: normalize_value(field_options.fetch(:baseline)))
         end
@@ -593,7 +595,7 @@ module TermForm
 
       def normalize_value(value)
         return nil if value.nil? || (value.respond_to?(:strip) && value.strip.empty?)
-        return value if value.is_a?(Date)
+        return value if parsed_value?(value)
 
         parsed = parse_text(value.to_s)
         parsed || value.to_s
@@ -603,7 +605,7 @@ module TermForm
         normalized = normalize_value(value)
         return if normalize_value(text) == normalized
 
-        @state.editor.replace(normalized.is_a?(Date) ? format_date(normalized) : normalized.to_s)
+        @state.editor.replace(parsed_value?(normalized) ? format_date(normalized) : normalized.to_s)
       end
 
       def handle_event(event, value, context)
@@ -626,20 +628,20 @@ module TermForm
 
       def validation_errors(value, context)
         errors = super
-        if !value.nil? && !value.is_a?(Date)
-          errors = errors + ["is not a valid date"]
+        if !value.nil? && !parsed_value?(value)
+          errors = errors + [@state.parse_error || "is not a valid date"]
         end
         errors.freeze
       end
 
       def preview(value = normalize_value(text))
-        value.is_a?(Date) ? format_date(value) : nil
+        parsed_value?(value) ? format_date(value) : nil
       end
 
       def cursor_for(_value, _context) = picker_open? ? nil : cursor
 
       def metadata_for(value, context)
-        date = value.is_a?(Date) ? value : parse_text(text)
+        date = parsed_value?(value) ? value : parse_text(text)
         metadata.merge(
           text: text, preview: date && format_date(date), picker_open: picker_open?,
           suggestions: Array(Support.property(@suggestion_source, context)).map { |entry| entry.to_s.dup.freeze }.freeze,
@@ -677,9 +679,11 @@ module TermForm
         text = raw.to_s.strip
         return nil if text.empty?
 
+        @state.parse_error = nil
         result = call_with_today(@parser, text)
-        result if result.is_a?(Date)
-      rescue StandardError
+        result if parsed_value?(result)
+      rescue StandardError => error
+        @state.parse_error = error.message if @expose_parse_errors && error.is_a?(ArgumentError)
         nil
       end
 
@@ -708,7 +712,7 @@ module TermForm
 
       def anchor_for(value, context)
         candidates = [value, parse_text(text), Support.property(@default_anchor, context), today]
-        candidates.find { |candidate| candidate.is_a?(Date) }
+        candidates.filter_map { |candidate| date_for_value(candidate) }.first
       end
 
       def handle_picker_event(event, value)
@@ -717,7 +721,7 @@ module TermForm
           return Field::Result.new(:handled, value)
         end
         if DecodedEvent.command?(event, :commit, "\r", "\n")
-          selected = @state.anchor
+          selected = value_for_date(@state.anchor, value)
           @state.editor.replace(format_date(selected))
           @state.picker_open = false
           return Field::Result.new(selected == value ? :handled : :changed, selected)
@@ -744,6 +748,14 @@ module TermForm
         last_day = Date.new(year, month, -1).day
         Date.new(year, month, [date.day, last_day].min)
       end
+
+      # Subclasses can retain DateInput's picker and text behavior while owning
+      # a richer atomic semantic value (for example a task temporal value).
+      def parsed_value?(value) = value.is_a?(Date)
+      def date_for_value(value)
+        value if value.is_a?(Date)
+      end
+      def value_for_date(date, _current) = date
 
       def calendar_metadata(date)
         first = Date.new(date.year, date.month, 1)

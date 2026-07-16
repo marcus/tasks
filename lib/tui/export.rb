@@ -16,8 +16,8 @@ module Tui
       md = ["## #{item.title}", ""]
       md << "- state: #{item.state}"
       md << "- priority: #{item.priority}" if item.priority
-      md << "- deadline: #{item.deadline.iso8601}"   if item.deadline
-      md << "- available from: #{item.scheduled.iso8601}" if item.scheduled
+      md << "- deadline: #{temporal_text(item, :deadline)}" if item.deadline
+      md << "- available from: #{temporal_text(item, :scheduled)}" if item.scheduled
       md << "- on hold: yes" if item.deferred?
       if item.respond_to?(:available?) && !item.available?
         reason = item.availability_reason.to_s.tr("_", " ")
@@ -35,6 +35,15 @@ module Tui
         md.concat(notes)
       end
       md.join("\n") + "\n"
+    end
+
+    def temporal_text(item, field)
+      value = item.respond_to?("#{field}_value") && item.public_send("#{field}_value")
+      return item.public_send(field).iso8601 unless value&.local_time
+
+      mode = value.timezone || "floating"
+      fold = value.fold == 1 ? " fold=later" : ""
+      "#{value.date.iso8601} #{value.local_time} #{mode}#{fold}"
     end
   end
 end

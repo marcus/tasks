@@ -2,6 +2,7 @@
 
 require "date"
 require "set"
+require "time"
 require_relative "ansi"
 require_relative "theme"
 require_relative "store"
@@ -107,11 +108,11 @@ module Tui
       def sort_key(item)
         case view
         when :agenda
-          [item.deadline || item.scheduled, item.priority || "Z"]
+          [Views.temporal_sort_key(item), item.priority || "Z"]
         when :next
           [item.priority || "Z"]
         when :projects
-          [item.deadline || item.scheduled || FAR_FUTURE, item.priority || "Z", item.title]
+          [Views.temporal_sort_key(item), item.priority || "Z", item.title]
         else
           [item.line || Float::INFINITY]
         end
@@ -143,7 +144,7 @@ module Tui
               resolved = yield entry
               resolved.is_a?(Array) ? resolved : [resolved]
             end
-            [items.filter_map { |item| item.deadline || item.scheduled }.min || FAR_FUTURE, key]
+            [items.map { |item| Views.temporal_sort_key(item) }.min, key]
           else
             [key.to_s]
           end
@@ -368,7 +369,8 @@ module Tui
       head = +"#{T.paint(:project, project.title)}  #{T.paint(:muted, "#{project.open_count} open")}"
       head << T.paint(project.next_count.zero? ? :warning : :muted, " · #{project.next_count} next")
       if (upcoming = project.next_date)
-        head << T.paint(due_slot((upcoming - today).to_i), " · next #{upcoming.strftime("%m-%d")}")
+        label = project.next_time&.fetch(:local, nil) || upcoming.strftime("%m-%d")
+        head << T.paint(due_slot((upcoming - today).to_i), " · next #{label}")
       end
       head << T.paint(:warning, " ⚠ stuck") if project.stuck
       head
@@ -672,8 +674,8 @@ module Tui
 
     def subtree_dates(node, show_deferred, reader: nil, today: Date.today)
       dates = []
-      d = node.item.deadline || node.item.scheduled
-      dates << d if d
+      d = temporal_sort_key(node.item)
+      dates << d if d < Float::INFINITY
       visible_children(node, show_deferred, reader: reader, today: today).each do |child|
         dates.concat(subtree_dates(child, show_deferred, reader: reader, today: today))
       end
@@ -702,9 +704,12 @@ module Tui
       d = item.deadline || item.scheduled
       return " " * AGENDA_STAMP_W unless d
       kind = item.deadline ? "DUE " : "AVL "
+      value_method = item.deadline ? :deadline_value : :scheduled_value
+      value = item.respond_to?(value_method) && item.public_send(value_method)
       days = (d - today).to_i
       when_s = days.negative? ? "#{-days}d ago" : days.zero? ? "today" : "in #{days}d"
-      T.paint(due_slot(days), "#{d.strftime("%m-%d")} #{kind} #{("(" + when_s + ")").ljust(8)}")
+      stamp = value&.local_time || d.strftime("%m-%d")
+      T.paint(due_slot(days), "#{stamp.rjust(5)} #{kind} #{("(" + when_s + ")").ljust(8)}")
     end
 
     def next_body(item, today, reader: nil)
@@ -734,7 +739,25 @@ module Tui
     def short_due(item, today)
       return "" unless item.deadline
       days = (item.deadline - today).to_i
-      T.paint(due_slot(days), "#{item.deadline.month}/#{item.deadline.day}")
+      value = item.respond_to?(:deadline_value) && item.deadline_value
+      label = value&.local_time || "#{item.deadline.month}/#{item.deadline.day}"
+      T.paint(due_slot(days), label)
+    end
+
+    def temporal_sort_key(item)
+      if item.deadline
+        time = item.respond_to?(:deadline_time) && item.deadline_time
+        return Time.iso8601(time[:instant] || time["instant"]).to_f if time
+        date = item.deadline + 1
+        return Time.utc(date.year, date.month, date.day).to_f
+      end
+      if item.scheduled
+        time = item.respond_to?(:scheduled_time) && item.scheduled_time
+        return Time.iso8601(time[:instant] || time["instant"]).to_f if time
+        date = item.scheduled
+        return Time.utc(date.year, date.month, date.day).to_f
+      end
+      Float::INFINITY
     end
 
     def pri(item) = item.priority ? T.paint(:priority, "[#{item.priority}] ") : ""

@@ -3,6 +3,8 @@
 require_relative "../term_form"
 require_relative "../tasks/dates"
 require_relative "../tasks/recur"
+require_relative "../tasks/temporal_context"
+require_relative "../tasks/temporal_parser"
 
 module Tui
   # Task-domain policy adapter around the persistence-neutral TermForm engine.
@@ -29,17 +31,40 @@ module Tui
     STATE_OPTIONS = %w[INBOX TODO NEXT WAITING DONE CANCELLED].freeze
     PRIORITY_OPTIONS = [[nil, "None"], %w[A A], %w[B B], %w[C C]].freeze
     RECURRENCE_PRESETS = %w[daily weekly monthly yearly].freeze
-    DATE_SUGGESTIONS = %w[today tomorrow fri +3].freeze
+    DATE_SUGGESTIONS = ["today", "tomorrow 9am", "fri noon", "+3 17:30"].freeze
 
     attr_reader :form, :snapshot, :store, :today
 
+    def self.parse_temporal(text, today, context: nil)
+      tokens = text.to_s.strip.split
+      fold_token = tokens.last&.match?(/\Afold=(?:earlier|later)\z/) ? tokens.pop : nil
+      mode = if tokens.last == "floating" || tokens.last&.include?("/") || tokens.last == "UTC"
+               tokens.pop
+             end
+      fold = fold_token == "fold=later" ? 1 : 0
+      timezone = mode unless mode.nil? || mode == "floating"
+      Tasks::TemporalParser.parse(tokens.join(" "), today: today, timezone: timezone,
+                                  floating: mode == "floating", fold: fold, context: context)
+    end
+
+    def self.format_temporal(value)
+      parts = [value.date.iso8601]
+      if value.local_time
+        parts << value.local_time
+        parts << (value.timezone || "floating")
+        parts << "fold=later" if value.fold == 1
+      end
+      parts.join(" ")
+    end
+
     def initialize(snapshot:, store: nil, today: -> { Date.today },
-                   context_options: nil, tag_options: nil, focus: nil)
+                   temporal_context: nil, context_options: nil, tag_options: nil, focus: nil)
       raise ArgumentError, "snapshot must have a stable id" if snapshot.nil? || snapshot.id.to_s.empty?
 
       @snapshot = snapshot
       @store = store
       @today = today.respond_to?(:call) ? today : -> { today }
+      @temporal_context = temporal_context
       @context_source = context_options
       @tag_source = tag_options
       @expectations = FIELD_ORDER.to_h { |field| [field, snapshot.expected_for(field)] }
@@ -163,8 +188,8 @@ module Tui
         TermForm::Fields::Confirm.new(
           key: :deferred, label: "On hold", value: values[:deferred],
         ),
-        date_field(:scheduled, "Available from", values[:scheduled]),
-        date_field(:deadline, "Deadline", values[:deadline]),
+        temporal_field(:scheduled, "Available from", values[:scheduled]),
+        temporal_field(:deadline, "Deadline", values[:deadline]),
         TermForm::Fields::Input.new(
           key: :recurrence, label: "Recurrence", value: values[:recurrence],
           metadata: { presets: RECURRENCE_PRESETS },
@@ -190,11 +215,22 @@ module Tui
       ]
     end
 
-    def date_field(key, label, value)
-      TermForm::Fields::DateInput.new(
+    class TemporalInput < TermForm::Fields::DateInput
+      private
+
+      def parsed_value?(value) = value.is_a?(Tasks::TemporalValue)
+      def date_for_value(value) = value.is_a?(Tasks::TemporalValue) ? value.date : super
+      def value_for_date(date, current)
+        current.is_a?(Tasks::TemporalValue) ? current.with_date(date) : Tasks::TemporalValue.new(date: date)
+      end
+    end
+
+    def temporal_field(key, label, value)
+      TemporalInput.new(
         key: key, label: label, value: value,
-        parser: ->(text, today) { Tasks::Dates.parse_when(text, today: today) },
-        formatter: ->(date) { date.iso8601 }, today: @today,
+        parser: ->(text, today) { self.class.parse_temporal(text, today, context: @temporal_context) },
+        formatter: self.class.method(:format_temporal), today: @today,
+        expose_parse_errors: true,
         suggestions: DATE_SUGGESTIONS,
       )
     end
@@ -202,7 +238,8 @@ module Tui
     def validate_recurrence(value, context)
       raw = value.to_s.strip
       return nil if raw.empty?
-      if context.dirty?(:recurrence) && !context[:scheduled].is_a?(Date) && !context[:deadline].is_a?(Date)
+      if context.dirty?(:recurrence) && !context[:scheduled].is_a?(Tasks::TemporalValue) &&
+         !context[:deadline].is_a?(Tasks::TemporalValue)
         return "Recurrence requires an Available from date or deadline"
       end
       return "Recurrence is not valid" unless Tasks::Recur.parse_interval(raw)
@@ -215,8 +252,8 @@ module Tui
         title: value.title,
         priority: value.priority,
         deferred: value.deferred,
-        scheduled: value.scheduled,
-        deadline: value.deadline,
+        scheduled: value.scheduled_value,
+        deadline: value.deadline_value,
         recurrence: value.recurrence.to_s,
         contexts: value.contexts,
         tags: value.tags,

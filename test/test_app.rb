@@ -14,6 +14,52 @@ class TestApp < Minitest::Test
     app.send(:screen_layout, width: width, height: height, panel: true).panel_width
   end
 
+  def test_idle_minute_boundary_rebuilds_availability_without_a_file_change
+    Dir.mktmpdir do |dir|
+      today = Date.today
+      records = FIXTURE_RECORDS.map(&:dup)
+      task = records.find { |record| record["id"] == FIX[:plants] }
+      task["scheduled"] = today.iso8601
+      task["scheduled_time"] = { "local" => "09:31", "timezone" => "UTC" }
+      File.write(File.join(dir, "tasks.jsonl"), Tasks::Format.dump(records))
+      now = Time.utc(today.year, today.month, today.day, 9, 30)
+      app = Tui::App.new(
+        root: dir, paths: Tasks::Config.for_dir(dir), llm_config: default_llm_config,
+        date_provider: -> { today }, time_provider: -> { now }
+      )
+
+      refute app.send(:read_model).task_for(FIX[:plants]).available?
+      app.send(:idle_layout_changed?)
+      now += 60
+      assert app.send(:idle_layout_changed?)
+      assert app.send(:read_model).task_for(FIX[:plants]).available?
+    end
+  end
+
+  def test_schema_v1_opens_with_a_non_destructive_migration_prompt
+    Dir.mktmpdir do |dir|
+      records = FIXTURE_RECORDS.map(&:dup)
+      records.first["version"] = 1
+      raw = records.map { |record| JSON.generate(record) }.join("\n") + "\n"
+      path = File.join(dir, "tasks.jsonl")
+      File.write(path, raw)
+
+      app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir), llm_config: default_llm_config)
+      assert_equal :modal, ui(app).mode
+      assert_equal :migration_required, ui(app).modal.kind
+      text = ui(app).modal.lines.join("\n")
+      assert_includes text, "tasks migrate --dry-run"
+      assert_includes text, ".v1.bak"
+      assert_equal raw, File.read(path)
+
+      app.send(:modal_key, "y")
+      assert_equal :list, ui(app).mode
+      migrated = Tasks::Format.parse(File.read(path)).records
+      assert_equal 2, migrated.first.fetch("version")
+      assert_equal raw, File.read("#{path}.v1.bak")
+    end
+  end
+
   # Single-run adapter fake used behind AgentQueue's injected factory.
   class FakeAgent
     attr_reader :started, :output, :process_status, :exit_status
@@ -602,7 +648,7 @@ class TestApp < Minitest::Test
       assert_same editor, ui(app).task_editor
       assert_equal :deadline, editor.focused_key
       assert editor.form.field(:deadline).picker_open?
-      assert_equal Date.new(2026, 7, 20), editor.edit_form.value(:deadline)
+      assert_equal Date.new(2026, 7, 20), editor.edit_form.value(:deadline).date
       assert_equal coalesce_key, editor.coalesce_key
       assert_equal before, File.binread(app.instance_variable_get(:@store).org)
     end
@@ -1581,16 +1627,30 @@ class TestApp < Minitest::Test
     end
   end
 
-  def test_open_date_popup_uses_term_form_date_input_without_changing_quick_submit
+  def test_open_date_popup_uses_atomic_temporal_input_without_changing_date_only_submit
     app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE) do |app|
       app.send(:open_date_popup)
-      assert_instance_of TermForm::Fields::DateInput, ui(app).form.field
+      assert_instance_of Tui::TaskEditForm::TemporalInput, ui(app).form.field
 
       ui(app).form.input.replace("2026-08-14")
       app.send(:handle_key, "\r")
 
       assert_equal :list, ui(app).mode
       assert_equal Date.new(2026, 8, 14), app.send(:current_item).deadline
+    end
+  end
+
+
+  def test_quick_date_popup_accepts_a_fixed_timed_value
+    app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE) do |app|
+      app.send(:open_date_popup)
+      ui(app).form.input.replace("2026-11-01 1:30am America/New_York fold=later")
+      app.send(:handle_key, "\r")
+
+      value = app.send(:current_item).deadline_value
+      assert_equal "01:30", value.local_time
+      assert_equal "America/New_York", value.timezone
+      assert_equal 1, value.fold
     end
   end
 
