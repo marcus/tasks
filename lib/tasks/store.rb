@@ -593,6 +593,57 @@ module Tasks
       with_lock { archive_plan(fresh_records(@org)).preview }
     end
 
+    # Create a new empty section in one checked transaction. With parent_id nil
+    # the section is appended at end of file as a top-level list; with a parent
+    # section id it is inserted as the LAST child of that section's subtree, which
+    # the DFS pre-order invariant keeps valid. The id is minted like task ids
+    # (unique across live + archive). An empty/first-run file is bootstrapped with
+    # a meta record first. Returns the new section id, or false when the title is
+    # blank or parent_id names no section.
+    def create_section!(title:, parent_id: nil)
+      title = utf8(title.to_s).strip
+      return false if title.empty?
+
+      with_history("create section: #{title}") { create_section_impl(title, parent_id) }
+    end
+
+    # The record of the section matching `name`, resolved with capture's widening
+    # tiers (find_section): exact top-level, exact any-level, substring top-level,
+    # substring any-level — all case-insensitive. Lets a move destination reach a
+    # nested project sub-section by name, not just a top-level heading. Returns
+    # the record hash, or nil.
+    def section_named(name)
+      records = current_read_snapshot.live_records
+      i = find_section(records, name.to_s)
+      i && records[i]
+    end
+
+    # Retitle a section in one checked transaction. Returns the section id, or
+    # false when the id names no section or the title is blank.
+    def rename_section!(id:, to:)
+      title = utf8(to.to_s).strip
+      return false if title.empty?
+
+      with_history("rename section: #{title}") { rename_section_impl(id, title) }
+    end
+
+    # Close every open descendant task of a section (DONE + today's closed date,
+    # drops defer, retires recur — the close_open_descendants cascade). Returns
+    # the count closed (0 is a clean no-op), or false when the id names no
+    # section.
+    def complete_project!(id:, today: Date.today)
+      with_history("complete project: #{id}") { complete_project_impl(id, today) }
+    end
+
+    # Move a section's entire contiguous subtree to the archive, mirroring the
+    # sweep's serialization: the root section drops its parent and gains today's
+    # `archived` stamp. Open tasks do not block — blocking is caller policy;
+    # Store stays mechanical. Returns the moved stable ids, or false when the id
+    # names no section.
+    def archive_project!(id:)
+      with_history("archive project: #{id}") { archive_project_impl(id) }
+    end
+
     # Build the editor's exact values and semantic conflict baselines from the
     # live file while holding the same lock mutations use. The target may be a
     # stable id, an Item, or any object responding to #id. Missing ids never
@@ -962,14 +1013,22 @@ module Tasks
       if attributes[:parent_id]
         pi = records.index { |record| record["id"] == attributes[:parent_id] }
         return { status: :not_found } unless pi
-        return { status: :invalid, errors: ["parent_id must identify a task"] } unless records[pi]["type"] == "task"
+        unless %w[task section].include?(records[pi]["type"])
+          return { status: :invalid, errors: ["parent_id must identify a task or section"] }
+        end
 
-        by_id = records.to_h { |record| [record["id"], record] }
-        if task_depth(by_id, records[pi]) + 1 > @max_depth
-          return { status: :too_deep,
-                   errors: ["would exceed max depth #{@max_depth} (max_depth config / TASKS_MAX_DEPTH)"] }
+        # A section parent files the task directly beneath the heading (depth 1),
+        # so only a task parent can push past the nesting cap.
+        if records[pi]["type"] == "task"
+          by_id = records.to_h { |record| [record["id"], record] }
+          if task_depth(by_id, records[pi]) + 1 > @max_depth
+            return { status: :too_deep,
+                     errors: ["would exceed max depth #{@max_depth} (max_depth config / TASKS_MAX_DEPTH)"] }
+          end
         end
         parent_id = records[pi]["id"]
+        # Append at the end of the parent's subtree — after any existing task
+        # and section children — which the DFS pre-order invariant keeps valid.
         insert_at = subtree_end(records, pi)
       elsif records.empty?
         records = [meta_record,
@@ -2103,13 +2162,91 @@ module Tasks
       end
     end
 
-    # Index of the top-level ("* ") section matching `name` — a section record
-    # with no parent, exact title then substring (case-insensitive) — or nil.
+    def section_index(records, id)
+      records.index { |record| record["type"] == "section" && record["id"] == id }
+    end
+
+    def create_section_impl(title, parent_id)
+      records = fresh_records(@org)
+      records = [meta_record] if records.empty?
+      if parent_id.nil?
+        insert_at = records.length
+      else
+        pi = section_index(records, parent_id) or return false
+        insert_at = subtree_end(records, pi)
+      end
+      id = gen_id(ids_of(records) + archived_ids)
+      rec = { "type" => "section", "id" => id, "title" => title }
+      rec["parent"] = parent_id if parent_id
+      records[insert_at, 0] = [rec]
+      write_records(@org, records)
+      reload!
+      id
+    end
+
+    def rename_section_impl(id, title)
+      records = fresh_records(@org)
+      ri = section_index(records, id) or return false
+      records[ri]["title"] = title
+      write_records(@org, records)
+      reload!
+      id
+    end
+
+    def complete_project_impl(id, today)
+      records = fresh_records(@org)
+      ri = section_index(records, id) or return false
+      closed = close_open_descendants(records, ri, today: today)
+      return 0 if closed.empty?
+
+      write_records(@org, records)
+      reload!
+      closed.length
+    end
+
+    # Splice the section's subtree out of the live file and append it to the
+    # archive, archive-first so an interruption can only leave retry-safe
+    # duplicates, never a lost subtree (the sweep's ordering and safety gates).
+    def archive_project_impl(id)
+      records = fresh_records(@org)
+      ri = section_index(records, id) or return false
+      rj = subtree_end(records, ri)
+      moved = records[ri...rj].map(&:dup)
+      moved[0].delete("parent")
+      moved[0]["archived"] = Date.today.iso8601
+      kept = records[0...ri] + records[rj..]
+
+      arch = File.exist?(@archive) ? fresh_records(@archive) : []
+      arch = [meta_record] if arch.empty?
+      retry_state, = archive_retry_state(arch, moved)
+      return false if retry_state == :conflict
+
+      if retry_state == :new
+        arch.concat(moved)
+        write_records(@archive, arch)
+      end
+      persisted_ids = ids_of(fresh_records(@archive)).to_set
+      missing_ids = ids_of(moved).reject { |mid| persisted_ids.include?(mid) }
+      raise "archive write omitted moved ids: #{missing_ids.join(", ")}" unless missing_ids.empty?
+
+      write_records(@org, kept)
+      reload!
+      ids_of(moved)
+    end
+
+    # Index of the section matching `name`, resolving in widening tiers so a
+    # captured task lands in the most specific match: exact top-level, then
+    # exact any-level, then substring top-level, then substring any-level (all
+    # case-insensitive, file order within a tier). The top-level tiers preserve
+    # the historical resolution; the any-level tiers let capture reach a nested
+    # project sub-section by name. Returns the record index, or nil.
     def find_section(records, name)
       want = name.strip.downcase
-      top = records.each_index.select { |i| records[i]["type"] == "section" && !records[i]["parent"] }
-      top.find { |i| records[i]["title"].to_s.downcase == want } ||
-        top.find { |i| records[i]["title"].to_s.downcase.include?(want) }
+      all = records.each_index.select { |i| records[i]["type"] == "section" }
+      top = all.select { |i| !records[i]["parent"] }
+      exact = ->(pool) { pool.find { |i| records[i]["title"].to_s.downcase == want } }
+      substr = ->(pool) { pool.find { |i| records[i]["title"].to_s.downcase.include?(want) } }
+      exact.call(top) || exact.call(all) || substr.call(top) || substr.call(all)
     end
 
     # -- write plumbing --------------------------------------------------------

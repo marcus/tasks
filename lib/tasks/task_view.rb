@@ -88,6 +88,66 @@ module Tasks
     end
   end
 
+  # Canonical project/area resource: a section rolled up over its open,
+  # non-deferred descendant tasks at any depth. `kind` distinguishes a project
+  # (a section under the top-level "Projects" heading) from an area (any other
+  # top-level list that currently holds open work). `stuck` flags a project or
+  # area with no open NEXT action — including one with zero open tasks. `line`
+  # is the physical coordinate for adapters; like TaskView it never appears in
+  # #to_h, keeping reusable resources free of file positions. `next_date` is the
+  # soonest deadline-or-scheduled date across the rolled-up open tasks, the key
+  # the listing sorts on (nil sorts last). `held_count` counts open descendant
+  # tasks excluded from the rollup because they are deferred/held (own or
+  # inherited hold); the archive refusal treats them as open work too.
+  class ProjectView
+    KINDS = %w[project area].freeze
+
+    attr_reader :id, :title, :parent_id, :kind, :line, :open_count, :next_count,
+                :next_date, :stuck, :body, :task_ids, :held_count
+
+    def initialize(id:, title:, parent_id:, kind:, line:, open_count:, next_count:,
+                   next_date:, stuck:, body:, task_ids:, held_count: 0)
+      @id = frozen_text(id)
+      @title = frozen_text(title)
+      @parent_id = frozen_text(parent_id)
+      @kind = frozen_text(kind)
+      raise ArgumentError, "unknown project kind: #{kind}" unless KINDS.include?(@kind)
+
+      @line = line
+      @open_count = Integer(open_count)
+      @next_count = Integer(next_count)
+      @next_date = next_date&.freeze
+      @stuck = !!stuck
+      @body = frozen_text(body)
+      @task_ids = frozen_array(task_ids)
+      @held_count = Integer(held_count)
+      freeze
+    end
+
+    # Dates render as ISO strings because this is also the future HTTP resource;
+    # nil-valued fields are omitted so the shape stays as lean as the on-disk
+    # record. `held_count` is always an integer, so it is always present.
+    # Physical `line` is intentionally absent.
+    def to_h
+      {
+        id: id, title: title, parent_id: parent_id, kind: kind,
+        open_count: open_count, next_count: next_count,
+        next_date: next_date&.iso8601, stuck: stuck, held_count: held_count,
+        body: body, task_ids: task_ids,
+      }.reject { |_, value| value.nil? }
+    end
+
+    private
+
+    def frozen_text(value)
+      value.nil? ? nil : value.to_s.dup.freeze
+    end
+
+    def frozen_array(values)
+      Array(values).map { |value| frozen_text(value) }.freeze
+    end
+  end
+
   # Canonical section resource for clients that need project headings without
   # inspecting raw records or rebuilding the task tree themselves.
   class SectionView

@@ -284,6 +284,42 @@ module Tasks
       end.freeze
     end
 
+    # Projects and areas as rolled-up ProjectViews. Projects are the section
+    # children of the top-level "Projects" heading (listed even when empty);
+    # areas are the other top-level lists that currently hold open, non-deferred
+    # work — excluding Inbox, the Projects heading itself, and everything inside
+    # its subtree (nested sub-sections roll up into their project). Sorted
+    # projects-before-areas, then by [next_date (nil last), title].
+    def projects
+      root = projects_root_record
+      views = []
+      live_sections.each do |record|
+        views << build_project_view(record, :project) if root && record["parent"] == root["id"]
+      end
+      live_sections.each do |record|
+        next unless area_candidate?(record, root)
+
+        view = build_project_view(record, :area)
+        views << view if view.open_count.positive?
+      end
+      sort_projects(views).freeze
+    end
+
+    # A single ProjectView for a project or area section id, or nil when the id
+    # is not such a section (a task, Inbox, the Projects heading, a nested
+    # sub-section, or an area with no open work today).
+    def project_view(id)
+      record = @records_by_source_and_id.fetch(:live)[id.to_s]
+      return nil unless record && record["type"] == "section"
+
+      if projects_root_record && record["parent"] == projects_root_record["id"]
+        build_project_view(record, :project)
+      elsif area_candidate?(record, projects_root_record)
+        view = build_project_view(record, :area)
+        view.open_count.positive? ? view : nil
+      end
+    end
+
     private
 
     def result(name, items, filter: nil)
@@ -423,6 +459,87 @@ module Tasks
       return items.find { |candidate| candidate.id == item.id } if item.id
 
       items.find { |candidate| candidate.line == item.line && candidate.title == item.title }
+    end
+
+    def live_sections
+      @live_sections ||= snapshot.live_records.select { |record| record["type"] == "section" }
+    end
+
+    # The top-level section titled "Projects" (case-insensitive), or nil. Its
+    # direct child sections are projects; its whole subtree is excluded from
+    # the area listing.
+    def projects_root_record
+      return @projects_root_record if defined?(@projects_root_record)
+
+      @projects_root_record = live_sections.find do |record|
+        !record["parent"] && record["title"].to_s.strip.downcase == "projects"
+      end
+    end
+
+    # An area is a top-level section that is neither Inbox nor the Projects
+    # heading. Being top-level already excludes every section inside the
+    # Projects subtree, whose members carry a parent.
+    def area_candidate?(record, root)
+      return false if record["parent"]
+      return false if root && record["id"] == root["id"]
+
+      record["title"].to_s.strip.downcase != "inbox"
+    end
+
+    # The open, non-deferred descendant tasks of a section, at any depth, in DFS
+    # order. Deferral is effective (own or inherited hold), so a task under a
+    # deferred project drops out too; a future-scheduled task still counts.
+    def project_open_tasks(record)
+      node = snapshot.nodes_by_line[record["line"]]
+      return [] unless node
+
+      node.each.filter_map do |descendant|
+        item = descendant.item
+        next unless item&.open? && !project_deferred?(item)
+
+        item
+      end
+    end
+
+    # The open descendant tasks a section excludes from its rollup because they
+    # are deferred/held (own or inherited hold) — the counterpart of
+    # #project_open_tasks. The archive refusal treats these as open work too, so
+    # a parked-but-open project cannot be swept without an explicit force.
+    def project_held_tasks(record)
+      node = snapshot.nodes_by_line[record["line"]]
+      return [] unless node
+
+      node.each.filter_map do |descendant|
+        item = descendant.item
+        next unless item&.open? && project_deferred?(item)
+
+        item
+      end
+    end
+
+    def project_deferred?(item)
+      %i[on_hold ancestor_on_hold].include?(availability(item).reason)
+    end
+
+    def build_project_view(record, kind)
+      open_items = project_open_tasks(record)
+      next_items = open_items.select { |item| item.state == "NEXT" }
+      next_date = open_items.filter_map { |item| item.deadline || item.scheduled }.min
+      ProjectView.new(
+        id: record["id"], title: record["title"], parent_id: record["parent"],
+        kind: kind, line: record["line"], open_count: open_items.length,
+        next_count: next_items.length, next_date: next_date,
+        stuck: next_items.empty?, body: record["body"],
+        task_ids: open_items.map(&:id), held_count: project_held_tasks(record).length
+      )
+    end
+
+    def sort_projects(views)
+      kind_rank = { "project" => 0, "area" => 1 }
+      views.each_with_index.sort_by do |view, index|
+        [kind_rank.fetch(view.kind), view.next_date ? 0 : 1,
+         view.next_date&.jd || 0, view.title.to_s, index]
+      end.map(&:first)
     end
 
     def section_view(record)

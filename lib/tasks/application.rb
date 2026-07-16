@@ -151,6 +151,19 @@ module Tasks
       queries.sections
     end
 
+    # Projects and areas rolled up over their open tasks. Kept here so the CLI
+    # and HTTP adapters share one definition of what a project is and how it is
+    # ordered. Returns an array of ProjectView.
+    def list_projects(today: Date.today)
+      queries(today: today).projects
+    end
+
+    # A single ProjectView for a project or area section id, or nil so a later
+    # HTTP adapter maps the absence to its own not-found response.
+    def get_project(id, today: Date.today)
+      queries(today: today).project_view(id)
+    end
+
     # API-grade reads return canonical data plus the global live+archive
     # revision produced by the exact checked snapshot behind that data. The
     # existing direct query methods stay compatible for CLI/TUI callers.
@@ -170,6 +183,17 @@ module Tasks
 
     def list_sections_result(today: Date.today)
       checked_query(today: today) { |query| query.sections }
+    end
+
+    # API-grade project reads: the ProjectView list, and a single ProjectView
+    # mapped to not_found when the id is not a project or area. Both carry the
+    # checked snapshot's global revision.
+    def list_projects_result(today: Date.today)
+      checked_query(today: today) { |query| query.projects }
+    end
+
+    def project_result(id, today: Date.today)
+      checked_query(today: today) { |query| query.project_view(id) }
     end
 
     # Safe foundation for /meta and readiness. Transport/config capabilities
@@ -263,6 +287,79 @@ module Tasks
       store_factory.call.delete_task!(command)
     end
 
+    # Project mutations mapped to the shared MutationResult vocabulary so the CLI
+    # and HTTP adapters render one outcome set. Rename validates a non-blank
+    # title (:invalid) and reports a missing section as :not_found. Complete
+    # returns the closed count in the summary (0 is a clean :ok). Archive returns
+    # the moved stable ids.
+    # Create a new empty project: a section under the top-level "Projects" root.
+    # When no root exists yet (an empty or rootless store) it is created first —
+    # top-level, appended at end — then the project beneath it, so an agent is
+    # never stranded. Rejects a blank title (:invalid) and a title that
+    # duplicates an existing project or area (:invalid — the project-ref candidate
+    # set, so a duplicate would make later refs ambiguous). touched_ids is
+    # [new_id], or [new_id, root_id] when the root was auto-created.
+    def create_project(title:, today: Date.today)
+      title = title.to_s.strip
+      if title.empty?
+        return MutationResult.new(status: :invalid, errors: ["title cannot be blank"],
+                                  field_errors: { title: ["cannot be blank"] })
+      end
+      if list_projects(today: today).any? { |view| view.title.to_s.strip.casecmp?(title) }
+        message = "a project or area named #{title.inspect} already exists"
+        return MutationResult.new(status: :invalid, errors: [message],
+                                  field_errors: { title: [message] })
+      end
+
+      store = store_factory.call
+      root_id = project_root_id(store)
+      created_root = root_id.nil?
+      if created_root
+        root_id = store.create_section!(title: "Projects")
+        return create_section_failure(store) unless root_id
+      end
+      new_id = store.create_section!(title: title, parent_id: root_id)
+      return create_section_failure(store) unless new_id
+
+      MutationResult.new(
+        status: :ok, touched_ids: created_root ? [new_id, root_id] : [new_id],
+        summary: { created_id: new_id, root_id: root_id, created_root: created_root }
+      )
+    end
+
+    def rename_project(id, title:)
+      title = title.to_s.strip
+      if title.empty?
+        return MutationResult.new(status: :invalid, errors: ["title cannot be blank"])
+      end
+
+      touched = store_factory.call.rename_section!(id: id, to: title)
+      touched ? MutationResult.new(status: :ok, touched_ids: [touched]) : MutationResult.new(status: :not_found)
+    end
+
+    def complete_project(id, today: Date.today)
+      store = store_factory.call
+      closed = store.complete_project!(id: id, today: today)
+      return MutationResult.new(status: :not_found) unless closed
+
+      # complete_project! returns 0 both for a genuine no-op (already fully
+      # closed) and for a post-write validation rollback. Only the latter sets
+      # last_rollback, so a rolled-back write maps to the same :store_invalid
+      # failure other mutations produce rather than masquerading as clean.
+      if closed == 0 && store.last_rollback
+        return MutationResult.new(status: :store_invalid, errors: [store.last_rollback])
+      end
+
+      MutationResult.new(status: :ok, summary: { closed: closed })
+    end
+
+    def archive_project(id)
+      moved = store_factory.call.archive_project!(id: id)
+      return MutationResult.new(status: :not_found) unless moved
+
+      MutationResult.new(status: :ok, touched_ids: moved, summary: { archived: moved.length })
+    end
+
     # Rebuild a canonical task resource from the immutable post-mutation
     # snapshot carried by MutationResult. This keeps an HTTP response and its
     # global revision tied to the exact same write instead of racing a second
@@ -286,6 +383,24 @@ module Tasks
     private
 
     attr_reader :store_factory
+
+    # The id of the top-level "Projects" root section (case-insensitive, same
+    # rule TaskQueries#projects uses), read from the given store's live snapshot,
+    # or nil when no such root exists yet.
+    def project_root_id(store)
+      store.read_snapshot.live_records.find do |record|
+        record["type"] == "section" && !record["parent"] &&
+          record["title"].to_s.strip.downcase == "projects"
+      end&.fetch("id")
+    end
+
+    # A create_section! that returned false after a non-blank title and a valid
+    # parent can only be a post-write validation rollback, mapped like the other
+    # project mutations (see complete_project).
+    def create_section_failure(store)
+      MutationResult.new(status: :store_invalid,
+                         errors: [store.last_rollback || "section creation failed"])
+    end
 
     def queries(include_archive: false, today: Date.today)
       TaskQueries.new(store_factory.call.read_snapshot(include_archive: include_archive), today: today)

@@ -110,6 +110,68 @@ FIXTURE_RECORDS = [
 FIXTURE = Tasks::Format.dump(FIXTURE_RECORDS)
 FIXTURE_ORG = FIXTURE
 
+# Fixed 8-hex ids for the Projects-feature fixture, mirroring the FIX idiom so
+# project/area query and mutation tests can assert against known ids.
+PFIX = {
+  inbox:         "cccc0001",
+  inbox_task:    "cccc0002",
+  projects:      "cccc0003",
+  site:          "cccc0004",
+  site_next:     "cccc0005",
+  site_todo:     "cccc0006",
+  site_sub:      "cccc0007",
+  site_sub_task: "cccc0008",
+  site_deferred: "cccc0009",
+  reno:          "cccc000a",
+  reno_todo:     "cccc000b",
+  empty:         "cccc000c",
+  tasks:         "cccc000d",
+  tasks_next:    "cccc000e",
+  tasks_todo:    "cccc000f",
+  donepile:      "cccc0010",
+  done_task:     "cccc0011",
+}.freeze
+
+# Records exercising the project read model and mutations: an Inbox (excluded
+# from areas), a top-level "Projects" heading whose child sections are projects
+# — "Site launch" (a body note, a recurring NEXT, a TODO with a deadline, a
+# nested "Copywriting" sub-section proving depth rollup, and a deferred TODO
+# proving deferral exclusion), "Stuck reno" (a TODO with no NEXT), and an empty
+# project — plus a "Tasks" area (2 open incl. 1 NEXT) and a "Done pile" whose
+# only task is DONE (so it never surfaces as an area). DFS pre-order throughout.
+PROJECTS_FIXTURE_RECORDS = [
+  { "type" => "meta", "version" => 1 },
+  { "type" => "section", "id" => PFIX[:inbox], "title" => "Inbox" },
+  { "type" => "task", "id" => PFIX[:inbox_task], "parent" => PFIX[:inbox], "state" => "INBOX",
+    "title" => "unfiled capture" },
+  { "type" => "section", "id" => PFIX[:projects], "title" => "Projects" },
+  { "type" => "section", "id" => PFIX[:site], "parent" => PFIX[:projects], "title" => "Site launch",
+    "body" => "Goal: ship the personal site." },
+  { "type" => "task", "id" => PFIX[:site_next], "parent" => PFIX[:site], "state" => "NEXT",
+    "title" => "Pick a static-site generator", "recur" => "+1w" },
+  { "type" => "task", "id" => PFIX[:site_todo], "parent" => PFIX[:site], "state" => "TODO",
+    "title" => "Write the landing copy", "deadline" => "2026-07-25" },
+  { "type" => "section", "id" => PFIX[:site_sub], "parent" => PFIX[:site], "title" => "Copywriting" },
+  { "type" => "task", "id" => PFIX[:site_sub_task], "parent" => PFIX[:site_sub], "state" => "TODO",
+    "title" => "Draft the about page" },
+  { "type" => "task", "id" => PFIX[:site_deferred], "parent" => PFIX[:site], "state" => "TODO",
+    "title" => "Someday: custom domain", "tags" => %w[defer] },
+  { "type" => "section", "id" => PFIX[:reno], "parent" => PFIX[:projects], "title" => "Stuck reno" },
+  { "type" => "task", "id" => PFIX[:reno_todo], "parent" => PFIX[:reno], "state" => "TODO",
+    "title" => "Measure the kitchen" },
+  { "type" => "section", "id" => PFIX[:empty], "parent" => PFIX[:projects], "title" => "Empty project" },
+  { "type" => "section", "id" => PFIX[:tasks], "title" => "Tasks" },
+  { "type" => "task", "id" => PFIX[:tasks_next], "parent" => PFIX[:tasks], "state" => "NEXT",
+    "title" => "Reply to the vendor" },
+  { "type" => "task", "id" => PFIX[:tasks_todo], "parent" => PFIX[:tasks], "state" => "TODO",
+    "title" => "File expenses" },
+  { "type" => "section", "id" => PFIX[:donepile], "title" => "Done pile" },
+  { "type" => "task", "id" => PFIX[:done_task], "parent" => PFIX[:donepile], "state" => "DONE",
+    "title" => "Old finished chore", "closed" => "2026-07-01" },
+].freeze
+
+PROJECTS_FIXTURE = Tasks::Format.dump(PROJECTS_FIXTURE_RECORDS)
+
 # Serialize a records array to fixture text (for tests that need a variant).
 def dump_fixture(records) = Tasks::Format.dump(records)
 
