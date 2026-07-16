@@ -122,7 +122,7 @@ class TestSession < Minitest::Test
     with_state_home do
       # A hand-edited state file with a non-string view must not crash startup.
       FileUtils.mkdir_p(File.dirname(Tui::Session.path))
-      File.write(Tui::Session.path, JSON.generate(version: 1, view: 123))
+      File.write(Tui::Session.path, JSON.generate(version: 2, view: 123))
       Dir.mktmpdir do |dir|
         File.write(File.join(dir, "gtd.org"), FIXTURE_ORG)
         assert_equal :agenda, ui(build_app(dir)).view
@@ -189,7 +189,7 @@ class TestSession < Minitest::Test
     with_state_home do
       FileUtils.mkdir_p(File.dirname(Tui::Session.path))
       # A string where an array belongs must degrade, not crash startup.
-      File.write(Tui::Session.path, JSON.generate(version: 1, view: "agenda", collapsed: "oops"))
+      File.write(Tui::Session.path, JSON.generate(version: 2, view: "agenda", collapsed: "oops"))
       Dir.mktmpdir do |dir|
         assert_empty ui(app_on_fixture(dir)).collapsed
       end
@@ -241,7 +241,7 @@ class TestSession < Minitest::Test
   def test_corrupt_context_filter_falls_back_to_nil
     with_state_home do
       FileUtils.mkdir_p(File.dirname(Tui::Session.path))
-      File.write(Tui::Session.path, JSON.generate(version: 1, view: "agenda", context_filter: 123))
+      File.write(Tui::Session.path, JSON.generate(version: 2, view: "agenda", context_filter: 123))
       Dir.mktmpdir do |dir|
         assert_nil ui(app_on_fixture(dir)).context_filter
       end

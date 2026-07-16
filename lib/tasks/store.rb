@@ -16,12 +16,14 @@ require_relative "patch_result"
 require_relative "quadrants"
 require_relative "recur"
 require_relative "task_patch"
+require_relative "temporal_value"
 require_relative "tree"
 require_relative "update_stamp"
 
 module Tasks
   Item = Struct.new(
-    :state, :priority, :title, :tags, :scheduled, :deadline, :line, :source,
+    :state, :priority, :title, :tags, :scheduled, :deadline,
+    :scheduled_value, :deadline_value, :line, :source,
     :recur, :id, :closed, keyword_init: true
   ) do
     def open?    = Store::OPEN_STATES.include?(state)
@@ -252,6 +254,10 @@ module Tasks
       def open_descendants = blocks.sum { |block| block.open_ids.length }
     end
     ArchiveRefusal = Struct.new(:reason, :preview, :details, keyword_init: true)
+    MigrationResult = Struct.new(:status, :from_version, :to_version, :files, :backups, :errors,
+                                 keyword_init: true) do
+      def ok? = status == :ok || status == :already_current
+    end
 
     ArchivePlan = Struct.new(:kept, :moved, :preview, keyword_init: true)
     private_constant :ArchivePlan
@@ -436,6 +442,72 @@ module Tasks
     # Returns [:ok, label] | [:empty] | [:conflict, label]
     def undo! = history_step(-1)
     def redo! = history_step(1)
+
+    def migrate_schema!(dry_run: false)
+      with_lock do
+        before = snapshot
+        sources = { org: @org, archive: @archive }.select { |_kind, path| File.exist?(path) }
+        return MigrationResult.new(status: :invalid, errors: ["tasks.jsonl does not exist"], files: []) unless sources.key?(:org)
+
+        versions = {}
+        errors = []
+        sources.each do |kind, path|
+          raw = File.read(path, encoding: "UTF-8")
+          if raw.empty? && kind == :archive
+            versions[kind] = 1
+            next
+          end
+          parsed = Format.parse(raw)
+          version = parsed.records.first&.fetch("version", nil)
+          versions[kind] = version
+          unless [1, Format::VERSION].include?(version)
+            errors << "#{kind}: unsupported meta version #{version.inspect}"
+            next
+          end
+          check = Check.check_text(raw, version: version)
+          errors.concat(check.errors.map { |line, message| "#{kind} line #{line}: #{message}" }) unless check.ok?
+          if version == 1 && parsed.records.any? { |record| record["scheduled_time"] || record["deadline_time"] }
+            errors << "#{kind}: version 1 must not contain time metadata"
+          end
+        end
+        return MigrationResult.new(status: :invalid, from_version: versions.values.min,
+                                   to_version: Format::VERSION, files: sources.keys, errors: errors) unless errors.empty?
+        if versions.values.all? { |version| version == Format::VERSION }
+          return MigrationResult.new(status: :already_current, from_version: Format::VERSION,
+                                     to_version: Format::VERSION, files: sources.keys, backups: [], errors: [])
+        end
+        migrating = versions.filter_map { |kind, version| kind if version == 1 }
+        return MigrationResult.new(status: :dry_run, from_version: 1, to_version: Format::VERSION,
+                                   files: migrating, backups: [], errors: []) if dry_run
+
+        backups = []
+        begin
+          sources.each do |kind, path|
+            next unless versions[kind] == 1
+            backup = "#{path}.v1.bak"
+            Atomic.write(backup, before.fetch(kind)) unless before.fetch(kind).to_s.empty?
+            backups << backup unless before.fetch(kind).to_s.empty?
+            records = before.fetch(kind).to_s.empty? ? [{ "type" => "meta", "version" => Format::VERSION }] :
+                      Format.parse(before.fetch(kind)).records
+            records.first["version"] = Format::VERSION
+            Atomic.write(path, Format.dump(records))
+          end
+          sources.each_value do |path|
+            result = Check.check(path)
+            raise ArgumentError, result.errors.map(&:last).join("; ") unless result.ok?
+          end
+          after = snapshot
+          @journal.barrier(after)
+          reload!
+          MigrationResult.new(status: :ok, from_version: 1, to_version: Format::VERSION,
+                              files: migrating, backups: backups, errors: [])
+        rescue StandardError => e
+          restore(before)
+          MigrationResult.new(status: :rolled_back, from_version: 1, to_version: Format::VERSION,
+                              files: migrating, backups: backups, errors: [safe_patch_error(e)])
+        end
+      end
+    end
 
     # Create one task from a complete typed command in one checked transaction.
     # Unlike the retired capture! path, recurrence and initial notes are part of
@@ -885,8 +957,8 @@ module Tasks
       tags = normalize_create_tags(command.tags, errors)
       deferred = normalize_create_deferred(command.deferred, errors)
       tags << DEFER_TAG if deferred && !tags.include?(DEFER_TAG)
-      scheduled = normalize_create_date(command.scheduled, :scheduled, errors)
-      deadline = normalize_create_date(command.deadline, :deadline, errors)
+      scheduled = normalize_create_temporal(command.scheduled, :scheduled, errors)
+      deadline = normalize_create_temporal(command.deadline, :deadline, errors)
       state = normalize_create_state(command.state, errors)
       project = normalize_create_project(command.project, errors)
       parent_id = normalize_create_parent_id(command.parent_id, errors)
@@ -900,7 +972,7 @@ module Tasks
       # Capturing with a recurrence has always meant "start repeating now" when
       # a date was omitted. Keep that behavior in the command, not the CLI, so
       # every transport gets one definition of a recurring create.
-      scheduled ||= today if recurrence && !deadline
+      scheduled ||= TemporalValue.new(date: today) if recurrence && !deadline
       state ||= (scheduled || deadline ? "TODO" : "INBOX")
       errors[:state] << "can't set recurrence on a #{state} task" if recurrence && DONE_STATES.include?(state)
 
@@ -967,15 +1039,15 @@ module Tasks
       false
     end
 
-    def normalize_create_date(value, field, errors)
+    def normalize_create_temporal(value, field, errors)
       return nil if value.nil? || value == ""
-      return value if value.is_a?(Date)
-      return Date.iso8601(value) if value.is_a?(String)
+      return value if value.is_a?(TemporalValue)
+      return TemporalValue.new(date: value) if value.is_a?(Date) || value.is_a?(String)
 
-      errors[field] << "#{field} must be a date or nil"
+      errors[field] << "#{field} must be a temporal value or nil"
       nil
-    rescue ArgumentError, Date::Error
-      errors[field] << "#{field} must be a date or nil"
+    rescue ArgumentError, Date::Error => e
+      errors[field] << "#{field} #{e.message}"
       nil
     end
 
@@ -1073,8 +1145,8 @@ module Tasks
               "state" => attributes[:state], "title" => attributes[:title] }
       rec["priority"] = attributes[:priority] if attributes[:priority]
       rec["tags"] = attributes[:tags] unless attributes[:tags].empty?
-      rec["scheduled"] = attributes[:scheduled].iso8601 if attributes[:scheduled]
-      rec["deadline"] = attributes[:deadline].iso8601 if attributes[:deadline]
+      write_temporal(rec, "scheduled", attributes[:scheduled]) if attributes[:scheduled]
+      write_temporal(rec, "deadline", attributes[:deadline]) if attributes[:deadline]
       rec["recur"] = attributes[:recurrence] if attributes[:recurrence]
       rec["body"] = (["Captured [#{today}]."] + attributes[:notes]).join("\n")
 
@@ -1271,6 +1343,8 @@ module Tasks
         state: rec["state"], priority: rec["priority"], title: rec["title"],
         tags: tags,
         scheduled: to_date(rec["scheduled"]), deadline: to_date(rec["deadline"]),
+        scheduled_value: TemporalValue.from_record(rec, :scheduled),
+        deadline_value: TemporalValue.from_record(rec, :deadline),
         recur: rec["recur"], id: rec["id"]&.to_s, closed: to_date(rec["closed"]),
         line: rec["line"], source: source
       )
@@ -1437,7 +1511,8 @@ module Tasks
         next unless record["type"] == "task"
         tags = semantic_tags(record)
         [record["id"], record["parent"], record["state"], record["closed"],
-         record["scheduled"], record["deadline"], record["recur"],
+         record["scheduled"], record["scheduled_time"],
+         record["deadline"], record["deadline_time"], record["recur"],
          tags.include?(DEFER_TAG)]
       end
       semantic_digest(owned)
@@ -1694,11 +1769,19 @@ module Tasks
 
     def normalize_patch_date(value)
       return nil if value.nil? || value == ""
+      return value if value.is_a?(TemporalValue)
       return value if value.is_a?(Date)
       return Date.iso8601(value) if value.is_a?(String)
       :invalid
     rescue ArgumentError, Date::Error
       :invalid
+    end
+
+    def write_temporal(record, key, value)
+      record[key] = value.date.iso8601
+      metadata = value.time_metadata
+      metadata ? record["#{key}_time"] = metadata : record.delete("#{key}_time")
+      record
     end
 
     def restored_edit_snapshot(id)
@@ -1775,20 +1858,25 @@ module Tasks
       tags.delete(DEFER_TAG)
       replace_optional(rec, "tags", tags)
       scheduled = to_date(rec["scheduled"])
-      rec.delete("scheduled") if scheduled && scheduled > today
+      if scheduled && scheduled > today
+        rec.delete("scheduled")
+        rec.delete("scheduled_time")
+      end
       patch_ok(rec)
     end
 
     def patch_date(records, ri, value, kind)
       date = normalize_patch_date(value)
-      return patch_invalid("#{kind} must be a date or nil") if date == :invalid
+      return patch_invalid("#{kind} must be a date/time or nil") if date == :invalid
       rec = records[ri]
       key = kind.to_s
       if date
-        rec[key] = date.iso8601
+        temporal = date.is_a?(TemporalValue) ? date : TemporalValue.new(date: date)
+        write_temporal(rec, key, temporal)
         rec["state"] = "TODO" if rec["state"] == "INBOX"
       else
         rec.delete(key)
+        rec.delete("#{key}_time")
         rec.delete("recur") unless rec["scheduled"] || rec["deadline"]
       end
       patch_ok(rec)
@@ -1805,7 +1893,10 @@ module Tasks
       fields = kind ? [kind] : %i[scheduled deadline]
       return patch_invalid("no matching date stamp") unless fields.any? { |field| rec[field.to_s] }
 
-      fields.each { |field| rec.delete(field.to_s) }
+      fields.each do |field|
+        rec.delete(field.to_s)
+        rec.delete("#{field}_time")
+      end
       rec.delete("recur") unless rec["scheduled"] || rec["deadline"]
       patch_ok(rec)
     end

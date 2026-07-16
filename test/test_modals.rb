@@ -36,7 +36,7 @@ class TestTaskDetails < Minitest::Test
 
   def test_detail_distinguishes_available_from_and_inherited_on_hold
     records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "s1", "title" => "Work" },
       { "type" => "task", "id" => "p1", "parent" => "s1", "state" => "TODO",
         "title" => "held parent", "tags" => %w[defer] },
@@ -84,7 +84,7 @@ class TestTaskDetails < Minitest::Test
   def test_detail_wraps_long_titles
     with_store do |store, org, _a|
       File.write(org, dump_fixture([
-                        { "type" => "meta", "version" => 1 },
+                        { "type" => "meta", "version" => 2 },
                         { "type" => "section", "id" => "cccc0001", "title" => "X" },
                         { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001",
                           "state" => "TODO", "title" => "very long title word " * 10,

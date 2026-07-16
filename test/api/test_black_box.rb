@@ -302,7 +302,7 @@ class TestApiBlackBox < Minitest::Test
     assert_equal ["Fresh CLI task"], JSON.parse(list.body).fetch("data").map { |task| task.fetch("title") }
 
     File.write(@archive, Tasks::Format.dump([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "dddd0001", "title" => "Archive" },
       { "type" => "task", "id" => "dddd0002", "parent" => "dddd0001", "state" => "DONE",
         "title" => "External archive task", "closed" => "2026-07-01" },

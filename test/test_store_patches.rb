@@ -19,7 +19,7 @@ class TestStorePatches < Minitest::Test
 
   BIN = File.expand_path("../bin/tasks", __dir__)
   PATCH_TREE = [
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "11110001", "title" => "One" },
     { "type" => "task", "id" => "11110002", "parent" => "11110001", "state" => "NEXT",
       "title" => "Parent", "tags" => %w[@home alpha defer], "body" => "raw\nbody" },
@@ -860,7 +860,7 @@ class TestStorePatches < Minitest::Test
       first = store.patch_task!(patch(store.edit_snapshot("11110002"), :title, "Renamed",
                                       coalesce_key: key))
       assert_equal :ok, first.status
-      File.write(archive, Tasks::Format.dump([{ "type" => "meta", "version" => 1 }]))
+      File.write(archive, Tasks::Format.dump([{ "type" => "meta", "version" => 2 }]))
       external_archive = File.read(archive)
 
       second = store.patch_task!(patch(first.snapshot, :body, "replacement", coalesce_key: key))

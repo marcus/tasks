@@ -24,7 +24,7 @@ class TestApiProjects < Minitest::Test
 
   # A project whose only open task is deferred: open_count 0, held_count 1.
   DEFERRED_ONLY_FIXTURE = Tasks::Format.dump([
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "dddd0001", "title" => "Projects" },
     { "type" => "section", "id" => "dddd0002", "parent" => "dddd0001", "title" => "Parked" },
     { "type" => "task", "id" => "dddd0003", "parent" => "dddd0002", "state" => "TODO",

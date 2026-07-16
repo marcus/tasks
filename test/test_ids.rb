@@ -15,7 +15,7 @@ class TestIds < Minitest::Test
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       File.write(org, dump_fixture([
-        { "type" => "meta", "version" => 1 },
+        { "type" => "meta", "version" => 2 },
         { "type" => "section", "id" => "aaaa0001", "title" => "Work" },
         { "type" => "task", "parent" => "aaaa0001", "state" => "NEXT", "title" => "Ship it",
           "deadline" => "2026-07-10" },
@@ -59,7 +59,7 @@ class TestIds < Minitest::Test
       File.write(org, FIXTURE)
       # An archived task already owns this id — a fresh mint must avoid it.
       File.write(archive, dump_fixture([
-        { "type" => "meta", "version" => 1 },
+        { "type" => "meta", "version" => 2 },
         { "type" => "task", "id" => "dddd9999", "state" => "DONE", "title" => "Old thing",
           "closed" => "2026-01-01", "archived" => "2026-01-02" },
       ]))
@@ -116,8 +116,8 @@ class TestIds < Minitest::Test
         { "type" => "task", "id" => "bbbb0002", "parent" => "bbbb0001", "state" => "TODO",
           "title" => "decoy task" },
       ])
-      File.write(org, %({"type":"meta","version":1}\n) +
-                 prefix + FIXTURE.sub(%({"type":"meta","version":1}\n), ""))
+      File.write(org, %({"type":"meta","version":2}\n) +
+                 prefix + FIXTURE.sub(%({"type":"meta","version":2}\n), ""))
       assert store.test_mutation.set_priority(flight, "C"), "stale line, but the id still finds it"
       assert_equal "C", find_item(store, "Book flight").priority
       assert_equal "TODO", find_item(store, "decoy task").state, "decoy untouched"

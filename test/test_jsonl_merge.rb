@@ -12,7 +12,7 @@ class TestJsonlMerge < Minitest::Test
 
   def base_records
     [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "10000001", "title" => "Work" },
       { "type" => "task", "id" => "10000002", "parent" => "10000001", "state" => "NEXT",
         "title" => "Book Sixt car", "tags" => ["@computer"], "scheduled" => "2026-07-18",

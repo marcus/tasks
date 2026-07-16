@@ -17,14 +17,15 @@ module Tasks
   module Format
     # Bumped when the on-disk schema changes incompatibly. Lives on the `meta`
     # record (line 1): {"type":"meta","version":1}.
-    VERSION = 1
+    VERSION = 2
 
     # Canonical field order for a serialized record. Any key present on a record
     # but absent here is emitted *after* these, in the hash's own insertion
     # order — so a future writer can add fields without this layer knowing them
     # (forward-compat), and an older reader round-trips them untouched.
     KEY_ORDER = %w[
-      type id parent state priority title tags scheduled deadline recur
+      type id parent state priority title tags scheduled scheduled_time
+      deadline deadline_time recur
       closed archived body updated
     ].freeze
 
@@ -44,7 +45,8 @@ module Tasks
       ordered = {}
       KEY_ORDER.each do |k|
         next unless record.key?(k)
-        ordered[k] = record[k] unless omit?(record[k])
+        value = temporal_metadata(k, record[k])
+        ordered[k] = value unless omit?(value)
       end
       record.each do |k, v|
         next if k == LINE_KEY || KEY_ORDER.include?(k) || omit?(v)
@@ -106,6 +108,14 @@ module Tasks
     # (a parsed record); the schema speaks strings, so normalize the top level.
     def stringify(record)
       record.each_key.all? { |k| k.is_a?(String) } ? record : record.transform_keys(&:to_s)
+    end
+
+    def temporal_metadata(key, value)
+      return value unless %w[scheduled_time deadline_time].include?(key) && value.is_a?(Hash)
+      source = stringify(value)
+      %w[local timezone fold].each_with_object({}) do |child, ordered|
+        ordered[child] = source[child] if source.key?(child) && !omit?(source[child])
+      end
     end
   end
 end

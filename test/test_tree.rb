@@ -12,7 +12,7 @@ class TestTree < Minitest::Test
   # A nested fixture: a section with a task carrying body links, a task with a
   # subtask, and a second section — the same shape the old NESTED_ORG had.
   NESTED_RECORDS = [
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "aaaa0001", "title" => "Work" },
     { "type" => "task", "id" => "aaaa1111", "parent" => "aaaa0001", "state" => "NEXT",
       "priority" => "A", "title" => "Fix billing outage", "tags" => %w[@computer],
@@ -103,7 +103,7 @@ class TestTree < Minitest::Test
     nested_store do |store, org, dir|
       archive = File.join(dir, "archive.jsonl")
       archived_records = [
-        { "type" => "meta", "version" => 1 },
+        { "type" => "meta", "version" => 2 },
         { "type" => "task", "id" => "ffff0001", "state" => "DONE",
           "title" => "Archived billing notes", "body" => "https://old.example.test/runbook" },
       ]
@@ -242,7 +242,7 @@ class TestTree < Minitest::Test
       prefix = [{ "type" => "section", "id" => "aaaa0008", "title" => "New" },
                 { "type" => "task", "id" => "aaaa0009", "parent" => "aaaa0008", "state" => "TODO",
                   "title" => "interloper task" }]
-      shifted = [{ "type" => "meta", "version" => 1 }, *prefix, *NESTED_RECORDS[1..]]
+      shifted = [{ "type" => "meta", "version" => 2 }, *prefix, *NESTED_RECORDS[1..]]
       File.write(org, Tasks::Format.dump(shifted))
       File.utime(future, future, org)
       assert_empty store.body(held), "an id-less stale item degrades to empty, not to the wrong task"
@@ -258,7 +258,7 @@ class TestTree < Minitest::Test
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       File.write(org, Tasks::Format.dump([
-        { "type" => "meta", "version" => 1 },
+        { "type" => "meta", "version" => 2 },
         { "type" => "section", "id" => "aaaa0001", "title" => "Work" },
         { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "TODO",
           "title" => "Review https://github.com/acme/app/pull/7" },
@@ -334,7 +334,7 @@ class TestTree < Minitest::Test
   def test_cli_links_empty_message
     Dir.mktmpdir do |dir|
       File.write(File.join(dir, "tasks.jsonl"), Tasks::Format.dump([
-        { "type" => "meta", "version" => 1 },
+        { "type" => "meta", "version" => 2 },
         { "type" => "section", "id" => "aaaa0001", "title" => "Inbox" },
         { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "TODO",
           "title" => "nothing linked" },

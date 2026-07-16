@@ -8,7 +8,7 @@ require "tui/task_editor_session"
 class TestTaskEditorSession < Minitest::Test
   BIN = File.expand_path("../bin/tasks", __dir__)
   EDIT_TREE = [
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "11110001", "title" => "One" },
     { "type" => "task", "id" => "11110002", "parent" => "11110001", "state" => "NEXT",
       "priority" => "B", "title" => "Parent", "tags" => %w[@home alpha],

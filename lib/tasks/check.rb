@@ -4,6 +4,7 @@ require "date"
 require "set"
 require_relative "format"
 require_relative "update_stamp"
+require_relative "temporal_value"
 
 module Tasks
   # Structural linter for a tasks.jsonl (or archive.jsonl) file. Format keeps a
@@ -30,7 +31,7 @@ module Tasks
 
     # Fields a section record must not carry (task-only semantics). `archived`
     # is allowed — a swept subtree root can be a section.
-    SECTION_FORBIDDEN = %w[state priority scheduled deadline recur closed tags].freeze
+    SECTION_FORBIDDEN = %w[state priority scheduled scheduled_time deadline deadline_time recur closed tags].freeze
     # Every key the schema knows (plus the out-of-band line stamp / meta version).
     KNOWN_KEYS = (Format::KEY_ORDER + %w[line version]).to_set
 
@@ -47,11 +48,11 @@ module Tasks
 
     module_function
 
-    def check(path)
+    def check(path, version: Format::VERSION)
       return Result.new([[0, "file not found: #{path}"]], []) unless File.exist?(path)
 
       raw = File.read(path, encoding: "UTF-8")
-      check_text(raw)
+      check_text(raw, version: version)
     end
 
     # Validate the live/archive pair and enforce the Store-wide ID invariant.
@@ -85,21 +86,21 @@ module Tasks
     # uses this while holding its sidecar lock so validation and the canonical
     # resources are derived from the same read, rather than checking a path and
     # reopening it afterward.
-    def check_text(raw)
+    def check_text(raw, version: Format::VERSION)
       return Result.new([[0, "file is not valid UTF-8"]], []) unless raw.valid_encoding?
 
-      check_parsed(Format.parse(raw))
+      check_parsed(Format.parse(raw), version: version)
     end
 
     # Validate one Format parse result without reparsing or rereading. This is
     # public for Store's coherent read capture; callers should normally prefer
     # #check or #check_text.
-    def check_parsed(parsed)
+    def check_parsed(parsed, version: Format::VERSION)
       errors = parsed.errors.dup # unparseable / blank lines fold in as errors
       warnings = []
       records = parsed.records
 
-      check_meta(records, errors)
+      check_meta(records, errors, version: version)
 
       seen = Set.new                 # ids seen so far (for parent resolution)
       dup_ids = Hash.new { |h, k| h[k] = [] }
@@ -173,16 +174,16 @@ module Tasks
     end
 
     # Line 1 must be a well-formed meta record at the current schema version.
-    def check_meta(records, errors)
+    def check_meta(records, errors, version: Format::VERSION)
       meta = records.find { |r| r["line"] == 1 }
       if meta.nil?
         errors << [1, "missing meta record on line 1"] unless errors.any? { |l, _| l == 1 }
       elsif meta["type"] != "meta"
-        errors << [1, "line 1 must be a meta record ({\"type\":\"meta\",\"version\":#{Format::VERSION}})"]
-      elsif !meta["version"].is_a?(Integer) || meta["version"] != Format::VERSION
+        errors << [1, "line 1 must be a meta record ({\"type\":\"meta\",\"version\":#{version}})"]
+      elsif !meta["version"].is_a?(Integer) || meta["version"] != version
         # A non-Integer version (e.g. the float 1.0, which `1.0 == 1` would
         # otherwise wave through) is unsupported, not just a wrong number.
-        errors << [1, "unsupported meta version #{meta["version"].inspect} (expected #{Format::VERSION})"]
+        errors << [1, "unsupported meta version #{meta["version"].inspect} (expected #{version})"]
       end
     end
 
@@ -244,6 +245,8 @@ module Tasks
         errors << [line, "title must be a string"]
       end
       %w[scheduled deadline closed].each { |k| check_date(r, k, line, errors) }
+      check_temporal_time(r, "scheduled", line, errors)
+      check_temporal_time(r, "deadline", line, errors)
       check_date(r, "archived", line, errors)
       # Guard the type before the regex: a non-String recur (e.g. an integer)
       # would raise on `!~`, and Check must report — never crash — on bad data.
@@ -282,6 +285,36 @@ module Tasks
       end
       y, m, d = v.split("-").map(&:to_i)
       errors << [line, "#{key} #{v} is not a real date"] unless Date.valid_date?(y, m, d)
+    end
+
+    def check_temporal_time(record, field, line, errors)
+      key = "#{field}_time"
+      value = record[key]
+      return unless value
+      unless record[field]
+        errors << [line, "#{key} requires #{field}"]
+        return
+      end
+      unless value.is_a?(Hash)
+        errors << [line, "#{key} must be an object"]
+        return
+      end
+      unknown = value.keys.map(&:to_s) - %w[local timezone fold]
+      errors << [line, "#{key} has unknown keys: #{unknown.join(", ")}"] unless unknown.empty?
+      unless value["local"].is_a?(String) && TemporalValue::LOCAL_RE.match?(value["local"])
+        errors << [line, "#{key}.local must be HH:MM"]
+        return
+      end
+      if value.key?("fold") && value["fold"] != 1
+        errors << [line, "#{key}.fold must be omitted or 1"]
+      end
+      return unless value["timezone"]
+      begin
+        TemporalValue.new(date: record[field], local_time: value["local"],
+                          timezone: value["timezone"], fold: value.fetch("fold", 0))
+      rescue ArgumentError => e
+        errors << [line, "#{key} #{e.message}"]
+      end
     end
   end
 end

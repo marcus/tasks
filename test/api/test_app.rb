@@ -576,7 +576,7 @@ class TestApiApp < Minitest::Test
 
   def archive_fixture
     Tasks::Format.dump([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "cccc0001", "title" => "Archive" },
       { "type" => "task", "id" => FIX[:pr], "parent" => "cccc0001", "state" => "DONE",
         "title" => "Archived duplicate", "closed" => "2026-07-01" },

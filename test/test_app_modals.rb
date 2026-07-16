@@ -312,7 +312,7 @@ class TestAppModals < Minitest::Test
 
   def test_archive_blocked_modal_names_open_descendant_and_cannot_confirm
     records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "accc0001", "title" => "Projects" },
       { "type" => "task", "id" => "accc0002", "parent" => "accc0001", "state" => "DONE",
         "title" => "Closed project", "closed" => "2026-07-01" },

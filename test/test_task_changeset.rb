@@ -5,7 +5,7 @@ require "tasks/application"
 
 class TestTaskChangeset < Minitest::Test
   TREE = [
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "11110001", "title" => "One" },
     { "type" => "task", "id" => "11110002", "parent" => "11110001", "state" => "NEXT",
       "title" => "Parent", "tags" => %w[@home alpha defer], "body" => "raw\nbody" },

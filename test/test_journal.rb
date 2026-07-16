@@ -752,7 +752,7 @@ class TestJournal < Minitest::Test
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       File.write(org, dump_fixture([
-        { "type" => "meta", "version" => 1 },
+        { "type" => "meta", "version" => 2 },
         { "type" => "section", "id" => "aaaa0001", "title" => "W" },
         { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "TODO",
           "title" => "Fix me", "scheduled" => "not-a-date" },

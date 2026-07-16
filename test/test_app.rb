@@ -1317,7 +1317,7 @@ class TestApp < Minitest::Test
 
   def test_filter_respects_deferred_parent_visibility
     content = dump_fixture([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "aaaa0001", "title" => "Work" },
       { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "NEXT",
         "title" => "deferred parent", "tags" => %w[defer] },
@@ -1400,7 +1400,7 @@ class TestApp < Minitest::Test
 
   def test_defer_success_reports_effective_ancestor_hold
     records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "aaaa0001", "title" => "Work" },
       { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "NEXT",
         "title" => "held parent", "tags" => %w[defer] },
@@ -1426,7 +1426,7 @@ class TestApp < Minitest::Test
   def test_defer_success_reports_later_effective_ancestor_date
     day = Date.new(2026, 7, 14)
     records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "bbbb0001", "title" => "Work" },
       { "type" => "task", "id" => "bbbb0002", "parent" => "bbbb0001", "state" => "NEXT",
         "title" => "later parent", "scheduled" => "2026-07-24" },
@@ -1455,7 +1455,7 @@ class TestApp < Minitest::Test
   def test_memoized_read_model_refreshes_when_local_date_rolls_over
     day = Date.new(2026, 7, 14)
     records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "cccc0001", "title" => "Work" },
       { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001", "state" => "NEXT",
         "title" => "release tomorrow", "scheduled" => "2026-07-15" },
@@ -1480,7 +1480,7 @@ class TestApp < Minitest::Test
   def test_defer_response_keeps_mutation_day_snapshot_across_midnight_rollover
     day = Date.new(2026, 7, 14)
     records = [
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "dddd0001", "title" => "Work" },
       { "type" => "task", "id" => "dddd0002", "parent" => "dddd0001", "state" => "NEXT",
         "title" => "releases tomorrow", "scheduled" => "2026-07-15" },
@@ -1563,7 +1563,7 @@ class TestApp < Minitest::Test
   # -- recurrence ------------------------------------------------------------
 
   RECUR_FIXTURE = dump_fixture([
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "cccc0001", "title" => "Work" },
     { "type" => "task", "id" => "cccc0002", "parent" => "cccc0001", "state" => "NEXT",
       "title" => "Pay rent", "tags" => %w[@home], "deadline" => "2026-08-01", "recur" => "+1m" },
@@ -1660,7 +1660,7 @@ class TestApp < Minitest::Test
 
   def test_complete_selected_uses_the_injected_operation_date_for_completion_recurrence
     content = dump_fixture([
-      { "type" => "meta", "version" => 1 },
+      { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "dc000001", "title" => "Work" },
       { "type" => "task", "id" => "dc000002", "parent" => "dc000001", "state" => "NEXT",
         "title" => "Injected cadence", "scheduled" => "2026-07-10", "recur" => ".+1w" },
@@ -1712,7 +1712,7 @@ class TestApp < Minitest::Test
   # -- stable selection identity ---------------------------------------------
 
   SELECTION_FIXTURE = dump_fixture([
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "5e1e0001", "title" => "Work" },
     { "type" => "task", "id" => "5e1e0002", "parent" => "5e1e0001", "state" => "NEXT",
       "title" => "Alpha", "deadline" => "2026-07-11" },
@@ -1827,7 +1827,7 @@ class TestApp < Minitest::Test
   # -- structural Outline ordering ------------------------------------------
 
   ORDERING_APP = dump_fixture([
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "0d000001", "title" => "Work" },
     { "type" => "task", "id" => "0d000002", "parent" => "0d000001", "state" => "NEXT",
       "title" => "Alpha" },
@@ -2049,7 +2049,7 @@ class TestApp < Minitest::Test
   end
 
   TOO_DEEP_ORDERING_APP = dump_fixture([
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "de000001", "title" => "Deep" },
     { "type" => "task", "id" => "de000002", "parent" => "de000001", "state" => "TODO", "title" => "Depth one" },
     { "type" => "task", "id" => "de000003", "parent" => "de000002", "state" => "TODO", "title" => "Depth two" },
@@ -2099,7 +2099,7 @@ class TestApp < Minitest::Test
   # leaf. Rendered in agenda the rows are, in order: Ship release, write notes,
   # grandchild task, undated rider, solo top.
   NESTED_APP = dump_fixture([
-    { "type" => "meta", "version" => 1 },
+    { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "aaaa0001", "title" => "Work" },
     { "type" => "task", "id" => "aaaa0002", "parent" => "aaaa0001", "state" => "NEXT",
       "title" => "Ship release", "deadline" => "2026-07-10" },

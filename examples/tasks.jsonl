@@ -1,4 +1,4 @@
-{"type":"meta","version":1}
+{"type":"meta","version":2}
 {"type":"section","id":"aaaa0001","title":"Inbox","body":"Capture here first. Process into the lists below during review."}
 {"type":"task","id":"aaaa0002","parent":"aaaa0001","state":"INBOX","priority":"B","title":"Skim the new API docs and note anything worth trying","tags":["@computer"],"body":"Captured [2026-01-15]."}
 {"type":"section","id":"aaaa0003","title":"Tasks"}

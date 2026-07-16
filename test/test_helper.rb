@@ -81,7 +81,7 @@ FIX = {
 # old org fixture, so behavioral assertions carry over. `with_store` serializes
 # this to tasks.jsonl. Order is DFS pre-order (a validated invariant).
 FIXTURE_RECORDS = [
-  { "type" => "meta", "version" => 1 },
+  { "type" => "meta", "version" => 2 },
   { "type" => "section", "id" => FIX[:inbox], "title" => "Inbox" },
   { "type" => "task", "id" => FIX[:garden], "parent" => FIX[:inbox], "state" => "INBOX",
     "title" => "random thought about the garden" },
@@ -140,7 +140,7 @@ PFIX = {
 # project — plus a "Tasks" area (2 open incl. 1 NEXT) and a "Done pile" whose
 # only task is DONE (so it never surfaces as an area). DFS pre-order throughout.
 PROJECTS_FIXTURE_RECORDS = [
-  { "type" => "meta", "version" => 1 },
+  { "type" => "meta", "version" => 2 },
   { "type" => "section", "id" => PFIX[:inbox], "title" => "Inbox" },
   { "type" => "task", "id" => PFIX[:inbox_task], "parent" => PFIX[:inbox], "state" => "INBOX",
     "title" => "unfiled capture" },

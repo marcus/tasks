@@ -88,9 +88,11 @@ module Tasks
       new(date: raw_date, local_time: time&.fetch("local", nil),
           timezone: time&.fetch("timezone", nil), fold: time&.fetch("fold", 0), validate: validate)
     rescue ArgumentError, KeyError, TypeError
-      new(date: raw_date, validate: false)
-    rescue Date::Error
-      nil
+      begin
+        new(date: raw_date, validate: false)
+      rescue ArgumentError, Date::Error
+        nil
+      end
     end
 
     private
