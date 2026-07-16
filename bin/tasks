@@ -17,8 +17,8 @@
 #   bin/tasks done|d <ref>    mark a matching open item DONE (complete/close);
 #                             cascades to its open descendants (recurring parent
 #                             rolls forward instead and does not cascade)
-#   bin/tasks due <ref> <date>       set/replace an item's DEADLINE
-#   bin/tasks schedule <ref> <date>  set/replace Available from (SCHEDULED)
+#   bin/tasks due <ref> <date-or-date-time>       set/replace an item's DEADLINE
+#   bin/tasks schedule <ref> <date-or-date-time>  set/replace Available from (SCHEDULED)
 #   bin/tasks undate <ref> [--kind deadline|scheduled]  remove date stamp(s)
 #   bin/tasks state <ref> <STATE>    transition an item to any state
 #   bin/tasks cancel|drop <ref>      mark an item CANCELLED
@@ -48,7 +48,8 @@
 #   bin/tasks merge-driver <base> <ours> <theirs> <path>  internal Git plumbing
 #   bin/tasks help|-h         full command reference
 #
-# Stdlib only — no bundler required. Reads tasks.jsonl (one JSON record/line).
+# Shared domain code uses TZInfo for named-zone and DST-safe time resolution.
+# Rack/Puma/OpenAPI remain isolated to bin/tasks-api. Reads one JSON record/line.
 # Task files default to the repo root; point them elsewhere with TASKS_DIR
 # (or TASKS_FILE/TASKS_ARCHIVE) env vars or ~/.config/tasks/config.
 
@@ -149,8 +150,9 @@ def emit_json?(items, args, extra: nil, result: nil)
 end
 
 def cmd_next(args = [])
-  today = Date.today
-  result = application.view_tasks(:next, today: today)
+  context = temporal_context
+  today = context.local_date
+  result = application.view_tasks(:next, today: today, context: cli_operation_context(context))
   nexts = result.items
   return if emit_json?(nexts, args, result: result)
   by_ctx = Hash.new { |h, k| h[k] = [] }
@@ -164,7 +166,7 @@ def cmd_next(args = [])
     # ties; a per-group re-sort here would re-break those ties (MRI sort_by
     # is unstable).
     list.each do |i|
-      due = short_due(i, today: today)
+      due = short_due(i, today: today, context: context)
       puts "  #{fmt(i)}#{due.empty? ? "" : "  #{due}"}"
     end
     puts
@@ -172,8 +174,10 @@ def cmd_next(args = [])
 end
 
 def cmd_quadrants(args = [])
-  today = Date.today
-  result = application.view_tasks(:quadrants, today: today, urgent_days: PATHS.urgent_days)
+  context = temporal_context
+  today = context.local_date
+  result = application.view_tasks(:quadrants, today: today, urgent_days: PATHS.urgent_days,
+                                   context: cli_operation_context(context))
   open_items = result.items
   return if emit_json?(open_items, args, result: result, extra: ->(i) { result.metadata_for(i) })
   by_q = open_items.group_by { |item| result.metadata_for(item).fetch(:quadrant) }
@@ -186,8 +190,9 @@ def cmd_quadrants(args = [])
 end
 
 def cmd_agenda(args = [])
-  today = Date.today
-  result = application.view_tasks(:agenda, today: today)
+  context = temporal_context
+  today = context.local_date
+  result = application.view_tasks(:agenda, today: today, context: cli_operation_context(context))
   dated = result.items
   return if emit_json?(dated, args, result: result)
   dated.each do |i|
@@ -195,15 +200,18 @@ def cmd_agenda(args = [])
     kind = i.deadline ? "DUE " : "STRT"
     days = (d - today).to_i
     when_s = days.negative? ? "#{-days}d ago" : days.zero? ? "today" : "in #{days}d"
-    stamp = "#{d.strftime("%m-%d")} #{kind} (#{when_s})"
+    value = result.task_for(i)&.public_send(i.deadline ? :deadline_value : :scheduled_value)
+    local = value&.local_time
+    stamp = "#{local || d.strftime("%m-%d")} #{kind} (#{when_s})"
     stamp = red(stamp) if days <= 2
     puts "#{stamp}  #{fmt(i)}"
   end
 end
 
 def cmd_inbox(args = [])
-  today = Date.today
-  result = application.view_tasks(:inbox, today: today)
+  context = temporal_context
+  today = context.local_date
+  result = application.view_tasks(:inbox, today: today, context: cli_operation_context(context))
   inbox = result.items
   return if emit_json?(inbox, args, result: result)
   inbox.empty? ? (puts "Inbox empty. ✨") : inbox.each { |i| puts "  #{fmt(i)}" }
@@ -768,7 +776,8 @@ def cmd_undate(args)
 end
 
 def cmd_show(args)
-  today = Date.today
+  context = temporal_context
+  today = context.local_date
   flags, rest = take_flags(args, "--json", "--include-done")
   ref = rest.shift
   abort %(usage: tasks show <ref>) if ref.nil? || ref.strip.empty?
@@ -776,7 +785,7 @@ def cmd_show(args)
   # Show is a pure read: build the view over one snapshot and fall back to the
   # held item if a concurrent write removed it, instead of aborting with
   # mutation-flavored error text (and a misleading rollback hint).
-  query = Tasks::TaskQueries.new(store.read_snapshot, today: today)
+  query = Tasks::TaskQueries.new(store.read_snapshot, today: today, temporal_context: context)
   task = query.task(item)
 
   closed = task.closed
@@ -794,8 +803,12 @@ def cmd_show(args)
     puts task.headline
     puts "  id:        #{task.id}" if task.id
     puts "  project:   #{project}" if project
-    puts "  available from: #{task.scheduled.iso8601}" if task.scheduled
-    puts "  deadline:  #{task.deadline.iso8601}" if task.deadline
+    if task.scheduled
+      puts "  available from: #{task.scheduled_value ? temporal_label(task.scheduled_value) : task.scheduled.iso8601}"
+    end
+    if task.deadline
+      puts "  deadline:  #{task.deadline_value ? temporal_label(task.deadline_value) : task.deadline.iso8601}"
+    end
     puts "  availability: #{availability_summary(query, query.availability(item))}"
     puts "  recur:     #{task.recur} #{dim("(#{recur_summary(task.recur)})")}" if task.recur
     puts "  closed:    #{closed.iso8601}" if closed
@@ -1038,8 +1051,8 @@ def availability_summary(query, availability)
 
   case availability.reason
   when :available then "available now"
-  when :scheduled then "unavailable until #{availability.scheduled.iso8601}"
-  when :ancestor_scheduled then "unavailable until #{availability.scheduled.iso8601}#{via}"
+  when :scheduled then "unavailable until #{temporal_label(availability.temporal_value)}"
+  when :ancestor_scheduled then "unavailable until #{temporal_label(availability.temporal_value)}#{via}"
   when :on_hold then "on hold indefinitely"
   when :ancestor_on_hold then "still on hold indefinitely#{via}"
   when :closed then "closed"
@@ -1601,13 +1614,15 @@ STATE_ORDER = Tasks::TaskFilter::STATE_ORDER
 
 # Parse `list` args into a scope symbol plus filters, then print grouped output.
 def cmd_list(args)
-  today = Date.today
+  context = temporal_context
+  today = context.local_date
   parsed = begin
     Tasks::TaskFilter.parse_cli(args)
   rescue ArgumentError => error
     abort error.message
   end
-  result = application.list_tasks(parsed.filter, today: today)
+  operation_context = cli_operation_context(context)
+  result = application.list_tasks(parsed.filter, today: today, context: operation_context)
   sel = result.items
 
   return if emit_json?(sel, [parsed.json ? "--json" : nil].compact, result: result)
@@ -1623,10 +1638,10 @@ def cmd_list(args)
     next unless list
     puts bold(st)
     list.sort_by { |i| i.priority || "Z" }.each do |i|
-      due = short_due(i, today: today)
+      due = short_due(i, today: today, context: context)
       arch = i.source == :archive ? dim("  (archived)") : ""
       task = result.task_for(i)
-      defr = list_availability_label(task, today: today)
+      defr = list_availability_label(task, today: today, context: operation_context)
       recr = i.recur ? dim("  ↻#{i.recur}") : ""
       puts "  #{fmt(i)}#{due.empty? ? "" : "  #{due}"}#{recr}#{defr}#{arch}"
     end
@@ -1634,19 +1649,19 @@ def cmd_list(args)
   end
 end
 
-def list_availability_label(task, today:)
+def list_availability_label(task, today:, context: nil)
   return "" unless task
   return dim("  (on hold)") if task.deferred?
   return "" if task.available? || task.availability_reason == :closed
 
   blocker = task.availability_blocker_id &&
-            application.get_task(task.availability_blocker_id, today: today)
+            application.get_task(task.availability_blocker_id, today: today, context: context)
   case task.availability_reason
   when :scheduled
-    dim("  (unavailable until #{task.scheduled.iso8601})")
+    dim("  (unavailable until #{temporal_label(task.scheduled_value)})")
   when :ancestor_scheduled
-    date = blocker&.scheduled
-    dim("  (unavailable#{date ? " until #{date.iso8601}" : ""} via #{blocker&.title || task.availability_blocker_id})")
+    value = blocker&.scheduled_value
+    dim("  (unavailable#{value ? " until #{temporal_label(value)}" : ""} via #{blocker&.title || task.availability_blocker_id})")
   when :ancestor_on_hold
     dim("  (on hold via #{blocker&.title || task.availability_blocker_id})")
   else
@@ -1787,7 +1802,7 @@ end
 def cmd_migrate(args)
   flags, rest = take_flags(args, "--dry-run", "--json")
   abort "usage: tasks migrate [--dry-run] [--json]" unless rest.empty?
-  result = store.migrate_schema!(dry_run: flags["--dry-run"])
+  result = application.migrate_schema(dry_run: flags["--dry-run"])
   if flags["--json"]
     require "json"
     puts JSON.generate(status: result.status, from_version: result.from_version,
@@ -1823,17 +1838,20 @@ def project_date(date) = date ? "#{date.month}/#{date.day}" : nil
 # One project/area summary: "3 open · 1 next · next 7/25" plus a stuck marker.
 def project_summary(view)
   parts = ["#{view.open_count} open", "#{view.next_count} next"]
-  parts << "next #{project_date(view.next_date)}" if view.next_date
+  if view.next_date
+    parts << "next #{view.next_time&.fetch(:local, nil) || project_date(view.next_date)}"
+  end
   "#{dim(parts.join(" · "))}#{view.stuck ? "  #{yellow("(stuck)")}" : ""}"
 end
 
 def project_row(view, width: 0) = "#{view.title.to_s.ljust(width)}  #{project_summary(view)}"
 
 def cmd_projects(args)
-  today = Date.today
+  context = temporal_context
+  today = context.local_date
   flags, rest = take_flags(args, "--json")
   abort "usage: tasks projects [--json]" unless rest.empty?
-  result = application.list_projects_result(today: today)
+  result = application.list_projects_result(today: today, context: cli_operation_context(context))
   abort "task file is invalid — run `tasks check`" unless result.ok?
   views = result.data
 
@@ -2078,8 +2096,8 @@ HELP = <<~USAGE
                              recurring task forward (aka complete, close)
     cancel      <ref>        mark CANCELLED          (aka drop)
     state     mv <ref> <STATE>       any state transition
-    due          <ref> <date>        set/replace DEADLINE   (aka deadline, reschedule)
-    schedule     <ref> <date>        set/replace Available from (SCHEDULED)
+    due          <ref> <date/time>   set/replace DEADLINE   (aka deadline, reschedule)
+    schedule     <ref> <date/time>   set/replace Available from (SCHEDULED)
     undate       <ref> [--kind deadline|scheduled]   remove date stamp(s)
     priority pri <ref> <A|B|C|none>  set or clear the priority cookie
     retitle rename <ref> "title"     replace the headline title
@@ -2093,7 +2111,7 @@ HELP = <<~USAGE
                                      place the subtree before a stable sibling
     recur repeat <ref> <interval>    repeat on done: weekly · 2w · .+1m · off
                                      --from schedule|completion · --on <date>
-    defer   snooze <ref> [date]      defer until date; no date holds indefinitely
+    defer   snooze <ref> [date/time] defer until exact value; omitted means On Hold
     someday        <ref>             put on indefinite hold (Someday/Maybe)
     activate       <ref>             make available now (undefer, resume)
     delete         <ref>             hard-delete a task (no archive). Needs --cascade

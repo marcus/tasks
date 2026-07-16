@@ -42,6 +42,17 @@ class TestExport < Minitest::Test
     refute_includes md, "- scheduled:"
   end
 
+  def test_markdown_preserves_fixed_and_floating_timed_values
+    fixed = Tasks::TemporalValue.new(
+      date: Date.new(2026, 7, 20), local_time: "17:00", timezone: "Europe/London"
+    )
+    floating = Tasks::TemporalValue.new(date: Date.new(2026, 7, 20), local_time: "09:00")
+    item = Struct.new(:deadline_value, :scheduled_value).new(fixed, floating)
+
+    assert_equal "2026-07-20 17:00 [Europe/London]", E.temporal_text(item, :deadline)
+    assert_equal "2026-07-20 09:00", E.temporal_text(item, :scheduled)
+  end
+
   def test_markdown_includes_closed_date
     md = export_for("Old finished thing") { |i, b| E.markdown(i, b) }
     assert_includes md, "- closed: 2026-06-20"

@@ -1046,7 +1046,7 @@ class TestCliMutations < Minitest::Test
       assert st.success?
       assert_match(/capture/, out)
       assert_match(/archive/, out)
-      assert_match(/defer\s+snooze <ref> \[date\]/, out)
+      assert_match(%r{defer\s+snooze <ref> \[date/time\]}, out)
       assert_match(/someday\s+<ref>/, out)
       assert_match(/--unavailable/, out)
       assert_match(/Available from/, out)

@@ -1,0 +1,29 @@
+@set:cols:120
+@set:rows:28
+@set:delay:150
+@set:output:docs/proofs
+@set:theme:github-dark
+@set:window_bar:colorful
+@set:border_radius:8
+@set:padding:8
+@set:shadow:true
+@require:termshot
+
+@sleep:1200
+1
+@sleep:500
+Z
+@wait:unavailable shown
+@sleep:500
+@capture:timed-task-values.png
+Down
+Down
+Down
+Enter
+@sleep:500
+Tab
+@wait:task · editing
+@sleep:500
+@capture:timed-task-values-editor.png
+Escape
+q

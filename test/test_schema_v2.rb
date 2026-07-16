@@ -38,6 +38,7 @@ class TestSchemaV2 < Minitest::Test
   def test_store_round_trips_and_undoes_atomic_temporal_patch
     with_store do |store, org, _archive|
       item = find_item(store, "Book flight")
+      stale = store.edit_snapshot(item.id)
       value = Tasks::TemporalValue.new(date: "2026-11-01", local_time: "01:30",
                                        timezone: "America/Los_Angeles", fold: 1)
       result = store.patch_task!(Tasks::TaskPatch.from(
@@ -50,6 +51,11 @@ class TestSchemaV2 < Minitest::Test
       assert_equal({ "local" => "01:30", "timezone" => "America/Los_Angeles", "fold" => 1 },
                    record["deadline_time"])
       assert_equal value, store.items.find { |candidate| candidate.id == item.id }.deadline_value
+      stale_result = store.patch_task!(Tasks::TaskPatch.from(
+        stale, field: :deadline,
+        value: Tasks::TemporalValue.new(date: "2026-11-01", local_time: "02:30")
+      ))
+      assert stale_result.conflict?, "time/zone metadata must participate in field conflicts"
       assert Tasks::Check.check(org).ok?
       assert_equal :ok, store.undo!.first
       assert_nil record_for(org, title: "Book flight in Concur")["deadline_time"]
@@ -84,6 +90,22 @@ class TestSchemaV2 < Minitest::Test
       assert File.exist?("#{archive}.v1.bak")
       assert_equal :empty, store.undo!.first
       assert_equal :already_current, store.migrate_schema!.status
+    end
+  end
+
+  def test_ordinary_mutation_against_v1_returns_typed_migration_requirement
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      records = [{ "type" => "meta", "version" => 1 },
+                 { "type" => "task", "id" => "aaaa0001", "state" => "NEXT", "title" => "Existing" }]
+      File.write(org, Tasks::Format.dump(records))
+      store = Tasks::Store.new(org: org, archive: archive, journal_dir: File.join(dir, "journal"))
+      patch = Tasks::TaskPatch.new(id: "aaaa0001", field: :priority, value: "A", expected: nil)
+      result = store.patch_task!(patch)
+      assert_equal :migration_required, result.status
+      assert result.migration_required?
+      assert_equal 1, JSON.parse(File.foreach(org).first).fetch("version")
     end
   end
 

@@ -40,22 +40,23 @@ One record per line. Records serialize with a fixed key order (nil/empty fields
 are omitted), so a single field change is a one-line diff:
 
 ```
-type id parent state priority title tags scheduled deadline recur closed archived body
+type id parent state priority title tags scheduled scheduled_time deadline deadline_time recur closed archived body
 ```
 
 ```json
-{"type":"meta","version":1}
+{"type":"meta","version":2}
 {"type":"section","id":"a1b2c3d4","title":"Inbox"}
 {"type":"task","id":"0f9e8d7c","parent":"a1b2c3d4","state":"INBOX","title":"Random thought","body":"Captured [2026-07-01]."}
 {"type":"section","id":"b2c3d4e5","title":"Projects"}
 {"type":"section","id":"c3d4e5f6","parent":"b2c3d4e5","title":"Launch the personal site","body":"Goal: site up by end of month."}
 {"type":"task","id":"d4e5f6a7","parent":"c3d4e5f6","state":"NEXT","priority":"A","title":"Pick a static-site generator","tags":["@computer","important"],"deadline":"2026-07-20"}
 {"type":"task","id":"e5f6a7b8","parent":"a1b2c3d4","state":"NEXT","title":"Water the plants","tags":["@home"],"scheduled":"2026-07-08","recur":".+1w","body":"- Did [2026-07-01]."}
+{"type":"task","id":"f6a7b8c9","parent":"c3d4e5f6","state":"NEXT","title":"Join customer call","deadline":"2026-07-20","deadline_time":{"local":"17:00","timezone":"Europe/London"}}
 ```
 
 ### Record types
 
-- **`meta`** — always line 1: `{"type":"meta","version":1}`. `version` is the
+- **`meta`** — always line 1: `{"type":"meta","version":2}`. `version` is the
   on-disk schema version.
 - **`section`** — a GTD list (`Inbox`, `Projects`, `Someday / Maybe`, …) or a
   project heading nested under one. Carries `title`, an optional `body`, and its
@@ -77,10 +78,16 @@ type id parent state priority title tags scheduled deadline recur closed archive
   `["@computer","important"]`). See [Tags](#tags).
 - **`scheduled`** / **`deadline`** / **`closed`** / **`archived`** —
   `"YYYY-MM-DD"` strings (no day-of-week, no `< >`). `scheduled` is the single
-  available-from/start/defer-until date: an open task is unavailable before it
-  and available on it. `deadline` is the separate due date; `closed` is stamped
+  available-from/start/defer-until date. `deadline` is the separate due date;
+  `closed` is stamped
   when a task enters DONE/CANCELLED; `archived` is stamped on a subtree root
   when it's swept to `archive.jsonl`.
+- **`scheduled_time`** / **`deadline_time`** — optional time metadata owned by
+  the matching date: `{ "local": "HH:MM", "timezone": "Area/Location", "fold": 1 }`.
+  Omitting `timezone` makes the time floating in the configured evaluation zone.
+  A fixed value stores a full IANA zone. `fold: 1` selects the later instant
+  during a daylight-saving overlap and is omitted otherwise. These objects
+  never appear without their matching date.
 - **`recur`** — an org-style repeater cookie (`.+1w`, `++1m`, `+2d`) on a dated
   task. See [Recurrence](#recurrence).
 - **`body`** — free-text notes as a single `\n`-joined string; omitted when
@@ -123,20 +130,30 @@ or `important` on a task you deliberately keep at low priority.
 The urgency window is configurable: `urgent_days = N` in `~/.config/tasks/config`, or
 the `TASKS_URGENT_DAYS` env var.
 
-## Dates
+## Dates and times
 
-- `scheduled` — the first day the task is available to *start* / work on.
-- `deadline` — the separate day it's *due*.
+- `scheduled` — when the task becomes available to *start* / work on.
+- `deadline` — the separate value for when it's due.
 - All dates are ISO `"YYYY-MM-DD"` strings. The CLI/TUI accept fuzzy input
   (`fri`, `+3`, `07-15`, `tomorrow`) and write the canonical form.
 
-A future `scheduled` date removes the task from active views until that date;
+Without a time, `scheduled` releases at the start of its local calendar date
+and `deadline` remains on time through its whole date. A time without a zone is
+floating. A time with `--timezone Europe/London` is fixed to that IANA zone and
+keeps the same instant when the display zone changes. Nonexistent local times
+in daylight-saving gaps are rejected; a fold defaults to the earlier instant
+unless `--fold later` is selected. Precision is one minute.
+
+A future `scheduled` value removes the task from active views until its exact boundary;
 it does not make the task urgent. The semantic `defer` tag means **On Hold
 indefinitely**, not a dated deferral. Effective availability is ancestor-aware:
 an On Hold or future-scheduled parent also hides its descendants. Use
-`defer <ref> <date>` for a timed release, `someday <ref>` for an indefinite
+`defer <ref> <date-or-date-time>` for a timed release, `someday <ref>` for an indefinite
 hold, and `activate <ref>` to make the task available now. None of those moves a
 `deadline`.
+
+Timed deadlines affect overdue state and ordering. They do not create reminders
+or notifications.
 
 ## Recurrence
 

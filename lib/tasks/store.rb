@@ -533,6 +533,9 @@ module Tasks
       with_lock do
         @last_rollback = nil
         before = snapshot
+        if schema_migration_required?
+          return MutationResult.new(status: :migration_required, errors: ["run `tasks migrate`"])
+        end
         begin
           preflight = create_preflight_failure
           if preflight
@@ -602,6 +605,9 @@ module Tasks
       with_lock do
         @last_rollback = nil
         before = snapshot
+        if schema_migration_required?
+          return MutationResult.new(status: :migration_required, errors: ["run `tasks migrate`"])
+        end
         current = nil
         begin
           unless command.id.is_a?(String) && !command.id.empty?
@@ -812,6 +818,9 @@ module Tasks
         before = snapshot
         current = nil
         repair = false
+        if schema_migration_required?
+          return MutationResult.new(status: :migration_required, errors: ["run `tasks migrate`"])
+        end
         begin
           # Check raw validity before parsing/building: Format.parse assumes a
           # valid UTF-8 String, while Check deliberately contains bad bytes.
@@ -964,6 +973,13 @@ module Tasks
         return result.errors.first&.last || "validation failed" unless result.ok?
       end
       nil
+    end
+
+    def schema_migration_required?
+      records = fresh_records(@org)
+      records.first&.fetch("type", nil) == "meta" && records.first["version"] == 1
+    rescue StandardError
+      false
     end
 
     def normalize_create_task(command, today:)

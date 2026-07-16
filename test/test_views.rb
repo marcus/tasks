@@ -92,6 +92,25 @@ class TestViews < Minitest::Test
     end
   end
 
+  def test_agenda_projects_fixed_time_into_reader_zone
+    records = [
+      { "type" => "meta", "version" => 2 },
+      { "type" => "section", "id" => "s1", "title" => "Work" },
+      { "type" => "task", "id" => "t1", "parent" => "s1", "state" => "NEXT",
+        "title" => "London call", "deadline" => "2026-07-02",
+        "deadline_time" => { "local" => "17:00", "timezone" => "Europe/London" } },
+    ]
+    with_records(records) do |store|
+      context = Tasks::TemporalContext.new(
+        now: Time.utc(2026, 7, 1, 19), timezone: "America/Los_Angeles"
+      )
+      reader = Tasks::TaskReadModel.new(store.read_snapshot, temporal_context: context)
+      row = V.rows(:agenda, reader.items, today: TODAY, reader: reader).find(&:item)
+
+      assert_includes A.strip(row.text), "09:00 DUE"
+    end
+  end
+
   def test_children_render_indented_in_next
     with_records(NESTED) do |store|
       rs = tree_rows(store, :next)

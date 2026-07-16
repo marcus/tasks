@@ -1,8 +1,16 @@
 # Timed task values and time zones
 
-Status: proposed implementation contract
+Status: implemented
 
 Date: 2026-07-16
+
+Implementation landed in seven feature checkpoint commits beginning with
+ADR-0010 and ending with the CLI, TUI, and HTTP adapters, followed by a final
+documentation and proof checkpoint. Schema v2, migration backups,
+TZInfo-backed temporal values, exact availability/deadline semantics, civil
+recurrence, and all three public surfaces are now covered by the core and API
+test gates. The final proof and independent-review fixes are recorded in the
+repository history for this implementation branch.
 
 ## Goal
 

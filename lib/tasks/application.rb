@@ -21,11 +21,12 @@ module Tasks
   # This is not a Store wrapper. It is created from a single ReadSnapshot and
   # exposes no mutable Store or persistence operation.
   class TaskReadModel
-    attr_reader :items, :tree, :tasks
+    attr_reader :items, :tree, :tasks, :temporal_context
 
     def initialize(snapshot, today: Date.today, temporal_context: nil)
       @snapshot = snapshot
       @queries = TaskQueries.new(snapshot, today: today, temporal_context: temporal_context)
+      @temporal_context = @queries.temporal_context
       @items = snapshot.items
       @tree = snapshot.tree
       @tasks = items.map { |item| @queries.task(item) }.freeze
@@ -131,26 +132,30 @@ module Tasks
       freeze
     end
 
-    def list_tasks(filter, today: Date.today)
+    def list_tasks(filter, today: Date.today, context: nil)
+      validate_operation_context(context)
       unless filter.is_a?(TaskFilter)
         raise ArgumentError, "filter must be a Tasks::TaskFilter"
       end
 
-      queries(include_archive: filter.include_archive?, today: today).list(filter)
+      queries(include_archive: filter.include_archive?, today: today, operation_context: context).list(filter)
     end
 
     # The named selections are kept here so adapters do not each recreate
     # agenda/next/inbox/quadrant semantics. The return value retains the legacy
     # Items for presentation while exposing canonical immutable TaskViews.
-    def view_tasks(name, today: Date.today, urgent_days: Quadrants::DEFAULT_URGENT_DAYS)
-      queries(today: today).view(name, urgent_days: urgent_days)
+    def view_tasks(name, today: Date.today, urgent_days: Quadrants::DEFAULT_URGENT_DAYS, context: nil)
+      validate_operation_context(context)
+      queries(today: today, operation_context: context).view(name, urgent_days: urgent_days)
     end
 
     # Stable IDs are the application boundary; fuzzy title and L<line>
     # resolution are CLI-only conveniences. A missing id is an ordinary nil
     # result so a later HTTP adapter can map it to its own not-found response.
-    def get_task(id, include_archive: false, today: Date.today)
-      queries(include_archive: include_archive, today: today).find(id, include_archive: include_archive)
+    def get_task(id, include_archive: false, today: Date.today, context: nil)
+      validate_operation_context(context)
+      queries(include_archive: include_archive, today: today, operation_context: context)
+        .find(id, include_archive: include_archive)
     end
 
     def list_sections
@@ -160,14 +165,16 @@ module Tasks
     # Projects and areas rolled up over their open tasks. Kept here so the CLI
     # and HTTP adapters share one definition of what a project is and how it is
     # ordered. Returns an array of ProjectView.
-    def list_projects(today: Date.today)
-      queries(today: today).projects
+    def list_projects(today: Date.today, context: nil)
+      validate_operation_context(context)
+      queries(today: today, operation_context: context).projects
     end
 
     # A single ProjectView for a project or area section id, or nil so a later
     # HTTP adapter maps the absence to its own not-found response.
-    def get_project(id, today: Date.today)
-      queries(today: today).project_view(id)
+    def get_project(id, today: Date.today, context: nil)
+      validate_operation_context(context)
+      queries(today: today, operation_context: context).project_view(id)
     end
 
     # API-grade reads return canonical data plus the global live+archive
@@ -194,12 +201,14 @@ module Tasks
     # API-grade project reads: the ProjectView list, and a single ProjectView
     # mapped to not_found when the id is not a project or area. Both carry the
     # checked snapshot's global revision.
-    def list_projects_result(today: Date.today)
-      checked_query(today: today) { |query| query.projects }
+    def list_projects_result(today: Date.today, context: nil)
+      validate_operation_context(context)
+      checked_query(today: today, operation_context: context) { |query| query.projects }
     end
 
-    def project_result(id, today: Date.today)
-      checked_query(today: today) { |query| query.project_view(id) }
+    def project_result(id, today: Date.today, context: nil)
+      validate_operation_context(context)
+      checked_query(today: today, operation_context: context) { |query| query.project_view(id) }
     end
 
     # Safe foundation for /meta and readiness. Transport/config capabilities
@@ -211,9 +220,10 @@ module Tasks
     # A single live read for presentation adapters. It deliberately receives a
     # new Store just like every other Application query, so the TUI cannot
     # retain Store's mutable read cache between paints or external writes.
-    def read_tasks(today: Date.today)
+    def read_tasks(today: Date.today, context: nil)
+      validate_operation_context(context)
       TaskReadModel.new(store_factory.call.read_snapshot, today: today,
-                        temporal_context: context_for(today: today))
+                        temporal_context: context_for(today: today, operation_context: context))
     end
 
     # Field-scoped snapshot for adapters that preserve save-on-blur or
@@ -420,12 +430,12 @@ module Tasks
                          errors: [store.last_rollback || "section creation failed"])
     end
 
-    def queries(include_archive: false, today: Date.today)
+    def queries(include_archive: false, today: Date.today, operation_context: nil)
       TaskQueries.new(store_factory.call.read_snapshot(include_archive: include_archive), today: today,
-                      temporal_context: context_for(today: today))
+                      temporal_context: context_for(today: today, operation_context: operation_context))
     end
 
-    def checked_query(today:)
+    def checked_query(today:, operation_context: nil)
       checked = store_factory.call.checked_read_snapshot
       unless checked.ok?
         return ApplicationReadResult.new(
@@ -435,7 +445,7 @@ module Tasks
       end
 
       data = yield TaskQueries.new(checked.snapshot, today: today,
-                                   temporal_context: context_for(today: today))
+                                   temporal_context: context_for(today: today, operation_context: operation_context))
       ApplicationReadResult.new(
         status: data.nil? ? :not_found : :ok,
         data: data,

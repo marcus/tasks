@@ -89,12 +89,16 @@ module Tui
       value = item.respond_to?("#{field}_value") && item.public_send("#{field}_value")
       return date_value(item.public_send(field), today) unless value&.local_time
 
-      display = context ? value.projected(context) : { date: value.date, local: value.local_time }
-      date = display.fetch(:date)
-      text = "#{date.iso8601} #{display.fetch(:local)}"
-      text += " #{value.timezone}" if value.fixed? && (!context || value.timezone != context.timezone_id)
+      date = value.date
+      text = "#{date.iso8601} #{value.local_time}"
+      text += " #{value.timezone}" if value.fixed?
       text += " floating" if value.floating?
       text += " · later fold" if value.fold == 1
+      if context && value.fixed? && value.timezone != context.timezone_id
+        projected = value.projected(context)
+        text += " → #{projected.fetch(:date).iso8601} #{projected.fetch(:local)} #{context.timezone_id}"
+        date = projected.fetch(:date)
+      end
       days = (date - today).to_i
       T.paint(Views.due_slot(days), text)
     end

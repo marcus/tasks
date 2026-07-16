@@ -71,7 +71,7 @@ module Tui
     #             stay off the developer's real CLI/models.
     def initialize(root:, paths: Tasks::Config.resolve(default_dir: root),
                    llm_config: LLM::Config.load, agent_factory: nil, agent_probe: nil,
-                   date_provider: -> { Date.today }, time_provider: -> { Time.now.utc })
+                   date_provider: nil, time_provider: nil)
       Theme.configure!(name: paths.theme, overrides: paths.colors || {})
       @paths = paths
       # Store remains the long-lived watcher, history/archive, and form-option
@@ -80,8 +80,22 @@ module Tui
       @store  = Store.new(org: paths.org, archive: paths.archive,
                           links: paths.links || {}, link_systems: paths.link_systems || {},
                           max_depth: paths.max_depth)
-      @date_provider = date_provider.respond_to?(:call) ? date_provider : -> { date_provider }
-      @time_provider = time_provider.respond_to?(:call) ? time_provider : -> { time_provider }
+      @time_provider_injected = !time_provider.nil?
+      @time_provider = if time_provider.nil?
+                         -> { Time.now.utc }
+                       elsif time_provider.respond_to?(:call)
+                         time_provider
+                       else
+                         -> { time_provider }
+                       end
+      @date_provider_injected = !date_provider.nil?
+      @date_provider = if date_provider.nil?
+                         -> { Tasks::Timezones.local_time(current_time, paths.timezone).to_date }
+                       elsif date_provider.respond_to?(:call)
+                         date_provider
+                       else
+                         -> { date_provider }
+                       end
       @application = Tasks::Application.new(
         store_factory: Tasks::StoreFactory.new(
           org: paths.org, archive: paths.archive, links: paths.links || {},
@@ -415,7 +429,11 @@ module Tui
     def current_time = @time_provider.call.utc
     def temporal_context
       date = current_date
-      now = date == Date.today ? current_time : Time.utc(date.year, date.month, date.day, 12)
+      now = if !@date_provider_injected || @time_provider_injected
+              current_time
+            else
+              Time.utc(date.year, date.month, date.day, 12)
+            end
       Tasks::TemporalContext.new(now: now, timezone: @paths.timezone, time_format: @paths.time_format)
     end
 

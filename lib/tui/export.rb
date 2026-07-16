@@ -41,9 +41,9 @@ module Tui
       value = item.respond_to?("#{field}_value") && item.public_send("#{field}_value")
       return item.public_send(field).iso8601 unless value&.local_time
 
-      mode = value.timezone || "floating"
+      zone = value.timezone ? " [#{value.timezone}]" : ""
       fold = value.fold == 1 ? " fold=later" : ""
-      "#{value.date.iso8601} #{value.local_time} #{mode}#{fold}"
+      "#{value.date.iso8601} #{value.local_time}#{zone}#{fold}"
     end
   end
 end

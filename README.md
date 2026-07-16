@@ -3,8 +3,7 @@
 A plain-text GTD task system designed to be shared with an AI agent. Your tasks
 live in one JSONL file that you own and git-commit; a Ruby CLI and a full-screen
 TUI are the writers; and any LLM harness can manage the list through the same
-commands you use. The whole thing runs on the Ruby standard library — `git clone`
-is the install.
+commands you use. Ruby 3.4 or Ruby 4.x plus `bundle install` is the install.
 
 ```sh
 tasks agenda            # (a) available dated work, soonest first
@@ -93,19 +92,25 @@ protocol slots in via `~/.config/tasks/config`.
 GTD and Covey's Important/Urgent matrix aren't conventions you're trusted to
 maintain; the tooling enforces them. Dating an `INBOX` item promotes it to
 `TODO` (a date means you've processed it). Completing a recurring task rolls
-its date forward instead of closing it. `scheduled` is the available-from date:
-future work stays out of active views until that day, while `deadline` remains
-the separate due date. Someday/Maybe is an indefinite On Hold marker with no
+its date forward instead of closing it. `scheduled` is the available-from value:
+future work stays out of active views until that date or exact time, while
+`deadline` remains the separate due value. Both accept all-day dates, floating
+local times, or fixed IANA zones. Someday/Maybe is an indefinite On Hold marker with no
 automatic release. The quadrant view computes urgency from your configured
 window. See [`docs/conventions.md`](docs/conventions.md) for the full format and
 methodology spec.
 
-### No dependencies for CLI and TUI
+### One shared time-zone runtime
 
-Ruby 3.4 or Ruby 4.x stdlib only — the CLI, the TUI, its theme engine, and the embedded
-`TermForm` editor component. No gems to install, no bundler, no version
-conflicts with whatever else is on your machine. The optional HTTP API has its
-own Bundler-isolated Rack/Puma runtime and never enters those boot paths.
+The CLI and TUI use TZInfo 2.x so named zones, daylight-saving gaps, and folds
+behave the same on every surface. Install the bundle once:
+
+```sh
+bundle install
+```
+
+Rack, Puma, and OpenAPI remain isolated to the HTTP boot path. Starting the CLI
+or TUI does not load them.
 
 ## Where your tasks live
 
@@ -123,6 +128,29 @@ Resolution order (CLI and TUI alike): `TASKS_FILE`/`TASKS_ARCHIVE` env vars,
 then `TASKS_DIR`, then the config file (`dir = …`, or per-file `file = …` /
 `archive = …`), then the repo root. Env vars make one-off sandboxes easy:
 `TASKS_FILE=/tmp/scratch.jsonl tasks capture "test"`.
+
+Time-zone settings live in the same config:
+
+```ini
+timezone = America/Los_Angeles
+time_format = 12
+```
+
+`TASKS_TIMEZONE` overrides the configured zone. `tasks config` prints the
+effective zone, its source, the 12/24-hour preference, and the loaded tzdb.
+Floating times use that zone; fixed values retain their stored IANA zone.
+
+Schema v2 adds optional time metadata to the existing date fields. Before using
+a v1 task store with this release, preview and run the checked migration:
+
+```sh
+tasks migrate --dry-run
+tasks migrate
+```
+
+The migration changes only the meta version and writes `.v1.bak` copies of the
+live and existing archive files. It is idempotent. Older binaries refuse schema
+v2, so keep those backups until every machine has upgraded.
 
 ### Git sync across devices
 
@@ -173,6 +201,7 @@ summary of what it did:
 ```sh
 tasks -p "close the Drew review task and push the Denver flight deadline to next Friday"
 tasks -p "defer the Fox task four days" # hides it for four days; deadline is unchanged
+tasks due "customer call" "tomorrow 5pm" --timezone Europe/London
 tasks -p --provider hermes "capture: renew passport"   # a local Ollama-backed harness
 ```
 
@@ -226,7 +255,7 @@ alt-↓/alt-j move a subtree down among siblings in the unfiltered Outline view
 > / <      indent under the preceding sibling / outdent after the parent (Outline)
 return     open the read-only task detail panel; e edits it in place
 c d r      complete · reschedule deadline · recur (weekly, 2w, off)
-z Z J K    defer (date/someday/now) · show unavailable · lower / raise priority
+z Z J K    defer (date/time/someday/now) · show unavailable · lower / raise priority
 /          live text filter; enter keeps it, esc clears
 u ctrl-r   undo / redo — the same journal the CLI uses
 o y p      open task link · yank ref / markdown · paste ref into the agent prompt
@@ -238,8 +267,9 @@ tab        focus the agent prompt
 Task editing is save-on-blur: moving between fields validates and saves,
 consecutive saves in one edit session coalesce into a single undo step, and if
 an external write changes the field you're editing, your buffer stays copyable
-and the save reports a conflict instead of clobbering either side. The editor
-is the embedded, stdlib-only `TermForm` component
+and the save reports a conflict instead of clobbering either side. Date rows
+save the date, time, floating/fixed mode, zone, and fold as one value. The editor
+is the embedded `TermForm` component
 (`ruby examples/term_form_demo.rb` shows it running with no task code loaded).
 
 The agent prompt runs asynchronously — the UI stays live while requests queue
@@ -275,6 +305,11 @@ request bodies are limited to 64 KiB, and DELETE accepts no request body. The
 complete wire contract is
 [`docs/api/openapi.yaml`](docs/api/openapi.yaml).
 
+Task JSON keeps `scheduled` and `deadline` as nullable ISO dates and adds
+nullable `scheduled_time` and `deadline_time` companions. A timed value changes
+availability, overdue state, and ordering at the exact minute. It does not send
+a reminder or notification.
+
 Named manager views, history/archive endpoints, events, static client hosting,
 authentication, and non-loopback serving are intentionally deferred.
 
@@ -289,8 +324,8 @@ bin/tasks check
 git diff --check
 ```
 
-The core suite is stdlib-only like the CLI and TUI. The separate Bundler-backed
-API gate validates route traffic against OpenAPI 3.1 and boots the real Puma
+The core suite does not load the web stack. The separate API gate validates
+route traffic against OpenAPI 3.1 and boots the real Puma
 entrypoint for cross-process locking, stale-write, undo, refresh-token, and
 invalid-store proof. Web dependencies are never required for `ruby test/all.rb`. Design
 decisions are recorded as ADRs in

@@ -49,6 +49,7 @@ bin/tasks capture "text"             # new INBOX item (see flags below)
 bin/tasks done "<ref>"               # mark DONE + closed date (cascades to open subtasks)
 bin/tasks cancel "<ref>"             # mark CANCELLED + closed date
 bin/tasks due "<ref>" fri            # set/replace deadline (INBOX → TODO)
+bin/tasks due "<ref>" "tomorrow 5pm" --timezone Europe/London
 bin/tasks schedule "<ref>" +3        # set/replace available-from/start date
 bin/tasks undate "<ref>"             # remove dates; --kind deadline|scheduled
 bin/tasks state "<ref>" WAITING      # any state; DONE/CANCELLED manage closed
@@ -96,9 +97,12 @@ archive and is not the same as `cancel`). A task with subtasks needs `--cascade`
 Prefer `cancel`/`archive` for normal "done with it" cases; `delete` is for a
 true mistake, and `bin/tasks undo` reverses it.
 
-`scheduled` is the task's available-from/start/defer-until date; `deadline` is
-its separate due date. A future available-from date hides the task from active
-views until that day. Translate "defer TASK 4 days" to `defer "TASK" +4` and
+`scheduled` is the task's available-from/start/defer-until value; `deadline` is
+its separate due value. A future available-from value hides the task from active
+views until its exact boundary. A date without time is all-day; `tomorrow 9am`
+is floating in the configured zone; `--timezone Europe/London` makes a value
+fixed. `--fold later` selects the later instant in a DST overlap. Times change
+task semantics but do not create reminders. Translate "defer TASK 4 days" to `defer "TASK" +4` and
 "defer TASK until Friday" to `defer "TASK" fri`: this atomically sets
 `scheduled`, clears an own indefinite hold, and never moves `deadline`.
 
@@ -121,7 +125,8 @@ as one undo step. A recurring parent is the exception — it rolls forward and d
 not cascade. `cancel` never cascades; reopening a parent does not reopen its
 descendants.
 
-`capture` flags: `--due <date>`, `--scheduled <date>`, `--priority A|B|C`,
+`capture` flags: `--due <date/time>`, `--scheduled <date/time>`, per-field
+`--due-timezone`/`--scheduled-timezone`, floating and fold flags, `--priority A|B|C`,
 `--tag t` (repeatable), `--context @x` (repeatable), `--state STATE`,
 `--project "Heading"`, `--under <ref>`. A date makes it land as TODO (override
 with `--state`); `--project` files it under that section (default Inbox);

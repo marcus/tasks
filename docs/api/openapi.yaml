@@ -37,8 +37,10 @@ info:
       changes, so a pre-upgrade `If-Match` may receive a conservative `412`.
     - Dates are ISO `YYYY-MM-DD` strings or `null`. Friendly date parsing is a
       human CLI/TUI feature and is not part of this contract.
-    - `scheduled` is the available-from/start/defer-until date; `deadline` is
-      the separate due date. `deferred` means the task's own indefinite On Hold
+      Optional companion time objects preserve minute-precision civil time,
+      floating/fixed mode, IANA zone, and fold choice. A time does not create a reminder.
+    - `scheduled` is the available-from/start/defer-until value; `deadline` is
+      the separate due value. `deferred` means the task's own indefinite On Hold
       marker. Derived effective availability is ancestor-aware.
     - The server never returns filesystem paths, journal locations, or
       exception backtraces.
@@ -2360,7 +2362,10 @@ components:
         the location input (moving places the subtree as the last child of the
         new parent). `placement` supplies an exact parent/anchor location and
         cannot be combined with `parent_id`. Fields apply in
-        `TaskChangeset::FIELD_ORDER`.
+        `TaskChangeset::FIELD_ORDER`. A date without its companion time field
+        preserves existing time metadata. A time object replaces the whole
+        companion; time null makes the date all-day; date null clears both.
+        Non-null time with a null date is rejected.
       additionalProperties: false
       minProperties: 1
       allOf:
@@ -2457,7 +2462,8 @@ components:
       description: |
         Stable machine error code. The set is derived from `MutationResult`
         statuses (not_found, stale→stale_revision, invalid→validation_failed,
-        conflict, cycle, too_deep, store_invalid, unavailable) plus transport
+        conflict, cycle, too_deep, migration_required→schema_migration_required,
+        store_invalid, unavailable) plus transport
         errors (malformed_request, unsupported_media_type, payload_too_large,
         missing_precondition, forbidden_origin). `ok`/`no_change` are successes,
         not errors, and are not listed here.

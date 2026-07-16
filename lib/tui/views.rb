@@ -272,7 +272,7 @@ module Tui
     def agenda(items, today: Date.today, show_deferred: true, reader: nil, store: nil)
       query = view_query(:agenda, today: today, show_deferred: show_deferred, reader: reader || store)
       query.sort(query.select(items)).map do |i|
-        Row.new("#{agenda_stamp(i, today)} #{decorated_title(i)}#{badge(i, reader: reader || store, today: today)}", i)
+        Row.new("#{agenda_stamp(i, today, reader: reader || store)} #{decorated_title(i)}#{badge(i, reader: reader || store, today: today)}", i)
       end
     end
 
@@ -448,7 +448,7 @@ module Tui
       anchors.each do |anchor|
         append_subtree(rows, anchor, "", collapsed: collapsed, show_deferred: show_deferred,
                        reader: reader, today: today) do |item|
-          "#{agenda_stamp(item, today)} #{decorated_title(item)}#{badge(item, reader: reader, today: today)}"
+          "#{agenda_stamp(item, today, reader: reader)} #{decorated_title(item)}#{badge(item, reader: reader, today: today)}"
         end
       end
       rows
@@ -700,20 +700,26 @@ module Tui
 
     # The agenda date stamp for a dated item, or a blank column of the same
     # width for an undated rider so its title lines up under dated siblings.
-    def agenda_stamp(item, today)
+    def agenda_stamp(item, today, reader: nil)
       d = item.deadline || item.scheduled
       return " " * AGENDA_STAMP_W unless d
       kind = item.deadline ? "DUE " : "AVL "
       value_method = item.deadline ? :deadline_value : :scheduled_value
       value = item.respond_to?(value_method) && item.public_send(value_method)
+      if value&.local_time && reader&.respond_to?(:temporal_context)
+        projected = value.projected(reader.temporal_context)
+        d = projected.fetch(:date)
+        stamp = projected.fetch(:local)
+      else
+        stamp = value&.local_time || d.strftime("%m-%d")
+      end
       days = (d - today).to_i
       when_s = days.negative? ? "#{-days}d ago" : days.zero? ? "today" : "in #{days}d"
-      stamp = value&.local_time || d.strftime("%m-%d")
       T.paint(due_slot(days), "#{stamp.rjust(5)} #{kind} #{("(" + when_s + ")").ljust(8)}")
     end
 
     def next_body(item, today, reader: nil)
-      due = short_due(item, today)
+      due = short_due(item, today, reader: reader)
       "#{pri(item)}#{T.paint(:title, item.title)}#{due.empty? ? "" : "  #{due}"}#{badge(item, reader: reader, today: today)}"
     end
 
@@ -736,11 +742,18 @@ module Tui
       end
     end
 
-    def short_due(item, today)
+    def short_due(item, today, reader: nil)
       return "" unless item.deadline
-      days = (item.deadline - today).to_i
+      date = item.deadline
       value = item.respond_to?(:deadline_value) && item.deadline_value
-      label = value&.local_time || "#{item.deadline.month}/#{item.deadline.day}"
+      if value&.local_time && reader&.respond_to?(:temporal_context)
+        projected = value.projected(reader.temporal_context)
+        date = projected.fetch(:date)
+        label = projected.fetch(:local)
+      else
+        label = value&.local_time || "#{date.month}/#{date.day}"
+      end
+      days = (date - today).to_i
       T.paint(due_slot(days), label)
     end
 
@@ -771,9 +784,9 @@ module Tui
       availability = availability_for(item, reader: reader, today: today)
       case availability.availability_reason
       when :scheduled
-        b << T.paint(:muted, " ⏳ #{availability_date(item, availability, reader)&.strftime("%-m/%-d")}")
+        b << T.paint(:muted, " ⏳ #{availability_stamp(item, availability, reader)}")
       when :ancestor_scheduled
-        b << T.paint(:muted, " ⏳ #{availability_date(item, availability, reader)&.strftime("%-m/%-d")} ↑")
+        b << T.paint(:muted, " ⏳ #{availability_stamp(item, availability, reader)} ↑")
       when :on_hold
         b << T.paint(:muted, " ⏸")
       when :ancestor_on_hold
@@ -853,6 +866,22 @@ module Tui
       return item.scheduled if availability.availability_blocker_id == item.id
 
       reader&.respond_to?(:task_for) && reader.task_for(availability.availability_blocker_id)&.scheduled
+    end
+
+    def availability_stamp(item, availability, reader)
+      blocker = if availability.availability_blocker_id == item.id
+                  reader&.respond_to?(:task_for) ? reader.task_for(item) : item
+                elsif reader&.respond_to?(:task_for)
+                  reader.task_for(availability.availability_blocker_id)
+                end
+      value = blocker&.respond_to?(:scheduled_value) && blocker.scheduled_value
+      if value&.local_time
+        context = reader&.respond_to?(:temporal_context) && reader.temporal_context
+        projected = context ? value.projected(context) : { local: value.local_time }
+        return projected.fetch(:local)
+      end
+
+      availability_date(item, availability, reader)&.strftime("%-m/%-d")
     end
 
     def project_name(item, reader)
