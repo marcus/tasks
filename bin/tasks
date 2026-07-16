@@ -105,11 +105,24 @@ end
 # Prefers the DEADLINE; falls back to the SCHEDULED start date, marked with a
 # leading "~" to distinguish "start" from "due". Empty when the item has
 # neither. Colored by proximity (see due_color).
-def short_due(item, today: Date.today)
+def short_due(item, today: Date.today, context: nil)
   date = item.deadline || item.scheduled
   return "" unless date
   days  = (date - today).to_i
   label = "#{date.month}/#{date.day}"
+  value = item.deadline_value || item.scheduled_value
+  if value&.local_time
+    context ||= temporal_context
+    projected = value.projected(context)
+    hour, minute = projected.fetch(:local).split(":").map(&:to_i)
+    time = if PATHS.time_format == 24
+             format("%02d:%02d", hour, minute)
+           else
+             format("%d:%02d%s", (hour % 12).zero? ? 12 : hour % 12, minute, hour < 12 ? "a" : "p")
+           end
+    label = "#{projected.fetch(:date).month}/#{projected.fetch(:date).day} #{time}"
+    label << " #{value.timezone}" if value.fixed? && value.timezone != context.timezone_id
+  end
   label = "~#{label}" unless item.deadline # scheduled = soft start date
   color(label, due_color(days))
 end
@@ -199,11 +212,13 @@ end
 CAPTURE_USAGE = %(usage: tasks capture "text" [--due d] [--scheduled d] [--priority A|B|C] [--tag t] [--context @x] [--state STATE] [--project "Heading" | --under <ref>])
 
 def cmd_capture(args)
-  require_relative "../lib/tasks/dates"
-  today = Date.today
+  context = temporal_context
+  today = context.local_date
   tags = []
   contexts = []
   due = scheduled = priority = state = project = recur = under = nil
+  due_timezone = scheduled_timezone = due_fold = scheduled_fold = nil
+  due_floating = scheduled_floating = false
   dry = json = false
   positional = []
   i = 0
@@ -213,6 +228,12 @@ def cmd_capture(args)
     case (a = args[i])
     when "--due", "--deadline"    then due = need.(a)
     when "--scheduled", "--sched" then scheduled = need.(a)
+    when "--due-timezone"          then due_timezone = need.(a)
+    when "--scheduled-timezone"    then scheduled_timezone = need.(a)
+    when "--due-floating"          then due_floating = true
+    when "--scheduled-floating"    then scheduled_floating = true
+    when "--due-fold"              then due_fold = need.(a)
+    when "--scheduled-fold"        then scheduled_fold = need.(a)
     when "--priority", "--pri"    then priority = need.(a)
     when "--tag"                  then tags << need.(a)
     when "--context", "--ctx"     then contexts << need.(a)
@@ -232,6 +253,13 @@ def cmd_capture(args)
   # --under (nest under a task) and --project (file under a section) are two
   # different destinations — pick one.
   abort "can't combine --under and --project\n#{CAPTURE_USAGE}" if under && project
+  abort "due temporal modifiers require --due" if !due && (due_timezone || due_floating || due_fold)
+  abort "scheduled temporal modifiers require --scheduled" if !scheduled && (scheduled_timezone || scheduled_floating || scheduled_fold)
+  abort "--due-timezone and --due-floating are mutually exclusive" if due_timezone && due_floating
+  abort "--scheduled-timezone and --scheduled-floating are mutually exclusive" if scheduled_timezone && scheduled_floating
+  { "--due-fold" => due_fold, "--scheduled-fold" => scheduled_fold }.each do |flag, fold|
+    abort "#{flag} must be earlier or later" unless fold.nil? || %w[earlier later].include?(fold)
+  end
 
   cookie = nil
   if recur
@@ -242,8 +270,15 @@ def cmd_capture(args)
     scheduled ||= "today" unless due
   end
 
-  due_date = due && (Tasks::Dates.parse_when(due, today: today) || abort("unrecognized date: #{due}"))
-  scheduled_date = scheduled && (Tasks::Dates.parse_when(scheduled, today: today) || abort("unrecognized date: #{scheduled}"))
+  due_date = due && parse_temporal(
+    due, context: context,
+    options: { timezone: due_timezone, floating: due_floating, fold: due_fold == "later" ? 1 : 0 }
+  )
+  scheduled_date = scheduled && parse_temporal(
+    scheduled, context: context,
+    options: { timezone: scheduled_timezone, floating: scheduled_floating,
+               fold: scheduled_fold == "later" ? 1 : 0 }
+  )
 
   pri = priority&.upcase
   pri = nil if pri && %w[NONE CLEAR -].include?(pri)
@@ -282,7 +317,7 @@ def cmd_capture(args)
     priority: pri, tags: all_tags, state: st, project: project,
     parent_id: parent_id, recurrence: cookie
   )
-  result = application.create_task(command, today: today)
+  result = application.create_task(command, today: today, context: cli_operation_context(context))
   if result.too_deep?
     mutation_failed "would exceed max depth #{store.max_depth} (max_depth config / TASKS_MAX_DEPTH)"
   end
@@ -296,7 +331,8 @@ def cmd_capture(args)
                                         touched_ids: result.touched_ids, summary: result.summary)
   end
   mutation_result_failed(result, "could not capture (no #{(project || "Inbox").inspect} section found?)")
-  report_touched(result.touched_ids, json: json, today: today, read_snapshot: result.read_snapshot)
+  report_touched(result.touched_ids, json: json, today: today,
+                 read_snapshot: result.read_snapshot, temporal_context: context)
 end
 
 # Core of the state-transition verbs. `state` passes the target as a
@@ -306,7 +342,8 @@ end
 # resolution to closed tasks — always for `state` (so you can reopen a DONE
 # item), on demand elsewhere via --include-done.
 def change_state(args, usage:, resolve_closed:, to: nil, dry_verb: nil, archive_hint: false, recur_aware: false)
-  today = Date.today
+  context = temporal_context
+  today = context.local_date
   flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
   ref = rest.shift
   target = to || rest.join(" ").strip.upcase
@@ -334,7 +371,8 @@ def change_state(args, usage:, resolve_closed:, to: nil, dry_verb: nil, archive_
   end
   task_id = stable_id_for(item)
   result = patch_task_by_id(task_id, field: :state, value: target,
-                            label: "state → #{target}: #{item.title}", today: today)
+                            label: "state → #{target}: #{item.title}", today: today,
+                            context: cli_operation_context(context))
   mutation_result_failed(result, "failed to set state")
   if recurring_done && !flags["--json"]
     fresh = result.read_snapshot&.items&.find { |i| i.id == task_id }
@@ -385,7 +423,10 @@ def application
     store_factory: Tasks::StoreFactory.new(
       org: ORG, archive: ARCHIVE, links: PATHS.links,
       link_systems: PATHS.link_systems, max_depth: PATHS.max_depth
-    )
+    ),
+    temporal_context_factory: -> {
+      Tasks::TemporalContext.capture(timezone: PATHS.timezone, time_format: PATHS.time_format)
+    }
   )
 end
 
@@ -418,7 +459,7 @@ PATCH_SNAPSHOT_UNSET = Object.new.freeze
 # refs that are absent at resolution still exit 2 in resolve_ref.
 def patch_task_by_id(task_id, field:, value:, label:, expected: PATCH_EXPECTED_UNSET,
                      coalesce_key: nil, snapshot: PATCH_SNAPSHOT_UNSET, force: false,
-                     today: Date.today)
+                     today: Date.today, context: nil)
   snapshot = application.edit_snapshot(task_id) if snapshot.equal?(PATCH_SNAPSHOT_UNSET)
   baseline = if expected.equal?(PATCH_EXPECTED_UNSET)
                snapshot && patch_expected(snapshot, field)
@@ -428,7 +469,7 @@ def patch_task_by_id(task_id, field:, value:, label:, expected: PATCH_EXPECTED_U
   patch = Tasks::TaskPatch.new(id: task_id, field: field, value: value,
                                expected: baseline, history_label: label,
                                coalesce_key: coalesce_key, force: force)
-  result = application.patch_task(patch, today: today)
+  result = application.patch_task(patch, today: today, context: context)
   return result unless result.not_found?
 
   Tasks::MutationResult.new(status: :stale, snapshot: result.snapshot,
@@ -441,12 +482,12 @@ end
 # defer and activate intentionally own both availability fields, so two
 # independent patches would expose an intermediate state and consume two undo
 # entries.
-def changeset_task_by_id(task_id, changes:, label:, today:, snapshot: nil)
+def changeset_task_by_id(task_id, changes:, label:, today:, snapshot: nil, context: nil)
   snapshot ||= application.edit_snapshot(task_id)
   return Tasks::MutationResult.new(status: :stale) unless snapshot
 
   changeset = Tasks::TaskChangeset.from(snapshot, changes: changes, history_label: label)
-  result = application.update_task(changeset, today: today)
+  result = application.update_task(changeset, today: today, context: context)
   return result unless result.not_found?
 
   Tasks::MutationResult.new(status: :stale, snapshot: result.snapshot,
@@ -545,7 +586,10 @@ def item_json(item, task: nil)
     tags: src.tags.reject { |tag| tag.start_with?("@") },
     contexts: src.contexts,
     deferred: src.deferred?,
-    scheduled: src.scheduled&.iso8601, deadline: src.deadline&.iso8601,
+    scheduled: src.scheduled&.iso8601,
+    scheduled_time: task&.scheduled_time || item.scheduled_value&.time_metadata,
+    deadline: src.deadline&.iso8601,
+    deadline_time: task&.deadline_time || item.deadline_value&.time_metadata,
     recur: src.recur,
     line: item.line, source: src.source, headline: src.headline,
   }
@@ -553,7 +597,8 @@ def item_json(item, task: nil)
     row.merge!(
       available: task.available?,
       availability_reason: task.availability_reason.to_s,
-      availability_blocker_id: task.availability_blocker_id
+      availability_blocker_id: task.availability_blocker_id,
+      available_at: task.available_at
     )
   end
   row
@@ -600,9 +645,9 @@ end
 # Stable ids survive retitles and tree moves, and cascade results carry every
 # affected id. The CLI JSON keeps its historical line field as presentation,
 # never as a mutation locator.
-def report_touched(ids, json:, today: Date.today, read_snapshot: nil, extra: nil)
+def report_touched(ids, json:, today: Date.today, read_snapshot: nil, extra: nil, temporal_context: nil)
   if read_snapshot
-    query = Tasks::TaskQueries.new(read_snapshot, today: today)
+    query = Tasks::TaskQueries.new(read_snapshot, today: today, temporal_context: temporal_context)
     items = Array(ids)
            .map { |id| read_snapshot.items.find { |item| item.id == id } }
            .compact.sort_by(&:line)
@@ -614,7 +659,8 @@ def report_touched(ids, json:, today: Date.today, read_snapshot: nil, extra: nil
   end
   if json
     require "json"
-    query ||= Tasks::TaskQueries.new(store.read_snapshot, today: today)
+    query ||= Tasks::TaskQueries.new(store.read_snapshot, today: today,
+                                     temporal_context: temporal_context)
     payload = { touched: items.map { |item| item_json(item, task: query.task(item)) } }
     payload.merge!(extra) if extra
     puts payload.to_json
@@ -635,31 +681,33 @@ end
 
 # Shared implementation for `due` (DEADLINE) and `schedule` (SCHEDULED).
 def cmd_set_date(args, kind:, usage:)
-  require_relative "../lib/tasks/dates"
-  today = Date.today
+  args = args.dup
+  context = temporal_context
+  today = context.local_date
   key = kind == :scheduled ? "SCHEDULED" : "DEADLINE"
+  temporal_options = extract_temporal_options(args)
   flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
   ref = rest.shift
   date_str = rest.join(" ")
   abort %(usage: #{usage}) if ref.nil? || date_str.strip.empty?
-  date = Tasks::Dates.parse_when(date_str, today: today)
-  abort "unrecognized date: #{date_str}" unless date
+  date = parse_temporal(date_str, context: context, options: temporal_options)
 
   item = resolve_ref(ref, include_done: flags["--include-done"])
   task_id = stable_id_for(item)
   if flags["--dry-run"]
-    puts "would set #{key} <#{date.iso8601} #{date.strftime("%a")}> on: #{item_headline(item)}"
+    puts "would set #{key} <#{temporal_label(date)}> on: #{item_headline(item)}"
     return
   end
   result = patch_task_by_id(task_id, field: kind, value: date,
-                            label: "#{key.downcase} → #{date.iso8601}: #{item.title}", today: today)
+                            label: "#{key.downcase} → #{temporal_label(date)}: #{item.title}",
+                            today: today, context: cli_operation_context(context))
   mutation_result_failed(result, "failed to set #{key.downcase}")
   report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"],
-                 today: today, read_snapshot: result.read_snapshot)
+                 today: today, read_snapshot: result.read_snapshot, temporal_context: context)
 end
 
-def cmd_due(args)      = cmd_set_date(args, kind: :deadline,  usage: "tasks due <ref> <date>")
-def cmd_schedule(args) = cmd_set_date(args, kind: :scheduled, usage: "tasks schedule <ref> <date>")
+def cmd_due(args)      = cmd_set_date(args, kind: :deadline,  usage: "tasks due <ref> <date-or-date-time>")
+def cmd_schedule(args) = cmd_set_date(args, kind: :scheduled, usage: "tasks schedule <ref> <date-or-date-time>")
 
 def cmd_priority(args)
   flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
@@ -969,8 +1017,8 @@ end
 # own-field override is used only for dry-run; ancestor precedence still comes
 # from Tasks::TaskQueries rather than being duplicated in the CLI.
 def availability_context(task_id, today:, read_snapshot:, deferred: PATCH_EXPECTED_UNSET,
-                         scheduled: PATCH_EXPECTED_UNSET)
-  query = Tasks::TaskQueries.new(read_snapshot, today: today)
+                         scheduled: PATCH_EXPECTED_UNSET, temporal_context: nil)
+  query = Tasks::TaskQueries.new(read_snapshot, today: today, temporal_context: temporal_context)
   item = query.snapshot.items.find { |candidate| candidate.id == task_id }
   mutation_failed "task changed before availability could be read" unless item
   availability = if deferred.equal?(PATCH_EXPECTED_UNSET) && scheduled.equal?(PATCH_EXPECTED_UNSET)
@@ -1001,10 +1049,10 @@ end
 def print_availability_change(task_id, today:, own_text:, dry_run: false,
                               read_snapshot:,
                               deferred: PATCH_EXPECTED_UNSET,
-                              scheduled: PATCH_EXPECTED_UNSET)
+                              scheduled: PATCH_EXPECTED_UNSET, temporal_context: nil)
   query, _item, availability = availability_context(
     task_id, today: today, read_snapshot: read_snapshot,
-    deferred: deferred, scheduled: scheduled
+    deferred: deferred, scheduled: scheduled, temporal_context: temporal_context
   )
   puts "#{dry_run ? "would " : ""}#{own_text} — #{availability_summary(query, availability)}"
 end
@@ -1013,21 +1061,24 @@ end
 # hold atomically. With no date it preserves the historical indefinite hold;
 # `someday` is the clearer canonical spelling for that operation.
 def cmd_defer(args, someday: false)
-  require_relative "../lib/tasks/dates"
-  today = Date.today
+  args = args.dup
+  context = temporal_context
+  today = context.local_date
+  temporal_options = extract_temporal_options(args)
   flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
   ref = rest.shift
   date_str = rest.join(" ").strip
   usage = someday ? "tasks someday <ref>" : "tasks defer <ref> [date]"
   abort %(usage: #{usage}) if ref.nil? || ref.strip.empty? || (someday && !date_str.empty?)
+  abort "temporal modifiers require a date" if date_str.empty? && temporal_options[:modified]
 
   date = unless date_str.empty?
-           Tasks::Dates.parse_when(date_str, today: today) || abort("unrecognized date: #{date_str}")
+           parse_temporal(date_str, context: context, options: temporal_options)
          end
   item = resolve_ref(ref, include_done: flags["--include-done"])
   task_id = stable_id_for(item)
   changes = date ? { deferred: false, scheduled: date } : { deferred: true }
-  own_text = date ? %(defer "#{item.title}" until #{date.iso8601}) :
+  own_text = date ? %(defer "#{item.title}" until #{temporal_label(date)}) :
                     %(put "#{item.title}" on hold (Someday/Maybe))
 
   if flags["--dry-run"]
@@ -1036,28 +1087,30 @@ def cmd_defer(args, someday: false)
       task_id, today: today, own_text: own_text, dry_run: true,
       read_snapshot: read_snapshot,
       deferred: changes.fetch(:deferred),
-      scheduled: changes.fetch(:scheduled, PATCH_EXPECTED_UNSET)
+      scheduled: changes.fetch(:scheduled, PATCH_EXPECTED_UNSET), temporal_context: context
     )
     return
   end
 
-  label = date ? "defer until #{date.iso8601}: #{item.title}" : "someday: #{item.title}"
-  result = changeset_task_by_id(task_id, changes: changes, label: label, today: today)
+  label = date ? "defer until #{temporal_label(date)}: #{item.title}" : "someday: #{item.title}"
+  result = changeset_task_by_id(task_id, changes: changes, label: label, today: today,
+                                context: cli_operation_context(context))
   mutation_result_failed(result, "failed to defer")
   mutation_failed "defer succeeded without a result snapshot" unless result.read_snapshot
   if flags["--json"]
     report_touched(result_touched_ids(result, fallback: task_id), json: true, today: today,
-                   read_snapshot: result.read_snapshot)
+                   read_snapshot: result.read_snapshot, temporal_context: context)
   else
     print_availability_change(task_id, today: today, own_text: own_text,
-                              read_snapshot: result.read_snapshot)
+                              read_snapshot: result.read_snapshot, temporal_context: context)
   end
 end
 
 # Make the task available now: remove its own indefinite marker and clear only
 # a future available-from date. A past/today date remains as useful history.
 def cmd_activate(args)
-  today = Date.today
+  context = temporal_context
+  today = context.local_date
   flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
   ref = rest.shift
   abort %(usage: tasks activate <ref>) if ref.nil? || ref.strip.empty? || !rest.empty?
@@ -1066,7 +1119,12 @@ def cmd_activate(args)
   task_id = stable_id_for(item)
   snapshot = application.edit_snapshot(task_id)
   mutation_failed "task changed before activation" unless snapshot
-  scheduled = snapshot.scheduled && snapshot.scheduled > today ? nil : snapshot.scheduled
+  scheduled_value = item.scheduled_value
+  scheduled = if scheduled_value && scheduled_value.release_instant(context) > context.now
+                nil
+              else
+                scheduled_value || snapshot.scheduled
+              end
   changes = { activate: true }
   own_text = %(activate "#{item.title}")
 
@@ -1074,23 +1132,23 @@ def cmd_activate(args)
     print_availability_change(
       task_id, today: today, own_text: own_text, dry_run: true,
       read_snapshot: store.read_snapshot,
-      deferred: false, scheduled: scheduled
+      deferred: false, scheduled: scheduled, temporal_context: context
     )
     return
   end
 
   result = changeset_task_by_id(
     task_id, changes: changes, label: "activate: #{item.title}", today: today,
-    snapshot: snapshot
+    snapshot: snapshot, context: cli_operation_context(context)
   )
   mutation_result_failed(result, "failed to activate")
   mutation_failed "activate succeeded without a result snapshot" unless result.read_snapshot
   if flags["--json"]
     report_touched(result_touched_ids(result, fallback: task_id), json: true, today: today,
-                   read_snapshot: result.read_snapshot)
+                   read_snapshot: result.read_snapshot, temporal_context: context)
   else
     print_availability_change(task_id, today: today, own_text: own_text,
-                              read_snapshot: result.read_snapshot)
+                              read_snapshot: result.read_snapshot, temporal_context: context)
   end
 end
 
@@ -1183,6 +1241,51 @@ def extract_value(args, flag)
   args.delete_at(idx + 1)
   args.delete_at(idx)
   val
+end
+
+def temporal_context
+  now = if ENV["TASKS_TEST_TODAY_SEQUENCE"]
+          date = Date.today
+          Time.utc(date.year, date.month, date.day, 12)
+        else
+          Time.now.utc
+        end
+  Tasks::TemporalContext.new(now: now, timezone: PATHS.timezone, time_format: PATHS.time_format)
+end
+
+def cli_operation_context(context)
+  Tasks::OperationContext.new(operation_id: "cli_#{SecureRandom.hex(8)}", source: :cli,
+                              temporal_context: context)
+end
+
+def extract_temporal_options(args, timezone_flag: "--timezone", floating_flag: "--floating",
+                             fold_flag: "--fold")
+  timezone = extract_value(args, timezone_flag)
+  fold_name = extract_value(args, fold_flag)
+  floating = !!args.delete(floating_flag)
+  abort "#{timezone_flag} and #{floating_flag} are mutually exclusive" if timezone && floating
+  unless fold_name.nil? || %w[earlier later].include?(fold_name)
+    abort "#{fold_flag} must be earlier or later"
+  end
+  { timezone: timezone, floating: floating, fold: fold_name == "later" ? 1 : 0,
+    modified: !!(timezone || floating || fold_name) }
+end
+
+def parse_temporal(expression, context:, options: {})
+  require_relative "../lib/tasks/temporal_parser"
+  Tasks::TemporalParser.parse(expression, today: context.local_date, context: context,
+                              timezone: options[:timezone], floating: options[:floating],
+                              fold: options.fetch(:fold, 0)) || abort("unrecognized date: #{expression}")
+rescue ArgumentError, Tasks::Timezones::Error => e
+  abort e.message
+end
+
+def temporal_label(value)
+  text = +value.date.iso8601
+  text << " #{value.local_time}" if value.local_time
+  text << " #{value.timezone}" if value.timezone
+  text << " (later fold)" if value.fold == 1
+  text
 end
 
 MOVE_USAGE = %(tasks move <ref> ("Section" | --under <ref> | --top | ["Section" | --under <ref>] --before <ref>))
@@ -1651,6 +1754,9 @@ def cmd_config(args)
            urgent_days: PATHS.urgent_days,
            max_depth: PATHS.max_depth,
            theme: PATHS.theme, colors: PATHS.colors,
+           timezone: PATHS.timezone, time_format: PATHS.time_format,
+           tzdb_version: Tasks::Timezones.tzdb_version,
+           timezone_fallback_warning: PATHS.timezone_fallback_warning,
            links: PATHS.links, link_systems: PATHS.link_systems,
            prompt_facts: PATHS.prompt_facts,
            sources: PATHS.sources,
@@ -1664,6 +1770,10 @@ def cmd_config(args)
     puts "urgent_days: #{PATHS.urgent_days}  #{dim("(#{PATHS.sources[:urgent_days]})")}"
     puts "max_depth:   #{PATHS.max_depth}  #{dim("(#{PATHS.sources[:max_depth]})")}"
     puts "theme:       #{PATHS.theme}  #{dim("(#{PATHS.sources[:theme]})")}"
+    puts "timezone:    #{PATHS.timezone}  #{dim("(#{PATHS.sources[:timezone]})")}"
+    puts "time_format: #{PATHS.time_format}  #{dim("(#{PATHS.sources[:time_format]})")}"
+    puts "tzdb:        #{Tasks::Timezones.tzdb_version}"
+    warn "warning: host time zone could not be detected; using Etc/UTC" if PATHS.timezone_fallback_warning
     puts "colors:      #{PATHS.colors.map { |k, v| "#{k}=#{v}" }.join(" · ")}" unless PATHS.colors.empty?
     # The link namespaces are the debugging surface for "why doesn't my
     # shorthand expand?" — show what actually resolved.
@@ -1671,6 +1781,28 @@ def cmd_config(args)
     PATHS.link_systems.each { |n, h| puts "system.#{n}: #{h}" }
     PATHS.prompt_facts.each { |n, on| puts "prompt.#{n}: #{on ? "on" : "off"}" }
     puts "config:      #{PATHS.config_file}#{File.file?(PATHS.config_file) ? "" : dim(" (not present)")}"
+  end
+end
+
+def cmd_migrate(args)
+  flags, rest = take_flags(args, "--dry-run", "--json")
+  abort "usage: tasks migrate [--dry-run] [--json]" unless rest.empty?
+  result = store.migrate_schema!(dry_run: flags["--dry-run"])
+  if flags["--json"]
+    require "json"
+    puts JSON.generate(status: result.status, from_version: result.from_version,
+                       to_version: result.to_version, files: result.files,
+                       backups: result.backups, errors: result.errors)
+  elsif result.status == :dry_run
+    puts "would migrate #{result.files.join(" and ")} from schema v1 to v#{result.to_version}"
+  elsif result.status == :already_current
+    puts "schema already at v#{result.to_version}"
+  elsif result.ok?
+    puts "migrated #{result.files.join(" and ")} to schema v#{result.to_version}"
+    result.backups.each { |path| puts "backup: #{path}" }
+  else
+    warn(result.errors.join("\n"))
+    exit 1
   end
 end
 
@@ -1984,6 +2116,7 @@ HELP = <<~USAGE
     undo                     revert the last mutation (shared with the TUI)
     redo                     replay the last undone mutation
     config                   show resolved file paths and their sources
+    migrate                  migrate schema v1 stores to v2 (--dry-run first)
     -p "..."                 hand a request to an LLM agent
                              (-p [--provider N] [--model N] "...")
     help      -h             this message
@@ -1998,7 +2131,8 @@ HELP = <<~USAGE
   Link shorthands: link.jira = https://acme.atlassian.net/browse/%s in the config
   lets notes say jira:OPS-1234; system.gitlab = gitlab.acme.io names custom hosts.
 
-  Dates: 2026-07-15 · 07-15 · 7/15 · fri · today · tomorrow · +3
+  Dates: 2026-07-15 · 07-15 · fri · today · tomorrow · +3 · tomorrow 9am
+  Timed values: --timezone Europe/London · --floating · --fold earlier|later
   Refs:  a case-insensitive title substring, an exact id, or L<line>.
   Full spec: docs/cli-spec.md
 USAGE
@@ -2042,6 +2176,7 @@ when "open", "o"      then cmd_open(ARGV[1..])
 when "list", "l"      then cmd_list(ARGV[1..])
 when "check", "k"     then cmd_check(ARGV[1..])
 when "config"         then cmd_config(ARGV[1..])
+when "migrate"        then cmd_migrate(ARGV[1..])
 when "help", "-h", "--help" then cmd_help
 else
   warn "unknown command: #{ARGV[0].inspect}\n\n" if ARGV[0]

@@ -16,7 +16,7 @@ class TestCliMutations < Minitest::Test
 
     refute_match(/store\.patch_task!/, source)
     assert_match(/application\.edit_snapshot\(task_id\)/, source)
-    assert_match(/application\.patch_task\(patch, today: today\)/, source)
+    assert_match(/application\.patch_task\(patch, today: today, context: context\)/, source)
   end
 
   # -- set_date! (backs `due`) ------------------------------------------------
@@ -1381,6 +1381,70 @@ class TestCliMutations < Minitest::Test
       assert_equal "2026-07-15", record_for(org, title: "Water the plants")["scheduled"]
       assert_equal false, task.fetch("available")
       assert_equal "scheduled", task.fetch("availability_reason")
+    end
+  end
+
+  def test_cli_due_supports_floating_and_fixed_time_values
+    run_cli("due", "Book flight", "2026-07-20 5pm", "--timezone", "Europe/London", "--json",
+            env: { "TASKS_TIMEZONE" => "America/Los_Angeles" }) do |org, out, err, st|
+      assert st.success?, err
+      record = record_for(org, title: "Book flight in Concur")
+      assert_equal "2026-07-20", record["deadline"]
+      assert_equal({ "local" => "17:00", "timezone" => "Europe/London" }, record["deadline_time"])
+      time = JSON.parse(out).dig("touched", 0, "deadline_time")
+      assert_equal "2026-07-20T16:00:00Z", time.fetch("instant")
+      assert_equal "Europe/London", time.fetch("effective_timezone")
+    end
+
+    run_cli("schedule", "Book flight", "2026-07-20 9am", "--json",
+            env: { "TASKS_TIMEZONE" => "America/Los_Angeles" }) do |org, out, err, st|
+      assert st.success?, err
+      assert_equal({ "local" => "09:00" }, record_for(org, title: "Book flight in Concur")["scheduled_time"])
+      assert_equal "America/Los_Angeles",
+                   JSON.parse(out).dig("touched", 0, "scheduled_time", "effective_timezone")
+    end
+  end
+
+  def test_cli_temporal_flags_validate_dst_gap_and_fold
+    run_cli("due", "Book flight", "2026-03-08 2:30am", "--timezone", "America/Los_Angeles") do |org, _out, err, st|
+      refute st.success?
+      assert_match(/does not exist/, err)
+      assert_nil record_for(org, title: "Book flight in Concur")["deadline_time"]
+    end
+
+    run_cli("due", "Book flight", "2026-11-01 1:30am", "--timezone", "America/Los_Angeles",
+            "--fold", "later") do |org, _out, err, st|
+      assert st.success?, err
+      assert_equal 1, record_for(org, title: "Book flight in Concur").dig("deadline_time", "fold")
+    end
+  end
+
+  def test_cli_capture_supports_independent_temporal_modes
+    run_cli("capture", "Mixed clocks", "--scheduled", "2026-07-20 9am",
+            "--scheduled-timezone", "Asia/Tokyo", "--due", "2026-07-20 5pm",
+            "--due-floating", "--project", "Work") do |org, _out, err, st|
+      assert st.success?, err
+      record = record_for(org, title: "Mixed clocks")
+      assert_equal({ "local" => "09:00", "timezone" => "Asia/Tokyo" }, record["scheduled_time"])
+      assert_equal({ "local" => "17:00" }, record["deadline_time"])
+    end
+  end
+
+  def test_cli_migrate_dry_run_and_install
+    v1 = Tasks::Format.dump([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "section", "id" => "aa000001", "title" => "Work" },
+    ])
+    run_cli("migrate", "--dry-run", content: v1) do |org, out, err, st|
+      assert st.success?, err
+      assert_match(/would migrate/, out)
+      assert_equal 1, JSON.parse(File.foreach(org).first)["version"]
+    end
+    run_cli("migrate", content: v1) do |org, out, err, st|
+      assert st.success?, err
+      assert_match(/migrated/, out)
+      assert_equal 2, JSON.parse(File.foreach(org).first)["version"]
+      assert File.exist?("#{org}.v1.bak")
     end
   end
 
