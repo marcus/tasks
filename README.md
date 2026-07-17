@@ -265,10 +265,10 @@ c d r      complete · reschedule deadline · recur (weekly, 2w, off)
 z Z J K    defer (date/time/someday/now) · show unavailable · lower / raise priority
 /          live text filter; enter keeps it, esc clears
 u ctrl-r   undo / redo — the same journal the CLI uses
-o y p      open task link · yank ref / markdown · paste ref into the agent prompt
+o y p      open task link · yank stable id / markdown · paste id into the agent prompt
 x          archive sweep with a preview of the counts before confirming
 :          action palette — search every action available in context
-tab        focus the agent prompt
+tab        focus the agent prompt, including while the detail panel is open
 ```
 
 Task editing is save-on-blur: moving between fields validates and saves,

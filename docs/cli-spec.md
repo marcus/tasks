@@ -125,7 +125,9 @@ verifying `.gitattributes` selects `merge=tasksjsonl`. This is intentionally
 not an HTTP capability: it is local Git transport plumbing, not user-visible
 task behavior. See the root README for setup and audit-log details.
 
-**TUI interaction.** With no task panel open, `Tab` focuses the agent prompt.
+**TUI interaction.** `Tab` always focuses the agent prompt, including while a
+read-only task panel is open. `p` inserts the selected task's stable id into
+that prompt, and `y` copies the same stable id to the clipboard.
 `:` opens the searchable, context-aware action palette; typing filters the
 available actions, the arrow keys choose one, Return runs it, and Escape
 cancels. `@` opens a searchable context filter for GTD `@` tags (for example
@@ -142,11 +144,12 @@ view; list navigation stays active and refreshes the panel for each newly
 selected task. Return or Escape closes it. The existing `d` date and `r`
 recurrence quick actions remain available.
 
-**Editable task-panel behavior.** With a read-only
-task panel open, `Tab` enters editing at the first editable field and
-`Shift-Tab` enters at the last. In edit mode, those keys traverse in their
-respective directions. Leaving a changed field validates and immediately saves
-that semantic field before focus moves; an unchanged field moves without IO.
+**Editable task-panel behavior.** With a read-only task panel open, `e` enters
+editing at the first editable field and `Shift-Tab` enters at the last. `Tab`
+continues to focus the agent prompt. In edit mode, `Tab` and `Shift-Tab`
+traverse in their respective directions. Leaving a changed field validates and
+immediately saves that semantic field before focus moves; an unchanged field
+moves without IO.
 Validation errors and conflicts retain focus and the pending, copyable buffer.
 Opening a picker, scrolling, resizing the terminal, or resizing the panel is
 not blur and never saves.

@@ -878,7 +878,7 @@ module Tui
       when :modal_filter then modal_filter_key(k)
       when :filter then filter_key(k)
       else
-        if suspended_recovery_owns_input? && ["y", "\e", "\t"].include?(k)
+        if suspended_recovery_owns_input? && ["y", "\e"].include?(k)
           suspended_recovery_key(k)
         else
           list_key(k)
@@ -1049,9 +1049,7 @@ module Tui
     def move_subtree_down = reorder_selected(:down)
     def indent_subtree = reorder_selected(:indent)
     def outdent_subtree = reorder_selected(:outdent)
-    def focus_prompt
-      detail_panel? ? start_task_edit : @ui.mode = :prompt
-    end
+    def focus_prompt = @ui.mode = :prompt
     def resp_up        = scroll_resp(-5)
     def resp_down      = scroll_resp(5)
     def quit
@@ -1698,7 +1696,7 @@ module Tui
         footer_rows: layout.footer_size
       )
       flash("editing paused — resize to at least #{required_width}×#{required_height}; " \
-            "Tab resumes · #{@task_edit_message}")
+            "e resumes · #{@task_edit_message}")
     end
 
     def suspended_recovery_panel?
@@ -1739,7 +1737,7 @@ module Tui
                     end
       lines = [explanation, "Draft: #{editor.copy_value}"]
       lines << if canonical_view
-                 "switch view + Tab resumes · y copies · esc discards"
+                 "switch view + e resumes · y copies · esc discards"
                else
                  "y copies field · esc discards draft"
                end
@@ -1764,8 +1762,6 @@ module Tui
         @task_edit_message = nil
         close_panel
         flash("discarded local draft for paused task")
-      when "\t"
-        show_suspended_recovery_panel
       end
     end
 
@@ -1794,7 +1790,7 @@ module Tui
 
       if suspended_target_visible_in_current_rows?
         show_detail
-        flash("paused task draft selected — Tab resumes")
+        flash("paused task draft selected — e resumes")
       else
         show_suspended_recovery_panel
       end

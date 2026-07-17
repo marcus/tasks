@@ -387,7 +387,7 @@ class TestAppModals < Minitest::Test
         assert_equal :detail, panel(app).kind, "yank must not close the panel"
       end
       assert_equal 2, copied.size
-      assert_equal selected_title(app), copied[0]
+      assert_equal app.send(:current_item).id, copied[0]
       assert_includes copied[1], "## #{selected_title(app)}"
       assert_includes copied[1], "- state:"
     end
@@ -521,10 +521,10 @@ class TestAppModals < Minitest::Test
 
   def test_p_pastes_quoted_ref_into_prompt
     with_app do |app|
-      title = selected_title(app)
+      id = app.send(:current_item).id
       app.send(:handle_key, "p")
       assert_equal :prompt, mode(app)
-      assert_equal "\"#{title}\" ", app.instance_variable_get(:@input)
+      assert_equal "\"#{id}\" ", app.instance_variable_get(:@input)
     end
   end
 
@@ -580,12 +580,12 @@ class TestAppModals < Minitest::Test
     with_app do |app|
       app.instance_variable_get(:@input) << "complete"
       app.send(:handle_key, "\r")
-      title = selected_title(app)
+      id = app.send(:current_item).id
       app.send(:handle_key, "p")
       assert_equal :prompt, mode(app)
       assert_nil modal(app)
       assert_equal :detail, panel(app).kind
-      assert_equal "complete \"#{title}\" ", app.instance_variable_get(:@input)
+      assert_equal "complete \"#{id}\" ", app.instance_variable_get(:@input)
     end
   end
 

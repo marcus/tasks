@@ -283,23 +283,18 @@ class TestApp < Minitest::Test
   end
 
 
-  def test_detail_tab_and_shift_tab_enter_one_editor_at_first_and_last_fields
+  def test_detail_tab_focuses_prompt_while_shift_tab_enters_editor_at_last_field
     app_on(view: :agenda, select: "Book flight") do |app|
       app.send(:handle_key, "\r")
       assert ui(app).panel
 
       app.send(:handle_key, "\t")
-      editor = ui(app).task_editor
-      assert_equal :task_edit, ui(app).mode
-      assert_equal FIX[:flight], editor.target_id
-      assert_equal :title, editor.focused_key
-      assert_equal :task_edit, ui(app).panel.kind
-
-      app.send(:handle_key, "\x0f")
-      assert_equal :list, ui(app).mode
+      assert_equal :prompt, ui(app).mode
       assert_nil ui(app).task_editor
       assert_equal :detail, ui(app).panel.kind
 
+      app.send(:handle_key, "\e")
+      assert_equal :list, ui(app).mode
       app.send(:handle_key, "\e[Z")
       assert_equal :task_edit, ui(app).mode
       assert_equal :state, ui(app).task_editor.focused_key
@@ -331,7 +326,7 @@ class TestApp < Minitest::Test
   def test_editor_dispatch_precedes_list_prompt_and_colon_actions
     app_on(view: :agenda, select: "Book flight") do |app|
       app.send(:handle_key, "\r")
-      app.send(:handle_key, "\t")
+      app.send(:handle_key, "e")
       editor = ui(app).task_editor
       selected_id = ui(app).selected_id
 
@@ -348,7 +343,7 @@ class TestApp < Minitest::Test
   def test_task_editor_receives_one_unicode_bracketed_paste_event
     app_on(view: :agenda, select: "Book flight") do |app|
       app.send(:handle_key, "\r")
-      app.send(:handle_key, "\t")
+      app.send(:handle_key, "e")
       editor = ui(app).task_editor
       editor.form.focus(:body)
       before = File.binread(app.instance_variable_get(:@store).org)
@@ -374,7 +369,7 @@ class TestApp < Minitest::Test
   def test_multiline_unicode_notes_keep_exact_120_by_32_app_frame_geometry
     app_on(view: :agenda, select: "Book flight") do |app|
       app.send(:handle_key, "\r")
-      app.send(:handle_key, "\t")
+      app.send(:handle_key, "e")
       editor = ui(app).task_editor
       editor.form.focus(:body)
       editor.form.set_value(
@@ -404,7 +399,7 @@ class TestApp < Minitest::Test
   def test_exact_boundary_notes_use_two_panel_rows_in_default_and_mono_frames
     app_on(view: :agenda, select: "Book flight") do |app|
       app.send(:handle_key, "\r")
-      app.send(:handle_key, "\t")
+      app.send(:handle_key, "e")
       editor = ui(app).task_editor
       editor.form.focus(:body)
       layout = app.send(:screen_layout, width: 120, height: 32, panel: ui(app).panel)
@@ -438,7 +433,7 @@ class TestApp < Minitest::Test
   def test_ctrl_s_saves_in_place_and_ctrl_o_returns_to_read_panel
     app_on(view: :agenda, select: "Book flight") do |app|
       app.send(:handle_key, "\r")
-      app.send(:handle_key, "\t")
+      app.send(:handle_key, "e")
       editor = ui(app).task_editor
       editor.form.set_value(:title, "Book flight safely")
 
@@ -458,7 +453,7 @@ class TestApp < Minitest::Test
   def test_dirty_active_editor_ctrl_c_requires_visible_cancelable_confirmation
     app_on(view: :agenda, select: "Book flight") do |app|
       app.send(:handle_key, "\r")
-      app.send(:handle_key, "\t")
+      app.send(:handle_key, "e")
       editor = ui(app).task_editor
       editor.form.set_value(:title, "UNSAVED-ACTIVE-DRAFT")
       before = File.binread(app.instance_variable_get(:@store).org)
@@ -497,7 +492,7 @@ class TestApp < Minitest::Test
   def test_dirty_suspended_editor_q_requires_visible_cancelable_confirmation
     app_on(view: :agenda, select: "Book flight") do |app|
       app.send(:handle_key, "\r")
-      app.send(:handle_key, "\t")
+      app.send(:handle_key, "e")
       editor = ui(app).task_editor
       editor.form.set_value(:title, "UNSAVED-SUSPENDED-DRAFT")
       before = File.binread(app.instance_variable_get(:@store).org)
@@ -532,7 +527,7 @@ class TestApp < Minitest::Test
   def test_clean_active_and_suspended_editors_keep_immediate_quit_behavior
     app_on(view: :agenda, select: "Book flight") do |app|
       app.send(:handle_key, "\r")
-      app.send(:handle_key, "\t")
+      app.send(:handle_key, "e")
       refute ui(app).task_editor.dirty?
 
       app.send(:handle_key, "\x03")
@@ -543,7 +538,7 @@ class TestApp < Minitest::Test
 
     app_on(view: :agenda, select: "Book flight") do |app|
       app.send(:handle_key, "\r")
-      app.send(:handle_key, "\t")
+      app.send(:handle_key, "e")
       editor = ui(app).task_editor
       small = Struct.new(:winsize).new([7, 46])
       IO.stub(:console, small) { capture_io { app.send(:paint) } }
@@ -564,7 +559,7 @@ class TestApp < Minitest::Test
     }.each do |expected_mode, open_overlay|
       app_on(view: :agenda, select: "Book flight") do |app|
         app.send(:handle_key, "\r")
-        app.send(:handle_key, "\t")
+        app.send(:handle_key, "e")
         editor = ui(app).task_editor
         editor.form.set_value(:title, "#{expected_mode}-safe-draft")
         small = Struct.new(:winsize).new([7, 46])
@@ -603,7 +598,7 @@ class TestApp < Minitest::Test
   def test_dirty_editor_quit_confirmation_also_accounts_for_agent_queue
     app_on(view: :agenda, select: "Book flight") do |app|
       app.send(:handle_key, "\r")
-      app.send(:handle_key, "\t")
+      app.send(:handle_key, "e")
       ui(app).task_editor.form.set_value(:title, "unsaved with agents")
 
       queue = Object.new
@@ -629,7 +624,7 @@ class TestApp < Minitest::Test
   def test_panel_resize_preserves_entire_editor_and_performs_no_write
     app_on(view: :agenda, select: "Book flight") do |app|
       app.send(:handle_key, "\r")
-      app.send(:handle_key, "\t")
+      app.send(:handle_key, "e")
       editor = ui(app).task_editor
       editor.form.set_value(:title, "draft text")
       field = editor.form.field(:title)
@@ -654,7 +649,7 @@ class TestApp < Minitest::Test
   def test_terminal_resize_preserves_dirty_picker_session_without_write
     app_on(view: :agenda, select: "Book flight") do |app|
       app.send(:handle_key, "\r")
-      app.send(:handle_key, "\t")
+      app.send(:handle_key, "e")
       editor = ui(app).task_editor
       editor.form.focus(:deadline)
       editor.form.set_value(:deadline, Date.new(2026, 7, 20))
@@ -679,7 +674,7 @@ class TestApp < Minitest::Test
   def test_below_minimum_height_suspends_editor_and_reentry_preserves_draft
     app_on(view: :agenda, select: "Book flight") do |app|
       app.send(:handle_key, "\r")
-      app.send(:handle_key, "\t")
+      app.send(:handle_key, "e")
       editor = ui(app).task_editor
       panel = ui(app).panel
       editor.form.set_value(:title, "narrow draft")
@@ -703,6 +698,14 @@ class TestApp < Minitest::Test
       assert_match(/editing paused/, app.instance_variable_get(:@flash))
       assert_equal before, File.binread(app.instance_variable_get(:@store).org)
 
+      app.send(:handle_key, "\t")
+      assert_equal :prompt, ui(app).mode
+      assert_same editor, app.instance_variable_get(:@suspended_task_editor)
+      assert_nil ui(app).task_editor
+      assert_equal :detail, ui(app).panel.kind
+      app.send(:handle_key, "\e")
+      assert_equal :list, ui(app).mode
+
       # The invisible editor no longer captures list keys.
       original_id = ui(app).selected_id
       app.send(:handle_key, "j")
@@ -711,7 +714,7 @@ class TestApp < Minitest::Test
 
       app.send(:handle_key, "k")
       wide = Struct.new(:winsize).new([18, 80])
-      IO.stub(:console, wide) { app.send(:handle_key, "\t") }
+      IO.stub(:console, wide) { app.send(:handle_key, "e") }
       assert_equal :task_edit, ui(app).mode
       assert_same editor, ui(app).task_editor
       assert_same panel, ui(app).panel
@@ -727,7 +730,7 @@ class TestApp < Minitest::Test
       app_on(view: :agenda, select: "Book flight") do |app|
         app.send(:handle_key, "\r")
         console = Struct.new(:winsize).new([height, 46])
-        IO.stub(:console, console) { app.send(:handle_key, "\t") }
+        IO.stub(:console, console) { app.send(:handle_key, "e") }
         assert_equal :list, ui(app).mode, "46x#{height}"
         assert_nil ui(app).task_editor
         assert_equal :detail, ui(app).panel.kind
@@ -740,7 +743,7 @@ class TestApp < Minitest::Test
       console = Struct.new(:winsize).new([8, 46])
       captured = nil
       IO.stub(:console, console) do
-        app.send(:handle_key, "\t")
+        app.send(:handle_key, "e")
         Tui::Frame.stub(:build, ->(**args) { captured = args; Array.new(args[:height], "") }) do
           capture_io { app.send(:paint) }
         end
@@ -756,7 +759,7 @@ class TestApp < Minitest::Test
     app_on(view: :agenda, select: "Book flight") do |app|
       target_id = app.send(:current_item).id
       app.send(:handle_key, "\r")
-      app.send(:handle_key, "\t")
+      app.send(:handle_key, "e")
       editor = ui(app).task_editor
       editor.form.set_value(:title, "recover this deleted draft")
       small = Struct.new(:winsize).new([7, 46])
@@ -771,9 +774,9 @@ class TestApp < Minitest::Test
       assert_match(/Task no longer exists/, ui(app).panel.lines.first)
       assert_match(/cop(?:y|ies).*discard/, app.instance_variable_get(:@flash))
 
-      # Widening and Tab cannot activate or confirm the hidden missing session.
+      # Widening and explicit edit cannot activate or confirm the hidden missing session.
       wide = Struct.new(:winsize).new([18, 80])
-      IO.stub(:console, wide) { app.send(:handle_key, "\t") }
+      IO.stub(:console, wide) { app.send(:handle_key, "e") }
       assert_equal :list, ui(app).mode
       assert_match(/y copies.*esc discards/, app.instance_variable_get(:@flash))
 
@@ -791,7 +794,7 @@ class TestApp < Minitest::Test
 
       app.send(:handle_key, "\r")
       replacement_id = app.send(:current_item).id
-      IO.stub(:console, wide) { app.send(:handle_key, "\t") }
+      IO.stub(:console, wide) { app.send(:handle_key, "e") }
       assert_equal :task_edit, ui(app).mode
       refute_same editor, ui(app).task_editor
       assert_equal replacement_id, ui(app).task_editor.target_id
@@ -802,7 +805,7 @@ class TestApp < Minitest::Test
     app_on(view: :next, select: "Book flight") do |app|
       target_id = app.send(:current_item).id
       app.send(:handle_key, "\r")
-      app.send(:handle_key, "\t")
+      app.send(:handle_key, "e")
       editor = ui(app).task_editor
       editor.form.set_value(:title, "draft for externally done task")
       small = Struct.new(:winsize).new([7, 46])
@@ -822,6 +825,13 @@ class TestApp < Minitest::Test
       assert_match(/switch to outline/, ui(app).panel.lines.first)
       assert_equal :outline, app.send(:suspended_target_canonical_view)
 
+      app.send(:handle_key, "\t")
+      assert_equal :prompt, ui(app).mode
+      assert_same editor, app.instance_variable_get(:@suspended_task_editor)
+      assert_equal :suspended_task_edit, ui(app).panel.kind
+      app.send(:handle_key, "\e")
+      assert_equal :list, ui(app).mode
+
       before = File.binread(app.instance_variable_get(:@store).org)
       app.send(:handle_key, "\x13")
       assert_equal before, File.binread(app.instance_variable_get(:@store).org)
@@ -838,7 +848,7 @@ class TestApp < Minitest::Test
       app.send(:handle_key, "\r")
       replacement_id = app.send(:current_item).id
       wide = Struct.new(:winsize).new([18, 80])
-      IO.stub(:console, wide) { app.send(:handle_key, "\t") }
+      IO.stub(:console, wide) { app.send(:handle_key, "e") }
       assert_equal :task_edit, ui(app).mode
       refute_same editor, ui(app).task_editor
       assert_equal replacement_id, ui(app).task_editor.target_id
@@ -950,7 +960,7 @@ class TestApp < Minitest::Test
     app_on(view: :projects, select: "Book flight") do |app|
       target_id = app.send(:current_item).id
       app.send(:handle_key, "\r")
-      app.send(:handle_key, "\t")
+      app.send(:handle_key, "e")
       editor = ui(app).task_editor
       editor.form.set_value(:title, "moved task draft")
       small = Struct.new(:winsize).new([7, 46])
@@ -974,7 +984,7 @@ class TestApp < Minitest::Test
       assert_equal :detail, ui(app).panel.kind
 
       wide = Struct.new(:winsize).new([18, 80])
-      IO.stub(:console, wide) { app.send(:handle_key, "\t") }
+      IO.stub(:console, wide) { app.send(:handle_key, "e") }
       assert_same editor, ui(app).task_editor
       assert_equal target_id, ui(app).task_editor.target_id
       assert_equal "moved task draft", editor.edit_form.value(:title)
@@ -985,7 +995,7 @@ class TestApp < Minitest::Test
     app_on(view: :next, select: "Book flight") do |app|
       target_id = app.send(:current_item).id
       app.send(:handle_key, "\r")
-      app.send(:handle_key, "\t")
+      app.send(:handle_key, "e")
       editor = ui(app).task_editor
       editor.form.set_value(:title, "deferred task draft")
       small = Struct.new(:winsize).new([7, 46])
@@ -1007,7 +1017,7 @@ class TestApp < Minitest::Test
       assert_equal :detail, ui(app).panel.kind
 
       wide = Struct.new(:winsize).new([18, 80])
-      IO.stub(:console, wide) { app.send(:handle_key, "\t") }
+      IO.stub(:console, wide) { app.send(:handle_key, "e") }
       assert_same editor, ui(app).task_editor
       assert_equal "deferred task draft", editor.edit_form.value(:title)
     end
@@ -1016,7 +1026,7 @@ class TestApp < Minitest::Test
   def test_confirmation_is_cancelled_on_suspend_and_rearmed_visibly_after_resume
     app_on(view: :next, select: "Book flight") do |app|
       app.send(:handle_key, "\r")
-      app.send(:handle_key, "\t")
+      app.send(:handle_key, "e")
       editor = ui(app).task_editor
       editor.form.focus(:state)
       editor.form.set_value(:state, "DONE")
@@ -1035,7 +1045,7 @@ class TestApp < Minitest::Test
       assert_equal "NEXT", task.state
 
       wide = Struct.new(:winsize).new([18, 80])
-      IO.stub(:console, wide) { app.send(:handle_key, "\t") }
+      IO.stub(:console, wide) { app.send(:handle_key, "e") }
       assert_same editor, ui(app).task_editor
       assert_match(/Confirmation cancelled/, app.instance_variable_get(:@flash))
       assert_nil editor.pending_confirmation
@@ -1050,7 +1060,7 @@ class TestApp < Minitest::Test
   def test_revert_prompt_is_cancelled_on_suspend_and_must_be_rearmed
     app_on(view: :agenda, select: "Book flight") do |app|
       app.send(:handle_key, "\r")
-      app.send(:handle_key, "\t")
+      app.send(:handle_key, "e")
       editor = ui(app).task_editor
       editor.form.set_value(:title, "keep this draft")
       app.send(:handle_key, "\e")
@@ -1069,7 +1079,7 @@ class TestApp < Minitest::Test
 
       app.send(:handle_key, "\r")
       wide = Struct.new(:winsize).new([18, 80])
-      IO.stub(:console, wide) { app.send(:handle_key, "\t") }
+      IO.stub(:console, wide) { app.send(:handle_key, "e") }
       assert_same editor, ui(app).task_editor
       assert_match(/Discard prompt cancelled/, app.instance_variable_get(:@flash))
 
@@ -1086,7 +1096,7 @@ class TestApp < Minitest::Test
     app_on(view: :agenda, select: "Book flight") do |app|
       target_id = app.send(:current_item).id
       app.send(:handle_key, "\r")
-      app.send(:handle_key, "\t")
+      app.send(:handle_key, "e")
       editor = ui(app).task_editor
       editor.form.set_value(:title, "local conflicting title")
       rewrite_records(app) do |records|
@@ -1105,7 +1115,7 @@ class TestApp < Minitest::Test
       assert_match(/Edit conflict.*local value retained/,
                    app.instance_variable_get(:@flash))
       wide = Struct.new(:winsize).new([18, 80])
-      IO.stub(:console, wide) { app.send(:handle_key, "\t") }
+      IO.stub(:console, wide) { app.send(:handle_key, "e") }
       assert_same editor, ui(app).task_editor
       assert_match(/Edit conflict.*local value retained/,
                    app.instance_variable_get(:@flash))
@@ -1154,7 +1164,7 @@ class TestApp < Minitest::Test
     app_on(view: :next, select: "Book flight") do |app|
       target_id = app.send(:current_item).id
       app.send(:handle_key, "\r")
-      app.send(:handle_key, "\t")
+      app.send(:handle_key, "e")
       editor = ui(app).task_editor
       editor.form.focus(:state)
       editor.form.set_value(:state, "DONE")
@@ -1175,7 +1185,7 @@ class TestApp < Minitest::Test
     app_on(view: :agenda, select: "Book flight") do |app|
       target_id = app.send(:current_item).id
       app.send(:handle_key, "\r")
-      app.send(:handle_key, "\t")
+      app.send(:handle_key, "e")
       editor = ui(app).task_editor
       editor.form.set_value(:title, "local recoverable draft")
 
@@ -1862,7 +1872,7 @@ class TestApp < Minitest::Test
   def prepare_done_suspended_recovery(app, draft:)
     target_id = app.send(:current_item).id
     app.send(:handle_key, "\r")
-    app.send(:handle_key, "\t")
+    app.send(:handle_key, "e")
     editor = ui(app).task_editor
     editor.form.set_value(:title, draft)
     small = Struct.new(:winsize).new([7, 46])

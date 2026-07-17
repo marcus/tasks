@@ -89,7 +89,7 @@ class TestShortcuts < Minitest::Test
 
   def test_task_edit_bindings_are_complete_and_isolated
     assert_equal :start_task_edit, S.match("e", :detail).handler
-    assert_equal :start_task_edit, S.match("\t", :detail).handler
+    assert_equal :focus_prompt, S.match("\t", :detail).handler
     assert_equal :start_task_edit_last, S.match("\e[Z", :detail).handler
     assert_equal :task_edit_input, S.match("\t", :task_edit).handler
     assert_equal :task_edit_input, S.match("\x13", :task_edit).handler

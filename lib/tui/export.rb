@@ -7,8 +7,9 @@ module Tui
   module Export
     module_function
 
-    # A reference just specific enough to paste into the Claude prompt.
-    def reference(item) = item.title
+    # Stable id for pasting into the agent prompt. Exact ids stay unambiguous
+    # across duplicate titles and later retitles.
+    def reference(item) = item.id
 
     # The whole task as pasteable markdown. `notes` is the item's prose lines
     # (already filtered) from Store#body.

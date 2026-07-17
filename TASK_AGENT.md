@@ -67,6 +67,12 @@ candidate as `L<line>: <headline>` — retry with a longer substring or an `L<li
 Don't guess between candidates; if the request is genuinely ambiguous, stop and
 say which ones matched.
 
+When the user's prompt includes an exact task `id`, treat it as context for an
+existing task unless they explicitly ask to create a separate new task. Resolve
+the id with `bin/tasks show "<id>"` first, then apply requested changes to that
+task through the mutation commands below; do not capture the prompt as a new
+task merely because it also contains task text.
+
 ## How to act
 - Change task **data**, not the tool. Do not read, "fix", or edit the CLI's
   source (`bin/tasks`, anything under `lib/`) or other project code as a

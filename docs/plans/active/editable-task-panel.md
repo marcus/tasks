@@ -19,8 +19,9 @@ Related decisions:
 ## Outcome
 
 A task continues to open in the right panel as a calm, read-only detail view.
-When that panel is open, `Tab` changes it into an editable form and focuses the
-first field; `Shift-Tab` enters at the last field. Inside the form, moving away
+When that panel is open, `e` changes it into an editable form and focuses the
+first field; `Shift-Tab` enters at the last field. `Tab` always focuses the
+agent prompt. Inside the form, moving away
 from a changed field validates and saves that field before focus moves. Text
 inputs, multi-line notes, choices, token lists, and date pickers use consistent
 keyboard behavior and reflow as the panel changes width.
@@ -38,8 +39,8 @@ remains an internal API until another real use can test the design.
 
 - The panel is read-only by default. Editing is an explicit mode, not the only
   way to inspect a task.
-- `Tab` is contextual: panel closed means the existing agent prompt; task panel
-  open means enter editing; edit mode means save-on-blur and traverse.
+- `Tab` focuses the agent prompt in list and read-only detail modes; `e` enters
+  editing from the detail panel; edit-mode Tab means save-on-blur and traverse.
 - Persistence is save-on-blur, not save-on-keystroke and not whole-form Save.
 - `TermForm` is the working library name.
 - The panel has named width modes and directional resize actions. Form elements
@@ -118,8 +119,8 @@ remains only as a compatibility wrapper for the quick single-field flows.
 
 - `Return` opens the selected task in the current read-only detail panel.
 - Normal list movement may continue to update that read-only panel.
-- With no detail panel open, `Tab` continues to focus the agent prompt.
-- With a task detail panel open, `Tab` enters edit mode at the first editable
+- `Tab` focuses the agent prompt whether or not a detail panel is open.
+- With a task detail panel open, `e` enters edit mode at the first editable
   field and `Shift-Tab` enters at the last editable field.
 - An `Edit task` palette action exposes the same transition for discoverability.
 - `Ctrl-K` grows the task panel and `Ctrl-L` shrinks it, stepping through the
@@ -512,14 +513,15 @@ editing controller.
 ### `UiState`, dispatch, and shortcuts
 
 - Add `:task_edit` as an explicit legal `UiState` mode with one active session.
-- Change the existing list `Tab` handler to act contextually on `detail_panel?`;
-  do not register a second colliding list key.
+- Register the same prompt-focus `Tab` action in list and detail contexts;
+  editing remains explicit through `e`, `Shift-Tab`, or the palette action.
 - In edit mode, normalized events go to the session before list/prompt actions.
 - The `:` action palette is unreachable while a field owns focus (`:` is text
   there), so every edit-mode action needs a direct key and generated-help entry.
 - Global quit/cancel safety remains explicit.
 - Generated help and the action palette derive from the same registry/key map.
-- Agent prompt remains reachable with panel closed and by its palette action.
+- Agent prompt remains reachable with `Tab` in both list and detail modes and by
+  its palette action.
 
 ### Existing quick actions
 
@@ -543,7 +545,7 @@ independently. Phase 5 was the first change that needed both.
 ### Phase 0: approve contracts and freeze behavior — complete
 
 1. Review this plan and ADRs 0001–0004; mark accepted decisions accordingly.
-2. Update `docs/cli-spec.md` before code with contextual Tab, blur lifecycle,
+2. Update `docs/cli-spec.md` before code with prompt-focused Tab, blur lifecycle,
    field order/ownership, Escape, conflicts, resize, and undo behavior.
 3. Add characterization tests for current prompt Tab, detail panel, `d`/`r`,
    UI transitions, session persistence, Store history, external reload, and
@@ -601,7 +603,7 @@ without merging across an intervening mutation.
 ### Phase 5: integrate panel editing and responsive layout — complete
 
 1. Add `TaskEditForm` and `TaskEditorSession`.
-2. Add `:task_edit`, contextual Tab, edit actions, and generated help.
+2. Add `:task_edit`, explicit edit actions, prompt-focused Tab, and generated help.
 3. Add named panel widths, central clamping, content breakpoints, and focused-row
    scrolling to `ScreenLayout`/`RightPanel`.
 4. Wire fields in the documented order, including confirmation and conflicts.
@@ -665,8 +667,8 @@ quality gates are proven.
 
 ### TUI and layout
 
-- Panel-closed Tab still focuses the agent prompt.
-- Panel-open Tab/Shift-Tab enters first/last task field without shortcut
+- Tab focuses the agent prompt with the panel closed or open.
+- Panel-open `e`/Shift-Tab enters first/last task field without shortcut
   collisions; edit-mode traversal never leaks to prompt/list handlers.
 - Key decoding distinguishes a lone `Escape` from `Shift-Tab` (`\e[Z`) and
   other CSI sequences, including a sequence split across two reads.
@@ -713,9 +715,10 @@ for the changed slice run before the full suite.
 
 ## Acceptance criteria
 
-- A task opens read-only and enters editing only through the contextual action.
-- Panel-closed Tab retains agent-prompt behavior; panel-open and edit-mode Tab
-  implement entry and save-on-blur traversal.
+- A task opens read-only and enters editing only through `e`, `Shift-Tab`, or
+  the Edit task palette action.
+- Tab focuses the agent prompt from list or read mode; edit-mode Tab implements
+  save-on-blur traversal.
 - Every in-scope live-task property is keyboard editable in the right panel.
 - Invalid or conflicting fields retain focus and never partially overwrite data.
 - Each blur is one validated semantic Store patch; ordinary consecutive blur
@@ -746,7 +749,7 @@ for the changed slice run before the full suite.
 | Generic fields acquire task policy | Enforce dependency tests and inject parsers/options/validators through `TaskEditForm`. |
 | New Store paths diverge from CLI semantics | Extract fresh-record helpers and pin parity with existing CLI mutation tests. |
 | Resize produces competing widths or accidental save | One `ScreenLayout` authority and explicit non-blur resize events. |
-| Contextual Tab collides with the agent shortcut | Branch the existing handler on panel/edit state; test registry uniqueness and dispatch precedence. |
+| Detail-panel Tab collides with the agent shortcut | Bind detail-panel Tab to the same prompt action and keep edit entry explicit; test registry uniqueness and dispatch precedence. |
 | High-impact blur surprises the user | Put location/state late and require a concrete consequence confirmation. |
 | Early extraction freezes a weak API | Keep TermForm embedded, prove a standalone use, and defer gem publication. |
 
@@ -771,5 +774,5 @@ while a field owns focus; reverting an unsaved field takes a confirming second
   view, editing exits immediately to the read panel or list after selecting a
   deterministic nearby row. There is no inert completion screen.
 
-All other interaction decisions above—including read-by-default, contextual
+All other interaction decisions above—including read-by-default, prompt-focused
 Tab, save-on-blur, and `TermForm`—reflect the approved direction.

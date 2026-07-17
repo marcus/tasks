@@ -148,11 +148,18 @@ destination. `--before` cannot be combined with `--top`.
 Mutations accept `--dry-run` (print, don't write), `--json` (structured
 result), and dates in any form: `fri`, `+3`, `07-15`, `2026-07-15`, `today`.
 
-Ref rules: case-insensitive substring of the title, or `L<line>` for an exact
-headline line. Zero or multiple matches exit 2 and list candidates as
-`L<line>: <headline>` — retry with a longer substring or the `L<line>` ref.
+Ref rules: an exact 8-hex stable `id`, a case-insensitive substring of the
+title, or `L<line>` for an exact headline line. Zero or multiple matches exit 2
+and list candidates as `L<line>: <headline>` — retry with a longer substring or
+the `L<line>` ref.
 Don't guess between candidates; if the user's request is genuinely ambiguous,
 stop and ask, listing the matches.
+
+When the user's prompt includes an exact task `id`, treat it as context for an
+existing task unless they explicitly ask to create a separate new task. Resolve
+it with `bin/tasks show "<id>"` first, then apply requested changes to that
+task; do not capture the prompt as a new task merely because it also contains
+task text.
 
 ## Never hand-edit the file
 

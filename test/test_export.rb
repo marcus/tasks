@@ -14,9 +14,9 @@ class TestExport < Minitest::Test
     end
   end
 
-  def test_reference_is_the_title
+  def test_reference_is_the_stable_id
     ref = export_for("Book flight") { |i, _b| E.reference(i) }
-    assert_equal "Book flight in Concur", ref
+    assert_equal FIX[:flight], ref
   end
 
   def test_markdown_full_task
