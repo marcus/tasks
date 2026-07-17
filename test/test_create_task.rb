@@ -153,6 +153,7 @@ class TestCreateTask < Minitest::Test
       result = store.stub(:write_records, writer) { store.create_task!(command(notes: ["never persists"])) }
 
       assert_equal :store_invalid, result.status
+      assert result.rolled_back?
       assert_equal before, File.binread(org)
       assert Tasks::Check.check(org).ok?
       assert_equal [:empty], store.undo!

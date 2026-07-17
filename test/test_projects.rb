@@ -384,10 +384,11 @@ class TestProjects < Minitest::Test
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       archive = File.join(dir, "archive.jsonl")
-      File.write(org, dump_fixture([
+      initial = dump_fixture([
         { "type" => "meta", "version" => 2 },
         { "type" => "section", "id" => "eeee0001", "title" => "Inbox" },
-      ]))
+      ])
+      File.write(org, initial)
       app = Tasks::Application.new(
         store_factory: Tasks::StoreFactory.new(org: org, archive: archive)
       )
@@ -402,6 +403,41 @@ class TestProjects < Minitest::Test
       assert_equal [result.summary[:created_id], root["id"]], result.touched_ids,
                    "touched carries the new project and the auto-created root"
       assert Tasks::Check.check(org).ok?
+
+      undo_store = Tasks::Store.new(org: org, archive: archive)
+      assert_equal :ok, undo_store.undo!.first
+      assert_equal initial, File.read(org), "one undo removes both project and bootstrapped root"
+    end
+  end
+
+  def test_application_create_project_rolls_back_root_and_child_as_one_transaction
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      initial = dump_fixture([
+        { "type" => "meta", "version" => 2 },
+        { "type" => "section", "id" => "eeee0001", "title" => "Inbox" },
+      ])
+      File.write(org, initial)
+      store = Tasks::Store.new(org: org, archive: archive)
+      app = Tasks::Application.new(store_factory: -> { store })
+      original_writer = store.method(:write_records)
+      writes = 0
+      corrupting_writer = lambda do |path, records|
+        writes += 1
+        original_writer.call(path, records)
+        File.write(path, "{not json}\n", encoding: "UTF-8")
+      end
+
+      result = store.stub(:write_records, corrupting_writer) do
+        app.create_project(title: "Reviews", today: TODAY)
+      end
+
+      assert_equal 1, writes, "root and child are installed by one write"
+      assert_equal :store_invalid, result.status
+      assert result.rolled_back?
+      assert_equal initial, File.read(org), "failure leaves neither root nor child"
+      assert_equal [:empty], store.undo!
     end
   end
 
@@ -436,7 +472,7 @@ class TestProjects < Minitest::Test
   # maps to the :store_invalid failure other mutations produce, so the "run
   # `tasks check`" hint reaches the adapter. Mirrors the store's own rollback
   # idiom: an integer id readers survive but any post-write Check rejects.
-  def test_complete_project_maps_a_post_write_rollback_to_store_invalid
+  def test_project_mutations_map_post_write_rollbacks_to_store_invalid
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       archive = File.join(dir, "archive.jsonl")
@@ -456,7 +492,18 @@ class TestProjects < Minitest::Test
 
       result = app.complete_project("aaaa0002", today: TODAY)
       assert_equal :store_invalid, result.status
+      assert result.rolled_back?
       assert_equal before, File.read(org), "the rolled-back write leaves bytes untouched"
+
+      renamed = app.rename_project("aaaa0002", title: "Renamed")
+      assert_equal :store_invalid, renamed.status
+      assert renamed.rolled_back?
+      assert_equal before, File.read(org)
+
+      archived = app.archive_project("aaaa0002")
+      assert_equal :store_invalid, archived.status
+      assert archived.rolled_back?
+      assert_equal before, File.read(org)
     end
   end
 

@@ -78,9 +78,10 @@ module Tasks
       # how a sharing process spelled the path — same rationale as dir_for's key.
       @org = self.class.canonical(org)
       @limit = limit
-      # Coalescing is deliberately local to one live Journal/Store instance.
-      # Persisting this random scope on a keyed tip lets another instance share
-      # undo history without accidentally extending the prior edit session.
+      # Coalescing is deliberately local to one scope owner: by default this
+      # Journal/Store instance, or one Application lifetime when StoreFactory
+      # injects a shared scope into its per-operation Stores. Persisting the
+      # scope on a keyed tip prevents unrelated processes from extending it.
       @coalesce_scope = (coalesce_scope || SecureRandom.hex(16)).to_s.dup.freeze
     end
 

@@ -94,6 +94,20 @@ class TestDeleteTask < Minitest::Test
     end
   end
 
+  def test_post_write_check_failure_marks_the_delete_as_rolled_back
+    with_delete_store do |store, org, _archive|
+      before = File.binread(org)
+      result = store.stub(:post_write_failure, "injected check failure") do
+        store.delete_task!(command(id: IDS[:garden]))
+      end
+
+      assert_equal :store_invalid, result.status
+      assert result.rolled_back?
+      assert_equal before, File.binread(org)
+      assert_equal [:empty], store.undo!
+    end
+  end
+
   # -- descendant guard -------------------------------------------------------
 
   def test_parent_without_cascade_is_a_conflict_and_writes_nothing

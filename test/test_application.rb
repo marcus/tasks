@@ -62,7 +62,7 @@ class TestApplication < Minitest::Test
   end
 
   def test_patch_task_preserves_field_scoped_conflicts_without_exposing_a_store
-    with_application do |_org, _archive, app|
+    with_application do |org, _archive, app|
       snapshot = app.edit_snapshot(FIX[:flight])
       body_change = Tasks::TaskPatch.from(snapshot, field: :body, value: "A new note")
       assert_equal :ok, app.patch_task(body_change).status
@@ -74,6 +74,29 @@ class TestApplication < Minitest::Test
       task = app.get_task(FIX[:flight])
       assert_equal "Rebook flight", task.title
       assert_equal ["A new note"], task.body
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_keyed_patches_across_fresh_stores_coalesce_into_one_undo_step
+    with_application do |org, archive, app|
+      initial = File.read(org)
+      first = app.patch_task(Tasks::TaskPatch.from(
+        app.edit_snapshot(FIX[:flight]), field: :title, value: "Renamed",
+        coalesce_key: "editor-session"
+      ))
+      assert_equal :ok, first.status
+      second = app.patch_task(Tasks::TaskPatch.from(
+        first.snapshot, field: :body, value: "replacement",
+        coalesce_key: "editor-session"
+      ))
+      assert_equal :ok, second.status
+      assert Tasks::Check.check(org).ok?
+
+      undo_store = Tasks::Store.new(org: org, archive: archive)
+      assert_equal :ok, undo_store.undo!.first
+      assert_equal initial, File.read(org)
+      assert_equal [:empty], undo_store.undo!
     end
   end
 

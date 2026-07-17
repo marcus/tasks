@@ -1550,6 +1550,14 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  def test_cli_note_refuses_without_a_readable_append_baseline
+    run_cli("note", "Fix the widget", "keep this", content: INVALID_SCHEDULED) do |org, _out, err, st|
+      refute st.success?
+      assert_match(/cannot add note: task is missing or the file is invalid/, err)
+      assert_equal INVALID_SCHEDULED, File.read(org, encoding: "UTF-8")
+    end
+  end
+
   def test_cli_priority_clears_with_none
     run_cli("priority", "Book flight", "none") do |org, out, _err, st|
       assert st.success?
@@ -2592,6 +2600,15 @@ class TestCliMutations < Minitest::Test
       assert_equal 1, st.exitstatus
       assert_match(/tasks check/, err)
       assert_equal dup, File.read(org, encoding: "UTF-8"), "file unchanged after rollback"
+    end
+  end
+
+  def test_cli_reports_a_post_write_rollback_from_the_application_store
+    run_cli("due", "Book flight", "2026-07-15", archive_content: "{\"broken\"") do |org, _out, err, st|
+      refute st.success?
+      assert_match(/file failed validation after the edit/, err)
+      refute_match(/nothing was written/, err)
+      assert_equal "2026-07-02", record_for(org, title: "Book flight in Concur")["deadline"]
     end
   end
 

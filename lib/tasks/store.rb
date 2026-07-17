@@ -568,7 +568,7 @@ module Tasks
           if (reason = post_write_failure)
             @last_rollback = reason
             restore(before)
-            return MutationResult.new(status: :store_invalid, errors: [reason])
+            return MutationResult.new(status: :store_invalid, errors: [reason], rolled_back: true)
           end
 
           after = snapshot
@@ -586,7 +586,7 @@ module Tasks
         rescue StandardError => e
           @last_rollback = safe_patch_error(e)
           restore(before)
-          MutationResult.new(status: :unavailable, errors: [safe_patch_error(e)])
+          MutationResult.new(status: :unavailable, errors: [safe_patch_error(e)], rolled_back: true)
         end
       end
     end
@@ -673,7 +673,8 @@ module Tasks
             @last_rollback = reason
             restore(before)
             return MutationResult.new(status: :store_invalid,
-                                      snapshot: restored_edit_snapshot(command.id), errors: [reason])
+                                      snapshot: restored_edit_snapshot(command.id), errors: [reason],
+                                      rolled_back: true)
           end
           after = snapshot
           @journal.record(label: label, before: before, after: after)
@@ -691,7 +692,7 @@ module Tasks
         rescue StandardError => e
           @last_rollback = safe_patch_error(e)
           restore(before)
-          MutationResult.new(status: :unavailable, errors: [safe_patch_error(e)])
+          MutationResult.new(status: :unavailable, errors: [safe_patch_error(e)], rolled_back: true)
         end
       end
     end
@@ -719,6 +720,93 @@ module Tasks
       return false if title.empty?
 
       with_history("create section: #{title}") { create_section_impl(title, parent_id) }
+    end
+
+    # Atomically create one project section, bootstrapping the top-level
+    # Projects root in the same checked write when it is absent. Returning one
+    # MutationResult prevents a failed child insertion from leaving a root and
+    # a separate undo entry behind.
+    def create_project!(title:)
+      title = utf8(title.to_s).strip
+      if title.empty?
+        return MutationResult.new(status: :invalid, errors: ["title cannot be blank"],
+                                  field_errors: { title: ["cannot be blank"] })
+      end
+
+      with_lock do
+        @last_rollback = nil
+        before = snapshot
+        if schema_migration_required?
+          return MutationResult.new(status: :migration_required, errors: ["run `tasks migrate`"])
+        end
+
+        begin
+          if (preflight = create_preflight_failure)
+            return MutationResult.new(status: :store_invalid, errors: [preflight])
+          end
+
+          records = fresh_records(@org)
+          records = [meta_record] if records.empty?
+          root_index = records.index do |record|
+            record["type"] == "section" && !record["parent"] &&
+              record["title"].to_s.strip.casecmp?("Projects")
+          end
+          created_root = root_index.nil?
+          ids = ids_of(records) + archived_ids
+          if created_root
+            root_id = gen_id(ids)
+            records << { "type" => "section", "id" => root_id, "title" => "Projects" }
+            root_index = records.length - 1
+            ids << root_id
+          else
+            root_id = records[root_index]["id"]
+          end
+
+          duplicate = records.any? do |record|
+            record["type"] == "section" && record["parent"] == root_id &&
+              record["title"].to_s.strip.casecmp?(title)
+          end
+          if duplicate
+            message = "a project or area named #{title.inspect} already exists"
+            return MutationResult.new(status: :invalid, errors: [message],
+                                      field_errors: { title: [message] })
+          end
+
+          project_id = gen_id(ids)
+          insert_at = subtree_end(records, root_index)
+          records.insert(insert_at, {
+                           "type" => "section", "id" => project_id,
+                           "title" => title, "parent" => root_id,
+                         })
+          Format.dump(records)
+        rescue JSON::GeneratorError, EncodingError, ArgumentError => e
+          return MutationResult.new(status: :invalid, errors: [safe_patch_error(e)])
+        end
+
+        begin
+          write_records(@org, records)
+          if (reason = post_write_failure)
+            @last_rollback = reason
+            restore(before)
+            return MutationResult.new(status: :store_invalid, errors: [reason],
+                                      rolled_back: true)
+          end
+
+          after = snapshot
+          @journal.record(label: "create project: #{title}", before: before, after: after)
+          reload!
+          MutationResult.new(
+            status: :ok, read_snapshot: @read_snapshot, store_revision: store_revision_for(after),
+            touched_ids: created_root ? [project_id, root_id] : [project_id],
+            summary: { created_id: project_id, root_id: root_id, created_root: created_root }
+          )
+        rescue StandardError => e
+          @last_rollback = safe_patch_error(e)
+          restore(before)
+          MutationResult.new(status: :unavailable, errors: [safe_patch_error(e)],
+                             rolled_back: true)
+        end
+      end
     end
 
     # The record of the section matching `name`, resolved with capture's widening
@@ -917,7 +1005,7 @@ module Tasks
             restore(before)
             return MutationResult.new(status: :store_invalid,
                                       snapshot: restored_edit_snapshot(changeset.id),
-                                      errors: [reason])
+                                      errors: [reason], rolled_back: true)
           end
           after = snapshot
           @journal.record(label: label, before: before, after: after,
@@ -937,7 +1025,7 @@ module Tasks
           restore(before)
           MutationResult.new(status: :unavailable,
                              snapshot: restored_edit_snapshot(changeset.id),
-                             errors: [safe_patch_error(e)])
+                             errors: [safe_patch_error(e)], rolled_back: true)
         end
       end
     end

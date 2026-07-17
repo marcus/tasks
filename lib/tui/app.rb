@@ -384,8 +384,7 @@ module Tui
       @store.changed? || (@read_model ? @read_model.stale?(@paths.org) : false)
     end
 
-    def reload_read_model
-      context = temporal_context
+    def reload_read_model(context = temporal_context)
       @read_model_today = context.local_date
       @read_model_minute = context.now.to_i / 60
       @read_model = read_tasks_with_temporal_fallback(context)
@@ -397,6 +396,16 @@ module Tui
       @read_model_today = nil
       @read_model_minute = nil
       clear_row_caches
+    end
+
+    # Application mutations write through per-operation Stores. Refresh the
+    # TUI's long-lived watcher Store immediately so its next tick does not
+    # mistake our own write for an external edit and run reconciliation twice.
+    # Then rebuild presentation from a fresh Application read: a concurrent
+    # writer may have landed between the mutation result and this refresh.
+    def absorb_own_write(context = temporal_context)
+      @store.reload!
+      reload_read_model(context)
     end
 
     def clear_row_caches
@@ -1183,7 +1192,7 @@ module Tui
 
       result = @application.patch_task(Tasks::TaskPatch.from(snapshot, field: field, value: value,
                                                               history_label: label), today: today)
-      invalidate_read_model if result.ok?
+      absorb_own_write if result.ok?
       result
     end
 
@@ -1208,18 +1217,20 @@ module Tui
       command = Tasks::TaskChangeset.from(
         snapshot, changes: { location: placement }, history_label: label
       )
-      operation_today = current_date
-      result = @application.update_task(command, today: operation_today)
+      operation_context = temporal_context
+      operation_today = operation_context.local_date
+      result = @application.update_task(
+        command, today: operation_today, context: tui_operation_context(operation_context)
+      )
       unless result.ok?
         reload_store
         return flash(ordering_failure_message(result, action))
       end
 
-      @read_model_today = operation_today
-      @read_model = Tasks::TaskReadModel.new(result.read_snapshot, today: @read_model_today)
+      absorb_own_write(operation_context)
       @ui.collapsed.delete(placement.parent_id) if action == :indent
       @ui.selected_id = item.id
-      rows(read: @read_model, today: @read_model_today)
+      rows(read: @read_model, today: operation_today)
       refresh_detail_panel if detail_panel?
       flash(result.no_change? ? "already in that position: #{item.title}" : "#{ordering_label(action)}: #{item.title}")
     end
@@ -1377,7 +1388,8 @@ module Tui
         hint: "fri · +3 · 07-15 · someday · now · esc cancels", min_width: 50,
         return_mode: :list, target_id: item.id, field: field
       ) do |raw|
-        operation_today = current_date
+        operation_context = temporal_context
+        operation_today = operation_context.local_date
         choice = raw.to_s.strip.downcase
         value = unless %w[someday now].include?(choice)
                   TaskEditForm.parse_temporal(raw, operation_today, context: temporal_context)
@@ -1393,14 +1405,15 @@ module Tui
         command = Tasks::TaskChangeset.from(
           snapshot, changes: changes, history_label: label
         )
-        result = @application.update_task(command, today: operation_today)
+        result = @application.update_task(
+          command, today: operation_today, context: tui_operation_context(operation_context)
+        )
         unless result.ok?
           reload_store
           next result.conflict? ? "file changed underneath — reopen" : result.tui_message
         end
-        fresh_read = Tasks::TaskReadModel.new(result.read_snapshot, today: operation_today)
-        @read_model = fresh_read
-        @read_model_today = operation_today
+        absorb_own_write(operation_context)
+        fresh_read = @read_model
         fresh_task = fresh_read.task_for(item.id)
         message = availability_flash(fresh_task, reader: fresh_read)
 
@@ -1830,7 +1843,7 @@ module Tui
       @task_edit_message = task_edit_outcome_message(outcome)
       flash(@task_edit_message) if outcome.missing? || outcome.conflict?
       if outcome.patch_result&.changed?
-        invalidate_read_model
+        absorb_own_write
         target_id = @ui.task_editor.target_id
         @ui.selected_id = target_id
         rows
@@ -2522,7 +2535,7 @@ module Tui
           return flash("project no longer exists")
         end
 
-        invalidate_read_model
+        absorb_own_write
         closed = result.summary&.fetch(:closed, 0) || 0
         flash("✓ closed #{closed} in #{project.title}")
         reselect(project.id)
@@ -2567,9 +2580,9 @@ module Tui
           return flash("project no longer exists")
         end
 
+        absorb_own_write
         moved = result.summary&.fetch(:archived, nil) || result.touched_ids.size
         close_panel if project_detail? && @ui.panel&.identity == project.id
-        invalidate_read_model
         flash("⤓ archived #{project.title} (#{moved})")
         rows
         clamp_selection
@@ -2599,9 +2612,9 @@ module Tui
           reload_store
           next "project no longer exists"
         end
+        absorb_own_write
 
         @ui.form_success = lambda do
-          invalidate_read_model
           flash("renamed: #{raw.strip}")
           reselect(project.id)
           refresh_open_panel if panel_detail?
@@ -2632,10 +2645,10 @@ module Tui
           reload_store
           next result.errors.first || result.tui_message
         end
+        absorb_own_write
 
         new_id = result.touched_ids.first
         @ui.form_success = lambda do
-          invalidate_read_model
           flash("+ #{title}")
           reselect(new_id || project.id)
           refresh_open_panel if panel_detail?

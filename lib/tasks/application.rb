@@ -340,19 +340,7 @@ module Tasks
                                   field_errors: { title: [message] })
       end
 
-      root_id = project_root_id(store)
-      created_root = root_id.nil?
-      if created_root
-        root_id = store.create_section!(title: "Projects")
-        return create_section_failure(store) unless root_id
-      end
-      new_id = store.create_section!(title: title, parent_id: root_id)
-      return create_section_failure(store) unless new_id
-
-      MutationResult.new(
-        status: :ok, touched_ids: created_root ? [new_id, root_id] : [new_id],
-        summary: { created_id: new_id, root_id: root_id, created_root: created_root }
-      )
+      store.create_project!(title: title)
     end
 
     def rename_project(id, title:)
@@ -364,7 +352,13 @@ module Tasks
       store = store_factory.call
       return migration_required_mutation if store.checked_read_snapshot.migration_required?
       touched = store.rename_section!(id: id, to: title)
-      touched ? MutationResult.new(status: :ok, touched_ids: [touched]) : MutationResult.new(status: :not_found)
+      return MutationResult.new(status: :ok, touched_ids: [touched]) if touched
+      if store.last_rollback
+        return MutationResult.new(status: :store_invalid, errors: [store.last_rollback],
+                                  rolled_back: true)
+      end
+
+      MutationResult.new(status: :not_found)
     end
 
     def complete_project(id, today: Date.today)
@@ -378,7 +372,8 @@ module Tasks
       # last_rollback, so a rolled-back write maps to the same :store_invalid
       # failure other mutations produce rather than masquerading as clean.
       if closed == 0 && store.last_rollback
-        return MutationResult.new(status: :store_invalid, errors: [store.last_rollback])
+        return MutationResult.new(status: :store_invalid, errors: [store.last_rollback],
+                                  rolled_back: true)
       end
 
       MutationResult.new(status: :ok, summary: { closed: closed })
@@ -388,7 +383,13 @@ module Tasks
       store = store_factory.call
       return migration_required_mutation if store.checked_read_snapshot.migration_required?
       moved = store.archive_project!(id: id)
-      return MutationResult.new(status: :not_found) unless moved
+      unless moved
+        if store.last_rollback
+          return MutationResult.new(status: :store_invalid, errors: [store.last_rollback],
+                                    rolled_back: true)
+        end
+        return MutationResult.new(status: :not_found)
+      end
 
       MutationResult.new(status: :ok, touched_ids: moved, summary: { archived: moved.length })
     end
@@ -417,24 +418,6 @@ module Tasks
     private
 
     attr_reader :store_factory, :temporal_context_factory
-
-    # The id of the top-level "Projects" root section (case-insensitive, same
-    # rule TaskQueries#projects uses), read from the given store's live snapshot,
-    # or nil when no such root exists yet.
-    def project_root_id(store)
-      store.read_snapshot.live_records.find do |record|
-        record["type"] == "section" && !record["parent"] &&
-          record["title"].to_s.strip.downcase == "projects"
-      end&.fetch("id")
-    end
-
-    # A create_section! that returned false after a non-blank title and a valid
-    # parent can only be a post-write validation rollback, mapped like the other
-    # project mutations (see complete_project).
-    def create_section_failure(store)
-      MutationResult.new(status: :store_invalid,
-                         errors: [store.last_rollback || "section creation failed"])
-    end
 
     def queries(include_archive: false, today: Date.today, operation_context: nil)
       TaskQueries.new(store_factory.call.read_snapshot(include_archive: include_archive), today: today,

@@ -439,6 +439,7 @@ class TestApp < Minitest::Test
 
       app.send(:handle_key, "\x13")
       assert_equal :task_edit, ui(app).mode
+      refute app.send(:external_change?), "the editor's own write is absorbed by the watcher Store"
       assert_equal :title, editor.focused_key
       assert_equal "Book flight safely", app.send(:current_item).title
       refute editor.dirty?(:title)
@@ -1341,6 +1342,7 @@ class TestApp < Minitest::Test
       ui(app).form.input.replace("+4")
       app.send(:handle_key, "\r")
 
+      refute app.send(:external_change?), "the defer form's own write is absorbed"
       store = app.instance_variable_get(:@store)
       task = store.items.find { |i| i.title.include?("Water the plants") }
       refute task.deferred?
@@ -1826,6 +1828,13 @@ class TestApp < Minitest::Test
     assert_match(/@application\.patch_task/, source)
   end
 
+  def test_application_routed_quick_patch_is_not_mistaken_for_an_external_write
+    app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE) do |app|
+      app.send(:complete_selected)
+      refute app.send(:external_change?)
+    end
+  end
+
   def test_tui_presentation_reads_use_the_application_model_not_the_mutation_store
     source = File.read(File.expand_path("../lib/tui/app.rb", __dir__), encoding: "UTF-8")
     refute_match(/@store\.(?:items|tree|body|links|node_for)/, source)
@@ -1999,12 +2008,33 @@ class TestApp < Minitest::Test
         app.send(:rows)
         app.send(:handle_key, sequence)
 
+        refute app.send(:external_change?), "ordering's own write is absorbed"
         assert_equal %w[0d000004 0d000005 0d000002 0d000003 0d000006 0d000007],
                      ordering_ids(app), sequence.inspect
         assert_equal "0d000004", app.send(:current_item).id
         assert_includes ui(app).collapsed, "0d000004"
         assert_match(/move up: Beta/, app.instance_variable_get(:@flash))
       end
+    end
+  end
+
+  def test_ordering_refresh_keeps_a_concurrent_write_visible_after_absorbing_its_own_write
+    app_on(view: :outline, select: "Beta", content: ORDERING_APP) do |app|
+      store = app.instance_variable_get(:@store)
+      external = Tasks::Store.new(org: store.org, archive: app.instance_variable_get(:@paths).archive)
+      original_absorb = app.method(:absorb_own_write)
+      injected_absorb = lambda do |_context|
+        result = external.create_task!(
+          Tasks::CreateTask.new(title: "Concurrent task", parent_id: "0d000001")
+        )
+        assert result.ok?
+        original_absorb.call
+      end
+
+      app.stub(:absorb_own_write, injected_absorb) { app.send(:move_subtree_up) }
+
+      assert_includes app.send(:read_model).items.map(&:title), "Concurrent task"
+      refute app.send(:external_change?)
     end
   end
 
@@ -2222,7 +2252,7 @@ class TestApp < Minitest::Test
         rejecting = Object.new
         rejecting.define_singleton_method(:edit_snapshot) { |id| application.edit_snapshot(id) }
         rejecting.define_singleton_method(:read_tasks) { |**options| application.read_tasks(**options) }
-        rejecting.define_singleton_method(:update_task) { |_command, today:| result }
+        rejecting.define_singleton_method(:update_task) { |_command, today:, **_options| result }
         app.instance_variable_set(:@application, rejecting)
         app.send(:move_subtree_up)
         assert_equal before, File.binread(app.instance_variable_get(:@store).org), status
@@ -2440,6 +2470,7 @@ class TestApp < Minitest::Test
       assert_equal :project_complete_confirm, ui(app).modal.kind
       app.send(:handle_key, "y")
 
+      refute app.send(:external_change?), "project completion's own write is absorbed"
       assert_equal "DONE", record_for(org_path(app), title: "Pick a static-site generator")["state"]
       assert_equal "DONE", record_for(org_path(app), title: "Draft the about page")["state"]
       assert Tasks::Check.check(org_path(app)).ok?, "file stays valid after completing a project"
@@ -2455,6 +2486,7 @@ class TestApp < Minitest::Test
       assert_includes ui(app).modal.lines.join(" "), "open task"
       app.send(:handle_key, "y")
 
+      refute app.send(:external_change?), "project archive's own write is absorbed"
       assert_nil record_for(org_path(app), title: "Site launch"), "swept out of the live file"
       assert record_for(archive_path(app), title: "Site launch"), "moved into archive.jsonl"
       assert_match(/archived Site launch/, app.instance_variable_get(:@flash))
@@ -2469,6 +2501,7 @@ class TestApp < Minitest::Test
       ui(app).form.input.replace("Kitchen reno")
       app.send(:handle_key, "\r")
 
+      refute app.send(:external_change?), "project rename's own write is absorbed"
       assert_equal "Kitchen reno", record_for(org_path(app), title: "Kitchen reno")["title"]
       assert_equal PFIX[:reno], ui(app).selected_id, "selection follows the renamed project id"
       assert_match(/renamed: Kitchen reno/, app.instance_variable_get(:@flash))
@@ -2494,6 +2527,7 @@ class TestApp < Minitest::Test
       ui(app).form.input.replace("Order the tiles")
       app.send(:handle_key, "\r")
 
+      refute app.send(:external_change?), "project capture's own write is absorbed"
       record = record_for(org_path(app), title: "Order the tiles")
       refute_nil record, "the new task exists"
       assert_equal "TODO", record["state"]

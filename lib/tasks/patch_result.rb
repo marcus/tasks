@@ -59,9 +59,15 @@ module Tasks
                 :form_errors, :touched_ids, :summary, :store_revision
 
     def initialize(status:, snapshot: nil, read_snapshot: nil, errors: [], field_errors: {},
-                   form_errors: nil, touched_ids: [], summary: nil, store_revision: nil)
+                   form_errors: nil, touched_ids: [], summary: nil, store_revision: nil,
+                   rolled_back: false)
       @status = self.class.normalize_status(status)
 
+      # Distinguishes a failed mutation that wrote and restored bytes from a
+      # preflight refusal that never wrote. Application adapters cannot inspect
+      # the short-lived Store instance after it returns, so this fact belongs on
+      # the immutable result.
+      @rolled_back = !!rolled_back
       @snapshot = snapshot
       @read_snapshot = read_snapshot
       @errors = immutable(Array(errors))
@@ -86,6 +92,7 @@ module Tasks
     def migration_required? = status == :migration_required
     def store_invalid? = status == :store_invalid
     def unavailable? = status == :unavailable
+    def rolled_back? = @rolled_back
 
     # Adapter-only interpretations. They deliberately do not alter #status:
     # commands can reason about one vocabulary while each adapter preserves its

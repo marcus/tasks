@@ -2,7 +2,6 @@
 
 require "securerandom"
 require_relative "task_edit_form"
-require_relative "../tasks/application"
 require_relative "../tasks/patch_result"
 require_relative "../tasks/task_patch"
 

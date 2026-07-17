@@ -601,6 +601,7 @@ class TestStorePatches < Minitest::Test
       end
       assert_equal :store_invalid, result.status
       assert_equal ["injected check failure"], result.errors
+      assert result.rolled_back?
       assert_equal before, File.read(org)
       assert_equal [:empty], store.undo!
     end
@@ -619,6 +620,7 @@ class TestStorePatches < Minitest::Test
       end
       assert_equal :unavailable, result.status
       assert_equal ["injected writer failure"], result.errors
+      assert result.rolled_back?
       assert_equal before, File.read(org)
       assert_equal [:empty], store.undo!
     end

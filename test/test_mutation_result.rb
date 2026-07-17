@@ -25,6 +25,11 @@ class TestMutationResult < Minitest::Test
     assert result.summary.frozen?
     assert_equal "s1.abc", result.store_revision
     assert result.store_revision.frozen?
+    refute result.rolled_back?
+
+    rolled_back = Tasks::MutationResult.new(status: :store_invalid, rolled_back: true)
+    assert rolled_back.rolled_back?
+    assert rolled_back.frozen?
   end
 
   def test_patch_result_legacy_name_normalizes_missing_to_not_found
