@@ -2195,6 +2195,11 @@ module Tui
     end
 
     def clamp_selection
+      # A mutation key handler (e.g. an archive sweep) can clear the row cache
+      # without rebuilding it. loop_once calls this every tick, so rebuild rows
+      # first when the cache is empty — otherwise reconcile against the rows the
+      # caller already warmed, so a frozen mutation-day snapshot is preserved.
+      return rows if @rows.nil?
       sync_selection
     end
 

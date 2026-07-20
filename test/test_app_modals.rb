@@ -268,6 +268,11 @@ class TestAppModals < Minitest::Test
       assert_nil record_for(store.org, title: "Old finished thing")
       assert record_for(store.archive, title: "Old finished thing")
       assert_match(/archived 1 root/, app.instance_variable_get(:@flash))
+
+      # The sweep invalidates the read model and clears the row cache; the next
+      # loop tick reconciles selection and must rebuild rows rather than
+      # dereference a nil @rows.
+      app.send(:clamp_selection)
     end
   end
 
