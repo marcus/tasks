@@ -458,6 +458,30 @@ class TestViews < Minitest::Test
     end
   end
 
+  # matching_ancestor? must use matching? (not bare eligible?): a NEXT @work
+  # child under a NEXT parent that lacks @work is view-eligible at the parent,
+  # but the parent is not a context match — so the child must self-anchor.
+  # Checking eligible? would suppress the child and drop it entirely (parent
+  # isn't in the matching set either).
+  def test_next_context_filter_self_anchors_matching_child_under_nonmatching_parent
+    records = [
+      { "type" => "meta", "version" => 2 },
+      { "type" => "section", "id" => "s1", "title" => "Work" },
+      { "type" => "task", "id" => "p1", "parent" => "s1", "state" => "NEXT",
+        "title" => "untagged parent" },
+      { "type" => "task", "id" => "c1", "parent" => "p1", "state" => "NEXT",
+        "title" => "tagged child", "tags" => %w[@work] },
+    ]
+    with_records(records) do |store|
+      rs = tree_rows(store, :next, context_filter: "@work")
+      titles = rs.map { |r| r.item&.title }.compact
+      assert_includes titles, "tagged child", "matching NEXT child still surfaces"
+      refute_includes titles, "untagged parent", "non-matching parent is not scaffolding in Next"
+      child = rs.find { |r| r.item&.title == "tagged child" }
+      refute_includes child.text, "│", "child self-anchors at depth 0 (not nested under parent)"
+    end
+  end
+
   def test_inbox_context_filter_scopes_to_the_matching_context
     records = [
       { "type" => "meta", "version" => 2 },
@@ -472,6 +496,32 @@ class TestViews < Minitest::Test
                  .map { |r| r.item&.title }.compact
       assert_includes titles, "email vendor"
       refute_includes titles, "call plumber"
+    end
+  end
+
+  # Symmetric maximal-match proof for Inbox, plus an untagged rider under a
+  # matching INBOX parent (the subtask goal the sibling-only case missed).
+  def test_inbox_context_filter_self_anchors_and_rides_untagged_children
+    records = [
+      { "type" => "meta", "version" => 2 },
+      { "type" => "section", "id" => "s1", "title" => "Inbox" },
+      { "type" => "task", "id" => "p1", "parent" => "s1", "state" => "INBOX",
+        "title" => "untagged inbox parent" },
+      { "type" => "task", "id" => "c1", "parent" => "p1", "state" => "INBOX",
+        "title" => "tagged inbox child", "tags" => %w[@work] },
+      { "type" => "task", "id" => "c2", "parent" => "c1", "state" => "TODO",
+        "title" => "untagged rider" },
+    ]
+    with_records(records) do |store|
+      rs = tree_rows(store, :inbox, context_filter: "@work")
+      titles = rs.map { |r| r.item&.title }.compact
+      assert_includes titles, "tagged inbox child", "matching INBOX child self-anchors"
+      assert_includes titles, "untagged rider", "its untagged descendant rides along"
+      refute_includes titles, "untagged inbox parent", "non-matching INBOX parent stays out"
+      child = rs.find { |r| r.item&.title == "tagged inbox child" }
+      rider = rs.find { |r| r.item&.title == "untagged rider" }
+      refute_includes child.text, "│", "matching child is a depth-0 anchor"
+      assert_includes rider.text, "│", "rider nests under that anchor"
     end
   end
 
