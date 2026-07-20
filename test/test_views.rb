@@ -32,14 +32,16 @@ class TestViews < Minitest::Test
   # Tree-mode Rows for `view` (keeps the Row so tests can reach r.node.level —
   # the true nesting depth, decoupled from whatever indent glyph the outliner
   # renders).
-  def tree_rows(store, view, collapsed: Set.new, show_deferred: false)
+  def tree_rows(store, view, collapsed: Set.new, show_deferred: false, context_filter: nil)
     V.rows(view, store.items, tree: store.tree, collapsed: collapsed,
-                              show_deferred: show_deferred, today: TODAY, urgent_days: 3)
+                              show_deferred: show_deferred, today: TODAY, urgent_days: 3,
+                              context_filter: context_filter)
   end
 
   # Tree-mode rows for `view`, as stripped-text strings.
-  def tree_texts(store, view, collapsed: Set.new, show_deferred: false)
-    tree_rows(store, view, collapsed: collapsed, show_deferred: show_deferred)
+  def tree_texts(store, view, collapsed: Set.new, show_deferred: false, context_filter: nil)
+    tree_rows(store, view, collapsed: collapsed, show_deferred: show_deferred,
+                           context_filter: context_filter)
       .map { |r| A.strip(r.text) }
   end
 
@@ -378,6 +380,115 @@ class TestViews < Minitest::Test
         else assert_nil r.node, "header/blank row has no node"
         end
       end
+    end
+  end
+
+  # -- context-filtered tree rendering -------------------------------------
+  # With a `@` context filter the list views stay on the tree path (subtasks
+  # visible) but scope which anchors appear. In NESTED only the Work parent
+  # `p1 "Ship release"` carries a context tag (@computer); the Home thread has
+  # none.
+
+  def test_agenda_context_filter_keeps_matching_thread_with_its_subtasks
+    with_records(NESTED) do |store|
+      titles = tree_rows(store, :agenda, context_filter: "@computer")
+                 .map { |r| r.item&.title }.compact
+      assert_includes titles, "Ship release", "the @computer parent anchors"
+      assert_includes titles, "write notes", "its dated subtask rides along"
+      assert_includes titles, "grandchild next", "deeper descendants ride too"
+      refute_includes titles, "plan trip", "the untagged Home thread is scoped out"
+      refute_includes titles, "book hotel"
+    end
+  end
+
+  def test_agenda_context_filter_keeps_untagged_subtask_under_a_matching_parent
+    with_records(NESTED) do |store|
+      rs = tree_rows(store, :agenda, context_filter: "@computer")
+      rider = rs.find { |r| r.item&.title == "undated rider" }
+      refute_nil rider, "an untagged subtask still shows under a matching parent"
+      assert_includes rider.text, "│", "and renders as a nested rider"
+    end
+  end
+
+  def test_agenda_context_filter_excludes_nonmatching_top_level
+    with_records(NESTED) do |store|
+      titles = tree_texts(store, :agenda, context_filter: "@computer")
+      assert(titles.none? { |t| t.include?("plan trip") },
+             "a top-level task lacking the context is dropped")
+    end
+  end
+
+  # The reason context lives in its own predicate and not in eligible?: an
+  # undated parent that DOES carry the context, whose only date sits on an
+  # untagged child, must keep the whole thread. Folding context into eligible?
+  # (agenda's "any subtree item is dated + open" rule) would drop it.
+  def test_agenda_context_filter_keeps_undated_matching_parent_of_dated_untagged_child
+    records = [
+      { "type" => "meta", "version" => 2 },
+      { "type" => "section", "id" => "s1", "title" => "Work" },
+      { "type" => "task", "id" => "p1", "parent" => "s1", "state" => "TODO",
+        "title" => "review budget", "tags" => %w[@work] },
+      { "type" => "task", "id" => "c1", "parent" => "p1", "state" => "TODO",
+        "title" => "sign form", "deadline" => "2026-07-05" },
+    ]
+    with_records(records) do |store|
+      titles = tree_rows(store, :agenda, context_filter: "@work")
+                 .map { |r| r.item&.title }.compact
+      assert_includes titles, "review budget", "matching undated parent stays as scaffolding"
+      assert_includes titles, "sign form", "so its dated (untagged) child can surface"
+    end
+  end
+
+  def test_context_filter_nil_matches_the_unfiltered_tree_rows
+    with_records(NESTED) do |store|
+      %i[agenda next quadrants inbox].each do |view|
+        base = tree_rows(store, view).map(&:text)
+        filtered = tree_rows(store, view, context_filter: nil).map(&:text)
+        assert_equal base, filtered, "#{view}: context_filter: nil is a no-op"
+      end
+    end
+  end
+
+  def test_next_context_filter_keeps_subtasks_and_scopes_anchors
+    with_records(NESTED) do |store|
+      titles = tree_rows(store, :next, context_filter: "@computer")
+                 .map { |r| r.item&.title }.compact
+      assert_includes titles, "Ship release", "the @computer NEXT parent anchors"
+      assert_includes titles, "grandchild next", "its NEXT descendant rides along"
+    end
+  end
+
+  def test_inbox_context_filter_scopes_to_the_matching_context
+    records = [
+      { "type" => "meta", "version" => 2 },
+      { "type" => "section", "id" => "s1", "title" => "Inbox" },
+      { "type" => "task", "id" => "i1", "parent" => "s1", "state" => "INBOX",
+        "title" => "call plumber", "tags" => %w[@home] },
+      { "type" => "task", "id" => "i2", "parent" => "s1", "state" => "INBOX",
+        "title" => "email vendor", "tags" => %w[@work] },
+    ]
+    with_records(records) do |store|
+      titles = tree_rows(store, :inbox, context_filter: "@work")
+                 .map { |r| r.item&.title }.compact
+      assert_includes titles, "email vendor"
+      refute_includes titles, "call plumber"
+    end
+  end
+
+  def test_quadrants_context_filter_rides_untagged_children_under_a_matching_root
+    records = [
+      { "type" => "meta", "version" => 2 },
+      { "type" => "section", "id" => "s1", "title" => "Work" },
+      { "type" => "task", "id" => "p1", "parent" => "s1", "state" => "TODO",
+        "title" => "quarterly plan", "tags" => %w[@work], "deadline" => "2026-07-02" },
+      { "type" => "task", "id" => "c1", "parent" => "p1", "state" => "TODO",
+        "title" => "gather figures" },
+    ]
+    with_records(records) do |store|
+      titles = tree_rows(store, :quadrants, context_filter: "@work")
+                 .map { |r| r.item&.title }.compact
+      assert_includes titles, "quarterly plan", "the @work root anchors a quadrant"
+      assert_includes titles, "gather figures", "and its untagged child rides along"
     end
   end
 

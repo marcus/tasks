@@ -2415,6 +2415,41 @@ class TestApp < Minitest::Test
     end
   end
 
+  # A `@` context filter (no `/` search) keeps the agenda on the tree path, so
+  # subtasks render and H/L (collapse_all/expand_all) fold and unfold them. This
+  # is the counterpart to the flat `/`-filter test above.
+  NESTED_TAGGED_APP = dump_fixture([
+    { "type" => "meta", "version" => 2 },
+    { "type" => "section", "id" => "bbbb0001", "title" => "Work" },
+    { "type" => "task", "id" => "bbbb0002", "parent" => "bbbb0001", "state" => "TODO",
+      "title" => "Ship release", "tags" => %w[@work], "deadline" => "2026-07-10" },
+    { "type" => "task", "id" => "bbbb0003", "parent" => "bbbb0002", "state" => "INBOX",
+      "title" => "write notes" },
+    { "type" => "section", "id" => "bbbb0004", "title" => "Home" },
+    { "type" => "task", "id" => "bbbb0005", "parent" => "bbbb0004", "state" => "TODO",
+      "title" => "mow lawn", "tags" => %w[@home], "deadline" => "2026-07-11" },
+  ])
+
+  def test_context_filter_agenda_shows_subtasks_and_collapses
+    app_on(view: :agenda, select: "Ship release", content: NESTED_TAGGED_APP) do |app|
+      ui(app).context_filter = "@work"
+      app.send(:rows)
+
+      rows = app.instance_variable_get(:@rows)
+      parent = rows.find { |r| r.item&.title == "Ship release" }
+      child  = rows.find { |r| r.item&.title == "write notes" }
+      refute_nil parent.node, "context-filtered agenda stays on the tree path"
+      refute_nil child, "an untagged subtask shows under its @work parent"
+      refute_includes row_titles(app), "mow lawn", "the @home thread is scoped out"
+
+      app.send(:select_row, rows.index(parent))
+      app.send(:collapse_all)
+      refute_includes row_titles(app), "write notes", "H folds the subtree"
+      app.send(:expand_all)
+      assert_includes row_titles(app), "write notes", "L unfolds it again"
+    end
+  end
+
   # The run loop's reload gate must survive the mutation Store consuming its
   # own mtime signal: an editor-session read (store.items during a cascade
   # confirmation) self-reloads @store, after which @store.changed? is false —

@@ -56,6 +56,9 @@ module Tui
     ORDERING_HANDLERS = %i[
       move_subtree_up move_subtree_down indent_subtree outdent_subtree
     ].freeze
+    # List views that keep the outliner tree (subtasks + collapse/expand) under an
+    # active `@` context filter. Outline/Projects stay on their flat filtered path.
+    CONTEXT_TREE_VIEWS = %i[agenda next quadrants inbox].freeze
     ATOMIC_ALT_SEQUENCES = Shortcuts::REGISTRY.flat_map(&:sequences).select do |sequence|
       sequence.match?(/\A\e[^\e\[O]/)
     end.freeze
@@ -493,24 +496,35 @@ module Tui
       end
 
       items = read.items
-      if (ctx = active_context_filter)
-        items = items.select { |i| i.contexts.include?(ctx) }
-      end
+      ctx = active_context_filter
+      items = items.select { |i| i.contexts.include?(ctx) } if ctx
       if (q = active_filter)
         q = q.downcase
         hay = title_haystack(read)
         items = items.select { |i| (hay[i.id] || i.title.downcase).include?(q) }
       end
-      if active_context_filter || active_filter
-        @rows = Views.rows(@ui.view, items, show_deferred: @ui.show_deferred,
-                                           today: today,
-                                           urgent_days: @urgent_days, reader: read)
-      else
+      # A `/` search always renders flat (its result shape is what filtering
+      # expects). A `@` context filter keeps the tree on the list views so
+      # subtasks stay visible — scoped to that context via context_filter —
+      # but outline/projects stay flat under a context filter as before.
+      use_tree = if active_filter
+                   false
+                 elsif ctx
+                   CONTEXT_TREE_VIEWS.include?(@ui.view)
+                 else
+                   true
+                 end
+      if use_tree
         projects = @ui.view == :projects ? project_views(read, today) : nil
         @rows = Views.rows(@ui.view, items, tree: read.tree, collapsed: @ui.collapsed,
                                          show_deferred: @ui.show_deferred, today: today,
                                          urgent_days: @urgent_days,
-                                         reader: read, projects: projects)
+                                         reader: read, projects: projects,
+                                         context_filter: ctx)
+      else
+        @rows = Views.rows(@ui.view, items, show_deferred: @ui.show_deferred,
+                                           today: today,
+                                           urgent_days: @urgent_days, reader: read)
       end
       @rows_fingerprint = fingerprint
       @row_item_count = @rows.count(&:item)
