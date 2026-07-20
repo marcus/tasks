@@ -176,6 +176,31 @@ class TestAppModals < Minitest::Test
     end
   end
 
+  def test_typing_without_slash_starts_filtering_help_modal_live
+    with_app do |app|
+      app.send(:handle_key, "?")
+      total = modal(app).lines.size
+      "yank".chars.each { |c| app.send(:handle_key, c) }
+      assert_equal :modal_filter, mode(app)
+      assert_equal "yank", modal(app).filter
+      matches = modal(app).lines.map { |l| A.strip(l) }
+      assert_operator matches.size, :<, total
+      assert matches.all? { |l| l.downcase.include?("yank") }
+    end
+  end
+
+  def test_scroll_and_close_keys_still_work_without_starting_a_filter
+    with_app do |app|
+      app.send(:handle_key, "?")
+      app.send(:handle_key, "j")
+      assert_equal :modal, mode(app)
+      assert_nil modal(app).filter
+
+      app.send(:handle_key, "q")
+      assert_equal :list, mode(app)
+    end
+  end
+
   def test_modal_filter_input_renders_inside_modal_not_the_footer
     with_app do |app|
       app.send(:handle_key, "?")

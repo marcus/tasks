@@ -167,6 +167,12 @@ module TermForm
       end
     end
 
+    def printable_key?(key)
+      return false if key.nil? || key.empty?
+
+      key.each_grapheme_cluster.all? { |grapheme| grapheme.match?(/[[:print:]]/) }
+    end
+
     private
 
     def units = units_for(@text)
@@ -180,12 +186,6 @@ module TermForm
                text.tr("\r\n\t", "   ")
              end
       text.each_grapheme_cluster.select { |grapheme| grapheme == "\n" || printable_key?(grapheme) }.join
-    end
-
-    def printable_key?(key)
-      return false if key.nil? || key.empty?
-
-      key.each_grapheme_cluster.all? { |grapheme| grapheme.match?(/[[:print:]]/) }
     end
 
     def move_start

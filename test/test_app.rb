@@ -918,8 +918,11 @@ class TestApp < Minitest::Test
         app.send(:handle_key, "?")
         assert_equal :modal, ui(app).mode
         %w[y d c r].each { |key| app.send(:handle_key, key) }
+        assert_equal :modal_filter, ui(app).mode
+        assert_equal "ydcr", ui(app).modal.filter
+        app.send(:handle_key, "\e") # clears the typed filter, stays on the modal
         assert_equal :modal, ui(app).mode
-        app.send(:handle_key, "\e")
+        app.send(:handle_key, "\e") # closes the modal
 
         assert_equal :list, ui(app).mode
         assert_empty copied

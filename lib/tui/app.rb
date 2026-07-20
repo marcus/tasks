@@ -940,7 +940,21 @@ module Tui
       return cancel_queued_agent_requests_key(k) if @ui.modal&.kind == :agent_queue_cancel_confirm
       return project_complete_confirm_key(k) if @ui.modal&.kind == :project_complete_confirm
       return project_archive_confirm_key(k) if @ui.modal&.kind == :project_archive_confirm
+      return modal_key_starts_typing(k) if modal_key_starts_typing?(k)
+
       dispatch_action(k, :modal)
+    end
+
+    # Typing a character with no modal binding of its own (j/k/q/? etc. stay
+    # reserved for scrolling/closing) opens the live filter immediately, so
+    # `/` is only needed to resume editing an already-committed filter.
+    def modal_key_starts_typing?(k)
+      modal_filter_available? && !Shortcuts.match(k, :modal) && @ui.modal_filter_input.printable_key?(k)
+    end
+
+    def modal_key_starts_typing(k)
+      modal_start_filter
+      modal_filter_key(k)
     end
 
     def schema_migration_key(key)
