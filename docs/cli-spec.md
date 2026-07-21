@@ -248,17 +248,27 @@ llm_provider = hermes            # selected harness (default: claude-cli)
 llm_model    = qwen3.6:35b-a3b   # selected model (default: provider's first model)
 claude-cli_models = sonnet,opus,haiku   # override a provider's model list
 hermes_models     = qwen3.6:35b-a3b      # override Hermes' model list
+cursor-cli_models = composer-2.5-fast    # override Cursor CLI's model list
 hermes_command    = hermes       # override the binary a provider spawns
+cursor-cli_command = agent       # override the Cursor CLI binary
 hermes_provider   = ollama-launch # Hermes inference provider (passed as --provider)
 ollama_url        = http://127.0.0.1:11434  # endpoint Hermes' availability probe hits
 ```
 
-Built-in providers are `claude-cli` (models `sonnet/opus/haiku`) and `hermes`
+Built-in providers are `claude-cli` (models `sonnet/opus/haiku`), `hermes`
 (default model `qwen3.6:35b-a3b`, driving a local Ollama model via Hermes' own
-config). The overall default stays `claude-cli:sonnet`. The TUI's `M` key cycles
-the flattened `(provider, model)` list; the header shows `provider:model`.
-Adding a new harness is one adapter class in `lib/llm/` plus a
-`Registry::DEFAULTS` entry — see `docs/plans/llm-adapter-pattern.md`.
+config), and `cursor-cli` (default model `composer-2.5-fast`). Cursor CLI uses
+the local `agent` binary in non-interactive force mode; authenticate first with
+`agent login` or `CURSOR_API_KEY`, and run `agent --list-models` to discover
+model ids available to the current account. Its text output contains the final
+assistant message rather than structured tool progress. The overall default
+stays `claude-cli:sonnet`. The TUI's `M` key cycles the flattened
+`(provider, model)` list. The header and agent activity use concise display
+aliases for known entries (for example `claude:sonnet`, `cursor:grok`,
+`cursor:composer`, and `hermes:qwen`) while configuration and CLI flags retain
+the exact provider/model ids; unknown ids fall back to their full names. Adding
+a new harness is one adapter class in `lib/llm/` plus a `Registry::DEFAULTS`
+entry — see `docs/plans/llm-adapter-pattern.md`.
 
 **Local models:** a pre-JSONL eval of models behind Hermes
 (`eval/llm/results-2026-07-02.md`) selected `qwen3.6:35b-a3b` as the default

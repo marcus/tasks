@@ -53,6 +53,35 @@ class TestLLM < Minitest::Test
     assert_equal "/opt/claude", agent.command("x", model: "sonnet").first
   end
 
+  # -- Cursor CLI adapter ----------------------------------------------------
+
+  def test_cursor_command_uses_headless_force_text_mode_and_model
+    agent = A::CursorCli.new(root: "/tmp")
+    cmd = agent.command("do the thing", model: "cursor-grok-4.5-low-fast")
+
+    assert_equal %w[agent -p --force --output-format text], cmd[0, 5]
+    assert_equal "cursor-grok-4.5-low-fast", cmd[cmd.index("--model") + 1]
+    assert_equal "do the thing", cmd.last
+  end
+
+  def test_cursor_command_prepends_system_prompt
+    agent = A::CursorCli.new(root: "/tmp", system: "SYS")
+    assert_equal "SYS\n\nhello", agent.command("hello", model: "composer-2.5-fast").last
+  end
+
+  def test_cursor_command_is_the_same_for_sync_and_streaming_runs
+    agent = A::CursorCli.new(root: "/tmp")
+    streaming = agent.command("hello", model: "composer-2.5-fast", stream: true)
+    sync = agent.command("hello", model: "composer-2.5-fast", stream: false)
+
+    assert_equal streaming, sync
+  end
+
+  def test_cursor_command_override_changes_binary
+    agent = A::CursorCli.new(root: "/tmp", command: "/opt/cursor-agent")
+    assert_equal "/opt/cursor-agent", agent.command("x", model: "composer-2.5-fast").first
+  end
+
   # -- Hermes adapter --------------------------------------------------------
 
   def test_hermes_stream_uses_chat_query_and_prepends_system
@@ -117,6 +146,8 @@ class TestLLM < Minitest::Test
       hermes_command = /opt/hermes
       hermes_provider = my-ollama
       ollama_url = http://127.0.0.1:9999
+      cursor-cli_models = composer-2.5-fast, cursor-grok-4.5-low-fast
+      cursor-cli_command = /opt/agent
     CFG
     with_config(body) do |c|
       h = c.provider_settings("hermes")
@@ -124,6 +155,9 @@ class TestLLM < Minitest::Test
       assert_equal "/opt/hermes", h[:command]
       assert_equal "my-ollama", h[:inference_provider]
       assert_equal "http://127.0.0.1:9999", h[:ollama_url]
+      cursor = c.provider_settings("cursor-cli")
+      assert_equal %w[composer-2.5-fast cursor-grok-4.5-low-fast], cursor[:models]
+      assert_equal "/opt/agent", cursor[:command]
     end
   end
 
@@ -140,11 +174,30 @@ class TestLLM < Minitest::Test
 
   def empty_config = LLM::Config.new(provider: nil, model: nil, providers: {})
 
+  def test_entry_ui_labels_are_concise_without_changing_canonical_identity
+    cursor = LLM::Entry.new(provider: "cursor-cli", model: "cursor-grok-4.5-low-fast")
+    claude = LLM::Entry.new(provider: "claude-cli", model: "sonnet")
+    hermes = LLM::Entry.new(provider: "hermes", model: "qwen3.6:35b-a3b")
+
+    assert_equal "cursor-cli:cursor-grok-4.5-low-fast", cursor.to_s
+    assert_equal "cursor:grok", cursor.ui_label
+    assert_equal "claude:sonnet", claude.ui_label
+    assert_equal "hermes:qwen", hermes.ui_label
+  end
+
+  def test_entry_ui_label_preserves_unknown_provider_and_model
+    entry = LLM::Entry.new(provider: "future-cli", model: "future-model-v2")
+    assert_equal "future-cli:future-model-v2", entry.ui_label
+  end
+
   def test_registry_defaults
     reg = LLM.registry(empty_config)
-    assert_equal %w[claude-cli hermes], reg.keys
+    assert_equal %w[claude-cli hermes cursor-cli], reg.keys
     assert_equal A::ClaudeCli, reg["claude-cli"].adapter
     assert_equal %w[sonnet opus haiku], reg["claude-cli"].models
+    assert_equal A::CursorCli, reg["cursor-cli"].adapter
+    assert_equal :cli, reg["cursor-cli"].transport
+    assert_equal %w[composer-2.5-fast], reg["cursor-cli"].models
   end
 
   def test_entries_put_default_first_and_dedupe
@@ -171,6 +224,18 @@ class TestLLM < Minitest::Test
                           providers: { "hermes" => { models: %w[qwen3:4b] } })
     hermes = LLM.entries(cfg).map(&:to_s).select { |e| e.start_with?("hermes:") }
     assert_equal %w[hermes:qwen3:4b], hermes
+  end
+
+  def test_cursor_config_model_list_override_flows_into_entries
+    cfg = LLM::Config.new(
+      provider: "cursor-cli",
+      model: "cursor-grok-4.5-low-fast",
+      providers: { "cursor-cli" => { models: %w[composer-2.5-fast] } }
+    )
+    entries = LLM.entries(cfg).map(&:to_s)
+
+    assert_equal "cursor-cli:cursor-grok-4.5-low-fast", entries.first
+    assert_includes entries, "cursor-cli:composer-2.5-fast"
   end
 
   def test_default_entry_precedence_explicit_over_config
@@ -282,6 +347,16 @@ class TestLLM < Minitest::Test
     assert_instance_of A::Hermes, agent
     assert_equal "/opt/hermes", agent.command("hi", model: "m").first
     assert_equal "x", agent.command("hi", model: "m")[agent.command("hi", model: "m").index("--provider") + 1]
+  end
+
+  def test_build_returns_configured_cursor_adapter
+    cfg = LLM::Config.new(provider: nil, model: nil,
+                          providers: { "cursor-cli" => { command: "/opt/agent" } })
+    agent = LLM.build(LLM::Entry.new(provider: "cursor-cli", model: "composer-2.5-fast"),
+                      root: "/tmp", config: cfg)
+
+    assert_instance_of A::CursorCli, agent
+    assert_equal "/opt/agent", agent.command("hi", model: "composer-2.5-fast").first
   end
 
   def test_build_raises_on_unknown_provider

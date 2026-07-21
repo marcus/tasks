@@ -587,7 +587,7 @@ module Tui
       end.join(" ")
       open_n = open_task_count(read_model)
       unavailable_note = @ui.show_deferred ? "#{T.paint(:warning, "unavailable shown")}#{T.paint(:muted, " · ")}" : ""
-      count = "#{T.paint(:muted, "#{open_n} open · ")}#{unavailable_note}#{T.paint(:accent, current_entry.to_s)}#{T.paint(:muted, " · ? help")}"
+      count = "#{T.paint(:muted, "#{open_n} open · ")}#{unavailable_note}#{T.paint(:accent, current_entry.ui_label)}#{T.paint(:muted, " · ? help")}"
       gap = [w - A.vislen(tabs) - A.vislen(count) - 2, 1].max
       " #{tabs}#{" " * gap}#{count} "
     end
@@ -599,7 +599,7 @@ module Tui
         queued = pending.positive? ? " · #{pending} queued" : ""
         f << T.paint(
           :muted,
-          " #{SPINNER[@tick % SPINNER.size]} ##{active.id} #{active.entry} is working#{queued} · A activity · esc cancels"
+          " #{SPINNER[@tick % SPINNER.size]} ##{active.id} #{active.entry.ui_label} is working#{queued} · A activity · esc cancels"
         )
         # scrub: a streaming chunk can end mid-multibyte-char
         A.strip(@agent_queue.active_output.scrub("�")).split("\n").last(3).each do |line|
@@ -1505,7 +1505,7 @@ module Tui
     # to the next request; the in-flight agent keeps streaming untouched.
     def toggle_model
       @entry_idx = (@entry_idx + 1) % @entries.size
-      flash("agent: #{current_entry}#{@agent_queue.work? ? " (applies to new requests)" : ""}")
+      flash("agent: #{current_entry.ui_label}#{@agent_queue.work? ? " (applies to new requests)" : ""}")
     end
 
     def undo_last  = history_op(:undo!, "undid")

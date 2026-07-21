@@ -21,11 +21,11 @@ class TestAppModals < Minitest::Test
     def io = nil
   end
 
-  def with_app(content: FIXTURE_ORG, agent_factory: nil)
+  def with_app(content: FIXTURE_ORG, agent_factory: nil, llm_config: default_llm_config)
     Dir.mktmpdir do |dir|
       File.write(File.join(dir, "tasks.jsonl"), content)
       app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir),
-                         llm_config: default_llm_config, agent_factory: agent_factory,
+                         llm_config: llm_config, agent_factory: agent_factory,
                          agent_probe: ->(_entry) { true })
       app.send(:rows) # populate @rows like the paint loop does
       app.send(:clamp_selection)
@@ -955,15 +955,26 @@ class TestAppModals < Minitest::Test
   def test_model_toggle_cycles_provider_and_model_in_header
     with_app do |app|
       # Out of the box the switcher starts at claude-cli:sonnet and cycles the
-      # flattened (provider, model) list; the header shows provider:model.
-      assert_includes Tui::Ansi.strip(app.send(:header, 80)), "claude-cli:sonnet"
+      # flattened (provider, model) list; the header uses its concise UI label.
+      assert_includes Tui::Ansi.strip(app.send(:header, 80)), "claude:sonnet"
       app.send(:handle_key, "M")
-      assert_includes Tui::Ansi.strip(app.send(:header, 80)), "claude-cli:opus"
-      assert_match(/agent: claude-cli:opus/, app.instance_variable_get(:@flash))
+      assert_includes Tui::Ansi.strip(app.send(:header, 80)), "claude:opus"
+      assert_match(/agent: claude:opus/, app.instance_variable_get(:@flash))
       # cycle all the way around back to the first entry
       entries = app.instance_variable_get(:@entries).size
       (entries - 1).times { app.send(:handle_key, "M") }
-      assert_includes Tui::Ansi.strip(app.send(:header, 80)), "claude-cli:sonnet", "wraps back around"
+      assert_includes Tui::Ansi.strip(app.send(:header, 80)), "claude:sonnet", "wraps back around"
+    end
+  end
+
+  def test_header_shortens_configured_cursor_model
+    config = LLM::Config.new(
+      provider: "cursor-cli",
+      model: "cursor-grok-4.5-low-fast",
+      providers: {}
+    )
+    with_app(llm_config: config) do |app|
+      assert_includes Tui::Ansi.strip(app.send(:header, 80)), "cursor:grok"
     end
   end
 

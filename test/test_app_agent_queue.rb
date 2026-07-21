@@ -116,7 +116,7 @@ class TestAppAgentQueue < Minitest::Test
       submit(app, "first")
       submit(app, "second")
       running = app.send(:footer, 100).map { |line| line.is_a?(String) ? A.strip(line) : line }.join("\n")
-      assert_includes running, "#1 claude-cli:sonnet is working"
+      assert_includes running, "#1 claude:sonnet is working"
       assert_includes running, "1 queued"
       assert_includes running, "A activity"
 

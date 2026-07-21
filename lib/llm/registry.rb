@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "claude_cli"
+require_relative "cursor_cli"
 require_relative "hermes"
 require_relative "config"
 
@@ -9,7 +10,19 @@ module LLM
   # resolves a default for. Because every backend is an agent, there is no
   # `kind`/`transport` branch here: an Entry only names which harness + model.
   Entry = Struct.new(:provider, :model, keyword_init: true) do
+    PROVIDER_LABELS = {
+      "claude-cli" => "claude",
+      "cursor-cli" => "cursor",
+    }.freeze
+    MODEL_LABELS = {
+      %w[cursor-cli cursor-grok-4.5-low-fast] => "grok",
+      %w[cursor-cli composer-2.5-fast] => "composer",
+      %w[hermes qwen3.6:35b-a3b] => "qwen",
+      %w[hermes gemma4:e4b] => "gemma",
+    }.freeze
+
     def to_s = "#{provider}:#{model}"
+    def ui_label = "#{PROVIDER_LABELS.fetch(provider, provider)}:#{MODEL_LABELS.fetch([provider, model], model)}"
     def ==(other) = other.is_a?(Entry) && provider == other.provider && model == other.model
     alias_method :eql?, :==
     def hash = [provider, model].hash
@@ -36,6 +49,8 @@ module LLM
                         models: %w[sonnet opus haiku], settings: {} },
       "hermes"     => { adapter: Agent::Hermes,     transport: :cli,
                         models: %w[qwen3.6:35b-a3b gemma4:e4b], settings: {} },
+      "cursor-cli" => { adapter: Agent::CursorCli,  transport: :cli,
+                        models: %w[composer-2.5-fast], settings: {} },
     }.freeze
 
     def self.build(config = Config.load)

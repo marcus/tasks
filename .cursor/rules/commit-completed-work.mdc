@@ -1,0 +1,11 @@
+---
+description: Commit completed user-requested changes
+alwaysApply: true
+---
+
+# Commit completed work
+
+- After implementing and validating user-requested changes, create a git commit
+  unless the user explicitly asks to leave the changes uncommitted.
+- Commit only the requested work; do not include unrelated changes.
+- Do not push unless the user explicitly requests it.

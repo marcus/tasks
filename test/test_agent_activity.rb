@@ -39,9 +39,9 @@ class TestAgentActivity < Minitest::Test
     text = plain(content)
 
     assert_equal "Agent activity · 1 running · 1 queued · 1 finished", content[:title]
-    assert_includes text, "✓ #1 · claude-cli:sonnet · succeeded · 8s"
+    assert_includes text, "✓ #1 · claude:sonnet · succeeded · 8s"
     assert_includes text, "⠸ #2 · hermes:qwen · running · 42s"
-    assert_includes text, "○ #3 · claude-cli:sonnet · queued #1"
+    assert_includes text, "○ #3 · claude:sonnet · queued #1"
     assert_includes text, "request  capture milk"
     assert_includes text, "result   done"
     assert_includes text, "result   (waiting)"

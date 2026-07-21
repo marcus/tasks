@@ -15,7 +15,8 @@ module LLM
   #   hermes_provider = ollama-launch       Hermes inference provider (--provider)
   #   ollama_url  = http://127.0.0.1:11434  endpoint for Hermes' availability probe
   #
-  # `<provider>` is any registry key, e.g. `claude-cli_models` or `hermes_models`.
+  # `<provider>` is any registry key, e.g. `claude-cli_models`,
+  # `hermes_models`, or `cursor-cli_models`.
   Config = Struct.new(:provider, :model, :providers, keyword_init: true) do
     # Per-provider overrides ({ models:, command:, ollama_url:, ... }), or {}.
     def provider_settings(name) = providers[name] || {}

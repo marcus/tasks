@@ -22,6 +22,12 @@ session-scoped result history are specified in
 [`queued-llm-messages.md`](implemented/queued-llm-messages.md). The coordinator remains
 above this single-run adapter protocol; `tasks -p` is still synchronous.
 
+Follow-on (2026-07-21): `LLM::Agent::CursorCli` adds Cursor's local `agent`
+binary as another dependency-free CLI transport. It runs `agent -p --force`
+with text output, prepends the shared list-agent context, and inherits the same
+spawn, pump, and cancellation behavior as the other CLI adapters. This does not
+replace or implement the deferred SDK-transport phase.
+
 ## Why
 
 The LLM integration is welded to one backend: the local `claude` CLI, invoked

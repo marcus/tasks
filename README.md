@@ -210,12 +210,19 @@ tasks -p "close the Drew review task and push the Denver flight deadline to next
 tasks -p "defer the Fox task four days" # hides it for four days; deadline is unchanged
 tasks due "customer call" "tomorrow 5pm" --timezone Europe/London
 tasks -p --provider hermes "capture: renew passport"   # a local Ollama-backed harness
+tasks -p --provider cursor-cli "capture: renew passport" # the local Cursor agent CLI
 ```
 
 Because every change lands as a one-line diff in a file you version, reviewing
 what an agent did to your list is `git diff`, and reverting it is `tasks undo`.
 Pick the default backend and add models in `~/.config/tasks/config`; see
 `docs/cli-spec.md` (LLM agent settings).
+
+The optional `cursor-cli` provider runs the `agent` binary in headless force
+mode with no additional application dependencies. Authenticate with
+`agent login` or `CURSOR_API_KEY`; `agent --list-models` prints the model ids
+available to your account. Its text stream contains the final assistant message,
+while task changes still appear through the normal file watcher and git diff.
 
 ### Remembered defaults
 

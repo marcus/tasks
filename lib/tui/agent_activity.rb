@@ -66,7 +66,7 @@ module Tui
       status = request.status.to_s
       status += " ##{queued_position}" if request.status == :queued
       elapsed = request.started_at ? " · #{format_elapsed(request.elapsed(now))}" : ""
-      label = "#{GLYPHS.fetch(request.status)} ##{request.id} · #{request.entry} · #{status}#{elapsed}"
+      label = "#{GLYPHS.fetch(request.status)} ##{request.id} · #{request.entry.ui_label} · #{status}#{elapsed}"
       T.paint(SLOTS.fetch(request.status), label)
     end
     private_class_method :header
