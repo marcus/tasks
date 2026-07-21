@@ -91,7 +91,7 @@ module Tasks
       host = uri.host
       return "link" if host.nil? || host.empty?
       systems.each do |name, custom_host|
-        return name if host.match?(/(?:\A|\.)#{Regexp.escape(custom_host)}\z/i)
+        return name if host.match?(custom_host_regexp(custom_host))
       end
       SYSTEMS.each do |name, host_pat, path_pat|
         return name if host.match?(host_pat) && (path_pat.nil? || uri.path.match?(path_pat))
@@ -133,14 +133,31 @@ module Tasks
     # The raw token is kept as the label so listings show what the file says.
     def expand_shorthands(text, found, shorthands, systems)
       return if shorthands.empty?
-      names = Regexp.union(shorthands.keys.sort_by(&:length).reverse)
-      text.scan(/(?<=\A|\s|\(|\[|,|"|'|“|—|–)(#{names}):(\S+)/) do
+      text.scan(shorthand_scan(shorthands.keys)) do
         m = Regexp.last_match
         name, value = m[1], m[2]
         value = clean_bare(value, nil)
         next if value.empty?
         url = expand(name, value, shorthands[name])
         found << [m.begin(0), Link.new(url: url, label: "#{name}:#{value}", system: classify(url, systems: systems))]
+      end
+    end
+
+    # Both of these interpolate config-derived values into a regex, so building
+    # them inline recompiled a pattern on every call — classify() rebuilt one
+    # per configured system for every URL found. The config is stable per
+    # session, so memoize on the value it depends on. Keyed by content (a host
+    # string / the shorthand-name array), so a config reload with a new set
+    # simply caches a fresh entry.
+    def custom_host_regexp(custom_host)
+      (@custom_host_regexps ||= {})[custom_host] ||=
+        /(?:\A|\.)#{Regexp.escape(custom_host)}\z/i
+    end
+
+    def shorthand_scan(names)
+      (@shorthand_scans ||= {})[names] ||= begin
+        union = Regexp.union(names.sort_by(&:length).reverse)
+        /(?<=\A|\s|\(|\[|,|"|'|“|—|–)(#{union}):(\S+)/
       end
     end
 

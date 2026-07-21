@@ -9,6 +9,10 @@ module Tasks
     # 05:00. Minutes may be omitted only when a meridiem disambiguates (5pm).
     TIME_TOKEN = /(?:noon|midnight|(?:[01]?\d|2[0-3]):[0-5]\d(?:am|pm)?|(?:1[0-2]|0?[1-9])(?:am|pm))/i
 
+    # Built once. Interpolating TIME_TOKEN inline recompiled this regex on every
+    # split call; the token itself is a constant, so hoist the whole pattern.
+    TRAILING_TIME = /\A(.+?)(?:[ T])(#{TIME_TOKEN})\z/i
+
     module_function
 
     def parse(expression, today:, timezone: nil, floating: false, fold: 0, context: nil)
@@ -31,7 +35,7 @@ module Tasks
 
     def split(input)
       normalized = input.sub(/\s+at\s+/i, " ")
-      if (match = normalized.match(/\A(.+?)(?:[ T])(#{TIME_TOKEN})\z/i))
+      if (match = normalized.match(TRAILING_TIME))
         [match[1], normalize_time(match[2])]
       else
         [normalized, nil]
