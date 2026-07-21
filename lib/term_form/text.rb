@@ -41,6 +41,10 @@ module TermForm
 
     def char_width(char)
       codepoint = char.ord
+      # Printable ASCII is the overwhelmingly common input and every char of
+      # every field render passes through here, so return before scanning the
+      # ~75 WIDE/ZERO_WIDTH ranges. Mirrors Tui::Ansi.char_width.
+      return 1 if codepoint >= 0x20 && codepoint < 0x7F
       return 0 if codepoint < 0x20
       return 0 if ZERO_WIDTH.any? { |range| range.cover?(codepoint) }
       return 2 if WIDE.any? { |range| range.cover?(codepoint) }
