@@ -1336,7 +1336,11 @@ class TestCliMutations < Minitest::Test
   end
 
   def run_cli_at(org, archive, *args)
-    Open3.capture3({ "TASKS_FILE" => org, "TASKS_ARCHIVE" => archive }, "ruby", BIN, *args)
+    out, err, st = Open3.capture3({ "TASKS_FILE" => org, "TASKS_ARCHIVE" => archive }, "ruby", BIN, *args)
+    # Same locale re-tag as run_cli: under US-ASCII (LANG unset / LC_ALL=C),
+    # capture3 tags CLI UTF-8 output incorrectly and assert_match raises
+    # "invalid byte sequence in US-ASCII" on any multibyte bytes in the stream.
+    [out.force_encoding("UTF-8"), err.force_encoding("UTF-8"), st]
   end
 
   def sequenced_today_env(*dates)
