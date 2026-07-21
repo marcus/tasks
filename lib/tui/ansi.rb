@@ -9,6 +9,11 @@ module Tui
 
     SGR = /\e\[[0-9;]*m/
 
+    # cell_slice tokenizes into SGR escapes or single grapheme clusters. Built
+    # once: interpolating SGR inline recompiles the regex on every call, and
+    # cell_slice runs per box row of every modal frame.
+    CELL_SCAN = /(#{SGR})|(\X)/
+
     def color(str, *codes) = "\e[#{codes.join(";")}m#{str}\e[0m"
 
     # Composite `sgr` (an opening SGR sequence, e.g. "\e[1m") over `str`, whose
@@ -76,9 +81,13 @@ module Tui
     ].freeze
 
     # Display width of a single codepoint: 0 (combining/zero-width),
-    # 2 (wide/emoji) or 1 (everything else).
+    # 2 (wide/emoji) or 1 (everything else). Printable ASCII is by far the
+    # hottest input (every char of every styled row runs through here), so it
+    # returns before touching the ~75 WIDE/ZERO_WIDTH ranges — those linear
+    # `cover?` scans dominated modal compositing otherwise.
     def char_width(ch)
       cp = ch.ord
+      return 1 if cp >= 0x20 && cp < 0x7F
       return 0 if cp < 0x20
       return 0 if ZERO_WIDTH.any? { |r| r.cover?(cp) }
       return 2 if WIDE.any? { |r| r.cover?(cp) }
@@ -129,7 +138,7 @@ module Tui
       started = false
       used_sgr = false
 
-      text.scan(/(#{SGR})|(\X)/) do |esc, gc|
+      text.scan(CELL_SCAN) do |esc, gc|
         if esc
           if !started && cell <= start
             prefix << esc
