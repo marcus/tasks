@@ -32,16 +32,18 @@ class TestViews < Minitest::Test
   # Tree-mode Rows for `view` (keeps the Row so tests can reach r.node.level —
   # the true nesting depth, decoupled from whatever indent glyph the outliner
   # renders).
-  def tree_rows(store, view, collapsed: Set.new, show_deferred: false, context_filter: nil)
+  def tree_rows(store, view, collapsed: Set.new, show_deferred: false,
+                context_filter: nil, context_filters: nil)
     V.rows(view, store.items, tree: store.tree, collapsed: collapsed,
                               show_deferred: show_deferred, today: TODAY, urgent_days: 3,
-                              context_filter: context_filter)
+                              context_filter: context_filter, context_filters: context_filters)
   end
 
   # Tree-mode rows for `view`, as stripped-text strings.
-  def tree_texts(store, view, collapsed: Set.new, show_deferred: false, context_filter: nil)
+  def tree_texts(store, view, collapsed: Set.new, show_deferred: false,
+                 context_filter: nil, context_filters: nil)
     tree_rows(store, view, collapsed: collapsed, show_deferred: show_deferred,
-                           context_filter: context_filter)
+                           context_filter: context_filter, context_filters: context_filters)
       .map { |r| A.strip(r.text) }
   end
 
@@ -446,6 +448,40 @@ class TestViews < Minitest::Test
         filtered = tree_rows(store, view, context_filter: nil).map(&:text)
         assert_equal base, filtered, "#{view}: context_filter: nil is a no-op"
       end
+    end
+  end
+
+  def test_multiple_context_filters_match_any_selected_context
+    records = [
+      { "type" => "meta", "version" => 2 },
+      { "type" => "section", "id" => "s1", "title" => "Work" },
+      { "type" => "task", "id" => "h1", "parent" => "s1", "state" => "NEXT",
+        "title" => "home task", "tags" => ["@home"] },
+      { "type" => "task", "id" => "w1", "parent" => "s1", "state" => "NEXT",
+        "title" => "work task", "tags" => ["@work"] },
+      { "type" => "task", "id" => "e1", "parent" => "s1", "state" => "NEXT",
+        "title" => "errand task", "tags" => ["@errands"] },
+    ]
+    with_records(records) do |store|
+      titles = tree_rows(store, :next, context_filters: %w[@home @work])
+                 .filter_map { |row| row.item&.title }
+      assert_includes titles, "home task"
+      assert_includes titles, "work task"
+      refute_includes titles, "errand task"
+    end
+  end
+
+  def test_context_filter_mode_is_explicit_and_rejects_unknown_modes
+    query = V::Query.new(
+      :next, today: TODAY, urgent_days: 3, show_deferred: false,
+      context_filters: %w[@home @work], context_filter_mode: :any
+    )
+    assert_equal :any, query.context_filter_mode
+    assert_raises(ArgumentError) do
+      V::Query.new(
+        :next, today: TODAY, urgent_days: 3, show_deferred: false,
+        context_filters: ["@home"], context_filter_mode: :all
+      )
     end
   end
 

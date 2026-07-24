@@ -7,7 +7,7 @@ require_relative "../tasks/config"
 
 module Tui
   # Persists small bits of TUI state across runs — the active view, collapsed
-  # set, panel mode/offset, and context filter — so the TUI reopens where you
+  # set, panel mode/offset, and context filters — so the TUI reopens where you
   # left it. Deliberately dumb: a flat, versioned JSON hash at
   # $XDG_STATE_HOME/tasks/tui.json. UI preference, not task data — so one file
   # per user (not per org file), and losing it costs nothing but a default.

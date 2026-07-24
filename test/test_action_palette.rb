@@ -26,6 +26,15 @@ class TestActionPalette < Minitest::Test
     assert_equal [:focus_prompt], p.results.map(&:handler)
   end
 
+  def test_at_sign_search_is_not_normalized_as_a_context_query
+    context_entry = Tui::Shortcuts::REGISTRY.find { |entry| entry.handler == :open_context_palette }
+    subject = Tui::ActionPalette.new(
+      entries: [*entries, context_entry], return_mode: :list
+    )
+    subject.paste("@")
+    assert_equal [:open_context_palette], subject.results.map(&:handler)
+  end
+
   def test_navigation_clamps_and_filter_reset_is_deterministic
     p = palette
     p.handle_key("\e[B")

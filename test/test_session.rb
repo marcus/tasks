@@ -198,67 +198,66 @@ class TestSession < Minitest::Test
 
   # -- context filter ----------------------------------------------------------
 
-  def test_context_filter_persists_across_app_instances
+  def test_context_filters_persist_across_app_instances
     with_state_home do
       Dir.mktmpdir do |dir|
         app = app_on_fixture(dir)
-        ui(app).context_filter = "@home"
+        ui(app).context_filters = %w[@home @computer]
         app.send(:save_session)
-        assert_equal "@home", ui(app_on_fixture(dir)).context_filter
+        assert_equal %w[@computer @home], ui(app_on_fixture(dir)).context_filters
       end
     end
   end
 
-  def test_context_filter_normalizes_on_restore
+  def test_legacy_singular_context_filter_normalizes_on_restore
     with_state_home do
       Tui::Session.save({ "view" => "next", "context_filter" => "work" })
       Dir.mktmpdir do |dir|
-        assert_equal "@work", ui(app_on_fixture(dir)).context_filter
+        assert_equal ["@work"], ui(app_on_fixture(dir)).context_filters
       end
     end
   end
 
-  def test_save_session_prunes_stale_context_filter
+  def test_save_session_prunes_stale_context_filters_individually
     with_state_home do
       Dir.mktmpdir do |dir|
         app = app_on_fixture(dir)
-        ui(app).context_filter = "@gone"
+        ui(app).context_filters = %w[@home @gone]
         app.send(:save_session)
-        assert_nil Tui::Session.load[:context_filter], "stale context pruned on save"
+        assert_equal ["@home"], Tui::Session.load[:context_filters]
       end
     end
   end
 
-  def test_legacy_session_without_context_filter_loads_nil
+  def test_legacy_session_without_context_filter_loads_empty
     with_state_home do
       Tui::Session.save({ "view" => "next" })
       Dir.mktmpdir do |dir|
-        assert_nil ui(app_on_fixture(dir)).context_filter
+        assert_empty ui(app_on_fixture(dir)).context_filters
       end
     end
   end
 
-  def test_corrupt_context_filter_falls_back_to_nil
+  def test_corrupt_context_filters_fall_back_to_empty
     with_state_home do
-      FileUtils.mkdir_p(File.dirname(Tui::Session.path))
-      File.write(Tui::Session.path, JSON.generate(version: 2, view: "agenda", context_filter: 123))
+      Tui::Session.save({ "view" => "agenda", "context_filters" => "@home" })
       Dir.mktmpdir do |dir|
-        assert_nil ui(app_on_fixture(dir)).context_filter
+        assert_empty ui(app_on_fixture(dir)).context_filters
       end
     end
   end
 
-  def test_clearing_context_filter_removes_it_from_session
+  def test_clearing_context_filters_removes_them_from_session
     with_state_home do
       Dir.mktmpdir do |dir|
         app = app_on_fixture(dir)
-        ui(app).context_filter = "@home"
+        ui(app).context_filters = ["@home"]
         app.send(:save_session)
-        assert_equal "@home", Tui::Session.load[:context_filter]
+        assert_equal ["@home"], Tui::Session.load[:context_filters]
 
-        ui(app).context_filter = nil
+        ui(app).context_filters = []
         app.send(:save_session)
-        assert_nil Tui::Session.load[:context_filter]
+        assert_nil Tui::Session.load[:context_filters]
       end
     end
   end

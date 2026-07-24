@@ -43,7 +43,7 @@ module Tui
       border:        "none",           # container chrome; solid fallback when the gradient is off
       context:       "bold cyan",      # context group headers
       context_selected: "bold cyan",
-      context_filter_active: "bold green", # active @context in the filter picker
+      context_filter_active: "bold green", # checked @contexts in the filter picker
       project:       "magenta",
       project_selected: "bold magenta",
       title:         "none",

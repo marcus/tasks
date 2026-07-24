@@ -694,7 +694,7 @@ class TestAppModals < Minitest::Test
       assert_equal "@home", ui(app).context_filter
       titles = app.send(:rows).select(&:item).map { |r| r.item.title }
       assert_equal ["Water the plants"], titles
-      assert_match(/context: @home/, app.instance_variable_get(:@flash))
+      assert_match(/contexts: @home/, app.instance_variable_get(:@flash))
     end
   end
 
@@ -728,9 +728,7 @@ class TestAppModals < Minitest::Test
 
       app.send(:handle_key, "@")
       assert_equal "@home", ui(app).context_palette.current.id
-      # Clear is first; type to find it explicitly then apply.
-      ui(app).context_palette.input.replace("")
-      ui(app).context_palette.instance_variable_set(:@selected, 0)
+      "clear".chars.each { |char| app.send(:handle_key, char) }
       app.send(:handle_key, "\r")
       assert_nil ui(app).context_filter
       assert_match(/context filter cleared/, app.instance_variable_get(:@flash))
@@ -741,6 +739,27 @@ class TestAppModals < Minitest::Test
       app.send(:handle_key, "\e")
       assert_nil ui(app).context_filter
       assert_match(/context filter cleared/, app.instance_variable_get(:@flash))
+    end
+  end
+
+  def test_context_picker_stages_multiple_contexts_with_space_and_filters_by_any
+    with_app do |app|
+      app.send(:handle_key, "2") # Next
+      app.send(:handle_key, "@")
+      app.send(:handle_key, "\e[B") # Clear -> @computer
+      app.send(:handle_key, " ")
+      app.send(:handle_key, "\e[B") until ui(app).context_palette.current.id == "@home"
+      app.send(:handle_key, " ")
+
+      assert_equal Set["@computer", "@home"], ui(app).context_palette.staged_selection
+      app.send(:handle_key, "\r")
+
+      assert_equal %w[@computer @home], ui(app).context_filters
+      titles = app.send(:rows).select(&:item).map { |row| row.item.title }
+      assert_includes titles, "Book flight in Concur"
+      assert_includes titles, "Review PR backlog"
+      assert_includes titles, "Water the plants"
+      assert_match(/@computer \+ @home/, app.instance_variable_get(:@flash))
     end
   end
 

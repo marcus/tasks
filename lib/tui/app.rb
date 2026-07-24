@@ -59,6 +59,7 @@ module Tui
     # List views that keep the outliner tree (subtasks + collapse/expand) under an
     # active `@` context filter. Outline/Projects stay on their flat filtered path.
     CONTEXT_TREE_VIEWS = %i[agenda next quadrants inbox].freeze
+    CONTEXT_FILTER_MODE = :any
     ATOMIC_ALT_SEQUENCES = Shortcuts::REGISTRY.flat_map(&:sequences).select do |sequence|
       sequence.match?(/\A\e[^\e\[O]/)
     end.freeze
@@ -497,8 +498,12 @@ module Tui
       end
 
       items = read.items
-      ctx = active_context_filter
-      items = items.select { |i| i.contexts.include?(ctx) } if ctx
+      contexts = active_context_filters
+      unless contexts.empty?
+        items = items.select do |item|
+          context_filter_match?(item, contexts, mode: CONTEXT_FILTER_MODE)
+        end
+      end
       if (q = active_filter)
         q = q.downcase
         hay = title_haystack(read)
@@ -510,7 +515,7 @@ module Tui
       # but outline/projects stay flat under a context filter as before.
       use_tree = if active_filter
                    false
-                 elsif ctx
+                 elsif !contexts.empty?
                    CONTEXT_TREE_VIEWS.include?(@ui.view)
                  else
                    true
@@ -521,7 +526,8 @@ module Tui
                                          show_deferred: @ui.show_deferred, today: today,
                                          urgent_days: @urgent_days,
                                          reader: read, projects: projects,
-                                         context_filter: ctx)
+                                         context_filters: contexts,
+                                         context_filter_mode: CONTEXT_FILTER_MODE)
       else
         @rows = Views.rows(@ui.view, items, show_deferred: @ui.show_deferred,
                                            today: today,
@@ -543,7 +549,8 @@ module Tui
         @ui.show_deferred,
         @urgent_days,
         active_filter,
-        active_context_filter,
+        active_context_filters,
+        CONTEXT_FILTER_MODE,
         @ui.collapsed.hash,
       ]
     end
@@ -573,11 +580,15 @@ module Tui
       s.nil? || s.strip.empty? ? nil : s
     end
 
-    def active_context_filter
-      ctx = @ui.context_filter
-      return nil if ctx.nil?
+    def active_context_filters
+      @ui.context_filters.filter_map { |ctx| ContextPalette.normalize(ctx) }.uniq
+    end
 
-      ContextPalette.normalize(ctx)
+    def context_filter_match?(item, contexts, mode:)
+      case mode
+      when :any then item.contexts.any? { |ctx| contexts.include?(ctx) }
+      else raise ArgumentError, "unknown context filter mode #{mode.inspect}"
+      end
     end
 
     def header(w)
@@ -625,9 +636,10 @@ module Tui
         n = @row_item_count
         f << T.paint(:muted, " / #{@ui.filter} · #{n} match#{n == 1 ? "" : "es"} · esc clears · / edits")
       end
-      if @ui.context_filter && mode != :context_palette
+      unless @ui.context_filters.empty? || mode == :context_palette
         n = @row_item_count
-        f << T.paint(:muted, " #{@ui.context_filter} · #{n} match#{n == 1 ? "" : "es"} · esc clears · @ changes")
+        summary = @ui.context_filters.join(" + ")
+        f << T.paint(:muted, " #{summary} · #{n} match#{n == 1 ? "" : "es"} · esc clears · @ changes")
       end
       # Active text entry owns the scarce footer row on short terminals. Forms,
       # palettes, and the modal filter render their input in their own overlay;
@@ -1067,7 +1079,7 @@ module Tui
     def selected_action_available? = !current_item.nil?
     def project_selected? = !current_project.nil?
     def ordering_action_available?
-      @ui.view == :outline && !active_filter && !active_context_filter && !current_item.nil?
+      @ui.view == :outline && !active_filter && active_context_filters.empty? && !current_item.nil?
     end
     def recurrence_action_available?
       item = current_item
@@ -1144,7 +1156,7 @@ module Tui
       contexts = read_model.items.flat_map(&:contexts)
       @ui.context_palette = ContextPalette.new(
         contexts: contexts,
-        current: @ui.context_filter
+        current_filters: @ui.context_filters
       )
       @ui.mode = :context_palette
     end
@@ -1160,19 +1172,19 @@ module Tui
       return unless palette
 
       contexts = read_model.items.flat_map(&:contexts)
-      palette.refresh_options(contexts: contexts, current: @ui.context_filter)
+      palette.refresh_options(contexts: contexts, current_filters: @ui.context_filters)
       @ui.context_palette = palette
       @ui.mode = :context_palette
     end
 
-    def apply_context_filter(option)
-      previous = @ui.context_filter
-      next_filter = option.id # nil clears
-      @ui.context_filter = next_filter
-      if next_filter.nil?
-        flash(previous ? "context filter cleared" : "no context filter")
+    def apply_context_filter(contexts)
+      previous = @ui.context_filters
+      next_filters = Array(contexts).filter_map { |ctx| ContextPalette.normalize(ctx) }.uniq.sort
+      @ui.context_filters = next_filters
+      if next_filters.empty?
+        flash(previous.empty? ? "no context filter" : "context filter cleared")
       else
-        flash("context: #{next_filter}")
+        flash("contexts: #{next_filters.join(" + ")}")
       end
       rows
     end
@@ -2305,7 +2317,7 @@ module Tui
     def collapse_all
       read_model.tree.each do |root|
         root.each do |n|
-          has_collapsible_children = if @ui.view == :outline && !active_filter && !active_context_filter
+          has_collapsible_children = if @ui.view == :outline && !active_filter && active_context_filters.empty?
                                        n.children.any?
                                      else
                                        n.children.any?(&:task?)
@@ -2332,7 +2344,7 @@ module Tui
     end
 
     def collapsible_children?(node)
-      if @ui.view == :outline && !active_filter && !active_context_filter
+      if @ui.view == :outline && !active_filter && active_context_filters.empty?
         node.children.any?
       else
         Views.visible_children(node, @ui.show_deferred, reader: read_model).any?
@@ -2773,8 +2785,8 @@ module Tui
       elsif @ui.filter
         @ui.filter = nil
         flash("filter cleared")
-      elsif @ui.context_filter
-        @ui.context_filter = nil
+      elsif !@ui.context_filters.empty?
+        @ui.context_filters = []
         flash("context filter cleared")
         rows
       elsif panel_detail?

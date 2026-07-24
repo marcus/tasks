@@ -73,7 +73,7 @@ module Tui
       entry(sequences: ["\x0b"],       key: "ctrl-k",  description: "grow task panel",                  contexts: [:detail], handler: :grow_task_panel, palette: true),
       entry(sequences: ["\x0c"],       key: "ctrl-l",  description: "shrink task panel",                contexts: [:detail], handler: :shrink_task_panel, palette: true),
       entry(sequences: ["/"],          key: "/",       description: "filter tasks by text",             contexts: [:list], handler: :start_filter, palette: true, form: :filter),
-      entry(sequences: ["@"],          key: "@",       description: "filter tasks by @context",         contexts: [:list], handler: :open_context_palette, palette: true, form: :context_filter),
+      entry(sequences: ["@"],          key: "@",       description: "filter tasks by @contexts",        contexts: [:list], handler: :open_context_palette, palette: true, form: :context_filter),
       entry(sequences: ["M"],          key: "M",       description: "cycle agent/model",                contexts: [:list], handler: :toggle_model, palette: true),
       entry(sequences: ["A"],          key: "A",       description: "open agent activity",               contexts: [:list], handler: :open_agent_activity, availability: :agent_activity_available?, palette: true),
       entry(sequences: [],             key: "palette", description: "cancel queued agent requests",       contexts: [:list], handler: :cancel_queued_agent_requests, availability: :pending_agent_requests_available?, palette: true, confirmation: :agent_queue),

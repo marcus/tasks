@@ -156,14 +156,18 @@ read-only task panel is open. `p` inserts the selected task's stable id into
 that prompt, and `y` copies the same stable id to the clipboard.
 `:` opens the searchable, context-aware action palette; typing filters the
 available actions, the arrow keys choose one, Return runs it, and Escape
-cancels. `@` opens a searchable context filter for GTD `@` tags (for example
-`@work` or `@home`): arrow keys or typing narrow the list, Return applies the
-selected context across every view, and a leading **Clear context filter** row
-(or Escape after the filter is active) removes it. The active context filter is
-persisted in the TUI session (like the current view and collapsed set) and
-restored on the next launch; a context that no longer appears in the task set is
-pruned on save. Text `/` filter and `@` context filter compose with AND; either
-Esc-clears independently (text first).
+cancels. `@` opens a searchable, fixed-size context selector for GTD `@` tags
+(for example `@work` or `@home`). Typing filters and relevance-ranks the stable
+list; arrow keys move the `❯` cursor without reordering choices. `Space` toggles
+the cursor context (`●` marks every staged selection), Return applies the staged
+set, and Escape cancels staged changes. Typing a context and pressing Return
+still replaces the active set in one compact interaction. A leading **Clear all
+contexts** row clears the staged set with Space or clears-and-applies with
+Return. Multiple selected contexts match any selected context (OR within the
+context facet); the `/` text filter composes with that group using AND.
+Selected contexts are persisted in the TUI session and restored on the next
+launch; contexts that no longer appear in the task set are pruned individually
+on save. In list mode Escape clears `/` first, then the context group.
 Direct shortcuts and palette entries invoke the same registered
 actions. Return opens the read-only task-detail panel on the right in every
 view; list navigation stays active and refreshes the panel for each newly

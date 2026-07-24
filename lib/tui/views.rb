@@ -65,10 +65,12 @@ module Tui
       FAR_FUTURE = Date.new(9999, 12, 31)
       IDENTITY = ->(value) { value }
 
-      attr_reader :view
+      attr_reader :view, :context_filter_mode
 
       def initialize(view, today:, urgent_days:, show_deferred:, project_resolver: nil,
-                     availability_resolver: nil, temporal_context: nil, context_filter: nil)
+                     availability_resolver: nil, temporal_context: nil,
+                     context_filter: nil, context_filters: nil,
+                     context_filter_mode: :any)
         @view = view
         @today = today
         @urgent_days = urgent_days
@@ -76,7 +78,11 @@ module Tui
         @project_resolver = project_resolver
         @availability_resolver = availability_resolver
         @temporal_context = temporal_context
-        @context_filter = context_filter
+        @context_filters = Array(context_filters || context_filter).compact.uniq
+        @context_filter_mode = context_filter_mode.to_sym
+        unless %i[any].include?(@context_filter_mode)
+          raise ArgumentError, "unknown context filter mode #{@context_filter_mode.inspect}"
+        end
       end
 
       # View-only eligibility (availability + the per-view state/date rule). The
@@ -99,9 +105,15 @@ module Tui
         end
       end
 
-      # True when no context filter is active, or the item carries that context.
+      # True when no context filter is active, or the item carries any selected
+      # context. Contexts are one OR facet; text/view predicates compose by AND.
       def context_match?(item)
-        @context_filter.nil? || item.contexts.include?(@context_filter)
+        return true if @context_filters.empty?
+
+        case @context_filter_mode
+        when :any
+          item.contexts.any? { |context| @context_filters.include?(context) }
+        end
       end
 
       # The composite the filtered views select/anchor on: view-eligible AND in
@@ -183,7 +195,8 @@ module Tui
     # retained as a compatibility spelling for direct unit callers.
     def rows(view, items, tree: nil, collapsed: Set.new, show_deferred: false,
              today: Date.today, urgent_days: Tasks::Quadrants::DEFAULT_URGENT_DAYS,
-             reader: nil, store: nil, projects: nil, context_filter: nil)
+             reader: nil, store: nil, projects: nil, context_filter: nil,
+             context_filters: nil, context_filter_mode: :any)
       reader ||= store
       if view == :outline
         return outline(items, tree: tree, collapsed: collapsed, today: today, reader: reader)
@@ -194,8 +207,10 @@ module Tui
       end
 
       if tree
+        contexts = context_filters || context_filter
         ctx = { collapsed: collapsed, show_deferred: show_deferred, today: today,
-                urgent_days: urgent_days, context_filter: context_filter }
+                urgent_days: urgent_days, context_filters: contexts,
+                context_filter_mode: context_filter_mode }
         case view
         when :agenda    then agenda_tree(tree, reader: reader, **ctx)
         when :next      then next_tree(tree, reader: reader, **ctx)
@@ -453,10 +468,11 @@ module Tui
     # and quadrants read them.
 
     def agenda_tree(tree, collapsed:, show_deferred:, today:, urgent_days:, reader: nil,
-                    context_filter: nil)
+                    context_filter: nil, context_filters: nil, context_filter_mode: :any)
       query = view_query(:agenda, today: today, urgent_days: urgent_days,
                                   show_deferred: show_deferred, reader: reader,
-                                  context_filter: context_filter)
+                                  context_filter: context_filter, context_filters: context_filters,
+                                  context_filter_mode: context_filter_mode)
       anchors = anchor_roots(tree, show_deferred, reader: reader, today: today).select do |n|
         items = subtree_items(n, show_deferred, reader: reader, today: today)
         items.any? { |item| query.eligible?(item) } &&
@@ -476,10 +492,11 @@ module Tui
     end
 
     def next_tree(tree, collapsed:, show_deferred:, today:, urgent_days:, reader: nil,
-                  context_filter: nil)
+                  context_filter: nil, context_filters: nil, context_filter_mode: :any)
       query = view_query(:next, today: today, urgent_days: urgent_days,
                                 show_deferred: show_deferred, reader: reader,
-                                context_filter: context_filter)
+                                context_filter: context_filter, context_filters: context_filters,
+                                context_filter_mode: context_filter_mode)
       matching = query.select(visible_nodes(tree, show_deferred, reader: reader, today: today)) { |node| node.item }
       anchors = matching.reject do |node|
         matching_ancestor?(node, query, show_deferred, reader: reader, today: today)
@@ -501,10 +518,11 @@ module Tui
     end
 
     def quadrants_tree(tree, collapsed:, show_deferred:, today:, urgent_days:, reader: nil,
-                       context_filter: nil)
+                       context_filter: nil, context_filters: nil, context_filter_mode: :any)
       query = view_query(:quadrants, today: today, urgent_days: urgent_days,
                                      show_deferred: show_deferred, reader: reader,
-                                     context_filter: context_filter)
+                                     context_filter: context_filter, context_filters: context_filters,
+                                     context_filter_mode: context_filter_mode)
       anchors = query.select(anchor_roots(tree, show_deferred, reader: reader, today: today)) { |node| node.item }
       by_q = query.grouped(anchors) { |node| node.item }
       rows = []
@@ -528,10 +546,11 @@ module Tui
     end
 
     def inbox_tree(tree, collapsed:, show_deferred:, today:, urgent_days:, reader: nil,
-                   context_filter: nil)
+                   context_filter: nil, context_filters: nil, context_filter_mode: :any)
       query = view_query(:inbox, today: today, urgent_days: urgent_days,
                                  show_deferred: show_deferred, reader: reader,
-                                 context_filter: context_filter)
+                                 context_filter: context_filter, context_filters: context_filters,
+                                 context_filter_mode: context_filter_mode)
       matching = query.select(visible_nodes(tree, show_deferred, reader: reader, today: today)) { |node| node.item }
       anchors = matching.reject do |node|
         matching_ancestor?(node, query, show_deferred, reader: reader, today: today)
@@ -843,14 +862,17 @@ module Tui
     end
 
     def view_query(view, today: Date.today, urgent_days: Tasks::Quadrants::DEFAULT_URGENT_DAYS,
-                   show_deferred: true, reader: nil, store: nil, context_filter: nil)
+                   show_deferred: true, reader: nil, store: nil,
+                   context_filter: nil, context_filters: nil, context_filter_mode: :any)
       reader ||= store
       resolver = ->(item) { project_name(item, reader) } if view == :projects
       availability_resolver = ->(item) { availability_for(item, reader: reader, today: today) }
       temporal_context = reader&.respond_to?(:temporal_context) && reader.temporal_context
       Query.new(view, today: today, urgent_days: urgent_days, show_deferred: show_deferred,
                      project_resolver: resolver, availability_resolver: availability_resolver,
-                     temporal_context: temporal_context, context_filter: context_filter)
+                     temporal_context: temporal_context, context_filter: context_filter,
+                     context_filters: context_filters,
+                     context_filter_mode: context_filter_mode)
     end
 
     def available?(item, reader: nil, today: Date.today)

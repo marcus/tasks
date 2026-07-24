@@ -25,10 +25,11 @@ module Tui
     }.freeze
 
     attr_reader :mode, :panel_offset
-    attr_accessor :view, :selected_id, :filter, :context_filter, :collapsed, :show_deferred,
+    attr_accessor :view, :selected_id, :filter, :collapsed, :show_deferred,
                   :modal, :panel, :archive_preview, :form,
                   :form_success, :action_palette, :context_palette, :filter_input,
                   :modal_filter_input, :task_editor, :panel_mode
+    attr_reader :context_filters
 
     def self.restore(saved:, views:, default_view:)
       saved_view = saved[:view]
@@ -46,18 +47,18 @@ module Tui
       panel_mode = PANEL_MODES.include?(saved_panel_mode) ? saved_panel_mode : :standard
       saved_offset = saved[:panel_offset]
       panel_offset = saved_offset.is_a?(Integer) ? saved_offset : 0
-      context_filter = restore_context_filter(saved[:context_filter])
+      context_filters = restore_context_filters(saved[:context_filters], legacy: saved[:context_filter])
       new(view: view, collapsed: collapsed, panel_mode: panel_mode, panel_offset: panel_offset,
-          context_filter: context_filter)
+          context_filters: context_filters)
     end
 
     def initialize(view:, collapsed: Set.new, panel_mode: :standard, panel_offset: 0,
-                   context_filter: nil)
+                   context_filter: nil, context_filters: nil)
       @view = view
       @selected_id = nil
       @mode = :list
       @filter = nil
-      @context_filter = context_filter
+      self.context_filters = context_filters || context_filter
       @collapsed = collapsed
       @show_deferred = false
       @modal = nil
@@ -149,9 +150,15 @@ module Tui
       force_list! if value.nil? && @mode == :context_palette
     end
 
+    def context_filters=(values)
+      @context_filters = self.class.normalize_context_filters(values)
+    end
+
+    # Compatibility for callers restoring or inspecting the former singular
+    # state. New filtering code must use context_filters.
+    def context_filter = @context_filters.first
     def context_filter=(value)
-      @context_filter = value.nil? ? nil : value.to_s
-      @context_filter = nil if @context_filter&.strip&.empty?
+      self.context_filters = value
     end
 
     def task_editor=(value)
@@ -184,26 +191,29 @@ module Tui
         "panel_mode" => @panel_mode.to_s,
         "panel_offset" => @panel_offset,
       }
-      ctx = @context_filter
-      if ctx
-        ctx = nil if live_contexts && !live_contexts.include?(ctx)
-        hash["context_filter"] = ctx if ctx
-      end
+      contexts = @context_filters
+      contexts &= live_contexts if live_contexts
+      hash["context_filters"] = contexts unless contexts.empty?
       hash
     end
 
-    def self.restore_context_filter(value)
-      return nil unless value.is_a?(String)
+    def self.normalize_context_filters(values)
+      Array(values).filter_map do |value|
+        next unless value.is_a?(String)
 
-      token = value.strip
-      return nil if token.empty?
+        token = value.strip
+        next if token.empty?
 
-      token = "@#{token}" unless token.start_with?("@")
-      return nil if token.length < 2
-
-      token
+        token = "@#{token}" unless token.start_with?("@")
+        token if token.length >= 2
+      end.uniq.sort
     end
-    private_class_method :restore_context_filter
+
+    def self.restore_context_filters(value, legacy: nil)
+      source = value.is_a?(Array) ? value : legacy
+      normalize_context_filters(source)
+    end
+    private_class_method :restore_context_filters
 
     private
 

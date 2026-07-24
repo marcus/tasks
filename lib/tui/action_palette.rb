@@ -1,124 +1,56 @@
 # frozen_string_literal: true
 
-require_relative "ansi"
-require_relative "border"
-require_relative "theme"
-require_relative "text_input"
+require_relative "choice_picker"
 
 module Tui
   # Searchable projection of context-available actions from Shortcuts. It owns
   # only query/selection state; App executes the selected registry entry.
   class ActionPalette
-    A = Ansi
-    T = Theme
     MAX_RESULTS = 8
 
-    attr_reader :input, :entries, :return_mode, :target_id, :selected, :error
+    attr_reader :entries, :return_mode, :target_id
 
     def initialize(entries:, return_mode:, target_id: nil)
       @entries = entries.freeze
       @return_mode = return_mode
       @target_id = target_id
-      @input = TextInput.new
-      @selected = 0
-      @error = nil
-    end
-
-    def results
-      query = @input.strip.downcase
-      return @entries if query.empty?
-
-      @entries.select do |entry|
-        [entry.description, entry.display_key, entry.handler.to_s]
-          .any? { |value| value.downcase.include?(query) }
+      options = @entries.map do |entry|
+        ChoicePicker::Option.new(
+          id: entry.handler,
+          label: "#{entry.description}  #{Theme.paint(:muted, entry.display_key)}",
+          search_text: [entry.description, entry.display_key, entry.handler.to_s],
+          metadata: entry,
+        )
       end
+      @picker = ChoicePicker.new(
+        title: "actions", options: options, selection_mode: :single,
+        accept_label: "run", empty_label: "no matching actions",
+        max_visible: MAX_RESULTS,
+      )
     end
 
-    def current = results[@selected]
+    def input = @picker.input
+    def selected = @picker.cursor_index
+    def error = @picker.error
+    def results = @picker.results.map(&:metadata)
+    def current = @picker.current&.metadata
 
     def handle_key(key)
-      case key
-      when "\e"           then :cancelled
-      when "\r", "\n"     then current ? [:execute, current] : :handled
-      when "\e[A", "\x10" then move(-1)
-      when "\e[B", "\x0e" then move(1)
-      else
-        if @input.handle_key(key) == :changed
-          @selected = 0
-          @error = nil
-          :changed
-        else
-          :handled
-        end
-      end
+      result = @picker.handle_key(key)
+      return result unless result.is_a?(Array) && result.first == :accepted
+
+      entry = @entries.find { |candidate| candidate.handler == result.last.first }
+      entry ? [:execute, entry] : :handled
     end
 
-    def paste(text)
-      if @input.insert(text) == :changed
-        @selected = 0
-        @error = nil
-        :changed
-      else
-        :handled
-      end
-    end
-
-    def fail!(message)
-      @error = message.to_s
-    end
+    def paste(text) = @picker.paste(text)
+    def fail!(message) = @picker.fail!(message)
 
     def popup(row:, col:, max_width:, max_height:, inline_input:)
-      matches = results
-      @selected = [[@selected, 0].max, [matches.size - 1, 0].max].min
-      first = [[@selected - MAX_RESULTS + 1, 0].max, [matches.size - MAX_RESULTS, 0].max].min
-      visible = matches.slice(first, MAX_RESULTS) || []
-      content = visible.each_with_index.map do |entry, index|
-        marker = first + index == @selected ? "❯" : " "
-        key = entry.display_key
-        " #{marker} #{entry.description}  #{T.paint(:muted, key)}"
-      end
-      content = [T.paint(:muted, "   no matching actions")] if content.empty?
-      selected_entry = matches[@selected]
-      selected_line = content.find { |line| line.include?("❯") } || content.first
-      compact_selected = if selected_entry
-                           "❯ #{selected_entry.display_key} #{selected_entry.description}"
-                         else
-                           T.paint(:muted, "no matches")
-                         end
-
-      query = " search: #{inline_input.call(@input)}"
-      hint = @error ? T.paint(:error, @error) : T.paint(:muted, "↑↓ choose · enter run · esc cancel")
-      inner = [query, *content, " #{hint}"]
-      natural_width = [inner.map { |line| A.vislen(line) }.max + 2, 46].max
-      width = [[natural_width, max_width].min, 1].max
-      height = [[inner.size + 2, max_height].min, 1].max
-
-      if width < 6 || height < 3
-        compact = [compact_selected, query, " #{hint}"].first(height)
-        lines = compact.map { |line| A.vpad(A.vtrunc(line, width), width) }
-        return { lines: lines, row: row, col: col }
-      end
-
-      slots = height - 2
-      other_actions = content.reject { |line| line.equal?(selected_line) }
-      visible_inner = [selected_line, query, *other_actions, " #{hint}"].first(slots)
-      inner_width = width - 2
-      title = A.vtrunc(" actions ", inner_width)
-      lines = Border.box(
-        inner_lines: visible_inner.compact.map { |line| A.vpad(A.vtrunc(line, inner_width), inner_width) },
-        inner_width: inner_width,
-        gradient: T.gradient(:border), solid: T.sgr(:border),
-        title: title, title_lead: 0,
+      @picker.popup(
+        row: row, col: col, max_width: max_width, max_height: max_height,
+        inline_input: inline_input,
       )
-      { lines: lines, row: row, col: col }
-    end
-
-    private
-
-    def move(delta)
-      count = results.size
-      @selected = count.zero? ? 0 : (@selected + delta).clamp(0, count - 1)
-      :handled
     end
   end
 end

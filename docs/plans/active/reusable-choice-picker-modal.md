@@ -1,8 +1,34 @@
 # Plan: reusable, stable choice-picker modal
 
-Status: proposed
+Status: implemented and independently reviewed
 
 Date: 2026-07-24
+
+## Implementation notes
+
+- Added the reusable `Tui::ChoicePicker` with injectable search normalization
+  and selected-label styling, stable cursor/viewport state, fixed normal-mode
+  geometry, single/multiple selection modes, refresh reconciliation, and
+  tiny-terminal fallback.
+- Migrated both `ActionPalette` and `ContextPalette` to thin domain adapters.
+  Contexts alone configure leading-`@` normalization and the checked-row theme
+  slot; the generic picker has no task, context, or shortcut knowledge.
+- Context selection is transactional: `●` marks staged choices, `❯` marks the
+  cursor, Space toggles, Return applies, Escape cancels, and typing plus Return
+  preserves the original one-step replacement flow.
+- Generalized `UiState`, session persistence, App filtering, and `Views::Query`
+  to ordered context arrays with explicit validated `context_filter_mode:
+  :any`. Legacy singular session values migrate and stale contexts prune
+  individually.
+- Betamax proof covered normal, filtered, multiple-selected, and narrow layouts.
+  It caught an unsupported `✓` glyph during development; `●` is the verified
+  portable selected marker.
+- Independent adversarial review found and verified fixes for refresh baseline
+  reconciliation, generic search normalization, explicit filter-mode
+  propagation/fingerprinting, and context-specific theme leakage. The final
+  review reported no remaining findings.
+- Final core proof: `1588 runs, 20189 assertions, 0 failures, 0 errors, 0 skips`;
+  `git diff --check` clean.
 
 ## Outcome
 
@@ -49,7 +75,7 @@ selector without changing the picker or persisted data shape.
 Cursor and selection are separate states:
 
 - `❯` means "the row operated on by Return or Space."
-- `✓` means "this item is in the staged selection."
+- `●` means "this item is in the staged selection."
 - `context_filter_active` color applies to checked rows.
 - The cursor row also uses the normal `selection` slot so focus remains
   perceivable in monochrome and low-color terminals.
@@ -83,7 +109,7 @@ The normal eight-row viewport:
 │ search: ho█                                    │
 │                                                │
 │   Clear all contexts                           │
-│ ❯ ✓ @home                                      │
+│ ❯ ● @home                                      │
 │     @phone                                     │
 │     @shopping                                  │
 │                                                │
@@ -94,8 +120,8 @@ The normal eight-row viewport:
 With multiple selected and the cursor elsewhere:
 
 ```text
-│   ✓ @home                                      │
-│   ✓ @work                                      │
+│   ● @home                                      │
+│   ● @work                                      │
 │ ❯   @computer                                  │
 ```
 
