@@ -118,6 +118,14 @@ class TestBorder < Minitest::Test
     assert_equal "└──┘", A.strip(rows.last)
   end
 
+  def test_box_oversized_title_never_widens_the_top_row
+    # A title wider than the inner width must be truncated so every row of the
+    # box stays the same width — the primitive enforces its own fit.
+    rows = B.box(inner_lines: [], inner_width: 3, title: "abcdef", title_lead: 1)
+    assert_equal [5], rows.map { |r| A.vislen(r) }.uniq, "every row stays inner_width + 2"
+    assert_equal "╭─a…╮", A.strip(rows.first) # title truncated with an ellipsis, corners intact
+  end
+
   def test_box_title_strip_keeps_title_unpainted
     title = "\e[1mHi\e[0m"
     rows = B.box(inner_lines: ["....."], inner_width: 5, gradient: GRAD, title: title, title_lead: 1)

@@ -109,9 +109,14 @@ module Tui
     def top_row(painter, c, inner_width, title, title_lead)
       return painter.run(0, 0, [c[:tl], *Array.new(inner_width, c[:h]), c[:tr]]) if title.nil?
 
-      lead = title_lead
+      # Self-enforce the fit: clamp the lead and truncate the (styled) title so
+      # lead + title never exceeds inner_width. Callers already pre-truncate, so
+      # this is a no-op for them, but it keeps the top row the same width as the
+      # rest of the box for any caller of this shared primitive.
+      lead = title_lead.clamp(0, inner_width)
+      title = A.vtrunc(title, inner_width - lead)
       tw = A.vislen(title)
-      fill = [inner_width - lead - tw, 0].max
+      fill = inner_width - lead - tw
       painter.run(0, 0, [c[:tl], *Array.new(lead, c[:h])]) +
         title +
         painter.run(0, 1 + lead + tw, [*Array.new(fill, c[:h]), c[:tr]])
