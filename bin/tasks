@@ -13,7 +13,8 @@
 #                             mutate one project (create makes an empty project
 #                             section; complete aka done; archive --force past open)
 #   bin/tasks capture|c "..." append a new item (flags: --due/--scheduled/
-#                             --priority/--tag/--context/--state/--project/--under)
+#                             --priority/--tag/--context/--no-host-context/
+#                             --state/--project/--under)
 #   bin/tasks done|d <ref>    mark a matching open item DONE (complete/close);
 #                             cascades to its open descendants (recurring parent
 #                             rolls forward instead and does not cascade)
@@ -217,7 +218,7 @@ def cmd_inbox(args = [])
   inbox.empty? ? (puts "Inbox empty. ✨") : inbox.each { |i| puts "  #{fmt(i)}" }
 end
 
-CAPTURE_USAGE = %(usage: tasks capture "text" [--due d] [--scheduled d] [--priority A|B|C] [--tag t] [--context @x] [--state STATE] [--project "Heading" | --under <ref>])
+CAPTURE_USAGE = %(usage: tasks capture "text" [--due d] [--scheduled d] [--priority A|B|C] [--tag t] [--context @x] [--no-host-context] [--state STATE] [--project "Heading" | --under <ref>])
 
 def cmd_capture(args)
   context = temporal_context
@@ -227,7 +228,7 @@ def cmd_capture(args)
   due = scheduled = priority = state = project = recur = under = nil
   due_timezone = scheduled_timezone = due_fold = scheduled_fold = nil
   due_floating = scheduled_floating = false
-  dry = json = false
+  dry = json = no_host_context = false
   positional = []
   i = 0
   # fetch a flag's value or abort — a forgotten value must never fail silently
@@ -245,6 +246,7 @@ def cmd_capture(args)
     when "--priority", "--pri"    then priority = need.(a)
     when "--tag"                  then tags << need.(a)
     when "--context", "--ctx"     then contexts << need.(a)
+    when "--no-host-context"      then no_host_context = true
     when "--state"                then state = need.(a)
     when "--project"              then project = need.(a)
     when "--under"                then under = need.(a)
@@ -306,11 +308,19 @@ def cmd_capture(args)
   under_item = under && resolve_ref(under)
   parent_id = under_item && stable_id_for(under_item)
 
+  command = Tasks::CreateTask.new(
+    title: text, deadline: due_date, scheduled: scheduled_date,
+    priority: pri, tags: all_tags, state: st, project: project,
+    parent_id: parent_id, recurrence: cookie,
+    apply_host_context: !no_host_context
+  )
+
   if dry
+    preview = application.prepare_create_task(command)
     head = +"#{st} "
     head << "[##{pri}] " if pri
     head << text
-    head << " :#{all_tags.join(":")}:" unless all_tags.empty?
+    head << " :#{preview.tags.join(":")}:" unless preview.tags.empty?
     head << " (recur #{cookie})" if cookie
     if under_item
       puts %(would capture under "#{under_item.title}": #{head})
@@ -320,11 +330,6 @@ def cmd_capture(args)
     return
   end
 
-  command = Tasks::CreateTask.new(
-    title: text, deadline: due_date, scheduled: scheduled_date,
-    priority: pri, tags: all_tags, state: st, project: project,
-    parent_id: parent_id, recurrence: cookie
-  )
   result = application.create_task(command, today: today, context: cli_operation_context(context))
   if result.too_deep?
     mutation_failed "would exceed max depth #{store.max_depth} (max_depth config / TASKS_MAX_DEPTH)"
@@ -445,7 +450,8 @@ def application
     ),
     temporal_context_factory: -> {
       Tasks::TemporalContext.capture(timezone: PATHS.timezone, time_format: PATHS.time_format)
-    }
+    },
+    host_context: PATHS.host_context
   )
 end
 
@@ -1806,6 +1812,9 @@ def cmd_config(args)
            timezone_fallback_warning: PATHS.timezone_fallback_warning,
            links: PATHS.links, link_systems: PATHS.link_systems,
            prompt_facts: PATHS.prompt_facts,
+           hostname: PATHS.hostname, host_context: PATHS.host_context,
+           host_context_source: PATHS.host_context_source,
+           host_contexts: PATHS.host_contexts,
            sources: PATHS.sources,
            memory_exists: File.file?(PATHS.memory),
            config_file: PATHS.config_file,
@@ -1819,6 +1828,10 @@ def cmd_config(args)
     puts "theme:       #{PATHS.theme}  #{dim("(#{PATHS.sources[:theme]})")}"
     puts "timezone:    #{PATHS.timezone}  #{dim("(#{PATHS.sources[:timezone]})")}"
     puts "time_format: #{PATHS.time_format}  #{dim("(#{PATHS.sources[:time_format]})")}"
+    puts "hostname:    #{PATHS.hostname || "unavailable"}"
+    host_context = PATHS.host_context || "none"
+    source = PATHS.host_context_source ? "  #{dim("(#{PATHS.host_context_source})")}" : ""
+    puts "host_context: #{host_context}#{source}"
     puts "tzdb:        #{Tasks::Timezones.tzdb_version}"
     warn "warning: host time zone could not be detected; using Etc/UTC" if PATHS.timezone_fallback_warning
     puts "colors:      #{PATHS.colors.map { |k, v| "#{k}=#{v}" }.join(" · ")}" unless PATHS.colors.empty?
@@ -2120,7 +2133,8 @@ HELP = <<~USAGE
 
   Capture:
     capture   c "text"       new item. Flags: --due --scheduled --priority
-                             --tag --context --state --project --under --recur
+                             --tag --context --no-host-context --state
+                             --project --under --recur
                              (--under <ref> nests it below a task; caps at max_depth)
 
   Update (take <ref>; support --dry-run/--json/--include-done):
@@ -2180,6 +2194,7 @@ HELP = <<~USAGE
   honored) — see docs/cli-spec.md (TUI colors).
   Link shorthands: link.jira = https://acme.atlassian.net/browse/%s in the config
   lets notes say jira:OPS-1234; system.gitlab = gitlab.acme.io names custom hosts.
+  Host contexts: host_context.my-mac.local = @home adds that context to new tasks.
 
   Dates: 2026-07-15 · 07-15 · fri · today · tomorrow · +3 · tomorrow 9am
   Timed values: --timezone Europe/London · --floating · --fold earlier|later

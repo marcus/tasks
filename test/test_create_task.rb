@@ -114,6 +114,60 @@ class TestCreateTask < Minitest::Test
     end
   end
 
+  def test_application_adds_host_context_alongside_explicit_contexts
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, FIXTURE)
+      app = Tasks::Application.new(
+        store_factory: Tasks::StoreFactory.new(org: org, archive: archive),
+        host_context: "@home"
+      )
+
+      result = app.create_task(
+        { title: "Call from laptop", tags: %w[@computer follow-up] }
+      )
+
+      assert result.ok?
+      assert_equal %w[@home @computer follow-up],
+                   record_for(org, title: "Call from laptop").fetch("tags")
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_application_deduplicates_or_explicitly_suppresses_host_context
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, FIXTURE)
+      app = Tasks::Application.new(
+        store_factory: Tasks::StoreFactory.new(org: org, archive: archive),
+        host_context: "@home"
+      )
+
+      assert app.create_task({ title: "Already home", tags: %w[@home @computer] }).ok?
+      assert app.create_task(
+        { title: "Work only", tags: %w[@work], apply_host_context: false }
+      ).ok?
+      assert_equal %w[@home @computer],
+                   record_for(org, title: "Already home").fetch("tags")
+      assert_equal %w[@work], record_for(org, title: "Work only").fetch("tags")
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_create_rejects_non_boolean_host_context_policy
+    with_create_store do |store, org, _archive|
+      result = store.create_task!(command(apply_host_context: "no"))
+
+      assert_equal :invalid, result.status
+      assert_equal ["apply_host_context must be true or false"],
+                   result.field_errors.fetch(:apply_host_context)
+      refute record_for(org, title: "Draft proposal")
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
   def test_create_rejects_non_boolean_deferred_without_writing
     with_create_store do |store, org, _archive|
       before = File.binread(org)

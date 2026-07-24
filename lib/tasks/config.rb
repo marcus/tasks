@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "socket"
+
 require_relative "quadrants"
 require_relative "tree"
 require_relative "prompt_facts"
@@ -13,7 +15,8 @@ module Tasks
   #   2. TASKS_DIR env var (a directory holding tasks.jsonl + archive.jsonl)
   #   3. config file at $XDG_CONFIG_HOME/tasks/config (default ~/.config/tasks/
   #      config), `key = value` lines with keys dir / file / archive /
-  #      urgent_days / max_depth / theme / color.<slot> / prompt.<fact>
+  #      urgent_days / max_depth / theme / color.<slot> / prompt.<fact> /
+  #      host_context.<hostname>
   #   4. default_dir — the repo root, matching the original layout
   #
   # Every consumer (CLI, TUI) goes through Config.resolve so they can never
@@ -37,6 +40,7 @@ module Tasks
     Paths = Struct.new(:org, :archive, :memory, :urgent_days, :max_depth, :theme, :colors,
                        :timezone, :time_format, :timezone_fallback_warning,
                        :links, :link_systems, :prompt_facts,
+                       :hostname, :host_context, :host_context_source, :host_contexts,
                        :sources, :config_file, keyword_init: true) do
       # Context block appended to an agent's system prompt so a headless harness
       # finds the CLI and the task files even when they live outside the repo.
@@ -66,13 +70,14 @@ module Tasks
         timezone: Timezones::FALLBACK, time_format: 12, timezone_fallback_warning: false,
         links: {}, link_systems: {},
         prompt_facts: PromptFacts.resolve,
+        hostname: nil, host_context: nil, host_context_source: nil, host_contexts: {},
         sources: { org: "pinned", archive: "pinned", memory: "pinned", urgent_days: "default",
                    max_depth: "default", theme: "default", timezone: "pinned", time_format: "default" },
         config_file: config_file
       )
     end
 
-    def self.resolve(default_dir:, env: ENV)
+    def self.resolve(default_dir:, env: ENV, hostname: -> { Socket.gethostname })
       file = config_file(env)
       conf = parse_file(file)
 
@@ -97,6 +102,8 @@ module Tasks
       theme, theme_source = pick_theme(conf, env)
       timezone, timezone_source, timezone_warning = pick_timezone(conf, env)
       time_format, time_format_source = pick_time_format(conf, env)
+      detected_hostname, host_context, host_context_source =
+        pick_host_context(conf.fetch(:host_contexts, {}), hostname)
 
       Paths.new(
         org: org, archive: archive, memory: memory,
@@ -105,12 +112,32 @@ module Tasks
         timezone: timezone, time_format: time_format, timezone_fallback_warning: timezone_warning,
         links: conf.fetch(:links, {}), link_systems: conf.fetch(:link_systems, {}),
         prompt_facts: PromptFacts.resolve(conf.fetch(:prompt_facts, {})),
+        hostname: detected_hostname, host_context: host_context,
+        host_context_source: host_context_source,
+        host_contexts: conf.fetch(:host_contexts, {}),
         sources: { org: org_source, archive: archive_source, memory: memory_source,
                    urgent_days: urgent_source, max_depth: max_depth_source, theme: theme_source,
                    timezone: timezone_source, time_format: time_format_source },
         config_file: file
       )
     end
+
+    def self.pick_host_context(contexts, hostname)
+      detected = hostname.call.to_s.strip
+      return [nil, nil, nil] if detected.empty?
+
+      full = detected.downcase
+      short = full.split(".", 2).first
+      [full, short].uniq.each do |selector|
+        next unless contexts.key?(selector)
+
+        return [detected, contexts.fetch(selector), "host_context.#{selector}"]
+      end
+      [detected, nil, nil]
+    rescue StandardError
+      [nil, nil, nil]
+    end
+    private_class_method :pick_host_context
 
     # Resolve the agent-memory.md sidecar: TASKS_MEMORY env beats a config
     # `memory` key beats agent-memory.md beside the resolved tasks.jsonl. The
@@ -255,7 +282,10 @@ module Tasks
     # :links / :link_systems maps (symbol keys so they can't collide with the
     # flat string keys above). `prompt.<fact> = on|off` toggles agent prompt
     # facts (see PromptFacts); unknown names are kept for forward compatibility
-    # but only registered facts affect the resolved map.
+    # but only registered facts affect the resolved map. `host_context.<host>`
+    # maps a full hostname or first DNS label to the context added on create.
+    HOST_SELECTOR = /\A[a-z0-9][a-z0-9._-]*\z/i
+
     def self.parse_file(path)
       return {} unless File.file?(path)
 
@@ -299,8 +329,20 @@ module Tasks
         elsif (m = key.match(/\Aprompt\.(.+)\z/)) && m[1].match?(PromptFacts::FACT_NAME)
           toggle = PromptFacts.parse_toggle(value)
           (conf[:prompt_facts] ||= {})[m[1]] = toggle unless toggle.nil?
+        elsif (m = key.match(/\Ahost_context\.(.+)\z/)) && m[1].match?(HOST_SELECTOR)
+          context = normalize_context(value)
+          (conf[:host_contexts] ||= {})[m[1].downcase] = context if context
         end
       end
     end
+
+    def self.normalize_context(value)
+      context = value.to_s.strip
+      context = "@#{context}" unless context.start_with?("@")
+      return nil if context == "@" || context.match?(/\s/)
+
+      context
+    end
+    private_class_method :normalize_context
   end
 end

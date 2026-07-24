@@ -140,6 +140,20 @@ time_format = 12
 effective zone, its source, the 12/24-hour preference, and the loaded tzdb.
 Floating times use that zone; fixed values retain their stored IANA zone.
 
+To make every task created on a machine visible under its usual context
+filter, map that machine's hostname in the same config file:
+
+```ini
+host_context.marcus-home.local = @home
+host_context.work-mbp = @work
+```
+
+The full hostname and its first DNS label are both recognized. The matched
+context is additive, so `tasks capture "Email Sam" --context @computer` can
+carry both `@home` and `@computer`. Use `--no-host-context` for a one-off task
+that should not inherit the machine context. `tasks config` shows the detected
+hostname and the mapping that won.
+
 Schema v2 adds optional time metadata to the existing date fields. Before using
 a v1 task store with this release, preview and run the checked migration:
 

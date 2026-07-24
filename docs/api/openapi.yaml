@@ -346,6 +346,7 @@ paths:
                   project: "Work"
                   parent_id: null
                   recurrence: "weekly"
+                  apply_host_context: true
                   body: "Captured 2026-07-14.\nClear the inbox to zero."
       responses:
         "201":
@@ -2342,6 +2343,13 @@ components:
             contexts and tags into the stored tag list (`Tasks::CreateTask`
             takes one array); the split fields keep the request unambiguous.
           items: { type: string }
+        apply_host_context:
+          type: boolean
+          default: true
+          description: |
+            When true or omitted, add the context configured for the API
+            server's host. The host context is additive with `contexts`.
+            Set false to suppress it for this create only.
         deferred:
           type: boolean
           description: Create with an own indefinite On Hold marker. Default false.

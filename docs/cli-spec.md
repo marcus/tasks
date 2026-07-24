@@ -64,6 +64,20 @@ that errors or returns blank is omitted silently; the rest of the block still
 injects. Both `tasks -p` and the TUI queue assemble this through
 `Tasks::AgentContext`.
 
+Host-specific creation contexts use another dotted namespace:
+
+```ini
+host_context.marcus-home.local = @home
+host_context.work-mbp = @work
+```
+
+Matching against `Socket.gethostname` is case-insensitive and tries the full
+hostname before its first DNS label. Values without `@` are normalized. A
+matched context is added to every task created through the CLI, TUI, or API,
+alongside any explicit contexts. `capture --no-host-context` suppresses it for
+one creation. `tasks config` reports the detected hostname, resolved context,
+and matching config key.
+
 Two dotted namespaces configure links (see `links`/`open`):
 
 ```
@@ -580,7 +594,7 @@ is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or `nul
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `capture "text"` | `add`, `c` | ✅ | New INBOX item. `--due` and `--scheduled` accept complete date/time expressions. Each has independent `--due-timezone`/`--scheduled-timezone`, `--due-floating`/`--scheduled-floating`, and `--due-fold`/`--scheduled-fold` modifiers; a modifier without its matching value is rejected. Other flags remain `--priority`, repeatable tags/contexts, state, project/under, recurrence, dry-run, and JSON. A capture with either temporal value lands as TODO unless state is explicit. |
+| `capture "text"` | `add`, `c` | ✅ | New INBOX item. `--due` and `--scheduled` accept complete date/time expressions. Each has independent `--due-timezone`/`--scheduled-timezone`, `--due-floating`/`--scheduled-floating`, and `--due-fold`/`--scheduled-fold` modifiers; a modifier without its matching value is rejected. Other flags remain `--priority`, repeatable tags/contexts, `--no-host-context`, state, project/under, recurrence, dry-run, and JSON. A configured host context is additive with explicit contexts unless suppressed. A capture with either temporal value lands as TODO unless state is explicit. |
 
 ## Update (all take `<ref>`, all support `--dry-run`)
 

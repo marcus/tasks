@@ -1319,10 +1319,13 @@ class TestApp < Minitest::Test
 
   # Build an app on a sandbox gtd.org (optionally a modified fixture), park it
   # on a given view, and select the row whose item title includes `select`.
-  def app_on(view:, select:, content: FIXTURE_ORG, date_provider: -> { Date.today })
+  def app_on(view:, select:, content: FIXTURE_ORG, date_provider: -> { Date.today },
+             host_context: nil)
     Dir.mktmpdir do |dir|
       File.write(File.join(dir, "tasks.jsonl"), content)
-      app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir),
+      paths = Tasks::Config.for_dir(dir)
+      paths.host_context = host_context
+      app = Tui::App.new(root: dir, paths: paths,
                          llm_config: default_llm_config, date_provider: date_provider)
       ui(app).view = view
       app.send(:rows)
@@ -2480,9 +2483,9 @@ class TestApp < Minitest::Test
 
   PROJ_DATE = -> { Date.new(2026, 7, 20) }
 
-  def on_project(select, &blk)
+  def on_project(select, host_context: nil, &blk)
     app_on(view: :projects, select: select, content: PROJECTS_FIXTURE,
-           date_provider: PROJ_DATE, &blk)
+           date_provider: PROJ_DATE, host_context: host_context, &blk)
   end
 
   def org_path(app) = app.instance_variable_get(:@store).org
@@ -2559,7 +2562,7 @@ class TestApp < Minitest::Test
   end
 
   def test_capture_into_project_creates_a_todo_under_the_section
-    on_project("Stuck reno") do |app|
+    on_project("Stuck reno", host_context: "@work") do |app|
       app.send(:handle_key, "a")
       assert_equal :project_capture, ui(app).form.kind
       ui(app).form.input.replace("Order the tiles")
@@ -2569,6 +2572,7 @@ class TestApp < Minitest::Test
       record = record_for(org_path(app), title: "Order the tiles")
       refute_nil record, "the new task exists"
       assert_equal "TODO", record["state"]
+      assert_equal %w[@work], record["tags"]
       assert_equal PFIX[:reno], record["parent"], "appended under the section"
       assert_includes row_titles(app), "Order the tiles", "visible under the project"
     end

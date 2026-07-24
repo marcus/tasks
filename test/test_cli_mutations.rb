@@ -1325,7 +1325,10 @@ class TestCliMutations < Minitest::Test
       archive = File.join(dir, "archive.jsonl")
       File.write(org, content)
       File.write(archive, archive_content) if archive_content
-      env = { "TASKS_FILE" => org, "TASKS_ARCHIVE" => archive }.merge(env)
+      env = {
+        "TASKS_FILE" => org, "TASKS_ARCHIVE" => archive,
+        "XDG_CONFIG_HOME" => File.join(dir, "xdg")
+      }.merge(env)
       require "open3"
       out, err, st = Open3.capture3(env, "ruby", BIN, *args)
       # The CLI emits UTF-8; capture3 tags output with the runner's locale,
@@ -1336,7 +1339,11 @@ class TestCliMutations < Minitest::Test
   end
 
   def run_cli_at(org, archive, *args)
-    out, err, st = Open3.capture3({ "TASKS_FILE" => org, "TASKS_ARCHIVE" => archive }, "ruby", BIN, *args)
+    env = {
+      "TASKS_FILE" => org, "TASKS_ARCHIVE" => archive,
+      "XDG_CONFIG_HOME" => File.join(File.dirname(org), ".xdg-test")
+    }
+    out, err, st = Open3.capture3(env, "ruby", BIN, *args)
     # Same locale re-tag as run_cli: under US-ASCII (LANG unset / LC_ALL=C),
     # capture3 tags CLI UTF-8 output incorrectly and assert_match raises
     # "invalid byte sequence in US-ASCII" on any multibyte bytes in the stream.
@@ -2229,6 +2236,56 @@ class TestCliMutations < Minitest::Test
       assert_equal "2026-07-20", rec["deadline"]
       assert_match(/prep board deck/, out)
       assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_capture_adds_configured_host_context_and_can_suppress_it
+    Dir.mktmpdir do |xdg|
+      config_dir = File.join(xdg, "tasks")
+      FileUtils.mkdir_p(config_dir)
+      File.write(
+        File.join(config_dir, "config"),
+        "host_context.#{Socket.gethostname.downcase} = @home\n"
+      )
+      env = { "XDG_CONFIG_HOME" => xdg }
+
+      run_cli(
+        "capture", "contextual task", "--context", "@computer", "--tag", "calls",
+        env: env
+      ) do |org, _out, err, st|
+        assert st.success?, err
+        assert_equal %w[@home @computer calls],
+                     record_for(org, title: "contextual task").fetch("tags")
+        assert Tasks::Check.check(org).ok?
+      end
+
+      run_cli(
+        "capture", "work-only task", "--context", "@work", "--no-host-context",
+        env: env
+      ) do |org, _out, err, st|
+        assert st.success?, err
+        assert_equal %w[@work], record_for(org, title: "work-only task").fetch("tags")
+      end
+    end
+  end
+
+  def test_cli_capture_dry_run_uses_configured_host_context
+    Dir.mktmpdir do |xdg|
+      config_dir = File.join(xdg, "tasks")
+      FileUtils.mkdir_p(config_dir)
+      File.write(
+        File.join(config_dir, "config"),
+        "host_context.#{Socket.gethostname.downcase} = home\n"
+      )
+
+      run_cli(
+        "capture", "preview context", "--context", "@computer", "--dry-run",
+        env: { "XDG_CONFIG_HOME" => xdg }
+      ) do |org, out, err, st|
+        assert st.success?, err
+        assert_equal FIXTURE_ORG, File.read(org)
+        assert_match(/:@home:@computer:/, out)
+      end
     end
   end
 

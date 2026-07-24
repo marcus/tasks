@@ -122,13 +122,17 @@ module Tasks
   # objects. Adapter concerns such as ARGV, terminal rendering, Rack request
   # objects, and HTTP status mapping deliberately remain outside this class.
   class Application
-    def initialize(store_factory:, temporal_context_factory: nil)
+    def initialize(store_factory:, temporal_context_factory: nil, host_context: nil)
       unless store_factory.respond_to?(:call)
         raise ArgumentError, "store_factory must respond to #call"
+      end
+      unless host_context.nil? || (host_context.is_a?(String) && host_context.match?(/\A@\S+\z/))
+        raise ArgumentError, "host_context must be an @context or nil"
       end
 
       @store_factory = store_factory
       @temporal_context_factory = temporal_context_factory
+      @host_context = host_context&.dup&.freeze
       freeze
     end
 
@@ -244,6 +248,13 @@ module Tasks
     # lock, so CLI, TUI, and a future HTTP adapter share one create transaction.
     def create_task(command_or_attributes, context: nil, today: Date.today)
       validate_operation_context(context)
+      command = prepare_create_task(command_or_attributes)
+      store_factory.call.create_task!(command, today: operation_today(today, context))
+    end
+
+    # The CLI dry-run path uses the same policy preparation as a real create,
+    # so its headline cannot disagree with what the Store would persist.
+    def prepare_create_task(command_or_attributes)
       command = case command_or_attributes
                 when CreateTask
                   command_or_attributes
@@ -252,7 +263,7 @@ module Tasks
                 else
                   raise ArgumentError, "create_task expects a Tasks::CreateTask or attributes mapping"
                 end
-      store_factory.call.create_task!(command, today: operation_today(today, context))
+      CreateTaskPolicy.apply_host_context(command, @host_context)
     end
 
     # Typed command seam for transports that need an atomic multi-field update.

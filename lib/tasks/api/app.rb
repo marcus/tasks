@@ -23,7 +23,7 @@ module Tasks
       DELETE_QUERY_KEYS = %w[cascade].freeze
       CREATE_FIELDS = %w[
         title priority tags contexts deferred scheduled scheduled_time deadline deadline_time
-        state project parent_id recurrence body
+        state project parent_id recurrence body apply_host_context
       ].freeze
       PATCH_FIELDS = %w[
         title priority body contexts tags deferred scheduled scheduled_time deadline deadline_time
@@ -45,7 +45,8 @@ module Tasks
             store_factory: factory,
             temporal_context_factory: -> {
               TemporalContext.capture(timezone: paths.timezone, time_format: paths.time_format)
-            }
+            },
+            host_context: paths.host_context
           ),
           port: port, max_depth: paths.max_depth,
           urgent_days: paths.urgent_days, logger: logger,
@@ -268,6 +269,7 @@ module Tasks
           deadline: temporal_input(body, "deadline", context: temporal), state: body["state"],
           project: body["project"], parent_id: body["parent_id"], recurrence: recurrence,
           body: normalize_body(body["body"]),
+          apply_host_context: body.fetch("apply_host_context", true),
         }
         ensure_store_ready!(request_id)
         result = application.create_task(
@@ -601,7 +603,8 @@ module Tasks
         if body.key?("state") && !TaskFilter::STATE_ORDER.include?(body["state"])
           validation!(state: ["must be a documented task state"])
         end
-        %w[deferred].each do |field|
+        boolean_fields = create ? %w[deferred apply_host_context] : %w[deferred]
+        boolean_fields.each do |field|
           validation!(field => ["must be true or false"]) if body.key?(field) && ![true, false].include?(body[field])
         end
         %w[scheduled deadline].each do |field|

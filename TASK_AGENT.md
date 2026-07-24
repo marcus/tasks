@@ -88,7 +88,8 @@ task merely because it also contains task text.
                       to its open descendants, as one undo; a recurring task
                       rolls its date forward and stays open, and does not cascade)
   - add a task:       `bin/tasks capture "<text>"` (flags: --due/--scheduled/
-                      --priority/--tag/--context/--state/--project/--under/--recur)
+                      --priority/--tag/--context/--no-host-context/--state/
+                      --project/--under/--recur)
   - nest a new task:  `bin/tasks capture "<text>" --under "<ref>"`  (child of a task; ≤ max_depth)
   - set a deadline:   `bin/tasks due "<ref>" <date-or-date-time>`
   - set available from: `bin/tasks schedule "<ref>" <date-or-date-time>`
@@ -158,6 +159,10 @@ than the request asks.
 - The current request wins over memory. An explicit "don't add a context", or a
   different context named in the request, overrides a saved default for that one
   request without changing the rule.
+- A configured host context is enforced by `capture` and is additive with
+  explicit contexts. When the user explicitly wants to omit the current
+  machine's context, pass `--no-host-context`; merely adding another context
+  does not suppress it.
 - A more specific saved rule refines a general one when they don't conflict.
   Conflicting rules, or a request whose relevance to a rule is genuinely
   unclear, call for a clarifying question — never a guessed durable change.

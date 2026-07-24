@@ -105,10 +105,14 @@ descendants.
 `capture` flags: `--due <date/time>`, `--scheduled <date/time>`, per-field
 `--due-timezone`/`--scheduled-timezone`, floating and fold flags, `--priority A|B|C`,
 `--tag t` (repeatable), `--context @x` (repeatable), `--state STATE`,
-`--project "Heading"`, `--under <ref>`. A date makes it land as TODO (override
+`--project "Heading"`, `--under <ref>`, `--no-host-context`. A date makes it land as TODO (override
 with `--state`); `--project` files it under that section (default Inbox);
 `--under <ref>` nests it below an existing task instead (mutually exclusive with
 `--project`).
+
+When `tasks config` reports a `host_context`, every capture adds it alongside
+explicit contexts. Use `--no-host-context` only when the user explicitly wants
+that one task to omit the current machine's context.
 
 Nesting is capped at `max_depth` (default 4; `tasks config` shows it). `capture
 --under` / `move --under` past the cap fail with a depth message (exit 1) and

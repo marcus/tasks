@@ -107,7 +107,8 @@ module Tui
         ),
         temporal_context_factory: -> {
           temporal_context
-        }
+        },
+        host_context: paths.host_context
       )
       @read_model = nil
       @read_model_today = nil

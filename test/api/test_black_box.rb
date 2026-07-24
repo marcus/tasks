@@ -31,6 +31,7 @@ class TestApiBlackBox < Minitest::Test
       "TASKS_FILE" => @org,
       "TASKS_ARCHIVE" => @archive,
       "XDG_STATE_HOME" => @state,
+      "XDG_CONFIG_HOME" => File.join(@dir, "config"),
     }
     @port = available_port
     @log = Tempfile.new("tasks-api-puma")
@@ -394,7 +395,10 @@ class TestApiBlackBox < Minitest::Test
   end
 
   def run_cli_at(org, archive, state, *args)
-    env = { "TASKS_FILE" => org, "TASKS_ARCHIVE" => archive, "XDG_STATE_HOME" => state }
+    env = {
+      "TASKS_FILE" => org, "TASKS_ARCHIVE" => archive, "XDG_STATE_HOME" => state,
+      "XDG_CONFIG_HOME" => File.join(File.dirname(org), "config")
+    }
     stdout, stderr, status = Open3.capture3(env, RbConfig.ruby, TASKS_BIN, *args, chdir: ROOT)
     { stdout: stdout, stderr: stderr, status: status }
   end

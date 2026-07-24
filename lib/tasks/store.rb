@@ -1084,6 +1084,7 @@ module Tasks
       priority = normalize_create_priority(command.priority, errors)
       tags = normalize_create_tags(command.tags, errors)
       deferred = normalize_create_deferred(command.deferred, errors)
+      normalize_create_apply_host_context(command.apply_host_context, errors)
       tags << DEFER_TAG if deferred && !tags.include?(DEFER_TAG)
       scheduled = normalize_create_temporal(command.scheduled, :scheduled, errors)
       deadline = normalize_create_temporal(command.deadline, :deadline, errors)
@@ -1164,6 +1165,13 @@ module Tasks
       return value if value == true || value == false
 
       errors[:deferred] << "deferred must be true or false"
+      false
+    end
+
+    def normalize_create_apply_host_context(value, errors)
+      return value if value == true || value == false
+
+      errors[:apply_host_context] << "apply_host_context must be true or false"
       false
     end
 

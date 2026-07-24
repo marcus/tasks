@@ -202,6 +202,36 @@ class TestApiApp < Minitest::Test
     assert_contract_response(deleted)
   end
 
+  def test_create_adds_configured_host_context_and_supports_explicit_opt_out
+    paths = Tasks::Config.for_dir(@dir)
+    paths.host_context = "@home"
+    @app = Tasks::Api::App.build(paths: paths, port: 4747, logger: @log)
+    @request = Rack::MockRequest.new(@app)
+
+    inherited = json_request(
+      "POST", "/api/v1/tasks",
+      title: "API contextual task", contexts: ["@desk"], tags: ["api"]
+    )
+    assert_equal 201, inherited.status, inherited.body
+    assert_equal %w[@home @desk], JSON.parse(inherited.body).dig("data", "contexts")
+    assert_equal %w[api], JSON.parse(inherited.body).dig("data", "tags")
+    assert_contract_response(inherited)
+
+    suppressed = json_request(
+      "POST", "/api/v1/tasks",
+      title: "API work-only task", contexts: ["@work"], apply_host_context: false
+    )
+    assert_equal 201, suppressed.status, suppressed.body
+    assert_equal %w[@work], JSON.parse(suppressed.body).dig("data", "contexts")
+    assert_contract_response(suppressed)
+
+    invalid = json_request(
+      "POST", "/api/v1/tasks",
+      title: "Invalid policy", apply_host_context: "false"
+    )
+    assert_error invalid, 422, "validation_failed"
+  end
+
   def test_parent_null_unnests_and_tree_counts_are_derived
     parent = get("/api/v1/tasks/#{FIX[:pr]}")
     parent_resource = JSON.parse(parent.body).fetch("data")

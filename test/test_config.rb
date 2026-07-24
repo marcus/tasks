@@ -19,10 +19,10 @@ class TestConfig < Minitest::Test
       "TZ" => nil, "NO_COLOR" => nil, "XDG_CONFIG_HOME" => xdg }
   end
 
-  def resolve(env: {}, default: "/repo")
+  def resolve(env: {}, default: "/repo", hostname: -> { "test-host.local" })
     # Route the config file into a throwaway XDG dir unless the test sets one
     env = { "XDG_CONFIG_HOME" => @xdg, "TZ" => "Etc/UTC" }.merge(env)
-    Tasks::Config.resolve(default_dir: default, env: env)
+    Tasks::Config.resolve(default_dir: default, env: env, hostname: hostname)
   end
 
   def setup
@@ -383,6 +383,47 @@ class TestConfig < Minitest::Test
                  Tasks::Config.for_dir("/sandbox").prompt_facts)
   end
 
+  # -- host-specific creation context ----------------------------------------
+
+  def test_host_context_prefers_full_hostname_then_short_label
+    write_config(<<~CONF)
+      host_context.home-mac = home
+      host_context.home-mac.local = @specific
+    CONF
+
+    full = resolve(hostname: -> { "HOME-MAC.LOCAL" })
+    assert_equal "HOME-MAC.LOCAL", full.hostname
+    assert_equal "@specific", full.host_context
+    assert_equal "host_context.home-mac.local", full.host_context_source
+
+    short = resolve(hostname: -> { "home-mac.example" })
+    assert_equal "@home", short.host_context
+    assert_equal "host_context.home-mac", short.host_context_source
+  end
+
+  def test_host_context_ignores_unmatched_and_malformed_rows
+    write_config(<<~CONF)
+      host_context.bad host = @bad
+      host_context.bare = @
+      host_context.office = work desk
+      host_context.home = @home
+    CONF
+
+    paths = resolve(hostname: -> { "elsewhere.local" })
+    assert_equal "elsewhere.local", paths.hostname
+    assert_nil paths.host_context
+    assert_nil paths.host_context_source
+    assert_equal({ "home" => "@home" }, paths.host_contexts)
+  end
+
+  def test_for_dir_has_no_host_context_and_does_not_call_hostname
+    paths = Tasks::Config.for_dir("/sandbox")
+    assert_nil paths.hostname
+    assert_nil paths.host_context
+    assert_nil paths.host_context_source
+    assert_equal({}, paths.host_contexts)
+  end
+
   def test_cli_config_reports_prompt_facts
     Dir.mktmpdir do |dir|
       write_config("prompt.hostname = off\n")
@@ -392,6 +433,21 @@ class TestConfig < Minitest::Test
       assert st.success?
       j = JSON.parse(out)
       assert_equal({ "datetime" => true, "hostname" => false }, j["prompt_facts"])
+    end
+  end
+
+  def test_cli_config_reports_resolved_host_context
+    Dir.mktmpdir do |dir|
+      hostname = Socket.gethostname
+      write_config("host_context.#{hostname.downcase} = home\n")
+      env = clean_env(@xdg).merge("TASKS_DIR" => dir)
+      File.write(File.join(dir, "tasks.jsonl"), FIXTURE)
+      out, _err, st = Open3.capture3(env, "ruby", BIN, "config", "--json")
+      assert st.success?
+      j = JSON.parse(out)
+      assert_equal hostname, j["hostname"]
+      assert_equal "@home", j["host_context"]
+      assert_equal "host_context.#{hostname.downcase}", j["host_context_source"]
     end
   end
 
