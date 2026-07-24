@@ -137,6 +137,13 @@ class TestTheme < Minitest::Test
   def test_generated_theme_specs_parse
     T::THEMES.each do |name, slots|
       slots.each do |slot, spec|
+        # :border_gradient is not an SGR slot; it parses through Border and may
+        # legitimately be "none" to disable the sweep.
+        if slot == :border_gradient
+          assert(spec == "none" || Tui::Border.parse_gradient(spec),
+                 "#{name}.border_gradient has invalid spec #{spec.inspect}")
+          next
+        end
         assert T::DEFAULTS.key?(slot), "#{name} defines unknown slot #{slot}"
         assert T.parse(spec), "#{name}.#{slot} has invalid spec #{spec.inspect}"
       end
@@ -186,5 +193,39 @@ class TestTheme < Minitest::Test
 
   def test_note_line_without_links_is_all_note_styled
     assert_equal "\e[90mjust prose\e[0m", Tui::TaskDetails.note_line("just prose")
+  end
+
+  # -- border gradient ---------------------------------------------------------
+
+  def test_default_theme_carries_a_border_gradient
+    T.configure!
+    grad = T.gradient(:border)
+    assert grad, "default theme should define a border gradient"
+    assert_equal 2, grad[:stops].length
+    assert_in_delta 45.0, grad[:angle], 0.001
+  end
+
+  def test_border_solid_slot_defaults_to_none
+    T.configure!
+    assert_equal [], T.current[:border] # :none passes glyphs through uncolored
+  end
+
+  def test_mono_disables_the_border_gradient
+    T.configure!(name: "mono")
+    assert_nil T.gradient(:border), "mono/NO_COLOR must not sweep a gradient"
+    assert_equal [2], T.current[:border] # falls back to a dim solid edge
+  end
+
+  def test_border_gradient_override_from_config
+    T.configure!(overrides: { border_gradient: "#000000 #ffffff @90" })
+    grad = T.gradient(:border)
+    assert_equal [[0, 0, 0], [255, 255, 255]], grad[:stops]
+    assert_equal 90.0, grad[:angle]
+  end
+
+  def test_invalid_border_gradient_override_falls_back_to_solid
+    T.configure!(overrides: { border_gradient: "not a gradient", border: "#565f89" })
+    assert_nil T.gradient(:border)
+    assert_equal ["38;2;86;95;137"], T.current[:border]
   end
 end

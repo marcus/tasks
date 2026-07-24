@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "ansi"
+require_relative "border"
 require_relative "theme"
 require_relative "screen_layout"
 
@@ -51,16 +52,38 @@ module Tui
       overlay_modal!(body, modal, w - 2) if modal
       overlay!(body, popup, w - 2) if popup
 
+      # The whole frame chrome — outer ring plus the header/footer divider rules —
+      # shares one angled gradient swept over the full width×height, so it reads
+      # as lit from one corner. Border owns the glyphs and the per-cell color;
+      # only chrome cells are painted, interior content passes through untouched.
+      c = Border.chars(:round)
+      p = Border.painter(width: width, height: height,
+                         gradient: T.gradient(:border), solid: T.sgr(:border))
+      edge = ->(y) { [p.cell(0, y, c[:v]), p.cell(width - 1, y, c[:v])] }
+      hrule = ->(y, l, r) { p.run(y, 0, [l, *Array.new(w, c[:h]), r]) }
+
       lines = []
-      lines << "┌#{"─" * w}┐"
-      lines << "│#{A.vpad(A.vtrunc(header, w), w)}│"
-      lines << "├#{"─" * w}┤"
-      body.each { |b| lines << "│ #{A.vpad(b, w - 2)} │" }
-      lines << "├#{"─" * w}┤"
-      footer.each do |f|
-        lines << (f == :rule ? "├#{"─" * w}┤" : "│#{A.vpad(A.vtrunc(f, w), w)}│")
+      y = 0
+      lines << hrule.call(y, c[:tl], c[:tr]); y += 1
+      lv, rv = edge.call(y)
+      lines << "#{lv}#{A.vpad(A.vtrunc(header, w), w)}#{rv}"; y += 1
+      lines << hrule.call(y, c[:ml], c[:mr]); y += 1
+      body.each do |b|
+        lv, rv = edge.call(y)
+        lines << "#{lv} #{A.vpad(b, w - 2)} #{rv}"
+        y += 1
       end
-      lines << "└#{"─" * w}┘"
+      lines << hrule.call(y, c[:ml], c[:mr]); y += 1
+      footer.each do |f|
+        if f == :rule
+          lines << hrule.call(y, c[:ml], c[:mr])
+        else
+          lv, rv = edge.call(y)
+          lines << "#{lv}#{A.vpad(A.vtrunc(f, w), w)}#{rv}"
+        end
+        y += 1
+      end
+      lines << hrule.call(y, c[:bl], c[:br])
       lines
     end
 
@@ -145,10 +168,13 @@ module Tui
       bw = [[bw, w].min, 4].max
       inner = modal[:lines].map { |l| A.vtrunc(l, bw - 4) }
       inner = inner.first(body.size - 2)
-      title = A.vtrunc(" #{modal[:title]} ", bw - 4)
-      box = ["┌─#{T.paint(:modal_title, title)}#{"─" * [bw - 4 - A.vislen(title), 0].max}─┐"]
-      inner.each { |l| box << "│ #{A.vpad(l, bw - 4)} │" }
-      box << "└#{"─" * (bw - 2)}┘"
+      title = T.paint(:modal_title, A.vtrunc(" #{modal[:title]} ", bw - 4))
+      box = Border.box(
+        inner_lines: inner.map { |l| " #{A.vpad(l, bw - 4)} " },
+        inner_width: bw - 2,
+        gradient: T.gradient(:border), solid: T.sgr(:border),
+        title: title, title_lead: 1,
+      )
       overlay!(body, {
         lines: box,
         row: modal.fetch(:row, [(body.size - box.size) / 2, 0].max),

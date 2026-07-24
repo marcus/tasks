@@ -390,8 +390,8 @@ class TestApp < Minitest::Test
       assert frame.all? { |line| Tui::Ansi.vislen(line) == 120 },
              frame.map { |line| Tui::Ansi.vislen(line) }.inspect
       refute frame.any? { |line| line.match?(/[\r\n]/) }
-      assert_match(/\A┌─+┐\z/, Tui::Ansi.strip(frame.first))
-      assert_match(/\A└─+┘\z/, Tui::Ansi.strip(frame.last))
+      assert_match(/\A╭─+╮\z/, Tui::Ansi.strip(frame.first))
+      assert_match(/\A╰─+╯\z/, Tui::Ansi.strip(frame.last))
       refute ui(app).panel.lines.any? { |line| line.match?(/[\r\n]/) }
     end
   end
@@ -424,8 +424,8 @@ class TestApp < Minitest::Test
         assert_equal 32, frame.size, theme
         assert frame.all? { |line| Tui::Ansi.vislen(line) == 120 }, theme
         refute frame.any? { |line| line.match?(/[\r\n]/) }, theme
-        assert_match(/\A┌─+┐\z/, Tui::Ansi.strip(frame.first), theme)
-        assert_match(/\A└─+┘\z/, Tui::Ansi.strip(frame.last), theme)
+        assert_match(/\A╭─+╮\z/, Tui::Ansi.strip(frame.first), theme)
+        assert_match(/\A╰─+╯\z/, Tui::Ansi.strip(frame.last), theme)
       end
     end
   end

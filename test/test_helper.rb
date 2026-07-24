@@ -44,10 +44,17 @@ end
 $LOAD_PATH.unshift File.expand_path("../lib", __dir__)
 
 require "tui/ansi"
+require "tui/border"
 require "tui/dates"
 require "tui/store"
 require "tui/views"
 require "tui/frame"
+
+# Border gradients emit truecolor SGR only when the terminal supports it, which
+# would make chrome assertions depend on the developer's COLORTERM. Pin borders
+# to their plain fallback for deterministic frames; tests that exercise the
+# gradient itself opt back in explicitly (see test_border.rb).
+Tui::Border.truecolor = false
 require "llm/registry"
 require "tasks/format"
 

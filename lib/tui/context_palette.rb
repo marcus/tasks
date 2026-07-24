@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "ansi"
+require_relative "border"
 require_relative "theme"
 require_relative "text_input"
 
@@ -118,13 +119,15 @@ module Tui
       slots = height - 2
       other = content.reject { |line| line.equal?(selected_line) }
       visible_inner = [selected_line, query, *other, " #{hint}"].first(slots)
-      # Match Frame's shortcuts-modal chrome: ┌─ title ─────┐ with :modal_title.
-      title = A.vtrunc(" context ", width - 4)
-      lines = ["┌─#{T.paint(:modal_title, title)}#{"─" * [width - 4 - A.vislen(title), 0].max}─┐"]
-      visible_inner.compact.each do |line|
-        lines << "│ #{A.vpad(A.vtrunc(line, width - 4), width - 4)} │"
-      end
-      lines << "└#{"─" * (width - 2)}┘"
+      # Match Frame's shortcuts-modal chrome: ╭─ title ─────╮ with :modal_title
+      # and the shared border gradient/rounded corners via Border.
+      title = T.paint(:modal_title, A.vtrunc(" context ", width - 4))
+      lines = Border.box(
+        inner_lines: visible_inner.compact.map { |line| " #{A.vpad(A.vtrunc(line, width - 4), width - 4)} " },
+        inner_width: width - 2,
+        gradient: T.gradient(:border), solid: T.sgr(:border),
+        title: title, title_lead: 1,
+      )
       { lines: lines, row: row, col: col }
     end
 

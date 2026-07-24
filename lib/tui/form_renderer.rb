@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "ansi"
+require_relative "border"
 require_relative "theme"
 
 module Tui
@@ -59,9 +60,12 @@ module Tui
       shown += [" " * inner_width] * (budget - shown.length)
 
       title_text = truncate(" #{inline_text(title)} ", inner_width)
-      lines = ["┌#{title_text}#{"─" * (inner_width - A.vislen(title_text))}┐"]
-      lines.concat(shown.map { |line| "│#{line}│" })
-      lines << "└#{"─" * inner_width}┘"
+      lines = Border.box(
+        inner_lines: shown,
+        inner_width: inner_width,
+        gradient: T.gradient(:border), solid: T.sgr(:border),
+        title: title_text, title_lead: 0,
+      )
       visible_focus = focused_content_row && focused_content_row - offset
       Result.new(lines: lines.freeze, focused_content_row: visible_focus)
     end

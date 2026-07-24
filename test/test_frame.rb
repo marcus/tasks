@@ -17,6 +17,16 @@ class TestFrame < Minitest::Test
     F.build(**defaults.merge(opts))
   end
 
+  # Strip the (possibly styled) left/right border cell and its one-space margin
+  # from a body row, leaving the inner content. The border cell carries a solid
+  # SGR under themes like mono, so a plain "│ … │" slice won't do.
+  SGR_RUN = /(?:\e\[[0-9;]*m)*/
+  def body_inner(line)
+    line
+      .sub(/\A#{SGR_RUN}│#{SGR_RUN} /, "")
+      .sub(/ #{SGR_RUN}│#{SGR_RUN}\z/, "")
+  end
+
   def test_every_line_has_exact_visible_width
     build.each_with_index do |line, i|
       assert_equal 60, A.vislen(line), "line #{i} wrong width: #{line.inspect}"
@@ -52,7 +62,7 @@ class TestFrame < Minitest::Test
     assert_includes line, "\e[35mProject", "the field's own fg SGR is preserved, not stripped"
     assert_includes line, "\e[0m\e[44m", "selection SGR re-injected after the field reset"
     assert_includes A.strip(line), "❯ Project task"
-    inner = line[/\A│ (.*) │\z/, 1]
+    inner = body_inner(line)
     assert inner.end_with?("\e[0m"), "row closes with a reset so styling can't leak"
   ensure
     Tui::Theme.reset!
@@ -63,7 +73,7 @@ class TestFrame < Minitest::Test
   def test_selected_row_pads_to_full_width_under_selection
     Tui::Theme.configure!(overrides: { selection: "on-blue" })
     line = build(rows: [Row.new("short", Object.new)], selected: 0)[3]
-    inner = line[/\A│ (.*) │\z/, 1]
+    inner = body_inner(line)
     refute_nil inner, "body cell parses out of the frame line"
     assert_equal 56, A.vislen(inner), "selected row fills the inner width (60 - borders/margins)"
     # the padding tail is styled (last visible run is under the selection SGR),
@@ -79,7 +89,7 @@ class TestFrame < Minitest::Test
   def test_selected_row_reverse_video_covers_padding
     Tui::Theme.configure!(name: "mono")
     line = build(rows: [Row.new("plain row", Object.new)], selected: 0)[3]
-    inner = line[/\A│ (.*) │\z/, 1]
+    inner = body_inner(line)
     assert inner.start_with?("\e[7m"), "reverse video opens the row"
     assert_equal 56, A.vislen(inner)
     assert inner.end_with?("\e[0m")
@@ -96,7 +106,7 @@ class TestFrame < Minitest::Test
     Tui::Theme.configure!(overrides: { selection: "on-blue" })
     row = Row.new("\e[35m#{"x" * 200}\e[0m", Object.new)
     line = build(rows: [row], selected: 0)[3]
-    inner = line[/\A│ (.*) │\z/, 1]
+    inner = body_inner(line)
     assert_equal 56, A.vislen(inner), "truncated selected row fills exactly the inner width"
     assert inner.end_with?("\e[0m"), "truncated row still closes with a reset"
     assert_includes A.strip(inner), "…", "ellipsis marks the truncation"
@@ -109,7 +119,7 @@ class TestFrame < Minitest::Test
   def test_selected_plain_row_gets_full_width_selection
     Tui::Theme.configure!(overrides: { selection: "on-blue" })
     line = build(rows: [Row.new("no ansi here", Object.new)], selected: 0)[3]
-    inner = line[/\A│ (.*) │\z/, 1]
+    inner = body_inner(line)
     assert inner.start_with?("\e[44m❯ "), "selection opens even with no field SGRs"
     assert_equal 56, A.vislen(inner)
     assert inner.end_with?("\e[0m")
@@ -227,14 +237,14 @@ class TestFrame < Minitest::Test
     modal = { title: "task", lines: ["alpha", "beta gamma"] }
     lines = build(modal: modal)
     joined = lines.map { |l| A.strip(l) }.join("\n")
-    assert_includes joined, "┌─ task "
+    assert_includes joined, "╭─ task "
     assert_includes joined, "alpha"
     assert_includes joined, "beta gamma"
-    assert_includes joined, "└"
+    assert_includes joined, "╰"
     lines.each { |l| assert_equal 60, A.vislen(l) }
     # centered: box border starts past the left margin
-    box_line = lines.find { |l| A.strip(l).include?("┌─ task") }
-    assert A.strip(box_line).index("┌") > 5
+    box_line = lines.find { |l| A.strip(l).include?("╭─ task") }
+    assert A.strip(box_line).index("╭") > 5
   end
 
   def test_modal_uses_compact_unboxed_view_when_body_is_one_row
@@ -244,7 +254,7 @@ class TestFrame < Minitest::Test
     lines.each { |line| assert_equal 8, A.vislen(line) }
     body = A.strip(lines[3])
     assert_includes body, "tas", "compact modal remains identifiable"
-    refute_match(/[┌┐└┘]/, body, "never show a clipped box fragment")
+    refute_match(/[╭╮╰╯┌┐└┘]/, body, "never show a clipped box fragment")
   end
 
   def test_popup_renders_on_top_of_modal
@@ -265,12 +275,12 @@ class TestFrame < Minitest::Test
   def test_modal_explicit_width_pins_the_box
     modal = { title: "t", lines: ["short"], width: 44 }
     lines = build(modal: modal).map { |l| A.strip(l) }
-    top = lines.find { |l| l.include?("┌─ t ") }
-    bottom = lines.find { |l| l.include?("└") }
-    assert_equal 44, top.rindex("┐") - top.index("┌") + 1, "top border pinned: #{top.inspect}"
-    assert_equal 44, bottom.rindex("┘") - bottom.index("└") + 1, "bottom border pinned"
+    top = lines.find { |l| l.include?("╭─ t ") }
+    bottom = lines.find { |l| l.include?("╰") }
+    assert_equal 44, top.rindex("╮") - top.index("╭") + 1, "top border pinned: #{top.inspect}"
+    assert_equal 44, bottom.rindex("╯") - bottom.index("╰") + 1, "bottom border pinned"
     content = lines.find { |l| l.include?("short") }
-    assert_equal top.index("┌"), content.index("│", 1), "content row aligns with the border"
+    assert_equal top.index("╭"), content.index("│", 1), "content row aligns with the border"
   end
 
   def test_modal_explicit_width_is_clamped_to_frame
@@ -280,7 +290,7 @@ class TestFrame < Minitest::Test
 
   def test_modal_title_is_painted_with_theme_slot
     Tui::Theme.configure!(overrides: { modal_title: "on-blue" })
-    top = build(modal: { title: "task", lines: ["x"] }).find { |l| A.strip(l).include?("┌─ task") }
+    top = build(modal: { title: "task", lines: ["x"] }).find { |l| A.strip(l).include?("╭─ task") }
     assert_includes top, "\e[44m task \e[0m", "title strip must carry the modal_title style"
   ensure
     Tui::Theme.reset!
@@ -290,6 +300,24 @@ class TestFrame < Minitest::Test
     lines = build(rows: [])
     assert_equal 15, lines.size
     lines.each { |l| assert_equal 60, A.vislen(l) }
+  end
+
+  # When truecolor is available, the whole frame chrome carries the border
+  # gradient: distinct truecolor fg codes on the top corner and the bottom
+  # corner (a 45° sweep colors them differently), and the exact width holds.
+  def test_frame_chrome_carries_gradient_under_truecolor
+    Tui::Border.truecolor = true
+    Tui::Theme.configure!(overrides: { border_gradient: "#000000 #ffffff @45" })
+    lines = build
+    assert_match(/\e\[38;2;\d+;\d+;\d+m╭/, lines.first, "top-left corner is gradient-painted")
+    assert_match(/\e\[38;2;\d+;\d+;\d+m╰/, lines.last, "bottom-left corner is gradient-painted")
+    top_fg = lines.first[/\e\[38;2;(\d+;\d+;\d+)m/, 1]
+    bottom_fg = lines.last[/\e\[38;2;(\d+;\d+;\d+)m/, 1]
+    refute_equal top_fg, bottom_fg, "the sweep colors the two corners differently"
+    lines.each { |l| assert_equal 60, A.vislen(l), "gradient SGR must not disturb visible width" }
+  ensure
+    Tui::Border.truecolor = false
+    Tui::Theme.reset!
   end
 
   def test_mixed_unicode_frames_respect_narrow_width_boundaries

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "ansi"
+require_relative "border"
 require_relative "generated_themes"
 
 module Tui
@@ -39,6 +40,7 @@ module Tui
       section:       "bold",           # quadrant labels, detail title
       modal_title:   "bold",           # modal title strip (supports on-… backgrounds)
       panel_title:   "bold",           # persistent right-panel heading
+      border:        "none",           # container chrome; solid fallback when the gradient is off
       context:       "bold cyan",      # context group headers
       context_selected: "bold cyan",
       context_filter_active: "bold green", # active @context in the filter picker
@@ -84,6 +86,14 @@ module Tui
       state_done:    "gray",
     }.freeze
 
+    # The angled border gradient is not an SGR slot (it is per-cell truecolor,
+    # not one code list), so it lives outside DEFAULTS/@codes. A theme supplies
+    # its own via a :border_gradient key; "none" (or any unparseable value)
+    # disables it and the border falls back to the solid :border slot.
+    GRADIENT_DEFAULTS = {
+      border: "#5aa2f7 #c678dd @45", # a blue→violet diagonal sweep (contrasty enough to read)
+    }.freeze
+
     # Named themes overlay DEFAULTS; slots they omit keep the stock value.
     # "mono" is attribute-only (also the NO_COLOR fallback). Popular color
     # schemes live in generated_themes.rb and are refreshed by the generator.
@@ -96,6 +106,7 @@ module Tui
         tab_agenda_active: "reverse", tab_next_active: "reverse",
         tab_quadrants_active: "reverse", tab_inbox_active: "reverse",
         tab_projects_active: "reverse",
+        border: "dim", border_gradient: "none",
         prompt: "bold", modal_title: "bold", panel_title: "bold", context: "bold",
         context_selected: "bold", context_filter_active: "bold", project: "none", project_selected: "bold",
         title: "none", title_selected: "bold", muted: "dim", muted_selected: "dim",
@@ -136,18 +147,39 @@ module Tui
     # specs all fall back rather than raise — the config file must never be
     # able to break the TUI.
     def configure!(name: nil, overrides: {})
-      merged = DEFAULTS.merge(THEMES[name.to_s] || {})
+      theme = THEMES[name.to_s] || {}
+      merged = DEFAULTS.merge(theme)
+      # :border_gradient is not an SGR slot; pull it out before the code build.
+      merged.delete(:border_gradient)
+      grad_spec = theme.key?(:border_gradient) ? theme[:border_gradient] : GRADIENT_DEFAULTS[:border]
+
       overrides.each do |slot, spec|
         slot = slot.to_sym
+        if slot == :border_gradient
+          grad_spec = spec
+          next
+        end
         next unless DEFAULTS.key?(slot)
         merged[slot] = spec if parse(spec)
       end
+
+      @gradients = { border: Border.parse_gradient(grad_spec) }
       @codes = merged.to_h { |slot, spec| [slot, parse(spec) || parse(DEFAULTS[slot])] }
     end
 
-    def reset! = @codes = nil
+    def reset!
+      @codes = nil
+      @gradients = nil
+    end
 
     def current = @codes ||= configure!
+
+    # The parsed border gradient for `slot` ({ stops:, angle: }), or nil when the
+    # theme disables it. Border decides whether the terminal can render it.
+    def gradient(slot)
+      current
+      (@gradients || {})[slot.to_sym]
+    end
 
     # Style `str` for `slot`. Unknown slots and empty (:none) slots pass the
     # string through untouched.

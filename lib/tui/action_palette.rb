@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "ansi"
+require_relative "border"
 require_relative "theme"
 require_relative "text_input"
 
@@ -101,14 +102,14 @@ module Tui
       slots = height - 2
       other_actions = content.reject { |line| line.equal?(selected_line) }
       visible_inner = [selected_line, query, *other_actions, " #{hint}"].first(slots)
-      title = " actions "
       inner_width = width - 2
-      title = A.vtrunc(title, inner_width)
-      lines = ["┌#{title}#{"─" * (inner_width - A.vislen(title))}┐"]
-      visible_inner.compact.each do |line|
-        lines << "│#{A.vpad(A.vtrunc(line, inner_width), inner_width)}│"
-      end
-      lines << "└#{"─" * (width - 2)}┘"
+      title = A.vtrunc(" actions ", inner_width)
+      lines = Border.box(
+        inner_lines: visible_inner.compact.map { |line| A.vpad(A.vtrunc(line, inner_width), inner_width) },
+        inner_width: inner_width,
+        gradient: T.gradient(:border), solid: T.sgr(:border),
+        title: title, title_lead: 0,
+      )
       { lines: lines, row: row, col: col }
     end
 

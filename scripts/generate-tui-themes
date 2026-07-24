@@ -133,6 +133,11 @@ def convert_scheme(scheme)
     prompt: spec("bold", bright_cyan),
     section: spec("bold", foreground),
     modal_title: spec("bold", selection_fg, "on-#{selection_bg}"),
+    # Container chrome: a solid muted edge for terminals without truecolor, plus
+    # an angled blue→purple sweep (the scheme's own accents) for those with it.
+    # Spanning two distinct hues keeps the gradient legible rather than subtle.
+    border: bright_black,
+    border_gradient: "#{bright_blue} #{purple} @45",
     form_group_label: spec("bold", readable_text(bright_cyan), "on-#{bright_cyan}"),
     context: spec("bold", cyan),
     context_selected: spec("bold", cyan),

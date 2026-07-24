@@ -102,6 +102,18 @@ detail-panel slots like `panel_title`, `detail_label`, `description`, `link`, `l
   `color.selection = black on-cyan`. Invalid values fall back to the theme
   default rather than erroring. Because a hex token follows a space, `color.*`
   lines are exempt from inline `#` comments.
+- `color.border = <spec>` — the container chrome (the window frame, modals, the
+  form box, and the palettes all share it). This is the solid fallback used when
+  the terminal lacks truecolor, `NO_COLOR` is set, or the gradient is disabled.
+  `none` (the stock default) leaves the border the terminal's own foreground.
+- `color.border_gradient = <stop> <stop> [<stop>…] @<angle>` — an angled
+  truecolor gradient swept across the whole chrome, e.g.
+  `color.border_gradient = #7aa2f7 #bb9af7 @60`. Two or more `#rrggbb` stops set
+  the sweep; `@<angle>` is the direction in degrees (0 = left→right, 90 =
+  top→bottom). The outer corners are drawn rounded (`╭ ╮ ╰ ╯`). Set it to `none`
+  to disable the sweep and fall back to `color.border`. A malformed value
+  degrades to the solid border rather than erroring. Only rendered on truecolor
+  terminals; `mono`/`NO_COLOR` never sweep it.
 
 `tasks config` prints the resolved paths, `urgent_days`, `max_depth`, `theme`,
 the effective IANA `timezone`, `time_format` (12 or 24), and tzdb version

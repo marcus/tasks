@@ -69,8 +69,8 @@ class TestForm < Minitest::Test
         assert popup[:lines].all? { |line| A.vislen(line) <= width },
                "#{width}x#{height}: #{popup[:lines].inspect}"
         if width >= 6 && height >= 3
-          assert A.strip(popup[:lines].first).start_with?("┌")
-          assert A.strip(popup[:lines].last).end_with?("┘")
+          assert A.strip(popup[:lines].first).start_with?("╭")
+          assert A.strip(popup[:lines].last).end_with?("╯")
         end
       end
     end
