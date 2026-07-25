@@ -6,6 +6,12 @@ module Tui
   # Pure (mode, zone, button, action) → intent table. Receives a Mouse::Event
   # and a HitMap::Hit. Every intent maps to an existing keyboard handler.
   module MouseRouter
+    # Modes where an overlay owns input. A click or wheel that reached the list
+    # underneath would move the selection — or open a detail panel — behind a
+    # blocking box, so only the overlay's own zones route while one is open.
+    OVERLAY_MODES = %i[modal modal_filter palette context_palette form].freeze
+    OVERLAY_ZONES = %i[modal_row popup_row].freeze
+
     module_function
 
     def intent(event, hit, mode: :list, panel: false, selected: nil)
@@ -13,6 +19,7 @@ module Tui
       return :ignored if event.release? || event.motion?
       return :ignored if event.button == :middle || event.button == :right
       return :ignored if event.button.to_s.start_with?("button")
+      return :ignored if OVERLAY_MODES.include?(mode) && !OVERLAY_ZONES.include?(hit.zone)
 
       if event.wheel?
         return wheel_intent(event, hit, mode: mode, panel: panel)
@@ -24,7 +31,14 @@ module Tui
     end
 
     def wheel_intent(event, hit, mode:, panel:)
-      delta = event.button == :wheel_up ? -Mouse::WHEEL_DELTA : Mouse::WHEEL_DELTA
+      # Direction. macOS natural scrolling (the default, and what Apple mice and
+      # trackpads ship with) reports a *downward* gesture as wheel-up, so taking
+      # the report at face value moved the list cursor the opposite way from the
+      # user's hand. Deltas therefore follow the gesture, not the report name:
+      # wheel-up advances, wheel-down goes back. Every wheel target — list,
+      # panel, modal, response pane — shares this one sign so the panes never
+      # disagree about which way a flick goes. Swap the two terms to invert.
+      delta = event.button == :wheel_up ? Mouse::WHEEL_DELTA : -Mouse::WHEEL_DELTA
       # Wheel left/right are decoded but unused in the first release.
       return :ignored unless %i[wheel_up wheel_down].include?(event.button)
 

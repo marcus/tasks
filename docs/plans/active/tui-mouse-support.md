@@ -237,7 +237,7 @@ Intents for the first release:
 
 | Gesture | Where | Intent | Existing handler |
 |---|---|---|---|
-| wheel up/down | `:list_row` | `[:scroll_list, ∓3]` | `move(delta)` |
+| wheel up/down | `:list_row` | `[:scroll_list, ±3]` | `move(delta)` |
 | wheel up/down | `:panel` | `[:scroll_panel, ±3]` | `RightPanel#scroll_line` |
 | wheel up/down | `:modal_row` | `[:scroll_modal, ±3]` | `Modal#scroll_line` |
 | wheel up/down | `:footer_row` in the response pane | `[:scroll_response, ±3]` | `scroll_resp` |
@@ -247,15 +247,31 @@ Intents for the first release:
 | left press | footer prompt line | `[:focus_prompt]` | `focus_prompt` |
 | anything else | anywhere | `:ignored` | — |
 
+**Wheel direction.** macOS natural scrolling — the default, and what Apple mice
+and trackpads ship with — reports a *downward* gesture as wheel-**up**, so
+taking the report at face value moves the list cursor opposite to the user's
+hand. Deltas therefore follow the gesture, not the report name: wheel-up
+advances, wheel-down goes back. All four targets share the one sign so no two
+panes disagree about which way a flick goes. `MouseRouter.wheel_intent` holds the
+only ternary; swapping its terms inverts everything.
+
 Deliberate non-actions, each for a reason:
 
 - **Release events (`m`) are ignored.** Acting only on press matches Bubble
   Tea's action split and prevents every click firing twice.
 - **Right and middle press are ignored.** A context menu is a design question,
   not a plumbing one, and terminals disagree about which button reports what.
-- **Clicks outside an open modal do not dismiss it.** The context picker stages
-  a selection; an accidental click discarding staged toggles is worse than
-  reaching for Escape.
+- **While an overlay owns input (`:modal`, `:modal_filter`, `:palette`,
+  `:context_palette`, `:form`), only that overlay's own zones route** — the
+  router's `OVERLAY_MODES` guard. A modal is a blocking box, so a click beside
+  it must not move the selection or open a detail panel behind it, and clicking
+  outside does not dismiss it either: the context picker stages a selection, and
+  an accidental click discarding staged toggles is worse than reaching for
+  Escape.
+- **A pointer gesture aimed at the list blurs the agent prompt** (App's
+  `LIST_FOCUS_INTENTS`), keeping the typed draft exactly as Escape does. Paint
+  hides the row cursor while the prompt has focus, so without the blur a click
+  would move an invisible selection and read as doing nothing.
 - **In `:task_edit` mode, only wheel-over-panel routes; every click is
   ignored.** The editor saves on blur, so a click that moved focus would
   validate and write a field. Mouse editing gets its own plan.

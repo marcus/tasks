@@ -921,7 +921,14 @@ module Tui
       )
     end
 
+    # Pointer gestures that mean "I'm working in the list now". Painting hides
+    # the row cursor while the prompt has focus (see paint's visual_selection),
+    # so any of these landing with the prompt focused would move an invisible
+    # selection — the click would read as doing nothing at all.
+    LIST_FOCUS_INTENTS = %i[select_row activate_row toggle_collapse switch_view scroll_list].freeze
+
     def apply_mouse_intent(intent)
+      blur_prompt_for(intent)
       case intent
       in :ignored
         nil
@@ -957,6 +964,16 @@ module Tui
         nil
       end
       @paint_dirty = true
+    end
+
+    # Clicking or scrolling the list, a tab, or a marker takes focus out of the
+    # prompt, exactly like Escape: the typed draft survives, only the focus
+    # moves, so the selection the pointer just made is visible.
+    def blur_prompt_for(intent)
+      return unless @ui.mode == :prompt
+      return unless intent.is_a?(Array) && LIST_FOCUS_INTENTS.include?(intent.first)
+
+      @ui.mode = :list
     end
 
     def hit_map
@@ -1023,13 +1040,8 @@ module Tui
     def apply_picker_hit(row_offset)
       case @ui.mode
       when :palette
-        result = @ui.action_palette&.hit(row_offset)
-        return close_action_palette if result == :cancelled
-        return unless result.is_a?(Array) && result.first == :execute
-
-        entry = result.last
-        close_action_palette
-        method(entry.handler).call
+        palette = @ui.action_palette
+        resolve_palette(palette) { palette&.hit(row_offset) }
       when :context_palette
         result = @ui.context_palette&.hit(row_offset)
         return close_context_palette if result == :cancelled
@@ -1221,8 +1233,15 @@ module Tui
 
     def palette_key(k)
       palette = @ui.action_palette
+      resolve_palette(palette) { palette&.handle_key(k) }
+    end
+
+    # Keyboard and pointer reach palette actions through here, so a raising
+    # action restores the palette with an error on both paths instead of taking
+    # the event loop down on one of them.
+    def resolve_palette(palette)
       entry = nil
-      result = palette&.handle_key(k)
+      result = yield
       return close_action_palette if result == :cancelled
       return unless result.is_a?(Array) && result.first == :execute
 

@@ -2656,6 +2656,8 @@ class TestApp < Minitest::Test
     end
   end
 
+  # Wheel-up is the report a downward gesture produces under macOS natural
+  # scrolling, so it advances the selection and wheel-down brings it back.
   def test_mouse_wheel_over_list_moves_selection
     app_on(view: :agenda, select: "Book flight") do |app|
       layout = paint_at(app)
@@ -2663,8 +2665,12 @@ class TestApp < Minitest::Test
       body_row = layout.body_rows.begin + (sel_before - layout.viewport_offset)
       list_col = layout.list_cols.begin + 4
 
+      mouse_wheel(app, row: body_row, col: list_col, dir: :up)
+      advanced = app.instance_variable_get(:@sel)
+      assert_operator advanced, :>, sel_before
+
       mouse_wheel(app, row: body_row, col: list_col, dir: :down)
-      refute_equal sel_before, app.instance_variable_get(:@sel)
+      assert_operator app.instance_variable_get(:@sel), :<, advanced
     end
   end
 
@@ -2686,14 +2692,74 @@ class TestApp < Minitest::Test
   def test_mouse_click_on_tab_switches_view
     app_on(view: :agenda, select: "Book flight") do |app|
       paint_at(app)
-      selected_id = ui(app).selected_id
       spans = Tui::Views.tab_spans(active: :agenda)
-      next_span = spans.find { |key, _, _| key == :next }
-      key, start_col, = next_span
+      key, start_col, = spans.find { |k, _, _| k == :next }
       mouse_click(app, row: 1, col: start_col)
       assert_equal key, ui(app).view
-      # Selection id preserved when it still exists in the new view.
-      assert ui(app).selected_id.nil? || ui(app).selected_id == selected_id || true
+    end
+  end
+
+  # Painting hides the row cursor while the prompt has focus, so a pointer
+  # gesture aimed at the list has to blur the prompt or it reads as a no-op.
+  def test_mouse_click_on_list_blurs_the_prompt_and_keeps_the_draft
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:focus_prompt)
+      app.instance_variable_get(:@input).insert("reschedule this")
+      layout = paint_at(app)
+      rows = app.instance_variable_get(:@rows)
+      target = rows.each_index.find { |i| i != app.instance_variable_get(:@sel) && rows[i].selectable? }
+
+      mouse_click(app, row: layout.body_rows.begin + (target - layout.viewport_offset),
+                       col: layout.list_cols.begin + 4)
+
+      assert_equal :list, ui(app).mode
+      assert_equal target, app.instance_variable_get(:@sel)
+      assert_equal "reschedule this", app.instance_variable_get(:@input).text
+    end
+  end
+
+  def test_mouse_wheel_over_list_blurs_the_prompt
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:focus_prompt)
+      layout = paint_at(app)
+      mouse_wheel(app, row: layout.body_rows.begin, col: layout.list_cols.begin + 4, dir: :down)
+      assert_equal :list, ui(app).mode
+    end
+  end
+
+  def test_mouse_click_on_tab_blurs_the_prompt
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:focus_prompt)
+      paint_at(app)
+      _, start_col, = Tui::Views.tab_spans(active: :agenda).find { |k, _, _| k == :next }
+      mouse_click(app, row: 1, col: start_col)
+      assert_equal :list, ui(app).mode
+      assert_equal :next, ui(app).view
+    end
+  end
+
+  # A modal is a blocking overlay: a click landing beside the box must not move
+  # the selection or open a detail panel behind it.
+  def test_mouse_cannot_reach_the_list_behind_an_open_modal
+    app_on(view: :outline, select: "Book flight") do |app|
+      app.send(:open_modal, { title: "tiny", lines: ["one"] }, kind: :help)
+      layout = paint_at(app, width: 100)
+      rows = app.instance_variable_get(:@rows)
+      sel_before = app.instance_variable_get(:@sel)
+      col = layout.list_cols.begin + 3
+      outside = layout.body_rows.find do |row|
+        hit = app.send(:hit_map).at(row, col)
+        hit.zone == :list_row && rows[hit.payload]&.selectable? && hit.payload != sel_before
+      end
+      refute_nil outside, "expected a selectable list row beside the modal box"
+
+      mouse_click(app, row: outside, col: col)
+      mouse_click(app, row: outside, col: col)
+      mouse_wheel(app, row: outside, col: col, dir: :down)
+
+      assert_equal sel_before, app.instance_variable_get(:@sel)
+      assert_nil ui(app).panel
+      assert_equal :modal, ui(app).mode
     end
   end
 
