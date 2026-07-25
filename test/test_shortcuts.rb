@@ -20,20 +20,26 @@ class TestShortcuts < Minitest::Test
   def test_every_entry_declares_context_handler_availability_and_metadata
     S::REGISTRY.each do |entry|
       if entry.sequences.empty?
-        assert entry.palette == true || entry.palette == false ||
-               entry.palette.is_a?(Symbol) || entry.palette.respond_to?(:call),
-               "keyless actions must be palette-enabled or documentation-only"
+        assert entry.palette || entry.doc_only,
+               "keyless actions must be palette-enabled or doc_only"
       else
         refute_empty entry.sequences
+        refute entry.doc_only
+      end
+      if entry.doc_only
+        assert_nil entry.handler
+        assert_empty entry.sequences
+      else
+        assert_kind_of Symbol, entry.handler
       end
       refute_empty entry.display_key
       refute_empty entry.description
       refute_empty entry.contexts
-      assert_kind_of Symbol, entry.handler
       assert entry.availability
       assert_includes [TrueClass, FalseClass, NilClass, Symbol, Proc], entry.palette.class
       assert_includes [NilClass, Symbol, Hash], entry.form.class
       assert_includes [NilClass, Symbol, Hash], entry.confirmation.class
+      assert_includes [TrueClass, FalseClass], entry.doc_only.class
     end
   end
 
@@ -141,12 +147,17 @@ class TestShortcuts < Minitest::Test
     palette_only = changed_entry(sequences: [], display_key: "palette", palette: true)
     assert S.validate!(nil, entries: [palette_only])
 
-    docs_only = changed_entry(sequences: [], display_key: "click", palette: false)
+    docs_only = changed_entry(sequences: [], display_key: "click", palette: false,
+                              doc_only: true, handler: nil)
     assert S.validate!(nil, entries: [docs_only])
 
-    unreachable = changed_entry(sequences: [], palette: nil)
+    unreachable = changed_entry(sequences: [], palette: false, doc_only: false)
     error = assert_raises(ArgumentError) { S.validate!(nil, entries: [unreachable]) }
     assert_match(/must be palette-enabled/, error.message)
+
+    docs_with_handler = changed_entry(sequences: [], doc_only: true, handler: :open_detail)
+    error = assert_raises(ArgumentError) { S.validate!(nil, entries: [docs_with_handler]) }
+    assert_match(/doc_only shortcuts must not declare a handler/, error.message)
   end
 
   def test_validation_allows_same_key_in_modal_and_palette_only_detail_context

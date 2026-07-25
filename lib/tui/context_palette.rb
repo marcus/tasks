@@ -39,6 +39,7 @@ module Tui
     end
 
     def paste(text) = @picker.paste(text)
+    def move(delta) = @picker.move(delta)
 
     def hit(row_offset)
       cursor = current

@@ -2825,4 +2825,27 @@ class TestApp < Minitest::Test
       assert intents.all? { |i| i in [:scroll_list, Integer] }
     end
   end
+
+  def test_footer_roles_marks_wrapped_prompt_continuations
+    app_on(view: :agenda, select: "Book flight") do |app|
+      roles = app.send(:footer_roles_for, [
+        " ❯ first line of a long prompt",
+        "   continuation without the glyph",
+        "   another continuation",
+      ])
+      assert_equal %i[prompt prompt prompt], roles
+    end
+  end
+
+  def test_mouse_intent_invalidates_hit_map_for_next_report_in_chunk
+    app_on(view: :agenda, select: "Book flight") do |app|
+      paint_at(app)
+      map1 = app.send(:hit_map)
+      app.send(:apply_mouse_intent, [:switch_view, :next])
+      assert_nil app.instance_variable_get(:@hit_map)
+      map2 = app.send(:hit_map)
+      refute_same map1, map2
+      assert_equal :next, ui(app).view
+    end
+  end
 end

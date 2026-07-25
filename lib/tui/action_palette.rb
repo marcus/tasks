@@ -45,6 +45,7 @@ module Tui
 
     def paste(text) = @picker.paste(text)
     def fail!(message) = @picker.fail!(message)
+    def move(delta) = @picker.move(delta)
 
     def hit(row_offset)
       result = @picker.hit(row_offset)

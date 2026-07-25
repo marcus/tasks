@@ -10,7 +10,7 @@ module Tui
 
     Entry = Struct.new(
       :sequences, :display_key, :description, :contexts, :handler,
-      :availability, :palette, :form, :confirmation,
+      :availability, :palette, :form, :confirmation, :doc_only,
       keyword_init: true
     ) do
       def available?(receiver)
@@ -21,9 +21,9 @@ module Tui
       end
     end
 
-    def self.entry(sequences:, key:, description:, contexts:, handler:,
+    def self.entry(sequences:, key:, description:, contexts:, handler: nil,
                    availability: :action_available?, palette: false,
-                   form: nil, confirmation: nil)
+                   form: nil, confirmation: nil, doc_only: false)
       Entry.new(
         sequences: sequences.freeze,
         display_key: key.freeze,
@@ -33,7 +33,8 @@ module Tui
         availability: availability,
         palette: palette,
         form: form,
-        confirmation: confirmation
+        confirmation: confirmation,
+        doc_only: doc_only
       ).freeze
     end
     private_class_method :entry
@@ -89,8 +90,8 @@ module Tui
       entry(sequences: ["\e[6~"],      key: "pgdn",    description: "scroll agent response down",       contexts: [:list], handler: :resp_down),
       entry(sequences: ["\e"],         key: "esc",     description: "dismiss response / close task details", contexts: [:list], handler: :dismiss_or_cancel),
       entry(sequences: ["?"],          key: "?",       description: "keyboard shortcuts",               contexts: [:list], handler: :open_help, palette: true),
-      entry(sequences: [],             key: "click",   description: "select task · click again for details · click tab to switch view", contexts: [:list], handler: :open_detail, availability: :action_available?, palette: false),
-      entry(sequences: [],             key: "wheel",   description: "scroll list / panel / modal / agent response under the pointer", contexts: [:list], handler: :select_next, availability: :action_available?, palette: false),
+      entry(sequences: [],             key: "click",   description: "select task · click again for details · click tab to switch view", contexts: [:list], doc_only: true),
+      entry(sequences: [],             key: "wheel",   description: "scroll list / panel / modal / agent response under the pointer", contexts: [:list], doc_only: true),
       entry(sequences: ["q"],          key: "q",       description: "quit (confirms unsaved draft)",    contexts: [:list], handler: :quit, palette: true),
 
       entry(sequences: ["\t"],         key: "tab",     description: "save field and edit next",         contexts: [:task_edit], handler: :task_edit_input),
@@ -153,14 +154,18 @@ module Tui
       unless entry.sequences.is_a?(Array) && entry.sequences.all? { |s| s.is_a?(String) && !s.empty? }
         raise ArgumentError, "shortcut sequences must be an array of non-empty strings"
       end
-      if entry.sequences.empty? && entry.palette != false && !entry.palette
-        raise ArgumentError, "a shortcut without key sequences must be palette-enabled or documentation-only (palette: false)"
+      if entry.sequences.empty? && !entry.palette && !entry.doc_only
+        raise ArgumentError, "a shortcut without key sequences must be palette-enabled"
       end
       raise ArgumentError, "shortcut sequences must be unique" unless entry.sequences.uniq == entry.sequences
       raise ArgumentError, "shortcut display key must be a non-empty string" unless entry.display_key.is_a?(String) && !entry.display_key.empty?
       raise ArgumentError, "shortcut description must be a non-empty string" unless entry.description.is_a?(String) && !entry.description.empty?
       raise ArgumentError, "shortcut contexts are invalid" unless entry.contexts.is_a?(Array) && !entry.contexts.empty? && entry.contexts.uniq == entry.contexts && (entry.contexts - CONTEXTS).empty?
-      raise ArgumentError, "shortcut handler must be a symbol" unless entry.handler.is_a?(Symbol)
+      if entry.doc_only
+        raise ArgumentError, "doc_only shortcuts must not declare a handler" unless entry.handler.nil?
+      else
+        raise ArgumentError, "shortcut handler must be a symbol" unless entry.handler.is_a?(Symbol)
+      end
       unless entry.availability.is_a?(Symbol) || entry.availability.respond_to?(:call)
         raise ArgumentError, "shortcut availability must be a method name or callable"
       end
@@ -169,6 +174,7 @@ module Tui
       end
       validate_metadata!(:form, entry.form)
       validate_metadata!(:confirmation, entry.confirmation)
+      return if entry.doc_only
       return unless handler_owner
 
       raise ArgumentError, "missing shortcut handler #{handler_owner}##{entry.handler}" unless handler_owner.private_method_defined?(entry.handler) || handler_owner.method_defined?(entry.handler)

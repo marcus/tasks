@@ -145,6 +145,8 @@ module Tui
       @quit = false
       @paint_dirty = true # first frame must draw before any key arrives
       @last_layout = nil
+      @last_popup = nil
+      @last_modal = nil
       @hit_map = nil
       @rows = nil
       @rows_fingerprint = nil
@@ -963,6 +965,9 @@ module Tui
       else
         nil
       end
+      # A later report in the same stdin chunk must not resolve against geometry
+      # or tab spans from before this action (e.g. a click that switched views).
+      @hit_map = nil
       @paint_dirty = true
     end
 
@@ -999,14 +1004,20 @@ module Tui
     # Classify each fitted footer line so the router can tell the agent
     # response pane from the prompt without knowing footer construction.
     def footer_roles_for(footer_lines)
-      prompt_at = footer_lines.each_index.select do |i|
-        line = footer_lines[i]
+      prompt_start = footer_lines.index do |line|
         line.is_a?(String) && A.strip(line).include?("❯")
       end
+      # Wrapped prompt continuations drop the ❯; everything from the first
+      # prompt line through the end of the footer is still the prompt block.
+      prompt_at = if prompt_start
+                    (prompt_start...footer_lines.size).select { |i| footer_lines[i].is_a?(String) }
+                  else
+                    []
+                  end
       response_at = []
       if @resp_open && @resp
         rule_at = footer_lines.index(:rule)
-        limit = rule_at || prompt_at.first || footer_lines.size
+        limit = rule_at || prompt_start || footer_lines.size
         (0...limit).each do |i|
           response_at << i unless footer_lines[i] == :rule
         end
@@ -1057,16 +1068,15 @@ module Tui
 
     def scroll_popup_wheel(delta)
       case @ui.mode
-      when :palette, :context_palette, :form
-        # Wheel over a picker scrolls its option list via move-equivalent keys.
+      when :palette
+        @ui.action_palette&.move(delta)
+      when :context_palette
+        @ui.context_palette&.move(delta)
+      when :form
+        # Forms are text fields, not option lists; still route through form_key
+        # so :cancelled/:submitted are observed if the engine ever returns them.
         key = delta.negative? ? "\e[A" : "\e[B"
-        delta.abs.times do
-          case @ui.mode
-          when :palette then palette_key(key)
-          when :context_palette then context_palette_key(key)
-          when :form then @ui.form&.handle_key(key)
-          end
-        end
+        delta.abs.times { form_key(key) }
       end
     end
 

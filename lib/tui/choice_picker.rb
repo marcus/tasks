@@ -202,6 +202,14 @@ module Tui
       end
     end
 
+    # Wheel / programmatic cursor motion. Same step as ↑↓ in handle_key.
+    def move(delta)
+      count = results.size
+      @cursor_index = count.zero? ? 0 : (@cursor_index + delta).clamp(0, count - 1)
+      ensure_cursor_visible(count)
+      :changed
+    end
+
     private
 
     def normalize_options(options)
@@ -298,13 +306,6 @@ module Tui
     def apply_command(option)
       replacement = @toggle_command&.call(option, @staged_selection.dup)
       @staged_selection = normalize_selection(replacement) if replacement
-    end
-
-    def move(delta)
-      count = results.size
-      @cursor_index = count.zero? ? 0 : (@cursor_index + delta).clamp(0, count - 1)
-      ensure_cursor_visible(count)
-      :changed
     end
 
     def clamp_cursor!(count)
