@@ -24,7 +24,7 @@ module Tui
   # any per-slot config overrides decide the final look. Frame highlights the
   # selected row by reversing the plain text over the :selection slot.
   module Views
-    Row = Struct.new(:text, :item, :node, :project) do
+    Row = Struct.new(:text, :item, :node, :project, :marker_span) do
       def selectable? = !item.nil? || !project.nil?
       def id = item&.id || project&.id
     end
@@ -45,6 +45,32 @@ module Tui
       ["5 Projects",  :projects],
       ["6 Outline",   :outline],
     ].freeze
+
+    # Screen-column spans for the header tab strip. start_col 2 matches the
+    # leading space Frame leaves after the left border (`" #{tabs}…"`). Header
+    # rendering and HitMap both consume this so a theme that pads active tabs
+    # differently cannot desync the click target from the painted label.
+    def self.tab_spans(active:, start_col: 2)
+      col = start_col
+      TABS.map do |label, key|
+        cell = tab_cell(label, key, active: active)
+        width = A.vislen(cell)
+        span = [key, col, col + width]
+        col += width + 1 # join space between tabs
+        span
+      end
+    end
+
+    def self.tab_strip(active:)
+      TABS.map { |label, key| tab_cell(label, key, active: active) }.join(" ")
+    end
+
+    def self.tab_cell(label, key, active:)
+      slot = key == active ? :"tab_#{key}_active" : :"tab_#{key}"
+      slot = key == active ? :tab_active : :tab_inactive unless T.slot?(slot)
+      T.paint(slot, " #{label} ")
+    end
+    private_class_method :tab_cell
 
     # Visible width of the agenda date stamp ("MM-DD KIND (when....)"), so an
     # undated rider under a dated anchor blanks the same column and titles align.
@@ -280,7 +306,8 @@ module Tui
       body = T.composite_over(:outline_container, body) unless node.children.empty?
       text = +"#{indent}#{marker}#{body}"
       text << T.paint(:muted, " (#{outline_descendant_count(node)})") if folded
-      rows << Row.new(text, node.item, node)
+      marker_span = node.children.empty? ? nil : [A.vislen(indent), A.vislen(indent) + 2]
+      rows << Row.new(text, node.item, node, nil, marker_span)
       return if folded
 
       node.children.each do |child|
@@ -590,7 +617,9 @@ module Tui
           count = visible_descendant_count(node, show_deferred, reader: reader, today: today)
           text << T.paint(:muted, " (#{count})")
         end
-        rows << Row.new(text, node.item, node)
+        marker_start = A.vislen(base) + A.vislen(thread)
+        marker_span = marker == MARK_LEAF ? nil : [marker_start, marker_start + 2]
+        rows << Row.new(text, node.item, node, nil, marker_span)
       end
     end
 

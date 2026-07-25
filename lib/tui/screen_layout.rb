@@ -62,6 +62,24 @@ module Tui
       :inline
     end
 
+    # Screen-coordinate rectangles shared by Frame and HitMap. All ranges are
+    # half-open (begin...end) over 0-based terminal cells so a click and a
+    # painted glyph always agree on "row 3 is the first body row."
+    def header_row = 1
+    def body_origin = [3, 2].freeze
+    def body_rows = 3...(3 + @body_height)
+    def list_cols = 2...(2 + @list_width)
+    def panel_divider_col = panel? ? 2 + @list_width : nil
+    def panel_cols
+      return (0...0) unless panel?
+
+      (2 + @list_width + 2)...(2 + @body_width)
+    end
+    def footer_rows
+      start = @body_height + 4
+      start...(start + @footer.size)
+    end
+
     def self.minimum_edit_terminal_width
       4 + MIN_LIST_WIDTH + 2 + EDIT_MIN_CONTENT_WIDTH
     end

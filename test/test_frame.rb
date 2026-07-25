@@ -335,4 +335,44 @@ class TestFrame < Minitest::Test
       end
     end
   end
+
+  # Anti-drift: every HitMap :list_row cell must show a glyph that came from that
+  # absolute row's sentinel text. Catches a future Frame shift of body origin.
+  def test_hit_map_list_cells_match_rendered_row_glyphs
+    require "tui/hit_map"
+    width = 60
+    height = 15
+    rows = (0...8).map { |n| Row.new("ROW#{n}XXXX", Object.new) }
+    layout = Tui::ScreenLayout.new(width: width, height: height, footer: ["prompt"],
+                                   selected: 0, panel: true)
+    panel = { title: "Detail", lines: (0...layout.body_height).map { |n| "PANEL#{n}" } }
+    lines = F.build(width: width, height: height, header: "header", rows: rows,
+                    selected: 0, footer: layout.footer, panel: panel, layout: layout)
+    map = Tui::HitMap.build(
+      layout: layout,
+      tab_spans: [],
+      row_count: rows.size,
+      panel: true
+    )
+    layout.body_rows.each do |row|
+      layout.list_cols.each do |col|
+        hit = map.at(row, col)
+        next unless hit.zone == :list_row
+
+        n = hit.payload
+        next if n >= rows.size
+
+        cell = A.cell_slice(A.strip(lines[row]), col, 1)
+        # Skip the cursor/prefix columns (first two list cells) and padding.
+        text_col = col - layout.list_cols.begin
+        next if text_col < 2
+
+        expected = rows[n].text[text_col - 2]
+        next if expected.nil? || expected == " "
+
+        assert_equal expected, cell,
+                     "list cell (#{row},#{col}) hit row #{n} but rendered #{cell.inspect}"
+      end
+    end
+  end
 end

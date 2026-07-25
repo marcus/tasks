@@ -40,6 +40,19 @@ module Tui
 
     def paste(text) = @picker.paste(text)
 
+    def hit(row_offset)
+      cursor = current
+      query_present = !input.strip.empty?
+      selection_changed = @picker.selection_changed?
+      result = @picker.hit(row_offset)
+      return result unless result.is_a?(Array) && result.first == :accepted
+
+      if query_present && !selection_changed && cursor&.kind == :choice
+        return [:apply, [cursor.id]]
+      end
+      [:apply, result.last]
+    end
+
     def refresh_options(contexts:, current: nil, current_filters: nil)
       @current_filters = normalize_many(current_filters || current || @current_filters)
       @picker.refresh_options(

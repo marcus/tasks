@@ -125,4 +125,19 @@ class TestChoicePicker < Minitest::Test
       Tui::ChoicePicker.new(title: "bad", options: [Option.new(id: nil, label: "bad")])
     end
   end
+
+  def test_hit_selects_option_row_in_full_layout
+    subject = picker(selection_mode: :single)
+    popup = subject.popup(row: 0, col: 0, max_width: 80, max_height: 20,
+                          inline_input: ->(input) { input.to_s })
+    # Full layout: top border@0, query@1, blank@2, first option@3
+    result = subject.hit(3)
+    assert_equal [:accepted, [:home]], result
+
+    multi = picker(selection_mode: :multiple)
+    multi.popup(row: 0, col: 0, max_width: 80, max_height: 20,
+                inline_input: ->(input) { input.to_s })
+    assert_equal :changed, multi.hit(4) # second option toggles
+    assert_equal Set[:work], multi.staged_selection
+  end
 end

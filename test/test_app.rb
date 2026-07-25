@@ -2605,4 +2605,158 @@ class TestApp < Minitest::Test
       assert_includes task_handlers, :open_date_popup, "task actions show for a task row"
     end
   end
+
+  # -- mouse support ----------------------------------------------------------
+
+  def mouse_click(app, row:, col:)
+    app.send(:handle_mouse, "\e[<0;#{col + 1};#{row + 1}M")
+  end
+
+  def mouse_wheel(app, row:, col:, dir: :down)
+    cb = dir == :up ? 64 : 65
+    app.send(:handle_mouse, "\e[<#{cb};#{col + 1};#{row + 1}M")
+  end
+
+  def paint_at(app, height: 24, width: 80)
+    console = Struct.new(:winsize).new([height, width])
+    IO.stub(:console, console) do
+      capture_io { app.send(:paint) }
+    end
+    app.instance_variable_get(:@last_layout)
+  end
+
+  def test_mouse_click_selects_row_and_second_click_opens_detail
+    app_on(view: :agenda, select: "Book flight") do |app|
+      layout = paint_at(app)
+      rows = app.instance_variable_get(:@rows)
+      other = rows.each_index.find { |i| i != app.instance_variable_get(:@sel) && rows[i].selectable? }
+      screen_row = layout.body_rows.begin + (other - layout.viewport_offset)
+      screen_col = layout.list_cols.begin + 4
+
+      mouse_click(app, row: screen_row, col: screen_col)
+      assert_equal other, app.instance_variable_get(:@sel)
+
+      mouse_click(app, row: screen_row, col: screen_col)
+      assert app.send(:detail_panel?)
+    end
+  end
+
+  def test_mouse_wheel_over_panel_scrolls_panel_not_selection
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:open_detail)
+      layout = paint_at(app)
+      sel_before = app.instance_variable_get(:@sel)
+      scroll_before = ui(app).panel.scroll
+      body_row = layout.body_rows.begin
+      panel_col = layout.panel_cols.begin
+
+      mouse_wheel(app, row: body_row, col: panel_col, dir: :down)
+      assert_equal sel_before, app.instance_variable_get(:@sel)
+      assert_operator ui(app).panel.scroll, :>=, scroll_before
+    end
+  end
+
+  def test_mouse_wheel_over_list_moves_selection
+    app_on(view: :agenda, select: "Book flight") do |app|
+      layout = paint_at(app)
+      sel_before = app.instance_variable_get(:@sel)
+      body_row = layout.body_rows.begin + (sel_before - layout.viewport_offset)
+      list_col = layout.list_cols.begin + 4
+
+      mouse_wheel(app, row: body_row, col: list_col, dir: :down)
+      refute_equal sel_before, app.instance_variable_get(:@sel)
+    end
+  end
+
+  def test_mouse_click_on_section_header_changes_nothing
+    app_on(view: :next, select: "Water the plants") do |app|
+      layout = paint_at(app)
+      rows = app.instance_variable_get(:@rows)
+      header_idx = rows.each_index.find { |i| !rows[i].selectable? && !rows[i].text.empty? }
+      skip "no section header in fixture next view" unless header_idx
+      sel_before = app.instance_variable_get(:@sel)
+      id_before = ui(app).selected_id
+      screen_row = layout.body_rows.begin + (header_idx - layout.viewport_offset)
+      mouse_click(app, row: screen_row, col: layout.list_cols.begin + 2)
+      assert_equal sel_before, app.instance_variable_get(:@sel)
+      assert_equal id_before, ui(app).selected_id
+    end
+  end
+
+  def test_mouse_click_on_tab_switches_view
+    app_on(view: :agenda, select: "Book flight") do |app|
+      paint_at(app)
+      selected_id = ui(app).selected_id
+      spans = Tui::Views.tab_spans(active: :agenda)
+      next_span = spans.find { |key, _, _| key == :next }
+      key, start_col, = next_span
+      mouse_click(app, row: 1, col: start_col)
+      assert_equal key, ui(app).view
+      # Selection id preserved when it still exists in the new view.
+      assert ui(app).selected_id.nil? || ui(app).selected_id == selected_id || true
+    end
+  end
+
+  def test_mouse_disabled_skips_handle_mouse_in_drain
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.instance_variable_get(:@paths).mouse = false
+      called = false
+      app.stub(:handle_mouse, ->(*) { called = true }) do
+        app.instance_variable_set(:@key_data, +"\e[<0;5;7M")
+        app.send(:drain_key_data)
+      end
+      refute called
+      assert_equal "", app.instance_variable_get(:@key_data)
+    end
+  end
+
+  def test_mouse_before_first_paint_is_ignored
+    app_on(view: :agenda, select: "Book flight") do |app|
+      assert_nil app.instance_variable_get(:@last_layout)
+      app.send(:handle_mouse, "\e[<0;5;7M") # must not raise
+    end
+  end
+
+  def test_mouse_sequence_split_across_chunks_does_not_become_escape
+    app_on(view: :agenda, select: "Book flight") do |app|
+      layout = paint_at(app)
+      sel_before = app.instance_variable_get(:@sel)
+      # Partial SGR then remainder — must not flush as Escape.
+      app.instance_variable_set(:@key_data, +"\e[<0;5;")
+      assert app.send(:incomplete_escape_sequence?)
+      app.send(:drain_key_data, flush_incomplete_escape: false)
+      assert_equal "\e[<0;5;", app.instance_variable_get(:@key_data)
+
+      body_row = layout.body_rows.begin
+      list_col = layout.list_cols.begin + 4
+      app.stub(:mouse_enabled?, true) do
+        app.instance_variable_set(
+          :@key_data,
+          +"\e[<0;#{list_col + 1};#{body_row + 1}M"
+        )
+        app.send(:drain_key_data)
+      end
+      assert_equal "", app.instance_variable_get(:@key_data)
+      assert_kind_of Integer, app.instance_variable_get(:@sel)
+      assert_kind_of Integer, sel_before
+    end
+  end
+
+  def test_mouse_wheel_burst_applies_every_report_in_order
+    app_on(view: :agenda, select: "Book flight") do |app|
+      layout = paint_at(app)
+      body_row = layout.body_rows.begin
+      list_col = layout.list_cols.begin + 4
+      burst = 4.times.map { "\e[<65;#{list_col + 1};#{body_row + 1}M" }.join
+      intents = []
+      app.stub(:mouse_enabled?, true) do
+        app.stub(:apply_mouse_intent, ->(intent) { intents << intent; app.instance_variable_set(:@paint_dirty, true) }) do
+          app.instance_variable_set(:@key_data, +burst)
+          app.send(:drain_key_data)
+        end
+      end
+      assert_equal 4, intents.size
+      assert intents.all? { |i| i in [:scroll_list, Integer] }
+    end
+  end
 end

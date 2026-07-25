@@ -108,6 +108,11 @@ detail-panel slots like `panel_title`, `detail_label`, `description`, `link`, `l
   `scripts/generate-tui-themes`, which converts iTerm2-Color-Schemes
   Window Terminal JSON into tasks semantic slots. Overridable by `TASKS_THEME`;
   a non-empty `NO_COLOR` env var selects `mono` when nothing explicit is set.
+- `mouse = on|off` — enable SGR mouse tracking in the TUI (default `on`).
+  Overridable by `TASKS_MOUSE`. While tracking is on, unmodified terminal
+  text selection is unavailable (use the terminal's bypass modifier, or turn
+  mouse off). Wheel over the list moves the selection; a detached list
+  viewport is not implemented yet.
 - `color.<slot> = <spec>` — restyle one slot on top of the theme. A spec is
   space-separated tokens: attributes (`bold`, `dim`, `italic`, `underline`,
   `reverse`), a named color (`red`, `bright-red`, `gray`, …), a 256-color index
@@ -130,7 +135,7 @@ detail-panel slots like `panel_title`, `detail_label`, `description`, `link`, `l
   terminals; `mono`/`NO_COLOR` never sweep it.
 
 `tasks config` prints the resolved paths, `urgent_days`, `max_depth`, `theme`,
-the effective IANA `timezone`, `time_format` (12 or 24), and tzdb version
+`mouse`, the effective IANA `timezone`, `time_format` (12 or 24), and tzdb version
 (+ any `color.*`, link, and `prompt.*` overrides), and where each came from.
 `--json` includes `prompt_facts` (the effective name→boolean map).
 

@@ -31,6 +31,9 @@ require_relative "ui_state"
 require_relative "screen_layout"
 require_relative "form_renderer"
 require_relative "task_editor_session"
+require_relative "mouse"
+require_relative "hit_map"
+require_relative "mouse_router"
 require_relative "../tasks/config"
 require_relative "../tasks/agent_context"
 require_relative "../tasks/application"
@@ -141,6 +144,8 @@ module Tui
       @tick = 0
       @quit = false
       @paint_dirty = true # first frame must draw before any key arrives
+      @last_layout = nil
+      @hit_map = nil
       @rows = nil
       @rows_fingerprint = nil
       @row_item_count = 0
@@ -198,10 +203,14 @@ module Tui
     def run
       $stdin.raw!
       print "\e[?1049h\e[?2004h\e[?25l" # alt screen, bracketed paste, hide cursor
+      print Mouse::ENABLE if mouse_enabled?
       loop_once until @quit
     ensure
       # Terminal restore FIRST — if saving somehow raised, a skipped restore
       # would leave the shell raw on the alt screen, far worse than a lost view.
+      # Disable mouse tracking before leaving the alt screen so a raw shell does
+      # not keep receiving SGR reports.
+      print Mouse::DISABLE if mouse_enabled?
       print "\e[?2004l\e[?1049l\e[?25h"
       $stdin.cooked!
       @agent_queue.shutdown if @agent_queue&.work?
@@ -344,17 +353,23 @@ module Tui
       elsif project_detail? && current_project
         refresh_project_detail_panel(current_project, content_width: layout.panel_content_width)
       end
+      popup = current_popup(layout: layout)
+      modal = layout.place_modal(modal_view(layout.body_height, width: width))
       lines = Frame.build(
         width: width, height: height,
         header: header(width - 2),
         rows: frame_rows,
         selected: visual_selection,
         footer: layout.footer,
-        popup: current_popup(layout: layout),
+        popup: popup,
         panel: @ui.panel&.view(height: layout.body_height, width: layout.panel_content_width),
-        modal: layout.place_modal(modal_view(layout.body_height, width: width)),
+        modal: modal,
         layout: layout
       )
+      @last_layout = layout
+      @last_popup = popup
+      @last_modal = modal
+      @hit_map = nil # rebuild lazily against this painted frame
       print "\e[H" + lines.join("\e[K\r\n") + "\e[K"
     end
 
@@ -592,11 +607,7 @@ module Tui
     end
 
     def header(w)
-      tabs = Views::TABS.map do |label, key|
-        slot = key == @ui.view ? :"tab_#{key}_active" : :"tab_#{key}"
-        slot = key == @ui.view ? :tab_active : :tab_inactive unless T.slot?(slot)
-        T.paint(slot, " #{label} ")
-      end.join(" ")
+      tabs = Views.tab_strip(active: @ui.view)
       open_n = open_task_count(read_model)
       unavailable_note = @ui.show_deferred ? "#{T.paint(:warning, "unavailable shown")}#{T.paint(:muted, " · ")}" : ""
       count = "#{T.paint(:muted, "#{open_n} open · ")}#{unavailable_note}#{T.paint(:accent, current_entry.ui_label)}#{T.paint(:muted, " · ? help")}"
@@ -858,6 +869,14 @@ module Tui
         elsif @key_data.start_with?("\e")
           break if !flush_incomplete_escape && incomplete_escape_sequence?
 
+          if (seq = @key_data[Mouse::SEQUENCE])
+            # Always consume the report so a stray tracking terminal cannot
+            # inject Escape + literal text. Apply only when tracking is on.
+            handle_mouse(seq) if mouse_enabled?
+            @key_data = @key_data[seq.length..] || +""
+            next
+          end
+
           seq = @key_data[/\A\e\e\[[0-9;?]*[A-Za-z~]/] ||
                 @key_data[/\A\e\eO[A-Za-z]/] ||
                 @key_data[/\A\e\[[0-9;?]*[A-Za-z~]/] ||
@@ -876,11 +895,167 @@ module Tui
 
     def incomplete_escape_sequence?
       @key_data == "\e" ||
+        @key_data.match?(/\A\e\[<[0-9;]*\z/) ||
         @key_data.match?(/\A\e\[[0-9;?]*\z/) ||
         @key_data == "\eO" ||
         @key_data == "\e\e" ||
         @key_data.match?(/\A\e\e\[[0-9;?]*\z/) ||
         @key_data == "\e\eO"
+    end
+
+    def mouse_enabled?
+      return false unless $stdin.tty?
+      term = ENV["TERM"]
+      return false if term.nil? || term.empty? || term == "dumb"
+
+      @paths.mouse
+    end
+
+    def handle_mouse(seq)
+      return unless (event = Mouse.decode(seq))
+      return unless @last_layout
+
+      hit = hit_map.at(event.row, event.col)
+      apply_mouse_intent(
+        MouseRouter.intent(event, hit, mode: @ui.mode, panel: !@ui.panel.nil?, selected: @sel)
+      )
+    end
+
+    def apply_mouse_intent(intent)
+      case intent
+      in :ignored
+        nil
+      in [:select_row, n]
+        select_row(n) if @rows[n]&.selectable?
+      in [:activate_row, n]
+        if @rows[n]&.selectable?
+          select_row(n) unless @sel == n
+          open_detail
+        end
+      in [:switch_view, key]
+        idx = Views::TABS.index { |_, k| k == key }
+        switch_view(idx + 1) if idx
+      in [:scroll_list, d]
+        move(d)
+      in [:scroll_panel, d]
+        @ui.panel&.scroll_line(d, panel_body_h)
+      in [:scroll_modal, d]
+        @ui.modal&.scroll_line(d, screen_layout(
+          width: @last_layout.width, height: @last_layout.height
+        ).body_height)
+      in [:scroll_response, d]
+        scroll_resp(d)
+      in [:scroll_popup, d]
+        scroll_popup_wheel(d)
+      in [:focus_prompt]
+        focus_prompt
+      in [:toggle_collapse, n]
+        toggle_collapse_at(n)
+      in [:picker_hit, row_offset]
+        apply_picker_hit(row_offset)
+      else
+        nil
+      end
+      @paint_dirty = true
+    end
+
+    def hit_map
+      @hit_map ||= begin
+        rows_now = @rows || []
+        marker_spans = {}
+        rows_now.each_with_index do |row, i|
+          marker_spans[i] = row.marker_span if row.marker_span
+        end
+        HitMap.build(
+          layout: @last_layout,
+          tab_spans: Views.tab_spans(active: @ui.view),
+          row_count: rows_now.size,
+          modal: @last_modal,
+          popup: @last_popup,
+          panel: !@ui.panel.nil?,
+          marker_spans: marker_spans,
+          footer_roles: footer_roles_for(@last_layout.footer)
+        )
+      end
+    end
+
+    # Classify each fitted footer line so the router can tell the agent
+    # response pane from the prompt without knowing footer construction.
+    def footer_roles_for(footer_lines)
+      prompt_at = footer_lines.each_index.select do |i|
+        line = footer_lines[i]
+        line.is_a?(String) && A.strip(line).include?("❯")
+      end
+      response_at = []
+      if @resp_open && @resp
+        rule_at = footer_lines.index(:rule)
+        limit = rule_at || prompt_at.first || footer_lines.size
+        (0...limit).each do |i|
+          response_at << i unless footer_lines[i] == :rule
+        end
+      end
+      footer_lines.each_index.map do |i|
+        if prompt_at.include?(i) then :prompt
+        elsif response_at.include?(i) then :response
+        else :chrome
+        end
+      end
+    end
+
+    def toggle_collapse_at(index)
+      return unless @rows[index]&.selectable?
+
+      select_row(index)
+      node = @rows[@sel]&.node
+      return unless node&.item
+
+      id = node.item.id
+      return unless id && collapsible_children?(node)
+
+      if @ui.collapsed.include?(id)
+        expand_selected
+      else
+        @ui.collapsed.add(id)
+        reselect(id)
+      end
+    end
+
+    def apply_picker_hit(row_offset)
+      case @ui.mode
+      when :palette
+        result = @ui.action_palette&.hit(row_offset)
+        return close_action_palette if result == :cancelled
+        return unless result.is_a?(Array) && result.first == :execute
+
+        entry = result.last
+        close_action_palette
+        method(entry.handler).call
+      when :context_palette
+        result = @ui.context_palette&.hit(row_offset)
+        return close_context_palette if result == :cancelled
+        return unless result.is_a?(Array) && result.first == :apply
+
+        apply_context_filter(result.last)
+        close_context_palette
+      when :form
+        # Forms are not ChoicePicker-backed in this release.
+        nil
+      end
+    end
+
+    def scroll_popup_wheel(delta)
+      case @ui.mode
+      when :palette, :context_palette, :form
+        # Wheel over a picker scrolls its option list via move-equivalent keys.
+        key = delta.negative? ? "\e[A" : "\e[B"
+        delta.abs.times do
+          case @ui.mode
+          when :palette then palette_key(key)
+          when :context_palette then context_palette_key(key)
+          when :form then @ui.form&.handle_key(key)
+          end
+        end
+      end
     end
 
     def handle_paste(text)

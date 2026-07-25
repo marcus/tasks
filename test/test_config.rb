@@ -15,7 +15,7 @@ class TestConfig < Minitest::Test
   def clean_env(xdg)
     { "TASKS_FILE" => nil, "TASKS_ARCHIVE" => nil, "TASKS_DIR" => nil,
       "TASKS_URGENT_DAYS" => nil, "TASKS_MAX_DEPTH" => nil,
-      "TASKS_THEME" => nil, "TASKS_TIMEZONE" => nil, "TASKS_TIME_FORMAT" => nil,
+      "TASKS_THEME" => nil, "TASKS_MOUSE" => nil, "TASKS_TIMEZONE" => nil, "TASKS_TIME_FORMAT" => nil,
       "TZ" => nil, "NO_COLOR" => nil, "XDG_CONFIG_HOME" => xdg }
   end
 
@@ -48,6 +48,7 @@ class TestConfig < Minitest::Test
     assert_equal "/repo/agent-memory.md", paths.memory
     assert_equal({ org: "default", archive: "default", memory: "beside tasks.jsonl",
                    urgent_days: "default", max_depth: "default", theme: "default",
+                   mouse: "default",
                    timezone: "TZ env", time_format: "default" }, paths.sources)
   end
 
@@ -337,6 +338,30 @@ class TestConfig < Minitest::Test
     assert_equal "mono", resolve(env: { "NO_COLOR" => "1" }).theme
     write_config("theme = default\n")
     assert_equal "default", resolve(env: { "NO_COLOR" => "1" }).theme
+  end
+
+  def test_mouse_defaults_on
+    paths = resolve
+    assert_equal true, paths.mouse
+    assert_equal "default", paths.sources[:mouse]
+  end
+
+  def test_mouse_off_from_config_file
+    write_config("mouse = off\n")
+    paths = resolve
+    assert_equal false, paths.mouse
+    assert_equal "config file", paths.sources[:mouse]
+  end
+
+  def test_tasks_mouse_env_beats_config_file
+    write_config("mouse = off\n")
+    paths = resolve(env: { "TASKS_MOUSE" => "on" })
+    assert_equal true, paths.mouse
+    assert_equal "TASKS_MOUSE env", paths.sources[:mouse]
+  end
+
+  def test_for_dir_defaults_mouse_on
+    assert_equal true, Tasks::Config.for_dir("/sandbox").mouse
   end
 
   def test_bare_color_dot_key_is_ignored

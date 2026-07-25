@@ -314,6 +314,13 @@ per-slot overrides like `color.accent = magenta` in `~/.config/tasks/config`.
 `NO_COLOR` is honored. See `docs/cli-spec.md` (TUI colors) for the slot
 vocabulary.
 
+Mouse tracking is on by default (click to select, click again for details,
+wheel to scroll whatever is under the pointer, click a tab to switch views).
+While tracking is on, the terminal's unmodified click-drag text selection is
+unavailable — use the bypass modifier (shift in most terminals, option in
+iTerm2) or set `mouse = off` / `TASKS_MOUSE=off` to restore it. Wheel over the
+list moves the selection (there is no detached list viewport yet).
+
 ## Local HTTP API
 
 `bin/tasks-api` serves the same resolved task files and

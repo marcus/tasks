@@ -46,6 +46,14 @@ module Tui
     def paste(text) = @picker.paste(text)
     def fail!(message) = @picker.fail!(message)
 
+    def hit(row_offset)
+      result = @picker.hit(row_offset)
+      return result unless result.is_a?(Array) && result.first == :accepted
+
+      entry = @entries.find { |candidate| candidate.handler == result.last.first }
+      entry ? [:execute, entry] : :handled
+    end
+
     def popup(row:, col:, max_width:, max_height:, inline_input:)
       @picker.popup(
         row: row, col: col, max_width: max_width, max_height: max_height,

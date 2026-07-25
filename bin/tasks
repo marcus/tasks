@@ -1807,6 +1807,7 @@ def cmd_config(args)
            urgent_days: PATHS.urgent_days,
            max_depth: PATHS.max_depth,
            theme: PATHS.theme, colors: PATHS.colors,
+           mouse: PATHS.mouse,
            timezone: PATHS.timezone, time_format: PATHS.time_format,
            tzdb_version: Tasks::Timezones.tzdb_version,
            timezone_fallback_warning: PATHS.timezone_fallback_warning,
@@ -1826,6 +1827,7 @@ def cmd_config(args)
     puts "urgent_days: #{PATHS.urgent_days}  #{dim("(#{PATHS.sources[:urgent_days]})")}"
     puts "max_depth:   #{PATHS.max_depth}  #{dim("(#{PATHS.sources[:max_depth]})")}"
     puts "theme:       #{PATHS.theme}  #{dim("(#{PATHS.sources[:theme]})")}"
+    puts "mouse:       #{PATHS.mouse ? "on" : "off"}  #{dim("(#{PATHS.sources[:mouse]})")}"
     puts "timezone:    #{PATHS.timezone}  #{dim("(#{PATHS.sources[:timezone]})")}"
     puts "time_format: #{PATHS.time_format}  #{dim("(#{PATHS.sources[:time_format]})")}"
     puts "hostname:    #{PATHS.hostname || "unavailable"}"

@@ -38,7 +38,7 @@ module Tasks
     LINK_NAME = /\A[a-z][a-z0-9_-]*\z/
 
     Paths = Struct.new(:org, :archive, :memory, :urgent_days, :max_depth, :theme, :colors,
-                       :timezone, :time_format, :timezone_fallback_warning,
+                       :mouse, :timezone, :time_format, :timezone_fallback_warning,
                        :links, :link_systems, :prompt_facts,
                        :hostname, :host_context, :host_context_source, :host_contexts,
                        :sources, :config_file, keyword_init: true) do
@@ -66,13 +66,14 @@ module Tasks
         memory: File.join(dir, "agent-memory.md"),
         urgent_days: Quadrants::DEFAULT_URGENT_DAYS,
         max_depth: Tree::DEFAULT_MAX_DEPTH,
-        theme: "default", colors: {},
+        theme: "default", colors: {}, mouse: true,
         timezone: Timezones::FALLBACK, time_format: 12, timezone_fallback_warning: false,
         links: {}, link_systems: {},
         prompt_facts: PromptFacts.resolve,
         hostname: nil, host_context: nil, host_context_source: nil, host_contexts: {},
         sources: { org: "pinned", archive: "pinned", memory: "pinned", urgent_days: "default",
-                   max_depth: "default", theme: "default", timezone: "pinned", time_format: "default" },
+                   max_depth: "default", theme: "default", mouse: "default",
+                   timezone: "pinned", time_format: "default" },
         config_file: config_file
       )
     end
@@ -100,6 +101,7 @@ module Tasks
       urgent_days, urgent_source = pick_urgent_days(conf, env)
       max_depth,   max_depth_source = pick_max_depth(conf, env)
       theme, theme_source = pick_theme(conf, env)
+      mouse, mouse_source = pick_mouse(conf, env)
       timezone, timezone_source, timezone_warning = pick_timezone(conf, env)
       time_format, time_format_source = pick_time_format(conf, env)
       detected_hostname, host_context, host_context_source =
@@ -108,7 +110,7 @@ module Tasks
       Paths.new(
         org: org, archive: archive, memory: memory,
         urgent_days: urgent_days, max_depth: max_depth,
-        theme: theme, colors: conf["colors"] || {},
+        theme: theme, colors: conf["colors"] || {}, mouse: mouse,
         timezone: timezone, time_format: time_format, timezone_fallback_warning: timezone_warning,
         links: conf.fetch(:links, {}), link_systems: conf.fetch(:link_systems, {}),
         prompt_facts: PromptFacts.resolve(conf.fetch(:prompt_facts, {})),
@@ -117,6 +119,7 @@ module Tasks
         host_contexts: conf.fetch(:host_contexts, {}),
         sources: { org: org_source, archive: archive_source, memory: memory_source,
                    urgent_days: urgent_source, max_depth: max_depth_source, theme: theme_source,
+                   mouse: mouse_source,
                    timezone: timezone_source, time_format: time_format_source },
         config_file: file
       )
@@ -168,6 +171,28 @@ module Tasks
       end
     end
     private_class_method :pick_theme
+
+    # TUI mouse tracking. Default on; opt out with `mouse = off` or
+    # TASKS_MOUSE=off. While tracking is on, the terminal's unmodified
+    # click-drag text selection is unavailable (shift/option bypass still works).
+    def self.pick_mouse(conf, env)
+      if env["TASKS_MOUSE"] && !env["TASKS_MOUSE"].empty?
+        value = parse_on_off(env["TASKS_MOUSE"])
+        return [value, "TASKS_MOUSE env"] unless value.nil?
+      end
+      return [conf["mouse"], "config file"] if conf.key?("mouse")
+
+      [true, "default"]
+    end
+    private_class_method :pick_mouse
+
+    def self.parse_on_off(str)
+      case str.to_s.strip.downcase
+      when "on", "true", "yes", "1" then true
+      when "off", "false", "no", "0" then false
+      end
+    end
+    private_class_method :parse_on_off
 
     # Each source falls through independently on an invalid zone: a typo'd
     # TASKS_TIMEZONE must not silently skip past a valid config-file zone.
@@ -312,6 +337,9 @@ module Tasks
           conf[key] = n
         elsif key == "theme"
           conf[key] = value
+        elsif key == "mouse"
+          toggle = parse_on_off(value)
+          conf[key] = toggle unless toggle.nil?
         elsif key == "timezone"
           begin
             conf[key] = Timezones.get(value).identifier

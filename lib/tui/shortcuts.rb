@@ -89,6 +89,8 @@ module Tui
       entry(sequences: ["\e[6~"],      key: "pgdn",    description: "scroll agent response down",       contexts: [:list], handler: :resp_down),
       entry(sequences: ["\e"],         key: "esc",     description: "dismiss response / close task details", contexts: [:list], handler: :dismiss_or_cancel),
       entry(sequences: ["?"],          key: "?",       description: "keyboard shortcuts",               contexts: [:list], handler: :open_help, palette: true),
+      entry(sequences: [],             key: "click",   description: "select task · click again for details · click tab to switch view", contexts: [:list], handler: :open_detail, availability: :action_available?, palette: false),
+      entry(sequences: [],             key: "wheel",   description: "scroll list / panel / modal / agent response under the pointer", contexts: [:list], handler: :select_next, availability: :action_available?, palette: false),
       entry(sequences: ["q"],          key: "q",       description: "quit (confirms unsaved draft)",    contexts: [:list], handler: :quit, palette: true),
 
       entry(sequences: ["\t"],         key: "tab",     description: "save field and edit next",         contexts: [:task_edit], handler: :task_edit_input),
@@ -151,8 +153,8 @@ module Tui
       unless entry.sequences.is_a?(Array) && entry.sequences.all? { |s| s.is_a?(String) && !s.empty? }
         raise ArgumentError, "shortcut sequences must be an array of non-empty strings"
       end
-      if entry.sequences.empty? && !entry.palette
-        raise ArgumentError, "a shortcut without key sequences must be palette-enabled"
+      if entry.sequences.empty? && entry.palette != false && !entry.palette
+        raise ArgumentError, "a shortcut without key sequences must be palette-enabled or documentation-only (palette: false)"
       end
       raise ArgumentError, "shortcut sequences must be unique" unless entry.sequences.uniq == entry.sequences
       raise ArgumentError, "shortcut display key must be a non-empty string" unless entry.display_key.is_a?(String) && !entry.display_key.empty?

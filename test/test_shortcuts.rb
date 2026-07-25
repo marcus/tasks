@@ -20,7 +20,9 @@ class TestShortcuts < Minitest::Test
   def test_every_entry_declares_context_handler_availability_and_metadata
     S::REGISTRY.each do |entry|
       if entry.sequences.empty?
-        assert entry.palette, "keyless actions must be palette-enabled"
+        assert entry.palette == true || entry.palette == false ||
+               entry.palette.is_a?(Symbol) || entry.palette.respond_to?(:call),
+               "keyless actions must be palette-enabled or documentation-only"
       else
         refute_empty entry.sequences
       end
@@ -135,11 +137,14 @@ class TestShortcuts < Minitest::Test
     assert_match(/sequences must be unique/, error.message)
   end
 
-  def test_validation_allows_palette_only_action_and_rejects_unreachable_action
+  def test_validation_allows_palette_only_and_docs_only_actions
     palette_only = changed_entry(sequences: [], display_key: "palette", palette: true)
     assert S.validate!(nil, entries: [palette_only])
 
-    unreachable = changed_entry(sequences: [], palette: false)
+    docs_only = changed_entry(sequences: [], display_key: "click", palette: false)
+    assert S.validate!(nil, entries: [docs_only])
+
+    unreachable = changed_entry(sequences: [], palette: nil)
     error = assert_raises(ArgumentError) { S.validate!(nil, entries: [unreachable]) }
     assert_match(/must be palette-enabled/, error.message)
   end

@@ -121,6 +121,7 @@ module Tui
         compact_selected = current ? compact_line(current) : T.paint(:muted, @empty_label)
         compact = [compact_selected, query, " #{hint}"].first(height)
         lines = compact.map { |line| A.vpad(A.vtrunc(line, width), width) }
+        @hit_layout = { kind: :compact, height: lines.size, option_row: 0 }
         return { lines: lines, row: row, col: col }
       end
 
@@ -135,6 +136,7 @@ module Tui
           gradient: T.gradient(:border), solid: T.sgr(:border),
           title: title, title_lead: 1,
         )
+        @hit_layout = { kind: :short, height: lines.size, option_row: 1 }
         return { lines: lines, row: row, col: col }
       end
 
@@ -155,7 +157,49 @@ module Tui
         gradient: T.gradient(:border), solid: T.sgr(:border),
         title: title, title_lead: 1,
       )
+      # Box adds top/bottom borders around inner: query@1, blank@2, options@3…
+      @hit_layout = {
+        kind: :full,
+        height: lines.size,
+        options_start: 3,
+        result_slots: result_slots,
+        viewport_start: @viewport_start,
+        match_count: matches.size,
+      }
       { lines: lines, row: row, col: col }
+    end
+
+    # Map a popup-local row (0 = top border) to a picker action. Returns the
+    # same shapes handle_key does (:changed, :handled, [:accepted, ids], …)
+    # so App can reuse its existing palette key handlers.
+    def hit(row_offset)
+      layout = @hit_layout
+      return :handled unless layout
+      return :handled if row_offset.negative? || row_offset >= layout[:height]
+
+      case layout[:kind]
+      when :compact, :short
+        return :handled unless row_offset == layout[:option_row]
+        return accept_current if @selection_mode == :single
+
+        toggle_current
+      when :full
+        options_start = layout[:options_start]
+        slot = row_offset - options_start
+        return :handled if slot.negative? || slot >= layout[:result_slots]
+        return :handled if layout[:match_count].zero?
+
+        absolute = layout[:viewport_start] + slot
+        return :handled if absolute >= layout[:match_count]
+
+        @cursor_index = absolute
+        ensure_cursor_visible(layout[:match_count], capacity: layout[:result_slots])
+        return accept_current if @selection_mode == :single
+
+        toggle_current
+      else
+        :handled
+      end
     end
 
     private
