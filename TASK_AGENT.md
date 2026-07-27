@@ -44,7 +44,9 @@ back a bad one.
   optional `priority` A|B|C, `title`, `tags` (array, includes `@contexts` and
   the internal `defer` On Hold marker), `scheduled`/`deadline`/`closed` dates
   (`"YYYY-MM-DD"`) with optional `scheduled_time`/`deadline_time` metadata,
-  `recur` cookie, `body` notes. `scheduled` is the available-from/start value;
+  `recur` cookie, optional `delegation` object (who holds the next action —
+  see [Delegation](#delegation-handing-work-to-a-person-or-an-agent)),
+  `body` notes. `scheduled` is the available-from/start value;
   `deadline` is the due value. Read it via the CLI's
   `--json`, never by parsing the file yourself.
   Links in notes (Slack, Jira, PRs, docs) are first-class — `[[url][label]]`, bare
@@ -59,6 +61,10 @@ back a bad one.
 ## Reading (always via the CLI, `--json` when you reason over results)
 - `bin/tasks list -a` — everything, grouped by state (filters: `@ctx +tag /text -A`).
 - `bin/tasks list --proposed` — only inert tasks pending owner approval.
+- `bin/tasks list --delegated` — every task handed to a person or the agent
+  pool (add `--all` to review closed provenance too).
+- `bin/tasks list --agent-ready [--json]` — the claimable queue for heartbeat
+  pickup, ranked; see [Delegation](#delegation-handing-work-to-a-person-or-an-agent).
 - `bin/tasks agenda` — dated items, soonest first.
 - `bin/tasks show "<ref>"` — one task in full (fields + notes + links).
 - `bin/tasks projects` (`pj`) — projects & areas rolled up over their open tasks.
@@ -100,6 +106,11 @@ task merely because it also contains task text.
   - accept proposal:  `bin/tasks approve "<ref>"` (PROPOSED → INBOX)
   - decline proposal: `bin/tasks reject "<ref>"` (PROPOSED → CANCELLED)
   - nest a new task:  `bin/tasks capture "<text>" --under "<ref>"`  (child of a task; ≤ max_depth)
+  - delegate to a person: `bin/tasks delegate "<ref>" --to <email>`  (moves it
+                      to WAITING; `--keep-state` opts out)
+  - offer to agents:  `bin/tasks delegate "<ref>" refine|research|implement`
+  - clear delegation: `bin/tasks undelegate "<ref>"`  (also revokes a live claim)
+  - record the work:  `bin/tasks workref "<ref>" <url-or-id>`  ("off" clears)
   - set a deadline:   `bin/tasks due "<ref>" <date-or-date-time>`
   - set available from: `bin/tasks schedule "<ref>" <date-or-date-time>`
   - remove dates:     `bin/tasks undate "<ref>" [--kind deadline|scheduled]`
@@ -180,6 +191,71 @@ Keep the distinction crisp:
 - Rejecting a proposal is a lifecycle decision, not deletion; it preserves the
   audit trail as CANCELLED.
 
+## Delegation: handing work to a person or an agent
+
+Approval asks "is this the owner's work?"; delegation asks "who holds the next
+action on work already accepted?" They are independent — a `PROPOSED` task
+cannot be delegated, and approving one does not delegate it.
+
+An accepted live task may carry one `delegation` object: either a **person**
+(an email `assignee`, status `delegated`, which moves the task to `WAITING`) or
+the **agent pool** (an authority `mode`, status `ready` until a worker claims
+it and `claimed` after). `bin/tasks workref` records the single reference to
+where the work actually happened — a ticket, PR, brief, or session — and it
+survives completion and archival.
+
+**Delegation is the owner's decision.** Set, change, or clear it when the user
+asks. Never delegate a task to yourself, never widen a mode you were given, and
+never treat a delegation marker as permission to do anything the task text and
+the repository's own instructions do not already permit.
+
+### Authority modes
+
+- **`refine`** — read the task and its linked context; improve the title, body,
+  acceptance criteria, project placement, tags, contexts, and suggested dates;
+  split it into a small coherent set of subtasks; leave a concise rationale for
+  material changes. Do **not** do the underlying work, contact anyone, deploy,
+  send messages, purchase, delete external data, or complete the task.
+- **`research`** — everything `refine` allows, plus inspecting relevant
+  repositories and read-only sources, running non-mutating diagnostics, writing
+  a durable brief linked with `workref`, and recommending a concrete next
+  action. No implementation and no consequential external writes.
+- **`implement`** — everything above, plus changing code/docs/files within the
+  task's named scope, running tests and product proof, committing and pushing
+  where that repository's instructions normally require it, and completing the
+  task once its stated acceptance criteria are genuinely satisfied, with
+  `workref` pointing at the result.
+
+`implement` never authorizes scope expansion, deployment, messaging, purchases,
+destructive external actions, credential changes, or bypassing a repository's
+own approval gates — repository instructions remain the only authority on
+commit and push policy. A vague `implement` task must be refined or released
+with a blocker note, never interpreted expansively.
+
+### Heartbeat pickup
+
+If you are a worker picking up delegated work rather than managing the list:
+
+1. `bin/tasks list --agent-ready --json` for candidates — never parse display
+   text.
+2. Choose one task within your actual capabilities.
+3. `bin/tasks claim "<ref>" --worker <id> --json`. The claim is a
+   compare-and-set: exactly one worker can ever hold a task, and a lost race
+   exits non-zero naming the current holder. Pick another task and move on.
+   A worker id looks like `<harness>/<model>/<session-id>`, and
+   `TASKS_WORKER_ID` supplies it when the flag is omitted.
+4. Read your authority from the task the claim returns, not from memory.
+5. Do only what that mode permits.
+6. Attach progress and `bin/tasks workref "<ref>" <url-or-id> --worker <id>`.
+7. Finish: complete the task (`implement` only, criteria actually met), or
+   `bin/tasks release "<ref>" --worker <id> --note "why it's blocked"`.
+8. Never recursively delegate, promote your own mode, or hold more than you
+   can finish in one session.
+
+There are no leases: a claim you abandon stays claimed until the owner clears
+it with `undelegate` or `release --force`. Release deliberately rather than
+walking away.
+
 ## Task-set memory
 A task set may carry `agent-memory.md` — a small Markdown sidecar of durable,
 user-approved defaults for managing this list. Its absolute path is in "File
@@ -236,9 +312,10 @@ still governs what you do with the task itself.
 
 ## Report
 End with ONE line listing every change made — distinguish accepted captures
-from proposals, name every approval or rejection, include any memory-file
-change (the exact rule added, changed, or removed), and include any external
-action (Slack, email) — so the caller has a full audit trail.
+from proposals, name every approval or rejection, name every delegation, claim,
+release, or work reference, include any memory-file change (the exact rule
+added, changed, or removed), and include any external action (Slack, email) —
+so the caller has a full audit trail.
 
 ---
 *Escape hatch: if the file is ever edited out-of-band (not by you), `bin/tasks

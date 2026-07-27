@@ -18,6 +18,8 @@ marks each command ✅ implemented / 🚧 planned).
 ```sh
 bin/tasks list -a          # everything incl. archive; filters: @ctx +tag /text -A
 bin/tasks list --proposed  # inert suggestions pending owner approval
+bin/tasks list --delegated # tasks handed to a person or the agent pool
+bin/tasks list --agent-ready --json # the claimable queue for heartbeat pickup
 bin/tasks list --unavailable # timed, inherited, and indefinite unavailability
 bin/tasks list --someday   # tasks with their own indefinite On Hold marker
 bin/tasks agenda           # dated items, soonest first
@@ -50,6 +52,12 @@ bin/tasks capture "text"             # new INBOX item (see flags below)
 bin/tasks propose "text" --note "why" # inert PROPOSED item for owner review
 bin/tasks approve "<ref>"             # accept PROPOSED → INBOX
 bin/tasks reject "<ref>"              # decline PROPOSED → CANCELLED
+bin/tasks delegate "<ref>" --to pat@example.com # hand to a person (→ WAITING)
+bin/tasks delegate "<ref>" research   # offer to agents: refine|research|implement
+bin/tasks undelegate "<ref>"         # clear the marker; revokes any live claim
+bin/tasks workref "<ref>" <url|off>  # record where the work happened
+bin/tasks claim "<ref>" --worker <id> --json # atomic single-winner pickup
+bin/tasks release "<ref>" --worker <id> --note "blocked: why" # hand a claim back
 bin/tasks done "<ref>"               # mark DONE + closed date (cascades to open subtasks)
 bin/tasks cancel "<ref>"             # mark CANCELLED + closed date
 bin/tasks due "<ref>" fri            # set/replace deadline (INBOX → TODO)
@@ -91,6 +99,25 @@ valuable but was not requested. Add concise rationale/evidence with repeatable
 proposal is not permission to create accepted work, contact anyone, or change
 external state. Never approve your own proposal unless the user explicitly
 asks you to approve that specific proposal.
+
+**Delegation** answers a different question: who holds the next action on work
+the owner has already accepted. An accepted live task may carry one
+`delegation` — a person (an email, which moves it to `WAITING`) or the agent
+pool at an authority `mode`. `workref` records the one reference to where the
+work happened and survives completion and archival.
+
+Delegating is the owner's call: set or clear it when asked, never delegate a
+task to yourself, and never widen a mode you were given. `refine` may improve
+the task definition only. `research` adds read-only investigation and a durable
+brief. `implement` adds changes within the task's named scope, and even then
+the target repository's own instructions remain the only authority on commit,
+push, and approval gates.
+
+To pick up delegated work: read `list --agent-ready --json`, `claim` one task
+(a compare-and-set — exactly one worker wins, and a lost race exits non-zero
+naming the holder), take your authority from the task the claim returns, set a
+`workref`, then complete it or `release` it with a blocker note. There are no
+leases, so an abandoned claim stays claimed until the owner clears it.
 
 **Make a project, then fill it.** To collect tasks into a brand-new project,
 `project create "Name"` first (it creates the empty section, bootstrapping the
