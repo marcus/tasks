@@ -81,6 +81,7 @@ module Tui
                    llm_config: LLM::Config.load, agent_factory: nil, agent_probe: nil,
                    date_provider: nil, time_provider: nil)
       Theme.configure!(name: paths.theme, overrides: paths.colors || {})
+      Tasks::Dates.configure!(date_order: paths.date_order)
       @paths = paths
       # Store remains the long-lived watcher, history/archive, and form-option
       # source. TUI presentation reads and patch-style writes travel through

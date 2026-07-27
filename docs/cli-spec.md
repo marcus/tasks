@@ -135,8 +135,9 @@ detail-panel slots like `panel_title`, `detail_label`, `description`, `link`, `l
   terminals; `mono`/`NO_COLOR` never sweep it.
 
 `tasks config` prints the resolved paths, `urgent_days`, `max_depth`, `theme`,
-`mouse`, the effective IANA `timezone`, `time_format` (12 or 24), and tzdb version
-(+ any `color.*`, link, and `prompt.*` overrides), and where each came from.
+`mouse`, the effective IANA `timezone`, `time_format` (12 or 24), `date_order`
+(`mdy` or `dmy` — see Dates and times), and tzdb version (+ any `color.*`,
+link, and `prompt.*` overrides), and where each came from.
 `--json` includes `prompt_facts` (the effective name→boolean map).
 
 **Multi-device Git merge plumbing.** Every Store write stamps only task records
@@ -336,9 +337,19 @@ missing one. Mutations locate their target by id (falling back to line + title
 otherwise), so an out-of-band reflow or retitle can't misfire an edit onto the
 wrong task. IDs must be unique — `check` reports a collision as an error.
 
-**Dates and times.** Anywhere a date is accepted: `2026-07-15`, `07-15`, `7/15`,
-`fri`/`friday`, `today`, `tomorrow`, `+3` (days from today). Same parser as
-the TUI (`lib/tasks/dates.rb`). Bare month-day in the past rolls forward a year.
+**Dates and times.** Anywhere a date is accepted: `2026-07-15`, `2026/07/15`,
+`07-15`, `7/15`, `7/15/2026`, `7/15/26`, `aug 1`, `august 1st`, `1 aug 2026`,
+`aug 1, 2026`, `fri`/`friday`, `next fri`, `today`, `tomorrow`, `+3` (days from
+today), `in 3 days`/`in 2 weeks`/`in 6 months`/`in a year`, `next week`, `next
+month` (same day next month, clamped to the last day if the target month is
+shorter), `next year`. Same parser as the TUI (`lib/tasks/dates.rb`). Bare
+month-day (numeric or by name) in the past rolls forward a year; an explicit
+year is always respected as-is.
+
+Bare numeric dates with no 4-digit year (`7/15`, `7/15/26`) are ambiguous
+between month-first and day-first — `date_order = mdy` (the default, US
+month/day/year) or `date_order = dmy` in the config file, or `TASKS_DATE_ORDER`
+env, picks the reading. `tasks config` reports the resolved value.
 
 `due`, `schedule`, and timed `defer` also accept `today 5pm`, `tomorrow at
 09:30`, `fri noon`, `2026-07-20 17:00`, and `2026-07-20T17:00`. A time without

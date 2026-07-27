@@ -15,13 +15,14 @@ module Tasks
 
     module_function
 
-    def parse(expression, today:, timezone: nil, floating: false, fold: 0, context: nil)
+    def parse(expression, today:, timezone: nil, floating: false, fold: 0, context: nil,
+             date_order: Dates.date_order)
       input = expression.to_s.strip
       return nil if input.empty?
       raise ArgumentError, "--timezone and --floating are mutually exclusive" if timezone && floating
 
       date_text, local = split(input)
-      date = Dates.parse_when(date_text, today: today)
+      date = Dates.parse_when(date_text, today: today, date_order: date_order)
       return nil unless date
       if !local && (timezone || floating || fold.to_i == 1)
         raise ArgumentError, "a time is required with --timezone, --floating, or --fold"

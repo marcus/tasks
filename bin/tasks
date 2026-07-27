@@ -73,9 +73,11 @@ end
 # Task files are configurable (env vars, ~/.config/tasks/config) so the data
 # can live outside this repo. See lib/tasks/config.rb for precedence.
 require_relative "../lib/tasks/config"
+require_relative "../lib/tasks/dates"
 PATHS   = Tasks::Config.resolve(default_dir: ROOT)
 ORG     = PATHS.org
 ARCHIVE = PATHS.archive
+Tasks::Dates.configure!(date_order: PATHS.date_order)
 
 # The model layer owns parsing and every mutation; the CLI adds dispatch,
 # ref resolution, and output. (Tasks::Item, Tasks::Format etc. live there.)
@@ -1877,6 +1879,7 @@ def cmd_config(args)
            theme: PATHS.theme, colors: PATHS.colors,
            mouse: PATHS.mouse,
            timezone: PATHS.timezone, time_format: PATHS.time_format,
+           date_order: PATHS.date_order,
            tzdb_version: Tasks::Timezones.tzdb_version,
            timezone_fallback_warning: PATHS.timezone_fallback_warning,
            links: PATHS.links, link_systems: PATHS.link_systems,
@@ -1898,6 +1901,7 @@ def cmd_config(args)
     puts "mouse:       #{PATHS.mouse ? "on" : "off"}  #{dim("(#{PATHS.sources[:mouse]})")}"
     puts "timezone:    #{PATHS.timezone}  #{dim("(#{PATHS.sources[:timezone]})")}"
     puts "time_format: #{PATHS.time_format}  #{dim("(#{PATHS.sources[:time_format]})")}"
+    puts "date_order:  #{PATHS.date_order}  #{dim("(#{PATHS.sources[:date_order]})")}"
     puts "hostname:    #{PATHS.hostname || "unavailable"}"
     host_context = PATHS.host_context || "none"
     source = PATHS.host_context_source ? "  #{dim("(#{PATHS.host_context_source})")}" : ""

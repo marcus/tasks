@@ -144,6 +144,12 @@ time_format = 12
 effective zone, its source, the 12/24-hour preference, and the loaded tzdb.
 Floating times use that zone; fixed values retain their stored IANA zone.
 
+Fuzzy dates (`aug 1`, `7/15`, `next month`, `in 2 weeks`, …) accept a lot of
+shapes — see `docs/cli-spec.md`. A bare numeric date with no year (`7/15`) is
+ambiguous between month-first and day-first; `date_order = mdy` (the default,
+US-style) or `date_order = dmy` in the config file, or `TASKS_DATE_ORDER=mdy|dmy`,
+picks the reading.
+
 To make every task created on a machine visible under its usual context
 filter, map that machine's hostname in the same config file:
 

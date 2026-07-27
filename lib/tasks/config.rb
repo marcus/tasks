@@ -6,6 +6,7 @@ require_relative "quadrants"
 require_relative "tree"
 require_relative "prompt_facts"
 require_relative "timezones"
+require_relative "dates"
 
 module Tasks
   # Resolves where tasks.jsonl and archive.jsonl live, so the task data can sit
@@ -16,7 +17,7 @@ module Tasks
   #   3. config file at $XDG_CONFIG_HOME/tasks/config (default ~/.config/tasks/
   #      config), `key = value` lines with keys dir / file / archive /
   #      urgent_days / max_depth / theme / color.<slot> / prompt.<fact> /
-  #      host_context.<hostname>
+  #      host_context.<hostname> / date_order
   #   4. default_dir — the repo root, matching the original layout
   #
   # Every consumer (CLI, TUI) goes through Config.resolve so they can never
@@ -38,7 +39,7 @@ module Tasks
     LINK_NAME = /\A[a-z][a-z0-9_-]*\z/
 
     Paths = Struct.new(:org, :archive, :memory, :urgent_days, :max_depth, :theme, :colors,
-                       :mouse, :timezone, :time_format, :timezone_fallback_warning,
+                       :mouse, :timezone, :time_format, :timezone_fallback_warning, :date_order,
                        :links, :link_systems, :prompt_facts,
                        :hostname, :host_context, :host_context_source, :host_contexts,
                        :sources, :config_file, keyword_init: true) do
@@ -68,12 +69,13 @@ module Tasks
         max_depth: Tree::DEFAULT_MAX_DEPTH,
         theme: "default", colors: {}, mouse: true,
         timezone: Timezones::FALLBACK, time_format: 12, timezone_fallback_warning: false,
+        date_order: Dates::DEFAULT_ORDER,
         links: {}, link_systems: {},
         prompt_facts: PromptFacts.resolve,
         hostname: nil, host_context: nil, host_context_source: nil, host_contexts: {},
         sources: { org: "pinned", archive: "pinned", memory: "pinned", urgent_days: "default",
                    max_depth: "default", theme: "default", mouse: "default",
-                   timezone: "pinned", time_format: "default" },
+                   timezone: "pinned", time_format: "default", date_order: "default" },
         config_file: config_file
       )
     end
@@ -104,6 +106,7 @@ module Tasks
       mouse, mouse_source = pick_mouse(conf, env)
       timezone, timezone_source, timezone_warning = pick_timezone(conf, env)
       time_format, time_format_source = pick_time_format(conf, env)
+      date_order, date_order_source = pick_date_order(conf, env)
       detected_hostname, host_context, host_context_source =
         pick_host_context(conf.fetch(:host_contexts, {}), hostname)
 
@@ -112,6 +115,7 @@ module Tasks
         urgent_days: urgent_days, max_depth: max_depth,
         theme: theme, colors: conf["colors"] || {}, mouse: mouse,
         timezone: timezone, time_format: time_format, timezone_fallback_warning: timezone_warning,
+        date_order: date_order,
         links: conf.fetch(:links, {}), link_systems: conf.fetch(:link_systems, {}),
         prompt_facts: PromptFacts.resolve(conf.fetch(:prompt_facts, {})),
         hostname: detected_hostname, host_context: host_context,
@@ -120,7 +124,8 @@ module Tasks
         sources: { org: org_source, archive: archive_source, memory: memory_source,
                    urgent_days: urgent_source, max_depth: max_depth_source, theme: theme_source,
                    mouse: mouse_source,
-                   timezone: timezone_source, time_format: time_format_source },
+                   timezone: timezone_source, time_format: time_format_source,
+                   date_order: date_order_source },
         config_file: file
       )
     end
@@ -221,6 +226,16 @@ module Tasks
       [12, "default"]
     end
     private_class_method :pick_time_format
+
+    # Ambiguous bare numeric date interpretation (see Tasks::Dates): :mdy
+    # reads "8/1" as August 1 (US default), :dmy reads it as 1 August.
+    def self.pick_date_order(conf, env)
+      raw = env["TASKS_DATE_ORDER"]&.downcase
+      return [raw.to_sym, "TASKS_DATE_ORDER env"] if Dates::ORDER_VALUES.map(&:to_s).include?(raw)
+      return [conf["date_order"], "config file"] if conf.key?("date_order")
+      [Dates::DEFAULT_ORDER, "default"]
+    end
+    private_class_method :pick_date_order
 
     # Deadline window (in days) for the "urgent" axis. Env beats config file
     # beats the built-in default; an empty or non-integer value is ignored so
@@ -348,6 +363,8 @@ module Tasks
           end
         elsif key == "time_format" && %w[12 24].include?(value)
           conf[key] = value.to_i
+        elsif key == "date_order" && Dates::ORDER_VALUES.map(&:to_s).include?(value.downcase)
+          conf[key] = value.downcase.to_sym
         elsif key.start_with?("color.") && key.length > 6
           (conf["colors"] ||= {})[key.delete_prefix("color.")] = value
         elsif (m = key.match(/\Alink\.(.+)\z/)) && m[1].match?(LINK_NAME)

@@ -32,6 +32,20 @@ class TestTemporal < Minitest::Test
     assert_equal "17:00", Tasks::TemporalParser.parse("fri 17:00", today: TODAY).local_time
   end
 
+  def test_parser_threads_date_order_and_new_date_grammar_with_a_time
+    mdy = Tasks::TemporalParser.parse("8/1/2026 5pm", today: TODAY, date_order: :mdy)
+    assert_equal Date.new(2026, 8, 1), mdy.date
+    assert_equal "17:00", mdy.local_time
+
+    dmy = Tasks::TemporalParser.parse("8/1/2026 5pm", today: TODAY, date_order: :dmy)
+    assert_equal Date.new(2026, 1, 8), dmy.date
+    assert_equal "17:00", dmy.local_time
+
+    next_month = Tasks::TemporalParser.parse("next month at 9am", today: TODAY)
+    assert_equal TODAY >> 1, next_month.date
+    assert_equal "09:00", next_month.local_time
+  end
+
   def test_parser_requires_a_time_for_floating_flag
     assert_raises(ArgumentError) do
       Tasks::TemporalParser.parse("2026-07-20", today: TODAY, floating: true)

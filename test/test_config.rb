@@ -49,7 +49,7 @@ class TestConfig < Minitest::Test
     assert_equal({ org: "default", archive: "default", memory: "beside tasks.jsonl",
                    urgent_days: "default", max_depth: "default", theme: "default",
                    mouse: "default",
-                   timezone: "TZ env", time_format: "default" }, paths.sources)
+                   timezone: "TZ env", time_format: "default", date_order: "default" }, paths.sources)
   end
 
   def test_tasks_dir_env_points_both_files
@@ -298,6 +298,48 @@ class TestConfig < Minitest::Test
     assert_equal "Etc/UTC", zone
     assert_equal "UTC fallback", source
     assert warning
+  end
+
+  def test_date_order_defaults_to_mdy
+    paths = resolve
+    assert_equal :mdy, paths.date_order
+    assert_equal "default", paths.sources[:date_order]
+  end
+
+  def test_date_order_from_config_file
+    write_config("date_order = dmy\n")
+    paths = resolve
+    assert_equal :dmy, paths.date_order
+    assert_equal "config file", paths.sources[:date_order]
+  end
+
+  def test_date_order_config_file_value_is_case_insensitive
+    write_config("date_order = DMY\n")
+    assert_equal :dmy, resolve.date_order
+  end
+
+  def test_date_order_env_overrides_config_file
+    write_config("date_order = dmy\n")
+    paths = resolve(env: { "TASKS_DATE_ORDER" => "mdy" })
+    assert_equal :mdy, paths.date_order
+    assert_equal "TASKS_DATE_ORDER env", paths.sources[:date_order]
+  end
+
+  def test_date_order_env_is_case_insensitive
+    assert_equal :dmy, resolve(env: { "TASKS_DATE_ORDER" => "DMY" }).date_order
+  end
+
+  def test_date_order_invalid_config_value_is_dropped
+    write_config("date_order = backwards\n")
+    assert_equal :mdy, resolve.date_order
+    assert_equal "default", resolve.sources[:date_order]
+  end
+
+  def test_date_order_invalid_env_falls_through_to_config_file
+    write_config("date_order = dmy\n")
+    paths = resolve(env: { "TASKS_DATE_ORDER" => "nonsense" })
+    assert_equal :dmy, paths.date_order
+    assert_equal "config file", paths.sources[:date_order]
   end
 
   # -- theme + colors (TUI appearance) ----------------------------------------
