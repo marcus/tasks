@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require_relative "delegation"
 require_relative "links"
 require_relative "recur"
 require_relative "store"
@@ -15,13 +16,13 @@ module Tasks
                 :section_title, :project, :revision, :availability_reason,
                 :availability_blocker_id, :descendant_count,
                 :scheduled_value, :deadline_value, :scheduled_time, :deadline_time,
-                :available_at
+                :available_at, :delegation
 
     def initialize(id:, state:, priority:, title:, tags:, scheduled:, deadline:,
                    scheduled_value: nil, deadline_value: nil, temporal_context: nil,
                    recur:, closed:, source:, body:, links:, headline:, parent_id:,
                    ancestor_ids:, child_ids:, section_id:, section_title:, project:,
-                   availability:, revision: nil, descendant_count: 0)
+                   availability:, revision: nil, descendant_count: 0, delegation: nil)
       @id = frozen_text(id)
       @state = frozen_text(state)
       @priority = frozen_text(priority)
@@ -52,6 +53,10 @@ module Tasks
       @availability_blocker_id = frozen_text(availability.blocker_id)
       @available_at = availability.available_at&.iso8601&.freeze
       @descendant_count = Integer(descendant_count)
+      # The delegation object rides along verbatim (string keys, fixed order,
+      # absent keys omitted) so a heartbeat agent reads exactly the bytes the
+      # record carries and no adapter has to re-derive kind/mode/status.
+      @delegation = frozen_delegation(delegation)
       freeze
     end
 
@@ -60,6 +65,14 @@ module Tasks
     def deferred? = tags.include?(Store::DEFER_TAG)
     def recurring? = Recur.cookie?(recur)
     def available? = @available
+    def delegated? = Delegation.object?(delegation)
+    def agent_ready? = Delegation.ready?(delegation)
+    def claimed? = Delegation.claimed?(delegation)
+    def delegation_kind = delegation && delegation["kind"]
+    def delegation_mode = delegation && delegation["mode"]
+    def delegation_status = delegation && delegation["status"]
+    def delegation_assignee = delegation && delegation["assignee"]
+    def work_ref = delegation && delegation["work_ref"]
 
     # The canonical JSON-ready representation. Dates are strings because this
     # object is also the future HTTP resource; the Ruby accessors retain Dates.
@@ -75,7 +88,7 @@ module Tasks
         body: body, links: links.map(&:to_h), parent_id: parent_id,
         ancestor_ids: ancestor_ids, child_ids: child_ids, section_id: section_id,
         section_title: section_title, project: project, headline: headline,
-        revision: revision,
+        revision: revision, delegation: delegation,
       }
     end
 
@@ -87,6 +100,16 @@ module Tasks
 
     def frozen_array(values)
       Array(values).map { |value| frozen_text(value) }.freeze
+    end
+
+    # A deep-frozen copy in Delegation::KEY_ORDER, or nil when the task carries
+    # no marker. Absent means "not delegated" — there is no empty object.
+    def frozen_delegation(value)
+      return nil unless Delegation.object?(value)
+
+      Delegation.ordered(value).each_with_object({}) do |(key, child), copy|
+        copy[frozen_text(key)] = frozen_text(child)
+      end.freeze
     end
 
     def frozen_links(values)

@@ -42,7 +42,7 @@ One record per line. Records serialize with a fixed key order (nil/empty fields
 are omitted), so a single field change is a one-line diff:
 
 ```
-type id parent state priority title tags scheduled scheduled_time deadline deadline_time recur closed archived body
+type id parent state priority title tags scheduled scheduled_time deadline deadline_time recur delegation closed archived body
 ```
 
 ```json
@@ -92,6 +92,8 @@ type id parent state priority title tags scheduled scheduled_time deadline deadl
   never appear without their matching date.
 - **`recur`** — an org-style repeater cookie (`.+1w`, `++1m`, `+2d`) on a dated
   task. See [Recurrence](#recurrence).
+- **`delegation`** — optional object naming who holds the next action; absent
+  means not delegated. See [Delegation](#delegation).
 - **`body`** — free-text notes as a single `\n`-joined string; omitted when
   empty. Notes, links, and context live here.
 
@@ -166,6 +168,36 @@ date: `.+1w`, `++1m`, `+2d`. The prefix sets what the interval is measured from 
 completion — `+` fixed, `++` catch-up, `.+` from-completion. Completing a recurring
 task rolls its date forward and **leaves it open** (no `closed`), appending a
 `- Did [date].` line to the body. See `docs/cli-spec.md` for the full grammar.
+
+## Delegation
+
+A task you have handed off carries one optional `delegation` object naming who
+holds the next action. Absent means not delegated; there is no neutral value.
+
+```json
+{"type":"task","id":"e5f6a7b8","state":"WAITING","title":"Renew office lease","delegation":{"kind":"human","status":"delegated","assignee":"pat@example.com","at":"2026-07-27T18:04:11Z"}}
+{"type":"task","id":"f6a7b8c9","state":"TODO","title":"Compare CRDT libraries","delegation":{"kind":"agent","mode":"research","status":"claimed","assignee":"claude-code/claude-fable-5/313cf82e","at":"2026-07-27T18:04:11Z","work_ref":"https://example.com/brief"}}
+```
+
+- **`kind`** — `human` (a person, identified by an email address) or `agent`
+  (the agent pool).
+- **`mode`** — agent authority: `refine` (improve the task), `research`
+  (investigate and recommend), `implement` (do the work). Required for an
+  agent, forbidden for a human. Only the owner sets or widens it.
+- **`status`** — `delegated` (human), `ready` (agent, unclaimed), `claimed`
+  (agent, held by one worker).
+- **`assignee`** — the person's email, or the holding worker id
+  (`<harness>/<model>/<session-id>`) while claimed.
+- **`at`** — UTC timestamp of the last status transition.
+- **`work_ref`** — optional single reference to where the work lives: a ticket,
+  PR, research brief, or agent session. More detail belongs in the body.
+
+`tasks delegate <ref> --to <email>` sets WAITING, because that is exactly what
+WAITING means; agent delegation and claims never change state. `claim` is
+atomic, so exactly one worker ever holds a task. Completing or cancelling a
+task clears an unclaimed marker (nothing happened yet) and keeps a claimed or
+human one verbatim — that is how "who did it, and where" survives into the
+archive.
 
 ## Links
 

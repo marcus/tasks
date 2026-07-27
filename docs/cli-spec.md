@@ -400,6 +400,33 @@ so it cannot disappear inside a closed ancestor. HTTP clients use
 intent routes with `If-Match`; both return the transitioned task plus its new
 ETag.
 
+**Delegation and pickup.** An accepted live task can carry one optional
+`delegation` object naming who holds the next action: a person (`kind: human`,
+an email `assignee`, status `delegated`) or the agent pool (`kind: agent`, an
+authority `mode` of `refine`/`research`/`implement`, status `ready` until a
+worker claims it and `claimed` after). `PROPOSED`, closed, and archived tasks
+refuse delegation with an error naming the state; approval and delegation stay
+two independent owner decisions. Human delegation sets WAITING by default
+(`--keep-state` opts out) because that is exactly what WAITING encodes; agent
+delegation and claims never change lifecycle state. Closing a task clears an
+unclaimed marker (nothing happened yet) and retains a claimed or human one
+verbatim as provenance into the archive, `work_ref` included.
+
+The one hard guarantee is **single pickup**: `claim` is a compare-and-set from
+`ready` to `claimed` performed under the store mutation lock, so two workers
+can never both believe they own a task; a list read never grants ownership, and
+the loser gets a conflict naming the holder. There are deliberately no leases,
+renewals, or liveness tracking — a crashed agent leaves a visibly claimed task
+until the owner clears it with `undelegate` or `release --force`. `release`
+requires the matching worker id unless the owner forces it, and revocation
+wins: after `undelegate` a stale worker's `release`/`workref` fail their
+worker-match precondition. All five operations are revision-aware typed
+`Tasks::Application` commands (`delegate_task`, `undelegate_task`,
+`claim_task`, `release_task`, `set_work_ref`), journaled and undoable; the two
+composed ones (the WAITING default, a release note) fold their second write
+into the same undo step. Heartbeat agents discover work through
+`list --agent-ready --json` and read their authority from `claim --json`.
+
 Normal create, move, and state operations cannot strand accepted descendants
 beneath a proposed task. In particular, transitioning an accepted parent to
 PROPOSED refuses while any accepted descendant remains. The explicit
@@ -616,7 +643,7 @@ and `sources.memory` (`"TASKS_MEMORY env"` / `"config file"` /
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `list [filters]` | `l` | ✅ | All tasks grouped by state. Filters compose: `@context`, `+tag`, `/text` or bare word, `-A/-B/-C`, lifecycle scope `--open/-o` (default), `--proposed`, `--done/-d`, `--archived/-x`, or `--all/-a` (mutually exclusive). Effectively unavailable tasks are hidden from the default open scope; `--unavailable` (compatibility alias `--deferred/-D`) lists timed, inherited, and indefinite blockers; `--someday/--on-hold` selects tasks carrying their own indefinite marker. Those two filters are mutually exclusive. With a closed/archive scope, legacy `--deferred` and `--someday` filter the own marker; explicit `--unavailable` is rejected because every closed task is unavailable for lifecycle reasons. `--recurring/-R` lists tasks with a repeater. `--body/-b` widens text matching into notes. `--json` |
+| `list [filters]` | `l` | ✅ | All tasks grouped by state. Filters compose: `@context`, `+tag`, `/text` or bare word, `-A/-B/-C`, lifecycle scope `--open/-o` (default), `--proposed`, `--done/-d`, `--archived/-x`, or `--all/-a` (mutually exclusive). Effectively unavailable tasks are hidden from the default open scope; `--unavailable` (compatibility alias `--deferred/-D`) lists timed, inherited, and indefinite blockers; `--someday/--on-hold` selects tasks carrying their own indefinite marker. Those two filters are mutually exclusive. With a closed/archive scope, legacy `--deferred` and `--someday` filter the own marker; explicit `--unavailable` is rejected because every closed task is unavailable for lifecycle reasons. `--recurring/-R` lists tasks with a repeater. `--delegated` lists every task carrying a delegation (human or agent, ready or claimed) in file order and composes with any lifecycle scope, so `--all --delegated` reviews closed provenance too. `--agent-ready` lists the claimable queue — agent kind, unclaimed, accepted live state, and available under the ordinary prerequisite/ancestor rules — ranked by priority, then soonest deadline-or-scheduled boundary, then file order; it is only valid with `--open` and is mutually exclusive with `--delegated`. Both print one flat line per task (`agent-ready (<mode>): …`, `delegated → <email> (<STATE>): …`, `claimed by <id>: …`) instead of the state-grouped view. `--body/-b` widens text matching into notes. `--json` |
 | `agenda` | `a` | ✅ | Available dated items, soonest first. `--json` |
 | `next` | `n` | ✅ | NEXT actions by context. `--json` |
 | `quadrants` | `q` | ✅ | Covey 2×2 from priority (A/B ⇒ important) + a `DEADLINE` within `urgent_days` (default 3, overdue counts) ⇒ urgent, with `important`/`urgent` tags as overrides. `--json` adds `quadrant`. |
@@ -634,6 +661,11 @@ already sorted the way the text view sorts:
 (`headline` is the star-less summary rendered from the record's fields; `source`
 is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or
 `null`; proposals report `availability_reason: "proposed"`.)
+Every row also carries `"project"` and `"delegation"` — the latter is the
+delegation object verbatim (`{kind, mode?, status, assignee?, at, work_ref?}`)
+or `null`. That is what makes `list --agent-ready --json` a complete heartbeat
+entrypoint: id, title, mode, priority, dates, project, and marker, with no
+display text to parse.
 `quadrants --json` adds `"quadrant": "Q1".."Q4"` per item. Empty result → `[]`.
 
 ## Create
@@ -659,6 +691,12 @@ is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or
 | `retitle <ref> "new title"` | `rename` | ✅ | Replace the `title`; tags/priority/state untouched. |
 | `tag <ref> +foo -bar @ctx -@old` | | ✅ | Add/remove tags and contexts in one call. `+t`/`@ctx` add, `-t`/`-@ctx` remove. |
 | `note <ref> "text"` | | ✅ | Append a line to the task's `body`. |
+| `delegate <ref> <refine\|research\|implement>` | | ✅ | Mark the task agent-ready at that authority mode (`delegation: {kind: agent, status: ready, mode}`). Repeating it on an already-ready task updates the mode and keeps any `work_ref`; a claimed task refuses (`undelegate` first). Lifecycle state is never touched. Prints `agent-ready (<mode>): <title>`. |
+| `delegate <ref> --to <email> [--keep-state]` | | ✅ | Hand the task to a person (`delegation: {kind: human, status: delegated, assignee}`) and move it to WAITING — the next action is outside the owner's control. `--keep-state` opts out. Replaces an agent delegation (and vice versa): one delegation per task. The state change is folded into the same undo step. Prints `delegated → <email> (<STATE>): <title>`. |
+| `undelegate <ref>` | | ✅ | Clear the marker, revoking any live claim; afterwards the stale worker's `release`/`workref` fail their worker match. Lifecycle state is left alone — undelegating does not leave WAITING. An undelegated task is a clean no-op (exit 0, no undo slot). |
+| `workref <ref> <url-or-id\|off>` | `work-ref` | ✅ | Record the single reference to where the work lives (ticket, PR, brief, session); setting overwrites and `off` clears. The owner may always write it; an agent adds `--worker <id>` to prove its claim still matches (deliberately **not** defaulted from `TASKS_WORKER_ID`, so an exported worker id cannot silently change who is writing). Survives completion and archival. |
+| `claim <ref> --worker <id> [--json]` | | ✅ | Atomic compare-and-set from `ready` to `claimed` under the store mutation lock — exactly one worker can ever hold a task. `--worker` defaults from `TASKS_WORKER_ID`; the flag always wins, and missing both is a usage error (exit 1). A lost race exits 1 with `conflict: already claimed by <holder> at <ts>` on stderr, plus a `{"error":"conflict","action":"claim","id","holder","at","message"}` object on stdout under `--json`. Success prints `claimed by <id>: <title>`; `--json` re-emits the **full canonical task resource** (the `show --json` shape) so an agent claims and reads its authority in one step. |
+| `release <ref> --worker <id> [--note "text"] [--force]` | | ✅ | Hand a claim back (`claimed → ready`, assignee dropped, `work_ref` kept). Requires the worker id matching the live claim unless `--force` (the owner override, which needs no worker). `--note` appends a blocker line to the body through the ordinary note seam, folded into the **same undo step** as the release. A worker mismatch exits 1 with `conflict: claim is held by <holder>, not "<id>"`. Prints `released → agent-ready (<mode>): <title>`. |
 | `move <ref> ("Section" \| --under <ref> \| --top)` | | ✅ | Relocate a task's whole subtree by re-pointing its `parent`. Exactly one destination: a positional **section** name (out of `Inbox` into `Work`), `--under <ref>` to **nest** below another task, or `--top` to **unnest** to the section level. A section name resolves in the same widening tiers as `capture --project` (exact top-level, exact any-level, substring top-level, substring any-level; case-insensitive), so a **nested project sub-section** — e.g. a project under the "Projects" root — is a valid destination, not just a top-level heading. Section and `--top` moves are never depth-checked; `--under` is capped at `max_depth` (over-cap exits 1 with a depth message). Nesting under itself or a descendant exits 1 (cycle). `--top` on an already-top-level task prints "already at top level" (exit 0, no-op). See Nesting. |
 | `move <ref> ["Section" \| --under <ref>] --before <ref>` | | ✅ | Place the whole subtree before a stable sibling. Without an explicit destination, infer the anchor's current parent; otherwise require the anchor to be a direct child of the named task/section. Not combinable with `--top`. Exact errors and human/JSON/dry-run output are frozen under Manual sibling placement above. |
 | `recur <ref> <interval>` | `repeat`, `every` | ✅ | Attach/replace the `recur` cookie on the task's date. `<interval>`: a cookie (`.+1w`/`+2d`/`++1m`) or friendly form (`weekly`/`daily`/`monthly`/`yearly`/`2w`/`every 3 days`); `off`/`none` clears it. `--from schedule\|completion` picks `+`/`.+` for a bare interval (default `completion` → `.+`). `--on <date>` seeds a `deadline` when the task has no date yet (else it errors). `--dry-run`/`--json`. |

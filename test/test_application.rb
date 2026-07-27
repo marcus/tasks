@@ -278,6 +278,282 @@ class TestApplication < Minitest::Test
     end
   end
 
+  # -- delegation --------------------------------------------------------------
+  #
+  # Store owns eligibility, the claim compare-and-set, and worker matching
+  # (test_delegation.rb). What is proved here is the application contract the
+  # CLI, HTTP, and TUI adapters build on: the typed commands, the composed
+  # WAITING default and release note as single undo steps, and a summary rich
+  # enough that no adapter has to re-derive the outcome.
+
+  WORKER = "claude-code/claude-fable-5/aaaa1111"
+  RIVAL  = "claude-code/claude-opus-5/bbbb2222"
+
+  def undo_store(org, archive) = Tasks::Store.new(org: org, archive: archive)
+
+  def test_agent_delegation_returns_the_marker_and_the_canonical_resource
+    with_application do |org, _archive, app|
+      result = app.delegate_task(FIX[:plants], kind: "agent", mode: "research")
+
+      assert result.changed?
+      summary = result.summary
+      assert_equal :delegate, summary[:action]
+      assert_equal FIX[:plants], summary[:task_id]
+      assert_nil summary[:previous]
+      assert_equal "research", summary[:delegation]["mode"]
+      assert_equal "ready", summary[:delegation]["status"]
+      assert_equal "NEXT", summary[:state]
+      refute summary[:state_changed], "agent delegation never moves lifecycle state"
+      assert_equal FIX[:plants], summary[:task].id
+      assert summary[:task].agent_ready?
+      assert_equal [FIX[:plants]], result.touched_ids
+      assert_match(/\As1\.[0-9a-f]{64}\z/, result.store_revision)
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_human_delegation_moves_to_waiting_in_one_undo_step
+    with_application do |org, archive, app|
+      before = File.read(org)
+      result = app.delegate_task(FIX[:plants], kind: "human", assignee: "pat@example.com")
+
+      assert result.changed?
+      assert result.summary[:state_changed]
+      assert_equal "WAITING", result.summary[:state]
+      assert_equal "WAITING", result.summary[:task].state
+      assert_equal "pat@example.com", result.summary[:task].delegation_assignee
+      assert_equal "delegated", result.summary[:delegation]["status"]
+
+      store = undo_store(org, archive)
+      assert_equal :ok, store.undo!.first
+      assert_equal before, File.read(org), "the WAITING default undoes with the delegation"
+      assert_equal :ok, store.redo!.first
+      assert_equal "WAITING", app.get_task(FIX[:plants]).state
+    end
+  end
+
+  def test_keep_state_opts_out_of_the_waiting_default
+    with_application do |_org, _archive, app|
+      result = app.delegate_task(FIX[:plants], kind: "human", assignee: "pat@example.com",
+                                 keep_state: true)
+
+      assert result.changed?
+      refute result.summary[:state_changed]
+      assert_equal "NEXT", result.summary[:state]
+      assert_equal "pat@example.com", app.get_task(FIX[:plants]).delegation_assignee
+    end
+  end
+
+  def test_mode_update_keeps_the_work_ref_and_reports_the_previous_marker
+    with_application do |_org, _archive, app|
+      app.delegate_task(FIX[:plants], kind: "agent", mode: "research")
+      app.set_work_ref(FIX[:plants], "https://example.com/brief")
+      result = app.delegate_task(FIX[:plants], kind: "agent", mode: "implement")
+
+      assert result.changed?
+      assert_equal "research", result.summary[:previous]["mode"]
+      assert_equal "implement", result.summary[:delegation]["mode"]
+      assert_equal "https://example.com/brief", result.summary[:task].work_ref
+      assert_equal "ready", result.summary[:task].delegation_status
+    end
+  end
+
+  def test_replacing_human_with_agent_delegation_and_back
+    with_application do |_org, _archive, app|
+      app.delegate_task(FIX[:plants], kind: "human", assignee: "pat@example.com")
+      to_agent = app.delegate_task(FIX[:plants], kind: "agent", mode: "refine")
+
+      assert to_agent.changed?
+      assert_equal "human", to_agent.summary[:previous]["kind"]
+      assert_equal "agent", to_agent.summary[:delegation]["kind"]
+      assert_equal "WAITING", to_agent.summary[:state], "undelegating never leaves WAITING by itself"
+
+      back = app.delegate_task(FIX[:plants], kind: "human", assignee: "sam@example.com")
+      assert_equal "agent", back.summary[:previous]["kind"]
+      assert_equal "sam@example.com", back.summary[:task].delegation_assignee
+    end
+  end
+
+  def test_claim_returns_the_full_resource_and_a_lost_race_names_the_holder
+    with_application do |_org, _archive, app|
+      app.delegate_task(FIX[:plants], kind: "agent", mode: "research")
+      won = app.claim_task(FIX[:plants], worker: WORKER)
+
+      assert won.changed?
+      assert_equal :claim, won.summary[:action]
+      assert_equal WORKER, won.summary[:task].delegation_assignee
+      assert_equal "research", won.summary[:task].delegation_mode
+      assert_equal "Water the plants", won.summary[:task].title
+
+      lost = app.claim_task(FIX[:plants], worker: RIVAL)
+      assert lost.conflict?
+      assert_equal :claim, lost.summary[:action]
+      assert_equal FIX[:plants], lost.summary[:task_id]
+      assert_equal WORKER, lost.summary[:holder]
+      assert_match(/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\z/, lost.summary[:at])
+      assert_equal 1, lost.cli_exit_code
+      assert_equal WORKER, app.get_task(FIX[:plants]).delegation_assignee
+    end
+  end
+
+  def test_release_enforces_the_worker_match_and_the_owner_can_force_it
+    with_application do |_org, _archive, app|
+      app.delegate_task(FIX[:plants], kind: "agent", mode: "research")
+      app.claim_task(FIX[:plants], worker: WORKER)
+
+      mismatch = app.release_task(FIX[:plants], worker: RIVAL)
+      assert mismatch.conflict?
+      assert_equal :release, mismatch.summary[:action]
+      assert_equal WORKER, mismatch.summary[:holder]
+      assert_equal WORKER, app.get_task(FIX[:plants]).delegation_assignee
+
+      forced = app.release_task(FIX[:plants], force: true)
+      assert forced.changed?
+      assert_equal WORKER, forced.summary[:released_from]
+      assert forced.summary[:forced]
+      assert forced.summary[:task].agent_ready?
+    end
+  end
+
+  def test_release_note_is_appended_in_the_same_undo_step
+    with_application do |org, archive, app|
+      app.delegate_task(FIX[:plants], kind: "agent", mode: "implement")
+      app.claim_task(FIX[:plants], worker: WORKER)
+      before = File.read(org)
+
+      result = app.release_task(FIX[:plants], worker: WORKER, note: "blocked: need repo access")
+
+      assert result.changed?
+      assert result.summary[:note_applied]
+      assert result.summary[:task].agent_ready?
+      assert_equal ["blocked: need repo access"], result.summary[:task].body
+
+      store = undo_store(org, archive)
+      assert_equal :ok, store.undo!.first
+      assert_equal before, File.read(org), "the note and the release are one undo step"
+      assert_equal WORKER, app.get_task(FIX[:plants]).delegation_assignee
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_work_ref_is_set_cleared_and_worker_matched
+    with_application do |_org, _archive, app|
+      app.delegate_task(FIX[:plants], kind: "agent", mode: "research")
+      app.claim_task(FIX[:plants], worker: WORKER)
+
+      stale = app.set_work_ref(FIX[:plants], "https://example.com/other", worker: RIVAL)
+      assert stale.conflict?
+
+      set = app.set_work_ref(FIX[:plants], "https://example.com/brief", worker: WORKER)
+      assert set.changed?
+      assert_equal "https://example.com/brief", set.summary[:task].work_ref
+
+      cleared = app.set_work_ref(FIX[:plants], "off")
+      assert cleared.changed?
+      assert_nil cleared.summary[:task].work_ref
+      assert_equal :work_ref, cleared.summary[:action]
+    end
+  end
+
+  def test_undelegate_clears_the_marker_and_leaves_lifecycle_alone
+    with_application do |_org, _archive, app|
+      app.delegate_task(FIX[:plants], kind: "human", assignee: "pat@example.com")
+      result = app.undelegate_task(FIX[:plants])
+
+      assert result.changed?
+      assert_equal :undelegate, result.summary[:action]
+      assert_equal "pat@example.com", result.summary[:previous]["assignee"]
+      assert_nil result.summary[:delegation]
+      assert_equal "WAITING", result.summary[:state], "the owner decides when to leave WAITING"
+      refute result.summary[:task].delegated?
+
+      repeat = app.undelegate_task(FIX[:plants])
+      assert repeat.no_change?
+      assert_nil repeat.summary[:previous]
+      refute_nil repeat.summary[:task], "an idempotent repeat still returns the resource"
+    end
+  end
+
+  def test_delegation_refuses_proposed_and_closed_tasks
+    records = FIXTURE_RECORDS.map(&:dup)
+    records << { "type" => "task", "id" => "eeee0001", "parent" => FIX[:home],
+                 "state" => "PROPOSED", "title" => "Maybe repaint" }
+
+    with_application(records: records) do |_org, _archive, app|
+      proposed = app.delegate_task("eeee0001", kind: "agent", mode: "refine")
+      assert proposed.invalid?
+      assert_match(/PROPOSED/, proposed.errors.first)
+
+      closed = app.delegate_task(FIX[:old], kind: "human", assignee: "pat@example.com")
+      assert closed.invalid?
+      assert_match(/DONE/, closed.errors.first)
+
+      missing = app.claim_task("ffffffff", worker: WORKER)
+      assert missing.not_found?
+      assert_equal 2, missing.cli_exit_code
+    end
+  end
+
+  def test_delegation_honors_an_expected_revision
+    with_application do |_org, _archive, app|
+      stale_revision = app.get_task(FIX[:plants]).revision
+      app.delegate_task(FIX[:plants], kind: "agent", mode: "refine")
+
+      refused = app.delegate_task(FIX[:plants], kind: "agent", mode: "implement",
+                                  expected_revision: stale_revision)
+      assert refused.stale?
+      assert_equal "refine", app.get_task(FIX[:plants]).delegation_mode
+
+      current = app.get_task(FIX[:plants]).revision
+      accepted = app.delegate_task(FIX[:plants], kind: "agent", mode: "implement",
+                                   expected_revision: current)
+      assert accepted.changed?
+    end
+  end
+
+  def test_delegation_accepts_prebuilt_typed_commands
+    with_application do |_org, _archive, app|
+      command = Tasks::DelegationCommand.new(id: FIX[:plants], action: :delegate,
+                                             kind: "agent", mode: "research")
+      assert app.delegate_task(command).changed?
+      assert app.claim_task(
+        Tasks::DelegationCommand.new(id: FIX[:plants], action: :claim, worker: WORKER)
+      ).changed?
+
+      assert_raises(ArgumentError) { app.delegate_task(command, mode: "implement") }
+      assert_raises(ArgumentError) { app.claim_task(command) }
+      assert_raises(ArgumentError) do
+        Tasks::DelegationCommand.new(id: FIX[:plants], action: :promote)
+      end
+    end
+  end
+
+  def test_every_delegation_mutation_is_individually_undoable
+    with_application do |org, archive, app|
+      states = [File.read(org)]
+      app.delegate_task(FIX[:plants], kind: "agent", mode: "research")
+      states << File.read(org)
+      app.claim_task(FIX[:plants], worker: WORKER)
+      states << File.read(org)
+      app.set_work_ref(FIX[:plants], "https://example.com/brief", worker: WORKER)
+      states << File.read(org)
+      app.release_task(FIX[:plants], worker: WORKER)
+      states << File.read(org)
+      app.undelegate_task(FIX[:plants])
+
+      store = undo_store(org, archive)
+      states.reverse.each do |expected|
+        assert_equal :ok, store.undo!.first
+        assert_equal expected, File.read(org)
+      end
+      states.drop(1).each do |expected|
+        assert_equal :ok, store.redo!.first
+        assert_equal expected, File.read(org)
+      end
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
   def test_checked_result_owns_an_immutable_copy_of_plain_payloads
     key = +"items"
     value = +"one"

@@ -456,4 +456,120 @@ class TestTaskQueries < Minitest::Test
       assert_raises(ArgumentError) { Tasks::TaskFilter.parse_cli(%w[--all --unavailable]) }
     end
   end
+
+  # -- delegation scopes -------------------------------------------------------
+
+  WORKER = "claude-code/claude-fable-5/aaaa1111"
+
+  # The shared fixture with one delegation of every shape: three agent-ready
+  # tasks that differ in priority and date (the ranking cases), a claimed one,
+  # a human one, a deferred agent-ready one (available but held), and a closed
+  # task keeping a claim as provenance.
+  def delegated_records
+    marks = {
+      FIX[:flight] => { "kind" => "agent", "mode" => "implement", "status" => "ready",
+                        "at" => "2026-07-10T09:00:00Z" },
+      FIX[:eval] => { "kind" => "agent", "mode" => "research", "status" => "ready",
+                      "at" => "2026-07-10T09:00:00Z" },
+      FIX[:pr] => { "kind" => "agent", "mode" => "refine", "status" => "ready",
+                    "at" => "2026-07-10T09:00:00Z" },
+      FIX[:plants] => { "kind" => "agent", "mode" => "research", "status" => "claimed",
+                        "assignee" => WORKER, "at" => "2026-07-11T09:00:00Z" },
+      FIX[:travel] => { "kind" => "human", "status" => "delegated",
+                        "assignee" => "pat@example.com", "at" => "2026-07-12T09:00:00Z" },
+      FIX[:garden] => { "kind" => "agent", "mode" => "refine", "status" => "ready",
+                        "at" => "2026-07-12T09:00:00Z" },
+      FIX[:old] => { "kind" => "agent", "mode" => "implement", "status" => "claimed",
+                     "assignee" => WORKER, "at" => "2026-06-19T09:00:00Z",
+                     "work_ref" => "https://example.com/pr/1" },
+    }
+    FIXTURE_RECORDS.map do |record|
+      copy = record.dup
+      copy["delegation"] = marks[copy["id"]] if marks.key?(copy["id"])
+      # The garden capture is held indefinitely: delegated, but not workable.
+      copy["tags"] = (copy["tags"] || []) + ["defer"] if copy["id"] == FIX[:garden]
+      copy
+    end
+  end
+
+  def delegated_ids(store, args, today: Date.new(2026, 7, 14))
+    filter = Tasks::TaskFilter.parse_cli(args).filter
+    queries(store, include_archive: filter.include_archive?, today: today).list(filter).tasks.map(&:id)
+  end
+
+  def test_delegation_filter_parsing_and_scope_rules
+    delegated = Tasks::TaskFilter.parse_cli(["--delegated"]).filter
+    assert delegated.delegated_only
+    refute delegated.agent_ready_only
+
+    ready = Tasks::TaskFilter.parse_cli(["--agent-ready", "--json"])
+    assert ready.json
+    assert ready.filter.agent_ready_only
+
+    both = assert_raises(ArgumentError) { Tasks::TaskFilter.parse_cli(%w[--delegated --agent-ready]) }
+    assert_match(/mutually exclusive/, both.message)
+    closed = assert_raises(ArgumentError) { Tasks::TaskFilter.parse_cli(%w[--done --agent-ready]) }
+    assert_match(/only valid with --open/, closed.message)
+  end
+
+  def test_delegated_scope_selects_every_marker_and_agent_ready_only_claimable_work
+    with_query_store(records: delegated_records) do |store|
+      assert_equal [FIX[:flight], FIX[:pr], FIX[:eval], FIX[:travel], FIX[:plants]],
+                   delegated_ids(store, ["--delegated"]),
+                   "human, ready, and claimed markers all count; a held task still shows"
+
+      # Ranked: priority A (soonest boundary first), then B, then unprioritized.
+      assert_equal [FIX[:flight], FIX[:eval], FIX[:pr]],
+                   delegated_ids(store, ["--agent-ready"])
+    end
+  end
+
+  def test_agent_ready_excludes_claimed_human_unavailable_and_closed_tasks
+    with_query_store(records: delegated_records) do |store|
+      ready = delegated_ids(store, ["--agent-ready"])
+
+      refute_includes ready, FIX[:plants], "a claimed task is no longer up for grabs"
+      refute_includes ready, FIX[:travel], "a person's task is not agent work"
+      refute_includes ready, FIX[:garden], "an indefinite hold means the work cannot start"
+      refute_includes ready, FIX[:old], "a closed task is not claimable"
+      assert_includes delegated_ids(store, ["--delegated", "--all"]), FIX[:old],
+                      "closed provenance is still a delegation"
+      assert_equal [FIX[:garden]], delegated_ids(store, ["--delegated", "--someday"])
+    end
+  end
+
+  def test_delegation_scopes_compose_with_the_existing_filters
+    with_query_store(records: delegated_records) do |store|
+      assert_equal [FIX[:flight], FIX[:eval]], delegated_ids(store, ["--agent-ready", "-A"])
+      assert_equal [FIX[:flight], FIX[:eval], FIX[:pr]],
+                   delegated_ids(store, ["--agent-ready", "+important", "@computer"])
+      assert_equal [FIX[:flight]], delegated_ids(store, ["--agent-ready", "/flight"])
+      assert_equal [FIX[:travel]], delegated_ids(store, ["--delegated", "@email"])
+      assert_empty delegated_ids(store, ["--agent-ready", "+nonexistent"])
+    end
+  end
+
+  def test_delegation_rides_on_the_canonical_task_resource
+    with_query_store(records: delegated_records) do |store|
+      query = queries(store)
+      by_id = query.snapshot.items.to_h { |item| [item.id, item] }
+      claimed = query.task(by_id[FIX[:plants]])
+      plain = query.task(by_id[FIX[:travel]])
+
+      assert claimed.claimed?
+      assert_equal WORKER, claimed.delegation_assignee
+      assert_equal "research", claimed.delegation_mode
+      assert_equal({ "kind" => "agent", "mode" => "research", "status" => "claimed",
+                     "assignee" => WORKER, "at" => "2026-07-11T09:00:00Z" },
+                   claimed.to_h[:delegation])
+      assert claimed.delegation.frozen?
+      assert_equal "human", plain.delegation_kind
+      assert_nil plain.delegation_mode
+      assert_nil query.task(by_id[FIX[:flight]]).work_ref
+      assert_equal "https://example.com/pr/1", query.task(by_id[FIX[:old]]).work_ref,
+                   "a reference outlives the task it was recorded on"
+      assert_equal "claimed", query.delegation(by_id[FIX[:old]])["status"]
+      refute query.task(by_id[FIX[:flight]]).claimed?
+    end
+  end
 end

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "date"
+require_relative "delegation"
 require_relative "quadrants"
 require_relative "recur"
 require_relative "store"
@@ -23,11 +24,13 @@ module Tasks
     end
 
     attr_reader :scope, :deferred_only, :unavailable_only, :someday_only,
-                :recurring_only, :body_search, :contexts, :tags, :priority, :state, :text
+                :recurring_only, :body_search, :contexts, :tags, :priority, :state, :text,
+                :delegated_only, :agent_ready_only
 
     def initialize(scope: :open, deferred_only: false, unavailable_only: false,
                    someday_only: false, recurring_only: false, body_search: false,
-                   contexts: [], tags: [], priority: nil, state: nil, text: [])
+                   contexts: [], tags: [], priority: nil, state: nil, text: [],
+                   delegated_only: false, agent_ready_only: false)
       @scope = scope.to_s.to_sym
       raise ArgumentError, "unknown task scope: #{scope}" unless SCOPES.include?(@scope)
 
@@ -39,6 +42,18 @@ module Tasks
       end
       if @unavailable_only && @scope != :open
         raise ArgumentError, "--unavailable is only valid with --open"
+      end
+      # `--delegated` spans every lifecycle scope (a closed task keeps its
+      # marker as provenance); `--agent-ready` is a claimable queue, so it is
+      # meaningful only over accepted live work, and it already implies
+      # everything `--delegated` selects.
+      @delegated_only = !!delegated_only
+      @agent_ready_only = !!agent_ready_only
+      if @delegated_only && @agent_ready_only
+        raise ArgumentError, "--delegated and --agent-ready are mutually exclusive"
+      end
+      if @agent_ready_only && @scope != :open
+        raise ArgumentError, "--agent-ready is only valid with --open"
       end
       @recurring_only = !!recurring_only
       @body_search = !!body_search
@@ -61,6 +76,7 @@ module Tasks
       scope = :open
       json = false
       deferred_only = unavailable_only = someday_only = recurring_only = body_search = false
+      delegated_only = agent_ready_only = false
       contexts = []
       tags = []
       priority = nil
@@ -78,6 +94,8 @@ module Tasks
         when "--unavailable" then unavailable_only = true
         when "--someday", "--on-hold" then someday_only = true
         when "--recurring", "-R" then recurring_only = true
+        when "--delegated" then delegated_only = true
+        when "--agent-ready" then agent_ready_only = true
         when "--body", "-b" then body_search = true
         when "--json" then json = true
         when /\A-([ABC])\z/ then priority = Regexp.last_match(1)
@@ -96,6 +114,7 @@ module Tasks
         filter: new(scope: scope, deferred_only: deferred_only,
                     unavailable_only: unavailable_only, someday_only: someday_only,
                     recurring_only: recurring_only, body_search: body_search,
+                    delegated_only: delegated_only, agent_ready_only: agent_ready_only,
                     contexts: contexts, tags: tags, priority: priority, text: text),
         json: json
       )
@@ -220,6 +239,10 @@ module Tasks
 
     def list(filter)
       items = source_items(filter).select { |item| filter_match?(item, filter) }
+      # The claimable queue is the one list whose order is a contract: a
+      # heartbeat agent takes the first row it is capable of, so ranking cannot
+      # live in the adapter that happens to print it.
+      items = rank_agent_ready(items) if filter.agent_ready_only
       result(:list, items, filter: filter)
     end
 
@@ -247,6 +270,15 @@ module Tasks
 
     def task(item)
       task_view(current_item_for(item) || item)
+    end
+
+    # The task's `delegation` object as stored, or nil when it carries none.
+    # Read straight off the record so a filter never has to build a whole
+    # TaskView to answer "is this delegated?".
+    def delegation(item)
+      item = current_item_for(item) || item
+      value = record_for(item)&.fetch(Delegation::FIELD, nil)
+      Delegation.object?(value) ? value : nil
     end
 
     # Effective availability includes the task and every task ancestor. Closed
@@ -357,7 +389,31 @@ module Tasks
         (filter.priority.nil? || item.priority == filter.priority) &&
         filter.contexts.all? { |context| item.tags.include?(context) } &&
         filter.tags.all? { |tag| item.tags.include?(tag) } &&
+        delegation_match?(item, filter) &&
         text_match?(item, filter)
+    end
+
+    # `--delegated` is any marker at all — human or agent, ready or claimed —
+    # so the owner sees every handed-off task in one list. `--agent-ready` is
+    # the narrower claimable queue: agent kind, unclaimed, accepted live state,
+    # and actually workable right now under the ordinary availability rules
+    # (an own or inherited hold, or a future available-from date, means the
+    # prerequisite work is not done yet).
+    def delegation_match?(item, filter)
+      return true unless filter.delegated_only || filter.agent_ready_only
+
+      value = delegation(item)
+      return Delegation.object?(value) if filter.delegated_only
+
+      Delegation.ready?(value) && item.source == :live &&
+        Store::OPEN_STATES.include?(item.state) && availability(item).available?
+    end
+
+    # Existing priority, then the soonest deadline-or-scheduled boundary, then
+    # canonical file order. No autonomous scoring — the same three keys the
+    # human views already rank by.
+    def rank_agent_ready(items)
+      stable_sort(items) { |item| [item.priority || "Z", agenda_sort_key(item)] }
     end
 
     def deferred_match?(item, filter)
@@ -417,7 +473,7 @@ module Tasks
           child_ids: child_ids, section_id: section && section["id"],
           section_title: section && section["title"], project: node&.open_project&.title,
           revision: snapshot.revision_for(item), availability: availability(item),
-          temporal_context: temporal_context,
+          temporal_context: temporal_context, delegation: record && record[Delegation::FIELD],
           descendant_count: descendant_count(item.id, item.source)
         )
       end

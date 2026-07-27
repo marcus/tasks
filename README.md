@@ -217,6 +217,8 @@ tasks list -a                    # everything, both files
 tasks list @computer -A /denver  # compose: context, priority, text — all at once
 tasks list --unavailable         # timed, inherited, and indefinite blockers
 tasks list --someday             # own indefinite On Hold tasks only
+tasks list --delegated           # everything handed to a person or the agent pool
+tasks list --agent-ready         # the claimable agent queue, ranked
 ```
 
 Scope flags: `--open/-o` (default) `--proposed` `--done/-d`
@@ -249,6 +251,30 @@ work views. The TUI's Approvals tab shows the queue and its count; approve or
 reject each suggestion there with one key. Explicit requests to add or remember
 a task still use ordinary `capture`. A proposal never authorizes the agent to
 perform the work, contact anyone, or approve its own suggestion.
+
+### Delegating a task
+
+A task can also be handed off — to a person, or to the agent pool for a
+heartbeat agent to pick up later:
+
+```sh
+tasks delegate 4f2a --to pat@example.com      # → WAITING; --keep-state opts out
+tasks workref 4f2a https://github.com/acme/x/issues/12   # where the work lives
+
+tasks delegate 4f2a research                  # agent-ready at that authority
+tasks list --agent-ready --json               # what an agent may pick up, ranked
+tasks claim 4f2a --worker claude-code/claude-fable-5/313cf82e --json
+tasks release 4f2a --worker … --note "blocked: needs dataset access"
+tasks undelegate 4f2a                         # revoke, whatever its status
+```
+
+`refine` may improve the task, `research` may investigate and recommend, and
+`implement` may do the work within the task's stated scope — the owner sets the
+mode; an agent never widens it. `claim` is an atomic compare-and-set, so
+exactly one worker can ever hold a task: the loser is told who won and picks
+something else. `--worker` defaults from `TASKS_WORKER_ID` so a harness sets it
+once. The marker and its `work_ref` survive completion and archival, so a
+closed task still says who did it and where the result lives.
 
 The optional `cursor-cli` provider runs the `agent` binary in headless force
 mode with no additional application dependencies. Authenticate with

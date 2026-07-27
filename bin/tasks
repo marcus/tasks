@@ -18,6 +18,12 @@
 #   bin/tasks propose "..."   suggest an inert task for approval
 #   bin/tasks approve <ref>   accept a PROPOSED task into INBOX
 #   bin/tasks reject <ref>    decline a PROPOSED task into CANCELLED
+#   bin/tasks delegate <ref> refine|research|implement   hand to the agent pool
+#   bin/tasks delegate <ref> --to <email> [--keep-state] hand to a person (WAITING)
+#   bin/tasks undelegate <ref>            clear the marker / revoke a claim
+#   bin/tasks workref <ref> <url|off>     record where the work lives
+#   bin/tasks claim <ref> --worker <id>   atomically pick up agent-ready work
+#   bin/tasks release <ref> --worker <id> [--note "..."] [--force]  hand it back
 #   bin/tasks done|d <ref>    mark a matching open item DONE (complete/close);
 #                             cascades to its open descendants (recurring parent
 #                             rolls forward instead and does not cascade)
@@ -43,7 +49,8 @@
 #   bin/tasks list|l [...]    list tasks grouped by state, with filters:
 #     scope:   --open/-o (default) --proposed --done/-d --archived/-x --all/-a
 #     filters: @context /text +tag -A|-B|-C --deferred/-D --unavailable
-#              --someday/--on-hold (compose freely except as documented)
+#              --someday/--on-hold --delegated --agent-ready
+#              (compose freely except as documented)
 #   bin/tasks -p "..."        hand a natural-language request to an LLM agent
 #                             (Claude or another configured harness), which acts
 #                             on your tasks and reports what changed
@@ -403,6 +410,230 @@ end
 def cmd_approve(args) = cmd_proposal_decision(args, action: :approve)
 def cmd_reject(args) = cmd_proposal_decision(args, action: :reject)
 
+# --- Delegation (delegate / undelegate / workref / claim / release) ----------
+#
+# Five thin adapters over the typed Tasks::Application delegation operations.
+# Eligibility, the atomic claim compare-and-set, worker matching, and the
+# WAITING default all live behind that boundary; what happens here is argument
+# parsing, ref resolution, and printing the one-line delegation summary.
+
+DELEGATE_USAGE = %(usage: tasks delegate <ref> <refine|research|implement>  |  tasks delegate <ref> --to <email> [--keep-state])
+WORKER_HINT = "pass --worker <id> or set TASKS_WORKER_ID"
+
+# The worker id behind a claim or release: the flag always wins, then the
+# TASKS_WORKER_ID environment variable a heartbeat harness sets once per
+# session. Missing both is a usage error, not a silent owner-level write.
+def worker_id(flag_value, required: true)
+  value = (flag_value || ENV["TASKS_WORKER_ID"]).to_s.strip
+  abort "missing worker id — #{WORKER_HINT}" if value.empty? && required
+  value.empty? ? nil : value
+end
+
+# One line describing a task's delegation. `delegate`, `claim`, `release`, and
+# `list --delegated/--agent-ready` all print through it, so the four surfaces
+# cannot drift apart.
+def delegation_headline(task)
+  delegation = task&.delegation
+  return "not delegated: #{task&.title}" unless delegation
+
+  case delegation["status"]
+  when "delegated" then "delegated → #{delegation["assignee"]} (#{task.state}): #{task.title}"
+  when "ready"     then "agent-ready (#{delegation["mode"]}): #{task.title}"
+  when "claimed"   then "claimed by #{delegation["assignee"]}: #{task.title}"
+  else "delegated: #{task.title}"
+  end
+end
+
+# The same summary without the title, for `show`'s field list.
+def delegation_summary(delegation)
+  case delegation["status"]
+  when "delegated" then "→ #{delegation["assignee"]}"
+  when "ready"     then "agent-ready (#{delegation["mode"]})"
+  when "claimed"   then "claimed by #{delegation["assignee"]} (#{delegation["mode"]})"
+  else delegation["status"].to_s
+  end
+end
+
+# Typed refusals mapped to the CLI's error contract. A conflict is the
+# lost-race case (a claim someone else holds, a worker mismatch): it names the
+# holder, exits non-zero, and with --json also emits a machine-readable error
+# object so a heartbeat agent branches without parsing display text.
+def delegation_failed!(result, json:)
+  if result.conflict?
+    summary = result.summary || {}
+    message = if summary[:action] == :claim && summary[:holder]
+                "conflict: already claimed by #{summary[:holder]} at #{summary[:at]}"
+              else
+                "conflict: #{result.errors.first || "delegation conflict"}"
+              end
+    if json
+      require "json"
+      puts JSON.generate({ error: "conflict", action: summary[:action]&.to_s,
+                           id: summary[:task_id], holder: summary[:holder],
+                           at: summary[:at], message: message })
+    end
+    warn message
+    exit result.cli_exit_code
+  end
+  mutation_failed(result.errors.first) if result.invalid? && !result.errors.empty?
+  mutation_result_failed(result, "failed to update delegation")
+end
+
+# The canonical post-write task as the [item, TaskView] pair the CLI's JSON
+# shapes are built from. An idempotent repeat writes nothing and carries no
+# snapshot, so that case re-reads the live file.
+def delegation_task_pair(result, task_id, today:, context:)
+  snapshot = result.read_snapshot
+  unless snapshot
+    store.reload!
+    snapshot = store.read_snapshot
+  end
+  query = Tasks::TaskQueries.new(snapshot, today: today, temporal_context: context)
+  item = snapshot.items.find { |candidate| candidate.id == task_id }
+  [item, item && query.task(item)]
+end
+
+def cmd_delegate(args)
+  context = temporal_context
+  today = context.local_date
+  args = args.dup
+  to = extract_value(args, "--to")
+  flags, rest = take_flags(args, "--json", "--keep-state")
+  ref = rest.shift
+  mode = rest.join(" ").strip
+  abort DELEGATE_USAGE if ref.nil? || ref.strip.empty?
+  abort DELEGATE_USAGE if to.nil? && mode.empty?
+  abort "delegate takes a mode or --to <email>, not both\n#{DELEGATE_USAGE}" if to && !mode.empty?
+  abort "--keep-state applies to --to <email>\n#{DELEGATE_USAGE}" if flags["--keep-state"] && to.nil?
+
+  # Refs resolve across proposed and closed tasks so an ineligible target
+  # reports the state that refuses it rather than a bare no-match.
+  item = resolve_ref(ref, include_done: true)
+  task_id = stable_id_for(item)
+  operation = cli_operation_context(context)
+  result = if to
+             application.delegate_task(task_id, kind: "human", assignee: utf8_arg(to),
+                                       keep_state: flags["--keep-state"], today: today,
+                                       context: operation)
+           else
+             application.delegate_task(task_id, kind: "agent", mode: mode, today: today,
+                                       context: operation)
+           end
+  delegation_failed!(result, json: flags["--json"])
+  if flags["--json"]
+    report_touched([task_id], json: true, today: today,
+                   read_snapshot: result.read_snapshot, temporal_context: context)
+  else
+    _item, task = delegation_task_pair(result, task_id, today: today, context: context)
+    puts delegation_headline(task)
+  end
+end
+
+def cmd_undelegate(args)
+  context = temporal_context
+  today = context.local_date
+  flags, rest = take_flags(args, "--json")
+  ref = rest.shift
+  abort "usage: tasks undelegate <ref> [--json]" if ref.nil? || ref.strip.empty? || !rest.empty?
+
+  item = resolve_ref(ref, include_done: true)
+  task_id = stable_id_for(item)
+  result = application.undelegate_task(task_id, today: today,
+                                       context: cli_operation_context(context))
+  delegation_failed!(result, json: flags["--json"])
+  if flags["--json"]
+    report_touched([task_id], json: true, today: today,
+                   read_snapshot: result.read_snapshot, temporal_context: context)
+  else
+    _item, task = delegation_task_pair(result, task_id, today: today, context: context)
+    title = task&.title || item.title
+    puts result.no_change? ? "not delegated: #{title}" : "undelegated: #{title}"
+  end
+end
+
+# Record where the work lives (ticket, PR, brief, session); `off` clears it.
+# The owner may always write it; an agent passes --worker to prove its claim
+# still matches (deliberately never defaulted from the environment, so an
+# exported TASKS_WORKER_ID cannot silently change who is writing).
+def cmd_workref(args)
+  context = temporal_context
+  today = context.local_date
+  args = args.dup
+  worker = extract_value(args, "--worker")
+  flags, rest = take_flags(args, "--json")
+  ref = rest.shift
+  reference = utf8_arg(rest.join(" ").strip)
+  abort "usage: tasks workref <ref> <url-or-id|off> [--worker <id>]" if ref.nil? || ref.strip.empty? || reference.empty?
+
+  item = resolve_ref(ref, include_done: true)
+  task_id = stable_id_for(item)
+  result = application.set_work_ref(task_id, reference, worker: worker, today: today,
+                                    context: cli_operation_context(context))
+  delegation_failed!(result, json: flags["--json"])
+  if flags["--json"]
+    report_touched([task_id], json: true, today: today,
+                   read_snapshot: result.read_snapshot, temporal_context: context)
+  else
+    _item, task = delegation_task_pair(result, task_id, today: today, context: context)
+    title = task&.title || item.title
+    puts task&.work_ref ? "work ref → #{task.work_ref}: #{title}" : "work ref cleared: #{title}"
+  end
+end
+
+def cmd_claim(args)
+  context = temporal_context
+  today = context.local_date
+  args = args.dup
+  worker_flag = extract_value(args, "--worker")
+  flags, rest = take_flags(args, "--json")
+  ref = rest.shift
+  abort "usage: tasks claim <ref> --worker <id> [--json]" if ref.nil? || ref.strip.empty? || !rest.empty?
+  worker = worker_id(worker_flag)
+
+  item = resolve_ref(ref, include_done: true)
+  task_id = stable_id_for(item)
+  result = application.claim_task(task_id, worker: worker, today: today,
+                                  context: cli_operation_context(context))
+  delegation_failed!(result, json: flags["--json"])
+  claimed, task = delegation_task_pair(result, task_id, today: today, context: context)
+  if flags["--json"]
+    # The whole canonical resource, not just the marker: a worker claims and
+    # reads the authority it is working under in one step.
+    require "json"
+    puts JSON.generate(task_resource_json(claimed, task))
+  else
+    puts delegation_headline(task)
+  end
+end
+
+def cmd_release(args)
+  context = temporal_context
+  today = context.local_date
+  args = args.dup
+  worker_flag = extract_value(args, "--worker")
+  note = utf8_arg(extract_value(args, "--note"))
+  flags, rest = take_flags(args, "--json", "--force")
+  ref = rest.shift
+  abort "usage: tasks release <ref> --worker <id> [--note \"blocker\"] [--force]" if ref.nil? || ref.strip.empty? || !rest.empty?
+  # --force is the owner override, so it stands in for a worker id.
+  worker = worker_id(worker_flag, required: !flags["--force"])
+
+  item = resolve_ref(ref, include_done: true)
+  task_id = stable_id_for(item)
+  result = application.release_task(task_id, worker: worker, force: flags["--force"],
+                                    note: note, today: today,
+                                    context: cli_operation_context(context))
+  delegation_failed!(result, json: flags["--json"])
+  warn "note was not appended: #{result.errors.first}" if note && result.summary[:note_applied] == false
+  if flags["--json"]
+    report_touched([task_id], json: true, today: today,
+                   read_snapshot: result.read_snapshot, temporal_context: context)
+  else
+    _item, task = delegation_task_pair(result, task_id, today: today, context: context)
+    puts "released → #{delegation_headline(task)}"
+  end
+end
+
 # Core of the state-transition verbs. `state` passes the target as a
 # positional arg; its sugar `done`/`cancel` hardcode DONE/CANCELLED. All three
 # resolve the ref, honor --dry-run/--json, and route the write through the
@@ -681,10 +912,27 @@ def item_json(item, task: nil)
       available: task.available?,
       availability_reason: task.availability_reason.to_s,
       availability_blocker_id: task.availability_blocker_id,
-      available_at: task.available_at
+      available_at: task.available_at,
+      # Present (as null when absent) on every row that has a view, so
+      # `list --agent-ready --json` needs no bespoke shape: an agent ranks and
+      # claims from the same fields the other read commands emit.
+      project: task.project,
+      delegation: task.delegation
     )
   end
   row
+end
+
+# The full canonical task resource: the standard row plus what `show` adds —
+# closed date, notes, project, links. `show --json` and `claim --json` both
+# emit exactly this.
+def task_resource_json(item, task)
+  item_json(item, task: task).merge(
+    closed: task.closed&.iso8601,
+    notes: task.body.map(&:strip).reject(&:empty?),
+    project: task.project,
+    links: task.links.map(&:to_h)
+  )
 end
 
 # Resolve <ref> to exactly one open item (or exit 2). `L<line>` targets an
@@ -886,14 +1134,15 @@ def cmd_show(args)
 
   if flags["--json"]
     require "json"
-    puts item_json(item, task: task).merge(
-      closed: closed&.iso8601, notes: notes, project: project,
-      links: links.map(&:to_h),
-    ).to_json
+    puts task_resource_json(item, task).to_json
   else
     puts task.headline
     puts "  id:        #{task.id}" if task.id
     puts "  project:   #{project}" if project
+    if task.delegated?
+      puts "  delegation: #{delegation_summary(task.delegation)} #{dim("(since #{task.delegation["at"]})")}"
+      puts "  work ref:  #{task.work_ref}" if task.work_ref
+    end
     if task.scheduled
       puts "  available from: #{task.scheduled_value ? temporal_label(task.scheduled_value) : task.scheduled.iso8601}"
     end
@@ -1740,6 +1989,14 @@ def cmd_list(args)
     return
   end
 
+  # The delegation scopes are about who holds the task, not what state it is
+  # in, so they print one flat ranked list of delegation summaries instead of
+  # the state-grouped view.
+  if parsed.filter.delegated_only || parsed.filter.agent_ready_only
+    sel.each { |item| puts delegation_headline(result.task_for(item)) }
+    return
+  end
+
   by_state = sel.group_by(&:state)
   STATE_ORDER.each do |st|
     list = by_state[st]
@@ -2197,6 +2454,8 @@ HELP = <<~USAGE
                              --archived/-x --all/-a (choose one)
                              --deferred/-D all unavailable · --unavailable canonical spelling
                              --someday/--on-hold own indefinite holds · --recurring/-R repeating
+                             --delegated any delegation · --agent-ready claimable
+                             agent work, ranked by priority then date
                              --body/-b widens /text search into task notes
     show      s <ref>        one task in full (headline + notes + links)
     links     urls [<ref>]   links in task notes, by system (slack, jira, …)
@@ -2244,6 +2503,21 @@ HELP = <<~USAGE
                                      if it has subtasks. Undoable via `undo`;
                                      usually prefer cancel/archive — this is for
                                      true mistakes.
+
+  Delegation (hand a task to a person or to the agent pool):
+    delegate <ref> refine|research|implement   agent-ready at that authority
+    delegate <ref> --to <email> [--keep-state] hand to a person; sets WAITING
+    undelegate <ref>                clear the marker (also revokes a claim)
+    workref <ref> <url-or-id|off>   record where the work lives (one reference)
+    claim <ref> --worker <id>       atomic pickup of agent-ready work; --json
+                                    re-emits the full task so an agent reads its
+                                    authority in one step
+    release <ref> --worker <id>     hand a claim back to agent-ready
+                                    --note "blocker" appends a note in the same
+                                    undo step · --force is the owner override
+    list --delegated · list --agent-ready    the two delegation read scopes
+    --worker defaults from TASKS_WORKER_ID; the flag always wins.
+    A lost claim race exits 1 with `conflict: already claimed by <id> at <ts>`.
 
   Projects (a project/area is a rolled-up section):
     projects  pj             list projects & areas (see Read above)
@@ -2299,6 +2573,11 @@ when "capture", "add", "c" then cmd_capture(ARGV[1..])
 when "propose"        then cmd_propose(ARGV[1..])
 when "approve"        then cmd_approve(ARGV[1..])
 when "reject"         then cmd_reject(ARGV[1..])
+when "delegate"       then cmd_delegate(ARGV[1..])
+when "undelegate"     then cmd_undelegate(ARGV[1..])
+when "workref", "work-ref" then cmd_workref(ARGV[1..])
+when "claim"          then cmd_claim(ARGV[1..])
+when "release"        then cmd_release(ARGV[1..])
 when "done", "complete", "close", "d" then cmd_done(ARGV[1..])
 when "due", "deadline", "reschedule" then cmd_due(ARGV[1..])
 when "schedule"       then cmd_schedule(ARGV[1..])

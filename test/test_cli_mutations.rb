@@ -1338,11 +1338,11 @@ class TestCliMutations < Minitest::Test
     end
   end
 
-  def run_cli_at(org, archive, *args)
+  def run_cli_at(org, archive, *args, env: {})
     env = {
       "TASKS_FILE" => org, "TASKS_ARCHIVE" => archive,
       "XDG_CONFIG_HOME" => File.join(File.dirname(org), ".xdg-test")
-    }
+    }.merge(env)
     out, err, st = Open3.capture3(env, "ruby", BIN, *args)
     # Same locale re-tag as run_cli: under US-ASCII (LANG unset / LC_ALL=C),
     # capture3 tags CLI UTF-8 output incorrectly and assert_match raises
@@ -3266,6 +3266,373 @@ class TestCliMutations < Minitest::Test
         refute_includes result.diff, "agent-memory.md",
                         "an out-of-repo sidecar is not in the git diff"
       end
+    end
+  end
+
+  # -- delegation commands -----------------------------------------------------
+  #
+  # Delegation is inherently multi-step (delegate → claim → work → release), so
+  # these drive the real binary across a sequence of runs against one sandbox
+  # store — the same way a heartbeat agent and its owner actually use it.
+
+  CLI_WORKER = "claude-code/claude-fable-5/aaaa1111"
+  CLI_RIVAL  = "claude-code/claude-opus-5/bbbb2222"
+
+  # The shared fixture with one delegation of each shape: two agent-ready tasks
+  # of differing priority, a person's task, and a claimed one.
+  DELEGATED_CLI_FIXTURE = Tasks::Format.dump(
+    FIXTURE_RECORDS.map do |record|
+      copy = record.dup
+      case copy["id"]
+      when FIX[:flight]
+        copy["delegation"] = { "kind" => "agent", "mode" => "implement", "status" => "ready",
+                               "at" => "2026-07-10T09:00:00Z" }
+      when FIX[:pr]
+        copy["delegation"] = { "kind" => "agent", "mode" => "refine", "status" => "ready",
+                               "at" => "2026-07-10T09:00:00Z" }
+      when FIX[:travel]
+        copy["delegation"] = { "kind" => "human", "status" => "delegated",
+                               "assignee" => "pat@example.com", "at" => "2026-07-12T09:00:00Z" }
+      when FIX[:plants]
+        copy["delegation"] = { "kind" => "agent", "mode" => "research", "status" => "claimed",
+                               "assignee" => CLI_WORKER, "at" => "2026-07-11T09:00:00Z",
+                               "work_ref" => "https://example.com/brief" }
+      end
+      copy
+    end
+  ).freeze
+
+  # A sandbox store plus its archive path, for a sequence of run_cli_at calls.
+  def with_cli_store(content: FIXTURE_ORG)
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, content)
+      yield org, archive
+    end
+  end
+
+  def test_cli_delegate_hands_work_to_the_agent_pool_and_to_a_person
+    run_cli("delegate", "Water the plants", "research") do |org, out, err, st|
+      assert st.success?, err
+      assert_equal "agent-ready (research): Water the plants\n", out
+      record = record_for(org, title: "Water the plants")
+      assert_equal({ "kind" => "agent", "mode" => "research", "status" => "ready",
+                     "at" => record.dig("delegation", "at") }, record["delegation"])
+      assert_equal "NEXT", record["state"], "agent delegation never moves lifecycle state"
+      assert Tasks::Check.check(org).ok?
+    end
+
+    run_cli("delegate", "Water the plants", "--to", "pat@example.com") do |org, out, err, st|
+      assert st.success?, err
+      assert_equal "delegated → pat@example.com (WAITING): Water the plants\n", out
+      record = record_for(org, title: "Water the plants")
+      assert_equal "WAITING", record["state"]
+      assert_equal "pat@example.com", record.dig("delegation", "assignee")
+    end
+
+    run_cli("delegate", "Water the plants", "--to", "pat@example.com", "--keep-state") do |org, out, err, st|
+      assert st.success?, err
+      assert_equal "delegated → pat@example.com (NEXT): Water the plants\n", out
+      assert_equal "NEXT", record_for(org, title: "Water the plants")["state"]
+    end
+  end
+
+  def test_cli_delegate_rejects_bad_usage_and_ineligible_tasks
+    run_cli("delegate", "Water the plants") do |_org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/usage: tasks delegate/, err)
+    end
+
+    run_cli("delegate", "Water the plants", "research", "--to", "pat@example.com") do |_org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/not both/, err)
+    end
+
+    run_cli("delegate", "Water the plants", "research", "--keep-state") do |_org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/--keep-state applies to --to/, err)
+    end
+
+    run_cli("delegate", "Water the plants", "review") do |org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(%r{must be one of refine/research/implement}, err)
+      assert_nil record_for(org, title: "Water the plants")["delegation"]
+    end
+
+    run_cli("delegate", "Old finished thing", "research") do |_org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/task is DONE; only accepted live tasks can be delegated/, err)
+    end
+
+    proposal = { "type" => "task", "id" => "ee000040", "parent" => FIX[:inbox],
+                 "state" => "PROPOSED", "title" => "Maybe repaint" }
+    content = dump_fixture(FIXTURE_RECORDS[0..2] + [proposal] + FIXTURE_RECORDS[3..])
+    run_cli("delegate", "Maybe repaint", "refine", content: content) do |_org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/task is PROPOSED/, err)
+    end
+
+    run_cli("delegate", "no such task", "refine") do |_org, _out, err, st|
+      assert_equal 2, st.exitstatus, "an unresolvable ref is a ref failure, not a mutation failure"
+      assert_match(/no match/, err)
+    end
+  end
+
+  # The product smoke's centrepiece: two workers race for one task and exactly
+  # one wins; the loser is told who holds it, and the store still shows one
+  # holder afterwards.
+  def test_cli_claim_race_leaves_exactly_one_holder
+    with_cli_store do |org, archive|
+      _out, err, st = run_cli_at(org, archive, "delegate", "Water the plants", "research")
+      assert st.success?, err
+
+      won, won_err, won_status = run_cli_at(org, archive, "claim", "Water the plants",
+                                            "--worker", CLI_WORKER)
+      assert won_status.success?, won_err
+      assert_equal "claimed by #{CLI_WORKER}: Water the plants\n", won
+
+      lost, lost_err, lost_status = run_cli_at(org, archive, "claim", "Water the plants",
+                                               "--worker", CLI_RIVAL)
+      assert_equal 1, lost_status.exitstatus
+      assert_empty lost
+      assert_match(/\Aconflict: already claimed by #{Regexp.escape(CLI_WORKER)} at \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\n\z/,
+                   lost_err)
+
+      json, _json_err, json_status = run_cli_at(org, archive, "claim", "Water the plants",
+                                                "--worker", CLI_RIVAL, "--json")
+      assert_equal 1, json_status.exitstatus
+      payload = JSON.parse(json)
+      assert_equal "conflict", payload.fetch("error")
+      assert_equal "claim", payload.fetch("action")
+      assert_equal CLI_WORKER, payload.fetch("holder")
+      assert_match(/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\z/, payload.fetch("at"))
+
+      assert_equal CLI_WORKER, record_for(org, title: "Water the plants").dig("delegation", "assignee")
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_claim_json_emits_the_full_task_resource
+    with_cli_store do |org, archive|
+      run_cli_at(org, archive, "delegate", "Book flight in Concur", "implement")
+      out, err, st = run_cli_at(org, archive, "claim", "Book flight in Concur",
+                                "--worker", CLI_WORKER, "--json")
+      assert st.success?, err
+      resource = JSON.parse(out)
+
+      assert_equal FIX[:flight], resource.fetch("id")
+      assert_equal "Book flight in Concur", resource.fetch("title")
+      assert_equal "NEXT", resource.fetch("state")
+      assert_equal "A", resource.fetch("priority")
+      assert_equal "2026-07-02", resource.fetch("deadline")
+      assert_equal "Work", resource.fetch("project")
+      assert_equal [], resource.fetch("notes")
+      assert_equal [], resource.fetch("links")
+      assert_equal "implement", resource.dig("delegation", "mode")
+      assert_equal "claimed", resource.dig("delegation", "status")
+      assert_equal CLI_WORKER, resource.dig("delegation", "assignee")
+    end
+  end
+
+  def test_cli_worker_id_falls_back_to_the_environment_and_the_flag_wins
+    with_cli_store do |org, archive|
+      run_cli_at(org, archive, "delegate", "Water the plants", "research")
+
+      missing, err, st = run_cli_at(org, archive, "claim", "Water the plants")
+      assert_equal 1, st.exitstatus
+      assert_empty missing
+      assert_match(/missing worker id — pass --worker <id> or set TASKS_WORKER_ID/, err)
+
+      env_out, env_err, env_status = run_cli_at(org, archive, "claim", "Water the plants",
+                                                env: { "TASKS_WORKER_ID" => CLI_WORKER })
+      assert env_status.success?, env_err
+      assert_equal "claimed by #{CLI_WORKER}: Water the plants\n", env_out
+
+      # The flag wins over the environment: releasing as the env worker would
+      # match, so a mismatching flag must be the one that is honored.
+      _out, mismatch_err, mismatch_status = run_cli_at(
+        org, archive, "release", "Water the plants", "--worker", CLI_RIVAL,
+        env: { "TASKS_WORKER_ID" => CLI_WORKER }
+      )
+      assert_equal 1, mismatch_status.exitstatus
+      assert_match(/conflict: claim is held by #{Regexp.escape(CLI_WORKER)}/, mismatch_err)
+
+      released, release_err, release_status = run_cli_at(
+        org, archive, "release", "Water the plants", env: { "TASKS_WORKER_ID" => CLI_WORKER }
+      )
+      assert release_status.success?, release_err
+      assert_equal "released → agent-ready (research): Water the plants\n", released
+    end
+  end
+
+  def test_cli_release_appends_a_blocker_note_and_the_owner_can_force_it
+    with_cli_store do |org, archive|
+      run_cli_at(org, archive, "delegate", "Water the plants", "implement")
+      run_cli_at(org, archive, "claim", "Water the plants", "--worker", CLI_WORKER)
+      before = File.read(org)
+
+      out, err, st = run_cli_at(org, archive, "release", "Water the plants",
+                                "--worker", CLI_WORKER, "--note", "blocked: no repo access")
+      assert st.success?, err
+      assert_equal "released → agent-ready (implement): Water the plants\n", out
+      record = record_for(org, title: "Water the plants")
+      assert_equal "ready", record.dig("delegation", "status")
+      refute record["delegation"].key?("assignee")
+      assert_equal "blocked: no repo access", record["body"]
+
+      # One user action, one undo step: the note and the release revert together.
+      undo_out, undo_err, undo_status = run_cli_at(org, archive, "undo")
+      assert undo_status.success?, undo_err
+      assert_match(/undid: release: Water the plants/, undo_out)
+      assert_equal before, File.read(org)
+
+      run_cli_at(org, archive, "redo")
+      _forced, force_err, force_status = run_cli_at(org, archive, "claim", "Water the plants",
+                                                    "--worker", CLI_RIVAL)
+      assert force_status.success?, force_err
+      out, err, st = run_cli_at(org, archive, "release", "Water the plants", "--force")
+      assert st.success?, err
+      assert_equal "released → agent-ready (implement): Water the plants\n", out
+    end
+  end
+
+  def test_cli_workref_records_replaces_and_clears_one_reference
+    with_cli_store do |org, archive|
+      run_cli_at(org, archive, "delegate", "Water the plants", "research")
+
+      out, err, st = run_cli_at(org, archive, "workref", "Water the plants",
+                                "https://example.com/brief")
+      assert st.success?, err
+      assert_equal "work ref → https://example.com/brief: Water the plants\n", out
+      assert_equal "https://example.com/brief",
+                   record_for(org, title: "Water the plants").dig("delegation", "work_ref")
+
+      run_cli_at(org, archive, "claim", "Water the plants", "--worker", CLI_WORKER)
+      _out, stale_err, stale_status = run_cli_at(org, archive, "workref", "Water the plants",
+                                                 "https://example.com/other", "--worker", CLI_RIVAL)
+      assert_equal 1, stale_status.exitstatus
+      assert_match(/conflict: a work reference from a worker requires a matching claim/, stale_err)
+
+      out, err, st = run_cli_at(org, archive, "workref", "Water the plants", "off")
+      assert st.success?, err
+      assert_equal "work ref cleared: Water the plants\n", out
+      refute record_for(org, title: "Water the plants")["delegation"].key?("work_ref")
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_undelegate_revokes_a_claim_and_repeats_without_burning_history
+    with_cli_store do |org, archive|
+      run_cli_at(org, archive, "delegate", "Water the plants", "research")
+      run_cli_at(org, archive, "claim", "Water the plants", "--worker", CLI_WORKER)
+
+      out, err, st = run_cli_at(org, archive, "undelegate", "Water the plants")
+      assert st.success?, err
+      assert_equal "undelegated: Water the plants\n", out
+      assert_nil record_for(org, title: "Water the plants")["delegation"]
+
+      # Revocation wins: the stale worker's next matched write fails.
+      _out, stale_err, stale_status = run_cli_at(org, archive, "release", "Water the plants",
+                                                 "--worker", CLI_WORKER)
+      assert_equal 1, stale_status.exitstatus
+      assert_match(/task is not claimed/, stale_err)
+
+      repeat, repeat_err, repeat_status = run_cli_at(org, archive, "undelegate", "Water the plants")
+      assert repeat_status.success?, repeat_err
+      assert_equal "not delegated: Water the plants\n", repeat
+
+      undo, undo_err, undo_status = run_cli_at(org, archive, "undo")
+      assert undo_status.success?, undo_err
+      assert_match(/undid: undelegate: Water the plants/, undo,
+                   "the idempotent repeat burned no undo slot")
+      assert_equal CLI_WORKER,
+                   record_for(org, title: "Water the plants").dig("delegation", "assignee")
+    end
+  end
+
+  def test_cli_list_delegation_scopes_render_and_compose
+    with_cli_store(content: DELEGATED_CLI_FIXTURE) do |org, archive|
+      out, err, st = run_cli_at(org, archive, "list", "--delegated")
+      assert st.success?, err
+      assert_equal <<~ROWS, out
+        agent-ready (implement): Book flight in Concur
+        agent-ready (refine): Review PR backlog
+        delegated → pat@example.com (WAITING): Travel desk reply
+        claimed by #{CLI_WORKER}: Water the plants
+      ROWS
+
+      ready, ready_err, ready_status = run_cli_at(org, archive, "list", "--agent-ready")
+      assert ready_status.success?, ready_err
+      assert_equal <<~ROWS, ready
+        agent-ready (implement): Book flight in Concur
+        agent-ready (refine): Review PR backlog
+      ROWS
+
+      composed, _composed_err, composed_status = run_cli_at(
+        org, archive, "list", "--agent-ready", "-B", "@computer"
+      )
+      assert composed_status.success?
+      assert_equal "agent-ready (refine): Review PR backlog\n", composed
+
+      empty, _empty_err, empty_status = run_cli_at(org, archive, "list", "--agent-ready", "+nope")
+      assert empty_status.success?
+      assert_equal "No matching tasks.\n", empty
+
+      _out, exclusive_err, exclusive_status = run_cli_at(
+        org, archive, "list", "--delegated", "--agent-ready"
+      )
+      assert_equal 1, exclusive_status.exitstatus
+      assert_match(/mutually exclusive/, exclusive_err)
+
+      _out, scope_err, scope_status = run_cli_at(org, archive, "list", "--done", "--agent-ready")
+      assert_equal 1, scope_status.exitstatus
+      assert_match(/only valid with --open/, scope_err)
+    end
+  end
+
+  def test_cli_agent_ready_json_carries_everything_a_heartbeat_needs
+    with_cli_store(content: DELEGATED_CLI_FIXTURE) do |org, archive|
+      out, err, st = run_cli_at(org, archive, "list", "--agent-ready", "--json")
+      assert st.success?, err
+      rows = JSON.parse(out)
+
+      assert_equal [FIX[:flight], FIX[:pr]], rows.map { |row| row.fetch("id") },
+                   "ranked by priority, then date, then file order"
+      first = rows.first
+      assert_equal "Book flight in Concur", first.fetch("title")
+      assert_equal "A", first.fetch("priority")
+      assert_equal "2026-07-02", first.fetch("deadline")
+      assert_nil first.fetch("scheduled")
+      assert_equal "Work", first.fetch("project")
+      assert_equal true, first.fetch("available")
+      assert_equal({ "kind" => "agent", "mode" => "implement", "status" => "ready",
+                     "at" => "2026-07-10T09:00:00Z" }, first.fetch("delegation"))
+
+      delegated, _derr, _dst = run_cli_at(org, archive, "list", "--delegated", "--json")
+      claimed = JSON.parse(delegated).find { |row| row.fetch("id") == FIX[:plants] }
+      assert_equal CLI_WORKER, claimed.dig("delegation", "assignee")
+      assert_equal "https://example.com/brief", claimed.dig("delegation", "work_ref")
+
+      plain, _perr, _pst = run_cli_at(org, archive, "list", "--json")
+      undelegated = JSON.parse(plain).find { |row| row.fetch("id") == FIX[:garden] }
+      assert_nil undelegated.fetch("delegation"), "an ordinary row carries an explicit null"
+    end
+  end
+
+  def test_cli_show_marks_a_delegated_task
+    with_cli_store(content: DELEGATED_CLI_FIXTURE) do |org, archive|
+      out, err, st = run_cli_at(org, archive, "show", "Water the plants")
+      assert st.success?, err
+      assert_match(/^  delegation: claimed by #{Regexp.escape(CLI_WORKER)} \(research\) \(since 2026-07-11T09:00:00Z\)$/, out)
+      assert_match(%r{^  work ref:  https://example\.com/brief$}, out)
+
+      human, _herr, _hst = run_cli_at(org, archive, "show", "Travel desk reply")
+      assert_match(/^  delegation: → pat@example\.com \(since 2026-07-12T09:00:00Z\)$/, human)
+      refute_match(/work ref/, human)
+
+      plain, _perr, _pst = run_cli_at(org, archive, "show", "random thought")
+      refute_match(/delegation/, plain)
     end
   end
 

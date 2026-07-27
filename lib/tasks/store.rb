@@ -834,6 +834,13 @@ module Tasks
     # from `ready` to `claimed` performed under the lock against freshly read
     # bytes, so two workers can never both believe they hold one task. Reads
     # never grant ownership.
+    #
+    # `coalesce_key` is the same journal seam editor writes use: two mutations
+    # sharing one key (and one coalesce scope) collapse into a single undo step.
+    # Tasks::Application composes a delegation with a second write that belongs
+    # to the same user action — the WAITING default behind `delegate --to`, the
+    # blocker note behind `release --note` — so the owner undoes one action
+    # rather than half of one.
 
     # Delegate to a person (`kind: "human"` + email assignee) or to the agent
     # pool (`kind: "agent"` + mode), replacing any delegation already present.
@@ -843,8 +850,10 @@ module Tasks
     # worker's task out from under it. `work_ref` survives a replacement of the
     # same kind (a mode update keeps pointing at the same work) and is dropped
     # when the delegation changes kind.
-    def delegate_task!(id, kind:, mode: nil, assignee: nil, expected_revision: nil)
-      delegation_mutation!(id, expected_revision: expected_revision) do |rec|
+    def delegate_task!(id, kind:, mode: nil, assignee: nil, expected_revision: nil,
+                       coalesce_key: nil)
+      delegation_mutation!(id, expected_revision: expected_revision,
+                           coalesce_key: coalesce_key) do |rec|
         plan_delegate(rec, kind: kind, mode: mode, assignee: assignee)
       end
     end
@@ -871,8 +880,10 @@ module Tasks
     # Hand a claim back: claimed → ready, dropping the assignee. A worker must
     # supply the id that matches the live claim; the owner passes force: true
     # (no worker id) to clear a stale claim without undelegating.
-    def release_task!(id, worker: nil, force: false, expected_revision: nil)
-      delegation_mutation!(id, expected_revision: expected_revision) do |rec|
+    def release_task!(id, worker: nil, force: false, expected_revision: nil,
+                      coalesce_key: nil)
+      delegation_mutation!(id, expected_revision: expected_revision,
+                           coalesce_key: coalesce_key) do |rec|
         plan_release(rec, worker: worker, force: force)
       end
     end
@@ -2650,7 +2661,7 @@ module Tasks
     # nothing. Because the block runs under the mutation lock against records
     # read fresh inside it, a compare-and-set the block performs is atomic
     # across processes.
-    def delegation_mutation!(id, expected_revision:)
+    def delegation_mutation!(id, expected_revision:, coalesce_key: nil)
       with_lock do
         @last_rollback = nil
         before = snapshot
@@ -2711,7 +2722,8 @@ module Tasks
                                       errors: [reason], rolled_back: true)
           end
           after = snapshot
-          @journal.record(label: planned[:label], before: before, after: after)
+          @journal.record(label: planned[:label], before: before, after: after,
+                          coalesce_key: coalesce_key)
           reload!
           fresh_ri = locate_stable_index(@records, id)
           MutationResult.new(

@@ -5,6 +5,8 @@ require "securerandom"
 require_relative "store"
 require_relative "application_read_result"
 require_relative "create_task"
+require_relative "delegation"
+require_relative "delegation_command"
 require_relative "delete_task"
 require_relative "operation_context"
 require_relative "proposal_decision"
@@ -336,6 +338,89 @@ module Tasks
                       context: context, today: today)
     end
 
+    # -- delegation ------------------------------------------------------------
+    #
+    # Five typed operations over the Store delegation primitives. Each accepts a
+    # stable id plus keywords, or a prebuilt DelegationCommand, and returns the
+    # shared MutationResult so adapters keep one outcome vocabulary. The summary
+    # is deliberately rich enough that a CLI, HTTP, or TUI adapter translates
+    # rather than re-derives:
+    #
+    #   action:        the operation performed (:delegate/:claim/…)
+    #   task_id:       the touched stable id
+    #   previous:      the delegation object before the write (nil when absent)
+    #   delegation:    the delegation object after the write (nil when cleared)
+    #   task:          the canonical post-write TaskView (nil only when the task
+    #                  vanished under a concurrent write)
+    #   state:         the task's lifecycle state after the write
+    #   state_changed: true when this operation moved the task to WAITING
+    #   note_applied:  release only — whether the blocker note was appended
+    #   holder / at:   conflict only — who holds the claim, and since when
+    #
+    # Preconditions (eligibility, worker match, claim CAS) stay in Store; what
+    # lives here is composition: the WAITING default behind a human delegation
+    # and the blocker note behind a release, each folded into the same undo step
+    # as the delegation write via the journal's coalesce key.
+
+    # Delegate to a person (kind: "human" + email assignee) or to the agent pool
+    # (kind: "agent" + refine/research/implement). Human delegation moves the
+    # task to WAITING — the next action is outside the owner's control, which is
+    # what WAITING means — unless keep_state opts out.
+    def delegate_task(id_or_command, kind: nil, mode: nil, assignee: nil, keep_state: false,
+                      expected_revision: nil, context: nil, today: Date.today)
+      run_delegation(
+        delegation_command(id_or_command, :delegate, kind: kind, mode: mode, assignee: assignee,
+                                                     keep_state: keep_state,
+                                                     expected_revision: expected_revision),
+        context: context, today: today
+      )
+    end
+
+    # Clear the marker, revoking any live claim. Lifecycle state is untouched:
+    # undelegating does not automatically leave WAITING, the owner decides.
+    def undelegate_task(id_or_command, expected_revision: nil, context: nil, today: Date.today)
+      run_delegation(
+        delegation_command(id_or_command, :undelegate, expected_revision: expected_revision),
+        context: context, today: today
+      )
+    end
+
+    # Atomic pickup. A lost race returns :conflict with the winning holder and
+    # its timestamp in the summary; an ok result carries the full canonical task
+    # so a worker claims and reads its authority in one step.
+    def claim_task(id_or_command, worker: nil, expected_revision: nil, context: nil,
+                   today: Date.today)
+      run_delegation(
+        delegation_command(id_or_command, :claim, worker: worker,
+                                                  expected_revision: expected_revision),
+        context: context, today: today
+      )
+    end
+
+    # Hand a claim back to the agent-ready queue. A worker must supply the id
+    # matching the live claim; the owner passes force: true to clear a stale
+    # one. `note` appends a blocker line to the body in the same undo step.
+    def release_task(id_or_command, worker: nil, force: false, note: nil,
+                     expected_revision: nil, context: nil, today: Date.today)
+      run_delegation(
+        delegation_command(id_or_command, :release, worker: worker, force: force, note: note,
+                                                    expected_revision: expected_revision),
+        context: context, today: today
+      )
+    end
+
+    # Record where the work lives. One reference: setting overwrites, and nil
+    # (or the string "off") clears it. The owner may always write it; a worker
+    # only while its claim matches.
+    def set_work_ref(id_or_command, work_ref = nil, worker: nil, expected_revision: nil,
+                     context: nil, today: Date.today)
+      run_delegation(
+        delegation_command(id_or_command, :work_ref, work_ref: work_ref, worker: worker,
+                                                     expected_revision: expected_revision),
+        context: context, today: today
+      )
+    end
+
     # Project mutations mapped to the shared MutationResult vocabulary so the CLI
     # and HTTP adapters render one outcome set. Rename validates a non-blank
     # title (:invalid) and reports a missing section as :not_found. Complete
@@ -446,6 +531,150 @@ module Tasks
     private
 
     attr_reader :store_factory, :temporal_context_factory
+
+    # Accept either a prebuilt command or an id plus keywords, exactly like
+    # delete_task. Mixing the two is a programming error, not a user input
+    # error, so it raises rather than returning an :invalid result.
+    def delegation_command(id_or_command, action, **options)
+      if id_or_command.is_a?(DelegationCommand)
+        unless options.each_value.all? { |value| value.nil? || value == false }
+          raise ArgumentError, "options are not accepted with a Tasks::DelegationCommand"
+        end
+        unless id_or_command.action == action
+          raise ArgumentError, "command action #{id_or_command.action} does not match #{action}"
+        end
+
+        return id_or_command
+      end
+
+      DelegationCommand.new(id: id_or_command, action: action, **options)
+    end
+
+    def run_delegation(command, context:, today:)
+      validate_operation_context(context)
+      temporal = context_for(today: today, operation_context: context)
+      local_today = temporal.local_date
+      # One key per operation, so only this operation's own follow-up write
+      # merges into its journal entry — never an unrelated neighbouring edit.
+      coalesce_key = "delegation-#{command.action}-#{SecureRandom.hex(8)}"
+      result = invoke_delegation(command, coalesce_key: coalesce_key)
+      unless result.ok?
+        return delegation_outcome(result, command, temporal: temporal, today: local_today)
+      end
+
+      follow_up = delegation_follow_up(command, coalesce_key: coalesce_key,
+                                       context: context, today: local_today)
+      delegation_outcome(result, command, follow_up: follow_up,
+                         temporal: temporal, today: local_today)
+    end
+
+    def invoke_delegation(command, coalesce_key:)
+      store = store_factory.call
+      case command.action
+      when :delegate
+        store.delegate_task!(command.id, kind: command.kind, mode: command.mode,
+                             assignee: command.assignee, coalesce_key: coalesce_key,
+                             expected_revision: command.expected_revision)
+      when :undelegate
+        store.undelegate_task!(command.id, expected_revision: command.expected_revision)
+      when :claim
+        store.claim_task!(command.id, worker: command.worker,
+                          expected_revision: command.expected_revision)
+      when :release
+        store.release_task!(command.id, worker: command.worker, force: command.force,
+                            coalesce_key: coalesce_key,
+                            expected_revision: command.expected_revision)
+      when :work_ref
+        store.set_work_ref!(command.id, command.work_ref, worker: command.worker,
+                            expected_revision: command.expected_revision)
+      end
+    end
+
+    # The second half of a composed delegation action, or nil when the command
+    # asked for none. It always runs after the delegation write succeeded, so a
+    # refused delegation never leaves a stray state change or note behind.
+    def delegation_follow_up(command, coalesce_key:, context:, today:)
+      case command.action
+      when :delegate then delegate_state_follow_up(command, coalesce_key: coalesce_key,
+                                                            context: context, today: today)
+      when :release then release_note_follow_up(command, coalesce_key: coalesce_key,
+                                                         context: context, today: today)
+      end
+    end
+
+    def delegate_state_follow_up(command, coalesce_key:, context:, today:)
+      return nil unless command.human? && !command.keep_state
+
+      snapshot = store_factory.call.edit_snapshot(command.id)
+      return nil if snapshot.nil? || snapshot.state == "WAITING"
+
+      patch_task(
+        TaskPatch.from(snapshot, field: :state, value: "WAITING", coalesce_key: coalesce_key,
+                                 history_label: "delegate → #{command.assignee}: #{snapshot.title}"),
+        today: today, context: context
+      )
+    end
+
+    def release_note_follow_up(command, coalesce_key:, context:, today:)
+      note = command.note.to_s.strip
+      return nil if note.empty?
+
+      snapshot = store_factory.call.edit_snapshot(command.id)
+      return nil if snapshot.nil?
+
+      body = snapshot.body
+      patch_task(
+        TaskPatch.from(snapshot, field: :body,
+                                 value: body.nil? || body.empty? ? note : "#{body}\n#{note}",
+                                 coalesce_key: coalesce_key,
+                                 history_label: "release: #{snapshot.title}"),
+        today: today, context: context
+      )
+    end
+
+    # Fold the Store result (and any follow-up write) into one adapter-facing
+    # MutationResult. A failed follow-up never turns a successful delegation
+    # into a failure — the composed fact is reported as false in the summary and
+    # its error is carried alongside, and the canonical task the caller renders
+    # shows the real post-write state either way.
+    def delegation_outcome(result, command, temporal:, today:, follow_up: nil)
+      summary = (result.summary.is_a?(Hash) ? result.summary : {})
+                .merge(action: command.action, task_id: command.id)
+      unless result.ok?
+        return MutationResult.new(
+          status: result.status, snapshot: result.snapshot, read_snapshot: result.read_snapshot,
+          store_revision: result.store_revision, errors: result.errors,
+          field_errors: result.field_errors, form_errors: result.form_errors,
+          touched_ids: result.touched_ids, summary: summary, rolled_back: result.rolled_back?
+        )
+      end
+
+      final = follow_up&.changed? ? follow_up : result
+      task = delegation_task(final, command.id, temporal: temporal, today: today)
+      summary = summary.merge(
+        task: task, state: task&.state, delegation: task ? task.delegation : summary[:delegation]
+      )
+      summary[:state_changed] = command.action == :delegate && !!follow_up&.changed?
+      summary[:note_applied] = !!follow_up&.ok? if command.action == :release && command.note
+      MutationResult.new(
+        status: result.status, snapshot: final.snapshot || result.snapshot,
+        read_snapshot: final.read_snapshot || result.read_snapshot,
+        store_revision: final.store_revision || result.store_revision,
+        errors: follow_up&.ok? == false ? follow_up.errors : [],
+        touched_ids: result.touched_ids.empty? ? [command.id] : result.touched_ids,
+        summary: summary
+      )
+    end
+
+    # The canonical post-write resource, built from the snapshot the write
+    # itself produced. An idempotent repeat writes nothing and so carries no
+    # snapshot; that case re-reads rather than leaving the caller without the
+    # resource it needs to render.
+    def delegation_task(result, id, temporal:, today:)
+      snapshot = result.read_snapshot || store_factory.call.read_snapshot
+      TaskQueries.new(snapshot, today: today, temporal_context: temporal)
+                 .find(id, source: :live)
+    end
 
     def decide_proposal(id, action, expected_revision:, context:, today:)
       validate_operation_context(context)
