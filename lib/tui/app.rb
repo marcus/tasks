@@ -609,10 +609,14 @@ module Tui
     end
 
     def header(w)
-      tabs = Views.tab_strip(active: @ui.view, counts: tab_counts)
       open_n = open_task_count(read_model)
       unavailable_note = @ui.show_deferred ? "#{T.paint(:warning, "unavailable shown")}#{T.paint(:muted, " · ")}" : ""
       count = "#{T.paint(:muted, "#{open_n} open · ")}#{unavailable_note}#{T.paint(:accent, current_entry.ui_label)}#{T.paint(:muted, " · ? help")}"
+      tab_width = [w - A.vislen(count) - 3, 1].max
+      @last_tab_presentation = Views.tab_presentation(
+        active: @ui.view, counts: tab_counts, width: tab_width
+      )
+      tabs = @last_tab_presentation.strip
       gap = [w - A.vislen(tabs) - A.vislen(count) - 2, 1].max
       " #{tabs}#{" " * gap}#{count} "
     end
@@ -995,7 +999,8 @@ module Tui
         end
         HitMap.build(
           layout: @last_layout,
-          tab_spans: Views.tab_spans(active: @ui.view, counts: tab_counts),
+          tab_spans: @last_tab_presentation&.spans ||
+            Views.tab_spans(active: @ui.view, counts: tab_counts),
           row_count: rows_now.size,
           modal: @last_modal,
           popup: @last_popup,

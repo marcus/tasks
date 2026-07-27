@@ -352,7 +352,7 @@ module Tasks
             operation_id: request_id, source: :api, temporal_context: temporal
           )
         )
-        mutation_failure!(result, request_id, id: id)
+        mutation_failure!(result, request_id, id: id, semantic_invalid: true)
         resource_result = application.task_result_from_mutation(
           result, id, temporal_context: temporal
         )
@@ -764,7 +764,8 @@ module Tasks
         value.is_a?(Array) ? value.join("\n") : value
       end
 
-      def mutation_failure!(result, request_id, parent_id: nil, id: nil, placement: nil)
+      def mutation_failure!(result, request_id, parent_id: nil, id: nil, placement: nil,
+                            semantic_invalid: false)
         return if result.ok?
 
         case result.status
@@ -797,7 +798,12 @@ module Tasks
                               details: details, headers: headers)
         when :invalid
           details = result.field_errors.empty? ? {} : { fields: result.field_errors }
-          raise HttpError.new(422, :validation_failed, Errors.message(:validation_failed), details: details)
+          message = if semantic_invalid && !result.errors.empty?
+                      result.errors.first
+                    else
+                      Errors.message(:validation_failed)
+                    end
+          raise HttpError.new(422, :validation_failed, message, details: details)
         when :conflict
           if placement.is_a?(TaskPlacement)
             raise HttpError.new(

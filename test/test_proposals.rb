@@ -128,6 +128,27 @@ class TestProposals < Minitest::Test
     end
   end
 
+  def test_accepted_parent_cannot_become_proposed_while_accepted_descendants_remain
+    records = FIXTURE_RECORDS + [
+      { "type" => "task", "id" => "ee000010", "parent" => FIX[:home],
+        "state" => "TODO", "title" => "Accepted parent" },
+      { "type" => "task", "id" => "ee000011", "parent" => "ee000010",
+        "state" => "INBOX", "title" => "Accepted child" },
+    ]
+    with_proposal_app(records: records) do |app, org, _archive|
+      parent = app.get_task("ee000010")
+      result = app.update_task(
+        parent.id, { state: "PROPOSED" }, expected_revision: parent.revision
+      )
+
+      assert result.invalid?
+      assert_equal ["cannot set PROPOSED while accepted descendants remain"], result.errors
+      assert_equal "TODO", app.get_task("ee000010").state
+      assert_equal "INBOX", app.get_task("ee000011").state
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
   def test_proposals_cannot_recur_complete_or_archive_as_live_descendants
     records = [
       { "type" => "meta", "version" => 2 },

@@ -2750,6 +2750,33 @@ class TestApp < Minitest::Test
     end
   end
 
+  def test_active_approvals_and_badge_remain_visible_and_click_aligned_when_narrow
+    app_on(
+      view: :approvals, select: "Alpha proposal", content: PROPOSAL_APP
+    ) do |app|
+      [72, 80].each do |width|
+        paint_at(app, width: width)
+        presentation = app.instance_variable_get(:@last_tab_presentation)
+        assert_includes Tui::Ansi.strip(presentation.strip), "7 Approvals 2"
+        span = presentation.spans.find { |key, _start, _finish| key == :approvals }
+        refute_nil span
+        assert_operator span[2], :<=, width - 1
+
+        hit = app.send(:hit_map).at(1, span[1])
+        assert_equal :tab, hit.zone
+        assert_equal :approvals, hit.payload
+      end
+
+      ui(app).view = :agenda
+      paint_at(app, width: 72)
+      presentation = app.instance_variable_get(:@last_tab_presentation)
+      assert_includes Tui::Ansi.strip(presentation.strip), "1 Agenda"
+      assert_includes Tui::Ansi.strip(presentation.strip), "7 Appr 2"
+      span = presentation.spans.find { |key, _start, _finish| key == :approvals }
+      assert_equal :approvals, app.send(:hit_map).at(1, span[1]).payload
+    end
+  end
+
   # Painting hides the row cursor while the prompt has focus, so a pointer
   # gesture aimed at the list has to blur the prompt or it reads as a no-op.
   def test_mouse_click_on_list_blurs_the_prompt_and_keeps_the_draft

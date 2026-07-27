@@ -259,6 +259,10 @@ class TestApiApp < Minitest::Test
       "HTTP_IF_MATCH" => get("/api/v1/tasks/#{FIX[:garden]}")["etag"]
     )
     assert_error not_proposed, 422, "validation_failed"
+    assert_match(
+      /task is INBOX, not PROPOSED/,
+      JSON.parse(not_proposed.body).dig("error", "message")
+    )
     assert_contract_response(not_proposed)
   end
 

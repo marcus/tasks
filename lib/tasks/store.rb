@@ -2445,6 +2445,18 @@ module Tasks
       if PROPOSED_STATES.include?(value) && Recur.cookie?(rec["recur"])
         return patch_invalid("remove recurrence before setting PROPOSED")
       end
+      if PROPOSED_STATES.include?(value) && !PROPOSED_STATES.include?(from)
+        rj = subtree_end(records, ri)
+        accepted_descendant = records[(ri + 1)...rj].find do |descendant|
+          descendant["type"] == "task" &&
+            !PROPOSED_STATES.include?(descendant["state"])
+        end
+        if accepted_descendant
+          return patch_invalid(
+            "cannot set PROPOSED while accepted descendants remain"
+          )
+        end
+      end
       if PROPOSED_STATES.include?(from) && value == "DONE"
         return patch_invalid("approve the proposal before completing it")
       end

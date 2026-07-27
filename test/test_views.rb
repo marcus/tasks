@@ -872,6 +872,20 @@ class TestViews < Minitest::Test
     assert_equal A.vislen(" 7 Approvals 3 "), span[2] - span[1]
   end
 
+  def test_compact_tabs_preserve_active_and_counted_approvals_with_shared_spans
+    presentation = V.tab_presentation(
+      active: :agenda, counts: { approvals: 3 }, width: 30
+    )
+
+    assert_includes presentation.keys, :agenda
+    assert_includes presentation.keys, :approvals
+    assert_includes A.strip(presentation.strip), "1 Agenda"
+    assert_includes A.strip(presentation.strip), "7 Appr 3"
+    assert_operator A.vislen(presentation.strip), :<=, 30
+    last = presentation.spans.last
+    assert_equal A.vislen(presentation.strip), last[2] - 2
+  end
+
   # Hybrid model keeps tagged fixture items where they were: the :important:/
   # :urgent: tags force their axes, and the fixture's A/B priorities line up.
   def test_quadrants_places_fixture_items

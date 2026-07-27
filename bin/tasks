@@ -232,7 +232,8 @@ def cmd_capture(args, proposed: false)
   today = context.local_date
   tags = []
   contexts = []
-  due = scheduled = priority = state = project = recur = under = note = nil
+  notes = []
+  due = scheduled = priority = state = project = recur = under = nil
   due_timezone = scheduled_timezone = due_fold = scheduled_fold = nil
   due_floating = scheduled_floating = false
   dry = json = no_host_context = false
@@ -258,7 +259,7 @@ def cmd_capture(args, proposed: false)
     when "--project"              then project = need.(a)
     when "--under"                then under = need.(a)
     when "--recur", "--repeat"    then recur = need.(a)
-    when "--note"                 then note = need.(a)
+    when "--note"                 then notes << need.(a)
     when "--dry-run"              then dry = true
     when "--json"                 then json = true
     when /\A--/                   then abort "unknown flag: #{a}"
@@ -324,7 +325,8 @@ def cmd_capture(args, proposed: false)
   command = Tasks::CreateTask.new(
     title: text, deadline: due_date, scheduled: scheduled_date,
     priority: pri, tags: all_tags, state: st, project: project,
-    parent_id: parent_id, recurrence: cookie, body: note,
+    parent_id: parent_id, recurrence: cookie,
+    body: notes.empty? ? nil : notes.join("\n"),
     apply_host_context: !no_host_context
   )
 
@@ -369,17 +371,26 @@ end
 def cmd_propose(args) = cmd_capture(args, proposed: true)
 
 def cmd_proposal_decision(args, action:)
+  context = temporal_context
+  today = context.local_date
   flags, rest = take_flags(args, "--json")
   ref = rest.shift
   abort "usage: tasks #{action} <ref> [--json]" if ref.nil? || ref.strip.empty? || !rest.empty?
-  item = resolve_ref(ref, proposed_only: true)
-  result = application.public_send(:"#{action}_task", stable_id_for(item), today: Date.today)
+  item = resolve_ref(ref, include_done: true)
+  result = application.public_send(
+    :"#{action}_task", stable_id_for(item), today: today,
+    context: cli_operation_context(context)
+  )
   if result.conflict? && result.summary&.dig(:proposed_descendant_ids)
     mutation_failed "decide proposed descendants first"
   end
+  mutation_failed(result.errors.first) if result.invalid? && !result.errors.empty?
   mutation_result_failed(result, "failed to #{action} proposal")
   if flags["--json"]
-    report_touched(result.touched_ids, json: true, read_snapshot: result.read_snapshot)
+    report_touched(
+      result.touched_ids, json: true, today: today,
+      read_snapshot: result.read_snapshot, temporal_context: context
+    )
   else
     target = action == :approve ? "INBOX" : "CANCELLED"
     verb = action == :approve ? "approved" : "rejected"
@@ -857,7 +868,9 @@ def cmd_show(args)
   flags, rest = take_flags(args, "--json", "--include-done")
   ref = rest.shift
   abort %(usage: tasks show <ref>) if ref.nil? || ref.strip.empty?
-  item = resolve_ref(ref, include_done: flags["--include-done"])
+  item = resolve_ref(
+    ref, include_done: flags["--include-done"], include_proposed: true
+  )
   # Show is a pure read: build the view over one snapshot and fall back to the
   # held item if a concurrent write removed it, instead of aborting with
   # mutation-flavored error text (and a misleading rollback hint).
@@ -1575,14 +1588,19 @@ DELETE_USAGE = %(tasks delete <ref> [--cascade] [--dry-run] [--json] [--include-
 # gone after the write, so capture their headlines BEFORE mutating and report
 # from that snapshot.
 def cmd_delete(args)
-  today = Date.today
+  context = temporal_context
+  today = context.local_date
   flags, rest = take_flags(args, "--cascade", "--dry-run", "--json", "--include-done")
   ref = rest.shift
   abort %(usage: #{DELETE_USAGE}) if ref.nil? || ref.strip.empty?
 
-  item = resolve_ref(ref, include_done: flags["--include-done"])
+  item = resolve_ref(
+    ref, include_done: flags["--include-done"], include_proposed: true
+  )
   task_id = stable_id_for(item)
-  query = Tasks::TaskQueries.new(store.read_snapshot, today: today)
+  query = Tasks::TaskQueries.new(
+    store.read_snapshot, today: today, temporal_context: context
+  )
   snapshot_item = query.snapshot.items.find { |candidate| candidate.id == task_id }
   mutation_failed "task changed before delete" unless snapshot_item
   node = query.snapshot.node_for(snapshot_item)

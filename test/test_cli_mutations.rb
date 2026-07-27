@@ -2340,6 +2340,7 @@ class TestCliMutations < Minitest::Test
   def test_cli_propose_creates_inert_task_with_note_and_explicit_list_scope
     run_cli(
       "propose", "Research backup providers", "--note", "Current setup has no offsite copy.",
+      "--note", "Renewal mail is the supporting evidence.",
       "--due", "2026-08-15", "--priority", "B"
     ) do |org, out, err, st|
       assert st.success?, err
@@ -2348,6 +2349,7 @@ class TestCliMutations < Minitest::Test
       assert_equal "B", record["priority"]
       assert_equal "2026-08-15", record["deadline"]
       assert_match(/Current setup has no offsite copy/, record["body"])
+      assert_match(/Renewal mail is the supporting evidence/, record["body"])
       assert_match(/\Aproposed: Research backup providers \[[0-9a-f]{8}\]\n\z/, out)
 
       list_out, list_err, list_status = run_cli_at(
@@ -2366,7 +2368,7 @@ class TestCliMutations < Minitest::Test
     end
   end
 
-  def test_cli_approve_and_reject_use_proposal_only_refs
+  def test_cli_approve_and_reject_reach_store_preconditions_for_any_live_task
     proposal_record = [
       { "type" => "task", "id" => "ee000001", "parent" => FIX[:inbox],
         "state" => "PROPOSED", "title" => "Review subscriptions" },
@@ -2387,8 +2389,65 @@ class TestCliMutations < Minitest::Test
     end
 
     run_cli("approve", "random thought") do |_org, _out, err, st|
-      assert_equal 2, st.exitstatus
-      assert_match(/no match/, err)
+      assert_equal 1, st.exitstatus
+      assert_match(/task is INBOX, not PROPOSED/, err)
+    end
+  end
+
+  def test_cli_show_and_delete_resolve_proposals_without_unrelated_flags
+    proposal = { "type" => "task", "id" => "ee000021", "parent" => FIX[:inbox],
+                 "state" => "PROPOSED", "title" => "Inspect proposed cleanup",
+                 "body" => "Evidence line." }
+    content = dump_fixture(FIXTURE_RECORDS[0..2] + [proposal] + FIXTURE_RECORDS[3..])
+
+    run_cli("show", "proposed cleanup", "--json", content: content) do |_org, out, err, st|
+      assert st.success?, err
+      shown = JSON.parse(out)
+      assert_equal "ee000021", shown.fetch("id")
+      assert_equal "PROPOSED", shown.fetch("state")
+      assert_equal ["Evidence line."], shown.fetch("notes")
+    end
+
+    run_cli("delete", "proposed cleanup", content: content) do |org, out, err, st|
+      assert st.success?, err
+      assert_match(/PROPOSED Inspect proposed cleanup/, out)
+      assert_nil record_for(org, title: "Inspect proposed cleanup")
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_proposal_decision_uses_one_configured_temporal_context
+    proposal = { "type" => "task", "id" => "ee000022", "parent" => FIX[:inbox],
+                 "state" => "PROPOSED", "title" => "Decision clock",
+                 "scheduled" => "2026-07-15" }
+    content = dump_fixture(FIXTURE_RECORDS[0..2] + [proposal] + FIXTURE_RECORDS[3..])
+    env = sequenced_today_env("2026-07-14", "2026-07-15")
+
+    run_cli("approve", "Decision clock", "--json", content: content, env: env) do |org, out, err, st|
+      assert st.success?, err
+      assert_equal "INBOX", record_for(org, title: "Decision clock")["state"]
+      touched = JSON.parse(out).fetch("touched").fetch(0)
+      assert_equal "INBOX", touched.fetch("state")
+      assert_equal false, touched.fetch("available")
+      assert_equal "scheduled", touched.fetch("availability_reason")
+    end
+  end
+
+  def test_cli_state_cannot_strand_accepted_child_beneath_new_proposal
+    nested = [
+      { "type" => "task", "id" => "ee000030", "parent" => FIX[:inbox],
+        "state" => "TODO", "title" => "Accepted parent" },
+      { "type" => "task", "id" => "ee000031", "parent" => "ee000030",
+        "state" => "INBOX", "title" => "Accepted child" },
+    ]
+    content = dump_fixture(FIXTURE_RECORDS[0..2] + nested + FIXTURE_RECORDS[3..])
+
+    run_cli("state", "Accepted parent", "PROPOSED", content: content) do |org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/failed to set state/, err)
+      assert_equal "TODO", record_for(org, title: "Accepted parent")["state"]
+      assert_equal "INBOX", record_for(org, title: "Accepted child")["state"]
+      assert Tasks::Check.check(org).ok?
     end
   end
 

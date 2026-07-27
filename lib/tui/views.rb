@@ -46,27 +46,74 @@ module Tui
       ["6 Outline",   :outline],
       ["7 Approvals", :approvals],
     ].freeze
+    COMPACT_TAB_LABELS = {
+      agenda: "1 Ag",
+      next: "2 Nx",
+      quadrants: "3 Q",
+      inbox: "4 In",
+      projects: "5 Pr",
+      outline: "6 Out",
+      approvals: "7 Appr",
+    }.freeze
+    TabPresentation = Data.define(:strip, :spans, :keys)
 
     # Screen-column spans for the header tab strip. start_col 2 matches the
     # leading space Frame leaves after the left border (`" #{tabs}…"`). Header
     # rendering and HitMap both consume this so a theme that pads active tabs
     # differently cannot desync the click target from the painted label.
-    def self.tab_spans(active:, counts: {}, start_col: 2)
+    def self.tab_presentation(active:, counts: {}, width: nil, start_col: 2)
+      cells = TABS.to_h do |label, key|
+        [key, tab_cell(label, key, active: active, count: counts[key])]
+      end
+      keys = TABS.map(&:last)
+      if width && presentation_width(keys, cells) > width
+        cells = TABS.to_h do |label, key|
+          compact = key == active ? label : COMPACT_TAB_LABELS.fetch(key)
+          [key, tab_cell(compact, key, active: active, count: counts[key])]
+        end
+        active_index = keys.index(active) || 0
+        required = [active]
+        required << :approvals if counts[:approvals].to_i.positive? && active != :approvals
+        selected = required.uniq
+        keys.sort_by { |key| [(keys.index(key) - active_index).abs, keys.index(key)] }.each do |key|
+          next if selected.include?(key)
+
+          candidate = (selected + [key]).sort_by { |selected_key| keys.index(selected_key) }
+          selected = candidate if presentation_width(candidate, cells) <= width
+        end
+        selected = [active] if presentation_width(selected, cells) > width
+        keys = selected.sort_by { |key| TABS.index { |_label, tab_key| tab_key == key } }
+      end
+
       col = start_col
-      TABS.map do |label, key|
-        cell = tab_cell(label, key, active: active, count: counts[key])
-        width = A.vislen(cell)
-        span = [key, col, col + width]
-        col += width + 1 # join space between tabs
+      spans = keys.map do |key|
+        cell = cells.fetch(key)
+        cell_width = A.vislen(cell)
+        span = [key, col, col + cell_width]
+        col += cell_width + 1 # join space between tabs
         span
       end
+      TabPresentation.new(
+        strip: keys.map { |key| cells.fetch(key) }.join(" "),
+        spans: spans.freeze,
+        keys: keys.freeze
+      )
     end
 
-    def self.tab_strip(active:, counts: {})
-      TABS.map do |label, key|
-        tab_cell(label, key, active: active, count: counts[key])
-      end.join(" ")
+    def self.tab_spans(active:, counts: {}, width: nil, start_col: 2)
+      tab_presentation(
+        active: active, counts: counts, width: width, start_col: start_col
+      ).spans
     end
+
+    def self.tab_strip(active:, counts: {}, width: nil)
+      tab_presentation(active: active, counts: counts, width: width).strip
+    end
+
+    def self.presentation_width(keys, cells)
+      keys.sum { |key| A.vislen(cells.fetch(key)) } + [keys.length - 1, 0].max
+    end
+    private_class_method :presentation_width
 
     def self.tab_cell(label, key, active:, count: nil)
       slot = key == active ? :"tab_#{key}_active" : :"tab_#{key}"
