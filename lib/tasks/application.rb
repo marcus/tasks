@@ -7,6 +7,7 @@ require_relative "application_read_result"
 require_relative "create_task"
 require_relative "delete_task"
 require_relative "operation_context"
+require_relative "proposal_decision"
 require_relative "task_changeset"
 require_relative "task_patch"
 require_relative "task_queries"
@@ -325,6 +326,16 @@ module Tasks
       store_factory.call.delete_task!(command)
     end
 
+    def approve_task(id, expected_revision: nil, context: nil, today: Date.today)
+      decide_proposal(id, :approve, expected_revision: expected_revision,
+                      context: context, today: today)
+    end
+
+    def reject_task(id, expected_revision: nil, context: nil, today: Date.today)
+      decide_proposal(id, :reject, expected_revision: expected_revision,
+                      context: context, today: today)
+    end
+
     # Project mutations mapped to the shared MutationResult vocabulary so the CLI
     # and HTTP adapters render one outcome set. Rename validates a non-blank
     # title (:invalid) and reports a missing section as :not_found. Complete
@@ -394,6 +405,12 @@ module Tasks
       store = store_factory.call
       return migration_required_mutation if store.checked_read_snapshot.migration_required?
       moved = store.archive_project!(id: id)
+      if moved == :proposed_descendants
+        return MutationResult.new(
+          status: :conflict,
+          errors: ["decide proposed tasks before archiving the project"]
+        )
+      end
       unless moved
         if store.last_rollback
           return MutationResult.new(status: :store_invalid, errors: [store.last_rollback],
@@ -429,6 +446,16 @@ module Tasks
     private
 
     attr_reader :store_factory, :temporal_context_factory
+
+    def decide_proposal(id, action, expected_revision:, context:, today:)
+      validate_operation_context(context)
+      command = ProposalDecision.new(
+        id: id, action: action, expected_revision: expected_revision
+      )
+      store_factory.call.decide_proposal!(
+        command, today: operation_today(today, context)
+      )
+    end
 
     def queries(include_archive: false, today: Date.today, operation_context: nil)
       TaskQueries.new(store_factory.call.read_snapshot(include_archive: include_archive), today: today,

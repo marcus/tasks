@@ -105,7 +105,8 @@ paths:
                     data:
                       api_version: "v1"
                       server_mode: "loopback"
-                      states: [INBOX, TODO, NEXT, WAITING, DONE, CANCELLED]
+                      states: [PROPOSED, INBOX, TODO, NEXT, WAITING, DONE, CANCELLED]
+                      proposed_states: [PROPOSED]
                       open_states: [INBOX, TODO, NEXT, WAITING]
                       closed_states: [DONE, CANCELLED]
                       priorities: [A, B, C]
@@ -192,7 +193,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [open, done, archived, all]
+            enum: [open, proposed, done, archived, all]
             default: open
         - name: state
           in: query
@@ -242,7 +243,7 @@ paths:
           description: |
             Filter by effective, ancestor-aware availability. `available=false`
             is the timed/inherited/indefinite review for open live tasks and is
-            rejected with `scope=done|archived|all`; closed resources report
+            rejected with `scope=proposed|done|archived|all`; closed resources report
             `available: false` only when fetched directly. Omitted means the
             selected scope's default behavior.
           required: false
@@ -833,6 +834,86 @@ paths:
           $ref: "#/components/responses/UnsupportedMediaType"
         "503":
           $ref: "#/components/responses/StoreInvalid"
+
+  /tasks/{id}/approve:
+    post:
+      tags: [tasks]
+      operationId: approveTaskProposal
+      summary: Accept a proposed task into INBOX.
+      description: |
+        Atomically transitions a live PROPOSED task to INBOX. The request has
+        no body and requires the proposal's current ETag in `If-Match`.
+        Proposed descendants must be decided first.
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: Approved task resource.
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Task" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+        "400": { $ref: "#/components/responses/MalformedRequest" }
+        "403": { $ref: "#/components/responses/ForbiddenOrigin" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Proposed descendants remain, or schema migration is required.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "412": { $ref: "#/components/responses/StaleRevision" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "428": { $ref: "#/components/responses/MissingPrecondition" }
+        "503": { $ref: "#/components/responses/StoreInvalid" }
+
+  /tasks/{id}/reject:
+    post:
+      tags: [tasks]
+      operationId: rejectTaskProposal
+      summary: Decline a proposed task into CANCELLED.
+      description: |
+        Atomically transitions a live PROPOSED task to CANCELLED and stamps its
+        closed date. The request has no body and requires the proposal's current
+        ETag in `If-Match`. Proposed descendants must be decided first.
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: Rejected task resource.
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Task" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+        "400": { $ref: "#/components/responses/MalformedRequest" }
+        "403": { $ref: "#/components/responses/ForbiddenOrigin" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Proposed descendants remain, or schema migration is required.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "412": { $ref: "#/components/responses/StaleRevision" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "428": { $ref: "#/components/responses/MissingPrecondition" }
+        "503": { $ref: "#/components/responses/StoreInvalid" }
 
   /projects:
     get:
@@ -1955,7 +2036,7 @@ components:
 
     State:
       type: string
-      enum: [INBOX, TODO, NEXT, WAITING, DONE, CANCELLED]
+      enum: [PROPOSED, INBOX, TODO, NEXT, WAITING, DONE, CANCELLED]
 
     Priority:
       type: [string, "null"]
@@ -2024,7 +2105,8 @@ components:
     Meta:
       type: object
       description: Server capabilities and config-derived vocabularies. No paths.
-      required: [api_version, server_mode, states, priorities, max_depth, urgent_days,
+      required: [api_version, server_mode, states, proposed_states, open_states,
+                 closed_states, priorities, max_depth, urgent_days,
                  timezone, time_format, tzdb_version, temporal_precision]
       additionalProperties: false
       properties:
@@ -2033,6 +2115,9 @@ components:
           type: string
           enum: [loopback]
         states:
+          type: array
+          items: { $ref: "#/components/schemas/State" }
+        proposed_states:
           type: array
           items: { $ref: "#/components/schemas/State" }
         open_states:
@@ -2280,7 +2365,7 @@ components:
         availability_reason:
           type: string
           readOnly: true
-          enum: [available, scheduled, on_hold, ancestor_scheduled, ancestor_on_hold, closed]
+          enum: [available, scheduled, on_hold, ancestor_scheduled, ancestor_on_hold, proposed, closed]
           description: Why the task is or is not effectively available.
         availability_blocker_id:
           readOnly: true

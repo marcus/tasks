@@ -177,7 +177,11 @@ Direct shortcuts and palette entries invoke the same registered
 actions. Return opens the read-only task-detail panel on the right in every
 view; list navigation stays active and refreshes the panel for each newly
 selected task. Return or Escape closes it. The existing `d` date and `r`
-recurrence quick actions remain available.
+recurrence quick actions remain available. The seventh **Approvals** tab shows
+only PROPOSED tasks and carries a live count badge in the tab strip. There,
+`a` approves the selected proposal and `r` rejects it; the registered shortcut
+availability keeps `r` as recurrence everywhere else. Both decisions preserve
+the nearest useful selection and participate in undo/redo.
 
 **Editable task-panel behavior.** With a read-only task panel open, `e` enters
 editing at the first editable field and `Shift-Tab` enters at the last. `Tab`
@@ -369,6 +373,21 @@ and any own future available-from date. `list --unavailable` (`--deferred/-D`
 compatibility alias) reviews all effective blockers, while
 `list --someday`/`--on-hold` matches only an own indefinite marker. In the TUI,
 `Z` reveals unavailable rows and `z` accepts a date/time, `someday`, or `now`.
+
+**Proposals and approval.** `PROPOSED` is a lifecycle category separate from
+accepted open work. `propose` creates an inert task, while `approve` transitions
+it to INBOX and `reject` transitions it to CANCELLED with a `closed` date.
+Proposals appear only through the explicit `list --proposed` scope, direct
+`show`, and the TUI Approvals tab; they stay out of agenda, next, quadrants,
+inbox, project rollups, Outline, and the default open list. They cannot recur
+or transition directly to DONE. Approval/rejection are checked atomic Store
+mutations with revision support in the application/API, undo history, and
+leaves-first handling for proposal trees. A proposal is retained live until it
+is approved or rejected; archive sweep treats it as a non-closed descendant,
+so it cannot disappear inside a closed ancestor. HTTP clients use
+`scope=proposed` and explicit `POST /api/v1/tasks/{id}/approve` or `/reject`
+intent routes with `If-Match`; both return the transitioned task plus its new
+ETag.
 
 Date-only deadlines remain on time for their whole calendar date. Timed
 deadlines become overdue strictly after their resolved instant and sort by that
@@ -580,7 +599,7 @@ and `sources.memory` (`"TASKS_MEMORY env"` / `"config file"` /
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `list [filters]` | `l` | ✅ | All tasks grouped by state. Filters compose: `@context`, `+tag`, `/text` or bare word, `-A/-B/-C`, scope `--open/-o` (default) `--done/-d` `--archived/-x` `--all/-a`. Effectively unavailable tasks are hidden from the default open scope; `--unavailable` (compatibility alias `--deferred/-D`) lists timed, inherited, and indefinite blockers; `--someday/--on-hold` selects tasks carrying their own indefinite marker. Those two filters are mutually exclusive. With a closed/archive scope, legacy `--deferred` and `--someday` filter the own marker; explicit `--unavailable` is rejected because every closed task is unavailable for lifecycle reasons. `--recurring/-R` lists tasks with a repeater. `--body/-b` widens text matching into notes. `--json` |
+| `list [filters]` | `l` | ✅ | All tasks grouped by state. Filters compose: `@context`, `+tag`, `/text` or bare word, `-A/-B/-C`, lifecycle scope `--open/-o` (default), `--proposed`, `--done/-d`, `--archived/-x`, or `--all/-a` (mutually exclusive). Effectively unavailable tasks are hidden from the default open scope; `--unavailable` (compatibility alias `--deferred/-D`) lists timed, inherited, and indefinite blockers; `--someday/--on-hold` selects tasks carrying their own indefinite marker. Those two filters are mutually exclusive. With a closed/archive scope, legacy `--deferred` and `--someday` filter the own marker; explicit `--unavailable` is rejected because every closed task is unavailable for lifecycle reasons. `--recurring/-R` lists tasks with a repeater. `--body/-b` widens text matching into notes. `--json` |
 | `agenda` | `a` | ✅ | Available dated items, soonest first. `--json` |
 | `next` | `n` | ✅ | NEXT actions by context. `--json` |
 | `quadrants` | `q` | ✅ | Covey 2×2 from priority (A/B ⇒ important) + a `DEADLINE` within `urgent_days` (default 3, overdue counts) ⇒ urgent, with `important`/`urgent` tags as overrides. `--json` adds `quadrant`. |
@@ -596,14 +615,16 @@ JSON list shape (`--json` on list/agenda/next/quadrants/inbox) — a flat array,
 already sorted the way the text view sorts:
 `[{"state": "NEXT", "priority": "A", "title": "…", "tags": [..], "contexts": [..], "deferred": false, "scheduled": null, "scheduled_time": null, "deadline": "2026-07-02", "deadline_time": null, "available": true, "available_at": null, "availability_reason": "available", "availability_blocker_id": null, "recur": null, "line": 17, "source": "live", "headline": "NEXT [#A] …"}]`
 (`headline` is the star-less summary rendered from the record's fields; `source`
-is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or `null`.)
+is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or
+`null`; proposals report `availability_reason: "proposed"`.)
 `quadrants --json` adds `"quadrant": "Q1".."Q4"` per item. Empty result → `[]`.
 
 ## Create
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `capture "text"` | `add`, `c` | ✅ | New INBOX item. `--due` and `--scheduled` accept complete date/time expressions. Each has independent `--due-timezone`/`--scheduled-timezone`, `--due-floating`/`--scheduled-floating`, and `--due-fold`/`--scheduled-fold` modifiers; a modifier without its matching value is rejected. Other flags remain `--priority`, repeatable tags/contexts, `--no-host-context`, state, project/under, recurrence, dry-run, and JSON. A configured host context is additive with explicit contexts unless suppressed. A capture with either temporal value lands as TODO unless state is explicit. |
+| `capture "text"` | `add`, `c` | ✅ | New accepted INBOX item. `--due` and `--scheduled` accept complete date/time expressions. Each has independent `--due-timezone`/`--scheduled-timezone`, `--due-floating`/`--scheduled-floating`, and `--due-fold`/`--scheduled-fold` modifiers; a modifier without its matching value is rejected. Other flags remain `--priority`, repeatable tags/contexts/notes, `--no-host-context`, state, project/under, recurrence, dry-run, and JSON. A configured host context is additive with explicit contexts unless suppressed. A capture with either temporal value lands as TODO unless state is explicit. |
+| `propose "text"` | | ✅ | New inert PROPOSED task for owner review. Shares capture's dates, priority, repeatable tags/contexts/notes, host-context, project/under, dry-run, and JSON behavior, but rejects explicit state and recurrence. Agent-authored proposals should use `--note` for concise rationale/evidence. |
 
 ## Update (all take `<ref>`, all support `--dry-run`)
 
@@ -611,7 +632,9 @@ is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or `nul
 |---|---|---|---|
 | `done <ref>` | `complete`, `close`, `d` | ✅ | Mark DONE + `closed` date, cascading to every open descendant (see Cascading completion); recurring descendants close outright and their recur cookie is retired. A recurring task (recur cookie on its date) rolls forward and stays open instead — output shows `↻ <title> → next <date>` — and does **not** cascade. `--dry-run` also previews how many open descendants would close. |
 | `cancel <ref>` | `drop` | ✅ | Mark CANCELLED + `closed` date. |
-| `state <ref> <STATE>` | `mv` | ✅ | Any state transition (INBOX/TODO/NEXT/WAITING/DONE/CANCELLED). Enforces: entering DONE/CANCELLED sets `closed`; leaving them clears it. Entering DONE cascades to open descendants (see Cascading completion); entering CANCELLED does not. Resolves refs across open *and* closed tasks so you can reopen a DONE item (reopening does not reopen cascaded descendants). |
+| `approve <ref>` | | ✅ | Accept exactly one PROPOSED task into INBOX. Refuses a non-proposal or a proposal with proposed descendants; decide leaves first. Undoable. |
+| `reject <ref>` | | ✅ | Decline exactly one PROPOSED task into CANCELLED and stamp `closed`. Uses the same target/refusal/undo contract as `approve`. |
+| `state <ref> <STATE>` | `mv` | ✅ | Any state transition (PROPOSED/INBOX/TODO/NEXT/WAITING/DONE/CANCELLED). Enforces: entering DONE/CANCELLED sets `closed`; leaving them clears it. A proposal cannot transition directly to DONE or carry recurrence; use `approve`/`reject` for review intent. Entering DONE cascades to accepted open descendants (see Cascading completion); entering CANCELLED does not. Resolves refs across proposed, open, and closed live tasks so you can repair state explicitly. |
 | `due <ref> <date-or-date-time>` | `deadline`, `reschedule` | ✅ | Atomically replace `deadline`; accepts `--timezone ZONE` or `--floating`, plus `--fold earlier\|later`. Omitting time creates an all-day value and clears old time metadata. INBOX items promote to TODO. |
 | `schedule <ref> <date-or-date-time>` | | ✅ | Atomically replace `scheduled` with the same temporal flags. A future exact boundary hides the task, but this command does not clear an On Hold marker; callers that mean deferral use `defer`. Same INBOX promotion. |
 | `undate <ref>` | | ✅ | Remove `scheduled` and/or `deadline` (`--kind deadline\|scheduled` to pick one). |
@@ -662,7 +685,7 @@ title ambiguity a bare `project "<ref>"` would create.
 | `project create <title> [--json] [--dry-run]` | `project new` | ✅ | Create a new empty project — a section filed under the top-level "Projects" root (created first if the store has none yet, so an empty/rootless file still works). A blank title, or one that duplicates an existing project or area (case-insensitive; the project-ref candidate set, so a duplicate would make later refs ambiguous), exits 1 with the reason. Success prints the new project row (`--json` emits the project object). `--dry-run` writes nothing. Then `move <ref> "<title>"` files tasks into it. |
 | `project show <ref> [--json]` | | ✅ | One project/area in full: title, kind, rolled-up open/NEXT counts, soonest date, and body note. `--json` is the project object (same shape as a `projects` element). |
 | `project complete <ref>` | `project done` | ✅ | Close every open descendant task of the project — the same cascade as `done`: DONE + today's `closed` date, `defer` dropped, and a recurring descendant retired (its cookie removed, no roll-forward). Prints every touched task's new headline (identified by line). |
-| `project archive <ref> [--force]` | | ✅ | Sweep the project's whole section subtree to `archive.jsonl` (the root section drops its `parent` and gains today's `archived` stamp). Refuses with exit 1 while the project still has open work unless `--force`; deferred/held tasks (`held_count`) count as open work too, so a parked-but-open project also refuses (parity with `project complete`, which closes them). |
+| `project archive <ref> [--force]` | | ✅ | Sweep the project's whole section subtree to `archive.jsonl` (the root section drops its `parent` and gains today's `archived` stamp). Refuses with exit 1 while the project still has open work unless `--force`; deferred/held tasks (`held_count`) count as open work too. PROPOSED descendants always refuse, even with `--force`, until approved or rejected. |
 | `project rename <ref> <new title>` | | ✅ | Replace the section title (leading/trailing space trimmed). |
 
 **Project refs.** A `<ref>` resolves against the `projects` listing: an exact
@@ -683,7 +706,7 @@ no fuzzy refs (a transport difference per design rule 7). See
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `archive` | `x` | ✅ | Sweep each DONE/CANCELLED subtree to `archive.jsonl` (root drops `parent`, gains `archived`). Refuses with exit 1 when any candidate root has an open descendant and explains how to resolve it. Persistence is retry-safe across interruption: the archive is installed first, and live records are removed only when the archive contains exactly one canonical copy of every moved ID; partial or conflicting overlap refuses without deleting live data. In the TUI, `x` previews root and descendant counts and requires `y` confirmation; the Store validates that exact candidate-ID/content fingerprint under the sweep lock, while `n`/`esc` cancels without writing. |
+| `archive` | `x` | ✅ | Sweep each DONE/CANCELLED subtree to `archive.jsonl` (root drops `parent`, gains `archived`). Refuses with exit 1 when any candidate root has a non-closed descendant, including PROPOSED, and explains how to resolve it. Persistence is retry-safe across interruption: the archive is installed first, and live records are removed only when the archive contains exactly one canonical copy of every moved ID; partial or conflicting overlap refuses without deleting live data. In the TUI, `x` previews root and descendant counts and requires `y` confirmation; the Store validates that exact candidate-ID/content fingerprint under the sweep lock, while `n`/`esc` cancels without writing. |
 | `delete <ref>` | | ✅ | Undoable **hard delete** of a task's subtree from the live file — not an alias for `CANCELLED`, and it never touches `archive.jsonl`. A leaf deletes directly; a task that still has descendants is refused (exit 1) unless `--cascade` removes the whole contiguous subtree as one journal entry. Deleting never hoists or reparents children. Archived-only ids are not found (exit 2 via ref resolution / `not_found`); a section id is rejected (delete targets tasks). Resolves open tasks by default; `--include-done` widens to closed live tasks (they are still live records). Reports every removed task's pre-delete headline (`--json` → `{deleted: [..]}`); `--dry-run` prints what would be deleted, including the descendant count when cascading, and writes nothing. Undoable via `tasks undo` (restores the exact prior bytes). Cancellation/archival is usually the right call — `delete` is for genuine mistakes. |
 | `undo` | | ✅ | Revert the last mutation via the on-disk journal (`Tasks::Journal`, under `$XDG_STATE_HOME/tasks/journal/`), shared with the TUI and across CLI runs. Refuses (exit 1) if `tasks.jsonl` changed out-of-band since that edit — resolve with `git diff` / `git checkout -- tasks.jsonl`. |
 | `redo` | | ✅ | Replay the last undone mutation; same shared journal and conflict guard as `undo`. |

@@ -44,16 +44,17 @@ module Tui
       ["4 Inbox",     :inbox],
       ["5 Projects",  :projects],
       ["6 Outline",   :outline],
+      ["7 Approvals", :approvals],
     ].freeze
 
     # Screen-column spans for the header tab strip. start_col 2 matches the
     # leading space Frame leaves after the left border (`" #{tabs}…"`). Header
     # rendering and HitMap both consume this so a theme that pads active tabs
     # differently cannot desync the click target from the painted label.
-    def self.tab_spans(active:, start_col: 2)
+    def self.tab_spans(active:, counts: {}, start_col: 2)
       col = start_col
       TABS.map do |label, key|
-        cell = tab_cell(label, key, active: active)
+        cell = tab_cell(label, key, active: active, count: counts[key])
         width = A.vislen(cell)
         span = [key, col, col + width]
         col += width + 1 # join space between tabs
@@ -61,13 +62,16 @@ module Tui
       end
     end
 
-    def self.tab_strip(active:)
-      TABS.map { |label, key| tab_cell(label, key, active: active) }.join(" ")
+    def self.tab_strip(active:, counts: {})
+      TABS.map do |label, key|
+        tab_cell(label, key, active: active, count: counts[key])
+      end.join(" ")
     end
 
-    def self.tab_cell(label, key, active:)
+    def self.tab_cell(label, key, active:, count: nil)
       slot = key == active ? :"tab_#{key}_active" : :"tab_#{key}"
       slot = key == active ? :tab_active : :tab_inactive unless T.slot?(slot)
+      label = "#{label} #{count}" if count.to_i.positive?
       T.paint(slot, " #{label} ")
     end
     private_class_method :tab_cell
@@ -227,6 +231,9 @@ module Tui
       if view == :outline
         return outline(items, tree: tree, collapsed: collapsed, today: today, reader: reader)
       end
+      if view == :approvals
+        return approvals(items, today: today, reader: reader)
+      end
       if view == :projects
         return projects(items, tree: tree, collapsed: collapsed, show_deferred: show_deferred,
                                today: today, reader: reader, projects: projects)
@@ -272,7 +279,7 @@ module Tui
     # reduced list is a structural outline.
     def outline(items, tree: nil, collapsed: Set.new, today: Date.today, reader: nil)
       unless tree
-        return items.map do |item|
+        return items.reject(&:proposed?).map do |item|
           Row.new("  #{outline_body(item, today: today, reader: reader)}", item)
         end
       end
@@ -290,6 +297,13 @@ module Tui
         node.children.each do |child|
           append_outline_node(rows, child, depth + 1, collapsed: collapsed,
                                                         today: today, reader: reader)
+        end
+        return
+      end
+      if node.item.proposed?
+        node.children.each do |child|
+          append_outline_node(rows, child, depth, collapsed: collapsed,
+                                                   today: today, reader: reader)
         end
         return
       end
@@ -323,7 +337,7 @@ module Tui
     end
 
     def outline_body(item, today:, reader:)
-      state_slot = item.open? ? :accent : :muted
+      state_slot = item.open? ? :accent : (item.proposed? ? :warning : :muted)
       "#{T.paint(state_slot, item.state.ljust(9))} #{decorated_title(item)}" \
         "#{badge(item, reader: reader, today: today)}"
     end
@@ -377,6 +391,15 @@ module Tui
       matched = query.sort(query.select(items))
       return [Row.new(T.paint(:muted, "Inbox empty. ✨"), nil)] if matched.empty?
       matched.map { |i| Row.new("  #{inbox_body(i, reader: reader || store, today: today)}", i) }
+    end
+
+    def approvals(items, today: Date.today, reader: nil)
+      proposed = items.select(&:proposed?)
+      return [Row.new(T.paint(:muted, "No tasks pending approval"), nil)] if proposed.empty?
+
+      proposed.map do |item|
+        Row.new("  #{outline_body(item, today: today, reader: reader)}", item)
+      end
     end
 
     # The Projects tab renders the Phase-1 project read model: a "Projects" group

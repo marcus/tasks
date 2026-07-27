@@ -609,12 +609,17 @@ module Tui
     end
 
     def header(w)
-      tabs = Views.tab_strip(active: @ui.view)
+      tabs = Views.tab_strip(active: @ui.view, counts: tab_counts)
       open_n = open_task_count(read_model)
       unavailable_note = @ui.show_deferred ? "#{T.paint(:warning, "unavailable shown")}#{T.paint(:muted, " · ")}" : ""
       count = "#{T.paint(:muted, "#{open_n} open · ")}#{unavailable_note}#{T.paint(:accent, current_entry.ui_label)}#{T.paint(:muted, " · ? help")}"
       gap = [w - A.vislen(tabs) - A.vislen(count) - 2, 1].max
       " #{tabs}#{" " * gap}#{count} "
+    end
+
+    def tab_counts
+      count = read_model.items.count(&:proposed?)
+      count.positive? ? { approvals: count } : {}
     end
 
     def footer(w, mode: @ui.mode)
@@ -990,7 +995,7 @@ module Tui
         end
         HitMap.build(
           layout: @last_layout,
-          tab_spans: Views.tab_spans(active: @ui.view),
+          tab_spans: Views.tab_spans(active: @ui.view, counts: tab_counts),
           row_count: rows_now.size,
           modal: @last_modal,
           popup: @last_popup,
@@ -1143,7 +1148,7 @@ module Tui
     end
 
     def dispatch_action(k, context)
-      entry = Shortcuts.match(k, context)
+      entry = Shortcuts.match(k, context, self)
       return false unless entry
       unless Shortcuts.available?(entry, self)
         unavailable_action(entry)
@@ -1287,7 +1292,12 @@ module Tui
     end
     def recurrence_action_available?
       item = current_item
-      !!(item && (item.scheduled || item.deadline))
+      !!(item && (!item.respond_to?(:state) || item.state != "PROPOSED") &&
+         (item.scheduled || item.deadline))
+    end
+    def proposal_action_available?
+      item = current_item
+      !!(item&.respond_to?(:state) && item.state == "PROPOSED")
     end
     def link_action_available?
       task = current_task
@@ -2591,6 +2601,33 @@ module Tui
       else
         reload_store
         flash("file changed underneath — try again")
+      end
+    end
+
+    def approve_proposal = decide_proposal(:approve)
+    def reject_proposal = decide_proposal(:reject)
+
+    def decide_proposal(action)
+      item = current_item
+      return flash("select a task pending approval") unless item&.proposed?
+
+      result = @application.public_send(
+        :"#{action}_task", item.id, expected_revision: current_task&.revision,
+        today: current_date,
+        context: tui_operation_context(temporal_context)
+      )
+      if result.ok?
+        title = item.title
+        absorb_own_write
+        rows
+        refresh_detail_panel if detail_panel?
+        target = action == :approve ? "INBOX" : "CANCELLED"
+        flash("#{action == :approve ? "approved" : "rejected"} → #{target}: #{title}")
+      elsif result.conflict? && result.summary&.dig(:proposed_descendant_ids)
+        flash("decide proposed descendants first")
+      else
+        reload_store
+        flash(Array(result.errors).first || "proposal changed underneath — try again")
       end
     end
 

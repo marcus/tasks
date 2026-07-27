@@ -17,6 +17,7 @@ marks each command ✅ implemented / 🚧 planned).
 
 ```sh
 bin/tasks list -a          # everything incl. archive; filters: @ctx +tag /text -A
+bin/tasks list --proposed  # inert suggestions pending owner approval
 bin/tasks list --unavailable # timed, inherited, and indefinite unavailability
 bin/tasks list --someday   # tasks with their own indefinite On Hold marker
 bin/tasks agenda           # dated items, soonest first
@@ -46,6 +47,9 @@ prefer it when you need to reason over tasks rather than display them.
 
 ```sh
 bin/tasks capture "text"             # new INBOX item (see flags below)
+bin/tasks propose "text" --note "why" # inert PROPOSED item for owner review
+bin/tasks approve "<ref>"             # accept PROPOSED → INBOX
+bin/tasks reject "<ref>"              # decline PROPOSED → CANCELLED
 bin/tasks done "<ref>"               # mark DONE + closed date (cascades to open subtasks)
 bin/tasks cancel "<ref>"             # mark CANCELLED + closed date
 bin/tasks due "<ref>" fri            # set/replace deadline (INBOX → TODO)
@@ -74,6 +78,19 @@ bin/tasks project complete "<ref>"   # close every open task in a project (aka d
 bin/tasks project rename "<ref>" "new"  # retitle a project/area section
 bin/tasks project archive "<ref>"    # sweep a project's subtree to archive (--force past open tasks)
 ```
+
+`PROPOSED` is separate from accepted open work. It stays out of the default
+list, agenda, next, quadrants, inbox, and project rollups; review it with
+`list --proposed` or the TUI Approvals tab. A proposal cannot recur or be
+completed. Approval and rejection are undoable lifecycle decisions.
+
+Use `capture` when the user explicitly asks to add, remember, or track a task.
+You may use `propose` without asking when agent-initiated follow-up is plausibly
+valuable but was not requested. Add concise rationale/evidence with repeatable
+`--note`, do not perform the proposed work, and do not flood the queue. A
+proposal is not permission to create accepted work, contact anyone, or change
+external state. Never approve your own proposal unless the user explicitly
+asks you to approve that specific proposal.
 
 **Make a project, then fill it.** To collect tasks into a brand-new project,
 `project create "Name"` first (it creates the empty section, bootstrapping the
@@ -128,7 +145,8 @@ descendants.
 `capture` flags: `--due <date/time>`, `--scheduled <date/time>`, per-field
 `--due-timezone`/`--scheduled-timezone`, floating and fold flags, `--priority A|B|C`,
 `--tag t` (repeatable), `--context @x` (repeatable), `--state STATE`,
-`--project "Heading"`, `--under <ref>`. A date makes it land as TODO (override
+`--project "Heading"`, `--under <ref>`, and repeatable `--note`. A date makes
+it land as TODO (override
 with `--state`); `--project` files it under that section (default Inbox);
 `--under <ref>` nests it below an existing task instead (mutually exclusive with
 `--project`).

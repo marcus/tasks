@@ -210,7 +210,8 @@ module Tui
         ),
         TermForm::Fields::Select.new(
           key: :state, label: "State", value: values[:state],
-          options: STATE_OPTIONS, searchable: false,
+          options: snapshot.state == "PROPOSED" ? ["PROPOSED"] : STATE_OPTIONS,
+          searchable: false,
         ),
       ]
     end

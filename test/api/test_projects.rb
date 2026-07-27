@@ -30,6 +30,13 @@ class TestApiProjects < Minitest::Test
     { "type" => "task", "id" => "dddd0003", "parent" => "dddd0002", "state" => "TODO",
       "title" => "Someday: revisit", "tags" => %w[defer] },
   ])
+  PROPOSED_PROJECT_FIXTURE = Tasks::Format.dump([
+    { "type" => "meta", "version" => 2 },
+    { "type" => "section", "id" => "eeee0001", "title" => "Projects" },
+    { "type" => "section", "id" => "eeee0002", "parent" => "eeee0001", "title" => "Candidate" },
+    { "type" => "task", "id" => "eeee0003", "parent" => "eeee0002", "state" => "PROPOSED",
+      "title" => "Investigate the candidate" },
+  ])
 
   def setup
     @dir = Dir.mktmpdir("tasks-api-projects")
@@ -275,6 +282,16 @@ class TestApiProjects < Minitest::Test
     assert_nil record("Parked")
     assert Tasks::Check.check(@org).ok?
     assert_contract_response(forced)
+  end
+
+  def test_archive_force_never_sweeps_an_undecided_proposal
+    rebuild_app(PROPOSED_PROJECT_FIXTURE)
+    response = post("/api/v1/projects/eeee0002/archive?force=true")
+    assert_error response, 409, "conflict"
+    assert_match(/decide proposed tasks/, JSON.parse(response.body).dig("error", "message"))
+    assert_equal PROPOSED_PROJECT_FIXTURE, File.read(@org)
+    refute File.exist?(@archive)
+    assert_contract_response(response)
   end
 
   def test_archive_empty_project_needs_no_force

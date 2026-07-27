@@ -29,11 +29,13 @@ module Tui
       tab_quadrants: "yellow",
       tab_inbox:     "magenta",
       tab_projects:  "blue",
+      tab_approvals: "yellow",
       tab_agenda_active:    "bold reverse cyan",
       tab_next_active:      "bold reverse green",
       tab_quadrants_active: "bold reverse yellow",
       tab_inbox_active:     "bold reverse magenta",
       tab_projects_active:  "bold reverse blue",
+      tab_approvals_active: "bold reverse yellow",
       selection:     "reverse",        # highlighted list row + input cursor
       accent:        "cyan",           # model name, help keys
       prompt:        "bold cyan",      # ❯ and / input markers
@@ -102,10 +104,10 @@ module Tui
       "mono" => {
         tab_active: "reverse", tab_inactive: "dim", accent: "bold",
         tab_agenda: "none", tab_next: "none", tab_quadrants: "none",
-        tab_inbox: "none", tab_projects: "none",
+        tab_inbox: "none", tab_projects: "none", tab_approvals: "none",
         tab_agenda_active: "reverse", tab_next_active: "reverse",
         tab_quadrants_active: "reverse", tab_inbox_active: "reverse",
-        tab_projects_active: "reverse",
+        tab_projects_active: "reverse", tab_approvals_active: "reverse",
         border: "dim", border_gradient: "none",
         prompt: "bold", modal_title: "bold", panel_title: "bold", context: "bold",
         context_selected: "bold", context_filter_active: "bold", project: "none", project_selected: "bold",

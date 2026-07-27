@@ -14,7 +14,10 @@
 #                             section; complete aka done; archive --force past open)
 #   bin/tasks capture|c "..." append a new item (flags: --due/--scheduled/
 #                             --priority/--tag/--context/--no-host-context/
-#                             --state/--project/--under)
+#                             --state/--project/--under/--note)
+#   bin/tasks propose "..."   suggest an inert task for approval
+#   bin/tasks approve <ref>   accept a PROPOSED task into INBOX
+#   bin/tasks reject <ref>    decline a PROPOSED task into CANCELLED
 #   bin/tasks done|d <ref>    mark a matching open item DONE (complete/close);
 #                             cascades to its open descendants (recurring parent
 #                             rolls forward instead and does not cascade)
@@ -38,7 +41,7 @@
 #   bin/tasks show|s <ref>    show one task in full (headline + notes)
 #   bin/tasks archive|x       move DONE/CANCELLED items to archive.jsonl
 #   bin/tasks list|l [...]    list tasks grouped by state, with filters:
-#     scope:   --open/-o (default) --done/-d --archived/-x --all/-a
+#     scope:   --open/-o (default) --proposed --done/-d --archived/-x --all/-a
 #     filters: @context /text +tag -A|-B|-C --deferred/-D --unavailable
 #              --someday/--on-hold (compose freely except as documented)
 #   bin/tasks -p "..."        hand a natural-language request to an LLM agent
@@ -84,7 +87,10 @@ def contexts(item) = item.tags.select { |t| t.start_with?("@") }
 def open?(item)     = OPEN_STATES.include?(item.state)
 
 OPEN_STATES = Tasks::Store::OPEN_STATES
-DONE_STATES = Tasks::Store::DONE_STATES
+PROPOSED_STATES = Tasks::Store::PROPOSED_STATES
+CLOSED_STATES = Tasks::Store::CLOSED_STATES
+ALL_STATES = Tasks::Store::STATES
+DONE_STATES = CLOSED_STATES
 
 def color(str, code) = $stdout.tty? ? "\e[#{code}m#{str}\e[0m" : str
 def bold(s)   = color(s, 1)
@@ -218,14 +224,15 @@ def cmd_inbox(args = [])
   inbox.empty? ? (puts "Inbox empty. ✨") : inbox.each { |i| puts "  #{fmt(i)}" }
 end
 
-CAPTURE_USAGE = %(usage: tasks capture "text" [--due d] [--scheduled d] [--priority A|B|C] [--tag t] [--context @x] [--no-host-context] [--state STATE] [--project "Heading" | --under <ref>])
+CAPTURE_USAGE = %(usage: tasks capture "text" [--due d] [--scheduled d] [--priority A|B|C] [--tag t] [--context @x] [--no-host-context] [--state STATE] [--project "Heading" | --under <ref>] [--note "text"])
+PROPOSE_USAGE = %(usage: tasks propose "text" [--due d] [--scheduled d] [--priority A|B|C] [--tag t] [--context @x] [--no-host-context] [--project "Heading" | --under <ref>] [--note "rationale"])
 
-def cmd_capture(args)
+def cmd_capture(args, proposed: false)
   context = temporal_context
   today = context.local_date
   tags = []
   contexts = []
-  due = scheduled = priority = state = project = recur = under = nil
+  due = scheduled = priority = state = project = recur = under = note = nil
   due_timezone = scheduled_timezone = due_fold = scheduled_fold = nil
   due_floating = scheduled_floating = false
   dry = json = no_host_context = false
@@ -251,6 +258,7 @@ def cmd_capture(args)
     when "--project"              then project = need.(a)
     when "--under"                then under = need.(a)
     when "--recur", "--repeat"    then recur = need.(a)
+    when "--note"                 then note = need.(a)
     when "--dry-run"              then dry = true
     when "--json"                 then json = true
     when /\A--/                   then abort "unknown flag: #{a}"
@@ -259,10 +267,13 @@ def cmd_capture(args)
     i += 1
   end
   text = positional.join(" ").strip.force_encoding("UTF-8")
-  abort CAPTURE_USAGE if text.empty?
+  usage = proposed ? PROPOSE_USAGE : CAPTURE_USAGE
+  abort usage if text.empty?
   # --under (nest under a task) and --project (file under a section) are two
   # different destinations — pick one.
-  abort "can't combine --under and --project\n#{CAPTURE_USAGE}" if under && project
+  abort "can't combine --under and --project\n#{usage}" if under && project
+  abort "propose owns state PROPOSED" if proposed && state
+  abort "proposals cannot recur" if proposed && recur
   abort "due temporal modifiers require --due" if !due && (due_timezone || due_floating || due_fold)
   abort "scheduled temporal modifiers require --scheduled" if !scheduled && (scheduled_timezone || scheduled_floating || scheduled_fold)
   abort "--due-timezone and --due-floating are mutually exclusive" if due_timezone && due_floating
@@ -294,10 +305,12 @@ def cmd_capture(args)
   pri = nil if pri && %w[NONE CLEAR -].include?(pri)
   abort "priority must be A, B, or C" unless pri.nil? || %w[A B C].include?(pri)
 
-  st = state&.upcase || ((due_date || scheduled_date) ? "TODO" : "INBOX")
-  valid = OPEN_STATES + DONE_STATES
+  st = proposed ? "PROPOSED" : (state&.upcase || ((due_date || scheduled_date) ? "TODO" : "INBOX"))
+  valid = ALL_STATES
   abort "unknown state: #{st} (want one of #{valid.join(", ")})" unless valid.include?(st)
-  abort "can't set recurrence on a #{st} task" if cookie && DONE_STATES.include?(st)
+  if cookie && (CLOSED_STATES + PROPOSED_STATES).include?(st)
+    abort "can't set recurrence on a #{st} task"
+  end
 
   # Contexts are tags that start with "@"; list them before plain tags.
   all_tags = contexts.map { |c| c.start_with?("@") ? c : "@#{c}" } + tags
@@ -305,13 +318,13 @@ def cmd_capture(args)
   # --under nests below an existing task (open-only ref, exit 2 on miss).
   # Resolve the convenience ref here, then pass only its durable id across the
   # application boundary.
-  under_item = under && resolve_ref(under)
+  under_item = under && resolve_ref(under, include_proposed: proposed)
   parent_id = under_item && stable_id_for(under_item)
 
   command = Tasks::CreateTask.new(
     title: text, deadline: due_date, scheduled: scheduled_date,
     priority: pri, tags: all_tags, state: st, project: project,
-    parent_id: parent_id, recurrence: cookie,
+    parent_id: parent_id, recurrence: cookie, body: note,
     apply_host_context: !no_host_context
   )
 
@@ -323,9 +336,9 @@ def cmd_capture(args)
     head << " :#{preview.tags.join(":")}:" unless preview.tags.empty?
     head << " (recur #{cookie})" if cookie
     if under_item
-      puts %(would capture under "#{under_item.title}": #{head})
+      puts %(would #{proposed ? "propose" : "capture"} under "#{under_item.title}": #{head})
     else
-      puts "would capture under #{project || "Inbox"}: #{head}"
+      puts "would #{proposed ? "propose" : "capture"} under #{project || "Inbox"}: #{head}"
     end
     return
   end
@@ -344,10 +357,38 @@ def cmd_capture(args)
                                         touched_ids: result.touched_ids, summary: result.summary,
                                         rolled_back: result.rolled_back?)
   end
-  mutation_result_failed(result, "could not capture (no #{(project || "Inbox").inspect} section found?)")
-  report_touched(result.touched_ids, json: json, today: today,
-                 read_snapshot: result.read_snapshot, temporal_context: context)
+  mutation_result_failed(result, "could not #{proposed ? "propose" : "capture"} (no #{(project || "Inbox").inspect} section found?)")
+  if proposed && !json
+    puts "proposed: #{text} [#{result.touched_ids.fetch(0)}]"
+  else
+    report_touched(result.touched_ids, json: json, today: today,
+                   read_snapshot: result.read_snapshot, temporal_context: context)
+  end
 end
+
+def cmd_propose(args) = cmd_capture(args, proposed: true)
+
+def cmd_proposal_decision(args, action:)
+  flags, rest = take_flags(args, "--json")
+  ref = rest.shift
+  abort "usage: tasks #{action} <ref> [--json]" if ref.nil? || ref.strip.empty? || !rest.empty?
+  item = resolve_ref(ref, proposed_only: true)
+  result = application.public_send(:"#{action}_task", stable_id_for(item), today: Date.today)
+  if result.conflict? && result.summary&.dig(:proposed_descendant_ids)
+    mutation_failed "decide proposed descendants first"
+  end
+  mutation_result_failed(result, "failed to #{action} proposal")
+  if flags["--json"]
+    report_touched(result.touched_ids, json: true, read_snapshot: result.read_snapshot)
+  else
+    target = action == :approve ? "INBOX" : "CANCELLED"
+    verb = action == :approve ? "approved" : "rejected"
+    puts "#{verb} → #{target}: #{item.title}"
+  end
+end
+
+def cmd_approve(args) = cmd_proposal_decision(args, action: :approve)
+def cmd_reject(args) = cmd_proposal_decision(args, action: :reject)
 
 # Core of the state-transition verbs. `state` passes the target as a
 # positional arg; its sugar `done`/`cancel` hardcode DONE/CANCELLED. All three
@@ -362,7 +403,7 @@ def change_state(args, usage:, resolve_closed:, to: nil, dry_verb: nil, archive_
   ref = rest.shift
   target = to || rest.join(" ").strip.upcase
   abort %(usage: #{usage}) if ref.nil? || ref.strip.empty? || target.empty?
-  valid = OPEN_STATES + DONE_STATES
+  valid = ALL_STATES
   abort "unknown state: #{target} (want one of #{valid.join(", ")})" unless valid.include?(target)
 
   item = resolve_ref(ref, include_done: resolve_closed || flags["--include-done"])
@@ -635,15 +676,24 @@ end
 
 # Resolve <ref> to exactly one open item (or exit 2). `L<line>` targets an
 # exact headline line. --include-done widens the search to closed items.
-def resolve_ref(ref, include_done: false)
+def resolve_ref(ref, include_done: false, proposed_only: false, include_proposed: false)
   abort "missing <ref>" if ref.nil? || ref.strip.empty?
   items = store.items
-  items = items.select { |i| OPEN_STATES.include?(i.state) } unless include_done
+  items = if proposed_only
+            items.select(&:proposed?)
+          elsif include_done
+            items
+          elsif include_proposed
+            items.select { |i| i.open? || i.proposed? }
+          else
+            items.select(&:open?)
+          end
 
   if (m = ref.match(/\AL(\d+)\z/i))
     item = items.find { |i| i.line == m[1].to_i }
     unless item
-      warn "no #{include_done ? "" : "open "}task with a headline on line #{m[1]}"
+      qualifier = proposed_only ? "proposed " : (include_done ? "" : "open ")
+      warn "no #{qualifier}task with a headline on line #{m[1]}"
       exit 2
     end
     return item
@@ -962,7 +1012,7 @@ def cmd_open(args)
 end
 
 def cmd_state(args)
-  usage = "tasks state <ref> <#{(OPEN_STATES + DONE_STATES).join("|")}>"
+  usage = "tasks state <ref> <#{ALL_STATES.join("|")}>"
   # resolve_closed: true — a state change may need to find (and reopen) a
   # closed item, e.g. `state <ref> TODO`. recur_aware: DONE on a recurring task
   # rolls it forward (same as `done`), so the preview/output must say so.
@@ -2066,6 +2116,7 @@ def project_archive(args)
     return
   end
   result = application.archive_project(view.id)
+  mutation_failed(result.errors.first) if result.conflict? && !result.errors.empty?
   mutation_result_failed(result, "failed to archive project")
   archived = (result.summary && result.summary[:archived]) || result.touched_ids.length
   if flags["--json"]
@@ -2120,7 +2171,8 @@ HELP = <<~USAGE
     projects  pj             projects & areas rolled up over their open tasks
                              (open/NEXT counts, soonest date, stuck flag)
     list      l [filters]    tasks by state. Filters: @context /text +tag -A|-B|-C
-                             Scope: --open/-o (default) --done/-d --archived/-x --all/-a
+                             Scope: --open/-o (default) --proposed --done/-d
+                             --archived/-x --all/-a (choose one)
                              --deferred/-D all unavailable · --unavailable canonical spelling
                              --someday/--on-hold own indefinite holds · --recurring/-R repeating
                              --body/-b widens /text search into task notes
@@ -2136,10 +2188,14 @@ HELP = <<~USAGE
   Capture:
     capture   c "text"       new item. Flags: --due --scheduled --priority
                              --tag --context --no-host-context --state
-                             --project --under --recur
+                             --project --under --recur --note
                              (--under <ref> nests it below a task; caps at max_depth)
+    propose     "text"       inert PROPOSED item for owner review. Capture flags
+                             except --state/--recur; repeat --note for rationale
 
   Update (take <ref>; support --dry-run/--json/--include-done):
+    approve      <ref>        accept PROPOSED into INBOX
+    reject       <ref>        decline PROPOSED into CANCELLED
     done      d <ref>        mark DONE (cascades to open subtasks) — or roll a
                              recurring task forward (aka complete, close)
     cancel      <ref>        mark CANCELLED          (aka drop)
@@ -2218,6 +2274,9 @@ when "inbox", "i"     then cmd_inbox(ARGV[1..])
 when "projects", "pj" then cmd_projects(ARGV[1..])
 when "project"        then cmd_project(ARGV[1..])
 when "capture", "add", "c" then cmd_capture(ARGV[1..])
+when "propose"        then cmd_propose(ARGV[1..])
+when "approve"        then cmd_approve(ARGV[1..])
+when "reject"         then cmd_reject(ARGV[1..])
 when "done", "complete", "close", "d" then cmd_done(ARGV[1..])
 when "due", "deadline", "reschedule" then cmd_due(ARGV[1..])
 when "schedule"       then cmd_schedule(ARGV[1..])

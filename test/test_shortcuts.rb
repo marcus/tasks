@@ -77,10 +77,10 @@ class TestShortcuts < Minitest::Test
     assert_equal :outdent_subtree, S.match("<", :list).handler
   end
 
-  def test_sixth_view_has_a_direct_jump_key
-    entry = S.match("6", :list)
+  def test_seventh_view_has_a_direct_jump_key
+    entry = S.match("7", :list)
     assert_equal :jump_view, entry.handler
-    assert_equal "1-6", entry.display_key
+    assert_equal "1-7", entry.display_key
   end
 
   def test_unknown_lookup_context_is_rejected

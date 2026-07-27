@@ -17,9 +17,11 @@ module Tasks
   # fuzzy refs). The Result shape (errors/warnings as (line, message) tuples,
   # to_h) matches the old org linter so cmd_check and with_history don't change.
   module Check
-    STATES      = %w[INBOX TODO NEXT WAITING DONE CANCELLED].freeze
+    PROPOSED_STATES = %w[PROPOSED].freeze
     OPEN_STATES = %w[INBOX TODO NEXT WAITING].freeze
-    DONE_STATES = %w[DONE CANCELLED].freeze
+    CLOSED_STATES = %w[DONE CANCELLED].freeze
+    STATES = (PROPOSED_STATES + OPEN_STATES + CLOSED_STATES).freeze
+    DONE_STATES = CLOSED_STATES
     PRIORITIES  = %w[A B C].freeze
     TYPES       = %w[meta section task].freeze
 
@@ -255,6 +257,8 @@ module Tasks
       end
       if r["closed"] && OPEN_STATES.include?(r["state"])
         errors << [line, "closed date on an open task (#{r["state"]})"]
+      elsif r["closed"] && PROPOSED_STATES.include?(r["state"])
+        errors << [line, "closed date on a proposed task (#{r["state"]})"]
       end
       if r["tags"] && !r["tags"].is_a?(Array)
         errors << [line, "tags must be an array"]

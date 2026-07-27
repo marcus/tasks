@@ -12,6 +12,10 @@ tasks quadrants         # (q) Covey Important/Urgent 2x2
 tasks inbox             # (i) unprocessed captures
 tasks list              # (l) all tasks grouped by state, with filters (see below)
 tasks capture "..."     # (c) append a new item to the Inbox
+tasks propose "..." --note "why" # inert suggestion pending your approval
+tasks list --proposed   # review only pending proposals
+tasks approve "<ref>"   # accept a proposal into Inbox
+tasks reject "<ref>"    # decline a proposal into Cancelled
 tasks done "..."        # (d) mark a matching open item DONE
 tasks links             # links in task notes, by system (slack, jira, …)
 tasks open "..."        # (o) open a task's link in the browser
@@ -209,7 +213,8 @@ tasks list --unavailable         # timed, inherited, and indefinite blockers
 tasks list --someday             # own indefinite On Hold tasks only
 ```
 
-Scope flags: `--open/-o` (default) `--done/-d` `--archived/-x` `--all/-a`.
+Scope flags: `--open/-o` (default) `--proposed` `--done/-d`
+`--archived/-x` `--all/-a`.
 Filter sigils: `@context`  `/text` (or a bare word)  `+tag`  `-A|-B|-C` (priority).
 
 ## Working with an agent
@@ -231,6 +236,13 @@ Because every change lands as a one-line diff in a file you version, reviewing
 what an agent did to your list is `git diff`, and reverting it is `tasks undo`.
 Pick the default backend and add models in `~/.config/tasks/config`; see
 `docs/cli-spec.md` (LLM agent settings).
+
+Agents may also suggest useful follow-up without silently committing you to it:
+`tasks propose` creates a distinct PROPOSED item that stays out of all accepted
+work views. The TUI's Approvals tab shows the queue and its count; approve or
+reject each suggestion there with one key. Explicit requests to add or remember
+a task still use ordinary `capture`. A proposal never authorizes the agent to
+perform the work, contact anyone, or approve its own suggestion.
 
 The optional `cursor-cli` provider runs the `agent` binary in headless force
 mode with no additional application dependencies. Authenticate with
@@ -275,7 +287,8 @@ same subtrees collapsed. Press `?` inside for the complete keymap; the shape
 of it:
 
 ```
-1-6 / ←→   switch view: Agenda · Next · Quadrants · Inbox · Projects · Outline
+1-7 / ←→   switch view: Agenda · Next · Quadrants · Inbox · Projects · Outline · Approvals
+a / r      approve / reject the selected proposal (Approvals only)
 ↑↓ / jk    select a task; an open detail panel follows the selection
 h / l      collapse / expand the selected subtree (H / L for all)
 alt-↑/alt-k move a subtree up among siblings in the unfiltered Outline view

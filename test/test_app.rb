@@ -7,6 +7,17 @@ require "tui/text_input"
 class TestApp < Minitest::Test
   def ui(app) = app.instance_variable_get(:@ui)
 
+  PROPOSAL_APP = dump_fixture([
+    { "type" => "meta", "version" => 2 },
+    { "type" => "section", "id" => "ee000001", "title" => "Inbox" },
+    { "type" => "task", "id" => "ee000002", "parent" => "ee000001",
+      "state" => "PROPOSED", "title" => "Alpha proposal", "body" => "Alpha rationale" },
+    { "type" => "task", "id" => "ee000003", "parent" => "ee000001",
+      "state" => "PROPOSED", "title" => "Beta proposal", "body" => "Beta rationale" },
+    { "type" => "task", "id" => "ee000004", "parent" => "ee000001",
+      "state" => "INBOX", "title" => "Accepted task" },
+  ]).freeze
+
   # Resolve the panel column count the same way the frame does, so resize
   # assertions read the realized width rather than the stored offset.
   def panel_width(app)
@@ -279,6 +290,46 @@ class TestApp < Minitest::Test
       assert_equal :prompt, ui(app).mode
       assert_equal selected_id, ui(app).selected_id
       assert_nil ui(app).panel
+    end
+  end
+
+  def test_approvals_keys_update_badge_selection_and_history_immediately
+    app_on(view: :approvals, select: "Alpha proposal", content: PROPOSAL_APP) do |app|
+      assert_equal({ approvals: 2 }, app.send(:tab_counts))
+
+      app.send(:handle_key, "a")
+      assert_equal "INBOX", record_for(org_path(app), title: "Alpha proposal")["state"]
+      assert_equal "Beta proposal", app.send(:current_item).title
+      assert_equal({ approvals: 1 }, app.send(:tab_counts))
+
+      app.send(:handle_key, "u")
+      assert_equal "PROPOSED", record_for(org_path(app), title: "Alpha proposal")["state"]
+      assert_equal({ approvals: 2 }, app.send(:tab_counts))
+
+      app.send(:handle_key, "\x12")
+      assert_equal "INBOX", record_for(org_path(app), title: "Alpha proposal")["state"]
+      assert_equal({ approvals: 1 }, app.send(:tab_counts))
+
+      app.send(:handle_key, "r")
+      assert_equal "CANCELLED", record_for(org_path(app), title: "Beta proposal")["state"]
+      assert_equal({}, app.send(:tab_counts))
+      assert_nil app.send(:current_item)
+
+      app.send(:handle_key, "u")
+      assert_equal "PROPOSED", record_for(org_path(app), title: "Beta proposal")["state"]
+      assert_equal({ approvals: 1 }, app.send(:tab_counts))
+    end
+  end
+
+  def test_proposal_decision_keys_work_with_detail_panel_open
+    app_on(view: :approvals, select: "Alpha proposal", content: PROPOSAL_APP) do |app|
+      app.send(:handle_key, "\r")
+      assert_equal :detail, ui(app).panel.kind
+      assert_includes ui(app).panel.lines.join("\n"), "Alpha rationale"
+
+      app.send(:handle_key, "r")
+      assert_equal "CANCELLED", record_for(org_path(app), title: "Alpha proposal")["state"]
+      assert_equal "Beta proposal", app.send(:current_item).title
     end
   end
 

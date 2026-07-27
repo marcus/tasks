@@ -13,8 +13,8 @@ module Tasks
   # facade. `parse_cli` deliberately contains only the legacy list syntax;
   # adapters decide how to report an ArgumentError to their own users.
   class TaskFilter
-    SCOPES = %i[open done archived all].freeze
-    STATE_ORDER = %w[INBOX TODO NEXT WAITING DONE CANCELLED].freeze
+    SCOPES = %i[open proposed done archived all].freeze
+    STATE_ORDER = Store::STATES
     Parsed = Struct.new(:filter, :json, keyword_init: true) do
       def initialize(**)
         super
@@ -65,13 +65,15 @@ module Tasks
       tags = []
       priority = nil
       text = []
+      lifecycle_scopes = []
 
       args.each do |arg|
         case arg
-        when "--open", "-o" then scope = :open
-        when "--done", "-d" then scope = :done
-        when "--archived", "-x" then scope = :archived
-        when "--all", "-a" then scope = :all
+        when "--open", "-o" then scope = :open; lifecycle_scopes << :open
+        when "--proposed" then scope = :proposed; lifecycle_scopes << :proposed
+        when "--done", "-d" then scope = :done; lifecycle_scopes << :done
+        when "--archived", "-x" then scope = :archived; lifecycle_scopes << :archived
+        when "--all", "-a" then scope = :all; lifecycle_scopes << :all
         when "--deferred", "-D" then deferred_only = true
         when "--unavailable" then unavailable_only = true
         when "--someday", "--on-hold" then someday_only = true
@@ -85,6 +87,9 @@ module Tasks
         when /\A-/ then raise ArgumentError, "unknown flag: #{arg}"
         else text << arg
         end
+      end
+      if lifecycle_scopes.uniq.length > 1
+        raise ArgumentError, "task lifecycle scopes are mutually exclusive"
       end
 
       Parsed.new(
@@ -101,7 +106,8 @@ module Tasks
     def states
       scoped = case scope
                when :open then Store::OPEN_STATES
-               when :done then Store::DONE_STATES
+               when :proposed then Store::PROPOSED_STATES
+               when :done then Store::CLOSED_STATES
                else STATE_ORDER
                end
       state ? scoped.select { |candidate| candidate == state }.freeze : scoped
@@ -180,7 +186,7 @@ module Tasks
     # indefinite hold, a closed task, or an available task.
     class Availability
       REASONS = %i[
-        available scheduled on_hold ancestor_scheduled ancestor_on_hold closed
+        available scheduled on_hold ancestor_scheduled ancestor_on_hold proposed closed
       ].freeze
 
       attr_reader :reason, :blocker_id, :scheduled, :temporal_value, :available_at
@@ -418,7 +424,9 @@ module Tasks
     end
 
     def build_availability(item, own_deferred: item.deferred?, own_scheduled: item.scheduled_value || item.scheduled)
-      return Availability.new(reason: :closed) if item.source == :archive || !item.open?
+      return Availability.new(reason: :closed) if item.source == :archive ||
+                                                   Store::CLOSED_STATES.include?(item.state)
+      return Availability.new(reason: :proposed) unless item.open?
 
       candidates = [[item, 0]]
       current = snapshot.node_for(item)&.parent

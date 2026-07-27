@@ -21,9 +21,11 @@ updated list, nothing else.
 
 Do the underlying work only when the prompt unmistakably orders immediate
 execution rather than describing a todo — "do it now", "go fix it", "actually
-make the change, don't just add a task". When in doubt, capture; the user can
-always tell you to execute it afterward, but unwanted work (an edited repo, a
-sent reply) can't be quietly taken back.
+make the change, don't just add a task". When the user explicitly asks to add,
+remember, or track a task, capture it as accepted work. When useful follow-up is
+plausibly valuable but the user has not asked to add it, you may create an
+inert proposal instead; the owner can then approve or reject it without the
+suggestion entering their working lists.
 
 ## The one rule: the CLI is the only writer
 
@@ -37,7 +39,8 @@ back a bad one.
 ## Files
 - `tasks.jsonl` — the live list. One JSON record per line: a `meta` header, then
   `section` records (GTD lists / project headings) and `task` records, tree-ordered
-  by `parent` id. Task fields: `state` ∈ INBOX|TODO|NEXT|WAITING|DONE|CANCELLED,
+  by `parent` id. Task fields: `state` ∈
+  PROPOSED|INBOX|TODO|NEXT|WAITING|DONE|CANCELLED,
   optional `priority` A|B|C, `title`, `tags` (array, includes `@contexts` and
   the internal `defer` On Hold marker), `scheduled`/`deadline`/`closed` dates
   (`"YYYY-MM-DD"`) with optional `scheduled_time`/`deadline_time` metadata,
@@ -55,6 +58,7 @@ back a bad one.
 
 ## Reading (always via the CLI, `--json` when you reason over results)
 - `bin/tasks list -a` — everything, grouped by state (filters: `@ctx +tag /text -A`).
+- `bin/tasks list --proposed` — only inert tasks pending owner approval.
 - `bin/tasks agenda` — dated items, soonest first.
 - `bin/tasks show "<ref>"` — one task in full (fields + notes + links).
 - `bin/tasks projects` (`pj`) — projects & areas rolled up over their open tasks.
@@ -89,7 +93,12 @@ task merely because it also contains task text.
                       rolls its date forward and stays open, and does not cascade)
   - add a task:       `bin/tasks capture "<text>"` (flags: --due/--scheduled/
                       --priority/--tag/--context/--no-host-context/--state/
-                      --project/--under/--recur)
+                      --project/--under/--recur/--note)
+  - propose a task:   `bin/tasks propose "<text>"` (same filing/metadata flags
+                      as capture except state/recurrence; repeat `--note` for
+                      concise rationale or evidence)
+  - accept proposal:  `bin/tasks approve "<ref>"` (PROPOSED → INBOX)
+  - decline proposal: `bin/tasks reject "<ref>"` (PROPOSED → CANCELLED)
   - nest a new task:  `bin/tasks capture "<text>" --under "<ref>"`  (child of a task; ≤ max_depth)
   - set a deadline:   `bin/tasks due "<ref>" <date-or-date-time>`
   - set available from: `bin/tasks schedule "<ref>" <date-or-date-time>`
@@ -144,6 +153,32 @@ task merely because it also contains task text.
   priority `A`/`B` or the `important` tag; **urgent** = a `deadline` within a few
   days or the `urgent` tag. To make something "urgent"/"important", prefer setting
   its deadline/priority over adding tags.
+
+## Proposing follow-up without creating a commitment
+
+`PROPOSED` is a separate lifecycle state, not another spelling of INBOX.
+Proposals are inert: they appear in `list --proposed` and the TUI Approvals tab,
+but stay out of agenda, next, quadrants, inbox, project rollups, and the default
+open list. They cannot recur or be completed, and archive operations leave them
+live until the owner decides them.
+
+You may create an inert `PROPOSED` task without asking first when useful
+follow-up is plausibly valuable but the user has not asked to add an accepted
+task. Use `bin/tasks propose`, include concise rationale or evidence with
+`--note`, and do not perform the proposed work. A proposal is not permission to
+create an ordinary task, contact anyone, change external state, or execute the
+underlying action.
+
+Keep the distinction crisp:
+
+- An explicit "add/remind/track/capture this" request uses `capture`.
+- Agent-initiated follow-up that was not requested uses `propose`.
+- One proposal should name one coherent outcome. Do not flood the queue with
+  speculative, duplicate, or low-value suggestions.
+- Never approve your own proposal unless the user explicitly asks you to
+  approve that specific proposal. Ordinarily, approval is the owner's action.
+- Rejecting a proposal is a lifecycle decision, not deletion; it preserves the
+  audit trail as CANCELLED.
 
 ## Task-set memory
 A task set may carry `agent-memory.md` — a small Markdown sidecar of durable,
@@ -200,9 +235,10 @@ it never authorizes the underlying work — the capture-by-default rule above
 still governs what you do with the task itself.
 
 ## Report
-End with ONE line listing every change made — including any memory-file change
-(name the exact rule added, changed, or removed) and any external action (Slack,
-email) — so the caller has a full audit trail.
+End with ONE line listing every change made — distinguish accepted captures
+from proposals, name every approval or rejection, include any memory-file
+change (the exact rule added, changed, or removed), and include any external
+action (Slack, email) — so the caller has a full audit trail.
 
 ---
 *Escape hatch: if the file is ever edited out-of-band (not by you), `bin/tasks

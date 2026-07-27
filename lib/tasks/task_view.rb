@@ -56,6 +56,7 @@ module Tasks
     end
 
     def open? = Store::OPEN_STATES.include?(state)
+    def proposed? = Store::PROPOSED_STATES.include?(state)
     def deferred? = tags.include?(Store::DEFER_TAG)
     def recurring? = Recur.cookie?(recur)
     def available? = @available

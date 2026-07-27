@@ -23,6 +23,7 @@ breakage (see [`docs/cli-spec.md`](cli-spec.md)).
 
 | State       | Meaning                                                              |
 |-------------|---------------------------------------------------------------------|
+| `PROPOSED`  | Inert suggestion pending explicit owner approval or rejection.       |
 | `INBOX`     | Captured, not yet processed. Decide what it is and where it goes.    |
 |             | Giving an item a date counts as processing: a `scheduled`/`deadline` on an `INBOX` item promotes it to `TODO` (the tooling does this automatically). |
 | `TODO`      | Actionable, categorized, but not the immediate next physical action. |
@@ -31,8 +32,9 @@ breakage (see [`docs/cli-spec.md`](cli-spec.md)).
 | `DONE`      | Complete.                                                            |
 | `CANCELLED` | Dropped, no longer relevant.                                         |
 
-`INBOX`/`TODO`/`NEXT`/`WAITING` are the open states; `DONE`/`CANCELLED` are the
-closed states (they carry a `closed` date).
+`PROPOSED` is its own lifecycle category. It is neither accepted open work nor
+closed history. `INBOX`/`TODO`/`NEXT`/`WAITING` are the open states;
+`DONE`/`CANCELLED` are the closed states (they carry a `closed` date).
 
 ## Record reference
 
@@ -71,7 +73,7 @@ type id parent state priority title tags scheduled scheduled_time deadline deadl
 - **`parent`** — the id of the containing section or task. Absent on top-level
   sections. Children are ordinary records that name their parent, so a project
   is a section (or task) with child records pointing at it.
-- **`state`** — one of the six states above (tasks only).
+- **`state`** — one of the seven states above (tasks only).
 - **`priority`** — `"A"` / `"B"` / `"C"`, optional. Ranks within a list.
 - **`title`** — short; starts with a verb for actions.
 - **`tags`** — a JSON array including `@contexts` (e.g.

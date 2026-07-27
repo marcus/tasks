@@ -13,6 +13,7 @@ require_relative "format"
 require_relative "journal"
 require_relative "links"
 require_relative "patch_result"
+require_relative "proposal_decision"
 require_relative "quadrants"
 require_relative "recur"
 require_relative "task_patch"
@@ -28,6 +29,7 @@ module Tasks
     :recur, :id, :closed, keyword_init: true
   ) do
     def open?    = Store::OPEN_STATES.include?(state)
+    def proposed? = Store::PROPOSED_STATES.include?(state)
     def contexts = tags.select { |t| t.start_with?("@") }
     # Deferred (someday/maybe) is a semantic tag, like important/urgent — it
     # rides alongside the task's real state rather than replacing it.
@@ -62,8 +64,11 @@ module Tasks
   # org line-walker was prone to is structurally gone. Claude edits the file
   # out-of-band via the CLI; `changed?` picks up any write by mtime.
   class Store
-    OPEN_STATES = %w[INBOX TODO NEXT WAITING].freeze
-    DONE_STATES = %w[DONE CANCELLED].freeze
+    PROPOSED_STATES = Check::PROPOSED_STATES
+    OPEN_STATES = Check::OPEN_STATES
+    CLOSED_STATES = Check::CLOSED_STATES
+    STATES = Check::STATES
+    DONE_STATES = CLOSED_STATES
     REVISION_OWN_FIELDS = (EditSnapshot::FIELDS - [:location]).freeze
     # A different Fiber on the same thread cannot wait on the sidecar flock:
     # doing so would block the thread's scheduler before the owning Fiber can
@@ -697,6 +702,122 @@ module Tasks
       end
     end
 
+    # Accept or decline one proposal in a single checked transaction. This is
+    # intentionally stricter than an arbitrary state patch: intent endpoints
+    # only target PROPOSED tasks and proposal trees are decided leaves-first.
+    def decide_proposal!(command, today: Date.today)
+      unless command.is_a?(ProposalDecision)
+        return MutationResult.new(status: :invalid, errors: ["expected a Tasks::ProposalDecision"])
+      end
+      unless ProposalDecision::ACTIONS.include?(command.action)
+        return MutationResult.new(status: :invalid, errors: ["proposal action must be approve or reject"])
+      end
+
+      with_lock do
+        @last_rollback = nil
+        before = snapshot
+        current = nil
+        if schema_migration_required?
+          return MutationResult.new(status: :migration_required, errors: ["run `tasks migrate`"])
+        end
+        begin
+          preflight = Check.check(@org)
+          unless preflight.ok?
+            return MutationResult.new(status: :store_invalid, errors: preflight.errors.map(&:last))
+          end
+          unless command.id.is_a?(String) && !command.id.empty?
+            return MutationResult.new(status: :invalid, errors: ["task id is required"])
+          end
+          if !command.expected_revision.nil? && revision_components(command.expected_revision).nil?
+            return MutationResult.new(status: :invalid, errors: ["malformed expected_revision"])
+          end
+
+          records = fresh_records(@org)
+          ri = locate_stable_index(records, command.id)
+          return MutationResult.new(status: :not_found) unless ri
+          current = build_edit_snapshot(records, ri)
+          if command.expected_revision
+            revision_error = changeset_revision_error(
+              current,
+              TaskChangeset.new(
+                id: command.id, changes: { state: records[ri]["state"] },
+                expected_revision: command.expected_revision
+              )
+            )
+            return MutationResult.new(status: revision_error, snapshot: current) if revision_error
+          end
+
+          from = records[ri]["state"]
+          unless PROPOSED_STATES.include?(from)
+            return MutationResult.new(
+              status: :invalid, snapshot: current,
+              errors: ["task is #{from}, not PROPOSED"],
+              summary: { action: command.action, from: from }
+            )
+          end
+
+          rj = subtree_end(records, ri)
+          proposed_descendants = records[(ri + 1)...rj].select do |record|
+            record["type"] == "task" && PROPOSED_STATES.include?(record["state"])
+          end
+          unless proposed_descendants.empty?
+            return MutationResult.new(
+              status: :conflict, snapshot: current,
+              errors: ["decide proposed descendants first"],
+              summary: {
+                action: command.action,
+                proposed_descendant_ids: proposed_descendants.map { |record| record["id"] },
+              }
+            )
+          end
+
+          target = command.action == :approve ? "INBOX" : "CANCELLED"
+          working_records = duplicate_records(records)
+          applied = patch_state(
+            working_records, ri, target, today: today,
+            allow_proposed_ancestor: command.action == :approve
+          )
+          unless applied[:status] == :ok
+            return MutationResult.new(status: applied[:status], snapshot: current,
+                                      errors: applied[:errors] || [], summary: applied[:summary])
+          end
+          Format.dump(working_records)
+        rescue JSON::GeneratorError, EncodingError, ArgumentError => e
+          return MutationResult.new(status: :invalid, snapshot: current,
+                                    errors: [safe_patch_error(e)])
+        end
+
+        begin
+          write_records(@org, working_records)
+          if (reason = post_write_failure)
+            @last_rollback = reason
+            restore(before)
+            return MutationResult.new(status: :store_invalid,
+                                      snapshot: restored_edit_snapshot(command.id),
+                                      errors: [reason], rolled_back: true)
+          end
+          after = snapshot
+          label = "#{command.action} proposal: #{records[ri]["title"]}"
+          @journal.record(label: label, before: before, after: after)
+          reload!
+          fresh_ri = locate_stable_index(@records, command.id)
+          MutationResult.new(
+            status: :ok,
+            snapshot: fresh_ri && build_edit_snapshot(@records, fresh_ri),
+            read_snapshot: @read_snapshot,
+            store_revision: store_revision_for(after),
+            touched_ids: [command.id],
+            summary: { action: command.action, from: "PROPOSED", to: target }
+          )
+        rescue StandardError => e
+          @last_rollback = safe_patch_error(e)
+          restore(before)
+          MutationResult.new(status: :unavailable, snapshot: current,
+                             errors: [safe_patch_error(e)], rolled_back: true)
+        end
+      end
+    end
+
     def archive_swept!(expected_preview: nil)
       with_history("archive sweep") { archive_swept_impl(expected_preview) }
     end
@@ -839,9 +960,9 @@ module Tasks
 
     # Move a section's entire contiguous subtree to the archive, mirroring the
     # sweep's serialization: the root section drops its parent and gains today's
-    # `archived` stamp. Open tasks do not block — blocking is caller policy;
-    # Store stays mechanical. Returns the moved stable ids, or false when the id
-    # names no section.
+    # `archived` stamp. Open tasks do not block — blocking is caller policy —
+    # but an undecided proposal is never archival material. Returns the moved
+    # stable ids, :proposed_descendants, or false when the id names no section.
     def archive_project!(id:)
       with_history("archive project: #{id}") { archive_project_impl(id) }
     end
@@ -1103,7 +1224,9 @@ module Tasks
       # every transport gets one definition of a recurring create.
       scheduled ||= TemporalValue.new(date: today) if recurrence && !deadline
       state ||= (scheduled || deadline ? "TODO" : "INBOX")
-      errors[:state] << "can't set recurrence on a #{state} task" if recurrence && DONE_STATES.include?(state)
+      if recurrence && (CLOSED_STATES + PROPOSED_STATES).include?(state)
+        errors[:state] << "can't set recurrence on a #{state} task"
+      end
 
       [
         {
@@ -1246,6 +1369,11 @@ module Tasks
         return { status: :not_found } unless pi
         unless %w[task section].include?(records[pi]["type"])
           return { status: :invalid, errors: ["parent_id must identify a task or section"] }
+        end
+        if records[pi]["type"] == "task" &&
+           PROPOSED_STATES.include?(records[pi]["state"]) &&
+           !PROPOSED_STATES.include?(attributes[:state])
+          return { status: :invalid, errors: ["accepted work cannot be created under a proposed task"] }
         end
 
         # A section parent files the task directly beneath the heading (depth 1),
@@ -2062,6 +2190,9 @@ module Tasks
 
     def patch_recurrence(records, ri, value)
       rec = records[ri]
+      if !value.nil? && value != :off && PROPOSED_STATES.include?(rec["state"])
+        return patch_invalid("can't set recurrence on a PROPOSED task")
+      end
       return patch_invalid("recurrence requires a scheduled date or deadline") unless rec["scheduled"] || rec["deadline"]
       if value.nil? || value == :off
         rec.delete("recur")
@@ -2171,6 +2302,11 @@ module Tasks
       pi = records.index { |record| record["id"] == parent_id }
       return patch_invalid("location parent does not exist") unless pi
       return patch_invalid("location parent must be a section or task") unless %w[section task].include?(records[pi]["type"])
+      if records[pi]["type"] == "task" &&
+         PROPOSED_STATES.include?(records[pi]["state"]) &&
+         !PROPOSED_STATES.include?(rec["state"])
+        return patch_invalid("accepted work cannot be moved under a proposed task")
+      end
 
       rj = subtree_end(records, ri)
       return { status: :cycle, summary: { from: rec["parent"], to: parent_id } } if pi >= ri && pi < rj
@@ -2236,6 +2372,11 @@ module Tasks
 
       pi = targets.fetch(:parent_index)
       ai = targets.fetch(:before_index)
+      if records[pi]["type"] == "task" &&
+         PROPOSED_STATES.include?(records[pi]["state"]) &&
+         !PROPOSED_STATES.include?(rec["state"])
+        return patch_invalid("accepted work cannot be moved under a proposed task")
+      end
 
       rj = subtree_end(records, ri)
       if (pi >= ri && pi < rj) || (ai && ai >= ri && ai < rj)
@@ -2296,10 +2437,23 @@ module Tasks
       nil
     end
 
-    def patch_state(records, ri, value, today:, temporal_context: nil)
+    def patch_state(records, ri, value, today:, temporal_context: nil,
+                    allow_proposed_ancestor: false)
       return patch_invalid("invalid task state") unless Check::STATES.include?(value)
       rec = records[ri]
       from = rec["state"]
+      if PROPOSED_STATES.include?(value) && Recur.cookie?(rec["recur"])
+        return patch_invalid("remove recurrence before setting PROPOSED")
+      end
+      if PROPOSED_STATES.include?(from) && value == "DONE"
+        return patch_invalid("approve the proposal before completing it")
+      end
+      if !CLOSED_STATES.include?(value) &&
+         !PROPOSED_STATES.include?(value) &&
+         !allow_proposed_ancestor &&
+         proposed_task_ancestor?(records, rec)
+        return patch_invalid("accepted work cannot remain under a proposed task")
+      end
       if value == "DONE" && Recur.cookie?(rec["recur"])
         result = advance_recurrence_records(records, ri, today: today,
                                             temporal_context: temporal_context)
@@ -2325,6 +2479,19 @@ module Tasks
       patch_ok(rec, touched_ids: touched_ids,
                summary: { from: from, to: value, recurrence_advanced: false,
                           cascaded_ids: cascaded_ids })
+    end
+
+    def proposed_task_ancestor?(records, record)
+      by_id = records.each_with_object({}) do |candidate, index|
+        index[candidate["id"]] = candidate if candidate["id"]
+      end
+      current = record
+      while (parent = by_id[current["parent"]])
+        return true if parent["type"] == "task" && PROPOSED_STATES.include?(parent["state"])
+
+        current = parent
+      end
+      false
     end
 
     def advance_recurrence_records(records, ri, today:, temporal_context: nil)
@@ -2517,6 +2684,9 @@ module Tasks
       ri = section_index(records, id) or return false
       rj = subtree_end(records, ri)
       moved = records[ri...rj].map(&:dup)
+      if moved.any? { |record| record["type"] == "task" && PROPOSED_STATES.include?(record["state"]) }
+        return :proposed_descendants
+      end
       moved[0].delete("parent")
       moved[0]["archived"] = Date.today.iso8601
       kept = records[0...ri] + records[rj..]
@@ -2904,7 +3074,7 @@ module Tasks
           j = subtree_end(records, i)
           group = records[i...j].map(&:dup)
           open = group.drop(1).select do |record|
-            record["type"] == "task" && OPEN_STATES.include?(record["state"])
+            record["type"] == "task" && !CLOSED_STATES.include?(record["state"])
           end
           unless open.empty?
             blocks << ArchiveBlock.new(

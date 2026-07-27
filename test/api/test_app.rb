@@ -45,7 +45,10 @@ class TestApiApp < Minitest::Test
     assert_equal 200, meta.status
     payload = JSON.parse(meta.body)
     assert_equal "loopback", payload.dig("data", "server_mode")
-    assert_equal %w[INBOX TODO NEXT WAITING DONE CANCELLED], payload.dig("data", "states")
+    assert_equal %w[PROPOSED INBOX TODO NEXT WAITING DONE CANCELLED], payload.dig("data", "states")
+    assert_equal %w[PROPOSED], payload.dig("data", "proposed_states")
+    assert_equal %w[INBOX TODO NEXT WAITING], payload.dig("data", "open_states")
+    assert_equal %w[DONE CANCELLED], payload.dig("data", "closed_states")
     assert_equal 4, payload.dig("data", "max_depth")
     # Capabilities advertise only what App#dispatch routes. `projects` is true
     # (the project routes are dispatched); undo/redo/archive_sweep/events stay
@@ -200,6 +203,63 @@ class TestApiApp < Minitest::Test
     assert_equal "", deleted.body
     refute deleted["content-type"]
     assert_contract_response(deleted)
+  end
+
+  def test_proposal_scope_and_approve_reject_actions
+    first = json_request(
+      "POST", "/api/v1/tasks",
+      title: "Research backup providers", state: "PROPOSED",
+      deadline: "2026-08-15", body: "Current setup has no offsite copy."
+    )
+    assert_equal 201, first.status, first.body
+    first_task = JSON.parse(first.body).fetch("data")
+    assert_equal "PROPOSED", first_task.fetch("state")
+    assert_equal false, first_task.fetch("available")
+    assert_equal "proposed", first_task.fetch("availability_reason")
+    assert_contract_response(first)
+
+    default_ids = JSON.parse(get("/api/v1/tasks").body).fetch("data").map { |task| task.fetch("id") }
+    refute_includes default_ids, first_task.fetch("id")
+    proposed = get("/api/v1/tasks?scope=proposed")
+    assert_equal [first_task.fetch("id")],
+                 JSON.parse(proposed.body).fetch("data").map { |task| task.fetch("id") }
+    assert_contract_response(proposed)
+
+    missing_precondition = request(
+      "POST", "/api/v1/tasks/#{first_task.fetch("id")}/approve"
+    )
+    assert_error missing_precondition, 428, "missing_precondition"
+    assert_contract_request missing_precondition, valid: false
+
+    approved = request(
+      "POST", "/api/v1/tasks/#{first_task.fetch("id")}/approve",
+      "HTTP_IF_MATCH" => first["etag"]
+    )
+    assert_equal 200, approved.status, approved.body
+    assert_equal "INBOX", JSON.parse(approved.body).dig("data", "state")
+    assert_equal approved["etag"], quote(JSON.parse(approved.body).dig("data", "revision"))
+    assert_contract_response(approved)
+
+    second = json_request(
+      "POST", "/api/v1/tasks", title: "Review subscriptions", state: "PROPOSED"
+    )
+    second_task = JSON.parse(second.body).fetch("data")
+    rejected = request(
+      "POST", "/api/v1/tasks/#{second_task.fetch("id")}/reject",
+      "HTTP_IF_MATCH" => second["etag"]
+    )
+    assert_equal 200, rejected.status, rejected.body
+    rejected_task = JSON.parse(rejected.body).fetch("data")
+    assert_equal "CANCELLED", rejected_task.fetch("state")
+    assert_equal Date.today.iso8601, rejected_task.fetch("closed")
+    assert_contract_response(rejected)
+
+    not_proposed = request(
+      "POST", "/api/v1/tasks/#{FIX[:garden]}/approve",
+      "HTTP_IF_MATCH" => get("/api/v1/tasks/#{FIX[:garden]}")["etag"]
+    )
+    assert_error not_proposed, 422, "validation_failed"
+    assert_contract_response(not_proposed)
   end
 
   def test_create_adds_configured_host_context_and_supports_explicit_opt_out

@@ -192,6 +192,13 @@ class TestCliProjects < Minitest::Test
     { "type" => "task", "id" => "dddd0003", "parent" => "dddd0002", "state" => "TODO",
       "title" => "Someday: revisit", "tags" => %w[defer] },
   ])
+  PROPOSED_PROJECT_FIXTURE = Tasks::Format.dump([
+    { "type" => "meta", "version" => 2 },
+    { "type" => "section", "id" => "eeee0001", "title" => "Projects" },
+    { "type" => "section", "id" => "eeee0002", "parent" => "eeee0001", "title" => "Candidate" },
+    { "type" => "task", "id" => "eeee0003", "parent" => "eeee0002", "state" => "PROPOSED",
+      "title" => "Investigate the candidate" },
+  ])
 
   def test_project_archive_refuses_a_deferred_only_project_without_force
     run_cli("project", "archive", "Parked", content: DEFERRED_ONLY_FIXTURE) do |org, _out, err, st|
@@ -209,6 +216,17 @@ class TestCliProjects < Minitest::Test
       assert_equal "Someday: revisit", record_for(archive, title: "Someday: revisit")["title"]
       assert Tasks::Check.check(org).ok?
       assert Tasks::Check.check(archive).ok?
+    end
+  end
+
+  def test_project_archive_force_never_sweeps_an_undecided_proposal
+    run_cli(
+      "project", "archive", "Candidate", "--force", content: PROPOSED_PROJECT_FIXTURE
+    ) do |org, _out, err, st, archive|
+      assert_equal 1, st.exitstatus
+      assert_match(/decide proposed tasks before archiving the project/, err)
+      assert_equal PROPOSED_PROJECT_FIXTURE, File.read(org)
+      refute File.exist?(archive)
     end
   end
 

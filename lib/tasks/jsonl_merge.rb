@@ -29,7 +29,7 @@ module Tasks
     TEMPORAL_PAIRS = { "scheduled" => "scheduled_time", "deadline" => "deadline_time" }.freeze
     SPECIAL_FIELDS = (EXCLUDED_FIELDS + STATE_FIELDS + Set["tags", "body"] +
                       TEMPORAL_PAIRS.keys + TEMPORAL_PAIRS.values).freeze
-    TERMINAL_STATES = Set["DONE", "CANCELLED"].freeze
+    TERMINAL_STATES = Check::CLOSED_STATES.to_set.freeze
 
     module_function
 

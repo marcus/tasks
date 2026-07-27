@@ -841,6 +841,37 @@ class TestViews < Minitest::Test
     assert_includes A.strip(flight_row.text), "7/2"
   end
 
+  def test_approvals_only_shows_proposals_and_outline_excludes_them
+    records = [
+      { "type" => "meta", "version" => 2 },
+      { "type" => "section", "id" => "aa000001", "title" => "Inbox" },
+      { "type" => "task", "id" => "aa000002", "parent" => "aa000001",
+        "state" => "PROPOSED", "title" => "Research backup providers",
+        "body" => "Current setup has no offsite copy." },
+      { "type" => "task", "id" => "aa000003", "parent" => "aa000001",
+        "state" => "INBOX", "title" => "Accepted work" },
+    ]
+    with_records(records) do |store|
+      approvals = tree_rows(store, :approvals)
+      assert_equal ["Research backup providers"], approvals.filter_map { |row| row.item&.title }
+      assert_includes A.strip(approvals.first.text), "PROPOSED"
+
+      outline = tree_rows(store, :outline)
+      assert_equal ["Accepted work"], outline.filter_map { |row| row.item&.title }
+    end
+  end
+
+  def test_approvals_empty_state_and_count_share_tab_geometry
+    empty = V.rows(:approvals, [])
+    assert_equal ["No tasks pending approval"], texts(empty)
+
+    strip = V.tab_strip(active: :agenda, counts: { approvals: 3 })
+    span = V.tab_spans(active: :agenda, counts: { approvals: 3 })
+            .find { |key, _start, _finish| key == :approvals }
+    assert_includes A.strip(strip), "7 Approvals 3"
+    assert_equal A.vislen(" 7 Approvals 3 "), span[2] - span[1]
+  end
+
   # Hybrid model keeps tagged fixture items where they were: the :important:/
   # :urgent: tags force their axes, and the fixture's A/B priorities line up.
   def test_quadrants_places_fixture_items

@@ -44,7 +44,7 @@ module Tui
       entry(sequences: ["\e[B", "j"],  key: "↓ / j",   description: "select next task",                 contexts: [:list], handler: :select_next),
       entry(sequences: ["\e[D"],       key: "←",       description: "previous view",                    contexts: [:list], handler: :prev_view),
       entry(sequences: ["\e[C"],       key: "→",       description: "next view",                        contexts: [:list], handler: :next_view),
-      entry(sequences: %w[1 2 3 4 5 6], key: "1-6",     description: "jump to view",                     contexts: [:list], handler: :jump_view),
+      entry(sequences: %w[1 2 3 4 5 6 7], key: "1-7",     description: "jump to view",                     contexts: [:list], handler: :jump_view),
       entry(sequences: ["\e[1;3A", "\e\e[A", "\ek"], key: "alt-↑ / alt-k", description: "Move up", contexts: [:list], handler: :move_subtree_up, availability: :ordering_action_available?, palette: true),
       entry(sequences: ["\e[1;3B", "\e\e[B", "\ej"], key: "alt-↓ / alt-j", description: "Move down", contexts: [:list], handler: :move_subtree_down, availability: :ordering_action_available?, palette: true),
       entry(sequences: [">"],          key: ">",       description: "Indent",                          contexts: [:list], handler: :indent_subtree, availability: :ordering_action_available?, palette: true),
@@ -56,7 +56,9 @@ module Tui
       entry(sequences: ["\r", "\n"],   key: "return",  description: "open / close task details",        contexts: [:list], handler: :open_detail, palette: :selected_action_available?),
       entry(sequences: ["c"],          key: "c",       description: "complete selected task",           contexts: %i[list detail], handler: :complete_selected, palette: :selected_action_available?),
       entry(sequences: ["d"],          key: "d",       description: "edit Deadline / Available from date or time", contexts: %i[list detail], handler: :open_date_popup, palette: :selected_action_available?, form: :date),
+      entry(sequences: ["r"],          key: "r",       description: "Reject proposal",                   contexts: %i[list detail], handler: :reject_proposal, availability: :proposal_action_available?, palette: :proposal_action_available?),
       entry(sequences: ["r"],          key: "r",       description: "recur — weekly · 2w · .+1m · off", contexts: %i[list detail], handler: :open_recur_popup, palette: :recurrence_action_available?, form: :recurrence),
+      entry(sequences: ["a"],          key: "a",       description: "Approve proposal",                  contexts: %i[list detail], handler: :approve_proposal, availability: :proposal_action_available?, palette: :proposal_action_available?),
       entry(sequences: ["x"],          key: "x",       description: "archive DONE/CANCELLED items",     contexts: [:list], handler: :archive_sweep, palette: true, confirmation: :archive_preview),
       entry(sequences: ["e"],          key: "e",       description: "rename selected project",          contexts: [:list], handler: :rename_project, availability: :project_selected?, palette: :project_selected?, form: :project_rename),
       entry(sequences: ["a"],          key: "a",       description: "capture a task into the project",  contexts: [:list], handler: :capture_into_project, availability: :project_selected?, palette: :project_selected?, form: :project_capture),
@@ -126,8 +128,11 @@ module Tui
 
     # Returns the binding even when unavailable. Dispatch must consume such a
     # key instead of falling through to another context.
-    def self.match(sequence, context)
-      entries(context).find { |entry| entry.sequences.include?(sequence) }
+    def self.match(sequence, context, receiver = nil)
+      matches = entries(context).select { |entry| entry.sequences.include?(sequence) }
+      return matches.first unless receiver
+
+      matches.find { |entry| available?(entry, receiver) } || matches.first
     end
 
     def self.available?(entry, receiver) = entry.available?(receiver)
@@ -206,7 +211,9 @@ module Tui
           entry.sequences.each do |sequence|
             key = [context, sequence]
             other = bindings[key]
-            raise ArgumentError, "duplicate shortcut #{sequence.inspect} in #{context}: #{other.handler} and #{entry.handler}" if other && other != entry
+            if other && other != entry && other.availability == entry.availability
+              raise ArgumentError, "duplicate shortcut #{sequence.inspect} in #{context}: #{other.handler} and #{entry.handler}"
+            end
             bindings[key] = entry
           end
         end

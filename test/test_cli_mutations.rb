@@ -2337,6 +2337,61 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  def test_cli_propose_creates_inert_task_with_note_and_explicit_list_scope
+    run_cli(
+      "propose", "Research backup providers", "--note", "Current setup has no offsite copy.",
+      "--due", "2026-08-15", "--priority", "B"
+    ) do |org, out, err, st|
+      assert st.success?, err
+      record = record_for(org, title: "Research backup providers")
+      assert_equal "PROPOSED", record["state"]
+      assert_equal "B", record["priority"]
+      assert_equal "2026-08-15", record["deadline"]
+      assert_match(/Current setup has no offsite copy/, record["body"])
+      assert_match(/\Aproposed: Research backup providers \[[0-9a-f]{8}\]\n\z/, out)
+
+      list_out, list_err, list_status = run_cli_at(
+        org, File.join(File.dirname(org), "archive.jsonl"), "list", "--proposed", "--json"
+      )
+      assert list_status.success?, list_err
+      rows = JSON.parse(list_out)
+      assert_equal ["Research backup providers"], rows.map { |row| row.fetch("title") }
+
+      default_out, default_err, default_status = run_cli_at(
+        org, File.join(File.dirname(org), "archive.jsonl"), "list", "--json"
+      )
+      assert default_status.success?, default_err
+      refute_includes JSON.parse(default_out).map { |row| row.fetch("title") },
+                      "Research backup providers"
+    end
+  end
+
+  def test_cli_approve_and_reject_use_proposal_only_refs
+    proposal_record = [
+      { "type" => "task", "id" => "ee000001", "parent" => FIX[:inbox],
+        "state" => "PROPOSED", "title" => "Review subscriptions" },
+    ]
+    proposed = dump_fixture(FIXTURE_RECORDS[0..2] + proposal_record + FIXTURE_RECORDS[3..])
+    run_cli("approve", "Review subscriptions", content: proposed) do |org, out, err, st|
+      assert st.success?, err
+      assert_equal "INBOX", record_for(org, title: "Review subscriptions")["state"]
+      assert_equal "approved → INBOX: Review subscriptions\n", out
+    end
+
+    run_cli("reject", "Review subscriptions", content: proposed) do |org, out, err, st|
+      assert st.success?, err
+      record = record_for(org, title: "Review subscriptions")
+      assert_equal "CANCELLED", record["state"]
+      assert_equal Date.today.iso8601, record["closed"]
+      assert_equal "rejected → CANCELLED: Review subscriptions\n", out
+    end
+
+    run_cli("approve", "random thought") do |_org, _out, err, st|
+      assert_equal 2, st.exitstatus
+      assert_match(/no match/, err)
+    end
+  end
+
   def test_cli_capture_uses_one_today_for_parse_create_log_and_json
     env = sequenced_today_env("2026-07-14", "2026-07-15")
     run_cli("capture", "Midnight task", "--scheduled", "tomorrow", "--project", "Work", "--json",

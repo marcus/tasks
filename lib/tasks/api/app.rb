@@ -130,6 +130,12 @@ module Tasks
           return delete_task(request, id, request_id) if method == "DELETE"
         end
 
+        decision = path.match(%r{\A/api/v1/tasks/([^/]+)/(approve|reject)\z})
+        if decision && method == "POST"
+          id = valid_task_id!(decision[1])
+          return decide_proposal(request, id, decision[2].to_sym, request_id)
+        end
+
         return list_projects(request, request_id) if method == "GET" && path == "/api/v1/projects"
         return create_project(request, request_id) if method == "POST" && path == "/api/v1/projects"
 
@@ -170,8 +176,9 @@ module Tasks
         data = {
           api_version: "v1", server_mode: "loopback",
           states: TaskFilter::STATE_ORDER,
+          proposed_states: Store::PROPOSED_STATES,
           open_states: Store::OPEN_STATES,
-          closed_states: Store::DONE_STATES,
+          closed_states: Store::CLOSED_STATES,
           priorities: Check::PRIORITIES,
           max_depth: @max_depth,
           urgent_days: @urgent_days,
@@ -200,7 +207,7 @@ module Tasks
         query = query_params(request, LIST_QUERY_KEYS)
         scope = query.fetch("scope", "open")
         allowed_scopes = TaskFilter::SCOPES.map(&:to_s)
-        validation!(scope: ["must be open, done, archived, or all"]) unless allowed_scopes.include?(scope)
+        validation!(scope: ["must be open, proposed, done, archived, or all"]) unless allowed_scopes.include?(scope)
 
         state = query["state"]
         validation!(state: ["must be a documented task state"]) if state && !TaskFilter::STATE_ORDER.include?(state)
@@ -331,6 +338,30 @@ module Tasks
         )
         mutation_failure!(result, request_id, id: id)
         [204, {}, nil]
+      end
+
+      def decide_proposal(request, id, action, request_id)
+        temporal = request_temporal_context
+        query_params(request, [])
+        reject_action_body!(request, subject: "Task proposal action requests")
+        expected_revision = if_match!(request)
+        ensure_store_ready!(request_id)
+        result = application.public_send(
+          :"#{action}_task", id, expected_revision: expected_revision,
+          context: OperationContext.new(
+            operation_id: request_id, source: :api, temporal_context: temporal
+          )
+        )
+        mutation_failure!(result, request_id, id: id)
+        resource_result = application.task_result_from_mutation(
+          result, id, temporal_context: temporal
+        )
+        view = resource_result.data
+        [
+          200,
+          { "etag" => etag(view.revision) },
+          Representation.success(Representation.task(view), resource_result.store_revision),
+        ]
       end
 
       # Projects and areas are rolled-up sections. Reads mirror the CLI's
@@ -505,6 +536,11 @@ module Tasks
         when :invalid
           details = result.field_errors.empty? ? {} : { fields: result.field_errors }
           raise HttpError.new(422, :validation_failed, Errors.message(:validation_failed), details: details)
+        when :conflict
+          raise HttpError.new(
+            409, :conflict, result.errors.first || Errors.message(:conflict),
+            details: { id: id }
+          )
         when :store_invalid, :unavailable
           raise HttpError.new(503, result.status, Errors.message(result.status))
         else
@@ -514,8 +550,8 @@ module Tasks
 
       # A parameterless action POST (complete/archive) accepts no request body;
       # a non-empty one is rejected the same way DELETE rejects a body.
-      def reject_action_body!(request)
-        reject_delete_body!(request, subject: "Project action requests")
+      def reject_action_body!(request, subject: "Project action requests")
+        reject_delete_body!(request, subject: subject)
       end
 
       def normalize_patch_changes(body, current:, context:)
