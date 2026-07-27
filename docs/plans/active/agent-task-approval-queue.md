@@ -52,7 +52,8 @@ This tranche does not include:
 - task assignment/delegation metadata.
 
 Delegation is a deliberate follow-on described under
-[Delegation boundary](#delegation-boundary).
+[Delegation boundary](#delegation-boundary) and specified further in
+[Agent task delegation and heartbeat pickup](agent-task-delegation.md).
 
 ## Product contract
 
@@ -430,6 +431,12 @@ an accepted task should imply `WAITING`. That field would remain meaningful
 across lifecycle transitions, while `WAITING` describes current actionability.
 The proposal design leaves room for that without sharing implementation beyond
 the existing typed mutation and TUI detail seams.
+
+The follow-on plan now lives at
+[Agent task delegation and heartbeat pickup](agent-task-delegation.md). It
+defines owner-controlled `refine`, `research`, and `implement` modes plus an
+atomic heartbeat claim/lease boundary. Those details remain outside this
+approval-queue tranche.
 
 ## Implementation phases
 
