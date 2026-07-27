@@ -63,6 +63,26 @@ class TestSchemaV2 < Minitest::Test
     end
   end
 
+  # Delegation is additive like PROPOSED: absent means not delegated, so there
+  # is no backfill, no migration, and no version bump. The compatibility cost is
+  # one-directional — an older binary fails `check` on a store that uses it.
+  def test_delegation_is_additive_and_does_not_bump_the_schema_version
+    assert_equal 2, Tasks::Format::VERSION
+
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, FIXTURE)
+      store = Tasks::Store.new(org: org, archive: archive, journal_dir: File.join(dir, "journal"))
+      assert store.delegate_task!(FIX[:plants], kind: "agent", mode: "research").ok?
+
+      assert_equal 2, JSON.parse(File.foreach(org).first).fetch("version")
+      assert Tasks::Check.check(org).ok?
+      assert_equal :already_current, store.migrate_schema!.status
+      refute store.checked_read_snapshot.migration_required?
+    end
+  end
+
   def test_v1_migration_changes_only_meta_and_establishes_backups
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")

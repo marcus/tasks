@@ -7,6 +7,7 @@ require "set"
 require_relative "atomic"
 require_relative "check"
 require_relative "create_task"
+require_relative "delegation"
 require_relative "delete_task"
 require_relative "edit_snapshot"
 require_relative "format"
@@ -815,6 +816,74 @@ module Tasks
           MutationResult.new(status: :unavailable, snapshot: current,
                              errors: [safe_patch_error(e)], rolled_back: true)
         end
+      end
+    end
+
+    # -- delegation ------------------------------------------------------------
+    #
+    # Five primitives over the optional `delegation` object (see
+    # Tasks::Delegation). Each is one checked transaction with the same shape as
+    # decide_proposal!: the mutation lock, a preflight Check, an optional `own`
+    # revision precondition, an atomic write, post-write rollback, one journal
+    # entry, and a reload. Refusals are typed MutationResults, never exceptions:
+    # :invalid for a precondition the caller can fix, :conflict for a race it
+    # lost (a held claim, a worker mismatch), :no_change for an idempotent
+    # repeat that must not burn an undo slot.
+    #
+    # The single hard guarantee is single pickup: claim is a compare-and-set
+    # from `ready` to `claimed` performed under the lock against freshly read
+    # bytes, so two workers can never both believe they hold one task. Reads
+    # never grant ownership.
+
+    # Delegate to a person (`kind: "human"` + email assignee) or to the agent
+    # pool (`kind: "agent"` + mode), replacing any delegation already present.
+    # Only accepted live tasks qualify; PROPOSED, closed, and archived tasks
+    # refuse with an error naming the state. A live claim refuses outright —
+    # the owner revokes explicitly with undelegate! rather than yanking a
+    # worker's task out from under it. `work_ref` survives a replacement of the
+    # same kind (a mode update keeps pointing at the same work) and is dropped
+    # when the delegation changes kind.
+    def delegate_task!(id, kind:, mode: nil, assignee: nil, expected_revision: nil)
+      delegation_mutation!(id, expected_revision: expected_revision) do |rec|
+        plan_delegate(rec, kind: kind, mode: mode, assignee: assignee)
+      end
+    end
+
+    # Clear the marker: undelegate, or revoke a live claim. Revocation wins —
+    # afterwards the stale worker's release/work_ref fail their worker match.
+    # Allowed whatever the delegation's status and whatever the task's state
+    # (clearing provenance from a closed task is an owner's prerogative);
+    # an undelegated task is :no_change.
+    def undelegate_task!(id, expected_revision: nil)
+      delegation_mutation!(id, expected_revision: expected_revision) { |rec| plan_undelegate(rec) }
+    end
+
+    # Atomic pickup: compare-and-set {kind agent, status ready} to
+    # {status claimed, assignee: worker}. An already-claimed task returns
+    # :conflict naming the current holder and its `at`, including when the
+    # holder is this same worker — a claim is granted once, never re-granted.
+    def claim_task!(id, worker:, expected_revision: nil)
+      delegation_mutation!(id, expected_revision: expected_revision) do |rec|
+        plan_claim(rec, worker: worker)
+      end
+    end
+
+    # Hand a claim back: claimed → ready, dropping the assignee. A worker must
+    # supply the id that matches the live claim; the owner passes force: true
+    # (no worker id) to clear a stale claim without undelegating.
+    def release_task!(id, worker: nil, force: false, expected_revision: nil)
+      delegation_mutation!(id, expected_revision: expected_revision) do |rec|
+        plan_release(rec, worker: worker, force: force)
+      end
+    end
+
+    # Record where the work lives (ticket, PR, brief, session). One reference:
+    # setting overwrites, and nil clears it. The owner (worker: nil) may always
+    # set it; a worker only while its claim matches. Not a status transition,
+    # so `at` is left alone.
+    def set_work_ref!(id, work_ref, worker: nil, expected_revision: nil)
+      delegation_mutation!(id, expected_revision: expected_revision) do |rec|
+        plan_work_ref(rec, work_ref: work_ref, worker: worker)
       end
     end
 
@@ -1808,6 +1877,10 @@ module Tasks
       # cannot invalidate revisions.
       own_fields << [:scheduled_time, revision_value(rec["scheduled_time"])]
       own_fields << [:deadline_time, revision_value(rec["deadline_time"])]
+      # Delegation is an own-field change (ADR-0007), so an HTTP If-Match claim
+      # gets its compare-and-set from the same revision component every other
+      # field edit uses — and a stale editor cannot overwrite a fresh claim.
+      own_fields << [:delegation, revision_value(rec[Delegation::FIELD])]
       own = semantic_digest(own_fields)
       location = location_fingerprint(records, ri, siblings_by_parent: siblings_by_parent)
       lifecycle = lifecycle_fingerprint(records, ri)
@@ -2445,6 +2518,11 @@ module Tasks
       if PROPOSED_STATES.include?(value) && Recur.cookie?(rec["recur"])
         return patch_invalid("remove recurrence before setting PROPOSED")
       end
+      # Approval and delegation are independent owner decisions, and an
+      # undecided proposal carries neither a claim nor an assignee.
+      if PROPOSED_STATES.include?(value) && Delegation.object?(rec[Delegation::FIELD])
+        return patch_invalid("undelegate before setting PROPOSED")
+      end
       if PROPOSED_STATES.include?(value) && !PROPOSED_STATES.include?(from)
         rj = subtree_end(records, ri)
         accepted_descendant = records[(ri + 1)...rj].find do |descendant|
@@ -2481,6 +2559,7 @@ module Tasks
         rec["tags"] = semantic_tags(rec) - [DEFER_TAG]
         replace_optional(rec, "tags", rec["tags"])
         rec["closed"] ||= today.iso8601
+        settle_delegation_on_close(rec)
         if value == "DONE"
           cascaded_ids = close_open_descendants(records, ri, today: today)
           touched_ids.concat(cascaded_ids)
@@ -2560,6 +2639,273 @@ module Tasks
       true
     rescue ArgumentError, Timezones::Error
       false
+    end
+
+    # -- delegation ------------------------------------------------------------
+
+    # The shared transaction behind every delegation primitive. The block gets
+    # the target record from a DETACHED copy and returns a plan hash:
+    # {status: :ok, label:, summary:, no_change: false} to write, or a typed
+    # refusal ({status: :invalid | :conflict, errors:, summary:}) that writes
+    # nothing. Because the block runs under the mutation lock against records
+    # read fresh inside it, a compare-and-set the block performs is atomic
+    # across processes.
+    def delegation_mutation!(id, expected_revision:)
+      with_lock do
+        @last_rollback = nil
+        before = snapshot
+        current = nil
+        if schema_migration_required?
+          return MutationResult.new(status: :migration_required, errors: ["run `tasks migrate`"])
+        end
+        begin
+          preflight = Check.check(@org)
+          unless preflight.ok?
+            return MutationResult.new(status: :store_invalid, errors: preflight.errors.map(&:last))
+          end
+          unless id.is_a?(String) && !id.empty?
+            return MutationResult.new(status: :invalid, errors: ["task id is required"])
+          end
+          if !expected_revision.nil? && revision_components(expected_revision).nil?
+            return MutationResult.new(status: :invalid, errors: ["malformed expected_revision"])
+          end
+
+          records = fresh_records(@org)
+          ri = locate_stable_index(records, id)
+          return MutationResult.new(status: :not_found) unless ri
+          current = build_edit_snapshot(records, ri)
+          # A delegation change is an `own`-field change (ADR-0007), so an
+          # If-Match claim is guarded by exactly the component that carries it.
+          if expected_revision &&
+             revision_components(current.revision)[:own] != revision_components(expected_revision)[:own]
+            return MutationResult.new(status: :stale, snapshot: current)
+          end
+
+          working_records = duplicate_records(records)
+          planned = yield(working_records[ri])
+          unless planned[:status] == :ok
+            return MutationResult.new(status: planned[:status], snapshot: current,
+                                      errors: planned[:errors] || [], summary: planned[:summary])
+          end
+          if planned[:no_change]
+            return MutationResult.new(status: :no_change, snapshot: current, summary: planned[:summary])
+          end
+          # Never write a marker the schema would reject: Check runs post-write
+          # and would roll the whole file back, which is a far worse diagnostic
+          # than the shape error itself.
+          if working_records[ri].key?(Delegation::FIELD)
+            shape = Delegation.errors(working_records[ri][Delegation::FIELD])
+            return MutationResult.new(status: :invalid, snapshot: current, errors: shape) unless shape.empty?
+          end
+          Format.dump(working_records)
+        rescue JSON::GeneratorError, EncodingError, ArgumentError => e
+          return MutationResult.new(status: :invalid, snapshot: current, errors: [safe_patch_error(e)])
+        end
+
+        begin
+          write_records(@org, working_records)
+          if (reason = post_write_failure)
+            @last_rollback = reason
+            restore(before)
+            return MutationResult.new(status: :store_invalid, snapshot: restored_edit_snapshot(id),
+                                      errors: [reason], rolled_back: true)
+          end
+          after = snapshot
+          @journal.record(label: planned[:label], before: before, after: after)
+          reload!
+          fresh_ri = locate_stable_index(@records, id)
+          MutationResult.new(
+            status: :ok,
+            snapshot: fresh_ri && build_edit_snapshot(@records, fresh_ri),
+            read_snapshot: @read_snapshot,
+            store_revision: store_revision_for(after),
+            touched_ids: [id],
+            summary: planned[:summary]
+          )
+        rescue StandardError => e
+          @last_rollback = safe_patch_error(e)
+          restore(before)
+          MutationResult.new(status: :unavailable, snapshot: current,
+                             errors: [safe_patch_error(e)], rolled_back: true)
+        end
+      end
+    end
+
+    def delegation_now = Delegation.stamp(@now.call)
+
+    def delegation_refusal(status, message, summary = nil)
+      { status: status, errors: [message], summary: summary }
+    end
+
+    # Only accepted live work is delegable: a proposal is an undecided
+    # suggestion, a closed task's marker is inert provenance, and an archived
+    # record is history. Each refusal names the state it is refusing.
+    def delegation_ineligible(rec, verb)
+      state = rec["archived"] ? "archived" : rec["state"]
+      return nil if !rec["archived"] && OPEN_STATES.include?(rec["state"])
+
+      delegation_refusal(:invalid, "task is #{state}; only accepted live tasks can be #{verb}")
+    end
+
+    def delegation_held(rec, action, message)
+      existing = rec[Delegation::FIELD]
+      delegation_refusal(:conflict, message,
+                         { action: action, holder: existing["assignee"], at: existing["at"] })
+    end
+
+    def plan_delegate(rec, kind:, mode:, assignee:)
+      kind = kind.to_s
+      mode = mode.nil? ? nil : utf8(mode.to_s).strip
+      assignee = assignee.nil? ? nil : utf8(assignee.to_s).strip
+      invalid = delegate_input_error(kind, mode, assignee)
+      return delegation_refusal(:invalid, invalid) if invalid
+      ineligible = delegation_ineligible(rec, "delegated")
+      return ineligible if ineligible
+
+      existing = rec[Delegation::FIELD]
+      if Delegation.claimed?(existing)
+        return delegation_held(rec, :delegate,
+                               "already claimed by #{existing["assignee"]} at #{existing["at"]}; " \
+                               "undelegate to revoke the claim first")
+      end
+
+      # A mode update or a new assignee of the same kind still points at the
+      # same work; a human <-> agent replacement is a different delegation.
+      retained = existing["work_ref"] if Delegation.object?(existing) && existing["kind"] == kind
+      candidate = Delegation.ordered({
+        "kind" => kind, "mode" => mode, "assignee" => assignee, "at" => delegation_now,
+        "status" => kind == "human" ? Delegation::DELEGATED : Delegation::READY,
+        "work_ref" => retained,
+      })
+      summary = { action: :delegate, delegation: candidate, previous: existing }
+      if delegation_settled?(existing, candidate)
+        return { status: :ok, no_change: true,
+                 summary: summary.merge(delegation: existing) }
+      end
+
+      rec[Delegation::FIELD] = candidate
+      label = kind == "human" ? "delegate → #{assignee}: #{rec["title"]}" : "delegate #{mode}: #{rec["title"]}"
+      { status: :ok, label: label, summary: summary }
+    end
+
+    def delegate_input_error(kind, mode, assignee)
+      unless Delegation::KINDS.include?(kind)
+        return "delegation kind #{kind.inspect} must be #{Delegation::KINDS.join(" or ")}"
+      end
+      if kind == "human"
+        return "a human delegation has no mode" if mode
+        unless Delegation.email?(assignee)
+          return "assignee #{assignee.inspect} must be an email address " \
+                 "(contains @, no whitespace, at most #{Delegation::ASSIGNEE_LIMIT} chars)"
+        end
+      else
+        unless Delegation::MODES.include?(mode)
+          return "mode #{mode.inspect} must be one of #{Delegation::MODES.join("/")}"
+        end
+        return "an agent delegation is claimed by a worker, not assigned" if assignee
+      end
+      nil
+    end
+
+    # Two delegations describe the same state when only the transition stamp
+    # differs — re-delegating at the current mode must not burn an undo slot.
+    def delegation_settled?(existing, candidate)
+      return false unless Delegation.object?(existing)
+
+      existing.reject { |key, _| key == "at" } == candidate.reject { |key, _| key == "at" }
+    end
+
+    def plan_undelegate(rec)
+      existing = rec[Delegation::FIELD]
+      unless Delegation.object?(existing)
+        return { status: :ok, no_change: true, summary: { action: :undelegate, previous: nil } }
+      end
+
+      rec.delete(Delegation::FIELD)
+      { status: :ok, label: "undelegate: #{rec["title"]}",
+        summary: { action: :undelegate, previous: existing } }
+    end
+
+    def plan_claim(rec, worker:)
+      worker = worker.nil? ? nil : utf8(worker.to_s).strip
+      unless Delegation.worker?(worker)
+        return delegation_refusal(:invalid, "worker id #{worker.inspect} must be non-empty, " \
+                                            "whitespace-free, and at most #{Delegation::ASSIGNEE_LIMIT} chars")
+      end
+      ineligible = delegation_ineligible(rec, "claimed")
+      return ineligible if ineligible
+
+      existing = rec[Delegation::FIELD]
+      unless Delegation.agent?(existing)
+        return delegation_refusal(:invalid, "task is not delegated to the agent pool")
+      end
+      unless Delegation.ready?(existing)
+        return delegation_held(rec, :claim,
+                               "already claimed by #{existing["assignee"]} at #{existing["at"]}")
+      end
+
+      claimed = Delegation.ordered(existing.merge("status" => Delegation::CLAIMED,
+                                                  "assignee" => worker, "at" => delegation_now))
+      rec[Delegation::FIELD] = claimed
+      { status: :ok, label: "claim: #{rec["title"]}",
+        summary: { action: :claim, worker: worker, delegation: claimed, previous: existing } }
+    end
+
+    def plan_release(rec, worker:, force:)
+      worker = worker.nil? ? nil : utf8(worker.to_s).strip
+      existing = rec[Delegation::FIELD]
+      unless Delegation.claimed?(existing)
+        return delegation_refusal(:invalid, "task is not claimed")
+      end
+      ineligible = delegation_ineligible(rec, "released")
+      return ineligible if ineligible
+      unless force || worker == existing["assignee"]
+        return delegation_held(rec, :release,
+                               "claim is held by #{existing["assignee"]}, not #{worker.inspect}")
+      end
+
+      released = Delegation.ordered(existing.merge("status" => Delegation::READY,
+                                                   "assignee" => nil, "at" => delegation_now))
+      rec[Delegation::FIELD] = released
+      { status: :ok, label: "release: #{rec["title"]}",
+        summary: { action: :release, released_from: existing["assignee"], forced: !!force,
+                   delegation: released, previous: existing } }
+    end
+
+    def plan_work_ref(rec, work_ref:, worker:)
+      existing = rec[Delegation::FIELD]
+      return delegation_refusal(:invalid, "task is not delegated") unless Delegation.object?(existing)
+
+      unless worker.nil?
+        held_by = utf8(worker.to_s).strip
+        unless Delegation.claimed?(existing) && existing["assignee"] == held_by
+          return delegation_held(rec, :work_ref,
+                                 "a work reference from a worker requires a matching claim")
+        end
+      end
+
+      clear = work_ref.nil? || work_ref == :off
+      reference = clear ? nil : utf8(work_ref.to_s).strip
+      unless clear
+        problems = Delegation.work_ref_errors("work_ref" => reference)
+        return delegation_refusal(:invalid, problems.first) unless problems.empty?
+      end
+
+      candidate = Delegation.ordered(existing.merge("work_ref" => reference))
+      summary = { action: :work_ref, work_ref: reference, delegation: candidate, previous: existing }
+      return { status: :ok, no_change: true, summary: summary } if candidate == existing
+
+      rec[Delegation::FIELD] = candidate
+      label = clear ? "clear work ref: #{rec["title"]}" : "work ref → #{reference}: #{rec["title"]}"
+      { status: :ok, label: label, summary: summary }
+    end
+
+    # Closing a task that was merely QUEUED for an agent clears the marker —
+    # nothing happened yet, so there is no provenance to keep. A live claim or a
+    # human delegation is retained verbatim: who held the task and where the
+    # work lives is exactly what should survive into the archive.
+    def settle_delegation_on_close(rec)
+      rec.delete(Delegation::FIELD) if Delegation.ready?(rec[Delegation::FIELD])
     end
 
     # -- id minting ------------------------------------------------------------
@@ -2642,6 +2988,7 @@ module Tasks
         rec["closed"] = closed_on
         rec["tags"] = (rec["tags"] || []) - [DEFER_TAG]
         rec.delete("recur")
+        settle_delegation_on_close(rec)
         touched << rec["id"]
       end
     end

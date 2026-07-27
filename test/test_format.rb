@@ -78,6 +78,50 @@ class TestFormat < Minitest::Test
                  F.dump_record({ type: "meta", version: 2 })
   end
 
+  # -- nested key order ------------------------------------------------------
+
+  def test_delegation_sits_between_recur_and_closed
+    assert_equal %w[recur delegation closed],
+                 F::KEY_ORDER[F::KEY_ORDER.index("recur"), 3]
+  end
+
+  def test_delegation_emits_in_fixed_nested_order_with_absent_keys_omitted
+    rec = {
+      "type" => "task", "id" => "aaaa0001", "state" => "DONE", "title" => "T",
+      "closed" => "2026-07-27", "recur" => nil,
+      "delegation" => { "work_ref" => "https://example.com/pr/42", "at" => "2026-07-27T18:04:11Z",
+                        "assignee" => "cc/fable5/aaaa1111", "status" => "claimed",
+                        "mode" => "implement", "kind" => "agent" },
+    }
+    assert_equal '{"type":"task","id":"aaaa0001","state":"DONE","title":"T",' \
+                 '"delegation":{"kind":"agent","mode":"implement","status":"claimed",' \
+                 '"assignee":"cc/fable5/aaaa1111","at":"2026-07-27T18:04:11Z",' \
+                 '"work_ref":"https://example.com/pr/42"},"closed":"2026-07-27"}',
+                 F.dump_record(rec)
+  end
+
+  def test_delegation_omits_absent_nested_values_and_the_empty_object
+    ready = { "type" => "task", "title" => "T",
+              "delegation" => { "kind" => "agent", "mode" => "research", "status" => "ready",
+                                "assignee" => nil, "at" => "2026-07-27T18:04:11Z",
+                                "work_ref" => "" } }
+    assert_equal '{"type":"task","title":"T","delegation":{"kind":"agent","mode":"research",' \
+                 '"status":"ready","at":"2026-07-27T18:04:11Z"}}',
+                 F.dump_record(ready)
+    assert_equal '{"type":"task","title":"T"}',
+                 F.dump_record({ "type" => "task", "title" => "T", "delegation" => {} })
+    assert_equal '{"type":"task","title":"T"}',
+                 F.dump_record({ "type" => "task", "title" => "T", "delegation" => nil })
+  end
+
+  def test_delegation_round_trips_through_parse
+    rec = { "type" => "task", "id" => "aaaa0001", "state" => "NEXT", "title" => "T",
+            "delegation" => { "kind" => "human", "status" => "delegated",
+                              "assignee" => "pat@example.com", "at" => "2026-07-27T18:04:11Z" } }
+    parsed = F.parse(F.dump([rec])).records.first
+    assert_equal rec, parsed.reject { |k, _| k == "line" }
+  end
+
   # -- unknown keys ----------------------------------------------------------
 
   def test_unknown_keys_emitted_after_known_in_insertion_order

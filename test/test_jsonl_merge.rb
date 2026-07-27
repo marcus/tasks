@@ -134,6 +134,169 @@ class TestJsonlMerge < Minitest::Test
     assert_includes result.events.first[:conflicts], "scheduled"
   end
 
+  # -- delegation ------------------------------------------------------------
+
+  def ready(mode: "research", at: "2026-07-27T18:00:00Z", **extra)
+    { "kind" => "agent", "mode" => mode, "status" => "ready", "at" => at }
+      .merge(extra.transform_keys(&:to_s))
+  end
+
+  def claim(assignee, at:, mode: "research", **extra)
+    { "kind" => "agent", "mode" => mode, "status" => "claimed", "assignee" => assignee, "at" => at }
+      .merge(extra.transform_keys(&:to_s))
+  end
+
+  def delegation_of(records, id) = find(records, id)["delegation"]
+
+  def test_one_sided_delegation_change_wins_without_conflict
+    ours = change(base_records, "10000002", tags: ["@computer", "travel"], updated: HOME_STAMP)
+    theirs = change(base_records, "10000002", delegation: ready, updated: WORK_STAMP)
+
+    records, result = merge(base_records, ours, theirs)
+
+    assert_equal ready, delegation_of(records, "10000002")
+    assert_empty result.events.first[:conflicts]
+  end
+
+  def test_concurrent_claims_resolve_to_the_earlier_at_symmetrically
+    base = change(base_records, "10000002", delegation: ready)
+    early = claim("worker/zzz", at: "2026-07-27T18:04:11Z")
+    late = claim("worker/aaa", at: "2026-07-27T18:09:00Z")
+    ours = change(base, "10000002", delegation: late, updated: HOME_STAMP)
+    theirs = change(base, "10000002", delegation: early, updated: WORK_STAMP)
+
+    records, result = merge(base, ours, theirs)
+    reverse, = merge(base, theirs, ours)
+
+    assert_equal early, delegation_of(records, "10000002"), "first claim holds the task"
+    assert_equal Tasks::Format.dump(records), Tasks::Format.dump(reverse)
+    assert_includes result.events.first[:conflicts], "delegation"
+    assert_equal :earlier_claim, result.events.first[:delegation][:reason]
+    assert_includes result.log_lines.join("\n"), "delegation=earlier_claim holder=worker/zzz"
+  end
+
+  def test_simultaneous_claims_tiebreak_on_the_smaller_assignee
+    base = change(base_records, "10000002", delegation: ready)
+    at = "2026-07-27T18:04:11Z"
+    ours = change(base, "10000002", delegation: claim("worker/bbb", at: at), updated: HOME_STAMP)
+    theirs = change(base, "10000002", delegation: claim("worker/aaa", at: at), updated: WORK_STAMP)
+
+    records, = merge(base, ours, theirs)
+    reverse, = merge(base, theirs, ours)
+
+    assert_equal "worker/aaa", delegation_of(records, "10000002")["assignee"]
+    assert_equal Tasks::Format.dump(records), Tasks::Format.dump(reverse)
+  end
+
+  def test_delegation_is_taken_whole_never_field_by_field
+    base = change(base_records, "10000002", delegation: ready)
+    ours = change(base, "10000002",
+                  delegation: claim("worker/zzz", at: "2026-07-27T18:04:11Z", mode: "implement",
+                                    work_ref: "https://example.com/ours"),
+                  updated: HOME_STAMP)
+    theirs = change(base, "10000002",
+                    delegation: claim("worker/aaa", at: "2026-07-27T18:20:00Z", mode: "refine",
+                                      work_ref: "https://example.com/theirs"),
+                    updated: WORK_STAMP)
+
+    records, = merge(base, ours, theirs)
+    merged = delegation_of(records, "10000002")
+
+    assert_equal ours.find { |record| record["id"] == "10000002" }["delegation"], merged,
+                 "the winning side supplies every field of the object"
+  end
+
+  def test_owner_undelegate_beats_a_concurrent_claim_in_either_direction
+    base = change(base_records, "10000002", delegation: ready)
+    revoked = change(base, "10000002", delegation: nil, updated: HOME_STAMP)
+    claimed = change(base, "10000002", delegation: claim("worker/aaa", at: "2026-07-27T18:04:11Z"),
+                     updated: WORK_STAMP)
+
+    forward, result = merge(base, revoked, claimed)
+    reverse, = merge(base, claimed, revoked)
+
+    refute find(forward, "10000002").key?("delegation"), "revocation wins"
+    assert_equal Tasks::Format.dump(forward), Tasks::Format.dump(reverse)
+    assert_equal :removal_wins, result.events.first[:delegation][:reason]
+  end
+
+  def test_owner_undelegate_against_an_unchanged_side_simply_removes_it
+    base = change(base_records, "10000002", delegation: ready)
+    revoked = change(base, "10000002", delegation: nil, updated: HOME_STAMP)
+
+    records, result = merge(base, revoked, base)
+
+    refute find(records, "10000002").key?("delegation")
+    refute_includes Array(result.events.first[:conflicts]), "delegation"
+  end
+
+  def test_non_claim_delegation_conflicts_fall_back_to_last_write_wins
+    base = change(base_records, "10000002", delegation: ready(mode: "refine"))
+    ours = change(base, "10000002", delegation: ready(mode: "implement", at: "2026-07-27T19:00:00Z"),
+                  updated: HOME_STAMP)
+    theirs = change(base, "10000002",
+                    delegation: { "kind" => "human", "status" => "delegated",
+                                  "assignee" => "pat@example.com", "at" => "2026-07-27T20:00:00Z" },
+                    updated: WORK_STAMP)
+
+    records, result = merge(base, ours, theirs)
+    reverse, = merge(base, theirs, ours)
+
+    assert_equal "human", delegation_of(records, "10000002")["kind"], "the newer stamp wins"
+    assert_equal Tasks::Format.dump(records), Tasks::Format.dump(reverse)
+    assert_equal :last_write, result.events.first[:delegation][:reason]
+  end
+
+  def test_close_against_claim_keeps_provenance_but_drops_a_ready_marker
+    base = change(base_records, "10000002", delegation: ready)
+    claimed = claim("worker/aaa", at: "2026-07-27T18:04:11Z", work_ref: "https://example.com/pr/42")
+    ours = change(base, "10000002", state: "DONE", closed: "2026-07-27", updated: HOME_STAMP)
+    theirs = change(base, "10000002", delegation: claimed, updated: WORK_STAMP)
+
+    records, = merge(base, ours, theirs)
+    task = find(records, "10000002")
+    assert_equal "DONE", task["state"]
+    assert_equal claimed, task["delegation"], "who did it and where survives the close"
+
+    # The same close against an untouched ready marker records nothing.
+    unclaimed, result = merge(base, ours, base)
+    refute find(unclaimed, "10000002").key?("delegation")
+    assert_equal :cleared_on_close, result.events.first[:delegation][:reason]
+  end
+
+  # Both sides are individually legal; only their combination is not, and the
+  # merge must normalize rather than abort over it.
+  def test_delegation_against_a_concurrent_proposal_is_dropped_not_fatal
+    base = change(base_records, "10000002", delegation: nil)
+    ours = change(base, "10000002", delegation: ready, updated: HOME_STAMP)
+    theirs = change(base, "10000002", state: "PROPOSED", updated: WORK_STAMP)
+
+    records, result = merge(base, ours, theirs)
+    task = find(records, "10000002")
+
+    assert_equal "PROPOSED", task["state"]
+    refute task.key?("delegation")
+    assert_equal :cleared_on_proposal, result.events.first[:delegation][:reason]
+    assert Tasks::Check.check_text(result.text).ok?
+  end
+
+  def test_merged_delegation_still_validates_and_lands_in_canonical_order
+    base = change(base_records, "10000002", delegation: ready)
+    ours = change(base, "10000002",
+                  delegation: claim("worker/aaa", at: "2026-07-27T18:04:11Z",
+                                    work_ref: "https://example.com/pr/42"),
+                  updated: HOME_STAMP)
+    theirs = change(base, "10000002", title: "Book the Sixt car", updated: WORK_STAMP)
+
+    _records, result = merge(base, ours, theirs)
+
+    assert Tasks::Check.check_text(result.text).ok?
+    assert_includes result.text,
+                    %("delegation":{"kind":"agent","mode":"research","status":"claimed",) +
+                    %("assignee":"worker/aaa","at":"2026-07-27T18:04:11Z",) +
+                    %("work_ref":"https://example.com/pr/42"})
+  end
+
   def test_v1_merge_base_between_two_migrated_sides_merges_cleanly
     v1_base = copy(base_records)
     v1_base.first["version"] = 1

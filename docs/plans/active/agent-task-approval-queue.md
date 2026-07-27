@@ -433,10 +433,10 @@ The proposal design leaves room for that without sharing implementation beyond
 the existing typed mutation and TUI detail seams.
 
 The follow-on plan now lives at
-[Agent task delegation and heartbeat pickup](agent-task-delegation.md). It
-defines owner-controlled `refine`, `research`, and `implement` modes plus an
-atomic heartbeat claim/lease boundary. Those details remain outside this
-approval-queue tranche.
+[Task delegation: humans, agents, and heartbeat pickup](agent-task-delegation.md).
+It defines human delegation by email, owner-controlled `refine`, `research`,
+and `implement` agent modes, and an atomic lease-free heartbeat claim. Those
+details remain outside this approval-queue tranche.
 
 ## Implementation phases
 

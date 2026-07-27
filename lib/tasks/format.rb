@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require_relative "delegation"
 
 module Tasks
   # The JSONL store's serialization layer, and the SOLE owner of the on-disk
@@ -25,9 +26,19 @@ module Tasks
     # (forward-compat), and an older reader round-trips them untouched.
     KEY_ORDER = %w[
       type id parent state priority title tags scheduled scheduled_time
-      deadline deadline_time recur
+      deadline deadline_time recur delegation
       closed archived body updated
     ].freeze
+
+    # Nested objects with a fixed key order of their own. Emission follows the
+    # same rules one level down — declared order first, absent entries omitted
+    # — so a delegation or a time value produces one canonical line whichever
+    # writer built it.
+    NESTED_KEY_ORDER = {
+      "scheduled_time" => %w[local timezone fold].freeze,
+      "deadline_time" => %w[local timezone fold].freeze,
+      Delegation::FIELD => Delegation::KEY_ORDER,
+    }.freeze
 
     # The physical 1-based line number `parse` stamps onto each record so the
     # Store can resolve `L<n>` refs and reselect in the TUI. It is bookkeeping,
@@ -45,7 +56,7 @@ module Tasks
       ordered = {}
       KEY_ORDER.each do |k|
         next unless record.key?(k)
-        value = temporal_metadata(k, record[k])
+        value = nested_object(k, record[k])
         ordered[k] = value unless omit?(value)
       end
       record.each do |k, v|
@@ -110,10 +121,15 @@ module Tasks
       record.each_key.all? { |k| k.is_a?(String) } ? record : record.transform_keys(&:to_s)
     end
 
-    def temporal_metadata(key, value)
-      return value unless %w[scheduled_time deadline_time].include?(key) && value.is_a?(Hash)
+    # Order one nested object's keys, dropping absent entries. A value with no
+    # declared nested order — or one that isn't an object at all — passes
+    # through untouched, so a malformed record still serializes for Check to
+    # report rather than raising here.
+    def nested_object(key, value)
+      order = NESTED_KEY_ORDER[key]
+      return value unless order && value.is_a?(Hash)
       source = stringify(value)
-      %w[local timezone fold].each_with_object({}) do |child, ordered|
+      order.each_with_object({}) do |child, ordered|
         ordered[child] = source[child] if source.key?(child) && !omit?(source[child])
       end
     end

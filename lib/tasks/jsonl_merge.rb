@@ -2,6 +2,7 @@
 
 require "set"
 require_relative "check"
+require_relative "delegation"
 require_relative "format"
 require_relative "update_stamp"
 
@@ -27,7 +28,10 @@ module Tasks
     # A date and its nested time metadata are one logical value; resolving them
     # independently could attach one side's clock/zone to the other side's date.
     TEMPORAL_PAIRS = { "scheduled" => "scheduled_time", "deadline" => "deadline_time" }.freeze
-    SPECIAL_FIELDS = (EXCLUDED_FIELDS + STATE_FIELDS + Set["tags", "body"] +
+    # The delegation marker resolves as ONE object, never field by field: a
+    # mixed record could name one worker's id beside another's claim stamp,
+    # which is exactly the two-owner state the design forbids.
+    SPECIAL_FIELDS = (EXCLUDED_FIELDS + STATE_FIELDS + Set["tags", "body", Delegation::FIELD] +
                       TEMPORAL_PAIRS.keys + TEMPORAL_PAIRS.values).freeze
     TERMINAL_STATES = Check::CLOSED_STATES.to_set.freeze
 
@@ -240,7 +244,11 @@ module Tasks
         assign(merged, "body", body)
       end
 
+      merge_delegation!(merged, base, ours, theirs, event) if keys.include?(Delegation::FIELD)
       merge_state!(merged, base, ours, theirs, event) if keys.include?("state")
+      # Runs after both, because the rule reads the resolved state and rewrites
+      # the resolved delegation.
+      settle_delegation_state!(merged, event)
       updated = UpdateStamp.max(value_of(ours, "updated"), value_of(theirs, "updated"))
       assign(merged, "updated", updated)
 
@@ -296,6 +304,77 @@ module Tasks
 
       event[:conflicts] << "body"
       lww_side(ours, theirs, event, "body") == :ours ? ours_value : theirs_value
+    end
+
+    # Resolve the delegation marker as ONE atomic value: the merged record takes
+    # exactly one side's whole object, so a claim can never be spliced together
+    # from two devices. Beyond the ordinary three-way rules:
+    #
+    # - an owner's removal (undelegate) beats any concurrent change, because
+    #   revocation is the owner's override and must not be resurrected by a
+    #   worker's offline claim;
+    # - two concurrent claims resolve to the earlier `at`, tiebroken by the
+    #   lexicographically smaller assignee — deterministic and independent of
+    #   which side is "ours", so both clones converge on one holder and the
+    #   loser discovers it at its next worker-matched operation;
+    # - anything else is an ordinary conflict decided by the file's usual
+    #   last-write-wins rule.
+    def merge_delegation!(merged, base, ours, theirs, event)
+      field = Delegation::FIELD
+      base_value = value_of(base, field)
+      ours_value = value_of(ours, field)
+      theirs_value = value_of(theirs, field)
+
+      winner, reason =
+        if ours_value == theirs_value then [ours_value, nil]
+        elsif ours_value == base_value then [theirs_value, nil]
+        elsif theirs_value == base_value then [ours_value, nil]
+        elsif ours_value.nil? || theirs_value.nil? then [nil, :removal_wins]
+        elsif Delegation.claimed?(ours_value) && Delegation.claimed?(theirs_value)
+          [earlier_claim(ours_value, theirs_value), :earlier_claim]
+        else
+          [lww_side(ours, theirs, event, field) == :ours ? ours_value : theirs_value, :last_write]
+        end
+
+      if reason
+        event[:conflicts] << field
+        event[:delegation] = { reason: reason, holder: winner && winner["assignee"] }
+      end
+      assign(merged, field, winner)
+    end
+
+    # First claim wins. The JSON tail keeps the choice symmetric even for two
+    # objects that agree on holder and instant but differ elsewhere.
+    def earlier_claim(ours_value, theirs_value)
+      [ours_value, theirs_value].min_by do |value|
+        [value["at"].to_s, value["assignee"].to_s, JSON.generate(Delegation.ordered(value))]
+      end
+    end
+
+    # Reconcile the resolved marker with the resolved state, because the two
+    # were decided independently and only some pairings are legal:
+    #
+    # - closed keeps a claim or a human delegation verbatim (who did it, and
+    #   where), but drops a marker still merely `ready` — nothing happened, the
+    #   same normalization a local close performs;
+    # - a task the other side turned back into a proposal carries no delegation
+    #   at all.
+    #
+    # Without this the merge could emit a record Check rejects, failing the
+    # whole merge over a pair of individually legal sides.
+    def settle_delegation_state!(merged, event)
+      delegation = merged[Delegation::FIELD]
+      return unless Delegation.object?(delegation)
+
+      reason = if Check::PROPOSED_STATES.include?(merged["state"]) then :cleared_on_proposal
+               elsif TERMINAL_STATES.include?(merged["state"]) && Delegation.ready?(delegation)
+                 :cleared_on_close
+               end
+      return unless reason
+
+      merged.delete(Delegation::FIELD)
+      prior = event[:delegation]
+      event[:delegation] = prior ? prior.merge(cleared: reason) : { reason: reason }
     end
 
     def merge_state!(merged, base, ours, theirs, event)
@@ -410,6 +489,10 @@ module Tasks
       details << "conflicts=#{event[:conflicts].uniq.join(",")}" unless Array(event[:conflicts]).empty?
       unless Array(event[:low_confidence]).empty?
         details << "low-confidence=#{event[:low_confidence].uniq.join(",")}"
+      end
+      if (delegation = event[:delegation])
+        details << "delegation=#{[delegation[:reason], delegation[:cleared]].compact.join("+")}"
+        details << "holder=#{delegation[:holder]}" if delegation[:holder]
       end
       "  #{event[:id]} #{event[:decision]}#{details.empty? ? "" : " #{details.join(" ")}"}"
     end

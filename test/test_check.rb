@@ -133,6 +133,130 @@ class TestCheck < Minitest::Test
     assert_match(/section must not carry "state"/, res.errors.map { |_l, m| m }.join)
   end
 
+  def test_section_must_not_carry_a_delegation
+    res = check_records([meta, section("aaaa0001", "W", "delegation" => valid_delegation)])
+    refute res.ok?
+    assert_match(/section must not carry "delegation"/, res.errors.map { |_l, m| m }.join)
+  end
+
+  # -- delegation ------------------------------------------------------------
+
+  def valid_delegation
+    { "kind" => "agent", "mode" => "research", "status" => "ready", "at" => "2026-07-27T18:04:11Z" }
+  end
+
+  def delegated_task(delegation, state: "NEXT")
+    [meta, section("aaaa0001", "W"),
+     task("aaaa0002", "aaaa0001", state, "a task", "delegation" => delegation)]
+  end
+
+  def test_valid_delegations_pass_and_are_a_known_key
+    assert_includes C::KNOWN_KEYS, "delegation"
+    [
+      valid_delegation,
+      { "kind" => "agent", "mode" => "implement", "status" => "claimed",
+        "assignee" => "cc/fable5/aaaa1111", "at" => "2026-07-27T18:04:11Z",
+        "work_ref" => "https://example.com/pr/42" },
+      { "kind" => "human", "status" => "delegated", "assignee" => "pat@example.com",
+        "at" => "2026-07-27T18:04:11Z" },
+    ].each do |delegation|
+      res = check_records(delegated_task(delegation))
+      assert res.ok?, "#{delegation.inspect}: #{res.errors.inspect}"
+      assert_empty res.warnings, delegation.inspect
+    end
+  end
+
+  def test_every_delegation_invariant_violation_is_an_error
+    at = "2026-07-27T18:04:11Z"
+    cases = {
+      "delegation must be an object" => "claimed",
+      /kind "team" must be human or agent/ => { "kind" => "team", "status" => "ready", "at" => at },
+      /kind nil must be human or agent/ => { "status" => "ready", "at" => at },
+      /mode is not allowed for a human/ =>
+        { "kind" => "human", "mode" => "refine", "status" => "delegated",
+          "assignee" => "pat@example.com", "at" => at },
+      /status "ready" must be "delegated" for a human/ =>
+        { "kind" => "human", "status" => "ready", "assignee" => "pat@example.com", "at" => at },
+      /assignee "pat" must be an email address/ =>
+        { "kind" => "human", "status" => "delegated", "assignee" => "pat", "at" => at },
+      /assignee "a b@c.d" must be an email address/ =>
+        { "kind" => "human", "status" => "delegated", "assignee" => "a b@c.d", "at" => at },
+      /assignee nil must be an email address/ =>
+        { "kind" => "human", "status" => "delegated", "at" => at },
+      /mode "deploy" must be one of refine\/research\/implement/ =>
+        { "kind" => "agent", "mode" => "deploy", "status" => "ready", "at" => at },
+      /mode nil must be one of/ => { "kind" => "agent", "status" => "ready", "at" => at },
+      /assignee is not allowed while ready/ =>
+        { "kind" => "agent", "mode" => "refine", "status" => "ready", "assignee" => "w1", "at" => at },
+      /assignee nil must be a worker id/ =>
+        { "kind" => "agent", "mode" => "refine", "status" => "claimed", "at" => at },
+      /assignee "w 1" must be a worker id/ =>
+        { "kind" => "agent", "mode" => "refine", "status" => "claimed", "assignee" => "w 1", "at" => at },
+      /must be a worker id/ =>
+        { "kind" => "agent", "mode" => "refine", "status" => "claimed",
+          "assignee" => "w" * 201, "at" => at },
+      /status "delegated" must be ready or claimed/ =>
+        { "kind" => "agent", "mode" => "refine", "status" => "delegated", "at" => at },
+      /at nil is not a UTC timestamp/ => { "kind" => "agent", "mode" => "refine", "status" => "ready" },
+      /at "2026-07-27T18:04:11\+02:00" is not a UTC timestamp/ =>
+        { "kind" => "agent", "mode" => "refine", "status" => "ready", "at" => "2026-07-27T18:04:11+02:00" },
+      /work_ref must be a non-empty string/ => valid_delegation.merge("work_ref" => "   "),
+      /work_ref must be a single line/ => valid_delegation.merge("work_ref" => "a\nb"),
+    }
+
+    cases.each do |pattern, delegation|
+      res = check_records(delegated_task(delegation))
+      refute res.ok?, delegation.inspect
+      assert_match pattern, res.errors.map { |_l, m| m }.join(" | "), delegation.inspect
+    end
+  end
+
+  # Format omits an empty object, so a hand-edited one is the only way this
+  # reaches a file — and it is a state the schema has no meaning for.
+  def test_hand_edited_empty_delegation_is_an_error
+    text = Tasks::Format.dump([meta, section("aaaa0001", "W")]) +
+           %({"type":"task","id":"aaaa0002","parent":"aaaa0001","state":"NEXT","title":"t","delegation":{}}\n)
+    res = C.check_text(text)
+    refute res.ok?
+    assert_match(/delegation must not be empty/, res.errors.map { |_l, m| m }.join)
+  end
+
+  # Format emits only the keys the schema declares, so an unknown nested key is
+  # likewise a hand edit — and it must be reported, not silently carried.
+  def test_hand_edited_unknown_delegation_keys_are_errors
+    text = Tasks::Format.dump([meta, section("aaaa0001", "W")]) +
+           %({"type":"task","id":"aaaa0002","parent":"aaaa0001","state":"NEXT","title":"t",) +
+           %("delegation":{"kind":"agent","mode":"refine","status":"ready",) +
+           %("at":"2026-07-27T18:04:11Z","note":"x","lease":1}}\n)
+    res = C.check_text(text)
+    refute res.ok?
+    assert_match(/delegation has unknown keys: lease, note/, res.errors.map { |_l, m| m }.join)
+  end
+
+  # A JSON null is absence, not breakage: the next write drops the key.
+  def test_null_delegation_is_treated_as_absent
+    text = Tasks::Format.dump([meta, section("aaaa0001", "W")]) +
+           %({"type":"task","id":"aaaa0002","parent":"aaaa0001","state":"NEXT","title":"t","delegation":null}\n)
+    assert C.check_text(text).ok?
+  end
+
+  def test_proposed_task_cannot_carry_a_delegation
+    res = check_records(delegated_task(valid_delegation, state: "PROPOSED"))
+    refute res.ok?
+    assert_match(/delegation on a proposed task \(PROPOSED\)/, res.errors.map { |_l, m| m }.join)
+  end
+
+  def test_closed_task_may_carry_a_delegation_as_provenance
+    delegation = { "kind" => "agent", "mode" => "implement", "status" => "claimed",
+                   "assignee" => "cc/fable5/aaaa1111", "at" => "2026-07-27T18:04:11Z",
+                   "work_ref" => "https://example.com/pr/42" }
+    records = [meta, section("aaaa0001", "W"),
+               task("aaaa0002", "aaaa0001", "DONE", "a task",
+                    "closed" => "2026-07-27", "delegation" => delegation)]
+    res = check_records(records)
+    assert res.ok?, res.errors.inspect
+  end
+
   def test_duplicate_ids_are_an_error
     res = check_records([meta, section("aaaa0001", "W"),
                          task("aaaa0002", "aaaa0001", "NEXT", "one"),

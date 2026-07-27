@@ -2,6 +2,7 @@
 
 require "date"
 require "set"
+require_relative "delegation"
 require_relative "format"
 require_relative "update_stamp"
 require_relative "temporal_value"
@@ -33,7 +34,8 @@ module Tasks
 
     # Fields a section record must not carry (task-only semantics). `archived`
     # is allowed — a swept subtree root can be a section.
-    SECTION_FORBIDDEN = %w[state priority scheduled scheduled_time deadline deadline_time recur closed tags].freeze
+    SECTION_FORBIDDEN = %w[state priority scheduled scheduled_time deadline deadline_time recur
+                           delegation closed tags].freeze
     # Every key the schema knows (plus the out-of-band line stamp / meta version).
     KNOWN_KEYS = (Format::KEY_ORDER + %w[line version]).to_set
 
@@ -268,6 +270,23 @@ module Tasks
       if r.key?("updated") && !UpdateStamp.valid?(r["updated"])
         errors << [line, "updated #{r["updated"].inspect} is not an RFC3339 UTC timestamp with device slug"]
       end
+      check_delegation(r, line, errors)
+    end
+
+    # The delegation marker's own shape (Tasks::Delegation owns the invariants)
+    # plus the one lifecycle rule the object cannot state about itself:
+    # approval and delegation are independent owner decisions, so an undecided
+    # proposal never carries a delegation. A JSON null is treated as absent —
+    # Format omits it on the next write — so only a present object is linted.
+    def check_delegation(r, line, errors)
+      return unless r.key?(Delegation::FIELD)
+      value = r[Delegation::FIELD]
+      return if value.nil?
+
+      if PROPOSED_STATES.include?(r["state"])
+        errors << [line, "delegation on a proposed task (#{r["state"]})"]
+      end
+      Delegation.errors(value).each { |message| errors << [line, message] }
     end
 
     def check_section(r, line, errors)
