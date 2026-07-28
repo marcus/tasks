@@ -50,10 +50,13 @@ Typing `research` (or the prefix `res`) marks the task agent-ready and flashes
 `agent-ready (research): Renew office lease`. The row's human marker is replaced
 by `→research` — one delegation per task.
 
-Note the task stays `WAITING`: it inherited that state from the earlier human
-delegation, and agent delegation deliberately never changes lifecycle. It is
-still discoverable, because `WAITING` is an open state and the task is
-available.
+The row also moves from `WAITING` back to `TODO`. That `WAITING` came from
+delegating the task to a person, so handing it to the agent pool undoes it:
+agent-ready work is actionable again. A `WAITING` the owner set themselves on an
+undelegated task is left alone, and `--keep-state` opts out of both directions.
+
+Prefixes must be at least three characters. `res` works; a stray `o` or `i` is
+refused rather than silently undelegating or delegating at the widest authority.
 
 ## Detail panel
 
