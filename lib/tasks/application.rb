@@ -562,10 +562,18 @@ module Tasks
         return delegation_outcome(result, command, temporal: temporal, today: local_today)
       end
 
-      follow_up = delegation_follow_up(command, coalesce_key: coalesce_key,
+      follow_up = delegation_follow_up(command, previous: delegation_before(result),
+                                       coalesce_key: coalesce_key,
                                        context: context, today: local_today)
       delegation_outcome(result, command, follow_up: follow_up,
                          temporal: temporal, today: local_today)
+    end
+
+    # The marker the write replaced, which decides whether a state side effect
+    # is owed. Store reports it in the summary; anything else means "none".
+    def delegation_before(result)
+      summary = result.summary
+      summary.is_a?(Hash) ? summary[:previous] : nil
     end
 
     def invoke_delegation(command, coalesce_key:)
@@ -593,27 +601,50 @@ module Tasks
     # The second half of a composed delegation action, or nil when the command
     # asked for none. It always runs after the delegation write succeeded, so a
     # refused delegation never leaves a stray state change or note behind.
-    def delegation_follow_up(command, coalesce_key:, context:, today:)
+    def delegation_follow_up(command, previous:, coalesce_key:, context:, today:)
       case command.action
-      when :delegate then delegate_state_follow_up(command, coalesce_key: coalesce_key,
+      when :delegate then delegate_state_follow_up(command, previous: previous,
+                                                            coalesce_key: coalesce_key,
                                                             context: context, today: today)
       when :release then release_note_follow_up(command, coalesce_key: coalesce_key,
                                                          context: context, today: today)
       end
     end
 
-    def delegate_state_follow_up(command, coalesce_key:, context:, today:)
-      return nil unless command.human? && !command.keep_state
+    # Handing a task to a person moves it to WAITING — the next action really is
+    # outside the owner's control. Replacing that person with the agent pool
+    # undoes exactly that: agent-ready work is actionable again, and a WAITING
+    # marker would describe it wrongly. Only a WAITING inherited from the human
+    # delegation is cleared; a WAITING the owner set for their own reasons on an
+    # undelegated task is left alone.
+    def delegate_state_follow_up(command, previous:, coalesce_key:, context:, today:)
+      return nil if command.keep_state
+      return nil unless command.human? || replacing_human_delegation?(previous)
 
       snapshot = store_factory.call.edit_snapshot(command.id)
-      return nil if snapshot.nil? || snapshot.state == "WAITING"
+      return nil if snapshot.nil?
+
+      if command.human?
+        return nil if snapshot.state == "WAITING"
+
+        target = "WAITING"
+        label = "delegate → #{command.assignee}: #{snapshot.title}"
+      else
+        return nil unless snapshot.state == "WAITING"
+
+        target = "TODO"
+        label = "agent-ready (#{command.mode}): #{snapshot.title}"
+      end
 
       patch_task(
-        TaskPatch.from(snapshot, field: :state, value: "WAITING", coalesce_key: coalesce_key,
-                                 history_label: "delegate → #{command.assignee}: #{snapshot.title}"),
+        TaskPatch.from(snapshot, field: :state, value: target, coalesce_key: coalesce_key,
+                                 history_label: label),
         today: today, context: context
       )
     end
+
+    def replacing_human_delegation?(previous) =
+      previous.is_a?(Hash) && previous["kind"] == "human"
 
     def release_note_follow_up(command, coalesce_key:, context:, today:)
       note = command.note.to_s.strip

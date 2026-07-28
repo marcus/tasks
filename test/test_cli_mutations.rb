@@ -3349,9 +3349,11 @@ class TestCliMutations < Minitest::Test
       assert_match(/not both/, err)
     end
 
-    run_cli("delegate", "Water the plants", "research", "--keep-state") do |_org, _out, err, st|
-      assert_equal 1, st.exitstatus
-      assert_match(/--keep-state applies to --to/, err)
+    # --keep-state now applies to both kinds: handing a task to the agent pool
+    # leaves the WAITING that delegating to a person set, unless asked not to.
+    run_cli("delegate", "Water the plants", "research", "--keep-state") do |_org, out, _err, st|
+      assert_equal 0, st.exitstatus
+      assert_match(/agent-ready \(research\)/, out)
     end
 
     run_cli("delegate", "Water the plants", "review") do |org, _out, err, st|

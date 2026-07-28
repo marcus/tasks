@@ -407,8 +407,11 @@ authority `mode` of `refine`/`research`/`implement`, status `ready` until a
 worker claims it and `claimed` after). `PROPOSED`, closed, and archived tasks
 refuse delegation with an error naming the state; approval and delegation stay
 two independent owner decisions. Human delegation sets WAITING by default
-(`--keep-state` opts out) because that is exactly what WAITING encodes; agent
-delegation and claims never change lifecycle state. Closing a task clears an
+(`--keep-state` opts out) because that is exactly what WAITING encodes, and
+replacing that person with the agent pool leaves WAITING again — agent-ready
+work is actionable. Agent delegation otherwise never changes lifecycle state,
+and a WAITING the owner set on an undelegated task is left alone. Closing a
+task clears an
 unclaimed marker (nothing happened yet) and retains a claimed or human one
 verbatim as provenance into the archive, `work_ref` included.
 
@@ -691,7 +694,7 @@ display text to parse.
 | `retitle <ref> "new title"` | `rename` | ✅ | Replace the `title`; tags/priority/state untouched. |
 | `tag <ref> +foo -bar @ctx -@old` | | ✅ | Add/remove tags and contexts in one call. `+t`/`@ctx` add, `-t`/`-@ctx` remove. |
 | `note <ref> "text"` | | ✅ | Append a line to the task's `body`. |
-| `delegate <ref> <refine\|research\|implement>` | | ✅ | Mark the task agent-ready at that authority mode (`delegation: {kind: agent, status: ready, mode}`). Repeating it on an already-ready task updates the mode and keeps any `work_ref`; a claimed task refuses (`undelegate` first). Lifecycle state is never touched. Prints `agent-ready (<mode>): <title>`. |
+| `delegate <ref> <refine\|research\|implement>` | | ✅ | Mark the task agent-ready at that authority mode (`delegation: {kind: agent, status: ready, mode}`). Repeating it on an already-ready task updates the mode and keeps any `work_ref`; a claimed task refuses (`undelegate` first). Lifecycle state is untouched except when this replaces a human delegation on a WAITING task: the WAITING that delegating to a person set is undone (to `TODO`) in the same undo step, because agent-ready work is actionable again. `--keep-state` opts out. Prints `agent-ready (<mode>): <title>`, or `agent-ready (<mode>) \u2192 <STATE>: <title>` when the state moved. |
 | `delegate <ref> --to <email> [--keep-state]` | | ✅ | Hand the task to a person (`delegation: {kind: human, status: delegated, assignee}`) and move it to WAITING — the next action is outside the owner's control. `--keep-state` opts out. Replaces an agent delegation (and vice versa): one delegation per task. The state change is folded into the same undo step. Prints `delegated → <email> (<STATE>): <title>`. |
 | `undelegate <ref>` | | ✅ | Clear the marker, revoking any live claim; afterwards the stale worker's `release`/`workref` fail their worker match. Lifecycle state is left alone — undelegating does not leave WAITING. An undelegated task is a clean no-op (exit 0, no undo slot). |
 | `workref <ref> <url-or-id\|off>` | `work-ref` | ✅ | Record the single reference to where the work lives (ticket, PR, brief, session); setting overwrites and `off` clears. The owner may always write it; an agent adds `--worker <id>` to prove its claim still matches (deliberately **not** defaulted from `TASKS_WORKER_ID`, so an exported worker id cannot silently change who is writing). Survives completion and archival. |

@@ -366,11 +366,51 @@ class TestApplication < Minitest::Test
       assert to_agent.changed?
       assert_equal "human", to_agent.summary[:previous]["kind"]
       assert_equal "agent", to_agent.summary[:delegation]["kind"]
-      assert_equal "WAITING", to_agent.summary[:state], "undelegating never leaves WAITING by itself"
+      assert_equal "TODO", to_agent.summary[:state],
+                   "replacing the person undoes the WAITING that delegating to them set"
+      assert to_agent.summary[:state_changed]
 
       back = app.delegate_task(FIX[:plants], kind: "human", assignee: "sam@example.com")
       assert_equal "agent", back.summary[:previous]["kind"]
       assert_equal "sam@example.com", back.summary[:task].delegation_assignee
+    end
+  end
+
+  def test_agent_delegation_only_clears_a_waiting_the_human_delegation_set
+    with_application do |_org, _archive, app|
+      # A WAITING the owner set themselves is theirs to keep: no human marker
+      # is being replaced, so the agent delegation must not touch the state.
+      app.patch_task(Tasks::TaskPatch.from(
+        app.edit_snapshot(FIX[:plants]), field: :state, value: "WAITING"
+      ))
+      result = app.delegate_task(FIX[:plants], kind: "agent", mode: "research")
+
+      assert result.changed?
+      refute result.summary[:state_changed]
+      assert_equal "WAITING", result.summary[:state]
+    end
+  end
+
+  def test_agent_delegation_can_keep_the_inherited_waiting_state
+    with_application do |_org, _archive, app|
+      app.delegate_task(FIX[:plants], kind: "human", assignee: "pat@example.com")
+      result = app.delegate_task(FIX[:plants], kind: "agent", mode: "research", keep_state: true)
+
+      assert result.changed?
+      refute result.summary[:state_changed]
+      assert_equal "WAITING", result.summary[:state]
+    end
+  end
+
+  def test_replacing_a_person_with_agents_undoes_state_and_marker_in_one_step
+    with_application do |org, archive, app|
+      app.delegate_task(FIX[:plants], kind: "human", assignee: "pat@example.com")
+      before = File.read(org)
+      app.delegate_task(FIX[:plants], kind: "agent", mode: "research")
+
+      assert_equal :ok, Tasks::Store.new(org: org, archive: archive).undo!.first
+      assert_equal before, File.read(org),
+                   "one undo restores both the person and the WAITING state"
     end
   end
 

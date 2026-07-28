@@ -164,6 +164,11 @@ Rules:
   that is exactly what `WAITING` means in this system (next action outside the
   owner's control). `--keep-state` opts out. Undelegating does not
   automatically leave `WAITING`; the owner decides.
+- Replacing that person with the agent pool undoes it: a task that is `WAITING`
+  *because* it was delegated to someone returns to `TODO`, since agent-ready
+  work is actionable again and a `WAITING` marker would describe it wrongly.
+  Only that inherited `WAITING` is cleared — a `WAITING` the owner set on an
+  undelegated task is theirs to keep. `--keep-state` opts out here too.
 - Agent delegation and claims never change lifecycle. A task can be `TODO` or
   `NEXT` while ready or claimed; the TUI shows the delegation marker
   directly.

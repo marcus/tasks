@@ -432,13 +432,17 @@ end
 # One line describing a task's delegation. `delegate`, `claim`, `release`, and
 # `list --delegated/--agent-ready` all print through it, so the four surfaces
 # cannot drift apart.
-def delegation_headline(task)
+def delegation_headline(task, state_changed: false)
   delegation = task&.delegation
   return "not delegated: #{task&.title}" unless delegation
 
   case delegation["status"]
   when "delegated" then "delegated → #{delegation["assignee"]} (#{task.state}): #{task.title}"
-  when "ready"     then "agent-ready (#{delegation["mode"]}): #{task.title}"
+  when "ready"
+    # The state only appears when this write moved it — replacing a person with
+    # the agent pool leaves WAITING, and silently changing state would surprise.
+    ready = "agent-ready (#{delegation["mode"]})"
+    state_changed ? "#{ready} → #{task.state}: #{task.title}" : "#{ready}: #{task.title}"
   when "claimed"   then "claimed by #{delegation["assignee"]}: #{task.title}"
   else "delegated: #{task.title}"
   end
@@ -504,7 +508,6 @@ def cmd_delegate(args)
   abort DELEGATE_USAGE if ref.nil? || ref.strip.empty?
   abort DELEGATE_USAGE if to.nil? && mode.empty?
   abort "delegate takes a mode or --to <email>, not both\n#{DELEGATE_USAGE}" if to && !mode.empty?
-  abort "--keep-state applies to --to <email>\n#{DELEGATE_USAGE}" if flags["--keep-state"] && to.nil?
 
   # Refs resolve across proposed and closed tasks so an ineligible target
   # reports the state that refuses it rather than a bare no-match.
@@ -516,7 +519,8 @@ def cmd_delegate(args)
                                        keep_state: flags["--keep-state"], today: today,
                                        context: operation)
            else
-             application.delegate_task(task_id, kind: "agent", mode: mode, today: today,
+             application.delegate_task(task_id, kind: "agent", mode: mode,
+                                       keep_state: flags["--keep-state"], today: today,
                                        context: operation)
            end
   delegation_failed!(result, json: flags["--json"])
@@ -525,7 +529,7 @@ def cmd_delegate(args)
                    read_snapshot: result.read_snapshot, temporal_context: context)
   else
     _item, task = delegation_task_pair(result, task_id, today: today, context: context)
-    puts delegation_headline(task)
+    puts delegation_headline(task, state_changed: !!result.summary[:state_changed])
   end
 end
 
