@@ -20,6 +20,10 @@ module Tasks
         forbidden_origin: "This origin is not allowed to mutate tasks.",
         not_found: "No task with that id.",
         conflict: "The requested change conflicts with the current task.",
+        # A lost delegation race, distinct from `stale_revision`: the client's
+        # view of the task was current, and the claim is simply held by someone
+        # else. `details` names the holder and when it took the task.
+        claim_conflict: "The task's claim is held by another worker.",
         cycle: "A task cannot be moved under itself or a descendant.",
         too_deep: "Nesting the task would exceed the maximum depth.",
         stale_revision: "The task changed after it was loaded.",

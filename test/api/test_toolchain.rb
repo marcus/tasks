@@ -16,7 +16,7 @@ class TestApiToolchain < Minitest::Test
   ROOT = File.expand_path("../..", __dir__)
   CONTRACT = File.join(ROOT, "docs/api/openapi.yaml")
   RACK_FIXTURE = File.join(__dir__, "fixtures/toolchain.ru")
-  METHODS = %w[get post patch delete].freeze
+  METHODS = %w[get post put patch delete].freeze
 
   def setup
     @definition = OpenapiFirst.load(CONTRACT)
@@ -228,9 +228,12 @@ class TestApiToolchain < Minitest::Test
 
   def rack_request(path, method, body: nil)
     concrete = path.gsub("{id}", "3c4d5e6f").gsub("{name}", "agenda")
+    # Every mutating verb carries an If-Match: task actions (approve, delegate,
+    # claim, work_ref, …) require the precondition just as PATCH and DELETE do,
+    # and an operation that does not declare the header simply ignores it.
     env = {
-      "CONTENT_TYPE" => (body || %w[post patch].include?(method)) ? "application/json" : nil,
-      "HTTP_IF_MATCH" => %w[patch delete].include?(method) ? '"v1.opaque"' : nil,
+      "CONTENT_TYPE" => (body || %w[post put patch].include?(method)) ? "application/json" : nil,
+      "HTTP_IF_MATCH" => %w[post put patch delete].include?(method) ? '"v1.opaque"' : nil,
     }.compact
     input = body.nil? ? "" : JSON.generate(body)
     Rack::Request.new(

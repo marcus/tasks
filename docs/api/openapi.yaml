@@ -110,6 +110,9 @@ paths:
                       open_states: [INBOX, TODO, NEXT, WAITING]
                       closed_states: [DONE, CANCELLED]
                       priorities: [A, B, C]
+                      delegation_kinds: [human, agent]
+                      delegation_modes: [refine, research, implement]
+                      delegation_statuses: [delegated, ready, claimed]
                       max_depth: 4
                       urgent_days: 3
                       timezone: "America/Los_Angeles"
@@ -189,11 +192,32 @@ paths:
       parameters:
         - name: scope
           in: query
-          description: Which lifecycle/source slice to list. Default `open` (open live tasks).
+          description: |
+            Which slice to list. Default `open` (open live tasks).
+
+            `open`, `proposed`, `done`, `archived`, and `all` are lifecycle/source
+            slices. `delegated` and `agent_ready` are delegation refinements of
+            the default open-live slice, mirroring `tasks list --delegated` and
+            `tasks list --agent-ready`:
+
+            - `delegated` — every open live task carrying a `delegation`, human
+              or agent, ready or claimed. Delegation retained as provenance on a
+              closed task is read through that task's own resource (`delegation`
+              is part of every task representation) rather than through this
+              scope.
+            - `agent_ready` — the claimable queue: `kind: agent`,
+              `status: ready`, an accepted live state, and effectively available
+              now. Ranked by priority, then the soonest deadline-or-scheduled
+              boundary, then canonical order — the order is a contract, because a
+              heartbeat agent takes the first row it is capable of. A list read
+              never grants ownership; only `POST /tasks/{id}/claim` does.
+
+            Other filters compose with both. `available=false` remains valid only
+            with `scope=open`.
           required: false
           schema:
             type: string
-            enum: [open, proposed, done, archived, all]
+            enum: [open, proposed, done, archived, all, delegated, agent_ready]
             default: open
         - name: state
           in: query
@@ -297,6 +321,7 @@ paths:
                         project: "Work"
                         child_count: 0
                         descendant_count: 0
+                        delegation: null
                         links:
                           - system: "github"
                             url: "https://github.com/acme/app/issues/12"
@@ -398,6 +423,7 @@ paths:
                       project: "Work"
                       child_count: 0
                       descendant_count: 0
+                      delegation: null
                       links: []
                     meta:
                       store_revision: "s1.7a1b2c3d"
@@ -507,6 +533,7 @@ paths:
                       project: "Work"
                       child_count: 0
                       descendant_count: 0
+                      delegation: null
                       links:
                         - system: "github"
                           url: "https://github.com/acme/app/issues/12"
@@ -649,6 +676,7 @@ paths:
                       project: "Work"
                       child_count: 0
                       descendant_count: 0
+                      delegation: null
                       links: []
                     meta:
                       store_revision: "s1.8b2c3d4e"
@@ -910,6 +938,347 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
         "412": { $ref: "#/components/responses/StaleRevision" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "428": { $ref: "#/components/responses/MissingPrecondition" }
+        "503": { $ref: "#/components/responses/StoreInvalid" }
+
+  /tasks/{id}/delegate:
+    post:
+      tags: [tasks]
+      operationId: delegateTask
+      summary: Hand the task to a person or to the agent pool.
+      description: |
+        Installs (or replaces) the task's `delegation` marker in one checked,
+        journaled, undoable transaction, and requires the task's current ETag in
+        `If-Match`. Only accepted live tasks qualify: `PROPOSED`, closed, and
+        archived tasks refuse with `422` naming the state.
+
+        A human delegation moves the task to `WAITING` unless `keep_state` is
+        true; an agent delegation never changes lifecycle state. Re-delegating
+        at the same mode or to the same person is a no-op that still returns the
+        current resource. A task with a live claim refuses with `409` /
+        `claim_conflict` — the owner revokes explicitly with `/undelegate`
+        rather than taking a task out from under a working agent. A work
+        reference survives a replacement of the same kind and is dropped when
+        the delegation changes kind.
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DelegateTaskRequest" }
+            examples:
+              human:
+                summary: Hand to a person; the task moves to WAITING.
+                value:
+                  kind: "human"
+                  assignee: "pat@example.com"
+              human_keep_state:
+                summary: Hand to a person without touching the lifecycle state.
+                value:
+                  kind: "human"
+                  assignee: "pat@example.com"
+                  keep_state: true
+              agent:
+                summary: Publish to the agent pool at research authority.
+                value:
+                  kind: "agent"
+                  mode: "research"
+      responses:
+        "200":
+          description: The delegated task resource.
+          headers:
+            ETag:
+              description: The task's revision after the write.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Task" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+              examples:
+                agent:
+                  summary: Agent-ready at research authority.
+                  value:
+                    data:
+                      id: "3c4d5e6f"
+                      revision: "v1.opaque-own.opaque-location.opaque-lifecycle"
+                      source: "live"
+                      parent_id: null
+                      section_id: "9f8e7d6c"
+                      depth: 0
+                      state: "TODO"
+                      priority: "A"
+                      title: "Compare CRDT libraries"
+                      contexts: ["@computer"]
+                      tags: []
+                      deferred: false
+                      scheduled: null
+                      scheduled_time: null
+                      deadline: null
+                      deadline_time: null
+                      available: true
+                      availability_reason: "available"
+                      availability_blocker_id: null
+                      available_at: null
+                      recurrence: null
+                      body: []
+                      closed: null
+                      archived: false
+                      project: "Work"
+                      child_count: 0
+                      descendant_count: 0
+                      links: []
+                      delegation:
+                        kind: "agent"
+                        mode: "research"
+                        status: "ready"
+                        at: "2026-07-27T18:02:00Z"
+                    meta:
+                      store_revision: "s1.6f2a9c0b"
+        "400": { $ref: "#/components/responses/MalformedRequest" }
+        "403": { $ref: "#/components/responses/ForbiddenOrigin" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/ClaimConflict" }
+        "412": { $ref: "#/components/responses/StaleRevision" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "428": { $ref: "#/components/responses/MissingPrecondition" }
+        "503": { $ref: "#/components/responses/StoreInvalid" }
+
+  /tasks/{id}/undelegate:
+    post:
+      tags: [tasks]
+      operationId: undelegateTask
+      summary: Clear the delegation marker, revoking any live claim.
+      description: |
+        Removes the task's `delegation` entirely. Revocation wins: afterwards a
+        stale worker's `/release` and `/work_ref` fail their worker match. The
+        request has no body and requires the task's current ETag in `If-Match`.
+
+        Lifecycle state is untouched — undelegating does not automatically leave
+        `WAITING`, the owner decides. Unlike delegation, this is permitted
+        whatever the marker's status and whatever the task's state, since
+        clearing provenance from a closed task is the owner's prerogative. An
+        undelegated task is a no-op that still returns the current resource.
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: The task resource with no delegation.
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Task" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+        "400": { $ref: "#/components/responses/MalformedRequest" }
+        "403": { $ref: "#/components/responses/ForbiddenOrigin" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/ClaimConflict" }
+        "412": { $ref: "#/components/responses/StaleRevision" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "428": { $ref: "#/components/responses/MissingPrecondition" }
+        "503": { $ref: "#/components/responses/StoreInvalid" }
+
+  /tasks/{id}/claim:
+    post:
+      tags: [tasks]
+      operationId: claimTask
+      summary: Atomically pick up agent-ready work.
+      description: |
+        Compare-and-set from `status: ready` to `status: claimed` under the
+        store mutation lock, so two workers can never both believe they hold one
+        task. Requires the task's current ETag in `If-Match`.
+
+        The response is the whole canonical task resource, not just the marker:
+        a worker claims and reads the authority it is working under in one step.
+
+        The two failures are deliberately distinct. `412` / `stale_revision`
+        means the client's `If-Match` was out of date — refetch and decide
+        again. `409` / `claim_conflict` means the view was current and another
+        worker holds the task; `details.holder` and `details.at` name who and
+        when. A claim is granted once and never re-granted, so re-claiming with
+        the same worker id is also `409`. A task that is not delegated to the
+        agent pool is `422`.
+
+        `worker` has no server-side default. The CLI's `TASKS_WORKER_ID`
+        convenience is a per-session shell setting for one harness; a shared
+        server must never decide who is claiming.
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ClaimTaskRequest" }
+            examples:
+              worker:
+                value:
+                  worker: "claude-code/claude-fable-5/313cf82e"
+      responses:
+        "200":
+          description: The claimed task resource, with the mode it authorizes.
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Task" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+        "400": { $ref: "#/components/responses/MalformedRequest" }
+        "403": { $ref: "#/components/responses/ForbiddenOrigin" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/ClaimConflict" }
+        "412": { $ref: "#/components/responses/StaleRevision" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "428": { $ref: "#/components/responses/MissingPrecondition" }
+        "503": { $ref: "#/components/responses/StoreInvalid" }
+
+  /tasks/{id}/release:
+    post:
+      tags: [tasks]
+      operationId: releaseTask
+      summary: Hand a claim back to the agent-ready queue.
+      description: |
+        Returns the marker from `claimed` to `ready` and drops the assignee,
+        requiring the task's current ETag in `If-Match`. A worker must supply
+        the `worker` id matching the live claim; the owner passes `force: true`
+        instead to clear a stale claim without undelegating. A mismatched worker
+        is `409` / `claim_conflict`; a task that is not claimed is `422`.
+
+        `note` appends a blocker line to the task body in the same undo step as
+        the release — one journal entry, one undo. This is how a blocked agent
+        surfaces a problem rather than converting refine or research authority
+        into implementation.
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReleaseTaskRequest" }
+            examples:
+              worker:
+                summary: The holding worker hands the task back.
+                value:
+                  worker: "claude-code/claude-fable-5/313cf82e"
+              blocked:
+                summary: Blocked worker releases with a note.
+                value:
+                  worker: "claude-code/claude-fable-5/313cf82e"
+                  note: "Blocked: needs the vendor's API key before it can proceed."
+              force:
+                summary: Owner clears a stale claim.
+                value:
+                  force: true
+      responses:
+        "200":
+          description: The released task resource, agent-ready again.
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Task" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+        "400": { $ref: "#/components/responses/MalformedRequest" }
+        "403": { $ref: "#/components/responses/ForbiddenOrigin" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/ClaimConflict" }
+        "412": { $ref: "#/components/responses/StaleRevision" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "428": { $ref: "#/components/responses/MissingPrecondition" }
+        "503": { $ref: "#/components/responses/StoreInvalid" }
+
+  /tasks/{id}/work_ref:
+    put:
+      tags: [tasks]
+      operationId: setTaskWorkRef
+      summary: Replace the task's single work reference.
+      description: |
+        Records where the work lives — a ticket, PR, research brief, or agent
+        session. One reference: writing overwrites, and `null` clears. PUT
+        rather than POST because this replaces a value on an existing marker
+        instead of transitioning it, and repeating the same write is a no-op.
+        Requires the task's current ETag in `If-Match`, and the task must
+        already carry a delegation (`422` otherwise).
+
+        The owner may always write it. A worker sends its `worker` id and may
+        write only while that claim still matches — after an owner revocation
+        the stale worker gets `409` / `claim_conflict`. The reference survives
+        completion and archival along with the marker that carries it, which is
+        how "who did it and where" reaches the archive.
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkRefRequest" }
+            examples:
+              owner:
+                summary: Owner records the ticket.
+                value:
+                  work_ref: "https://github.com/acme/x/issues/12"
+              worker:
+                summary: Holding worker records its pull request.
+                value:
+                  work_ref: "https://github.com/acme/x/pull/42"
+                  worker: "claude-code/claude-fable-5/313cf82e"
+              clear:
+                summary: Clear the reference.
+                value:
+                  work_ref: null
+      responses:
+        "200":
+          description: The task resource with the updated reference.
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Task" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+        "400": { $ref: "#/components/responses/MalformedRequest" }
+        "403": { $ref: "#/components/responses/ForbiddenOrigin" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/ClaimConflict" }
+        "412": { $ref: "#/components/responses/StaleRevision" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
         "428": { $ref: "#/components/responses/MissingPrecondition" }
@@ -1399,6 +1768,7 @@ paths:
                           project: "Work"
                           child_count: 0
                           descendant_count: 0
+                          delegation: null
                           links: []
                     meta:
                       store_revision: "s1.6f2a9c0b"
@@ -1768,7 +2138,9 @@ components:
       required: true
       description: |
         The opaque task `revision` (ETag) the client last saw. Required on
-        PATCH and DELETE. A missing header is `428`; a stale value is `412`.
+        PATCH, DELETE, and every task action (approve, reject, delegate,
+        undelegate, claim, release, work_ref). A missing header is `428`; a
+        stale value is `412`.
       schema: { type: string }
 
   responses:
@@ -1883,8 +2255,36 @@ components:
                       project: "Work"
                       child_count: 0
                       descendant_count: 0
+                      delegation: null
                       links: []
                   request_id: "req_4d5e"
+    ClaimConflict:
+      description: |
+        A lost delegation race, deliberately distinct from `412`
+        / `stale_revision`. `412` means the client's view of the task was out of
+        date and it should refetch and decide again; `409` / `claim_conflict`
+        means the view was current and the marker is simply held by someone
+        else — another worker already claimed it, the claim being released or
+        written to belongs to a different worker, or the owner must revoke
+        before re-delegating. `details.holder` names the current holder (null in
+        the one case where a worker acts on an unclaimed marker) and
+        `details.at` is the timestamp of the transition that beat this request.
+        The losing caller picks another task; it does not retry.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          examples:
+            claimed:
+              value:
+                error:
+                  code: "claim_conflict"
+                  message: "already claimed by claude-code/claude-opus-5/9a11d0c2 at 2026-07-27T18:04:11Z"
+                  details:
+                    id: "3c4d5e6f"
+                    action: "claim"
+                    holder: "claude-code/claude-opus-5/9a11d0c2"
+                    at: "2026-07-27T18:04:11Z"
+                  request_id: "req_7a8b"
     MissingPrecondition:
       description: A required `If-Match` header was absent.
       content:
@@ -2022,6 +2422,7 @@ components:
         project: "Work"
         child_count: 0
         descendant_count: 0
+        delegation: null
         links:
           - system: "github"
             url: "https://github.com/acme/app/issues/12"
@@ -2106,7 +2507,8 @@ components:
       type: object
       description: Server capabilities and config-derived vocabularies. No paths.
       required: [api_version, server_mode, states, proposed_states, open_states,
-                 closed_states, priorities, max_depth, urgent_days,
+                 closed_states, priorities, delegation_kinds, delegation_modes,
+                 delegation_statuses, max_depth, urgent_days,
                  timezone, time_format, tzdb_version, temporal_precision]
       additionalProperties: false
       properties:
@@ -2129,6 +2531,20 @@ components:
         priorities:
           type: array
           items: { type: string, enum: [A, B, C] }
+        delegation_kinds:
+          type: array
+          description: Who a task can be handed to.
+          items: { $ref: "#/components/schemas/DelegationKind" }
+        delegation_modes:
+          type: array
+          description: |
+            Agent authority levels, narrowest first. Only the owner sets or
+            widens a mode; a worker never promotes its own.
+          items: { $ref: "#/components/schemas/DelegationMode" }
+        delegation_statuses:
+          type: array
+          description: Delegation statuses across both kinds.
+          items: { $ref: "#/components/schemas/DelegationStatus" }
         max_depth:
           type: integer
           description: Maximum nesting depth (max_depth config / TASKS_MAX_DEPTH).
@@ -2302,6 +2718,7 @@ components:
         - child_count
         - descendant_count
         - links
+        - delegation
       additionalProperties: false
       properties:
         id: { $ref: "#/components/schemas/TaskId" }
@@ -2402,6 +2819,163 @@ components:
         links:
           type: array
           items: { $ref: "#/components/schemas/Link" }
+        delegation:
+          description: |
+            Who currently holds this task, or `null` when it is not delegated —
+            there is no empty delegation. Written only through the delegation
+            actions (`/delegate`, `/undelegate`, `/claim`, `/release`,
+            `/work_ref`), never through `PATCH /tasks/{id}`. Retained verbatim
+            as provenance when a claimed or human-delegated task closes and is
+            archived; an unclaimed agent marker is cleared on close.
+          oneOf:
+            - { $ref: "#/components/schemas/Delegation" }
+            - { type: "null" }
+
+    DelegationKind:
+      type: string
+      enum: [human, agent]
+
+    DelegationMode:
+      type: string
+      enum: [refine, research, implement]
+      description: |
+        Agent authority. `refine` may improve the task itself; `research` adds
+        read-only investigation and a written brief; `implement` adds changing
+        files within the task's named scope and completing it when its criteria
+        are met. Modes never authorize scope expansion, deployment, messaging,
+        purchases, or destructive external actions.
+
+    DelegationStatus:
+      type: string
+      enum: [delegated, ready, claimed]
+      description: |
+        `delegated` for a human hand-off, `ready` for unclaimed agent work, and
+        `claimed` while exactly one worker holds it.
+
+    Delegation:
+      type: object
+      description: |
+        The task's delegation marker. Keys are emitted in the fixed order
+        `kind, mode, status, assignee, at, work_ref`, and keys that do not apply
+        are omitted entirely rather than sent as null — the same bytes the store
+        writes and `tasks show --json` prints. `mode` applies to agent
+        delegations only; `assignee` is the email address for a human hand-off
+        and the worker id of the holder while `claimed`, and is absent while
+        `ready`.
+      required: [kind, status, at]
+      additionalProperties: false
+      properties:
+        kind: { $ref: "#/components/schemas/DelegationKind" }
+        mode: { $ref: "#/components/schemas/DelegationMode" }
+        status: { $ref: "#/components/schemas/DelegationStatus" }
+        assignee:
+          type: string
+          maxLength: 200
+          description: |
+            Email address (human) or worker id (claimed agent work). An
+            identifier, not a mail or messaging integration. Worker ids are
+            free-form, whitespace-free tokens; the recommended form is
+            `<harness>/<model>/<session-id>`.
+        at:
+          type: string
+          description: UTC timestamp of the last status transition (`YYYY-MM-DDTHH:MM:SSZ`).
+        work_ref:
+          type: string
+          description: |
+            One single-line reference to where the work lives (ticket, PR,
+            brief, or agent session). Absent when unset. Additional links belong
+            in the task body.
+
+    DelegateTaskRequest:
+      type: object
+      description: |
+        Hand the task to a person or to the agent pool, replacing any marker
+        already present. A human delegation carries `assignee` and no `mode`; an
+        agent delegation carries `mode` and no `assignee` — an agent task is
+        claimed by a worker, never assigned to one.
+      required: [kind]
+      additionalProperties: false
+      properties:
+        kind: { $ref: "#/components/schemas/DelegationKind" }
+        mode:
+          allOf:
+            - { $ref: "#/components/schemas/DelegationMode" }
+          description: |
+            Required for `kind: agent`, rejected for `kind: human`.
+        assignee:
+          type: string
+          maxLength: 200
+          description: |
+            Required for `kind: human`: an email-shaped identifier (contains
+            `@`, no whitespace). Rejected for `kind: agent`.
+        keep_state:
+          type: boolean
+          default: false
+          description: |
+            Human delegation moves the task to `WAITING` — the next action is
+            outside the owner's control, which is what `WAITING` means. Set true
+            to leave the lifecycle state alone. Agent delegation never changes
+            state, and this field is inert there.
+
+    ClaimTaskRequest:
+      type: object
+      description: |
+        Atomic pickup of agent-ready work. Exactly one worker can hold a task;
+        a lost race is `409` / `claim_conflict` naming the holder.
+      required: [worker]
+      additionalProperties: false
+      properties:
+        worker:
+          type: string
+          maxLength: 200
+          description: |
+            The claiming worker id: non-empty, whitespace-free, at most 200
+            characters. Recommended form `<harness>/<model>/<session-id>`. It
+            needs to be stable only for the lifetime of the claim; there is no
+            lease to renew.
+
+    ReleaseTaskRequest:
+      type: object
+      description: |
+        Hand a claim back to the agent-ready queue. A worker supplies the id
+        matching the live claim; the owner passes `force: true` instead to clear
+        a stale claim without undelegating. Supplying neither is `422`.
+      additionalProperties: false
+      properties:
+        worker:
+          type: string
+          maxLength: 200
+          description: The worker id that must match the live claim.
+        force:
+          type: boolean
+          default: false
+          description: Owner override — release whoever holds it.
+        note:
+          type: [string, "null"]
+          description: |
+            A blocker note appended to the task body in the same undo step as
+            the release. This is how a blocked agent surfaces a problem instead
+            of widening its authority.
+
+    WorkRefRequest:
+      type: object
+      description: |
+        Replace the task's single work reference. `null` clears it (the literal
+        string `off`, the spelling every surface accepts, clears it too).
+      required: [work_ref]
+      additionalProperties: false
+      properties:
+        work_ref:
+          type: [string, "null"]
+          description: A single-line URL or identifier, or null to clear.
+        worker:
+          type: string
+          maxLength: 200
+          description: |
+            Present when a worker writes the reference: the claim must still be
+            held by exactly this id, otherwise `409` / `claim_conflict`. Absent
+            means the owner is writing, which is always permitted on a delegated
+            task.
 
     CreateTaskRequest:
       type: object
@@ -2597,7 +3171,8 @@ components:
         Stable machine error code. The set is derived from `MutationResult`
         statuses (not_found, stale→stale_revision, invalid→validation_failed,
         conflict, cycle, too_deep, migration_required→schema_migration_required,
-        store_invalid, unavailable) plus transport
+        store_invalid, unavailable), the delegation-specific
+        `claim_conflict` refinement of `conflict`, plus transport
         errors (malformed_request, unsupported_media_type, payload_too_large,
         missing_precondition, forbidden_origin). `ok`/`no_change` are successes,
         not errors, and are not listed here.
@@ -2606,6 +3181,7 @@ components:
         - forbidden_origin
         - not_found
         - conflict
+        - claim_conflict
         - cycle
         - too_deep
         - stale_revision

@@ -9,6 +9,7 @@ require "rack/utils"
 
 require_relative "../application"
 require_relative "../config"
+require_relative "../delegation"
 require_relative "../recur"
 require_relative "errors"
 require_relative "representation"
@@ -30,6 +31,18 @@ module Tasks
         recurrence parent_id placement state
       ].freeze
       PLACEMENT_FIELDS = %w[parent_id before_id].freeze
+      # Delegation action bodies. Each mirrors the CLI flags for the same verb
+      # (`tasks delegate --to/--keep-state`, `claim --worker`, `release
+      # --worker/--force/--note`, `workref <ref> <url|off> --worker`); the
+      # domain owns every cross-field rule.
+      DELEGATE_FIELDS = %w[kind mode assignee keep_state].freeze
+      CLAIM_FIELDS = %w[worker].freeze
+      RELEASE_FIELDS = %w[worker force note].freeze
+      WORK_REF_FIELDS = %w[work_ref worker].freeze
+      # Delegation read scopes. They are refinements of the default open-live
+      # collection, not new lifecycle slices: `delegated` is `tasks list
+      # --delegated` and `agent_ready` is `tasks list --agent-ready`.
+      DELEGATION_SCOPES = %w[delegated agent_ready].freeze
       FORWARDED_HEADERS = %w[
         HTTP_FORWARDED HTTP_X_FORWARDED_HOST HTTP_X_FORWARDED_PROTO HTTP_X_FORWARDED_PORT
       ].freeze
@@ -136,6 +149,20 @@ module Tasks
           return decide_proposal(request, id, decision[2].to_sym, request_id)
         end
 
+        delegation = path.match(%r{\A/api/v1/tasks/([^/]+)/(delegate|undelegate|claim|release)\z})
+        if delegation && method == "POST"
+          id = valid_task_id!(delegation[1])
+          # The regex admits exactly the four literal verbs below, so the
+          # dispatch cannot name anything else (same idiom as approve/reject).
+          return send(:"#{delegation[2]}_task_action", request, id, request_id)
+        end
+
+        work_ref = path.match(%r{\A/api/v1/tasks/([^/]+)/work_ref\z})
+        if work_ref && method == "PUT"
+          id = valid_task_id!(work_ref[1])
+          return put_work_ref(request, id, request_id)
+        end
+
         return list_projects(request, request_id) if method == "GET" && path == "/api/v1/projects"
         return create_project(request, request_id) if method == "POST" && path == "/api/v1/projects"
 
@@ -180,6 +207,12 @@ module Tasks
           open_states: Store::OPEN_STATES,
           closed_states: Store::CLOSED_STATES,
           priorities: Check::PRIORITIES,
+          # Delegation vocabularies, alongside the lifecycle ones: a client
+          # renders the marker and builds a delegate/claim body without
+          # hard-coding refine/research/implement.
+          delegation_kinds: Delegation::KINDS,
+          delegation_modes: Delegation::MODES,
+          delegation_statuses: Delegation::STATUSES,
           max_depth: @max_depth,
           urgent_days: @urgent_days,
           timezone: @timezone,
@@ -206,8 +239,17 @@ module Tasks
       def list_tasks(request, request_id)
         query = query_params(request, LIST_QUERY_KEYS)
         scope = query.fetch("scope", "open")
-        allowed_scopes = TaskFilter::SCOPES.map(&:to_s)
-        validation!(scope: ["must be open, proposed, done, archived, or all"]) unless allowed_scopes.include?(scope)
+        allowed_scopes = TaskFilter::SCOPES.map(&:to_s) + DELEGATION_SCOPES
+        unless allowed_scopes.include?(scope)
+          validation!(scope: ["must be open, proposed, done, archived, all, delegated, or agent_ready"])
+        end
+        # The two delegation scopes narrow the default open-live collection by
+        # who holds the task, exactly as the CLI flags do on top of the CLI's
+        # default `--open`. Everything else about the request (state, context,
+        # tag, priority, text) still composes.
+        delegated_only = scope == "delegated"
+        agent_ready_only = scope == "agent_ready"
+        lifecycle_scope = DELEGATION_SCOPES.include?(scope) ? "open" : scope
 
         state = query["state"]
         validation!(state: ["must be a documented task state"]) if state && !TaskFilter::STATE_ORDER.include?(state)
@@ -229,11 +271,12 @@ module Tasks
         end
 
         filter = TaskFilter.new(
-          scope: scope, state: state, priority: priority,
+          scope: lifecycle_scope, state: state, priority: priority,
           contexts: context ? [context] : [], tags: tag ? [tag] : [],
           text: query["text"] ? [query["text"]] : [], body_search: body,
           someday_only: deferred, unavailable_only: available == false,
-          recurring_only: recurring
+          recurring_only: recurring, delegated_only: delegated_only,
+          agent_ready_only: agent_ready_only
         )
         result = application.list_tasks_result(filter)
         read_failure!(result, request_id) unless result.ok?
@@ -362,6 +405,214 @@ module Tasks
           { "etag" => etag(view.revision) },
           Representation.success(Representation.task(view), resource_result.store_revision),
         ]
+      end
+
+      # -- delegation ----------------------------------------------------------
+      #
+      # Five actions over the typed Tasks::Application delegation operations,
+      # following the approve/reject convention exactly: a POST to a named
+      # sub-resource of the task, an If-Match precondition, and the canonical
+      # post-write task resource with a fresh ETag on success. A delegation
+      # change is an `own`-field change (ADR-0007), so If-Match guards a claim
+      # with the same component that carries it — no bespoke concurrency here.
+      #
+      # The only departure is the request body: approve/reject take none, while
+      # these carry the same inputs the CLI takes as flags. `work_ref` is the
+      # exception in shape as well as verb — it replaces one value on the
+      # existing marker rather than transitioning it, so it is an idempotent
+      # PUT of a sub-resource (see put_work_ref).
+      #
+      # Eligibility (accepted live tasks only), the claim compare-and-set,
+      # worker matching, and the WAITING default all stay behind Application;
+      # what happens here is body shape validation and status mapping.
+      def delegate_task_action(request, id, request_id)
+        temporal = request_temporal_context
+        query_params(request, [])
+        expected_revision = if_match!(request)
+        body = json_body(request)
+        reject_unknown_fields!(body, DELEGATE_FIELDS)
+        validate_delegate_body!(body)
+        ensure_store_ready!(request_id)
+        result = application.delegate_task(
+          id, kind: body["kind"], mode: body["mode"], assignee: body["assignee"],
+          keep_state: body.fetch("keep_state", false),
+          expected_revision: expected_revision, context: delegation_context(request_id, temporal)
+        )
+        delegation_response(result, id, request_id)
+      end
+
+      def undelegate_task_action(request, id, request_id)
+        temporal = request_temporal_context
+        query_params(request, [])
+        reject_action_body!(request, subject: "Undelegate requests")
+        expected_revision = if_match!(request)
+        ensure_store_ready!(request_id)
+        result = application.undelegate_task(
+          id, expected_revision: expected_revision, context: delegation_context(request_id, temporal)
+        )
+        delegation_response(result, id, request_id)
+      end
+
+      def claim_task_action(request, id, request_id)
+        temporal = request_temporal_context
+        query_params(request, [])
+        expected_revision = if_match!(request)
+        body = json_body(request)
+        reject_unknown_fields!(body, CLAIM_FIELDS)
+        validation!(worker: ["is required"]) unless body.key?("worker")
+        validate_worker!("worker", body["worker"])
+        ensure_store_ready!(request_id)
+        result = application.claim_task(
+          id, worker: body["worker"], expected_revision: expected_revision,
+          context: delegation_context(request_id, temporal)
+        )
+        delegation_response(result, id, request_id)
+      end
+
+      def release_task_action(request, id, request_id)
+        temporal = request_temporal_context
+        query_params(request, [])
+        expected_revision = if_match!(request)
+        body = json_body(request)
+        reject_unknown_fields!(body, RELEASE_FIELDS)
+        validate_release_body!(body)
+        ensure_store_ready!(request_id)
+        result = application.release_task(
+          id, worker: body["worker"], force: body.fetch("force", false), note: body["note"],
+          expected_revision: expected_revision, context: delegation_context(request_id, temporal)
+        )
+        delegation_response(result, id, request_id)
+      end
+
+      # One reference to where the work lives, replaced wholesale: a null (or
+      # the `off` spelling every surface accepts) clears it. PUT rather than
+      # POST because this names a value on the marker and repeating it is a
+      # no-op, unlike the four transitions above.
+      def put_work_ref(request, id, request_id)
+        temporal = request_temporal_context
+        query_params(request, [])
+        expected_revision = if_match!(request)
+        body = json_body(request)
+        reject_unknown_fields!(body, WORK_REF_FIELDS)
+        validate_work_ref_body!(body)
+        ensure_store_ready!(request_id)
+        result = application.set_work_ref(
+          id, body["work_ref"], worker: body["worker"], expected_revision: expected_revision,
+          context: delegation_context(request_id, temporal)
+        )
+        delegation_response(result, id, request_id)
+      end
+
+      def delegation_context(request_id, temporal)
+        OperationContext.new(operation_id: request_id, source: :api, temporal_context: temporal)
+      end
+
+      # The canonical post-write resource. Application already re-reads the task
+      # from the snapshot its own write produced, so the response cannot show a
+      # neighbouring writer's later state — and its ETag is the revision this
+      # request created. An idempotent repeat (:no_change) writes nothing and so
+      # carries no store revision; that case, and only that case, re-reads.
+      def delegation_response(result, id, request_id)
+        delegation_failure!(result, request_id, id: id)
+        summary = result.summary.is_a?(Hash) ? result.summary : {}
+        view = summary[:task]
+        revision = result.store_revision
+        if view.nil? || revision.nil?
+          read = application.get_task_result(id, source: :live)
+          read_failure!(read, request_id) unless read.ok?
+          view ||= read.data
+          revision ||= read.store_revision
+        end
+        [
+          200,
+          { "etag" => etag(view.revision) },
+          Representation.success(Representation.task(view), revision),
+        ]
+      end
+
+      # A lost claim race is not a stale precondition, and clients must be able
+      # to tell them apart without parsing prose:
+      #
+      #   412 stale_revision — the task moved on since the client read it; the
+      #                        fix is to refetch and decide again.
+      #   409 claim_conflict — the client's view was current and the delegation
+      #                        is simply held by someone else; the fix is to
+      #                        pick another task (or, for the owner, revoke).
+      #
+      # Every delegation :conflict is a lost race over one live marker — a claim
+      # someone else took, or a worker id that no longer matches it — so all of
+      # them carry the holder and the timestamp of the transition that beat this
+      # request. `holder` is null in the one case where a worker acts on a
+      # marker nobody holds.
+      #
+      # Every other refusal keeps the shared mapping, including the semantic
+      # :invalid messages that name the refusing state ("task is PROPOSED; only
+      # accepted live tasks can be delegated").
+      def delegation_failure!(result, request_id, id:)
+        return if result.ok?
+
+        summary = result.summary.is_a?(Hash) ? result.summary : {}
+        if result.conflict?
+          raise HttpError.new(
+            409, :claim_conflict, result.errors.first || Errors.message(:claim_conflict),
+            details: {
+              id: id, action: summary[:action].to_s,
+              holder: summary[:holder], at: summary[:at]
+            }
+          )
+        end
+        mutation_failure!(result, request_id, id: id, semantic_invalid: true)
+      end
+
+      def validate_delegate_body!(body)
+        validation!(kind: ["is required"]) unless body.key?("kind")
+        unless Delegation::KINDS.include?(body["kind"])
+          validation!(kind: ["must be #{Delegation::KINDS.join(" or ")}"])
+        end
+        # Which of mode/assignee is required or forbidden follows from kind, and
+        # that rule belongs to the domain (Store#delegate_task!), not here. The
+        # adapter only rejects values of the wrong type.
+        %w[mode assignee].each do |field|
+          next unless body.key?(field)
+          unless body[field].is_a?(String) && !body[field].strip.empty?
+            validation!(field => ["must be non-empty text"])
+          end
+        end
+        if body.key?("keep_state") && ![true, false].include?(body["keep_state"])
+          validation!(keep_state: ["must be true or false"])
+        end
+      end
+
+      def validate_release_body!(body)
+        validate_worker!("worker", body["worker"]) if body.key?("worker")
+        if body.key?("force") && ![true, false].include?(body["force"])
+          validation!(force: ["must be true or false"])
+        end
+        if body.key?("note") && !body["note"].nil? &&
+           !(body["note"].is_a?(String) && !body["note"].strip.empty?)
+          validation!(note: ["must be non-empty text or null"])
+        end
+        # A release either proves the claim with a worker id or is the owner's
+        # explicit override; neither is inferable from the transport.
+        return if body["worker"] || body["force"] == true
+
+        validation!(worker: ["is required unless force is true"])
+      end
+
+      def validate_work_ref_body!(body)
+        validation!(work_ref: ["is required"]) unless body.key?("work_ref")
+        reference = body["work_ref"]
+        unless reference.nil? || (reference.is_a?(String) && !reference.strip.empty? &&
+                                  !reference.match?(/[\r\n]/))
+          validation!(work_ref: ["must be a non-empty single-line reference, or null to clear"])
+        end
+        validate_worker!("worker", body["worker"]) if body.key?("worker")
+      end
+
+      def validate_worker!(field, value)
+        return if value.is_a?(String) && !value.strip.empty?
+
+        validation!(field => ["must be a non-empty worker id"])
       end
 
       # Projects and areas are rolled-up sections. Reads mirror the CLI's
@@ -1002,7 +1253,7 @@ module Tasks
       end
 
       def enforce_origin!(request)
-        return unless %w[POST PATCH DELETE].include?(request.request_method)
+        return unless %w[POST PUT PATCH DELETE].include?(request.request_method)
         origin = request.get_header("HTTP_ORIGIN")
         return if origin.nil? || origin.empty?
         return if @allowed_origins.include?(origin)
@@ -1031,6 +1282,8 @@ module Tasks
       def route_name(request)
         path = request.path_info
         return path if %w[/healthz /readyz /api/v1/meta /api/v1/sections /api/v1/tasks /api/v1/projects].include?(path)
+        action = path.match(%r{\A/api/v1/tasks/[^/]+/(delegate|undelegate|claim|release|work_ref)\z})
+        return "/api/v1/tasks/{id}/#{action[1]}" if action
         return "/api/v1/tasks/{id}" if path.match?(%r{\A/api/v1/tasks/[^/]+\z})
         return "/api/v1/projects/{id}/complete" if path.match?(%r{\A/api/v1/projects/[^/]+/complete\z})
         return "/api/v1/projects/{id}/archive" if path.match?(%r{\A/api/v1/projects/[^/]+/archive\z})

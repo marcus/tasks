@@ -37,6 +37,12 @@ module Tasks
           child_count: view.child_ids.length,
           descendant_count: view.descendant_count,
           links: view.links.map { |link| { system: link.system, url: link.url, label: link.label } },
+          # The stored delegation object verbatim — same nested key order
+          # (kind, mode, status, assignee, at, work_ref) with absent keys
+          # omitted, so the HTTP resource, `tasks show --json`, and the record
+          # on disk all spell one delegation identically. null means the task
+          # carries no marker; there is no empty delegation.
+          delegation: view.delegation,
         }
       end
 
