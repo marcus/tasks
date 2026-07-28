@@ -864,7 +864,8 @@ module Tasks
     # (clearing provenance from a closed task is an owner's prerogative);
     # an undelegated task is :no_change.
     def undelegate_task!(id, expected_revision: nil)
-      delegation_mutation!(id, expected_revision: expected_revision) { |rec| plan_undelegate(rec) }
+      delegation_mutation!(id, expected_revision: expected_revision,
+                           allow_repair: true) { |rec| plan_undelegate(rec) }
     end
 
     # Atomic pickup: compare-and-set {kind agent, status ready} to
@@ -2633,6 +2634,7 @@ module Tasks
       rec["tags"] = semantic_tags(rec) - [DEFER_TAG]
       replace_optional(rec, "tags", rec["tags"])
       rec["body"] = append_body(rec["body"], "- Did [#{today}].")
+      roll_delegation_forward(rec)
       patch_ok(rec)
     rescue ArgumentError, Timezones::Error => error
       patch_invalid(error.message)
@@ -2661,18 +2663,29 @@ module Tasks
     # nothing. Because the block runs under the mutation lock against records
     # read fresh inside it, a compare-and-set the block performs is atomic
     # across processes.
-    def delegation_mutation!(id, expected_revision:, coalesce_key: nil)
+    def delegation_mutation!(id, expected_revision:, coalesce_key: nil, allow_repair: false)
       with_lock do
         @last_rollback = nil
         before = snapshot
         current = nil
+        repair = false
         if schema_migration_required?
           return MutationResult.new(status: :migration_required, errors: ["run `tasks migrate`"])
         end
         begin
           preflight = Check.check(@org)
           unless preflight.ok?
-            return MutationResult.new(status: :store_invalid, errors: preflight.errors.map(&:last))
+            # Targeted repair, exactly as apply_task_changeset! grants it to a
+            # field-owned patch: undelegate OWNS the delegation field, so it may
+            # strip a malformed marker from its own record — the one a version
+            # skew or a foreign writer can leave behind. Only when every
+            # preflight error is attributable to that record (repair_scope?),
+            # and never under an If-Match, whose baseline was built over the
+            # malformed bytes. Every other delegation operation keeps refusing.
+            repair = allow_repair && expected_revision.nil? && repair_scope?(preflight, id)
+            unless repair
+              return MutationResult.new(status: :store_invalid, errors: preflight.errors.map(&:last))
+            end
           end
           unless id.is_a?(String) && !id.empty?
             return MutationResult.new(status: :invalid, errors: ["task id is required"])
@@ -2723,7 +2736,7 @@ module Tasks
           end
           after = snapshot
           @journal.record(label: planned[:label], before: before, after: after,
-                          coalesce_key: coalesce_key)
+                          coalesce_key: coalesce_key, repair: repair)
           reload!
           fresh_ri = locate_stable_index(@records, id)
           MutationResult.new(
@@ -2827,9 +2840,14 @@ module Tasks
       existing.reject { |key, _| key == "at" } == candidate.reject { |key, _| key == "at" }
     end
 
+    # Keyed on the field's PRESENCE, not on its shape: undelegate is the repair
+    # route for a marker some other writer left malformed (a claimed marker with
+    # no assignee, say), so it must be able to strip a value it would never have
+    # written itself. An explicit JSON null is the one exception — Check and
+    # Format both read it as absent, so removing it would write identical bytes.
     def plan_undelegate(rec)
       existing = rec[Delegation::FIELD]
-      unless Delegation.object?(existing)
+      if existing.nil?
         return { status: :ok, no_change: true, summary: { action: :undelegate, previous: nil } }
       end
 
@@ -2910,6 +2928,29 @@ module Tasks
       rec[Delegation::FIELD] = candidate
       label = clear ? "clear work ref: #{rec["title"]}" : "work ref → #{reference}: #{rec["title"]}"
       { status: :ok, label: label, summary: summary }
+    end
+
+    # Completing a recurring task rolls it forward instead of closing it, and
+    # the occurrence that appears is NEW work: the claim and the work reference
+    # belong to the cycle that just finished, so carrying them over would hand
+    # the next occurrence to a worker who never picked it up — invisible to
+    # `--agent-ready` (it looks claimed) and unpickupable by anyone else.
+    # The standing intent survives: the agent mode, or the person the task is
+    # delegated to, with a fresh transition stamp. Nothing that says the work
+    # already started does.
+    def roll_delegation_forward(rec)
+      existing = rec[Delegation::FIELD]
+      return unless Delegation.object?(existing)
+      # A marker of no recognized kind cannot describe intent to carry over;
+      # a fresh occurrence is the right place to drop it.
+      return rec.delete(Delegation::FIELD) unless Delegation.agent?(existing) || Delegation.human?(existing)
+
+      human = Delegation.human?(existing)
+      rec[Delegation::FIELD] = Delegation.ordered(
+        existing.merge("status" => human ? Delegation::DELEGATED : Delegation::READY,
+                       "assignee" => human ? existing["assignee"] : nil,
+                       "at" => delegation_now, "work_ref" => nil)
+      )
     end
 
     # Closing a task that was merely QUEUED for an agent clears the marker —

@@ -308,52 +308,92 @@ module Tasks
 
     # Resolve the delegation marker as ONE atomic value: the merged record takes
     # exactly one side's whole object, so a claim can never be spliced together
-    # from two devices. Beyond the ordinary three-way rules:
+    # from two devices.
     #
-    # - an owner's removal (undelegate) beats any concurrent change, because
-    #   revocation is the owner's override and must not be resurrected by a
-    #   worker's offline claim;
-    # - two concurrent claims resolve to the earlier `at`, tiebroken by the
-    #   lexicographically smaller assignee — deterministic and independent of
-    #   which side is "ours", so both clones converge on one holder and the
-    #   loser discovers it at its next worker-matched operation;
-    # - anything else is an ordinary conflict decided by the file's usual
-    #   last-write-wins rule.
+    # The winner is picked by a SINGLE total order over the two values, never by
+    # asking which side is "ours" or which record was written last. That matters
+    # because the merge is applied pairwise: an earlier rule that ordered claims
+    # by `at` but everything else by record-level last-write-wins is
+    # non-associative, and three devices could converge on DIFFERENT holders
+    # depending on the order their clones happened to sync. A maximum over one
+    # total order is associative and commutative, which is what makes "exactly
+    # one worker holds a claim" hold across multi-device merges. The order is:
+    #
+    # - removal absorbs everything: if either side dropped a marker the base
+    #   carried, the merge drops it. Owner revocation (undelegate) is the always
+    #   -wins override, and the escape hatch for every rule below;
+    # - a `claimed` marker beats any non-claimed one, so a live claim is never
+    #   silently downgraded to `ready` (or replaced) by a concurrent edit that
+    #   did not go through revocation;
+    # - two claims: earlier `at`, then the lexicographically smaller assignee,
+    #   then canonical bytes — first claim wins, and the loser discovers it at
+    #   its next worker-matched operation;
+    # - two non-claimed markers: later `at`, then canonical bytes — the most
+    #   recent owner intent.
     def merge_delegation!(merged, base, ours, theirs, event)
       field = Delegation::FIELD
       base_value = value_of(base, field)
       ours_value = value_of(ours, field)
       theirs_value = value_of(theirs, field)
+      return assign(merged, field, ours_value) if ours_value == theirs_value
 
-      winner, reason =
-        if ours_value == theirs_value then [ours_value, nil]
-        elsif ours_value == base_value then [theirs_value, nil]
-        elsif theirs_value == base_value then [ours_value, nil]
-        elsif ours_value.nil? || theirs_value.nil? then [nil, :removal_wins]
-        elsif Delegation.claimed?(ours_value) && Delegation.claimed?(theirs_value)
-          [earlier_claim(ours_value, theirs_value), :earlier_claim]
-        else
-          [lww_side(ours, theirs, event, field) == :ours ? ours_value : theirs_value, :last_write]
-        end
-
-      if reason
-        event[:conflicts] << field
-        event[:delegation] = { reason: reason, holder: winner && winner["assignee"] }
+      removed = !base_value.nil? && (ours_value.nil? || theirs_value.nil?)
+      winner = removed ? nil : delegation_max(ours_value, theirs_value)
+      # A change only one side made is reported as a conflict only when the
+      # order OVERRULES it — a released claim the other device still holds, say.
+      # Confirming a one-sided edit is the ordinary field rule, and silent.
+      other = ours_value == base_value ? theirs_value : ours_value
+      if [ours_value, theirs_value].include?(base_value) && winner == other
+        return assign(merged, field, winner)
       end
+
+      event[:conflicts] << field
+      event[:delegation] = { reason: removed ? :removal_wins : delegation_reason(ours_value, theirs_value),
+                             holder: winner && winner["assignee"] }
       assign(merged, field, winner)
     end
 
-    # First claim wins. The JSON tail keeps the choice symmetric even for two
-    # objects that agree on holder and instant but differ elsewhere.
-    def earlier_claim(ours_value, theirs_value)
-      [ours_value, theirs_value].min_by do |value|
-        [value["at"].to_s, value["assignee"].to_s, JSON.generate(Delegation.ordered(value))]
+    # The greater of two markers under the total order documented above. `nil`
+    # (a side with no marker, with none in the base to have removed) ranks below
+    # every object, so a concurrent add still wins over "absent".
+    def delegation_max(left, right)
+      return left if right.nil?
+      return right if left.nil?
+
+      left_claimed = Delegation.claimed?(left)
+      return left_claimed ? left : right if left_claimed != Delegation.claimed?(right)
+
+      by_at = left["at"].to_s <=> right["at"].to_s
+      # A claim is ranked by when it was taken (first wins); any other marker by
+      # when the owner last stated it (most recent wins).
+      return (left_claimed ? by_at.negative? : by_at.positive?) ? left : right unless by_at.zero?
+
+      if left_claimed
+        by_assignee = left["assignee"].to_s <=> right["assignee"].to_s
+        return by_assignee.negative? ? left : right unless by_assignee.zero?
       end
+      # Canonical bytes make the order total: two objects that tie on every
+      # meaningful key still resolve the same way on both devices.
+      delegation_bytes(left) <= delegation_bytes(right) ? left : right
     end
 
-    # Reconcile the resolved marker with the resolved state, because the two
-    # were decided independently and only some pairings are legal:
+    def delegation_bytes(value) = JSON.generate(Delegation.ordered(value))
+
+    def delegation_reason(ours_value, theirs_value)
+      ours_claimed = Delegation.claimed?(ours_value)
+      return :claim_holds unless ours_claimed == Delegation.claimed?(theirs_value)
+
+      ours_claimed ? :earlier_claim : :later_intent
+    end
+
+    # Reconcile the resolved marker with the rest of the resolved record,
+    # because the parts were decided independently and only some combinations
+    # are legal:
     #
+    # - only a task can carry a delegation; a record whose `type` resolved to
+    #   something else drops it (defensive — no CLI or API operation turns a
+    #   delegated task into a section — but the alternative is aborting the
+    #   whole merge, which would block device sync until a hand repair);
     # - closed keeps a claim or a human delegation verbatim (who did it, and
     #   where), but drops a marker still merely `ready` — nothing happened, the
     #   same normalization a local close performs;
@@ -366,7 +406,8 @@ module Tasks
       delegation = merged[Delegation::FIELD]
       return unless Delegation.object?(delegation)
 
-      reason = if Check::PROPOSED_STATES.include?(merged["state"]) then :cleared_on_proposal
+      reason = if merged["type"] != "task" then :cleared_on_non_task
+               elsif Check::PROPOSED_STATES.include?(merged["state"]) then :cleared_on_proposal
                elsif TERMINAL_STATES.include?(merged["state"]) && Delegation.ready?(delegation)
                  :cleared_on_close
                end

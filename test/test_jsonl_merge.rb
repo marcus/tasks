@@ -230,7 +230,7 @@ class TestJsonlMerge < Minitest::Test
     refute_includes Array(result.events.first[:conflicts]), "delegation"
   end
 
-  def test_non_claim_delegation_conflicts_fall_back_to_last_write_wins
+  def test_non_claim_delegation_conflicts_take_the_most_recent_owner_intent
     base = change(base_records, "10000002", delegation: ready(mode: "refine"))
     ours = change(base, "10000002", delegation: ready(mode: "implement", at: "2026-07-27T19:00:00Z"),
                   updated: HOME_STAMP)
@@ -242,9 +242,9 @@ class TestJsonlMerge < Minitest::Test
     records, result = merge(base, ours, theirs)
     reverse, = merge(base, theirs, ours)
 
-    assert_equal "human", delegation_of(records, "10000002")["kind"], "the newer stamp wins"
+    assert_equal "human", delegation_of(records, "10000002")["kind"], "the newer intent wins"
     assert_equal Tasks::Format.dump(records), Tasks::Format.dump(reverse)
-    assert_equal :last_write, result.events.first[:delegation][:reason]
+    assert_equal :later_intent, result.events.first[:delegation][:reason]
   end
 
   def test_close_against_claim_keeps_provenance_but_drops_a_ready_marker
@@ -296,6 +296,134 @@ class TestJsonlMerge < Minitest::Test
                     %("assignee":"worker/aaa","at":"2026-07-27T18:04:11Z",) +
                     %("work_ref":"https://example.com/pr/42"})
   end
+
+  # The regression that motivated the single total order: with `at` deciding
+  # two claims but record-level last-write-wins deciding everything else, the
+  # holder depended on the order the devices happened to sync in. Device A
+  # claims first, the owner then widens the mode on device C, device B claims
+  # last: (A+B)+C used to hold A's claim while (A+C)+B installed B's, so two
+  # devices each believed a DIFFERENT worker owned the task.
+  def test_pairwise_merge_order_cannot_change_the_claim_holder
+    base = change(base_records, "10000002", delegation: ready(at: "2026-07-27T09:00:00Z"))
+    first = change(base, "10000002", delegation: claim("worker/aaa", at: "2026-07-27T10:00:00Z"),
+                   updated: "2026-07-27T10:00:00Z#a")
+    widened = change(base, "10000002", delegation: ready(mode: "implement", at: "2026-07-27T10:10:00Z"),
+                     updated: "2026-07-27T10:10:00Z#c")
+    second = change(base, "10000002", delegation: claim("worker/bbb", at: "2026-07-27T10:30:00Z"),
+                    updated: "2026-07-27T10:30:00Z#b")
+
+    holders = [[first, second, widened], [first, widened, second], [second, widened, first]].map do |x, y, z|
+      pair, = merge(base, x, y)
+      whole, = merge(base, copy(pair), z)
+      delegation_of(whole, "10000002")
+    end
+
+    assert_equal 1, holders.uniq.length, "every sync order must converge on one holder: #{holders.inspect}"
+    assert_equal "worker/aaa", holders.first["assignee"], "the first claim holds the task"
+  end
+
+  # A live claim is never silently downgraded by a concurrent non-removal edit:
+  # the owner's release loses to the claim it is racing, and the claim's holder
+  # and work_ref — the provenance the feature exists to keep — survive the close
+  # that the other device performed.
+  def test_a_live_claim_outranks_a_concurrent_release_and_keeps_its_provenance
+    held = claim("worker/aaa", at: "2026-07-27T10:00:00Z", work_ref: "https://example.com/pr/42")
+    base = change(base_records, "10000002", delegation: held)
+    closed = change(base, "10000002", state: "DONE", closed: "2026-07-27", updated: HOME_STAMP)
+    released = change(base, "10000002", delegation: ready(at: "2026-07-27T10:02:00Z"),
+                      updated: WORK_STAMP)
+
+    records, result = merge(base, closed, released)
+    reverse, = merge(base, released, closed)
+    task = find(records, "10000002")
+
+    assert_equal "DONE", task["state"]
+    assert_equal held, task["delegation"], "the holder and work_ref must survive the close"
+    assert_equal Tasks::Format.dump(records), Tasks::Format.dump(reverse)
+    assert_equal :claim_holds, result.events.first[:delegation][:reason]
+  end
+
+  # Owner revocation stays the escape hatch that beats even a live claim, in
+  # both directions and whatever the other side did.
+  def test_removal_still_absorbs_a_live_claim_from_either_side
+    base = change(base_records, "10000002",
+                  delegation: claim("worker/aaa", at: "2026-07-27T10:00:00Z"))
+    revoked = change(base, "10000002", delegation: nil, updated: HOME_STAMP)
+    reclaimed = change(base, "10000002",
+                       delegation: claim("worker/bbb", at: "2026-07-27T09:00:00Z"),
+                       updated: WORK_STAMP)
+
+    forward, result = merge(base, revoked, reclaimed)
+    reverse, = merge(base, reclaimed, revoked)
+
+    refute find(forward, "10000002").key?("delegation"), "undelegate always wins"
+    assert_equal Tasks::Format.dump(forward), Tasks::Format.dump(reverse)
+    assert_equal :removal_wins, result.events.first[:delegation][:reason]
+  end
+
+  # Defensive: no operation turns a delegated task into a section, but a record
+  # whose merged `type` resolves that way must normalize rather than abort the
+  # whole merge and block device sync until a hand repair.
+  def test_delegation_on_a_record_that_merged_into_a_section_is_dropped_not_fatal
+    base = copy(base_records)
+    ours = change(base, "10000003",
+                  delegation: claim("worker/aaa", at: "2026-07-27T18:04:11Z"), updated: HOME_STAMP)
+    theirs = copy(base)
+    theirs.find { |record| record["id"] == "10000003" }
+          .replace({ "type" => "section", "id" => "10000003", "parent" => "10000001",
+                     "title" => "Call PSE", "updated" => WORK_STAMP })
+
+    records, result = merge(base, ours, theirs)
+    record = find(records, "10000003")
+
+    assert_equal "section", record["type"]
+    refute record.key?("delegation")
+    assert_equal :cleared_on_non_task, result.events.first[:delegation][:reason]
+    assert Tasks::Check.check_text(result.text).ok?
+  end
+
+  # Delegation resolution must be a maximum over ONE total order, which makes it
+  # associative and commutative: no sequence of pairwise device syncs can end on
+  # two different markers. States stay live here on purpose — clearing a marker
+  # on a closed or proposed task is the state machine's rule, and the state
+  # merge's own ordering is out of this property's scope.
+  def test_delegation_resolution_is_order_independent_across_three_devices
+    rng = Random.new(20_260_727)
+    stamps = ["2026-07-27T09:00:00Z", "2026-07-27T10:00:00Z", "2026-07-27T11:00:00Z"]
+    shapes = lambda do
+      [nil,
+       ready(mode: %w[refine research implement].sample(random: rng), at: stamps.sample(random: rng)),
+       claim("worker/#{%w[aaa bbb ccc].sample(random: rng)}", at: stamps.sample(random: rng),
+             mode: %w[refine research implement].sample(random: rng)),
+       claim("worker/#{%w[aaa bbb].sample(random: rng)}", at: stamps.sample(random: rng),
+             work_ref: "https://example.com/#{rng.rand(2)}"),
+       { "kind" => "human", "status" => "delegated", "at" => stamps.sample(random: rng),
+         "assignee" => "p#{rng.rand(2)}@example.com" }].sample(random: rng)
+    end
+    side = lambda do |base, index|
+      change(base, "10000002", delegation: shapes.call,
+             state: %w[TODO NEXT WAITING].sample(random: rng),
+             updated: "2026-07-27T1#{rng.rand(3)}:0#{rng.rand(6)}:00Z#d#{index}")
+    end
+
+    300.times do
+      base = change(base_records, "10000002", delegation: shapes.call)
+      devices = Array.new(3) { |index| side.call(base, index) }
+
+      outcomes = [[0, 1, 2], [0, 2, 1], [1, 2, 0], [2, 1, 0], [1, 0, 2], [2, 0, 1]].map do |x, y, z|
+        pair, = merge(base, devices[x], devices[y])
+        whole, = merge(base, copy(pair), devices[z])
+        delegation_of(whole, "10000002")
+      end
+
+      assert_equal 1, outcomes.uniq.length,
+                   "sync order changed the marker:\n  base=#{base_delegation(base)}\n" \
+                   "  devices=#{devices.map { |records| base_delegation(records) }.join("\n          ")}\n" \
+                   "  outcomes=#{outcomes.uniq.inspect}"
+    end
+  end
+
+  def base_delegation(records) = JSON.generate(find(records, "10000002")["delegation"])
 
   def test_v1_merge_base_between_two_migrated_sides_merges_cleanly
     v1_base = copy(base_records)

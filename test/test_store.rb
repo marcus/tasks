@@ -962,6 +962,64 @@ class TestStore < Minitest::Test
     end
   end
 
+  # A recurring completion opens the NEXT occurrence, which is new work: the
+  # claim and the work reference belong to the cycle that just finished. Left
+  # in place they hand the fresh occurrence to a worker who never picked it up
+  # — invisible to `--agent-ready` (it reads as claimed), unclaimable by anyone
+  # else, and re-inherited every cycle.
+  def test_completing_a_claimed_recurring_task_returns_the_next_occurrence_to_the_pool
+    with_clocked_recur_store do |store, org, clock|
+      assert store.delegate_task!("dddd0002", kind: "agent", mode: "implement").ok?
+      assert store.claim_task!("dddd0002", worker: "claude/opus/aaa").ok?
+      assert store.set_work_ref!("dddd0002", "https://example.com/pr/1", worker: "claude/opus/aaa").ok?
+      claimed_at = record_for(org, title: "Pay rent")["delegation"]["at"]
+      clock.call(3600)
+
+      assert store.test_mutation.complete(find_item(store, "Pay rent"))
+
+      delegation = record_for(org, title: "Pay rent")["delegation"]
+      assert_equal "ready", delegation["status"], "the next occurrence is unclaimed work"
+      assert_equal "implement", delegation["mode"], "the owner's standing intent survives"
+      refute delegation.key?("assignee"), "the finished cycle's holder does not carry over"
+      refute delegation.key?("work_ref"), "the finished cycle's work reference does not carry over"
+      refute_equal claimed_at, delegation["at"], "the transition stamp is the new occurrence's"
+      assert store.claim_task!("dddd0002", worker: "claude/other/bbb").ok?,
+             "another worker can pick the new occurrence up"
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  # The human half of the same rule: the person keeps the standing assignment,
+  # but the closed cycle's work reference does not follow it forward.
+  def test_completing_a_human_delegated_recurring_task_keeps_the_person_not_the_work_ref
+    with_clocked_recur_store do |store, org, clock|
+      assert store.delegate_task!("dddd0002", kind: "human", assignee: "pat@example.com").ok?
+      assert store.set_work_ref!("dddd0002", "https://example.com/ticket/7").ok?
+      clock.call(3600)
+
+      assert store.test_mutation.complete(find_item(store, "Pay rent"))
+
+      delegation = record_for(org, title: "Pay rent")["delegation"]
+      assert_equal "delegated", delegation["status"]
+      assert_equal "pat@example.com", delegation["assignee"]
+      refute delegation.key?("work_ref")
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  # RECUR_RECORDS with a store whose clock the test advances, so a refreshed
+  # `at` stamp is provably different from the one it replaced.
+  def with_clocked_recur_store
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, Tasks::Format.dump(RECUR_RECORDS))
+      now = Time.utc(2026, 7, 27, 9, 0, 0)
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"),
+                               now: -> { now })
+      yield store, org, ->(seconds) { now += seconds }
+    end
+  end
+
   def test_complete_non_recurring_still_closes
     with_recur_store do |store, org|
       plain = find_item(store, "Plain dated task")
@@ -1336,6 +1394,87 @@ class TestStore < Minitest::Test
 
       assert_equal :ok, store.undo!.first, "undo of a targeted repair is permitted"
       assert_equal invalid_bytes, File.read(org), "undo restores the invalid bytes exactly"
+    end
+  end
+
+  # A shape-invalid `delegation` — a claimed marker with no assignee, the kind
+  # of record a version skew or a foreign writer leaves behind — must not make
+  # the store unrepairable through the CLI. `undelegate` OWNS that field, so it
+  # gets the same targeted-repair capability a field-owned patch has; every
+  # other delegation operation keeps refusing an invalid file outright.
+  def invalid_delegation_records(extra = [])
+    [
+      { "type" => "meta", "version" => 2 },
+      { "type" => "section", "id" => "eeee0001", "title" => "W" },
+      { "type" => "task", "id" => "eeee0002", "parent" => "eeee0001", "state" => "TODO",
+        "title" => "Skewed marker",
+        "delegation" => { "kind" => "agent", "mode" => "research", "status" => "claimed",
+                          "at" => "2026-07-27T18:04:11Z" } },
+      *extra,
+    ]
+  end
+
+  def with_invalid_delegation_store(extra = [])
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, dump_fixture(invalid_delegation_records(extra)))
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
+      refute Tasks::Check.check(org).ok?, "seed is invalid"
+      yield store, org
+    end
+  end
+
+  def test_undelegate_repairs_an_invalid_marker_on_its_own_record
+    with_invalid_delegation_store do |store, org|
+      invalid_bytes = File.read(org)
+
+      assert_equal :store_invalid, store.claim_task!("eeee0002", worker: "w/1").status,
+                   "claim never repairs"
+      assert_equal :store_invalid, store.release_task!("eeee0002", force: true).status,
+                   "release never repairs"
+      assert_equal :store_invalid,
+                   store.set_work_ref!("eeee0002", "https://example.com/x").status,
+                   "work_ref never repairs"
+      assert_equal :store_invalid,
+                   store.delegate_task!("eeee0002", kind: "agent", mode: "refine").status,
+                   "delegate never repairs"
+      assert_equal invalid_bytes, File.read(org), "a refusal writes nothing"
+
+      result = store.undelegate_task!("eeee0002")
+
+      assert_equal :ok, result.status
+      assert Tasks::Check.check(org).ok?, "the file is valid again"
+      refute record_for(org, title: "Skewed marker").key?("delegation")
+      assert_equal :ok, store.undo!.first, "undo of a targeted repair is permitted"
+      assert_equal invalid_bytes, File.read(org), "undo restores the invalid bytes exactly"
+    end
+  end
+
+  def test_undelegate_refuses_when_another_record_is_also_invalid
+    bystander = { "type" => "task", "id" => "eeee0003", "parent" => "eeee0001",
+                  "state" => "TODO", "title" => "Bystander", "deadline" => "also-bad" }
+    with_invalid_delegation_store([bystander]) do |store, org|
+      before = File.read(org)
+
+      result = store.undelegate_task!("eeee0002")
+
+      assert_equal :store_invalid, result.status, "repairing one record can't leave the file clean"
+      assert_equal before, File.read(org)
+      assert_equal :empty, store.undo!.first
+    end
+  end
+
+  # An If-Match baseline computed over malformed bytes isn't trustworthy, so the
+  # revision-guarded path keeps refusing — matching the strict-revision rule.
+  def test_undelegate_with_an_expected_revision_never_repairs
+    with_invalid_delegation_store do |store, org|
+      before = File.read(org)
+      hex = "0" * 64
+
+      result = store.undelegate_task!("eeee0002", expected_revision: "v1.#{hex}.#{hex}.#{hex}")
+
+      assert_equal :store_invalid, result.status
+      assert_equal before, File.read(org)
     end
   end
 
