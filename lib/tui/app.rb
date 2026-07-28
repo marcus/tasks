@@ -2770,7 +2770,7 @@ module Tui
       field = TermForm::Fields::Input.new(key: :value, value: +"", label: "delegate to")
       @ui.form = Form.new(
         kind: :delegate, title: "Delegate", prompt: "delegate to",
-        hint: DELEGATE_HINT, min_width: 60, return_mode: :list,
+        hint: DELEGATE_HINT, min_width: 84, return_mode: :list,
         suffix: "(#{delegation_state_label(task)})", target_id: task.id, field: field
       ) do |raw|
         text = raw.to_s.strip
