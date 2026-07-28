@@ -472,11 +472,126 @@ class TestDelegation < Minitest::Test
          "at" => "2026-02-31T00:00:00Z" }, /is not a UTC timestamp/],
       [{ "kind" => "human", "status" => "delegated", "assignee" => "pat@example.com",
          "at" => STAMP, "work_ref" => "" }, /work_ref must be a non-empty string/],
-      [{ "kind" => "human", "status" => "delegated", "assignee" => "pat@example.com",
-         "at" => STAMP, "note" => "x" }, /unknown keys: note/],
     ].each do |value, pattern|
       refute D.valid?(value), value.inspect
       assert_match pattern, D.errors(value).join(" | "), value.inspect
+    end
+  end
+
+  # -- identity hygiene ------------------------------------------------------
+
+  # Control bytes are not a cosmetic problem. A worker id carrying an erase-line
+  # / cursor-up sequence rewrites the terminal of the agent that *lost* a claim
+  # race, because the conflict line names the holder verbatim; the same bytes
+  # reach `show`, `list --delegated`, and the TUI detail panel, where a non-SGR
+  # escape also desynchronizes cell arithmetic (Ansi.vislen strips SGR only).
+  def test_control_characters_and_escapes_are_refused_in_every_identity_field
+    spoof = "\e[2K\e[1A\e[2K\e[Gagent-ready (research): Renew office lease"
+    hostile = [spoof, "w\u0000x", "w\u007Fx", "w\ax", "w\bx", "w\u009Bx"]
+    hostile.each do |value|
+      refute D.worker?(value), value.inspect
+      refute D.email?("pat#{value}@example.com"), value.inspect
+      assert_match(/must not contain control characters/,
+                   D.work_ref_errors("work_ref" => "https://example.com/#{value}").join(" | "),
+                   value.inspect)
+    end
+
+    # Ruby's \s is ASCII-only, so these four used to pass the "no whitespace"
+    # rule while still reading as a break on screen.
+    ["w\u00A0x", "w\u2028x", "w\u2029x", "w\u3000x"].each do |value|
+      refute D.worker?(value), value.inspect
+      refute D.email?("pat#{value}@example.com"), value.inspect
+    end
+
+    assert D.worker?(WORKER)
+    assert D.email?("pat@example.com")
+  end
+
+  def test_a_control_character_worker_id_never_reaches_the_store
+    with_delegation_store do |store, org, _archive|
+      id = FIX[:plants]
+      assert store.delegate_task!(id, kind: "agent", mode: "research").ok?
+      result = store.claim_task!(id, worker: "\e[2K\e[1Aagent-ready")
+      assert result.invalid?, result.status.inspect
+      assert_equal "ready", delegation_in(org, id)["status"]
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  # `@` is the TUI's context filter, so `@work` is muscle memory — and it used
+  # to become a person the task was now WAITING on.
+  def test_an_at_prefixed_word_is_not_an_email_address
+    ["@", "@work", "@home", "pat@", "pat@example", "pat@.com", "pat@example.",
+     "pat@@example.com", "pat@ex..com"].each do |value|
+      refute D.email?(value), value.inspect
+    end
+    ["pat@example.com", "p.a+t@mail.example.co.uk", "x@y.z"].each do |value|
+      assert D.email?(value), value.inspect
+    end
+  end
+
+  def test_delegating_to_an_at_prefixed_word_is_refused_and_leaves_the_state_alone
+    with_delegation_store do |store, org, _archive|
+      id = FIX[:plants]
+      before = Tasks::Format.parse(File.read(org, encoding: "UTF-8"))
+                            .records.find { |r| r["id"] == id }["state"]
+      result = store.delegate_task!(id, kind: "human", assignee: "@work")
+      assert result.invalid?, result.status.inspect
+      assert_match(/"@work" must be an email address/, result.errors.join(" | "))
+      assert_nil delegation_in(org, id)
+      assert_equal before, Tasks::Format.parse(File.read(org, encoding: "UTF-8"))
+                                        .records.find { |r| r["id"] == id }["state"]
+    end
+  end
+
+  # -- work_ref bounds -------------------------------------------------------
+
+  def test_work_ref_is_bounded_so_one_paste_cannot_own_a_jsonl_line
+    at_limit = "https://example.com/#{"x" * (D::WORK_REF_LIMIT - 20)}"
+    assert_equal D::WORK_REF_LIMIT, at_limit.length
+    assert_empty D.work_ref_errors("work_ref" => at_limit)
+
+    over = "x" * (D::WORK_REF_LIMIT + 1)
+    assert_match(/at most #{D::WORK_REF_LIMIT} characters/,
+                 D.work_ref_errors("work_ref" => over).join(" | "))
+
+    with_delegation_store do |store, org, _archive|
+      id = FIX[:plants]
+      assert store.delegate_task!(id, kind: "agent", mode: "research").ok?
+      assert store.claim_task!(id, worker: WORKER).ok?
+      result = store.set_work_ref!(id, "x" * 100_000, worker: WORKER)
+      assert result.invalid?, result.status.inspect
+      assert_nil delegation_in(org, id)["work_ref"]
+      assert_operator File.size(org), :<, 20_000
+    end
+  end
+
+  # -- forward compatibility -------------------------------------------------
+
+  # The top level has always round-tripped unknown keys with only a warning.
+  # One level down that posture used to invert: a field a newer binary added
+  # was a hard Check error, which blocked every write store-wide and made the
+  # git merge driver refuse outright.
+  def test_an_unknown_nested_key_is_not_an_error_and_survives_a_write
+    future = { "kind" => "agent", "mode" => "research", "status" => "ready", "at" => STAMP,
+               "lease_until" => "2026-07-28T00:00:00Z" }
+    assert_empty D.errors(future), "a newer binary's field must not fail validation"
+    assert_equal ["lease_until"], D.unknown_keys(future)
+
+    records = FIXTURE_RECORDS.map do |record|
+      record["id"] == FIX[:plants] ? record.merge("delegation" => future) : record
+    end
+    with_delegation_store(records: records) do |store, org, _archive|
+      id = FIX[:plants]
+      assert Tasks::Check.check(org).ok?, Tasks::Check.check(org).errors.inspect
+
+      claimed = store.claim_task!(id, worker: WORKER)
+      assert claimed.ok?, claimed.errors.inspect
+      assert_equal "2026-07-28T00:00:00Z", delegation_in(org, id)["lease_until"],
+                   "the unknown field must survive a write that lands on its record"
+      # Unknown keys emit after the known ones, so the line stays canonical.
+      assert_includes line_for(org, id),
+                      %("at":"#{STAMP}","lease_until":"2026-07-28T00:00:00Z")
     end
   end
 end

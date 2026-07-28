@@ -646,8 +646,16 @@ module Tasks
     def replacing_human_delegation?(previous) =
       previous.is_a?(Hash) && previous["kind"] == "human"
 
+    # The blocker note is the whole point of a blocked agent's escape hatch, and
+    # it is appended *after* the release has already been written. So text this
+    # process cannot even trim must degrade to a typed "not applied" — the
+    # note_applied: false contract the caller already handles — and never to an
+    # exception raised on top of a completed, half-composed write.
+    NOTE_ENCODING_ERROR = "release note is not valid UTF-8 text"
+
     def release_note_follow_up(command, coalesce_key:, context:, today:)
-      note = command.note.to_s.strip
+      note = blocker_note(command.note)
+      return MutationResult.new(status: :invalid, errors: [NOTE_ENCODING_ERROR]) if note.nil?
       return nil if note.empty?
 
       snapshot = store_factory.call.edit_snapshot(command.id)
@@ -661,6 +669,17 @@ module Tasks
                                  history_label: "release: #{snapshot.title}"),
         today: today, context: context
       )
+    end
+
+    # The trimmed note, "" for no note at all, or nil when the bytes are not
+    # valid UTF-8 even after re-tagging them from the process locale (Store#utf8's
+    # recovery, applied here because String#strip would raise first).
+    def blocker_note(value)
+      text = value.to_s
+      text = text.dup.force_encoding(Encoding::UTF_8) unless text.encoding == Encoding::UTF_8
+      return nil unless text.valid_encoding?
+
+      text.strip
     end
 
     # Fold the Store result (and any follow-up write) into one adapter-facing

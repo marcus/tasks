@@ -40,6 +40,14 @@ module Tasks
       Delegation::FIELD => Delegation::KEY_ORDER,
     }.freeze
 
+    # Nested objects whose *unknown* keys round-trip instead of being dropped —
+    # the same forward-compat rule the top level has always had. `delegation` is
+    # in: a field a newer binary added must survive a write by this one, and
+    # Check only warns about it. The temporal `*_time` objects are deliberately
+    # out: Check treats an unknown key there as a hard error, so dropping it on
+    # the next write is the repair path, not data loss.
+    NESTED_FORWARD_COMPAT = [Delegation::FIELD].freeze
+
     # The physical 1-based line number `parse` stamps onto each record so the
     # Store can resolve `L<n>` refs and reselect in the TUI. It is bookkeeping,
     # never part of the schema — `dump_record` drops it so it never serializes.
@@ -124,14 +132,24 @@ module Tasks
     # Order one nested object's keys, dropping absent entries. A value with no
     # declared nested order — or one that isn't an object at all — passes
     # through untouched, so a malformed record still serializes for Check to
-    # report rather than raising here.
+    # report rather than raising here. For a forward-compat field, keys this
+    # binary does not know follow the declared ones in their own order, exactly
+    # as dump_record does at the top level.
     def nested_object(key, value)
       order = NESTED_KEY_ORDER[key]
       return value unless order && value.is_a?(Hash)
       source = stringify(value)
-      order.each_with_object({}) do |child, ordered|
+      ordered = {}
+      order.each do |child|
         ordered[child] = source[child] if source.key?(child) && !omit?(source[child])
       end
+      return ordered unless NESTED_FORWARD_COMPAT.include?(key)
+
+      source.each do |child, child_value|
+        next if order.include?(child) || omit?(child_value)
+        ordered[child] = child_value
+      end
+      ordered
     end
   end
 end

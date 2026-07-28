@@ -233,6 +233,12 @@ module Tasks
       r.each_key do |k|
         warnings << [line, "unknown key #{k.inspect}"] unless KNOWN_KEYS.include?(k)
       end
+      # A newer binary's delegation key is preserved on write rather than
+      # dropped, so it gets the same hazard warning as an unknown top-level key
+      # instead of failing the file.
+      Delegation.unknown_keys(r[Delegation::FIELD]).each do |k|
+        warnings << [line, "unknown delegation key #{k.inspect}"]
+      end
     end
 
     def check_task(r, line, errors)

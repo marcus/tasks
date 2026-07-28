@@ -200,8 +200,22 @@ class TestCheck < Minitest::Test
       /at nil is not a UTC timestamp/ => { "kind" => "agent", "mode" => "refine", "status" => "ready" },
       /at "2026-07-27T18:04:11\+02:00" is not a UTC timestamp/ =>
         { "kind" => "agent", "mode" => "refine", "status" => "ready", "at" => "2026-07-27T18:04:11+02:00" },
+      /assignee "@work" must be an email address/ =>
+        { "kind" => "human", "status" => "delegated", "assignee" => "@work", "at" => at },
+      /assignee "@" must be an email address/ =>
+        { "kind" => "human", "status" => "delegated", "assignee" => "@", "at" => at },
+      /assignee "pat@example" must be an email address/ =>
+        { "kind" => "human", "status" => "delegated", "assignee" => "pat@example", "at" => at },
+      /\\e\[2K\\e\[1Aagent-ready" must be a worker id/ =>
+        { "kind" => "agent", "mode" => "refine", "status" => "claimed",
+          "assignee" => "\e[2K\e[1Aagent-ready", "at" => at },
       /work_ref must be a non-empty string/ => valid_delegation.merge("work_ref" => "   "),
       /work_ref must be a single line/ => valid_delegation.merge("work_ref" => "a\nb"),
+      /must be a single line/ => valid_delegation.merge("work_ref" => "a\u2028b"),
+      /work_ref must not contain control characters/ =>
+        valid_delegation.merge("work_ref" => "https://example.com/\e[2Kx"),
+      /work_ref must be at most 500 characters/ =>
+        valid_delegation.merge("work_ref" => "x" * 501),
     }
 
     cases.each do |pattern, delegation|
@@ -221,16 +235,39 @@ class TestCheck < Minitest::Test
     assert_match(/delegation must not be empty/, res.errors.map { |_l, m| m }.join)
   end
 
-  # Format emits only the keys the schema declares, so an unknown nested key is
-  # likewise a hand edit — and it must be reported, not silently carried.
-  def test_hand_edited_unknown_delegation_keys_are_errors
+  # Forward compatibility, one level down. An unknown key inside `delegation` is
+  # most likely a field a *newer* binary writes, not a hand edit — and treating
+  # it as an error was catastrophic rather than cautious: it failed `check`,
+  # made JsonlMerge refuse the whole merge, and (because the post-write Check
+  # validates every line) blocked every write store-wide until a patch happened
+  # to land on that one record. Unknown top-level keys have always been a
+  # warning that round-trips; the nested rule now matches.
+  def test_unknown_delegation_keys_do_not_fail_the_file
     text = Tasks::Format.dump([meta, section("aaaa0001", "W")]) +
            %({"type":"task","id":"aaaa0002","parent":"aaaa0001","state":"NEXT","title":"t",) +
            %("delegation":{"kind":"agent","mode":"refine","status":"ready",) +
            %("at":"2026-07-27T18:04:11Z","note":"x","lease":1}}\n)
     res = C.check_text(text)
-    refute res.ok?
-    assert_match(/delegation has unknown keys: lease, note/, res.errors.map { |_l, m| m }.join)
+    assert res.ok?, res.errors.map { |_l, m| m }.inspect
+    assert_equal %w[lease note], Tasks::Delegation.unknown_keys(
+      { "kind" => "agent", "note" => "x", "lease" => 1 }
+    )
+    # Tolerated, but still reported — the same hazard treatment an unknown
+    # top-level key gets, so a forward-compat field is never silent.
+    messages = res.warnings.map { |_l, message| message }
+    assert_includes messages, %(unknown delegation key "lease")
+    assert_includes messages, %(unknown delegation key "note")
+  end
+
+  # ...and re-serializing that record keeps the field instead of deleting it.
+  def test_unknown_delegation_keys_survive_a_round_trip
+    record = task("aaaa0002", "aaaa0001", "NEXT", "t",
+                  "delegation" => { "kind" => "agent", "mode" => "refine", "status" => "ready",
+                                    "at" => "2026-07-27T18:04:11Z",
+                                    "lease_until" => "2026-07-28T00:00:00Z" })
+    line = Tasks::Format.dump_record(record)
+    assert_includes line, %("at":"2026-07-27T18:04:11Z","lease_until":"2026-07-28T00:00:00Z")
+    assert C.check_text(Tasks::Format.dump([meta, section("aaaa0001", "W"), record])).ok?
   end
 
   # A JSON null is absence, not breakage: the next write drops the key.

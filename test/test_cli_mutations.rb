@@ -3524,6 +3524,142 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  # `off` and `none` are the same instruction at every surface. They were not:
+  # the CLI cleared only on `off` and stored the literal string "none", while
+  # the TUI's `W` form cleared on both.
+  def test_cli_workref_clears_on_both_off_and_none
+    %w[off none OFF NONE].each do |word|
+      with_cli_store do |org, archive|
+        run_cli_at(org, archive, "delegate", "Water the plants", "research")
+        run_cli_at(org, archive, "workref", "Water the plants", "https://example.com/brief")
+
+        out, err, st = run_cli_at(org, archive, "workref", "Water the plants", word)
+        assert st.success?, err
+        assert_equal "work ref cleared: Water the plants\n", out
+        refute record_for(org, title: "Water the plants")["delegation"].key?("work_ref"), word
+      end
+    end
+  end
+
+  # One reference, not a document: an unbounded work_ref put a 100 kB field on
+  # one JSONL line.
+  def test_cli_workref_refuses_an_unbounded_reference
+    with_cli_store do |org, archive|
+      run_cli_at(org, archive, "delegate", "Water the plants", "research")
+      _out, err, st = run_cli_at(org, archive, "workref", "Water the plants", "x" * 100_000)
+      assert_equal 1, st.exitstatus
+      assert_match(/work_ref must be at most 500 characters/, err)
+      assert_nil record_for(org, title: "Water the plants")["delegation"]["work_ref"]
+      assert_operator File.size(org), :<, 20_000
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  # A worker id is echoed verbatim in the conflict line the *losing* agent sees,
+  # so escape sequences in it are a terminal-rewriting primitive, not a typo.
+  def test_cli_refuses_control_characters_in_identity_fields
+    with_cli_store do |org, archive|
+      run_cli_at(org, archive, "delegate", "Water the plants", "research")
+      spoof = "\e[2K\e[1A\e[2K\e[Gagent-ready (research): Water the plants"
+
+      _out, err, st = run_cli_at(org, archive, "claim", "Water the plants", "--worker", spoof)
+      assert_equal 1, st.exitstatus
+      assert_match(/must be non-empty, whitespace-free/, err)
+      assert_equal "ready", record_for(org, title: "Water the plants").dig("delegation", "status")
+
+      _out, ref_err, ref_status = run_cli_at(org, archive, "workref", "Water the plants",
+                                             "https://example.com/\e[2Kx")
+      assert_equal 1, ref_status.exitstatus
+      assert_match(/must not contain control characters/, ref_err)
+
+      _out, mail_err, mail_status = run_cli_at(org, archive, "delegate", "Water the plants",
+                                               "--to", "pat\e[2K@example.com")
+      assert_equal 1, mail_status.exitstatus
+      assert_match(/must be an email address/, mail_err)
+      refute_includes File.read(org), "\e"
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  # `@` is the TUI's context filter, so `@work` is one keystroke of muscle
+  # memory away from silently moving a task to WAITING for a person who is not
+  # a person.
+  def test_cli_delegate_refuses_a_bare_at_prefixed_word_as_a_person
+    ["@", "@work", "@home", "pat@example"].each do |value|
+      run_cli("delegate", "Water the plants", "--to", value) do |org, _out, err, st|
+        assert_equal 1, st.exitstatus, value
+        assert_match(/#{Regexp.escape(value.inspect)} must be an email address/, err, value)
+        record = record_for(org, title: "Water the plants")
+        assert_nil record["delegation"], value
+        assert_equal "NEXT", record["state"], "a refused delegation never moves the state"
+      end
+    end
+  end
+
+  # Invalid argv bytes are a refusal, not a backtrace — and never a backtrace
+  # raised *after* the write, which is how a blocked agent's note was lost.
+  def test_cli_delegation_refuses_invalid_utf8_argv_without_a_backtrace
+    bad_ref = "ref\xFFbad".dup.force_encoding("UTF-8")
+    bad_worker = "w\xFFx".dup.force_encoding("UTF-8")
+    bad_note = "x\xFF".dup.force_encoding("UTF-8")
+
+    with_cli_store do |org, archive|
+      run_cli_at(org, archive, "delegate", "Water the plants", "research")
+
+      _out, err, st = run_cli_at(org, archive, "workref", "Water the plants", bad_ref)
+      assert_equal 1, st.exitstatus
+      assert_match(/work reference is not valid UTF-8 text/, err)
+      refute_match(/Encoding::CompatibilityError|backtrace|\.rb:\d+:in/, err)
+
+      _out, claim_err, claim_status = run_cli_at(org, archive, "claim", "Water the plants",
+                                                 "--worker", bad_worker)
+      assert_equal 1, claim_status.exitstatus
+      assert_match(/worker id is not valid UTF-8 text/, claim_err)
+      refute_match(/\.rb:\d+:in/, claim_err)
+
+      # The release itself succeeds; the note it could not decode is reported as
+      # not applied instead of crashing on top of the completed write.
+      run_cli_at(org, archive, "claim", "Water the plants", "--worker", CLI_WORKER)
+      out, note_err, note_status = run_cli_at(org, archive, "release", "Water the plants",
+                                              "--worker", CLI_WORKER, "--note", bad_note)
+      assert note_status.success?, note_err
+      assert_equal "released → agent-ready (research): Water the plants\n", out
+      assert_match(/note was not appended: release note is not valid UTF-8 text/, note_err)
+      refute_match(/\.rb:\d+:in/, note_err)
+      assert_equal "ready", record_for(org, title: "Water the plants").dig("delegation", "status")
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  # A field a newer binary writes must not brick this one: `check` stays clean,
+  # unrelated writes still land, and a write on that record keeps the field.
+  def test_cli_tolerates_an_unknown_delegation_key_from_a_newer_binary
+    content = Tasks::Format.dump(
+      FIXTURE_RECORDS.map do |record|
+        next record unless record["id"] == FIX[:plants]
+
+        record.merge("delegation" => { "kind" => "agent", "mode" => "research", "status" => "ready",
+                                       "at" => "2026-07-27T18:04:11Z",
+                                       "lease_until" => "2026-07-28T00:00:00Z" })
+      end
+    )
+    with_cli_store(content: content) do |org, archive|
+      _out, err, st = run_cli_at(org, archive, "check")
+      assert st.success?, err
+
+      # An unrelated write elsewhere in the store is not blocked by that line.
+      _out, pri_err, pri_status = run_cli_at(org, archive, "pri", "Review PR backlog", "A")
+      assert pri_status.success?, pri_err
+
+      _out, claim_err, claim_status = run_cli_at(org, archive, "claim", "Water the plants",
+                                                 "--worker", CLI_WORKER)
+      assert claim_status.success?, claim_err
+      delegation = record_for(org, title: "Water the plants")["delegation"]
+      assert_equal "2026-07-28T00:00:00Z", delegation["lease_until"]
+      assert_equal CLI_WORKER, delegation["assignee"]
+    end
+  end
+
   def test_cli_undelegate_revokes_a_claim_and_repeats_without_burning_history
     with_cli_store do |org, archive|
       run_cli_at(org, archive, "delegate", "Water the plants", "research")

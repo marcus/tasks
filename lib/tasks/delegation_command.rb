@@ -13,9 +13,14 @@ module Tasks
   # Tasks::Application, not by Store, because they compose two writes.
   class DelegationCommand
     ACTIONS = %i[delegate undelegate claim release work_ref].freeze
-    # Clearing a work reference is spelled `off` at every surface (`tasks
-    # workref <ref> off`, the TUI form) and reaches Store as nil.
-    CLEAR = "off"
+    # Clearing a work reference is spelled `off` or `none` at every surface
+    # (`tasks workref <ref> off`, the TUI's `W` form, an HTTP body) and reaches
+    # Store as nil. Both words normalize here, once: when a surface kept its own
+    # list the CLI stored the literal string "none" while the TUI cleared.
+    CLEAR_WORDS = %w[off none].freeze
+    CLEAR = CLEAR_WORDS.first
+    # The same instruction spelled as a symbol by a programmatic caller.
+    CLEAR_SYMBOLS = CLEAR_WORDS.map(&:to_sym).freeze
 
     attr_reader :id, :action, :kind, :mode, :assignee, :worker, :work_ref, :note,
                 :keep_state, :force, :expected_revision
@@ -45,14 +50,29 @@ module Tasks
 
     private
 
-    # nil and `off` are the same instruction; anything else is a reference
-    # string Store validates (non-empty, single line).
+    # nil, `off`, and `none` are the same instruction; anything else is a
+    # reference string Store validates (non-empty, single line, bounded).
     def normalize_work_ref(value)
-      return nil if value.nil? || value == :off
-      text = value.to_s
-      return nil if text.strip.casecmp?(CLEAR)
+      return nil if value.nil? || CLEAR_SYMBOLS.include?(value)
+
+      text = utf8(value.to_s)
+      # Bytes that are still not valid UTF-8 after re-tagging cannot be stripped
+      # or compared without raising, so hand them through untouched: Store owns
+      # the refusal, and a typed refusal beats a backtrace from a constructor.
+      return text.dup.freeze unless text.valid_encoding?
+      return nil if CLEAR_WORDS.any? { |word| text.strip.casecmp?(word) }
 
       text.dup.freeze
+    end
+
+    # Text from argv or a TUI field carries the process locale's encoding
+    # (BINARY under LANG=C), and every String operation below would raise
+    # Encoding::CompatibilityError on it. Same recovery as Store#utf8.
+    def utf8(text)
+      return text if text.encoding == Encoding::UTF_8
+
+      recoded = text.dup.force_encoding(Encoding::UTF_8)
+      recoded.valid_encoding? ? recoded : text
     end
 
     def immutable(value)

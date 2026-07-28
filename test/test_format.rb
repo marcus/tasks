@@ -135,6 +135,32 @@ class TestFormat < Minitest::Test
     assert_equal "keepme", parsed["future_field"]
   end
 
+  # The same forward-compat rule one level down: a key a newer binary added
+  # inside `delegation` emits after the declared ones and survives the write,
+  # rather than being silently deleted by whichever write lands on that record.
+  def test_unknown_delegation_keys_emit_after_the_declared_ones_and_round_trip
+    rec = { "type" => "task", "id" => "aaaa0001", "state" => "NEXT", "title" => "T",
+            "delegation" => { "lease_until" => "2026-07-28T00:00:00Z", "kind" => "agent",
+                              "status" => "ready", "mode" => "research",
+                              "at" => "2026-07-27T18:04:11Z" } }
+    assert_equal '{"type":"task","id":"aaaa0001","state":"NEXT","title":"T","delegation":' \
+                 '{"kind":"agent","mode":"research","status":"ready","at":"2026-07-27T18:04:11Z",' \
+                 '"lease_until":"2026-07-28T00:00:00Z"}}',
+                 F.dump_record(rec)
+    parsed = F.parse(F.dump([rec])).records.first
+    assert_equal "2026-07-28T00:00:00Z", parsed.dig("delegation", "lease_until")
+  end
+
+  # The temporal objects deliberately keep the old behavior: Check treats an
+  # unknown key there as a hard error, so dropping it on write is the repair.
+  def test_unknown_temporal_time_keys_are_still_dropped
+    rec = { "type" => "task", "title" => "T", "scheduled" => "2026-07-27",
+            "scheduled_time" => { "local" => "09:00", "offset" => "+02:00" } }
+    assert_equal '{"type":"task","title":"T","scheduled":"2026-07-27",' \
+                 '"scheduled_time":{"local":"09:00"}}',
+                 F.dump_record(rec)
+  end
+
   # -- omission --------------------------------------------------------------
 
   def test_nil_empty_string_and_empty_array_omitted

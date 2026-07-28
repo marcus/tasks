@@ -423,8 +423,10 @@ WORKER_HINT = "pass --worker <id> or set TASKS_WORKER_ID"
 # The worker id behind a claim or release: the flag always wins, then the
 # TASKS_WORKER_ID environment variable a heartbeat harness sets once per
 # session. Missing both is a usage error, not a silent owner-level write.
+# Normalize before trimming — see utf8_strip.
 def worker_id(flag_value, required: true)
-  value = (flag_value || ENV["TASKS_WORKER_ID"]).to_s.strip
+  value = utf8_strip((flag_value || ENV["TASKS_WORKER_ID"]).to_s)
+  abort "worker id is not valid UTF-8 text" unless value.valid_encoding?
   abort "missing worker id — #{WORKER_HINT}" if value.empty? && required
   value.empty? ? nil : value
 end
@@ -566,8 +568,9 @@ def cmd_workref(args)
   worker = extract_value(args, "--worker")
   flags, rest = take_flags(args, "--json")
   ref = rest.shift
-  reference = utf8_arg(rest.join(" ").strip)
+  reference = utf8_strip(rest.join(" "))
   abort "usage: tasks workref <ref> <url-or-id|off> [--worker <id>]" if ref.nil? || ref.strip.empty? || reference.empty?
+  abort "work reference is not valid UTF-8 text" unless reference.valid_encoding?
 
   item = resolve_ref(ref, include_done: true)
   task_id = stable_id_for(item)
@@ -1346,6 +1349,18 @@ def utf8_arg(str)
   return str if str.nil? || str.encoding == Encoding::UTF_8
   recoded = str.dup.force_encoding(Encoding::UTF_8)
   recoded.valid_encoding? ? recoded : str
+end
+
+# utf8_arg, then strip — in that order, always. String#strip raises
+# Encoding::CompatibilityError on bytes that are invalid in their own encoding,
+# so trimming first turns one mistyped byte into a raw backtrace. Text that is
+# still invalid after normalization is returned untrimmed, for the caller to
+# refuse with a sentence instead of a stack trace.
+def utf8_strip(str)
+  text = utf8_arg(str)
+  return text if text.nil? || !text.valid_encoding?
+
+  text.strip
 end
 
 def cmd_note(args)
