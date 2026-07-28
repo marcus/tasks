@@ -197,20 +197,24 @@ paths:
 
             `open`, `proposed`, `done`, `archived`, and `all` are lifecycle/source
             slices. `delegated` and `agent_ready` are delegation refinements of
-            the default open-live slice, mirroring `tasks list --delegated` and
-            `tasks list --agent-ready`:
+            the default open-live slice, mirroring `tasks list --delegated`
+            (under its default `--open`) and `tasks list --agent-ready`:
 
-            - `delegated` — every open live task carrying a `delegation`, human
-              or agent, ready or claimed. Delegation retained as provenance on a
-              closed task is read through that task's own resource (`delegation`
-              is part of every task representation) rather than through this
-              scope.
+            - `delegated` — the documented shorthand for
+              `scope=open&delegated=true`: every open live *and effectively
+              available* task carrying a `delegation`, human or agent, ready or
+              claimed. To read delegation provenance on closed or archived work,
+              use the `delegated` query parameter with the lifecycle scope you
+              mean (`scope=done&delegated=true`, `scope=all&delegated=true`).
             - `agent_ready` — the claimable queue: `kind: agent`,
               `status: ready`, an accepted live state, and effectively available
               now. Ranked by priority, then the soonest deadline-or-scheduled
               boundary, then canonical order — the order is a contract, because a
               heartbeat agent takes the first row it is capable of. A list read
-              never grants ownership; only `POST /tasks/{id}/claim` does.
+              never grants ownership; only `POST /tasks/{id}/claim` does. This
+              scope is open-only by construction — a closed task is not
+              claimable — and combining it with `delegated` or with a closed
+              `state` is `422`, never a silently empty collection.
 
             Other filters compose with both. `available=false` remains valid only
             with `scope=open`.
@@ -219,13 +223,36 @@ paths:
             type: string
             enum: [open, proposed, done, archived, all, delegated, agent_ready]
             default: open
+        - name: delegated
+          in: query
+          description: |
+            When true, list only tasks carrying a `delegation` marker — human or
+            agent, ready or claimed — exactly as `tasks list --delegated` does.
+            Unlike `scope=delegated`, this composes with EVERY lifecycle scope,
+            because a claimed or human delegation is retained verbatim as
+            provenance when the task closes and is swept:
+            `scope=done&delegated=true` and `scope=all&delegated=true` answer
+            "which closed tasks were delegated, to whom, and where did the work
+            land" (`delegation.assignee` and `delegation.work_ref` on each row).
+            `scope=archived&delegated=true` reads the same from the archive.
+
+            `false` and omitted are equivalent (no delegation filter).
+            `scope=delegated` implies `delegated=true`, so pairing it with
+            `delegated=false` is `422`; pairing this parameter with
+            `scope=agent_ready` is `422` because that scope is already a
+            delegation slice.
+          required: false
+          schema: { type: boolean }
         - name: state
           in: query
           description: |
             Restrict to one lifecycle state. Intersects with `scope`: the
             result contains only tasks whose state is in the scope's state set
             AND equals this value, so `scope=open&state=DONE` is an empty
-            collection, not an error.
+            collection, not an error. The two delegation scopes are the one
+            exception: `scope=delegated|agent_ready` with a non-open `state` is
+            `422` naming the query that would answer it, because an empty
+            collection there is indistinguishable from "nothing is delegated".
           required: false
           schema: { $ref: "#/components/schemas/State" }
         - name: context
@@ -955,9 +982,12 @@ paths:
         archived tasks refuse with `422` naming the state.
 
         A human delegation moves the task to `WAITING` unless `keep_state` is
-        true; an agent delegation never changes lifecycle state. Re-delegating
-        at the same mode or to the same person is a no-op that still returns the
-        current resource. A task with a live claim refuses with `409` /
+        true. An agent delegation never changes lifecycle state either, with one
+        exception: replacing a *person* on a task that is `WAITING` because of
+        that person returns it to `TODO`, in the same undo step, because
+        agent-ready work is actionable again. `keep_state` opts out of both
+        directions. Re-delegating at the same mode or to the same person is a
+        no-op that still returns the current resource. A task with a live claim refuses with `409` /
         `claim_conflict` — the owner revokes explicitly with `/undelegate`
         rather than taking a task out from under a working agent. A work
         reference survives a replacement of the same kind and is dropped when
@@ -1068,6 +1098,16 @@ paths:
         whatever the marker's status and whatever the task's state, since
         clearing provenance from a closed task is the owner's prerogative. An
         undelegated task is a no-op that still returns the current resource.
+
+        `undelegate` is also the delegation **repair** route: alone among these
+        actions it owns the whole field, so it may strip a marker a version skew
+        or a foreign writer left malformed even while the store is otherwise
+        invalid — provided that record is the only problem. That path is
+        deliberately **not reachable over HTTP**, because this endpoint requires
+        `If-Match` and a repair is refused under any expected revision (the
+        baseline was computed over the malformed bytes). Use
+        `tasks undelegate <ref>` on the machine holding the store; every HTTP
+        delegation action on an invalid store returns `503` / `store_invalid`.
       parameters:
         - $ref: "#/components/parameters/TaskId"
         - $ref: "#/components/parameters/IfMatch"
@@ -1226,7 +1266,8 @@ paths:
       summary: Replace the task's single work reference.
       description: |
         Records where the work lives — a ticket, PR, research brief, or agent
-        session. One reference: writing overwrites, and `null` clears. PUT
+        session. One reference: writing overwrites, and `null` (or the string
+        `off`/`none`) clears. PUT
         rather than POST because this replaces a value on an existing marker
         instead of transitioning it, and repeating the same write is a no-op.
         Requires the task's current ETag in `If-Match`, and the task must
@@ -2826,7 +2867,15 @@ components:
             actions (`/delegate`, `/undelegate`, `/claim`, `/release`,
             `/work_ref`), never through `PATCH /tasks/{id}`. Retained verbatim
             as provenance when a claimed or human-delegated task closes and is
-            archived; an unclaimed agent marker is cleared on close.
+            archived; an unclaimed agent marker is cleared on close. Completing
+            a *recurring* delegated task rolls the standing intent forward
+            instead of closing: the next occurrence keeps the agent `mode` or
+            the person, always unclaimed, with a fresh `at` and no `work_ref` —
+            the claim and the reference belonged to the cycle that just
+            finished. Only `/undelegate` stops a standing delegation.
+
+            Read `delegation` on closed and archived tasks with
+            `GET /tasks?scope=done|archived|all&delegated=true`.
           oneOf:
             - { $ref: "#/components/schemas/Delegation" }
             - { type: "null" }
@@ -2862,8 +2911,13 @@ components:
         delegations only; `assignee` is the email address for a human hand-off
         and the worker id of the holder while `claimed`, and is absent while
         `ready`.
+
+        Nested keys this server does not know are round-tripped verbatim rather
+        than dropped — a claim or release written by an older binary must not
+        silently delete a newer one's field — and reported by `tasks check` as a
+        warning, not an error. A response may therefore carry properties beyond
+        those listed here, which is why this schema is open.
       required: [kind, status, at]
-      additionalProperties: false
       properties:
         kind: { $ref: "#/components/schemas/DelegationKind" }
         mode: { $ref: "#/components/schemas/DelegationMode" }
@@ -2873,18 +2927,24 @@ components:
           maxLength: 200
           description: |
             Email address (human) or worker id (claimed agent work). An
-            identifier, not a mail or messaging integration. Worker ids are
-            free-form, whitespace-free tokens; the recommended form is
-            `<harness>/<model>/<session-id>`.
+            identifier, not a mail or messaging integration. A human assignee is
+            address-shaped — a non-empty local part, exactly one `@`, and a
+            dotted domain — so `@work` and `pat@localhost` are refused. Worker
+            ids are free-form tokens; the recommended form is
+            `<harness>/<model>/<session-id>`. Both reject Unicode whitespace
+            (not just ASCII) and control/escape characters, because four
+            surfaces render these strings raw.
         at:
           type: string
           description: UTC timestamp of the last status transition (`YYYY-MM-DDTHH:MM:SSZ`).
         work_ref:
           type: string
+          maxLength: 500
           description: |
             One single-line reference to where the work lives (ticket, PR,
-            brief, or agent session). Absent when unset. Additional links belong
-            in the task body.
+            brief, or agent session): at most 500 characters, no line breaks,
+            no control characters. Absent when unset. Additional links belong in
+            the task body.
 
     DelegateTaskRequest:
       type: object
@@ -2906,8 +2966,10 @@ components:
           type: string
           maxLength: 200
           description: |
-            Required for `kind: human`: an email-shaped identifier (contains
-            `@`, no whitespace). Rejected for `kind: agent`.
+            Required for `kind: human`: an address-shaped identifier — a
+            non-empty local part, exactly one `@`, and a dotted domain, with no
+            whitespace or control characters. `@work` and `pat@localhost` are
+            `422`. Rejected for `kind: agent`.
         keep_state:
           type: boolean
           default: false
@@ -2929,10 +2991,10 @@ components:
           type: string
           maxLength: 200
           description: |
-            The claiming worker id: non-empty, whitespace-free, at most 200
-            characters. Recommended form `<harness>/<model>/<session-id>`. It
-            needs to be stable only for the lifetime of the claim; there is no
-            lease to renew.
+            The claiming worker id: non-empty, at most 200 characters, and free
+            of Unicode whitespace and control/escape characters. Recommended
+            form `<harness>/<model>/<session-id>`. It needs to be stable only
+            for the lifetime of the claim; there is no lease to renew.
 
     ReleaseTaskRequest:
       type: object
@@ -2960,14 +3022,19 @@ components:
     WorkRefRequest:
       type: object
       description: |
-        Replace the task's single work reference. `null` clears it (the literal
-        string `off`, the spelling every surface accepts, clears it too).
+        Replace the task's single work reference. `null` clears it, as do the
+        literal strings `off` and `none` (either word, case-insensitive) — the
+        two spellings every surface accepts, normalized once in the domain so
+        the CLI cannot store the word while the TUI clears.
       required: [work_ref]
       additionalProperties: false
       properties:
         work_ref:
           type: [string, "null"]
-          description: A single-line URL or identifier, or null to clear.
+          maxLength: 500
+          description: |
+            A single-line URL or identifier of at most 500 characters with no
+            control characters; `null`, `off`, or `none` to clear.
         worker:
           type: string
           maxLength: 200

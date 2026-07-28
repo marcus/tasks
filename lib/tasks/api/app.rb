@@ -19,7 +19,9 @@ module Tasks
     class App
       BODY_LIMIT = 64 * 1024
       TASK_ID = /\A[0-9a-f]{8}\z/
-      LIST_QUERY_KEYS = %w[scope state context tag priority text body deferred available recurring].freeze
+      LIST_QUERY_KEYS = %w[
+        scope state context tag priority text body deferred available recurring delegated
+      ].freeze
       TASK_QUERY_KEYS = %w[source].freeze
       DELETE_QUERY_KEYS = %w[cascade].freeze
       CREATE_FIELDS = %w[
@@ -39,9 +41,14 @@ module Tasks
       CLAIM_FIELDS = %w[worker].freeze
       RELEASE_FIELDS = %w[worker force note].freeze
       WORK_REF_FIELDS = %w[work_ref worker].freeze
-      # Delegation read scopes. They are refinements of the default open-live
-      # collection, not new lifecycle slices: `delegated` is `tasks list
-      # --delegated` and `agent_ready` is `tasks list --agent-ready`.
+      # Delegation read scopes. Both are refinements of the OPEN-live
+      # collection: `scope=delegated` is the documented shorthand for
+      # `scope=open&delegated=true`, and `agent_ready` is `tasks list
+      # --agent-ready`, which is open-only by construction (a closed task is
+      # not claimable). Reading a delegation over any other lifecycle — the
+      # archive-provenance question "which closed tasks were delegated, to
+      # whom, and where did the work land" — is the `delegated` boolean below,
+      # which composes with every scope exactly as the CLI's `--delegated` does.
       DELEGATION_SCOPES = %w[delegated agent_ready].freeze
       FORWARDED_HEADERS = %w[
         HTTP_FORWARDED HTTP_X_FORWARDED_HOST HTTP_X_FORWARDED_PROTO HTTP_X_FORWARDED_PORT
@@ -243,16 +250,19 @@ module Tasks
         unless allowed_scopes.include?(scope)
           validation!(scope: ["must be open, proposed, done, archived, all, delegated, or agent_ready"])
         end
-        # The two delegation scopes narrow the default open-live collection by
-        # who holds the task, exactly as the CLI flags do on top of the CLI's
-        # default `--open`. Everything else about the request (state, context,
-        # tag, priority, text) still composes.
-        delegated_only = scope == "delegated"
+        # `delegated=true` is the CLI's `--delegated`: a refinement by who holds
+        # the task that composes with EVERY lifecycle scope, because a closed or
+        # archived task keeps its marker as provenance. The `delegated` scope is
+        # kept as the shorthand it was documented to be, so an existing client
+        # keeps its meaning while `scope=done&delegated=true` becomes sayable.
         agent_ready_only = scope == "agent_ready"
+        delegated = boolean_query(query, "delegated", default: nil)
+        delegated_only = scope == "delegated" || delegated == true
         lifecycle_scope = DELEGATION_SCOPES.include?(scope) ? "open" : scope
 
         state = query["state"]
         validation!(state: ["must be a documented task state"]) if state && !TaskFilter::STATE_ORDER.include?(state)
+        delegation_scope_conflict!(scope, delegated, state)
         priority = query["priority"]
         validation!(priority: ["must be A, B, or C"]) if priority && !Check::PRIORITIES.include?(priority)
 
@@ -288,6 +298,27 @@ module Tasks
         raise
       rescue ArgumentError => error
         validation!(query: [safe_argument_message(error)])
+      end
+
+      # The two delegation scopes are open-live slices, so combining either with
+      # a closed state used to return an empty 200 that a client cannot tell
+      # from "nothing is delegated". Refuse instead, and name the query that
+      # answers the question — the whole point of the `delegated` boolean is
+      # that provenance over closed and archived work is now reachable.
+      def delegation_scope_conflict!(scope, delegated, state)
+        agent_ready = scope == "agent_ready"
+        if agent_ready && !delegated.nil?
+          validation!(delegated: [
+            "is not valid with scope=agent_ready, which is already the unclaimed " \
+            "agent slice; use scope=open&delegated=true for every open marker",
+          ])
+        end
+        validation!(delegated: ["false contradicts scope=delegated"]) if scope == "delegated" && delegated == false
+        return unless DELEGATION_SCOPES.include?(scope)
+        return if state.nil? || Store::OPEN_STATES.include?(state)
+
+        hint = agent_ready ? "only accepted live work is claimable" : "use scope=all&delegated=true"
+        validation!(state: ["#{state} is outside scope=#{scope}, which lists open live tasks (#{hint})"])
       end
 
       def get_task(request, id, request_id)

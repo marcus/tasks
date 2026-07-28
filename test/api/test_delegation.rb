@@ -185,6 +185,107 @@ class TestApiDelegation < Minitest::Test
     assert_equal [], list_ids("/api/v1/tasks?scope=agent_ready")
   end
 
+  # `scope=delegated` is an OPEN slice, so on its own it cannot answer the
+  # plan's archive-provenance question. `delegated=true` is the CLI's
+  # `--delegated`: it composes with every lifecycle scope, and it is the only
+  # way an HTTP client reads who held a closed task and where the work landed.
+  def test_delegated_flag_reads_closed_and_archived_provenance_like_the_cli
+    delegate(FIX[:pr], kind: "agent", mode: "implement")
+    claim(FIX[:pr], worker: WORKER_A)
+    work_ref(FIX[:pr], work_ref: "https://example.com/pull/42", worker: WORKER_A)
+    delegate(FIX[:travel], kind: "human", assignee: "pat@example.com")
+
+    # The scope keeps its documented meaning: a shorthand for the boolean over
+    # the default open slice, not a second, divergent selection rule.
+    assert_equal list_ids("/api/v1/tasks?scope=delegated"),
+                 list_ids("/api/v1/tasks?scope=open&delegated=true")
+    assert_equal list_ids("/api/v1/tasks?scope=delegated"),
+                 list_ids("/api/v1/tasks?scope=delegated&delegated=true")
+
+    patch_task(FIX[:pr], state: "DONE")
+    refute_includes list_ids("/api/v1/tasks?scope=delegated"), FIX[:pr],
+                    "the open shorthand drops a closed task, which is why the boolean exists"
+
+    closed = get("/api/v1/tasks?scope=done&delegated=true")
+    assert_equal 200, closed.status
+    rows = JSON.parse(closed.body).fetch("data")
+    assert_equal [FIX[:pr]], rows.map { |row| row.fetch("id") }
+    # Who held it and where the work landed — retained verbatim on close.
+    assert_equal "claimed", rows.first.dig("delegation", "status")
+    assert_equal WORKER_A, rows.first.dig("delegation", "assignee")
+    assert_equal "https://example.com/pull/42", rows.first.dig("delegation", "work_ref")
+    assert_equal stored_delegation(FIX[:pr]), rows.first.fetch("delegation")
+    assert_contract_response(closed)
+
+    assert_equal delegation_rows(cli!("list", "--done", "--delegated", "--json")),
+                 delegation_rows(closed.body),
+                 "scope=done&delegated=true mirrors `tasks list --done --delegated`"
+    assert_equal delegation_rows(cli!("list", "--all", "--delegated", "--json")),
+                 delegation_rows(get("/api/v1/tasks?scope=all&delegated=true").body),
+                 "scope=all&delegated=true mirrors `tasks list --all --delegated`"
+
+    # `--all` is also the only scope that shows a delegated task the open
+    # collection hides for unavailability, so the two adapters must agree there
+    # too rather than each hiding a different row.
+    held = create_task(title: "Held work", deferred: true)
+    delegate(held.fetch("id"), kind: "agent", mode: "refine")
+    refute_includes list_ids("/api/v1/tasks?scope=delegated"), held.fetch("id")
+    assert_includes list_ids("/api/v1/tasks?scope=all&delegated=true"), held.fetch("id")
+    assert_equal delegation_rows(cli!("list", "--all", "--delegated", "--json")),
+                 delegation_rows(get("/api/v1/tasks?scope=all&delegated=true").body)
+
+    # The archive is where provenance finally lives; the marker rides along.
+    cli!("archive")
+    archived = get("/api/v1/tasks?scope=archived&delegated=true")
+    assert_equal [FIX[:pr]], JSON.parse(archived.body).fetch("data").map { |row| row.fetch("id") }
+    assert_equal "archive", JSON.parse(archived.body).fetch("data").first.fetch("source")
+    assert_equal delegation_rows(cli!("list", "--archived", "--delegated", "--json")),
+                 delegation_rows(archived.body)
+    assert_contract_response(archived)
+
+    # A lifecycle scope with no delegation filter is unchanged.
+    assert_equal list_ids("/api/v1/tasks?scope=done"),
+                 list_ids("/api/v1/tasks?scope=done&delegated=false")
+  end
+
+  def test_incompatible_delegation_queries_are_refused_rather_than_silently_empty
+    delegate(FIX[:pr], kind: "agent", mode: "research")
+    claim(FIX[:pr], worker: WORKER_A)
+    patch_task(FIX[:pr], state: "DONE")
+
+    # Each of these used to be a 200 with an empty `data`, indistinguishable
+    # from "nothing is delegated" — the one answer a client must not guess at.
+    refusals = [
+      "/api/v1/tasks?scope=delegated&state=DONE",
+      "/api/v1/tasks?scope=agent_ready&state=DONE",
+      "/api/v1/tasks?scope=agent_ready&state=CANCELLED",
+      "/api/v1/tasks?scope=agent_ready&delegated=true",
+      "/api/v1/tasks?scope=agent_ready&delegated=false",
+      "/api/v1/tasks?scope=delegated&delegated=false",
+    ]
+    refusals.each do |path|
+      response = get(path)
+      assert_error response, 422, "validation_failed", context: path
+      assert_contract_response(response)
+    end
+
+    # The refusal names the query that does answer the question.
+    fields = JSON.parse(get("/api/v1/tasks?scope=delegated&state=DONE").body)
+                 .dig("error", "details", "fields")
+    assert_match(/scope=all&delegated=true/, fields.fetch("state").join(" "))
+    assert_equal [FIX[:pr]], list_ids("/api/v1/tasks?scope=all&delegated=true&state=DONE")
+
+    # A non-boolean value is a validation error, not a silent "false".
+    bad = get("/api/v1/tasks?scope=all&delegated=yes")
+    assert_error bad, 422, "validation_failed"
+    assert_contract_response(bad, request_valid: false)
+
+    # An open state still composes with either delegation scope.
+    assert_equal [], list_ids("/api/v1/tasks?scope=delegated&state=WAITING")
+    delegate(FIX[:travel], kind: "human", assignee: "pat@example.com")
+    assert_equal [FIX[:travel]], list_ids("/api/v1/tasks?scope=delegated&state=WAITING")
+  end
+
   # -- actions ---------------------------------------------------------------
 
   def test_human_delegation_moves_the_task_to_waiting_unless_keep_state
@@ -627,6 +728,16 @@ class TestApiDelegation < Minitest::Test
     response = get(path)
     assert_equal 200, response.status, response.body
     JSON.parse(response.body).fetch("data").map { |row| row.fetch("id") }
+  end
+
+  # The delegation half of a list payload, from either adapter: `tasks list
+  # --json` emits a bare array and the API wraps rows in `data`, and the two
+  # row shapes differ by design (revision, depth, section_id). The selection and
+  # the marker itself are the parity contract, so compare exactly those.
+  def delegation_rows(body)
+    payload = JSON.parse(body)
+    rows = payload.is_a?(Hash) ? payload.fetch("data") : payload
+    rows.map { |row| [row.fetch("id"), row.fetch("delegation")] }
   end
 
   # The delegation object as it sits on disk, so representation assertions are

@@ -1,9 +1,12 @@
 # Task delegation: humans, agents, and heartbeat pickup
 
-Status: implementation-ready contract (supersedes the 2026-07-27
-product-direction draft)
+Status: **implemented** (phases 1–5 landed; see [What shipped differs from this
+contract](#what-shipped-differs-from-this-contract) for the rules that changed
+during implementation and review, and [Acceptance
+criteria](#acceptance-criteria) for which criteria hold with which caveats).
+Supersedes the 2026-07-27 product-direction draft.
 
-Date: 2026-07-27
+Date: 2026-07-27 (contract); 2026-07-28 (implementation notes)
 
 Related: [Agent task approval queue](agent-task-approval-queue.md),
 [ADR-0007](../../adr/0007-concurrency-and-revisions.md) (revisions/CAS),
@@ -101,16 +104,28 @@ Fields, in fixed emission order:
 
 Invariants, enforced by Store validation and `tasks check`:
 
-- `kind: human` ⇒ `status: delegated`, `assignee` present and email-shaped
-  (contains `@`, no whitespace), no `mode`;
+- `kind: human` ⇒ `status: delegated`, `assignee` present and address-shaped
+  (non-empty local part, exactly one `@`, dotted domain — `Delegation::EMAIL_RE`;
+  `@work` and `pat@localhost` are refused), no `mode`;
 - `kind: agent`, `status: ready` ⇒ no `assignee`;
 - `kind: agent`, `status: claimed` ⇒ `assignee` present;
 - `at` always present and a valid UTC timestamp;
-- `work_ref`, when present, a non-empty single-line string (one reference;
-  additional links belong in the task body/links as today);
+- `work_ref`, when present, a non-empty single-line string of at most 500
+  characters with no control characters (one reference; additional links belong
+  in the task body/links as today);
+- `assignee`, worker ids, and `work_ref` all reject C0 controls, `DEL`, the C1
+  block, and Unicode whitespace (NBSP, U+2028/U+2029, the ideographic space —
+  Ruby's `\s` is ASCII-only). Four surfaces render these strings raw, including
+  the conflict line that names a holder to the agent that just lost a race, so
+  the bytes are refused at the schema boundary rather than sanitized per
+  surface;
 - a `PROPOSED` task cannot carry `delegation`; and
-- nested keys emit in the fixed order above with absent keys omitted, so
-  one-line diffs stay readable.
+- known keys emit in the fixed order above with absent keys omitted, so
+  one-line diffs stay readable; *unknown* nested keys are preserved in their own
+  order after them and reported by `check` as a WARNING, never an error —
+  forward compatibility must not invert one level down, or a
+  `delegation.lease_until` from a newer binary would fail `check`, make
+  `JsonlMerge` refuse the whole merge, and block every write store-wide.
 
 ### Identity conventions
 
@@ -118,9 +133,10 @@ Invariants, enforced by Store validation and `tasks check`:
   identifier, not a mail integration.
 - **Agent worker id**: a free-form token, recommended form
   `<harness>/<model>/<session-id>`, e.g.
-  `claude-code/claude-fable-5/313cf82e`. Validation requires only non-empty,
-  no whitespace, ≤ 200 chars. The id needs to be stable only for the lifetime
-  of one claim; there is no cross-session lease to renew.
+  `claude-code/claude-fable-5/313cf82e`. Validation requires valid UTF-8,
+  non-empty, no Unicode whitespace, no control/escape characters, ≤ 200 chars.
+  The id needs to be stable only for the lifetime of one claim; there is no
+  cross-session lease to renew.
 
 `OperationContext.actor` remains non-persisted and is not the claim record.
 The CLI may default `--worker` from an environment variable (e.g.
@@ -137,6 +153,10 @@ wins.
 task closes (DONE/CANCELLED):
   status ready      → delegation cleared (nothing happened yet)
   status claimed/delegated → delegation retained verbatim as provenance
+
+recurring task completed (rolls forward instead of closing):
+  claimed → ready   (fresh `at`, work_ref dropped, mode retained)
+  delegated → delegated (fresh `at`, work_ref dropped, person retained)
 ```
 
 Rules:
@@ -155,6 +175,15 @@ Rules:
 - Completing or cancelling a task with a live claim or human delegation
   retains the `delegation` object as inert provenance — this is how "who did
   it and where" survives into the archive. `work_ref` is preserved.
+- **Completing a delegated *recurring* task rolls the standing intent
+  forward** instead (it does not close, so there is no provenance to keep).
+  The next occurrence inherits the agent `mode`, or the person, always
+  **unclaimed**, with a fresh `at` and **no** `work_ref`: the claim and the
+  reference belong to the cycle that just finished, and carrying them over
+  would hand the new occurrence to a worker who never picked it up — invisible
+  to `--agent-ready` (it looks claimed) and unpickupable by anyone else. A
+  marker of no recognized kind is dropped rather than carried. To stop a
+  standing delegation the owner must `undelegate`; completing a cycle will not.
 - Claim/delegation state is **not** lifecycle state, with one pragmatic
   exception below.
 
@@ -211,11 +240,11 @@ interpreted expansively.
 # owner
 tasks delegate <ref> refine|research|implement    # agent-ready with mode
 tasks delegate <ref> --to <email> [--keep-state]  # human delegation
-tasks undelegate <ref>                            # clear marker / revoke claim
-tasks workref <ref> <url-or-id>                   # set/replace work reference
+tasks undelegate <ref>                            # clear marker / revoke claim (also the repair route)
+tasks workref <ref> <url-or-id|off|none>          # set/replace/clear work reference
 
 # reads
-tasks list --delegated [--json]                   # any delegation, incl. claimed
+tasks list [--all] --delegated [--json]           # any delegation, incl. claimed
 tasks list --agent-ready [--json]                 # agent kind, ready, available
 
 # agent (heartbeat)
@@ -233,6 +262,13 @@ Semantics:
   and re-read authority in one step (heartbeat steps 3–4 below).
 - `workref` is valid for the owner always, and for a worker only while its
   claim matches; it overwrites (one reference; more detail goes in the body).
+  `off` and `none` both clear it, on every surface (CLI argument, TUI `W`
+  form, HTTP body), normalized once in `DelegationCommand`.
+- `list --delegated` selects within the lifecycle scope it is given, and the
+  default `--open` scope still hides effectively unavailable tasks — so a
+  delegated task with a future `scheduled` date or a blocked ancestor needs
+  `--all --delegated` (or `--unavailable --delegated`) to appear. `--all
+  --delegated` is also the closed-provenance review.
 - `done`, `cancel`, and `state` need no new flags; `done --work-ref <url>` is
   a nice-to-have only if it falls out of the shared parsing seam trivially.
 - Errors are explicit preconditions: not delegated, already claimed by
@@ -291,17 +327,56 @@ The heartbeat contract for agents:
 - **Merge treats `delegation` as one atomic field** (add to
   `SPECIAL_FIELDS` in `JsonlMerge`): a merged record takes exactly one side's
   whole object, never a mix — this is what makes two-owner claims impossible
-  across devices. Resolution rules:
-  - only one side changed it → that side wins (normal field-level rule);
-  - both sides claimed concurrently → deterministic single winner: earlier
-    `at`, tiebreak lexicographically smaller `assignee`; record a merge
-    event. The losing worker discovers the loss at its next worker-matched
-    operation;
-  - one side undelegated (owner) vs. any other change → the removal wins,
-    honoring revocation;
-  - close vs. claim → state follows existing terminal-state rules; the
-    delegation object follows the atomic-field rules above and the
-    provenance-on-close rule.
+  across devices.
+
+  **As implemented, the winner is a maximum over a SINGLE total order** on the
+  two values, not the field-level "whichever side changed it" rule this plan
+  originally specified. The base is consulted only to detect a removal. In
+  order:
+
+  1. **removal absorbs** — if either side dropped a marker the base carried,
+     the merge drops it (`removal_wins`). Owner `undelegate` is the always-wins
+     override and the escape hatch for every rule below;
+  2. a **`claimed`** marker beats any non-claimed one (`claim_holds`), so a
+     live claim is never silently downgraded to `ready` or replaced by a
+     concurrent edit that did not go through revocation;
+  3. **two claims** — earlier `at`, then the lexicographically smaller
+     `assignee`, then canonical bytes (`earlier_claim`). The losing worker
+     discovers the loss at its next worker-matched operation;
+  4. **two non-claims** — later `at`, then canonical bytes (`later_intent`):
+     the most recent owner intent.
+
+  Why it changed: the original rule (one-sided change wins, then
+  last-write-wins) is **not associative**. The merge is applied pairwise, so
+  three devices syncing in different orders could converge on *different* claim
+  holders — which breaks the single-pickup guarantee this whole tranche exists
+  to provide. A maximum over one total order is associative and commutative.
+
+  Honest consequences of the change:
+  - an owner's `release --force` racing a worker's concurrent write on another
+    device now **loses** the merge (rule 2 outranks it). `undelegate` is the
+    operation that always wins; `release --force` is a same-device override
+    only;
+  - a one-sided release can be overturned when the devices meet, for the same
+    reason. That is deliberate: a claim is only ever given up by the holder,
+    the owner's explicit revocation, or a later claim of its own;
+  - the merge-event reason vocabulary for this field is `removal_wins` /
+    `claim_holds` / `earlier_claim` / `later_intent`, plus the reconciliation
+    clears `cleared_on_non_task` / `cleared_on_proposal` / `cleared_on_close`.
+    `last_write` no longer appears for `delegation`.
+- **Reconciliation after resolution.** The marker and the rest of the record are
+  resolved independently, so only some combinations are legal: a record whose
+  `type` did not resolve to `task` drops the marker (`cleared_on_non_task`); a
+  task the other side turned back into a proposal drops it
+  (`cleared_on_proposal`); a task the other side closed keeps a claim or human
+  delegation verbatim but drops a merely `ready` one (`cleared_on_close`) — the
+  same normalization a local close performs. Without this the merge could emit a
+  record `Check` rejects and fail over two individually legal sides.
+- **Known residual divergence.** A *third* device concurrently closing the task
+  can still diverge, because `merge_state!`'s own rule (one-sided change wins →
+  terminal state wins → last-write-wins) is **not** associative, and
+  `cleared_on_close` reads the merged state. This predates delegation and is a
+  property of state merging; fixing it is a separate change to `resolve_state`.
 - Archive: `delegation` rides along verbatim; archived provenance is the
   point.
 - Revisions (ADR-0007): delegation changes are `own`-field changes, so
@@ -313,7 +388,17 @@ The heartbeat contract for agents:
 - Task resources include `delegation`; metadata exposes the mode and status
   vocabularies.
 - `GET /api/v1/tasks?scope=delegated` and `?scope=agent_ready` mirror the CLI
-  list scopes.
+  list scopes. Both are open-live slices, so **`?delegated=true` is the real
+  parity surface for `--delegated`**: it composes with every lifecycle scope,
+  and `scope=done|archived|all&delegated=true` is how an HTTP client answers
+  the archive-provenance question this plan exists for ("which closed tasks
+  were delegated, to whom, and where did the work land"). `scope=delegated`
+  remains the documented shorthand for `scope=open&delegated=true`.
+  `scope=agent_ready` stays open-only — a closed task is not claimable — and an
+  incompatible combination (`scope=agent_ready&delegated=…`,
+  `scope=delegated&delegated=false`, either delegation scope with a non-open
+  `state`) is a `422` naming the query that would answer it, never a silently
+  empty `200` a client cannot tell from "nothing is delegated".
 - Action endpoints, matching the approve/reject convention:
   `POST /api/v1/tasks/{id}/delegate` (body: `{kind, mode?|assignee?}`),
   `/undelegate`, `/claim` (body: `{worker}`), `/release`, and
@@ -377,7 +462,47 @@ less-frequent variants of a lowercase concept (`d` = date, `D` = delegate).
 - Agents surface blockers (release + note) rather than converting refine or
   research authority into implementation.
 - Owner revocation wins over a stale worker; the revoked claim's subsequent
-  delegation operations fail their worker-match precondition.
+  delegation operations fail their worker-match precondition. Note the
+  multi-device caveat: `undelegate` (a removal) always wins a merge, but
+  `release --force` does not — see the merge order above.
+
+## What shipped differs from this contract
+
+Four rules were rewritten during implementation and review. Each is corrected
+in place above; this is the index.
+
+1. **Merge resolution** is a single total order over the two values, not the
+   field-level "only one side changed → that side wins" plus last-write-wins
+   this plan first specified. The old rule was not associative, so devices
+   syncing in different orders could converge on different claim holders. See
+   [Persistence, merge, and compatibility](#persistence-merge-and-compatibility)
+   for the order, the reason vocabulary, the consequences for
+   `release --force`, and the known residual (a third device closing the task
+   concurrently can still diverge, because `merge_state!` is itself
+   non-associative — a pre-existing property of state merging).
+2. **Recurrence rolls the standing delegation forward**, which the contract did
+   not mention at all: mode or person retained, always unclaimed, fresh `at`,
+   no `work_ref`. `undelegate` is the only way to stop a standing delegation.
+   See [Lifecycle interaction](#lifecycle-interaction).
+3. **Validation is tighter**: address-shaped assignees, control/Unicode-
+   whitespace refusal on all three identity/reference fields, a 500-character
+   `work_ref` bound, `off`/`none` both clearing a work reference on every
+   surface, and unknown nested keys preserved across a rewrite and reported as
+   a `check` WARNING rather than failing the file. See
+   [Record shape](#record-shape) and [Identity conventions](#identity-conventions).
+4. **`undelegate` gained a repair power**: it may clear an invalid marker on
+   its own record even when `tasks check` calls the file invalid, provided that
+   record is the only problem and no `expected_revision`/`If-Match` was
+   supplied. It is journaled as a repair, so `undo` deliberately restores the
+   malformed bytes. It is the only delegation verb that repairs, because it is
+   the only one that does not have to read the broken marker to decide what to
+   write.
+
+Two smaller adjustments: replacing a human delegation with the agent pool
+returns an inherited `WAITING` to `TODO` (`--keep-state` opts out for both
+kinds of `delegate`), and the HTTP surface gained a `delegated=true` query
+parameter composing with every lifecycle scope — see
+[HTTP API parity](#http-api-parity).
 
 ## Resolved design questions
 
@@ -455,7 +580,7 @@ Each commit green on its own; each phase carries its tests.
 
 | Boundary | Required proof |
 |---|---|
-| Shape | Valid objects accepted; every invariant violation rejected; fixed nested key order; no schema bump. |
+| Shape | Valid objects accepted; every invariant violation rejected; fixed nested key order; unknown nested keys preserved and warned, never fatal; no schema bump. |
 | Eligibility | Only accepted live tasks delegable; PROPOSED/closed/archived refuse. |
 | Human flow | Email validated; WAITING default; `--keep-state`; provenance after done. |
 | Claim | CAS single winner under concurrency; conflict names holder; list never grants ownership. |
@@ -463,9 +588,11 @@ Each commit green on its own; each phase carries its tests.
 | Revocation | Undelegate clears claim; stale worker's next delegation op fails. |
 | Work ref | Owner always; worker only while claim matches; survives close and archive. |
 | Close | Ready clears; claimed/delegated retained verbatim. |
-| Merge | Atomic object; deterministic claim-race winner; removal wins; no mixed-field claims. |
-| Reads | `--delegated` / `--agent-ready` scopes compose with existing filters; JSON has rank/claim fields. |
-| API | Scope, endpoints, ETag, conflict codes, representation parity. |
+| Recurrence | Completion rolls intent forward: mode/person retained, unclaimed, fresh `at`, no `work_ref`. |
+| Repair | `undelegate` clears a malformed marker on an otherwise-valid file; refused under `expected_revision`; `undo` restores the malformed bytes. |
+| Merge | Atomic object; one total order (removal > claimed > earlier claim > later intent); associativity across three devices; reason vocabulary; no mixed-field claims. |
+| Reads | `--delegated` / `--agent-ready` scopes compose with existing filters; `--delegated` under `--open` inherits the availability rule; JSON has rank/claim fields. |
+| API | Scopes, `delegated=true` over every lifecycle scope, 422 on incompatible combinations, endpoints, ETag, conflict codes, representation parity. |
 | TUI | Marker, detail section, palette availability, narrow/monochrome. |
 | Agent | Follows mode authority; claims before working; releases with blocker; never widens mode. |
 
@@ -495,23 +622,40 @@ tasks undo
 
 ## Acceptance criteria
 
+Kept verbatim, each annotated with what actually holds.
+
 - The owner can delegate an accepted task to a person (email) or to the
   agent pool with `refine`/`research`/`implement`, and undelegate at any
-  time.
+  time. — **Holds.** Caveat: the email must be address-*shaped*
+  (`local@domain.tld`), so `@work` and `pat@localhost` are refused.
 - Heartbeat agents discover eligible tasks via `--agent-ready --json`
-  without parsing display text.
+  without parsing display text. — **Holds.**
 - Exactly one worker can ever hold a claim, across processes and across
-  multi-device merges; a losing claimer gets a clear conflict.
+  multi-device merges; a losing claimer gets a clear conflict. — **Holds**,
+  and only because the merge rule was rewritten as one total order; the
+  originally specified rule did not hold this across three devices. Residual:
+  a third device concurrently *closing* the task can still diverge, via the
+  non-associative `state` merge that predates delegation.
 - A claimed agent cannot widen or promote its authority; revocation defeats
-  stale workers.
+  stale workers. — **Holds** on one device. Across devices only `undelegate`
+  always wins a merge; an owner's `release --force` racing a worker's
+  concurrent write loses.
 - `work_ref` records where the work lives and survives completion and
-  archival, along with who held the task.
+  archival, along with who held the task. — **Holds** for a task that closes.
+  For a *recurring* task there is no close: the next occurrence starts with no
+  `work_ref` and no claim, by design.
 - Human delegation defaults to `WAITING`; agent claims never change
-  lifecycle state.
+  lifecycle state. — **Holds**, with the one intended exception: replacing a
+  person with the agent pool returns an inherited `WAITING` to `TODO`
+  (`--keep-state` opts out). Claims themselves never move state.
 - Delegation state is visible in list rows and task detail; CLI and HTTP
-  expose equivalent semantics.
+  expose equivalent semantics. — **Holds.** HTTP needed a `delegated=true`
+  query parameter to reach parity with `--delegated` over non-open scopes;
+  before that, closed provenance was unreachable over HTTP and
+  `scope=delegated&state=DONE` returned a misleading empty `200`.
 - No leases, boards, notifications, or scoring shipped — the accepted
   limitation (stale claims need owner cleanup) is documented in the agent
-  contract.
+  contract. — **Holds.**
 - All gates, the product smoke including a real claim race, and one
-  independent review pass.
+  independent review pass. — **Holds**; four rounds of review fixes are folded
+  into the corrections indexed above.

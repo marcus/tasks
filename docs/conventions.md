@@ -186,18 +186,34 @@ holds the next action. Absent means not delegated; there is no neutral value.
   agent, forbidden for a human. Only the owner sets or widens it.
 - **`status`** — `delegated` (human), `ready` (agent, unclaimed), `claimed`
   (agent, held by one worker).
-- **`assignee`** — the person's email, or the holding worker id
-  (`<harness>/<model>/<session-id>`) while claimed.
+- **`assignee`** — the person's email (address-shaped: non-empty local part,
+  one `@`, dotted domain), or the holding worker id
+  (`<harness>/<model>/<session-id>`) while claimed. Both are bounded at 200
+  characters and reject Unicode whitespace and control/escape characters.
 - **`at`** — UTC timestamp of the last status transition.
 - **`work_ref`** — optional single reference to where the work lives: a ticket,
-  PR, research brief, or agent session. More detail belongs in the body.
+  PR, research brief, or agent session; one line, at most 500 characters. More
+  detail belongs in the body.
+
+Nested keys this binary does not know are round-tripped rather than dropped and
+reported by `check` as a warning, so a record written by a newer binary
+survives a claim or release here.
 
 `tasks delegate <ref> --to <email>` sets WAITING, because that is exactly what
-WAITING means; agent delegation and claims never change state. `claim` is
-atomic, so exactly one worker ever holds a task. Completing or cancelling a
-task clears an unclaimed marker (nothing happened yet) and keeps a claimed or
-human one verbatim — that is how "who did it, and where" survives into the
-archive.
+WAITING means. Agent delegation and claims never change state, with one
+exception: replacing a *person* with the agent pool on a task that is WAITING
+*because* of that person returns it to TODO. `claim` is atomic, so exactly one
+worker ever holds a task. Completing or cancelling a task clears an unclaimed
+marker (nothing happened yet) and keeps a claimed or human one verbatim — that
+is how "who did it, and where" survives into the archive. Completing a
+*recurring* task instead rolls the standing intent forward onto the next
+occurrence — mode or person retained, always unclaimed, fresh `at`, no
+`work_ref`.
+
+Across devices the object is merged atomically under one total order: a removal
+(`undelegate`) absorbs everything, a `claimed` marker outranks a non-claimed
+one, two claims resolve to the earlier `at`, and two non-claims to the later
+`at`. See `docs/cli-spec.md` for the full rule and its consequences.
 
 ## Links
 

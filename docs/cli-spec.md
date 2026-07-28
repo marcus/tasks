@@ -157,6 +157,41 @@ verifying `.gitattributes` selects `merge=tasksjsonl`. This is intentionally
 not an HTTP capability: it is local Git transport plumbing, not user-visible
 task behavior. See the root README for setup and audit-log details.
 
+The `delegation` marker is merged as **one atomic value** — the merged record
+takes exactly one side's whole object, never a mix, which is what makes a
+spliced two-owner claim impossible. The winner is chosen by a single total
+order over the two values, *not* by "which side changed it" or by
+last-write-wins; the base is consulted only to detect a removal. In order:
+
+1. **removal absorbs** — if either side dropped a marker the base carried, the
+   merge drops it. Owner `undelegate` is the always-wins override and the
+   escape hatch for every rule below;
+2. a **`claimed`** marker beats any non-claimed one, so a live claim is never
+   silently downgraded to `ready` by a concurrent edit that did not go through
+   revocation;
+3. **two claims** — earlier `at`, then the lexicographically smaller
+   `assignee`, then canonical bytes: the first claim wins, and the loser
+   discovers it at its next worker-matched operation;
+4. **two non-claims** — later `at`, then canonical bytes: the most recent owner
+   intent.
+
+Being a maximum over one total order, this is associative and commutative,
+which is what makes "exactly one worker holds a claim" survive multi-device
+merges. (The earlier rule — one-sided change wins, then last-write-wins — was
+not: two devices syncing in different orders could converge on different claim
+holders.) A merge event names the reason: `removal_wins`, `claim_holds`,
+`earlier_claim`, or `later_intent`. Afterwards the marker is reconciled with
+the rest of the merged record, which can additionally clear it with
+`cleared_on_non_task`, `cleared_on_proposal`, or `cleared_on_close` (a merely
+`ready` marker on a task the other side closed — the same normalization a local
+close performs). `last_write` no longer appears for this field.
+
+**Known residual.** A *third* device that concurrently closes the task can
+still diverge, because the `state` merge's own rule (one-sided change wins →
+terminal state wins → last-write-wins) is not associative, and the
+`cleared_on_close` reconciliation reads the merged state. That predates
+delegation and is a property of state merging, not of the delegation order.
+
 **TUI interaction.** `Tab` always focuses the agent prompt, including while a
 read-only task panel is open. `p` inserts the selected task's stable id into
 that prompt, and `y` copies the same stable id to the clipboard.
@@ -415,6 +450,33 @@ task clears an
 unclaimed marker (nothing happened yet) and retains a claimed or human one
 verbatim as provenance into the archive, `work_ref` included.
 
+**Recurring tasks roll the standing intent forward.** Completing a delegated
+recurring task does not close it, so there is nothing to keep as provenance:
+the next occurrence inherits the *intent* — the agent `mode`, or the person the
+task is delegated to — always **unclaimed**, with a fresh `at` and **no**
+`work_ref`. Anything saying the work already started belongs to the cycle that
+just finished; carrying a claim over would hand the new occurrence to a worker
+who never picked it up (invisible to `--agent-ready`, unpickupable by anyone
+else). To stop a standing delegation, the owner `undelegate`s — completing a
+cycle will not.
+
+**Identity and reference validation.** `assignee`, the worker id, and
+`work_ref` all refuse C0 controls, `DEL`, the C1 block, and Unicode whitespace
+(NBSP, U+2028/U+2029, the ideographic space — Ruby's `\s` is ASCII-only, so a
+plain "no whitespace" rule let all of those through). These strings are
+rendered raw by `show`, `list --delegated`, the TUI detail panel, and the
+conflict line that names a holder, so a worker id carrying `\e[2K\e[1A` would
+rewrite the terminal of the agent that *lost* a claim race; the bytes are
+refused at the schema boundary instead of sanitized at four surfaces. A human
+`assignee` must additionally be address-*shaped* — non-empty local part,
+exactly one `@`, dotted domain — so `@work` (muscle memory from the TUI's
+context filter, one keystroke from silently moving a task to WAITING) and
+`pat@localhost` are refused. `assignee`/worker ids are bounded at 200
+characters, `work_ref` at 500. Nested keys inside `delegation` that this binary
+does not know are **preserved** across a rewrite (a claim from an older binary
+cannot silently drop a newer one's field) and reported by `check` as a WARNING,
+not an error — the same forward-compatible posture the top-level schema has.
+
 The one hard guarantee is **single pickup**: `claim` is a compare-and-set from
 `ready` to `claimed` performed under the store mutation lock, so two workers
 can never both believe they own a task; a list read never grants ownership, and
@@ -423,7 +485,17 @@ renewals, or liveness tracking — a crashed agent leaves a visibly claimed task
 until the owner clears it with `undelegate` or `release --force`. `release`
 requires the matching worker id unless the owner forces it, and revocation
 wins: after `undelegate` a stale worker's `release`/`workref` fail their
-worker-match precondition. All five operations are revision-aware typed
+worker-match precondition.
+
+That last guarantee is about *this* device. Across devices the whole marker is
+merged as one atomic value under a single total order (see Multi-device Git
+merge plumbing above), and only `undelegate` — a removal — always wins there. In particular an owner's
+`release --force` racing a worker's concurrent write on another device **loses**
+the merge, because a `claimed` marker outranks a non-claimed one; a one-sided
+release can be overturned when the devices meet. Use `undelegate` when you mean
+"this is no longer theirs, whatever else happened".
+
+All five operations are revision-aware typed
 `Tasks::Application` commands (`delegate_task`, `undelegate_task`,
 `claim_task`, `release_task`, `set_work_ref`), journaled and undoable; the two
 composed ones (the WAITING default, a release note) fold their second write
@@ -646,7 +718,7 @@ and `sources.memory` (`"TASKS_MEMORY env"` / `"config file"` /
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `list [filters]` | `l` | ✅ | All tasks grouped by state. Filters compose: `@context`, `+tag`, `/text` or bare word, `-A/-B/-C`, lifecycle scope `--open/-o` (default), `--proposed`, `--done/-d`, `--archived/-x`, or `--all/-a` (mutually exclusive). Effectively unavailable tasks are hidden from the default open scope; `--unavailable` (compatibility alias `--deferred/-D`) lists timed, inherited, and indefinite blockers; `--someday/--on-hold` selects tasks carrying their own indefinite marker. Those two filters are mutually exclusive. With a closed/archive scope, legacy `--deferred` and `--someday` filter the own marker; explicit `--unavailable` is rejected because every closed task is unavailable for lifecycle reasons. `--recurring/-R` lists tasks with a repeater. `--delegated` lists every task carrying a delegation (human or agent, ready or claimed) in file order and composes with any lifecycle scope, so `--all --delegated` reviews closed provenance too. `--agent-ready` lists the claimable queue — agent kind, unclaimed, accepted live state, and available under the ordinary prerequisite/ancestor rules — ranked by priority, then soonest deadline-or-scheduled boundary, then file order; it is only valid with `--open` and is mutually exclusive with `--delegated`. Both print one flat line per task (`agent-ready (<mode>): …`, `delegated → <email> (<STATE>): …`, `claimed by <id>: …`) instead of the state-grouped view. `--body/-b` widens text matching into notes. `--json` |
+| `list [filters]` | `l` | ✅ | All tasks grouped by state. Filters compose: `@context`, `+tag`, `/text` or bare word, `-A/-B/-C`, lifecycle scope `--open/-o` (default), `--proposed`, `--done/-d`, `--archived/-x`, or `--all/-a` (mutually exclusive). Effectively unavailable tasks are hidden from the default open scope; `--unavailable` (compatibility alias `--deferred/-D`) lists timed, inherited, and indefinite blockers; `--someday/--on-hold` selects tasks carrying their own indefinite marker. Those two filters are mutually exclusive. With a closed/archive scope, legacy `--deferred` and `--someday` filter the own marker; explicit `--unavailable` is rejected because every closed task is unavailable for lifecycle reasons. `--recurring/-R` lists tasks with a repeater. `--delegated` selects tasks carrying a delegation (human or agent, ready or claimed) in file order and composes with any lifecycle scope — but only *within* that scope, so it is not "every delegated task": under the default `--open` it still inherits the open scope's availability rule, and a delegated task with a future `scheduled` date or a blocked/on-hold ancestor is hidden until you ask for it (`--all --delegated`, which also reviews closed provenance, or `--unavailable --delegated`, which lists exactly the hidden ones). `--agent-ready` lists the claimable queue — agent kind, unclaimed, accepted live state, and available under the ordinary prerequisite/ancestor rules — ranked by priority, then soonest deadline-or-scheduled boundary, then file order; it is only valid with `--open` and is mutually exclusive with `--delegated`. Both print one flat line per task (`agent-ready (<mode>): …`, `delegated → <email> (<STATE>): …`, `claimed by <id>: …`) instead of the state-grouped view. `--body/-b` widens text matching into notes. `--json` |
 | `agenda` | `a` | ✅ | Available dated items, soonest first. `--json` |
 | `next` | `n` | ✅ | NEXT actions by context. `--json` |
 | `quadrants` | `q` | ✅ | Covey 2×2 from priority (A/B ⇒ important) + a `DEADLINE` within `urgent_days` (default 3, overdue counts) ⇒ urgent, with `important`/`urgent` tags as overrides. `--json` adds `quadrant`. |
@@ -694,10 +766,10 @@ display text to parse.
 | `retitle <ref> "new title"` | `rename` | ✅ | Replace the `title`; tags/priority/state untouched. |
 | `tag <ref> +foo -bar @ctx -@old` | | ✅ | Add/remove tags and contexts in one call. `+t`/`@ctx` add, `-t`/`-@ctx` remove. |
 | `note <ref> "text"` | | ✅ | Append a line to the task's `body`. |
-| `delegate <ref> <refine\|research\|implement>` | | ✅ | Mark the task agent-ready at that authority mode (`delegation: {kind: agent, status: ready, mode}`). Repeating it on an already-ready task updates the mode and keeps any `work_ref`; a claimed task refuses (`undelegate` first). Lifecycle state is untouched except when this replaces a human delegation on a WAITING task: the WAITING that delegating to a person set is undone (to `TODO`) in the same undo step, because agent-ready work is actionable again. `--keep-state` opts out. Prints `agent-ready (<mode>): <title>`, or `agent-ready (<mode>) \u2192 <STATE>: <title>` when the state moved. |
-| `delegate <ref> --to <email> [--keep-state]` | | ✅ | Hand the task to a person (`delegation: {kind: human, status: delegated, assignee}`) and move it to WAITING — the next action is outside the owner's control. `--keep-state` opts out. Replaces an agent delegation (and vice versa): one delegation per task. The state change is folded into the same undo step. Prints `delegated → <email> (<STATE>): <title>`. |
-| `undelegate <ref>` | | ✅ | Clear the marker, revoking any live claim; afterwards the stale worker's `release`/`workref` fail their worker match. Lifecycle state is left alone — undelegating does not leave WAITING. An undelegated task is a clean no-op (exit 0, no undo slot). |
-| `workref <ref> <url-or-id\|off>` | `work-ref` | ✅ | Record the single reference to where the work lives (ticket, PR, brief, session); setting overwrites and `off` clears. The owner may always write it; an agent adds `--worker <id>` to prove its claim still matches (deliberately **not** defaulted from `TASKS_WORKER_ID`, so an exported worker id cannot silently change who is writing). Survives completion and archival. |
+| `delegate <ref> <refine\|research\|implement>` | | ✅ | Mark the task agent-ready at that authority mode (`delegation: {kind: agent, status: ready, mode}`). Repeating it on an already-ready task updates the mode and keeps any `work_ref`; re-stating the mode it already has is a clean no-op (exit 0, no undo slot, no new `at`); a claimed task refuses with a conflict naming the holder (`undelegate` first). Replacing a *human* delegation is a different delegation, so its `work_ref` is dropped. Lifecycle state is untouched except when this replaces a human delegation on a WAITING task: the WAITING that delegating to a person set is undone (to `TODO`) in the same undo step, because agent-ready work is actionable again. `--keep-state` opts out (it applies to both kinds of `delegate`). Prints `agent-ready (<mode>): <title>`, or `agent-ready (<mode>) \u2192 <STATE>: <title>` when the state moved. |
+| `delegate <ref> --to <email> [--keep-state]` | | ✅ | Hand the task to a person (`delegation: {kind: human, status: delegated, assignee}`) and move it to WAITING — the next action is outside the owner's control. `--keep-state` opts out. `<email>` must be a real address shape (a non-empty local part, exactly one `@`, and a dotted domain), so `@work` — one keystroke from the TUI's context filter — and `pat@localhost` are refused rather than silently parking the task in WAITING. Replaces an agent delegation (and vice versa): one delegation per task, and a change of kind drops the old `work_ref`. The state change is folded into the same undo step. Prints `delegated → <email> (<STATE>): <title>`. |
+| `undelegate <ref>` | | ✅ | Clear the marker, revoking any live claim; afterwards the stale worker's `release`/`workref` fail their worker match. Lifecycle state is left alone — undelegating does not leave WAITING. An undelegated task is a clean no-op (exit 0, no undo slot). It is also the delegation **repair** route: alone among these verbs it may strip a marker some other writer left malformed even while `tasks check` calls the file invalid — provided that record is the only thing wrong and no `expected_revision`/`If-Match` was supplied (see Repairing an invalid record). Being a repair, `undo` deliberately restores the malformed bytes. |
+| `workref <ref> <url-or-id\|off\|none>` | `work-ref` | ✅ | Record the single reference to where the work lives (ticket, PR, brief, session); setting overwrites, and `off` or `none` (either word, case-insensitive, on every surface) clears it. At most 500 characters, one line, no control characters. The owner may always write it; an agent adds `--worker <id>` to prove its claim still matches (deliberately **not** defaulted from `TASKS_WORKER_ID`, so an exported worker id cannot silently change who is writing). Survives completion and archival. |
 | `claim <ref> --worker <id> [--json]` | | ✅ | Atomic compare-and-set from `ready` to `claimed` under the store mutation lock — exactly one worker can ever hold a task. `--worker` defaults from `TASKS_WORKER_ID`; the flag always wins, and missing both is a usage error (exit 1). A lost race exits 1 with `conflict: already claimed by <holder> at <ts>` on stderr, plus a `{"error":"conflict","action":"claim","id","holder","at","message"}` object on stdout under `--json`. Success prints `claimed by <id>: <title>`; `--json` re-emits the **full canonical task resource** (the `show --json` shape) so an agent claims and reads its authority in one step. |
 | `release <ref> --worker <id> [--note "text"] [--force]` | | ✅ | Hand a claim back (`claimed → ready`, assignee dropped, `work_ref` kept). Requires the worker id matching the live claim unless `--force` (the owner override, which needs no worker). `--note` appends a blocker line to the body through the ordinary note seam, folded into the **same undo step** as the release. A worker mismatch exits 1 with `conflict: claim is held by <holder>, not "<id>"`. Prints `released → agent-ready (<mode>): <title>`. |
 | `move <ref> ("Section" \| --under <ref> \| --top)` | | ✅ | Relocate a task's whole subtree by re-pointing its `parent`. Exactly one destination: a positional **section** name (out of `Inbox` into `Work`), `--under <ref>` to **nest** below another task, or `--top` to **unnest** to the section level. A section name resolves in the same widening tiers as `capture --project` (exact top-level, exact any-level, substring top-level, substring any-level; case-insensitive), so a **nested project sub-section** — e.g. a project under the "Projects" root — is a valid destination, not just a top-level heading. Section and `--top` moves are never depth-checked; `--under` is capped at `max_depth` (over-cap exits 1 with a depth message). Nesting under itself or a descendant exits 1 (cycle). `--top` on an already-top-level task prints "already at top level" (exit 0, no-op). See Nesting. |
@@ -731,6 +803,14 @@ The contract is narrow:
   (exit 1). A repair can't leave the file partially broken.
 - `undo` of a repair faithfully restores the prior (invalid) bytes, so you can
   retry a different fix.
+- Among the delegation verbs, only `undelegate` repairs, because it is the only
+  one that owns the whole `delegation` field: it may strip a marker a version
+  skew or a foreign writer left malformed (a `claimed` marker with no
+  `assignee`, say). `delegate`, `claim`, `release`, and `workref` all keep
+  refusing on an invalid file, since each of them would have to *read* the
+  broken marker to decide what to write. A repair is never granted under an
+  `expected_revision`/`If-Match`, whose baseline was computed over the
+  malformed bytes.
 
 ## Projects
 

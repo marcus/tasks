@@ -2821,7 +2821,8 @@ module Tasks
         return "a human delegation has no mode" if mode
         unless Delegation.email?(assignee)
           return "assignee #{assignee.inspect} must be an email address " \
-                 "(contains @, no whitespace, at most #{Delegation::ASSIGNEE_LIMIT} chars)"
+                 "(local@domain.tld, no whitespace or control characters, " \
+                 "at most #{Delegation::ASSIGNEE_LIMIT} chars)"
         end
       else
         unless Delegation::MODES.include?(mode)
@@ -2860,7 +2861,8 @@ module Tasks
       worker = worker.nil? ? nil : utf8(worker.to_s).strip
       unless Delegation.worker?(worker)
         return delegation_refusal(:invalid, "worker id #{worker.inspect} must be non-empty, " \
-                                            "whitespace-free, and at most #{Delegation::ASSIGNEE_LIMIT} chars")
+                                            "whitespace-free, free of control characters, " \
+                                            "and at most #{Delegation::ASSIGNEE_LIMIT} chars")
       end
       ineligible = delegation_ineligible(rec, "claimed")
       return ineligible if ineligible
