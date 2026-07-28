@@ -37,6 +37,8 @@ require_relative "mouse_router"
 require_relative "../tasks/config"
 require_relative "../tasks/agent_context"
 require_relative "../tasks/application"
+require_relative "../tasks/delegation"
+require_relative "../tasks/delegation_command"
 require_relative "../tasks/opener"
 
 module Tui
@@ -2753,15 +2755,30 @@ module Tui
 
     # The `D` grammar, in resolution order:
     #
-    #   anything containing "@"  → delegate to that person (Application moves
-    #                              the task to WAITING; Store validates shape)
-    #   an unambiguous prefix of one word below → that word's action
+    #   an email address       → delegate to that person (Application moves the
+    #                            task to WAITING)
+    #   anything else with "@" → a parse error naming the problem. `@` is the
+    #                            context-filter key, so `@work` is one slip of
+    #                            muscle memory away; it must not be treated as
+    #                            a person and must not reach the Application at
+    #                            all.
+    #   a prefix (≥ DELEGATE_PREFIX_MIN chars) of exactly one word below
+    #                          → that word's action
     #
-    # Prefix matching is what makes `ref` / `res` / `imp` work without four
-    # near-identical aliases; `re` is genuinely ambiguous (refine/research/
-    # release) and says so instead of guessing.
-    DELEGATE_WORDS = %w[refine research implement release off none].freeze
+    # The vocabulary is assembled from the shared definitions rather than
+    # respelled: the modes are the schema's, and the clear words are the CLI's,
+    # so `off`/`none` can never drift between the two surfaces.
+    DELEGATE_CLEAR_WORDS = Tasks::DelegationCommand::CLEAR_WORDS
+    DELEGATE_WORDS = (Tasks::Delegation::MODES + %w[release] + DELEGATE_CLEAR_WORDS).freeze
     DELEGATE_HINT = "pat@example.com · refine · research · implement · release · off · esc cancels"
+
+    # Prefix matching starts here. The plan promises `ref` / `res` / `imp`, and
+    # every word in the vocabulary is at least this long, so no promised
+    # spelling is lost — but one stray character no longer performs the widest
+    # or the most destructive action in the grammar. `i` used to delegate at
+    # `implement`, and `o` / `n` used to revoke a live claim with no
+    # confirmation; the shortest inputs must not be the ones that cost the most.
+    DELEGATE_PREFIX_MIN = 3
 
     def delegate_selected
       task = delegation_target
@@ -2822,7 +2839,7 @@ module Tui
           next "can't parse “#{raw}”; give a URL or id, or off to clear it"
         end
 
-        clear = %w[off none].include?(text.downcase)
+        clear = DELEGATE_CLEAR_WORDS.include?(text.downcase)
         run_delegation(task, :work_ref) do |id, operation_today, operation_context|
           @application.set_work_ref(id, clear ? nil : text,
                                     today: operation_today, context: operation_context)
@@ -2862,9 +2879,13 @@ module Tui
     # input would otherwise report itself as ambiguous across all six.
     def parse_delegation_input(text)
       return [:error, delegation_parse_error(text)] if text.empty?
-      return [:human, text] if text.include?("@")
+      return [:human, text] if Tasks::Delegation.email?(text)
+      # A near-miss address is a typo, not a person, and the user deserves to
+      # hear that here rather than as a Store refusal about a field they never
+      # knew they were writing.
+      return [:error, delegation_email_error(text)] if text.include?("@")
 
-      matches = DELEGATE_WORDS.select { |word| word.start_with?(text.downcase) }
+      matches = delegation_word_matches(text.downcase)
       case matches.length
       when 1 then delegation_word_action(matches.first)
       when 0 then [:error, delegation_parse_error(text)]
@@ -2872,16 +2893,29 @@ module Tui
       end
     end
 
+    # Nothing shorter than DELEGATE_PREFIX_MIN matches anything, so `o`, `n`,
+    # `i`, `r` and `re` all land on the unparseable message instead of silently
+    # resolving to a word the user did not type.
+    def delegation_word_matches(text)
+      return [] if text.length < DELEGATE_PREFIX_MIN
+
+      DELEGATE_WORDS.select { |word| word.start_with?(text) }
+    end
+
     def delegation_word_action(word)
       case word
       when "release" then [:release, nil]
-      when "off", "none" then [:undelegate, nil]
+      when *DELEGATE_CLEAR_WORDS then [:undelegate, nil]
       else [:agent, word]
       end
     end
 
     def delegation_parse_error(text)
       "can't parse “#{text}”; use an email, refine/research/implement, release, or off"
+    end
+
+    def delegation_email_error(text)
+      "“#{text}” isn't an email address — use pat@example.com"
     end
 
     # The shared submit body behind both prompts: run the operation against a
@@ -2895,7 +2929,16 @@ module Tui
       unless result.ok?
         message = delegation_failure_message(result)
         reload_store
-        return message
+        # reload_store → restore_form detaches the prompt when its target row is
+        # gone (deleted from another process mid-prompt). An orphaned Form's
+        # inline error is never painted, so the refusal has to reach the user as
+        # a flash instead of disappearing with the popup. Returning nil closes
+        # the form cleanly — close_form is already a no-op once @ui.form is nil,
+        # so no :form/nil soft-lock can appear here.
+        return message if @ui.form
+
+        flash(message)
+        return nil
       end
 
       absorb_own_write(operation_context)

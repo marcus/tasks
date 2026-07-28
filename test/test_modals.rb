@@ -8,6 +8,9 @@ class TestTaskDetails < Minitest::Test
   D = Tui::TaskDetails
   A = Tui::Ansi
   TODAY = Date.new(2026, 7, 1)
+  # C0, DEL, and C1 — the bytes the delegation schema refuses and the renderer
+  # must drop, spelled through Regexp.new so the source file stays printable.
+  CONTROL_BYTES = Regexp.new("[\\u0000-\\u001F\\u007F-\\u009F]")
 
   def detail_for(text)
     with_store do |store, _o, _a|
@@ -128,6 +131,12 @@ class TestTaskDetails < Minitest::Test
   # Build the panel for one task carrying `delegation`, through the canonical
   # reader (the marker lives on the TaskView, not on a presentation Item).
   def delegated_detail(delegation, state: "NEXT")
+    texts(lines: delegated_detail_lines(delegation, state: state))
+  end
+
+  # The painted lines, styling intact — control-character and reset assertions
+  # cannot use the stripped view.
+  def delegated_detail_lines(delegation, state: "NEXT")
     records = [
       { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "eeee0001", "title" => "Work" },
@@ -139,7 +148,7 @@ class TestTaskDetails < Minitest::Test
       File.write(org, dump_fixture(records))
       store = Tui::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
       task = Tasks::TaskReadModel.new(store.read_snapshot, today: TODAY).task_for("eeee0002")
-      return texts(D.build(task, task.body, 72, today: TODAY))
+      return D.build(task, task.body, 72, today: TODAY)[:lines]
     end
   end
 
@@ -174,6 +183,33 @@ class TestTaskDetails < Minitest::Test
     )
     assert lines_include?(claimed, /\A {2}status\s+claimed\z/)
     assert lines_include?(claimed, %r{\A {2}assignee\s+claude-code/claude-fable-5/313cf82e\z})
+  end
+
+  # Validation refuses these bytes now, but a record written by an older binary,
+  # a foreign writer, or a merge can still carry them, and the panel must never
+  # be corrupted by data it merely displays. `\e[7m` in an assignee would bleed
+  # reverse video into every following line and the frame border; `\e[2J` is
+  # invisible to Ansi.strip/vislen (SGR only), so the measured width of the row
+  # would disagree with the width the terminal paints.
+  def test_detail_delegation_values_are_sanitized_and_close_their_styling
+    lines = delegated_detail_lines(
+      { "kind" => "hu\e[7mman", "status" => "delegated", "assignee" => "p\e[7mat@x.co",
+        "at" => "2026-07-01T18:04:11Z", "work_ref" => "https://acme.example/\e[2J12" },
+      state: "WAITING"
+    )
+    delegation = lines.drop_while { |line| A.strip(line) != "delegation" }
+    refute_empty delegation
+
+    delegation.each do |line|
+      refute_match(CONTROL_BYTES, A.strip(line), "no control byte reaches the panel")
+      assert_equal 0, A.strip(line).count("\e"), "only SGR escapes may reach the frame"
+      assert_equal line, A.close(line), "a delegation row closes its own styling"
+    end
+
+    stripped = delegation.map { |line| A.strip(line) }
+    assert stripped.any? { |line| line =~ /\A {2}assignee\s+p\[7mat@x\.co\z/ },
+           "the payload survives as inert text: #{stripped.inspect}"
+    assert stripped.any? { |line| line =~ %r{\A {2}work ref\s+https://acme\.example/\[2J12\z} }
   end
 
   def test_detail_delegation_section_is_absent_without_a_marker

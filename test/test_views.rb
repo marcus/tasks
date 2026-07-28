@@ -9,6 +9,9 @@ class TestViews < Minitest::Test
   V = Tui::Views
   A = Tui::Ansi
   TODAY = Date.new(2026, 7, 1)
+  # C0, DEL, and C1 — the bytes the delegation schema refuses and the renderer
+  # must drop, spelled through Regexp.new so the source file stays printable.
+  CONTROL_BYTES = Regexp.new("[\\u0000-\\u001F\\u007F-\\u009F]")
 
   def rows(view)
     with_store { |store, _o, _a| return V.rows(view, store.items, today: TODAY) }
@@ -1593,6 +1596,97 @@ class TestViews < Minitest::Test
     assert_empty markers["plain task"]
   ensure
     Tui::Theme.reset!
+  end
+
+  # Two rows identical but for the delegation: same title length, both deferred
+  # and both recurring. The delegated one carries the widest badge in the
+  # system (an address, not a glyph), so it is the row that proves truncation
+  # order.
+  DELEGATION_BADGE_RECORDS = [
+    { "type" => "meta", "version" => 2 },
+    { "type" => "section", "id" => "dddd1001", "title" => "Work" },
+    { "type" => "task", "id" => "dddd1002", "parent" => "dddd1001", "state" => "NEXT",
+      "title" => "chore alpha", "recur" => "+1w", "scheduled" => "2026-08-26" },
+    { "type" => "task", "id" => "dddd1003", "parent" => "dddd1001", "state" => "NEXT",
+      "title" => "chore bravo", "recur" => "+1w", "scheduled" => "2026-08-26",
+      "delegation" => { "kind" => "human", "status" => "delegated",
+                        "assignee" => "pat@example.com", "at" => "2026-07-01T10:00:00Z" } },
+  ].freeze
+
+  def delegation_badge_rows
+    with_records(DELEGATION_BADGE_RECORDS) do |store|
+      reader = Tasks::TaskReadModel.new(store.read_snapshot, today: TODAY)
+      rows = V.rows(:outline, store.items, tree: store.tree, today: TODAY, reader: reader)
+      return rows.each_with_object({}) { |row, map| map[row.item&.title] = row }
+    end
+  end
+
+  # The delegation marker is the newest and widest badge, so it must truncate
+  # FIRST. A delegated task is exactly the one whose "why is this unavailable"
+  # signal matters — losing ↻/⏳ to make room for the assignee hides it on the
+  # rows someone else is holding.
+  def test_delegation_marker_truncates_before_the_recur_and_availability_markers
+    rows = delegation_badge_rows
+    plain = A.strip(rows["chore alpha"].text)
+    assert_includes plain, "↻"
+    assert_includes plain, "⏳ 8/26"
+
+    (50..72).each do |width|
+      cut = A.strip(A.vtrunc(rows["chore bravo"].text, width))
+      reference = A.strip(A.vtrunc(rows["chore alpha"].text, width))
+      next unless reference.include?("⏳ 8/26")
+
+      assert_includes cut, "↻", "the recur marker must survive to #{width} cols"
+      assert_includes cut, "⏳ 8/26", "the availability stamp must survive to #{width} cols"
+    end
+
+    # The full-width row still carries everything, marker last.
+    wide = A.strip(A.vtrunc(rows["chore bravo"].text, 120))
+    assert_operator wide.index("↻"), :<, wide.index("→pat@example.com")
+    assert_operator wide.index("⏳"), :<, wide.index("→pat@example.com")
+  end
+
+  # A record written by an older binary, a foreign writer, or a merge can carry
+  # control bytes the current schema refuses. The row must never be corrupted by
+  # data it merely displays: `\e[7m` would bleed reverse video into every
+  # following line, and non-SGR escapes are invisible to Ansi.strip/vislen (SGR
+  # only), so measured width would disagree with painted width.
+  HOSTILE_DELEGATION_RECORDS = [
+    { "type" => "meta", "version" => 2 },
+    { "type" => "section", "id" => "dddd2001", "title" => "Work" },
+    { "type" => "task", "id" => "dddd2002", "parent" => "dddd2001", "state" => "WAITING",
+      "title" => "hostile human",
+      "delegation" => { "kind" => "human", "status" => "delegated",
+                        "assignee" => "p\e[7mat@x.co", "at" => "2026-07-01T10:00:00Z" } },
+    { "type" => "task", "id" => "dddd2003", "parent" => "dddd2001", "state" => "NEXT",
+      "title" => "hostile agent",
+      "delegation" => { "kind" => "agent", "mode" => "res\e[2Jearch", "status" => "claimed",
+                        "assignee" => "worker", "at" => "2026-07-01T10:00:00Z" } },
+    { "type" => "task", "id" => "dddd2004", "parent" => "dddd2001", "state" => "NEXT",
+      "title" => "after",
+      "delegation" => nil },
+  ].freeze
+
+  def test_delegation_marker_strips_control_characters_from_stored_values
+    with_records(HOSTILE_DELEGATION_RECORDS) do |store|
+      reader = Tasks::TaskReadModel.new(store.read_snapshot, today: TODAY)
+      rows = V.rows(:outline, store.items, tree: store.tree, today: TODAY, reader: reader)
+      by_title = rows.each_with_object({}) { |row, map| map[row.item&.title] = row }
+
+      ["hostile human", "hostile agent"].each do |title|
+        text = by_title[title].text
+        refute_match(CONTROL_BYTES, A.strip(text),
+                     "#{title}: no control byte survives painting")
+        # Ansi.strip removes SGR only, so anything left carrying an ESC is a
+        # sequence the width arithmetic cannot see.
+        assert_equal 0, A.strip(text).count("\e"),
+                     "#{title}: only SGR escapes may reach the frame"
+        assert_operator A.vislen(A.vtrunc(text, 30)), :<=, 30
+        assert_equal text, A.close(text), "#{title}: the row closes its own styling"
+      end
+      assert_includes A.strip(by_title["hostile human"].text), "→p[7mat@x.co"
+      assert_includes A.strip(by_title["hostile agent"].text), "⇒res[2Jearch"
+    end
   end
 
   def test_delegation_marker_reads_a_raw_item_when_no_canonical_reader_is_supplied

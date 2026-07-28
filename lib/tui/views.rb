@@ -958,7 +958,6 @@ module Tui
     # an up-arrow identifies a blocker inherited from an ancestor.
     def badge(item, reader: nil, today: Date.today)
       b = +""
-      b << delegation_marker(item, reader: reader)
       b << T.paint(:muted, " ↻") if item.recurring?
       availability = availability_for(item, reader: reader, today: today)
       case availability.availability_reason
@@ -971,6 +970,12 @@ module Tui
       when :ancestor_on_hold
         b << T.paint(:muted, " ⏸ ↑")
       end
+      # The delegation marker is the widest thing a badge can carry (an address
+      # rather than a glyph), and it goes LAST so a narrow pane truncates it
+      # before the recur/availability/date markers. Those answer "why can't I
+      # act on this row" and predate delegation; a delegated task is exactly the
+      # one that must not lose them.
+      b << delegation_marker(item, reader: reader)
       b
     end
 
@@ -996,19 +1001,32 @@ module Tui
       when Tasks::Delegation::DELEGATED
         T.paint(:muted, " #{DELEGATED_GLYPH}#{delegation_assignee(delegation["assignee"])}")
       when Tasks::Delegation::READY
-        T.paint(:muted, " #{DELEGATED_GLYPH}#{delegation["mode"]}")
+        T.paint(:muted, " #{DELEGATED_GLYPH}#{delegation_text(delegation["mode"])}")
       when Tasks::Delegation::CLAIMED
-        T.paint(:accent, " #{CLAIMED_GLYPH}#{delegation["mode"]}")
+        T.paint(:accent, " #{CLAIMED_GLYPH}#{delegation_text(delegation["mode"])}")
       else
         ""
       end
+    end
+
+    # Every delegation string, on its way to the screen. The schema now refuses
+    # control characters, but a record written by an older binary, a foreign
+    # writer, or a merge can still carry them, and the TUI must never be
+    # corrupted by data it merely displays: `\e[7m` in an assignee bleeds
+    # reverse video into the following rows and the frame border, and any
+    # non-SGR escape (`\e[2J`) is invisible to Ansi.strip/vislen — which are SGR
+    # only — so measured width silently disagrees with painted width and
+    # desynchronizes vpad/vtrunc, Form#popup's width, and the assignee budget
+    # below. Dropping the bytes leaves the payload as inert text.
+    def delegation_text(value)
+      A.normalize(value.to_s).gsub(Tasks::Delegation::CONTROL_RE, "")
     end
 
     # Truncate an assignee to DELEGATION_ASSIGNEE_W cells, cutting the domain
     # first: `pat@example.com` survives intact, a long address degrades to
     # `pat@…` rather than to a meaningless prefix of the local part.
     def delegation_assignee(assignee)
-      text = assignee.to_s
+      text = delegation_text(assignee)
       return text if text.empty? || A.vislen(text) <= DELEGATION_ASSIGNEE_W
 
       local = text.split("@", 2).first.to_s

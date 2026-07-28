@@ -82,13 +82,15 @@ module Tui
       return [] unless Tasks::Delegation.object?(delegation)
 
       lines = ["", T.paint(:detail_label, "delegation")]
-      lines << delegation_row("kind", delegation["kind"])
-      lines << delegation_row("mode", delegation["mode"]) if delegation["mode"]
+      lines << delegation_row("kind", Views.delegation_text(delegation["kind"]))
+      lines << delegation_row("mode", Views.delegation_text(delegation["mode"])) if delegation["mode"]
       lines << delegation_row("status", delegation_status(delegation["status"]))
-      lines << delegation_row("assignee", delegation["assignee"]) if delegation["assignee"]
-      lines << delegation_row("at", T.paint(:muted, delegation["at"])) if delegation["at"]
+      if delegation["assignee"]
+        lines << delegation_row("assignee", Views.delegation_text(delegation["assignee"]))
+      end
+      lines << delegation_row("at", T.paint(:muted, Views.delegation_text(delegation["at"]))) if delegation["at"]
       if (reference = delegation["work_ref"])
-        lines << delegation_row("work ref", T.paint(:link, reference))
+        lines << delegation_row("work ref", T.paint(:link, Views.delegation_text(reference)))
       end
       lines
     end
@@ -98,11 +100,15 @@ module Tui
     # idle statuses stay muted — the same contrast the list marker uses.
     def delegation_status(status)
       slot = status == Tasks::Delegation::CLAIMED ? :accent : :muted
-      T.paint(slot, status.to_s)
+      T.paint(slot, Views.delegation_text(status))
     end
 
+    # Values arrive already sanitized (Views.delegation_text) and, where they
+    # carry a slot, already painted. The explicit close is the second belt: a
+    # delegation row must never hand its styling to the row underneath it, and
+    # the label's own slot is the theme's to change.
     def delegation_row(label, value)
-      "  #{T.paint(:detail_label, label.ljust(8))} #{value}"
+      A.close("  #{T.paint(:detail_label, label.ljust(8))} #{value}")
     end
 
     def note_line(line)

@@ -2069,7 +2069,7 @@ class TestApp < Minitest::Test
       ui(app).form.input.replace("re")
       app.send(:handle_key, "\r")
       assert_equal :form, ui(app).mode
-      assert_equal "“re” matches refine, research, release — type more of the word",
+      assert_equal "can't parse “re”; use an email, refine/research/implement, release, or off",
                    ui(app).form.error
 
       ui(app).form.input.replace("bananas")
@@ -2087,12 +2087,138 @@ class TestApp < Minitest::Test
     end
   end
 
-  def test_delegate_surfaces_a_malformed_email_from_the_store
+  # `@` is the context-filter key, so a typo'd `@word` is one slip of muscle
+  # memory away from the delegate prompt. It must be refused here, by name, and
+  # never routed down the human branch to come back as a Store refusal about a
+  # field the user did not know they were writing.
+  def test_delegate_refuses_an_at_word_that_is_not_an_address_before_the_store
+    ["@work", "@home", "pat @example.com", "pat@", "@", "pat@example", "a@b@c.com"].each do |typed|
+      delegation_app do |app|
+        submit_form(app, "D", typed)
+
+        assert_equal :form, ui(app).mode, "#{typed.inspect} keeps the prompt open"
+        assert_equal "“#{typed}” isn't an email address — use pat@example.com",
+                     ui(app).form.error
+        assert_nil delegation_of(app), "#{typed.inspect} must not write a delegation"
+        assert_equal "NEXT", app.send(:read_model).task_for("bbbb0003").state,
+                     "#{typed.inspect} must not flip the task to WAITING"
+      end
+    end
+  end
+
+  def test_delegate_accepts_ordinary_addresses_including_subdomains_and_plus_tags
+    ["pat@example.com", "pat+tasks@mail.example.co.uk", "PAT@Example.com"].each do |typed|
+      delegation_app do |app|
+        submit_form(app, "D", typed)
+
+        assert_equal typed, delegation_of(app)&.fetch("assignee"),
+                     "#{typed.inspect} is a usable identifier"
+      end
+    end
+  end
+
+  # A one-character answer must never resolve to the widest authority
+  # (`implement`) or to the one destructive verb (`off`/`none` revokes a live
+  # claim with no confirmation). Only the spellings the plan promises resolve.
+  def test_delegate_requires_three_characters_before_a_prefix_resolves
+    assert_equal 3, Tui::App::DELEGATE_PREFIX_MIN
+    # `i` was `implement`, `o`/`n` were `off`/`none`, and `r`/`re` guessed
+    # across three words. None of them are spellings the plan promises.
+    %w[o n i r re of no im].each do |typed|
+      delegation_app do |app|
+        submit_form(app, "D", typed)
+
+        assert_equal :form, ui(app).mode, "#{typed.inspect} must not act"
+        assert_equal "can't parse “#{typed}”; use an email, refine/research/implement, release, or off",
+                     ui(app).form.error
+        assert_nil delegation_of(app), "#{typed.inspect} must not write a delegation"
+      end
+    end
+  end
+
+  def test_short_input_cannot_revoke_a_live_claim
     delegation_app do |app|
-      submit_form(app, "D", "pat @example.com")
+      submit_form(app, "D", "research")
+      assert app.instance_variable_get(:@store)
+                .claim_task!("bbbb0003", worker: "claude-code/claude-fable-5/aaaa1111").ok?
+      app.send(:reload_store)
+
+      %w[o n].each do |typed|
+        submit_form(app, "D", typed)
+        assert_equal :form, ui(app).mode
+        assert_match(/can't parse/, ui(app).form.error)
+        assert_equal "claimed", delegation_of(app)["status"], "#{typed.inspect} must not revoke"
+        app.send(:handle_key, "\e")
+      end
+    end
+  end
+
+  # Every promised spelling still resolves, including the clear words the CLI
+  # owns — the TUI shares that vocabulary rather than keeping its own copy.
+  def test_delegate_accepts_every_promised_spelling
+    assert_same Tasks::DelegationCommand::CLEAR_WORDS, Tui::App::DELEGATE_CLEAR_WORDS,
+                "the clear vocabulary has exactly one definition"
+
+    { "ref" => :refine, "refine" => :refine, "res" => :research, "research" => :research,
+      "imp" => :implement, "implement" => :implement }.each do |typed, mode|
+      delegation_app do |app|
+        submit_form(app, "D", typed)
+        assert_equal mode.to_s, delegation_of(app)["mode"]
+      end
+    end
+
+    (Tasks::DelegationCommand::CLEAR_WORDS + %w[non]).each do |typed|
+      delegation_app do |app|
+        submit_form(app, "D", "research")
+        submit_form(app, "D", typed)
+        assert_nil delegation_of(app), "#{typed.inspect} undelegates"
+      end
+    end
+
+    %w[rel rele release].each do |typed|
+      delegation_app do |app|
+        submit_form(app, "D", "research")
+        assert app.instance_variable_get(:@store)
+                  .claim_task!("bbbb0003", worker: "claude-code/claude-fable-5/aaaa1111").ok?
+        app.send(:reload_store)
+
+        submit_form(app, "D", typed)
+        assert_equal "ready", delegation_of(app)["status"], "#{typed.inspect} forces a release"
+      end
+    end
+  end
+
+  # The clear words drive `W` too, from the same shared constant.
+  def test_work_ref_clear_words_come_from_the_shared_vocabulary
+    Tasks::DelegationCommand::CLEAR_WORDS.each do |typed|
+      delegation_app do |app|
+        submit_form(app, "D", "research")
+        submit_form(app, "W", "https://example.com/brief")
+        submit_form(app, "W", typed.upcase)
+
+        refute delegation_of(app).key?("work_ref"), "#{typed.inspect} clears the reference"
+      end
+    end
+  end
+
+  # The failure path reloads the store, and the reload detaches the prompt when
+  # its target row is gone. A detached Form's inline error is never painted, so
+  # the refusal has to arrive as a flash instead of the prompt simply vanishing.
+  def test_delegate_flashes_when_the_target_disappears_mid_prompt
+    delegation_app do |app|
+      app.send(:handle_key, "D")
       assert_equal :form, ui(app).mode
-      assert_match(/must be an email address/, ui(app).form.error)
-      assert_nil delegation_of(app)
+
+      paths = app.instance_variable_get(:@paths)
+      kept = File.readlines(paths.org).reject { |line| line.include?("bbbb0003") }
+      File.write(paths.org, kept.join)
+
+      ui(app).form.input.replace("research")
+      app.send(:handle_key, "\r")
+
+      assert_nil ui(app).form, "the prompt closes with its target"
+      assert_equal :list, ui(app).mode, "no :form mode without a form"
+      assert_equal "task no longer exists", app.instance_variable_get(:@flash)
     end
   end
 

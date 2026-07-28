@@ -47,6 +47,16 @@ module Tui
 
     def strip(s) = normalize(s).gsub(SGR, "")
 
+    # Close any styling a composed line still has open, so a row can never leak
+    # color into the one painted below it. A line with no SGR at all, or one
+    # that already ends in a reset, is returned unchanged.
+    def close(s)
+      text = normalize(s)
+      return text unless text.match?(SGR)
+
+      text.end_with?("\e[0m") || text.end_with?("\e[m") ? text : text + "\e[0m"
+    end
+
     # Bare codepoint/grapheme widths live in the shared CharWidth kernel; these
     # delegators keep Ansi.char_width / Ansi.cluster_width (and the bare internal
     # calls below) working unchanged.
