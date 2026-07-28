@@ -155,6 +155,9 @@ module Tui
       @rows = nil
       @rows_fingerprint = nil
       @row_item_count = 0
+      @filtered_items = nil
+      @filtered_items_model = nil
+      @filtered_items_key = nil
       @title_haystack = nil
       @title_haystack_model = nil
       @open_count = nil
@@ -438,6 +441,9 @@ module Tui
       @rows = nil
       @rows_fingerprint = nil
       @row_item_count = 0
+      @filtered_items = nil
+      @filtered_items_model = nil
+      @filtered_items_key = nil
       @title_haystack = nil
       @title_haystack_model = nil
       @open_count = nil
@@ -518,18 +524,8 @@ module Tui
         return @rows
       end
 
-      items = read.items
       contexts = active_context_filters
-      unless contexts.empty?
-        items = items.select do |item|
-          context_filter_match?(item, contexts, mode: CONTEXT_FILTER_MODE)
-        end
-      end
-      if (q = active_filter)
-        q = q.downcase
-        hay = title_haystack(read)
-        items = items.select { |i| (hay[i.id] || i.title.downcase).include?(q) }
-      end
+      items = filtered_items(read)
       # A `/` search always renders flat (its result shape is what filtering
       # expects). A `@` context filter keeps the tree on the list views so
       # subtasks stay visible — scoped to that context via context_filter —
@@ -574,6 +570,34 @@ module Tui
         CONTEXT_FILTER_MODE,
         @ui.collapsed.hash,
       ]
+    end
+
+    # Items after the active `@` context and `/` search filters. Shared by the
+    # list views and the tab badge so the badge can't advertise rows the
+    # current filter hides — an @home count of work approvals is a lie you
+    # can't act on. Memoized per (model, filter) since the header repaints
+    # every frame, including each keystroke while typing a filter.
+    def filtered_items(read)
+      contexts = active_context_filters
+      key = [active_filter, contexts]
+      if @filtered_items && @filtered_items_model.equal?(read) && @filtered_items_key == key
+        return @filtered_items
+      end
+
+      items = read.items
+      unless contexts.empty?
+        items = items.select do |item|
+          context_filter_match?(item, contexts, mode: CONTEXT_FILTER_MODE)
+        end
+      end
+      if (q = active_filter)
+        q = q.downcase
+        hay = title_haystack(read)
+        items = items.select { |i| (hay[i.id] || i.title.downcase).include?(q) }
+      end
+      @filtered_items_model = read
+      @filtered_items_key = key
+      @filtered_items = items
     end
 
     # Downcased titles keyed by task id, rebuilt once per read-model identity —
@@ -626,7 +650,7 @@ module Tui
     end
 
     def tab_counts
-      count = read_model.items.count(&:proposed?)
+      count = filtered_items(read_model).count(&:proposed?)
       count.positive? ? { approvals: count } : {}
     end
 

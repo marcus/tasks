@@ -18,6 +18,15 @@ class TestApp < Minitest::Test
       "state" => "INBOX", "title" => "Accepted task" },
   ]).freeze
 
+  CONTEXT_PROPOSAL_APP = dump_fixture([
+    { "type" => "meta", "version" => 2 },
+    { "type" => "section", "id" => "ef000001", "title" => "Inbox" },
+    { "type" => "task", "id" => "ef000002", "parent" => "ef000001",
+      "state" => "PROPOSED", "title" => "Home proposal", "tags" => ["@home"] },
+    { "type" => "task", "id" => "ef000003", "parent" => "ef000001",
+      "state" => "PROPOSED", "title" => "Work proposal", "tags" => ["@work"] },
+  ]).freeze
+
   # Resolve the panel column count the same way the frame does, so resize
   # assertions read the realized width rather than the stored offset.
   def panel_width(app)
@@ -318,6 +327,25 @@ class TestApp < Minitest::Test
       app.send(:handle_key, "u")
       assert_equal "PROPOSED", record_for(org_path(app), title: "Beta proposal")["state"]
       assert_equal({ approvals: 1 }, app.send(:tab_counts))
+    end
+  end
+
+  def test_approvals_badge_counts_only_proposals_the_active_filter_shows
+    app_on(view: :approvals, select: "Home proposal", content: CONTEXT_PROPOSAL_APP) do |app|
+      assert_equal({ approvals: 2 }, app.send(:tab_counts))
+
+      ui(app).context_filters = ["@home"]
+      assert_equal({ approvals: 1 }, app.send(:tab_counts))
+      assert_equal ["Home proposal"], app.send(:rows).filter_map { |r| r.item&.title }
+
+      ui(app).context_filters = ["@errand"]
+      assert_equal({}, app.send(:tab_counts))
+      assert_empty app.send(:rows).filter_map { |r| r.item&.title }
+
+      ui(app).context_filters = []
+      ui(app).filter = "work"
+      assert_equal({ approvals: 1 }, app.send(:tab_counts))
+      assert_equal ["Work proposal"], app.send(:rows).filter_map { |r| r.item&.title }
     end
   end
 
