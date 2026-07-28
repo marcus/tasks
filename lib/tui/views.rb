@@ -6,6 +6,7 @@ require "time"
 require_relative "ansi"
 require_relative "theme"
 require_relative "store"
+require_relative "../tasks/delegation"
 require_relative "../tasks/quadrants"
 
 module Tui
@@ -133,6 +134,23 @@ module Tui
     MARK_EXPANDED  = "▾ "
     MARK_COLLAPSED = "▸ "
     MARK_LEAF      = "  "
+
+    # The delegation row marker. A single arrow means "handed off and idle" —
+    # a person we are waiting on, or agent-ready work nobody has picked up. A
+    # doubled arrow means a worker is actively holding the task, and it is the
+    # one delegation state where acting on the row would collide with someone
+    # else's work, so it is deliberately the loudest.
+    #
+    # The two are distinguishable without color: different glyphs, and the
+    # :accent slot resolves to bold in every monochrome theme while :muted
+    # resolves to dim. Both glyphs are text-presentation arrows (one terminal
+    # cell each per CharWidth), so they never desync a row's cell arithmetic.
+    DELEGATED_GLYPH = "→"
+    CLAIMED_GLYPH   = "⇒"
+    # Cells an assignee may occupy before it is cut back to `local@…`. Wide
+    # enough for pat@example.com, narrow enough to leave the title readable in
+    # a split pane.
+    DELEGATION_ASSIGNEE_W = 16
 
     # Canonical semantic query for both flat/filter and tree modes. It owns the
     # per-view eligibility, classification/grouping, and item ordering policy;
@@ -940,6 +958,7 @@ module Tui
     # an up-arrow identifies a blocker inherited from an ancestor.
     def badge(item, reader: nil, today: Date.today)
       b = +""
+      b << delegation_marker(item, reader: reader)
       b << T.paint(:muted, " ↻") if item.recurring?
       availability = availability_for(item, reader: reader, today: today)
       case availability.availability_reason
@@ -953,6 +972,50 @@ module Tui
         b << T.paint(:muted, " ⏸ ↑")
       end
       b
+    end
+
+    # The delegation object behind a presentation Item. Items deliberately do
+    # not carry it (delegation is a canonical-resource field), so the reader's
+    # TaskView is the source of truth; the direct-item fallback keeps renderer
+    # unit tests useful against a raw read-only Store.
+    def delegation_for(item, reader: nil)
+      canonical = reader.task_for(item) if reader.respond_to?(:task_for)
+      source = canonical || item
+      value = source.respond_to?(:delegation) ? source.delegation : nil
+      Tasks::Delegation.object?(value) ? value : nil
+    end
+
+    # One compact marker, or "" for an undelegated task. Kept to a glyph plus
+    # one word so it rides at the end of a row without pushing the title out of
+    # a narrow pane; the detail panel carries the full picture.
+    def delegation_marker(item, reader: nil)
+      delegation = delegation_for(item, reader: reader)
+      return "" unless delegation
+
+      case delegation["status"]
+      when Tasks::Delegation::DELEGATED
+        T.paint(:muted, " #{DELEGATED_GLYPH}#{delegation_assignee(delegation["assignee"])}")
+      when Tasks::Delegation::READY
+        T.paint(:muted, " #{DELEGATED_GLYPH}#{delegation["mode"]}")
+      when Tasks::Delegation::CLAIMED
+        T.paint(:accent, " #{CLAIMED_GLYPH}#{delegation["mode"]}")
+      else
+        ""
+      end
+    end
+
+    # Truncate an assignee to DELEGATION_ASSIGNEE_W cells, cutting the domain
+    # first: `pat@example.com` survives intact, a long address degrades to
+    # `pat@…` rather than to a meaningless prefix of the local part.
+    def delegation_assignee(assignee)
+      text = assignee.to_s
+      return text if text.empty? || A.vislen(text) <= DELEGATION_ASSIGNEE_W
+
+      local = text.split("@", 2).first.to_s
+      head = local.empty? ? text : "#{local}@"
+      budget = DELEGATION_ASSIGNEE_W - 1
+      head = A.cell_slice(head, 0, budget) if A.vislen(head) > budget
+      "#{head}…"
     end
 
     def decorated_title(item)

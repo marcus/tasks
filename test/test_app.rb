@@ -1914,6 +1914,309 @@ class TestApp < Minitest::Test
     end
   end
 
+  # -- delegation (D / W) ------------------------------------------------------
+
+  DELEGATION_FIXTURE = dump_fixture([
+    { "type" => "meta", "version" => 2 },
+    { "type" => "section", "id" => "bbbb0001", "title" => "Projects" },
+    { "type" => "section", "id" => "bbbb0002", "parent" => "bbbb0001", "title" => "Research" },
+    { "type" => "task", "id" => "bbbb0003", "parent" => "bbbb0002", "state" => "NEXT",
+      "title" => "Compare CRDT libraries" },
+    { "type" => "task", "id" => "bbbb0004", "parent" => "bbbb0002", "state" => "PROPOSED",
+      "title" => "Suggested spike" },
+    { "type" => "task", "id" => "bbbb0005", "parent" => "bbbb0002", "state" => "DONE",
+      "title" => "Closed groundwork", "closed" => "2026-06-01" },
+  ])
+
+  def delegation_app(select: "Compare CRDT libraries", view: :outline, &block)
+    app_on(view: view, select: select, content: DELEGATION_FIXTURE, &block)
+  end
+
+  # Drive the inline prompt exactly as a keypress would: open it, type, submit.
+  def submit_form(app, key, text)
+    app.send(:handle_key, key)
+    ui(app).form.input.replace(text)
+    app.send(:handle_key, "\r")
+  end
+
+  def delegation_of(app, id = "bbbb0003")
+    Tasks::Format.parse(File.read(app.instance_variable_get(:@paths).org))
+                 .records.find { |record| record["id"] == id }&.fetch("delegation", nil)
+  end
+
+  def test_delegate_key_opens_the_inline_prompt_with_the_current_state
+    delegation_app do |app|
+      app.send(:handle_key, "D")
+      assert_equal :form, ui(app).mode
+      assert_equal :delegate, ui(app).form.kind
+      assert_equal "bbbb0003", ui(app).form.target_id
+      assert_equal :list, ui(app).form.return_mode
+      assert_equal "(not delegated)", ui(app).form.instance_variable_get(:@suffix)
+      assert_equal "", ui(app).form.input.to_s
+      hint = ui(app).form.instance_variable_get(:@hint)
+      assert_equal "pat@example.com · refine · research · implement · release · off · esc cancels", hint
+    end
+  end
+
+  def test_delegate_prompt_suffix_reports_the_live_delegation
+    delegation_app do |app|
+      submit_form(app, "D", "research")
+      app.send(:handle_key, "D")
+      assert_equal "(now agent-ready (research))", ui(app).form.instance_variable_get(:@suffix)
+    end
+  end
+
+  def test_delegate_email_hands_the_task_to_a_person_and_reports_waiting
+    delegation_app do |app|
+      submit_form(app, "D", "pat@example.com")
+
+      assert_equal :list, ui(app).mode
+      delegation = delegation_of(app)
+      assert_equal %w[human delegated pat@example.com], delegation.values_at("kind", "status", "assignee")
+      assert_equal "WAITING", app.send(:read_model).task_for("bbbb0003").state
+      assert_equal "delegated → pat@example.com (WAITING): Compare CRDT libraries",
+                   app.instance_variable_get(:@flash)
+      refute app.send(:external_change?), "the delegation's own write is absorbed"
+    end
+  end
+
+  def test_delegate_each_agent_mode_and_its_unambiguous_prefix
+    { "refine" => "refine", "ref" => "refine", "research" => "research", "res" => "research",
+      "implement" => "implement", "imp" => "implement" }.each do |typed, mode|
+      delegation_app do |app|
+        submit_form(app, "D", typed)
+
+        delegation = delegation_of(app)
+        assert_equal ["agent", mode, "ready"], delegation.values_at("kind", "mode", "status"),
+                     "#{typed.inspect} must delegate at #{mode}"
+        refute delegation.key?("assignee"), "agent-ready work carries no assignee"
+        assert_equal "agent-ready (#{mode}): Compare CRDT libraries",
+                     app.instance_variable_get(:@flash)
+        assert_equal "NEXT", app.send(:read_model).task_for("bbbb0003").state,
+                     "agent delegation never moves lifecycle state"
+      end
+    end
+  end
+
+  def test_delegate_off_and_none_clear_the_marker
+    %w[off none].each do |word|
+      delegation_app do |app|
+        submit_form(app, "D", "research")
+        submit_form(app, "D", word)
+
+        assert_nil delegation_of(app)
+        assert_equal "undelegated: Compare CRDT libraries", app.instance_variable_get(:@flash)
+      end
+    end
+  end
+
+  def test_delegate_off_on_an_undelegated_task_writes_nothing
+    delegation_app do |app|
+      submit_form(app, "D", "off")
+      assert_nil delegation_of(app)
+      assert_equal "not delegated: Compare CRDT libraries", app.instance_variable_get(:@flash)
+    end
+  end
+
+  def test_delegate_release_forces_a_stale_claim_back_to_the_ready_queue
+    delegation_app do |app|
+      submit_form(app, "D", "research")
+      # A worker picks it up out-of-band; the owner never holds that worker id.
+      assert app.instance_variable_get(:@store)
+                .claim_task!("bbbb0003", worker: "claude-code/opus/9a11").ok?
+      app.send(:reload_store)
+
+      submit_form(app, "D", "release")
+
+      delegation = delegation_of(app)
+      assert_equal ["agent", "research", "ready"], delegation.values_at("kind", "mode", "status")
+      refute delegation.key?("assignee")
+      assert_equal "released · agent-ready (research): Compare CRDT libraries",
+                   app.instance_variable_get(:@flash)
+    end
+  end
+
+  def test_delegating_over_a_live_claim_reports_the_holder_and_keeps_the_prompt_open
+    delegation_app do |app|
+      submit_form(app, "D", "research")
+      assert app.instance_variable_get(:@store)
+                .claim_task!("bbbb0003", worker: "claude-code/opus/9a11").ok?
+      app.send(:reload_store)
+
+      submit_form(app, "D", "refine")
+
+      assert_equal :form, ui(app).mode, "a refused delegation stays open for another answer"
+      assert_match(/already claimed by claude-code\/opus\/9a11 at /, ui(app).form.error)
+      assert_match(/off revokes it/, ui(app).form.error)
+      assert_equal "claimed", delegation_of(app)["status"]
+    end
+  end
+
+  def test_delegate_release_on_an_unclaimed_task_reports_the_precondition
+    delegation_app do |app|
+      submit_form(app, "D", "research")
+      submit_form(app, "D", "release")
+
+      assert_equal :form, ui(app).mode
+      assert_equal "task is not claimed", ui(app).form.error
+    end
+  end
+
+  def test_delegate_rejects_ambiguous_and_unparseable_input_without_writing
+    delegation_app do |app|
+      app.send(:handle_key, "D")
+
+      ui(app).form.input.replace("re")
+      app.send(:handle_key, "\r")
+      assert_equal :form, ui(app).mode
+      assert_equal "“re” matches refine, research, release — type more of the word",
+                   ui(app).form.error
+
+      ui(app).form.input.replace("bananas")
+      app.send(:handle_key, "\r")
+      assert_equal "can't parse “bananas”; use an email, refine/research/implement, release, or off",
+                   ui(app).form.error
+
+      ui(app).form.input.replace("")
+      app.send(:handle_key, "\r")
+      assert_match(/can't parse/, ui(app).form.error)
+
+      app.send(:handle_key, "\e")
+      assert_equal :list, ui(app).mode
+      assert_nil delegation_of(app)
+    end
+  end
+
+  def test_delegate_surfaces_a_malformed_email_from_the_store
+    delegation_app do |app|
+      submit_form(app, "D", "pat @example.com")
+      assert_equal :form, ui(app).mode
+      assert_match(/must be an email address/, ui(app).form.error)
+      assert_nil delegation_of(app)
+    end
+  end
+
+  def test_delegation_keys_are_unavailable_on_projects_proposals_and_closed_tasks
+    delegation_app(select: "Research", view: :projects) do |app|
+      refute app.send(:delegation_action_available?)
+      app.send(:handle_key, "D")
+      assert_equal :list, ui(app).mode
+      assert_equal "select a task for that", app.instance_variable_get(:@flash)
+    end
+
+    delegation_app(select: "Suggested spike", view: :approvals) do |app|
+      refute app.send(:delegation_action_available?)
+      app.send(:handle_key, "W")
+      assert_equal :list, ui(app).mode
+      assert_match(/proposal can't be delegated/, app.instance_variable_get(:@flash))
+    end
+
+    delegation_app(select: "Closed groundwork") do |app|
+      refute app.send(:delegation_action_available?)
+      app.send(:handle_key, "D")
+      assert_equal :list, ui(app).mode
+      assert_equal "done tasks can't be delegated", app.instance_variable_get(:@flash)
+    end
+
+    delegation_app do |app|
+      assert app.send(:delegation_action_available?)
+    end
+  end
+
+  def test_delegation_actions_are_palette_entries_only_for_an_eligible_task
+    delegation_app do |app|
+      handlers = Tui::Shortcuts.palette_entries(:list, app).map(&:handler)
+      assert_includes handlers, :delegate_selected
+      assert_includes handlers, :set_work_ref_selected
+      descriptions = Tui::Shortcuts.palette_entries(:list, app).map(&:description)
+      assert descriptions.any? { |text| text.start_with?("Delegate…") }
+      assert descriptions.any? { |text| text.start_with?("Set work reference…") }
+    end
+
+    delegation_app(select: "Closed groundwork") do |app|
+      handlers = Tui::Shortcuts.palette_entries(:list, app).map(&:handler)
+      refute_includes handlers, :delegate_selected
+      refute_includes handlers, :set_work_ref_selected
+    end
+  end
+
+  def test_work_ref_prompt_prefills_the_current_reference_and_records_a_new_one
+    delegation_app do |app|
+      submit_form(app, "D", "research")
+
+      app.send(:handle_key, "W")
+      assert_equal :work_ref, ui(app).form.kind
+      assert_equal "", ui(app).form.input.to_s
+      ui(app).form.input.replace("https://example.com/brief")
+      app.send(:handle_key, "\r")
+
+      assert_equal "https://example.com/brief", delegation_of(app)["work_ref"]
+      assert_equal "work ref → https://example.com/brief: Compare CRDT libraries",
+                   app.instance_variable_get(:@flash)
+      refute app.send(:external_change?)
+
+      app.send(:handle_key, "W")
+      assert_equal "https://example.com/brief", ui(app).form.input.to_s
+      app.send(:handle_key, "\e")
+    end
+  end
+
+  def test_work_ref_off_clears_the_reference_and_blank_input_refuses
+    delegation_app do |app|
+      submit_form(app, "D", "research")
+      submit_form(app, "W", "https://example.com/brief")
+
+      app.send(:handle_key, "W")
+      ui(app).form.input.replace("")
+      app.send(:handle_key, "\r")
+      assert_equal :form, ui(app).mode, "a blank field must not silently wipe the reference"
+      assert_match(/off to clear it/, ui(app).form.error)
+
+      ui(app).form.input.replace("off")
+      app.send(:handle_key, "\r")
+      refute delegation_of(app).key?("work_ref")
+      assert_equal "work ref cleared: Compare CRDT libraries", app.instance_variable_get(:@flash)
+    end
+  end
+
+  def test_work_ref_refuses_an_undelegated_task_before_opening_a_prompt
+    delegation_app do |app|
+      app.send(:handle_key, "W")
+      assert_equal :list, ui(app).mode
+      assert_nil ui(app).form
+      assert_match(/delegate the task first/, app.instance_variable_get(:@flash))
+    end
+  end
+
+  def test_delegation_refreshes_the_open_detail_panel_and_the_row_marker
+    delegation_app do |app|
+      app.send(:open_detail)
+      assert_equal :detail, ui(app).panel.kind
+
+      submit_form(app, "D", "research")
+
+      panel = ui(app).panel.lines.map { |line| Tui::Ansi.strip(line) }
+      assert_includes panel, "delegation"
+      assert panel.any? { |line| line =~ /mode\s+research/ }
+      row = app.instance_variable_get(:@rows).find { |r| r.item&.id == "bbbb0003" }
+      assert_includes Tui::Ansi.strip(row.text), "→research"
+      assert_equal "bbbb0003", ui(app).selected_id
+    end
+  end
+
+  def test_delegation_written_externally_shows_up_after_a_reload
+    delegation_app do |app|
+      assert app.instance_variable_get(:@store)
+                .delegate_task!("bbbb0003", kind: "agent", mode: "refine").ok?
+      app.send(:reload_store)
+
+      row = app.instance_variable_get(:@rows).find { |r| r.item&.id == "bbbb0003" }
+      assert_includes Tui::Ansi.strip(row.text), "→refine"
+      app.send(:handle_key, "D")
+      assert_equal "(now agent-ready (refine))", ui(app).form.instance_variable_get(:@suffix)
+    end
+  end
+
   # -- stable selection identity ---------------------------------------------
 
   SELECTION_FIXTURE = dump_fixture([

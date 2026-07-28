@@ -122,4 +122,76 @@ class TestTaskDetails < Minitest::Test
       assert title_lines.size > 1, "long title should wrap to multiple lines"
     end
   end
+
+  # -- delegation section ----------------------------------------------------
+
+  # Build the panel for one task carrying `delegation`, through the canonical
+  # reader (the marker lives on the TaskView, not on a presentation Item).
+  def delegated_detail(delegation, state: "NEXT")
+    records = [
+      { "type" => "meta", "version" => 2 },
+      { "type" => "section", "id" => "eeee0001", "title" => "Work" },
+      { "type" => "task", "id" => "eeee0002", "parent" => "eeee0001", "state" => state,
+        "title" => "Compare CRDT libraries", "delegation" => delegation },
+    ]
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, dump_fixture(records))
+      store = Tui::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
+      task = Tasks::TaskReadModel.new(store.read_snapshot, today: TODAY).task_for("eeee0002")
+      return texts(D.build(task, task.body, 72, today: TODAY))
+    end
+  end
+
+  def test_detail_shows_the_human_delegation_section
+    lines = delegated_detail(
+      { "kind" => "human", "status" => "delegated", "assignee" => "pat@example.com",
+        "at" => "2026-07-01T18:04:11Z", "work_ref" => "https://acme.example/issues/12" },
+      state: "WAITING"
+    )
+    assert_includes lines, "delegation"
+    assert lines.any? { |line| line =~ /\A {2}kind\s+human\z/ }
+    assert lines.any? { |line| line =~ /\A {2}status\s+delegated\z/ }
+    assert lines.any? { |line| line =~ /\A {2}assignee\s+pat@example\.com\z/ }
+    assert lines.any? { |line| line =~ /\A {2}at\s+2026-07-01T18:04:11Z\z/ }
+    assert lines.any? { |line| line =~ %r{\A {2}work ref\s+https://acme\.example/issues/12\z} }
+    refute lines.any? { |line| line.start_with?("  mode") }, "a human delegation has no mode"
+  end
+
+  def test_detail_shows_agent_mode_and_the_claim_holder
+    ready = delegated_detail(
+      { "kind" => "agent", "mode" => "research", "status" => "ready",
+        "at" => "2026-07-01T18:04:11Z" }
+    )
+    assert lines_include?(ready, /\A {2}mode\s+research\z/)
+    assert lines_include?(ready, /\A {2}status\s+ready\z/)
+    refute lines_include?(ready, /\A {2}assignee/), "ready work names no worker"
+    refute lines_include?(ready, /\A {2}work ref/), "an absent reference emits no row"
+
+    claimed = delegated_detail(
+      { "kind" => "agent", "mode" => "research", "status" => "claimed",
+        "assignee" => "claude-code/claude-fable-5/313cf82e", "at" => "2026-07-01T18:04:11Z" }
+    )
+    assert lines_include?(claimed, /\A {2}status\s+claimed\z/)
+    assert lines_include?(claimed, %r{\A {2}assignee\s+claude-code/claude-fable-5/313cf82e\z})
+  end
+
+  def test_detail_delegation_section_is_absent_without_a_marker
+    lines = texts(detail_for("Book flight"))
+    refute_includes lines, "delegation"
+  end
+
+  def test_detail_claim_stays_distinguishable_without_color
+    Tui::Theme.configure!(name: "mono")
+    # mono resolves :accent to bold and :muted to dim, so a live claim still
+    # reads louder than an idle delegation with no colors available.
+    assert_includes D.delegation_status("claimed"), "\e[1m"
+    assert_includes D.delegation_status("ready"), "\e[2m"
+    refute_includes D.delegation_status("ready"), "\e[1m"
+    assert_includes D.delegation_status("delegated"), "\e[2m"
+  ensure
+    Tui::Theme.reset!
+  end
+
+  def lines_include?(lines, pattern) = lines.any? { |line| line.match?(pattern) }
 end

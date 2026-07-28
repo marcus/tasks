@@ -4,6 +4,7 @@ require "date"
 require_relative "ansi"
 require_relative "theme"
 require_relative "store"
+require_relative "../tasks/delegation"
 require_relative "../tasks/links"
 require_relative "views"
 
@@ -44,6 +45,7 @@ module Tui
       lines << row("contexts", contexts.map { |context| T.paint(:context, context) }.join("  ")) unless contexts.empty?
       lines << row("tags", tags.join("  ")) unless tags.empty?
       lines << row("id", T.paint(:muted, item.id)) if item.id
+      lines.concat(delegation_lines(item))
 
       notes = notes.map(&:strip).reject(&:empty?)
       unless notes.empty?
@@ -64,6 +66,43 @@ module Tui
 
     def row(label, value)
       "#{T.paint(:detail_label, label.ljust(10))} #{value}"
+    end
+
+    # The delegation section: every field of the marker, in the record's own
+    # fixed key order, or nothing at all when the task is not delegated. It sits
+    # in its own block (like links) because a closed task keeps its delegation
+    # as provenance — "who held this and where the work landed" is a distinct
+    # question from the task's own fields.
+    #
+    # `work_ref` is painted with the :link slot but is deliberately NOT part of
+    # the `o`-openable link list: that list comes from the task body, and one
+    # keypress must keep meaning one thing.
+    def delegation_lines(item)
+      delegation = item.respond_to?(:delegation) ? item.delegation : nil
+      return [] unless Tasks::Delegation.object?(delegation)
+
+      lines = ["", T.paint(:detail_label, "delegation")]
+      lines << delegation_row("kind", delegation["kind"])
+      lines << delegation_row("mode", delegation["mode"]) if delegation["mode"]
+      lines << delegation_row("status", delegation_status(delegation["status"]))
+      lines << delegation_row("assignee", delegation["assignee"]) if delegation["assignee"]
+      lines << delegation_row("at", T.paint(:muted, delegation["at"])) if delegation["at"]
+      if (reference = delegation["work_ref"])
+        lines << delegation_row("work ref", T.paint(:link, reference))
+      end
+      lines
+    end
+
+    # A claim is the one delegation status where someone else is mid-flight, so
+    # it gets the accent slot (bold wherever the theme has no color) while the
+    # idle statuses stay muted — the same contrast the list marker uses.
+    def delegation_status(status)
+      slot = status == Tasks::Delegation::CLAIMED ? :accent : :muted
+      T.paint(slot, status.to_s)
+    end
+
+    def delegation_row(label, value)
+      "  #{T.paint(:detail_label, label.ljust(8))} #{value}"
     end
 
     def note_line(line)

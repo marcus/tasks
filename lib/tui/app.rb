@@ -59,6 +59,7 @@ module Tui
     ORDERING_HANDLERS = %i[
       move_subtree_up move_subtree_down indent_subtree outdent_subtree
     ].freeze
+    DELEGATION_HANDLERS = %i[delegate_selected set_work_ref_selected].freeze
     # List views that keep the outliner tree (subtasks + collapse/expand) under an
     # active `@` context filter. Outline/Projects stay on their flat filtered path.
     CONTEXT_TREE_VIEWS = %i[agenda next quadrants inbox].freeze
@@ -1309,6 +1310,15 @@ module Tui
       task = current_task
       !!(task && !task.links.empty?)
     end
+    # Delegation is an owner decision about accepted live work: a project header
+    # has no marker, a PROPOSED task is still an undecided suggestion, and a
+    # closed task's marker is inert provenance. TaskView#open? is exactly that
+    # set (INBOX/TODO/NEXT/WAITING), and Store refuses the rest anyway — this
+    # keeps the palette honest instead of listing an action that must fail.
+    def delegation_action_available?
+      task = current_task
+      !!(current_project.nil? && task&.open?)
+    end
 
     def select_prev    = move(-1)
     def select_next    = move(1)
@@ -1548,7 +1558,20 @@ module Tui
     end
 
     def unavailable_action(entry)
-      unavailable_ordering if ORDERING_HANDLERS.include?(entry.handler)
+      return unavailable_ordering if ORDERING_HANDLERS.include?(entry.handler)
+      return unavailable_delegation if DELEGATION_HANDLERS.include?(entry.handler)
+    end
+
+    # A consumed-but-unavailable delegation key still owes the reader a reason:
+    # silently swallowing D on a proposal reads as a broken keyboard.
+    def unavailable_delegation
+      return needs_task if current_project
+
+      item = current_item
+      return flash("nothing selected") unless item
+      return flash("approve the proposal first — a proposal can't be delegated") if item.state == "PROPOSED"
+
+      flash("#{item.state.to_s.downcase} tasks can't be delegated")
     end
 
     # A project header is selected but the pressed action only applies to a task.
@@ -2718,6 +2741,225 @@ module Tui
         nil
       end
       @ui.mode = :form
+    end
+
+    # -- delegation ------------------------------------------------------------
+    #
+    # The owner rarely opens the edit panel, so every delegation operation is
+    # reachable from one inline prompt on the selected row, exactly like `z` and
+    # `r`. `D` is deliberately ONE form rather than four keys: the four owner
+    # verbs are mutually exclusive states of a single field, and typing the
+    # target state is shorter than remembering which key sets it.
+
+    # The `D` grammar, in resolution order:
+    #
+    #   anything containing "@"  → delegate to that person (Application moves
+    #                              the task to WAITING; Store validates shape)
+    #   an unambiguous prefix of one word below → that word's action
+    #
+    # Prefix matching is what makes `ref` / `res` / `imp` work without four
+    # near-identical aliases; `re` is genuinely ambiguous (refine/research/
+    # release) and says so instead of guessing.
+    DELEGATE_WORDS = %w[refine research implement release off none].freeze
+    DELEGATE_HINT = "pat@example.com · refine · research · implement · release · off · esc cancels"
+
+    def delegate_selected
+      task = delegation_target
+      return unless task
+
+      field = TermForm::Fields::Input.new(key: :value, value: +"", label: "delegate to")
+      @ui.form = Form.new(
+        kind: :delegate, title: "Delegate", prompt: "delegate to",
+        hint: DELEGATE_HINT, min_width: 60, return_mode: :list,
+        suffix: "(#{delegation_state_label(task)})", target_id: task.id, field: field
+      ) do |raw|
+        text = raw.to_s.strip
+        action, argument = parse_delegation_input(text)
+        next argument if action == :error
+
+        run_delegation(task, action) do |id, operation_today, operation_context|
+          case action
+          when :human
+            @application.delegate_task(id, kind: "human", assignee: argument,
+                                           today: operation_today, context: operation_context)
+          when :agent
+            @application.delegate_task(id, kind: "agent", mode: argument,
+                                           today: operation_today, context: operation_context)
+          when :release
+            # The owner's D-release is always a forced one: this prompt exists
+            # to clear a claim the owner does not hold, and a worker releasing
+            # its own claim uses the CLI with its worker id.
+            @application.release_task(id, force: true, today: operation_today,
+                                          context: operation_context)
+          when :undelegate
+            @application.undelegate_task(id, today: operation_today, context: operation_context)
+          end
+        end
+      end
+      @ui.mode = :form
+    end
+
+    # `W` records where the work lives. It is a property of the delegation, so
+    # it refuses an undelegated task up front rather than opening a prompt whose
+    # every input must fail — the same shape as `r` refusing an undated task.
+    def set_work_ref_selected
+      task = delegation_target
+      return unless task
+      unless task.delegated?
+        return flash("delegate the task first — a work reference belongs to a delegation")
+      end
+
+      current = task.work_ref || +""
+      field = TermForm::Fields::Input.new(key: :value, value: current.dup, label: "work ref")
+      @ui.form = Form.new(
+        kind: :work_ref, title: "Work reference", prompt: "work ref",
+        hint: "url / ticket / session id · off clears · esc cancels", min_width: 60,
+        return_mode: :list, initial: current.dup,
+        suffix: "(#{current.empty? ? "none" : "now #{current}"})", target_id: task.id, field: field
+      ) do |raw|
+        text = raw.to_s.strip
+        if text.empty?
+          next "can't parse “#{raw}”; give a URL or id, or off to clear it"
+        end
+
+        clear = %w[off none].include?(text.downcase)
+        run_delegation(task, :work_ref) do |id, operation_today, operation_context|
+          @application.set_work_ref(id, clear ? nil : text,
+                                    today: operation_today, context: operation_context)
+        end
+      end
+      @ui.mode = :form
+    end
+
+    # The selected task as a canonical TaskView, or nil after flashing why this
+    # row cannot be delegated. Mirrors defer_selected's guards, plus the
+    # accepted-live-work rule delegation_action_available? gates the key on.
+    def delegation_target
+      if current_project
+        needs_task
+        return nil
+      end
+      item = current_item
+      unless item
+        flash("nothing selected")
+        return nil
+      end
+      task = current_task
+      unless task
+        flash("task no longer exists")
+        return nil
+      end
+      unless task.open?
+        unavailable_delegation
+        return nil
+      end
+
+      task
+    end
+
+    # Returns [action, argument] or [:error, message]. The empty string is
+    # rejected before the prefix scan — every word starts with "", so an empty
+    # input would otherwise report itself as ambiguous across all six.
+    def parse_delegation_input(text)
+      return [:error, delegation_parse_error(text)] if text.empty?
+      return [:human, text] if text.include?("@")
+
+      matches = DELEGATE_WORDS.select { |word| word.start_with?(text.downcase) }
+      case matches.length
+      when 1 then delegation_word_action(matches.first)
+      when 0 then [:error, delegation_parse_error(text)]
+      else [:error, "“#{text}” matches #{matches.join(", ")} — type more of the word"]
+      end
+    end
+
+    def delegation_word_action(word)
+      case word
+      when "release" then [:release, nil]
+      when "off", "none" then [:undelegate, nil]
+      else [:agent, word]
+      end
+    end
+
+    def delegation_parse_error(text)
+      "can't parse “#{text}”; use an email, refine/research/implement, release, or off"
+    end
+
+    # The shared submit body behind both prompts: run the operation against a
+    # frozen task id, absorb our own write, and stage the flash + reselect for
+    # after the form closes. Returns nil on success (Form's contract) or the
+    # message the form should show inline.
+    def run_delegation(task, action)
+      operation_context = temporal_context
+      operation_today = operation_context.local_date
+      result = yield(task.id, operation_today, tui_operation_context(operation_context))
+      unless result.ok?
+        message = delegation_failure_message(result)
+        reload_store
+        return message
+      end
+
+      absorb_own_write(operation_context)
+      message = delegation_flash(action, result, task.title)
+      @ui.form_success = lambda do
+        flash(message)
+        reselect(task.id)
+        refresh_detail_panel if detail_panel?
+      end
+      nil
+    end
+
+    # Store's refusals are already user-facing sentences ("task is DONE; only
+    # accepted live tasks can be delegated", "already claimed by … at …"), so
+    # they are surfaced verbatim; only the genuinely-changed-underneath statuses
+    # get the TUI's own reopen wording.
+    def delegation_failure_message(result)
+      summary = result.summary || {}
+      if result.conflict? && summary[:holder]
+        return "already claimed by #{summary[:holder]} at #{summary[:at]} — off revokes it"
+      end
+      return "file changed underneath — reopen" if result.stale?
+      return "task no longer exists" if result.not_found?
+
+      result.errors.first || result.tui_message
+    end
+
+    # One flash vocabulary shared with the CLI's delegation headline, so the two
+    # surfaces describe the same write the same way.
+    def delegation_flash(action, result, title)
+      summary = result.summary || {}
+      if action == :work_ref
+        reference = summary[:work_ref]
+        return "work ref cleared: #{title}" unless reference
+
+        return "work ref#{result.no_change? ? " already" : " →"} #{reference}: #{title}"
+      end
+
+      delegation = summary[:delegation]
+      unless Tasks::Delegation.object?(delegation)
+        return result.no_change? ? "not delegated: #{title}" : "undelegated: #{title}"
+      end
+      return "already #{delegation_label(delegation, summary[:state])}: #{title}" if result.no_change?
+
+      prefix = action == :release ? "released · " : ""
+      "#{prefix}#{delegation_label(delegation, summary[:state])}: #{title}"
+    end
+
+    def delegation_label(delegation, state = nil)
+      case delegation["status"]
+      when Tasks::Delegation::DELEGATED
+        "delegated → #{delegation["assignee"]}#{state ? " (#{state})" : ""}"
+      when Tasks::Delegation::READY
+        "agent-ready (#{delegation["mode"]})"
+      when Tasks::Delegation::CLAIMED
+        "claimed by #{delegation["assignee"]} (#{delegation["mode"]})"
+      else
+        "delegated"
+      end
+    end
+
+    # The `(now …)` suffix on the D prompt, matching the recur popup's shape.
+    def delegation_state_label(task)
+      task.delegated? ? "now #{delegation_label(task.delegation)}" : "not delegated"
     end
 
     def close_form(success: false)

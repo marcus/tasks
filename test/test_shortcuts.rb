@@ -83,6 +83,34 @@ class TestShortcuts < Minitest::Test
     assert_equal "1-7", entry.display_key
   end
 
+  # D and W are the uppercase variants of the lowercase concepts they extend
+  # (d = date, D = delegate). They must resolve identically whether the reader
+  # is on the list or in the task detail panel, and must not leak elsewhere.
+  def test_delegation_bindings_cover_list_and_detail_only
+    { "D" => :delegate_selected, "W" => :set_work_ref_selected }.each do |key, handler|
+      assert_equal handler, S.match(key, :list).handler
+      assert_equal handler, S.match(key, :detail).handler
+      assert_nil S.match(key, :modal)
+      assert_nil S.match(key, :task_edit)
+      entry = S.match(key, :list)
+      assert_equal :delegation_action_available?, entry.availability
+      assert_equal :delegation_action_available?, entry.palette
+      assert_equal key, entry.display_key
+    end
+    assert_equal :delegate, S.match("D", :list).form
+    assert_equal :work_ref, S.match("W", :list).form
+  end
+
+  def test_delegation_bindings_do_not_collide_with_existing_uppercase_actions
+    assert S.validate!(Tui::App)
+    %i[list detail].each do |context|
+      %w[D W].each do |key|
+        matches = S.entries(context).select { |entry| entry.sequences.include?(key) }
+        assert_equal 1, matches.length, "#{key} must have exactly one binding in #{context}"
+      end
+    end
+  end
+
   def test_unknown_lookup_context_is_rejected
     error = assert_raises(ArgumentError) { S.entries(:bogus) }
     assert_match(/unknown shortcut context/, error.message)
@@ -210,6 +238,7 @@ class TestShortcuts < Minitest::Test
     app.define_singleton_method(:selected_action_available?) { true }
     app.define_singleton_method(:recurrence_action_available?) { false }
     app.define_singleton_method(:link_action_available?) { false }
+    app.define_singleton_method(:delegation_action_available?) { false }
     app.define_singleton_method(:action_available?) { true }
 
     entries = S.palette_entries(:detail, app)
@@ -217,6 +246,8 @@ class TestShortcuts < Minitest::Test
     assert_includes handlers, :complete_selected
     refute_includes handlers, :open_recur_popup
     refute_includes handlers, :open_link
+    refute_includes handlers, :delegate_selected
+    refute_includes handlers, :set_work_ref_selected
     refute_includes handlers, :open_action_palette
     assert entries.all? { |entry| app.method(entry.handler).arity.zero? }
   end

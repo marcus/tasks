@@ -1488,4 +1488,121 @@ class TestViews < Minitest::Test
       refute_includes plain.text, "↻", "non-recurring task has no badge"
     end
   end
+
+  # -- delegation markers ----------------------------------------------------
+
+  DELEGATION_RECORDS = [
+    { "type" => "meta", "version" => 2 },
+    { "type" => "section", "id" => "dddd0001", "title" => "Work" },
+    { "type" => "task", "id" => "dddd0002", "parent" => "dddd0001", "state" => "WAITING",
+      "title" => "short human",
+      "delegation" => { "kind" => "human", "status" => "delegated",
+                        "assignee" => "pat@example.com", "at" => "2026-07-01T10:00:00Z" } },
+    { "type" => "task", "id" => "dddd0003", "parent" => "dddd0001", "state" => "WAITING",
+      "title" => "long human",
+      "delegation" => { "kind" => "human", "status" => "delegated",
+                        "assignee" => "pat@a-very-long-corporate-domain.example.com",
+                        "at" => "2026-07-01T10:00:00Z" } },
+    { "type" => "task", "id" => "dddd0004", "parent" => "dddd0001", "state" => "NEXT",
+      "title" => "ready agent",
+      "delegation" => { "kind" => "agent", "mode" => "research", "status" => "ready",
+                        "at" => "2026-07-01T10:00:00Z" } },
+    { "type" => "task", "id" => "dddd0005", "parent" => "dddd0001", "state" => "NEXT",
+      "title" => "claimed agent",
+      "delegation" => { "kind" => "agent", "mode" => "research", "status" => "claimed",
+                        "assignee" => "claude-code/claude-fable-5/313cf82e",
+                        "at" => "2026-07-01T10:00:00Z" } },
+    { "type" => "task", "id" => "dddd0006", "parent" => "dddd0001", "state" => "NEXT",
+      "title" => "plain task" },
+  ].freeze
+
+  # Rows keyed by title, built through the canonical reader the App uses (the
+  # delegation object lives on the TaskView, never on a presentation Item).
+  def delegation_rows
+    with_records(DELEGATION_RECORDS) do |store|
+      reader = Tasks::TaskReadModel.new(store.read_snapshot, today: TODAY)
+      rows = V.rows(:outline, store.items, tree: store.tree, today: TODAY, reader: reader)
+      return rows.each_with_object({}) { |row, map| map[row.item&.title] = row }
+    end
+  end
+
+  def test_delegation_markers_distinguish_person_ready_and_claimed_work
+    rows = delegation_rows
+    assert_includes A.strip(rows["short human"].text), "→pat@example.com"
+    assert_includes A.strip(rows["ready agent"].text), "→research"
+    assert_includes A.strip(rows["claimed agent"].text), "⇒research"
+    refute_includes A.strip(rows["plain task"].text), "→"
+    refute_includes A.strip(rows["plain task"].text), "⇒"
+  end
+
+  def test_long_assignee_truncates_to_the_local_part_and_stays_one_cell_per_column
+    text = A.strip(delegation_rows["long human"].text)
+    assert_includes text, "→pat@…"
+    refute_includes text, "corporate"
+    marker = text[/→\S+/]
+    assert_operator A.vislen(marker), :<=, V::DELEGATION_ASSIGNEE_W + 1
+    # Every marker glyph must be one terminal cell, or the row's cell arithmetic
+    # (hit map, selection reverse, vtrunc) drifts from what is painted.
+    [V::DELEGATED_GLYPH, V::CLAIMED_GLYPH, "…"].each do |glyph|
+      assert_equal 1, A.vislen(glyph), "#{glyph.inspect} must occupy one cell"
+    end
+  end
+
+  # The painted marker on its own, so theme assertions can't be confused by the
+  # state cookie's own styling.
+  def delegation_markers
+    with_records(DELEGATION_RECORDS) do |store|
+      reader = Tasks::TaskReadModel.new(store.read_snapshot, today: TODAY)
+      return store.items.each_with_object({}) do |item, map|
+        map[item.title] = V.delegation_marker(item, reader: reader)
+      end
+    end
+  end
+
+  def test_delegation_marker_stays_within_the_row_budget_at_narrow_widths
+    rows = delegation_rows
+    [24, 40, 120].each do |width|
+      ["short human", "long human", "ready agent", "claimed agent"].each do |title|
+        truncated = A.vtrunc(rows[title].text, width)
+        assert_operator A.vislen(truncated), :<=, width,
+                        "#{title} at #{width} cols must not overflow the frame"
+      end
+    end
+    # A comfortable width keeps the title and the whole marker.
+    wide = A.strip(A.vtrunc(rows["ready agent"].text, 120))
+    assert_includes wide, "ready agent"
+    assert_includes wide, "→research"
+    # A pane just wide enough for the title still shows the title first: the
+    # marker is a trailing badge, so truncation eats it before the content.
+    narrow = A.strip(A.vtrunc(rows["ready agent"].text, 26))
+    assert_includes narrow, "ready agent"
+    refute_includes narrow, "research"
+  end
+
+  def test_delegation_markers_stay_distinguishable_without_color
+    Tui::Theme.configure!(name: "mono")
+    markers = delegation_markers
+    # Different glyphs, and mono resolves :muted to dim and :accent to bold, so
+    # the claimed marker still reads louder with no colors available.
+    assert_equal " →research", A.strip(markers["ready agent"])
+    assert_equal " ⇒research", A.strip(markers["claimed agent"])
+    assert_equal " →pat@example.com", A.strip(markers["short human"])
+    assert_includes markers["claimed agent"], "\e[1m", "a claim is bold in a monochrome theme"
+    assert_includes markers["ready agent"], "\e[2m", "idle delegation stays dim"
+    refute_includes markers["ready agent"], "\e[1m"
+    assert_empty markers["plain task"]
+  ensure
+    Tui::Theme.reset!
+  end
+
+  def test_delegation_marker_reads_a_raw_item_when_no_canonical_reader_is_supplied
+    with_records(DELEGATION_RECORDS) do |store|
+      # Presentation Items carry no delegation, so a reader-less renderer render
+      # is simply unmarked rather than crashing on a missing accessor.
+      rows = V.rows(:outline, store.items, tree: store.tree, today: TODAY)
+      text = A.strip(rows.find { |row| row.item&.title == "ready agent" }.text)
+      assert_includes text, "ready agent"
+      refute_includes text, "→research"
+    end
+  end
 end
