@@ -365,8 +365,8 @@ class TestApp < Minitest::Test
     end
   end
 
-  # The inbox badge is pinned to the row set the Inbox tab would render: the
-  # `@`/`/` filters narrow it, a non-INBOX state never counts, and an
+  # The inbox badge counts the captures the tab holds under the active filters:
+  # the `@`/`/` filters narrow it, a non-INBOX state never counts, and an
   # indefinitely held capture stays out until `show_deferred` reveals it —
   # asserted against the rendered titles so badge and list can't drift.
   def test_inbox_badge_counts_only_the_captures_the_inbox_tab_would_show
@@ -392,9 +392,57 @@ class TestApp < Minitest::Test
       ui(app).context_filters = []
       ui(app).filter = "capture"
       assert_equal({ inbox: 2 }, app.send(:tab_counts))
+      assert_equal ["Home capture", "Work capture"],
+                   app.send(:rows).filter_map { |r| r.item&.title }
 
       ui(app).filter = "processed"
       assert_equal({}, app.send(:tab_counts))
+      assert_empty app.send(:rows).filter_map { |r| r.item&.title }
+    end
+  end
+
+  NESTED_INBOX_APP = dump_fixture([
+    { "type" => "meta", "version" => 2 },
+    { "type" => "section", "id" => "f1000001", "title" => "Inbox" },
+    { "type" => "task", "id" => "f1000002", "parent" => "f1000001",
+      "state" => "INBOX", "title" => "Tagged parent", "tags" => ["@home"] },
+    { "type" => "task", "id" => "f1000003", "parent" => "f1000002",
+      "state" => "INBOX", "title" => "Untagged inbox child" },
+    { "type" => "task", "id" => "f1000004", "parent" => "f1000002",
+      "state" => "NEXT", "title" => "Next rider" },
+  ]).freeze
+
+  # The badge counts tasks in the tab, not rows on screen, and in tree mode the
+  # two legitimately differ in both directions. This pins that contract with the
+  # rendered rows next to each count, so the gaps are deliberate and visible
+  # rather than discovered later as a bug:
+  #
+  #   - a NEXT child rides along under an INBOX anchor for context. It is on
+  #     screen and is not inbox work, so it is not counted.
+  #   - under an `@` filter, an untagged INBOX child still rides along under its
+  #     matching parent. It is on screen and does not match the filter, so it is
+  #     not counted — the badge stays the number `tasks inbox @home` reports.
+  #   - collapsing the anchor hides descendant rows but does not empty the
+  #     inbox, so the count holds while the row disappears. Counting rows would
+  #     make folding a subtree look like progress.
+  def test_inbox_badge_counts_tasks_in_the_tab_not_rows_on_screen
+    app_on(view: :inbox, select: "Tagged parent", content: NESTED_INBOX_APP) do |app|
+      titles = -> { app.send(:rows).filter_map { |r| r.item&.title } }
+
+      # Unfiltered and expanded: both INBOX tasks counted, the NEXT rider not.
+      assert_equal({ inbox: 2 }, app.send(:tab_counts))
+      assert_equal ["Tagged parent", "Untagged inbox child", "Next rider"], titles.call
+
+      # `@home` matches only the parent; the untagged child still renders.
+      ui(app).context_filters = ["@home"]
+      assert_equal({ inbox: 1 }, app.send(:tab_counts))
+      assert_equal ["Tagged parent", "Untagged inbox child", "Next rider"], titles.call
+
+      # Folding removes the rows, not the inbox work.
+      ui(app).context_filters = []
+      ui(app).collapsed = Set.new(["f1000002"])
+      assert_equal({ inbox: 2 }, app.send(:tab_counts))
+      assert_equal ["Tagged parent"], titles.call
     end
   end
 
@@ -407,6 +455,37 @@ class TestApp < Minitest::Test
       assert_includes texts, "    Home capture  @home"
       assert_includes texts, "    Work capture  @work"
     end
+  end
+
+  # The constructor delegates its presentation-cache setup to clear_row_caches
+  # rather than repeating the ivar list, so the two can't drift. Both halves of
+  # that arrangement are load-bearing and neither shows up in feature tests: a
+  # fresh App must already be in the cleared state, and clear_row_caches must
+  # stay assignment-only so it is safe to call before the App is built.
+  def test_a_fresh_app_starts_in_the_cleared_cache_state
+    app_on(view: :agenda, select: "Book flight") do |app|
+      fresh = Tui::App.new(root: File.dirname(org_path(app)),
+                           paths: Tasks::Config.for_dir(File.dirname(org_path(app))),
+                           llm_config: default_llm_config)
+      before = fresh.instance_variables.sort.to_h { |n| [n, fresh.instance_variable_get(n)] }
+      fresh.send(:clear_row_caches)
+      after = fresh.instance_variables.sort.to_h { |n| [n, fresh.instance_variable_get(n)] }
+
+      assert_equal before, after, "constructing an App must leave the caches cleared"
+      assert_equal 0, before.fetch(:@row_item_count)
+    end
+  end
+
+  def test_clearing_row_caches_only_assigns_and_needs_no_constructed_state
+    # Runs against an allocated-but-uninitialized App: anything that reads
+    # collaborators (@store, @ui, …) or calls out would blow up here, which is
+    # exactly what would make the constructor's call unsafe.
+    bare = Tui::App.allocate
+    bare.send(:clear_row_caches)
+
+    assert_equal 0, bare.instance_variable_get(:@row_item_count)
+    assert_nil bare.instance_variable_get(:@rows)
+    assert_nil bare.instance_variable_get(:@tab_counts)
   end
 
   def test_proposal_decision_keys_work_with_detail_panel_open

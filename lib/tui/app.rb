@@ -152,24 +152,11 @@ module Tui
       @last_popup = nil
       @last_modal = nil
       @hit_map = nil
-      @rows = nil
-      @rows_fingerprint = nil
-      @row_item_count = 0
-      @filtered_items = nil
-      @filtered_items_model = nil
-      @filtered_items_key = nil
-      @title_haystack = nil
-      @title_haystack_model = nil
-      @open_count = nil
-      @open_count_model = nil
-      @detail_panel_width = nil
-      @detail_panel_model = nil
-      @detail_panel_id = nil
-      @project_views = nil
-      @project_views_model = nil
-      @project_detail_id = nil
-      @project_detail_width = nil
-      @project_detail_model = nil
+      # A fresh App is a cleared App: the presentation caches start in exactly
+      # the state an invalidation leaves them in. Declaring them here instead
+      # would fork one list into two that must be kept in step by hand, and the
+      # half that gets forgotten is a cache that outlives its read model.
+      clear_row_caches
       @pending_project = nil
       @last_paint_size = nil
       @task_edit_message = nil
@@ -437,6 +424,9 @@ module Tui
       reload_read_model(context)
     end
 
+    # Drops every cache derived from the read model. Assignment only, on purpose
+    # — the constructor calls it to put a fresh App in exactly this state, so it
+    # must not read an ivar or reach for anything not yet built.
     def clear_row_caches
       @rows = nil
       @rows_fingerprint = nil
@@ -444,6 +434,9 @@ module Tui
       @filtered_items = nil
       @filtered_items_model = nil
       @filtered_items_key = nil
+      @tab_counts = nil
+      @tab_counts_model = nil
+      @tab_counts_key = nil
       @title_haystack = nil
       @title_haystack_model = nil
       @open_count = nil
@@ -649,23 +642,45 @@ module Tui
       " #{tabs}#{" " * gap}#{count} "
     end
 
-    # Badge counts for the tab strip. Every count is taken over filtered_items
-    # so a badge can never advertise rows the active `@`/`/` filter hides. The
-    # inbox count asks the Inbox view's own Query for eligibility rather than
-    # testing state == "INBOX" here, so the badge and the list agree about
-    # unavailable captures: a deferred INBOX item the view omits is not counted
-    # until `show_deferred` reveals it. Zero counts are dropped — tab_cell only
-    # renders a positive count, and an explicit 0 would still widen the label.
+    # Badge counts for the tab strip: how many tasks each tab holds under the
+    # filters in force. Every count is taken over filtered_items so a badge can
+    # never advertise work the active `@`/`/` filter hides. The inbox count asks
+    # the Inbox view's own Query for eligibility rather than testing
+    # state == "INBOX" here, so badge and list agree about held captures — a
+    # deferred INBOX item is counted only once `show_deferred` reveals it.
+    #
+    # This counts *tasks in the tab*, not rows the tab paints, and the two are
+    # deliberately not the same number. Tree mode rides non-matching descendants
+    # along under a matching anchor for context (see inbox_tree), and collapsing
+    # an anchor hides rows without emptying the inbox. Counting rows would make
+    # the badge shrink when you fold a subtree and grow on riders that are not
+    # inbox work; counting tasks keeps it the same number `tasks inbox` reports.
+    #
+    # Zero counts are dropped: tab_cell only renders a positive count, and an
+    # explicit 0 would still widen the label.
+    #
+    # Memoized like the other per-frame header inputs. The header repaints on
+    # every keystroke and on each animation tick while an agent runs, and this
+    # is a linear pass with an availability test per item — by far the most
+    # expensive thing the header does on a large list.
     def tab_counts
       read = read_model
+      key = [active_filter, active_context_filters, @ui.show_deferred]
+      if @tab_counts && @tab_counts_model.equal?(read) && @tab_counts_key == key
+        return @tab_counts
+      end
+
       items = filtered_items(read)
       inbox = Views.view_query(
-        :inbox, today: @read_model_today, show_deferred: @ui.show_deferred, reader: read
+        :inbox, today: @read_model_today, urgent_days: @urgent_days,
+        show_deferred: @ui.show_deferred, reader: read
       )
-      {
+      @tab_counts_model = read
+      @tab_counts_key = key
+      @tab_counts = {
         inbox: items.count { |item| inbox.eligible?(item) },
         approvals: items.count(&:proposed?),
-      }.reject { |_key, count| count.zero? }
+      }.reject { |_key, count| count.zero? }.freeze
     end
 
     def footer(w, mode: @ui.mode)

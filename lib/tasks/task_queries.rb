@@ -235,6 +235,10 @@ module Tasks
       @children_by_source_and_parent = children_by_source_and_parent
       @task_views = {}
       @availability = {}
+      # Pre-created like the caches above, so the hot read path only ever writes
+      # *into* these hashes rather than assigning an ivar on a shared instance.
+      @items_by_id = {}
+      @items_by_line = {}
     end
 
     def list(filter)
@@ -531,29 +535,41 @@ module Tasks
     # once per rendered row, so this indexes instead of scanning — the same
     # reason records_by_source_and_id exists. A scan here makes any per-row read
     # quadratic in list size.
+    # A miss is nil, never a fall-through to the line+title map: an Item whose id
+    # is absent from this snapshot names a task that is gone, and resolving it to
+    # whatever record now occupies its line would let a read describe a different
+    # task than Store#locate mutates.
     def current_item_for(item)
-      index = items_by_source(item.source)
-      return index[:by_id][item.id] if item.id
+      return items_by_id(item.source)[item.id] if item.id
 
-      index[:by_line][[item.line, item.title]]
+      items_by_line(item.source)[[item.line, item.title]]
     end
 
-    def items_by_source(source)
-      @items_by_source ||= {}
-      @items_by_source[source == :archive ? :archive : :live] ||=
-        index_items(source == :archive ? snapshot.archive_items : snapshot.items)
-    end
-
-    # First occurrence wins in both maps, matching the scan's `find` semantics
-    # when a malformed file repeats an id or a line+title pair.
-    def index_items(items)
-      by_id = {}
-      by_line = {}
-      items.each do |item|
-        by_id[item.id] ||= item if item.id
-        by_line[[item.line, item.title]] ||= item
+    # Indexed per source and built on first use — the two maps separately,
+    # because post-migration every Item carries an id and the line+title map is
+    # then pure cost. A one-shot resolution (`tasks show <ref>`) must not pay to
+    # index a fallback it will never read.
+    def items_by_id(source)
+      @items_by_id[index_key(source)] ||= source_items_for(source).each_with_object({}) do |item, index|
+        index[item.id] ||= item if item.id
       end
-      { by_id: by_id, by_line: by_line }
+    end
+
+    # The id-less fallback, for legacy records that predate stable ids.
+    def items_by_line(source)
+      @items_by_line[index_key(source)] ||= source_items_for(source).each_with_object({}) do |item, index|
+        index[[item.line, item.title]] ||= item
+      end
+    end
+
+    # First occurrence wins in both maps, matching the `find` semantics of the
+    # scan these replaced when a malformed file repeats an id or a line+title
+    # pair — so a read and Store#locate still agree on which duplicate is "the"
+    # task. Any source that is not :archive indexes the live items, which is how
+    # the scan treated an unexpected source too.
+    def index_key(source) = source == :archive ? :archive : :live
+    def source_items_for(source)
+      source == :archive ? snapshot.archive_items : snapshot.items
     end
 
     def live_sections

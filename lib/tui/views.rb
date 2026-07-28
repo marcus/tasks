@@ -185,9 +185,20 @@ module Tui
       # a root when ANY subtree item is eligible (dated + open), and an undated
       # @work parent whose only dates sit on untagged children must keep that
       # thread. Context is a separate predicate (see context_match?/matching?).
+      #
+      # The two conjuncts are ordered cheap-first on purpose: the per-view rule
+      # reads fields already on the Item, while the availability test resolves
+      # the canonical TaskView and walks task ancestors. Asking the view rule
+      # first means the walk runs only for items that could actually be rows —
+      # for the Inbox that skips every NEXT/DONE task in the file, on a
+      # predicate the header re-evaluates on each repaint.
       def eligible?(item)
-        return false if !@show_deferred && unavailable?(item)
+        return false unless view_rule?(item)
 
+        @show_deferred || !unavailable?(item)
+      end
+
+      def view_rule?(item)
         case view
         when :agenda    then item.open? && !!(item.deadline || item.scheduled)
         when :next      then item.state == "NEXT"

@@ -198,39 +198,114 @@ class TestTaskQueries < Minitest::Test
   end
 
   # task/availability/delegation all resolve a caller's possibly-stale Item to
-  # the snapshot's own Item first. That resolution is indexed rather than
-  # scanned, because adapters call it once per rendered row; a scan makes any
-  # per-row read quadratic in list size. This pins the semantics the index has
-  # to preserve: id wins when present, line+title is the id-less fallback,
-  # archive and live are separate namespaces even for a shared id, and a stale
-  # Item resolves to the current record rather than to itself.
-  def test_item_resolution_is_indexed_and_keeps_id_line_and_source_precedence
+  # the snapshot's own Item first, through indexes rather than a scan (adapters
+  # call them once per rendered row, and a scan makes any per-row read quadratic
+  # in list size). Each assertion below is written to fail if the index drops one
+  # of the scan's rules, so the optimization can't quietly change resolution.
+  # Every check reads a field the caller's own Item could NOT have supplied,
+  # because `current_item_for(item) || item` means a resolution that silently
+  # returns nil still yields a plausible-looking view.
+  RESOLUTION_RECORDS = [
+    { "type" => "meta", "version" => 2 },
+    { "type" => "section", "id" => "ba000001", "title" => "Work" },
+    { "type" => "task", "id" => "ba000002", "parent" => "ba000001", "state" => "NEXT",
+      "title" => "Live task", "priority" => "A" },
+    # A merge-conflicted file can repeat an id. The scan took the first, and
+    # Store#locate still does, so a read must not describe the second.
+    { "type" => "task", "id" => "ba000003", "parent" => "ba000001", "state" => "NEXT",
+      "title" => "First of a duplicated id" },
+    { "type" => "task", "id" => "ba000003", "parent" => "ba000001", "state" => "NEXT",
+      "title" => "Second of a duplicated id" },
+    # Legacy, pre-stable-id record: only line + title can resolve it.
+    { "type" => "task", "parent" => "ba000001", "state" => "TODO",
+      "title" => "Id-less legacy task", "priority" => "C" },
+  ].freeze
+
+  def test_item_resolution_keeps_the_scans_id_line_source_and_duplicate_rules
     archive_records = [
       { "type" => "meta", "version" => 2 },
-      { "type" => "task", "id" => "aaaa0002", "state" => "DONE", "title" => "Archived namesake" },
+      { "type" => "task", "id" => "ba000002", "state" => "DONE", "title" => "Archived namesake",
+        "priority" => "B" },
     ]
-    with_query_store(archive_records: archive_records) do |store|
+    with_query_store(records: RESOLUTION_RECORDS, archive_records: archive_records) do |store|
       q = queries(store, include_archive: true)
       snapshot = store.read_snapshot(include_archive: true)
-      live = snapshot.items.find { |item| item.id == "aaaa0002" }
-      archived = snapshot.archive_items.find { |item| item.id == "aaaa0002" }
+      live = snapshot.items.find { |item| item.id == "ba000002" }
+      fields = live.class.members.to_h { |field| [field, live.public_send(field)] }
+      restate = ->(**changes) { live.class.new(**fields.merge(changes)) }
 
-      # Same id in both sources must not cross over.
-      assert_equal live.title, q.task(live).title
-      assert_equal "Archived namesake", q.task(archived).title
+      # One id in both sources must not cross over. Priority is the tell: the
+      # live record is A, the archived one B, and neither caller Item supplies
+      # the other's.
+      archived = snapshot.archive_items.find { |item| item.id == "ba000002" }
+      assert_equal "A", q.task(live).priority
+      assert_equal "B", q.task(archived).priority
       assert_equal :archive, q.task(archived).source
 
-      fields = live.class.members.to_h { |field| [field, live.public_send(field)] }
+      # A stale Item (right id, wrong title and line) resolves to the current
+      # record — asserted on the title the stale Item does not carry.
+      stale = restate.call(title: "renamed elsewhere", line: 9999)
+      assert_equal "Live task", q.task(stale).title
+      assert_equal "A", q.task(stale).priority
 
-      # A stale Item (right id, wrong title/line) resolves to the live record.
-      stale = live.class.new(**fields.merge(title: "renamed elsewhere", line: 9999))
-      assert_equal live.title, q.task(stale).title
-      assert_equal q.availability(live).reason, q.availability(stale).reason
+      # An id absent from the snapshot resolves to nothing — it must NOT fall
+      # back to line+title and describe whatever record now sits on that line.
+      # Reads and Store#locate would otherwise name different tasks.
+      vanished = restate.call(id: "deadbeef", title: "Live task")
+      assert_nil q.send(:current_item_for, vanished)
+      assert_equal "deadbeef", q.task(vanished).id, "unresolved Items render themselves, not a neighbour"
 
-      # An id-less Item still resolves on line + title — proven by the resolved
-      # view carrying an id the caller's Item could not have supplied.
-      id_less = live.class.new(**fields.merge(id: nil))
-      assert_equal "aaaa0002", q.task(id_less).id
+      # A duplicated id resolves to the first occurrence, like Store#locate.
+      duplicated = restate.call(id: "ba000003", title: "Second of a duplicated id", line: 9999)
+      assert_equal "First of a duplicated id", q.task(duplicated).title
+
+      # Only :archive means archive. Anything else resolves against the live
+      # items, which is how the scan read an unexpected source too — the live
+      # priority A is the tell that it did not land in the archive namespace.
+      assert_equal "A", q.task(restate.call(source: :bogus)).priority
+      assert_equal "A", q.task(restate.call(source: nil)).priority
+      assert_equal "A", q.task(restate.call(source: "archive")).priority
+
+      # An id-less Item resolves on line + title, and only on both.
+      legacy = snapshot.items.find { |item| item.id.nil? }
+      assert_equal "C", q.task(restate.call(id: nil, line: legacy.line, title: legacy.title)).priority
+      assert_nil q.send(:current_item_for, restate.call(id: nil, line: legacy.line, title: "other"))
+      assert_nil q.send(:current_item_for, restate.call(id: nil, line: 9999, title: legacy.title))
+    end
+  end
+
+  # The index is the point of the change, so observe it rather than trusting it:
+  # N resolutions must reach the snapshot's item list once, not N times. A scan
+  # (or a rebuilt-per-call index) touches it once per resolution.
+  CountingSnapshot = Struct.new(:inner, :reads) do
+    def items
+      self.reads += 1
+      inner.items
+    end
+    def archive_items = inner.archive_items
+  end
+
+  def test_item_resolution_reaches_the_item_list_once_however_many_it_resolves
+    with_query_store(records: RESOLUTION_RECORDS) do |store|
+      items = store.read_snapshot.items
+      assert_operator items.count(&:id), :>, 1, "fixture must resolve several ids"
+      assert(items.any? { |item| item.id.nil? }, "fixture must include the id-less path")
+
+      # Every item, id-bearing and legacy alike: one build of each of the two
+      # maps, regardless of how many resolutions ride on them.
+      all = CountingSnapshot.new(store.read_snapshot, 0)
+      q = queries(store)
+      q.stub(:snapshot, all) { items.each { |item| q.send(:current_item_for, item) } }
+      assert_equal 2, all.reads, "one build per index, not one walk per resolution"
+
+      # Id-bearing items alone must not build the line+title fallback at all —
+      # post-migration that is every item, and the fallback map is pure cost.
+      ids_only = CountingSnapshot.new(store.read_snapshot, 0)
+      fresh = queries(store)
+      fresh.stub(:snapshot, ids_only) do
+        items.select(&:id).each { |item| fresh.send(:current_item_for, item) }
+      end
+      assert_equal 1, ids_only.reads, "the id-less fallback index stays unbuilt"
     end
   end
 

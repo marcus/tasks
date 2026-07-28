@@ -220,10 +220,17 @@ availability keeps `r` as recurrence everywhere else. Both decisions preserve
 the nearest useful selection and participate in undo/redo. The fourth **Inbox**
 tab carries the same kind of live count badge, and its rows show each capture's
 `@` contexts inline between the title and the trailing availability markers.
-Every tab badge counts the rows that tab would actually render under the
-active `@` and `/` filters (and, for Inbox, under the current unavailable-shown
-setting), so a badge never advertises work the filter hides; a zero count
-renders no badge at all.
+
+A tab badge counts the **tasks that tab holds** under the filters in force — the
+active `@` context group and `/` text filter, plus, for Inbox, the current
+unavailable-shown setting and the same INBOX-and-available rule the `inbox`
+command applies. So a badge never advertises work a filter hides, and the Inbox
+badge is the number `tasks inbox` would list. It is deliberately *not* a count
+of painted rows, and on the list views the two differ in both directions: tree
+mode rides non-matching descendants along under a matching anchor for context
+(they are on screen but are not that tab's work), and collapsing an anchor hides
+its descendant rows without emptying the inbox (the fold's own `(n)` marker
+accounts for those). A zero count renders no badge at all.
 
 **Editable task-panel behavior.** With a read-only task panel open, `e` enters
 editing at the first editable field and `Shift-Tab` enters at the last. `Tab`
