@@ -217,7 +217,7 @@ tasks list -a                    # everything, both files
 tasks list @computer -A /denver  # compose: context, priority, text — all at once
 tasks list --unavailable         # timed, inherited, and indefinite blockers
 tasks list --someday             # own indefinite On Hold tasks only
-tasks list --delegated           # everything handed to a person or the agent pool
+tasks list --delegated           # handed to a person or the agent pool (--all incl. closed)
 tasks list --agent-ready         # the claimable agent queue, ranked
 ```
 

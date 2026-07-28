@@ -61,8 +61,9 @@ back a bad one.
 ## Reading (always via the CLI, `--json` when you reason over results)
 - `bin/tasks list -a` — everything, grouped by state (filters: `@ctx +tag /text -A`).
 - `bin/tasks list --proposed` — only inert tasks pending owner approval.
-- `bin/tasks list --delegated` — every task handed to a person or the agent
-  pool (add `--all` to review closed provenance too).
+- `bin/tasks list --delegated` — tasks handed to a person or the agent pool,
+  within the current scope. The default open scope hides unavailable work, so
+  add `--all` to see closed provenance and deferred or blocked delegations.
 - `bin/tasks list --agent-ready [--json]` — the claimable queue for heartbeat
   pickup, ranked; see [Delegation](#delegation-handing-work-to-a-person-or-an-agent).
 - `bin/tasks agenda` — dated items, soonest first.
@@ -106,11 +107,14 @@ task merely because it also contains task text.
   - accept proposal:  `bin/tasks approve "<ref>"` (PROPOSED → INBOX)
   - decline proposal: `bin/tasks reject "<ref>"` (PROPOSED → CANCELLED)
   - nest a new task:  `bin/tasks capture "<text>" --under "<ref>"`  (child of a task; ≤ max_depth)
-  - delegate to a person: `bin/tasks delegate "<ref>" --to <email>`  (moves it
-                      to WAITING; `--keep-state` opts out)
+  - delegate to a person: `bin/tasks delegate "<ref>" --to <email>`  (a real
+                      address: local@domain.tld; moves it to WAITING,
+                      `--keep-state` opts out)
   - offer to agents:  `bin/tasks delegate "<ref>" refine|research|implement`
+                      (replacing a person returns the task to TODO)
   - clear delegation: `bin/tasks undelegate "<ref>"`  (also revokes a live claim)
-  - record the work:  `bin/tasks workref "<ref>" <url-or-id>`  ("off" clears)
+  - record the work:  `bin/tasks workref "<ref>" <url-or-id>`  ("off"/"none"
+                      clears; at most 500 characters)
   - set a deadline:   `bin/tasks due "<ref>" <date-or-date-time>`
   - set available from: `bin/tasks schedule "<ref>" <date-or-date-time>`
   - remove dates:     `bin/tasks undate "<ref>" [--kind deadline|scheduled]`
@@ -255,6 +259,11 @@ If you are a worker picking up delegated work rather than managing the list:
 There are no leases: a claim you abandon stays claimed until the owner clears
 it with `undelegate` or `release --force`. Release deliberately rather than
 walking away.
+
+Completing a delegated **recurring** task does not end the delegation. The next
+occurrence carries the same standing intent — the mode, or the person — always
+unclaimed and without the finished cycle's work reference, so it returns to the
+queue for whoever picks it up next. Only the owner's `undelegate` stops that.
 
 ## Task-set memory
 A task set may carry `agent-memory.md` — a small Markdown sidecar of durable,

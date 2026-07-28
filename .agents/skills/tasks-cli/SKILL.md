@@ -18,7 +18,7 @@ marks each command ✅ implemented / 🚧 planned).
 ```sh
 bin/tasks list -a          # everything incl. archive; filters: @ctx +tag /text -A
 bin/tasks list --proposed  # inert suggestions pending owner approval
-bin/tasks list --delegated # tasks handed to a person or the agent pool
+bin/tasks list --delegated # handed to a person/agents (--all incl. closed)
 bin/tasks list --agent-ready --json # the claimable queue for heartbeat pickup
 bin/tasks list --unavailable # timed, inherited, and indefinite unavailability
 bin/tasks list --someday   # tasks with their own indefinite On Hold marker
@@ -51,9 +51,10 @@ bin/tasks propose "text" --note "why" # inert PROPOSED item for owner review
 bin/tasks approve "<ref>"             # accept PROPOSED → INBOX
 bin/tasks reject "<ref>"              # decline PROPOSED → CANCELLED
 bin/tasks delegate "<ref>" --to pat@example.com # hand to a person (→ WAITING)
+# the address must be real: local@domain.tld — "@work" is refused
 bin/tasks delegate "<ref>" research   # offer to agents: refine|research|implement
 bin/tasks undelegate "<ref>"         # clear the marker; revokes any live claim
-bin/tasks workref "<ref>" <url|off>  # record where the work happened
+bin/tasks workref "<ref>" <url|off>  # where the work happened; off/none clears
 bin/tasks claim "<ref>" --worker <id> --json # atomic single-winner pickup
 bin/tasks release "<ref>" --worker <id> --note "blocked: why" # hand a claim back
 bin/tasks done "<ref>"               # mark DONE + closed date (cascades to open subtasks)
@@ -112,6 +113,10 @@ To pick up delegated work: read `list --agent-ready --json`, `claim` one task
 naming the holder), take your authority from the task the claim returns, set a
 `workref`, then complete it or `release` it with a blocker note. There are no
 leases, so an abandoned claim stays claimed until the owner clears it.
+
+Completing a delegated *recurring* task keeps the delegation standing: the next
+occurrence carries the same mode or person, always unclaimed and without the
+finished cycle's work reference.
 
 `delete` hard-removes a task's subtree from the live file (it never touches the
 archive and is not the same as `cancel`). A task with subtasks needs `--cascade`.
