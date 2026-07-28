@@ -170,7 +170,7 @@ class TestApiApp < Minitest::Test
     assert_equal ["@desk"], resource.fetch("contexts")
     assert_equal ["api"], resource.fetch("tags")
     assert_nil resource.fetch("parent_id")
-    assert_equal ["Captured [#{Date.today.iso8601}].", "one", "two"], resource.fetch("body")
+    assert_equal ["Captured [#{store_today.iso8601}].", "one", "two"], resource.fetch("body")
     assert_contract_response(created)
 
     updated = json_request(
@@ -251,7 +251,7 @@ class TestApiApp < Minitest::Test
     assert_equal 200, rejected.status, rejected.body
     rejected_task = JSON.parse(rejected.body).fetch("data")
     assert_equal "CANCELLED", rejected_task.fetch("state")
-    assert_equal Date.today.iso8601, rejected_task.fetch("closed")
+    assert_equal store_today.iso8601, rejected_task.fetch("closed")
     assert_contract_response(rejected)
 
     not_proposed = request(
@@ -897,4 +897,9 @@ class TestApiApp < Minitest::Test
   end
 
   def quote(value) = %Q("#{value}")
+
+  # The API stamps dates in the store's configured zone, not the machine's.
+  # An unconfigured fixture is Etc/UTC, so `Date.today` disagrees for the last
+  # hours of a Pacific day.
+  def store_today = Tasks::TemporalContext.capture(timezone: Tasks::Config.for_dir(@dir).timezone).local_date
 end
