@@ -649,9 +649,23 @@ module Tui
       " #{tabs}#{" " * gap}#{count} "
     end
 
+    # Badge counts for the tab strip. Every count is taken over filtered_items
+    # so a badge can never advertise rows the active `@`/`/` filter hides. The
+    # inbox count asks the Inbox view's own Query for eligibility rather than
+    # testing state == "INBOX" here, so the badge and the list agree about
+    # unavailable captures: a deferred INBOX item the view omits is not counted
+    # until `show_deferred` reveals it. Zero counts are dropped — tab_cell only
+    # renders a positive count, and an explicit 0 would still widen the label.
     def tab_counts
-      count = filtered_items(read_model).count(&:proposed?)
-      count.positive? ? { approvals: count } : {}
+      read = read_model
+      items = filtered_items(read)
+      inbox = Views.view_query(
+        :inbox, today: @read_model_today, show_deferred: @ui.show_deferred, reader: read
+      )
+      {
+        inbox: items.count { |item| inbox.eligible?(item) },
+        approvals: items.count(&:proposed?),
+      }.reject { |_key, count| count.zero? }
     end
 
     def footer(w, mode: @ui.mode)

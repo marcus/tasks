@@ -891,8 +891,13 @@ module Tui
       "#{pri(item)}#{T.paint(:title, item.title)}#{badge(item, reader: reader, today: today)}"
     end
 
+    # Inbox rows carry their `@` contexts for the same reason agenda and outline
+    # rows do: processing an item is deciding where it belongs, and a capture
+    # that already says @work or @home has answered half of that. They sit
+    # between the title and the badge so the trailing availability/delegation
+    # markers stay in the column they occupy in every other view.
     def inbox_body(item, reader: nil, today: Date.today)
-      "#{T.paint(:title, item.title)}#{badge(item, reader: reader, today: today)}"
+      "#{T.paint(:title, item.title)}#{context_tags(item)}#{badge(item, reader: reader, today: today)}"
     end
 
     # -- shared bits ---------------------------------------------------------
@@ -1037,8 +1042,17 @@ module Tui
     end
 
     def decorated_title(item)
+      "#{pri(item)}#{T.paint(:title, item.title)}#{context_tags(item)}"
+    end
+
+    # The trailing `@` context run, or "" when a task carries none. Shared so
+    # every view that shows contexts inline spells them the same way — same
+    # two-space lead-in, same order, same :context slot.
+    def context_tags(item)
       ctx = item.contexts
-      "#{pri(item)}#{T.paint(:title, item.title)}#{ctx.empty? ? "" : "  " + ctx.map { |c| T.paint(:context, c) }.join(" ")}"
+      return "" if ctx.empty?
+
+      "  #{ctx.map { |c| T.paint(:context, c) }.join(" ")}"
     end
 
     def view_query(view, today: Date.today, urgent_days: Tasks::Quadrants::DEFAULT_URGENT_DAYS,

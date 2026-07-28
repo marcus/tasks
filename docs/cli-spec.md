@@ -217,7 +217,13 @@ recurrence quick actions remain available. The seventh **Approvals** tab shows
 only PROPOSED tasks and carries a live count badge in the tab strip. There,
 `a` approves the selected proposal and `r` rejects it; the registered shortcut
 availability keeps `r` as recurrence everywhere else. Both decisions preserve
-the nearest useful selection and participate in undo/redo.
+the nearest useful selection and participate in undo/redo. The fourth **Inbox**
+tab carries the same kind of live count badge, and its rows show each capture's
+`@` contexts inline between the title and the trailing availability markers.
+Every tab badge counts the rows that tab would actually render under the
+active `@` and `/` filters (and, for Inbox, under the current unavailable-shown
+setting), so a badge never advertises work the filter hides; a zero count
+renders no badge at all.
 
 **Editable task-panel behavior.** With a read-only task panel open, `e` enters
 editing at the first editable field and `Shift-Tab` enters at the last. `Tab`

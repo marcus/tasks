@@ -27,6 +27,19 @@ class TestApp < Minitest::Test
       "state" => "PROPOSED", "title" => "Work proposal", "tags" => ["@work"] },
   ]).freeze
 
+  INBOX_BADGE_APP = dump_fixture([
+    { "type" => "meta", "version" => 2 },
+    { "type" => "section", "id" => "f0000001", "title" => "Inbox" },
+    { "type" => "task", "id" => "f0000002", "parent" => "f0000001",
+      "state" => "INBOX", "title" => "Home capture", "tags" => ["@home"] },
+    { "type" => "task", "id" => "f0000003", "parent" => "f0000001",
+      "state" => "INBOX", "title" => "Work capture", "tags" => ["@work"] },
+    { "type" => "task", "id" => "f0000004", "parent" => "f0000001",
+      "state" => "INBOX", "title" => "Held capture", "tags" => ["defer"] },
+    { "type" => "task", "id" => "f0000005", "parent" => "f0000001",
+      "state" => "NEXT", "title" => "Already processed" },
+  ]).freeze
+
   # Resolve the panel column count the same way the frame does, so resize
   # assertions read the realized width rather than the stored offset.
   def panel_width(app)
@@ -302,31 +315,34 @@ class TestApp < Minitest::Test
     end
   end
 
+  # Approving a proposal moves it into the inbox, so the two badges move
+  # together: every count here is asserted as a whole hash so a decision that
+  # decremented approvals without crediting the inbox would fail.
   def test_approvals_keys_update_badge_selection_and_history_immediately
     app_on(view: :approvals, select: "Alpha proposal", content: PROPOSAL_APP) do |app|
-      assert_equal({ approvals: 2 }, app.send(:tab_counts))
+      assert_equal({ inbox: 1, approvals: 2 }, app.send(:tab_counts))
 
       app.send(:handle_key, "a")
       assert_equal "INBOX", record_for(org_path(app), title: "Alpha proposal")["state"]
       assert_equal "Beta proposal", app.send(:current_item).title
-      assert_equal({ approvals: 1 }, app.send(:tab_counts))
+      assert_equal({ inbox: 2, approvals: 1 }, app.send(:tab_counts))
 
       app.send(:handle_key, "u")
       assert_equal "PROPOSED", record_for(org_path(app), title: "Alpha proposal")["state"]
-      assert_equal({ approvals: 2 }, app.send(:tab_counts))
+      assert_equal({ inbox: 1, approvals: 2 }, app.send(:tab_counts))
 
       app.send(:handle_key, "\x12")
       assert_equal "INBOX", record_for(org_path(app), title: "Alpha proposal")["state"]
-      assert_equal({ approvals: 1 }, app.send(:tab_counts))
+      assert_equal({ inbox: 2, approvals: 1 }, app.send(:tab_counts))
 
       app.send(:handle_key, "r")
       assert_equal "CANCELLED", record_for(org_path(app), title: "Beta proposal")["state"]
-      assert_equal({}, app.send(:tab_counts))
+      assert_equal({ inbox: 2 }, app.send(:tab_counts))
       assert_nil app.send(:current_item)
 
       app.send(:handle_key, "u")
       assert_equal "PROPOSED", record_for(org_path(app), title: "Beta proposal")["state"]
-      assert_equal({ approvals: 1 }, app.send(:tab_counts))
+      assert_equal({ inbox: 2, approvals: 1 }, app.send(:tab_counts))
     end
   end
 
@@ -346,6 +362,50 @@ class TestApp < Minitest::Test
       ui(app).filter = "work"
       assert_equal({ approvals: 1 }, app.send(:tab_counts))
       assert_equal ["Work proposal"], app.send(:rows).filter_map { |r| r.item&.title }
+    end
+  end
+
+  # The inbox badge is pinned to the row set the Inbox tab would render: the
+  # `@`/`/` filters narrow it, a non-INBOX state never counts, and an
+  # indefinitely held capture stays out until `show_deferred` reveals it —
+  # asserted against the rendered titles so badge and list can't drift.
+  def test_inbox_badge_counts_only_the_captures_the_inbox_tab_would_show
+    app_on(view: :inbox, select: "Home capture", content: INBOX_BADGE_APP) do |app|
+      assert_equal({ inbox: 2 }, app.send(:tab_counts))
+      assert_equal ["Home capture", "Work capture"],
+                   app.send(:rows).filter_map { |r| r.item&.title }
+
+      ui(app).show_deferred = true
+      assert_equal({ inbox: 3 }, app.send(:tab_counts))
+      assert_equal ["Home capture", "Work capture", "Held capture"],
+                   app.send(:rows).filter_map { |r| r.item&.title }
+      ui(app).show_deferred = false
+
+      ui(app).context_filters = ["@home"]
+      assert_equal({ inbox: 1 }, app.send(:tab_counts))
+      assert_equal ["Home capture"], app.send(:rows).filter_map { |r| r.item&.title }
+
+      ui(app).context_filters = ["@errand"]
+      assert_equal({}, app.send(:tab_counts))
+      assert_empty app.send(:rows).filter_map { |r| r.item&.title }
+
+      ui(app).context_filters = []
+      ui(app).filter = "capture"
+      assert_equal({ inbox: 2 }, app.send(:tab_counts))
+
+      ui(app).filter = "processed"
+      assert_equal({}, app.send(:tab_counts))
+    end
+  end
+
+  # Contexts ride the inbox row itself, ahead of the badge column, so
+  # processing a capture doesn't need the detail panel to answer "where?".
+  def test_inbox_rows_show_their_contexts_inline
+    app_on(view: :inbox, select: "Home capture", content: INBOX_BADGE_APP) do |app|
+      texts = app.send(:rows).filter_map { |r| Tui::Ansi.strip(r.text) if r.item }
+
+      assert_includes texts, "    Home capture  @home"
+      assert_includes texts, "    Work capture  @work"
     end
   end
 

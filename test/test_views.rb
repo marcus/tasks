@@ -875,6 +875,20 @@ class TestViews < Minitest::Test
     assert_equal A.vislen(" 7 Approvals 3 "), span[2] - span[1]
   end
 
+  # The badge mechanism is per-tab, so the inbox count paints and measures the
+  # same way the approvals count does — including both counts at once.
+  def test_inbox_count_shares_the_approvals_badge_geometry
+    counts = { inbox: 4, approvals: 3 }
+    strip = A.strip(V.tab_strip(active: :agenda, counts: counts))
+    span = V.tab_spans(active: :agenda, counts: counts)
+            .find { |key, _start, _finish| key == :inbox }
+
+    assert_includes strip, "4 Inbox 4"
+    assert_includes strip, "7 Approvals 3"
+    assert_equal A.vislen(" 4 Inbox 4 "), span[2] - span[1]
+    refute_includes A.strip(V.tab_strip(active: :agenda, counts: { inbox: 0 })), "4 Inbox 0"
+  end
+
   def test_compact_tabs_preserve_active_and_counted_approvals_with_shared_spans
     presentation = V.tab_presentation(
       active: :agenda, counts: { approvals: 3 }, width: 30
@@ -973,6 +987,34 @@ class TestViews < Minitest::Test
     assert_equal 1, rs.size
     assert_includes rs[0].text, "garden"
     assert rs[0].item
+  end
+
+  # Both inbox paths go through inbox_body, so the flat `/`-filter rendering and
+  # the tree rendering show the same context run in the same place: after the
+  # title, before the trailing availability badge.
+  def test_inbox_rows_carry_contexts_before_the_badge_in_both_modes
+    records = [
+      { "type" => "meta", "version" => 2 },
+      { "type" => "section", "id" => "cd000001", "title" => "Inbox" },
+      { "type" => "task", "id" => "cd000002", "parent" => "cd000001", "state" => "INBOX",
+        "title" => "tagged capture", "tags" => %w[@work @home] },
+      { "type" => "task", "id" => "cd000003", "parent" => "cd000001", "state" => "INBOX",
+        "title" => "recurring tagged capture", "tags" => %w[@errand], "recur" => "+1w" },
+      { "type" => "task", "id" => "cd000004", "parent" => "cd000001", "state" => "INBOX",
+        "title" => "untagged capture" },
+    ]
+    with_records(records) do |store|
+      flat = texts(V.rows(:inbox, store.items, today: TODAY))
+      tree = texts(tree_rows(store, :inbox))
+
+      [flat, tree].each do |rs|
+        assert(rs.any? { |t| t.end_with?("tagged capture  @work @home") })
+        assert(rs.any? { |t| t.end_with?("recurring tagged capture  @errand ↻") },
+               "contexts sit between the title and the badge")
+        assert(rs.any? { |t| t.end_with?("untagged capture") },
+               "an untagged capture gains no trailing whitespace")
+      end
+    end
   end
 
   def test_inbox_empty_state
