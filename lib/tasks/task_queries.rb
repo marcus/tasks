@@ -526,11 +526,34 @@ module Tasks
       Availability.new(reason: :available)
     end
 
+    # The snapshot's own Item for a possibly-stale caller Item. Every one of
+    # task/availability/delegation resolves through here, and adapters call them
+    # once per rendered row, so this indexes instead of scanning — the same
+    # reason records_by_source_and_id exists. A scan here makes any per-row read
+    # quadratic in list size.
     def current_item_for(item)
-      items = item.source == :archive ? snapshot.archive_items : snapshot.items
-      return items.find { |candidate| candidate.id == item.id } if item.id
+      index = items_by_source(item.source)
+      return index[:by_id][item.id] if item.id
 
-      items.find { |candidate| candidate.line == item.line && candidate.title == item.title }
+      index[:by_line][[item.line, item.title]]
+    end
+
+    def items_by_source(source)
+      @items_by_source ||= {}
+      @items_by_source[source == :archive ? :archive : :live] ||=
+        index_items(source == :archive ? snapshot.archive_items : snapshot.items)
+    end
+
+    # First occurrence wins in both maps, matching the scan's `find` semantics
+    # when a malformed file repeats an id or a line+title pair.
+    def index_items(items)
+      by_id = {}
+      by_line = {}
+      items.each do |item|
+        by_id[item.id] ||= item if item.id
+        by_line[[item.line, item.title]] ||= item
+      end
+      { by_id: by_id, by_line: by_line }
     end
 
     def live_sections

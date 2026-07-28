@@ -197,6 +197,43 @@ class TestTaskQueries < Minitest::Test
     end
   end
 
+  # task/availability/delegation all resolve a caller's possibly-stale Item to
+  # the snapshot's own Item first. That resolution is indexed rather than
+  # scanned, because adapters call it once per rendered row; a scan makes any
+  # per-row read quadratic in list size. This pins the semantics the index has
+  # to preserve: id wins when present, line+title is the id-less fallback,
+  # archive and live are separate namespaces even for a shared id, and a stale
+  # Item resolves to the current record rather than to itself.
+  def test_item_resolution_is_indexed_and_keeps_id_line_and_source_precedence
+    archive_records = [
+      { "type" => "meta", "version" => 2 },
+      { "type" => "task", "id" => "aaaa0002", "state" => "DONE", "title" => "Archived namesake" },
+    ]
+    with_query_store(archive_records: archive_records) do |store|
+      q = queries(store, include_archive: true)
+      snapshot = store.read_snapshot(include_archive: true)
+      live = snapshot.items.find { |item| item.id == "aaaa0002" }
+      archived = snapshot.archive_items.find { |item| item.id == "aaaa0002" }
+
+      # Same id in both sources must not cross over.
+      assert_equal live.title, q.task(live).title
+      assert_equal "Archived namesake", q.task(archived).title
+      assert_equal :archive, q.task(archived).source
+
+      fields = live.class.members.to_h { |field| [field, live.public_send(field)] }
+
+      # A stale Item (right id, wrong title/line) resolves to the live record.
+      stale = live.class.new(**fields.merge(title: "renamed elsewhere", line: 9999))
+      assert_equal live.title, q.task(stale).title
+      assert_equal q.availability(live).reason, q.availability(stale).reason
+
+      # An id-less Item still resolves on line + title — proven by the resolved
+      # view carrying an id the caller's Item could not have supplied.
+      id_less = live.class.new(**fields.merge(id: nil))
+      assert_equal "aaaa0002", q.task(id_less).id
+    end
+  end
+
   AVAILABILITY_RECORDS = [
     { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "aa000001", "title" => "Work" },
