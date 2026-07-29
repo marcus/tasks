@@ -2,6 +2,8 @@
 
 require_relative "test_helper"
 require "tasks/recur"
+require "tasks/temporal_value"
+require "tasks/temporal_context"
 
 class TestRecur < Minitest::Test
   R = Tasks::Recur
@@ -104,5 +106,50 @@ class TestRecur < Minitest::Test
 
   def test_next_date_rejects_non_cookie
     assert_raises(ArgumentError) { R.next_date("weekly", from: TODAY) }
+  end
+
+  # -- next_temporal_date ------------------------------------------------------
+
+  # A catch-up roll walks its series to today with plain date math before the
+  # civil-time loop runs, so a stamp thousands of hops stale still lands. The
+  # loop's iterations are reserved for real skips (DST gaps, vetoes).
+  def test_catch_up_rolls_from_a_stamp_thousands_of_hops_stale
+    context = Tasks::TemporalContext.new(now: Time.utc(2030, 6, 1, 12), timezone: "Etc/UTC")
+    value = Tasks::TemporalValue.new(date: "2026-01-31") # 1_582 daily hops behind
+    assert_equal Date.new(2030, 6, 1),
+                 R.next_temporal_date("++1d", value: value, kind: :deadline, context: context)
+    # 2026-01-31 and 2030-06-01 are both Saturdays, so the weekly series lands
+    # exactly on the completion day — still ahead by its end-of-day boundary.
+    assert_equal Date.new(2030, 6, 1),
+                 R.next_temporal_date("++1w", value: value, kind: :deadline, context: context)
+    # Monthly hops clamp to the 28th at the first short month and stay there.
+    assert_equal Date.new(2030, 6, 28),
+                 R.next_temporal_date("++1m", value: value, kind: :deadline, context: context)
+  end
+
+  # The fast-forward stops *at* today, never past it: an all-day stamp on the
+  # completion day is still ahead by its end-of-day boundary, and a timed one is
+  # judged by its local time. Both stay the boundary comparison's call.
+  def test_catch_up_still_offers_a_candidate_landing_on_today
+    context = Tasks::TemporalContext.new(now: Time.utc(2026, 7, 20, 0, 30), timezone: "Etc/UTC")
+    value = Tasks::TemporalValue.new(date: "2026-07-19", local_time: "23:00",
+                                     timezone: "Etc/UTC")
+    assert_equal Date.new(2026, 7, 20),
+                 R.next_temporal_date("++1d", value: value, kind: :deadline, context: context)
+
+    passed = Tasks::TemporalValue.new(date: "2026-07-19", local_time: "00:05",
+                                      timezone: "Etc/UTC")
+    assert_equal Date.new(2026, 7, 21),
+                 R.next_temporal_date("++1d", value: passed, kind: :deadline, context: context),
+                 "a candidate already past by local time advances again"
+  end
+
+  def test_catch_up_from_a_stale_stamp_still_honors_a_veto
+    context = Tasks::TemporalContext.new(now: Time.utc(2030, 6, 1, 12), timezone: "Etc/UTC")
+    value = Tasks::TemporalValue.new(date: "2026-01-31")
+    result = R.next_temporal_date("++1d", value: value, kind: :deadline, context: context) do |date|
+      date.day > 4
+    end
+    assert_equal Date.new(2030, 6, 5), result
   end
 end

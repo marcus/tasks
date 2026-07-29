@@ -4,6 +4,7 @@ require "date"
 require "set"
 require_relative "delegation"
 require_relative "format"
+require_relative "recur"
 require_relative "update_stamp"
 require_relative "temporal_value"
 
@@ -28,9 +29,6 @@ module Tasks
 
     ID_RE    = /\A[0-9a-f]{8}\z/
     DATE_RE  = /\A\d{4}-\d{2}-\d{2}\z/
-    # An org repeater cookie: +1w, ++2d, .+1m (see Tasks::Recur). A positive
-    # count only — ++0d would never terminate a catch-up roll.
-    RECUR_RE = /\A(?:\.\+|\+\+|\+)[1-9]\d*[dwmy]\z/
 
     # Fields a section record must not carry (task-only semantics). `archived`
     # is allowed — a swept subtree root can be a section.
@@ -258,10 +256,14 @@ module Tasks
       check_temporal_time(r, "scheduled", line, errors)
       check_temporal_time(r, "deadline", line, errors)
       check_date(r, "archived", line, errors)
-      # Guard the type before the regex: a non-String recur (e.g. an integer)
-      # would raise on `!~`, and Check must report — never crash — on bad data.
-      if (rc = r["recur"]) && (!rc.is_a?(String) || rc !~ RECUR_RE)
-        errors << [line, "invalid recur cookie #{rc.inspect} (expected e.g. .+1w, ++1m, +2d)"]
+      # The recurrence grammar — interval cookies and calendar schedules alike —
+      # lives in Tasks::Recur, so the linter and the write paths can never
+      # drift. Guard the type first (Check must report, never crash, on bad
+      # data) and the padding second: Recur tolerates surrounding whitespace on
+      # input, but a stored value is the exact canonical spelling.
+      if (rc = r["recur"]) && !(rc.is_a?(String) && rc == rc.strip && Recur.cookie?(rc))
+        errors << [line, "invalid recur cookie #{rc.inspect} " \
+                         "(expected e.g. .+1w, ++1m, +2d, w:mon, m:15, y:07-04)"]
       end
       if r["closed"] && OPEN_STATES.include?(r["state"])
         errors << [line, "closed date on an open task (#{r["state"]})"]

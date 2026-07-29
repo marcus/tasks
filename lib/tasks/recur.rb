@@ -310,8 +310,21 @@ module Tasks
     def temporal_plan(s, value:, context:)
       if (m = s.match(COOKIE))
         prefix, count, unit = m[1], m[2].to_i, m[3]
+        advance = ->(date) { step(date, count, unit) }
         base = prefix == ".+" ? local_today(value, context) : value.date
-        return [->(date) { step(date, count, unit) }, step(base, count, unit), prefix == "++"]
+        candidate = advance.call(base)
+        if prefix == "++"
+          # Walk a stale catch-up series up to the current day with plain date
+          # math first. The loop above is bounded, and its iterations are for
+          # genuine skips (DST gaps, vetoes) — a stamp years behind would
+          # otherwise exhaust them on hops that only ever fail the future test.
+          # Stopping *at* today rather than past it is deliberate: a candidate
+          # landing on today can still be future by its local time, which is the
+          # boundary comparison's call to make, not this one's.
+          today = local_today(value, context)
+          candidate = advance.call(candidate) while candidate < today
+        end
+        return [advance, candidate, prefix == "++"]
       end
 
       sched = schedule(s)

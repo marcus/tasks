@@ -942,6 +942,33 @@ class TestStore < Minitest::Test
     end
   end
 
+  # A catch-up cookie left alone for years still rolls: the roll walks the
+  # series to today by date math, so no bounded search stands between a stale
+  # stamp and its next occurrence.
+  def test_catch_up_completion_from_a_stamp_years_stale_still_rolls
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, dump_fixture([
+        { "type" => "meta", "version" => 2 },
+        { "type" => "section", "id" => "ac000001", "title" => "W" },
+        { "type" => "task", "id" => "ac000002", "parent" => "ac000001", "state" => "NEXT",
+          "title" => "Stale daily", "deadline" => "2026-01-31", "recur" => "++1d" },
+      ]))
+      store = Tasks::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
+      snapshot = store.edit_snapshot("ac000002")
+
+      result = store.patch_task!(Tasks::TaskPatch.from(
+        snapshot, field: :state, value: "DONE", history_label: "complete: Stale daily"
+      ), today: Date.new(2030, 6, 1))
+
+      assert result.ok?, result.errors.inspect
+      record = record_for(org, title: "Stale daily")
+      assert_equal "2030-06-01", record["deadline"]
+      assert_equal "NEXT", record["state"]
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
   def test_done_via_set_state_also_rolls_recurring
     with_recur_store do |store, org|
       rent = find_item(store, "Pay rent")

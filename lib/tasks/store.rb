@@ -1308,6 +1308,12 @@ module Tasks
       if recurrence && (CLOSED_STATES + PROPOSED_STATES).include?(state)
         errors[:state] << "can't set recurrence on a #{state} task"
       end
+      if recurrence
+        # Completion rolls the deadline when both dates exist, so that is the
+        # stamp the schedule has to be reachable from.
+        reason = unreachable_recurrence(recurrence, (deadline || scheduled)&.date, today: today)
+        errors[:recurrence] << reason if reason
+      end
 
       [
         {
@@ -2166,7 +2172,7 @@ module Tasks
       when :scheduled  then patch_date(records, ri, value, :scheduled)
       when :deadline   then patch_date(records, ri, value, :deadline)
       when :date_clear then patch_date_clear(records, ri, value)
-      when :recurrence then patch_recurrence(records, ri, value)
+      when :recurrence then patch_recurrence(records, ri, value, today: today)
       when :contexts   then patch_tag_slice(records, ri, value, :contexts)
       when :tags       then patch_tag_slice(records, ri, value, :tags)
       when :tag_delta  then patch_tag_delta(records, ri, value)
@@ -2273,7 +2279,7 @@ module Tasks
       patch_ok(rec)
     end
 
-    def patch_recurrence(records, ri, value)
+    def patch_recurrence(records, ri, value, today:)
       rec = records[ri]
       if !value.nil? && value != :off && PROPOSED_STATES.include?(rec["state"])
         return patch_invalid("can't set recurrence on a PROPOSED task")
@@ -2283,9 +2289,40 @@ module Tasks
         rec.delete("recur")
       else
         return patch_invalid("invalid recurrence cookie") unless value.is_a?(String) && Recur.cookie?(value)
+
+        anchor = to_date(rec["deadline"]) || to_date(rec["scheduled"])
+        if (reason = unreachable_recurrence(value, anchor, today: today))
+          return patch_invalid(reason)
+        end
+
         rec["recur"] = value
       end
       patch_ok(rec)
+    end
+
+    # A cookie can parse cleanly and still be unwritable, in two ways, both of
+    # which leave a task nothing can ever complete:
+    #
+    #   unreachable — `2y:02:5fri` anchored in an odd year needs a February with
+    #     five Fridays, and odd years are never leap, so the roll has no target
+    #     and `done` refuses it.
+    #   unstorable — `+9999y` (or `9999y:07-04`) rolls past the four-digit years
+    #     a stored date is written with, so the roll would succeed and then fail
+    #     the post-write check, rolling every completion back forever.
+    #
+    # So the write computes the one occurrence it would produce and refuses the
+    # cookie up front, with the engine's own reason where there is one. Both
+    # shapes can hit this: a calendar schedule can be unreachable, and either
+    # shape can overshoot the storable range.
+    def unreachable_recurrence(cookie, anchor, today:)
+      return nil unless anchor.is_a?(Date)
+
+      date = Recur.next_date(cookie, from: anchor, today: today)
+      return nil if date.iso8601.match?(Check::DATE_RE)
+
+      "recurrence would roll to #{date.iso8601}, outside the four-digit years dates are stored with"
+    rescue ArgumentError, Date::Error => error
+      error.message
     end
 
     def patch_tag_slice(records, ri, value, slice)

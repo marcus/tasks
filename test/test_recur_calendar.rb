@@ -402,6 +402,21 @@ class TestRecurCalendar < Minitest::Test
                  R.next_temporal_date("+w:mon", value: value, kind: :deadline, context: context)
   end
 
+  # Catch-up jumps to the current cycle by arithmetic, so a stamp years stale
+  # costs no more search than a fresh one — and every-Nth-week parity survives
+  # the jump.
+  def test_next_temporal_date_catches_up_from_a_stamp_years_stale
+    context = Tasks::TemporalContext.new(now: Time.utc(2030, 6, 1, 12), timezone: "Etc/UTC")
+    value = Tasks::TemporalValue.new(date: "2019-01-07")
+    assert_equal Date.new(2030, 6, 3),
+                 R.next_temporal_date("w:mon", value: value, kind: :deadline, context: context)
+    parity = R.next_temporal_date("2w:mon", value: value, kind: :deadline, context: context)
+    assert_equal Date.new(2030, 6, 10), parity, "the next Monday on the anchor's parity, not 06-03"
+    assert_equal 0, (parity - value.date).to_i % 14
+    assert_equal Date.new(2030, 6, 15),
+                 R.next_temporal_date("m:15", value: value, kind: :deadline, context: context)
+  end
+
   def test_next_temporal_date_keeps_nw_parity_when_a_candidate_hits_a_dst_gap
     # Anchor Sun 2026-02-22 puts the every-other-Sunday series on 2026-03-08 —
     # the US spring-forward, where 02:30 does not exist. The skip must land on
