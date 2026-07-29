@@ -131,7 +131,7 @@ class TestApiApp < Minitest::Test
     expected_keys = %w[
       archived availability_blocker_id availability_reason available available_at body child_count closed contexts
       deadline deadline_time deferred delegation depth descendant_count id links parent_id priority project recurrence
-      revision scheduled scheduled_time section_id source state tags title
+      recurrence_human revision scheduled scheduled_time section_id source state tags title
     ]
     assert_equal expected_keys, task.keys.sort
     assert_equal "live", task.fetch("source")

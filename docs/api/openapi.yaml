@@ -28,6 +28,9 @@ info:
     - Unknown request fields are rejected (`422` / `validation_failed`), never
       silently ignored.
     - Successful responses use the envelope `{ "data": ..., "meta": { ... } }`.
+      `meta` reports the store revision the answer was read at, so the few
+      operations that read no store omit it: the health probes carry no
+      envelope at all, and `GET /recurrence/explain` carries `data` only.
       Errors use `{ "error": { "code", "message", "details", "request_id" } }`.
     - `revision` is an opaque string. Operation descriptions name semantic
       precondition scopes, but component positions and digest recipes are not
@@ -62,6 +65,8 @@ tags:
     description: Task resource CRUD.
   - name: projects
     description: Projects and areas rolled up over their open tasks.
+  - name: recurrence
+    description: Taskless schedule parsing and projection.
   - name: views
     description: Canonical named selections (agenda, next, quadrants, inbox, projects).
   - name: history
@@ -301,7 +306,10 @@ paths:
           schema: { type: boolean }
         - name: recurring
           in: query
-          description: When true, list only tasks that carry a recurrence cookie.
+          description: |
+            When true, list only tasks that carry a recurrence — an interval
+            cookie or a calendar schedule alike. Unchanged by the calendar
+            shapes: it asks whether the task repeats, not how.
           required: false
           schema: { type: boolean }
       responses:
@@ -342,6 +350,7 @@ paths:
                         availability_blocker_id: null
                         available_at: null
                         recurrence: null
+                        recurrence_human: null
                         body: ["Captured 2026-07-14.", "Confirm the seat count first."]
                         closed: null
                         archived: false
@@ -444,6 +453,7 @@ paths:
                       availability_blocker_id: "3c4d5e6f"
                       available_at: null
                       recurrence: null
+                      recurrence_human: null
                       body: ["Captured 2026-07-14."]
                       closed: null
                       archived: false
@@ -554,6 +564,7 @@ paths:
                       availability_blocker_id: "3c4d5e6f"
                       available_at: null
                       recurrence: null
+                      recurrence_human: null
                       body: ["Captured 2026-07-14.", "Confirm the seat count first."]
                       closed: null
                       archived: false
@@ -697,6 +708,7 @@ paths:
                       availability_blocker_id: "3c4d5e6f"
                       available_at: null
                       recurrence: null
+                      recurrence_human: null
                       body: ["Captured 2026-07-14.", "Confirm the seat count first."]
                       closed: null
                       archived: false
@@ -1058,6 +1070,7 @@ paths:
                       availability_blocker_id: null
                       available_at: null
                       recurrence: null
+                      recurrence_human: null
                       body: []
                       closed: null
                       archived: false
@@ -1734,6 +1747,106 @@ paths:
         "503":
           $ref: "#/components/responses/StoreInvalid"
 
+  /recurrence/explain:
+    get:
+      tags: [recurrence]
+      operationId: explainRecurrence
+      summary: Parse, normalize, and project a recurrence schedule without touching a task.
+      description: |
+        The discoverability half of the recurrence contract, and the API twin of
+        `tasks recur --explain`: it answers "what does this schedule mean, and
+        when would it fire" for any input the write paths accept, without naming
+        a task and without mutating or even reading the store. The intended
+        agent flow is propose → explain → verify the projected dates → commit
+        with `POST /tasks` or `PATCH /tasks/{id}`.
+
+        Accepts both input syntaxes (see `CreateTaskRequest.recurrence`) and
+        returns the canonical spelling that a write would store. Occurrences are
+        projected from today in the server's configured time zone; the stamp on
+        a task is itself the next occurrence, so this endpoint is the only place
+        that projects further ahead.
+
+        Three response shapes, all `200`, because "this is not a schedule" is an
+        answer rather than a request error:
+
+        - **projected** — `canonical`, `human`, and `next` (up to `count` dates).
+        - **never fires** — `canonical` and `human` parsed, `next` empty, and
+          `error` explaining why no occurrence exists from today's anchor (some
+          schedules, e.g. `4y:02:5fri`, depend on the anchor, not the grammar).
+        - **unparsable** — `input` echoed with the parser's `error` reason and
+          nothing else.
+
+        Clearing words (`off`, `none`, `never`) are understood too: they answer
+        with `canonical: null` and an empty projection.
+
+        Since no store read happens, the success envelope carries `data` only —
+        there is no `meta.store_revision` to report — and the endpoint keeps
+        answering while the store is unreadable.
+      parameters:
+        - name: input
+          in: query
+          required: true
+          description: |
+            The schedule to explain, in either input syntax. Required and
+            non-blank; an absent or whitespace-only value is `422`. Any
+            non-blank value is answered with one of the three shapes above.
+          schema: { type: string, minLength: 1 }
+        - name: count
+          in: query
+          required: false
+          description: |
+            How many occurrences to project. Default 5. Values outside `0..50`
+            are clamped to that range rather than rejected (the engine clamps
+            identically); a value that is not an integer is `422`.
+          schema: { type: integer, default: 5 }
+      responses:
+        "200":
+          description: The parsed schedule, or the reason the input was not one.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                additionalProperties: false
+                properties:
+                  data: { $ref: "#/components/schemas/RecurrenceExplanation" }
+              examples:
+                projected:
+                  summary: An understood schedule with its next occurrences.
+                  value:
+                    data:
+                      input: "every mon wed fri"
+                      canonical: "w:mon,wed,fri"
+                      human: "every Mon, Wed, Fri"
+                      next: ["2026-07-29", "2026-07-31", "2026-08-03"]
+                cleared:
+                  summary: A clearing word, understood and projecting nothing.
+                  value:
+                    data:
+                      input: "off"
+                      canonical: null
+                      human: "no recurrence"
+                      next: []
+                never_fires:
+                  summary: Understood, but no occurrence exists from today's anchor.
+                  value:
+                    data:
+                      input: "4y:02:5fri"
+                      canonical: "4y:02:5fri"
+                      human: "every 4 years on the 5th Friday of February"
+                      next: []
+                      error: 'no occurrence of "4y:02:5fri" within 2000 years from 2026-07-28 — the schedule may never fire for this anchor'
+                unparsable:
+                  summary: Not a schedule at all.
+                  value:
+                    data:
+                      input: "every blursday"
+                      error: 'unrecognized schedule: "every blursday"'
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
   /views/{name}:
     parameters:
       - name: name
@@ -1803,6 +1916,7 @@ paths:
                           availability_blocker_id: null
                           available_at: null
                           recurrence: null
+                          recurrence_human: null
                           body: ["Captured 2026-07-14."]
                           closed: null
                           archived: false
@@ -2290,6 +2404,7 @@ components:
                       availability_blocker_id: "3c4d5e6f"
                       available_at: null
                       recurrence: null
+                      recurrence_human: null
                       body: ["Captured 2026-07-14."]
                       closed: null
                       archived: false
@@ -2457,6 +2572,7 @@ components:
         availability_blocker_id: "3c4d5e6f"
         available_at: null
         recurrence: null
+        recurrence_human: null
         body: ["Captured 2026-07-14.", "Confirm the seat count first."]
         closed: null
         archived: false
@@ -2489,6 +2605,14 @@ components:
       type: [string, "null"]
       pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
       description: ISO YYYY-MM-DD date, or null.
+
+    IsoDateOnly:
+      type: string
+      pattern: "^[0-9]{4,}-[0-9]{2}-[0-9]{2}$"
+      description: |
+        A non-null ISO YYYY-MM-DD date. Unlike a stored date this one is only
+        projected, never written, so an absurd interval (`9999y:07-04`) may
+        push it past four digits; the store would refuse such a schedule.
 
     TaskTimeInput:
       type: [object, "null"]
@@ -2723,6 +2847,62 @@ components:
           description: Stable ids moved to the archive, root section first.
           items: { $ref: "#/components/schemas/TaskId" }
 
+    RecurrenceExplanation:
+      description: |
+        The result of parsing one schedule input. Exactly one of the three
+        shapes applies, and they are told apart structurally rather than by a
+        status field: a projection has `next` and no `error`, an anchor-bound
+        failure has both, and an unparsable input has neither `canonical` nor
+        `next`. `input` is echoed verbatim in all three so a batched caller can
+        match answers to questions.
+      oneOf:
+        - title: Projected
+          type: object
+          required: [input, canonical, human, next]
+          additionalProperties: false
+          properties:
+            input: { type: string }
+            canonical:
+              type: [string, "null"]
+              description: |
+                The value a write would store, or null for a clearing word
+                (`off`, `none`, `never`).
+            human: { type: string }
+            next:
+              type: array
+              description: |
+                The next occurrences, ascending, starting strictly after today.
+                At most `count` entries; empty when `count` is 0 or the input
+                was a clearing word.
+              items: { $ref: "#/components/schemas/IsoDateOnly" }
+        - title: NeverFires
+          type: object
+          description: |
+            Understood, but unreachable from today's anchor — the schedule and
+            the anchor together decide this, so the input is still reported in
+            canonical form.
+          required: [input, canonical, human, next, error]
+          additionalProperties: false
+          properties:
+            input: { type: string }
+            canonical: { type: string }
+            human: { type: string }
+            next:
+              type: array
+              maxItems: 0
+              items: { $ref: "#/components/schemas/IsoDateOnly" }
+            error:
+              type: string
+              description: Why no occurrence could be found.
+        - title: Unparsable
+          type: object
+          description: Not a schedule; `error` is the parser's own reason.
+          required: [input, error]
+          additionalProperties: false
+          properties:
+            input: { type: string }
+            error: { type: string }
+
     Task:
       type: object
       description: |
@@ -2752,6 +2932,7 @@ components:
         - availability_blocker_id
         - available_at
         - recurrence
+        - recurrence_human
         - body
         - closed
         - archived
@@ -2837,7 +3018,26 @@ components:
           readOnly: true
         recurrence:
           type: [string, "null"]
-          description: Recurrence cookie (e.g. `.+1w`), or null.
+          description: |
+            The stored schedule in its canonical spelling, or null. Two shapes
+            share the field: an interval cookie (`.+1w`, `+2d`, `++1m`) that
+            advances the stamp by a fixed span, and a calendar schedule
+            (`w:mon,wed`, `2w:mon`, `m:15`, `m:last`, `m:2tue`, `y:07-04`) that
+            advances to the next matching calendar date. Writes accept friendly
+            phrasings too (see `CreateTaskRequest.recurrence`); what comes back
+            is always canonical, so two inputs meaning the same schedule read
+            back identically.
+        recurrence_human:
+          type: [string, "null"]
+          readOnly: true
+          description: |
+            One-line rendering of `recurrence` for display ("every Mon, Wed,
+            Fri", "monthly on the 2nd Tuesday", "every 2 weeks from
+            completion"), or null when the task does not recur. A pure string
+            render of the stored value — it projects no dates, so it is present
+            on collection rows as well as single resources. For the next
+            occurrences of a schedule, call `GET /recurrence/explain`. A stored
+            value that no longer parses is echoed verbatim rather than hidden.
         body:
           type: array
           description: The task's own notes, split to lines. A child's body never leaks in.
@@ -3101,7 +3301,29 @@ components:
             - { type: "null" }
         recurrence:
           type: [string, "null"]
-          description: Recurrence interval (cookie or friendly form). Implies a date.
+          description: |
+            The schedule this task repeats on. Implies a date: with neither
+            `scheduled` nor `deadline` supplied, today becomes the first
+            occurrence. Two input syntaxes are accepted and both normalize to
+            one canonical stored value (echoed back as `recurrence`):
+
+            - **Interval** — a cookie (`.+1w` from completion, `+2d` from the
+              stored date, `++1m` catching up) or a phrase (`weekly`,
+              `every 3 days`, `2w`). A bare interval means "from completion".
+            - **Calendar** — a phrase (`every monday`, `every mon wed fri`,
+              `weekdays`, `the 15th of the month`, `last day of the month`,
+              `2nd tuesday`, `every 2 weeks on monday`, `every july 4`) or the
+              canonical grammar (`w:mon,wed`, `2w:mon`, `m:15`, `m:last`,
+              `m:2tue`, `y:07-04`). Bare calendar input means "the next
+              matching date after today"; a leading `+` advances one occurrence
+              at a time from the stored date instead.
+
+            Unrecognized input is `422` and the error names the reason the
+            parser gave. A schedule that parses but could never fire from this
+            task's date is refused the same way. Call
+            `GET /recurrence/explain` first to check a schedule without writing.
+            `off`/`none`/`never` clears a schedule and is only meaningful on
+            PATCH.
         body:
           description: |
             Initial notes. Either one string (newlines allowed) or an ordered
@@ -3176,6 +3398,10 @@ components:
         deadline_time: { $ref: "#/components/schemas/TaskTimeInput" }
         recurrence:
           type: [string, "null"]
+          description: |
+            Set the repeat schedule, accepting the same two input syntaxes as
+            `CreateTaskRequest.recurrence` and storing the same canonical value.
+            `null` — or the words `off`, `none`, `never` — removes it.
         parent_id:
           description: New location. Null unnests the subtree to the section level.
           oneOf:

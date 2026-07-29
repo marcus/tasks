@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require_relative "../recur"
 require_relative "../store"
 
 module Tasks
@@ -30,6 +31,11 @@ module Tasks
           availability_blocker_id: view.availability_blocker_id,
           available_at: view.available_at,
           recurrence: view.recur,
+          # The canonical cookie rendered for reading — a string render only, no
+          # occurrence math, so it costs the same on a list row as on a single
+          # task. The stamp already IS the next occurrence; clients wanting a
+          # projection ask GET /recurrence/explain.
+          recurrence_human: Recur.humanize(view.recur),
           body: view.body,
           closed: view.closed&.iso8601,
           archived: view.source == :archive,

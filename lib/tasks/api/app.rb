@@ -24,6 +24,17 @@ module Tasks
       ].freeze
       TASK_QUERY_KEYS = %w[source].freeze
       DELETE_QUERY_KEYS = %w[cascade].freeze
+      EXPLAIN_PATH = "/api/v1/recurrence/explain"
+      RECURRENCE_QUERY_KEYS = %w[input count].freeze
+      # Projection window for the explain endpoint. The engine clamps to the
+      # same ceiling; the adapter states it so the contract can document it.
+      EXPLAIN_COUNT_DEFAULT = 5
+      EXPLAIN_COUNT_MAX = 50
+      # Paths logged verbatim, having no id segment to template away.
+      LITERAL_ROUTES = %W[
+        /healthz /readyz /api/v1/meta /api/v1/sections /api/v1/tasks /api/v1/projects
+        #{EXPLAIN_PATH}
+      ].freeze
       CREATE_FIELDS = %w[
         title priority tags contexts deferred scheduled scheduled_time deadline deadline_time
         state project parent_id recurrence body apply_host_context
@@ -141,6 +152,7 @@ module Tasks
         return sections(request, request_id) if method == "GET" && path == "/api/v1/sections"
         return list_tasks(request, request_id) if method == "GET" && path == "/api/v1/tasks"
         return create_task(request, request_id) if method == "POST" && path == "/api/v1/tasks"
+        return explain_recurrence(request) if method == "GET" && path == EXPLAIN_PATH
 
         match = path.match(%r{\A/api/v1/tasks/([^/]+)\z})
         if match
@@ -241,6 +253,42 @@ module Tasks
         read_failure!(result, request_id) unless result.ok?
         data = result.data.map { |view| Representation.section(view) }
         [200, {}, Representation.success(data, result.store_revision)]
+      end
+
+      # The API twin of `tasks recur --explain`: parse, normalize, and project a
+      # schedule without naming a task and without touching the store. The only
+      # ambient input is the server's clock and configured zone, so this is the
+      # one read that stays available while the store is unreadable — and the
+      # response carries no `meta.store_revision`, because no store was read
+      # (same envelope choice as the health probes).
+      #
+      # `Recur.explain` answers in three shapes and all three are 200: an
+      # understood schedule with its projection, an understood schedule that can
+      # never fire from today's anchor (`next: []` plus the engine's reason), and
+      # an input that is not a schedule at all (`input` + reason). Only a
+      # malformed *request* — no `input`, a blank one, a non-integer `count`, an
+      # unknown query field — is 4xx, exactly as elsewhere.
+      def explain_recurrence(request)
+        query = query_params(request, RECURRENCE_QUERY_KEYS)
+        validation!(input: ["is required"]) unless query.key?("input")
+        input = query.fetch("input")
+        validation!(input: ["must be non-empty text"]) if input.strip.empty?
+        payload = Recur.explain(
+          input, context: request_temporal_context, count: explain_count(query)
+        )
+        payload = payload.merge(next: payload[:next].map(&:iso8601)) if payload.key?(:next)
+        [200, {}, { data: payload }]
+      end
+
+      # Out-of-range counts clamp rather than fail, matching the engine, so a
+      # client asking for "as many as you have" gets the ceiling instead of a
+      # 422. A count that is not an integer at all is still a bad request.
+      def explain_count(query)
+        return EXPLAIN_COUNT_DEFAULT unless query.key?("count")
+        raw = query.fetch("count")
+        validation!(count: ["must be an integer"]) unless raw.match?(/\A-?\d+\z/)
+
+        Integer(raw, 10).clamp(0, EXPLAIN_COUNT_MAX)
       end
 
       def list_tasks(request, request_id)
@@ -390,7 +438,14 @@ module Tasks
           context: OperationContext.new(operation_id: request_id, source: :api,
                                         temporal_context: temporal)
         )
-        mutation_failure!(result, request_id, id: id, placement: changes[:location])
+        # A patch the adapter accepted and the domain refused (a schedule that can
+        # never fire, recurrence on a dateless task, a state transition the store
+        # forbids) carries the domain's own sentence as the error message —
+        # there are no per-field errors to hand back, and the generic
+        # "one or more fields are invalid" hides the only useful information.
+        # Same choice as approve/reject and the delegation actions.
+        mutation_failure!(result, request_id, id: id, placement: changes[:location],
+                                              semantic_invalid: true)
         resource_result = application.task_result_from_mutation(result, id, temporal_context: temporal)
         view = resource_result.data
         [
@@ -1033,12 +1088,23 @@ module Tasks
         TemporalContext.capture(timezone: @timezone, time_format: @time_format)
       end
 
+      # Both input syntaxes — interval cookies/phrases ("weekly", ".+1w") and
+      # calendar schedules ("every monday", "w:mon") — through the one shared
+      # parser, stored and echoed in the canonical spelling. A rejection carries
+      # the engine's own reason rather than a generic one, because the reason is
+      # the only thing that tells a client which part of the phrase failed.
+      #
+      # `off` clears an existing schedule (PATCH) and is meaningless on create,
+      # where there is nothing to clear.
       def normalize_recurrence(value, allow_off:)
         return nil if value.nil?
-        parsed = Recur.parse_interval(value)
-        return nil if allow_off && parsed == :off
-        validation!(recurrence: ["must be a valid recurrence interval"]) unless parsed.is_a?(String)
-        parsed
+        result = Recur.parse_result(value)
+        validation!(recurrence: [result[:error]]) if result[:error]
+        canonical = result.fetch(:canonical)
+        return nil if allow_off && canonical == :off
+        validation!(recurrence: ['must name a schedule, not "off"']) unless canonical.is_a?(String)
+
+        canonical
       end
 
       def normalize_body(value)
@@ -1312,7 +1378,7 @@ module Tasks
 
       def route_name(request)
         path = request.path_info
-        return path if %w[/healthz /readyz /api/v1/meta /api/v1/sections /api/v1/tasks /api/v1/projects].include?(path)
+        return path if LITERAL_ROUTES.include?(path)
         action = path.match(%r{\A/api/v1/tasks/[^/]+/(delegate|undelegate|claim|release|work_ref)\z})
         return "/api/v1/tasks/{id}/#{action[1]}" if action
         return "/api/v1/tasks/{id}" if path.match?(%r{\A/api/v1/tasks/[^/]+\z})
