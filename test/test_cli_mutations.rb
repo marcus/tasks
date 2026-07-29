@@ -2554,7 +2554,7 @@ class TestCliMutations < Minitest::Test
   def test_cli_recur_bad_interval_exits_1
     run_cli("recur", "Pay rent", "bananas", content: RECUR_CONTENT) do |_org, _out, err, st|
       assert_equal 1, st.exitstatus
-      assert_match(/unrecognized interval/, err)
+      assert_match(/unrecognized schedule/, err)
     end
   end
 
@@ -2579,6 +2579,292 @@ class TestCliMutations < Minitest::Test
       require "json"
       touched = JSON.parse(out).fetch("touched")
       assert_equal ".+1w", touched[0]["recur"]
+    end
+  end
+
+  # -- recur: calendar schedules ----------------------------------------------
+
+  # A natural phrase and the canonical grammar are two spellings of one
+  # schedule; both must land the same stored value.
+  def test_cli_recur_natural_phrase_lands_a_canonical_calendar_cookie
+    run_cli("recur", "Pay rent", "every mon wed", content: RECUR_CONTENT) do |org, out, _err, st|
+      assert st.success?
+      assert_equal "w:mon,wed", record_for(org, title: "Pay rent")["recur"]
+      assert_match(/↻ every Mon, Wed/, out)
+      # The stamp *is* the next occurrence, so that is the date reported —
+      # the same convention `done` uses after a roll.
+      assert_match(/→ next 2026-08-01 \(Sat\)/, out)
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_recur_canonical_calendar_input_passes_through
+    run_cli("recur", "Pay rent", "m:15", content: RECUR_CONTENT) do |org, out, _err, st|
+      assert st.success?
+      assert_equal "m:15", record_for(org, title: "Pay rent")["recur"]
+      assert_match(/monthly on the 15th/, out)
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_recur_one_hop_calendar_prefix_is_kept
+    run_cli("recur", "Pay rent", "+w:mon", content: RECUR_CONTENT) do |org, _out, _err, st|
+      assert st.success?
+      assert_equal "+w:mon", record_for(org, title: "Pay rent")["recur"]
+    end
+  end
+
+  # --from is interval-only. Combined with a calendar schedule it must name the
+  # prefix the input *lacks* — the advice is the opposite one in each direction —
+  # and write nothing.
+  def test_cli_recur_from_with_a_bare_calendar_schedule_points_at_the_plus_prefix
+    run_cli("recur", "Pay rent", "every monday", "--from", "schedule",
+            content: RECUR_CONTENT) do |org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/--from schedule applies to intervals/, err)
+      assert_match(/w:mon advances to the next match after today/, err)
+      assert_match(/write \+w:mon to advance one occurrence past the stored date/, err)
+      assert_equal RECUR_CONTENT, File.read(org)
+    end
+  end
+
+  def test_cli_recur_from_with_a_one_hop_calendar_schedule_points_at_dropping_it
+    run_cli("recur", "Pay rent", "+w:mon", "--from", "schedule",
+            content: RECUR_CONTENT) do |org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/\+w:mon already advances one occurrence past the stored date/, err)
+      assert_match(/drop the \+/, err)
+      refute_match(/\+\+w:mon/, err, "++ is not valid calendar input")
+      assert_equal RECUR_CONTENT, File.read(org)
+    end
+  end
+
+  def test_cli_recur_from_still_switches_a_bare_interval
+    run_cli("recur", "Pay rent", "every 3 days", "--from", "schedule",
+            content: RECUR_CONTENT) do |org, _out, _err, st|
+      assert st.success?
+      assert_equal "+3d", record_for(org, title: "Pay rent")["recur"]
+    end
+  end
+
+  # An interval prefix on a calendar schedule is a parse error, and the reason
+  # (not a generic "unrecognized") is what tells the user which prefix to use.
+  def test_cli_recur_rejects_an_interval_prefix_on_a_calendar_schedule
+    run_cli("recur", "Pay rent", ".+w:mon", content: RECUR_CONTENT) do |org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/interval prefix/, err)
+      assert_equal RECUR_CONTENT, File.read(org)
+    end
+  end
+
+  # A schedule can parse cleanly and still never fire from the task's stamp.
+  # The store refuses it; the CLI must surface that reason, not "no date stamp?".
+  def test_cli_recur_unsatisfiable_schedule_is_refused_with_the_store_reason
+    recs = RECUR_RECORDS.map(&:dup)
+    recs.find { |r| r["title"] == "Pay rent" }["deadline"] = "2027-02-01"
+    content = dump_fixture(recs)
+    run_cli("recur", "Pay rent", "2y:02:5fri", content: content) do |org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/no occurrence of "2y:02:5fri"/, err)
+      assert_nil record_for(org, title: "Pay rent")["recur"]
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  # `--on` seeds the stamp the schedule will repeat from, so seed and schedule
+  # are one transaction: a refused schedule must not leave the task carrying a
+  # date the user never asked for.
+  def test_cli_recur_with_on_refused_schedule_writes_nothing
+    run_cli("recur", "Standup", "2y:02:5fri", "--on", "2027-02-01",
+            content: RECUR_CONTENT) do |org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/no occurrence of "2y:02:5fri"/, err)
+      assert_equal RECUR_CONTENT, File.read(org), "the date seed must not survive the refusal"
+    end
+  end
+
+  def test_cli_recur_with_on_is_one_undoable_transaction
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, RECUR_CONTENT)
+      before = File.binread(org)
+
+      _out, err, status = run_cli_at(org, archive, "recur", "Standup", "every mon", "--on", "2026-09-01")
+      assert status.success?, err
+      rec = record_for(org, title: "Standup notes")
+      assert_equal "w:mon", rec["recur"]
+      assert_equal "2026-09-01", rec["deadline"]
+
+      _undo_out, undo_err, undo_status = run_cli_at(org, archive, "undo")
+      assert undo_status.success?, undo_err
+      assert_equal before, File.binread(org), "one undo restores both fields"
+    end
+  end
+
+  def test_cli_recur_json_write_carries_the_humanized_value_and_next_date
+    run_cli("recur", "Pay rent", "every monday", "--json", content: RECUR_CONTENT) do |_org, out, _err, st|
+      assert st.success?
+      payload = JSON.parse(out)
+      assert_equal "w:mon", payload.fetch("touched")[0]["recur"]
+      assert_equal "every Monday", payload.fetch("touched")[0]["recur_human"]
+      # `next` is the task's stamp after the write — the same value the row
+      # carries, never a date one hop past it.
+      assert_equal payload.fetch("touched")[0]["deadline"], payload.fetch("next")
+      assert_equal "2026-08-01", payload.fetch("next")
+    end
+  end
+
+  # -- recur <ref>: the read-only preview --------------------------------------
+
+  # The stamp is the next occurrence, so the list starts with it and projects
+  # forward from there: --count 5 is the stamp plus four.
+  def test_cli_recur_without_a_schedule_previews_occurrences_without_writing
+    content = recur_content(pay_rent_recur: "w:mon,thu")
+    run_cli("recur", "Pay rent", content: content) do |org, out, _err, st|
+      assert st.success?
+      assert_match(/↻ every Mon, Thu/, out)
+      dates = out.scan(/^  (\d{4}-\d\d-\d\d) (\w{3})$/)
+      assert_equal 5, dates.size, "default --count is 5"
+      assert_equal "2026-08-01", dates.first[0], "the stamp leads the list"
+      assert(dates.drop(1).all? { |_, dow| %w[Mon Thu].include?(dow) })
+      assert_equal content, File.read(org), "a preview never writes"
+    end
+  end
+
+  def test_cli_recur_preview_honors_count_and_json
+    content = recur_content(pay_rent_recur: "w:mon")
+    run_cli("recur", "Pay rent", "--count", "2", "--json", content: content) do |_org, out, _err, st|
+      assert st.success?
+      row = JSON.parse(out)
+      assert_equal "w:mon", row["recur"]
+      assert_equal "every Monday", row["recur_human"]
+      assert_equal "2026-08-01", row["anchor"]
+      assert_equal %w[2026-08-01 2026-08-03], row["next"], "stamp first, then the projection"
+      assert_equal "Pay rent", row["title"]
+    end
+  end
+
+  def test_cli_recur_preview_with_count_one_is_just_the_stamp
+    content = recur_content(pay_rent_recur: "w:mon")
+    run_cli("recur", "Pay rent", "--count", "1", "--json", content: content) do |_org, out, _err, st|
+      assert st.success?
+      assert_equal ["2026-08-01"], JSON.parse(out)["next"]
+    end
+  end
+
+  def test_cli_recur_preview_on_a_task_without_recurrence_says_so
+    run_cli("recur", "Pay rent", content: RECUR_CONTENT) do |_org, out, _err, st|
+      assert st.success?
+      assert_match(/no recurrence/, out)
+    end
+    run_cli("recur", "Pay rent", "--json", content: RECUR_CONTENT) do |_org, out, _err, st|
+      assert st.success?
+      row = JSON.parse(out)
+      assert_nil row["recur"]
+      assert_nil row["recur_human"]
+      assert_empty row["next"]
+    end
+  end
+
+  # A stored schedule that cannot be projected (hand-edited in, since the write
+  # guard refuses these) still reads: the schedule renders, the reason goes to
+  # stderr, and the command does not pretend to have dates.
+  def test_cli_recur_preview_reports_an_unprojectable_stored_schedule
+    recs = RECUR_RECORDS.map(&:dup)
+    rent = recs.find { |r| r["title"] == "Pay rent" }
+    rent["deadline"] = "2027-02-01"
+    rent["recur"] = "2y:02:5fri"
+    run_cli("recur", "Pay rent", "--json", content: dump_fixture(recs)) do |_org, out, _err, st|
+      assert st.success?
+      row = JSON.parse(out)
+      assert_equal ["2027-02-01"], row["next"], "the stamp is still a real occurrence"
+      assert_match(/no occurrence/, row["error"], "but nothing can be projected past it")
+    end
+  end
+
+  def test_cli_recur_preview_rejects_write_only_flags
+    run_cli("recur", "Pay rent", "--on", "2026-09-01", content: RECUR_CONTENT) do |org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/read-only/, err)
+      assert_equal RECUR_CONTENT, File.read(org)
+    end
+  end
+
+  # -- recur --explain ---------------------------------------------------------
+
+  # A schedule that parses but can never fire depends on the anchor's leap
+  # parity, and --explain anchors on today, so the input is picked from the
+  # engine rather than hardcoded into a test that would rot on a future date.
+  def never_firing_schedule
+    require "tasks/recur"
+    candidates = %w[fri mon tue wed thu sat sun].flat_map do |day|
+      [4, 2, 400].map { |n| "#{n}y:02:5#{day}" }
+    end
+    found = candidates.find { |c| Tasks::Recur.explain(c, count: 1)[:error] }
+    refute_nil found, "no never-firing schedule available from today's anchor"
+    found
+  end
+
+  def test_cli_recur_explain_renders_canonical_human_and_dates
+    run_cli("recur", "--explain", "2nd tuesday", content: RECUR_CONTENT) do |org, out, _err, st|
+      assert st.success?
+      assert_match(/^m:2tue — monthly on the 2nd Tuesday$/, out)
+      dates = out.scan(/^  (\d{4}-\d\d-\d\d) (\w{3})$/)
+      assert_equal 5, dates.size
+      assert(dates.all? { |_, dow| dow == "Tue" })
+      assert_equal RECUR_CONTENT, File.read(org), "--explain never touches the store"
+    end
+  end
+
+  def test_cli_recur_explain_json_emits_the_engine_payload
+    run_cli("recur", "--explain", "every mon wed", "--count", "3", "--json",
+            content: RECUR_CONTENT) do |_org, out, _err, st|
+      assert st.success?
+      row = JSON.parse(out)
+      assert_equal "every mon wed", row["input"]
+      assert_equal "w:mon,wed", row["canonical"]
+      assert_equal "every Mon, Wed", row["human"]
+      assert_equal 3, row["next"].size
+      assert(row["next"].all? { |d| %w[Mon Wed].include?(Date.parse(d).strftime("%a")) })
+    end
+  end
+
+  def test_cli_recur_explain_rejects_unreadable_input
+    run_cli("recur", "--explain", "bananas", content: RECUR_CONTENT) do |_org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/unrecognized schedule/, err)
+      assert_match(/try:/, err, "the rejection teaches the grammar")
+    end
+    run_cli("recur", "--explain", "bananas", "--json", content: RECUR_CONTENT) do |_org, out, _err, st|
+      assert_equal 1, st.exitstatus
+      row = JSON.parse(out)
+      assert_equal "bananas", row["input"]
+      assert_match(/unrecognized schedule/, row["error"])
+      refute row.key?("canonical")
+    end
+  end
+
+  def test_cli_recur_explain_reports_a_schedule_that_never_fires
+    schedule = never_firing_schedule
+    run_cli("recur", "--explain", schedule, content: RECUR_CONTENT) do |_org, out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/^#{Regexp.escape(schedule)} — /, out, "it still says what was understood")
+      assert_match(/no occurrence/, err)
+    end
+    run_cli("recur", "--explain", schedule, "--json", content: RECUR_CONTENT) do |_org, out, _err, st|
+      assert_equal 1, st.exitstatus
+      row = JSON.parse(out)
+      assert_equal schedule, row["canonical"]
+      assert_empty row["next"]
+      assert_match(/no occurrence/, row["error"])
+    end
+  end
+
+  def test_cli_recur_explain_off_reports_the_clearing_form
+    run_cli("recur", "--explain", "off", content: RECUR_CONTENT) do |_org, out, _err, st|
+      assert st.success?
+      assert_match(/clears any schedule/, out)
     end
   end
 
@@ -2670,6 +2956,26 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  # capture shares the one parser, so every input form `recur` takes lands
+  # canonical here too.
+  def test_cli_capture_recur_accepts_a_calendar_phrase
+    run_cli("capture", "water plants", "--recur", "every mon,thu", content: RECUR_CONTENT) do |org, _out, _err, st|
+      assert st.success?
+      rec = record_for(org, title: "water plants")
+      assert_equal "w:mon,thu", rec["recur"]
+      assert_match(/\A\d{4}-\d{2}-\d{2}\z/, rec["scheduled"], "a recurring capture is dated so it can repeat")
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  def test_cli_capture_recur_rejects_unreadable_input
+    run_cli("capture", "water plants", "--recur", "bananas", content: RECUR_CONTENT) do |org, _out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_match(/unrecognized schedule/, err)
+      assert_equal RECUR_CONTENT, File.read(org)
+    end
+  end
+
   def test_cli_capture_recurrence_is_one_undoable_transaction
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
@@ -2698,6 +3004,23 @@ class TestCliMutations < Minitest::Test
       assert st.success?
       assert_match(/Pay rent/, out)
       refute_match(/Standup/, out)
+    end
+  end
+
+  # The row shows the schedule a person can read; the machine value stays in
+  # JSON, where `recur_human` renders it once for every consumer.
+  def test_cli_list_recurring_shows_the_humanized_schedule
+    content = recur_content(pay_rent_recur: "w:mon,wed")
+    run_cli("list", "--recurring", content: content) do |_org, out, _err, st|
+      assert st.success?
+      assert_match(/↻ every Mon, Wed/, out)
+      refute_match(/w:mon,wed/, out, "the raw cookie is not the row's job")
+    end
+    run_cli("list", "--recurring", "--json", content: content) do |_org, out, _err, st|
+      assert st.success?
+      row = JSON.parse(out).first
+      assert_equal "w:mon,wed", row["recur"]
+      assert_equal "every Mon, Wed", row["recur_human"]
     end
   end
 

@@ -40,7 +40,10 @@
 #   bin/tasks move <ref> ["Section"|--under <ref>] --before <ref>  place before a sibling
 #   bin/tasks delete <ref>   hard-delete a task (needs --cascade if it has
 #                             subtasks); undoable — usually prefer cancel/archive
-#   bin/tasks recur <ref> <interval|off>   repeat on done (weekly, 2w, .+1m; off clears)
+#   bin/tasks recur <ref> <schedule|off>   repeat on done (weekly, 2w, .+1m,
+#                             every mon,wed, m:15, last friday; off clears).
+#                             No schedule: preview the next occurrences.
+#                             --explain "<schedule>" previews without a task
 #   bin/tasks defer|snooze <ref> [date]    defer until a date, or hold indefinitely
 #   bin/tasks someday <ref>                hold indefinitely (someday/maybe)
 #   bin/tasks activate <ref>               make available now (undefer/resume)
@@ -294,9 +297,8 @@ def cmd_capture(args, proposed: false)
 
   cookie = nil
   if recur
-    require_relative "../lib/tasks/recur"
-    cookie = Tasks::Recur.parse_interval(recur)
-    abort "unrecognized interval: #{recur} (try weekly, 2w, .+1m)" if cookie.nil? || cookie == :off
+    cookie = parse_recur_input(recur)
+    abort "a capture cannot start with recurrence cleared — drop --recur" if cookie == :off
     # A recurrence needs a date to repeat; default to scheduling it today.
     scheduled ||= "today" unless due
   end
@@ -912,6 +914,9 @@ def item_json(item, task: nil)
     deadline: src.deadline&.iso8601,
     deadline_time: task&.deadline_time || item.deadline_value&.time_metadata,
     recur: src.recur,
+    # The canonical cookie stays the machine value; recur_human is the same
+    # schedule rendered once, here, so no consumer re-implements the grammar.
+    recur_human: src.recur && Tasks::Recur.humanize(src.recur),
     line: item.line, source: src.source, headline: src.headline,
   }
   if task
@@ -1527,43 +1532,98 @@ def cmd_activate(args)
   end
 end
 
-# Human-readable gloss of a repeater cookie, e.g. ".+1w" → "every 1 week, from
-# completion". Used by `show` and `recur` output.
+# Human-readable gloss of a stored recurrence value, e.g. ".+1w" → "every week
+# from completion", "w:mon,wed" → "every Mon and Wed". One renderer (the engine's)
+# for `show`, `list`, and every `recur` surface; unparsable values echo verbatim.
 def recur_summary(cookie)
-  m = cookie.to_s.match(/\A(\.\+|\+\+|\+)(\d+)([dwmy])\z/)
-  return cookie unless m
-  unit = { "d" => "day", "w" => "week", "m" => "month", "y" => "year" }[m[3]]
-  n = m[2].to_i
-  anchor = { ".+" => "from completion", "+" => "fixed", "++" => "catch-up" }[m[1]]
-  "every #{n} #{unit}#{n == 1 ? "" : "s"}, #{anchor}"
+  Tasks::Recur.humanize(cookie) || cookie.to_s
 end
 
-# Attach/replace/clear a recurrence repeater on a task's date stamp. On `done`,
-# a recurring task rolls its date forward and stays open instead of closing.
-# `<interval>`: a cookie (.+1w/+2d/++1m) or friendly form (weekly/2w/every 3 days),
-# or `off` to clear. --from schedule|completion picks +/.+ for a bare interval;
-# --on <date> seeds a stamp when the task has no date yet.
+RECUR_USAGE = %(usage: tasks recur <ref> [<schedule>] [--from schedule|completion] [--on <date>]
+       tasks recur <ref> [--count N] [--json]              preview the next occurrences
+       tasks recur --explain "<schedule>" [--count N] [--json]).freeze
+
+# What to type when the parser can't read a schedule: one example per shape.
+RECUR_HINT = "try: weekly · 2w · every 3 days · .+1m · every mon,wed · m:15 · " \
+             "2nd tuesday · last day of the month · every july 4 · off"
+
+# Normalize typed input to its stored form, aborting with the engine's own
+# reason (which names the fix) when it can't be read. `:off` comes back for the
+# clearing words; each caller decides whether clearing is legal there.
+def parse_recur_input(input, default_prefix: ".+")
+  result = Tasks::Recur.parse_result(input, default_prefix: default_prefix)
+  abort "#{result[:error]}\n#{RECUR_HINT}" if result[:error]
+  result[:canonical]
+end
+
+# --count for the two preview modes. Returns nil when the flag was absent, so
+# the write path can reject it rather than silently ignore it.
+def recur_count(args)
+  raw = extract_value(args, "--count")
+  return nil if raw.nil?
+  abort "--count must be a positive whole number" unless raw.match?(/\A\d+\z/) && raw.to_i.positive?
+  abort "--count is capped at 50" if raw.to_i > 50
+  raw.to_i
+end
+
+# Attach/replace/clear a recurrence schedule on a task's date stamp, or — with
+# no schedule argument — preview when the task fires next. On `done`, a
+# recurring task rolls its date forward and stays open instead of closing.
+# `<schedule>`: an interval (weekly/2w/every 3 days/.+1m), a calendar schedule
+# (every mon,wed / m:15 / last friday / w:mon), or `off` to clear.
+# --from schedule|completion picks +/.+ for a bare interval (calendar schedules
+# carry their own semantics and reject it); --on <date> seeds a stamp when the
+# task has no date yet.
 def cmd_recur(args)
   require_relative "../lib/tasks/dates"
-  require_relative "../lib/tasks/recur"
-  today = Date.today
+  context = temporal_context
+  today = context.local_date
   args = args.dup
 
   from = extract_value(args, "--from")
   abort "--from must be schedule or completion" unless from.nil? || %w[schedule completion].include?(from)
   on = extract_value(args, "--on")
   on_date = on && (Tasks::Dates.parse_when(on, today: today) || abort("unrecognized date: #{on}"))
+  count = recur_count(args)
 
-  flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
+  flags, rest = take_flags(args, "--dry-run", "--json", "--include-done", "--explain")
+
+  # `--explain` never touches the store: it parses, renders, and projects.
+  if flags["--explain"]
+    abort "--explain previews a schedule, not a task — drop --from/--on/--dry-run" if from || on || flags["--dry-run"]
+    input = rest.join(" ").strip
+    abort RECUR_USAGE if input.empty?
+    return recur_explain(input, count: count || 5, json: flags["--json"], context: context)
+  end
+
   ref = rest.shift
-  interval = rest.join(" ").strip
-  abort %(usage: tasks recur <ref> <weekly|2w|.+1m|off> [--from schedule|completion] [--on <date>]) if ref.nil? || ref.strip.empty? || interval.empty?
-
-  default_prefix = from == "schedule" ? "+" : ".+"
-  cookie = Tasks::Recur.parse_interval(interval, default_prefix: default_prefix)
-  abort "unrecognized interval: #{interval} (try weekly, 2w, every 3 days, .+1m, or off)" if cookie.nil?
+  input = rest.join(" ").strip
+  abort RECUR_USAGE if ref.nil? || ref.strip.empty?
 
   item = resolve_ref(ref, include_done: flags["--include-done"])
+
+  # No schedule argument: read-only preview of the schedule already stored.
+  if input.empty?
+    abort "`tasks recur <ref>` with no schedule is read-only — pass a schedule to set one" if from || on || flags["--dry-run"]
+    return recur_preview(item, count: count || 5, json: flags["--json"], context: context)
+  end
+
+  abort "--count previews occurrences; it does not apply when setting a schedule" if count
+  default_prefix = from == "schedule" ? "+" : ".+"
+  cookie = parse_recur_input(input, default_prefix: default_prefix)
+  # --from is interval-only: a calendar schedule carries its own advance
+  # semantics in the `+` prefix, so point at the prefix the input does not have.
+  if from && cookie.is_a?(String) && Tasks::Recur.calendar?(cookie)
+    advice = if cookie.start_with?("+")
+               "#{cookie} already advances one occurrence past the stored date; " \
+               "drop the + to advance to the next match after today instead"
+             else
+               "#{cookie} advances to the next match after today; " \
+               "write +#{cookie} to advance one occurrence past the stored date instead"
+             end
+    abort "--from #{from} applies to intervals, not calendar schedules — #{advice}"
+  end
+
   task_id = stable_id_for(item)
   # A closed task with a live repeater is dead recurrence: `done` can't reach it
   # to roll it. Refuse to create one (clearing with `off` is always fine).
@@ -1593,16 +1653,109 @@ def cmd_recur(args)
     report_touched([task_id], json: flags["--json"], today: today)
     return
   end
-  if on_date && !has_date
-    result = patch_task_by_id(task_id, field: :deadline, value: on_date,
-                              label: "deadline → #{on_date.iso8601}: #{item.title}", today: today)
-    mutation_result_failed(result, "failed to seed date")
-  end
   label = cookie == :off ? "recur off: #{item.title}" : "recur #{cookie}: #{item.title}"
-  result = patch_task_by_id(task_id, field: :recurrence, value: cookie, label: label, today: today)
+  result =
+    if on_date && !has_date
+      # Seed and schedule land in one checked transaction: the store applies
+      # dates before recurrence, so the satisfiability guard anchors on the new
+      # deadline, a refusal leaves the file untouched, and success is one undo.
+      changeset_task_by_id(task_id, changes: { deadline: on_date, recurrence: cookie },
+                           label: "recur #{cookie} + deadline #{on_date.iso8601}: #{item.title}",
+                           today: today, context: cli_operation_context(context))
+    else
+      patch_task_by_id(task_id, field: :recurrence, value: cookie, label: label, today: today)
+    end
+  # The store refuses a schedule that would never fire (or would roll past the
+  # storable year range); its reason names which, so surface it verbatim.
+  mutation_failed(result.errors.first) if result.invalid? && !result.errors.empty?
   mutation_result_failed(result, "failed to set recurrence (no date stamp?)")
+
+  # The stamp on the task *is* its next occurrence, so report that — the same
+  # value (and phrasing) `done` prints after a roll.
+  fresh = result.read_snapshot&.items&.find { |i| i.id == task_id }
+  stamp = fresh && (fresh.deadline || fresh.scheduled)
+  nxt = cookie == :off ? nil : stamp
+  if cookie != :off && !flags["--json"]
+    puts "↻ #{recur_summary(cookie)} #{dim("(#{cookie})")}" \
+         "#{nxt ? " → next #{nxt.iso8601} (#{nxt.strftime("%a")})" : ""}"
+  end
   report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"],
-                 today: today, read_snapshot: result.read_snapshot)
+                 today: today, read_snapshot: result.read_snapshot,
+                 extra: nxt ? { next: nxt.iso8601 } : nil, temporal_context: context)
+end
+
+# `tasks recur <ref>` — read-only: what this task's schedule means and when it
+# fires next. The stamp is the next occurrence by definition, so the list starts
+# with it and projects forward from there. Never mutates, so it is safe for
+# agents to call before committing.
+def recur_preview(item, count:, json:, context:)
+  today = context.local_date
+  cookie = item.recur.to_s.strip
+  anchor = item.deadline || item.scheduled
+  dates, error = [], nil
+  unless cookie.empty?
+    if anchor
+      dates = [anchor]
+      begin
+        dates += Tasks::Recur.occurrences(cookie, from: anchor, today: today, count: count - 1) if count > 1
+      rescue ArgumentError => e
+        error = e.message
+      end
+    else
+      error = "no scheduled date or deadline to project from"
+    end
+  end
+
+  if json
+    require "json"
+    row = { id: item.id, line: item.line, title: item.title,
+            recur: cookie.empty? ? nil : cookie,
+            recur_human: cookie.empty? ? nil : recur_summary(cookie),
+            anchor: anchor&.iso8601, next: dates.map(&:iso8601) }
+    row[:error] = error if error
+    puts JSON.generate(row)
+    return
+  end
+
+  puts item_headline(item)
+  if cookie.empty?
+    puts "  no recurrence — set one with `tasks recur #{item.title.inspect} <schedule>`"
+    return
+  end
+  puts "  ↻ #{recur_summary(cookie)} #{dim("(#{cookie})")}"
+  warn error if error
+  dates.each { |d| puts "  #{d.iso8601} #{dim(d.strftime("%a"))}" }
+end
+
+# `tasks recur --explain "<schedule>"` — taskless parse/preview. The engine's
+# payload has three shapes (understood + projected, understood but never fires,
+# not understood); all three render here, and both failing shapes exit 1 so a
+# script can branch on the status alone.
+def recur_explain(input, count:, json:, context:)
+  payload = Tasks::Recur.explain(input, context: context, count: count)
+  if json
+    require "json"
+    row = payload.dup
+    row[:next] = row[:next].map(&:iso8601) if row[:next]
+    puts JSON.generate(row)
+    exit 1 if row[:error]
+    return
+  end
+
+  unless payload[:canonical]
+    # Either an unreadable input or the explicit "off" words, which parse
+    # cleanly and mean "clear the schedule".
+    abort "#{payload[:error]}\n#{RECUR_HINT}" if payload[:error]
+    puts "off — clears any schedule on the task"
+    return
+  end
+
+  puts "#{payload[:canonical]} — #{payload[:human]}"
+  Array(payload[:next]).each { |d| puts "  #{d.iso8601} #{dim(d.strftime("%a"))}" }
+  return unless payload[:error]
+
+  warn payload[:error]
+  exit 1
 end
 
 # Pull `--flag value` out of args in place, returning the value (or nil). Aborts
@@ -2026,7 +2179,7 @@ def cmd_list(args)
       arch = i.source == :archive ? dim("  (archived)") : ""
       task = result.task_for(i)
       defr = list_availability_label(task, today: today, context: operation_context)
-      recr = i.recur ? dim("  ↻#{i.recur}") : ""
+      recr = i.recur ? dim("  ↻ #{recur_summary(i.recur)}") : ""
       puts "  #{fmt(i)}#{due.empty? ? "" : "  #{due}"}#{recr}#{defr}#{arch}"
     end
     puts
@@ -2513,8 +2666,14 @@ HELP = <<~USAGE
                  <ref> --top         unnest the subtree back to the section level
                  <ref> ["Section"|--under <ref>] --before <ref>
                                      place the subtree before a stable sibling
-    recur repeat <ref> <interval>    repeat on done: weekly · 2w · .+1m · off
-                                     --from schedule|completion · --on <date>
+    recur repeat <ref> <schedule>    repeat on done: weekly · 2w · .+1m · off
+                                     calendar: every mon,wed · m:15 · 2nd tuesday ·
+                                     last day of the month · every july 4
+                                     --from schedule|completion (intervals only) ·
+                                     --on <date> seeds a stamp
+                 <ref>               read-only: the schedule + its next dates
+                                     (--count N, default 5 · --json)
+                 --explain "<sched>" parse/preview any schedule, no task needed
     defer   snooze <ref> [date/time] defer until exact value; omitted means On Hold
     someday        <ref>             put on indefinite hold (Someday/Maybe)
     activate       <ref>             make available now (undefer, resume)

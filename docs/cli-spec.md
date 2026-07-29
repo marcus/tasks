@@ -526,25 +526,61 @@ deadlines become overdue strictly after their resolved instant and sort by that
 instant; same-day all-day deadlines sort after timed ones. Times affect task
 semantics only. They do not schedule reminders or notifications.
 
-**Recurrence.** A task *recurs* when it carries a `recur` cookie alongside a
-`scheduled`/`deadline` date: `.+1w`, `++1m`, `+2d`. The prefix sets what the
-interval is measured from on completion — `+` fixed (stored date + interval, one
-hop), `++` catch-up (repeated until strictly future), `.+` from-completion (today
-+ interval) — and the suffix is a count plus a unit (`d`/`w`/`m`/`y`; months/years
-step by calendar with day-clamp, so Jan 31 `+1m` → Feb 28). Timed `++` catch-up
-compares the exact release/due boundary, and `.+` uses the completion date in
-the value's effective zone. A nonexistent recurring wall time is skipped by
-another whole interval without changing its clock time or fixed zone.
-Completing a recurring
-task (`done`, or `state … DONE`) rolls its date forward and **leaves it open**
-instead of setting `closed`; it logs a `- Did [date]` line to the body since the
-task never closes. `cancel` still truly closes it
-(stopping the recurrence). `recur <ref> <interval>` sets/replaces the cookie
-(bare intervals like `weekly`/`2w`/`every 3 days` default to `.+`; `--from
-schedule` uses `+`); `recur <ref> off` clears it; `list --recurring` reviews
-them. Dating commands (`due`/`schedule`/`reschedule`) preserve an existing
-cookie. In the TUI, `r` opens a recurrence popup on the selected task, a `↻`
-badge marks recurring tasks, and completing one rolls it forward in place.
+**Recurrence.** A task *recurs* when it carries a `recur` schedule alongside a
+`scheduled`/`deadline` date. The stamp on the task **is** the next occurrence;
+the schedule only says how it advances on completion — nothing is materialized
+ahead of time. One scalar field holds two stored shapes:
+
+*Interval cookies* — `.+1w`, `++1m`, `+2d`. The prefix sets what the interval is
+measured from on completion: `+` fixed (stored date + interval, one hop), `++`
+catch-up (repeated until strictly future), `.+` from-completion (today +
+interval). The suffix is a count plus a unit (`d`/`w`/`m`/`y`; months/years step
+by calendar with day-clamp, so Jan 31 `+1m` → Feb 28).
+
+*Calendar schedules* — advance to the next matching calendar date:
+`w:mon,wed` (weekly on a day set), `2w:mon` (every Nth week, parity anchored on
+the stamp's ISO week when the schedule is set and preserved by every roll),
+`m:15` / `m:last` / `m:2tue` / `m:lastfri` (monthly by day-of-month, last day, or
+ordinal weekday, comma-separable), `y:07-04` / `y:02:2tue` (yearly). Only two
+prefixes exist, because "from completion" and "catch-up" coincide when the dates
+are calendar-fixed: bare (the default) advances to the next match strictly after
+**today**; `+` (one-hop) advances to the next match strictly after the **stored
+date**, which may stay in the past when every missed occurrence must be
+processed. `.+`/`++` on a calendar schedule are rejected with that explanation.
+Edge rules: a numeric day the month lacks clamps to the month's last day (`m:31`
+in April = April 30); an ordinal weekday the month lacks skips to the next month
+that has one (`m:5fri`); `y:02-29` clamps to Feb 28 in non-leap years.
+
+Input never has to be canonical. `recur`, `capture --recur`, and the API take
+natural phrases (`every monday`, `every mon wed fri`, `weekdays`, `weekends`,
+`the 15th`, `last day of the month`, `2nd tuesday`, `every 2 weeks on monday`,
+`every july 4`; case-insensitive, filler words ignored) as well as the canonical
+grammar, and one parser normalizes both to the single stored spelling. Bare
+intervals (`weekly`, `2w`, `every 3 days`) default to `.+`; bare calendar input
+defaults to the prefixless catch-up form. `off`/`none`/`never` clear the
+schedule. Unparsable stored values degrade to non-recurring on read and are
+reported by `check`, never auto-repaired.
+
+Timed `++` catch-up compares the exact release/due boundary, and `.+` uses the
+completion date in the value's effective zone. A nonexistent recurring wall time
+(DST gap) skips to the next occurrence without changing its clock time or fixed
+zone. When both dates are present the deadline carries the schedule and the
+scheduled date shifts by the same offset, preserving lead time.
+
+Completing a recurring task (`done`, or `state … DONE`) rolls its date forward
+and **leaves it open** instead of setting `closed`; it logs a `- Did [date]` line
+to the body since the task never closes. `cancel` still truly closes it
+(stopping the recurrence). `recur <ref> <schedule>` sets/replaces the schedule
+(`--from schedule` switches a bare *interval* to `+`; it does not apply to
+calendar schedules); `recur <ref> off` clears it; `recur <ref>` with no schedule
+previews the stamp and the occurrences after it; `recur --explain "<schedule>"` parses and projects
+any schedule without touching the store; `list --recurring` reviews them. A
+schedule that could never fire from the task's stamp — or would roll past the
+storable year range — is refused at write time with the engine's reason, so
+nothing lands that `done` could not roll. Dating commands
+(`due`/`schedule`/`reschedule`) preserve an existing schedule. In the TUI, `r`
+opens a recurrence popup on the selected task, a `↻` badge marks recurring
+tasks, and completing one rolls it forward in place.
 
 **Cascading completion.** Completing a parent completes its whole open subtree.
 `done` (or `state … DONE`) on a task closes every open descendant
@@ -731,7 +767,7 @@ and `sources.memory` (`"TASKS_MEMORY env"` / `"config file"` /
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `list [filters]` | `l` | ✅ | All tasks grouped by state. Filters compose: `@context`, `+tag`, `/text` or bare word, `-A/-B/-C`, lifecycle scope `--open/-o` (default), `--proposed`, `--done/-d`, `--archived/-x`, or `--all/-a` (mutually exclusive). Effectively unavailable tasks are hidden from the default open scope; `--unavailable` (compatibility alias `--deferred/-D`) lists timed, inherited, and indefinite blockers; `--someday/--on-hold` selects tasks carrying their own indefinite marker. Those two filters are mutually exclusive. With a closed/archive scope, legacy `--deferred` and `--someday` filter the own marker; explicit `--unavailable` is rejected because every closed task is unavailable for lifecycle reasons. `--recurring/-R` lists tasks with a repeater. `--delegated` selects tasks carrying a delegation (human or agent, ready or claimed) in file order and composes with any lifecycle scope — but only *within* that scope, so it is not "every delegated task": under the default `--open` it still inherits the open scope's availability rule, and a delegated task with a future `scheduled` date or a blocked/on-hold ancestor is hidden until you ask for it (`--all --delegated`, which also reviews closed provenance, or `--unavailable --delegated`, which lists exactly the hidden ones). `--agent-ready` lists the claimable queue — agent kind, unclaimed, accepted live state, and available under the ordinary prerequisite/ancestor rules — ranked by priority, then soonest deadline-or-scheduled boundary, then file order; it is only valid with `--open` and is mutually exclusive with `--delegated`. Both print one flat line per task (`agent-ready (<mode>): …`, `delegated → <email> (<STATE>): …`, `claimed by <id>: …`) instead of the state-grouped view. `--body/-b` widens text matching into notes. `--json` |
+| `list [filters]` | `l` | ✅ | All tasks grouped by state. Filters compose: `@context`, `+tag`, `/text` or bare word, `-A/-B/-C`, lifecycle scope `--open/-o` (default), `--proposed`, `--done/-d`, `--archived/-x`, or `--all/-a` (mutually exclusive). Effectively unavailable tasks are hidden from the default open scope; `--unavailable` (compatibility alias `--deferred/-D`) lists timed, inherited, and indefinite blockers; `--someday/--on-hold` selects tasks carrying their own indefinite marker. Those two filters are mutually exclusive. With a closed/archive scope, legacy `--deferred` and `--someday` filter the own marker; explicit `--unavailable` is rejected because every closed task is unavailable for lifecycle reasons. `--recurring/-R` lists tasks with a schedule; every list row with one shows `↻ <humanized schedule>`. `--delegated` selects tasks carrying a delegation (human or agent, ready or claimed) in file order and composes with any lifecycle scope — but only *within* that scope, so it is not "every delegated task": under the default `--open` it still inherits the open scope's availability rule, and a delegated task with a future `scheduled` date or a blocked/on-hold ancestor is hidden until you ask for it (`--all --delegated`, which also reviews closed provenance, or `--unavailable --delegated`, which lists exactly the hidden ones). `--agent-ready` lists the claimable queue — agent kind, unclaimed, accepted live state, and available under the ordinary prerequisite/ancestor rules — ranked by priority, then soonest deadline-or-scheduled boundary, then file order; it is only valid with `--open` and is mutually exclusive with `--delegated`. Both print one flat line per task (`agent-ready (<mode>): …`, `delegated → <email> (<STATE>): …`, `claimed by <id>: …`) instead of the state-grouped view. `--body/-b` widens text matching into notes. `--json` |
 | `agenda` | `a` | ✅ | Available dated items, soonest first. `--json` |
 | `next` | `n` | ✅ | NEXT actions by context. `--json` |
 | `quadrants` | `q` | ✅ | Covey 2×2 from priority (A/B ⇒ important) + a `DEADLINE` within `urgent_days` (default 3, overdue counts) ⇒ urgent, with `important`/`urgent` tags as overrides. `--json` adds `quadrant`. |
@@ -745,10 +781,13 @@ and `sources.memory` (`"TASKS_MEMORY env"` / `"config file"` /
 
 JSON list shape (`--json` on list/agenda/next/quadrants/inbox) — a flat array,
 already sorted the way the text view sorts:
-`[{"state": "NEXT", "priority": "A", "title": "…", "tags": [..], "contexts": [..], "deferred": false, "scheduled": null, "scheduled_time": null, "deadline": "2026-07-02", "deadline_time": null, "available": true, "available_at": null, "availability_reason": "available", "availability_blocker_id": null, "recur": null, "line": 17, "source": "live", "headline": "NEXT [#A] …"}]`
+`[{"state": "NEXT", "priority": "A", "title": "…", "tags": [..], "contexts": [..], "deferred": false, "scheduled": null, "scheduled_time": null, "deadline": "2026-07-02", "deadline_time": null, "available": true, "available_at": null, "availability_reason": "available", "availability_blocker_id": null, "recur": null, "recur_human": null, "line": 17, "source": "live", "headline": "NEXT [#A] …"}]`
 (`headline` is the star-less summary rendered from the record's fields; `source`
-is `"live"` or `"archive"`; `recur` is the cookie string, e.g. `".+1w"`, or
-`null`; proposals report `availability_reason: "proposed"`.)
+is `"live"` or `"archive"`; `recur` is the stored canonical schedule, e.g.
+`".+1w"` or `"w:mon,wed"`, or `null`, and `recur_human` is that same value
+rendered once for display (`"every Mon, Wed"`, `null` when `recur` is) so no
+consumer re-implements the grammar; proposals report
+`availability_reason: "proposed"`.)
 Every row also carries `"project"` and `"delegation"` — the latter is the
 delegation object verbatim (`{kind, mode?, status, assignee?, at, work_ref?}`)
 or `null`. That is what makes `list --agent-ready --json` a complete heartbeat
@@ -760,7 +799,7 @@ display text to parse.
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `capture "text"` | `add`, `c` | ✅ | New accepted INBOX item. `--due` and `--scheduled` accept complete date/time expressions. Each has independent `--due-timezone`/`--scheduled-timezone`, `--due-floating`/`--scheduled-floating`, and `--due-fold`/`--scheduled-fold` modifiers; a modifier without its matching value is rejected. Other flags remain `--priority`, repeatable tags/contexts/notes, `--no-host-context`, state, project/under, recurrence, dry-run, and JSON. A configured host context is additive with explicit contexts unless suppressed. A capture with either temporal value lands as TODO unless state is explicit. |
+| `capture "text"` | `add`, `c` | ✅ | New accepted INBOX item. `--due` and `--scheduled` accept complete date/time expressions. Each has independent `--due-timezone`/`--scheduled-timezone`, `--due-floating`/`--scheduled-floating`, and `--due-fold`/`--scheduled-fold` modifiers; a modifier without its matching value is rejected. Other flags remain `--priority`, repeatable tags/contexts/notes, `--no-host-context`, state, project/under, recurrence, dry-run, and JSON. `--recur` takes every input form `recur` does (intervals, natural calendar phrases, canonical grammar — see Recurrence) and stores the canonical value; `off` is rejected here since a new task has no schedule to clear, and a recurring capture with no date is scheduled today so it has something to repeat from. A configured host context is additive with explicit contexts unless suppressed. A capture with either temporal value lands as TODO unless state is explicit. |
 | `propose "text"` | | ✅ | New inert PROPOSED task for owner review. Shares capture's dates, priority, repeatable tags/contexts/notes, host-context, project/under, dry-run, and JSON behavior, but rejects explicit state and recurrence. Agent-authored proposals should use `--note` for concise rationale/evidence. |
 
 ## Update (all take `<ref>`, all support `--dry-run`)
@@ -787,7 +826,9 @@ display text to parse.
 | `release <ref> --worker <id> [--note "text"] [--force]` | | ✅ | Hand a claim back (`claimed → ready`, assignee dropped, `work_ref` kept). Requires the worker id matching the live claim unless `--force` (the owner override, which needs no worker). `--note` appends a blocker line to the body through the ordinary note seam, folded into the **same undo step** as the release. A worker mismatch exits 1 with `conflict: claim is held by <holder>, not "<id>"`. Prints `released → agent-ready (<mode>): <title>`. |
 | `move <ref> ("Section" \| --under <ref> \| --top)` | | ✅ | Relocate a task's whole subtree by re-pointing its `parent`. Exactly one destination: a positional **section** name (out of `Inbox` into `Work`), `--under <ref>` to **nest** below another task, or `--top` to **unnest** to the section level. A section name resolves in the same widening tiers as `capture --project` (exact top-level, exact any-level, substring top-level, substring any-level; case-insensitive), so a **nested project sub-section** — e.g. a project under the "Projects" root — is a valid destination, not just a top-level heading. Section and `--top` moves are never depth-checked; `--under` is capped at `max_depth` (over-cap exits 1 with a depth message). Nesting under itself or a descendant exits 1 (cycle). `--top` on an already-top-level task prints "already at top level" (exit 0, no-op). See Nesting. |
 | `move <ref> ["Section" \| --under <ref>] --before <ref>` | | ✅ | Place the whole subtree before a stable sibling. Without an explicit destination, infer the anchor's current parent; otherwise require the anchor to be a direct child of the named task/section. Not combinable with `--top`. Exact errors and human/JSON/dry-run output are frozen under Manual sibling placement above. |
-| `recur <ref> <interval>` | `repeat`, `every` | ✅ | Attach/replace the `recur` cookie on the task's date. `<interval>`: a cookie (`.+1w`/`+2d`/`++1m`) or friendly form (`weekly`/`daily`/`monthly`/`yearly`/`2w`/`every 3 days`); `off`/`none` clears it. `--from schedule\|completion` picks `+`/`.+` for a bare interval (default `completion` → `.+`). `--on <date>` seeds a `deadline` when the task has no date yet (else it errors). `--dry-run`/`--json`. |
+| `recur <ref> <schedule>` | `repeat`, `every` | ✅ | Attach/replace the `recur` value on the task's date. `<schedule>` is any input form the one parser takes (see Recurrence): an interval cookie (`.+1w`/`+2d`/`++1m`) or friendly interval (`weekly`/`2w`/`every 3 days`), a calendar phrase (`every mon,wed`/`weekdays`/`the 15th`/`2nd tuesday`/`last day of the month`/`every july 4`), or the canonical calendar grammar (`w:mon,wed`/`2w:mon`/`m:15`/`m:last`/`m:2tue`/`y:07-04`, optional `+` one-hop prefix); `off`/`none` clears it. Input is stored canonical, so two spellings of one schedule store identically. `--from schedule\|completion` picks `+`/`.+` for a bare **interval** (default `completion` → `.+`); with a calendar schedule it exits 1 naming the prefix the input lacks — bare input is told to write `+w:mon` for one-hop, `+`-prefixed input is told to drop the `+` for catch-up. `--on <date>` seeds a `deadline` when the task has no date yet (else it errors); the seed and the schedule land in **one checked transaction**, so a refused schedule leaves the file byte-unchanged and a successful one is a single `undo`. Unreadable input exits 1 with the parser's reason (quoting the input verbatim) plus an example line; a schedule that could never fire from the task's stamp is refused by the store with its reason. Success prints `↻ <humanized> (<canonical>) → next <date> (<Dow>)` above the touched headline, where `<date>` is the task's stamp after the write — the stamp *is* the next occurrence, the same convention `done` prints; `--json` carries that date as `"next"` beside `touched`. `--dry-run`/`--json`/`--include-done`. |
+| `recur <ref>` | | ✅ | Read-only preview — no schedule argument, no write. Prints the headline, `↻ <humanized> (<canonical>)`, then `--count N` occurrence dates (default 5, max 50). The list **starts with the task's stamp** — that is its next occurrence — and projects forward from there, so `--count 5` is the stamp plus four. A task with no recurrence says so and exits 0. `--json` emits `{"id","line","title","recur","recur_human","anchor","next":[…]}` with `next` starting at the stamp likewise (`recur`/`recur_human` null when absent, `"error"` added when nothing can be projected past the stamp — the stamp itself still lists). Rejects `--from`/`--on`/`--dry-run`, which only make sense when setting. |
+| `recur --explain "<schedule>"` | | ✅ | Taskless parse/preview: no ref, no store access. Prints `<canonical> — <humanized>` and the next `--count N` dates (default 5) from today. Three outcomes: understood and projected (exit 0); understood but never firing from today's anchor (dates empty, reason on stderr, exit 1); unreadable (parser reason plus the example line on stderr, exit 1). `off` reports that it clears the schedule (exit 0). `--json` emits the engine payload verbatim — `{"input","canonical","human","next":[ISO dates]}`, with `"error"` present on either failure and dates as ISO strings — on stdout, with the same exit codes. The agent-facing contract: propose a schedule, explain it, verify the dates, then commit. |
 | `defer <ref> [date-or-date-time]` | `snooze` | ✅ | With a value, atomically set `scheduled` and clear the task's own indefinite marker, preserving `deadline`; accepts the same temporal flags as `schedule`. Without a value, put it On Hold indefinitely. Output and `--dry-run` report exact ancestor-aware availability. |
 | `someday <ref>` | | ✅ | Canonical spelling for an indefinite Someday/Maybe / On Hold task. Adds the own `defer` marker without changing either date. Idempotent. |
 | `activate <ref>` | `undefer`, `resume` | ✅ | Make the task available now: clear its own indefinite marker and clear its own `scheduled` only when that date is in the future. A blocker inherited from an ancestor remains effective and is reported. Resolves unavailable open tasks. |

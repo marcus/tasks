@@ -158,6 +158,22 @@ class TestRecurCalendar < Minitest::Test
     end
   end
 
+  # Parsing lowercases, but a rejection is read by the person who typed it, so
+  # it must quote their spelling — not the parser's working copy.
+  def test_rejections_echo_the_input_verbatim
+    {
+      "Pay Rent" => '"Pay Rent"',
+      "2nd Tuesdayish" => '"2nd Tuesdayish"',
+      "W:FUNDAY" => '"funday"' # a sub-token the caller still typed as written
+    }.each do |input, quoted|
+      reason = R.parse_result(input)[:error]
+      assert reason, "expected #{input.inspect} to be rejected"
+      assert_includes reason.downcase, quoted.downcase, input.inspect
+    end
+    assert_includes R.parse_result("Pay Rent")[:error], '"Pay Rent"'
+    assert_equal "Pay Rent", R.explain("Pay Rent")[:input]
+  end
+
   def test_bare_cardinal_before_a_weekday_is_ambiguous_and_rejected
     # "every 2 tuesdays" reads as a cadence, not as "the 2nd Tuesday" — and the
     # ordinal already has its own spelling, so the input is declined.

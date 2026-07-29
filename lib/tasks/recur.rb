@@ -171,9 +171,11 @@ module Tasks
         return { canonical: "#{m[1]}#{m[2].to_i}#{m[3]}" }
       end
 
-      return canonical_calendar(s) if s.match?(CALENDAR_SHAPE)
+      # Parsing reads the downcased form; rejections quote `raw`, so what the
+      # caller sees echoed back is exactly what they typed.
+      return canonical_calendar(s, echo: raw) if s.match?(CALENDAR_SHAPE)
 
-      parse_natural(s, default_prefix: default_prefix)
+      parse_natural(s, default_prefix: default_prefix, echo: raw)
     end
 
     # A one-line human rendering of a stored value: "every Mon, Wed, Fri",
@@ -371,10 +373,11 @@ module Tasks
       parsed[:canonical] == s ? parsed[:schedule] : nil
     end
 
-    # Validate and normalize a canonical-grammar calendar schedule.
-    def canonical_calendar(s)
+    # Validate and normalize a canonical-grammar calendar schedule. `echo` is
+    # the spelling quoted in rejections (the caller's, not the downcased one).
+    def canonical_calendar(s, echo: s)
       m = s.match(CALENDAR)
-      return { error: "unrecognized schedule: #{s.inspect}" } unless m
+      return { error: "unrecognized schedule: #{echo.inspect}" } unless m
 
       prefix = m[1].to_s
       if prefix == ".+" || prefix == "++"
@@ -457,9 +460,9 @@ module Tasks
 
     # -- natural phrases -------------------------------------------------------
 
-    def parse_natural(s, default_prefix:)
+    def parse_natural(s, default_prefix:, echo: s)
       tokens = tokenize(s)
-      return { error: "unrecognized schedule: #{s.inspect}" } if tokens.empty?
+      return { error: "unrecognized schedule: #{echo.inspect}" } if tokens.empty?
 
       count, unit, spec = take_interval(tokens)
       monthly_hint = false
@@ -468,7 +471,7 @@ module Tasks
       end
 
       if spec.empty?
-        return { error: "unrecognized schedule: #{s.inspect}" } unless unit && count.positive?
+        return { error: "unrecognized schedule: #{echo.inspect}" } unless unit && count.positive?
         return { canonical: "#{default_prefix}#{count}#{unit}" }
       end
 
@@ -485,13 +488,13 @@ module Tasks
         unless unit.nil? || unit == "y"
           return { error: "a month name needs a yearly schedule, e.g. \"every 2 years on july 4\"" }
         end
-        return natural_yearly(spec, interval: count || 1, source: s)
+        return natural_yearly(spec, interval: count || 1, source: echo)
       end
 
       unless unit.nil? || unit == "m"
         return { error: "day-of-month rules need a monthly schedule, e.g. \"every 2 months on the 15th\"" }
       end
-      natural_monthly(spec, interval: count || 1, monthly_hint: monthly_hint || unit == "m", source: s)
+      natural_monthly(spec, interval: count || 1, monthly_hint: monthly_hint || unit == "m", source: echo)
     end
 
     # Lowercase words, ordinals marked with a leading "#", filler dropped.
