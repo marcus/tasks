@@ -78,13 +78,40 @@ class TestRecur < Minitest::Test
     assert_equal Date.new(2020, 1, 8), R.next_date("+1w", from: Date.new(2020, 1, 1), today: TODAY)
   end
 
-  def test_catch_up_lands_strictly_in_the_future
-    # ++: keep adding until strictly after today
+  def test_catch_up_walks_the_series_up_to_today
+    # ++: keep adding until the series reaches today
     d = R.next_date("++1w", from: Date.new(2026, 6, 1), today: TODAY)
-    assert_operator d, :>, TODAY
+    assert_operator d, :>=, TODAY
     assert_equal Date.new(2026, 7, 6), d
     # already-future stored date still advances at least once
     assert_equal Date.new(2026, 7, 20), R.next_date("++1w", from: Date.new(2026, 7, 13), today: TODAY)
+  end
+
+  # The date-only projection stops where the completion path's own fast-forward
+  # stops — at today, not past it. An all-day stamp landing on the completion
+  # day is still ahead by its end-of-day boundary, so `done` writes that day and
+  # every preview built on next_date/occurrences has to name it.
+  def test_catch_up_projection_can_land_on_today
+    assert_equal TODAY, R.next_date("++1d", from: TODAY - 1, today: TODAY)
+    assert_equal TODAY, R.next_date("++1w", from: TODAY - 7, today: TODAY)
+    assert_equal TODAY, R.next_date("++1w", from: TODAY - 28, today: TODAY)
+    assert_equal TODAY, R.next_date("++1m", from: TODAY << 1, today: TODAY)
+
+    # Projections chain from each landing, so the series keeps stepping.
+    assert_equal [TODAY, TODAY + 7, TODAY + 14],
+                 R.occurrences("++1w", from: TODAY - 7, today: TODAY, count: 3)
+  end
+
+  # The date-only projection and the temporal write must agree for an all-day
+  # stamp; the timed case below is the documented exception.
+  def test_catch_up_projection_agrees_with_the_temporal_roll
+    context = Tasks::TemporalContext.new(now: Time.utc(2026, 7, 4, 12), timezone: "Etc/UTC")
+    %w[++1d ++1w ++1m].each do |cookie|
+      value = Tasks::TemporalValue.new(date: (TODAY - 28).iso8601)
+      assert_equal R.next_temporal_date(cookie, value: value, kind: :deadline, context: context),
+                   R.next_date(cookie, from: TODAY - 28, today: TODAY),
+                   "#{cookie}: preview and roll disagree"
+    end
   end
 
   def test_units_days_weeks_months_years

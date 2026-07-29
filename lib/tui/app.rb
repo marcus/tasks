@@ -1514,12 +1514,22 @@ module Tui
     # established confirmations, messages, and undo labels.
     def patch_task(item, field:, value:, label:, today: current_date)
       snapshot = @application.edit_snapshot(item.id)
-      return Tasks::MutationResult.new(status: :not_found) unless snapshot
+      return Tasks::MutationResult.new(status: missing_snapshot_status) unless snapshot
 
       result = @application.patch_task(Tasks::TaskPatch.from(snapshot, field: field, value: value,
                                                               history_label: label), today: today)
       absorb_own_write if result.ok?
       result
+    end
+
+    # A nil edit snapshot means one of two very different things: the task is
+    # gone from a readable file, or the file itself failed its preflight check
+    # (corrupt, half-written, mid-edit by another writer) and nothing can be
+    # located in it. Only the first is "the task no longer exists"; the second
+    # is the reopen case every other quick action already reports. Resolve which
+    # one it was here, once, so no caller has to guess from :not_found alone.
+    def missing_snapshot_status
+      Tasks::Check.check(@paths.org).ok? ? :not_found : :unavailable
     end
 
     # Org-style ordering is a thin adapter over the shared placement command.
@@ -2770,32 +2780,108 @@ module Tui
       return flash("nothing selected") unless item
       return flash("add an Available from date or deadline first — recurrence needs a date") unless item.scheduled || item.deadline
 
-      current = item.recur ? "now #{item.recur}" : "not repeating"
+      # The field is prefilled with the canonical cookie, so the suffix glosses
+      # it rather than repeating it.
+      current = item.recur ? "now #{Tasks::Recur.humanize(item.recur)}" : "not repeating"
       field = TermForm::Fields::Input.new(
-        key: :value, value: item.recur || +"", label: "every",
+        key: :value, value: item.recur || +"", label: "repeat",
       )
+      # The stamp the schedule rides is the projection anchor, so the preview
+      # dates are the dates completing the task would actually produce. Frozen
+      # with the popup, like target_id: the preview must describe the task the
+      # form will write to, not whatever is selected when a key lands.
+      anchor = item.deadline || item.scheduled
       @ui.form = Form.new(
-        kind: :recurrence, title: "recur", prompt: "every",
-        hint: "weekly · 2w · .+1m · off · esc cancels", min_width: 40,
-        return_mode: :list,
+        kind: :recurrence, title: "recur", prompt: "repeat",
+        hint: ->(raw, width) { recur_preview(raw, anchor: anchor, width: width) },
+        min_width: RECUR_POPUP_WIDTH, return_mode: :list,
         initial: item.recur || +"", suffix: "(#{current})", target_id: item.id, field: field
       ) do |raw|
-        cookie = Tasks::Recur.parse_interval(raw)
-        next "can't parse “#{raw}”" if cookie.nil?
+        result = Tasks::Recur.parse_result(raw)
+        next result[:error] if result[:error]
+
+        cookie = result[:canonical]
         label = cookie == :off ? "recur off: #{item.title}" : "recur #{cookie}: #{item.title}"
-        unless patch_task(item, field: :recurrence, value: cookie, label: label).ok?
-          reload_store
-          next "file changed underneath — reopen"
+        patch = patch_task(item, field: :recurrence, value: cookie, label: label)
+        unless patch.ok?
+          reload_store if patch.stale? || patch.not_found?
+          next recurrence_failure_message(patch)
         end
 
         @ui.form_success = lambda do
-          flash(cookie == :off ? "↻ off: #{item.title}" : "↻ #{cookie}: #{item.title}")
+          flash(cookie == :off ? "↻ off: #{item.title}" : "↻ #{Tasks::Recur.humanize(cookie)}: #{item.title}")
           reselect(item.id)
           refresh_detail_panel if detail_panel?
         end
         nil
       end
       @ui.mode = :form
+    end
+
+    # What to type when nothing has been typed yet: one example per shape,
+    # matching the `r` shortcut's own description.
+    RECUR_POPUP_HINT = "weekly · every mon · m:15 · off · esc cancels"
+
+    # The most dates the preview projects. The line drops whole dates from the
+    # end when the popup is too narrow for all of them, so this is a ceiling,
+    # not a promise.
+    RECUR_PREVIEW_COUNT = 3
+
+    # Popup floor, sized so a typical schedule's gloss and all three dates fit
+    # on the footer line. A narrower terminal clamps it and the fit logic sheds
+    # dates instead.
+    RECUR_POPUP_WIDTH = 76
+
+    # The recurrence popup's live footer: `Recur.explain` for whatever is in the
+    # input right now, on one line. The engine's payload has three shapes and
+    # each renders differently —
+    #
+    #   understood + projected  → "every Mon, Wed → 2026-07-29 Wed · …"
+    #   understood, never fires → the canonical form, its gloss, and the reason
+    #   not understood          → the parser's own reason, which names the fix
+    #
+    # plus the empty input, which shows the grammar instead of "no schedule
+    # given". Pure computation on a parse of a short string, so it runs per
+    # keystroke with no debounce. `width` is the cells the line may occupy, or
+    # nil for an unbounded rendering.
+    def recur_preview(raw, anchor:, width: nil)
+      return RECUR_POPUP_HINT if raw.to_s.strip.empty?
+
+      payload = Tasks::Recur.explain(raw, context: temporal_context, from: anchor,
+                                     count: RECUR_PREVIEW_COUNT)
+      human = payload[:human]
+      return payload[:error] unless human
+      return "#{payload[:canonical]} — #{human} — #{payload[:error]}" if payload[:error]
+
+      dates = Array(payload[:next]).map { |date| "#{date.iso8601} #{date.strftime("%a")}" }
+      dates.empty? ? human : fit_recur_preview(human, dates, width)
+    end
+
+    # Fit the projection to the footer by dropping whole dates from the end. A
+    # date clipped mid-digit ("2026-08-0…") reads as a different, wrong date, so
+    # the line sheds dates — down to none — rather than ever showing a partial
+    # one. The gloss always leads; if the gloss alone overflows, the renderer's
+    # ellipsis takes it, and no date is left to be misread.
+    def fit_recur_preview(human, dates, width)
+      shown = dates.dup
+      until shown.empty?
+        line = "#{human} → #{shown.join(" · ")}"
+        return line if width.nil? || A.vislen(line) <= width
+
+        shown.pop
+      end
+      human
+    end
+
+    # The store refuses schedules that would leave a task nothing can complete
+    # (unreachable or unstorable), and those refusals are already user-facing
+    # sentences — surface them verbatim rather than as a generic failure. Only
+    # the genuinely-changed-underneath statuses get the TUI's reopen wording.
+    def recurrence_failure_message(result)
+      return "file changed underneath — reopen" if result.stale? || result.unavailable?
+      return "task no longer exists" if result.not_found?
+
+      result.errors.first || result.tui_message
     end
 
     # -- delegation ------------------------------------------------------------

@@ -218,6 +218,39 @@ class TestTaskEditorSession < Minitest::Test
     end
   end
 
+  def test_recurrence_field_accepts_calendar_input_and_reports_the_engines_reason
+    with_editor do |session, _store, _org|
+      session.form.set_value(:recurrence, "every mon wed")
+      assert_equal "w:mon,wed", session.edit_form.semantic_value(:recurrence)
+
+      session.form.set_value(:recurrence, "m:15")
+      assert_equal "m:15", session.edit_form.semantic_value(:recurrence)
+
+      session.form.set_value(:recurrence, "bananas")
+      assert_includes session.form.validate[:recurrence].join, "unrecognized schedule"
+    end
+  end
+
+  # The committed schedule reads as prose; the canonical value comes back the
+  # moment the field is focused or edited, so the cursor always sits on the
+  # characters the editor actually holds.
+  def test_recurrence_field_renders_the_committed_schedule_humanized
+    with_editor do |session, _store, _org|
+      row = ->(model) { model.rows.find { |r| r.key == :recurrence } }
+
+      blurred = row.call(session.render_model)
+      assert_equal ".+1w", blurred.value
+      assert_equal "every week from completion", blurred.metadata[:text]
+
+      session.form.focus(:recurrence)
+      assert_nil row.call(session.render_model).metadata[:text], "focused editing shows the raw value"
+
+      session.form.focus(:title)
+      session.form.set_value(:recurrence, "every mon")
+      assert_nil row.call(session.render_model).metadata[:text], "a dirty buffer is not humanized"
+    end
+  end
+
   def test_ctrl_s_commits_in_place_and_ctrl_o_commits_then_finishes
     with_editor do |session, _store, org|
       session.form.set_value(:title, "Renamed")
@@ -390,7 +423,10 @@ class TestTaskEditorSession < Minitest::Test
     with_editor do |session, _store, org|
       session.form.focus(:recurrence)
       session.form.set_value(:recurrence, "monthly")
-      assert session.save.confirmation?
+      pending = session.save
+      assert pending.confirmation?
+      assert_equal "Set recurrence to every month from completion (.+1m)?", pending.message,
+                   "the prompt asks about meaning, with the stored spelling alongside"
       session.confirm!
       assert_equal ".+1m", record(org)["recur"]
 

@@ -77,9 +77,38 @@ module Tui
       height = [height, 0].max
       rendered = @renderer.render(
         model: @engine.render_model, width: width, height: height,
-        title: @title, hint: @hint, error: @error, suffix: @suffix,
+        title: @title, hint: rendered_hint(hint_budget(width)), error: @error, suffix: @suffix,
       )
       { lines: rendered.lines, focused_content_row: rendered.focused_content_row, row: row, col: col }
+    end
+
+    # The hint line, resolved against the current input. A caller may pass a
+    # plain string (fixed guidance) or a callable, which turns the hint into a
+    # live preview of what the typed value means — the recurrence popup renders
+    # its schedule explanation this way. Resolution happens per paint, which is
+    # already once per keystroke, so the callable must be pure and cheap.
+    #
+    # A two-argument callable also receives the cells its text may occupy, so it
+    # can fit itself rather than be truncated mid-word by the renderer. Passing
+    # no width means "unbounded" — the caller then gets the fullest rendering.
+    def hint(width = nil)
+      return @hint unless @hint.respond_to?(:call)
+
+      @hint.arity == 1 ? @hint.call(@input.to_s) : @hint.call(@input.to_s, width)
+    end
+
+    # Cells a hint's own text can use: the box takes two columns of border and
+    # the renderer prefixes every cue with two more.
+    def hint_budget(width) = [width - 4, 0].max
+
+    # The paint path's resolution. A hint is decoration; a callable that raises
+    # must never take the render loop down with it, so this one swallows and
+    # renders nothing. `hint` itself still propagates, which keeps the failure
+    # visible to tests and to any caller that asks for the value directly.
+    def rendered_hint(width)
+      hint(width)
+    rescue StandardError
+      nil
     end
 
     # Keeps the old single-input API available while TermForm owns the actual

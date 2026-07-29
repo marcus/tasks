@@ -99,7 +99,7 @@ module Tui
       when :title then value.to_s.strip
       when :recurrence
         raw = value.to_s.strip
-        raw.empty? ? nil : Tasks::Recur.parse_interval(raw)
+        raw.empty? ? nil : Tasks::Recur.parse(raw)
       when :contexts then normalize_tokens(value, context: true)
       when :tags then normalize_tokens(value, context: false)
       else value
@@ -190,7 +190,7 @@ module Tui
         ),
         temporal_field(:scheduled, "Available from", values[:scheduled]),
         temporal_field(:deadline, "Deadline", values[:deadline]),
-        TermForm::Fields::Input.new(
+        RecurrenceInput.new(
           key: :recurrence, label: "Recurrence", value: values[:recurrence],
           metadata: { presets: RECURRENCE_PRESETS },
           validate: method(:validate_recurrence),
@@ -214,6 +214,20 @@ module Tui
           searchable: false,
         ),
       ]
+    end
+
+    # A committed schedule reads as prose ("every Mon, Wed"); the raw canonical
+    # value is what gets edited. The moment the field is focused or the buffer
+    # is dirty the display reverts to the stored spelling, so the cursor never
+    # sits on characters the editor does not have.
+    class RecurrenceInput < TermForm::Fields::Input
+      def metadata_for(value, context)
+        base = super
+        return base if context.focused_key == key || context.dirty?(key)
+
+        human = Tasks::Recur.humanize(value)
+        human.nil? || human == value.to_s ? base : base.merge(text: human)
+      end
     end
 
     class TemporalInput < TermForm::Fields::DateInput
@@ -548,9 +562,10 @@ module Tui
          !context[:deadline].is_a?(Tasks::TemporalValue)
         return "Recurrence requires an Available from date or deadline"
       end
-      return "Recurrence is not valid" unless Tasks::Recur.parse_interval(raw)
-
-      nil
+      # The engine's own rejection names the fix ("every what?", "no such day");
+      # a field-level "not valid" would throw that away.
+      result = Tasks::Recur.parse_result(raw)
+      result[:error]
     end
 
     def snapshot_values(value)

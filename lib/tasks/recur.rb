@@ -271,8 +271,19 @@ module Tasks
                when ".+" then step(today, n, unit)
                when "+"  then step(from, n, unit)
                else
+                 # Catch-up stops *at* today, never past it, which is exactly
+                 # where temporal_plan's own fast-forward stops. The completion
+                 # path then lets the stamp's end-of-day boundary decide whether
+                 # a candidate landing on today is still future; a date-only
+                 # projection has no time to compare and so must report the same
+                 # day the write would produce.
+                 #
+                 # Known edge, accepted: for a TIMED stamp whose local time has
+                 # already passed today, completion rejects today and rolls to
+                 # the next occurrence while this projection still says today.
+                 # Recovering that would mean projecting instants, not dates.
                  d = step(from, n, unit)
-                 d = step(d, n, unit) while d <= today
+                 d = step(d, n, unit) while d < today
                  d
                end
       end

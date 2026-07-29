@@ -3,6 +3,7 @@
 require "securerandom"
 require_relative "task_edit_form"
 require_relative "../tasks/patch_result"
+require_relative "../tasks/recur"
 require_relative "../tasks/task_patch"
 
 module Tui
@@ -353,7 +354,9 @@ module Tui
         summary = { from: old, to: value, subtree_ids: snapshot.metadata[:subtree_ids] }
       when :recurrence
         return nil if value == old
-        message = value ? "Set recurrence to #{value}?" : "Clear recurrence?"
+        # The prompt asks about meaning, not spelling: the gloss leads and the
+        # canonical value follows, since that is what lands in the record.
+        message = value ? "Set recurrence to #{Tasks::Recur.humanize(value)} (#{value})?" : "Clear recurrence?"
         summary = { from: old, to: value }
       when :scheduled, :deadline
         other = field == :scheduled ? snapshot.deadline : snapshot.scheduled

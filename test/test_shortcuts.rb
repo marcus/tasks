@@ -231,6 +231,13 @@ class TestShortcuts < Minitest::Test
     assert_match(/must not require a key/, error.message)
   end
 
+  # The `r` hint is the only place the grammar is advertised before the popup
+  # opens, so it names one example per shape the parser accepts.
+  def test_recur_hint_advertises_the_calendar_grammar
+    entry = S::REGISTRY.find { |e| e.handler == :open_recur_popup }
+    assert_equal "recur — weekly · every mon · m:15 · off", entry.description
+  end
+
   def test_palette_entries_are_contextual_available_and_executable_without_a_key
     app = Tui::App.allocate
     item = Struct.new(:scheduled, :deadline).new(nil, nil)

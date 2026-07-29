@@ -31,6 +31,41 @@ class TestTaskDetails < Minitest::Test
     assert lines.any? { |l| l =~ /tags\s+important\s+urgent/ }
   end
 
+  # The panel spells the schedule out next to the list's ↻ badge; the canonical
+  # cookie stays the machine value and never reaches the reader.
+  def test_detail_renders_the_schedule_as_prose_next_to_the_recur_badge
+    records = [
+      { "type" => "meta", "version" => 2 },
+      { "type" => "section", "id" => "s1", "title" => "Work" },
+      { "type" => "task", "id" => "t1", "parent" => "s1", "state" => "NEXT",
+        "title" => "Payroll", "deadline" => "2026-07-15", "recur" => "m:15" },
+      { "type" => "task", "id" => "t2", "parent" => "s1", "state" => "NEXT",
+        "title" => "Rent", "deadline" => "2026-07-20", "recur" => "+1w" },
+      { "type" => "task", "id" => "t3", "parent" => "s1", "state" => "NEXT",
+        "title" => "One-off" },
+    ]
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, dump_fixture(records))
+      store = Tui::Store.new(org: org, archive: File.join(dir, "archive.jsonl"))
+      reader = Tasks::TaskReadModel.new(store.read_snapshot, today: TODAY)
+      panel = lambda do |id|
+        task = reader.task_for(id)
+        texts(D.build(task, task.body, 64, today: TODAY))
+      end
+
+      calendar = panel.call("t1")
+      assert calendar.any? { |l| l =~ /repeats\s+↻ monthly on the 15th/ }, calendar.inspect
+      refute calendar.any? { |l| l.include?("m:15") }, "the stored cookie stays a machine value"
+
+      interval = panel.call("t2")
+      assert interval.any? { |l| l =~ /repeats\s+↻ every week from the scheduled date/ },
+             interval.inspect
+
+      refute panel.call("t3").any? { |l| l.start_with?("repeats") }
+    end
+  end
+
   def test_detail_scheduled_item_has_no_deadline_row
     lines = texts(detail_for("self-eval"))
     assert lines.any? { |l| l =~ /available from\s+2026-07-03 Fri · in 2d/ }

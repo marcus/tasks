@@ -98,6 +98,53 @@ class TestForm < Minitest::Test
     end
   end
 
+  # A callable hint turns the footer into a live preview of the typed value —
+  # what the recurrence popup uses to explain a schedule as it is entered.
+  def test_hint_resolves_from_the_current_input_when_it_is_callable
+    assert_equal "enter a value", form { nil }.hint, "a plain string hint is unchanged"
+
+    f = Tui::Form.new(
+      kind: :example, title: "example", prompt: "value", min_width: 32, return_mode: :modal,
+      hint: ->(raw) { raw.empty? ? "type something" : "you typed #{raw}" },
+    ) { nil }
+    assert_equal "type something", f.hint
+
+    f.handle_key("x")
+    assert_equal "you typed x", f.hint
+    text = f.popup(row: 0, col: 0, inline_input: ->(input) { input.to_s })[:lines]
+            .map { |line| A.strip(line) }.join("\n")
+    assert_includes text, "you typed x"
+  end
+
+  # A two-argument hint is told how many cells its text may use, so it can fit
+  # itself instead of being clipped by the renderer.
+  def test_callable_hint_receives_the_cells_available_to_it
+    seen = nil
+    f = Tui::Form.new(
+      kind: :example, title: "example", prompt: "value", min_width: 40, return_mode: :modal,
+      hint: ->(raw, width) { seen = width; "#{raw}@#{width}" },
+    ) { nil }
+
+    f.popup(row: 0, col: 0, inline_input: ->(input) { input.to_s }, max_width: 40, max_height: 4)
+    assert_equal 36, seen, "box borders and the renderer's cue leave four cells"
+    assert_equal "@", f.hint, "outside a render the callable is told nothing about width"
+  end
+
+  # A hint is decoration: one that blows up must not take the paint loop with
+  # it. Only the render path swallows — asking for the value still raises.
+  def test_a_raising_hint_renders_nothing_instead_of_crashing_the_popup
+    f = Tui::Form.new(
+      kind: :example, title: "example", prompt: "value", min_width: 32, return_mode: :modal,
+      hint: ->(_raw, _width) { raise "preview exploded" },
+    ) { nil }
+
+    popup = f.popup(row: 0, col: 0, inline_input: ->(input) { input.to_s })
+    text = popup[:lines].map { |line| A.strip(line) }.join("\n")
+    refute_empty popup[:lines]
+    refute_includes text, "preview exploded"
+    assert_raises(RuntimeError) { f.hint }
+  end
+
   def test_zero_width_or_height_popup_budget_emits_no_lines
     f = form(initial: "value") { nil }
     assert_empty f.popup(

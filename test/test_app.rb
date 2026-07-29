@@ -1929,6 +1929,12 @@ class TestApp < Minitest::Test
       assert_equal :recurrence, ui(app).form.kind
       assert_instance_of TermForm::Fields::Input, ui(app).form.field
       assert_equal "+1m", ui(app).form.input
+
+      rendered = ui(app).form.popup(row: 0, col: 0, inline_input: ->(input) { input.to_s },
+                                    max_width: 120, max_height: 4)[:lines]
+                  .map { |line| Tui::Ansi.strip(line) }.join("\n")
+      assert_includes rendered, "(now every month from the scheduled date)",
+                      "the suffix glosses the prefilled cookie rather than repeating it"
     end
   end
 
@@ -2006,7 +2012,167 @@ class TestApp < Minitest::Test
       ui(app).form.input.replace("bananas")
       app.send(:handle_key, "\r")
       assert_equal :form, ui(app).mode, "stays open on bad input"
-      assert_match(/can't parse/, ui(app).form.error)
+      assert_match(/unrecognized schedule/, ui(app).form.error,
+                   "the engine's own reason, not a generic parse failure")
+    end
+  end
+
+  def test_submit_recur_accepts_a_calendar_phrase_and_stores_the_canonical_form
+    app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE) do |app|
+      app.send(:open_recur_popup)
+      ui(app).form.input.replace("every mon wed")
+      app.send(:handle_key, "\r")
+
+      store = app.instance_variable_get(:@store)
+      assert_equal "w:mon,wed", store.items.find { |i| i.title.include?("Pay rent") }.recur
+      assert_equal :list, ui(app).mode
+      assert_match(/↻ every Mon, Wed: Pay rent/, app.instance_variable_get(:@flash))
+    end
+  end
+
+  def test_submit_recur_passes_a_canonical_calendar_cookie_through_unchanged
+    app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE) do |app|
+      app.send(:open_recur_popup)
+      ui(app).form.input.replace("m:15")
+      app.send(:handle_key, "\r")
+
+      assert_equal "m:15", app.instance_variable_get(:@store).items
+        .find { |i| i.title.include?("Pay rent") }.recur
+    end
+  end
+
+  # A schedule can parse cleanly and still be unwritable; the store refuses it
+  # with a sentence naming why, and the popup must show that sentence rather
+  # than the "file changed underneath" wording reserved for real staleness.
+  def test_submit_recur_surfaces_the_stores_refusal_reason
+    app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE) do |app|
+      app.send(:open_recur_popup)
+      ui(app).form.input.replace("every 9999 years")
+      app.send(:handle_key, "\r")
+
+      assert_equal :form, ui(app).mode, "stays open on a refused schedule"
+      assert_match(/outside the four-digit years/, ui(app).form.error)
+      assert_equal "+1m", app.instance_variable_get(:@store).items
+        .find { |i| i.title.include?("Pay rent") }.recur, "the stored schedule is untouched"
+    end
+  end
+
+  RECUR_PREVIEW_TODAY = -> { Date.new(2026, 7, 28) }
+
+  def test_recur_popup_previews_the_typed_schedule_in_its_footer
+    app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE,
+           date_provider: RECUR_PREVIEW_TODAY) do |app|
+      app.send(:open_recur_popup)
+      form = ui(app).form
+
+      assert_equal "every month from the scheduled date → 2026-09-01 Tue · 2026-10-01 Thu · 2026-11-01 Sun",
+                   form.hint, "the prefilled cookie previews on open"
+
+      form.input.replace("every mon wed")
+      assert_equal "every Mon, Wed → 2026-08-03 Mon · 2026-08-05 Wed · 2026-08-10 Mon", form.hint
+
+      form.input.replace("off")
+      assert_equal "no recurrence", form.hint
+
+      form.input.replace("bananas")
+      assert_equal "unrecognized schedule: \"bananas\"", form.hint
+
+      form.input.replace("")
+      assert_equal Tui::App::RECUR_POPUP_HINT, form.hint, "an empty input teaches the grammar"
+    end
+  end
+
+  # The rendered footer line, with the renderer's "· " cue stripped.
+  def popup_footer(form, width)
+    lines = form.popup(row: 0, col: 0, inline_input: ->(input) { input.to_s },
+                       max_width: width, max_height: 4)[:lines]
+    line = lines.map { |l| Tui::Ansi.strip(l) }.find { |l| l.include?("· ") }
+    line.to_s.sub(/\A[^·]*·\s/, "").sub(/\s*│?\s*\z/, "")
+  end
+
+  # The preview must never clip a date: "2026-08-0…" reads as a different day.
+  # It sheds whole dates as the popup narrows, down to none.
+  def test_recur_popup_preview_fits_whole_dates_to_the_popup_width
+    app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE,
+           date_provider: RECUR_PREVIEW_TODAY) do |app|
+      app.send(:open_recur_popup)
+      form = ui(app).form
+      form.input.replace("every mon wed")
+
+      wide = form.popup(row: 0, col: 0, inline_input: ->(input) { input.to_s },
+                        max_width: 120, max_height: 4)[:lines]
+                 .map { |line| Tui::Ansi.strip(line) }.join("\n")
+      assert_includes wide, "repeat: every mon wed", "the raw input stays in the field"
+      assert_includes wide, "every Mon, Wed → 2026-08-03 Mon · 2026-08-05 Wed · 2026-08-10 Mon"
+
+      [Tui::App::RECUR_POPUP_WIDTH, 60, 52, 40, 30].each do |width|
+        footer = popup_footer(form, width)
+        refute_includes footer, "…", "footer clipped at #{width}: #{footer.inspect}"
+        footer.scan(/\d{4}-\d\d-\d\d.{0,4}/).each do |date|
+          assert_match(/\A\d{4}-\d\d-\d\d [A-Z][a-z]{2}\z/, date.strip,
+                       "partial date at width #{width}: #{footer.inspect}")
+        end
+      end
+
+      # A long gloss sheds every date before it would clip one.
+      form.input.replace("+1m")
+      assert_equal "every month from the scheduled date", popup_footer(form, 52)
+    end
+  end
+
+  RECUR_CATCHUP_FIXTURE = dump_fixture([
+    { "type" => "meta", "version" => 2 },
+    { "type" => "section", "id" => "dddd0001", "title" => "Work" },
+    { "type" => "task", "id" => "dddd0002", "parent" => "dddd0001", "state" => "NEXT",
+      "title" => "Weekly review", "deadline" => "2026-07-21", "recur" => "++1w" },
+    { "type" => "task", "id" => "dddd0003", "parent" => "dddd0001", "state" => "NEXT",
+      "title" => "Daily log", "deadline" => "2026-07-27", "recur" => "++1d" },
+  ])
+
+  # A preview that disagrees with the write is worse than no preview. For an
+  # all-day stamp a catch-up series lands *on* the completion day, and the
+  # projection has to say so.
+  def test_catch_up_preview_names_the_date_completion_writes
+    [["Weekly review", "++1w"], ["Daily log", "++1d"]].each do |title, cookie|
+      app_on(view: :agenda, select: title, content: RECUR_CATCHUP_FIXTURE,
+             date_provider: RECUR_PREVIEW_TODAY) do |app|
+        preview = app.send(:recur_preview, cookie, anchor: app.send(:current_item).deadline)
+        app.send(:complete_selected)
+        rolled = app.instance_variable_get(:@store).items.find { |i| i.title.include?(title) }
+
+        assert_equal Date.new(2026, 7, 28), rolled.deadline, "#{cookie} catches up to today"
+        assert_includes preview, "→ #{rolled.deadline.iso8601}",
+                        "#{cookie}: the first previewed date is the one done writes"
+      end
+    end
+  end
+
+  # edit_snapshot returns nil both for a vanished task and for a file that fails
+  # its preflight check. Only the first is "task no longer exists".
+  def test_recur_popup_reports_an_unreadable_file_as_a_reopen_not_a_missing_task
+    app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE) do |app|
+      app.send(:open_recur_popup)
+      ui(app).form.input.replace("m:15")
+      path = app.instance_variable_get(:@paths).org
+      File.write(path, "#{File.read(path)}this is not json\n")
+
+      app.send(:handle_key, "\r")
+
+      assert_equal :form, ui(app).mode, "stays open so the edit can be retried"
+      assert_equal "file changed underneath — reopen", ui(app).form.error
+      assert_includes File.read(path), "Pay rent", "the record is still on disk"
+    end
+  end
+
+  # The third explain shape: understood, but no occurrence exists from this
+  # anchor. Canonical form, gloss, and the engine's reason all stay visible.
+  def test_recur_preview_reports_a_schedule_that_never_fires
+    app_on(view: :agenda, select: "Pay rent", content: RECUR_FIXTURE,
+           date_provider: RECUR_PREVIEW_TODAY) do |app|
+      preview = app.send(:recur_preview, "2y:02:5fri", anchor: Date.new(2027, 8, 1))
+
+      assert_match(/\A2y:02:5fri — every 2 years on the 5th Friday of February — /, preview)
+      assert_match(/may never fire for this anchor/, preview)
     end
   end
 

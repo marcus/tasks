@@ -6,6 +6,7 @@ require_relative "theme"
 require_relative "store"
 require_relative "../tasks/delegation"
 require_relative "../tasks/links"
+require_relative "../tasks/recur"
 require_relative "views"
 
 module Tui
@@ -38,6 +39,7 @@ module Tui
       if item.respond_to?(:availability_reason) && item.availability_reason != :available
         lines << row("availability", availability_value(item, availability_blocker, today, temporal_context))
       end
+      lines << row("repeats", recurrence_value(item)) if recurrence_of(item)
       lines << row("closed", item.closed.iso8601) if item.closed
       lines << row("project", T.paint(:project, project)) if project
       contexts = item.contexts
@@ -66,6 +68,23 @@ module Tui
 
     def row(label, value)
       "#{T.paint(:detail_label, label.ljust(10))} #{value}"
+    end
+
+    # The stored schedule, or nil when the task does not repeat. Guarded like the
+    # panel's other optional fields, so a host that supplies a leaner item shape
+    # renders without it rather than raising.
+    def recurrence_of(item)
+      cookie = item.respond_to?(:recur) ? item.recur.to_s.strip : ""
+      cookie.empty? ? nil : cookie
+    end
+
+    # The schedule as prose next to the list's own ↻ badge — "↻ every Mon, Wed",
+    # not "↻ w:mon,wed". The canonical cookie is the machine value; a panel read
+    # by a person spells it out. An unparsable stored value humanizes to itself,
+    # so nothing disappears from view.
+    def recurrence_value(item)
+      cookie = recurrence_of(item)
+      "#{T.paint(:muted, "↻")} #{Tasks::Recur.humanize(cookie)}"
     end
 
     # The delegation section: every field of the marker, in the record's own
