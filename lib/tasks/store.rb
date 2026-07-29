@@ -772,6 +772,20 @@ module Tasks
             )
           end
 
+          if command.notes && !command.notes.empty? && command.action != :reject
+            return MutationResult.new(
+              status: :invalid, snapshot: current,
+              errors: ["notes are only allowed when rejecting a proposal"]
+            )
+          end
+          note_text = proposal_note_text(command.notes)
+          if command.notes && note_text.nil?
+            return MutationResult.new(
+              status: :invalid, snapshot: current,
+              errors: ["reject notes must be valid UTF-8 text"]
+            )
+          end
+
           target = command.action == :approve ? "INBOX" : "CANCELLED"
           working_records = duplicate_records(records)
           applied = patch_state(
@@ -781,6 +795,9 @@ module Tasks
           unless applied[:status] == :ok
             return MutationResult.new(status: applied[:status], snapshot: current,
                                       errors: applied[:errors] || [], summary: applied[:summary])
+          end
+          unless note_text.nil? || note_text.empty?
+            working_records[ri]["body"] = append_body(working_records[ri]["body"], note_text)
           end
           Format.dump(working_records)
         rescue JSON::GeneratorError, EncodingError, ArgumentError => e
@@ -3214,6 +3231,17 @@ module Tasks
     # Append `line` to an existing body string (or start one).
     def append_body(body, line)
       body.nil? || body.empty? ? line : "#{body}\n#{line}"
+    end
+
+    # Join reject notes the same way propose joins repeatable `--note` values.
+    # Returns nil when any note fails UTF-8 recovery (invalid → typed error).
+    def proposal_note_text(notes)
+      return "" if notes.nil? || notes.empty?
+
+      pieces = notes.map { |note| utf8(note) }
+      return nil unless pieces.all?(&:valid_encoding?)
+
+      pieces.join("\n")
     end
 
     # User-supplied text (ARGV, TUI input) is tagged with the process locale,

@@ -44,6 +44,7 @@ module Tasks
         recurrence parent_id placement state
       ].freeze
       PLACEMENT_FIELDS = %w[parent_id before_id].freeze
+      REJECT_FIELDS = %w[notes].freeze
       # Delegation action bodies. Each mirrors the CLI flags for the same verb
       # (`tasks delegate --to/--keep-state`, `claim --worker`, `release
       # --worker/--force/--note`, `workref <ref> <url|off> --worker`); the
@@ -472,15 +473,29 @@ module Tasks
       def decide_proposal(request, id, action, request_id)
         temporal = request_temporal_context
         query_params(request, [])
-        reject_action_body!(request, subject: "Task proposal action requests")
+        notes = if action == :reject
+                  optional_reject_notes!(request)
+                else
+                  reject_action_body!(request, subject: "Task proposal action requests")
+                  nil
+                end
         expected_revision = if_match!(request)
         ensure_store_ready!(request_id)
-        result = application.public_send(
-          :"#{action}_task", id, expected_revision: expected_revision,
-          context: OperationContext.new(
-            operation_id: request_id, source: :api, temporal_context: temporal
-          )
-        )
+        result = if action == :reject
+                   application.reject_task(
+                     id, expected_revision: expected_revision, notes: notes,
+                     context: OperationContext.new(
+                       operation_id: request_id, source: :api, temporal_context: temporal
+                     )
+                   )
+                 else
+                   application.approve_task(
+                     id, expected_revision: expected_revision,
+                     context: OperationContext.new(
+                       operation_id: request_id, source: :api, temporal_context: temporal
+                     )
+                   )
+                 end
         mutation_failure!(result, request_id, id: id, semantic_invalid: true)
         resource_result = application.task_result_from_mutation(
           result, id, temporal_context: temporal
@@ -889,6 +904,61 @@ module Tasks
       # a non-empty one is rejected the same way DELETE rejects a body.
       def reject_action_body!(request, subject: "Project action requests")
         reject_delete_body!(request, subject: subject)
+      end
+
+      # Reject may carry optional withdrawal notes (CLI repeatable `--note`). An
+      # empty body keeps the historical no-body contract; a present body may
+      # only supply `notes` as a string or ordered list of strings.
+      def optional_reject_notes!(request)
+        raw = read_optional_body(request)
+        return nil if raw.nil?
+
+        body = parse_json_object(raw)
+        reject_unknown_fields!(body, REJECT_FIELDS)
+        return nil unless body.key?("notes")
+
+        notes = body["notes"]
+        notes = [notes] if notes.is_a?(String)
+        unless notes.is_a?(Array) && notes.all? { |note| note.is_a?(String) }
+          validation!(notes: ["must be text or an ordered list of text"])
+        end
+        notes.empty? ? nil : notes
+      end
+
+      def read_optional_body(request)
+        length = request.content_length
+        begin
+          length = Integer(length, 10) if length
+        rescue ArgumentError
+          raise HttpError.new(400, :malformed_request, "Content-Length is malformed.")
+        end
+        if length && length > BODY_LIMIT
+          raise HttpError.new(413, :payload_too_large, Errors.message(:payload_too_large))
+        end
+
+        input = request.body
+        return nil unless input
+
+        raw = input.read(BODY_LIMIT + 1) || ""
+        if raw.bytesize > BODY_LIMIT
+          raise HttpError.new(413, :payload_too_large, Errors.message(:payload_too_large))
+        end
+        return nil if raw.empty?
+
+        unless request.media_type == "application/json"
+          raise HttpError.new(415, :unsupported_media_type, Errors.message(:unsupported_media_type))
+        end
+        raw
+      end
+
+      def parse_json_object(raw)
+        parsed = JSON.parse(raw)
+        unless parsed.is_a?(Hash)
+          raise HttpError.new(400, :malformed_request, "The request body must be a JSON object.")
+        end
+        parsed
+      rescue JSON::ParserError
+        raise HttpError.new(400, :malformed_request, "The request body is not valid JSON.")
       end
 
       def normalize_patch_changes(body, current:, context:)

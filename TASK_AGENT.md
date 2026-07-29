@@ -106,7 +106,7 @@ task merely because it also contains task text.
                       as capture except state/recurrence; repeat `--note` for
                       concise rationale or evidence)
   - accept proposal:  `bin/tasks approve "<ref>"` (PROPOSED → INBOX)
-  - decline proposal: `bin/tasks reject "<ref>"` (PROPOSED → CANCELLED)
+  - decline proposal: `bin/tasks reject "<ref>" [--note "why"]` (PROPOSED → CANCELLED)
   - nest a new task:  `bin/tasks capture "<text>" --under "<ref>"`  (child of a task; ≤ max_depth)
   - delegate to a person: `bin/tasks delegate "<ref>" --to <email>`  (a real
                       address: local@domain.tld; moves it to WAITING,
@@ -120,7 +120,7 @@ task merely because it also contains task text.
   - set available from: `bin/tasks schedule "<ref>" <date-or-date-time>`
   - remove dates:     `bin/tasks undate "<ref>" [--kind deadline|scheduled]`
   - change state:     `bin/tasks state "<ref>" <STATE>`
-  - cancel a task:    `bin/tasks cancel "<ref>"`
+  - cancel a task:    `bin/tasks cancel "<ref>" [--note "why"]`
   - set priority:     `bin/tasks priority "<ref>" <A|B|C|none>`
   - retitle a task:   `bin/tasks retitle "<ref>" "<new title>"`
   - edit tags:        `bin/tasks tag "<ref>" +tag -tag @ctx -@ctx`

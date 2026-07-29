@@ -49,7 +49,7 @@ prefer it when you need to reason over tasks rather than display them.
 bin/tasks capture "text"             # new INBOX item (see flags below)
 bin/tasks propose "text" --note "why" # inert PROPOSED item for owner review
 bin/tasks approve "<ref>"             # accept PROPOSED → INBOX
-bin/tasks reject "<ref>"              # decline PROPOSED → CANCELLED
+bin/tasks reject "<ref>" [--note "why"] # decline PROPOSED → CANCELLED (+ rationale)
 bin/tasks delegate "<ref>" --to pat@example.com # hand to a person (→ WAITING)
 # the address must be real: local@domain.tld — "@work" is refused
 bin/tasks delegate "<ref>" research   # offer to agents: refine|research|implement
@@ -58,7 +58,7 @@ bin/tasks workref "<ref>" <url|off>  # where the work happened; off/none clears
 bin/tasks claim "<ref>" --worker <id> --json # atomic single-winner pickup
 bin/tasks release "<ref>" --worker <id> --note "blocked: why" # hand a claim back
 bin/tasks done "<ref>"               # mark DONE + closed date (cascades to open subtasks)
-bin/tasks cancel "<ref>"             # mark CANCELLED + closed date
+bin/tasks cancel "<ref>" [--note "why"] # mark CANCELLED + closed date (+ rationale)
 bin/tasks due "<ref>" fri            # set/replace deadline (INBOX → TODO)
 bin/tasks due "<ref>" "tomorrow 5pm" --timezone Europe/London
 bin/tasks schedule "<ref>" +3        # set/replace available-from/start date

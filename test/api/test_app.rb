@@ -254,6 +254,26 @@ class TestApiApp < Minitest::Test
     assert_equal store_today.iso8601, rejected_task.fetch("closed")
     assert_contract_response(rejected)
 
+    third = json_request(
+      "POST", "/api/v1/tasks",
+      title: "Duplicate proposal", state: "PROPOSED",
+      body: "Original rationale."
+    )
+    third_task = JSON.parse(third.body).fetch("data")
+    rejected_with_notes = json_request(
+      "POST", "/api/v1/tasks/#{third_task.fetch("id")}/reject",
+      { notes: ["Duplicate — already rejected previously.", "Same renewal mail."] },
+      { "HTTP_IF_MATCH" => third["etag"] }
+    )
+    assert_equal 200, rejected_with_notes.status, rejected_with_notes.body
+    noted = JSON.parse(rejected_with_notes.body).fetch("data")
+    assert_equal "CANCELLED", noted.fetch("state")
+    body_lines = noted.fetch("body")
+    assert_includes body_lines, "Original rationale."
+    assert_includes body_lines, "Duplicate — already rejected previously."
+    assert_includes body_lines, "Same renewal mail."
+    assert_contract_response(rejected_with_notes)
+
     not_proposed = request(
       "POST", "/api/v1/tasks/#{FIX[:garden]}/approve",
       "HTTP_IF_MATCH" => get("/api/v1/tasks/#{FIX[:garden]}")["etag"]

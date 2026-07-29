@@ -2388,9 +2388,55 @@ class TestCliMutations < Minitest::Test
       assert_equal "rejected → CANCELLED: Review subscriptions\n", out
     end
 
+    run_cli(
+      "reject", "Review subscriptions",
+      "--note", "Duplicate — already rejected previously",
+      "--note", "Same renewal mail thread.",
+      content: proposed
+    ) do |org, out, err, st|
+      assert st.success?, err
+      record = record_for(org, title: "Review subscriptions")
+      assert_equal "CANCELLED", record["state"]
+      assert_match(/Duplicate — already rejected previously/, record["body"])
+      assert_match(/Same renewal mail thread/, record["body"])
+      assert_equal "rejected → CANCELLED: Review subscriptions\n", out
+
+      show_out, show_err, show_status = run_cli_at(
+        org, File.join(File.dirname(org), "archive.jsonl"),
+        "show", "Review subscriptions", "--include-done"
+      )
+      assert show_status.success?, show_err
+      assert_match(/Duplicate — already rejected previously/, show_out)
+      assert_match(/Same renewal mail thread/, show_out)
+    end
+
     run_cli("approve", "random thought") do |_org, _out, err, st|
       assert_equal 1, st.exitstatus
       assert_match(/task is INBOX, not PROPOSED/, err)
+    end
+  end
+
+  def test_cli_cancel_accepts_repeatable_note_visible_in_show
+    run_cli(
+      "cancel", "random thought",
+      "--note", "Not actionable.",
+      "--note", "Capture was a duplicate."
+    ) do |org, out, err, st|
+      assert st.success?, err
+      record = record_for(org, title: "random thought about the garden")
+      assert_equal "CANCELLED", record["state"]
+      assert_match(/Not actionable/, record["body"])
+      assert_match(/Capture was a duplicate/, record["body"])
+      assert Tasks::Check.check(org).ok?
+
+      show_out, show_err, show_status = run_cli_at(
+        org, File.join(File.dirname(org), "archive.jsonl"),
+        "show", "random thought", "--include-done"
+      )
+      assert show_status.success?, show_err
+      assert_match(/Not actionable/, show_out)
+      assert_match(/Capture was a duplicate/, show_out)
+      refute_match(/unknown flag/, out + err)
     end
   end
 

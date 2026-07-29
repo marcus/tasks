@@ -333,9 +333,12 @@ module Tasks
                       context: context, today: today)
     end
 
-    def reject_task(id, expected_revision: nil, context: nil, today: Date.today)
+    # Decline a proposal into CANCELLED. Optional `notes` (string or Array of
+    # strings) appends withdrawal rationale to the body in the same write —
+    # the Application-level mirror of repeatable CLI `reject --note`.
+    def reject_task(id, expected_revision: nil, notes: nil, context: nil, today: Date.today)
       decide_proposal(id, :reject, expected_revision: expected_revision,
-                      context: context, today: today)
+                      notes: notes, context: context, today: today)
     end
 
     # -- delegation ------------------------------------------------------------
@@ -726,14 +729,16 @@ module Tasks
                  .find(id, source: :live)
     end
 
-    def decide_proposal(id, action, expected_revision:, context:, today:)
+    def decide_proposal(id, action, expected_revision:, context:, today:, notes: nil)
       validate_operation_context(context)
       command = ProposalDecision.new(
-        id: id, action: action, expected_revision: expected_revision
+        id: id, action: action, expected_revision: expected_revision, notes: notes
       )
       store_factory.call.decide_proposal!(
         command, today: operation_today(today, context)
       )
+    rescue ArgumentError => e
+      MutationResult.new(status: :invalid, errors: [e.message])
     end
 
     def queries(include_archive: false, today: Date.today, operation_context: nil)

@@ -64,6 +64,36 @@ class TestProposals < Minitest::Test
     end
   end
 
+  def test_reject_appends_repeatable_notes_in_the_same_write
+    with_proposal_app do |app, org, archive|
+      created = app.create_task(
+        { title: "Duplicate proposal", state: "PROPOSED",
+          body: "Original rationale." },
+        today: TODAY
+      )
+      id = created.touched_ids.fetch(0)
+
+      rejected = app.reject_task(
+        id, expected_revision: app.get_task(id).revision, today: TODAY,
+        notes: ["Duplicate — already rejected previously.", "Same renewal mail."]
+      )
+      assert rejected.ok?, rejected.errors.inspect
+      task = app.get_task(id)
+      assert_equal "CANCELLED", task.state
+      assert_equal TODAY, task.closed
+      assert_includes task.body, "Original rationale."
+      assert_includes task.body, "Duplicate — already rejected previously."
+      assert_includes task.body, "Same renewal mail."
+      assert Tasks::Check.check(org).ok?
+
+      store = Tasks::Store.new(org: org, archive: archive)
+      assert_equal [:ok, "reject proposal: Duplicate proposal"], store.undo!
+      restored = store.items.find { |item| item.id == id }
+      assert_equal "PROPOSED", restored.state
+      refute_includes store.body(restored).join("\n"), "Duplicate — already rejected"
+    end
+  end
+
   def test_decision_refuses_non_proposals_stale_revisions_and_proposal_trees
     records = FIXTURE_RECORDS + [
       { "type" => "task", "id" => "ee000001", "parent" => FIX[:home],

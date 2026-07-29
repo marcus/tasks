@@ -436,6 +436,8 @@ compatibility alias) reviews all effective blockers, while
 **Proposals and approval.** `PROPOSED` is a lifecycle category separate from
 accepted open work. `propose` creates an inert task, while `approve` transitions
 it to INBOX and `reject` transitions it to CANCELLED with a `closed` date.
+Repeatable `--note` on `reject` (and on `cancel`) records withdrawal rationale
+on the body, visible in `show` — the same join semantics as `propose --note`.
 Proposals appear only through the explicit `list --proposed` scope, direct
 `show`, and the TUI Approvals tab; they stay out of agenda, next, quadrants,
 inbox, project rollups, Outline, and the default open list. They cannot recur
@@ -446,7 +448,7 @@ is approved or rejected; archive sweep treats it as a non-closed descendant,
 so it cannot disappear inside a closed ancestor. HTTP clients use
 `scope=proposed` and explicit `POST /api/v1/tasks/{id}/approve` or `/reject`
 intent routes with `If-Match`; both return the transitioned task plus its new
-ETag.
+ETag. Reject may optionally carry a `notes` body field.
 
 **Delegation and pickup.** An accepted live task can carry one optional
 `delegation` object naming who holds the next action: a person (`kind: human`,
@@ -807,9 +809,9 @@ display text to parse.
 | Command | Alias/synonyms | Status | Description |
 |---|---|---|---|
 | `done <ref>` | `complete`, `close`, `d` | ✅ | Mark DONE + `closed` date, cascading to every open descendant (see Cascading completion); recurring descendants close outright and their recur cookie is retired. A recurring task (recur cookie on its date) rolls forward and stays open instead — output shows `↻ <title> → next <date>` — and does **not** cascade. `--dry-run` also previews how many open descendants would close. |
-| `cancel <ref>` | `drop` | ✅ | Mark CANCELLED + `closed` date. |
+| `cancel <ref> [--note "text"]` | `drop` | ✅ | Mark CANCELLED + `closed` date. Repeatable `--note` appends withdrawal rationale to the body (same join semantics as `propose --note`), visible in `show`. |
 | `approve <ref>` | | ✅ | Accept exactly one PROPOSED task into INBOX. A live non-proposal resolves normally and reports its current state as the semantic error; a proposal with proposed descendants refuses so decisions proceed leaves first. Undoable. |
-| `reject <ref>` | | ✅ | Decline exactly one PROPOSED task into CANCELLED and stamp `closed`. Uses the same broad live-ref/current-state/refusal/undo contract as `approve`. |
+| `reject <ref> [--note "text"]` | | ✅ | Decline exactly one PROPOSED task into CANCELLED and stamp `closed`. Repeatable `--note` records withdrawal rationale on the body in the same write (mirrors `propose --note`). Uses the same broad live-ref/current-state/refusal/undo contract as `approve`. |
 | `state <ref> <STATE>` | `mv` | ✅ | Any state transition (PROPOSED/INBOX/TODO/NEXT/WAITING/DONE/CANCELLED). Enforces: entering DONE/CANCELLED sets `closed`; leaving them clears it. A proposal cannot transition directly to DONE or carry recurrence; use `approve`/`reject` for review intent. Entering DONE cascades to accepted open descendants (see Cascading completion); entering CANCELLED does not. Resolves refs across proposed, open, and closed live tasks so you can repair state explicitly. |
 | `due <ref> <date-or-date-time>` | `deadline`, `reschedule` | ✅ | Atomically replace `deadline`; accepts `--timezone ZONE` or `--floating`, plus `--fold earlier\|later`. Omitting time creates an all-day value and clears old time metadata. INBOX items promote to TODO. |
 | `schedule <ref> <date-or-date-time>` | | ✅ | Atomically replace `scheduled` with the same temporal flags. A future exact boundary hides the task, but this command does not clear an On Hold marker; callers that mean deferral use `defer`. Same INBOX promotion. |

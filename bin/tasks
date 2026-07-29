@@ -17,7 +17,7 @@
 #                             --state/--project/--under/--note)
 #   bin/tasks propose "..."   suggest an inert task for approval
 #   bin/tasks approve <ref>   accept a PROPOSED task into INBOX
-#   bin/tasks reject <ref>    decline a PROPOSED task into CANCELLED
+#   bin/tasks reject <ref> [--note "..."]  decline PROPOSED → CANCELLED
 #   bin/tasks delegate <ref> refine|research|implement   hand to the agent pool
 #   bin/tasks delegate <ref> --to <email> [--keep-state] hand to a person (WAITING)
 #   bin/tasks undelegate <ref>            clear the marker / revoke a claim
@@ -31,7 +31,7 @@
 #   bin/tasks schedule <ref> <date-or-date-time>  set/replace Available from (SCHEDULED)
 #   bin/tasks undate <ref> [--kind deadline|scheduled]  remove date stamp(s)
 #   bin/tasks state <ref> <STATE>    transition an item to any state
-#   bin/tasks cancel|drop <ref>      mark an item CANCELLED
+#   bin/tasks cancel|drop <ref> [--note "..."]  mark CANCELLED (+ optional reason)
 #   bin/tasks priority <ref> <A|B|C|none>  set or clear the priority cookie
 #   bin/tasks retitle <ref> "new title"    replace the headline title
 #   bin/tasks tag <ref> +t -t @ctx -@ctx   add/remove tags and contexts
@@ -384,14 +384,26 @@ def cmd_propose(args) = cmd_capture(args, proposed: true)
 def cmd_proposal_decision(args, action:)
   context = temporal_context
   today = context.local_date
+  notes = []
+  if action == :reject
+    notes, args = extract_repeatable_flag(args, "--note")
+  end
   flags, rest = take_flags(args, "--json")
   ref = rest.shift
-  abort "usage: tasks #{action} <ref> [--json]" if ref.nil? || ref.strip.empty? || !rest.empty?
+  usage = action == :reject ? "tasks reject <ref> [--note \"reason\"] [--json]" : "tasks #{action} <ref> [--json]"
+  abort "usage: #{usage}" if ref.nil? || ref.strip.empty? || !rest.empty?
   item = resolve_ref(ref, include_done: true)
-  result = application.public_send(
-    :"#{action}_task", stable_id_for(item), today: today,
-    context: cli_operation_context(context)
-  )
+  result = if action == :reject
+             application.reject_task(
+               stable_id_for(item), today: today, notes: notes.empty? ? nil : notes,
+               context: cli_operation_context(context)
+             )
+           else
+             application.approve_task(
+               stable_id_for(item), today: today,
+               context: cli_operation_context(context)
+             )
+           end
   if result.conflict? && result.summary&.dig(:proposed_descendant_ids)
     mutation_failed "decide proposed descendants first"
   end
@@ -648,8 +660,10 @@ end
 # resolve the ref, honor --dry-run/--json, and route the write through the
 # stable-id state patch (which stamps/clears CLOSED). `resolve_closed:` widens ref
 # resolution to closed tasks — always for `state` (so you can reopen a DONE
-# item), on demand elsewhere via --include-done.
-def change_state(args, usage:, resolve_closed:, to: nil, dry_verb: nil, archive_hint: false, recur_aware: false)
+# item), on demand elsewhere via --include-done. Optional `notes` (cancel only)
+# append withdrawal rationale in the same multi-field write as the state change.
+def change_state(args, usage:, resolve_closed:, to: nil, dry_verb: nil, archive_hint: false, recur_aware: false,
+                 notes: nil)
   context = temporal_context
   today = context.local_date
   flags, rest = take_flags(args, "--dry-run", "--json", "--include-done")
@@ -663,6 +677,7 @@ def change_state(args, usage:, resolve_closed:, to: nil, dry_verb: nil, archive_
   # Completing a recurring task rolls its date forward and keeps it open — a
   # different verb (and no archive hint) than closing a one-shot task.
   recurring_done = recur_aware && target == "DONE" && item.recurring?
+  note_text = notes && !notes.empty? ? notes.join("\n") : nil
   if flags["--dry-run"]
     if recurring_done
       puts "would recur → #{recur_next(item, context: context).iso8601}: #{item_headline(item)}"
@@ -674,13 +689,26 @@ def change_state(args, usage:, resolve_closed:, to: nil, dry_verb: nil, archive_
       if target == "DONE" && item.open? && (n = open_descendant_count(item)) > 0
         puts "would also close #{n} open descendant#{"s" unless n == 1}"
       end
+      puts "would add note: #{note_text}" if note_text
     end
     return
   end
   task_id = stable_id_for(item)
-  result = patch_task_by_id(task_id, field: :state, value: target,
-                            label: "state → #{target}: #{item.title}", today: today,
-                            context: cli_operation_context(context))
+  result = if note_text
+             snapshot = application.edit_snapshot(task_id)
+             mutation_failed "failed to set state" unless snapshot
+             body = snapshot.body
+             new_body = body.nil? || body.empty? ? note_text : "#{body}\n#{note_text}"
+             changeset_task_by_id(
+               task_id, changes: { state: target, body: new_body },
+               label: "state → #{target}: #{item.title}", today: today,
+               snapshot: snapshot, context: cli_operation_context(context)
+             )
+           else
+             patch_task_by_id(task_id, field: :state, value: target,
+                              label: "state → #{target}: #{item.title}", today: today,
+                              context: cli_operation_context(context))
+           end
   mutation_result_failed(result, "failed to set state")
   if recurring_done && !flags["--json"]
     fresh = result.read_snapshot&.items&.find { |i| i.id == task_id }
@@ -718,7 +746,9 @@ def cmd_done(args)
 end
 
 def cmd_cancel(args)
-  change_state(args, to: "CANCELLED", usage: "tasks cancel <ref>", resolve_closed: false)
+  notes, args = extract_repeatable_flag(args, "--note")
+  change_state(args, to: "CANCELLED", usage: "tasks cancel <ref> [--note \"reason\"]",
+               resolve_closed: false, notes: notes)
 end
 
 # --- Store-backed mutations (due / state / priority) ------------------------
@@ -890,6 +920,23 @@ def take_flags(args, *known)
     end
   end
   [flags, rest]
+end
+
+# Extract every occurrence of a valued flag (e.g. repeatable `--note`), returning
+# [values, remaining_args]. Missing values abort the same way capture does.
+def extract_repeatable_flag(args, flag)
+  values = []
+  rest = []
+  i = 0
+  while i < args.length
+    if args[i] == flag
+      values << (args[i += 1] or abort "missing value for #{flag}")
+    else
+      rest << args[i]
+    end
+    i += 1
+  end
+  [values, rest]
 end
 
 def item_headline(item)
@@ -2648,10 +2695,11 @@ HELP = <<~USAGE
 
   Update (take <ref>; support --dry-run/--json/--include-done):
     approve      <ref>        accept PROPOSED into INBOX
-    reject       <ref>        decline PROPOSED into CANCELLED
+    reject       <ref> [--note] decline PROPOSED into CANCELLED; repeat --note
+                             for withdrawal rationale (visible in `show`)
     done      d <ref>        mark DONE (cascades to open subtasks) — or roll a
                              recurring task forward (aka complete, close)
-    cancel      <ref>        mark CANCELLED          (aka drop)
+    cancel      <ref> [--note] mark CANCELLED (aka drop); repeat --note for reason
     state     mv <ref> <STATE>       any state transition
     due          <ref> <date/time>   set/replace DEADLINE   (aka deadline, reschedule)
     schedule     <ref> <date/time>   set/replace Available from (SCHEDULED)

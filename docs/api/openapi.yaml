@@ -949,11 +949,21 @@ paths:
       summary: Decline a proposed task into CANCELLED.
       description: |
         Atomically transitions a live PROPOSED task to CANCELLED and stamps its
-        closed date. The request has no body and requires the proposal's current
-        ETag in `If-Match`. Proposed descendants must be decided first.
+        closed date. An empty body keeps the historical no-body contract; an
+        optional JSON body may supply `notes` (string or ordered list of
+        strings) as withdrawal rationale appended to the task body in the same
+        write — the HTTP mirror of repeatable CLI `reject --note`. Requires the
+        proposal's current ETag in `If-Match`. Proposed descendants must be
+        decided first.
       parameters:
         - $ref: "#/components/parameters/TaskId"
         - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RejectTaskRequest"
       responses:
         "200":
           description: Rejected task resource.
@@ -3218,6 +3228,23 @@ components:
             A blocker note appended to the task body in the same undo step as
             the release. This is how a blocked agent surfaces a problem instead
             of widening its authority.
+
+    RejectTaskRequest:
+      type: object
+      description: |
+        Optional withdrawal rationale for `POST /tasks/{id}/reject`. An omitted
+        or empty body rejects without notes. `notes` mirrors repeatable CLI
+        `reject --note` and is appended to the task body in the same write.
+      additionalProperties: false
+      properties:
+        notes:
+          oneOf:
+            - type: string
+            - type: array
+              items: { type: string }
+          description: |
+            Withdrawal rationale. A string may contain newlines; an array is
+            joined with newlines in order (same as CLI repeatable `--note`).
 
     WorkRefRequest:
       type: object
