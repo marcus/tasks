@@ -199,17 +199,15 @@ class TestRecurCalendar < Minitest::Test
     assert_match(/"\+"/, reason)
   end
 
-  def test_parse_interval_still_declines_calendar_schedules
-    # Surfaces that have not opted into the calendar grammar keep their old
-    # behavior: `check` does not yet validate calendar cookies, so nothing may
-    # write one through the interval-only entry point.
+  def test_one_parser_reads_both_shapes
+    # Every surface goes through `parse`, so interval and calendar input reach
+    # the store through the same entry point and normalize the same way.
     ["every monday", "w:mon", "weekdays", "m:15", "+y:07-04"].each do |input|
       refute_nil R.parse(input), input.inspect
-      assert_nil R.parse_interval(input), input.inspect
     end
-    assert_equal ".+1w", R.parse_interval("weekly")
-    assert_equal "+2w", R.parse_interval("2w", default_prefix: "+")
-    assert_equal :off, R.parse_interval("off")
+    assert_equal ".+1w", R.parse("weekly")
+    assert_equal "+2w", R.parse("2w", default_prefix: "+")
+    assert_equal :off, R.parse("off")
   end
 
   def test_calendar_input_ignores_the_interval_default_prefix
@@ -222,7 +220,6 @@ class TestRecurCalendar < Minitest::Test
   def test_interval_rejections_are_unchanged
     ["", "bananas", "1", "w", "2x", "+0d", ".+0w", "1.5w", "-2w"].each do |input|
       assert_nil R.parse(input), input.inspect
-      assert_nil R.parse_interval(input), input.inspect
     end
   end
 

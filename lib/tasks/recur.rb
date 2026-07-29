@@ -145,15 +145,6 @@ module Tasks
       result[:error] ? nil : result[:canonical]
     end
 
-    # The interval-only half of `parse`, for callers that cannot yet handle a
-    # calendar schedule. Calendar input parses cleanly and is then declined, so
-    # a surface that has not opted in behaves exactly as it did before.
-    def parse_interval(str, default_prefix: ".+")
-      canonical = parse(str, default_prefix: default_prefix)
-      return canonical if canonical.nil? || canonical == :off || canonical.match?(COOKIE)
-      nil
-    end
-
     # parse with the rejection reason kept. Calendar results also carry the
     # parsed :schedule, which the occurrence math and humanizer reuse.
     #   => { canonical: "w:mon", schedule: {…} } | { canonical: :off } |

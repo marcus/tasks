@@ -36,11 +36,14 @@ for the normal case.
 
 ## 3. Recurring tasks ✅ (done)
 
-The `recur` field uses Org-style cookies (`+1w`, `.+1m`, `++1d`). On `done`,
-advance `scheduled` or `deadline` by the interval and keep the task open. This
-covers bills, reviews, standups, and other repeating work.
-Shipped across CLI (`recur`, `capture --recur`, `list --recurring`, `done`
-rolls forward) and TUI (`r` popup, `↻` badge) — see `docs/plans/implemented/recurring-tasks.md`.
+The `recur` field holds either an Org-style interval cookie (`+1w`, `.+1m`,
+`++1d`) or a calendar schedule (`w:mon,wed`, `m:15`, `y:07-04`). On `done`,
+advance `scheduled` or `deadline` and keep the task open. This covers bills,
+reviews, standups, and other repeating work.
+Shipped with full parity across CLI (`recur` set/preview/`--explain`, `capture
+--recur`, `list --recurring`, `done` rolls forward), TUI (`r` popup with a live
+preview, `↻` badge), and API (`recurrence`, `GET /recurrence/explain`) — see
+`docs/plans/implemented/recurring-schedules.md`.
 Follow-on parked here: a full per-occurrence completions log (the current
 `- Did [date]` line is a lightweight stand-in).
 

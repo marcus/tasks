@@ -90,8 +90,9 @@ type id parent state priority title tags scheduled scheduled_time deadline deadl
   A fixed value stores a full IANA zone. `fold: 1` selects the later instant
   during a daylight-saving overlap and is omitted otherwise. These objects
   never appear without their matching date.
-- **`recur`** — an org-style repeater cookie (`.+1w`, `++1m`, `+2d`) on a dated
-  task. See [Recurrence](#recurrence).
+- **`recur`** — a recurrence schedule on a dated task, in one canonical
+  spelling: an org-style interval cookie (`.+1w`, `++1m`, `+2d`) or a calendar
+  schedule (`w:mon,wed`, `m:15`, `y:07-04`). See [Recurrence](#recurrence).
 - **`delegation`** — optional object naming who holds the next action; absent
   means not delegated. See [Delegation](#delegation).
 - **`body`** — free-text notes as a single `\n`-joined string; omitted when
@@ -163,11 +164,24 @@ or notifications.
 
 ## Recurrence
 
-A task *recurs* when it carries a `recur` cookie alongside a `scheduled`/`deadline`
-date: `.+1w`, `++1m`, `+2d`. The prefix sets what the interval is measured from on
-completion — `+` fixed, `++` catch-up, `.+` from-completion. Completing a recurring
-task rolls its date forward and **leaves it open** (no `closed`), appending a
-`- Did [date].` line to the body. See `docs/cli-spec.md` for the full grammar.
+A task *recurs* when it carries a `recur` schedule alongside a
+`scheduled`/`deadline` date. The stamp on the task **is** its next occurrence;
+the schedule only says how that stamp advances on completion, so nothing is
+materialized ahead of time. One scalar field holds two stored shapes:
+
+- **Interval cookies** — `.+1w`, `++1m`, `+2d`. The prefix sets what the interval
+  is measured from on completion: `+` fixed (one hop from the stored date), `++`
+  catch-up (repeated until strictly future), `.+` from-completion.
+- **Calendar schedules** — `w:mon,wed`, `2w:mon`, `m:15`, `m:last`, `m:2tue`,
+  `y:07-04`, `y:11:3thu`. These advance to the next matching calendar date and
+  take only two prefixes: bare (the default) means the next match after today,
+  `+` means the next match after the stored date.
+
+Values are stored canonical, so two inputs meaning the same schedule store
+identically; writes accept friendly intervals and natural calendar phrases too.
+Completing a recurring task rolls its date forward and **leaves it open** (no
+`closed`), appending a `- Did [date].` line to the body. See `docs/cli-spec.md`
+for the full grammar, input forms, and edge-date rules.
 
 ## Delegation
 

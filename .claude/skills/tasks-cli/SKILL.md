@@ -76,7 +76,10 @@ bin/tasks move "<ref>" --under "<ref>"  # nest the subtree below another task
 bin/tasks move "<ref>" --top         # unnest the subtree back to the section level
 bin/tasks move "<ref>" --before "<ref>" # reorder before a sibling (infers its parent)
 bin/tasks move "<ref>" --under "<parent>" --before "<sibling>" # reparent at an exact slot
-bin/tasks recur "<ref>" weekly       # repeat on done: weekly/2w/.+1m; "off" clears
+bin/tasks recur "<ref>" weekly       # repeat on done: intervals or calendar days; "off" clears
+bin/tasks recur "<ref>" "every mon,wed"  # calendar schedule (see Recurrence below)
+bin/tasks recur "<ref>"              # read-only: humanized schedule + next occurrences
+bin/tasks recur --explain "<sched>"  # taskless parse/preview — no ref, no store access
 bin/tasks defer "<ref>" +4           # hide until available four days from today
 bin/tasks someday "<ref>"            # hold indefinitely (someday/maybe/on hold)
 bin/tasks activate "<ref>"           # make available now (undefer/resume)
@@ -163,10 +166,41 @@ available-from date. An unavailable ancestor can still block the task. Review
 all effective unavailability with `list --unavailable` (`--deferred` alias), or
 only tasks carrying their own On Hold marker with `list --someday`.
 
-Recurrence is a `recur` cookie alongside the task's date (`.+1w`, `++1m`, `+2d`).
-`recur "<ref>" weekly` (or `2w`, `.+1m`, `every 3 days`) sets it; `off` clears it.
+Recurrence is a `recur` schedule alongside the task's date. The stamp **is** the
+next occurrence; the schedule only says how it advances on `done`. Two shapes
+share the field:
+
+- **Interval** — `.+1w`, `++1m`, `+2d`: advance by a fixed span. `.+` from
+  completion (today + interval), `+` one hop from the stored date (may stay
+  overdue), `++` catch-up (repeat until future).
+- **Calendar** — `w:mon,wed`, `2w:mon`, `m:15`, `m:last`, `m:2tue`, `m:lastfri`,
+  `y:07-04`, `y:11:3thu`: advance to the next matching date. Only two prefixes,
+  since "from completion" and "catch-up" coincide here: bare (default) = next
+  match after **today**, `+` = next match after the **stored date** (one hop, for
+  cadences where every missed occurrence matters). `.+`/`++` here are rejected.
+
+Input is never required to be canonical: `recur`, `capture --recur`, and the API
+also take friendly intervals (`weekly`, `2w`, `every 3 days`) and natural phrases
+(`every monday`, `weekdays`, `the 15th`, `2nd tuesday`, `last day of the month`,
+`every 2 weeks on monday`, `every july 4`), all normalized to one stored spelling.
+`off`/`none`/`never` clear it. `--from schedule|completion` is interval-only; with
+a calendar schedule it exits 1 pointing at the `+` prefix. Edge rules: `m:31`
+clamps in short months, `m:5fri` skips months without one, `y:02-29` clamps to
+Feb 28.
+
+**Explain before you commit.** `recur "<ref>"` (no schedule) prints the humanized
+schedule and the next `--count N` dates (default 5, max 50) starting from the
+task's stamp; `recur --explain "<schedule>"` does it with no ref and no store
+access. Both take `--json`. A schedule that parses but could never fire from the
+task's stamp — or would roll past four-digit years — is refused at **write** time
+with the engine's reason, so check the projection first. (Accepted gap: editing a
+date later can strand a calendar schedule; `done` then refuses with a reason, and
+`recur "<ref>" off` clears it.)
+
 Completing a recurring task with `done` rolls its date forward and keeps it open
-(no `closed`) — use `cancel` to actually stop it. `list --recurring` reviews them.
+(no `closed`; `- Did [date].` appended) — use `cancel` to actually stop it.
+`list --recurring` reviews them; rows show `↻ <humanized>` and JSON carries
+`recur` (canonical) plus `recur_human`.
 
 Completing a parent cascades: `done` (or `state … DONE`) closes every open
 descendant too (recurring descendants close outright — their cookie is retired),

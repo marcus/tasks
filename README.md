@@ -78,7 +78,7 @@ Comparing `tasks` against traditional task managers across both classic GTD capa
 | **Interactive Detail / Inspector View** | ✅ | ⚠️ | ✅ | ✅ | ❌ |
 | **Offline-First & Fast Boot** | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Deep Link & URL Integration** | ✅ | ✅ | ✅ | ✅ | ⚠️ |
-| **Advanced Recurring Task Rules** | ⚠️ (Basic roll) | ✅ | ✅ | ✅ | ✅ |
+| **Advanced Recurring Task Rules** | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Multi-Device Synchronization** | ✅ (Git driver) | ⚠️ (Manual Git) | ✅ (OmniSync) | ✅ (Things Cloud) | ⚠️ (Taskserver) |
 
 ### Agentic & Modern Developer Features
@@ -207,7 +207,7 @@ a / r      approve / reject selected proposal (Approvals view)
 h / l      collapse / expand selected subtree
 > / <      indent / outdent subtree (Outline view)
 return     open task detail panel; e edits in place
-c d r      complete · reschedule deadline · recur (weekly, 2w, off)
+c d r      complete · reschedule deadline · recur (weekly, 2w, every mon,wed, m:15, off)
 z Z J K    defer (date/time/someday/now) · show unavailable · lower / raise priority
 /          live text filter (enter commits, esc clears)
 u ctrl-r   undo / redo via shared journal

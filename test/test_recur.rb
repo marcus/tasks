@@ -8,51 +8,51 @@ require "tasks/temporal_context"
 class TestRecur < Minitest::Test
   R = Tasks::Recur
 
-  # -- parse_interval --------------------------------------------------------
+  # -- parse (intervals) -----------------------------------------------------
 
   def test_parses_canonical_cookies
-    assert_equal ".+1w", R.parse_interval(".+1w")
-    assert_equal "+2d",  R.parse_interval("+2d")
-    assert_equal "++1m", R.parse_interval("++1m")
-    assert_equal ".+3y", R.parse_interval(".+3y")
+    assert_equal ".+1w", R.parse(".+1w")
+    assert_equal "+2d",  R.parse("+2d")
+    assert_equal "++1m", R.parse("++1m")
+    assert_equal ".+3y", R.parse(".+3y")
   end
 
   def test_parses_friendly_words
-    assert_equal ".+1d", R.parse_interval("daily")
-    assert_equal ".+1w", R.parse_interval("weekly")
-    assert_equal ".+1m", R.parse_interval("monthly")
-    assert_equal ".+1y", R.parse_interval("yearly")
-    assert_equal ".+1y", R.parse_interval("annually")
+    assert_equal ".+1d", R.parse("daily")
+    assert_equal ".+1w", R.parse("weekly")
+    assert_equal ".+1m", R.parse("monthly")
+    assert_equal ".+1y", R.parse("yearly")
+    assert_equal ".+1y", R.parse("annually")
   end
 
   def test_parses_bare_and_every_intervals
-    assert_equal ".+2w", R.parse_interval("2w")
-    assert_equal ".+3d", R.parse_interval("3 days")
-    assert_equal ".+2w", R.parse_interval("every 2 weeks")
-    assert_equal ".+1m", R.parse_interval("every 1 month")
+    assert_equal ".+2w", R.parse("2w")
+    assert_equal ".+3d", R.parse("3 days")
+    assert_equal ".+2w", R.parse("every 2 weeks")
+    assert_equal ".+1m", R.parse("every 1 month")
   end
 
   def test_bare_interval_honors_default_prefix
-    assert_equal "+2w", R.parse_interval("2w", default_prefix: "+")
-    assert_equal ".+2w", R.parse_interval("2w") # default
+    assert_equal "+2w", R.parse("2w", default_prefix: "+")
+    assert_equal ".+2w", R.parse("2w") # default
     # an explicit cookie's own prefix wins over default_prefix
-    assert_equal ".+2w", R.parse_interval(".+2w", default_prefix: "+")
+    assert_equal ".+2w", R.parse(".+2w", default_prefix: "+")
   end
 
   def test_off_synonyms
     %w[off none never clear no stop].each do |w|
-      assert_equal :off, R.parse_interval(w), w
+      assert_equal :off, R.parse(w), w
     end
   end
 
   def test_case_and_whitespace_insensitive
-    assert_equal ".+1w", R.parse_interval("  Weekly ")
-    assert_equal ".+2w", R.parse_interval("2W")
+    assert_equal ".+1w", R.parse("  Weekly ")
+    assert_equal ".+2w", R.parse("2W")
   end
 
   def test_rejects_garbage
     ["", "bananas", "1", "w", "2x", "+0d", ".+0w", "1.5w", "-2w"].each do |s|
-      assert_nil R.parse_interval(s), s.inspect
+      assert_nil R.parse(s), s.inspect
     end
   end
 

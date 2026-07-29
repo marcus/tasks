@@ -44,7 +44,8 @@ back a bad one.
   optional `priority` A|B|C, `title`, `tags` (array, includes `@contexts` and
   the internal `defer` On Hold marker), `scheduled`/`deadline`/`closed` dates
   (`"YYYY-MM-DD"`) with optional `scheduled_time`/`deadline_time` metadata,
-  `recur` cookie, optional `delegation` object (who holds the next action —
+  `recur` schedule (interval cookie or calendar schedule),
+  optional `delegation` object (who holds the next action —
   see [Delegation](#delegation-handing-work-to-a-person-or-an-agent)),
   `body` notes. `scheduled` is the available-from/start value;
   `deadline` is the due value. Read it via the CLI's
@@ -130,7 +131,11 @@ task merely because it also contains task text.
   - reorder a subtree:`bin/tasks move "<ref>" --before "<sibling-ref>"`  (infers the sibling's parent)
   - place a subtree:  `bin/tasks move "<ref>" --under "<parent-ref>" --before "<sibling-ref>"`
   - place in section: `bin/tasks move "<ref>" "<Section>" --before "<sibling-ref>"`
-  - make it recur:    `bin/tasks recur "<ref>" weekly`  (2w/.+1m/…; "off" clears)
+  - make it recur:    `bin/tasks recur "<ref>" weekly`  (intervals: 2w/.+1m/…;
+                      calendar: "every mon,wed"/m:15/"last friday"/"every july 4";
+                      "off" clears)
+  - preview a schedule: `bin/tasks recur "<ref>"`  (next occurrences, read-only)
+                      or `bin/tasks recur --explain "<schedule>"`  (no task needed)
   - defer until value: `bin/tasks defer "<ref>" <date-or-date-time>`  (preserves deadline)
   - hold indefinitely: `bin/tasks someday "<ref>"`  (someday/maybe/on hold)
   - reactivate now:   `bin/tasks activate "<ref>"`  (clears own hold/future start)
