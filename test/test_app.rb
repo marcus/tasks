@@ -360,6 +360,28 @@ class TestApp < Minitest::Test
     end
   end
 
+  def test_approving_manually_selected_last_proposal_wraps_to_earlier_proposal
+    app_on(view: :inbox, select: "Beta proposal", content: PROPOSAL_APP) do |app|
+      app.send(:handle_key, "a")
+
+      assert_equal "INBOX", record_for(org_path(app), title: "Beta proposal")["state"]
+      assert_equal "PROPOSED", record_for(org_path(app), title: "Alpha proposal")["state"]
+      assert_equal "Alpha proposal", app.send(:current_item).title
+      assert_equal({ inbox: 2, approvals: 1 }, intake_counts(app))
+    end
+  end
+
+  def test_rejecting_manually_selected_last_proposal_wraps_to_earlier_proposal
+    app_on(view: :inbox, select: "Beta proposal", content: PROPOSAL_APP) do |app|
+      app.send(:handle_key, "r")
+
+      assert_equal "CANCELLED", record_for(org_path(app), title: "Beta proposal")["state"]
+      assert_equal "PROPOSED", record_for(org_path(app), title: "Alpha proposal")["state"]
+      assert_equal "Alpha proposal", app.send(:current_item).title
+      assert_equal({ inbox: 1, approvals: 1 }, intake_counts(app))
+    end
+  end
+
   def test_final_approval_selects_visible_capture_but_hidden_future_capture_falls_back
     today = -> { Date.new(2026, 7, 1) }
     app_on(view: :inbox, select: "Visible proposal", content: FUTURE_PROPOSAL_APP,

@@ -2710,7 +2710,8 @@ module Tui
 
       proposal_ids = @rows.filter_map { |row| row.item&.id if row.item&.proposed? }
       proposal_index = proposal_ids.index(item.id)
-      next_proposal_id = proposal_index && proposal_ids[proposal_index + 1]
+      review_order = proposal_ids.rotate((proposal_index || -1) + 1)
+      next_proposal_id = review_order.find { |id| id != item.id }
       result = @application.public_send(
         :"#{action}_task", item.id, expected_revision: current_task&.revision,
         today: current_date,
