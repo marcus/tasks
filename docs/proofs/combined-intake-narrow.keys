@@ -1,0 +1,18 @@
+@set:cols:72
+@set:rows:24
+@set:delay:150
+@set:output:docs/proofs
+@set:theme:github-dark
+@set:window_bar:colorful
+@set:border_radius:8
+@set:padding:8
+@set:shadow:true
+@require:termshot
+
+@sleep:1200
+6
+@wait:APPROVALS 2
+@sleep:500
+@capture:combined-intake-narrow-72.png
+
+q

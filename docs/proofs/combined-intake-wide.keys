@@ -1,0 +1,36 @@
+@set:cols:120
+@set:rows:28
+@set:delay:150
+@set:output:docs/proofs
+@set:theme:github-dark
+@set:window_bar:colorful
+@set:border_radius:8
+@set:padding:8
+@set:shadow:true
+@require:termshot
+
+@sleep:1200
+6
+@wait:APPROVALS 2
+@sleep:500
+@capture:combined-intake-wide-before.png
+
+a
+@wait:approved
+@sleep:500
+@capture:combined-intake-wide-after-approval.png
+
+# 0x40 is tmux's hexadecimal key spelling for a literal @. A bare @ line is a
+# Betamax directive, so using the key code keeps this script declarative.
+0x40
+@sleep:400
+w
+o
+r
+k
+Enter
+@wait:@work
+@sleep:500
+@capture:combined-intake-wide-work-filter.png
+
+q
