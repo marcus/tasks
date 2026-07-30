@@ -31,6 +31,12 @@ betamax \
 betamax \
   "bash docs/proofs/combined-intake-tui.sh" \
   -f docs/proofs/combined-intake-narrow.keys
+betamax \
+  "env TASKS_PROOF_NO_COLOR=1 bash docs/proofs/combined-intake-tui.sh" \
+  -f docs/proofs/combined-intake-monochrome.keys
+betamax \
+  "env TASKS_THEME=dracula bash docs/proofs/combined-intake-tui.sh" \
+  -f docs/proofs/combined-intake-dracula.keys
 ```
 
 ## Combined sections and paired counts
@@ -66,3 +72,17 @@ At 72 columns the responsive strip drops distant inactive tabs while preserving
 the active final tab, its nearest neighbor, and both numbers. The painted cell
 and mouse hit span are generated from the same presentation object; focused
 tests assert their exact widths.
+
+## Theme variants
+
+![Combined tab with NO_COLOR](./combined-intake-monochrome.png)
+
+With `NO_COLOR` set, labels, the explicit `PROPOSED` state, stable section
+spacing, and the `a`/`r` hint preserve the authority distinction without
+depending on color.
+
+![Combined tab with the generated Dracula theme](./combined-intake-dracula.png)
+
+The checked-in generated Dracula theme explicitly maps the approval section to
+its warning/quadrant color and the Inbox section to its Inbox color. Regression
+coverage requires both semantic section slots in every generated theme.

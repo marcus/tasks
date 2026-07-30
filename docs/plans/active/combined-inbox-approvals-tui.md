@@ -1,6 +1,6 @@
 # Combine Inbox and Approvals in the final TUI tab
 
-Status: implemented; pending visual proof and independent review
+Status: implemented
 
 Related decisions and plans:
 

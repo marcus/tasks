@@ -13,8 +13,13 @@ export TASKS_FILE="$sandbox/tasks.jsonl"
 export TASKS_ARCHIVE="$sandbox/archive.jsonl"
 export XDG_STATE_HOME="$sandbox/state"
 export TASKS_TIMEZONE="America/Los_Angeles"
-export TASKS_THEME="default"
-unset NO_COLOR || true
+if [[ "${TASKS_PROOF_NO_COLOR:-0}" == "1" ]]; then
+  unset TASKS_THEME || true
+  export NO_COLOR=1
+else
+  export TASKS_THEME="${TASKS_THEME:-default}"
+  unset NO_COLOR || true
+fi
 
 mkdir -p "$XDG_STATE_HOME"
 cp "$root/examples/tasks.jsonl" "$TASKS_FILE"
