@@ -159,6 +159,17 @@ class TestTheme < Minitest::Test
     end
   end
 
+  def test_every_generated_theme_overrides_intake_section_slots
+    Tui::GeneratedThemes::THEMES.each do |name, slots|
+      assert_equal "bold #{slots.fetch(:tab_quadrants)}",
+                   slots.fetch(:approval_section),
+                   "#{name} approval section should use its warning accent"
+      assert_equal "bold #{slots.fetch(:tab_inbox)}",
+                   slots.fetch(:inbox_section),
+                   "#{name} Inbox section should use its Inbox accent"
+    end
+  end
+
   def test_generated_theme_can_be_configured_by_name
     T.configure!(name: "dracula")
     assert_equal "\e[38;2;164;255;255mx\e[0m", T.paint(:accent, "x")

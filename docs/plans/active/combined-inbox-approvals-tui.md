@@ -384,7 +384,8 @@ capability and state transition is unchanged.
 Run:
 
 ```sh
-ruby -Itest test/test_views.rb test/test_app.rb test/test_session.rb \
+ruby -Itest -e 'ARGV.each { |file| require File.expand_path(file) }' \
+  test/test_views.rb test/test_app.rb test/test_session.rb \
   test/test_app_modals.rb test/test_shortcuts.rb test/test_theme.rb \
   test/test_hit_map.rb
 ruby test/all.rb
