@@ -177,7 +177,8 @@ task merely because it also contains task text.
 ## Proposing follow-up without creating a commitment
 
 `PROPOSED` is a separate lifecycle state, not another spelling of INBOX.
-Proposals are inert: they appear in `list --proposed` and the TUI Approvals tab,
+Proposals are inert: they appear in `list --proposed` and the approval section
+of the final TUI Inbox tab,
 but stay out of agenda, next, quadrants, inbox, project rollups, and the default
 open list. They cannot recur or be completed, and archive operations leave them
 live until the owner decides them.

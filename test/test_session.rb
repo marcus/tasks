@@ -118,6 +118,26 @@ class TestSession < Minitest::Test
     end
   end
 
+  def test_legacy_approvals_view_restores_to_combined_inbox
+    with_state_home do
+      Tui::Session.save({ "view" => "approvals" })
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, "tasks.jsonl"), FIXTURE_ORG)
+        assert_equal :inbox, ui(build_app(dir)).view
+      end
+    end
+  end
+
+  def test_inbox_view_still_restores_to_combined_inbox
+    with_state_home do
+      Tui::Session.save({ "view" => "inbox" })
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, "tasks.jsonl"), FIXTURE_ORG)
+        assert_equal :inbox, ui(build_app(dir)).view
+      end
+    end
+  end
+
   def test_non_string_saved_view_falls_back_not_crashes
     with_state_home do
       # A hand-edited state file with a non-string view must not crash startup.

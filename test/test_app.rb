@@ -6,6 +6,7 @@ require "tui/text_input"
 
 class TestApp < Minitest::Test
   def ui(app) = app.instance_variable_get(:@ui)
+  def intake_counts(app) = app.send(:tab_counts).fetch(:inbox).to_h
 
   PROPOSAL_APP = dump_fixture([
     { "type" => "meta", "version" => 2 },
@@ -16,6 +17,19 @@ class TestApp < Minitest::Test
       "state" => "PROPOSED", "title" => "Beta proposal", "body" => "Beta rationale" },
     { "type" => "task", "id" => "ee000004", "parent" => "ee000001",
       "state" => "INBOX", "title" => "Accepted task" },
+  ]).freeze
+
+  FUTURE_PROPOSAL_APP = dump_fixture([
+    { "type" => "meta", "version" => 2 },
+    { "type" => "section", "id" => "ed000001", "title" => "Inbox" },
+    { "type" => "task", "id" => "ed000002", "parent" => "ed000001",
+      "state" => "PROPOSED", "title" => "Visible proposal" },
+    { "type" => "task", "id" => "ed000003", "parent" => "ed000001",
+      "state" => "INBOX", "title" => "Existing capture" },
+    { "type" => "task", "id" => "ed000004", "parent" => "ed000001",
+      "state" => "PROPOSED", "title" => "Future proposal", "scheduled" => "2026-08-01" },
+    { "type" => "task", "id" => "ed000005", "parent" => "ed000001",
+      "state" => "INBOX", "title" => "Held capture", "tags" => ["defer"] },
   ]).freeze
 
   CONTEXT_PROPOSAL_APP = dump_fixture([
@@ -315,52 +329,81 @@ class TestApp < Minitest::Test
     end
   end
 
-  # Approving a proposal moves it into the inbox, so the two badges move
-  # together: every count here is asserted as a whole hash so a decision that
-  # decremented approvals without crediting the inbox would fail.
-  def test_approvals_keys_update_badge_selection_and_history_immediately
-    app_on(view: :approvals, select: "Alpha proposal", content: PROPOSAL_APP) do |app|
-      assert_equal({ inbox: 1, approvals: 2 }, app.send(:tab_counts))
+  # Approving a proposal moves it between sections, so the paired count moves
+  # together and selection advances through the decision queue before landing
+  # in accepted Inbox work.
+  def test_combined_inbox_decision_keys_update_counts_selection_and_history_immediately
+    app_on(view: :inbox, select: "Alpha proposal", content: PROPOSAL_APP) do |app|
+      assert_equal({ inbox: 1, approvals: 2 }, intake_counts(app))
 
       app.send(:handle_key, "a")
       assert_equal "INBOX", record_for(org_path(app), title: "Alpha proposal")["state"]
       assert_equal "Beta proposal", app.send(:current_item).title
-      assert_equal({ inbox: 2, approvals: 1 }, app.send(:tab_counts))
+      assert_equal({ inbox: 2, approvals: 1 }, intake_counts(app))
 
       app.send(:handle_key, "u")
       assert_equal "PROPOSED", record_for(org_path(app), title: "Alpha proposal")["state"]
-      assert_equal({ inbox: 1, approvals: 2 }, app.send(:tab_counts))
+      assert_equal({ inbox: 1, approvals: 2 }, intake_counts(app))
 
       app.send(:handle_key, "\x12")
       assert_equal "INBOX", record_for(org_path(app), title: "Alpha proposal")["state"]
-      assert_equal({ inbox: 2, approvals: 1 }, app.send(:tab_counts))
+      assert_equal({ inbox: 2, approvals: 1 }, intake_counts(app))
 
       app.send(:handle_key, "r")
       assert_equal "CANCELLED", record_for(org_path(app), title: "Beta proposal")["state"]
-      assert_equal({ inbox: 2 }, app.send(:tab_counts))
-      assert_nil app.send(:current_item)
+      assert_equal({ inbox: 2, approvals: 0 }, intake_counts(app))
+      assert_equal "Alpha proposal", app.send(:current_item).title
 
       app.send(:handle_key, "u")
       assert_equal "PROPOSED", record_for(org_path(app), title: "Beta proposal")["state"]
-      assert_equal({ inbox: 2, approvals: 1 }, app.send(:tab_counts))
+      assert_equal({ inbox: 2, approvals: 1 }, intake_counts(app))
     end
   end
 
-  def test_approvals_badge_counts_only_proposals_the_active_filter_shows
-    app_on(view: :approvals, select: "Home proposal", content: CONTEXT_PROPOSAL_APP) do |app|
-      assert_equal({ approvals: 2 }, app.send(:tab_counts))
+  def test_final_approval_selects_visible_capture_but_hidden_future_capture_falls_back
+    today = -> { Date.new(2026, 7, 1) }
+    app_on(view: :inbox, select: "Visible proposal", content: FUTURE_PROPOSAL_APP,
+           date_provider: today) do |app|
+      assert_equal({ inbox: 1, approvals: 2 }, intake_counts(app))
+      ui(app).show_deferred = true
+      assert_equal({ inbox: 2, approvals: 2 }, intake_counts(app))
+      assert_equal 2, app.send(:rows).count { |row| row.item&.proposed? },
+                   "Z never hides or adds proposals"
+      ui(app).show_deferred = false
+      app.send(:rows)
+
+      app.send(:handle_key, "a")
+      assert_equal "Future proposal", app.send(:current_item).title,
+                   "another proposal remains the rapid-review target"
+
+      app.send(:handle_key, "a")
+      assert_equal({ inbox: 2, approvals: 0 }, intake_counts(app))
+      refute_includes row_titles(app), "Future proposal"
+      assert_equal "Visible proposal", app.send(:current_item).title,
+                   "hidden approved work falls back to the nearest visible Inbox row"
+
+      ui(app).show_deferred = true
+      assert_equal({ inbox: 4, approvals: 0 }, intake_counts(app))
+      assert_includes app.send(:rows).filter_map { |row| row.item&.title }, "Future proposal"
+      assert_includes row_titles(app), "Held capture"
+    end
+  end
+
+  def test_combined_inbox_counts_and_rows_respect_context_and_text_filters
+    app_on(view: :inbox, select: "Home proposal", content: CONTEXT_PROPOSAL_APP) do |app|
+      assert_equal({ inbox: 0, approvals: 2 }, intake_counts(app))
 
       ui(app).context_filters = ["@home"]
-      assert_equal({ approvals: 1 }, app.send(:tab_counts))
+      assert_equal({ inbox: 0, approvals: 1 }, intake_counts(app))
       assert_equal ["Home proposal"], app.send(:rows).filter_map { |r| r.item&.title }
 
       ui(app).context_filters = ["@errand"]
-      assert_equal({}, app.send(:tab_counts))
+      assert_equal({ inbox: 0, approvals: 0 }, intake_counts(app))
       assert_empty app.send(:rows).filter_map { |r| r.item&.title }
 
       ui(app).context_filters = []
       ui(app).filter = "work"
-      assert_equal({ approvals: 1 }, app.send(:tab_counts))
+      assert_equal({ inbox: 0, approvals: 1 }, intake_counts(app))
       assert_equal ["Work proposal"], app.send(:rows).filter_map { |r| r.item&.title }
     end
   end
@@ -371,32 +414,32 @@ class TestApp < Minitest::Test
   # asserted against the rendered titles so badge and list can't drift.
   def test_inbox_badge_counts_only_the_captures_the_inbox_tab_would_show
     app_on(view: :inbox, select: "Home capture", content: INBOX_BADGE_APP) do |app|
-      assert_equal({ inbox: 2 }, app.send(:tab_counts))
+      assert_equal({ inbox: 2, approvals: 0 }, intake_counts(app))
       assert_equal ["Home capture", "Work capture"],
                    app.send(:rows).filter_map { |r| r.item&.title }
 
       ui(app).show_deferred = true
-      assert_equal({ inbox: 3 }, app.send(:tab_counts))
+      assert_equal({ inbox: 3, approvals: 0 }, intake_counts(app))
       assert_equal ["Home capture", "Work capture", "Held capture"],
                    app.send(:rows).filter_map { |r| r.item&.title }
       ui(app).show_deferred = false
 
       ui(app).context_filters = ["@home"]
-      assert_equal({ inbox: 1 }, app.send(:tab_counts))
+      assert_equal({ inbox: 1, approvals: 0 }, intake_counts(app))
       assert_equal ["Home capture"], app.send(:rows).filter_map { |r| r.item&.title }
 
       ui(app).context_filters = ["@errand"]
-      assert_equal({}, app.send(:tab_counts))
+      assert_equal({ inbox: 0, approvals: 0 }, intake_counts(app))
       assert_empty app.send(:rows).filter_map { |r| r.item&.title }
 
       ui(app).context_filters = []
       ui(app).filter = "capture"
-      assert_equal({ inbox: 2 }, app.send(:tab_counts))
+      assert_equal({ inbox: 2, approvals: 0 }, intake_counts(app))
       assert_equal ["Home capture", "Work capture"],
                    app.send(:rows).filter_map { |r| r.item&.title }
 
       ui(app).filter = "processed"
-      assert_equal({}, app.send(:tab_counts))
+      assert_equal({ inbox: 0, approvals: 0 }, intake_counts(app))
       assert_empty app.send(:rows).filter_map { |r| r.item&.title }
     end
   end
@@ -430,18 +473,18 @@ class TestApp < Minitest::Test
       titles = -> { app.send(:rows).filter_map { |r| r.item&.title } }
 
       # Unfiltered and expanded: both INBOX tasks counted, the NEXT rider not.
-      assert_equal({ inbox: 2 }, app.send(:tab_counts))
+      assert_equal({ inbox: 2, approvals: 0 }, intake_counts(app))
       assert_equal ["Tagged parent", "Untagged inbox child", "Next rider"], titles.call
 
       # `@home` matches only the parent; the untagged child still renders.
       ui(app).context_filters = ["@home"]
-      assert_equal({ inbox: 1 }, app.send(:tab_counts))
+      assert_equal({ inbox: 1, approvals: 0 }, intake_counts(app))
       assert_equal ["Tagged parent", "Untagged inbox child", "Next rider"], titles.call
 
       # Folding removes the rows, not the inbox work.
       ui(app).context_filters = []
       ui(app).collapsed = Set.new(["f1000002"])
-      assert_equal({ inbox: 2 }, app.send(:tab_counts))
+      assert_equal({ inbox: 2, approvals: 0 }, intake_counts(app))
       assert_equal ["Tagged parent"], titles.call
     end
   end
@@ -489,7 +532,7 @@ class TestApp < Minitest::Test
   end
 
   def test_proposal_decision_keys_work_with_detail_panel_open
-    app_on(view: :approvals, select: "Alpha proposal", content: PROPOSAL_APP) do |app|
+    app_on(view: :inbox, select: "Alpha proposal", content: PROPOSAL_APP) do |app|
       app.send(:handle_key, "\r")
       assert_equal :detail, ui(app).panel.kind
       assert_includes ui(app).panel.lines.join("\n"), "Alpha rationale"
@@ -2563,7 +2606,7 @@ class TestApp < Minitest::Test
       assert_equal "select a task for that", app.instance_variable_get(:@flash)
     end
 
-    delegation_app(select: "Suggested spike", view: :approvals) do |app|
+    delegation_app(select: "Suggested spike", view: :inbox) do |app|
       refute app.send(:delegation_action_available?)
       app.send(:handle_key, "W")
       assert_equal :list, ui(app).mode
@@ -3512,30 +3555,31 @@ class TestApp < Minitest::Test
     end
   end
 
-  def test_active_approvals_and_badge_remain_visible_and_click_aligned_when_narrow
+  def test_active_combined_inbox_and_paired_count_remain_visible_and_click_aligned_when_narrow
     app_on(
-      view: :approvals, select: "Alpha proposal", content: PROPOSAL_APP
+      view: :inbox, select: "Alpha proposal", content: PROPOSAL_APP
     ) do |app|
       [72, 80].each do |width|
         paint_at(app, width: width)
         presentation = app.instance_variable_get(:@last_tab_presentation)
-        assert_includes Tui::Ansi.strip(presentation.strip), "7 Approvals 2"
-        span = presentation.spans.find { |key, _start, _finish| key == :approvals }
+        assert_match(/6 (?:Inbox 1 · Approvals 2|In 1 · Ap 2|I1 A2)/,
+                     Tui::Ansi.strip(presentation.strip))
+        span = presentation.spans.find { |key, _start, _finish| key == :inbox }
         refute_nil span
         assert_operator span[2], :<=, width - 1
 
         hit = app.send(:hit_map).at(1, span[1])
         assert_equal :tab, hit.zone
-        assert_equal :approvals, hit.payload
+        assert_equal :inbox, hit.payload
       end
 
       ui(app).view = :agenda
       paint_at(app, width: 72)
       presentation = app.instance_variable_get(:@last_tab_presentation)
       assert_includes Tui::Ansi.strip(presentation.strip), "1 Agenda"
-      assert_includes Tui::Ansi.strip(presentation.strip), "7 Appr 2"
-      span = presentation.spans.find { |key, _start, _finish| key == :approvals }
-      assert_equal :approvals, app.send(:hit_map).at(1, span[1]).payload
+      assert_match(/6 (?:In 1 · Ap 2|I1 A2)/, Tui::Ansi.strip(presentation.strip))
+      span = presentation.spans.find { |key, _start, _finish| key == :inbox }
+      assert_equal :inbox, app.send(:hit_map).at(1, span[1]).payload
     end
   end
 

@@ -42,20 +42,27 @@ module Tui
       ["1 Agenda",    :agenda],
       ["2 Next",      :next],
       ["3 Quadrants", :quadrants],
-      ["4 Inbox",     :inbox],
-      ["5 Projects",  :projects],
-      ["6 Outline",   :outline],
-      ["7 Approvals", :approvals],
+      ["4 Projects",  :projects],
+      ["5 Outline",   :outline],
+      ["6 Inbox",     :inbox],
     ].freeze
     COMPACT_TAB_LABELS = {
       agenda: "1 Ag",
       next: "2 Nx",
       quadrants: "3 Q",
-      inbox: "4 In",
-      projects: "5 Pr",
-      outline: "6 Out",
-      approvals: "7 Appr",
+      projects: "4 Pr",
+      outline: "5 Out",
+      inbox: "6 In",
     }.freeze
+    MINIMUM_TAB_LABELS = {
+      agenda: "1",
+      next: "2",
+      quadrants: "3",
+      projects: "4",
+      outline: "5",
+      inbox: "6",
+    }.freeze
+    IntakeCounts = Data.define(:inbox, :approvals)
     TabPresentation = Data.define(:strip, :spans, :keys)
 
     # Screen-column spans for the header tab strip. start_col 2 matches the
@@ -64,17 +71,43 @@ module Tui
     # differently cannot desync the click target from the painted label.
     def self.tab_presentation(active:, counts: {}, width: nil, start_col: 2)
       cells = TABS.to_h do |label, key|
-        [key, tab_cell(label, key, active: active, count: counts[key])]
+        [key, tab_cell(label, key, active: active, count: counts[key], variant: :full)]
       end
       keys = TABS.map(&:last)
       if width && presentation_width(keys, cells) > width
         cells = TABS.to_h do |label, key|
           compact = key == active ? label : COMPACT_TAB_LABELS.fetch(key)
-          [key, tab_cell(compact, key, active: active, count: counts[key])]
+          [key, tab_cell(compact, key, active: active, count: counts[key],
+                                               variant: key == active ? :full : :compact)]
         end
         active_index = keys.index(active) || 0
         required = [active]
-        required << :approvals if counts[:approvals].to_i.positive? && active != :approvals
+        intake = counts[:inbox]
+        required << :inbox if intake_count_positive?(intake) && active != :inbox
+        if presentation_width(required, cells) > width && required.include?(:inbox)
+          cells[:inbox] = tab_cell(
+            COMPACT_TAB_LABELS[:inbox], :inbox, active: active,
+            count: intake, variant: :compact
+          )
+        end
+        if presentation_width(required, cells) > width && required.include?(:inbox)
+          cells[:inbox] = tab_cell(
+            MINIMUM_TAB_LABELS[:inbox], :inbox, active: active,
+            count: intake, variant: :minimum
+          )
+        end
+        if presentation_width(required, cells) > width && active != :inbox
+          cells[active] = tab_cell(
+            COMPACT_TAB_LABELS.fetch(active), active, active: active,
+            count: counts[active], variant: :compact
+          )
+        end
+        if presentation_width(required, cells) > width && active != :inbox
+          cells[active] = tab_cell(
+            MINIMUM_TAB_LABELS.fetch(active), active, active: active,
+            count: counts[active], variant: :minimum
+          )
+        end
         selected = required.uniq
         keys.sort_by { |key| [(keys.index(key) - active_index).abs, keys.index(key)] }.each do |key|
           next if selected.include?(key)
@@ -116,13 +149,39 @@ module Tui
     end
     private_class_method :presentation_width
 
-    def self.tab_cell(label, key, active:, count: nil)
+    def self.tab_cell(label, key, active:, count: nil, variant: :full)
       slot = key == active ? :"tab_#{key}_active" : :"tab_#{key}"
       slot = key == active ? :tab_active : :tab_inactive unless T.slot?(slot)
-      label = "#{label} #{count}" if count.to_i.positive?
+      label = if key == :inbox && count.is_a?(IntakeCounts)
+                inbox_tab_label(label, count, variant)
+              elsif count.to_i.positive?
+                "#{label} #{count}"
+              else
+                label
+              end
       T.paint(slot, " #{label} ")
     end
     private_class_method :tab_cell
+
+    def self.inbox_tab_label(label, counts, variant)
+      case variant
+      when :full
+        "#{label} #{counts.inbox} · Approvals #{counts.approvals}"
+      when :compact
+        "#{label} #{counts.inbox} · Ap #{counts.approvals}"
+      when :minimum
+        "#{label} I#{counts.inbox} A#{counts.approvals}"
+      else
+        raise ArgumentError, "unknown tab label variant #{variant.inspect}"
+      end
+    end
+    private_class_method :inbox_tab_label
+
+    def self.intake_count_positive?(counts)
+      counts.is_a?(IntakeCounts) &&
+        (counts.inbox.to_i.positive? || counts.approvals.to_i.positive?)
+    end
+    private_class_method :intake_count_positive?
 
     # Visible width of the agenda date stamp ("MM-DD KIND (when....)"), so an
     # undated rider under a dated anchor blanks the same column and titles align.
@@ -302,13 +361,10 @@ module Tui
     def rows(view, items, tree: nil, collapsed: Set.new, show_deferred: false,
              today: Date.today, urgent_days: Tasks::Quadrants::DEFAULT_URGENT_DAYS,
              reader: nil, store: nil, projects: nil, context_filter: nil,
-             context_filters: nil, context_filter_mode: :any)
+             context_filters: nil, context_filter_mode: :any, intake_counts: nil)
       reader ||= store
       if view == :outline
         return outline(items, tree: tree, collapsed: collapsed, today: today, reader: reader)
-      end
-      if view == :approvals
-        return approvals(items, today: today, reader: reader)
       end
       if view == :projects
         return projects(items, tree: tree, collapsed: collapsed, show_deferred: show_deferred,
@@ -324,7 +380,12 @@ module Tui
         when :agenda    then agenda_tree(tree, reader: reader, **ctx)
         when :next      then next_tree(tree, reader: reader, **ctx)
         when :quadrants then quadrants_tree(tree, reader: reader, **ctx)
-        when :inbox     then inbox_tree(tree, reader: reader, **ctx)
+        when :inbox
+          inbox_rows = inbox_tree_section(tree, reader: reader, **ctx)
+          combined_inbox(items, inbox_rows: inbox_rows, today: today, reader: reader,
+                                show_deferred: show_deferred, context_filters: contexts,
+                                context_filter_mode: context_filter_mode,
+                                counts: intake_counts)
         else []
         end
       else
@@ -337,7 +398,10 @@ module Tui
           quadrants(items, today: today, urgent_days: urgent_days,
                             show_deferred: show_deferred, reader: reader)
         when :inbox
-          inbox(items, today: today, show_deferred: show_deferred, reader: reader)
+          inbox_rows = inbox_section(items, today: today, show_deferred: show_deferred,
+                                            reader: reader)
+          combined_inbox(items, inbox_rows: inbox_rows, today: today, reader: reader,
+                                show_deferred: show_deferred, counts: intake_counts)
         else []
         end
       end
@@ -463,10 +527,14 @@ module Tui
     end
 
     def inbox(items, today: Date.today, show_deferred: true, reader: nil, store: nil)
-      query = view_query(:inbox, today: today, show_deferred: show_deferred, reader: reader || store)
+      inbox_section(items, today: today, show_deferred: show_deferred, reader: reader || store)
+    end
+
+    def inbox_section(items, today: Date.today, show_deferred: true, reader: nil)
+      query = view_query(:inbox, today: today, show_deferred: show_deferred, reader: reader)
       matched = query.sort(query.select(items))
       return [Row.new(T.paint(:muted, "Inbox empty. ✨"), nil)] if matched.empty?
-      matched.map { |i| Row.new("  #{inbox_body(i, reader: reader || store, today: today)}", i) }
+      matched.map { |i| Row.new("  #{inbox_body(i, reader: reader, today: today)}", i) }
     end
 
     def approvals(items, today: Date.today, reader: nil)
@@ -476,6 +544,45 @@ module Tui
       proposed.map do |item|
         Row.new("  #{outline_body(item, today: today, reader: reader)}", item)
       end
+    end
+
+    def combined_inbox(items, inbox_rows:, today: Date.today, reader: nil,
+                       show_deferred: true, context_filters: nil,
+                       context_filter_mode: :any, counts: nil)
+      contexts = Array(context_filters).compact
+      proposal_items = if contexts.empty?
+                         items
+                       else
+                         items.select do |item|
+                           case context_filter_mode
+                           when :any
+                             item.contexts.any? { |context| contexts.include?(context) }
+                           else
+                             raise ArgumentError, "unknown context filter mode #{context_filter_mode.inspect}"
+                           end
+                         end
+                       end
+      proposal_rows = approvals(proposal_items, today: today, reader: reader)
+      inbox_query = view_query(
+        :inbox, today: today, show_deferred: show_deferred, reader: reader,
+        context_filters: contexts, context_filter_mode: context_filter_mode
+      )
+      counts ||= IntakeCounts.new(
+        inbox: items.count { |item| inbox_query.matching?(item) },
+        approvals: proposal_items.count(&:proposed?)
+      )
+      inbox_count = counts.inbox
+      approval_count = counts.approvals
+      approval_title = T.paint(:approval_section, "APPROVALS #{approval_count}")
+      approval_title += T.paint(:muted, "  a approve · r reject") if approval_count.positive?
+
+      [
+        Row.new(approval_title, nil),
+        *proposal_rows,
+        Row.new("", nil),
+        Row.new(T.paint(:inbox_section, "INBOX #{inbox_count}"), nil),
+        *inbox_rows,
+      ]
     end
 
     # The Projects tab renders the Phase-1 project read model: a "Projects" group
@@ -673,6 +780,16 @@ module Tui
 
     def inbox_tree(tree, collapsed:, show_deferred:, today:, urgent_days:, reader: nil,
                    context_filter: nil, context_filters: nil, context_filter_mode: :any)
+      inbox_tree_section(
+        tree, collapsed: collapsed, show_deferred: show_deferred, today: today,
+        urgent_days: urgent_days, reader: reader, context_filter: context_filter,
+        context_filters: context_filters, context_filter_mode: context_filter_mode
+      )
+    end
+
+    def inbox_tree_section(tree, collapsed:, show_deferred:, today:, urgent_days:, reader: nil,
+                           context_filter: nil, context_filters: nil,
+                           context_filter_mode: :any)
       query = view_query(:inbox, today: today, urgent_days: urgent_days,
                                  show_deferred: show_deferred, reader: reader,
                                  context_filter: context_filter, context_filters: context_filters,

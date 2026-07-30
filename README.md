@@ -201,8 +201,8 @@ tasks -p "water the garden; remember garden tasks use @home"
 Launch `bin/tasks-tui` for the full-screen terminal dashboard:
 
 ```
-1-7 / ←→   switch view: Agenda · Next · Quadrants · Inbox · Projects · Outline · Approvals
-a / r      approve / reject selected proposal (Approvals view)
+1-6 / ←→   switch view: Agenda · Next · Quadrants · Projects · Outline · Inbox
+a / r      approve / reject selected proposal (Inbox approval section)
 ↑↓ / jk    select task; opens read-only detail panel
 h / l      collapse / expand selected subtree
 > / <      indent / outdent subtree (Outline view)
@@ -216,6 +216,13 @@ x          archive sweep with preview counts
 :          action palette
 tab        focus agent prompt
 ```
+
+The final Inbox tab is one intake workspace with an **Approvals** section first
+and accepted **Inbox** captures second. Its tab label always reports the two
+filtered counts separately (`Inbox 4 · Approvals 2`, including zeroes).
+Context filters and text search scope both sections; `Z` changes only Inbox
+availability. Proposal rows keep their inert `PROPOSED` state and are the only
+rows where `a`/`r` approve or reject.
 
 ---
 

@@ -77,10 +77,11 @@ class TestShortcuts < Minitest::Test
     assert_equal :outdent_subtree, S.match("<", :list).handler
   end
 
-  def test_seventh_view_has_a_direct_jump_key
-    entry = S.match("7", :list)
+  def test_six_views_have_direct_jump_keys_and_seven_is_unbound
+    entry = S.match("6", :list)
     assert_equal :jump_view, entry.handler
-    assert_equal "1-7", entry.display_key
+    assert_equal "1-6", entry.display_key
+    assert_nil S.match("7", :list)
   end
 
   # D and W are the uppercase variants of the lowercase concepts they extend

@@ -844,7 +844,7 @@ class TestViews < Minitest::Test
     assert_includes A.strip(flight_row.text), "7/2"
   end
 
-  def test_approvals_only_shows_proposals_and_outline_excludes_them
+  def test_combined_inbox_shows_approvals_before_accepted_work_and_outline_excludes_proposals
     records = [
       { "type" => "meta", "version" => 2 },
       { "type" => "section", "id" => "aa000001", "title" => "Inbox" },
@@ -855,52 +855,71 @@ class TestViews < Minitest::Test
         "state" => "INBOX", "title" => "Accepted work" },
     ]
     with_records(records) do |store|
-      approvals = tree_rows(store, :approvals)
-      assert_equal ["Research backup providers"], approvals.filter_map { |row| row.item&.title }
-      assert_includes A.strip(approvals.first.text), "PROPOSED"
+      combined = tree_rows(store, :inbox)
+      assert_equal ["APPROVALS 1  a approve · r reject", "  PROPOSED  Research backup providers",
+                    "", "INBOX 1", "    Accepted work"], texts(combined)
+      assert_equal ["Research backup providers", "Accepted work"],
+                   combined.filter_map { |row| row.item&.title }
+      assert_nil combined[0].item
+      assert_nil combined[2].item
+      assert_nil combined[3].item
 
       outline = tree_rows(store, :outline)
       assert_equal ["Accepted work"], outline.filter_map { |row| row.item&.title }
     end
   end
 
-  def test_approvals_empty_state_and_count_share_tab_geometry
-    empty = V.rows(:approvals, [])
-    assert_equal ["No tasks pending approval"], texts(empty)
+  def test_combined_inbox_empty_sections_and_paired_count_share_tab_geometry
+    empty = V.rows(:inbox, [])
+    assert_equal ["APPROVALS 0", "No tasks pending approval", "", "INBOX 0",
+                  "Inbox empty. ✨"], texts(empty)
 
-    strip = V.tab_strip(active: :agenda, counts: { approvals: 3 })
-    span = V.tab_spans(active: :agenda, counts: { approvals: 3 })
-            .find { |key, _start, _finish| key == :approvals }
-    assert_includes A.strip(strip), "7 Approvals 3"
-    assert_equal A.vislen(" 7 Approvals 3 "), span[2] - span[1]
+    counts = { inbox: V::IntakeCounts.new(inbox: 0, approvals: 3) }
+    strip = V.tab_strip(active: :agenda, counts: counts)
+    span = V.tab_spans(active: :agenda, counts: counts)
+            .find { |key, _start, _finish| key == :inbox }
+    assert_includes A.strip(strip), "6 Inbox 0 · Approvals 3"
+    assert_equal A.vislen(" 6 Inbox 0 · Approvals 3 "), span[2] - span[1]
   end
 
-  # The badge mechanism is per-tab, so the inbox count paints and measures the
-  # same way the approvals count does — including both counts at once.
-  def test_inbox_count_shares_the_approvals_badge_geometry
-    counts = { inbox: 4, approvals: 3 }
+  def test_inbox_paired_count_includes_both_zeroes_and_shares_geometry
+    counts = { inbox: V::IntakeCounts.new(inbox: 4, approvals: 3) }
     strip = A.strip(V.tab_strip(active: :agenda, counts: counts))
     span = V.tab_spans(active: :agenda, counts: counts)
             .find { |key, _start, _finish| key == :inbox }
 
-    assert_includes strip, "4 Inbox 4"
-    assert_includes strip, "7 Approvals 3"
-    assert_equal A.vislen(" 4 Inbox 4 "), span[2] - span[1]
-    refute_includes A.strip(V.tab_strip(active: :agenda, counts: { inbox: 0 })), "4 Inbox 0"
+    assert_includes strip, "6 Inbox 4 · Approvals 3"
+    assert_equal A.vislen(" 6 Inbox 4 · Approvals 3 "), span[2] - span[1]
+
+    zeroes = { inbox: V::IntakeCounts.new(inbox: 0, approvals: 0) }
+    assert_includes A.strip(V.tab_strip(active: :agenda, counts: zeroes)),
+                    "6 Inbox 0 · Approvals 0"
   end
 
-  def test_compact_tabs_preserve_active_and_counted_approvals_with_shared_spans
+  def test_compact_tabs_preserve_active_and_counted_inbox_with_shared_spans
     presentation = V.tab_presentation(
-      active: :agenda, counts: { approvals: 3 }, width: 30
+      active: :agenda,
+      counts: { inbox: V::IntakeCounts.new(inbox: 4, approvals: 3) },
+      width: 30
     )
 
     assert_includes presentation.keys, :agenda
-    assert_includes presentation.keys, :approvals
+    assert_includes presentation.keys, :inbox
     assert_includes A.strip(presentation.strip), "1 Agenda"
-    assert_includes A.strip(presentation.strip), "7 Appr 3"
+    assert_includes A.strip(presentation.strip), "6 In 4 · Ap 3"
     assert_operator A.vislen(presentation.strip), :<=, 30
     last = presentation.spans.last
     assert_equal A.vislen(presentation.strip), last[2] - 2
+
+    minimum = V.tab_presentation(
+      active: :agenda,
+      counts: { inbox: V::IntakeCounts.new(inbox: 4, approvals: 3) },
+      width: 17
+    )
+    assert_equal %i[agenda inbox], minimum.keys
+    assert_includes A.strip(minimum.strip), "1 Ag"
+    assert_includes A.strip(minimum.strip), "6 I4 A3"
+    assert_equal A.vislen(minimum.strip), minimum.spans.last[2] - 2
   end
 
   # Hybrid model keeps tagged fixture items where they were: the :important:/
@@ -984,9 +1003,9 @@ class TestViews < Minitest::Test
 
   def test_inbox_lists_inbox_items
     rs = rows(:inbox)
-    assert_equal 1, rs.size
-    assert_includes rs[0].text, "garden"
-    assert rs[0].item
+    assert_equal ["random thought about the garden"], rs.filter_map { |row| row.item&.title }
+    assert_equal "APPROVALS 0", A.strip(rs[0].text)
+    assert_equal "INBOX 1", A.strip(rs[3].text)
   end
 
   # Both inbox paths go through inbox_body, so the flat `/`-filter rendering and
@@ -1020,9 +1039,10 @@ class TestViews < Minitest::Test
   def test_inbox_empty_state
     items = []
     rs = V.rows(:inbox, items, today: TODAY)
-    assert_equal 1, rs.size
-    assert_nil rs[0].item
-    assert_includes A.strip(rs[0].text), "Inbox empty"
+    assert_equal 5, rs.size
+    assert rs.all? { |row| !row.selectable? }
+    assert_equal ["APPROVALS 0", "No tasks pending approval", "", "INBOX 0",
+                  "Inbox empty. ✨"], texts(rs)
   end
 
   def test_projects_view_groups_open_tasks_by_project

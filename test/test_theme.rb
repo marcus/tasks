@@ -90,6 +90,15 @@ class TestTheme < Minitest::Test
     end
     assert_equal "\e[2mx\e[0m", T.paint(:muted, "x")
     assert_equal "\e[4mx\e[0m", T.paint(:link, "x")
+    assert_equal "\e[1mx\e[0m", T.paint(:approval_section, "x")
+    assert_equal "\e[1;4mx\e[0m", T.paint(:inbox_section, "x")
+  end
+
+  def test_intake_sections_have_distinct_default_semantics
+    T.configure!
+    refute_equal T.current[:approval_section], T.current[:inbox_section]
+    assert_equal "\e[1;33mx\e[0m", T.paint(:approval_section, "x")
+    assert_equal "\e[1;35mx\e[0m", T.paint(:inbox_section, "x")
   end
 
   def test_unknown_theme_name_falls_back_to_default

@@ -96,7 +96,8 @@ rows win over built-ins.
 
 **TUI colors.** The TUI paints semantic *slots* (`lib/tui/theme.rb` lists them
 all: `accent`, `selection`, per-view tabs like `tab_agenda` /
-`tab_agenda_active`, task-row fields like `project`, `context`, `title`, the
+`tab_agenda_active`, intake headers `approval_section` / `inbox_section`,
+task-row fields like `project`, `context`, `title`, the
 `due_*` ladder plus selected-row variants such as `due_soon_selected`,
 detail-panel slots like `panel_title`, `detail_label`, `description`, `link`, `link_system`,
 `state_*`, …). Appearance keys in the same config file:
@@ -213,19 +214,26 @@ Direct shortcuts and palette entries invoke the same registered
 actions. Return opens the read-only task-detail panel on the right in every
 view; list navigation stays active and refreshes the panel for each newly
 selected task. Return or Escape closes it. The existing `d` date and `r`
-recurrence quick actions remain available. The seventh **Approvals** tab shows
-only PROPOSED tasks and carries a live count badge in the tab strip. There,
-`a` approves the selected proposal and `r` rejects it; the registered shortcut
-availability keeps `r` as recurrence everywhere else. Both decisions preserve
-the nearest useful selection and participate in undo/redo. The fourth **Inbox**
-tab carries the same kind of live count badge, and its rows show each capture's
-`@` contexts inline between the title and the trailing availability markers.
+recurrence quick actions remain available. The sixth and final **Inbox** tab
+composes two visibly separate intake sections: **Approvals** first, containing
+only inert PROPOSED tasks with an `a approve · r reject` hint, then accepted
+**Inbox** captures with their existing tree and inline `@` contexts. `a`
+approves the selected proposal and `r` rejects it; registered shortcut
+availability keeps project capture and recurrence behavior on their eligible
+rows. Repeated decisions advance through the visible proposal queue. Once it
+is empty, approval follows the accepted task when that task is visible, while
+rejection uses the nearest selectable Inbox row. Both decisions participate in
+undo/redo. A session saved on the former `approvals` view restores to this
+combined Inbox tab.
 
-A tab badge counts the **tasks that tab holds** under the filters in force — the
-active `@` context group and `/` text filter, plus, for Inbox, the current
-unavailable-shown setting and the same INBOX-and-available rule the `inbox`
-command applies. So a badge never advertises work a filter hides, and the Inbox
-badge is the number `tasks inbox` would list. It is deliberately *not* a count
+The final tab label always shows both scoped counts, including zeroes:
+`Inbox 4 · Approvals 2`. Both counts use the active `@` context group and `/`
+text filter. The Inbox count additionally uses the current unavailable-shown
+setting and the same INBOX-and-available rule the `inbox` command applies;
+proposals remain visible regardless of availability because they await an
+owner decision. So the label never advertises work the current filters hide,
+and the Inbox number is what `tasks inbox` would list. It is deliberately *not*
+a count
 of painted rows, and on the list views the two differ in both directions: tree
 mode rides non-matching descendants along under a matching anchor for context
 (they are on screen but are not that tab's work), and collapsing an anchor hides
@@ -439,7 +447,7 @@ it to INBOX and `reject` transitions it to CANCELLED with a `closed` date.
 Repeatable `--note` on `reject` (and on `cancel`) records withdrawal rationale
 on the body, visible in `show` — the same join semantics as `propose --note`.
 Proposals appear only through the explicit `list --proposed` scope, direct
-`show`, and the TUI Approvals tab; they stay out of agenda, next, quadrants,
+`show`, and the approval section of the final TUI Inbox tab; they stay out of agenda, next, quadrants,
 inbox, project rollups, Outline, and the default open list. They cannot recur
 or transition directly to DONE. Approval/rejection are checked atomic Store
 mutations with revision support in the application/API, undo history, and
@@ -686,7 +694,7 @@ the API/TUI via an omitted/null `before_id`; no CLI grammar for that conversion
 is added in this slice.
 
 Agenda, Next, Quadrants, Inbox, and Projects are not eligible for ordering:
-they filter, regroup, or sort away live siblings. The sixth **Outline** tab
+they filter, regroup, or sort away live siblings. The fifth **Outline** tab
 renders every live section and task in canonical DFS order, including closed
 and unavailable tasks. Only collapse may hide
 descendants. `Alt+↑`/`Alt+k`, `Alt+↓`/`Alt+j`, `>`, and `<` reorder, indent,

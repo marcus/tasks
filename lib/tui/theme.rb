@@ -40,6 +40,8 @@ module Tui
       accent:        "cyan",           # model name, help keys
       prompt:        "bold cyan",      # ❯ and / input markers
       section:       "bold",           # quadrant labels, detail title
+      approval_section: "bold yellow", # proposed work awaiting owner decision
+      inbox_section: "bold magenta",   # accepted captures awaiting processing
       modal_title:   "bold",           # modal title strip (supports on-… backgrounds)
       panel_title:   "bold",           # persistent right-panel heading
       border:        "none",           # container chrome; solid fallback when the gradient is off
@@ -110,6 +112,7 @@ module Tui
         tab_projects_active: "reverse", tab_approvals_active: "reverse",
         border: "dim", border_gradient: "none",
         prompt: "bold", modal_title: "bold", panel_title: "bold", context: "bold",
+        approval_section: "bold", inbox_section: "bold underline",
         context_selected: "bold", context_filter_active: "bold", project: "none", project_selected: "bold",
         title: "none", title_selected: "bold", muted: "dim", muted_selected: "dim",
         outline_thread: "dim",

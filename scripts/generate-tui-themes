@@ -132,6 +132,8 @@ def convert_scheme(scheme)
     accent: bright_cyan,
     prompt: spec("bold", bright_cyan),
     section: spec("bold", foreground),
+    approval_section: spec("bold", bright_yellow),
+    inbox_section: spec("bold", purple),
     modal_title: spec("bold", selection_fg, "on-#{selection_bg}"),
     # Container chrome: a solid muted edge for terminals without truecolor, plus
     # an angled blue→purple sweep (the scheme's own accents) for those with it.

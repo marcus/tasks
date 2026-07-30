@@ -367,14 +367,14 @@ class TestAppModals < Minitest::Test
   def test_left_right_cycle_views_in_list_mode
     with_app do |app|
       views = []
-      7.times do
+      6.times do
         views << ui(app).view
         app.send(:handle_key, "\e[C")
       end
-      assert_equal %i[agenda next quadrants inbox projects outline approvals], views
+      assert_equal %i[agenda next quadrants projects outline inbox], views
       assert_equal :agenda, ui(app).view, "wraps around"
       app.send(:handle_key, "\e[D")
-      assert_equal :approvals, ui(app).view, "left wraps backward"
+      assert_equal :inbox, ui(app).view, "left wraps backward"
     end
   end
 

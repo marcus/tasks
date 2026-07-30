@@ -136,6 +136,24 @@ class TestHitMap < Minitest::Test
     Tui::Theme.reset!
   end
 
+  def test_paired_inbox_count_uses_the_same_span_for_paint_and_clicks
+    counts = {
+      inbox: Tui::Views::IntakeCounts.new(inbox: 4, approvals: 2),
+    }
+    presentation = Tui::Views.tab_presentation(
+      active: :agenda, counts: counts, width: 30
+    )
+    span = presentation.spans.find { |key, _start, _finish| key == :inbox }
+    lay = layout(width: 80)
+    map = HitMap.build(
+      layout: lay, tab_spans: presentation.spans, row_count: 1, panel: false
+    )
+
+    assert_equal :inbox, map.at(1, span[1]).payload
+    assert_equal :inbox, map.at(1, span[2] - 1).payload
+    assert_equal A.vislen(presentation.strip), presentation.spans.last[2] - 2
+  end
+
   def test_collapse_marker_zone
     lay = layout
     map = map_for(lay, row_count: 5, marker_spans: { 0 => [0, 2] })

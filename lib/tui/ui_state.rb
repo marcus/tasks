@@ -34,6 +34,7 @@ module Tui
     def self.restore(saved:, views:, default_view:)
       saved_view = saved[:view]
       saved_view = saved_view.is_a?(String) ? saved_view.to_sym : nil
+      saved_view = :inbox if saved_view == :approvals
       view = views.include?(saved_view) ? saved_view : default_view
 
       saved_collapsed = saved[:collapsed]

@@ -44,7 +44,7 @@ module Tui
       entry(sequences: ["\e[B", "j"],  key: "↓ / j",   description: "select next task",                 contexts: [:list], handler: :select_next),
       entry(sequences: ["\e[D"],       key: "←",       description: "previous view",                    contexts: [:list], handler: :prev_view),
       entry(sequences: ["\e[C"],       key: "→",       description: "next view",                        contexts: [:list], handler: :next_view),
-      entry(sequences: %w[1 2 3 4 5 6 7], key: "1-7",     description: "jump to view",                     contexts: [:list], handler: :jump_view),
+      entry(sequences: %w[1 2 3 4 5 6], key: "1-6",       description: "jump to view",                     contexts: [:list], handler: :jump_view),
       entry(sequences: ["\e[1;3A", "\e\e[A", "\ek"], key: "alt-↑ / alt-k", description: "Move up", contexts: [:list], handler: :move_subtree_up, availability: :ordering_action_available?, palette: true),
       entry(sequences: ["\e[1;3B", "\e\e[B", "\ej"], key: "alt-↓ / alt-j", description: "Move down", contexts: [:list], handler: :move_subtree_down, availability: :ordering_action_available?, palette: true),
       entry(sequences: [">"],          key: ">",       description: "Indent",                          contexts: [:list], handler: :indent_subtree, availability: :ordering_action_available?, palette: true),

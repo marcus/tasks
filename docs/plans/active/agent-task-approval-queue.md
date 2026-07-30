@@ -2,6 +2,12 @@
 
 Status: accepted implementation contract
 
+TUI presentation note (2026-07-30): the dedicated Approvals tab described by
+this plan is superseded by
+[ADR-0012](../../adr/0012-combine-tui-intake-queues.md). Proposal lifecycle
+semantics are unchanged; proposals now appear in the approval section of the
+final combined Inbox tab.
+
 Date: 2026-07-27
 
 Architecture: [ADR-0011](../../adr/0011-task-proposals-as-lifecycle-state.md)

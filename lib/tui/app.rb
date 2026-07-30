@@ -519,6 +519,7 @@ module Tui
 
       contexts = active_context_filters
       items = filtered_items(read)
+      intake_counts = tab_counts(read: read, today: today)[:inbox]
       # A `/` search always renders flat (its result shape is what filtering
       # expects). A `@` context filter keeps the tree on the list views so
       # subtasks stay visible — scoped to that context via context_filter —
@@ -537,11 +538,13 @@ module Tui
                                          urgent_days: @urgent_days,
                                          reader: read, projects: projects,
                                          context_filters: contexts,
-                                         context_filter_mode: CONTEXT_FILTER_MODE)
+                                         context_filter_mode: CONTEXT_FILTER_MODE,
+                                         intake_counts: intake_counts)
       else
         @rows = Views.rows(@ui.view, items, show_deferred: @ui.show_deferred,
                                            today: today,
-                                           urgent_days: @urgent_days, reader: read)
+                                           urgent_days: @urgent_days, reader: read,
+                                           intake_counts: intake_counts)
       end
       @rows_fingerprint = fingerprint
       @row_item_count = @rows.count(&:item)
@@ -642,8 +645,8 @@ module Tui
       " #{tabs}#{" " * gap}#{count} "
     end
 
-    # Badge counts for the tab strip: how many tasks each tab holds under the
-    # filters in force. Every count is taken over filtered_items so a badge can
+    # Counts shared by the intake section headers and tab strip under the
+    # filters in force. Every count is taken over filtered_items so a label can
     # never advertise work the active `@`/`/` filter hides. The inbox count asks
     # the Inbox view's own Query for eligibility rather than testing
     # state == "INBOX" here, so badge and list agree about held captures — a
@@ -656,31 +659,31 @@ module Tui
     # the badge shrink when you fold a subtree and grow on riders that are not
     # inbox work; counting tasks keeps it the same number `tasks inbox` reports.
     #
-    # Zero counts are dropped: tab_cell only renders a positive count, and an
-    # explicit 0 would still widen the label.
-    #
     # Memoized like the other per-frame header inputs. The header repaints on
     # every keystroke and on each animation tick while an agent runs, and this
     # is a linear pass with an availability test per item — by far the most
     # expensive thing the header does on a large list.
-    def tab_counts
-      read = read_model
-      key = [active_filter, active_context_filters, @ui.show_deferred]
+    def tab_counts(read: nil, today: nil)
+      read ||= read_model
+      today ||= @read_model_today
+      key = [today, active_filter, active_context_filters, @ui.show_deferred]
       if @tab_counts && @tab_counts_model.equal?(read) && @tab_counts_key == key
         return @tab_counts
       end
 
       items = filtered_items(read)
       inbox = Views.view_query(
-        :inbox, today: @read_model_today, urgent_days: @urgent_days,
+        :inbox, today: today, urgent_days: @urgent_days,
         show_deferred: @ui.show_deferred, reader: read
       )
       @tab_counts_model = read
       @tab_counts_key = key
       @tab_counts = {
-        inbox: items.count { |item| inbox.eligible?(item) },
-        approvals: items.count(&:proposed?),
-      }.reject { |_key, count| count.zero? }.freeze
+        inbox: Views::IntakeCounts.new(
+          inbox: items.count { |item| inbox.eligible?(item) },
+          approvals: items.count(&:proposed?)
+        )
+      }.freeze
     end
 
     def footer(w, mode: @ui.mode)
@@ -2705,6 +2708,9 @@ module Tui
       item = current_item
       return flash("select a task pending approval") unless item&.proposed?
 
+      proposal_ids = @rows.filter_map { |row| row.item&.id if row.item&.proposed? }
+      proposal_index = proposal_ids.index(item.id)
+      next_proposal_id = proposal_index && proposal_ids[proposal_index + 1]
       result = @application.public_send(
         :"#{action}_task", item.id, expected_revision: current_task&.revision,
         today: current_date,
@@ -2713,6 +2719,7 @@ module Tui
       if result.ok?
         title = item.title
         absorb_own_write
+        @ui.selected_id = next_proposal_id || (item.id if action == :approve)
         rows
         refresh_detail_panel if detail_panel?
         target = action == :approve ? "INBOX" : "CANCELLED"
