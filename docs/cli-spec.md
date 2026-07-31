@@ -226,10 +226,11 @@ rejection uses the nearest selectable Inbox row. Both decisions participate in
 undo/redo. A session saved on the former `approvals` view restores to this
 combined Inbox tab.
 
-The final tab label always shows both scoped counts, including zeroes:
-`Inbox 4 · Approvals 2`. Both counts use the active `@` context group and `/`
-text filter. The Inbox count additionally uses the current unavailable-shown
-setting and the same INBOX-and-available rule the `inbox` command applies;
+The final tab label always shows both scoped counts, including zeroes, with the
+Inbox count first and approval count second: `Inbox 4 | 2`. Both counts use the
+active `@` context group and `/` text filter. The Inbox count additionally uses
+the current unavailable-shown setting and the same INBOX-and-available rule the
+`inbox` command applies;
 proposals remain visible regardless of availability because they await an
 owner decision. So the label never advertises work the current filters hide,
 and the Inbox number is what `tasks inbox` would list. It is deliberately *not*

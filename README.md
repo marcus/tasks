@@ -219,7 +219,7 @@ tab        focus agent prompt
 
 The final Inbox tab is one intake workspace with an **Approvals** section first
 and accepted **Inbox** captures second. Its tab label always reports the two
-filtered counts separately (`Inbox 4 · Approvals 2`, including zeroes).
+filtered counts in that order (`Inbox 4 | 2`, including zeroes).
 Context filters and text search scope both sections; `Z` changes only Inbox
 availability. Proposal rows keep their inert `PROPOSED` state and are the only
 rows where `a`/`r` approve or reject.

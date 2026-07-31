@@ -5,6 +5,10 @@ in a temporary task-store sandbox. It never writes to the user's task files.
 
 Plan: [Combined Inbox and Approvals TUI](../plans/active/combined-inbox-approvals-tui.md).
 
+The screenshots preserve the original rollout label. A 2026-07-31 follow-up
+shortened the current tab title to `Inbox 4 | 2`; the paired-count behavior and
+the section proof below are unchanged.
+
 ## Sandbox
 
 [`combined-intake-tui.sh`](./combined-intake-tui.sh) copies the checked-in

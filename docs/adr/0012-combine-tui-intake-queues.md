@@ -59,9 +59,11 @@ treatments and actions. Approving still means `PROPOSED -> INBOX`; rejecting
 still means `PROPOSED -> CANCELLED`.
 
 The tab label always reports both scoped counts, including zero, rather than
-collapsing them into a total. Wide and compact labels may abbreviate their
-words, but must not make the two numbers ambiguous. Header rendering and mouse
-hit testing consume the same presentation object.
+collapsing them into a total. To keep the title bar short, the Inbox count is
+labelled and appears first, followed by a `|` and the approval count
+(`Inbox 4 | 2`). Compact labels may abbreviate Inbox but must preserve that
+order and separator. Header rendering and mouse hit testing consume the same
+presentation object.
 
 Active context filters apply their existing OR semantics to both sections. The
 Inbox section retains its context-filtered tree behavior, including visible

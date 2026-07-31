@@ -52,26 +52,25 @@ The implementation should compose these paths rather than introduce an
 Use six tabs, with the combined Inbox last:
 
 ```text
-1 Agenda  2 Next  3 Quadrants  4 Projects  5 Outline  6 Inbox 4 · Approvals 2
+1 Agenda  2 Next  3 Quadrants  4 Projects  5 Outline  6 Inbox 4 | 2
 ```
 
-The two numbers are intentionally labelled, not summed. A total such as `6`
-would hide the authority boundary, while an unexplained `4/2` would be hard to
-decode. Unlike ordinary single badges, render both values even when one is
-zero:
+The two numbers are intentionally separate, not summed. The Inbox title labels
+the first number and a vertical bar separates the approval count. Unlike
+ordinary single badges, render both values even when one is zero:
 
 ```text
-6 Inbox 4 · Approvals 0
-6 Inbox 0 · Approvals 2
-6 Inbox 0 · Approvals 0
+6 Inbox 4 | 0
+6 Inbox 0 | 2
+6 Inbox 0 | 0
 ```
 
 The last form makes an empty combined queue unambiguous. Recommended compact
 variants are:
 
 ```text
-6 In 4 · Ap 2
-6 I4 A2
+6 In 4|2
+6 I4|2
 ```
 
 The full, compact, and minimum cells must all come from
@@ -270,9 +269,9 @@ Changes:
    show-unavailable changes, filter changes, and external reload through the
    current invalidation path.
 
-Exit evidence: approving a visible proposal changes `Inbox 4 · Approvals 2` to
-`Inbox 5 · Approvals 1` in the same repaint; a held approved item instead yields
-`Inbox 4 · Approvals 1` until `Z` reveals it.
+Exit evidence: approving a visible proposal changes `Inbox 4 | 2` to
+`Inbox 5 | 1` in the same repaint; a held approved item instead yields
+`Inbox 4 | 1` until `Z` reveals it.
 
 ### 4. Add semantic section treatment
 
@@ -417,8 +416,8 @@ Prove:
 
 - Inbox and Approvals are no longer separate top-level tabs.
 - The combined Inbox is the sixth and final tab.
-- Its label shows separately labelled Inbox and Approvals counts, including
-  zero, under the active filters.
+- Its label shows the Inbox count then the approval count separated by `|`,
+  including zero, under the active filters.
 - Approvals render first with proposal styling and decision hints; Inbox renders
   second with its current flat/tree treatment.
 - Context filters use OR semantics within the context group and apply to both

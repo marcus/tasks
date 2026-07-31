@@ -166,11 +166,11 @@ module Tui
     def self.inbox_tab_label(label, counts, variant)
       case variant
       when :full
-        "#{label} #{counts.inbox} · Approvals #{counts.approvals}"
+        "#{label} #{counts.inbox} | #{counts.approvals}"
       when :compact
-        "#{label} #{counts.inbox} · Ap #{counts.approvals}"
+        "#{label} #{counts.inbox}|#{counts.approvals}"
       when :minimum
-        "#{label} I#{counts.inbox} A#{counts.approvals}"
+        "#{label} I#{counts.inbox}|#{counts.approvals}"
       else
         raise ArgumentError, "unknown tab label variant #{variant.inspect}"
       end

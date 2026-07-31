@@ -878,8 +878,8 @@ class TestViews < Minitest::Test
     strip = V.tab_strip(active: :agenda, counts: counts)
     span = V.tab_spans(active: :agenda, counts: counts)
             .find { |key, _start, _finish| key == :inbox }
-    assert_includes A.strip(strip), "6 Inbox 0 · Approvals 3"
-    assert_equal A.vislen(" 6 Inbox 0 · Approvals 3 "), span[2] - span[1]
+    assert_includes A.strip(strip), "6 Inbox 0 | 3"
+    assert_equal A.vislen(" 6 Inbox 0 | 3 "), span[2] - span[1]
   end
 
   def test_inbox_paired_count_includes_both_zeroes_and_shares_geometry
@@ -888,12 +888,12 @@ class TestViews < Minitest::Test
     span = V.tab_spans(active: :agenda, counts: counts)
             .find { |key, _start, _finish| key == :inbox }
 
-    assert_includes strip, "6 Inbox 4 · Approvals 3"
-    assert_equal A.vislen(" 6 Inbox 4 · Approvals 3 "), span[2] - span[1]
+    assert_includes strip, "6 Inbox 4 | 3"
+    assert_equal A.vislen(" 6 Inbox 4 | 3 "), span[2] - span[1]
 
     zeroes = { inbox: V::IntakeCounts.new(inbox: 0, approvals: 0) }
     assert_includes A.strip(V.tab_strip(active: :agenda, counts: zeroes)),
-                    "6 Inbox 0 · Approvals 0"
+                    "6 Inbox 0 | 0"
   end
 
   def test_compact_tabs_preserve_active_and_counted_inbox_with_shared_spans
@@ -906,7 +906,7 @@ class TestViews < Minitest::Test
     assert_includes presentation.keys, :agenda
     assert_includes presentation.keys, :inbox
     assert_includes A.strip(presentation.strip), "1 Agenda"
-    assert_includes A.strip(presentation.strip), "6 In 4 · Ap 3"
+    assert_includes A.strip(presentation.strip), "6 In 4|3"
     assert_operator A.vislen(presentation.strip), :<=, 30
     last = presentation.spans.last
     assert_equal A.vislen(presentation.strip), last[2] - 2
@@ -918,7 +918,7 @@ class TestViews < Minitest::Test
     )
     assert_equal %i[agenda inbox], minimum.keys
     assert_includes A.strip(minimum.strip), "1 Ag"
-    assert_includes A.strip(minimum.strip), "6 I4 A3"
+    assert_includes A.strip(minimum.strip), "6 I4|3"
     assert_equal A.vislen(minimum.strip), minimum.spans.last[2] - 2
   end
 

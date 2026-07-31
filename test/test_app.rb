@@ -3584,7 +3584,7 @@ class TestApp < Minitest::Test
       [72, 80].each do |width|
         paint_at(app, width: width)
         presentation = app.instance_variable_get(:@last_tab_presentation)
-        assert_match(/6 (?:Inbox 1 · Approvals 2|In 1 · Ap 2|I1 A2)/,
+        assert_match(/6 (?:Inbox 1 \| 2|In 1\|2|I1\|2)/,
                      Tui::Ansi.strip(presentation.strip))
         span = presentation.spans.find { |key, _start, _finish| key == :inbox }
         refute_nil span
@@ -3599,7 +3599,7 @@ class TestApp < Minitest::Test
       paint_at(app, width: 72)
       presentation = app.instance_variable_get(:@last_tab_presentation)
       assert_includes Tui::Ansi.strip(presentation.strip), "1 Agenda"
-      assert_match(/6 (?:In 1 · Ap 2|I1 A2)/, Tui::Ansi.strip(presentation.strip))
+      assert_match(/6 (?:In 1\|2|I1\|2)/, Tui::Ansi.strip(presentation.strip))
       span = presentation.spans.find { |key, _start, _finish| key == :inbox }
       assert_equal :inbox, app.send(:hit_map).at(1, span[1]).payload
     end
