@@ -286,6 +286,35 @@ class TestApiApp < Minitest::Test
     assert_contract_response(not_proposed)
   end
 
+  def test_patch_updates_proposal_presentation_without_changing_its_state
+    created = json_request(
+      "POST", "/api/v1/tasks",
+      title: "Notify the invented channel", state: "PROPOSED", body: "Original rationale."
+    )
+    assert_equal 201, created.status, created.body
+    id = JSON.parse(created.body).dig("data", "id")
+
+    updated = json_request(
+      "PATCH", "/api/v1/tasks/#{id}",
+      {
+        title: "Notify the actual channel", priority: "B",
+        contexts: ["@desk"], tags: ["correction"],
+        body: ["Original rationale.", "Correction: use the actual channel."],
+      },
+      { "HTTP_IF_MATCH" => created["etag"] }
+    )
+    assert_equal 200, updated.status, updated.body
+    task = JSON.parse(updated.body).fetch("data")
+    assert_equal "PROPOSED", task.fetch("state")
+    assert_equal "Notify the actual channel", task.fetch("title")
+    assert_equal "B", task.fetch("priority")
+    assert_equal ["@desk"], task.fetch("contexts")
+    assert_equal ["correction"], task.fetch("tags")
+    assert_equal ["Original rationale.", "Correction: use the actual channel."], task.fetch("body")
+    assert_contract_response(updated)
+    assert Tasks::Check.check(@org).ok?
+  end
+
   def test_create_adds_configured_host_context_and_supports_explicit_opt_out
     paths = Tasks::Config.for_dir(@dir)
     paths.host_context = "@home"

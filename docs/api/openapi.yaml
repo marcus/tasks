@@ -606,6 +606,11 @@ paths:
         returns `200` with the unchanged resource and its current `ETag`, and
         it does not burn an undo step.
 
+        Any live task may be patched, including a `PROPOSED` task. Presentation
+        fields such as title, priority, body, tags, and contexts can therefore
+        be corrected before the proposal is approved or rejected; patching
+        those fields does not change its lifecycle state.
+
         `placement` moves the whole subtree before a stable direct-child anchor,
         or appends it when `before_id` is omitted/null. It is mutually exclusive
         with the legacy top-level `parent_id` location input. Placement compares

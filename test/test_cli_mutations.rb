@@ -1579,6 +1579,73 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  def test_cli_presentation_updates_correct_a_proposal_and_remain_undoable
+    proposal_id = "ee000001"
+    proposal = dump_fixture(
+      FIXTURE_RECORDS[0..2] + [
+        { "type" => "task", "id" => proposal_id, "parent" => FIX[:inbox],
+          "state" => "PROPOSED", "title" => "Notify the invented channel",
+          "tags" => ["@work"], "body" => "Original rationale." },
+      ] + FIXTURE_RECORDS[3..]
+    )
+
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, proposal)
+
+      dry_out, dry_err, dry_status = run_cli_at(
+        org, archive, "retitle", proposal_id, "Notify the actual channel", "--dry-run"
+      )
+      assert dry_status.success?, dry_err
+      assert_match(/would retitle/, dry_out)
+      assert_equal proposal, File.read(org), "dry-run resolves the proposal without writing"
+
+      commands = [
+        ["priority", proposal_id, "B"],
+        ["retitle", proposal_id, "Notify the actual channel"],
+        ["tag", proposal_id, "+correction", "-@work", "@desk"],
+        ["note", proposal_id, "Correction: use the actual channel."],
+      ]
+      commands.each do |command|
+        _out, err, status = run_cli_at(org, archive, *command)
+        assert status.success?, "#{command.first} failed: #{err}"
+      end
+
+      record = record_for(org, title: "Notify the actual channel")
+      assert_equal "PROPOSED", record["state"], "presentation edits must stay inert"
+      assert_equal "B", record["priority"]
+      assert_equal %w[correction @desk], record["tags"]
+      assert_equal "Original rationale.\nCorrection: use the actual channel.", record["body"]
+      assert Tasks::Check.check(org).ok?
+
+      commands.length.times do
+        _out, err, status = run_cli_at(org, archive, "undo")
+        assert status.success?, err
+      end
+      assert_equal proposal, File.read(org), "all four proposal edits undo to the original bytes"
+    end
+  end
+
+  def test_cli_ref_reports_a_known_proposal_outside_an_open_only_scope
+    proposal_id = "ee000001"
+    proposal = dump_fixture(
+      FIXTURE_RECORDS[0..2] + [
+        { "type" => "task", "id" => proposal_id, "parent" => FIX[:inbox],
+          "state" => "PROPOSED", "title" => "Proposal with a deadline" },
+      ] + FIXTURE_RECORDS[3..]
+    )
+
+    [proposal_id, "Proposal with", "L4"].each do |ref|
+      run_cli("due", ref, "today", content: proposal) do |org, _out, err, status|
+        assert_equal 2, status.exitstatus
+        assert_match(/ref outside scope: .*task is PROPOSED; expected an open task/, err)
+        refute_match(/no match:/, err)
+        assert_equal proposal, File.read(org), "scope failure must not write"
+      end
+    end
+  end
+
   def test_cli_state_reopens_done_item
     run_cli("state", "Old finished", "TODO") do |org, out, _err, st|
       assert st.success?
@@ -2188,7 +2255,10 @@ class TestCliMutations < Minitest::Test
 
     run_cli("move", "Gamma task", "--before", "Closed anchor", content: ORDER_CLI) do |org, _out, err, st|
       assert_equal 2, st.exitstatus
-      assert_match(/no match: Closed anchor/, err)
+      assert_match(
+        /ref outside scope: Closed anchor — task is DONE; expected an open task/,
+        err
+      )
       assert_equal ORDER_CLI, File.read(org, encoding: "UTF-8")
     end
   end

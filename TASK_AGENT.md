@@ -181,7 +181,8 @@ Proposals are inert: they appear in `list --proposed` and the approval section
 of the final TUI Inbox tab,
 but stay out of agenda, next, quadrants, inbox, project rollups, and the default
 open list. They cannot recur or be completed, and archive operations leave them
-live until the owner decides them.
+live until the owner decides them. If a proposal needs correction first, use
+`priority`, `retitle`, `tag`, or `note`; these preserve its PROPOSED state.
 
 You may create an inert `PROPOSED` task without asking first when useful
 follow-up is plausibly valuable but the user has not asked to add an accepted

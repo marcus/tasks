@@ -94,7 +94,9 @@ bin/tasks project archive "<ref>"    # sweep a project's subtree to archive (--f
 `PROPOSED` is separate from accepted open work. It stays out of the default
 list, agenda, next, quadrants, inbox, and project rollups; review it with
 `list --proposed` or the TUI Approvals tab. A proposal cannot recur or be
-completed. Approval and rejection are undoable lifecycle decisions.
+completed. Before the owner decides it, `priority`, `retitle`, `tag`, and
+`note` can correct its presentation without changing its PROPOSED state.
+Approval and rejection are undoable lifecycle decisions.
 
 Use `capture` when the user explicitly asks to add, remember, or track a task.
 You may use `propose` without asking when agent-initiated follow-up is plausibly
