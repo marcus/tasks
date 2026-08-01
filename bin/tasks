@@ -394,6 +394,11 @@ def cmd_capture(args, proposed: false)
                                         touched_ids: result.touched_ids, summary: result.summary,
                                         rolled_back: result.rolled_back?)
   end
+  # A field refusal (an unreachable schedule, a lead outside the storable range)
+  # already says what to fix; the section guess is only right when nothing else
+  # explains the failure.
+  field_reason = result.field_errors.is_a?(Hash) ? result.field_errors.values.flatten.compact.first : nil
+  mutation_failed(field_reason) if field_reason && !result.not_found?
   mutation_result_failed(result, "could not #{proposed ? "propose" : "capture"} (no #{(project || "Inbox").inspect} section found?)")
   if proposed && !json
     puts "proposed: #{text} [#{result.touched_ids.fetch(0)}]"
@@ -1852,7 +1857,7 @@ end
 # The store refuses the same shape with its own message; this one fires before
 # a write the store would only reject, so a capture never half-lands.
 def lead_gate_conflict_hint(span)
-  "a #{Tasks::Lead.humanize(span)} lead measures from the deadline, so an " \
+  "a lead of #{Tasks::Lead.humanize(span)} measures from the deadline, so an " \
     "available-from date would be a second, ignored gate — pick one"
 end
 

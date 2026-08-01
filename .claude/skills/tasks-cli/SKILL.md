@@ -204,8 +204,14 @@ last date clears the lead with it. A lead rides with the dates, so a proposal
 takes one on the same terms it takes `--due`.
 
 `activate "<ref>"` on a lead task releases **this occurrence only** and keeps
-every date; the next `done` roll re-arms the window. (That same mechanism is why
-activating a recurring task no longer deletes its next occurrence date.)
+every date; the next `done` roll re-arms the window. On a task with no lead —
+including a recurring one — `activate` keeps its usual meaning of clearing a
+future available-from date.
+
+A recurring capture that also carries a lead seeds the schedule's **first
+occurrence** rather than today, so `capture "clean gutters" --recur y:06-01
+--lead 17d` needs no date flag: it anchors on June 1 and hides until May 15.
+Without a lead, a dateless recurring capture still starts repeating today.
 
 Recurrence is a `recur` schedule alongside the task's date. The stamp **is** the
 next occurrence; the schedule only says how it advances on `done`. Two shapes

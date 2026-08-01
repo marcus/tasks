@@ -1262,17 +1262,20 @@ module Tui
     def fallback_gate_date(candidate)
       anchor = candidate.respond_to?(:lead_anchor) ? candidate.lead_anchor : candidate.scheduled
       return candidate.scheduled unless anchor
-      return nil if candidate.respond_to?(:lead_skip) && candidate.lead_skip == anchor.iso8601
+      # Same order as TaskQueries#lead_gate: a stamp releases a LEAD window and
+      # nothing else, so a stray one can never erase a plain available-from gate.
       return candidate.scheduled unless candidate.respond_to?(:lead_time?) && candidate.lead_time?
+      return nil if candidate.respond_to?(:lead_skip) && candidate.lead_skip == anchor.iso8601
 
-      # A clock lead has no date-grained answer; at this grain the nearest true
-      # statement is the day the duration reaches back to. The canonical
-      # instant-grained answer is the query's (TaskQueries#effective_gate).
+      # A clock lead has no date-grained answer; at this grain the true statement
+      # is the day the duration reaches BACK INTO, so it rounds away from the
+      # anchor (5h before a midnight-released date is the previous day). The
+      # canonical instant-grained answer is the query's.
       date = Tasks::Lead.gate_date(anchor, candidate.lead)
       return date if date
 
       seconds = Tasks::Lead.duration(candidate.lead)
-      seconds ? anchor - (seconds / 86_400) : nil
+      seconds ? anchor - (seconds / 86_400.0).ceil : nil
     end
 
     def availability_date(item, availability, reader)

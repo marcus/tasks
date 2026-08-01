@@ -117,6 +117,36 @@ class TestLeadMatrix < Minitest::Test
            "the first instant of the derived date"
   end
 
+  # The renderer's date-grained fallback (used when a renderer has no canonical
+  # reader) must agree with the query about which rows are hidden — including
+  # for a clock lead, which has no date-grained answer of its own, and for a
+  # stray release stamp on a task with no lead.
+  def test_the_renderer_fallback_agrees_with_the_query_about_hidden_rows
+    clock = RECORDS.map(&:dup)
+    clock[2] = clock[2].merge("lead" => "5h")
+    stray = RECORDS.map(&:dup)
+    stray[2] = { "type" => "task", "id" => "fb000002", "parent" => "fb000001", "state" => "NEXT",
+                 "title" => "Renew the passport", "scheduled" => "2026-12-01",
+                 "lead_skip" => "2026-12-01" }
+
+    [RECORDS, clock, stray].each_with_index do |records, index|
+      with_records(records) do |store|
+        item = store.items.find { |candidate| candidate.id == "fb000002" }
+        fallback = V.availability_for(item, today: TODAY)
+        canonical = Tasks::TaskQueries.new(store.read_snapshot, today: TODAY).availability(item)
+        assert_equal canonical.available?, fallback.available?,
+                     "fixture #{index}: fallback and query disagree about visibility"
+      end
+    end
+
+    # And the clock fallback rounds away from the anchor, matching the query's
+    # instant (5h before a midnight release is the previous day).
+    with_records(clock) do |store|
+      item = store.items.find { |candidate| candidate.id == "fb000002" }
+      assert_equal Date.new(2026, 10, 31), V.availability_for(item, today: TODAY).scheduled
+    end
+  end
+
   # -- concurrency -----------------------------------------------------------
 
   def test_a_lead_write_conflicts_like_any_other_field

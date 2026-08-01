@@ -260,7 +260,7 @@ alone.
 
 | command | result |
 | --- | --- |
-| `ruby test/all.rb` | 2047 runs, 29984 assertions, 0 failures, 0 errors |
+| `ruby test/all.rb` | 2049 runs, 29993 assertions, 0 failures, 0 errors |
 | `bundle exec ruby test/api/all.rb` | 106 runs, 2586 assertions, 0 failures, 0 errors |
 | `bin/tasks check` | ok — no structural errors |
 | `git diff --check` | clean |
@@ -307,3 +307,27 @@ but not the implementer's assumptions. All are fixed, each with a test.
     assertion probed mid-day rather than the release instant; the TUI's
     date-grained fallback could not express a clock lead; error-message grammar
     ("a 3 weeks lead").
+
+**Third pass (independent re-review of the fixes).** All six were confirmed
+fixed, with the P1-2 fix specifically checked for having moved the bug rather
+than removed it (it had not: `undate` still retires `recur`, `activate` still
+preserves it). Five smaller findings came out of the re-read and are fixed here:
+
+13. **P2** — both `tasks-cli` skill copies still told agents that activating a
+    recurring task preserves its date, which is exactly the behavior finding 7
+    reverted. Agent-facing guidance that is actively wrong is worse than absent.
+14. **P3** — `Tui::Views#fallback_gate_date` had not received finding 7's
+    ordering fix, and its clock-span fallback truncated instead of rounding away
+    from the anchor, so the renderer's date-grained answer disagreed with the
+    query in three cases. Both fixed, with a test that asserts the two agree.
+15. **P3** — `capture` discarded the store's field refusal behind "no Inbox
+    section found?". Inherited rather than introduced (recurrence's range guard
+    was swallowed identically), and now fixed for both.
+16. **P3** — the contract's delta list had gone stale: clock units and the
+    first-occurrence seeding were documented elsewhere but missing from the list
+    that claims to be complete.
+17. **P3** — one grammar string in `bin/tasks` was missed by finding 12's pass.
+
+One reported item was not a defect: the TUI-artifact prose says "due 2036-06-01"
+because the proof's fixture deliberately anchors a decade out, so the windows
+stay closed whenever the artifact is replayed.

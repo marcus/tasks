@@ -310,6 +310,18 @@ class TestCliLead < Minitest::Test
     end
   end
 
+  # A create refusal has to name the fix too — the section guess ("no Inbox
+  # section found?") is only right when nothing else explains the failure.
+  def test_capture_surfaces_the_stores_own_refusal
+    in_sandbox(today: "2026-07-01") do |_org, run|
+      _out, err, status = run.call("capture", "far future", "--due", "2026-07-01",
+                                   "--lead", "9999y", "--project", "Work")
+      refute status.success?
+      assert_match(/four-digit years/, err)
+      refute_match(/section found/, err)
+    end
+  end
+
   # -- activation ------------------------------------------------------------
 
   def test_activate_releases_one_occurrence_and_the_roll_re_arms_the_window

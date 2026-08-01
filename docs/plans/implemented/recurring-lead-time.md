@@ -19,6 +19,20 @@ Deltas between this contract and the shipped code, all deliberate and reviewed:
 - **Rule 3 is enforced from both directions.** Adding a *deadline* to a
   scheduled-anchored lead task is refused too; it would flip the anchor and
   strand the available-from date as the second gate rule 2 forbids.
+- **Clock units shipped.** Slice 5b landed with the rest, so `h` is accepted and
+  the "Out of scope" bullet about clock units, and slice 6's "`h` rejected by the
+  span parser" matrix row, are superseded by §"Planned clock units" below.
+- **A recurring capture with a lead seeds the first occurrence.** A dateless
+  recurring capture has always meant "start repeating today"; with a lead that
+  puts the window in the past and shows the task immediately, which would make
+  this document's own motivating captures false. A lead therefore seeds the
+  schedule's first occurrence instead. Without a lead, nothing changes.
+- **A zoned anchor's window date is stated in the anchor's zone.** The gate
+  instant honors the anchor's effective zone as §"Granularity" requires, while
+  the displayed date stays zone-less (a `TemporalValue` cannot hold a zone
+  without a local time). A Berlin-anchored lead therefore reads as
+  "unavailable until 2026-05-31" to a Denver reader while releasing at 16:00
+  local on the 30th.
 
 ## Goal
 

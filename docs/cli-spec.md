@@ -602,6 +602,9 @@ precedence a recurrence roll uses), and the window opens at midnight of
 `anchor - lead` **in the anchor's own effective zone** — a deadline that lives in
 Tokyo has a window that starts in Tokyo, whoever is reading; an all-day or
 floating anchor has no zone of its own and opens at the reader's local midnight.
+(The *date* a surface prints for a zoned gate is that anchor-zone date; a reader
+far enough west sees it release during their previous evening. `available_at` is
+always the exact instant.)
 Month and year spans clamp exactly as recurrence intervals do (`1m` before Mar 31
 = Feb 28 in a common year), and a calendar lead keeps its wall date across a DST
 change.
