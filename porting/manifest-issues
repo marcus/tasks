@@ -1,0 +1,691 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# manifest-issues — project porting/manifest.jsonl into td.
+#
+# The fleet's "what should I work on next" is a td query, but the truth about
+# what there is to port lives in the manifest. This script is the one-way
+# projection between them: one td epic per campaign, one td issue per slice,
+# dependency edges wired from `depends_on`. It is safe to run at any time and
+# safe to re-run after a failure — every write is preceded by a read that
+# decides whether the write is needed at all, so a second run is a no-op.
+#
+#   porting/manifest-issues plan            # what sync would do; touches nothing
+#   porting/manifest-issues sync            # create/update td to match the manifest
+#   porting/manifest-issues sync --json     # same, machine-readable
+#   porting/manifest-issues progress        # slice counts, generated from the manifest
+#   porting/manifest-issues validate        # manifest self-consistency + source/test existence
+#   porting/manifest-issues drift           # slices whose Ruby source moved past source_sha
+#
+# `sync --dry-run` is a synonym for `plan`.
+#
+# Identity is a label, never a title: the issue for slice `format-parse` is the
+# one carrying `slice:format-parse`. Retitle it in td, rename the behavior in
+# the manifest, close it, reopen it — the mapping survives, because nothing
+# about it is derived from text a human might edit.
+#
+# What this script does NOT do: it never writes a td *status*. td owns work
+# state (open / in_progress / in_review); the manifest's `status` field is port
+# progress, which agents update in the manifest. Syncing status in either
+# direction would let a generator run stomp on a claim.
+
+require "json"
+require "open3"
+require "optparse"
+require "tmpdir"
+
+module ManifestIssues
+  PORTING_DIR = File.expand_path(__dir__)
+  REPO_ROOT = File.expand_path("..", PORTING_DIR)
+  MANIFEST = File.join(PORTING_DIR, "manifest.jsonl")
+  CAMPAIGNS = File.join(PORTING_DIR, "campaigns.jsonl")
+
+  # Every label this script owns. An issue is "ours" if it carries FLEET_LABEL;
+  # within ours, the slice/campaign label is the durable identity.
+  FLEET_LABEL = "porting"
+  SLICE_LABEL = "porting-slice"
+  CAMPAIGN_LABEL = "porting-campaign"
+
+  RISKS = %w[low medium high].freeze
+  # Points are a size signal for the fleet's scheduler, derived from the risk
+  # tier's required evidence — not an independent estimate to keep in sync.
+  RISK_POINTS = { "low" => 1, "medium" => 3, "high" => 5 }.freeze
+
+  # PORTING.md's slice loop, scaled by risk. Restated here as acceptance text so
+  # the tier's obligations travel with the issue an agent claims.
+  RISK_ACCEPTANCE = {
+    "low" => "Oracle capture -> translate -> compile -> differential conformance. " \
+             "One combined review; self-approval allowed (td approve --self-review --reason).",
+    "medium" => "Low tier, plus property tests and split source-fidelity / Go-idiom reviews. " \
+                "Independent approval required.",
+    "high" => "Full loop: medium tier, plus fault injection at every write boundary, real " \
+              "competing processes, and stress and budget checks. Two independent reviews; " \
+              "independent approval only.",
+  }.freeze
+
+  ALWAYS = "Never skipped at any tier: the manifest entry, the Ruby oracle capture, and " \
+           "differential conformance. Anything else skipped is recorded in the manifest entry."
+
+  STATUSES = %w[not_started characterizing translating conformance reviewing
+                ported not_applicable blocking_cutover blocked].freeze
+  # PORTING.md's drift rule: a slice whose Ruby source moved must reach one of
+  # these, or CI fails while a changed behavior has no recorded disposition.
+  TERMINAL_STATUSES = %w[ported not_applicable blocking_cutover].freeze
+
+  REQUIRED_KEYS = %w[id campaign behavior target_package depends_on risk source_paths
+                     source_sha ruby_tests oracle_gaps fixtures fixtures_todo
+                     observable_outputs platforms perf_budget status evidence
+                     intentional_differences notes].freeze
+
+  Error = Class.new(StandardError)
+
+  # ---------------------------------------------------------------- manifest
+
+  class Manifest
+    attr_reader :slices, :campaigns
+
+    def self.load(manifest_path: MANIFEST, campaigns_path: CAMPAIGNS)
+      new(read_jsonl(manifest_path), read_jsonl(campaigns_path))
+    end
+
+    def self.read_jsonl(path)
+      raise Error, "missing #{path}" unless File.exist?(path)
+      File.readlines(path, chomp: true).each_with_index.filter_map do |line, i|
+        next if line.strip.empty?
+        begin
+          JSON.parse(line)
+        rescue JSON::ParserError => e
+          raise Error, "#{path}:#{i + 1}: #{e.message.lines.first.strip}"
+        end
+      end
+    end
+
+    def initialize(slices, campaigns)
+      @slices = slices
+      @campaigns = campaigns
+    end
+
+    def slice(id) = slices.find { |s| s["id"] == id }
+    def campaign(number) = campaigns.find { |c| c["campaign"] == number }
+
+    # Every way the manifest can be wrong that a machine can see. Returns a list
+    # of human-readable problems; empty means the manifest is internally
+    # consistent AND every source path and oracle test it names really exists.
+    def problems(root: REPO_ROOT)
+      out = []
+      ids = slices.map { |s| s["id"] }
+      dupes = ids.tally.select { |_, n| n > 1 }.keys
+      out << "duplicate slice ids: #{dupes.join(", ")}" unless dupes.empty?
+
+      campaign_numbers = campaigns.map { |c| c["campaign"] }
+      cdupes = campaign_numbers.tally.select { |_, n| n > 1 }.keys
+      out << "duplicate campaign numbers: #{cdupes.join(", ")}" unless cdupes.empty?
+
+      slices.each do |s|
+        id = s["id"] || "(no id)"
+        missing_keys = REQUIRED_KEYS - s.keys
+        out << "#{id}: missing keys #{missing_keys.join(", ")}" unless missing_keys.empty?
+        extra = s.keys - REQUIRED_KEYS
+        out << "#{id}: unmodelled keys #{extra.join(", ")}" unless extra.empty?
+
+        out << "#{id}: risk #{s["risk"].inspect} not one of #{RISKS.join("/")}" unless RISKS.include?(s["risk"])
+        out << "#{id}: status #{s["status"].inspect} not one of #{STATUSES.join("/")}" unless STATUSES.include?(s["status"])
+        out << "#{id}: campaign #{s["campaign"].inspect} has no record in campaigns.jsonl" unless campaign_numbers.include?(s["campaign"])
+        out << "#{id}: evidence must be porting/evidence/#{id}/" unless s["evidence"] == "porting/evidence/#{id}/"
+
+        unknown = Array(s["depends_on"]) - ids
+        out << "#{id}: depends on unknown slice(s) #{unknown.join(", ")}" unless unknown.empty?
+        out << "#{id}: depends on itself" if Array(s["depends_on"]).include?(id)
+
+        Array(s["source_paths"]).each do |p|
+          out << "#{id}: source path #{p} does not exist" unless File.exist?(File.join(root, p))
+        end
+        out << "#{id}: source_sha is not a 40-char sha" unless s["source_sha"].to_s.match?(/\A[0-9a-f]{40}\z/)
+
+        # A slice with no oracle test is a finding, not a blank field: it must
+        # say so in oracle_gaps rather than leave ruby_tests empty and silent.
+        if Array(s["ruby_tests"]).empty? && Array(s["oracle_gaps"]).empty?
+          out << "#{id}: no ruby_tests and no oracle_gaps — an unproven slice must record the gap"
+        end
+        Array(s["ruby_tests"]).each do |ref|
+          file, name = ref.split("#", 2)
+          full = File.join(root, file)
+          unless File.exist?(full)
+            out << "#{id}: ruby test file #{file} does not exist"
+            next
+          end
+          next unless name
+          out << "#{id}: #{file} has no #{name}" unless File.read(full).include?("def #{name}")
+        end
+
+        Array(s["fixtures"]).each do |f|
+          out << "#{id}: fixture #{f} does not exist" unless File.exist?(File.join(root, f))
+        end
+        if Array(s["fixtures"]).empty? && to_s_or_nil(s["fixtures_todo"]).nil?
+          out << "#{id}: no fixtures and no fixtures_todo — say which corpus this slice needs"
+        end
+      end
+
+      out.concat(cycles)
+      out
+    end
+
+    # Dependency cycles, reported as one line per cycle found.
+    def cycles
+      graph = slices.to_h { |s| [s["id"], Array(s["depends_on"])] }
+      state = Hash.new(:new)
+      found = []
+      walk = lambda do |node, path|
+        state[node] = :open
+        graph.fetch(node, []).each do |dep|
+          next unless graph.key?(dep)
+          if state[dep] == :open
+            found << "dependency cycle: #{(path + [dep]).join(" -> ")}"
+          elsif state[dep] == :new
+            walk.call(dep, path + [dep])
+          end
+        end
+        state[node] = :done
+      end
+      graph.each_key { |n| walk.call(n, [n]) if state[n] == :new }
+      found.uniq
+    end
+
+    def to_s_or_nil(v) = (v.nil? || v.to_s.strip.empty?) ? nil : v.to_s
+  end
+
+  # ---------------------------------------------------------------- td client
+
+  # Every td invocation this script makes, in one place. `td` is resolved from
+  # TD_BIN so a test can stand a recording double in front of it.
+  class Td
+    def initialize(bin: ENV["TD_BIN"] || "td", work_dir: REPO_ROOT)
+      @bin = bin
+      @work_dir = work_dir
+    end
+
+    def fleet_issues
+      run_json("list", "--labels", FLEET_LABEL, "--all", "--format", "json", "--limit", "500") || []
+    end
+
+    def show(id) = run_json("show", id, "--json")
+
+    def dependencies(id)
+      Array(run_json("dep", id, "--json")&.fetch("dependencies", nil))
+    end
+
+    # Returns the new issue id. Long text goes through files: --description-file
+    # and --acceptance-file both preserve formatting, and only one of them can
+    # read stdin, so neither does.
+    def create(type:, title:, labels:, priority:, points:, parent:, description:, acceptance:)
+      with_text_files(description, acceptance) do |dfile, afile|
+        args = ["create", "--title", title, "--type", type,
+                "--labels", labels.join(","), "--priority", priority,
+                "--points", points.to_s,
+                "--description-file", dfile, "--acceptance-file", afile, "--json"]
+        args += ["--parent", parent] if parent
+        result = run_json(*args)
+        result&.fetch("id", nil) or raise Error, "td create returned no id for #{title.inspect}"
+      end
+    end
+
+    def update(id, fields)
+      with_text_files(fields[:description], fields[:acceptance]) do |dfile, afile|
+        args = ["update", id]
+        args += ["--title", fields[:title]] if fields.key?(:title)
+        args += ["--priority", fields[:priority]] if fields.key?(:priority)
+        args += ["--points", fields[:points].to_s] if fields.key?(:points)
+        args += ["--labels", fields[:labels].join(",")] if fields.key?(:labels)
+        args += ["--parent", fields[:parent]] if fields.key?(:parent)
+        args += ["--description-file", dfile] if fields.key?(:description)
+        args += ["--acceptance-file", afile] if fields.key?(:acceptance)
+        run(*args, "--json")
+      end
+    end
+
+    def dep_add(id, dep) = run("dep", "add", id, dep)
+    def dep_rm(id, dep) = run("dep", "rm", id, dep)
+
+    private
+
+    def with_text_files(description, acceptance)
+      Dir.mktmpdir("manifest-issues") do |dir|
+        d = File.join(dir, "description.md")
+        a = File.join(dir, "acceptance.md")
+        File.write(d, description.to_s)
+        File.write(a, acceptance.to_s)
+        yield d, a
+      end
+    end
+
+    def run(*args)
+      stdout, stderr, status = Open3.capture3(@bin, "--work-dir", @work_dir, *args)
+      raise Error, "td #{args.first} failed: #{stderr.strip.empty? ? stdout.strip : stderr.strip}" unless status.success?
+      stdout
+    end
+
+    def run_json(*args)
+      out = run(*args)
+      return nil if out.strip.empty?
+      JSON.parse(out)
+    rescue JSON::ParserError
+      # td prints a human line ("No issues matching query") when a read finds
+      # nothing; that is an empty result, not a failure.
+      nil
+    end
+  end
+
+  # ---------------------------------------------------------------- desired state
+
+  # The td shape a manifest record should produce. Pure: same manifest in, same
+  # issue fields out, which is what makes the second run a no-op.
+  module Desired
+    module_function
+
+    TITLE_LIMIT = 200
+
+    def campaign_issue(campaign)
+      {
+        type: "epic",
+        title: truncate("Go port campaign #{campaign["campaign"]}: #{campaign["title"]}"),
+        labels: [FLEET_LABEL, CAMPAIGN_LABEL, "campaign:#{campaign["campaign"]}"],
+        priority: "P2",
+        points: 0,
+        parent: nil,
+        description: campaign_description(campaign),
+        acceptance: "Every slice issue under this epic is closed with its evidence bundle " \
+                    "recorded under porting/evidence/, and every manifest record for campaign " \
+                    "#{campaign["campaign"]} reads ported, not applicable, or blocking cutover.",
+      }
+    end
+
+    def slice_issue(slice, epic_id)
+      {
+        type: "task",
+        title: truncate("port #{slice["id"]}: #{slice["behavior"]}"),
+        labels: [FLEET_LABEL, SLICE_LABEL, "slice:#{slice["id"]}",
+                 "risk:#{slice["risk"]}", "campaign:#{slice["campaign"]}"],
+        priority: "P2",
+        points: RISK_POINTS.fetch(slice["risk"]),
+        parent: epic_id,
+        description: slice_description(slice),
+        acceptance: slice_acceptance(slice),
+      }
+    end
+
+    def truncate(text)
+      one_line = text.gsub(/\s+/, " ").strip
+      return one_line if one_line.length <= TITLE_LIMIT
+      cut = one_line[0, TITLE_LIMIT - 1]
+      cut = cut[0, cut.rindex(" ") || cut.length].rstrip
+      "#{cut}…"
+    end
+
+    def campaign_description(campaign)
+      <<~TEXT.strip
+        #{campaign["summary"]}
+
+        Maps onto #{campaign["plan_phase"]} of docs/plans/active/tasks-go-port-plan.md.
+
+        #{generated_footer}
+      TEXT
+    end
+
+    def slice_description(slice)
+      sha = slice["source_sha"].to_s[0, 12]
+      <<~TEXT.strip
+        #{slice["behavior"]}
+
+        Campaign #{slice["campaign"]} | risk #{slice["risk"]} | target package #{slice["target_package"]}
+
+        Ruby source (as of #{sha}):
+        #{bullets(slice["source_paths"])}
+
+        Ruby oracle tests:
+        #{bullets(slice["ruby_tests"], empty: "none — see oracle gaps")}
+
+        Oracle gaps and exclusions:
+        #{bullets(slice["oracle_gaps"], empty: "none recorded")}
+
+        Fixtures:
+        #{bullets(slice["fixtures"], empty: (slice["fixtures_todo"] || "none recorded"))}
+
+        Observable outputs:
+        #{bullets(slice["observable_outputs"])}
+
+        Platforms: #{Array(slice["platforms"]).join(", ")}
+        Performance budget: #{slice["perf_budget"] || "none set"}
+        Evidence: #{slice["evidence"]}
+        Manifest status: #{slice["status"]}
+        #{slice["notes"] ? "\nNotes: #{slice["notes"]}" : ""}
+        #{generated_footer}
+      TEXT
+    end
+
+    def slice_acceptance(slice)
+      <<~TEXT.strip
+        Risk tier #{slice["risk"]}: #{RISK_ACCEPTANCE.fetch(slice["risk"])}
+
+        #{ALWAYS}
+
+        Evidence bundle lands under #{slice["evidence"]} and the manifest record for
+        #{slice["id"]} is updated in the same change.
+      TEXT
+    end
+
+    def bullets(items, empty: "none")
+      list = Array(items)
+      return "  - #{empty}" if list.empty?
+      list.map { |i| "  - #{i}" }.join("\n")
+    end
+
+    def generated_footer
+      "Generated from porting/manifest.jsonl by porting/manifest-issues. " \
+        "Change the manifest, not this issue: the next sync overwrites edits made here."
+    end
+  end
+
+  # ---------------------------------------------------------------- planner
+
+  Action = Struct.new(:kind, :target, :td_id, :detail, keyword_init: true) do
+    def to_h = { "action" => kind, "target" => target, "td_id" => td_id, "detail" => detail }
+    def to_line
+      "#{kind.to_s.upcase.ljust(6)} #{(td_id || "-").ljust(9)} #{target}#{detail.empty? ? "" : "  (#{detail})"}"
+    end
+  end
+
+  # Reads td once for the fleet, then decides per record whether anything needs
+  # writing. `apply: false` is the dry run — it takes the same reads and the
+  # same decisions, so what it prints is what a real run would do.
+  class Planner
+    def initialize(manifest, td)
+      @manifest = manifest
+      @td = td
+      @actions = []
+    end
+
+    attr_reader :actions
+
+    def run(apply:)
+      epics, slices = index(@td.fleet_issues)
+      epic_ids = sync_campaigns(epics, apply: apply)
+      slice_ids = sync_slices(slices, epic_ids, apply: apply)
+      sync_dependencies(slice_ids, apply: apply)
+      report_orphans(epics, slices)
+      @actions
+    end
+
+    private
+
+    # Two indexes, not one, from a single list call. A slice issue carries
+    # `campaign:N` as *membership* while the epic carries it as *identity*, so a
+    # flat label map would let a slice masquerade as its own epic. The marker
+    # label (porting-slice / porting-campaign) is what separates them.
+    def index(issues)
+      epics = {}
+      slices = {}
+      issues.each do |issue|
+        labels = Array(issue["labels"])
+        if labels.include?(CAMPAIGN_LABEL)
+          key = labels.find { |l| l.start_with?("campaign:") }
+          epics[key] = issue if key
+        elsif labels.include?(SLICE_LABEL)
+          key = labels.find { |l| l.start_with?("slice:") }
+          slices[key] = issue if key
+        end
+      end
+      [epics, slices]
+    end
+
+    def sync_campaigns(epics, apply:)
+      @manifest.campaigns.sort_by { |c| c["campaign"] }.to_h do |campaign|
+        key = "campaign:#{campaign["campaign"]}"
+        desired = Desired.campaign_issue(campaign)
+        id = reconcile(key, desired, epics[key], "campaign #{campaign["campaign"]}", apply: apply)
+        [campaign["campaign"], id]
+      end
+    end
+
+    def sync_slices(slices, epic_ids, apply:)
+      @manifest.slices.to_h do |slice|
+        key = "slice:#{slice["id"]}"
+        desired = Desired.slice_issue(slice, epic_ids[slice["campaign"]])
+        id = reconcile(key, desired, slices[key], "slice #{slice["id"]}", apply: apply)
+        [slice["id"], id]
+      end
+    end
+
+    # Create if absent; otherwise fetch the full issue and update only the fields
+    # that actually differ. Returns the td id, or nil in a dry run of a create
+    # (nothing downstream may assume an id it did not get).
+    def reconcile(key, desired, summary, label, apply:)
+      unless summary
+        if apply
+          id = @td.create(**desired)
+          @actions << Action.new(kind: :create, target: label, td_id: id, detail: key)
+          return id
+        end
+        @actions << Action.new(kind: :create, target: label, td_id: nil, detail: key)
+        return nil
+      end
+
+      id = summary["id"]
+      actual = @td.show(id) || {}
+      changes = {}
+      changes[:title] = desired[:title] if desired[:title] != actual["title"]
+      changes[:priority] = desired[:priority] if desired[:priority] != actual["priority"]
+      changes[:points] = desired[:points] if desired[:points] != actual["points"]
+      changes[:parent] = desired[:parent] if desired[:parent] && desired[:parent] != actual["parent_id"]
+      changes[:description] = desired[:description] if normalize(desired[:description]) != normalize(actual["description"])
+      changes[:acceptance] = desired[:acceptance] if normalize(desired[:acceptance]) != normalize(actual["acceptance"])
+      # Labels the manifest does not own (a human's "flaky", say) are kept.
+      wanted_labels = (Array(actual["labels"]) - owned(Array(actual["labels"])) + desired[:labels]).uniq.sort
+      changes[:labels] = wanted_labels if wanted_labels != Array(actual["labels"]).uniq.sort
+
+      if changes.empty?
+        @actions << Action.new(kind: :skip, target: label, td_id: id, detail: "up to date")
+      else
+        @td.update(id, changes) if apply
+        @actions << Action.new(kind: :update, target: label, td_id: id, detail: changes.keys.join(", "))
+      end
+      id
+    end
+
+    def owned(labels)
+      labels.select do |l|
+        l == FLEET_LABEL || l == SLICE_LABEL || l == CAMPAIGN_LABEL ||
+          l.start_with?("slice:", "risk:", "campaign:")
+      end
+    end
+
+    def normalize(text) = text.to_s.gsub(/\r\n?/, "\n").strip
+
+    def sync_dependencies(slice_ids, apply:)
+      @manifest.slices.each do |slice|
+        id = slice_ids[slice["id"]]
+        wanted = Array(slice["depends_on"]).filter_map { |d| slice_ids[d] }.uniq.sort
+        unless id
+          # Dry run before the issue exists: every edge is a future add.
+          wanted_names = Array(slice["depends_on"])
+          unless wanted_names.empty?
+            @actions << Action.new(kind: :dep, target: "slice #{slice["id"]}", td_id: nil,
+                                   detail: "+#{wanted_names.join(" +")}")
+          end
+          next
+        end
+        current = @td.dependencies(id).uniq.sort
+        add = wanted - current
+        # Only edges between slices are ours to remove; a human-added edge to an
+        # unrelated issue stays.
+        ours = slice_ids.values.compact
+        remove = (current & ours) - wanted
+        next if add.empty? && remove.empty?
+        if apply
+          add.each { |d| @td.dep_add(id, d) }
+          remove.each { |d| @td.dep_rm(id, d) }
+        end
+        detail = (add.map { |d| "+#{d}" } + remove.map { |d| "-#{d}" }).join(" ")
+        @actions << Action.new(kind: :dep, target: "slice #{slice["id"]}", td_id: id, detail: detail)
+      end
+    end
+
+    # A td issue labelled for a slice the manifest no longer has. Reported, never
+    # deleted: removing a slice from the manifest is a decision, and the issue
+    # may carry the evidence of why.
+    def report_orphans(epics, slices)
+      known_epics = @manifest.campaigns.map { |c| "campaign:#{c["campaign"]}" }
+      known_slices = @manifest.slices.map { |s| "slice:#{s["id"]}" }
+      [[epics, known_epics], [slices, known_slices]].each do |index, known|
+        (index.keys - known).sort.each do |key|
+          @actions << Action.new(kind: :orphan, target: key, td_id: index[key]["id"],
+                                 detail: "labelled for a record the manifest no longer has")
+        end
+      end
+    end
+  end
+
+  # ---------------------------------------------------------------- cli
+
+  class CLI
+    def self.run(argv)
+      new.run(argv)
+    end
+
+    def run(argv)
+      options = { json: false, dry_run: false }
+      parser = OptionParser.new do |o|
+        o.banner = "usage: porting/manifest-issues <plan|sync|progress|validate|drift> [--json] [--dry-run]"
+        o.on("--json", "machine-readable output") { options[:json] = true }
+        o.on("--dry-run", "with sync: plan only, write nothing") { options[:dry_run] = true }
+        o.on("-h", "--help") { puts o; exit 0 }
+      end
+      rest = parser.parse(argv)
+      command = rest.shift || "plan"
+      unless rest.empty?
+        warn "unexpected argument: #{rest.first}"
+        warn parser.banner
+        return 2
+      end
+
+      manifest = Manifest.load
+      case command
+      when "plan"     then sync(manifest, options, apply: false)
+      when "sync"     then sync(manifest, options, apply: !options[:dry_run])
+      when "progress" then progress(manifest, options)
+      when "validate" then validate(manifest, options)
+      when "drift"    then drift(manifest, options)
+      else
+        warn "unknown command: #{command}"
+        warn parser.banner
+        2
+      end
+    rescue Error => e
+      if options[:json]
+        puts JSON.pretty_generate({ "ok" => false, "error" => e.message })
+      else
+        warn "error: #{e.message}"
+      end
+      1
+    end
+
+    private
+
+    def sync(manifest, options, apply:)
+      problems = manifest.problems
+      unless problems.empty?
+        raise Error, "manifest is not valid, refusing to sync:\n  #{problems.join("\n  ")}"
+      end
+
+      actions = Planner.new(manifest, Td.new).run(apply: apply)
+      summary = actions.map(&:kind).tally.transform_keys(&:to_s)
+      summary["total"] = actions.size
+      mode = apply ? "sync" : "dry-run"
+
+      if options[:json]
+        puts JSON.pretty_generate({ "ok" => true, "mode" => mode,
+                                    "actions" => actions.map(&:to_h), "summary" => summary })
+      else
+        puts "#{mode}: #{manifest.slices.size} slices, #{manifest.campaigns.size} campaigns"
+        actions.each { |a| puts a.to_line }
+        puts
+        puts summary.map { |k, v| "#{k}=#{v}" }.join("  ")
+        puts "nothing to do — td already matches the manifest" if (summary.keys - %w[skip total]).empty?
+      end
+      0
+    end
+
+    # The only progress number that exists. Counting is done here, from the
+    # manifest, so no percentage is ever written down anywhere.
+    def progress(manifest, options)
+      counts = manifest.slices.map { |s| s["status"] }.tally
+      by_campaign = manifest.slices.group_by { |s| s["campaign"] }.transform_values do |slices|
+        { "total" => slices.size,
+          "done" => slices.count { |s| TERMINAL_STATUSES.include?(s["status"]) },
+          "by_status" => slices.map { |s| s["status"] }.tally }
+      end
+      total = manifest.slices.size
+      done = manifest.slices.count { |s| TERMINAL_STATUSES.include?(s["status"]) }
+
+      if options[:json]
+        puts JSON.pretty_generate({ "ok" => true, "total" => total, "done" => done,
+                                    "by_status" => counts, "by_campaign" => by_campaign })
+      else
+        puts "slices: #{done}/#{total} at a terminal status"
+        STATUSES.each { |s| puts "  #{s.ljust(18)} #{counts.fetch(s, 0)}" if counts.key?(s) }
+        puts
+        by_campaign.keys.sort.each do |number|
+          c = by_campaign[number]
+          name = manifest.campaign(number)&.fetch("title", nil) || "(no campaign record)"
+          puts "campaign #{number}: #{c["done"]}/#{c["total"]}  #{name}"
+        end
+      end
+      0
+    end
+
+    def validate(manifest, options)
+      problems = manifest.problems
+      if options[:json]
+        puts JSON.pretty_generate({ "ok" => problems.empty?, "problems" => problems,
+                                    "slices" => manifest.slices.size })
+      elsif problems.empty?
+        puts "ok: #{manifest.slices.size} slices, #{manifest.campaigns.size} campaigns, " \
+             "every source path and oracle test resolves"
+      else
+        problems.each { |p| puts p }
+      end
+      problems.empty? ? 0 : 1
+    end
+
+    # PORTING.md's drift rule, made executable: a slice whose source moved past
+    # its source_sha must be at a terminal status, or it is an open question.
+    def drift(manifest, options)
+      drifted = manifest.slices.filter_map do |slice|
+        commits, _err, status = Open3.capture3(
+          "git", "-C", REPO_ROOT, "log", "--format=%H", "#{slice["source_sha"]}..HEAD",
+          "--", *Array(slice["source_paths"])
+        )
+        next unless status.success?
+        shas = commits.split("\n")
+        next if shas.empty?
+        { "id" => slice["id"], "source_sha" => slice["source_sha"], "status" => slice["status"],
+          "commits_since" => shas, "resolved" => TERMINAL_STATUSES.include?(slice["status"]) }
+      end
+      unresolved = drifted.reject { |d| d["resolved"] }
+
+      if options[:json]
+        puts JSON.pretty_generate({ "ok" => unresolved.empty?, "drifted" => drifted })
+      elsif drifted.empty?
+        puts "no drift: every slice's Ruby source is unchanged since its source_sha"
+      else
+        drifted.each do |d|
+          mark = d["resolved"] ? "resolved" : "UNRESOLVED"
+          puts "#{mark.ljust(10)} #{d["id"]}  #{d["commits_since"].size} commit(s) since " \
+               "#{d["source_sha"][0, 12]}  (status: #{d["status"]})"
+        end
+      end
+      unresolved.empty? ? 0 : 1
+    end
+  end
+end
+
+exit ManifestIssues::CLI.run(ARGV) if __FILE__ == $PROGRAM_NAME
