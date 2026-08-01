@@ -1,0 +1,461 @@
+{"type":"meta","version":2}
+{"type":"section","id":"5c000001","title":"Inbox"}
+{"type":"section","id":"5c000002","parent":"5c000001","title":"Inbox project 1"}
+{"type":"task","id":"5c000003","parent":"5c000002","state":"INBOX","priority":"A","title":"Draft the quarterly report (1.1.1)","tags":["@computer"],"scheduled":"2026-01-01","deadline":"2026-01-02"}
+{"type":"task","id":"5c000004","parent":"5c000002","state":"TODO","title":"Review the pantry shelf (1.1.2)"}
+{"type":"task","id":"5c000005","parent":"5c000004","state":"TODO","title":"Sub-step for 1.1.2"}
+{"type":"task","id":"5c000006","parent":"5c000002","state":"NEXT","title":"Email the recycling schedule (1.1.3)","tags":["@calls"]}
+{"type":"task","id":"5c000007","parent":"5c000002","state":"WAITING","title":"Call the vet appointment (1.1.4)","scheduled":"2026-04-10"}
+{"type":"section","id":"5c000008","parent":"5c000001","title":"Inbox project 2"}
+{"type":"task","id":"5c000009","parent":"5c000008","state":"TODO","priority":"A","title":"Call the spare key (1.2.1)","tags":["@email"],"scheduled":"2026-01-02","deadline":"2026-02-02"}
+{"type":"task","id":"5c00000a","parent":"5c000008","state":"NEXT","title":"Book the bike lock (1.2.2)"}
+{"type":"task","id":"5c00000b","parent":"5c00000a","state":"TODO","title":"Sub-step for 1.2.2"}
+{"type":"task","id":"5c00000c","parent":"5c000008","state":"WAITING","title":"Fix the quarterly report (1.2.3)","tags":["@home"]}
+{"type":"task","id":"5c00000d","parent":"5c000008","state":"DONE","title":"Order the pantry shelf (1.2.4)","scheduled":"2026-04-11","closed":"2026-05-04"}
+{"type":"task","id":"5c00000e","parent":"5c000008","state":"CANCELLED","priority":"B","title":"Plan the recycling schedule (1.2.5)","tags":["@computer"],"closed":"2026-05-05"}
+{"type":"task","id":"5c00000f","parent":"5c00000e","state":"TODO","title":"Sub-step for 1.2.5"}
+{"type":"section","id":"5c000010","parent":"5c000001","title":"Inbox project 3"}
+{"type":"task","id":"5c000011","parent":"5c000010","state":"NEXT","priority":"A","title":"Order the tyre pressure (1.3.1)","tags":["@calls"],"scheduled":"2026-01-03","deadline":"2026-03-02"}
+{"type":"task","id":"5c000012","parent":"5c000010","state":"WAITING","title":"Plan the smoke alarm (1.3.2)"}
+{"type":"task","id":"5c000013","parent":"5c000012","state":"TODO","title":"Sub-step for 1.3.2"}
+{"type":"task","id":"5c000014","parent":"5c000010","state":"DONE","title":"Sort the spare key (1.3.3)","tags":["@errands"],"closed":"2026-05-03"}
+{"type":"task","id":"5c000015","parent":"5c000010","state":"CANCELLED","title":"File the bike lock (1.3.4)","scheduled":"2026-04-12","closed":"2026-05-04"}
+{"type":"task","id":"5c000016","parent":"5c000010","state":"INBOX","priority":"B","title":"Check the quarterly report (1.3.5)","tags":["@email"]}
+{"type":"task","id":"5c000017","parent":"5c000016","state":"TODO","title":"Sub-step for 1.3.5"}
+{"type":"task","id":"5c000018","parent":"5c000010","state":"TODO","title":"Renew the pantry shelf (1.3.6)","deadline":"2026-08-27"}
+{"type":"section","id":"5c000019","parent":"5c000001","title":"Inbox project 4"}
+{"type":"task","id":"5c00001a","parent":"5c000019","state":"WAITING","priority":"A","title":"File the insurance quote (1.4.1)","tags":["@home"],"scheduled":"2026-01-04","deadline":"2026-04-02"}
+{"type":"task","id":"5c00001b","parent":"5c000019","state":"DONE","title":"Check the plant food (1.4.2)","closed":"2026-05-02"}
+{"type":"task","id":"5c00001c","parent":"5c00001b","state":"TODO","title":"Sub-step for 1.4.2"}
+{"type":"task","id":"5c00001d","parent":"5c000019","state":"CANCELLED","title":"Renew the tyre pressure (1.4.3)","tags":["@computer"],"closed":"2026-05-03"}
+{"type":"task","id":"5c00001e","parent":"5c000019","state":"INBOX","title":"Return the smoke alarm (1.4.4)","scheduled":"2026-04-13"}
+{"type":"task","id":"5c00001f","parent":"5c000019","state":"TODO","priority":"B","title":"Measure the spare key (1.4.5)","tags":["@calls"]}
+{"type":"task","id":"5c000020","parent":"5c00001f","state":"TODO","title":"Sub-step for 1.4.5"}
+{"type":"task","id":"5c000021","parent":"5c000019","state":"NEXT","title":"Compare the bike lock (1.4.6)","deadline":"2026-09-27"}
+{"type":"task","id":"5c000022","parent":"5c000019","state":"WAITING","title":"Draft the quarterly report (1.4.7)","tags":["@errands"],"scheduled":"2026-07-22"}
+{"type":"section","id":"5c000023","parent":"5c000001","title":"Inbox project 5"}
+{"type":"task","id":"5c000024","parent":"5c000023","state":"DONE","priority":"A","title":"Return the guest bed (1.5.1)","tags":["@errands"],"scheduled":"2026-01-05","deadline":"2026-05-02","closed":"2026-05-01"}
+{"type":"task","id":"5c000025","parent":"5c000023","state":"CANCELLED","title":"Measure the utility bill (1.5.2)","closed":"2026-05-02"}
+{"type":"task","id":"5c000026","parent":"5c000025","state":"TODO","title":"Sub-step for 1.5.2"}
+{"type":"task","id":"5c000027","parent":"5c000023","state":"INBOX","title":"Compare the insurance quote (1.5.3)","tags":["@email"]}
+{"type":"task","id":"5c000028","parent":"5c000023","state":"TODO","title":"Draft the plant food (1.5.4)","scheduled":"2026-04-14"}
+{"type":"task","id":"5c000029","parent":"5c000023","state":"NEXT","priority":"B","title":"Review the tyre pressure (1.5.5)","tags":["@home"]}
+{"type":"task","id":"5c00002a","parent":"5c000029","state":"TODO","title":"Sub-step for 1.5.5"}
+{"type":"task","id":"5c00002b","parent":"5c000023","state":"WAITING","title":"Email the smoke alarm (1.5.6)","deadline":"2026-10-27"}
+{"type":"task","id":"5c00002c","parent":"5c000023","state":"DONE","title":"Call the spare key (1.5.7)","tags":["@computer"],"scheduled":"2026-07-23","closed":"2026-05-07"}
+{"type":"task","id":"5c00002d","parent":"5c000023","state":"CANCELLED","title":"Book the bike lock (1.5.8)","closed":"2026-05-08"}
+{"type":"task","id":"5c00002e","parent":"5c00002d","state":"TODO","title":"Sub-step for 1.5.8"}
+{"type":"section","id":"5c00002f","title":"Next Actions"}
+{"type":"section","id":"5c000030","parent":"5c00002f","title":"Next Actions project 1"}
+{"type":"task","id":"5c000031","parent":"5c000030","state":"TODO","title":"Plan the utility bill (2.1.1)","tags":["@computer"],"scheduled":"2026-02-01","deadline":"2026-01-02"}
+{"type":"task","id":"5c000032","parent":"5c000030","state":"NEXT","title":"Sort the insurance quote (2.1.2)"}
+{"type":"task","id":"5c000033","parent":"5c000032","state":"TODO","title":"Sub-step for 2.1.2"}
+{"type":"task","id":"5c000034","parent":"5c000030","state":"WAITING","title":"File the plant food (2.1.3)","tags":["@calls"]}
+{"type":"task","id":"5c000035","parent":"5c000030","state":"DONE","priority":"B","title":"Check the tyre pressure (2.1.4)","scheduled":"2026-05-10","closed":"2026-05-04"}
+{"type":"task","id":"5c000036","parent":"5c000030","state":"CANCELLED","title":"Renew the smoke alarm (2.1.5)","tags":["@errands"],"closed":"2026-05-05"}
+{"type":"task","id":"5c000037","parent":"5c000036","state":"TODO","title":"Sub-step for 2.1.5"}
+{"type":"section","id":"5c000038","parent":"5c00002f","title":"Next Actions project 2"}
+{"type":"task","id":"5c000039","parent":"5c000038","state":"NEXT","title":"Check the vet appointment (2.2.1)","tags":["@email"],"scheduled":"2026-02-02","deadline":"2026-02-02"}
+{"type":"task","id":"5c00003a","parent":"5c000038","state":"WAITING","title":"Renew the guest bed (2.2.2)"}
+{"type":"task","id":"5c00003b","parent":"5c00003a","state":"TODO","title":"Sub-step for 2.2.2"}
+{"type":"task","id":"5c00003c","parent":"5c000038","state":"DONE","title":"Return the utility bill (2.2.3)","tags":["@home"],"closed":"2026-05-03"}
+{"type":"task","id":"5c00003d","parent":"5c000038","state":"CANCELLED","priority":"B","title":"Measure the insurance quote (2.2.4)","scheduled":"2026-05-11","closed":"2026-05-04"}
+{"type":"task","id":"5c00003e","parent":"5c000038","state":"INBOX","title":"Compare the plant food (2.2.5)","tags":["@computer"]}
+{"type":"task","id":"5c00003f","parent":"5c00003e","state":"TODO","title":"Sub-step for 2.2.5"}
+{"type":"task","id":"5c000040","parent":"5c000038","state":"TODO","title":"Draft the tyre pressure (2.2.6)","deadline":"2026-07-27"}
+{"type":"section","id":"5c000041","parent":"5c00002f","title":"Next Actions project 3"}
+{"type":"task","id":"5c000042","parent":"5c000041","state":"WAITING","title":"Measure the pantry shelf (2.3.1)","tags":["@calls"],"scheduled":"2026-02-03","deadline":"2026-03-02"}
+{"type":"task","id":"5c000043","parent":"5c000041","state":"DONE","title":"Compare the recycling schedule (2.3.2)","closed":"2026-05-02"}
+{"type":"task","id":"5c000044","parent":"5c000043","state":"TODO","title":"Sub-step for 2.3.2"}
+{"type":"task","id":"5c000045","parent":"5c000041","state":"CANCELLED","title":"Draft the vet appointment (2.3.3)","tags":["@errands"],"closed":"2026-05-03"}
+{"type":"task","id":"5c000046","parent":"5c000041","state":"INBOX","priority":"B","title":"Review the guest bed (2.3.4)","scheduled":"2026-05-12"}
+{"type":"task","id":"5c000047","parent":"5c000041","state":"TODO","title":"Email the utility bill (2.3.5)","tags":["@email"]}
+{"type":"task","id":"5c000048","parent":"5c000047","state":"TODO","title":"Sub-step for 2.3.5"}
+{"type":"task","id":"5c000049","parent":"5c000041","state":"NEXT","title":"Call the insurance quote (2.3.6)","deadline":"2026-08-27"}
+{"type":"task","id":"5c00004a","parent":"5c000041","state":"WAITING","title":"Book the plant food (2.3.7)","tags":["@home"],"scheduled":"2026-08-21"}
+{"type":"section","id":"5c00004b","parent":"5c00002f","title":"Next Actions project 4"}
+{"type":"task","id":"5c00004c","parent":"5c00004b","state":"DONE","title":"Review the bike lock (2.4.1)","tags":["@home"],"scheduled":"2026-02-04","deadline":"2026-04-02","closed":"2026-05-01"}
+{"type":"task","id":"5c00004d","parent":"5c00004b","state":"CANCELLED","title":"Email the quarterly report (2.4.2)","closed":"2026-05-02"}
+{"type":"task","id":"5c00004e","parent":"5c00004d","state":"TODO","title":"Sub-step for 2.4.2"}
+{"type":"task","id":"5c00004f","parent":"5c00004b","state":"INBOX","title":"Call the pantry shelf (2.4.3)","tags":["@computer"]}
+{"type":"task","id":"5c000050","parent":"5c00004b","state":"TODO","priority":"B","title":"Book the recycling schedule (2.4.4)","scheduled":"2026-05-13"}
+{"type":"task","id":"5c000051","parent":"5c00004b","state":"NEXT","title":"Fix the vet appointment (2.4.5)","tags":["@calls"]}
+{"type":"task","id":"5c000052","parent":"5c000051","state":"TODO","title":"Sub-step for 2.4.5"}
+{"type":"task","id":"5c000053","parent":"5c00004b","state":"WAITING","title":"Order the guest bed (2.4.6)","deadline":"2026-09-27"}
+{"type":"task","id":"5c000054","parent":"5c00004b","state":"DONE","title":"Plan the utility bill (2.4.7)","tags":["@errands"],"scheduled":"2026-08-22","closed":"2026-05-07"}
+{"type":"task","id":"5c000055","parent":"5c00004b","state":"CANCELLED","priority":"C","title":"Sort the insurance quote (2.4.8)","closed":"2026-05-08"}
+{"type":"task","id":"5c000056","parent":"5c000055","state":"TODO","title":"Sub-step for 2.4.8"}
+{"type":"section","id":"5c000057","parent":"5c00002f","title":"Next Actions project 5"}
+{"type":"task","id":"5c000058","parent":"5c000057","state":"CANCELLED","title":"Book the smoke alarm (2.5.1)","tags":["@errands"],"scheduled":"2026-02-05","deadline":"2026-05-02","closed":"2026-05-01"}
+{"type":"task","id":"5c000059","parent":"5c000057","state":"INBOX","title":"Fix the spare key (2.5.2)"}
+{"type":"task","id":"5c00005a","parent":"5c000059","state":"TODO","title":"Sub-step for 2.5.2"}
+{"type":"task","id":"5c00005b","parent":"5c000057","state":"TODO","title":"Order the bike lock (2.5.3)","tags":["@email"]}
+{"type":"task","id":"5c00005c","parent":"5c000057","state":"NEXT","priority":"B","title":"Plan the quarterly report (2.5.4)","scheduled":"2026-05-14"}
+{"type":"section","id":"5c00005d","title":"Projects"}
+{"type":"section","id":"5c00005e","parent":"5c00005d","title":"Projects project 1"}
+{"type":"task","id":"5c00005f","parent":"5c00005e","state":"NEXT","title":"Compare the spare key (3.1.1)","tags":["@computer"],"scheduled":"2026-03-01","deadline":"2026-01-02"}
+{"type":"task","id":"5c000060","parent":"5c00005e","state":"WAITING","title":"Draft the bike lock (3.1.2)"}
+{"type":"task","id":"5c000061","parent":"5c000060","state":"TODO","title":"Sub-step for 3.1.2"}
+{"type":"task","id":"5c000062","parent":"5c00005e","state":"DONE","priority":"B","title":"Review the quarterly report (3.1.3)","tags":["@calls"],"closed":"2026-05-03"}
+{"type":"task","id":"5c000063","parent":"5c00005e","state":"CANCELLED","title":"Email the pantry shelf (3.1.4)","scheduled":"2026-06-10","closed":"2026-05-04"}
+{"type":"task","id":"5c000064","parent":"5c00005e","state":"INBOX","title":"Call the recycling schedule (3.1.5)","tags":["@errands"]}
+{"type":"task","id":"5c000065","parent":"5c000064","state":"TODO","title":"Sub-step for 3.1.5"}
+{"type":"task","id":"5c000066","parent":"5c00005e","state":"TODO","title":"Book the vet appointment (3.1.6)","deadline":"2026-06-27"}
+{"type":"section","id":"5c000067","parent":"5c00005d","title":"Projects project 2"}
+{"type":"task","id":"5c000068","parent":"5c000067","state":"WAITING","title":"Email the tyre pressure (3.2.1)","tags":["@email"],"scheduled":"2026-03-02","deadline":"2026-02-02"}
+{"type":"task","id":"5c000069","parent":"5c000067","state":"DONE","title":"Call the smoke alarm (3.2.2)","closed":"2026-05-02"}
+{"type":"task","id":"5c00006a","parent":"5c000069","state":"TODO","title":"Sub-step for 3.2.2"}
+{"type":"task","id":"5c00006b","parent":"5c000067","state":"CANCELLED","priority":"B","title":"Book the spare key (3.2.3)","tags":["@home"],"closed":"2026-05-03"}
+{"type":"task","id":"5c00006c","parent":"5c000067","state":"INBOX","title":"Fix the bike lock (3.2.4)","scheduled":"2026-06-11"}
+{"type":"task","id":"5c00006d","parent":"5c000067","state":"TODO","title":"Order the quarterly report (3.2.5)","tags":["@computer"]}
+{"type":"task","id":"5c00006e","parent":"5c00006d","state":"TODO","title":"Sub-step for 3.2.5"}
+{"type":"task","id":"5c00006f","parent":"5c000067","state":"NEXT","title":"Plan the pantry shelf (3.2.6)","deadline":"2026-07-27"}
+{"type":"task","id":"5c000070","parent":"5c000067","state":"WAITING","priority":"C","title":"Sort the recycling schedule (3.2.7)","tags":["@calls"],"scheduled":"2026-09-20"}
+{"type":"section","id":"5c000071","parent":"5c00005d","title":"Projects project 3"}
+{"type":"task","id":"5c000072","parent":"5c000071","state":"DONE","title":"Fix the insurance quote (3.3.1)","tags":["@calls"],"scheduled":"2026-03-03","deadline":"2026-03-02","closed":"2026-05-01"}
+{"type":"task","id":"5c000073","parent":"5c000071","state":"CANCELLED","title":"Order the plant food (3.3.2)","closed":"2026-05-02"}
+{"type":"task","id":"5c000074","parent":"5c000073","state":"TODO","title":"Sub-step for 3.3.2"}
+{"type":"task","id":"5c000075","parent":"5c000071","state":"INBOX","priority":"B","title":"Plan the tyre pressure (3.3.3)","tags":["@errands"]}
+{"type":"task","id":"5c000076","parent":"5c000071","state":"TODO","title":"Sort the smoke alarm (3.3.4)","scheduled":"2026-06-12"}
+{"type":"task","id":"5c000077","parent":"5c000071","state":"NEXT","title":"File the spare key (3.3.5)","tags":["@email"]}
+{"type":"task","id":"5c000078","parent":"5c000077","state":"TODO","title":"Sub-step for 3.3.5"}
+{"type":"task","id":"5c000079","parent":"5c000071","state":"WAITING","title":"Check the bike lock (3.3.6)","deadline":"2026-08-27"}
+{"type":"task","id":"5c00007a","parent":"5c000071","state":"DONE","priority":"C","title":"Renew the quarterly report (3.3.7)","tags":["@home"],"scheduled":"2026-09-21","closed":"2026-05-07"}
+{"type":"task","id":"5c00007b","parent":"5c000071","state":"CANCELLED","title":"Return the pantry shelf (3.3.8)","closed":"2026-05-08"}
+{"type":"task","id":"5c00007c","parent":"5c00007b","state":"TODO","title":"Sub-step for 3.3.8"}
+{"type":"section","id":"5c00007d","parent":"5c00005d","title":"Projects project 4"}
+{"type":"task","id":"5c00007e","parent":"5c00007d","state":"CANCELLED","title":"Sort the guest bed (3.4.1)","tags":["@home"],"scheduled":"2026-03-04","deadline":"2026-04-02","closed":"2026-05-01"}
+{"type":"task","id":"5c00007f","parent":"5c00007d","state":"INBOX","title":"File the utility bill (3.4.2)"}
+{"type":"task","id":"5c000080","parent":"5c00007f","state":"TODO","title":"Sub-step for 3.4.2"}
+{"type":"task","id":"5c000081","parent":"5c00007d","state":"TODO","priority":"B","title":"Check the insurance quote (3.4.3)","tags":["@computer"]}
+{"type":"task","id":"5c000082","parent":"5c00007d","state":"NEXT","title":"Renew the plant food (3.4.4)","scheduled":"2026-06-13"}
+{"type":"section","id":"5c000083","parent":"5c00005d","title":"Projects project 5"}
+{"type":"task","id":"5c000084","parent":"5c000083","state":"INBOX","title":"Renew the recycling schedule (3.5.1)","tags":["@errands"],"scheduled":"2026-03-05","deadline":"2026-05-02"}
+{"type":"task","id":"5c000085","parent":"5c000083","state":"TODO","title":"Return the vet appointment (3.5.2)"}
+{"type":"task","id":"5c000086","parent":"5c000085","state":"TODO","title":"Sub-step for 3.5.2"}
+{"type":"task","id":"5c000087","parent":"5c000083","state":"NEXT","priority":"B","title":"Measure the guest bed (3.5.3)","tags":["@email"]}
+{"type":"task","id":"5c000088","parent":"5c000083","state":"WAITING","title":"Compare the utility bill (3.5.4)","scheduled":"2026-06-14"}
+{"type":"task","id":"5c000089","parent":"5c000083","state":"DONE","title":"Draft the insurance quote (3.5.5)","tags":["@home"],"closed":"2026-05-05"}
+{"type":"task","id":"5c00008a","parent":"5c000089","state":"TODO","title":"Sub-step for 3.5.5"}
+{"type":"section","id":"5c00008b","title":"Waiting On"}
+{"type":"section","id":"5c00008c","parent":"5c00008b","title":"Waiting On project 1"}
+{"type":"task","id":"5c00008d","parent":"5c00008c","state":"WAITING","title":"Order the vet appointment (4.1.1)","tags":["@computer"],"scheduled":"2026-04-01","deadline":"2026-01-02"}
+{"type":"task","id":"5c00008e","parent":"5c00008c","state":"DONE","priority":"B","title":"Plan the guest bed (4.1.2)","closed":"2026-05-02"}
+{"type":"task","id":"5c00008f","parent":"5c00008e","state":"TODO","title":"Sub-step for 4.1.2"}
+{"type":"task","id":"5c000090","parent":"5c00008c","state":"CANCELLED","title":"Sort the utility bill (4.1.3)","tags":["@calls"],"closed":"2026-05-03"}
+{"type":"task","id":"5c000091","parent":"5c00008c","state":"INBOX","title":"File the insurance quote (4.1.4)","scheduled":"2026-07-10"}
+{"type":"task","id":"5c000092","parent":"5c00008c","state":"TODO","title":"Check the plant food (4.1.5)","tags":["@errands"]}
+{"type":"task","id":"5c000093","parent":"5c000092","state":"TODO","title":"Sub-step for 4.1.5"}
+{"type":"task","id":"5c000094","parent":"5c00008c","state":"NEXT","priority":"C","title":"Renew the tyre pressure (4.1.6)","deadline":"2026-06-27"}
+{"type":"task","id":"5c000095","parent":"5c00008c","state":"WAITING","title":"Return the smoke alarm (4.1.7)","tags":["@email"],"scheduled":"2026-10-19"}
+{"type":"section","id":"5c000096","parent":"5c00008b","title":"Waiting On project 2"}
+{"type":"task","id":"5c000097","parent":"5c000096","state":"DONE","title":"File the pantry shelf (4.2.1)","tags":["@email"],"scheduled":"2026-04-02","deadline":"2026-02-02","closed":"2026-05-01"}
+{"type":"task","id":"5c000098","parent":"5c000096","state":"CANCELLED","priority":"B","title":"Check the recycling schedule (4.2.2)","closed":"2026-05-02"}
+{"type":"task","id":"5c000099","parent":"5c000098","state":"TODO","title":"Sub-step for 4.2.2"}
+{"type":"task","id":"5c00009a","parent":"5c000096","state":"INBOX","title":"Renew the vet appointment (4.2.3)","tags":["@home"]}
+{"type":"task","id":"5c00009b","parent":"5c000096","state":"TODO","title":"Return the guest bed (4.2.4)","scheduled":"2026-07-11"}
+{"type":"task","id":"5c00009c","parent":"5c000096","state":"NEXT","title":"Measure the utility bill (4.2.5)","tags":["@computer"]}
+{"type":"task","id":"5c00009d","parent":"5c00009c","state":"TODO","title":"Sub-step for 4.2.5"}
+{"type":"task","id":"5c00009e","parent":"5c000096","state":"WAITING","priority":"C","title":"Compare the insurance quote (4.2.6)","deadline":"2026-07-27"}
+{"type":"task","id":"5c00009f","parent":"5c000096","state":"DONE","title":"Draft the plant food (4.2.7)","tags":["@calls"],"scheduled":"2026-10-20","closed":"2026-05-07"}
+{"type":"task","id":"5c0000a0","parent":"5c000096","state":"CANCELLED","title":"Review the tyre pressure (4.2.8)","closed":"2026-05-08"}
+{"type":"task","id":"5c0000a1","parent":"5c0000a0","state":"TODO","title":"Sub-step for 4.2.8"}
+{"type":"section","id":"5c0000a2","parent":"5c00008b","title":"Waiting On project 3"}
+{"type":"task","id":"5c0000a3","parent":"5c0000a2","state":"CANCELLED","title":"Return the bike lock (4.3.1)","tags":["@calls"],"scheduled":"2026-04-03","deadline":"2026-03-02","closed":"2026-05-01"}
+{"type":"task","id":"5c0000a4","parent":"5c0000a2","state":"INBOX","priority":"B","title":"Measure the quarterly report (4.3.2)"}
+{"type":"task","id":"5c0000a5","parent":"5c0000a4","state":"TODO","title":"Sub-step for 4.3.2"}
+{"type":"task","id":"5c0000a6","parent":"5c0000a2","state":"TODO","title":"Compare the pantry shelf (4.3.3)","tags":["@errands"]}
+{"type":"task","id":"5c0000a7","parent":"5c0000a2","state":"NEXT","title":"Draft the recycling schedule (4.3.4)","scheduled":"2026-07-12"}
+{"type":"section","id":"5c0000a8","parent":"5c00008b","title":"Waiting On project 4"}
+{"type":"task","id":"5c0000a9","parent":"5c0000a8","state":"INBOX","title":"Draft the smoke alarm (4.4.1)","tags":["@home"],"scheduled":"2026-04-04","deadline":"2026-04-02"}
+{"type":"task","id":"5c0000aa","parent":"5c0000a8","state":"TODO","priority":"B","title":"Review the spare key (4.4.2)"}
+{"type":"task","id":"5c0000ab","parent":"5c0000aa","state":"TODO","title":"Sub-step for 4.4.2"}
+{"type":"task","id":"5c0000ac","parent":"5c0000a8","state":"NEXT","title":"Email the bike lock (4.4.3)","tags":["@computer"]}
+{"type":"task","id":"5c0000ad","parent":"5c0000a8","state":"WAITING","title":"Call the quarterly report (4.4.4)","scheduled":"2026-07-13"}
+{"type":"task","id":"5c0000ae","parent":"5c0000a8","state":"DONE","title":"Book the pantry shelf (4.4.5)","tags":["@calls"],"closed":"2026-05-05"}
+{"type":"task","id":"5c0000af","parent":"5c0000ae","state":"TODO","title":"Sub-step for 4.4.5"}
+{"type":"section","id":"5c0000b0","parent":"5c00008b","title":"Waiting On project 5"}
+{"type":"task","id":"5c0000b1","parent":"5c0000b0","state":"TODO","title":"Call the plant food (4.5.1)","tags":["@errands"],"scheduled":"2026-04-05","deadline":"2026-05-02"}
+{"type":"task","id":"5c0000b2","parent":"5c0000b0","state":"NEXT","priority":"B","title":"Book the tyre pressure (4.5.2)"}
+{"type":"task","id":"5c0000b3","parent":"5c0000b2","state":"TODO","title":"Sub-step for 4.5.2"}
+{"type":"task","id":"5c0000b4","parent":"5c0000b0","state":"WAITING","title":"Fix the smoke alarm (4.5.3)","tags":["@email"]}
+{"type":"task","id":"5c0000b5","parent":"5c0000b0","state":"DONE","title":"Order the spare key (4.5.4)","scheduled":"2026-07-14","closed":"2026-05-04"}
+{"type":"task","id":"5c0000b6","parent":"5c0000b0","state":"CANCELLED","title":"Plan the bike lock (4.5.5)","tags":["@home"],"closed":"2026-05-05"}
+{"type":"task","id":"5c0000b7","parent":"5c0000b6","state":"TODO","title":"Sub-step for 4.5.5"}
+{"type":"task","id":"5c0000b8","parent":"5c0000b0","state":"INBOX","priority":"C","title":"Sort the quarterly report (4.5.6)","deadline":"2026-10-27"}
+{"type":"section","id":"5c0000b9","title":"Someday / Maybe"}
+{"type":"section","id":"5c0000ba","parent":"5c0000b9","title":"Someday / Maybe project 1"}
+{"type":"task","id":"5c0000bb","parent":"5c0000ba","state":"DONE","priority":"B","title":"Measure the tyre pressure (5.1.1)","tags":["@computer"],"scheduled":"2026-05-01","deadline":"2026-01-02","closed":"2026-05-01"}
+{"type":"task","id":"5c0000bc","parent":"5c0000ba","state":"CANCELLED","title":"Compare the smoke alarm (5.1.2)","closed":"2026-05-02"}
+{"type":"task","id":"5c0000bd","parent":"5c0000bc","state":"TODO","title":"Sub-step for 5.1.2"}
+{"type":"task","id":"5c0000be","parent":"5c0000ba","state":"INBOX","title":"Draft the spare key (5.1.3)","tags":["@calls"]}
+{"type":"task","id":"5c0000bf","parent":"5c0000ba","state":"TODO","title":"Review the bike lock (5.1.4)","scheduled":"2026-08-10"}
+{"type":"task","id":"5c0000c0","parent":"5c0000ba","state":"NEXT","priority":"C","title":"Email the quarterly report (5.1.5)","tags":["@errands"]}
+{"type":"task","id":"5c0000c1","parent":"5c0000c0","state":"TODO","title":"Sub-step for 5.1.5"}
+{"type":"task","id":"5c0000c2","parent":"5c0000ba","state":"WAITING","title":"Call the pantry shelf (5.1.6)","deadline":"2026-06-27"}
+{"type":"task","id":"5c0000c3","parent":"5c0000ba","state":"DONE","title":"Book the recycling schedule (5.1.7)","tags":["@email"],"scheduled":"2026-11-19","closed":"2026-05-07"}
+{"type":"task","id":"5c0000c4","parent":"5c0000ba","state":"CANCELLED","title":"Fix the vet appointment (5.1.8)","closed":"2026-05-08"}
+{"type":"task","id":"5c0000c5","parent":"5c0000c4","state":"TODO","title":"Sub-step for 5.1.8"}
+{"type":"section","id":"5c0000c6","parent":"5c0000b9","title":"Someday / Maybe project 2"}
+{"type":"task","id":"5c0000c7","parent":"5c0000c6","state":"CANCELLED","priority":"B","title":"Review the insurance quote (5.2.1)","tags":["@email"],"scheduled":"2026-05-02","deadline":"2026-02-02","closed":"2026-05-01"}
+{"type":"task","id":"5c0000c8","parent":"5c0000c6","state":"INBOX","title":"Email the plant food (5.2.2)"}
+{"type":"task","id":"5c0000c9","parent":"5c0000c8","state":"TODO","title":"Sub-step for 5.2.2"}
+{"type":"task","id":"5c0000ca","parent":"5c0000c6","state":"TODO","title":"Call the tyre pressure (5.2.3)","tags":["@home"]}
+{"type":"task","id":"5c0000cb","parent":"5c0000c6","state":"NEXT","title":"Book the smoke alarm (5.2.4)","scheduled":"2026-08-11"}
+{"type":"section","id":"5c0000cc","parent":"5c0000b9","title":"Someday / Maybe project 3"}
+{"type":"task","id":"5c0000cd","parent":"5c0000cc","state":"INBOX","priority":"B","title":"Book the guest bed (5.3.1)","tags":["@calls"],"scheduled":"2026-05-03","deadline":"2026-03-02"}
+{"type":"task","id":"5c0000ce","parent":"5c0000cc","state":"TODO","title":"Fix the utility bill (5.3.2)"}
+{"type":"task","id":"5c0000cf","parent":"5c0000ce","state":"TODO","title":"Sub-step for 5.3.2"}
+{"type":"task","id":"5c0000d0","parent":"5c0000cc","state":"NEXT","title":"Order the insurance quote (5.3.3)","tags":["@errands"]}
+{"type":"task","id":"5c0000d1","parent":"5c0000cc","state":"WAITING","title":"Plan the plant food (5.3.4)","scheduled":"2026-08-12"}
+{"type":"task","id":"5c0000d2","parent":"5c0000cc","state":"DONE","priority":"C","title":"Sort the tyre pressure (5.3.5)","tags":["@email"],"closed":"2026-05-05"}
+{"type":"task","id":"5c0000d3","parent":"5c0000d2","state":"TODO","title":"Sub-step for 5.3.5"}
+{"type":"section","id":"5c0000d4","parent":"5c0000b9","title":"Someday / Maybe project 4"}
+{"type":"task","id":"5c0000d5","parent":"5c0000d4","state":"TODO","priority":"B","title":"Plan the recycling schedule (5.4.1)","tags":["@home"],"scheduled":"2026-05-04","deadline":"2026-04-02"}
+{"type":"task","id":"5c0000d6","parent":"5c0000d4","state":"NEXT","title":"Sort the vet appointment (5.4.2)"}
+{"type":"task","id":"5c0000d7","parent":"5c0000d6","state":"TODO","title":"Sub-step for 5.4.2"}
+{"type":"task","id":"5c0000d8","parent":"5c0000d4","state":"WAITING","title":"File the guest bed (5.4.3)","tags":["@computer"]}
+{"type":"task","id":"5c0000d9","parent":"5c0000d4","state":"DONE","title":"Check the utility bill (5.4.4)","scheduled":"2026-08-13","closed":"2026-05-04"}
+{"type":"task","id":"5c0000da","parent":"5c0000d4","state":"CANCELLED","priority":"C","title":"Renew the insurance quote (5.4.5)","tags":["@calls"],"closed":"2026-05-05"}
+{"type":"task","id":"5c0000db","parent":"5c0000da","state":"TODO","title":"Sub-step for 5.4.5"}
+{"type":"task","id":"5c0000dc","parent":"5c0000d4","state":"INBOX","title":"Return the plant food (5.4.6)","deadline":"2026-09-27"}
+{"type":"section","id":"5c0000dd","parent":"5c0000b9","title":"Someday / Maybe project 5"}
+{"type":"task","id":"5c0000de","parent":"5c0000dd","state":"NEXT","priority":"B","title":"Check the quarterly report (5.5.1)","tags":["@errands"],"scheduled":"2026-05-05","deadline":"2026-05-02"}
+{"type":"task","id":"5c0000df","parent":"5c0000dd","state":"WAITING","title":"Renew the pantry shelf (5.5.2)"}
+{"type":"task","id":"5c0000e0","parent":"5c0000df","state":"TODO","title":"Sub-step for 5.5.2"}
+{"type":"task","id":"5c0000e1","parent":"5c0000dd","state":"DONE","title":"Return the recycling schedule (5.5.3)","tags":["@email"],"closed":"2026-05-03"}
+{"type":"task","id":"5c0000e2","parent":"5c0000dd","state":"CANCELLED","title":"Measure the vet appointment (5.5.4)","scheduled":"2026-08-14","closed":"2026-05-04"}
+{"type":"task","id":"5c0000e3","parent":"5c0000dd","state":"INBOX","priority":"C","title":"Compare the guest bed (5.5.5)","tags":["@home"]}
+{"type":"task","id":"5c0000e4","parent":"5c0000e3","state":"TODO","title":"Sub-step for 5.5.5"}
+{"type":"task","id":"5c0000e5","parent":"5c0000dd","state":"TODO","title":"Draft the utility bill (5.5.6)","deadline":"2026-10-27"}
+{"type":"task","id":"5c0000e6","parent":"5c0000dd","state":"NEXT","title":"Review the insurance quote (5.5.7)","tags":["@computer"],"scheduled":"2026-11-23"}
+{"type":"section","id":"5c0000e7","title":"Reference"}
+{"type":"section","id":"5c0000e8","parent":"5c0000e7","title":"Reference project 1"}
+{"type":"task","id":"5c0000e9","parent":"5c0000e8","state":"CANCELLED","title":"Fix the pantry shelf (6.1.1)","tags":["@computer"],"scheduled":"2026-06-01","deadline":"2026-01-02","closed":"2026-05-01"}
+{"type":"task","id":"5c0000ea","parent":"5c0000e8","state":"INBOX","title":"Order the recycling schedule (6.1.2)"}
+{"type":"task","id":"5c0000eb","parent":"5c0000ea","state":"TODO","title":"Sub-step for 6.1.2"}
+{"type":"task","id":"5c0000ec","parent":"5c0000e8","state":"TODO","title":"Plan the vet appointment (6.1.3)","tags":["@calls"]}
+{"type":"task","id":"5c0000ed","parent":"5c0000e8","state":"NEXT","priority":"C","title":"Sort the guest bed (6.1.4)","scheduled":"2026-09-10"}
+{"type":"section","id":"5c0000ee","parent":"5c0000e7","title":"Reference project 2"}
+{"type":"task","id":"5c0000ef","parent":"5c0000ee","state":"INBOX","title":"Sort the bike lock (6.2.1)","tags":["@email"],"scheduled":"2026-06-02","deadline":"2026-02-02"}
+{"type":"task","id":"5c0000f0","parent":"5c0000ee","state":"TODO","title":"File the quarterly report (6.2.2)"}
+{"type":"task","id":"5c0000f1","parent":"5c0000f0","state":"TODO","title":"Sub-step for 6.2.2"}
+{"type":"task","id":"5c0000f2","parent":"5c0000ee","state":"NEXT","title":"Check the pantry shelf (6.2.3)","tags":["@home"]}
+{"type":"task","id":"5c0000f3","parent":"5c0000ee","state":"WAITING","priority":"C","title":"Renew the recycling schedule (6.2.4)","scheduled":"2026-09-11"}
+{"type":"task","id":"5c0000f4","parent":"5c0000ee","state":"DONE","title":"Return the vet appointment (6.2.5)","tags":["@computer"],"closed":"2026-05-05"}
+{"type":"task","id":"5c0000f5","parent":"5c0000f4","state":"TODO","title":"Sub-step for 6.2.5"}
+{"type":"section","id":"5c0000f6","parent":"5c0000e7","title":"Reference project 3"}
+{"type":"task","id":"5c0000f7","parent":"5c0000f6","state":"TODO","title":"Renew the smoke alarm (6.3.1)","tags":["@calls"],"scheduled":"2026-06-03","deadline":"2026-03-02"}
+{"type":"task","id":"5c0000f8","parent":"5c0000f6","state":"NEXT","title":"Return the spare key (6.3.2)"}
+{"type":"task","id":"5c0000f9","parent":"5c0000f8","state":"TODO","title":"Sub-step for 6.3.2"}
+{"type":"task","id":"5c0000fa","parent":"5c0000f6","state":"WAITING","title":"Measure the bike lock (6.3.3)","tags":["@errands"]}
+{"type":"task","id":"5c0000fb","parent":"5c0000f6","state":"DONE","priority":"C","title":"Compare the quarterly report (6.3.4)","scheduled":"2026-09-12","closed":"2026-05-04"}
+{"type":"task","id":"5c0000fc","parent":"5c0000f6","state":"CANCELLED","title":"Draft the pantry shelf (6.3.5)","tags":["@email"],"closed":"2026-05-05"}
+{"type":"task","id":"5c0000fd","parent":"5c0000fc","state":"TODO","title":"Sub-step for 6.3.5"}
+{"type":"task","id":"5c0000fe","parent":"5c0000f6","state":"INBOX","title":"Review the recycling schedule (6.3.6)","deadline":"2026-08-27"}
+{"type":"section","id":"5c0000ff","parent":"5c0000e7","title":"Reference project 4"}
+{"type":"task","id":"5c000100","parent":"5c0000ff","state":"NEXT","title":"Compare the plant food (6.4.1)","tags":["@home"],"scheduled":"2026-06-04","deadline":"2026-04-02"}
+{"type":"task","id":"5c000101","parent":"5c0000ff","state":"WAITING","title":"Draft the tyre pressure (6.4.2)"}
+{"type":"task","id":"5c000102","parent":"5c000101","state":"TODO","title":"Sub-step for 6.4.2"}
+{"type":"task","id":"5c000103","parent":"5c0000ff","state":"DONE","title":"Review the smoke alarm (6.4.3)","tags":["@computer"],"closed":"2026-05-03"}
+{"type":"task","id":"5c000104","parent":"5c0000ff","state":"CANCELLED","priority":"C","title":"Email the spare key (6.4.4)","scheduled":"2026-09-13","closed":"2026-05-04"}
+{"type":"task","id":"5c000105","parent":"5c0000ff","state":"INBOX","title":"Call the bike lock (6.4.5)","tags":["@calls"]}
+{"type":"task","id":"5c000106","parent":"5c000105","state":"TODO","title":"Sub-step for 6.4.5"}
+{"type":"task","id":"5c000107","parent":"5c0000ff","state":"TODO","title":"Book the quarterly report (6.4.6)","deadline":"2026-09-27"}
+{"type":"task","id":"5c000108","parent":"5c0000ff","state":"NEXT","title":"Fix the pantry shelf (6.4.7)","tags":["@errands"],"scheduled":"2026-12-22"}
+{"type":"section","id":"5c000109","parent":"5c0000e7","title":"Reference project 5"}
+{"type":"task","id":"5c00010a","parent":"5c000109","state":"WAITING","title":"Email the utility bill (6.5.1)","tags":["@errands"],"scheduled":"2026-06-05","deadline":"2026-05-02"}
+{"type":"task","id":"5c00010b","parent":"5c000109","state":"DONE","title":"Call the insurance quote (6.5.2)","closed":"2026-05-02"}
+{"type":"task","id":"5c00010c","parent":"5c00010b","state":"TODO","title":"Sub-step for 6.5.2"}
+{"type":"task","id":"5c00010d","parent":"5c000109","state":"CANCELLED","title":"Book the plant food (6.5.3)","tags":["@email"],"closed":"2026-05-03"}
+{"type":"task","id":"5c00010e","parent":"5c000109","state":"INBOX","priority":"C","title":"Fix the tyre pressure (6.5.4)","scheduled":"2026-09-14"}
+{"type":"task","id":"5c00010f","parent":"5c000109","state":"TODO","title":"Order the smoke alarm (6.5.5)","tags":["@home"]}
+{"type":"task","id":"5c000110","parent":"5c00010f","state":"TODO","title":"Sub-step for 6.5.5"}
+{"type":"task","id":"5c000111","parent":"5c000109","state":"NEXT","title":"Plan the spare key (6.5.6)","deadline":"2026-10-27"}
+{"type":"task","id":"5c000112","parent":"5c000109","state":"WAITING","title":"Sort the bike lock (6.5.7)","tags":["@computer"],"scheduled":"2026-12-23"}
+{"type":"task","id":"5c000113","parent":"5c000109","state":"DONE","priority":"A","title":"File the quarterly report (6.5.8)","closed":"2026-05-08"}
+{"type":"task","id":"5c000114","parent":"5c000113","state":"TODO","title":"Sub-step for 6.5.8"}
+{"type":"section","id":"5c000115","title":"Errands"}
+{"type":"section","id":"5c000116","parent":"5c000115","title":"Errands project 1"}
+{"type":"task","id":"5c000117","parent":"5c000116","state":"INBOX","title":"Return the insurance quote (7.1.1)","tags":["@computer"],"scheduled":"2026-07-01","deadline":"2026-01-02"}
+{"type":"task","id":"5c000118","parent":"5c000116","state":"TODO","title":"Measure the plant food (7.1.2)"}
+{"type":"task","id":"5c000119","parent":"5c000118","state":"TODO","title":"Sub-step for 7.1.2"}
+{"type":"task","id":"5c00011a","parent":"5c000116","state":"NEXT","priority":"C","title":"Compare the tyre pressure (7.1.3)","tags":["@calls"]}
+{"type":"task","id":"5c00011b","parent":"5c000116","state":"WAITING","title":"Draft the smoke alarm (7.1.4)","scheduled":"2026-10-10"}
+{"type":"task","id":"5c00011c","parent":"5c000116","state":"DONE","title":"Review the spare key (7.1.5)","tags":["@errands"],"closed":"2026-05-05"}
+{"type":"task","id":"5c00011d","parent":"5c00011c","state":"TODO","title":"Sub-step for 7.1.5"}
+{"type":"section","id":"5c00011e","parent":"5c000115","title":"Errands project 2"}
+{"type":"task","id":"5c00011f","parent":"5c00011e","state":"TODO","title":"Draft the guest bed (7.2.1)","tags":["@email"],"scheduled":"2026-07-02","deadline":"2026-02-02"}
+{"type":"task","id":"5c000120","parent":"5c00011e","state":"NEXT","title":"Review the utility bill (7.2.2)"}
+{"type":"task","id":"5c000121","parent":"5c000120","state":"TODO","title":"Sub-step for 7.2.2"}
+{"type":"task","id":"5c000122","parent":"5c00011e","state":"WAITING","priority":"C","title":"Email the insurance quote (7.2.3)","tags":["@home"]}
+{"type":"task","id":"5c000123","parent":"5c00011e","state":"DONE","title":"Call the plant food (7.2.4)","scheduled":"2026-10-11","closed":"2026-05-04"}
+{"type":"task","id":"5c000124","parent":"5c00011e","state":"CANCELLED","title":"Book the tyre pressure (7.2.5)","tags":["@computer"],"closed":"2026-05-05"}
+{"type":"task","id":"5c000125","parent":"5c000124","state":"TODO","title":"Sub-step for 7.2.5"}
+{"type":"task","id":"5c000126","parent":"5c00011e","state":"INBOX","title":"Fix the smoke alarm (7.2.6)","deadline":"2026-07-27"}
+{"type":"section","id":"5c000127","parent":"5c000115","title":"Errands project 3"}
+{"type":"task","id":"5c000128","parent":"5c000127","state":"NEXT","title":"Call the recycling schedule (7.3.1)","tags":["@calls"],"scheduled":"2026-07-03","deadline":"2026-03-02"}
+{"type":"task","id":"5c000129","parent":"5c000127","state":"WAITING","title":"Book the vet appointment (7.3.2)"}
+{"type":"task","id":"5c00012a","parent":"5c000129","state":"TODO","title":"Sub-step for 7.3.2"}
+{"type":"task","id":"5c00012b","parent":"5c000127","state":"DONE","priority":"C","title":"Fix the guest bed (7.3.3)","tags":["@errands"],"closed":"2026-05-03"}
+{"type":"task","id":"5c00012c","parent":"5c000127","state":"CANCELLED","title":"Order the utility bill (7.3.4)","scheduled":"2026-10-12","closed":"2026-05-04"}
+{"type":"task","id":"5c00012d","parent":"5c000127","state":"INBOX","title":"Plan the insurance quote (7.3.5)","tags":["@email"]}
+{"type":"task","id":"5c00012e","parent":"5c00012d","state":"TODO","title":"Sub-step for 7.3.5"}
+{"type":"task","id":"5c00012f","parent":"5c000127","state":"TODO","title":"Sort the plant food (7.3.6)","deadline":"2026-08-27"}
+{"type":"task","id":"5c000130","parent":"5c000127","state":"NEXT","priority":"A","title":"File the tyre pressure (7.3.7)","tags":["@home"],"scheduled":"2026-01-21"}
+{"type":"section","id":"5c000131","parent":"5c000115","title":"Errands project 4"}
+{"type":"task","id":"5c000132","parent":"5c000131","state":"WAITING","title":"Order the quarterly report (7.4.1)","tags":["@home"],"scheduled":"2026-07-04","deadline":"2026-04-02"}
+{"type":"task","id":"5c000133","parent":"5c000131","state":"DONE","title":"Plan the pantry shelf (7.4.2)","closed":"2026-05-02"}
+{"type":"task","id":"5c000134","parent":"5c000133","state":"TODO","title":"Sub-step for 7.4.2"}
+{"type":"task","id":"5c000135","parent":"5c000131","state":"CANCELLED","priority":"C","title":"Sort the recycling schedule (7.4.3)","tags":["@computer"],"closed":"2026-05-03"}
+{"type":"task","id":"5c000136","parent":"5c000131","state":"INBOX","title":"File the vet appointment (7.4.4)","scheduled":"2026-10-13"}
+{"type":"task","id":"5c000137","parent":"5c000131","state":"TODO","title":"Check the guest bed (7.4.5)","tags":["@calls"]}
+{"type":"task","id":"5c000138","parent":"5c000137","state":"TODO","title":"Sub-step for 7.4.5"}
+{"type":"task","id":"5c000139","parent":"5c000131","state":"NEXT","title":"Renew the utility bill (7.4.6)","deadline":"2026-09-27"}
+{"type":"task","id":"5c00013a","parent":"5c000131","state":"WAITING","priority":"A","title":"Return the insurance quote (7.4.7)","tags":["@errands"],"scheduled":"2026-01-22"}
+{"type":"task","id":"5c00013b","parent":"5c000131","state":"DONE","title":"Measure the plant food (7.4.8)","closed":"2026-05-08"}
+{"type":"task","id":"5c00013c","parent":"5c00013b","state":"TODO","title":"Sub-step for 7.4.8"}
+{"type":"section","id":"5c00013d","parent":"5c000115","title":"Errands project 5"}
+{"type":"task","id":"5c00013e","parent":"5c00013d","state":"DONE","title":"File the spare key (7.5.1)","tags":["@errands"],"scheduled":"2026-07-05","deadline":"2026-05-02","closed":"2026-05-01"}
+{"type":"task","id":"5c00013f","parent":"5c00013d","state":"CANCELLED","title":"Check the bike lock (7.5.2)","closed":"2026-05-02"}
+{"type":"task","id":"5c000140","parent":"5c00013f","state":"TODO","title":"Sub-step for 7.5.2"}
+{"type":"task","id":"5c000141","parent":"5c00013d","state":"INBOX","priority":"C","title":"Renew the quarterly report (7.5.3)","tags":["@email"]}
+{"type":"task","id":"5c000142","parent":"5c00013d","state":"TODO","title":"Return the pantry shelf (7.5.4)","scheduled":"2026-10-14"}
+{"type":"section","id":"5c000143","title":"Reading list"}
+{"type":"section","id":"5c000144","parent":"5c000143","title":"Reading list project 1"}
+{"type":"task","id":"5c000145","parent":"5c000144","state":"TODO","title":"Book the bike lock (8.1.1)","tags":["@computer"],"scheduled":"2026-08-01","deadline":"2026-01-02"}
+{"type":"task","id":"5c000146","parent":"5c000144","state":"NEXT","priority":"C","title":"Fix the quarterly report (8.1.2)"}
+{"type":"task","id":"5c000147","parent":"5c000146","state":"TODO","title":"Sub-step for 8.1.2"}
+{"type":"task","id":"5c000148","parent":"5c000144","state":"WAITING","title":"Order the pantry shelf (8.1.3)","tags":["@calls"]}
+{"type":"task","id":"5c000149","parent":"5c000144","state":"DONE","title":"Plan the recycling schedule (8.1.4)","scheduled":"2026-11-10","closed":"2026-05-04"}
+{"type":"task","id":"5c00014a","parent":"5c000144","state":"CANCELLED","title":"Sort the vet appointment (8.1.5)","tags":["@errands"],"closed":"2026-05-05"}
+{"type":"task","id":"5c00014b","parent":"5c00014a","state":"TODO","title":"Sub-step for 8.1.5"}
+{"type":"task","id":"5c00014c","parent":"5c000144","state":"INBOX","priority":"A","title":"File the guest bed (8.1.6)","deadline":"2026-06-27"}
+{"type":"section","id":"5c00014d","parent":"5c000143","title":"Reading list project 2"}
+{"type":"task","id":"5c00014e","parent":"5c00014d","state":"NEXT","title":"Plan the smoke alarm (8.2.1)","tags":["@email"],"scheduled":"2026-08-02","deadline":"2026-02-02"}
+{"type":"task","id":"5c00014f","parent":"5c00014d","state":"WAITING","priority":"C","title":"Sort the spare key (8.2.2)"}
+{"type":"task","id":"5c000150","parent":"5c00014f","state":"TODO","title":"Sub-step for 8.2.2"}
+{"type":"task","id":"5c000151","parent":"5c00014d","state":"DONE","title":"File the bike lock (8.2.3)","tags":["@home"],"closed":"2026-05-03"}
+{"type":"task","id":"5c000152","parent":"5c00014d","state":"CANCELLED","title":"Check the quarterly report (8.2.4)","scheduled":"2026-11-11","closed":"2026-05-04"}
+{"type":"task","id":"5c000153","parent":"5c00014d","state":"INBOX","title":"Renew the pantry shelf (8.2.5)","tags":["@computer"]}
+{"type":"task","id":"5c000154","parent":"5c000153","state":"TODO","title":"Sub-step for 8.2.5"}
+{"type":"task","id":"5c000155","parent":"5c00014d","state":"TODO","priority":"A","title":"Return the recycling schedule (8.2.6)","deadline":"2026-07-27"}
+{"type":"task","id":"5c000156","parent":"5c00014d","state":"NEXT","title":"Measure the vet appointment (8.2.7)","tags":["@calls"],"scheduled":"2026-02-20"}
+{"type":"section","id":"5c000157","parent":"5c000143","title":"Reading list project 3"}
+{"type":"task","id":"5c000158","parent":"5c000157","state":"WAITING","title":"Check the plant food (8.3.1)","tags":["@calls"],"scheduled":"2026-08-03","deadline":"2026-03-02"}
+{"type":"task","id":"5c000159","parent":"5c000157","state":"DONE","priority":"C","title":"Renew the tyre pressure (8.3.2)","closed":"2026-05-02"}
+{"type":"task","id":"5c00015a","parent":"5c000159","state":"TODO","title":"Sub-step for 8.3.2"}
+{"type":"task","id":"5c00015b","parent":"5c000157","state":"CANCELLED","title":"Return the smoke alarm (8.3.3)","tags":["@errands"],"closed":"2026-05-03"}
+{"type":"task","id":"5c00015c","parent":"5c000157","state":"INBOX","title":"Measure the spare key (8.3.4)","scheduled":"2026-11-12"}
+{"type":"task","id":"5c00015d","parent":"5c000157","state":"TODO","title":"Compare the bike lock (8.3.5)","tags":["@email"]}
+{"type":"task","id":"5c00015e","parent":"5c00015d","state":"TODO","title":"Sub-step for 8.3.5"}
+{"type":"task","id":"5c00015f","parent":"5c000157","state":"NEXT","priority":"A","title":"Draft the quarterly report (8.3.6)","deadline":"2026-08-27"}
+{"type":"task","id":"5c000160","parent":"5c000157","state":"WAITING","title":"Review the pantry shelf (8.3.7)","tags":["@home"],"scheduled":"2026-02-21"}
+{"type":"task","id":"5c000161","parent":"5c000157","state":"DONE","title":"Email the recycling schedule (8.3.8)","closed":"2026-05-08"}
+{"type":"task","id":"5c000162","parent":"5c000161","state":"TODO","title":"Sub-step for 8.3.8"}
+{"type":"section","id":"5c000163","parent":"5c000143","title":"Reading list project 4"}
+{"type":"task","id":"5c000164","parent":"5c000163","state":"DONE","title":"Measure the utility bill (8.4.1)","tags":["@home"],"scheduled":"2026-08-04","deadline":"2026-04-02","closed":"2026-05-01"}
+{"type":"task","id":"5c000165","parent":"5c000163","state":"CANCELLED","priority":"C","title":"Compare the insurance quote (8.4.2)","closed":"2026-05-02"}
+{"type":"task","id":"5c000166","parent":"5c000165","state":"TODO","title":"Sub-step for 8.4.2"}
+{"type":"task","id":"5c000167","parent":"5c000163","state":"INBOX","title":"Draft the plant food (8.4.3)","tags":["@computer"]}
+{"type":"task","id":"5c000168","parent":"5c000163","state":"TODO","title":"Review the tyre pressure (8.4.4)","scheduled":"2026-11-13"}
+{"type":"section","id":"5c000169","parent":"5c000143","title":"Reading list project 5"}
+{"type":"task","id":"5c00016a","parent":"5c000169","state":"CANCELLED","title":"Review the vet appointment (8.5.1)","tags":["@errands"],"scheduled":"2026-08-05","deadline":"2026-05-02","closed":"2026-05-01"}
+{"type":"task","id":"5c00016b","parent":"5c000169","state":"INBOX","priority":"C","title":"Email the guest bed (8.5.2)"}
+{"type":"task","id":"5c00016c","parent":"5c00016b","state":"TODO","title":"Sub-step for 8.5.2"}
+{"type":"task","id":"5c00016d","parent":"5c000169","state":"TODO","title":"Call the utility bill (8.5.3)","tags":["@email"]}
+{"type":"task","id":"5c00016e","parent":"5c000169","state":"NEXT","title":"Book the insurance quote (8.5.4)","scheduled":"2026-11-14"}
+{"type":"task","id":"5c00016f","parent":"5c000169","state":"WAITING","title":"Fix the plant food (8.5.5)","tags":["@home"]}
+{"type":"task","id":"5c000170","parent":"5c00016f","state":"TODO","title":"Sub-step for 8.5.5"}
+{"type":"section","id":"5c000171","title":"Home"}
+{"type":"section","id":"5c000172","parent":"5c000171","title":"Home project 1"}
+{"type":"task","id":"5c000173","parent":"5c000172","state":"NEXT","priority":"C","title":"Renew the guest bed (9.1.1)","tags":["@computer"],"scheduled":"2026-09-01","deadline":"2026-01-02"}
+{"type":"task","id":"5c000174","parent":"5c000172","state":"WAITING","title":"Return the utility bill (9.1.2)"}
+{"type":"task","id":"5c000175","parent":"5c000174","state":"TODO","title":"Sub-step for 9.1.2"}
+{"type":"task","id":"5c000176","parent":"5c000172","state":"DONE","title":"Measure the insurance quote (9.1.3)","tags":["@calls"],"closed":"2026-05-03"}
+{"type":"task","id":"5c000177","parent":"5c000172","state":"CANCELLED","title":"Compare the plant food (9.1.4)","scheduled":"2026-12-10","closed":"2026-05-04"}
+{"type":"task","id":"5c000178","parent":"5c000172","state":"INBOX","priority":"A","title":"Draft the tyre pressure (9.1.5)","tags":["@errands"]}
+{"type":"task","id":"5c000179","parent":"5c000178","state":"TODO","title":"Sub-step for 9.1.5"}
+{"type":"task","id":"5c00017a","parent":"5c000172","state":"TODO","title":"Review the smoke alarm (9.1.6)","deadline":"2026-06-27"}
+{"type":"task","id":"5c00017b","parent":"5c000172","state":"NEXT","title":"Email the spare key (9.1.7)","tags":["@email"],"scheduled":"2026-03-19"}
+{"type":"section","id":"5c00017c","parent":"5c000171","title":"Home project 2"}
+{"type":"task","id":"5c00017d","parent":"5c00017c","state":"WAITING","priority":"C","title":"Compare the recycling schedule (9.2.1)","tags":["@email"],"scheduled":"2026-09-02","deadline":"2026-02-02"}
+{"type":"task","id":"5c00017e","parent":"5c00017c","state":"DONE","title":"Draft the vet appointment (9.2.2)","closed":"2026-05-02"}
+{"type":"task","id":"5c00017f","parent":"5c00017e","state":"TODO","title":"Sub-step for 9.2.2"}
+{"type":"task","id":"5c000180","parent":"5c00017c","state":"CANCELLED","title":"Review the guest bed (9.2.3)","tags":["@home"],"closed":"2026-05-03"}
+{"type":"task","id":"5c000181","parent":"5c00017c","state":"INBOX","title":"Email the utility bill (9.2.4)","scheduled":"2026-12-11"}
+{"type":"task","id":"5c000182","parent":"5c00017c","state":"TODO","priority":"A","title":"Call the insurance quote (9.2.5)","tags":["@computer"]}
+{"type":"task","id":"5c000183","parent":"5c000182","state":"TODO","title":"Sub-step for 9.2.5"}
+{"type":"task","id":"5c000184","parent":"5c00017c","state":"NEXT","title":"Book the plant food (9.2.6)","deadline":"2026-07-27"}
+{"type":"task","id":"5c000185","parent":"5c00017c","state":"WAITING","title":"Fix the tyre pressure (9.2.7)","tags":["@calls"],"scheduled":"2026-03-20"}
+{"type":"task","id":"5c000186","parent":"5c00017c","state":"DONE","title":"Order the smoke alarm (9.2.8)","closed":"2026-05-08"}
+{"type":"task","id":"5c000187","parent":"5c000186","state":"TODO","title":"Sub-step for 9.2.8"}
+{"type":"section","id":"5c000188","parent":"5c000171","title":"Home project 3"}
+{"type":"task","id":"5c000189","parent":"5c000188","state":"DONE","priority":"C","title":"Email the quarterly report (9.3.1)","tags":["@calls"],"scheduled":"2026-09-03","deadline":"2026-03-02","closed":"2026-05-01"}
+{"type":"task","id":"5c00018a","parent":"5c000188","state":"CANCELLED","title":"Call the pantry shelf (9.3.2)","closed":"2026-05-02"}
+{"type":"task","id":"5c00018b","parent":"5c00018a","state":"TODO","title":"Sub-step for 9.3.2"}
+{"type":"task","id":"5c00018c","parent":"5c000188","state":"INBOX","title":"Book the recycling schedule (9.3.3)","tags":["@errands"]}
+{"type":"task","id":"5c00018d","parent":"5c000188","state":"TODO","title":"Fix the vet appointment (9.3.4)","scheduled":"2026-12-12"}
+{"type":"section","id":"5c00018e","parent":"5c000171","title":"Home project 4"}
+{"type":"task","id":"5c00018f","parent":"5c00018e","state":"CANCELLED","priority":"C","title":"Fix the spare key (9.4.1)","tags":["@home"],"scheduled":"2026-09-04","deadline":"2026-04-02","closed":"2026-05-01"}
+{"type":"task","id":"5c000190","parent":"5c00018e","state":"INBOX","title":"Order the bike lock (9.4.2)"}
+{"type":"task","id":"5c000191","parent":"5c000190","state":"TODO","title":"Sub-step for 9.4.2"}
+{"type":"task","id":"5c000192","parent":"5c00018e","state":"TODO","title":"Plan the quarterly report (9.4.3)","tags":["@computer"]}
+{"type":"task","id":"5c000193","parent":"5c00018e","state":"NEXT","title":"Sort the pantry shelf (9.4.4)","scheduled":"2026-12-13"}
+{"type":"task","id":"5c000194","parent":"5c00018e","state":"WAITING","priority":"A","title":"File the recycling schedule (9.4.5)","tags":["@calls"]}
+{"type":"task","id":"5c000195","parent":"5c000194","state":"TODO","title":"Sub-step for 9.4.5"}
+{"type":"section","id":"5c000196","parent":"5c000171","title":"Home project 5"}
+{"type":"task","id":"5c000197","parent":"5c000196","state":"INBOX","priority":"C","title":"Sort the tyre pressure (9.5.1)","tags":["@errands"],"scheduled":"2026-09-05","deadline":"2026-05-02"}
+{"type":"task","id":"5c000198","parent":"5c000196","state":"TODO","title":"File the smoke alarm (9.5.2)"}
+{"type":"task","id":"5c000199","parent":"5c000198","state":"TODO","title":"Sub-step for 9.5.2"}
+{"type":"task","id":"5c00019a","parent":"5c000196","state":"NEXT","title":"Check the spare key (9.5.3)","tags":["@email"]}
+{"type":"task","id":"5c00019b","parent":"5c000196","state":"WAITING","title":"Renew the bike lock (9.5.4)","scheduled":"2026-12-14"}
+{"type":"task","id":"5c00019c","parent":"5c000196","state":"DONE","priority":"A","title":"Return the quarterly report (9.5.5)","tags":["@home"],"closed":"2026-05-05"}
+{"type":"task","id":"5c00019d","parent":"5c00019c","state":"TODO","title":"Sub-step for 9.5.5"}
+{"type":"task","id":"5c00019e","parent":"5c000196","state":"CANCELLED","title":"Measure the pantry shelf (9.5.6)","deadline":"2026-10-27","closed":"2026-05-06"}
+{"type":"section","id":"5c00019f","title":"Work"}
+{"type":"section","id":"5c0001a0","parent":"5c00019f","title":"Work project 1"}
+{"type":"task","id":"5c0001a1","parent":"5c0001a0","state":"WAITING","title":"Call the smoke alarm (10.1.1)","tags":["@computer"],"scheduled":"2026-10-01","deadline":"2026-01-02"}
+{"type":"task","id":"5c0001a2","parent":"5c0001a0","state":"DONE","title":"Book the spare key (10.1.2)","closed":"2026-05-02"}
+{"type":"task","id":"5c0001a3","parent":"5c0001a2","state":"TODO","title":"Sub-step for 10.1.2"}
+{"type":"task","id":"5c0001a4","parent":"5c0001a0","state":"CANCELLED","title":"Fix the bike lock (10.1.3)","tags":["@calls"],"closed":"2026-05-03"}
+{"type":"task","id":"5c0001a5","parent":"5c0001a0","state":"INBOX","priority":"A","title":"Order the quarterly report (10.1.4)","scheduled":"2026-01-10"}
+{"type":"task","id":"5c0001a6","parent":"5c0001a0","state":"TODO","title":"Plan the pantry shelf (10.1.5)","tags":["@errands"]}
+{"type":"task","id":"5c0001a7","parent":"5c0001a6","state":"TODO","title":"Sub-step for 10.1.5"}
+{"type":"task","id":"5c0001a8","parent":"5c0001a0","state":"NEXT","title":"Sort the recycling schedule (10.1.6)","deadline":"2026-06-27"}
+{"type":"task","id":"5c0001a9","parent":"5c0001a0","state":"WAITING","title":"File the vet appointment (10.1.7)","tags":["@email"],"scheduled":"2026-04-19"}
+{"type":"task","id":"5c0001aa","parent":"5c0001a0","state":"DONE","priority":"B","title":"Check the guest bed (10.1.8)","closed":"2026-05-08"}
+{"type":"task","id":"5c0001ab","parent":"5c0001aa","state":"TODO","title":"Sub-step for 10.1.8"}
+{"type":"section","id":"5c0001ac","parent":"5c00019f","title":"Work project 2"}
+{"type":"task","id":"5c0001ad","parent":"5c0001ac","state":"DONE","title":"Order the plant food (10.2.1)","tags":["@email"],"scheduled":"2026-10-02","deadline":"2026-02-02","closed":"2026-05-01"}
+{"type":"task","id":"5c0001ae","parent":"5c0001ac","state":"CANCELLED","title":"Plan the tyre pressure (10.2.2)","closed":"2026-05-02"}
+{"type":"task","id":"5c0001af","parent":"5c0001ae","state":"TODO","title":"Sub-step for 10.2.2"}
+{"type":"task","id":"5c0001b0","parent":"5c0001ac","state":"INBOX","title":"Sort the smoke alarm (10.2.3)","tags":["@home"]}
+{"type":"task","id":"5c0001b1","parent":"5c0001ac","state":"TODO","priority":"A","title":"File the spare key (10.2.4)","scheduled":"2026-01-11"}
+{"type":"section","id":"5c0001b2","parent":"5c00019f","title":"Work project 3"}
+{"type":"task","id":"5c0001b3","parent":"5c0001b2","state":"CANCELLED","title":"File the utility bill (10.3.1)","tags":["@calls"],"scheduled":"2026-10-03","deadline":"2026-03-02","closed":"2026-05-01"}
+{"type":"task","id":"5c0001b4","parent":"5c0001b2","state":"INBOX","title":"Check the insurance quote (10.3.2)"}
+{"type":"task","id":"5c0001b5","parent":"5c0001b4","state":"TODO","title":"Sub-step for 10.3.2"}
+{"type":"task","id":"5c0001b6","parent":"5c0001b2","state":"TODO","title":"Renew the plant food (10.3.3)","tags":["@errands"]}
+{"type":"task","id":"5c0001b7","parent":"5c0001b2","state":"NEXT","priority":"A","title":"Return the tyre pressure (10.3.4)","scheduled":"2026-01-12"}
+{"type":"task","id":"5c0001b8","parent":"5c0001b2","state":"WAITING","title":"Measure the smoke alarm (10.3.5)","tags":["@email"]}
+{"type":"task","id":"5c0001b9","parent":"5c0001b8","state":"TODO","title":"Sub-step for 10.3.5"}
+{"type":"section","id":"5c0001ba","parent":"5c00019f","title":"Work project 4"}
+{"type":"task","id":"5c0001bb","parent":"5c0001ba","state":"INBOX","title":"Return the vet appointment (10.4.1)","tags":["@home"],"scheduled":"2026-10-04","deadline":"2026-04-02"}
+{"type":"task","id":"5c0001bc","parent":"5c0001ba","state":"TODO","title":"Measure the guest bed (10.4.2)"}
+{"type":"task","id":"5c0001bd","parent":"5c0001bc","state":"TODO","title":"Sub-step for 10.4.2"}
+{"type":"task","id":"5c0001be","parent":"5c0001ba","state":"NEXT","title":"Compare the utility bill (10.4.3)","tags":["@computer"]}
+{"type":"task","id":"5c0001bf","parent":"5c0001ba","state":"WAITING","priority":"A","title":"Draft the insurance quote (10.4.4)","scheduled":"2026-01-13"}
+{"type":"task","id":"5c0001c0","parent":"5c0001ba","state":"DONE","title":"Review the plant food (10.4.5)","tags":["@calls"],"closed":"2026-05-05"}
+{"type":"task","id":"5c0001c1","parent":"5c0001c0","state":"TODO","title":"Sub-step for 10.4.5"}
+{"type":"task","id":"5c0001c2","parent":"5c0001ba","state":"CANCELLED","title":"Email the tyre pressure (10.4.6)","deadline":"2026-09-27","closed":"2026-05-06"}
+{"type":"section","id":"5c0001c3","parent":"5c00019f","title":"Work project 5"}
+{"type":"task","id":"5c0001c4","parent":"5c0001c3","state":"TODO","title":"Draft the pantry shelf (10.5.1)","tags":["@errands"],"scheduled":"2026-10-05","deadline":"2026-05-02"}
+{"type":"task","id":"5c0001c5","parent":"5c0001c3","state":"NEXT","title":"Review the recycling schedule (10.5.2)"}
+{"type":"task","id":"5c0001c6","parent":"5c0001c5","state":"TODO","title":"Sub-step for 10.5.2"}
+{"type":"task","id":"5c0001c7","parent":"5c0001c3","state":"WAITING","title":"Email the vet appointment (10.5.3)","tags":["@email"]}
+{"type":"task","id":"5c0001c8","parent":"5c0001c3","state":"DONE","priority":"A","title":"Call the guest bed (10.5.4)","scheduled":"2026-01-14","closed":"2026-05-04"}
+{"type":"task","id":"5c0001c9","parent":"5c0001c3","state":"CANCELLED","title":"Book the utility bill (10.5.5)","tags":["@home"],"closed":"2026-05-05"}
+{"type":"task","id":"5c0001ca","parent":"5c0001c9","state":"TODO","title":"Sub-step for 10.5.5"}
+{"type":"task","id":"5c0001cb","parent":"5c0001c3","state":"INBOX","title":"Fix the insurance quote (10.5.6)","deadline":"2026-10-27"}
+{"type":"task","id":"5c0001cc","parent":"5c0001c3","state":"TODO","title":"Order the plant food (10.5.7)","tags":["@computer"],"scheduled":"2026-04-23"}

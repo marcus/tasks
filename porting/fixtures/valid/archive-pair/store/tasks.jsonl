@@ -1,0 +1,6 @@
+{"type":"meta","version":2}
+{"type":"section","id":"a0000001","title":"Next Actions"}
+{"type":"task","id":"a0000002","parent":"a0000001","state":"NEXT","title":"Book the annual service","tags":["@calls"]}
+{"type":"section","id":"a0000003","title":"Projects"}
+{"type":"section","id":"a0000004","parent":"a0000003","title":"Kitchen repaint"}
+{"type":"task","id":"a0000005","parent":"a0000004","state":"TODO","title":"Choose the finish"}

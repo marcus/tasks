@@ -1,0 +1,23 @@
+{"type":"meta","version":2}
+{"type":"section","id":"c1000001","title":"Next Actions"}
+{"type":"task","id":12345678,"parent":"c1000001","state":"TODO","title":"Integer id"}
+{"type":"task","id":"c1000003","parent":"c1000001","state":"STARTED","title":"Unknown state"}
+{"type":"task","id":"c1000004","parent":"c1000001","state":"TODO","priority":"Z","title":"Priority outside A/B/C"}
+{"type":"task","id":"c1000005","parent":"c1000001","state":"TODO","title":42}
+{"type":"task","id":"c1000006","parent":"c1000001","state":"TODO","title":"Tags as a string","tags":"@home"}
+{"type":"task","id":"c1000007","parent":"c1000001","state":"TODO","title":"Tags containing a number","tags":["@home",7]}
+{"type":"task","id":"c1000008","parent":"c1000001","state":"TODO","title":"Impossible date","scheduled":"2026-02-30"}
+{"type":"task","id":"c1000009","parent":"c1000001","state":"TODO","title":"Date in the wrong shape","deadline":"14/06/2026"}
+{"type":"task","id":"c100000a","parent":"c1000001","state":"TODO","title":"Closed date on an open task","closed":"2026-06-01"}
+{"type":"task","id":"c100000b","parent":"c1000001","state":"TODO","title":"Unparseable recur cookie","scheduled":"2026-06-10","recur":"every week"}
+{"type":"task","id":"c100000c","parent":"c1000001","state":"TODO","title":"Lead with nothing to hide before","lead":"3w"}
+{"type":"task","id":"c100000d","parent":"c1000001","state":"TODO","title":"Lead beside both dates","scheduled":"2026-06-10","deadline":"2026-06-20","lead":"2d"}
+{"type":"task","id":"c100000e","parent":"c1000001","state":"TODO","title":"Time metadata with no date","scheduled_time":{"local":"09:00"}}
+{"type":"task","id":"c100000f","parent":"c1000001","state":"TODO","title":"Time metadata in the wrong shape","scheduled":"2026-06-10","scheduled_time":{"local":"9am"}}
+{"type":"task","id":"c1000010","parent":"c1000001","state":"TODO","title":"Update stamp without a device slug","updated":"2026-06-01T10:00:00Z"}
+{"type":"task","id":"c1000011","parent":"c1000001","state":"PROPOSED","title":"Delegation on a proposed task","delegation":{"kind":"agent","status":"ready","at":"2026-06-01T10:00:00Z"}}
+{"type":"section","id":"c1000012","parent":"c1000001","state":"TODO","title":"Section carrying task fields","tags":["@home"],"deadline":"2026-06-30"}
+{"type":"task","id":"short","parent":"c1000001","state":"TODO","title":"Id too short"}
+{"type":"task","parent":"c1000001","state":"TODO","title":"No id at all"}
+{"type":"task","id":"c1000013","parent":"c1000001","state":"TODO","title":"   "}
+{"type":"widget","id":"c1000014","parent":"c1000001","title":"Unknown record type"}

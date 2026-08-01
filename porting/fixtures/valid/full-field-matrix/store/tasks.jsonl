@@ -1,0 +1,34 @@
+{"type":"meta","version":2}
+{"type":"section","id":"f0000001","title":"Field matrix","body":"One record per interesting field combination."}
+{"type":"task","id":"f0000010","parent":"f0000001","state":"PROPOSED","title":"Proposed: add a second backup target","body":"Suggested by the agent; awaiting approval."}
+{"type":"task","id":"f0000011","parent":"f0000001","state":"INBOX","title":"Inbox item with nothing else set"}
+{"type":"task","id":"f0000012","parent":"f0000001","state":"TODO","priority":"C","title":"Todo with priority C"}
+{"type":"task","id":"f0000013","parent":"f0000001","state":"NEXT","priority":"A","title":"Next with priority A and both tags","tags":["@computer","important","urgent"]}
+{"type":"task","id":"f0000014","parent":"f0000001","state":"WAITING","title":"Waiting on the letting agent","tags":["@waiting"]}
+{"type":"task","id":"f0000015","parent":"f0000001","state":"DONE","title":"Done last week","closed":"2026-05-28","updated":"2026-05-28T09:14:02Z#fixture"}
+{"type":"task","id":"f0000016","parent":"f0000001","state":"CANCELLED","title":"Cancelled after the trip was moved","closed":"2026-05-29"}
+{"type":"task","id":"f0000020","parent":"f0000001","state":"TODO","title":"Scheduled, date only","scheduled":"2026-06-15"}
+{"type":"task","id":"f0000021","parent":"f0000001","state":"TODO","title":"Deadline, date only","deadline":"2026-06-20"}
+{"type":"task","id":"f0000022","parent":"f0000001","state":"TODO","title":"Both a start date and a due date","scheduled":"2026-06-15","deadline":"2026-06-20"}
+{"type":"task","id":"f0000023","parent":"f0000001","state":"TODO","title":"Floating local time (no zone)","scheduled":"2026-06-16","scheduled_time":{"local":"09:30"}}
+{"type":"task","id":"f0000024","parent":"f0000001","state":"TODO","title":"Fixed-zone deadline time","deadline":"2026-06-18","deadline_time":{"local":"17:00","timezone":"Europe/London"}}
+{"type":"task","id":"f0000025","parent":"f0000001","state":"TODO","title":"Second instant of a DST overlap","scheduled":"2026-11-01","scheduled_time":{"local":"01:30","timezone":"America/Los_Angeles","fold":1}}
+{"type":"task","id":"f0000026","parent":"f0000001","state":"TODO","title":"Leap day","scheduled":"2028-02-29"}
+{"type":"task","id":"f0000030","parent":"f0000001","state":"NEXT","title":"Weekly from completion (.+1w)","scheduled":"2026-06-08","recur":".+1w"}
+{"type":"task","id":"f0000031","parent":"f0000001","state":"TODO","title":"Monthly, catch up to today (++1m)","scheduled":"2026-06-01","recur":"++1m"}
+{"type":"task","id":"f0000032","parent":"f0000001","state":"TODO","title":"Every other day (+2d)","scheduled":"2026-06-02","recur":"+2d"}
+{"type":"task","id":"f0000033","parent":"f0000001","state":"TODO","title":"Weekdays by name (w:mon,wed)","scheduled":"2026-06-01","recur":"w:mon,wed"}
+{"type":"task","id":"f0000034","parent":"f0000001","state":"TODO","title":"Day of month (m:15)","deadline":"2026-06-15","recur":"m:15"}
+{"type":"task","id":"f0000035","parent":"f0000001","state":"TODO","title":"Annual (y:07-04)","scheduled":"2026-07-04","recur":"y:07-04"}
+{"type":"task","id":"f0000040","parent":"f0000001","state":"TODO","title":"Hidden until three weeks before the deadline","deadline":"2026-08-01","lead":"3w"}
+{"type":"task","id":"f0000041","parent":"f0000001","state":"TODO","title":"Hidden until five hours before the start time","scheduled":"2026-06-14","scheduled_time":{"local":"14:00"},"lead":"5h"}
+{"type":"task","id":"f0000042","parent":"f0000001","state":"TODO","title":"Lead already released for this occurrence","scheduled":"2026-06-22","recur":".+1w","lead":"2d","lead_skip":"2026-06-22"}
+{"type":"task","id":"f0000050","parent":"f0000001","state":"WAITING","title":"Delegated to a person","delegation":{"kind":"human","status":"delegated","assignee":"sam.rivera@example.com","at":"2026-06-01T10:00:00Z"}}
+{"type":"task","id":"f0000051","parent":"f0000001","state":"TODO","title":"Offered to the agent pool, unclaimed","delegation":{"kind":"agent","mode":"research","status":"ready","at":"2026-06-02T08:30:00Z"}}
+{"type":"task","id":"f0000052","parent":"f0000001","state":"TODO","title":"Claimed by a worker, with a work reference","delegation":{"kind":"agent","mode":"implement","status":"claimed","assignee":"harness/model/session-0001","at":"2026-06-02T09:00:00Z","work_ref":"https://example.invalid/runs/0001"}}
+{"type":"task","id":"f0000060","parent":"f0000001","state":"TODO","title":"Multi-line body with a link","body":"First line.\nSecond line with https://example.invalid/docs/page\n- a bullet"}
+{"type":"task","id":"f0000061","parent":"f0000001","state":"TODO","title":"Unicode title — naïve, résumé, 日本語, emoji 🌱","tags":["@home"],"body":"Grüße — ünïcödé body, ideographic space:　end."}
+{"type":"task","id":"f0000062","parent":"f0000001","state":"TODO","title":"Quotes \"inside\" the title and a backslash \\ too"}
+{"type":"task","id":"f0000070","parent":"f0000001","state":"TODO","title":"Parent task with children"}
+{"type":"task","id":"f0000071","parent":"f0000070","state":"NEXT","title":"First child action"}
+{"type":"task","id":"f0000072","parent":"f0000070","state":"TODO","title":"Second child action"}

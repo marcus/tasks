@@ -1,0 +1,7 @@
+{"type":"meta","version":2}
+{"type":"section","id":"e0000001","title":"Inbox"}
+{"type":"task","id":"8e5e8c22","parent":"e0000001","state":"NEXT","title":"Book the boiler service","tags":["@calls"],"body":"Captured [2026-08-01].","updated":"2026-08-01T18:11:01Z#fixture"}
+{"type":"task","id":"dc3f5f4b","parent":"e0000001","state":"TODO","title":"Draft the neighbourhood newsletter","tags":["@computer"],"deadline":"2026-06-30","delegation":{"kind":"agent","mode":"research","status":"claimed","assignee":"harness/model/worker-alpha","at":"2026-08-01T18:11:01Z"},"body":"Captured [2026-08-01].","updated":"2026-08-01T18:11:01Z#fixture"}
+{"type":"task","id":"d8516bc2","parent":"e0000001","state":"INBOX","title":"Replace the door handle","tags":["@home"],"delegation":{"kind":"agent","mode":"implement","status":"ready","at":"2026-08-01T18:11:01Z"},"body":"Captured [2026-08-01].","updated":"2026-08-01T18:11:01Z#fixture"}
+{"type":"section","id":"e0000002","title":"Next Actions"}
+{"type":"section","id":"e0000003","title":"Projects"}

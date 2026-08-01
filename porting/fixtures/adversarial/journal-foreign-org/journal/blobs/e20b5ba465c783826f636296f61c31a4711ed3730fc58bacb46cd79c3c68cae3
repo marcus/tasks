@@ -1,0 +1,7 @@
+{"type":"meta","version":2}
+{"type":"section","id":"e0000001","title":"Inbox"}
+{"type":"task","id":"c91d23fe","parent":"e0000001","state":"NEXT","title":"Book the boiler service","tags":["@calls"],"body":"Captured [2026-08-01].","updated":"2026-08-01T18:11:06Z#fixture"}
+{"type":"task","id":"f82090f3","parent":"e0000001","state":"INBOX","title":"Draft the neighbourhood newsletter","tags":["@computer"],"body":"Captured [2026-08-01].","updated":"2026-08-01T18:11:06Z#fixture"}
+{"type":"task","id":"b20aa0bd","parent":"e0000001","state":"INBOX","title":"Replace the door handle","tags":["@home"],"body":"Captured [2026-08-01].","updated":"2026-08-01T18:11:06Z#fixture"}
+{"type":"section","id":"e0000002","title":"Next Actions"}
+{"type":"section","id":"e0000003","title":"Projects"}

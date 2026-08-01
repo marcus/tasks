@@ -1,0 +1,14 @@
+{"type":"meta","version":2}
+{"type":"section","id":"1a2b3c01","title":"Inbox","body":"Capture here first. Process during the weekly review."}
+{"type":"task","id":"1a2b3c02","parent":"1a2b3c01","state":"INBOX","priority":"B","title":"Skim the release notes for the parser library","tags":["@computer"],"body":"Captured [2026-06-02]."}
+{"type":"section","id":"1a2b3c03","title":"Next Actions"}
+{"type":"task","id":"1a2b3c04","parent":"1a2b3c03","state":"NEXT","priority":"A","title":"Draft the quarterly planning outline","tags":["@computer","important"],"scheduled":"2026-06-05","body":"Goals first, then break into projects."}
+{"type":"task","id":"1a2b3c05","parent":"1a2b3c03","state":"TODO","priority":"B","title":"Reply to the supplier about the renewal quote","tags":["@email"],"deadline":"2026-06-11"}
+{"type":"task","id":"1a2b3c06","parent":"1a2b3c03","state":"WAITING","title":"Sign-off on the budget from the finance team","tags":["@waiting"],"body":"Pinged 2026-06-01; nudge on Friday."}
+{"type":"section","id":"1a2b3c07","title":"Projects"}
+{"type":"section","id":"1a2b3c08","parent":"1a2b3c07","title":"Rebuild the garden shed","body":"Goal: usable by the end of summer."}
+{"type":"task","id":"1a2b3c09","parent":"1a2b3c08","state":"NEXT","title":"Measure the existing slab","tags":["@home"]}
+{"type":"task","id":"1a2b3c0a","parent":"1a2b3c08","state":"TODO","title":"Price treated timber at two suppliers","tags":["@errands"]}
+{"type":"section","id":"1a2b3c0b","title":"Someday / Maybe"}
+{"type":"task","id":"1a2b3c0c","parent":"1a2b3c0b","state":"TODO","title":"Learn to bake sourdough","tags":["@home"]}
+{"type":"task","id":"1a2b3c0d","parent":"1a2b3c0b","state":"CANCELLED","title":"Take the intro pottery class","closed":"2026-05-30","body":"Course was full."}

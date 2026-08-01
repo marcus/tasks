@@ -1,0 +1,6 @@
+{"type":"section","id":"c0000001","title":"Next Actions"}
+{"type":"task","id":"c0000002","parent":"c0000001","state":"NEXT","title":"Replace the bathroom bulb","tags":["@home"]}
+{"type":"task","id":"c0000003","parent":"c0000001","state":"TODO","title":"Return the library books","deadline":"2026-06-14","body":"Two overdue."}
+{"type":"section","id":"c0000004","title":"Projects"}
+{"type":"section","id":"c0000005","parent":"c0000004","title":"Garage tidy-up"}
+{"type":"task","id":"c0000006","parent":"c0000005","state":"TODO","title":"Sort the toolbox"}

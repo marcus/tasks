@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "org": "/home/someone-else/tasks/tasks.jsonl",
+  "cursor": 6,
+  "states": [
+    {
+      "org_sha": "af203728152de793f87317d32ab792c3b2dc6743e792743eddd9e1a8a6b610c9",
+      "archive_sha": null
+    },
+    {
+      "org_sha": "ee412e5819b83ee709e6219103f3166e8ea5fe97bf11c51a8695af759148fd86",
+      "archive_sha": null,
+      "label": "capture: Book the boiler service"
+    },
+    {
+      "org_sha": "b2101ef4829e2a599bd808b1ab13cd63154ae32ca2a5429428fceb5dfcae946d",
+      "archive_sha": null,
+      "label": "capture: Draft the neighbourhood newsletter"
+    },
+    {
+      "org_sha": "acbfbe3317d66bc9078c2730f02eedf05472115b8523d4f836a82a25e4d3b5ea",
+      "archive_sha": null,
+      "label": "capture: Replace the door handle"
+    },
+    {
+      "org_sha": "e20b5ba465c783826f636296f61c31a4711ed3730fc58bacb46cd79c3c68cae3",
+      "archive_sha": null,
+      "label": "state → NEXT: Book the boiler service"
+    },
+    {
+      "org_sha": "7d9e2911b161db2a80f2f495e73bb83b553a7cc373c5abf0a80ec00b09655c99",
+      "archive_sha": null,
+      "label": "deadline → 2026-06-30: Draft the neighbourhood newsletter"
+    },
+    {
+      "org_sha": "8bb74b1c7e1024762d0a41ad99e94da85dbe9e3737b0a57c30ce74f71d86987b",
+      "archive_sha": null,
+      "label": "state → NEXT: Replace the door handle"
+    }
+  ]
+}

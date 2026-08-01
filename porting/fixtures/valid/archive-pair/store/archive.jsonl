@@ -1,0 +1,6 @@
+{"type":"meta","version":2}
+{"type":"section","id":"a0000101","title":"Spring clear-out","archived":"2026-05-31","body":"Swept after completion."}
+{"type":"task","id":"a0000102","parent":"a0000101","state":"DONE","title":"Empty the loft","closed":"2026-05-20"}
+{"type":"task","id":"a0000103","parent":"a0000101","state":"DONE","title":"Book the skip","closed":"2026-05-18"}
+{"type":"task","id":"a0000104","parent":"a0000101","state":"CANCELLED","title":"Sell the old bookcase","closed":"2026-05-19"}
+{"type":"task","id":"a0000105","state":"DONE","title":"Standalone archived task","closed":"2026-04-02","archived":"2026-05-31"}

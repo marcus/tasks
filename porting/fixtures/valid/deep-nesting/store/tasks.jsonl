@@ -1,0 +1,12 @@
+{"type":"meta","version":2}
+{"type":"section","id":"d0000000","title":"Areas"}
+{"type":"section","id":"d0000001","parent":"d0000000","title":"Level 1 grouping"}
+{"type":"task","id":"d0000002","parent":"d0000001","state":"TODO","title":"Level 2 action"}
+{"type":"section","id":"d0000003","parent":"d0000002","title":"Level 3 grouping"}
+{"type":"task","id":"d0000004","parent":"d0000003","state":"TODO","title":"Level 4 action"}
+{"type":"section","id":"d0000005","parent":"d0000004","title":"Level 5 grouping"}
+{"type":"task","id":"d0000006","parent":"d0000005","state":"TODO","title":"Level 6 action"}
+{"type":"section","id":"d0000007","parent":"d0000006","title":"Level 7 grouping"}
+{"type":"task","id":"d0000008","parent":"d0000007","state":"NEXT","title":"Level 8 action","tags":["@computer"]}
+{"type":"task","id":"d0000010","parent":"d0000007","state":"TODO","title":"Sibling under the deepest grouping"}
+{"type":"task","id":"d0000011","parent":"d0000000","state":"TODO","title":"Sibling at level 1"}

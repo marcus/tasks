@@ -1,0 +1,4 @@
+{"type":"meta","version":2}
+{"type":"section","id":"b0000401","title":"Next Actions"}
+{"type":"task","id":"b0000402","parent":"b0000401","state":"NEXT","title":"Confirm the venue booking","tags":["@calls"],"deadline":"2026-06-30","delegation":{"kind":"agent","mode":"research","status":"ready","at":"2026-06-02T08:30:00Z","budget_tokens":25000},"energy":"low"}
+{"type":"task","id":"b0000403","parent":"b0000401","state":"TODO","title":"Post the deposit cheque","review_after":"2026-07-01"}
