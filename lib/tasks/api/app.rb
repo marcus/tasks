@@ -37,11 +37,11 @@ module Tasks
       ].freeze
       CREATE_FIELDS = %w[
         title priority tags contexts deferred scheduled scheduled_time deadline deadline_time
-        state project parent_id recurrence body apply_host_context
+        state project parent_id recurrence lead body apply_host_context
       ].freeze
       PATCH_FIELDS = %w[
         title priority body contexts tags deferred scheduled scheduled_time deadline deadline_time
-        recurrence parent_id placement state
+        recurrence lead parent_id placement state
       ].freeze
       PLACEMENT_FIELDS = %w[parent_id before_id].freeze
       REJECT_FIELDS = %w[notes].freeze
@@ -398,6 +398,7 @@ module Tasks
           scheduled: temporal_input(body, "scheduled", context: temporal),
           deadline: temporal_input(body, "deadline", context: temporal), state: body["state"],
           project: body["project"], parent_id: body["parent_id"], recurrence: recurrence,
+          lead: normalize_lead(body["lead"], allow_off: false),
           body: normalize_body(body["body"]),
           apply_host_context: body.fetch("apply_host_context", true),
         }
@@ -972,6 +973,7 @@ module Tasks
         if body.key?("recurrence")
           changes[:recurrence] = normalize_recurrence(body["recurrence"], allow_off: true)
         end
+        changes[:lead] = normalize_lead(body["lead"], allow_off: true) if body.key?("lead")
         if body.key?("parent_id")
           changes.delete(:parent_id)
           # Store resolves nil to the enclosing section under the mutation
@@ -1086,6 +1088,9 @@ module Tasks
         if body.key?("recurrence") && !body["recurrence"].nil? && !body["recurrence"].is_a?(String)
           validation!(recurrence: ["must be text or null"])
         end
+        if body.key?("lead") && !body["lead"].nil? && !body["lead"].is_a?(String)
+          validation!(lead: ["must be text or null"])
+        end
       end
 
       def validate_iso_date!(field, value)
@@ -1173,6 +1178,22 @@ module Tasks
         canonical = result.fetch(:canonical)
         return nil if allow_off && canonical == :off
         validation!(recurrence: ['must name a schedule, not "off"']) unless canonical.is_a?(String)
+
+        canonical
+      end
+
+      # The lead-time span through the one shared parser, so an HTTP client and
+      # the CLI accept the same phrasings ("3w", "3 weeks", "a week") and read
+      # the same rejection — including the one that names hour leads as planned
+      # but absent. `null` (PATCH) and the `off` words clear the window;
+      # `off` on create is meaningless, since there is nothing to clear.
+      def normalize_lead(value, allow_off:)
+        return nil if value.nil?
+        result = Lead.parse_result(value)
+        validation!(lead: [result[:error]]) if result[:error]
+        canonical = result.fetch(:canonical)
+        return nil if allow_off && canonical == :off
+        validation!(lead: ['must name a span, not "off"']) unless canonical.is_a?(String)
 
         canonical
       end

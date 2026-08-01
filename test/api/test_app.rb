@@ -130,7 +130,8 @@ class TestApiApp < Minitest::Test
     task = JSON.parse(live.body).fetch("data")
     expected_keys = %w[
       archived availability_blocker_id availability_reason available available_at body child_count closed contexts
-      deadline deadline_time deferred delegation depth descendant_count id links parent_id priority project recurrence
+      deadline deadline_time deferred delegation depth descendant_count id lead lead_human lead_opens links
+      parent_id priority project recurrence
       recurrence_human revision scheduled scheduled_time section_id source state tags title
     ]
     assert_equal expected_keys, task.keys.sort
