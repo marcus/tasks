@@ -44,6 +44,9 @@
 #                             every mon,wed, m:15, last friday; off clears).
 #                             No schedule: preview the next occurrences.
 #                             --explain "<schedule>" previews without a task
+#   bin/tasks lead <ref> <span|off>        hide until a span before its date
+#                             (3w, 2d, 1m, "a week"; off clears). No span:
+#                             show the window and when it opens.
 #   bin/tasks defer|snooze <ref> [date]    defer until a date, or hold indefinitely
 #   bin/tasks someday <ref>                hold indefinitely (someday/maybe)
 #   bin/tasks activate <ref>               make available now (undefer/resume)
@@ -245,7 +248,7 @@ def cmd_capture(args, proposed: false)
   tags = []
   contexts = []
   notes = []
-  due = scheduled = priority = state = project = recur = under = nil
+  due = scheduled = priority = state = project = recur = lead = under = nil
   due_timezone = scheduled_timezone = due_fold = scheduled_fold = nil
   due_floating = scheduled_floating = false
   dry = json = no_host_context = false
@@ -271,6 +274,7 @@ def cmd_capture(args, proposed: false)
     when "--project"              then project = need.(a)
     when "--under"                then under = need.(a)
     when "--recur", "--repeat"    then recur = need.(a)
+    when "--lead"                 then lead = need.(a)
     when "--note"                 then notes << need.(a)
     when "--dry-run"              then dry = true
     when "--json"                 then json = true
@@ -287,6 +291,7 @@ def cmd_capture(args, proposed: false)
   abort "can't combine --under and --project\n#{usage}" if under && project
   abort "propose owns state PROPOSED" if proposed && state
   abort "proposals cannot recur" if proposed && recur
+  abort "proposals cannot carry a lead time" if proposed && lead
   abort "due temporal modifiers require --due" if !due && (due_timezone || due_floating || due_fold)
   abort "scheduled temporal modifiers require --scheduled" if !scheduled && (scheduled_timezone || scheduled_floating || scheduled_fold)
   abort "--due-timezone and --due-floating are mutually exclusive" if due_timezone && due_floating
@@ -301,6 +306,11 @@ def cmd_capture(args, proposed: false)
     abort "a capture cannot start with recurrence cleared — drop --recur" if cookie == :off
     # A recurrence needs a date to repeat; default to scheduling it today.
     scheduled ||= "today" unless due
+  end
+
+  span = lead && parse_lead_input(lead)
+  if span == :off
+    abort "a capture cannot start with its lead time cleared — drop --lead"
   end
 
   due_date = due && parse_temporal(
@@ -323,6 +333,12 @@ def cmd_capture(args, proposed: false)
   if cookie && (CLOSED_STATES + PROPOSED_STATES).include?(st)
     abort "can't set recurrence on a #{st} task"
   end
+  if span && !(due_date || scheduled_date)
+    abort "a lead time needs a date to hide before — add --due or --scheduled"
+  end
+  if span && due_date && scheduled_date
+    abort lead_gate_conflict_hint(span)
+  end
 
   # Contexts are tags that start with "@"; list them before plain tags.
   all_tags = contexts.map { |c| c.start_with?("@") ? c : "@#{c}" } + tags
@@ -336,7 +352,7 @@ def cmd_capture(args, proposed: false)
   command = Tasks::CreateTask.new(
     title: text, deadline: due_date, scheduled: scheduled_date,
     priority: pri, tags: all_tags, state: st, project: project,
-    parent_id: parent_id, recurrence: cookie,
+    parent_id: parent_id, recurrence: cookie, lead: span,
     body: notes.empty? ? nil : notes.join("\n"),
     apply_host_context: !no_host_context
   )
@@ -348,6 +364,7 @@ def cmd_capture(args, proposed: false)
     head << text
     head << " :#{preview.tags.join(":")}:" unless preview.tags.empty?
     head << " (recur #{cookie})" if cookie
+    head << " (lead #{span})" if span
     if under_item
       puts %(would #{proposed ? "propose" : "capture"} under "#{under_item.title}": #{head})
     else
@@ -964,6 +981,10 @@ def item_json(item, task: nil)
     # The canonical cookie stays the machine value; recur_human is the same
     # schedule rendered once, here, so no consumer re-implements the grammar.
     recur_human: src.recur && Tasks::Recur.humanize(src.recur),
+    lead: src.lead,
+    # Same convention as recur/recur_human: the canonical span stays the
+    # machine value, and the rendering happens once, here.
+    lead_human: Tasks::Lead.span?(src.lead) ? Tasks::Lead.humanize(src.lead) : nil,
     line: item.line, source: src.source, headline: src.headline,
   }
   if task
@@ -1246,6 +1267,11 @@ def cmd_show(args)
     end
     puts "  availability: #{availability_summary(query, query.availability(item))}"
     puts "  recur:     #{task.recur} #{dim("(#{recur_summary(task.recur)})")}" if task.recur
+    if task.lead
+      opens = lead_gate_line(item, task.lead)
+      puts "  lead:      #{task.lead} #{dim("(#{task.lead_human || task.lead})")}"
+      puts "  opens:     #{opens}" if opens
+    end
     puts "  closed:    #{closed.iso8601}" if closed
     notes.each { |n| puts "  #{n}" }
     unless links.empty?
@@ -1486,16 +1512,20 @@ end
 # own-field override is used only for dry-run; ancestor precedence still comes
 # from Tasks::TaskQueries rather than being duplicated in the CLI.
 def availability_context(task_id, today:, read_snapshot:, deferred: PATCH_EXPECTED_UNSET,
-                         scheduled: PATCH_EXPECTED_UNSET, temporal_context: nil)
+                         scheduled: PATCH_EXPECTED_UNSET, lead: PATCH_EXPECTED_UNSET,
+                         temporal_context: nil)
   query = Tasks::TaskQueries.new(read_snapshot, today: today, temporal_context: temporal_context)
   item = query.snapshot.items.find { |candidate| candidate.id == task_id }
   mutation_failed "task changed before availability could be read" unless item
-  availability = if deferred.equal?(PATCH_EXPECTED_UNSET) && scheduled.equal?(PATCH_EXPECTED_UNSET)
+  unset = [deferred, scheduled, lead].all? { |value| value.equal?(PATCH_EXPECTED_UNSET) }
+  availability = if unset
                    query.availability(item)
                  else
                    own_deferred = deferred.equal?(PATCH_EXPECTED_UNSET) ? item.deferred? : deferred
                    own_scheduled = scheduled.equal?(PATCH_EXPECTED_UNSET) ? item.scheduled : scheduled
-                   query.availability_after(item, deferred: own_deferred, scheduled: own_scheduled)
+                   own_lead = lead.equal?(PATCH_EXPECTED_UNSET) ? Tasks::TaskQueries::UNSET : lead
+                   query.availability_after(item, deferred: own_deferred,
+                                            scheduled: own_scheduled, lead: own_lead)
                  end
   [query, item, availability]
 end
@@ -1518,10 +1548,11 @@ end
 def print_availability_change(task_id, today:, own_text:, dry_run: false,
                               read_snapshot:,
                               deferred: PATCH_EXPECTED_UNSET,
-                              scheduled: PATCH_EXPECTED_UNSET, temporal_context: nil)
+                              scheduled: PATCH_EXPECTED_UNSET,
+                              lead: PATCH_EXPECTED_UNSET, temporal_context: nil)
   query, _item, availability = availability_context(
     task_id, today: today, read_snapshot: read_snapshot,
-    deferred: deferred, scheduled: scheduled, temporal_context: temporal_context
+    deferred: deferred, scheduled: scheduled, lead: lead, temporal_context: temporal_context
   )
   puts "#{dry_run ? "would " : ""}#{own_text} — #{availability_summary(query, availability)}"
 end
@@ -1546,6 +1577,13 @@ def cmd_defer(args, someday: false)
          end
   item = resolve_ref(ref, include_done: flags["--include-done"])
   task_id = stable_id_for(item)
+  # Rule 3: the lead already owns "hide until". A one-off defer date would
+  # either fight it or be silently ignored, so name the two ways out instead.
+  if date && item.lead_time?
+    abort "“#{item.title}” already hides until #{Tasks::Lead.describe(item.lead)} its " \
+          "#{item.deadline ? "deadline" : "available-from date"} — " \
+          "change the window with `tasks lead`, or clear it with `tasks lead <ref> off` first"
+  end
   changes = date ? { deferred: false, scheduled: date } : { deferred: true }
   own_text = date ? %(defer "#{item.title}" until #{temporal_label(date)}) :
                     %(put "#{item.title}" on hold (Someday/Maybe))
@@ -1771,6 +1809,124 @@ def cmd_recur(args)
   report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"],
                  today: today, read_snapshot: result.read_snapshot,
                  extra: nxt ? { next: nxt.iso8601 } : nil, temporal_context: context)
+end
+
+LEAD_USAGE = %(usage: tasks lead <ref> <span|off> [--dry-run] [--json]
+       tasks lead <ref>                              read-only: the window it opens).freeze
+
+# What to type when the parser can't read a span: one example per shape.
+LEAD_HINT = "try: 3w · 2d · 1m · \"3 weeks\" · \"a week\" · \"10 days\" · off"
+
+# Normalize typed input to its stored span, aborting with the engine's own
+# reason (which names the fix) when it can't be read. `:off` comes back for the
+# clearing words; each caller decides whether clearing is legal there.
+def parse_lead_input(input)
+  result = Tasks::Lead.parse_result(input)
+  abort "#{result[:error]}\n#{LEAD_HINT}" if result[:error]
+  result[:canonical]
+end
+
+# Rule 3's CLI-side wording (see docs/plans/active/recurring-lead-time.md §5).
+# The store refuses the same shape with its own message; this one fires before
+# a write the store would only reject, so a capture never half-lands.
+def lead_gate_conflict_hint(span)
+  "a #{Tasks::Lead.humanize(span)} lead measures from the deadline, so an " \
+    "available-from date would be a second, ignored gate — pick one"
+end
+
+# The anchor a lead is measured back from, and the date its window opens.
+def lead_anchor_value(item) = item.deadline_value || item.scheduled_value
+
+def lead_gate_line(item, span)
+  anchor = lead_anchor_value(item)
+  gate = anchor && Tasks::Lead.gate_date(anchor.date, span)
+  return nil unless gate
+
+  "#{gate.iso8601} (#{gate.strftime("%a")}) — #{Tasks::Lead.humanize(span)} before " \
+    "#{anchor.date.iso8601}"
+end
+
+# Attach/replace/clear the lead-time window on a task's date stamp: how long
+# before its occurrence date the task becomes visible. With no span argument it
+# is a read-only preview of the window already stored.
+# `<span>`: a count and a unit (3w, 2d, 1m, 10 days, a week), or `off` to clear.
+def cmd_lead(args)
+  context = temporal_context
+  today = context.local_date
+  flags, rest = take_flags(args.dup, "--dry-run", "--json", "--include-done")
+  ref = rest.shift
+  input = rest.join(" ").strip
+  abort LEAD_USAGE if ref.nil? || ref.strip.empty?
+
+  item = resolve_ref(ref, include_done: flags["--include-done"])
+  return lead_preview(item, json: flags["--json"]) if input.empty?
+
+  span = parse_lead_input(input)
+  task_id = stable_id_for(item)
+  # The store owns the five rules; these two refusals exist only because the
+  # CLI can name the exact flag combination that caused them (rules 1 and 3).
+  if span != :off && lead_anchor_value(item).nil?
+    abort "“#{item.title}” has no date to hide before — " \
+          "add a deadline (`tasks due`) or an available-from date (`tasks schedule`) first"
+  end
+  abort lead_gate_conflict_hint(span) if span != :off && item.deadline && item.scheduled
+
+  own_text = span == :off ? %(clear the lead time on "#{item.title}") :
+                            %(hide "#{item.title}" until #{Tasks::Lead.describe(span)} its #{item.deadline ? "deadline" : "available-from date"})
+
+  if flags["--dry-run"]
+    print_availability_change(
+      task_id, today: today, own_text: own_text, dry_run: true,
+      read_snapshot: store.read_snapshot, lead: span == :off ? nil : span,
+      temporal_context: context
+    )
+    return
+  end
+
+  label = span == :off ? "lead off: #{item.title}" : "lead #{span}: #{item.title}"
+  result = patch_task_by_id(task_id, field: :lead, value: span, label: label, today: today)
+  mutation_failed(result.errors.first) if result.invalid? && !result.errors.empty?
+  mutation_result_failed(result, "failed to set the lead time")
+
+  if flags["--json"]
+    report_touched(result_touched_ids(result, fallback: task_id), json: true, today: today,
+                   read_snapshot: result.read_snapshot, temporal_context: context)
+  else
+    print_availability_change(task_id, today: today, own_text: own_text,
+                              read_snapshot: result.read_snapshot, temporal_context: context)
+  end
+end
+
+# `tasks lead <ref>` — read-only: the stored span and the date its window
+# opens. Never mutates, so it is safe for agents to call before committing.
+def lead_preview(item, json:)
+  span = item.lead.to_s.strip
+  anchor = lead_anchor_value(item)
+  gate = Tasks::Lead.span?(span) && anchor ? Tasks::Lead.gate_date(anchor.date, span) : nil
+
+  if json
+    require "json"
+    row = { id: item.id, line: item.line, title: item.title,
+            lead: span.empty? ? nil : span,
+            lead_human: span.empty? ? nil : (Tasks::Lead.humanize(span) || span),
+            anchor: anchor&.date&.iso8601, opens: gate&.iso8601,
+            lead_skip: item.lead_skip }
+    puts JSON.generate(row)
+    return
+  end
+
+  puts item_headline(item)
+  if span.empty?
+    puts "  no lead time — set one with `tasks lead #{item.title.inspect} 3w`"
+    return
+  end
+  puts "  ⏳ #{Tasks::Lead.describe(span)} #{dim("(#{span})")}"
+  if (line = lead_gate_line(item, span))
+    puts "  opens #{line}"
+  else
+    warn "no date to hide before — add a deadline or an available-from date"
+  end
+  puts "  #{dim("this occurrence was released early (activate)")}" if item.lead_skip == anchor&.date&.iso8601
 end
 
 # `tasks recur <ref>` — read-only: what this task's schedule means and when it
@@ -2284,9 +2440,11 @@ def list_availability_label(task, today:, context: nil)
             application.get_task(task.availability_blocker_id, today: today, context: context)
   case task.availability_reason
   when :scheduled
-    dim("  (unavailable until #{temporal_label(task.scheduled_value)})")
+    dim("  (unavailable until #{temporal_label(task.gate_value)})")
   when :ancestor_scheduled
-    value = blocker&.scheduled_value
+    # The effective gate, which for an ancestor with a lead is the derived date
+    # rather than any stamp the ancestor carries.
+    value = task.gate_value || blocker&.scheduled_value
     dim("  (unavailable#{value ? " until #{temporal_label(value)}" : ""} via #{blocker&.title || task.availability_blocker_id})")
   when :ancestor_on_hold
     dim("  (on hold via #{blocker&.title || task.availability_blocker_id})")
@@ -2730,7 +2888,7 @@ HELP = <<~USAGE
   Capture:
     capture   c "text"       new item. Flags: --due --scheduled --priority
                              --tag --context --no-host-context --state
-                             --project --under --recur --note
+                             --project --under --recur --lead --note
                              (--under <ref> nests it below a task; caps at max_depth)
     propose     "text"       inert PROPOSED item for owner review. Capture flags
                              except --state/--recur; repeat --note for rationale
@@ -2764,6 +2922,10 @@ HELP = <<~USAGE
                  <ref>               read-only: the schedule + its next dates
                                      (--count N, default 5 · --json)
                  --explain "<sched>" parse/preview any schedule, no task needed
+    lead           <ref> <span|off>   hide until a span before its date: 3w · 2d ·
+                                     1m · "a week" · off (anchor = deadline if
+                                     it has one, else Available from)
+                   <ref>              read-only: the window and when it opens
     defer   snooze <ref> [date/time] defer until exact value; omitted means On Hold
     someday        <ref>             put on indefinite hold (Someday/Maybe)
     activate       <ref>             make available now (undefer, resume)
@@ -2859,6 +3021,7 @@ when "note"           then cmd_note(ARGV[1..])
 when "move"           then cmd_move(ARGV[1..])
 when "delete"         then cmd_delete(ARGV[1..])
 when "recur", "repeat", "every" then cmd_recur(ARGV[1..])
+when "lead", "leadtime", "lead-time" then cmd_lead(ARGV[1..])
 when "defer", "snooze" then cmd_defer(ARGV[1..])
 when "someday"         then cmd_defer(ARGV[1..], someday: true)
 when "activate", "undefer", "resume" then cmd_activate(ARGV[1..])

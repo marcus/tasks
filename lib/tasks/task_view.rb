@@ -15,7 +15,7 @@ module Tasks
                 :deadline, :recur, :lead, :lead_skip, :closed, :source, :body, :links, :headline,
                 :parent_id, :ancestor_ids, :child_ids, :section_id,
                 :section_title, :project, :revision, :availability_reason,
-                :availability_blocker_id, :descendant_count,
+                :availability_blocker_id, :descendant_count, :gate_value, :gate_date,
                 :scheduled_value, :deadline_value, :scheduled_time, :deadline_time,
                 :available_at, :delegation
 
@@ -55,6 +55,12 @@ module Tasks
       @availability_reason = availability.reason
       @availability_blocker_id = frozen_text(availability.blocker_id)
       @available_at = availability.available_at&.iso8601&.freeze
+      # The EFFECTIVE gate behind an unavailable-until answer — a plain
+      # available-from stamp, or the date a lead derived. Adapters render this
+      # rather than re-deriving it from `scheduled`, which a lead-gated task
+      # (deadline-anchored, no available-from date) does not have at all.
+      @gate_value = availability.temporal_value&.freeze
+      @gate_date = availability.scheduled&.freeze
       @descendant_count = Integer(descendant_count)
       # The delegation object rides along verbatim (string keys, fixed order,
       # absent keys omitted) so a heartbeat agent reads exactly the bytes the
