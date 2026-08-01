@@ -2,6 +2,7 @@
 
 require "socket"
 
+require_relative "determinism"
 require_relative "quadrants"
 require_relative "tree"
 require_relative "prompt_facts"
@@ -80,7 +81,11 @@ module Tasks
       )
     end
 
-    def self.resolve(default_dir:, env: ENV, hostname: -> { Socket.gethostname })
+    # `hostname` defaults through Determinism so every adapter (CLI, TUI, API)
+    # honors the harness's host pin without each one remembering to. With the pin
+    # unset it is `-> { Socket.gethostname }` — the previous default, unchanged.
+    def self.resolve(default_dir:, env: ENV, hostname: nil)
+      hostname ||= Determinism.hostname(env: env)
       file = config_file(env)
       conf = parse_file(file)
 

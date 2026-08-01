@@ -92,12 +92,34 @@ ORG     = PATHS.org
 ARCHIVE = PATHS.archive
 Tasks::Dates.configure!(date_order: PATHS.date_order)
 
+# Conformance-harness pins for the Go port (lib/tasks/determinism.rb,
+# porting/specs/determinism.md). `.compact` is the whole safety story: with no
+# pin set this is `{}` and every constructor below keeps the default it has
+# always had, so unpinned behavior is byte-for-byte unchanged.
+STORE_PINS = {
+  now: Tasks::Determinism.clock,
+  id_source: Tasks::Determinism.id_source,
+  coalesce_scope: Tasks::Determinism.coalesce_scope
+}.compact.freeze
+CAPTURE_PINS = { clock: Tasks::Determinism.clock }.compact.freeze
+PINNED_NOW = Tasks::Determinism.now
+
 # The model layer owns parsing and every mutation; the CLI adds dispatch,
 # ref resolution, and output. (Tasks::Item, Tasks::Format etc. live there.)
 require_relative "../lib/tasks/store"
 require_relative "../lib/tasks/application"
 require_relative "../lib/tasks/opener"
 require_relative "../lib/tasks/timezones"
+
+# "Today" for every read and mutation that needs a calendar day. Unpinned this
+# is `Date.today` verbatim — the process's local date. Pinned, it is the pinned
+# instant projected into the resolved time zone, which is what makes two runs of
+# a date-sensitive command agree even across a midnight boundary.
+def today_local
+  return Date.today unless PINNED_NOW
+
+  Tasks::Timezones.local_time(PINNED_NOW, PATHS.timezone).to_date
+end
 
 def contexts(item) = item.tags.select { |t| t.start_with?("@") }
 def open?(item)     = OPEN_STATES.include?(item.state)
@@ -129,7 +151,7 @@ end
 # Prefers the DEADLINE; falls back to the SCHEDULED start date, marked with a
 # leading "~" to distinguish "start" from "due". Empty when the item has
 # neither. Colored by proximity (see due_color).
-def short_due(item, today: Date.today, context: nil)
+def short_due(item, today: today_local, context: nil)
   date = item.deadline || item.scheduled
   return "" unless date
   days  = (date - today).to_i
@@ -789,7 +811,7 @@ end
 def store
   @store ||= Tasks::Store.new(org: ORG, archive: ARCHIVE,
                               links: PATHS.links, link_systems: PATHS.link_systems,
-                              max_depth: PATHS.max_depth)
+                              max_depth: PATHS.max_depth, **STORE_PINS)
 end
 
 # The application keeps no Store instance: every query receives its own fresh
@@ -799,10 +821,11 @@ def application
   @application ||= Tasks::Application.new(
     store_factory: Tasks::StoreFactory.new(
       org: ORG, archive: ARCHIVE, links: PATHS.links,
-      link_systems: PATHS.link_systems, max_depth: PATHS.max_depth
+      link_systems: PATHS.link_systems, max_depth: PATHS.max_depth, **STORE_PINS
     ),
     temporal_context_factory: -> {
-      Tasks::TemporalContext.capture(timezone: PATHS.timezone, time_format: PATHS.time_format)
+      Tasks::TemporalContext.capture(timezone: PATHS.timezone, time_format: PATHS.time_format,
+                                     **CAPTURE_PINS)
     },
     host_context: PATHS.host_context
   )
@@ -837,7 +860,7 @@ PATCH_SNAPSHOT_UNSET = Object.new.freeze
 # refs that are absent at resolution still exit 2 in resolve_ref.
 def patch_task_by_id(task_id, field:, value:, label:, expected: PATCH_EXPECTED_UNSET,
                      coalesce_key: nil, snapshot: PATCH_SNAPSHOT_UNSET, force: false,
-                     today: Date.today, context: nil)
+                     today: today_local, context: nil)
   snapshot = application.edit_snapshot(task_id) if snapshot.equal?(PATCH_SNAPSHOT_UNSET)
   baseline = if expected.equal?(PATCH_EXPECTED_UNSET)
                snapshot && patch_expected(snapshot, field)
@@ -2080,7 +2103,8 @@ def extract_value(args, flag)
 end
 
 def temporal_context
-  now = if ENV["TASKS_TEST_TODAY_SEQUENCE"]
+  now = Tasks::Determinism.now ||
+        if ENV["TASKS_TEST_TODAY_SEQUENCE"]
           date = Date.today
           Time.utc(date.year, date.month, date.day, 12)
         else
@@ -2157,7 +2181,7 @@ def preview_task_placement(task_id, placement:, snapshot:, label:)
     changeset = Tasks::TaskChangeset.from(
       snapshot, changes: { location: placement }, history_label: label
     )
-    preview_application.update_task(changeset, today: Date.today)
+    preview_application.update_task(changeset, today: today_local)
   end
 end
 
@@ -2247,7 +2271,7 @@ def cmd_move(args)
       task_id,
       changes: { location: placement },
       label: label,
-      today: Date.today,
+      today: today_local,
       snapshot: snapshot
     )
     placement_result_failed(result, anchor_item: anchor_item, parent: parent)
@@ -2411,7 +2435,7 @@ def cmd_redo = run_history(:redo!, verb: "redo", past: "redid")
 # Print a task's stable :ID:, assigning one (a PROPERTIES drawer) if it has none.
 # Idempotent — a task that already carries an id is printed without a rewrite.
 def cmd_id(args)
-  today = Date.today
+  today = today_local
   flags, rest = take_flags(args, "--json")
   ref = rest.shift
   abort "usage: tasks id <ref>" if ref.nil? || ref.strip.empty?
@@ -2759,7 +2783,7 @@ end
 # (bootstrapping the root when absent). The title is positional; a blank or
 # duplicate title exits 1 with the reason.
 def project_create(args)
-  today = Date.today
+  today = today_local
   flags, rest = take_flags(args, "--dry-run", "--json")
   title = utf8_arg(rest.join(" ").strip)
   abort "usage: tasks project create <title>" if title.empty?
@@ -2781,7 +2805,7 @@ end
 # id wins, then an L<line> section line, then a case-insensitive title substring
 # across projects and areas. The `projects` listing is the candidate set, so an
 # empty area (no open work) is not addressable — matching what `projects` shows.
-def resolve_project(ref, today: Date.today)
+def resolve_project(ref, today: today_local)
   abort "missing <ref>" if ref.nil? || ref.strip.empty?
   result = application.list_projects_result(today: today)
   abort "task file is invalid — run `tasks check`" unless result.ok?
@@ -2814,7 +2838,7 @@ def resolve_project(ref, today: Date.today)
 end
 
 def project_show(args)
-  today = Date.today
+  today = today_local
   flags, rest = take_flags(args, "--json")
   ref = rest.shift
   abort "usage: tasks project show <ref> [--json]" if ref.nil? || ref.strip.empty? || !rest.empty?
@@ -2831,7 +2855,7 @@ def project_show(args)
 end
 
 def project_rename(args)
-  today = Date.today
+  today = today_local
   flags, rest = take_flags(args, "--dry-run", "--json")
   ref = rest.shift
   new_title = utf8_arg(rest.join(" ").strip)
@@ -2848,7 +2872,7 @@ def project_rename(args)
 end
 
 def project_complete(args)
-  today = Date.today
+  today = today_local
   flags, rest = take_flags(args, "--dry-run", "--json")
   ref = rest.shift
   abort "usage: tasks project complete <ref>" if ref.nil? || ref.strip.empty? || !rest.empty?
@@ -2869,7 +2893,7 @@ def project_complete(args)
 end
 
 def project_archive(args)
-  today = Date.today
+  today = today_local
   flags, rest = take_flags(args, "--dry-run", "--json", "--force")
   ref = rest.shift
   abort "usage: tasks project archive <ref> [--force]" if ref.nil? || ref.strip.empty? || !rest.empty?

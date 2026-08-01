@@ -321,9 +321,14 @@ module Tasks
     # the user's configured shorthand templates and custom host rows
     # (Config#links / #link_systems), consulted by #links. The keyword stays
     # `org:` for constructor compatibility though it now names the jsonl file.
+    # `id_source` is the seam the conformance harness pins so a mutation mints a
+    # reproducible id (see Tasks::Determinism). nil keeps the production mint —
+    # SecureRandom — unchanged; a pinned source is still filtered through
+    # #gen_id's collision loop, so it can never hand out an id already in use.
     def initialize(org:, archive:, journal_dir: nil, undo_limit: UNDO_LIMIT, coalesce_scope: nil,
                    links: {}, link_systems: {}, max_depth: Tree::DEFAULT_MAX_DEPTH,
-                   now: -> { Time.now.utc }, device: nil)
+                   now: -> { Time.now.utc }, device: nil, id_source: nil)
+      @id_source = id_source
       @org = org
       @archive = archive
       @max_depth = max_depth
@@ -3223,7 +3228,7 @@ module Tasks
     def gen_id(taken)
       taken = taken.to_set
       loop do
-        id = SecureRandom.hex(4)
+        id = @id_source ? @id_source.call : SecureRandom.hex(4)
         break id unless taken.include?(id)
       end
     end

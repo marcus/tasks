@@ -5,6 +5,7 @@ require "date"
 require "json"
 require "securerandom"
 require "set"
+require_relative "../tasks/determinism"
 require_relative "ansi"
 require_relative "theme"
 require_relative "dates"
@@ -369,8 +370,11 @@ module Tui
       print "\e[H" + lines.join("\e[K\r\n") + "\e[K"
     end
 
+    # LINES/COLUMNS win over the real winsize when both are set, so a harness can
+    # render a fixed-geometry frame without a pty (Tasks::Determinism). With them
+    # unset this is the same `IO.console&.winsize || [24, 80]` it always was.
     def terminal_size
-      height, width = IO.console&.winsize || [24, 80]
+      height, width = Tasks::Determinism.winsize || IO.console&.winsize || [24, 80]
       height = height.to_i
       width = width.to_i
       height = 24 unless height.positive? # degenerate ptys can report 0x0

@@ -71,9 +71,15 @@ module Tasks
   # leak into later calls. The factory owns only immutable construction
   # settings; each #call returns a new mutable Store.
   class StoreFactory
+    # `id_source` and `coalesce_scope` are the conformance harness's seams (see
+    # Tasks::Determinism): the first pins minted task ids, the second pins the
+    # random scope token this factory otherwise generates — which is persisted
+    # into journal index.json and so shows up in journal bytes. Both default to
+    # nil, which is exactly the production behavior they replace.
     def initialize(org:, archive:, journal_dir: nil, undo_limit: Store::UNDO_LIMIT,
                    links: {}, link_systems: {}, max_depth: Tree::DEFAULT_MAX_DEPTH,
-                   now: -> { Time.now.utc }, device: nil)
+                   now: -> { Time.now.utc }, device: nil, id_source: nil,
+                   coalesce_scope: nil)
       @org = frozen_text(org)
       @archive = frozen_text(archive)
       @journal_dir = journal_dir && frozen_text(journal_dir)
@@ -86,7 +92,8 @@ module Tasks
       # Every Store built by one factory represents one adapter/application
       # lifetime. Sharing this private scope preserves coalesced editor writes
       # while each operation still receives its own mutable Store instance.
-      @coalesce_scope = SecureRandom.hex(16).freeze
+      @coalesce_scope = (coalesce_scope || SecureRandom.hex(16)).to_s.dup.freeze
+      @id_source = id_source
       freeze
     end
 
@@ -94,13 +101,13 @@ module Tasks
       Store.new(org: org, archive: archive, journal_dir: journal_dir,
                 undo_limit: undo_limit, links: links, link_systems: link_systems,
                 max_depth: max_depth, coalesce_scope: coalesce_scope,
-                now: now, device: device)
+                now: now, device: device, id_source: id_source)
     end
 
     private
 
     attr_reader :org, :archive, :journal_dir, :undo_limit, :links, :link_systems, :max_depth,
-                :coalesce_scope, :now, :device
+                :coalesce_scope, :now, :device, :id_source
 
     def frozen_text(value)
       value.to_s.dup.freeze

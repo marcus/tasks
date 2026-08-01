@@ -149,6 +149,15 @@ stamp remain valid and are treated as oldest during a merge. `updated` is not
 part of task revision/ETag fingerprints, and undo/redo restores exact journal
 bytes without re-stamping.
 
+**Determinism pins (conformance harness only).** A small set of `TASKS_PIN_*`
+environment variables fixes the values that are otherwise nondeterministic —
+the clock, minted ids, the journal's coalescing scope, and the hostname used for
+host-context selection — so two runs of one command produce byte-identical
+output. They exist for the Go-port conformance harness; with none of them set,
+behavior is exactly as documented everywhere else in this spec. The complete
+list, defaults, and rules live in
+[`porting/specs/determinism.md`](../porting/specs/determinism.md).
+
 `tasks merge-driver <base> <ours> <theirs> <pathname>` is an internal,
 Git-invoked CLI-only adapter. It performs a deterministic field-level 3-way
 merge by stable id and writes valid canonical JSONL to `<ours>`; hard failure

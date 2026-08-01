@@ -1,0 +1,265 @@
+{
+  "schema_version": 1,
+  "observation_id": "obs_cli-list-read",
+  "case_id": "cli-list-open",
+  "implementation": {
+    "name": "ruby",
+    "version": "0000000000000000000000000000000000000000",
+    "runtime": "ruby 3.4.x"
+  },
+  "fixture": {
+    "id": "throwaway-valid-1",
+    "class": "valid",
+    "root_sha256": "de5b4b201dc72b89dac4eeeae5764592056425628c76c6eaa623052859236008",
+    "copy_root": "/fixtures/run"
+  },
+  "invocation": {
+    "surface": "cli",
+    "argv": [
+      "list"
+    ],
+    "stdin": {
+      "provided": true,
+      "bytes_base64": ""
+    },
+    "cwd": ".",
+    "env": [
+      {
+        "name": "COLUMNS",
+        "value": "100"
+      },
+      {
+        "name": "HOME",
+        "value": "/fixtures/run"
+      },
+      {
+        "name": "LANG",
+        "value": "en_US.UTF-8"
+      },
+      {
+        "name": "LC_ALL",
+        "value": "en_US.UTF-8"
+      },
+      {
+        "name": "LINES",
+        "value": "40"
+      },
+      {
+        "name": "TASKS_DEVICE",
+        "value": "fixture"
+      },
+      {
+        "name": "TASKS_DIR",
+        "value": "/fixtures/run"
+      },
+      {
+        "name": "TASKS_PIN_COALESCE_SCOPE",
+        "value": "pinned-scope"
+      },
+      {
+        "name": "TASKS_PIN_HOSTNAME",
+        "value": "fixture-host"
+      },
+      {
+        "name": "TASKS_PIN_IDS",
+        "value": "bbbb0001,bbbb0002,bbbb0003"
+      },
+      {
+        "name": "TASKS_PIN_NOW",
+        "value": "2026-03-14T15:09:26Z"
+      },
+      {
+        "name": "TZ",
+        "value": "America/Denver"
+      },
+      {
+        "name": "XDG_CONFIG_HOME",
+        "value": "/fixtures/run/config"
+      },
+      {
+        "name": "XDG_STATE_HOME",
+        "value": "/fixtures/run/state"
+      }
+    ],
+    "pins": [
+      {
+        "name": "COLUMNS",
+        "applied": true,
+        "value": "100"
+      },
+      {
+        "name": "LANG",
+        "applied": true,
+        "value": "en_US.UTF-8"
+      },
+      {
+        "name": "LC_ALL",
+        "applied": true,
+        "value": "en_US.UTF-8"
+      },
+      {
+        "name": "LINES",
+        "applied": true,
+        "value": "40"
+      },
+      {
+        "name": "TASKS_DEVICE",
+        "applied": true,
+        "value": "fixture"
+      },
+      {
+        "name": "TASKS_PIN_COALESCE_SCOPE",
+        "applied": true,
+        "value": "pinned-scope"
+      },
+      {
+        "name": "TASKS_PIN_HOSTNAME",
+        "applied": true,
+        "value": "fixture-host"
+      },
+      {
+        "name": "TASKS_PIN_IDS",
+        "applied": true,
+        "value": "bbbb0001,bbbb0002,bbbb0003"
+      },
+      {
+        "name": "TASKS_PIN_NOW",
+        "applied": true,
+        "value": "2026-03-14T15:09:26Z"
+      },
+      {
+        "name": "TZ",
+        "applied": true,
+        "value": "America/Denver"
+      }
+    ],
+    "timeout_ms": null
+  },
+  "process": {
+    "exit_status": 0,
+    "signal": null,
+    "timed_out": false,
+    "stdout": {
+      "sha256": "228b5f01954482a7364b6dc000f0adde85d0ee34d7f37096937d2bdccf25daf5",
+      "size_bytes": 19,
+      "valid_utf8": true,
+      "bytes_base64": "SU5CT1gKICBzZWVkIHRhc2sKCg==",
+      "truncated_at_bytes": null,
+      "text": "INBOX\n  seed task\n\n"
+    },
+    "stderr": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "valid_utf8": true,
+      "bytes_base64": "",
+      "truncated_at_bytes": null,
+      "text": ""
+    }
+  },
+  "files": {
+    "mutated": false,
+    "before": [
+      {
+        "role": "other",
+        "path": "config/tasks/config",
+        "present": true,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": 0,
+        "mode": "0644",
+        "content_base64": "",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "store",
+        "path": "tasks.jsonl",
+        "present": true,
+        "sha256": "1a607039774186df9b4e6bf4f25d2db65171222b102704ae99e180d8331ca187",
+        "size_bytes": 240,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImFhYWEwMDAxIiwidGl0bGUiOiJJbmJveCJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImFhYWEwMDAyIiwicGFyZW50IjoiYWFhYTAwMDEiLCJzdGF0ZSI6IklOQk9YIiwidGl0bGUiOiJzZWVkIHRhc2siLCJib2R5IjoiQ2FwdHVyZWQgWzIwMjYtMDMtMTRdLiIsInVwZGF0ZWQiOiIyMDI2LTAzLTE0VDE1OjA5OjI2WiNmaXh0dXJlIn0K",
+        "line_count": 3,
+        "symlink_target": null
+      }
+    ],
+    "after": [
+      {
+        "role": "lock",
+        "path": ".tasks.jsonl.lock",
+        "present": true,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": 0,
+        "mode": "0644",
+        "content_base64": "",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "path": "config/tasks/config",
+        "present": true,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": 0,
+        "mode": "0644",
+        "content_base64": "",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "store",
+        "path": "tasks.jsonl",
+        "present": true,
+        "sha256": "1a607039774186df9b4e6bf4f25d2db65171222b102704ae99e180d8331ca187",
+        "size_bytes": 240,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImFhYWEwMDAxIiwidGl0bGUiOiJJbmJveCJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImFhYWEwMDAyIiwicGFyZW50IjoiYWFhYTAwMDEiLCJzdGF0ZSI6IklOQk9YIiwidGl0bGUiOiJzZWVkIHRhc2siLCJib2R5IjoiQ2FwdHVyZWQgWzIwMjYtMDMtMTRdLiIsInVwZGF0ZWQiOiIyMDI2LTAzLTE0VDE1OjA5OjI2WiNmaXh0dXJlIn0K",
+        "line_count": 3,
+        "symlink_target": null
+      }
+    ],
+    "deltas": [
+      {
+        "path": ".tasks.jsonl.lock",
+        "kind": "created",
+        "before_sha256": null,
+        "after_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    ],
+    "rolled_back": null
+  },
+  "journal": {
+    "present": false,
+    "version": null,
+    "cursor": null,
+    "states": [],
+    "index": {
+      "role": "journal_index",
+      "path": "state/tasks/journal/<key>/index.json",
+      "present": false
+    },
+    "blob_count": null,
+    "blob_sha256": []
+  },
+  "revisions": {
+    "store": null,
+    "resources": [],
+    "touched_ids": [],
+    "http_etag": null
+  },
+  "http": [],
+  "environment": {
+    "tzdb_version": "Zoneinfo DataSource: /usr/share/zoneinfo",
+    "platform": "arm64-darwin23",
+    "filesystem": null,
+    "locale": "UTF-8",
+    "umask": "0022"
+  },
+  "metrics": {
+    "wall_ms": 118.5,
+    "user_cpu_ms": null,
+    "sys_cpu_ms": null,
+    "peak_rss_bytes": null,
+    "bytes_written": null
+  },
+  "notes": null
+}

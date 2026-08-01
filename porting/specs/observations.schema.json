@@ -1,0 +1,601 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tasks.invalid/porting/specs/observations.schema.json",
+  "title": "Tasks conformance observation",
+  "description": "The complete record of ONE CLI (or HTTP) invocation against ONE fixture copy. An observation is the unit the conformance harness compares: two observations of the same case, one from the Ruby oracle and one from the Go port, must be equal on every field this schema marks as contract. The schema is language-neutral on purpose — nothing here may name Ruby, a Ruby class, a Ruby error, or a Ruby-specific formatting rule. Byte-sensitive payloads are carried base64 because stdout, stderr, and store bytes are not guaranteed valid UTF-8 and a JSON string cannot round-trip invalid bytes. Every map that could have grown open-ended keys is instead a SORTED ARRAY of {name/path, value} objects, so that the serialized observation is itself byte-stable and diffable — a map with arbitrary keys would make observation equality depend on the emitting language's hash ordering.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "observation_id",
+    "case_id",
+    "implementation",
+    "fixture",
+    "invocation",
+    "process",
+    "files",
+    "journal",
+    "revisions",
+    "environment",
+    "metrics"
+  ],
+  "properties": {
+    "schema_version": {
+      "description": "Version of THIS schema the record was written against. Proves a comparison is between two observations that mean the same thing by the same field names; a harness refusing to compare across versions is correct behavior, not a bug.",
+      "type": "integer",
+      "const": 1
+    },
+    "observation_id": {
+      "description": "Unique id for this single record, assigned by the harness. Proves provenance and lets evidence files reference one run. It is harness metadata and is NEVER compared between implementations.",
+      "type": "string",
+      "minLength": 1
+    },
+    "case_id": {
+      "description": "Stable id of the conformance case being observed, matching a slice/case id in porting/manifest.jsonl. Proves that the Ruby and Go observations being diffed are answers to the same question. Compared for equality as a precondition of comparing anything else.",
+      "type": "string",
+      "minLength": 1
+    },
+    "implementation": {
+      "description": "Which implementation produced this observation. Never compared for equality (it is the axis of comparison); recorded so a mismatch report can say which side is which and so a stale binary can be spotted.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "description": "Implementation identity: the Ruby oracle or the Go port. Determines which side of a differential comparison this record is.",
+          "type": "string",
+          "enum": ["ruby", "go"]
+        },
+        "version": {
+          "description": "Build identity of the implementation — a git sha, a tag, or an interpreter+source pair. Proves which code produced the bytes, so a mismatch can be bisected instead of argued about.",
+          "type": "string",
+          "minLength": 1
+        },
+        "runtime": {
+          "description": "Free-form runtime detail (interpreter or toolchain version, e.g. an interpreter release or a compiler version). Diagnostic only; never compared, because the port's whole point is that the runtime differs.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "fixture": {
+      "description": "The fixture copy this invocation ran against. Proves the two implementations started from identical bytes; without the before-state digests, an output difference cannot be attributed.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "class", "root_sha256"],
+      "properties": {
+        "id": {
+          "description": "Stable fixture id from the fixture corpus. Proves both sides used the same starting data.",
+          "type": "string",
+          "minLength": 1
+        },
+        "class": {
+          "description": "Which corpus family the fixture belongs to. Proves the case exercises the intended regime — malformed and adversarial fixtures are expected to produce diagnostics and refusals, and a harness that only ever ran 'valid' would prove very little.",
+          "type": "string",
+          "enum": ["valid", "legacy", "malformed", "adversarial"]
+        },
+        "root_sha256": {
+          "description": "Digest over the fixture copy's whole starting tree (a stable digest of sorted relative-path + content-digest pairs). Proves the copy was pristine and identical on both sides before the invocation.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "copy_root": {
+          "description": "Absolute path of the throwaway copy the invocation ran in. Diagnostic only, and deliberately NOT compared: the path differs per run by design (each run gets its own copy) and every path inside the observation is recorded relative to this root precisely so the observation stays comparable.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "invocation": {
+      "description": "Everything the harness controlled about the invocation. Two implementations must be driven by identical values here; if they are not, no downstream comparison means anything.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["surface", "argv", "stdin", "cwd", "env", "pins"],
+      "properties": {
+        "surface": {
+          "description": "Which adapter was driven. Proves the case is comparing like with like: the CLI and the HTTP API are deliberately allowed to differ in mechanics (fuzzy refs, status codes) while sharing an outcome.",
+          "type": "string",
+          "enum": ["cli", "http"]
+        },
+        "argv": {
+          "description": "Argument vector after the program name, in order. The primary input under test; compared for equality as a precondition.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "stdin": {
+          "description": "Bytes fed to standard input. Present as an explicit object even when nothing was written, so 'no stdin' is an observed fact rather than a missing key.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["provided", "bytes_base64"],
+          "properties": {
+            "provided": {
+              "description": "Whether the harness attached a stdin payload at all. Distinguishes an empty payload from a closed/absent stdin — the two are different inputs and can produce different behavior.",
+              "type": "boolean"
+            },
+            "bytes_base64": {
+              "description": "Base64 of the exact bytes written to stdin. Base64 because stdin fixtures include deliberately invalid UTF-8 in the adversarial corpus.",
+              "type": "string",
+              "contentEncoding": "base64"
+            }
+          }
+        },
+        "cwd": {
+          "description": "Working directory of the invocation, relative to the fixture copy root. Proves relative-path resolution was exercised from the intended place; recorded relative so it stays comparable across per-run copy paths.",
+          "type": "string"
+        },
+        "env": {
+          "description": "The environment variables the harness deliberately set or deliberately observed, sorted by name. NOT the whole environment: a full dump would be unstable, would leak secrets, and would make every observation differ on irrelevant grounds. The allowlist is exactly the set documented in porting/specs/determinism.md, and it is recorded in full — including entries with a null value — so 'this variable was unset' is proven rather than inferred.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "value"],
+            "properties": {
+              "name": {
+                "description": "Variable name. The array is sorted by this field so the serialized observation is byte-stable.",
+                "type": "string",
+                "minLength": 1
+              },
+              "value": {
+                "description": "Value as a string, or null when the variable was unset. Null is meaningful: an unset pin is a different experiment from a pin set to the empty string.",
+                "type": ["string", "null"]
+              }
+            }
+          }
+        },
+        "pins": {
+          "description": "The determinism pins ACTUALLY APPLIED by the implementation, as opposed to merely requested via env. Sorted by name. This is the field that catches the harness's worst failure mode: a pin that was set but silently ignored, producing a run that looks reproducible and is not.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "applied", "value"],
+            "properties": {
+              "name": {
+                "description": "Pin name as documented in porting/specs/determinism.md.",
+                "type": "string",
+                "minLength": 1
+              },
+              "applied": {
+                "description": "Whether the implementation actually used the pin for this invocation. False with a non-null value means the pin was requested and ignored — a harness defect, and a hard failure.",
+                "type": "boolean"
+              },
+              "value": {
+                "description": "The effective pinned value as the implementation resolved it, or null when unpinned. Comparing resolved values (not the raw env strings) catches two implementations parsing the same pin differently.",
+                "type": ["string", "null"]
+              }
+            }
+          }
+        },
+        "timeout_ms": {
+          "description": "Wall-clock budget the harness allowed. Diagnostic; a timeout shows up as process.timed_out, which IS compared.",
+          "type": ["integer", "null"],
+          "minimum": 0
+        }
+      }
+    },
+    "process": {
+      "description": "What the process did as a process. Exit status and the exact stdout/stderr bytes are the most-compared part of an observation.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exit_status", "signal", "timed_out", "stdout", "stderr"],
+      "properties": {
+        "exit_status": {
+          "description": "Exit status, or null if the process was terminated by a signal instead of exiting. Contract: the exit status is part of the product (see porting/specs/errors.md), not a formatting detail.",
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 255
+        },
+        "signal": {
+          "description": "Signal number that terminated the process, or null for a normal exit. Proves a crash is reported as a crash rather than being flattened into an exit status. Signal NUMBERS are platform-specific; the harness compares only 'was signalled' plus the number when both sides run the same platform.",
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "timed_out": {
+          "description": "Whether the harness killed the process for exceeding its budget. A timed-out observation is never a pass, whatever the rest of the record says.",
+          "type": "boolean"
+        },
+        "stdout": { "$ref": "#/$defs/stream" },
+        "stderr": { "$ref": "#/$defs/stream" }
+      }
+    },
+    "files": {
+      "description": "The observable filesystem effect of the invocation. Deliberately three-part — before, after, and an explicit delta list — so that a READ can state 'this changed nothing' rather than merely omitting the field. A missing 'deltas' would be indistinguishable from a harness that never looked, which is exactly the difference-hiding this schema exists to prevent.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mutated", "before", "after", "deltas"],
+      "properties": {
+        "mutated": {
+          "description": "Asserted independently of the delta list: true when the implementation reports having written to the store or archive. Comparing this against `deltas` being empty catches both directions of harness error — a write the harness failed to notice, and a 'no change' claim it never verified. For a read this is false AND deltas is empty; either one alone is not proof.",
+          "type": "boolean"
+        },
+        "before": {
+          "description": "State of every tracked file immediately before the invocation, sorted by path. Present for reads too: an unchanged before/after pair is the positive evidence that a read is side-effect free.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/file_state" }
+        },
+        "after": {
+          "description": "State of every tracked file immediately after the invocation, sorted by path. Store and archive bytes here are the strictest contract in the port — byte identity, not JSON equivalence.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/file_state" }
+        },
+        "deltas": {
+          "description": "Every path whose presence or content changed, sorted by path. An empty array is a meaningful, required assertion for reads. Note that a read is NOT expected to be delta-free in general: acquiring the store lock creates the lock sidecar when it is absent, and that creation is a genuine observable effect the port must reproduce.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "kind", "before_sha256", "after_sha256"],
+            "properties": {
+              "path": {
+                "description": "Path relative to the fixture copy root.",
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "description": "How the path changed. 'created' and 'deleted' are distinguished from 'modified' because a rollback that restores prior bytes and a mutation that never ran are different outcomes with the same after-digest.",
+                "type": "string",
+                "enum": ["created", "modified", "deleted"]
+              },
+              "before_sha256": {
+                "description": "Digest before, or null when the path did not exist.",
+                "type": ["string", "null"],
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "after_sha256": {
+                "description": "Digest after, or null when the path no longer exists.",
+                "type": ["string", "null"],
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          }
+        },
+        "rolled_back": {
+          "description": "Whether the implementation reported that a write was performed and then reverted by post-write validation. Contract: a failed post-write check that restores the prior bytes is a different product outcome from a mutation that was rejected before writing, even though both leave the file unchanged.",
+          "type": ["boolean", "null"]
+        }
+      }
+    },
+    "journal": {
+      "description": "Undo/redo state after the invocation. The journal is shared durable state across CLI, TUI and API, so it is part of the contract and not an implementation detail. Recorded structurally AND as bytes: the structure makes a mismatch readable, the bytes make it provable.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["present", "cursor", "states", "index"],
+      "properties": {
+        "present": {
+          "description": "Whether a journal exists for this store at all. First-run cases legitimately have none; distinguishing 'no journal' from 'empty journal' matters because only one of them is a bug.",
+          "type": "boolean"
+        },
+        "version": {
+          "description": "Journal format version. Proves the port reads and writes the existing format rather than silently migrating it.",
+          "type": ["integer", "null"]
+        },
+        "cursor": {
+          "description": "Index of the state matching the live files. Proves undo/redo position, which is what makes a subsequent `undo` land on the right bytes. Null when no journal is present.",
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "states": {
+          "description": "The whole timeline, in order. Order is the contract: a redo tail that should have been truncated shows up here and nowhere else.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["store_sha256", "archive_sha256"],
+            "properties": {
+              "label": {
+                "description": "Human label of the mutation that produced this state, or null for the baseline. Contract: labels are surfaced to the user by undo/redo, so they are compared.",
+                "type": ["string", "null"]
+              },
+              "store_sha256": {
+                "description": "Digest of the store bytes this state restores. Content-addressing is the journal's integrity story; comparing digests proves exact-byte restoration rather than logical equivalence.",
+                "type": ["string", "null"],
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "archive_sha256": {
+                "description": "Digest of the archive bytes this state restores, or null when the archive did not exist at that state.",
+                "type": ["string", "null"],
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "coalesce_key": {
+                "description": "Key that lets a follow-up edit replace this tip instead of appending. Contract: coalescing changes how many undo steps a user sees.",
+                "type": ["string", "null"]
+              },
+              "coalesce_scope": {
+                "description": "Owner token that scopes coalescing to one adapter lifetime. Normally random per process and therefore PINNED by the harness rather than normalized away — it is persisted into journal bytes, so normalizing it would hide a real difference in who is allowed to coalesce with whom.",
+                "type": ["string", "null"]
+              },
+              "repair": {
+                "description": "Whether this state was produced by a targeted repair of previously-invalid bytes, which exempts its undo from the restore-validity gate. Contract: it changes whether a later undo is refused.",
+                "type": ["boolean", "null"]
+              }
+            }
+          }
+        },
+        "index": {
+          "description": "The journal index file itself as a tracked file. Structure above is for readability; these bytes are the proof.",
+          "$ref": "#/$defs/file_state"
+        },
+        "blob_count": {
+          "description": "Number of content-addressed blobs retained. Proves history capping and deduplication behave identically — a port that keeps every blob forever passes every structural check and still regresses the product.",
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "blob_sha256": {
+          "description": "Sorted digests of the retained blobs. Proves the blob set — not just its size — matches, which is what a missing-blob or over-eager-prune bug shows up as.",
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    },
+    "revisions": {
+      "description": "The revision tokens the invocation observed or returned. Deliberately several scopes rather than one generic 'version': store-wide, per-resource, and HTTP entity tags observe different things, and collapsing them into one hash is a documented way to hide concurrency mistakes.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["store", "resources"],
+      "properties": {
+        "store": {
+          "description": "Global store revision derived from the committed bytes, or null when the invocation did not report one. Contract: it is derived from content, so two implementations that write identical bytes must produce the identical token.",
+          "type": ["string", "null"]
+        },
+        "resources": {
+          "description": "Per-resource revisions the invocation reported, sorted by id. Proves a mutation answered from its own committed transaction rather than from a later unrelated read that may have caught a neighboring writer's state.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "revision"],
+            "properties": {
+              "id": {
+                "description": "Stable record id the revision belongs to.",
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "description": "What sort of resource the id names, when the surface distinguishes them.",
+                "type": ["string", "null"]
+              },
+              "revision": {
+                "description": "The revision token as emitted. Compared verbatim: the token's exact spelling is what a client sends back as a precondition.",
+                "type": ["string", "null"]
+              }
+            }
+          }
+        },
+        "touched_ids": {
+          "description": "Ids the mutation reports having touched, sorted. Proves the blast radius of a tree mutation — a move that silently restamps a neighbor is invisible in the store bytes if the neighbor's content did not change.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "http_etag": {
+          "description": "Entity tag returned by an HTTP response, when the surface is http. Null on the CLI surface.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "http": {
+      "description": "HTTP exchanges performed, in order, when invocation.surface is 'http'. Empty for CLI observations. Provisional: the HTTP adapter is not ported until a later phase, and this block will be tightened when it is — it is present now so a Phase-1 harness that captures HTTP oracle output has somewhere honest to put it.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["request", "response"],
+        "properties": {
+          "request": {
+            "type": "object",
+            "description": "The request as sent. Compared as a precondition: both implementations must be asked the same thing.",
+            "additionalProperties": false,
+            "required": ["method", "path", "headers", "body_base64"],
+            "properties": {
+              "method": { "description": "HTTP method.", "type": "string" },
+              "path": { "description": "Request target including query string.", "type": "string" },
+              "headers": {
+                "description": "Request headers actually sent, sorted by lowercased name. Sorted array rather than a map so the observation stays byte-stable.",
+                "type": "array",
+                "items": { "$ref": "#/$defs/header" }
+              },
+              "body_base64": {
+                "description": "Base64 of the request body; empty string for a bodyless request.",
+                "type": "string",
+                "contentEncoding": "base64"
+              }
+            }
+          },
+          "response": {
+            "type": "object",
+            "description": "The response as received.",
+            "additionalProperties": false,
+            "required": ["status", "headers", "body_base64"],
+            "properties": {
+              "status": {
+                "description": "Status code. Contract: status is part of the API's meaning, not formatting.",
+                "type": "integer"
+              },
+              "headers": {
+                "description": "Response headers, sorted by lowercased name, filtered to the allowlist documented in porting/specs/determinism.md — a full header dump would differ on server identity and dates and prove nothing.",
+                "type": "array",
+                "items": { "$ref": "#/$defs/header" }
+              },
+              "body_base64": {
+                "description": "Base64 of the response body bytes.",
+                "type": "string",
+                "contentEncoding": "base64"
+              }
+            }
+          }
+        }
+      }
+    },
+    "environment": {
+      "description": "Host facts a pin cannot control but a comparison must know about. These are recorded, never compared for equality between implementations — but a mismatch here explains a mismatch elsewhere, and an unexplained difference with identical environments is a real defect rather than a host artifact.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tzdb_version", "platform"],
+      "properties": {
+        "tzdb_version": {
+          "description": "IANA time-zone database version in effect. Two implementations resolving the same zone against different tzdb releases can legitimately disagree about a historical offset; without this field that disagreement is unattributable.",
+          "type": "string",
+          "minLength": 1
+        },
+        "platform": {
+          "description": "Operating system and architecture the observation was taken on. Locking, atomic replacement, and signal numbers are platform-shaped, so a cross-platform comparison must be labelled as one.",
+          "type": "string",
+          "minLength": 1
+        },
+        "filesystem": {
+          "description": "Filesystem type of the fixture copy, when the harness can determine it. Diagnostic: rename atomicity, mode bits, and directory fsync behave differently on some mounts.",
+          "type": ["string", "null"]
+        },
+        "locale": {
+          "description": "Effective locale/encoding of the process. Recorded because collation and case-folding are locale-sensitive in some languages; pinned by the harness so it is normally a constant.",
+          "type": ["string", "null"]
+        },
+        "umask": {
+          "description": "Process umask as an octal string. Explains a mode difference on a newly created file, which would otherwise look like an implementation defect.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "metrics": {
+      "description": "Cost of the invocation. ADVISORY ONLY: no field here participates in observation equality, because timing and memory are not properties a user can hold the implementation to. They exist to detect a performance-budget regression, which is a separate gate with its own thresholds.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["wall_ms"],
+      "properties": {
+        "wall_ms": {
+          "description": "Wall-clock duration of the invocation in milliseconds. The one metric every platform can produce.",
+          "type": "number",
+          "minimum": 0
+        },
+        "user_cpu_ms": {
+          "description": "User CPU time in milliseconds, when the platform reports it.",
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "sys_cpu_ms": {
+          "description": "System CPU time in milliseconds, when the platform reports it.",
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "peak_rss_bytes": {
+          "description": "Peak resident set size in bytes, when the platform reports it. Units differ by platform at the source; the harness normalizes to bytes.",
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "bytes_written": {
+          "description": "Total bytes the invocation wrote across tracked files. Cheap proxy for 'did this rewrite the whole store to change one field'.",
+          "type": ["integer", "null"],
+          "minimum": 0
+        }
+      }
+    },
+    "notes": {
+      "description": "Free-text harness annotations — why a case was skipped, what a known-flaky step was. Never compared. Present so a capture never has to encode an explanation by mangling a real field.",
+      "type": ["string", "null"]
+    }
+  },
+  "$defs": {
+    "stream": {
+      "description": "One captured output stream. Carried as bytes because CLI output is not guaranteed valid UTF-8 — malformed fixtures round-trip invalid bytes into diagnostics on purpose — and a JSON string cannot represent those.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "size_bytes", "valid_utf8", "bytes_base64"],
+      "properties": {
+        "sha256": {
+          "description": "Digest of the exact bytes. The comparison field: cheap, total, and immune to truncation policy.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "size_bytes": {
+          "description": "Byte length of the stream. Catches a truncation difference that a digest comparison would report only as 'different'.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "valid_utf8": {
+          "description": "Whether the bytes decode as UTF-8. Proves an encoding difference is being reported rather than papered over by a lossy decode.",
+          "type": "boolean"
+        },
+        "bytes_base64": {
+          "description": "Base64 of the exact bytes, possibly truncated (see truncated_at_bytes). This is what makes a mismatch readable; sha256 is what makes it authoritative.",
+          "type": "string",
+          "contentEncoding": "base64"
+        },
+        "truncated_at_bytes": {
+          "description": "Byte offset at which bytes_base64 was cut, or null when complete. Non-null means bytes_base64 must not be used for equality — only sha256 and size_bytes may be.",
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "text": {
+          "description": "Convenience decode of the stream when valid_utf8 is true. Never authoritative and never compared; it exists so a human reading an evidence file does not have to decode base64.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "file_state": {
+      "description": "One tracked file at one instant. Small files carry their whole content so an evidence record is self-contained and a mismatch is readable without re-running anything; large files carry digest and size only.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "path", "present"],
+      "properties": {
+        "role": {
+          "description": "What the file is to the product. Roles, not names, so the port can be compared even if a future layout renames a file — and so the harness can assert that the store and archive were BOTH observed, since they are one consistency boundary and checking only one hides half of every archive bug.",
+          "type": "string",
+          "enum": ["store", "archive", "lock", "journal_index", "journal_blob", "config", "memory", "other"]
+        },
+        "path": {
+          "description": "Path relative to the fixture copy root. Relative because the absolute path differs per run by construction.",
+          "type": "string",
+          "minLength": 1
+        },
+        "present": {
+          "description": "Whether the file existed at this instant. Absence is a state, not a gap: 'archive.jsonl does not exist yet' is the first-run contract and must be distinguishable from 'the harness did not look'.",
+          "type": "boolean"
+        },
+        "sha256": {
+          "description": "Digest of the file's bytes, or null when absent. The authoritative comparison field for store and archive bytes.",
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "size_bytes": {
+          "description": "Byte length, or null when absent.",
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "mode": {
+          "description": "Permission bits as a 4-digit octal string, or null when absent or unavailable. Contract on the store: a chmod-600 store must not widen to 644 across an atomic replacement.",
+          "type": ["string", "null"],
+          "pattern": "^[0-7]{4}$"
+        },
+        "content_base64": {
+          "description": "Base64 of the whole file when it is small enough to embed, else null. Makes evidence self-contained; never a substitute for sha256, which is always present when the file is.",
+          "type": ["string", "null"],
+          "contentEncoding": "base64"
+        },
+        "line_count": {
+          "description": "Number of newline-terminated lines, for JSONL files. Diagnostic shortcut: a record-count difference is the most common shape of store mismatch and this makes it visible at a glance.",
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "symlink_target": {
+          "description": "Link target when the path is a symlink, else null. Contract: atomic replacement must follow a symlinked store rather than replacing the link.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "header": {
+      "description": "One HTTP header as a name/value pair. A pair rather than a map entry because a header name may legitimately repeat and because sorted pairs keep the observation byte-stable.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": {
+          "description": "Lowercased header name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "description": "Header value verbatim.",
+          "type": "string"
+        }
+      }
+    }
+  }
+}
