@@ -1,0 +1,43 @@
+# phase1.jsonl — the Phase 1 conformance case list.
+#
+# One JSON object per line; blank lines and lines starting with `#` are skipped.
+# Format: porting/runners/README.md § "The case list".
+#
+# Coverage rule for this file: every fixture class, at least one read, at least
+# one mutation, at least one refused mutation, and at least one malformed
+# fixture whose diagnostic is captured.
+
+# --- valid: the ordinary regimes ------------------------------------------
+{"case_id":"cli-list-small-gtd","fixture":"valid/small-gtd","argv":["list"],"notes":"read: grouped human output, and the lock sidecar a read still creates"}
+{"case_id":"cli-list-json-small-gtd","fixture":"valid/small-gtd","argv":["list","--json"],"notes":"read: the structured surface an agent consumes"}
+{"case_id":"cli-list-stdin-ignored","fixture":"valid/small-gtd","argv":["list"],"stdin":"this payload is attached and ignored\n","notes":"proves stdin is attached deterministically; no CLI command reads it today"}
+{"case_id":"cli-check-empty-store","fixture":"valid/empty-store","argv":["check"],"notes":"the empty-collection boundary"}
+{"case_id":"cli-check-archive-pair","fixture":"valid/archive-pair","argv":["check","--all-files"],"notes":"the two-file store: both halves of the consistency boundary"}
+{"case_id":"cli-agenda-full-field-matrix","fixture":"valid/full-field-matrix","argv":["agenda"],"notes":"every field, every recur form, unicode; dates resolved against the pinned clock"}
+{"case_id":"cli-list-scale-ordering","fixture":"valid/scale-ordering","argv":["list","--json"],"notes":"461 records, 50 sibling groups: ordering at size"}
+{"case_id":"cli-capture-small-gtd","fixture":"valid/small-gtd","argv":["capture","port the runner","--priority","A","--tag","port","--json"],"notes":"mutation: pinned id and clock, journal state appended, touched_ids reported"}
+{"case_id":"cli-done-small-gtd","fixture":"valid/small-gtd","argv":["done","Skim the release notes","--json"],"notes":"mutation: a state transition through the history path"}
+{"case_id":"cli-undo-after-capture","fixture":"valid/single-task","argv":["undo"],"notes":"no journal exists yet: undo must refuse rather than invent one"}
+
+# --- compat: version skew --------------------------------------------------
+{"case_id":"cli-check-forward-compat","fixture":"compat/forward-compat-unknown-keys","argv":["check"],"notes":"unknown top-level and delegation keys round-trip with warnings"}
+{"case_id":"cli-priority-forward-compat","fixture":"compat/forward-compat-unknown-keys","argv":["priority","Confirm the venue booking","A","--json"],"notes":"mutation that must rewrite the store while preserving keys this binary does not understand"}
+{"case_id":"cli-capture-future-schema-v3","fixture":"compat/future-schema-v3","argv":["capture","must not be written"],"notes":"refused mutation: an unsupported schema version is refused on write, nothing written"}
+
+# --- malformed: diagnostics ------------------------------------------------
+{"case_id":"cli-check-invalid-json","fixture":"malformed/invalid-json","argv":["check"],"notes":"parser-message passthrough between good records"}
+{"case_id":"cli-check-bad-utf8","fixture":"malformed/bad-utf8","argv":["check"],"notes":"invalid encoding: the diagnostic itself may not be valid UTF-8"}
+{"case_id":"cli-check-duplicate-ids","fixture":"malformed/duplicate-ids","argv":["check"],"notes":"the id uniqueness invariant, reported on the last offending line"}
+{"case_id":"cli-check-wrong-key-order","fixture":"malformed/wrong-key-order","argv":["check"],"notes":"recorded behavior: check does not validate key order and exits 0"}
+{"case_id":"cli-capture-truncated-final-line","fixture":"malformed/truncated-final-line","argv":["capture","must not be written"],"notes":"refused mutation: the preflight check refuses a store that died mid-record"}
+
+# --- adversarial: tokens, sidecars, journals -------------------------------
+{"case_id":"cli-list-torn-file","fixture":"adversarial/mid-write-torn-file","argv":["list"],"notes":"reads tolerate a torn store and silently omit the torn record"}
+{"case_id":"cli-capture-torn-file","fixture":"adversarial/mid-write-torn-file","argv":["capture","must not be written"],"notes":"writes refuse what reads tolerated"}
+{"case_id":"cli-list-stale-lock","fixture":"adversarial/stale-lock-sidecar","argv":["list"],"notes":"an unheld lock sidecar is advisory; the read proceeds"}
+{"case_id":"cli-list-leftover-tmp","fixture":"adversarial/mid-write-leftover-tmp","argv":["list"],"notes":"an orphaned atomic-write temp file must survive the invocation unfiltered"}
+{"case_id":"cli-undo-cursor-behind-store","fixture":"adversarial/journal-cursor-behind-store","argv":["undo"],"notes":"out-of-band edit after the journal tip: undo refuses"}
+{"case_id":"cli-undo-missing-blob","fixture":"adversarial/journal-missing-blob","argv":["undo"],"notes":"a deleted blob degrades to nothing to undo"}
+{"case_id":"cli-undo-foreign-org","fixture":"adversarial/journal-foreign-org","argv":["undo"],"notes":"a journal keyed to someone else's store is discarded, not applied"}
+{"case_id":"cli-list-stale-revision","fixture":"adversarial/stale-revision","argv":["list","--json"],"notes":"revision tokens: the observation's revisions.resources must match revisions.json"}
+{"case_id":"cli-claim-same-owner-retry","fixture":"adversarial/same-owner-retry","argv":["claim","Draft the neighbourhood newsletter","--worker","harness/model/worker-alpha","--json"],"notes":"recorded behavior: a same-owner retry is refused, not idempotent"}

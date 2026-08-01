@@ -1,0 +1,185 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# probe — the Ruby implementation's self-report, for the conformance runner.
+#
+#   probe <copy-root>
+#
+# Prints ONE JSON object on stdout and exits 0. Every runner ships a probe of
+# its own (`porting/runners/<impl>/probe`) that prints the SAME object from the
+# same inputs; the object's shape is the contract, the language behind it is
+# not. See porting/runners/README.md § "The probe".
+#
+# It exists because two things an observation must record cannot be read off
+# the CLI's output:
+#
+#   1. **Revision tokens.** No CLI command prints `s1.` / `v1.` tokens (they are
+#      user-visible only over HTTP, which Phase 1 does not port). Deriving them
+#      inside the harness would mean re-implementing the product's revision
+#      algorithm in the harness — and then the harness could not detect a port
+#      that got that algorithm wrong, which is one of the five seeded-mismatch
+#      classes the Phase 1 gate tests. So the probe asks the implementation.
+#
+#   2. **Which pins were actually applied.** A pin that was set and silently
+#      ignored produces a run that looks reproducible and is not. Only the
+#      implementation knows what it resolved, so only the implementation can
+#      answer. `Tasks::Determinism.report` is the seam that answers it.
+#
+# The probe is READ-ONLY with respect to the store's own bytes, but it is not
+# side-effect free: reading a snapshot takes the store lock, which creates
+# `.tasks.jsonl.lock` when it is absent. The runner therefore runs the probe
+# only AFTER it has captured the post-invocation tree (and runs the
+# before-probe against a separate throwaway copy), so a probe can never mask
+# the lock-creation delta the port is supposed to reproduce.
+
+require "json"
+
+ROOT = File.expand_path("../../..", __dir__)
+require_relative "#{ROOT}/lib/tasks/config"
+require_relative "#{ROOT}/lib/tasks/dates"
+require_relative "#{ROOT}/lib/tasks/determinism"
+require_relative "#{ROOT}/lib/tasks/store"
+require_relative "#{ROOT}/lib/tasks/timezones"
+require_relative "#{ROOT}/lib/tasks/update_stamp"
+
+PROBE_VERSION = 1
+
+copy_root = ARGV[0]
+abort "usage: probe <copy-root>" if copy_root.nil? || copy_root.empty?
+
+# Resolve exactly as `bin/tasks` does, from the same environment the invocation
+# ran under: anything else would report tokens for a different store than the
+# one under test.
+paths = Tasks::Config.resolve(default_dir: copy_root)
+Tasks::Dates.configure!(date_order: paths.date_order)
+
+store_pins = {
+  now: Tasks::Determinism.clock,
+  id_source: Tasks::Determinism.id_source,
+  coalesce_scope: Tasks::Determinism.coalesce_scope
+}.compact
+
+# --- revisions --------------------------------------------------------------
+#
+# `checked_read_snapshot` is the API-grade read: it returns the content-derived
+# store revision for the exact bytes on disk even when those bytes are invalid,
+# and a snapshot (hence per-task revisions) only when they are not. A malformed
+# fixture therefore still yields a store token, which is the honest answer — the
+# token is a digest of bytes, not an assertion that they parse.
+revisions = begin
+  store = Tasks::Store.new(org: paths.org, archive: paths.archive, links: paths.links,
+                           link_systems: paths.link_systems, max_depth: paths.max_depth,
+                           **store_pins)
+  checked = store.checked_read_snapshot
+  snapshot = checked.snapshot
+  resources = []
+  if snapshot
+    snapshot.items.each do |item|
+      next unless item.id
+
+      resources << { "id" => item.id, "kind" => "task", "revision" => snapshot.revision_for(item) }
+    end
+    snapshot.archive_items.each do |item|
+      next unless item.id
+
+      resources << { "id" => item.id, "kind" => "archived_task",
+                     "revision" => snapshot.revision_for(item) }
+    end
+  end
+  { "status" => checked.status.to_s,
+    "store" => checked.store_revision,
+    "resources" => resources.sort_by { |r| [r["id"], r["kind"]] } }
+rescue StandardError => e
+  # A probe that cannot read the store says so; it never guesses a token.
+  { "status" => "probe_error", "store" => nil, "resources" => [],
+    "error" => "#{e.class}: #{e.message}" }
+end
+
+# --- pins -------------------------------------------------------------------
+#
+# `applied` answers "did the implementation USE this?", and `value` is what the
+# implementation RESOLVED it to — not the raw string it was handed. Reporting
+# the resolved value is what catches two implementations parsing one pin
+# differently, and `applied: false` alongside a non-null request is what catches
+# a pin that was accepted and dropped. The runner treats that combination as a
+# hard failure.
+def requested(env, name)
+  raw = env[name]
+  raw.nil? || raw.to_s.strip.empty? ? nil : raw.to_s
+end
+
+env = ENV
+pins = []
+add = ->(name, applied, value) { pins << { "name" => name, "applied" => applied, "value" => value } }
+
+now_request = requested(env, Tasks::Determinism::NOW)
+begin
+  resolved_now = Tasks::Determinism.now(env: env)
+  add.call(Tasks::Determinism::NOW, !resolved_now.nil?, resolved_now&.iso8601)
+rescue ArgumentError
+  # Malformed and therefore NOT applied — reported rather than raised, so the
+  # runner can fail the case with the requested value in evidence.
+  add.call(Tasks::Determinism::NOW, false, now_request)
+end
+
+ids_request = requested(env, Tasks::Determinism::IDS)
+begin
+  sequence = ids_request && Tasks::Determinism::IdSequence.new(ids_request)
+  add.call(Tasks::Determinism::IDS, !sequence.nil?, ids_request)
+rescue ArgumentError
+  add.call(Tasks::Determinism::IDS, false, ids_request)
+end
+
+scope = Tasks::Determinism.coalesce_scope(env: env)
+add.call(Tasks::Determinism::COALESCE_SCOPE, !scope.nil?, scope)
+
+hostname_request = requested(env, Tasks::Determinism::HOSTNAME)
+add.call(Tasks::Determinism::HOSTNAME, !hostname_request.nil?,
+         hostname_request && Tasks::Determinism.hostname(env: env).call)
+
+winsize = Tasks::Determinism.winsize(env: env)
+add.call(Tasks::Determinism::LINES, !winsize.nil?, winsize && winsize[0].to_s)
+add.call(Tasks::Determinism::COLUMNS, !winsize.nil?, winsize && winsize[1].to_s)
+
+device_request = requested(env, Tasks::Determinism::DEVICE)
+add.call(Tasks::Determinism::DEVICE, !device_request.nil?,
+         device_request && Tasks::UpdateStamp.device(env: env))
+
+# TZ resolves through Config, so `applied` is the strict test: the pin counts as
+# applied only when the zone the implementation ended up with is the zone that
+# was asked for. A silent fallback to Etc/UTC reports applied: false.
+tz_request = requested(env, Tasks::Determinism::TZ)
+add.call(Tasks::Determinism::TZ, !tz_request.nil? && paths.timezone == tz_request,
+         tz_request && paths.timezone)
+
+# TASKS_TIMEZONE is a product setting rather than one of Determinism's KEYS,
+# but the harness pins it (it out-ranks TZ), so it is reported here too: a pin
+# the runner sets and nobody reports is exactly the blind spot `applied` exists
+# to close. `porting/specs/determinism.md` lists TZ only, and should name both.
+timezone_request = requested(env, "TASKS_TIMEZONE")
+add.call("TASKS_TIMEZONE", !timezone_request.nil? && paths.timezone == timezone_request,
+         timezone_request && paths.timezone)
+
+# LANG/LC_ALL are applied when the process's default external encoding is the
+# encoding they name; that is the only effect they have here.
+locale_encoding = Encoding.default_external.to_s
+[Tasks::Determinism::LANG, Tasks::Determinism::LC_ALL].each do |name|
+  request = requested(env, name)
+  applied = !request.nil? &&
+            request.split(".", 2).last.to_s.delete("-").casecmp?(locale_encoding.delete("-"))
+  add.call(name, applied, request && locale_encoding)
+end
+
+report = Tasks::Determinism.report(env: env)
+
+puts JSON.generate(
+  "probe_version" => PROBE_VERSION,
+  "revisions" => revisions,
+  "pins" => pins.sort_by { |pin| pin["name"] },
+  "environment" => {
+    "tzdb_version" => report["tzdb_version"],
+    "platform" => report["ruby_platform"],
+    "locale" => locale_encoding,
+    "runtime" => "ruby #{report["ruby_version"]}"
+  }
+)
