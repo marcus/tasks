@@ -1,0 +1,320 @@
+{
+  "schema_version": 1,
+  "observation_id": "obs_cli-check-archive-pair",
+  "case_id": "cli-check-archive-pair",
+  "implementation": {
+    "name": "ruby",
+    "version": "5eba4b0d2a52b58bd0ccdc1af7f853f8f37b0a15-dirty",
+    "runtime": "ruby 4.0.6"
+  },
+  "fixture": {
+    "id": "valid/archive-pair",
+    "class": "valid",
+    "root_sha256": "fe0384fcd1346ae473eecc7284d744cb201293067a0c425eeeb2e1422727c6de",
+    "copy_root": "/tmp/tasks-conformance/cli-check-archive-pair"
+  },
+  "invocation": {
+    "surface": "cli",
+    "argv": [
+      "check",
+      "--all-files"
+    ],
+    "stdin": {
+      "provided": false,
+      "bytes_base64": ""
+    },
+    "cwd": ".",
+    "env": [
+      {
+        "name": "COLUMNS",
+        "value": "100"
+      },
+      {
+        "name": "HOME",
+        "value": "/tmp/tasks-conformance/cli-check-archive-pair"
+      },
+      {
+        "name": "LANG",
+        "value": "en_US.UTF-8"
+      },
+      {
+        "name": "LC_ALL",
+        "value": "en_US.UTF-8"
+      },
+      {
+        "name": "LINES",
+        "value": "40"
+      },
+      {
+        "name": "TASKS_ARCHIVE",
+        "value": null
+      },
+      {
+        "name": "TASKS_DEVICE",
+        "value": "fixture"
+      },
+      {
+        "name": "TASKS_DIR",
+        "value": "/tmp/tasks-conformance/cli-check-archive-pair"
+      },
+      {
+        "name": "TASKS_FILE",
+        "value": null
+      },
+      {
+        "name": "TASKS_PIN_COALESCE_SCOPE",
+        "value": "pinned-scope"
+      },
+      {
+        "name": "TASKS_PIN_HOSTNAME",
+        "value": "fixture-host"
+      },
+      {
+        "name": "TASKS_PIN_IDS",
+        "value": "bbbb0001"
+      },
+      {
+        "name": "TASKS_PIN_NOW",
+        "value": "2026-03-14T15:09:26Z"
+      },
+      {
+        "name": "TASKS_TIMEZONE",
+        "value": "UTC"
+      },
+      {
+        "name": "TZ",
+        "value": "UTC"
+      },
+      {
+        "name": "XDG_CONFIG_HOME",
+        "value": "/tmp/tasks-conformance/cli-check-archive-pair/.config"
+      },
+      {
+        "name": "XDG_STATE_HOME",
+        "value": "/tmp/tasks-conformance/cli-check-archive-pair/.state"
+      }
+    ],
+    "pins": [
+      {
+        "name": "COLUMNS",
+        "applied": true,
+        "value": "100"
+      },
+      {
+        "name": "LANG",
+        "applied": true,
+        "value": "UTF-8"
+      },
+      {
+        "name": "LC_ALL",
+        "applied": true,
+        "value": "UTF-8"
+      },
+      {
+        "name": "LINES",
+        "applied": true,
+        "value": "40"
+      },
+      {
+        "name": "TASKS_DEVICE",
+        "applied": true,
+        "value": "fixture"
+      },
+      {
+        "name": "TASKS_PIN_COALESCE_SCOPE",
+        "applied": true,
+        "value": "pinned-scope"
+      },
+      {
+        "name": "TASKS_PIN_HOSTNAME",
+        "applied": true,
+        "value": "fixture-host"
+      },
+      {
+        "name": "TASKS_PIN_IDS",
+        "applied": true,
+        "value": "bbbb0001"
+      },
+      {
+        "name": "TASKS_PIN_NOW",
+        "applied": true,
+        "value": "2026-03-14T15:09:26Z"
+      },
+      {
+        "name": "TASKS_TIMEZONE",
+        "applied": true,
+        "value": "UTC"
+      },
+      {
+        "name": "TZ",
+        "applied": true,
+        "value": "UTC"
+      }
+    ],
+    "timeout_ms": 60000
+  },
+  "process": {
+    "exit_status": 0,
+    "signal": null,
+    "timed_out": false,
+    "stdout": {
+      "sha256": "672bccc59d7e65153d09b5d7a7c35f04127c0fe8507dbe54875b861380b07515",
+      "size_bytes": 46,
+      "valid_utf8": true,
+      "bytes_base64": "b2sg4oCUIDYgcmVjb3JkcyBwYXJzZWQsIG5vIHN0cnVjdHVyYWwgZXJyb3JzCg==",
+      "truncated_at_bytes": null,
+      "text": "ok — 6 records parsed, no structural errors\n"
+    },
+    "stderr": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "valid_utf8": true,
+      "bytes_base64": "",
+      "truncated_at_bytes": null,
+      "text": ""
+    }
+  },
+  "files": {
+    "mutated": false,
+    "before": [
+      {
+        "role": "archive",
+        "path": "archive.jsonl",
+        "present": true,
+        "sha256": "771f2c1fb5a3b661635686ee718435aae708a4d86ac7ff8bffaf941e0492154a",
+        "size_bytes": 628,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImEwMDAwMTAxIiwidGl0bGUiOiJTcHJpbmcgY2xlYXItb3V0IiwiYXJjaGl2ZWQiOiIyMDI2LTA1LTMxIiwiYm9keSI6IlN3ZXB0IGFmdGVyIGNvbXBsZXRpb24uIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiYTAwMDAxMDIiLCJwYXJlbnQiOiJhMDAwMDEwMSIsInN0YXRlIjoiRE9ORSIsInRpdGxlIjoiRW1wdHkgdGhlIGxvZnQiLCJjbG9zZWQiOiIyMDI2LTA1LTIwIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiYTAwMDAxMDMiLCJwYXJlbnQiOiJhMDAwMDEwMSIsInN0YXRlIjoiRE9ORSIsInRpdGxlIjoiQm9vayB0aGUgc2tpcCIsImNsb3NlZCI6IjIwMjYtMDUtMTgifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJhMDAwMDEwNCIsInBhcmVudCI6ImEwMDAwMTAxIiwic3RhdGUiOiJDQU5DRUxMRUQiLCJ0aXRsZSI6IlNlbGwgdGhlIG9sZCBib29rY2FzZSIsImNsb3NlZCI6IjIwMjYtMDUtMTkifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJhMDAwMDEwNSIsInN0YXRlIjoiRE9ORSIsInRpdGxlIjoiU3RhbmRhbG9uZSBhcmNoaXZlZCB0YXNrIiwiY2xvc2VkIjoiMjAyNi0wNC0wMiIsImFyY2hpdmVkIjoiMjAyNi0wNS0zMSJ9Cg==",
+        "line_count": 6,
+        "symlink_target": null
+      },
+      {
+        "role": "store",
+        "path": "tasks.jsonl",
+        "present": true,
+        "sha256": "2088e054eaf73252f97824a008cbf24e6ccdda3ed3dbce0a9d45e7faa70e1a37",
+        "size_bytes": 435,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImEwMDAwMDAxIiwidGl0bGUiOiJOZXh0IEFjdGlvbnMifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJhMDAwMDAwMiIsInBhcmVudCI6ImEwMDAwMDAxIiwic3RhdGUiOiJORVhUIiwidGl0bGUiOiJCb29rIHRoZSBhbm51YWwgc2VydmljZSIsInRhZ3MiOlsiQGNhbGxzIl19CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImEwMDAwMDAzIiwidGl0bGUiOiJQcm9qZWN0cyJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImEwMDAwMDA0IiwicGFyZW50IjoiYTAwMDAwMDMiLCJ0aXRsZSI6IktpdGNoZW4gcmVwYWludCJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImEwMDAwMDA1IiwicGFyZW50IjoiYTAwMDAwMDQiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IkNob29zZSB0aGUgZmluaXNoIn0K",
+        "line_count": 6,
+        "symlink_target": null
+      }
+    ],
+    "after": [
+      {
+        "role": "lock",
+        "path": ".tasks.jsonl.lock",
+        "present": true,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": 0,
+        "mode": "0644",
+        "content_base64": "",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "archive",
+        "path": "archive.jsonl",
+        "present": true,
+        "sha256": "771f2c1fb5a3b661635686ee718435aae708a4d86ac7ff8bffaf941e0492154a",
+        "size_bytes": 628,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImEwMDAwMTAxIiwidGl0bGUiOiJTcHJpbmcgY2xlYXItb3V0IiwiYXJjaGl2ZWQiOiIyMDI2LTA1LTMxIiwiYm9keSI6IlN3ZXB0IGFmdGVyIGNvbXBsZXRpb24uIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiYTAwMDAxMDIiLCJwYXJlbnQiOiJhMDAwMDEwMSIsInN0YXRlIjoiRE9ORSIsInRpdGxlIjoiRW1wdHkgdGhlIGxvZnQiLCJjbG9zZWQiOiIyMDI2LTA1LTIwIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiYTAwMDAxMDMiLCJwYXJlbnQiOiJhMDAwMDEwMSIsInN0YXRlIjoiRE9ORSIsInRpdGxlIjoiQm9vayB0aGUgc2tpcCIsImNsb3NlZCI6IjIwMjYtMDUtMTgifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJhMDAwMDEwNCIsInBhcmVudCI6ImEwMDAwMTAxIiwic3RhdGUiOiJDQU5DRUxMRUQiLCJ0aXRsZSI6IlNlbGwgdGhlIG9sZCBib29rY2FzZSIsImNsb3NlZCI6IjIwMjYtMDUtMTkifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJhMDAwMDEwNSIsInN0YXRlIjoiRE9ORSIsInRpdGxlIjoiU3RhbmRhbG9uZSBhcmNoaXZlZCB0YXNrIiwiY2xvc2VkIjoiMjAyNi0wNC0wMiIsImFyY2hpdmVkIjoiMjAyNi0wNS0zMSJ9Cg==",
+        "line_count": 6,
+        "symlink_target": null
+      },
+      {
+        "role": "store",
+        "path": "tasks.jsonl",
+        "present": true,
+        "sha256": "2088e054eaf73252f97824a008cbf24e6ccdda3ed3dbce0a9d45e7faa70e1a37",
+        "size_bytes": 435,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImEwMDAwMDAxIiwidGl0bGUiOiJOZXh0IEFjdGlvbnMifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJhMDAwMDAwMiIsInBhcmVudCI6ImEwMDAwMDAxIiwic3RhdGUiOiJORVhUIiwidGl0bGUiOiJCb29rIHRoZSBhbm51YWwgc2VydmljZSIsInRhZ3MiOlsiQGNhbGxzIl19CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImEwMDAwMDAzIiwidGl0bGUiOiJQcm9qZWN0cyJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImEwMDAwMDA0IiwicGFyZW50IjoiYTAwMDAwMDMiLCJ0aXRsZSI6IktpdGNoZW4gcmVwYWludCJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImEwMDAwMDA1IiwicGFyZW50IjoiYTAwMDAwMDQiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IkNob29zZSB0aGUgZmluaXNoIn0K",
+        "line_count": 6,
+        "symlink_target": null
+      }
+    ],
+    "deltas": [
+      {
+        "path": ".tasks.jsonl.lock",
+        "kind": "created",
+        "before_sha256": null,
+        "after_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    ],
+    "rolled_back": null
+  },
+  "journal": {
+    "present": false,
+    "version": null,
+    "cursor": null,
+    "states": [],
+    "index": {
+      "role": "journal_index",
+      "path": ".state/tasks/journal/bb69eda9d67b3769/index.json",
+      "present": false,
+      "sha256": null,
+      "size_bytes": null,
+      "mode": null,
+      "content_base64": null,
+      "line_count": null,
+      "symlink_target": null
+    },
+    "blob_count": null,
+    "blob_sha256": []
+  },
+  "revisions": {
+    "store": "s1.514c25c002249be9c7ed4efe25fd62d4452c490f040ac2823d8581456073174d",
+    "resources": [
+      {
+        "id": "a0000002",
+        "kind": "task",
+        "revision": "v1.f3dada1008439e21efad62cd39bbba5caf4ede6d2951e6f507d8cc2f7187159b.c9e704ff3b0cfdad4b933f3825702c6dd55d9639f031e2c6882fa30efee8f365.ccee9a7af88dacdeb7767eaf73deb8bf6bfd80fbf4509009ed15e63bfac82095"
+      },
+      {
+        "id": "a0000005",
+        "kind": "task",
+        "revision": "v1.5df15f9d2a244b5e7716cc98ae96a6ff08386230af4e8c00ed2e198097169a44.31aa3c09c17705ae20424d12013324178a3c2ef918ec9cec53ac83e608981fa2.f3c1f72fc30aad2608d2ac82683f552a25e9aae2857ca437be889ebcdcf11590"
+      },
+      {
+        "id": "a0000102",
+        "kind": "archived_task",
+        "revision": "v1.10155c07b2b113399b7bec70d6c97f530066dd6226ff6d45e52d786c941ccbf6.a820057d76e578f5783daf17af3d7175bdd9509e8dd5aafc8453c5a53dcf579b.bb24b9baf079ce50ef0e7d7f87943bfb997952ae8d93b33eb15faa922d1f0b52"
+      },
+      {
+        "id": "a0000103",
+        "kind": "archived_task",
+        "revision": "v1.66a4ebfa2a504d035be4258006f12e0aa43bfd00c98100813d4a789d2eb77398.280f2eedab588c4368b0fc7b6f70e43e7ee68ca8d7ccda80b32d7e498ebee5c6.1628bb9f8fd9c1905561b5360ed4671e6e6244e478bae0fb756f03f94d6e151b"
+      },
+      {
+        "id": "a0000104",
+        "kind": "archived_task",
+        "revision": "v1.7fd3b363061f47a22860d0aeaa27c8d9dbdcc28196dd1cbdd384f7ece5976761.7e73af9ec918f9fd9d109288c9a68f8b9d272b9081f6f135120856293e785dfb.cbf514113fd708a0167265353ecade77a7de8f16a43b564f83eac1310f19cfde"
+      },
+      {
+        "id": "a0000105",
+        "kind": "archived_task",
+        "revision": "v1.37ba4553148c0e4bdf6295198a069405050b9891e0811e999578af26a46050f1.6d80886a770b62284a5c43f73337d0dbfc9da2e4f18a46ed8c06d137358c1cc1.d1f591168e5ace8657cb6afdfec702d05d0c794d37f4a4fc85c8df49b6b640d3"
+      }
+    ],
+    "touched_ids": [],
+    "http_etag": null
+  },
+  "http": [],
+  "environment": {
+    "tzdb_version": "Zoneinfo DataSource: /usr/share/zoneinfo",
+    "platform": "arm64-darwin23",
+    "filesystem": "/",
+    "locale": "UTF-8",
+    "umask": "0022"
+  },
+  "metrics": {
+    "wall_ms": 0,
+    "user_cpu_ms": null,
+    "sys_cpu_ms": null,
+    "peak_rss_bytes": null,
+    "bytes_written": 0
+  },
+  "notes": "the two-file store: both halves of the consistency boundary"
+}

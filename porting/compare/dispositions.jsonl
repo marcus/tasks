@@ -1,0 +1,35 @@
+# dispositions.jsonl — the machine-readable index into ../intentional-differences.md.
+#
+# One JSON object per line. Blank lines and lines starting with `#` are skipped.
+# The list is EMPTY, and it should stay short.
+#
+#   {"case_id":"…","field":"…","class":"intentional_difference",
+#    "severity":"accepted","record":"../intentional-differences.md#<section>"}
+#
+# Fields:
+#   case_id   the case the difference appears in. Never a wildcard: an exception
+#             is granted to one observable in one case, not to a class of
+#             comparison. A wildcard here is how a known exception becomes a
+#             blind spot.
+#   field     the comparator field exactly as it appears in a finding, e.g.
+#             "process.exit_status" or "files.after[tasks.jsonl].sha256".
+#   class     "intentional_difference" (Marcus accepted the Go behavior) or
+#             "legacy_ruby_rule" (the Ruby behavior is wrong but is the
+#             compatibility rule for this port; Go must still match it, so it
+#             still fails the gate — the class records WHY, not a pass).
+#   severity  "accepted" does not fail the gate; "gate" does. Optional;
+#             defaults to "accepted".
+#   record    REQUIRED. The section in ../intentional-differences.md that
+#             records Marcus's decision. Loading refuses an entry without it —
+#             ../intentional-differences.md § "The record" says a comparator
+#             exception with no written record is a difference-hiding machine,
+#             and this is that rule made mechanical.
+#
+# An entry here NEVER silences a finding. The difference is still reported, with
+# its disposition attached; only its severity changes. Suppressing it outright
+# would stop the comparison for that field, which is precisely how a blessed
+# difference stops being watched.
+#
+# Only Marcus adds a line here. An agent that believes a difference is right
+# files a blocked td issue naming him and moves on — see ../PORTING.md,
+# "Never bless Go output".

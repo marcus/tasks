@@ -1,0 +1,272 @@
+{
+  "schema_version": 1,
+  "observation_id": "obs_cli-undo-after-capture",
+  "case_id": "cli-undo-after-capture",
+  "implementation": {
+    "name": "ruby",
+    "version": "5eba4b0d2a52b58bd0ccdc1af7f853f8f37b0a15-dirty",
+    "runtime": "ruby 4.0.6"
+  },
+  "fixture": {
+    "id": "valid/single-task",
+    "class": "valid",
+    "root_sha256": "7d337294166b7b70f585d809cb43d2d76493c489c8fbc18ec4a372ea14e26105",
+    "copy_root": "/tmp/tasks-conformance/cli-undo-after-capture"
+  },
+  "invocation": {
+    "surface": "cli",
+    "argv": [
+      "undo"
+    ],
+    "stdin": {
+      "provided": false,
+      "bytes_base64": ""
+    },
+    "cwd": ".",
+    "env": [
+      {
+        "name": "COLUMNS",
+        "value": "100"
+      },
+      {
+        "name": "HOME",
+        "value": "/tmp/tasks-conformance/cli-undo-after-capture"
+      },
+      {
+        "name": "LANG",
+        "value": "en_US.UTF-8"
+      },
+      {
+        "name": "LC_ALL",
+        "value": "en_US.UTF-8"
+      },
+      {
+        "name": "LINES",
+        "value": "40"
+      },
+      {
+        "name": "TASKS_ARCHIVE",
+        "value": null
+      },
+      {
+        "name": "TASKS_DEVICE",
+        "value": "fixture"
+      },
+      {
+        "name": "TASKS_DIR",
+        "value": "/tmp/tasks-conformance/cli-undo-after-capture"
+      },
+      {
+        "name": "TASKS_FILE",
+        "value": null
+      },
+      {
+        "name": "TASKS_PIN_COALESCE_SCOPE",
+        "value": "pinned-scope"
+      },
+      {
+        "name": "TASKS_PIN_HOSTNAME",
+        "value": "fixture-host"
+      },
+      {
+        "name": "TASKS_PIN_IDS",
+        "value": "bbbb0001"
+      },
+      {
+        "name": "TASKS_PIN_NOW",
+        "value": "2026-03-14T15:09:26Z"
+      },
+      {
+        "name": "TASKS_TIMEZONE",
+        "value": "UTC"
+      },
+      {
+        "name": "TZ",
+        "value": "UTC"
+      },
+      {
+        "name": "XDG_CONFIG_HOME",
+        "value": "/tmp/tasks-conformance/cli-undo-after-capture/.config"
+      },
+      {
+        "name": "XDG_STATE_HOME",
+        "value": "/tmp/tasks-conformance/cli-undo-after-capture/.state"
+      }
+    ],
+    "pins": [
+      {
+        "name": "COLUMNS",
+        "applied": true,
+        "value": "100"
+      },
+      {
+        "name": "LANG",
+        "applied": true,
+        "value": "UTF-8"
+      },
+      {
+        "name": "LC_ALL",
+        "applied": true,
+        "value": "UTF-8"
+      },
+      {
+        "name": "LINES",
+        "applied": true,
+        "value": "40"
+      },
+      {
+        "name": "TASKS_DEVICE",
+        "applied": true,
+        "value": "fixture"
+      },
+      {
+        "name": "TASKS_PIN_COALESCE_SCOPE",
+        "applied": true,
+        "value": "pinned-scope"
+      },
+      {
+        "name": "TASKS_PIN_HOSTNAME",
+        "applied": true,
+        "value": "fixture-host"
+      },
+      {
+        "name": "TASKS_PIN_IDS",
+        "applied": true,
+        "value": "bbbb0001"
+      },
+      {
+        "name": "TASKS_PIN_NOW",
+        "applied": true,
+        "value": "2026-03-14T15:09:26Z"
+      },
+      {
+        "name": "TASKS_TIMEZONE",
+        "applied": true,
+        "value": "UTC"
+      },
+      {
+        "name": "TZ",
+        "applied": true,
+        "value": "UTC"
+      }
+    ],
+    "timeout_ms": 60000
+  },
+  "process": {
+    "exit_status": 1,
+    "signal": null,
+    "timed_out": false,
+    "stdout": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "valid_utf8": true,
+      "bytes_base64": "",
+      "truncated_at_bytes": null,
+      "text": ""
+    },
+    "stderr": {
+      "sha256": "dfbbca1ef3bc31d5705216a8df03b7eb997ba2da0b62e22f71de1d32e720378e",
+      "size_bytes": 16,
+      "valid_utf8": true,
+      "bytes_base64": "bm90aGluZyB0byB1bmRvCg==",
+      "truncated_at_bytes": null,
+      "text": "nothing to undo\n"
+    }
+  },
+  "files": {
+    "mutated": false,
+    "before": [
+      {
+        "role": "store",
+        "path": "tasks.jsonl",
+        "present": true,
+        "sha256": "6f1ce7683239606fb0c73730bb5173188a05c55f3512ef927f6534a69013bd60",
+        "size_bytes": 126,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InRhc2siLCJpZCI6IjAwMDAwMDAxIiwic3RhdGUiOiJORVhUIiwidGl0bGUiOiJXYXRlciB0aGUgb2ZmaWNlIHBsYW50cyIsInRhZ3MiOlsiQGhvbWUiXX0K",
+        "line_count": 2,
+        "symlink_target": null
+      }
+    ],
+    "after": [
+      {
+        "role": "lock",
+        "path": ".tasks.jsonl.lock",
+        "present": true,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": 0,
+        "mode": "0644",
+        "content_base64": "",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "store",
+        "path": "tasks.jsonl",
+        "present": true,
+        "sha256": "6f1ce7683239606fb0c73730bb5173188a05c55f3512ef927f6534a69013bd60",
+        "size_bytes": 126,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InRhc2siLCJpZCI6IjAwMDAwMDAxIiwic3RhdGUiOiJORVhUIiwidGl0bGUiOiJXYXRlciB0aGUgb2ZmaWNlIHBsYW50cyIsInRhZ3MiOlsiQGhvbWUiXX0K",
+        "line_count": 2,
+        "symlink_target": null
+      }
+    ],
+    "deltas": [
+      {
+        "path": ".tasks.jsonl.lock",
+        "kind": "created",
+        "before_sha256": null,
+        "after_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    ],
+    "rolled_back": null
+  },
+  "journal": {
+    "present": false,
+    "version": null,
+    "cursor": null,
+    "states": [],
+    "index": {
+      "role": "journal_index",
+      "path": ".state/tasks/journal/8662adcb22943b42/index.json",
+      "present": false,
+      "sha256": null,
+      "size_bytes": null,
+      "mode": null,
+      "content_base64": null,
+      "line_count": null,
+      "symlink_target": null
+    },
+    "blob_count": null,
+    "blob_sha256": []
+  },
+  "revisions": {
+    "store": "s1.4399ad032cedb74b235b43c2e6057a80ca361437b0148c7c00a3f157dc8e1f5f",
+    "resources": [
+      {
+        "id": "00000001",
+        "kind": "task",
+        "revision": "v1.1d5571d276405d4e57ce2215cf70da9a5b0309b58839089bb5568429ad599fbf.30286302e69bebccd91b0cd2637c77dd90ee757e1d211cf93bee710b294c59ee.f59e959ae56429e4170cae3c3305ce2312fd906ac8d1803dda93b4dcc381b869"
+      }
+    ],
+    "touched_ids": [],
+    "http_etag": null
+  },
+  "http": [],
+  "environment": {
+    "tzdb_version": "Zoneinfo DataSource: /usr/share/zoneinfo",
+    "platform": "arm64-darwin23",
+    "filesystem": "/",
+    "locale": "UTF-8",
+    "umask": "0022"
+  },
+  "metrics": {
+    "wall_ms": 0,
+    "user_cpu_ms": null,
+    "sys_cpu_ms": null,
+    "peak_rss_bytes": null,
+    "bytes_written": 0
+  },
+  "notes": "no journal exists yet: undo must refuse rather than invent one"
+}

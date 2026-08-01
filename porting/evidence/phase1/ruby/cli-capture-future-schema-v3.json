@@ -1,0 +1,249 @@
+{
+  "schema_version": 1,
+  "observation_id": "obs_cli-capture-future-schema-v3",
+  "case_id": "cli-capture-future-schema-v3",
+  "implementation": {
+    "name": "ruby",
+    "version": "5eba4b0d2a52b58bd0ccdc1af7f853f8f37b0a15-dirty",
+    "runtime": "ruby 4.0.6"
+  },
+  "fixture": {
+    "id": "compat/future-schema-v3",
+    "class": "compat",
+    "root_sha256": "e2bc693a34d31446e37f7d619f5fbcae915c4009313562eb8b832d60fe233382",
+    "copy_root": "/tmp/tasks-conformance/cli-capture-future-schema-v3"
+  },
+  "invocation": {
+    "surface": "cli",
+    "argv": [
+      "capture",
+      "must not be written"
+    ],
+    "stdin": {
+      "provided": false,
+      "bytes_base64": ""
+    },
+    "cwd": ".",
+    "env": [
+      {
+        "name": "COLUMNS",
+        "value": "100"
+      },
+      {
+        "name": "HOME",
+        "value": "/tmp/tasks-conformance/cli-capture-future-schema-v3"
+      },
+      {
+        "name": "LANG",
+        "value": "en_US.UTF-8"
+      },
+      {
+        "name": "LC_ALL",
+        "value": "en_US.UTF-8"
+      },
+      {
+        "name": "LINES",
+        "value": "40"
+      },
+      {
+        "name": "TASKS_ARCHIVE",
+        "value": null
+      },
+      {
+        "name": "TASKS_DEVICE",
+        "value": "fixture"
+      },
+      {
+        "name": "TASKS_DIR",
+        "value": "/tmp/tasks-conformance/cli-capture-future-schema-v3"
+      },
+      {
+        "name": "TASKS_FILE",
+        "value": null
+      },
+      {
+        "name": "TASKS_PIN_COALESCE_SCOPE",
+        "value": "pinned-scope"
+      },
+      {
+        "name": "TASKS_PIN_HOSTNAME",
+        "value": "fixture-host"
+      },
+      {
+        "name": "TASKS_PIN_IDS",
+        "value": "bbbb0001"
+      },
+      {
+        "name": "TASKS_PIN_NOW",
+        "value": "2026-03-14T15:09:26Z"
+      },
+      {
+        "name": "TASKS_TIMEZONE",
+        "value": "UTC"
+      },
+      {
+        "name": "TZ",
+        "value": "UTC"
+      },
+      {
+        "name": "XDG_CONFIG_HOME",
+        "value": "/tmp/tasks-conformance/cli-capture-future-schema-v3/.config"
+      },
+      {
+        "name": "XDG_STATE_HOME",
+        "value": "/tmp/tasks-conformance/cli-capture-future-schema-v3/.state"
+      }
+    ],
+    "pins": [
+      {
+        "name": "COLUMNS",
+        "applied": true,
+        "value": "100"
+      },
+      {
+        "name": "LANG",
+        "applied": true,
+        "value": "UTF-8"
+      },
+      {
+        "name": "LC_ALL",
+        "applied": true,
+        "value": "UTF-8"
+      },
+      {
+        "name": "LINES",
+        "applied": true,
+        "value": "40"
+      },
+      {
+        "name": "TASKS_DEVICE",
+        "applied": true,
+        "value": "fixture"
+      },
+      {
+        "name": "TASKS_PIN_COALESCE_SCOPE",
+        "applied": true,
+        "value": "pinned-scope"
+      },
+      {
+        "name": "TASKS_PIN_HOSTNAME",
+        "applied": true,
+        "value": "fixture-host"
+      },
+      {
+        "name": "TASKS_PIN_IDS",
+        "applied": true,
+        "value": "bbbb0001"
+      },
+      {
+        "name": "TASKS_PIN_NOW",
+        "applied": true,
+        "value": "2026-03-14T15:09:26Z"
+      },
+      {
+        "name": "TASKS_TIMEZONE",
+        "applied": true,
+        "value": "UTC"
+      },
+      {
+        "name": "TZ",
+        "applied": true,
+        "value": "UTC"
+      }
+    ],
+    "timeout_ms": 60000
+  },
+  "process": {
+    "exit_status": 1,
+    "signal": null,
+    "timed_out": false,
+    "stdout": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "valid_utf8": true,
+      "bytes_base64": "",
+      "truncated_at_bytes": null,
+      "text": ""
+    },
+    "stderr": {
+      "sha256": "13197e35edfc4c32e135d7c28130796c04d482de1871899fa5ea04fdbd92918b",
+      "size_bytes": 104,
+      "valid_utf8": true,
+      "bytes_base64": "dW5zdXBwb3J0ZWQgbWV0YSB2ZXJzaW9uIDMgKGV4cGVjdGVkIDIpIOKAlCB0aGlzIGJ1aWxkIGNhbm5vdCByZWFkIHRoaXMgdGFzayBmaWxlIChub3RoaW5nIHdhcyB3cml0dGVuKQo=",
+      "truncated_at_bytes": null,
+      "text": "unsupported meta version 3 (expected 2) — this build cannot read this task file (nothing was written)\n"
+    }
+  },
+  "files": {
+    "mutated": false,
+    "before": [
+      {
+        "role": "store",
+        "path": "tasks.jsonl",
+        "present": true,
+        "sha256": "f6e61e3ae473ae675be734e7704889506681c0b0a1287f1bcff1f797e105b4f8",
+        "size_bytes": 208,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjN9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImIwMDAwNTAxIiwidGl0bGUiOiJOZXh0IEFjdGlvbnMifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJiMDAwMDUwMiIsInBhcmVudCI6ImIwMDAwNTAxIiwic3RhdGUiOiJORVhUIiwidGl0bGUiOiJDb2xsZWN0IHRoZSBkcnkgY2xlYW5pbmciLCJ0YWdzIjpbIkBlcnJhbmRzIl19Cg==",
+        "line_count": 3,
+        "symlink_target": null
+      }
+    ],
+    "after": [
+      {
+        "role": "store",
+        "path": "tasks.jsonl",
+        "present": true,
+        "sha256": "f6e61e3ae473ae675be734e7704889506681c0b0a1287f1bcff1f797e105b4f8",
+        "size_bytes": 208,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjN9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImIwMDAwNTAxIiwidGl0bGUiOiJOZXh0IEFjdGlvbnMifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJiMDAwMDUwMiIsInBhcmVudCI6ImIwMDAwNTAxIiwic3RhdGUiOiJORVhUIiwidGl0bGUiOiJDb2xsZWN0IHRoZSBkcnkgY2xlYW5pbmciLCJ0YWdzIjpbIkBlcnJhbmRzIl19Cg==",
+        "line_count": 3,
+        "symlink_target": null
+      }
+    ],
+    "deltas": [],
+    "rolled_back": null
+  },
+  "journal": {
+    "present": false,
+    "version": null,
+    "cursor": null,
+    "states": [],
+    "index": {
+      "role": "journal_index",
+      "path": ".state/tasks/journal/95e67dccb6dc0049/index.json",
+      "present": false,
+      "sha256": null,
+      "size_bytes": null,
+      "mode": null,
+      "content_base64": null,
+      "line_count": null,
+      "symlink_target": null
+    },
+    "blob_count": null,
+    "blob_sha256": []
+  },
+  "revisions": {
+    "store": "s1.e921abe19150904bacd522b6e6560d82d601d790dd7fe7f9f3c647569f954526",
+    "resources": [],
+    "touched_ids": [],
+    "http_etag": null
+  },
+  "http": [],
+  "environment": {
+    "tzdb_version": "Zoneinfo DataSource: /usr/share/zoneinfo",
+    "platform": "arm64-darwin23",
+    "filesystem": "/",
+    "locale": "UTF-8",
+    "umask": "0022"
+  },
+  "metrics": {
+    "wall_ms": 0,
+    "user_cpu_ms": null,
+    "sys_cpu_ms": null,
+    "peak_rss_bytes": null,
+    "bytes_written": 0
+  },
+  "notes": "refused mutation: an unsupported schema version is refused on write, nothing written | probe read status: unsupported_schema"
+}

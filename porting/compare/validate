@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""validate — check every observation in a set against observations.schema.json.
+
+    porting/compare/validate porting/evidence/phase1/ruby
+    porting/compare/validate --quiet observations.jsonl
+
+Exit 0 when every record validates, 1 when any record does not, 2 on a usage or
+environment error.
+
+Kept separate from the comparator on purpose. The comparator must run with no
+dependency beyond a stock Ruby, because it is the thing CI and every future
+slice call; schema validation is a one-off provenance check run when evidence is
+captured, so it may reach for `jsonschema` (Draft202012Validator).
+
+An observation that does not validate is not evidence. A comparison over
+records the schema does not recognise proves nothing about the port, only that
+two malformed files agreed.
+"""
+
+import argparse
+import json
+import pathlib
+import sys
+
+REPO = pathlib.Path(__file__).resolve().parents[2]
+SCHEMA = REPO / "porting" / "specs" / "observations.schema.json"
+
+
+def load(path: pathlib.Path):
+    if path.is_dir():
+        for f in sorted(path.glob("*.json")):
+            yield str(f), json.loads(f.read_text())
+    else:
+        for i, line in enumerate(path.read_text().splitlines(), 1):
+            line = line.strip()
+            if line:
+                yield f"{path}:{i}", json.loads(line)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("path", help="directory of <case_id>.json, or a JSONL file")
+    ap.add_argument("--quiet", action="store_true")
+    args = ap.parse_args()
+
+    try:
+        from jsonschema import Draft202012Validator
+    except ImportError:
+        print("validate: jsonschema is not installed (pip install jsonschema)", file=sys.stderr)
+        return 2
+
+    path = pathlib.Path(args.path)
+    if not path.exists():
+        print(f"validate: no such observation set: {path}", file=sys.stderr)
+        return 2
+
+    validator = Draft202012Validator(json.loads(SCHEMA.read_text()))
+    total = 0
+    bad = 0
+    for name, record in load(path):
+        total += 1
+        errors = sorted(validator.iter_errors(record), key=lambda e: list(e.absolute_path))
+        if errors:
+            bad += 1
+            print(f"INVALID {name}", file=sys.stderr)
+            for e in errors[:5]:
+                where = "$" + "".join(f"[{p!r}]" for p in e.absolute_path)
+                print(f"  {where}: {e.message}", file=sys.stderr)
+
+    if not total:
+        print(f"validate: no observations found in {path}", file=sys.stderr)
+        return 2
+    if not args.quiet:
+        print(f"validate: {total - bad}/{total} observations valid against {SCHEMA.name}")
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

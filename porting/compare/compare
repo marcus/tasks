@@ -1,0 +1,91 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# compare — diff two observation sets and classify every difference.
+#
+#   porting/compare/compare BASELINE CANDIDATE
+#   porting/compare/compare --json porting/evidence/phase1/ruby /tmp/go
+#   porting/compare/compare --cross-path --json a.jsonl b.jsonl
+#
+# BASELINE and CANDIDATE are each either a directory of <case_id>.json (what
+# `run --out DIR` writes) or a JSONL file (what `run` streams to stdout).
+#
+# Exit status — usable as a gate by CI and by an agent without parsing anything:
+#   0  every paired case matched, or differed only in ways Marcus has recorded
+#      as intentional in porting/intentional-differences.md
+#   1  at least one gate-failing difference
+#   2  usage or configuration error
+#
+# The contract this implements is porting/specs/errors.md (what is contract and
+# what is formatting) and porting/specs/determinism.md (the four normalizations).
+# The classification is the playbook's step 6. See porting/compare/README.md.
+
+require "optparse"
+require_relative "lib/comparator"
+require_relative "lib/report"
+
+options = {
+  format: "text",
+  cross_path: false,
+  dispositions: File.join(__dir__, "dispositions.jsonl"),
+  only: [],
+  out: nil
+}
+
+parser = OptionParser.new do |o|
+  o.banner = "usage: compare [options] BASELINE CANDIDATE"
+  o.on("--json", "structured report on stdout (default: human text)") { options[:format] = "json" }
+  o.on("--out FILE", "write the report to FILE as well as stdout") { |v| options[:out] = v }
+  o.on("--case ID", "compare only this case (repeatable)") { |v| options[:only] << v }
+  o.on("--cross-path", "the two sides ran at different absolute paths: exclude journal.index",
+       "and record the exclusion in the report") { options[:cross_path] = true }
+  o.on("--dispositions FILE", "machine-readable intentional-difference register") { |v| options[:dispositions] = v }
+  o.on("--no-dispositions", "compare with no accepted differences at all") { options[:dispositions] = nil }
+  o.on("-h", "--help") { puts o; exit 0 }
+end
+
+begin
+  parser.parse!
+rescue OptionParser::ParseError => e
+  warn "compare: #{e.message}"
+  exit 2
+end
+
+if ARGV.length != 2
+  warn parser.help
+  exit 2
+end
+
+baseline_path, candidate_path = ARGV
+[baseline_path, candidate_path].each do |p|
+  next if File.exist?(p)
+
+  warn "compare: no such observation set: #{p}"
+  exit 2
+end
+
+begin
+  baseline = Conformance::ObservationSet.load(baseline_path)
+  candidate = Conformance::ObservationSet.load(candidate_path)
+  dispositions = Conformance::Dispositions.load(options[:dispositions])
+rescue JSON::ParserError, ArgumentError => e
+  warn "compare: #{e.message}"
+  exit 2
+end
+
+if baseline.size.zero? && candidate.size.zero?
+  warn "compare: both observation sets are empty"
+  exit 2
+end
+
+report = Conformance::Comparator.new(
+  baseline: baseline, candidate: candidate,
+  dispositions: dispositions, cross_path: options[:cross_path],
+  only: options[:only]
+).run
+
+rendered = options[:format] == "json" ? Conformance::Report.json(report) : Conformance::Report.text(report)
+print rendered
+File.write(options[:out], Conformance::Report.json(report)) if options[:out]
+
+exit report.dig("gate", "exit_status")

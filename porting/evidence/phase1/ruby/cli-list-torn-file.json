@@ -1,0 +1,266 @@
+{
+  "schema_version": 1,
+  "observation_id": "obs_cli-list-torn-file",
+  "case_id": "cli-list-torn-file",
+  "implementation": {
+    "name": "ruby",
+    "version": "5eba4b0d2a52b58bd0ccdc1af7f853f8f37b0a15-dirty",
+    "runtime": "ruby 4.0.6"
+  },
+  "fixture": {
+    "id": "adversarial/mid-write-torn-file",
+    "class": "adversarial",
+    "root_sha256": "1e603c26c3fe47d67bea9c5d7bf73d637b30925093d8c8aaee358bcd83f25427",
+    "copy_root": "/tmp/tasks-conformance/cli-list-torn-file"
+  },
+  "invocation": {
+    "surface": "cli",
+    "argv": [
+      "list"
+    ],
+    "stdin": {
+      "provided": false,
+      "bytes_base64": ""
+    },
+    "cwd": ".",
+    "env": [
+      {
+        "name": "COLUMNS",
+        "value": "100"
+      },
+      {
+        "name": "HOME",
+        "value": "/tmp/tasks-conformance/cli-list-torn-file"
+      },
+      {
+        "name": "LANG",
+        "value": "en_US.UTF-8"
+      },
+      {
+        "name": "LC_ALL",
+        "value": "en_US.UTF-8"
+      },
+      {
+        "name": "LINES",
+        "value": "40"
+      },
+      {
+        "name": "TASKS_ARCHIVE",
+        "value": null
+      },
+      {
+        "name": "TASKS_DEVICE",
+        "value": "fixture"
+      },
+      {
+        "name": "TASKS_DIR",
+        "value": "/tmp/tasks-conformance/cli-list-torn-file"
+      },
+      {
+        "name": "TASKS_FILE",
+        "value": null
+      },
+      {
+        "name": "TASKS_PIN_COALESCE_SCOPE",
+        "value": "pinned-scope"
+      },
+      {
+        "name": "TASKS_PIN_HOSTNAME",
+        "value": "fixture-host"
+      },
+      {
+        "name": "TASKS_PIN_IDS",
+        "value": "bbbb0001"
+      },
+      {
+        "name": "TASKS_PIN_NOW",
+        "value": "2026-03-14T15:09:26Z"
+      },
+      {
+        "name": "TASKS_TIMEZONE",
+        "value": "UTC"
+      },
+      {
+        "name": "TZ",
+        "value": "UTC"
+      },
+      {
+        "name": "XDG_CONFIG_HOME",
+        "value": "/tmp/tasks-conformance/cli-list-torn-file/.config"
+      },
+      {
+        "name": "XDG_STATE_HOME",
+        "value": "/tmp/tasks-conformance/cli-list-torn-file/.state"
+      }
+    ],
+    "pins": [
+      {
+        "name": "COLUMNS",
+        "applied": true,
+        "value": "100"
+      },
+      {
+        "name": "LANG",
+        "applied": true,
+        "value": "UTF-8"
+      },
+      {
+        "name": "LC_ALL",
+        "applied": true,
+        "value": "UTF-8"
+      },
+      {
+        "name": "LINES",
+        "applied": true,
+        "value": "40"
+      },
+      {
+        "name": "TASKS_DEVICE",
+        "applied": true,
+        "value": "fixture"
+      },
+      {
+        "name": "TASKS_PIN_COALESCE_SCOPE",
+        "applied": true,
+        "value": "pinned-scope"
+      },
+      {
+        "name": "TASKS_PIN_HOSTNAME",
+        "applied": true,
+        "value": "fixture-host"
+      },
+      {
+        "name": "TASKS_PIN_IDS",
+        "applied": true,
+        "value": "bbbb0001"
+      },
+      {
+        "name": "TASKS_PIN_NOW",
+        "applied": true,
+        "value": "2026-03-14T15:09:26Z"
+      },
+      {
+        "name": "TASKS_TIMEZONE",
+        "applied": true,
+        "value": "UTC"
+      },
+      {
+        "name": "TZ",
+        "applied": true,
+        "value": "UTC"
+      }
+    ],
+    "timeout_ms": 60000
+  },
+  "process": {
+    "exit_status": 0,
+    "signal": null,
+    "timed_out": false,
+    "stdout": {
+      "sha256": "447cceeb983820d955897e6ae43c9a06ea89fbebae4d95aa71251921645c8ea7",
+      "size_bytes": 140,
+      "valid_utf8": true,
+      "bytes_base64": "SU5CT1gKICBSZXBsYWNlIHRoZSBkb29yIGhhbmRsZSAgQGhvbWUKClRPRE8KICBEcmFmdCB0aGUgbmVpZ2hib3VyaG9vZCBuZXdzbGV0dGVyICBAY29tcHV0ZXIgIDYvMzAKCk5FWFQKICBCb29rIHRoZSBib2lsZXIgc2VydmljZSAgQGNhbGxzCgo=",
+      "truncated_at_bytes": null,
+      "text": "INBOX\n  Replace the door handle  @home\n\nTODO\n  Draft the neighbourhood newsletter  @computer  6/30\n\nNEXT\n  Book the boiler service  @calls\n\n"
+    },
+    "stderr": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "valid_utf8": true,
+      "bytes_base64": "",
+      "truncated_at_bytes": null,
+      "text": ""
+    }
+  },
+  "files": {
+    "mutated": false,
+    "before": [
+      {
+        "role": "store",
+        "path": "tasks.jsonl",
+        "present": true,
+        "sha256": "22a97bfc09268309e088e540eb8bef1b44dd87b5ef48306f2cf5c86622ecf63d",
+        "size_bytes": 763,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImUwMDAwMDAxIiwidGl0bGUiOiJJbmJveCJ9CnsidHlwZSI6InRhc2siLCJpZCI6IjNkNzc1ZTdhIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6Ik5FWFQiLCJ0aXRsZSI6IkJvb2sgdGhlIGJvaWxlciBzZXJ2aWNlIiwidGFncyI6WyJAY2FsbHMiXSwiYm9keSI6IkNhcHR1cmVkIFsyMDI2LTA4LTAxXS4iLCJ1cGRhdGVkIjoiMjAyNi0wOC0wMVQxODoxMTowM1ojZml4dHVyZSJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImU3MWE1ODkzIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IkRyYWZ0IHRoZSBuZWlnaGJvdXJob29kIG5ld3NsZXR0ZXIiLCJ0YWdzIjpbIkBjb21wdXRlciJdLCJkZWFkbGluZSI6IjIwMjYtMDYtMzAiLCJib2R5IjoiQ2FwdHVyZWQgWzIwMjYtMDgtMDFdLiIsInVwZGF0ZWQiOiIyMDI2LTA4LTAxVDE4OjExOjAzWiNmaXh0dXJlIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiZTFiNThmMGIiLCJwYXJlbnQiOiJlMDAwMDAwMSIsInN0YXRlIjoiSU5CT1giLCJ0aXRsZSI6IlJlcGxhY2UgdGhlIGRvb3IgaGFuZGxlIiwidGFncyI6WyJAaG9tZSJdLCJib2R5IjoiQ2FwdHVyZWQgWzIwMjYtMDgtMDFdLiIsInVwZGF0ZWQiOiIyMDI2LTA4LTAxVDE4OjExOjAzWiNmaXh0dXJlIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiZTAwMDAwMDIiLCJ0aXRsZSI6Ik5leHQgQWN0aW9ucyJ9CnsidHlwZSI6InNlYw==",
+        "line_count": 6,
+        "symlink_target": null
+      }
+    ],
+    "after": [
+      {
+        "role": "lock",
+        "path": ".tasks.jsonl.lock",
+        "present": true,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": 0,
+        "mode": "0644",
+        "content_base64": "",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "store",
+        "path": "tasks.jsonl",
+        "present": true,
+        "sha256": "22a97bfc09268309e088e540eb8bef1b44dd87b5ef48306f2cf5c86622ecf63d",
+        "size_bytes": 763,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImUwMDAwMDAxIiwidGl0bGUiOiJJbmJveCJ9CnsidHlwZSI6InRhc2siLCJpZCI6IjNkNzc1ZTdhIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6Ik5FWFQiLCJ0aXRsZSI6IkJvb2sgdGhlIGJvaWxlciBzZXJ2aWNlIiwidGFncyI6WyJAY2FsbHMiXSwiYm9keSI6IkNhcHR1cmVkIFsyMDI2LTA4LTAxXS4iLCJ1cGRhdGVkIjoiMjAyNi0wOC0wMVQxODoxMTowM1ojZml4dHVyZSJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImU3MWE1ODkzIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IkRyYWZ0IHRoZSBuZWlnaGJvdXJob29kIG5ld3NsZXR0ZXIiLCJ0YWdzIjpbIkBjb21wdXRlciJdLCJkZWFkbGluZSI6IjIwMjYtMDYtMzAiLCJib2R5IjoiQ2FwdHVyZWQgWzIwMjYtMDgtMDFdLiIsInVwZGF0ZWQiOiIyMDI2LTA4LTAxVDE4OjExOjAzWiNmaXh0dXJlIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiZTFiNThmMGIiLCJwYXJlbnQiOiJlMDAwMDAwMSIsInN0YXRlIjoiSU5CT1giLCJ0aXRsZSI6IlJlcGxhY2UgdGhlIGRvb3IgaGFuZGxlIiwidGFncyI6WyJAaG9tZSJdLCJib2R5IjoiQ2FwdHVyZWQgWzIwMjYtMDgtMDFdLiIsInVwZGF0ZWQiOiIyMDI2LTA4LTAxVDE4OjExOjAzWiNmaXh0dXJlIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiZTAwMDAwMDIiLCJ0aXRsZSI6Ik5leHQgQWN0aW9ucyJ9CnsidHlwZSI6InNlYw==",
+        "line_count": 6,
+        "symlink_target": null
+      }
+    ],
+    "deltas": [
+      {
+        "path": ".tasks.jsonl.lock",
+        "kind": "created",
+        "before_sha256": null,
+        "after_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    ],
+    "rolled_back": null
+  },
+  "journal": {
+    "present": false,
+    "version": null,
+    "cursor": null,
+    "states": [],
+    "index": {
+      "role": "journal_index",
+      "path": ".state/tasks/journal/db34bf469e35494e/index.json",
+      "present": false,
+      "sha256": null,
+      "size_bytes": null,
+      "mode": null,
+      "content_base64": null,
+      "line_count": null,
+      "symlink_target": null
+    },
+    "blob_count": null,
+    "blob_sha256": []
+  },
+  "revisions": {
+    "store": "s1.fb6432d5552f0aeb75d02a56e053c94723f9afe61f85d3a736aa0394fb57281c",
+    "resources": [],
+    "touched_ids": [],
+    "http_etag": null
+  },
+  "http": [],
+  "environment": {
+    "tzdb_version": "Zoneinfo DataSource: /usr/share/zoneinfo",
+    "platform": "arm64-darwin23",
+    "filesystem": "/",
+    "locale": "UTF-8",
+    "umask": "0022"
+  },
+  "metrics": {
+    "wall_ms": 0,
+    "user_cpu_ms": null,
+    "sys_cpu_ms": null,
+    "peak_rss_bytes": null,
+    "bytes_written": 0
+  },
+  "notes": "reads tolerate a torn store and silently omit the torn record | probe read status: store_invalid"
+}

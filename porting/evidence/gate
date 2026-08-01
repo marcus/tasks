@@ -1,0 +1,174 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# gate — the Phase 1 acceptance criterion, as one re-runnable command.
+#
+#   porting/evidence/gate                # run it, print the result
+#   porting/evidence/gate --json         # machine-readable result
+#   porting/evidence/gate --out DIR      # also write every comparison report
+#
+# For each seeded mismatch class it stands up a hypothetical Go implementation
+# by perturbing the committed Ruby baseline, runs the comparator, and asserts
+# THREE things — not one:
+#
+#   1. the mismatch was reported at all;
+#   2. it was reported on the EXPECTED field, not incidentally somewhere else;
+#   3. it was classified correctly.
+#
+# Asserting only (1) is how a gate passes for the wrong reason: a comparator
+# that reported every case as different would satisfy it perfectly.
+#
+# The negative control is asserted the other way round — it must produce NO
+# finding — because an over-strict comparator is just as useless as a blind one,
+# and it fails in a way that looks like diligence.
+#
+# Exit 0 when every expectation held, 1 otherwise, 2 on a setup error.
+
+require "fileutils"
+require "json"
+require "optparse"
+require "rbconfig"
+require "tmpdir"
+
+REPO = File.expand_path("../..", __dir__)
+COMPARE = File.join(REPO, "porting", "compare", "compare")
+SEED = File.join(REPO, "porting", "compare", "seed")
+AUDIT = File.join(REPO, "porting", "compare", "audit")
+BASELINE = File.join(__dir__, "phase1", "ruby")
+
+# The five classes named in the epic's gate, plus the negative control.
+#
+# `field` is matched as a prefix so a case can report several related fields
+# (a store byte change legitimately moves the journal blob and index with it);
+# what matters is that the EXPECTED field is among them.
+EXPECTATIONS = [
+  { seed: "exit-status", gate_class: "exit status", case_id: "cli-undo-after-capture",
+    field: "process.exit_status", klass: "go_defect", dimension: "cli" },
+  { seed: "json-output", gate_class: "JSON output", case_id: "cli-list-json-small-gtd",
+    field: "process.stdout (json)", klass: "go_defect", dimension: "cli" },
+  { seed: "store-bytes", gate_class: "write bytes", case_id: "cli-capture-small-gtd",
+    field: "files.after[tasks.jsonl].sha256", klass: "go_defect", dimension: "files" },
+  { seed: "revision-token", gate_class: "revision token", case_id: "cli-list-stale-revision",
+    field: "revisions.resources[", klass: "go_defect", dimension: "revisions" },
+  { seed: "rollback", gate_class: "rollback behavior", case_id: "cli-capture-torn-file",
+    field: "process.stderr (bytes)", klass: "go_defect", dimension: "cli",
+    caveat: "detected as a stderr byte difference, NOT as a labelled rollback: files.rolled_back is null " \
+            "on both sides because the CLI has no machine-readable rollback signal" },
+  { seed: "json-key-order", gate_class: "negative control: stdout JSON key order", negative: true,
+    case_id: "cli-list-json-small-gtd" }
+].freeze
+
+options = { format: "text", out: nil }
+OptionParser.new do |o|
+  o.banner = "usage: gate [--json] [--out DIR]"
+  o.on("--json") { options[:format] = "json" }
+  o.on("--out DIR", "write each comparison report as DIR/<seed>.json") { |v| options[:out] = v }
+  o.on("-h", "--help") { puts o; exit 0 }
+end.parse!
+
+unless File.directory?(BASELINE)
+  warn "gate: no baseline at #{BASELINE}; run porting/evidence/capture first"
+  exit 2
+end
+
+FileUtils.mkdir_p(options[:out]) if options[:out]
+work = Dir.mktmpdir("phase1-gate")
+results = []
+
+begin
+  # Self-comparison first. The baseline must match itself, or every result below
+  # is noise: a comparator that reports differences between a set and itself
+  # would "detect" every seed for the wrong reason.
+  self_report = JSON.parse(`#{RbConfig.ruby.inspect} #{COMPARE.inspect} --json #{BASELINE.inspect} #{BASELINE.inspect}`)
+  results << {
+    "check" => "self-comparison",
+    "gate_class" => "control: the baseline matches itself",
+    "passed" => self_report.dig("summary", "gate_findings").zero?,
+    "detail" => "#{self_report.dig("summary", "matched")}/#{self_report.dig("summary", "cases")} cases match, " \
+                "#{self_report.dig("summary", "gate_findings")} gate findings"
+  }
+
+  EXPECTATIONS.each do |exp|
+    dir = File.join(work, exp[:seed])
+    unless system(RbConfig.ruby, SEED, "--mismatch", exp[:seed], BASELINE, dir, err: File::NULL)
+      results << { "check" => exp[:seed], "gate_class" => exp[:gate_class], "passed" => false,
+                   "detail" => "seed failed to apply" }
+      next
+    end
+
+    report = JSON.parse(`#{RbConfig.ruby.inspect} #{COMPARE.inspect} --json #{BASELINE.inspect} #{dir.inspect}`)
+    File.write(File.join(options[:out], "#{exp[:seed]}.json"), "#{JSON.pretty_generate(report)}\n") if options[:out]
+
+    gate_findings = report["cases"].flat_map { |c| c["findings"] }.select { |f| f["severity"] == "gate" }
+
+    if exp[:negative]
+      passed = gate_findings.empty?
+      results << {
+        "check" => exp[:seed], "gate_class" => exp[:gate_class], "negative_control" => true,
+        "passed" => passed,
+        "detail" => passed ? "no finding, as required" : "reported #{gate_findings.length} finding(s) it must not",
+        "findings" => gate_findings.map { |f| f["field"] }
+      }
+      next
+    end
+
+    match = gate_findings.find do |f|
+      f["case_id"] == exp[:case_id] && f["field"].start_with?(exp[:field]) &&
+        f["class"] == exp[:klass] && f["dimension"] == exp[:dimension]
+    end
+    # Every seed touches exactly one case; a finding anywhere else means the
+    # perturbation leaked and the detection cannot be attributed to it.
+    leaked = gate_findings.map { |f| f["case_id"] }.uniq - [exp[:case_id]]
+
+    results << {
+      "check" => exp[:seed], "gate_class" => exp[:gate_class],
+      "passed" => !match.nil? && leaked.empty?,
+      "expected" => { "case_id" => exp[:case_id], "field" => exp[:field],
+                      "class" => exp[:klass], "dimension" => exp[:dimension] },
+      "reported_fields" => gate_findings.map { |f| "#{f["dimension"]}: #{f["field"]}" },
+      "leaked_into_other_cases" => leaked,
+      "caveat" => exp[:caveat],
+      "detail" => match ? "reported as [#{match["class"]}] #{match["dimension"]}: #{match["field"]}" \
+                          "#{" (#{gate_findings.length} findings in total for this case)" if gate_findings.length > 1}"
+                        : "NOT reported on the expected field"
+    }.compact
+  end
+
+  # Coverage. Not pass/fail for the gate itself — it is the statement of what
+  # the corpus cannot prove, which is the other half of an honest result.
+  audit = JSON.parse(`#{RbConfig.ruby.inspect} #{AUDIT.inspect} --json #{BASELINE.inspect}`)
+ensure
+  FileUtils.remove_entry(work)
+end
+
+passed = results.all? { |r| r["passed"] }
+report = {
+  "gate_version" => 1,
+  "baseline" => "porting/evidence/phase1/ruby",
+  "baseline_commit" => JSON.parse(File.read(File.join(__dir__, "phase1", "provenance.json")))
+                           .dig("repo", "commit"),
+  "checks" => results,
+  "coverage" => audit,
+  "passed" => passed
+}
+
+if options[:format] == "json"
+  puts JSON.pretty_generate(report)
+else
+  puts "Phase 1 gate — seeded-mismatch detection"
+  puts "  baseline: #{report["baseline"]} @ #{report["baseline_commit"][0, 12]}\n\n"
+  results.each do |r|
+    puts "  #{r["passed"] ? "PASS" : "FAIL"}  #{r["gate_class"]}"
+    puts "        #{r["detail"]}"
+    puts "        caveat: #{r["caveat"]}" if r["caveat"]
+    puts "        LEAKED into: #{r["leaked_into_other_cases"].join(", ")}" if
+      r["leaked_into_other_cases"] && !r["leaked_into_other_cases"].empty?
+  end
+  puts "\n  corpus coverage: #{audit["passed"] ? "complete" : "INCOMPLETE — #{audit["gaps"].join(", ")}"}"
+  audit["classes"].each do |c|
+    c["notes"].each { |n| puts "        ! #{c["class"]}: #{n}" }
+  end
+  puts "\n#{passed ? "GATE PASS" : "GATE FAIL"}"
+end
+
+exit(passed ? 0 : 1)

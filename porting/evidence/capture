@@ -1,0 +1,147 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# capture — take the Ruby oracle's baseline, with the provenance that makes it
+# re-capturable and auditable.
+#
+#   porting/evidence/capture                       # re-capture phase1/ruby in place
+#   porting/evidence/capture --check               # re-capture to a temp dir and DIFF
+#   porting/evidence/capture --out DIR --cases F
+#
+# `--check` is the drift detector. It re-runs the corpus against today's Ruby
+# and compares the result to the committed baseline with porting/compare. Exit 0
+# means the oracle still says exactly what the evidence says it said; exit 1
+# means the Ruby CLI's observable behavior changed since the baseline was taken,
+# and every Go slice measured against that baseline is now measuring against a
+# stale oracle. That is playbook § 10 ("scan for drift immediately") reduced to
+# one command.
+
+require "digest"
+require "tmpdir"
+require "fileutils"
+require "json"
+require "optparse"
+require "rbconfig"
+
+REPO = File.expand_path("../..", __dir__)
+RUNNER = File.join(REPO, "porting", "runners", "ruby", "run")
+COMPARE = File.join(REPO, "porting", "compare", "compare")
+FIXTURES = File.join(REPO, "porting", "fixtures")
+DEFAULT_CASES = File.join(REPO, "porting", "runners", "cases", "phase1.jsonl")
+DEFAULT_OUT = File.join(__dir__, "phase1", "ruby")
+DEFAULT_WORK = "/tmp/tasks-conformance"
+
+options = { out: DEFAULT_OUT, cases: DEFAULT_CASES, work: DEFAULT_WORK, check: false }
+OptionParser.new do |o|
+  o.banner = "usage: capture [--check] [--out DIR] [--cases FILE] [--work DIR]"
+  o.on("--check", "re-capture to a temp dir and diff against the committed baseline") { options[:check] = true }
+  o.on("--out DIR") { |v| options[:out] = v }
+  o.on("--cases FILE") { |v| options[:cases] = v }
+  o.on("--work DIR") { |v| options[:work] = v }
+  o.on("-h", "--help") { puts o; exit 0 }
+end.parse!
+
+def sh(*cmd) = `#{cmd.map { |c| "'#{c}'" }.join(" ")} 2>/dev/null`.strip
+
+# A digest over every file in a tree, defined the same way the runner defines
+# fixture.root_sha256: path, NUL, file digest, LF, in ascending path order. It
+# depends on nothing but path strings and file bytes.
+def tree_sha256(root)
+  acc = Digest::SHA256.new
+  Dir.glob("**/*", File::FNM_DOTMATCH, base: root).sort.each do |rel|
+    abs = File.join(root, rel)
+    next unless File.file?(abs) && !File.symlink?(abs)
+
+    acc << "#{rel}\0#{Digest::SHA256.file(abs).hexdigest}\n"
+  end
+  acc.hexdigest
+end
+
+def provenance(options, out_dir)
+  head = sh("git", "-C", REPO, "rev-parse", "HEAD")
+  dirty = sh("git", "-C", REPO, "status", "--porcelain").lines.map { |l| l[3..].to_s.strip }.reject(&:empty?)
+  # The only claim that matters for a baseline's trustworthiness: was the code
+  # under test modified? porting/compare and porting/evidence are the harness,
+  # not the implementation, and are not on bin/tasks' load path.
+  implementation_dirty = dirty.select { |p| p.start_with?("bin/", "lib/") }
+
+  {
+    "provenance_version" => 1,
+    "captured_at" => Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "oracle" => "ruby",
+    "repo" => {
+      "commit" => head,
+      "worktree_dirty" => !dirty.empty?,
+      "dirty_paths" => dirty,
+      "implementation_paths_dirty" => implementation_dirty,
+      "implementation_clean" => implementation_dirty.empty?
+    },
+    "inputs" => {
+      "case_list" => rel(options[:cases]),
+      "case_list_sha256" => Digest::SHA256.file(options[:cases]).hexdigest,
+      "case_count" => File.readlines(options[:cases]).map(&:strip)
+                          .count { |l| !l.empty? && !l.start_with?("#") },
+      "fixture_corpus" => rel(FIXTURES),
+      "fixture_corpus_sha256" => tree_sha256(FIXTURES),
+      "runner" => rel(RUNNER),
+      "runner_sha256" => Digest::SHA256.file(RUNNER).hexdigest,
+      "probe_sha256" => Digest::SHA256.file(File.join(File.dirname(RUNNER), "probe")).hexdigest,
+      "schema_sha256" => Digest::SHA256.file(File.join(REPO, "porting/specs/observations.schema.json")).hexdigest
+    },
+    "invocation" => {
+      "command" => ["porting/runners/ruby/run", "--out", rel(out_dir), "--work", options[:work],
+                    "--pin-identity", "--quiet", rel(options[:cases])],
+      "work_root" => options[:work],
+      "pin_identity" => true
+    },
+    "host" => {
+      "ruby" => RUBY_DESCRIPTION,
+      "ruby_path" => RbConfig.ruby,
+      "platform" => RUBY_PLATFORM,
+      "uname" => sh("uname", "-srm")
+    }
+  }
+end
+
+def rel(path) = path.to_s.sub("#{REPO}/", "")
+
+out_dir = options[:check] ? File.join(Dir.tmpdir, "tasks-baseline-check-#{Process.pid}") : options[:out]
+FileUtils.rm_rf(out_dir)
+FileUtils.mkdir_p(out_dir)
+
+ok = system(RbConfig.ruby, RUNNER, "--out", out_dir, "--work", options[:work],
+            "--pin-identity", "--quiet", options[:cases])
+unless ok
+  warn "capture: the runner reported a failure; see its stderr above"
+  exit 1
+end
+
+prov = provenance(options, options[:out])
+
+if options[:check]
+  baseline = options[:out]
+  unless File.directory?(baseline)
+    warn "capture: no committed baseline at #{baseline}"
+    exit 2
+  end
+  warn "capture --check: comparing today's Ruby against #{rel(baseline)}"
+  warn "  baseline captured at: #{JSON.parse(File.read(File.join(baseline, "..", "provenance.json")))
+                                       .dig("repo", "commit")}" rescue nil
+  warn "  today's commit:       #{prov.dig("repo", "commit")}"
+  drifted = !system(COMPARE, baseline, out_dir)
+  FileUtils.rm_rf(out_dir)
+  if drifted
+    warn "\ncapture --check: THE ORACLE HAS DRIFTED. The Ruby CLI's observable behavior no longer matches"
+    warn "the committed baseline. Every Go slice compared against that baseline is now measuring against a"
+    warn "stale oracle. Decide per playbook § 10: port the change, mark it not-applicable, or block cutover."
+    exit 1
+  end
+  warn "\ncapture --check: no drift."
+  exit 0
+end
+
+File.write(File.join(File.dirname(out_dir), "provenance.json"), "#{JSON.pretty_generate(prov)}\n")
+warn "capture: wrote #{Dir[File.join(out_dir, "*.json")].length} observations to #{rel(out_dir)}"
+warn "capture: wrote #{rel(File.join(File.dirname(out_dir), "provenance.json"))}"
+warn "capture: WARNING — bin/ or lib/ is dirty; this baseline does not correspond to a commit" unless
+  prov.dig("repo", "implementation_clean")
