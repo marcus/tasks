@@ -82,7 +82,20 @@ surface changes, in addition to `ruby test/all.rb`.
    - `report_touched(item.line, json:)` — post-mutation output. Identify
      tasks by **line**, never by title (duplicate titles are legal)
    - `item_json(item)` — the standard JSON shape
-4. **Dispatch**: add the `when` clause + alias, update the usage banner.
+4. **Dispatch**: commands are registry-driven, not a `case` statement. Adding
+   one means four coordinated edits, and `bin/tasks` refuses to start if the
+   first two disagree:
+   - `lib/tasks/cli_commands.rb` — the entry: canonical name, full-spelling
+     aliases, and `json:` (`false` requires a stated `reason`). A `project
+     <verb>` goes in as `"project <verb>"` with aliases like `"project new"`.
+   - `bin/tasks` — a lambda in `HANDLERS` (or `PROJECT_HANDLERS`) keyed by the
+     canonical name, plus the usage banner and `HELP`.
+   - `docs/cli-spec.md` — a row in the command table AND a row in
+     **Structured output (`--json`) coverage**; the two must agree with the
+     registry.
+   - `test/test_cli_json_coverage.rb` — an entry in `RECIPES` showing an
+     invocation that reaches the success path. The suite runs it and requires
+     stdout to be exactly one JSON document.
 5. **Output**: print the resulting headline(s) of every touched task.
    `--json` via `require "json"` at use site (keep startup fast).
 6. **Propagate the docs — a command isn't done until agents can find it:**
@@ -94,6 +107,10 @@ surface changes, in addition to `ruby test/all.rb`.
    - `TASK_AGENT.md` (the `tasks -p` / TUI list-agent prompt): add the command
      to the CLI bullet list
    - usage comment block at the top of `bin/tasks`
+   - `lib/tasks/cli_commands.rb`, the `--json` coverage table in
+     `docs/cli-spec.md`, and `RECIPES` in `test/test_cli_json_coverage.rb` (see
+     step 4) — structured output is a contract, not a flag, and these three are
+     what keep it from drifting
    - when the capability is or should be exposed over HTTP,
      `docs/api/openapi.yaml`, the Rack adapter, and API parity tests
 

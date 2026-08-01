@@ -71,7 +71,15 @@ back a bad one.
 - `bin/tasks agenda` — dated items, soonest first.
 - `bin/tasks show "<ref>"` — one task in full (fields + notes + links).
 - `bin/tasks projects` (`pj`) — projects & areas rolled up over their open tasks.
-- All read commands accept `--json` (a flat, pre-sorted array).
+- All read commands accept `--json` (a flat, pre-sorted array). So does every
+  other command except `-p` and the internal `merge-driver`:
+  `bin/tasks help --json` lists the whole set with each command's `--json`
+  answer, so you never have to guess whether one is scriptable. On failure,
+  branch on the **exit code**, not on stdout: a nonzero exit means the command
+  refused, and stdout is usually empty. `claim`, `release`, `delegate`,
+  `archive`, `undo`, `redo`, and `open` also print an error object
+  (`{"error", "action", "message"}`); most other refusals print prose to stderr
+  only.
 
 **Refs.** A `<ref>` resolves as: a case-insensitive substring of the title; an
 exact `id` (8 hex, stable across edits — wins over title matching); or `L<line>`
@@ -147,7 +155,8 @@ task merely because it also contains task text.
   - review unavailable: `bin/tasks list --unavailable`  (`--deferred` is an alias)
   - review own holds: `bin/tasks list --someday`
   - inspect a task:   `bin/tasks show "<ref>" [--json]`
-  - archive done:     `bin/tasks archive`
+  - archive done:     `bin/tasks archive`  (`--json` → `{roots, records, moved_ids}`)
+  - undo/redo:        `bin/tasks undo` / `bin/tasks redo`  (`--json` → `{action, label}`)
   - create a project: `bin/tasks project create "<title>"`  (new empty project;
                       then `bin/tasks move "<ref>" "<title>"` files tasks into it)
   - complete a project: `bin/tasks project complete "<ref>"`  (closes its whole open subtree)

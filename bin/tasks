@@ -51,7 +51,13 @@
 #   bin/tasks someday <ref>                hold indefinitely (someday/maybe)
 #   bin/tasks activate <ref>               make available now (undefer/resume)
 #   bin/tasks show|s <ref>    show one task in full (headline + notes)
+#   bin/tasks id <ref>        print (minting if absent) a task's stable id
+#   bin/tasks links|urls [<ref>]  links in task notes, grouped by system
+#   bin/tasks open|o <ref> [n]    open a task's link (--print shows it instead)
+#   bin/tasks check|k         validate tasks.jsonl structure (--all-files too)
+#   bin/tasks migrate         migrate a schema v1 store to v2 (--dry-run first)
 #   bin/tasks archive|x       move DONE/CANCELLED items to archive.jsonl
+#   bin/tasks undo|redo       revert/replay the last mutation
 #   bin/tasks list|l [...]    list tasks grouped by state, with filters:
 #     scope:   --open/-o (default) --proposed --done/-d --archived/-x --all/-a
 #     filters: @context /text +tag -A|-B|-C --deferred/-D --unavailable
@@ -63,7 +69,14 @@
 #   bin/tasks config          show where tasks.jsonl/archive.jsonl and the
 #                             agent-memory.md sidecar resolve, and why
 #   bin/tasks merge-driver <base> <ours> <theirs> <path>  internal Git plumbing
-#   bin/tasks help|-h         full command reference
+#   bin/tasks help|-h         full command reference (--json emits the command
+#                             registry: names, aliases, and --json coverage)
+#
+# Every command accepts --json except -p and merge-driver (both opt out with a
+# stated reason in lib/tasks/cli_commands.rb, the registry this file dispatches
+# from). The coverage table lives in docs/cli-spec.md and is enforced by
+# test/test_cli_json_coverage.rb. Refusals: branch on the exit code — only some
+# commands add a JSON error object, and the spec table says which.
 #
 # Shared domain code uses TZInfo for named-zone and DST-safe time resolution.
 # Rack/Puma/OpenAPI remain isolated to bin/tasks-api. Reads one JSON record/line.
@@ -108,6 +121,7 @@ PINNED_NOW = Tasks::Determinism.now
 # ref resolution, and output. (Tasks::Item, Tasks::Format etc. live there.)
 require_relative "../lib/tasks/store"
 require_relative "../lib/tasks/application"
+require_relative "../lib/tasks/cli_commands"
 require_relative "../lib/tasks/opener"
 require_relative "../lib/tasks/timezones"
 
@@ -523,6 +537,21 @@ def delegation_summary(delegation)
   when "claimed"   then "claimed by #{delegation["assignee"]} (#{delegation["mode"]})"
   else delegation["status"].to_s
   end
+end
+
+# The CLI's machine-readable failure envelope, mirroring the delegation
+# conflict object below: the JSON goes to stdout so a scripted caller branches
+# on `error`, the same sentence goes to stderr for a human, and the exit code is
+# the human one. A command that emits a JSON result must emit one of these on
+# its refusal paths too — otherwise --json degrades to "nothing on stdout",
+# which is exactly what a caller cannot tell apart from "no result".
+def json_error!(error, action:, message:, exit_code: 1, **extra)
+  require "json"
+  # `extra` is splatted FIRST so a payload key can never shadow the envelope's
+  # own discriminators, whatever a caller passes.
+  puts JSON.generate({ **extra, error: error, action: action, message: message })
+  warn message
+  exit exit_code
 end
 
 # Typed refusals mapped to the CLI's error contract. A conflict is the
@@ -1390,6 +1419,12 @@ end
 # Open a task's link in the browser. One link opens straight away; several
 # need a pick — a 1-based index or --system — otherwise they're listed with a
 # hint (nothing launches unbidden). --print prints instead of launching.
+#
+# --json reports which link this resolved to (and whether it was launched),
+# because "which URL did that command act on" is a result an agent has to be
+# able to read back. Launching is still a side effect of the command, not of
+# the output format: --json without --print opens the browser exactly as the
+# human form does.
 def cmd_open(args)
   args = args.dup
   flags = {}
@@ -1399,23 +1434,35 @@ def cmd_open(args)
     a = args.shift
     case a
     when "--print", "-p"  then flags["--print"] = true
+    when "--json"         then flags["--json"] = true
     when "--system", "-s" then system_f = take_system_value(args)
-    when /\A-/            then abort "unknown flag: #{a} (open accepts: --print, --system)"
+    when /\A-/            then abort "unknown flag: #{a} (open accepts: --print, --system, --json)"
     else                       rest << a
     end
   end
+  json = flags["--json"]
   ref = rest.shift
-  abort "usage: tasks open <ref> [n] [--system <name>] [--print]" if ref.nil? || ref.strip.empty?
+  abort "usage: tasks open <ref> [n] [--system <name>] [--print] [--json]" if ref.nil? || ref.strip.empty?
   pick = rest.shift&.then { |n| n =~ /\A\d+\z/ ? n.to_i : abort("expected a link number, got: #{n}") }
 
   item = resolve_ref(ref, include_done: true)
   links = store.links(item)
   links = links.select { |l| l.system == system_f } if system_f
-  abort "no links on: #{item.title}#{system_f ? " (system #{system_f})" : ""}" if links.empty?
+  if links.empty?
+    message = "no links on: #{item.title}#{system_f ? " (system #{system_f})" : ""}"
+    json_error!("not_found", action: "open", message: message,
+                id: item.id, line: item.line, system: system_f) if json
+    abort message
+  end
 
   if pick
     # 1-based; 0 would negative-index into the list's tail
-    abort "no link ##{pick} (task has #{links.size})" unless pick >= 1 && links[pick - 1]
+    unless pick >= 1 && links[pick - 1]
+      message = "no link ##{pick} (task has #{links.size})"
+      json_error!("not_found", action: "open", message: message,
+                  id: item.id, line: item.line, links: links.map(&:to_h)) if json
+      abort message
+    end
     link = links[pick - 1]
   elsif links.size == 1
     link = links.first
@@ -1423,17 +1470,34 @@ def cmd_open(args)
     # Echo the --system filter in the hint: the numbers below index the
     # FILTERED list, so the re-run must filter the same way.
     sys = system_f ? " --system #{system_f}" : ""
-    warn "#{links.size} links — pick one: tasks open #{ref.inspect}#{sys} <n>"
+    message = "#{links.size} links — pick one: tasks open #{ref.inspect}#{sys} <n>"
+    json_error!("ambiguous", action: "open", message: message,
+                id: item.id, line: item.line, links: links.map(&:to_h)) if json
+    warn message
     width = links.map { |l| l.system.length }.max
     links.each_with_index { |l, i| warn "  #{i + 1}. #{cyan(l.system.ljust(width))} #{l.url}" }
     exit 1
   end
 
-  if flags["--print"]
-    puts link.url
-  else
-    Tasks::Opener.open_url(link.url) or abort "no browser launcher found (set TASKS_OPENER)"
+  opened = false
+  unless flags["--print"]
+    unless Tasks::Opener.open_url(link.url)
+      message = "no browser launcher found (set TASKS_OPENER)"
+      json_error!("unavailable", action: "open", message: message,
+                  id: item.id, line: item.line, **link.to_h) if json
+      abort message
+    end
+    opened = true
+  end
+
+  if json
+    require "json"
+    puts JSON.generate({ id: item.id, line: item.line, title: item.title,
+                         **link.to_h, opened: opened })
+  elsif opened
     puts "opened #{link.url}"
+  else
+    puts link.url
   end
 end
 
@@ -2393,44 +2457,98 @@ def cmd_delete(args)
   end
 end
 
-def cmd_archive
-  require_current_schema_for_mutation!
-  result = store.archive_swept!
-  if result.is_a?(Tasks::Store::ArchiveRefusal)
-    preview = result.preview
-    if result.reason == :archive_conflict
-      abort [
-        "Archive refused: archive.jsonl has partial or conflicting copies of candidate IDs " \
-          "#{result.details.join(", ")}.",
-        "Live tasks were preserved. Compare `tasks list --done --json` with " \
-          "`tasks list --archived --json`, reconcile the conflicting records, then retry.",
-      ].join("\n")
-    end
+def cmd_archive(args = [])
+  flags, rest = take_flags(args, "--json")
+  abort "usage: tasks archive [--json]" unless rest.empty?
+  json = flags["--json"]
+  require_current_schema_for_mutation!(json: json, action: "archive")
+  # The sweep returns a count; only the pre-sweep preview knows WHICH records
+  # moved, which is what a --json caller needs. Pinning the sweep to that
+  # preview is what makes the reported ids true: a store that changed in
+  # between refuses rather than reporting a stale list. (The day stamp on a
+  # moved record is part of that fingerprint, so a sweep prepared either side
+  # of local midnight also refuses — retrying is always the right answer.)
+  preview = json ? store.archive_preview : nil
+  result = store.archive_swept!(expected_preview: preview)
+  archive_refused!(result, json: json) if result.is_a?(Tasks::Store::ArchiveRefusal)
+  if result == false || store.last_rollback
+    message = "archive failed; live tasks were preserved"
+    json_error!("conflict", action: "archive", reason: "write_failed", message: message) if json
+    mutation_failed(message)
+  end
+
+  roots = result
+  if json
+    require "json"
+    moved = roots.zero? ? [] : preview.candidate_ids
+    # `roots` is what the human line counts; `records` is the whole swept
+    # subtree, which is what `moved_ids` lists. Two names because they are two
+    # numbers — the sibling `project archive --json` calls its record count
+    # `archived`, which is why this one deliberately does not reuse that word.
+    puts JSON.generate(roots: roots, records: moved.length, moved_ids: moved)
+  elsif roots.zero?
+    puts "Nothing to archive (no DONE/CANCELLED items)."
+  else
+    puts "Archived #{roots} item#{roots == 1 ? "" : "s"} to archive.jsonl."
+  end
+end
+
+# The sweep's safety gates, in both dialects. Each refusal names the same fix in
+# prose and carries the CLI's `conflict` error code plus a stable `reason` — the
+# same vocabulary the delegation conflicts and the planned HTTP /archive-sweeps
+# endpoint use, so a caller branches on one shape.
+def archive_refused!(refusal, json:)
+  preview = refusal.preview
+  case refusal.reason
+  when :archive_conflict
+    message = [
+      "Archive refused: archive.jsonl has partial or conflicting copies of candidate IDs " \
+        "#{refusal.details.join(", ")}.",
+      "Live tasks were preserved. Compare `tasks list --done --json` with " \
+        "`tasks list --archived --json`, reconcile the conflicting records, then retry.",
+    ].join("\n")
+    json_error!("conflict", action: "archive", reason: "archive_conflict", message: message,
+                conflicting_ids: refusal.details) if json
+    abort message
+  when :preview_changed
+    # Only the --json path pins a preview, so only it can see this.
+    message = "Archive refused: tasks.jsonl changed while the sweep was being prepared. Retry."
+    json_error!("conflict", action: "archive", reason: "preview_changed", message: message) if json
+    abort message
+  when :open_descendants
     blocked = preview.blocks.map do |block|
       %(#{block.root_title.inspect}: #{block.open_titles.join(", ")})
     end
-    abort [
+    message = [
       "Archive refused: #{preview.blocked_roots} closed root#{preview.blocked_roots == 1 ? " has" : "s have"} " \
         "#{preview.open_descendants} open descendant#{preview.open_descendants == 1 ? "" : "s"}.",
       "Blocked subtree#{blocked.length == 1 ? "" : "s"}: #{blocked.join("; ")}",
       "Complete, cancel, move, or unnest the open work, then retry `tasks archive`.",
     ].join("\n")
-  end
-  mutation_failed("archive failed; live tasks were preserved") if result == false || store.last_rollback
-
-  n = result
-  if n.zero?
-    puts "Nothing to archive (no DONE/CANCELLED items)."
+    if json
+      json_error!("conflict", action: "archive", reason: "open_descendants", message: message,
+                  open_descendants: preview.open_descendants,
+                  blocked: preview.blocks.map do |block|
+                    { root_id: block.root_id, root_title: block.root_title,
+                      open_ids: block.open_ids, open_titles: block.open_titles }
+                  end)
+    end
+    abort message
   else
-    puts "Archived #{n} item#{n == 1 ? "" : "s"} to archive.jsonl."
+    # :migration_required is handled by the schema guard above; anything else is
+    # a refusal reason this adapter has not been taught. Say so rather than
+    # dereferencing a preview that may not be there.
+    message = "Archive refused: #{refusal.reason}."
+    json_error!("conflict", action: "archive", reason: refusal.reason.to_s, message: message) if json
+    abort message
   end
 end
 
 # Revert (undo) or replay (redo) the last mutation. History is the on-disk
 # journal shared with the TUI and across CLI runs, so this reaches back past the
 # current invocation. Refuses when tasks.jsonl changed out-of-band since that edit.
-def cmd_undo = run_history(:undo!, verb: "undo", past: "undid")
-def cmd_redo = run_history(:redo!, verb: "redo", past: "redid")
+def cmd_undo(args = []) = run_history(:undo!, args, verb: "undo", past: "undid")
+def cmd_redo(args = []) = run_history(:redo!, args, verb: "redo", past: "redid")
 
 # Print a task's stable :ID:, assigning one (a PROPERTIES drawer) if it has none.
 # Idempotent — a task that already carries an id is printed without a rewrite.
@@ -2455,20 +2573,40 @@ def cmd_id(args)
   end
 end
 
-def run_history(op, verb:, past:)
-  require_current_schema_for_mutation!
+def run_history(op, args, verb:, past:)
+  flags, rest = take_flags(args, "--json")
+  abort "usage: tasks #{verb} [--json]" unless rest.empty?
+  json = flags["--json"]
+  require_current_schema_for_mutation!(json: json, action: verb)
   kind, label = store.public_send(op)
   case kind
-  when :empty    then abort "nothing to #{verb}"
-  when :conflict then abort "tasks.jsonl changed since that edit — refusing to #{verb} “#{label}”"
-  else                puts "#{past}: #{label}"
+  when :empty
+    message = "nothing to #{verb}"
+    json_error!("empty", action: verb, message: message) if json
+    abort message
+  when :conflict
+    message = "tasks.jsonl changed since that edit — refusing to #{verb} “#{label}”"
+    json_error!("conflict", action: verb, message: message, label: label) if json
+    abort message
+  else
+    if json
+      require "json"
+      puts JSON.generate(action: verb, label: label)
+    else
+      puts "#{past}: #{label}"
+    end
   end
 end
 
-def require_current_schema_for_mutation!
+# The v1-store gate. Commands that emit a JSON result pass `json:`/`action:` so
+# the refusal is an error object rather than an empty stdout; the API names this
+# same condition `schema_migration_required`, so the CLI code matches it.
+def require_current_schema_for_mutation!(json: false, action: nil)
   return unless store.migration_required?
 
-  mutation_failed "task data migration required; run `tasks migrate`"
+  message = "task data migration required; run `tasks migrate`"
+  json_error!("schema_migration_required", action: action, message: message) if json
+  mutation_failed message
 end
 
 STATE_ORDER = Tasks::TaskFilter::STATE_ORDER
@@ -2577,6 +2715,20 @@ end
 # Hand a natural-language prompt to an LLM agent with TASK_AGENT.md as context.
 # Runs the configured harness headless; auto-applies, then shows the file diff.
 # `--provider`/`--model` (leading flags) override the config default for one run.
+# `-p` is the one command with no structured result (see Tasks::CliCommands).
+# Say so instead of folding `--json` into the prompt text and exiting 0 — a
+# caller that scripted it would get an LLM transcript where it expected a
+# document. Only the leading position is rejected: "explain --json to me" is a
+# legitimate prompt. Kept out of cmd_prompt because that method's rescue clause
+# names constants its own body requires.
+def reject_prompt_json!(args)
+  _provider, _model, words = extract_llm_flags(Array(args))
+  return unless words.first == "--json"
+
+  abort "-p has no --json: its result is the agent's transcript, not a value this CLI computes. " \
+        "Read the mutations back with a command that does emit JSON (see `tasks help --json`)."
+end
+
 def cmd_prompt(args)
   provider, model, words = extract_llm_flags(Array(args))
   prompt = words.join(" ")
@@ -2766,17 +2918,25 @@ def cmd_projects(args)
   end
 end
 
+# Sub-verbs dispatch through the registry too, so `project <verb>` cannot grow
+# a verb whose --json contract nobody stated — the drift guard below covers
+# these exactly as it covers the top-level slots.
+PROJECT_HANDLERS = {
+  "project create"   => ->(argv) { project_create(argv) },
+  "project show"     => ->(argv) { project_show(argv) },
+  "project complete" => ->(argv) { project_complete(argv) },
+  "project archive"  => ->(argv) { project_archive(argv) },
+  "project rename"   => ->(argv) { project_rename(argv) },
+}.freeze
+
 def cmd_project(args)
   verb = args.shift
-  case verb
-  when "create", "new"    then project_create(args)
-  when "show"             then project_show(args)
-  when "complete", "done" then project_complete(args)
-  when "archive"          then project_archive(args)
-  when "rename"           then project_rename(args)
-  when nil                then abort PROJECT_USAGE
-  else abort "unknown project command: #{verb.inspect}\n#{PROJECT_USAGE}"
-  end
+  abort PROJECT_USAGE if verb.nil?
+  name = Tasks::CliCommands.subcommands_of("project")[verb]
+  handler = name && PROJECT_HANDLERS[name]
+  abort "unknown project command: #{verb.inspect}\n#{PROJECT_USAGE}" unless handler
+
+  handler.call(args)
 end
 
 # Create a new empty project section under the top-level "Projects" root
@@ -2978,7 +3138,8 @@ HELP = <<~USAGE
                              --system <name> filters · --all widens the listing
                              to done + archived (<ref> stays live-file) · --json
     open      o <ref> [n]    open a task's link in the browser (n or --system
-                             picks among several; --print shows instead)
+                             picks among several; --print shows instead;
+                             --json reports the link it acted on)
     id           <ref>       print a task's stable id (assigns one if absent)
     check     k              validate tasks.jsonl structure
 
@@ -3062,13 +3223,16 @@ HELP = <<~USAGE
 
   Lifecycle:
     archive   x              sweep DONE/CANCELLED to archive.jsonl
+                             (--json: {roots, records, moved_ids})
     undo                     revert the last mutation (shared with the TUI)
     redo                     replay the last undone mutation
+                             (both --json: {action, label})
     config                   show resolved file paths and their sources
     migrate                  migrate schema v1 stores to v2 (--dry-run first)
     -p "..."                 hand a request to an LLM agent
                              (-p [--provider N] [--model N] "...")
-    help      -h             this message
+    help      -h             this message (--json: the command registry —
+                             every command, its aliases, and its --json answer)
 
   Files: default to the repo; override with TASKS_DIR (or TASKS_FILE/TASKS_ARCHIVE)
   env vars, or ~/.config/tasks/config (dir = / file = / archive = lines).
@@ -3084,63 +3248,113 @@ HELP = <<~USAGE
   Dates: 2026-07-15 · 07-15 · fri · today · tomorrow · +3 · tomorrow 9am
   Timed values: --timezone Europe/London · --floating · --fold earlier|later
   Refs:  a case-insensitive title substring, an exact id, or L<line>.
+  JSON:  every command takes --json except -p and merge-driver; `tasks help
+         --json` lists them. On failure branch on the exit code — stdout is
+         often empty; some commands add an {"error","action","message"} object.
   Full spec: docs/cli-spec.md
 USAGE
 
-def cmd_help(io = $stdout) = io.puts(HELP)
+# `help --json` emits the dispatch registry itself — every command, its
+# aliases, whether it answers in JSON, and the stated reason when it does not.
+# It is the same table bin/tasks dispatches from and docs/cli-spec.md documents,
+# so an agent can discover the command set (and its structured-output coverage)
+# without scraping this help text. Extra positionals are ignored, as before, so
+# `tasks help list` (and `tasks help --anything`) still prints the reference
+# rather than failing: help is the command you reach for when you are already
+# unsure, so it must not be the one that rejects your guess.
+def cmd_help(args = [], io = $stdout)
+  return io.puts(HELP) unless Array(args).include?("--json")
+
+  require "json"
+  io.puts JSON.generate(Tasks::CliCommands.to_h)
+end
+
+# One handler per dispatch slot, keyed by the CANONICAL command name; aliases
+# resolve through the registry, which is also what `help --json`, the spec's
+# coverage table, and the enumeration test read. Keeping the names in one place
+# is what makes "every command's --json contract is stated somewhere" checkable
+# instead of aspirational — see the drift guard below.
+HANDLERS = {
+  "-p"        => ->(argv) { reject_prompt_json!(argv); cmd_prompt(argv); exit },
+  "next"      => ->(argv) { cmd_next(argv) },
+  "quadrants" => ->(argv) { cmd_quadrants(argv) },
+  "agenda"    => ->(argv) { cmd_agenda(argv) },
+  "inbox"     => ->(argv) { cmd_inbox(argv) },
+  "projects"  => ->(argv) { cmd_projects(argv) },
+  "project"   => ->(argv) { cmd_project(argv) },
+  "capture"   => ->(argv) { cmd_capture(argv) },
+  "propose"   => ->(argv) { cmd_propose(argv) },
+  "approve"   => ->(argv) { cmd_approve(argv) },
+  "reject"    => ->(argv) { cmd_reject(argv) },
+  "delegate"  => ->(argv) { cmd_delegate(argv) },
+  "undelegate" => ->(argv) { cmd_undelegate(argv) },
+  "workref"   => ->(argv) { cmd_workref(argv) },
+  "claim"     => ->(argv) { cmd_claim(argv) },
+  "release"   => ->(argv) { cmd_release(argv) },
+  "done"      => ->(argv) { cmd_done(argv) },
+  "due"       => ->(argv) { cmd_due(argv) },
+  "schedule"  => ->(argv) { cmd_schedule(argv) },
+  "undate"    => ->(argv) { cmd_undate(argv) },
+  "state"     => ->(argv) { cmd_state(argv) },
+  "cancel"    => ->(argv) { cmd_cancel(argv) },
+  "priority"  => ->(argv) { cmd_priority(argv) },
+  "retitle"   => ->(argv) { cmd_retitle(argv) },
+  "tag"       => ->(argv) { cmd_tag(argv) },
+  "note"      => ->(argv) { cmd_note(argv) },
+  "move"      => ->(argv) { cmd_move(argv) },
+  "delete"    => ->(argv) { cmd_delete(argv) },
+  "recur"     => ->(argv) { cmd_recur(argv) },
+  "lead"      => ->(argv) { cmd_lead(argv) },
+  "defer"     => ->(argv) { cmd_defer(argv) },
+  "someday"   => ->(argv) { cmd_defer(argv, someday: true) },
+  "activate"  => ->(argv) { cmd_activate(argv) },
+  "show"      => ->(argv) { cmd_show(argv) },
+  "archive"   => ->(argv) { cmd_archive(argv) },
+  "undo"      => ->(argv) { cmd_undo(argv) },
+  "redo"      => ->(argv) { cmd_redo(argv) },
+  "id"        => ->(argv) { cmd_id(argv) },
+  "links"     => ->(argv) { cmd_links(argv) },
+  "open"      => ->(argv) { cmd_open(argv) },
+  "list"      => ->(argv) { cmd_list(argv) },
+  "check"     => ->(argv) { cmd_check(argv) },
+  "config"    => ->(argv) { cmd_config(argv) },
+  "migrate"   => ->(argv) { cmd_migrate(argv) },
+  "help"      => ->(argv) { cmd_help(argv) },
+}.freeze
+
+# The registry names its own early-dispatch commands (`merge-driver`, handled at
+# the top of this file before any config or store resolution, because Git hands
+# it three explicit paths and nothing else), so this list is derived, not
+# maintained alongside it.
+EARLY_DISPATCH = Tasks::CliCommands::EARLY_NAMES
+
+# The drift guard. A command — top-level or `project` sub-verb — added to one
+# side but not the other is a command whose --json contract nobody stated, so
+# the CLI refuses to run at all rather than shipping an undocumented surface.
+def assert_dispatch_matches_registry!(handlers, expected, slot)
+  return if handlers.keys.sort == expected.sort
+
+  raise "bin/tasks #{slot} dispatch and Tasks::CliCommands disagree — " \
+        "missing handlers: #{(expected - handlers.keys).inspect}, " \
+        "undeclared handlers: #{(handlers.keys - expected).inspect}"
+end
+
+assert_dispatch_matches_registry!(
+  HANDLERS, Tasks::CliCommands::DISPATCH_NAMES - EARLY_DISPATCH, "command"
+)
+assert_dispatch_matches_registry!(
+  PROJECT_HANDLERS, Tasks::CliCommands.subcommands_of("project").values.uniq, "project sub-verb"
+)
 
 # each branch reads via the store on demand — `check` must be able to run
 # (and report) on a file the parser would choke on
 begin
-case ARGV[0]
-when "-p", "--prompt" then cmd_prompt(ARGV[1..]); exit
-when "next", "n"      then cmd_next(ARGV[1..])
-when "quadrants", "q" then cmd_quadrants(ARGV[1..])
-when "agenda", "a"    then cmd_agenda(ARGV[1..])
-when "inbox", "i"     then cmd_inbox(ARGV[1..])
-when "projects", "pj" then cmd_projects(ARGV[1..])
-when "project"        then cmd_project(ARGV[1..])
-when "capture", "add", "c" then cmd_capture(ARGV[1..])
-when "propose"        then cmd_propose(ARGV[1..])
-when "approve"        then cmd_approve(ARGV[1..])
-when "reject"         then cmd_reject(ARGV[1..])
-when "delegate"       then cmd_delegate(ARGV[1..])
-when "undelegate"     then cmd_undelegate(ARGV[1..])
-when "workref", "work-ref" then cmd_workref(ARGV[1..])
-when "claim"          then cmd_claim(ARGV[1..])
-when "release"        then cmd_release(ARGV[1..])
-when "done", "complete", "close", "d" then cmd_done(ARGV[1..])
-when "due", "deadline", "reschedule" then cmd_due(ARGV[1..])
-when "schedule"       then cmd_schedule(ARGV[1..])
-when "undate"         then cmd_undate(ARGV[1..])
-when "state", "mv"    then cmd_state(ARGV[1..])
-when "cancel", "drop" then cmd_cancel(ARGV[1..])
-when "priority", "pri" then cmd_priority(ARGV[1..])
-when "retitle", "rename" then cmd_retitle(ARGV[1..])
-when "tag"            then cmd_tag(ARGV[1..])
-when "note"           then cmd_note(ARGV[1..])
-when "move"           then cmd_move(ARGV[1..])
-when "delete"         then cmd_delete(ARGV[1..])
-when "recur", "repeat", "every" then cmd_recur(ARGV[1..])
-when "lead", "leadtime", "lead-time" then cmd_lead(ARGV[1..])
-when "defer", "snooze" then cmd_defer(ARGV[1..])
-when "someday"         then cmd_defer(ARGV[1..], someday: true)
-when "activate", "undefer", "resume" then cmd_activate(ARGV[1..])
-when "show", "s"      then cmd_show(ARGV[1..])
-when "archive", "x"   then cmd_archive
-when "undo"           then cmd_undo
-when "redo"           then cmd_redo
-when "id"             then cmd_id(ARGV[1..])
-when "links", "urls"  then cmd_links(ARGV[1..])
-when "open", "o"      then cmd_open(ARGV[1..])
-when "list", "l"      then cmd_list(ARGV[1..])
-when "check", "k"     then cmd_check(ARGV[1..])
-when "config"         then cmd_config(ARGV[1..])
-when "migrate"        then cmd_migrate(ARGV[1..])
-when "help", "-h", "--help" then cmd_help
+handler = HANDLERS[Tasks::CliCommands.dispatch_for(ARGV[0])]
+if handler
+  handler.call(ARGV[1..])
 else
   warn "unknown command: #{ARGV[0].inspect}\n\n" if ARGV[0]
-  cmd_help($stderr)
+  cmd_help([], $stderr)
   exit 1
 end
 rescue Tasks::Timezones::Error => e
