@@ -43,8 +43,8 @@ is one-way: change the manifest, run `porting/manifest-issues sync`.
 | `source_sha` | 40-char sha | The Ruby revision this slice was characterized against. See below. |
 | `ruby_tests` | array of `path` or `path#test_name` | The existing Ruby oracle. Every entry is checked to exist by `manifest-issues validate`. Empty is only allowed when `oracle_gaps` says why. |
 | `oracle_gaps` | array of strings | What the Ruby suite does *not* prove for this slice, and what is deliberately excluded (usually because it belongs to a later campaign). A gap is a finding to act on, not a blank to leave. |
-| `fixtures` | array of repo paths under `porting/fixtures/` | Fixture stores this slice is proved against. Checked to exist. |
-| `fixtures_todo` | string or null | What corpus the slice needs, when the fixture does not exist yet. A slice may not pass `characterizing` while this is non-null. |
+| `fixtures` | array of repo paths under `porting/fixtures/` | Fixture directories this slice is proved against — the directory, not the `store/` inside it, because a runner copies the whole thing. Checked to exist. |
+| `fixtures_todo` | string or null | What corpus the slice still needs, named precisely enough to build. A slice may not pass `characterizing` while this is non-null, and its td issue is gated behind a fixture-gap issue for as long as it is set (below). A near-miss wired into `fixtures` is worse than an honest todo: it makes a slice look provable when it is not. |
 | `observable_outputs` | array of strings | What a user or an agent can actually see change: bytes, stdout, exit status, resource fields. The comparator's scope for this slice. |
 | `platforms` | array | `["any"]`, or the specific targets when the behavior is platform-dependent (`darwin`, `linux`, `windows`). |
 | `perf_budget` | string or null | A budget only where one is real. `null` is honest; an invented number is not. |
@@ -148,6 +148,13 @@ file, and the `def test_...` inside it**; every `fixtures` entry exists; and
 that a slice with no oracle test says so in `oracle_gaps` rather than leaving
 the field silently blank.
 
+The fixture fields have three honest shapes and one dishonest one. Wired
+fixtures; or a `fixtures_todo` naming what the corpus lacks; or — for a slice
+that genuinely operates on no store, like `query-filter-parse`, whose corpus is
+an argv list — neither, provided `notes` says in as many words why it needs no
+fixture. Both blank and silent is the shape validation rejects: it reads as
+"wired" and proves nothing.
+
 `sync` refuses to run against a manifest that does not validate.
 
 ## Projecting into td
@@ -173,6 +180,26 @@ membership. Labels outside that set (a human's `flaky`) are left alone.
 Every write is preceded by the read that decides whether it is needed, so a
 second run creates nothing, updates nothing, and touches no edge — and a run
 interrupted halfway is safe to repeat.
+
+### Fixture gaps are gates, not footnotes
+
+`td ready` lists open issues whose dependencies are met. A slice whose
+`fixtures_todo` is non-null cannot pass `characterizing`, so listing it there
+sends a claiming agent at work it must hand straight back — the queue lies to
+the fleet, and the cost is a wasted claim per gap per agent.
+
+So `sync` projects each non-null `fixtures_todo` as its own issue — labelled
+`porting-fixture-gate` plus `fixture-gate:<slice-id>`, parented to the campaign
+epic, carrying the todo text verbatim — and wires the slice to depend on it.
+The consequences are the ones wanted: the slice leaves `td ready`, the *fixture
+work* enters it, and the gap is visible as work rather than as a field nobody
+queries.
+
+The gate is temporary by construction. Wire the corpus, set `fixtures_todo` to
+null, re-run `sync`: the edge is removed and the gap issue is reported as an
+`ORPHAN` for a human to close, because it holds the record of what was built.
+Nothing about this writes a td status — `td block` would, and would stomp a live
+claim; a dependency edge does not.
 
 Two things `sync` deliberately does not do:
 

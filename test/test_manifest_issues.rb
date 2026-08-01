@@ -4,6 +4,8 @@ require_relative "test_helper"
 require "open3"
 require "rbconfig"
 require "json"
+require "fileutils"
+require "tmpdir"
 
 # porting/manifest-issues projects porting/manifest.jsonl into td. Its one
 # non-negotiable property is idempotency: the fleet runs it whenever the
@@ -131,6 +133,26 @@ class TestManifestIssues < Minitest::Test
   def manifest_records = File.readlines(MANIFEST, chomp: true).reject(&:empty?).map { |l| JSON.parse(l) }
   def campaign_records = File.readlines(CAMPAIGNS, chomp: true).reject(&:empty?).map { |l| JSON.parse(l) }
 
+  # Slices whose corpus is still missing. Each projects a second issue — the
+  # fixture gap — that the slice depends on, so `td ready` never offers a slice
+  # that manifest.md forbids passing `characterizing`.
+  def gated_records = manifest_records.reject { |s| s["fixtures_todo"].to_s.strip.empty? }
+  def issue_count = manifest_records.size + campaign_records.size + gated_records.size
+
+  # td issues indexed by the label that is their identity, and only that: a gate
+  # issue carries `campaign:N` as membership, so a flat scan would let it
+  # masquerade as its own epic.
+  def by_identity
+    state_issues.values.to_h do |issue|
+      labels = issue["labels"]
+      key = if labels.include?("porting-campaign") then labels.find { |l| l.start_with?("campaign:") }
+            elsif labels.include?("porting-slice") then labels.find { |l| l.start_with?("slice:") }
+            else labels.find { |l| l.start_with?("fixture-gate:") }
+            end
+      [key, issue]
+    end
+  end
+
   def sync(bin)
     stdout, stderr, status = run_script(bin, "sync", "--json")
     assert status.success?, "sync failed: #{stderr}#{stdout}"
@@ -155,31 +177,29 @@ class TestManifestIssues < Minitest::Test
 
   def test_second_run_is_a_no_op
     with_fake_td do |bin|
-      slices = manifest_records
-      campaigns = campaign_records
+      total = issue_count
 
       first = sync(bin)
-      assert_equal slices.size + campaigns.size, first["summary"]["create"]
+      assert_equal total, first["summary"]["create"]
       assert_equal 0, first["summary"].fetch("update", 0)
-      assert_equal slices.size + campaigns.size, state_issues.size
+      assert_equal total, state_issues.size
       refute_empty drain_log.grep(MUTATING)
 
       second = sync(bin)
-      assert_equal slices.size + campaigns.size, second["summary"]["skip"]
+      assert_equal total, second["summary"]["skip"]
       assert_equal 0, second["summary"].fetch("create", 0)
       assert_equal 0, second["summary"].fetch("update", 0)
       assert_equal 0, second["summary"].fetch("dep", 0)
       assert_equal 0, second["summary"].fetch("orphan", 0)
       assert_empty drain_log.grep(MUTATING), "the second run wrote to td"
-      assert_equal slices.size + campaigns.size, state_issues.size, "the second run created duplicates"
+      assert_equal total, state_issues.size, "the second run created duplicates"
     end
   end
 
   def test_every_slice_gets_its_issue_labels_parent_and_dependency_edges
     with_fake_td do |bin|
       sync(bin)
-      issues = state_issues.values
-      by_label = issues.to_h { |i| [i["labels"].find { |l| l.start_with?("slice:", "campaign:") }, i] }
+      by_label = by_identity
 
       campaign_records.each do |campaign|
         epic = by_label.fetch("campaign:#{campaign["campaign"]}")
@@ -194,9 +214,81 @@ class TestManifestIssues < Minitest::Test
         assert_equal by_label.fetch("campaign:#{slice["campaign"]}")["id"], issue["parent_id"]
         assert_operator issue["title"].length, :<=, 200
 
-        wanted = slice["depends_on"].map { |d| by_label.fetch("slice:#{d}")["id"] }.sort
-        assert_equal wanted, issue["dependencies"].sort, "wrong edges on #{slice["id"]}"
+        wanted = slice["depends_on"].map { |d| by_label.fetch("slice:#{d}")["id"] }
+        gate = by_label["fixture-gate:#{slice["id"]}"]
+        wanted << gate["id"] if gate
+        assert_equal wanted.sort, issue["dependencies"].sort, "wrong edges on #{slice["id"]}"
       end
+    end
+  end
+
+  # `td ready` lists open issues whose dependencies are not met. A slice whose
+  # `fixtures_todo` is non-null cannot pass `characterizing` (manifest.md), so
+  # advertising it would send a claiming agent at work it must hand straight
+  # back. The gap is projected as its own issue and the slice depends on it.
+  def test_a_slice_with_a_missing_corpus_is_gated_behind_its_fixture_gap
+    with_fake_td do |bin|
+      sync(bin)
+      by_label = by_identity
+
+      refute_empty gated_records, "this test needs at least one slice with a fixtures_todo"
+
+      gated_records.each do |slice|
+        gate = by_label.fetch("fixture-gate:#{slice["id"]}", nil)
+        refute_nil gate, "no fixture-gap issue for #{slice["id"]}"
+        assert_includes gate["labels"], "porting-fixture-gate"
+        refute_includes gate["labels"], "porting-slice", "a gap issue must not look like a slice"
+        assert_includes gate["description"], slice["fixtures_todo"]
+        assert_equal by_label.fetch("campaign:#{slice["campaign"]}")["id"], gate["parent_id"]
+
+        issue = by_label.fetch("slice:#{slice["id"]}")
+        assert_includes issue["dependencies"], gate["id"], "#{slice["id"]} is not gated on its gap"
+      end
+
+      manifest_records.each do |slice|
+        next unless slice["fixtures_todo"].to_s.strip.empty?
+        assert_nil by_label["fixture-gate:#{slice["id"]}"],
+                   "#{slice["id"]} has its fixtures wired but still has a gap issue"
+      end
+    end
+  end
+
+  # The gate is temporary by construction: the moment a slice's corpus lands and
+  # `fixtures_todo` goes null, the next sync drops the edge and reports the gap
+  # issue as an orphan rather than closing it — it holds the record of the work.
+  def test_closing_a_fixture_gap_removes_the_edge_and_orphans_the_gap_issue
+    with_fake_td do |bin|
+      sync(bin)
+      slice = gated_records.first
+      gate_id = by_identity.fetch("fixture-gate:#{slice["id"]}")["id"]
+      drain_log
+
+      cleared = manifest_records.map do |s|
+        s = s.dup
+        s["fixtures_todo"] = nil if s["id"] == slice["id"]
+        JSON.generate(s)
+      end
+
+      Dir.mktmpdir("manifest-cleared") do |dir|
+        path = File.join(dir, "manifest.jsonl")
+        File.write(path, "#{cleared.join("\n")}\n")
+        env = { "TD_BIN" => bin, "FAKE_TD_STATE" => @state, "FAKE_TD_LOG" => @log,
+                "MANIFEST_ISSUES_MANIFEST" => path }
+        stdout, stderr, status = Open3.capture3(env, RbConfig.ruby, SCRIPT, "sync", "--json")
+        assert status.success?, "sync failed: #{stderr}#{stdout}"
+        report = JSON.parse(stdout)
+
+        edge = report["actions"].find { |a| a["action"] == "dep" && a["target"] == "slice #{slice["id"]}" }
+        refute_nil edge, "no edge change for #{slice["id"]}"
+        assert_includes edge["detail"], "-#{gate_id}"
+        orphan = report["actions"].find { |a| a["action"] == "orphan" && a["target"] == "fixture-gate:#{slice["id"]}" }
+        refute_nil orphan, "the stale gap issue was not reported"
+        assert_equal gate_id, orphan["td_id"]
+      end
+
+      refute_includes state_issues.values.find { |i| i["labels"].include?("slice:#{slice["id"]}") }["dependencies"],
+                      gate_id
+      refute_nil state_issues[gate_id], "the gap issue was deleted rather than reported"
     end
   end
 
