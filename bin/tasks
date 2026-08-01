@@ -45,7 +45,7 @@
 #                             No schedule: preview the next occurrences.
 #                             --explain "<schedule>" previews without a task
 #   bin/tasks lead <ref> <span|off>        hide until a span before its date
-#                             (3w, 2d, 1m, "a week"; off clears). No span:
+#                             (3w, 2d, 1m, 5h, "a week"; off clears). No span:
 #                             show the window and when it opens.
 #   bin/tasks defer|snooze <ref> [date]    defer until a date, or hold indefinitely
 #   bin/tasks someday <ref>                hold indefinitely (someday/maybe)
@@ -2963,6 +2963,10 @@ HELP = <<~USAGE
                              --tag --context --no-host-context --state
                              --project --under --recur --lead --note
                              (--under <ref> nests it below a task; caps at max_depth)
+                             --recur with no date starts repeating today; adding
+                             --lead instead anchors on the schedule's FIRST
+                             occurrence, so the window opens before it rather
+                             than in the past
     propose     "text"       inert PROPOSED item for owner review. Capture flags
                              except --state/--recur; repeat --note for rationale
 
@@ -2996,8 +3000,8 @@ HELP = <<~USAGE
                                      (--count N, default 5 · --json)
                  --explain "<sched>" parse/preview any schedule, no task needed
     lead           <ref> <span|off>   hide until a span before its date: 3w · 2d ·
-                                     1m · "a week" · off (anchor = deadline if
-                                     it has one, else Available from)
+                                     1m · 5h · "a week" · off (anchor = deadline
+                                     if it has one, else Available from)
                    <ref>              read-only: the window and when it opens
     defer   snooze <ref> [date/time] defer until exact value; omitted means On Hold
     someday        <ref>             put on indefinite hold (Someday/Maybe)

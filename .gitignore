@@ -33,3 +33,10 @@ vendor/bundle/
 .sidecar-start.sh
 .sidecar-base
 .td-root
+
+# Go-port fleet runtime state (porting/loop.sh). Tick transcripts and the
+# usage-limit record are per-machine and large; STOP is an operator gesture,
+# not a repo fact. Everything durable — manifest, fixtures, evidence — is
+# committed.
+/porting/logs/
+/porting/STOP
