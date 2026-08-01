@@ -80,9 +80,9 @@ class TestFormat < Minitest::Test
 
   # -- nested key order ------------------------------------------------------
 
-  def test_delegation_sits_between_recur_and_closed
-    assert_equal %w[recur delegation closed],
-                 F::KEY_ORDER[F::KEY_ORDER.index("recur"), 3]
+  def test_lead_pair_and_delegation_sit_between_recur_and_closed
+    assert_equal %w[recur lead lead_skip delegation closed],
+                 F::KEY_ORDER[F::KEY_ORDER.index("recur"), 5]
   end
 
   def test_delegation_emits_in_fixed_nested_order_with_absent_keys_omitted

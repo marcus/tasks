@@ -12,6 +12,7 @@ require_relative "delete_task"
 require_relative "edit_snapshot"
 require_relative "format"
 require_relative "journal"
+require_relative "lead"
 require_relative "links"
 require_relative "patch_result"
 require_relative "proposal_decision"
@@ -27,7 +28,7 @@ module Tasks
   Item = Struct.new(
     :state, :priority, :title, :tags, :scheduled, :deadline,
     :scheduled_value, :deadline_value, :line, :source,
-    :recur, :id, :closed, keyword_init: true
+    :recur, :lead, :lead_skip, :id, :closed, keyword_init: true
   ) do
     def open?    = Store::OPEN_STATES.include?(state)
     def proposed? = Store::PROPOSED_STATES.include?(state)
@@ -41,6 +42,29 @@ module Tasks
     # non-recurring so completion closes the task normally — Check still reports
     # the bad cookie. Guards Recur.next_date from raising on a junk value.
     def recurring? = Recur.cookie?(recur)
+
+    # A lead-time task carries a VALID span in its own `lead` field; its own
+    # timed gate is then `anchor - lead` rather than its available-from date.
+    # A malformed span (a hand-edited "0w") reads as no lead at all, exactly as
+    # a malformed cookie reads as non-recurring — Check still reports it.
+    def lead_time? = Lead.span?(lead)
+
+    # The occurrence date a lead is measured back from: deadline first,
+    # available-from second (see Lead.anchor_date).
+    def lead_anchor = Lead.anchor_date(deadline, scheduled)
+
+    # The date this task's lead window opens, or nil when it has no lead, no
+    # anchor, or an `activate` already released this occurrence. The canonical
+    # derivation for availability lives in TaskQueries#effective_gate; this is
+    # the same answer for callers holding only an Item.
+    def lead_gate_date
+      return nil unless lead_time?
+
+      anchor = lead_anchor
+      return nil if anchor.nil? || lead_skip == anchor.iso8601
+
+      Lead.gate_date(anchor, lead)
+    end
 
     # The item's headline rendered from its own fields, star-less: state,
     # optional priority cookie, title, trailing tag cluster (stored order).
@@ -1311,6 +1335,7 @@ module Tasks
       project = normalize_create_project(command.project, errors)
       parent_id = normalize_create_parent_id(command.parent_id, errors)
       recurrence = normalize_create_recurrence(command.recurrence, errors)
+      lead = normalize_create_lead(command.lead, errors)
       notes = normalize_create_notes(command, errors)
 
       if project && parent_id
@@ -1332,11 +1357,34 @@ module Tasks
         errors[:recurrence] << reason if reason
       end
 
+      if lead
+        # The same five rules patch_lead enforces, stated against the values
+        # this create is about to write (docs/plans/active/recurring-lead-time.md
+        # §5). A create that would need an immediate repair is a create that
+        # should have been refused.
+        anchor = Lead.anchor_date(deadline&.date, scheduled&.date)
+        if (CLOSED_STATES + PROPOSED_STATES).include?(state)
+          errors[:lead] << "can't set a lead time on a #{state} task"
+        end
+        if anchor.nil?
+          errors[:lead] << "a lead time needs a date to hide before — " \
+                           "add a deadline or an available-from date first"
+        elsif deadline && scheduled
+          errors[:lead] << lead_gate_conflict_message(lead)
+        else
+          gate = Lead.gate_date(anchor, lead)
+          unless gate && gate.iso8601.match?(Check::DATE_RE)
+            errors[:lead] << "a #{Lead.humanize(lead)} lead would open before #{anchor.iso8601}, " \
+                             "outside the four-digit years dates are stored with"
+          end
+        end
+      end
+
       [
         {
           title: title, priority: priority, tags: tags, scheduled: scheduled,
           deadline: deadline, state: state, project: project, parent_id: parent_id,
-          recurrence: recurrence, notes: notes,
+          recurrence: recurrence, lead: lead, notes: notes,
         },
         errors,
       ]
@@ -1448,6 +1496,14 @@ module Tasks
       nil
     end
 
+    def normalize_create_lead(value, errors)
+      return nil if value.nil?
+      return value if Lead.span?(value)
+
+      errors[:lead] << "invalid lead time (expected a span like 3w, 2d, 1m, 1y)"
+      nil
+    end
+
     def normalize_create_notes(command, errors)
       if !command.body.nil? && !command.notes.nil?
         errors[:body] << "body and notes cannot both be supplied"
@@ -1516,6 +1572,7 @@ module Tasks
       write_temporal(rec, "scheduled", attributes[:scheduled]) if attributes[:scheduled]
       write_temporal(rec, "deadline", attributes[:deadline]) if attributes[:deadline]
       rec["recur"] = attributes[:recurrence] if attributes[:recurrence]
+      rec["lead"] = attributes[:lead] if attributes[:lead]
       rec["body"] = (["Captured [#{today}]."] + attributes[:notes]).join("\n")
 
       records[insert_at, 0] = [rec]
@@ -1713,7 +1770,8 @@ module Tasks
         scheduled: to_date(rec["scheduled"]), deadline: to_date(rec["deadline"]),
         scheduled_value: TemporalValue.from_record(rec, :scheduled),
         deadline_value: TemporalValue.from_record(rec, :deadline),
-        recur: rec["recur"], id: rec["id"]&.to_s, closed: to_date(rec["closed"]),
+        recur: rec["recur"], lead: rec["lead"], lead_skip: rec["lead_skip"],
+        id: rec["id"]&.to_s, closed: to_date(rec["closed"]),
         line: rec["line"], source: source
       )
     end
@@ -1818,6 +1876,7 @@ module Tasks
         deferred: values[:deferred], scheduled: values[:scheduled],
         deadline: values[:deadline], scheduled_value: scheduled_value,
         deadline_value: deadline_value, recurrence: values[:recurrence],
+        lead: values[:lead], lead_skip: rec["lead_skip"],
         contexts: contexts, tags: ordinary_tags, body: values[:body],
         parent: rec["parent"], state: rec["state"], closed: to_date(rec["closed"]),
         baselines: values,
@@ -1850,6 +1909,7 @@ module Tasks
         scheduled: to_date(rec["scheduled"]),
         deadline: to_date(rec["deadline"]),
         recurrence: rec["recur"],
+        lead: rec["lead"],
         contexts: contexts,
         tags: ordinary_tags,
         body: rec["body"].is_a?(String) ? rec["body"] : "",
@@ -2190,6 +2250,7 @@ module Tasks
       when :deadline   then patch_date(records, ri, value, :deadline)
       when :date_clear then patch_date_clear(records, ri, value)
       when :recurrence then patch_recurrence(records, ri, value, today: today)
+      when :lead       then patch_lead(records, ri, value)
       when :contexts   then patch_tag_slice(records, ri, value, :contexts)
       when :tags       then patch_tag_slice(records, ri, value, :tags)
       when :tag_delta  then patch_tag_delta(records, ri, value)
@@ -2253,6 +2314,19 @@ module Tasks
                else
                  scheduled && scheduled.date > today
                end
+      # A lead task releases the CURRENT OCCURRENCE, stamped by its anchor date,
+      # and keeps every date it has: the anchor is what the next window is
+      # measured from, and the roll re-arms it.
+      #
+      # A recurring task's future available-from date is likewise its next
+      # OCCURRENCE, not a defer: deleting it would retire the series' only
+      # anchor and leave a repeater `done` can never roll. Both release the
+      # occurrence with the stamp instead of destroying the date.
+      anchor = Lead.anchor_date(to_date(rec["deadline"]), to_date(rec["scheduled"]))
+      if anchor && (Lead.span?(rec["lead"]) || (future && Recur.cookie?(rec["recur"])))
+        rec["lead_skip"] = anchor.iso8601
+        return patch_ok(rec)
+      end
       if future
         rec.delete("scheduled")
         rec.delete("scheduled_time")
@@ -2266,6 +2340,13 @@ module Tasks
       rec = records[ri]
       key = kind.to_s
       if date
+        # Rule 3: the lead owns the task's own timed gate. On a deadline-
+        # anchored lead task an available-from date would be a second, silently
+        # ignored gate, so it is refused rather than written and disregarded.
+        if kind == :scheduled && Lead.span?(rec["lead"]) && rec["deadline"]
+          return patch_invalid(lead_gate_conflict_message(rec["lead"]))
+        end
+
         temporal = date.is_a?(TemporalValue) ? date : TemporalValue.new(date: date)
         write_temporal(rec, key, temporal)
         rec["state"] = "TODO" if rec["state"] == "INBOX"
@@ -2274,6 +2355,7 @@ module Tasks
         rec.delete("#{key}_time")
         rec.delete("recur") unless rec["scheduled"] || rec["deadline"]
       end
+      clear_lead_skip(rec)
       patch_ok(rec)
     end
 
@@ -2293,7 +2375,74 @@ module Tasks
         rec.delete("#{field}_time")
       end
       rec.delete("recur") unless rec["scheduled"] || rec["deadline"]
+      clear_lead_skip(rec)
       patch_ok(rec)
+    end
+
+    # Attach, replace, or clear the lead-time window. The five rules the plan
+    # states (docs/plans/active/recurring-lead-time.md §5) all land here, so
+    # every surface refuses the same shapes with the same words. Clearing is
+    # always allowed — a refusal a user cannot undo is a trap.
+    def patch_lead(records, ri, value)
+      rec = records[ri]
+      if value.nil? || value == :off
+        rec.delete("lead")
+        rec.delete("lead_skip")
+        return patch_ok(rec)
+      end
+
+      # Rule 4: grammar. The canonical span is what reaches the store; friendly
+      # phrasings are an adapter's job (Lead.parse_result), so a non-canonical
+      # value here is a caller bug, not a user typo.
+      unless Lead.span?(value)
+        return patch_invalid("invalid lead time #{value.inspect} (expected a span like 3w, 2d, 1m, 1y)")
+      end
+      # Rule 2: accepted, open tasks only.
+      if PROPOSED_STATES.include?(rec["state"])
+        return patch_invalid("can't set a lead time on a PROPOSED task")
+      end
+      if CLOSED_STATES.include?(rec["state"])
+        return patch_invalid("can't set a lead time on a #{rec["state"]} task — reopen it first")
+      end
+      # Rule 1: a lead needs an anchor to measure back from.
+      anchor = Lead.anchor_date(to_date(rec["deadline"]), to_date(rec["scheduled"]))
+      unless anchor
+        return patch_invalid("a lead time needs a date to hide before — " \
+                             "add a deadline or an available-from date first")
+      end
+      # Rule 3: one own timed gate.
+      if rec["deadline"] && rec["scheduled"]
+        return patch_invalid(lead_gate_conflict_message(value))
+      end
+      # Rule 5: the derived gate must stay a storable date.
+      gate = Lead.gate_date(anchor, value)
+      unless gate && gate.iso8601.match?(Check::DATE_RE)
+        return patch_invalid("a #{Lead.humanize(value)} lead would open before " \
+                             "#{anchor.iso8601}, outside the four-digit years dates are stored with")
+      end
+
+      rec["lead"] = value
+      # A new window supersedes any occurrence a previous one released early.
+      rec.delete("lead_skip")
+      patch_ok(rec)
+    end
+
+    # Rule 3's one message, shared by the two writes that can create the
+    # conflict (setting the lead, and setting an available-from date beside a
+    # deadline-anchored one), so the user reads the same fix either way.
+    def lead_gate_conflict_message(span)
+      "a lead time hides this task until #{Lead.humanize(span)} " \
+        "before its deadline — an available-from date would be a second, ignored gate. " \
+        "Clear one of them (`tasks undate <ref> --kind scheduled`, or `tasks lead <ref> off`)."
+    end
+
+    # `lead_skip` releases ONE occurrence, identified by the anchor date it was
+    # stamped with. Any write that moves or removes an anchor therefore retires
+    # it; the derivation also compares the stamp against the current anchor, so
+    # a stale stamp a foreign writer leaves behind still cannot release a
+    # different occurrence.
+    def clear_lead_skip(rec)
+      rec.delete("lead_skip")
     end
 
     def patch_recurrence(records, ri, value, today:)
@@ -2687,6 +2836,9 @@ module Tasks
       end
       rec["tags"] = semantic_tags(rec) - [DEFER_TAG]
       replace_optional(rec, "tags", rec["tags"])
+      # The roll moved the anchor, so any occurrence released early is history
+      # and the lead window re-arms against the new one.
+      clear_lead_skip(rec)
       rec["body"] = append_body(rec["body"], "- Did [#{today}].")
       roll_delegation_forward(rec)
       patch_ok(rec)

@@ -12,7 +12,7 @@ module Tasks
   # the task's initial indefinite On Hold marker and must be boolean.
   class CreateTask
     attr_reader :title, :priority, :tags, :deferred, :scheduled, :deadline, :state,
-                :project, :parent_id, :recurrence, :body, :notes, :apply_host_context
+                :project, :parent_id, :recurrence, :lead, :body, :notes, :apply_host_context
 
     alias text title
     alias due deadline
@@ -22,7 +22,7 @@ module Tasks
     def initialize(title: nil, text: nil, priority: nil, tags: [], deferred: false,
                    scheduled: nil, deadline: nil, due: nil, state: nil,
                    project: nil, parent_id: nil, under: nil,
-                   recurrence: nil, recur: nil, body: nil, notes: nil,
+                   recurrence: nil, recur: nil, lead: nil, body: nil, notes: nil,
                    apply_host_context: true)
       @title = immutable(title.nil? ? text : title)
       @priority = immutable(priority)
@@ -34,6 +34,7 @@ module Tasks
       @project = immutable(project)
       @parent_id = immutable(parent_id.nil? ? under : parent_id)
       @recurrence = immutable(recurrence.nil? ? recur : recurrence)
+      @lead = immutable(lead)
       @body = immutable(body)
       @notes = immutable(notes)
       @apply_host_context = immutable(apply_host_context)
@@ -81,7 +82,7 @@ module Tasks
         deferred: command.deferred, scheduled: command.scheduled,
         deadline: command.deadline, state: command.state, project: command.project,
         parent_id: command.parent_id, recurrence: command.recurrence,
-        body: command.body, notes: command.notes,
+        lead: command.lead, body: command.body, notes: command.notes,
         apply_host_context: command.apply_host_context
       )
     end

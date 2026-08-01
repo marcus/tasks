@@ -2,6 +2,7 @@
 
 require "date"
 require_relative "delegation"
+require_relative "lead"
 require_relative "quadrants"
 require_relative "recur"
 require_relative "store"
@@ -200,6 +201,13 @@ module Tasks
   class TaskQueries
     NAMED_VIEWS = %i[agenda next quadrants inbox].freeze
 
+    # "the caller did not override this field" — distinct from an explicit nil,
+    # which means "clear it".
+    UNSET = Object.new.freeze
+    # Sentinel from #lead_gate_value: this occurrence's window was already
+    # released by `activate`, which is not the same answer as "no lead".
+    SKIPPED = Object.new.freeze
+
     # One immutable, derived answer shared by every read surface. `scheduled`
     # is the effective release date when a timed blocker wins; it is nil for an
     # indefinite hold, a closed task, or an available task.
@@ -297,9 +305,9 @@ module Tasks
     # Preview the canonical effective availability after changing only the
     # subject task's two availability fields. CLI/TUI dry-runs use this instead
     # of reimplementing ancestor precedence or writing a temporary record.
-    def availability_after(item, deferred:, scheduled:)
+    def availability_after(item, deferred:, scheduled:, lead: UNSET)
       item = current_item_for(item) || item
-      build_availability(item, own_deferred: deferred, own_scheduled: scheduled)
+      build_availability(item, own_deferred: deferred, own_scheduled: scheduled, own_lead: lead)
     end
 
     def find(id, include_archive: false, source: nil)
@@ -471,7 +479,8 @@ module Tasks
           id: item.id, state: item.state, priority: item.priority, title: item.title,
           tags: item.tags, scheduled: item.scheduled, deadline: item.deadline,
           scheduled_value: item.scheduled_value, deadline_value: item.deadline_value,
-          recur: item.recur, closed: item.closed, source: item.source,
+          recur: item.recur, lead: item.lead, lead_skip: item.lead_skip,
+          closed: item.closed, source: item.source,
           body: snapshot.body(item), links: snapshot.links(item), headline: headline_for(item),
           parent_id: record && record["parent"], ancestor_ids: ancestor_ids(record, item.source),
           child_ids: child_ids, section_id: section && section["id"],
@@ -483,7 +492,8 @@ module Tasks
       end
     end
 
-    def build_availability(item, own_deferred: item.deferred?, own_scheduled: item.scheduled_value || item.scheduled)
+    def build_availability(item, own_deferred: item.deferred?, own_scheduled: item.scheduled_value || item.scheduled,
+                           own_lead: UNSET)
       return Availability.new(reason: :closed) if item.source == :archive ||
                                                    Store::CLOSED_STATES.include?(item.state)
       return Availability.new(reason: :proposed) unless item.open?
@@ -510,24 +520,72 @@ module Tasks
         )
       end
 
-      timed = candidates.select do |candidate, _distance|
-        scheduled = candidate.equal?(item) ? temporalize(own_scheduled) : candidate.scheduled_value
-        scheduled && scheduled.release_instant(temporal_context) > temporal_context.now
-      end.max_by do |candidate, distance|
-        scheduled = candidate.equal?(item) ? temporalize(own_scheduled) : candidate.scheduled_value
-        [scheduled.release_instant(temporal_context), -distance]
+      gates = candidates.filter_map do |candidate, distance|
+        gate = if candidate.equal?(item)
+                 effective_gate(candidate, scheduled_value: temporalize(own_scheduled),
+                                           lead: own_lead.equal?(UNSET) ? candidate.lead : own_lead)
+               else
+                 effective_gate(candidate)
+               end
+        gate && [candidate, distance, *gate]
       end
+      timed = gates.select { |_candidate, _distance, instant, _value| instant > temporal_context.now }
+                   .max_by { |_candidate, distance, instant, _value| [instant, -distance] }
       if timed
-        blocker, distance = timed
-        value = distance.zero? ? temporalize(own_scheduled) : blocker.scheduled_value
+        blocker, distance, instant, value = timed
         return Availability.new(
           reason: distance.zero? ? :scheduled : :ancestor_scheduled,
           blocker_id: blocker.id, scheduled: value.date,
-          temporal_value: value, available_at: value.release_instant(temporal_context)
+          temporal_value: value, available_at: instant
         )
       end
 
       Availability.new(reason: :available)
+    end
+
+    # The ONE derivation of a candidate's own timed gate, for the task itself
+    # and for every ancestor alike. Returns [release instant, the TemporalValue
+    # that explains it], or nil when the candidate has no own timed gate.
+    #
+    # It returns an INSTANT rather than a date on purpose: an all-day gate
+    # releases at local midnight today, and a clock lead (planned — see the
+    # plan's "Planned clock units") releases at an instant no date can express.
+    # Keeping the seam instant-shaped makes that follow-up additive.
+    #
+    # A lead REPLACES the available-from gate rather than joining it: the lead
+    # is measured from the anchor, and the store's rule 3 refuses the shapes
+    # that would leave a second, separately-meaningful available-from date
+    # behind.
+    def effective_gate(candidate, scheduled_value: candidate.scheduled_value, lead: candidate.lead)
+      gate = lead_gate_value(candidate, scheduled_value: scheduled_value, lead: lead)
+      # A released occurrence has NO own timed gate — not even its anchor's own
+      # available-from date, which would otherwise re-hide what activate just
+      # released.
+      return nil if gate.equal?(SKIPPED)
+
+      value = gate || scheduled_value
+      return nil unless value
+
+      [value.release_instant(temporal_context), value]
+    end
+
+    # The derived all-day gate for a lead, SKIPPED when `activate` already
+    # released this occurrence (lead_skip stamped with the current anchor
+    # date), or nil when there is no lead gate to derive — no anchor to measure
+    # from, or no valid span. Nil means "fall back to the available-from date";
+    # SKIPPED means "no own timed gate at all".
+    def lead_gate_value(candidate, scheduled_value:, lead:)
+      anchor = Lead.anchor_date(candidate.deadline_value&.date || candidate.deadline,
+                                scheduled_value&.date)
+      return nil unless anchor
+      # The release stamp is checked before the span, because `activate` also
+      # uses it to release a recurring task's next occurrence without deleting
+      # the date that occurrence IS.
+      return SKIPPED if candidate.lead_skip == anchor.iso8601
+      return nil unless Lead.span?(lead)
+
+      date = Lead.gate_date(anchor, lead)
+      date && TemporalValue.new(date: date)
     end
 
     # The snapshot's own Item for a possibly-stale caller Item. Every one of

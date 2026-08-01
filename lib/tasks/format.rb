@@ -26,7 +26,7 @@ module Tasks
     # (forward-compat), and an older reader round-trips them untouched.
     KEY_ORDER = %w[
       type id parent state priority title tags scheduled scheduled_time
-      deadline deadline_time recur delegation
+      deadline deadline_time recur lead lead_skip delegation
       closed archived body updated
     ].freeze
 

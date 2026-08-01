@@ -1760,7 +1760,8 @@ class TestApp < Minitest::Test
       app.send(:handle_key, "\r")
 
       task = app.instance_variable_get(:@store).items.find { |item| item.id == FIX[:plants] }
-      assert_nil task.scheduled
+      assert_equal future, task.scheduled.iso8601, "the next occurrence survives activation"
+      assert_equal future, task.lead_skip, "activation releases exactly this occurrence"
       assert_equal "+1w", task.recur, "activation owns availability without stopping recurrence"
       assert_match(/available now/, app.instance_variable_get(:@flash))
     end

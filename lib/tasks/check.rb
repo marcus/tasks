@@ -4,6 +4,7 @@ require "date"
 require "set"
 require_relative "delegation"
 require_relative "format"
+require_relative "lead"
 require_relative "recur"
 require_relative "update_stamp"
 require_relative "temporal_value"
@@ -33,7 +34,7 @@ module Tasks
     # Fields a section record must not carry (task-only semantics). `archived`
     # is allowed — a swept subtree root can be a section.
     SECTION_FORBIDDEN = %w[state priority scheduled scheduled_time deadline deadline_time recur
-                           delegation closed tags].freeze
+                           lead lead_skip delegation closed tags].freeze
     # Every key the schema knows (plus the out-of-band line stamp / meta version).
     KNOWN_KEYS = (Format::KEY_ORDER + %w[line version]).to_set
 
@@ -265,6 +266,7 @@ module Tasks
         errors << [line, "invalid recur cookie #{rc.inspect} " \
                          "(expected e.g. .+1w, ++1m, +2d, w:mon, m:15, y:07-04)"]
       end
+      check_lead(r, line, errors)
       if r["closed"] && OPEN_STATES.include?(r["state"])
         errors << [line, "closed date on an open task (#{r["state"]})"]
       elsif r["closed"] && PROPOSED_STATES.include?(r["state"])
@@ -279,6 +281,23 @@ module Tasks
         errors << [line, "updated #{r["updated"].inspect} is not an RFC3339 UTC timestamp with device slug"]
       end
       check_delegation(r, line, errors)
+    end
+
+    # The lead-time pair. `lead` is a canonical span (the grammar lives in
+    # Tasks::Lead, so linter and write paths can never drift); `lead_skip` is
+    # the anchor date one `activate` already released, so it needs an anchor to
+    # name — without a date stamp it can only be stale. Both guard the type
+    # first: Check must report bad data, never crash on it.
+    def check_lead(r, line, errors)
+      if (lead = r["lead"]) && !(lead.is_a?(String) && lead == lead.strip && Lead.span?(lead))
+        errors << [line, "invalid lead #{lead.inspect} (expected a span like 3w, 2d, 1m, 1y)"]
+      end
+      return unless r["lead_skip"]
+
+      check_date(r, "lead_skip", line, errors)
+      unless r["scheduled"] || r["deadline"]
+        errors << [line, "lead_skip without a scheduled date or deadline to release"]
+      end
     end
 
     # The delegation marker's own shape (Tasks::Delegation owns the invariants)

@@ -25,6 +25,7 @@ module Tasks
       activate
       scheduled deadline date_clear
       recurrence
+      lead
       location
       state
     ].freeze

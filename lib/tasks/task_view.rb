@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "delegation"
+require_relative "lead"
 require_relative "links"
 require_relative "recur"
 require_relative "store"
@@ -11,7 +12,7 @@ module Tasks
   # reusable callers operate on stable ids and semantic fields only.
   class TaskView
     attr_reader :id, :state, :priority, :title, :tags, :contexts, :scheduled,
-                :deadline, :recur, :closed, :source, :body, :links, :headline,
+                :deadline, :recur, :lead, :lead_skip, :closed, :source, :body, :links, :headline,
                 :parent_id, :ancestor_ids, :child_ids, :section_id,
                 :section_title, :project, :revision, :availability_reason,
                 :availability_blocker_id, :descendant_count,
@@ -20,7 +21,7 @@ module Tasks
 
     def initialize(id:, state:, priority:, title:, tags:, scheduled:, deadline:,
                    scheduled_value: nil, deadline_value: nil, temporal_context: nil,
-                   recur:, closed:, source:, body:, links:, headline:, parent_id:,
+                   recur:, lead: nil, lead_skip: nil, closed:, source:, body:, links:, headline:, parent_id:,
                    ancestor_ids:, child_ids:, section_id:, section_title:, project:,
                    availability:, revision: nil, descendant_count: 0, delegation: nil)
       @id = frozen_text(id)
@@ -36,6 +37,8 @@ module Tasks
       @scheduled_time = scheduled_value&.api_time(temporal_context)&.freeze
       @deadline_time = deadline_value&.api_time(temporal_context)&.freeze
       @recur = frozen_text(recur)
+      @lead = frozen_text(lead)
+      @lead_skip = frozen_text(lead_skip)
       @closed = closed&.freeze
       @source = source&.to_sym
       @body = frozen_array(body)
@@ -64,6 +67,9 @@ module Tasks
     def proposed? = Store::PROPOSED_STATES.include?(state)
     def deferred? = tags.include?(Store::DEFER_TAG)
     def recurring? = Recur.cookie?(recur)
+    def lead_time? = Lead.span?(lead)
+    # The rendered span ("3 weeks"), or nil when the task carries no lead.
+    def lead_human = lead_time? ? Lead.humanize(lead) : nil
     def available? = @available
     def delegated? = Delegation.object?(delegation)
     def agent_ready? = Delegation.ready?(delegation)
@@ -84,7 +90,8 @@ module Tasks
         deadline_time: deadline_time, available: available?, available_at: available_at,
         availability_reason: availability_reason.to_s,
         availability_blocker_id: availability_blocker_id,
-        recur: recur, closed: closed&.iso8601, source: source,
+        recur: recur, lead: lead, lead_human: lead_human,
+        closed: closed&.iso8601, source: source,
         body: body, links: links.map(&:to_h), parent_id: parent_id,
         ancestor_ids: ancestor_ids, child_ids: child_ids, section_id: section_id,
         section_title: section_title, project: project, headline: headline,

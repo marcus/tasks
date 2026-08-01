@@ -896,7 +896,7 @@ class TestCliMutations < Minitest::Test
     end
   end
 
-  def test_cli_activate_preserves_scheduled_only_recurrence_and_undo_restores_date
+  def test_cli_activate_releases_one_occurrence_of_a_recurring_task_and_undo_restores_it
     today = Date.today
     content = dump_fixture([
       { "type" => "meta", "version" => 2 },
@@ -914,7 +914,11 @@ class TestCliMutations < Minitest::Test
       out, err, status = run_cli_at(org, archive, "activate", "Weekly planning")
       assert status.success?, err
       record = record_for(org, title: "Weekly planning")
-      assert_nil record["scheduled"]
+      # A recurring task's future date is its next OCCURRENCE, not a defer:
+      # activation releases that one occurrence and leaves the anchor the
+      # series rolls from in place.
+      assert_equal (today + 4).iso8601, record["scheduled"]
+      assert_equal (today + 4).iso8601, record["lead_skip"]
       assert_equal ".+1w", record["recur"], "activation must not discard unrelated recurrence"
       refute_includes(record["tags"] || [], "defer")
       assert_match(/available now/, out)

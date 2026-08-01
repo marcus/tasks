@@ -6,13 +6,13 @@ module Tasks
   # checks; `fingerprints` guard operations whose effects span a subtree.
   class EditSnapshot
     FIELDS = %i[
-      title priority deferred scheduled deadline recurrence contexts tags body
+      title priority deferred scheduled deadline recurrence lead contexts tags body
       location state
     ].freeze
 
     attr_reader :id, :title, :priority, :deferred, :scheduled, :deadline,
                 :scheduled_value, :deadline_value,
-                :recurrence, :contexts, :tags, :body, :parent, :state, :closed,
+                :recurrence, :lead, :lead_skip, :contexts, :tags, :body, :parent, :state, :closed,
                 :baselines, :fingerprints, :metadata, :revision
 
     alias recur recurrence
@@ -20,7 +20,7 @@ module Tasks
 
     def initialize(id:, title:, priority:, deferred:, scheduled:, deadline:,
                    scheduled_value: scheduled, deadline_value: deadline,
-                   recurrence:, contexts:, tags:, body:, parent:, state:, closed:,
+                   recurrence:, lead: nil, lead_skip: nil, contexts:, tags:, body:, parent:, state:, closed:,
                    baselines:, fingerprints:, revision:, metadata: {})
       @id = immutable(id)
       @title = immutable(title)
@@ -31,6 +31,8 @@ module Tasks
       @scheduled_value = scheduled_value
       @deadline_value = deadline_value
       @recurrence = immutable(recurrence)
+      @lead = immutable(lead)
+      @lead_skip = immutable(lead_skip)
       @contexts = immutable(contexts)
       @tags = immutable(tags)
       @body = immutable(body)
