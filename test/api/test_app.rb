@@ -78,22 +78,40 @@ class TestApiApp < Minitest::Test
     assert_contract_response(response)
   end
 
-  def test_readiness_reports_a_typed_schema_migration_requirement
+  # A store this build cannot read is refused on every surface, and the refusal
+  # names the version rather than a migration: there is no migration.
+  def test_an_unsupported_schema_version_is_refused_on_read_and_on_write
     records = Tasks::Format.parse(File.read(@org)).records.map(&:dup)
     records.first["version"] = 1
     File.write(@org, records.map { |record| JSON.generate(record) }.join("\n") + "\n")
 
     response = get("/readyz")
-    assert_error response, 409, "schema_migration_required"
-    details = JSON.parse(response.body).dig("error", "details")
-    assert_equal 1, details.fetch("current_version")
-    assert_equal 2, details.fetch("required_version")
-    assert_equal "tasks migrate", details.fetch("command")
+    assert_error response, 503, "unsupported_schema_version"
+    body = JSON.parse(response.body)
+    assert_equal 2, body.dig("error", "details").fetch("supported_version")
+    refute_match(/migrat/i, body.dig("error", "message"))
     assert_contract_response(response)
 
     tasks = get("/api/v1/tasks")
-    assert_error tasks, 409, "schema_migration_required"
+    assert_error tasks, 503, "unsupported_schema_version"
     assert_contract_response(tasks)
+
+    created = json_request("POST", "/api/v1/tasks", { title: "Should not be written" })
+    assert_error created, 503, "unsupported_schema_version"
+    assert_contract_response(created)
+    assert_equal 1, JSON.parse(File.foreach(@org).first).fetch("version")
+  end
+
+  # Forward skew (a store written by a newer binary) takes the identical path.
+  def test_a_future_schema_version_is_refused_the_same_way
+    records = Tasks::Format.parse(File.read(@org)).records.map(&:dup)
+    records.first["version"] = 3
+    File.write(@org, records.map { |record| JSON.generate(record) }.join("\n") + "\n")
+
+    response = get("/readyz")
+
+    assert_error response, 503, "unsupported_schema_version"
+    assert_contract_response(response)
   end
 
   def test_list_supports_every_documented_filter_and_rejects_unknown_queries

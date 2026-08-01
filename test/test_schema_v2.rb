@@ -78,45 +78,11 @@ class TestSchemaV2 < Minitest::Test
 
       assert_equal 2, JSON.parse(File.foreach(org).first).fetch("version")
       assert Tasks::Check.check(org).ok?
-      assert_equal :already_current, store.migrate_schema!.status
-      refute store.checked_read_snapshot.migration_required?
+      refute store.checked_read_snapshot.unsupported_schema?
     end
   end
 
-  def test_v1_migration_changes_only_meta_and_establishes_backups
-    Dir.mktmpdir do |dir|
-      org = File.join(dir, "tasks.jsonl")
-      archive = File.join(dir, "archive.jsonl")
-      journal = File.join(dir, "journal")
-      live_records = [{ "type" => "meta", "version" => 1 },
-                      { "type" => "task", "id" => "aaaa0001", "state" => "NEXT",
-                        "title" => "Existing", "deadline" => "2026-07-20" }]
-      archived_records = [{ "type" => "meta", "version" => 1 },
-                          { "type" => "task", "id" => "bbbb0001", "state" => "DONE",
-                            "title" => "Old", "closed" => "2026-07-01" }]
-      File.write(org, Tasks::Format.dump(live_records))
-      File.write(archive, Tasks::Format.dump(archived_records))
-      store = Tasks::Store.new(org: org, archive: archive, journal_dir: journal)
-
-      preview = store.migrate_schema!(dry_run: true)
-      assert_equal :dry_run, preview.status
-      assert_equal 1, JSON.parse(File.foreach(org).first)["version"]
-
-      result = store.migrate_schema!
-      assert result.ok?, result.errors.inspect
-      assert_equal 2, JSON.parse(File.foreach(org).first)["version"]
-      assert_equal 2, JSON.parse(File.foreach(archive).first)["version"]
-      assert_equal live_records.drop(1), Tasks::Format.parse(File.read(org)).records.drop(1).map { |r| r.except("line") }
-      assert_equal archived_records.drop(1),
-                   Tasks::Format.parse(File.read(archive)).records.drop(1).map { |r| r.except("line") }
-      assert File.exist?("#{org}.v1.bak")
-      assert File.exist?("#{archive}.v1.bak")
-      assert_equal :empty, store.undo!.first
-      assert_equal :already_current, store.migrate_schema!.status
-    end
-  end
-
-  def test_ordinary_mutation_against_v1_returns_typed_migration_requirement
+  def test_ordinary_mutation_against_v1_is_refused_as_an_unsupported_schema
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       archive = File.join(dir, "archive.jsonl")
@@ -126,13 +92,14 @@ class TestSchemaV2 < Minitest::Test
       store = Tasks::Store.new(org: org, archive: archive, journal_dir: File.join(dir, "journal"))
       patch = Tasks::TaskPatch.new(id: "aaaa0001", field: :priority, value: "A", expected: nil)
       result = store.patch_task!(patch)
-      assert_equal :migration_required, result.status
-      assert result.migration_required?
+      assert_equal :unsupported_schema, result.status
+      assert result.unsupported_schema?
+      assert_equal ["unsupported meta version 1 (expected 2)"], result.errors
       assert_equal 1, JSON.parse(File.foreach(org).first).fetch("version")
     end
   end
 
-  def test_project_mutation_against_v1_returns_typed_migration_requirement
+  def test_project_mutation_against_v1_is_refused_as_an_unsupported_schema
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       archive = File.join(dir, "archive.jsonl")
@@ -143,7 +110,8 @@ class TestSchemaV2 < Minitest::Test
 
       result = application.create_project(title: "New project")
 
-      assert_equal :migration_required, result.status
+      assert_equal :unsupported_schema, result.status
+      assert_equal ["unsupported meta version 1 (expected 2)"], result.errors
       assert_equal 1, JSON.parse(File.foreach(org).first).fetch("version")
     end
   end
@@ -162,12 +130,13 @@ class TestSchemaV2 < Minitest::Test
 
       result = store.patch_task!(patch)
 
-      assert_equal :migration_required, result.status
+      assert_equal :unsupported_schema, result.status
+      assert_equal ["archive: unsupported meta version 1 (expected 2)"], result.errors
       assert_nil JSON.parse(File.readlines(org)[1]).fetch("priority", nil)
     end
   end
 
-  def test_legacy_archive_and_history_mutations_return_migration_required
+  def test_archive_and_history_against_v1_are_refused_as_an_unsupported_schema
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       archive = File.join(dir, "archive.jsonl")
@@ -177,52 +146,71 @@ class TestSchemaV2 < Minitest::Test
       ]))
       store = Tasks::Store.new(org: org, archive: archive)
 
-      assert_equal [:migration_required], store.undo!
+      assert_equal [:unsupported_schema], store.undo!
       refusal = store.archive_swept!
       assert_instance_of Tasks::Store::ArchiveRefusal, refusal
-      assert_equal :migration_required, refusal.reason
+      assert_equal :unsupported_schema, refusal.reason
       refute File.exist?(archive)
     end
   end
+  # There is no migration path in either direction, so the version gate is the
+  # only thing standing between v1 bytes and a reader that would interpret them
+  # as v2. It refuses, names the version, and never names a command to run.
+  def test_checked_read_refuses_a_v1_store_and_names_no_migration
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, Tasks::Format.dump([
+        { "type" => "meta", "version" => 1 },
+        { "type" => "task", "id" => "aaaa0001", "state" => "NEXT", "title" => "Existing" },
+      ]))
+      checked = Tasks::Store.new(org: org, archive: archive).checked_read_snapshot
 
-  def test_migration_backs_up_an_existing_empty_archive_for_exact_recovery
+      assert_equal :unsupported_schema, checked.status
+      assert checked.unsupported_schema?
+      assert_nil checked.snapshot, "v1 records must never be handed to a v2 reader"
+      assert_equal [{ source: :live, line: 1,
+                      message: "unsupported meta version 1 (expected 2)" }], checked.errors
+      refute_match(/migrat/i, checked.errors.map { |error| error[:message] }.join)
+    end
+  end
+
+  # Forward skew is the live case (Marcus runs several devices): a store written
+  # by a newer binary is refused by exactly the same gate, not silently read.
+  def test_a_future_schema_version_is_refused_on_read_and_on_mutation
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, Tasks::Format.dump([
+        { "type" => "meta", "version" => 3 },
+        { "type" => "task", "id" => "aaaa0001", "state" => "NEXT", "title" => "Existing" },
+      ]))
+      store = Tasks::Store.new(org: org, archive: archive, journal_dir: File.join(dir, "journal"))
+
+      assert_equal :unsupported_schema, store.checked_read_snapshot.status
+      result = store.patch_task!(
+        Tasks::TaskPatch.new(id: "aaaa0001", field: :priority, value: "A", expected: nil)
+      )
+      assert_equal :unsupported_schema, result.status
+      assert_equal ["unsupported meta version 3 (expected 2)"], result.errors
+      assert_equal 3, JSON.parse(File.foreach(org).first).fetch("version")
+    end
+  end
+
+  # A create is the one mutation that bootstraps missing files, so it gets its
+  # own proof that the gate runs before the bootstrap.
+  def test_create_against_a_v1_store_is_refused_and_writes_nothing
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       archive = File.join(dir, "archive.jsonl")
       File.write(org, Tasks::Format.dump([{ "type" => "meta", "version" => 1 }]))
-      File.write(archive, "")
-      store = Tasks::Store.new(org: org, archive: archive)
-
-      result = store.migrate_schema!
-
-      assert result.ok?, result.errors.inspect
-      assert_includes result.backups, "#{archive}.v1.bak"
-      assert_equal "", File.binread("#{archive}.v1.bak")
-      FileUtils.cp("#{org}.v1.bak", org)
-      FileUtils.cp("#{archive}.v1.bak", archive)
-      assert_equal 1, JSON.parse(File.foreach(org).first).fetch("version")
-      assert_equal "", File.binread(archive)
-    end
-  end
-
-  def test_migration_rolls_both_files_back_when_installation_fails
-    Dir.mktmpdir do |dir|
-      org = File.join(dir, "tasks.jsonl")
-      archive = File.join(dir, "archive.jsonl")
-      v1 = Tasks::Format.dump([{ "type" => "meta", "version" => 1 }])
-      File.write(org, v1)
-      File.write(archive, v1)
+      before = File.binread(org)
       store = Tasks::Store.new(org: org, archive: archive, journal_dir: File.join(dir, "journal"))
-      original = Tasks::Atomic.method(:write)
-      Tasks::Atomic.stub(:write, lambda { |path, content|
-        raise IOError, "install failed" if path == archive && content.include?('"version":2')
-        original.call(path, content)
-      }) do
-        result = store.migrate_schema!
-        assert_equal :rolled_back, result.status
-      end
-      assert_equal v1, File.read(org)
-      assert_equal v1, File.read(archive)
+
+      result = store.create_task!(Tasks::CreateTask.new(title: "New"))
+
+      assert_equal :unsupported_schema, result.status
+      assert_equal before, File.binread(org)
     end
   end
 end

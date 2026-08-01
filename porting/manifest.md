@@ -112,25 +112,27 @@ port. The reason is that no schema-v1 users exist.** This is a scope decision,
 not an unfinished slice, and it does not go through the
 intentional-differences path.
 
-Concretely, nothing here gets a manifest record, a td issue, or a fixture:
+It is no longer a carve-out, either. **td-09f7de deleted the migration machinery
+from Ruby** rather than asking every mutation slice to file an intentional
+difference for a dead branch: there is nothing left in the oracle to skip.
+Removed there: `tasks migrate` and its dispatch, `Store#migrate_schema!`,
+`MigrationResult`, `Application#migrate_schema`, the `:migration_required`
+status across `MutationResult` / `ApplicationReadResult` / `Store::CheckedRead`,
+the API's `409 schema_migration_required`, the cross-version branch in
+`jsonl_merge`, and the TUI's migrate prompt. Org-mode is gone entirely — no
+importer, no compatibility case, no future use.
 
-- `tasks migrate`, `Store#migrate_schema!`, `schema_migration_required?`, and
-  the schema-v1 read path;
-- the `migration_required` guard branches on Ruby's mutation paths (about
-  eight sites in `lib/tasks/store.rb`), the API's typed
-  migration-required error, the `jsonl_merge` guard, and the TUI's migration
-  hints;
-- org-mode entirely — no importer, no compatibility case, no future use.
+What replaced it is contract, and **is** in scope:
 
-Rejecting a `meta` version that is not 2 **is** in scope: that is validation,
-and `check-meta-and-ids` carries it. What is excluded is doing anything about a
-v1 store other than refusing it.
-
-Every seeded slice whose Ruby carries one of those guard branches says so in its
-own `oracle_gaps`, so an agent claiming the slice sees the exclusion without
-having to find this file. The Go side assumes schema v2; a missing guard branch
-is therefore **not** a conformance mismatch to classify, and must not be
-translated back in during compile repair.
+- Any declared `meta` version other than `Format::VERSION` — older or newer —
+  is refused identically. `Check` reports `unsupported meta version <n>
+  (expected 2)`; `check-meta-and-ids` carries that.
+- The store gates mutations on the same rule (`Store#unsupported_schema?`,
+  checking both the live file and the archive) and refuses with the typed
+  `:unsupported_schema` status, writing nothing. The API maps it to
+  `503 unsupported_schema_version`.
+- A port that omits the gate is not "missing a dead branch"; it is a
+  data-corruption bug, because v1 bytes would then be parsed as v2.
 
 ## Validation
 

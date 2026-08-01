@@ -511,8 +511,11 @@ implementations, stop and reconsider rather than pushing through sunk cost.
 
 ### Phase 1: build the conformance harness
 
-Create sanitized fixture stores covering valid, legacy, malformed, and
-concurrent cases. Add a runner protocol that can execute Ruby or Go commands
+Create sanitized fixture stores covering valid, compat, malformed, and
+adversarial (concurrent) cases — the four classes in `porting/fixtures/`.
+`compat/` is cross-binary version skew, not old formats: schema v1 and the
+org-mode importer are deleted, not ported (td-09f7de), and what a port must
+carry is the *refusal* of any `meta` version other than 2. Add a runner protocol that can execute Ruby or Go commands
 and emit a machine-readable observation containing outputs, errors, files, and
 journal state. Capture the current Ruby result set before Go code exists.
 

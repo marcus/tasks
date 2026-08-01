@@ -1,11 +1,12 @@
-# legacy/forward-compat-unknown-keys
+# compat/forward-compat-unknown-keys
 
 A version 2 store written by a **newer** binary: it carries top-level keys and a
 nested `delegation` key this version does not know.
 
-Forward compatibility is the same mechanism legacy support rests on — one
-binary reading bytes another binary's schema produced — which is why it lives in
-this class rather than in `malformed/`.
+This is version skew between binaries, not a broken store, which is why it
+lives in `compat/` rather than `malformed/`. It is the tolerant half of the
+pair: unknown *keys* at the current schema version are preserved with a warning,
+while an unknown schema *version* is refused outright (`future-schema-v3`).
 
 ## What it exercises
 

@@ -172,7 +172,7 @@ module Tui
       @agent_quit_return_mode = nil
       @agent_activity_width = nil
       @agent_activity_second = nil
-      show_schema_migration_prompt if schema_migration_required?
+      show_unsupported_schema_notice if unsupported_schema?
     end
 
     # -- agent selection -----------------------------------------------------
@@ -216,27 +216,31 @@ module Tui
 
     private
 
-    def schema_migration_required?
+    # True when either file declares a schema version this build does not
+    # implement. There is no conversion path in either direction: the TUI says
+    # so and refuses to edit, rather than rewriting bytes it cannot interpret.
+    def unsupported_schema?
       [@paths.org, @paths.archive].any? do |path|
         next false unless File.exist?(path)
 
         first = JSON.parse(File.open(path, "r", encoding: "UTF-8", &:readline))
-        first["type"] == "meta" && first["version"] == 1
+        first["type"] == "meta" && first["version"].is_a?(Integer) &&
+          first["version"] != Tasks::Format::VERSION
       rescue JSON::ParserError, EOFError, SystemCallError
         false
       end
     end
 
-    def show_schema_migration_prompt
+    def show_unsupported_schema_notice
       @ui.modal = Modal.new(
-        title: "Task data migration required",
-        kind: :migration_required,
+        title: "Unsupported schema version",
+        kind: :unsupported_schema,
         lines: [
-          "This task store uses schema v1. Run the migration before editing.",
-          "Preview: tasks migrate --dry-run",
-          "Apply:   tasks migrate",
-          "The migration writes .v1.bak backups before replacing either file.",
-          "Press y or Return to migrate now; Escape leaves the files unchanged.",
+          "This task store declares a schema version this build does not implement.",
+          "Supported: schema v#{Tasks::Format::VERSION}.",
+          "Run `tasks check` for the exact version, and use a build that reads it.",
+          "Nothing has been written; editing is refused while this is true.",
+          "Escape closes this notice.",
         ],
       )
       @ui.mode = :modal
@@ -1232,7 +1236,7 @@ module Tui
     # Modal navigation is reserved for blocking overlays such as help and
     # archive confirmation. Task details remain in list mode in the right panel.
     def modal_key(k)
-      return schema_migration_key(k) if @ui.modal&.kind == :migration_required
+      return unsupported_schema_key(k) if @ui.modal&.kind == :unsupported_schema
       return archive_confirm_key(k) if @ui.modal&.kind == :archive_confirm
       return archive_blocked_key(k) if @ui.modal&.kind == :archive_blocked
       return cancel_queued_agent_requests_key(k) if @ui.modal&.kind == :agent_queue_cancel_confirm
@@ -1255,19 +1259,10 @@ module Tui
       modal_filter_key(k)
     end
 
-    def schema_migration_key(key)
-      return close_modal if key == "\e"
-      return unless ["y", "Y", "\r", "\n"].include?(key)
-
-      result = @application.migrate_schema
-      if result.ok?
-        @store.reload!
-        invalidate_read_model
-        close_modal
-        flash("task data migrated to schema v#{result.to_version}; .v1.bak backups created")
-      else
-        flash("migration failed: #{Array(result.errors).first || result.status}")
-      end
+    # The notice has no action: nothing this build can do makes the store
+    # readable, so the only key it honors is the one that dismisses it.
+    def unsupported_schema_key(key)
+      close_modal if ["\e", "q", "\r", "\n"].include?(key)
     end
 
     def prompt_key(k)
@@ -1853,7 +1848,7 @@ module Tui
     def history_op(op, verb)
       kind, label = @store.public_send(op)
       case kind
-      when :migration_required then show_schema_migration_prompt
+      when :unsupported_schema then show_unsupported_schema_notice
       when :empty    then flash("nothing to #{verb == "undid" ? "undo" : "redo"}")
       when :conflict then flash("file changed externally — can't #{op.to_s.chomp("!")} “#{label}”")
       else
@@ -3180,7 +3175,7 @@ module Tui
     end
 
     def archive_sweep
-      return show_schema_migration_prompt if schema_migration_required?
+      return show_unsupported_schema_notice if unsupported_schema?
       return confirm_archive_project(current_project) if current_project
 
       preview = @store.archive_preview
@@ -3219,8 +3214,8 @@ module Tui
         close_modal
         if result.is_a?(Tasks::Store::ArchiveRefusal)
           case result.reason
-          when :migration_required
-            show_schema_migration_prompt
+          when :unsupported_schema
+            show_unsupported_schema_notice
           when :preview_changed
             flash("task list changed — press x to review the updated archive preview")
           when :archive_conflict

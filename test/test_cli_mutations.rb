@@ -1475,25 +1475,9 @@ class TestCliMutations < Minitest::Test
     end
   end
 
-  def test_cli_migrate_dry_run_and_install
-    v1 = Tasks::Format.dump([
-      { "type" => "meta", "version" => 1 },
-      { "type" => "section", "id" => "aa000001", "title" => "Work" },
-    ])
-    run_cli("migrate", "--dry-run", content: v1) do |org, out, err, st|
-      assert st.success?, err
-      assert_match(/would migrate/, out)
-      assert_equal 1, JSON.parse(File.foreach(org).first)["version"]
-    end
-    run_cli("migrate", content: v1) do |org, out, err, st|
-      assert st.success?, err
-      assert_match(/migrated/, out)
-      assert_equal 2, JSON.parse(File.foreach(org).first)["version"]
-      assert File.exist?("#{org}.v1.bak")
-    end
-  end
-
-  def test_cli_mutation_against_v1_store_names_the_migration_it_needs
+  # `tasks migrate` no longer exists in any form. A v1 store is still refused —
+  # loudly, without naming a command that is gone, and without a byte written.
+  def test_cli_mutation_against_a_v1_store_is_refused_without_writing
     v1 = Tasks::Format.dump([
       { "type" => "meta", "version" => 1 },
       { "type" => "section", "id" => "aa000001", "title" => "Work" },
@@ -1502,9 +1486,37 @@ class TestCliMutations < Minitest::Test
     ])
     run_cli("due", "aa000002", "2026-08-01", content: v1) do |org, _out, err, st|
       refute st.success?
-      assert_match(/tasks migrate/, err)
+      assert_match(/unsupported meta version 1 \(expected 2\)/, err)
+      assert_match(/nothing was written/, err)
+      refute_match(/migrate/i, err)
       assert_equal 1, JSON.parse(File.foreach(org).first)["version"]
       assert_equal "2026-07-20", record_for(org, title: "Old task")["deadline"]
+    end
+  end
+
+  def test_cli_undo_and_archive_against_a_v1_store_are_refused
+    v1 = Tasks::Format.dump([
+      { "type" => "meta", "version" => 1 },
+      { "type" => "task", "id" => "aa000002", "state" => "DONE", "title" => "Old task" },
+    ])
+    %w[undo archive].each do |command|
+      run_cli(command, content: v1) do |org, _out, err, st|
+        refute st.success?, "#{command} must refuse a v1 store"
+        assert_match(/unsupported schema version/, err)
+        refute_match(/migrate/i, err)
+        assert_equal 1, JSON.parse(File.foreach(org).first)["version"]
+      end
+    end
+  end
+
+  def test_cli_help_and_dispatch_no_longer_carry_a_migrate_command
+    run_cli("help") do |_org, out, _err, st|
+      assert st.success?
+      refute_match(/migrate/i, out)
+    end
+    run_cli("migrate") do |_org, _out, err, st|
+      refute st.success?
+      assert_match(/unknown command: "migrate"/, err)
     end
   end
 

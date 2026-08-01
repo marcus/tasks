@@ -20,7 +20,7 @@ implementation is the thing being judged against it.
 | `manifest-issues` | projects the manifest into td — one epic per campaign, one issue per slice, `depends_on` as dependency edges. Idempotent; `plan` is the dry run | td-940935 |
 | `intentional-differences.md` | every accepted divergence from Ruby, and only Marcus accepts one | as they arise |
 | `specs/` | `observations.schema.json` (the shape a runner emits) and `errors.md` | td-3527b1 |
-| `fixtures/{valid,legacy,malformed,adversarial}/` | sanitized store copies. Agents operate on copies here and never on a live store | td-a1d16a |
+| `fixtures/{valid,compat,malformed,adversarial}/` | sanitized store copies. Agents operate on copies here and never on a live store | td-a1d16a |
 | `runners/` | per-implementation drivers that execute an invocation and emit one observation | td-a23bad (ruby) |
 | `compare/` | the comparator: observation vs observation, plus the Ruby baseline | td-34d915 |
 | `evidence/<slice-id>/` | oracle captures, conformance reports, review findings. td logs point *at* these; evidence never lives only inside td | every slice |

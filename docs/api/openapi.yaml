@@ -132,8 +132,6 @@ paths:
                         events: false
                     meta:
                       store_revision: "s1.6f2a9c0b"
-        "409":
-          $ref: "#/components/responses/MigrationRequired"
         "503":
           $ref: "#/components/responses/StoreInvalid"
         "400":
@@ -174,8 +172,6 @@ paths:
                         parent_id: null
                     meta:
                       store_revision: "s1.6f2a9c0b"
-        "409":
-          $ref: "#/components/responses/MigrationRequired"
         "503":
           $ref: "#/components/responses/StoreInvalid"
         "400":
@@ -372,8 +368,6 @@ paths:
           $ref: "#/components/responses/MalformedRequest"
         "422":
           $ref: "#/components/responses/ValidationFailed"
-        "409":
-          $ref: "#/components/responses/MigrationRequired"
         "503":
           $ref: "#/components/responses/StoreInvalid"
     post:
@@ -495,7 +489,7 @@ paths:
                       details: { parent_id: "deadbeef" }
                       request_id: "req_4c1a"
         "409":
-          description: Structural refusal nesting the task, or schema migration required.
+          description: Structural refusal nesting the task.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -507,8 +501,6 @@ paths:
                       message: "Nesting the task would exceed the maximum depth."
                       details: { max_depth: 4 }
                       request_id: "req_5f3a"
-                migration_required:
-                  $ref: "#/components/examples/MigrationRequiredError"
         "415":
           $ref: "#/components/responses/UnsupportedMediaType"
         "403":
@@ -603,8 +595,6 @@ paths:
           $ref: "#/components/responses/MalformedRequest"
         "422":
           $ref: "#/components/responses/ValidationFailed"
-        "409":
-          $ref: "#/components/responses/MigrationRequired"
         "503":
           $ref: "#/components/responses/StoreInvalid"
     patch:
@@ -779,8 +769,7 @@ paths:
         "409":
           description: |
             Structural refusal applying a move or ordered placement. After id
-            resolution, cycle detection precedes anchor-parent validation. The
-            same status reports a required schema migration before mutation.
+            resolution, cycle detection precedes anchor-parent validation.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -818,8 +807,6 @@ paths:
                       message: "The placement would exceed max_depth."
                       details: { max_depth: 4 }
                       request_id: "req_6a1d"
-                migration_required:
-                  $ref: "#/components/examples/MigrationRequiredError"
         "412":
           $ref: "#/components/responses/StaleRevision"
         "415":
@@ -884,7 +871,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: The task has descendants without `cascade`, or schema migration is required.
+          description: The task has descendants without `cascade`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -898,8 +885,6 @@ paths:
                         descendants: 3
                         open_descendants: 2
                       request_id: "req_7b2d"
-                migration_required:
-                  $ref: "#/components/examples/MigrationRequiredError"
         "412":
           $ref: "#/components/responses/StaleRevision"
         "422":
@@ -960,7 +945,7 @@ paths:
         "403": { $ref: "#/components/responses/ForbiddenOrigin" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
-          description: Proposed descendants remain, or schema migration is required.
+          description: Proposed descendants remain.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -1010,7 +995,7 @@ paths:
         "403": { $ref: "#/components/responses/ForbiddenOrigin" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
-          description: Proposed descendants remain, or schema migration is required.
+          description: Proposed descendants remain.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -1442,8 +1427,6 @@ paths:
                         task_ids: ["cccc000e", "cccc000f"]
                     meta:
                       store_revision: "s1.6f2a9c0b"
-        "409":
-          $ref: "#/components/responses/MigrationRequired"
         "503":
           $ref: "#/components/responses/StoreInvalid"
         "400":
@@ -1519,8 +1502,6 @@ paths:
           $ref: "#/components/responses/UnsupportedMediaType"
         "422":
           $ref: "#/components/responses/ValidationFailed"
-        "409":
-          $ref: "#/components/responses/MigrationRequired"
         "503":
           $ref: "#/components/responses/StoreInvalid"
 
@@ -1573,8 +1554,6 @@ paths:
           $ref: "#/components/responses/NotFound"
         "400":
           $ref: "#/components/responses/MalformedRequest"
-        "409":
-          $ref: "#/components/responses/MigrationRequired"
         "503":
           $ref: "#/components/responses/StoreInvalid"
     patch:
@@ -1647,8 +1626,6 @@ paths:
           $ref: "#/components/responses/UnsupportedMediaType"
         "422":
           $ref: "#/components/responses/ValidationFailed"
-        "409":
-          $ref: "#/components/responses/MigrationRequired"
         "503":
           $ref: "#/components/responses/StoreInvalid"
 
@@ -1710,8 +1687,6 @@ paths:
           $ref: "#/components/responses/MalformedRequest"
         "403":
           $ref: "#/components/responses/ForbiddenOrigin"
-        "409":
-          $ref: "#/components/responses/MigrationRequired"
         "503":
           $ref: "#/components/responses/StoreInvalid"
 
@@ -1762,7 +1737,7 @@ paths:
                     meta:
                       store_revision: "s2.1a2b3c4d"
         "409":
-          description: The project has open work without `force`, or schema migration is required.
+          description: The project has open work without `force`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -1776,8 +1751,6 @@ paths:
                         open_count: 3
                         held_count: 0
                       request_id: "req_5e6f"
-                migration_required:
-                  $ref: "#/components/examples/MigrationRequiredError"
         "404":
           $ref: "#/components/responses/NotFound"
         "400":
@@ -1975,8 +1948,6 @@ paths:
                       store_revision: "s1.6f2a9c0b"
         "404":
           $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/MigrationRequired"
         "503":
           $ref: "#/components/responses/StoreInvalid"
 
@@ -2199,7 +2170,7 @@ paths:
                     meta:
                       store_revision: "s1.9c3d4e5f"
         "409":
-          description: The preview changed, or schema migration is required.
+          description: The preview changed.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -2211,8 +2182,6 @@ paths:
                       message: "The archive preview changed; refetch it and retry."
                       details: { fingerprint: "sweep.a1b2c3" }
                       request_id: "req_8c3e"
-                migration_required:
-                  $ref: "#/components/examples/MigrationRequiredError"
         "422":
           $ref: "#/components/responses/ValidationFailed"
         "503":
@@ -2318,8 +2287,13 @@ paths:
                       message: "The task list failed structural validation."
                       details: {}
                       request_id: "req_9d4f"
-        "409":
-          $ref: "#/components/responses/MigrationRequired"
+                unsupported_schema_version:
+                  value:
+                    error:
+                      code: "unsupported_schema_version"
+                      message: "The task store declares a schema version this build does not implement."
+                      details: { supported_version: 2 }
+                      request_id: "req_9d5a"
         "400":
           $ref: "#/components/responses/MalformedRequest"
         "422":
@@ -2527,8 +2501,7 @@ components:
         The step cannot be applied: the supplied `store_revision` no longer
         matches (another surface wrote since it was observed), there is no
         step in that direction, or the journal refused the step because the
-        files were edited out of band. A v1 store also returns this status with
-        `schema_migration_required`. `details.reason` distinguishes
+        files were edited out of band. `details.reason` distinguishes
         `stale_store_revision`, `empty`, and `journal_conflict` for history
         conflicts.
       content:
@@ -2551,14 +2524,15 @@ components:
                   message: "Nothing to undo."
                   details: { reason: "empty" }
                   request_id: "req_1d2e"
-            migration_required:
-              $ref: "#/components/examples/MigrationRequiredError"
     StoreInvalid:
       description: |
-        The operation could not proceed against the backing store: either the
-        store is structurally invalid (`store_invalid`, including a write that
-        failed post-write validation and was rolled back) or a write failed
-        for an environmental reason and was rolled back (`unavailable`).
+        The operation could not proceed against the backing store: the store is
+        structurally invalid (`store_invalid`, including a write that failed
+        post-write validation and was rolled back), the store declares a schema
+        version this build does not implement (`unsupported_schema_version` —
+        refused on read and on write, with nothing written and no conversion
+        offered), or a write failed for an environmental reason and was rolled
+        back (`unavailable`).
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -2570,6 +2544,13 @@ components:
                   message: "The task list failed structural validation."
                   details: {}
                   request_id: "req_8b9c"
+            unsupported_schema_version:
+              value:
+                error:
+                  code: "unsupported_schema_version"
+                  message: "The task store declares a schema version this build does not implement."
+                  details: { supported_version: 2 }
+                  request_id: "req_8b9e"
             unavailable:
               value:
                 error:
@@ -2577,27 +2558,7 @@ components:
                   message: "The write failed and was rolled back; retry."
                   details: {}
                   request_id: "req_2f4d"
-    MigrationRequired:
-      description: The backing files still use schema v1 and must be migrated before the API can serve them.
-      content:
-        application/json:
-          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
-          example:
-            error:
-              code: "schema_migration_required"
-              message: "The task store uses schema v1; run `tasks migrate` before starting the API."
-              details: { current_version: 1, required_version: 2, command: "tasks migrate" }
-              request_id: "req_8b9d"
-
   examples:
-    MigrationRequiredError:
-      summary: The store must be migrated before the operation can proceed.
-      value:
-        error:
-          code: "schema_migration_required"
-          message: "The task store uses schema v1; run `tasks migrate` before starting the API."
-          details: { current_version: 1, required_version: 2, command: "tasks migrate" }
-          request_id: "req_8b9d"
     TaskResource:
       summary: A representative task resource.
       value:
@@ -3602,7 +3563,7 @@ components:
       description: |
         Stable machine error code. The set is derived from `MutationResult`
         statuses (not_found, stale→stale_revision, invalid→validation_failed,
-        conflict, cycle, too_deep, migration_required→schema_migration_required,
+        conflict, cycle, too_deep, unsupported_schema→unsupported_schema_version,
         store_invalid, unavailable), the delegation-specific
         `claim_conflict` refinement of `conflict`, plus transport
         errors (malformed_request, unsupported_media_type, payload_too_large,
@@ -3621,6 +3582,6 @@ components:
         - unsupported_media_type
         - validation_failed
         - missing_precondition
-        - schema_migration_required
+        - unsupported_schema_version
         - store_invalid
         - unavailable

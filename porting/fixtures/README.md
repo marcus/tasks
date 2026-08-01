@@ -16,7 +16,7 @@ never read, copied, or sampled. See [Sanitization](#sanitization) below.
 | Class | Holds |
 |---|---|
 | `valid/` | healthy stores, from the empty boundary to a 461-record ordering stress |
-| `legacy/` | on-disk formats other than the current one — older, newer, and abandoned |
+| `compat/` | version skew between binaries: bytes a *newer* binary produced |
 | `malformed/` | broken stores, each paired with the diagnostic Ruby actually produces |
 | `adversarial/` | concurrency, mid-write, revision, lock, and journal states |
 
@@ -65,7 +65,10 @@ cd "$copy" && env -u TASKS_FILE -u TASKS_ARCHIVE \
   ruby bin/tasks check [--all-files]
 ```
 
-Recorded against `9528bd6` on ruby 4.0.6 (arm64-darwin23).
+Recorded against `9528bd6` on ruby 4.0.6 (arm64-darwin23), and re-verified
+against every fixture in this corpus after **td-09f7de** removed the schema-v1
+migration path. `Check` itself was not changed by that work, and no recorded
+`check` outcome moved.
 
 ### Installing a journal
 
@@ -106,17 +109,12 @@ where it differs.
 | `archive-pair` | the two-file store; `archived` stamps; `--all-files` | 0 — `ok — 2 tasks parsed` (`--all-files`: 0 — `6 records`) |
 | `scale-ordering` | 461 records, 50 sibling groups — ordering bugs at size | 0 — `ok — 400 tasks parsed` |
 
-### `legacy/`
+### `compat/`
 
 | Fixture | Exercises | `check` |
 |---|---|---|
-| `schema-v1` | on-disk schema v1 (pre-temporal); the `migrate` path | 1 — `unsupported meta version 1 (expected 2)` |
-| `schema-v1-archive-pair` | both files at v1; migration as one unit | 1 (`--all-files`: 2 errors, one per file) |
-| `schema-v1-mixed-versions` | live v1, archive already v2 — an interrupted migration | 1 (`--all-files`: still 1; the archive is current) |
-| `schema-v1-time-metadata` | a v1 header carrying v2-only time metadata | 1 — version only; the contradiction is `migrate`'s to report |
-| `forward-compat-unknown-keys` | a store from a *newer* binary: unknown top-level and delegation keys | 0 with 3 warnings |
-| `future-schema-v3` | an unknown newer schema version — unreadable, not migratable | 1 — `unsupported meta version 3 (expected 2)` |
-| `org-pre-jsonl` | the pre-JSONL org file; no importer exists any more | 1 — 13 × `invalid JSON` |
+| `forward-compat-unknown-keys` | a store from a *newer* binary: unknown top-level and delegation keys, preserved with warnings | 0 with 3 warnings |
+| `future-schema-v3` | an unreadable schema version — refused on every surface, never converted | 1 — `unsupported meta version 3 (expected 2)` |
 
 ### `malformed/`
 
@@ -178,27 +176,33 @@ runs the preflight `Check` that refuses.
 `conflict: already claimed by <itself>`. Idempotent retry is the design a port is
 likely to reach for; this corpus pins the actual behavior.
 
-## Legacy formats: what is actually there
+## Why there is a `compat/` class and no `legacy/` one
 
-The task asked for legacy formats found in the code and history rather than
-imagined. There are exactly two, and one abandoned one:
+The corpus originally shipped a `legacy/` class of seven, built from the formats
+found in the code and history. Two of the three things it covered have since been
+deleted from the Ruby, so the class was retired in favor of `compat/`:
 
-- **JSONL schema v1 → v2.** Real and live. `Format::VERSION` is 2; the bump landed
-  in `80691f4` with the temporal (timed-task) work, and the only structural
+- **JSONL schema v1 → v2: dead.** `Format::VERSION` is 2; the bump landed in
+  `80691f4` with the temporal (timed-task) work, and the only structural
   difference is that v2 records may carry `scheduled_time` / `deadline_time`.
-  `Store#migrate_schema!` still reads v1, refuses it if it contains time metadata,
-  backs up both files, rewrites the headers, and drops a journal barrier so undo
-  cannot cross the schema change. Four fixtures cover it.
-- **Forward skew.** Unknown top-level keys and unknown `delegation` keys
-  round-trip with a warning rather than being dropped or refused — the same
-  mechanism, pointed the other way. One fixture; plus `future-schema-v3` for a
-  version this binary must refuse outright.
-- **Org-mode: gone.** The store was an Org file until `7d70cff`. `15ad280` added
-  an org → JSONL importer under the `tasks migrate` name, and `e5c505c` deleted it
-  once the data repository was cut over. `tasks migrate` today means only
-  v1 → v2. `legacy/org-pre-jsonl` records what a user with a pre-cutover directory
-  sees now — thirteen JSON parse errors — precisely so a port does not resurrect
-  an importer that no longer exists.
+  `Store#migrate_schema!` and `tasks migrate` converted v1 stores until
+  **td-09f7de** removed them: Marcus confirmed on 2026-08-01 that no schema-v1
+  store exists, and carrying a migration into the Go port meant carrying ten
+  dead guard branches through its riskiest slices. The four `schema-v1*`
+  fixtures went with it. What survives is the *refusal*, which is contract:
+  any declared `meta` version other than 2 is refused on read and on write, with
+  nothing written and no command offered. `compat/future-schema-v3` pins it.
+- **Forward skew: live.** Unknown top-level keys and unknown `delegation` keys
+  round-trip with a warning rather than being dropped or refused. This is the one
+  cross-version case that still happens in practice — Marcus runs several devices,
+  so a store written by a newer binary is an ordinary Tuesday. Two fixtures, one
+  per half of the contract (tolerate unknown keys, refuse an unknown version).
+- **Org-mode: gone, twice over.** The store was an Org file until `7d70cff`.
+  `15ad280` added an org → JSONL importer under the `tasks migrate` name, and
+  `e5c505c` deleted it once the data repository was cut over; `tasks migrate`
+  itself is now gone too. The `legacy/org-pre-jsonl` fixture was retired with it:
+  it recorded a diagnostic (thirteen JSON parse errors) that is just the ordinary
+  invalid-JSON path, already covered by `malformed/invalid-json`.
 
 ## Sanitization
 

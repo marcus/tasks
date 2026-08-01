@@ -917,8 +917,9 @@ def mutation_result_failed(result, msg)
   # short-lived Store that the CLI never sees.
   message = if result.rolled_back?
               "#{msg}\nfile failed validation after the edit — run `tasks check`"
-            elsif result.respond_to?(:migration_required?) && result.migration_required?
-              "#{msg}\ntask data migration required; run `tasks migrate` (nothing was written)"
+            elsif result.respond_to?(:unsupported_schema?) && result.unsupported_schema?
+              "#{msg}\n#{result.errors.first || "unsupported schema version"} — this build cannot " \
+                "read this task file (nothing was written)"
             elsif result.store_invalid?
               "#{msg}\ntask file is already invalid — run `tasks check` (nothing was written)"
             else
@@ -2394,7 +2395,7 @@ def cmd_delete(args)
 end
 
 def cmd_archive
-  require_current_schema_for_mutation!
+  require_supported_schema_for_mutation!
   result = store.archive_swept!
   if result.is_a?(Tasks::Store::ArchiveRefusal)
     preview = result.preview
@@ -2440,7 +2441,7 @@ def cmd_id(args)
   ref = rest.shift
   abort "usage: tasks id <ref>" if ref.nil? || ref.strip.empty?
   item = resolve_ref(ref, include_done: true) # referenceable regardless of state
-  require_current_schema_for_mutation!
+  require_supported_schema_for_mutation!
   id = store.ensure_id!(item)
   mutation_failed "failed to assign id" unless id
   store.reload!
@@ -2456,19 +2457,26 @@ def cmd_id(args)
 end
 
 def run_history(op, verb:, past:)
-  require_current_schema_for_mutation!
+  require_supported_schema_for_mutation!
   kind, label = store.public_send(op)
   case kind
+  when :unsupported_schema
+    mutation_failed "task file uses an unsupported schema version; this build reads " \
+                    "schema v#{Tasks::Format::VERSION} only"
   when :empty    then abort "nothing to #{verb}"
   when :conflict then abort "tasks.jsonl changed since that edit — refusing to #{verb} “#{label}”"
   else                puts "#{past}: #{label}"
   end
 end
 
-def require_current_schema_for_mutation!
-  return unless store.migration_required?
+# Archive, `id`, and undo/redo reach the Store directly rather than through a
+# typed MutationResult, so the schema gate is applied here too: a store at a
+# schema version this build does not implement is refused before it is touched.
+def require_supported_schema_for_mutation!
+  return unless store.unsupported_schema?
 
-  mutation_failed "task data migration required; run `tasks migrate`"
+  mutation_failed "task file uses an unsupported schema version; this build reads " \
+                  "schema v#{Tasks::Format::VERSION} only"
 end
 
 STATE_ORDER = Tasks::TaskFilter::STATE_ORDER
@@ -2688,28 +2696,6 @@ def cmd_config(args)
     PATHS.link_systems.each { |n, h| puts "system.#{n}: #{h}" }
     PATHS.prompt_facts.each { |n, on| puts "prompt.#{n}: #{on ? "on" : "off"}" }
     puts "config:      #{PATHS.config_file}#{File.file?(PATHS.config_file) ? "" : dim(" (not present)")}"
-  end
-end
-
-def cmd_migrate(args)
-  flags, rest = take_flags(args, "--dry-run", "--json")
-  abort "usage: tasks migrate [--dry-run] [--json]" unless rest.empty?
-  result = application.migrate_schema(dry_run: flags["--dry-run"])
-  if flags["--json"]
-    require "json"
-    puts JSON.generate(status: result.status, from_version: result.from_version,
-                       to_version: result.to_version, files: result.files,
-                       backups: result.backups, errors: result.errors)
-  elsif result.status == :dry_run
-    puts "would migrate #{result.files.join(" and ")} from schema v1 to v#{result.to_version}"
-  elsif result.status == :already_current
-    puts "schema already at v#{result.to_version}"
-  elsif result.ok?
-    puts "migrated #{result.files.join(" and ")} to schema v#{result.to_version}"
-    result.backups.each { |path| puts "backup: #{path}" }
-  else
-    warn(result.errors.join("\n"))
-    exit 1
   end
 end
 
@@ -3065,7 +3051,6 @@ HELP = <<~USAGE
     undo                     revert the last mutation (shared with the TUI)
     redo                     replay the last undone mutation
     config                   show resolved file paths and their sources
-    migrate                  migrate schema v1 stores to v2 (--dry-run first)
     -p "..."                 hand a request to an LLM agent
                              (-p [--provider N] [--model N] "...")
     help      -h             this message
@@ -3136,7 +3121,6 @@ when "open", "o"      then cmd_open(ARGV[1..])
 when "list", "l"      then cmd_list(ARGV[1..])
 when "check", "k"     then cmd_check(ARGV[1..])
 when "config"         then cmd_config(ARGV[1..])
-when "migrate"        then cmd_migrate(ARGV[1..])
 when "help", "-h", "--help" then cmd_help
 else
   warn "unknown command: #{ARGV[0].inspect}\n\n" if ARGV[0]

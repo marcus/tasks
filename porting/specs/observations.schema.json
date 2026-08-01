@@ -71,7 +71,7 @@
         "class": {
           "description": "Which corpus family the fixture belongs to. Proves the case exercises the intended regime — malformed and adversarial fixtures are expected to produce diagnostics and refusals, and a harness that only ever ran 'valid' would prove very little.",
           "type": "string",
-          "enum": ["valid", "legacy", "malformed", "adversarial"]
+          "enum": ["valid", "compat", "malformed", "adversarial"]
         },
         "root_sha256": {
           "description": "Digest over the fixture copy's whole starting tree (a stable digest of sorted relative-path + content-digest pairs). Proves the copy was pristine and identical on both sides before the invocation.",

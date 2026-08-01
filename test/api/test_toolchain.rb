@@ -136,7 +136,7 @@ class TestApiToolchain < Minitest::Test
     %w[404 409 412 422 428].each { |status| assert patch.fetch("responses").key?(status), status }
   end
 
-  def test_409_contracts_have_unique_keys_and_compose_migration_with_domain_conflicts
+  def test_409_contracts_have_unique_keys_and_carry_only_domain_conflicts
     counts = Hash.new(0)
     path = method = nil
     in_responses = false
@@ -166,13 +166,24 @@ class TestApiToolchain < Minitest::Test
       ["/history/redo", "post"],
       ["/archive-sweeps", "post"],
     ]
+    # 409 is now purely a domain conflict. An unreadable schema version is a
+    # store-health refusal (503 `unsupported_schema_version`), not something the
+    # client can resolve by retrying with different content.
     conflict_operations.each do |operation_path, operation_method|
       response = resolve(@document.dig("paths", operation_path, operation_method, "responses", "409"))
       content = response.dig("content", "application/json")
       codes = examples(content).values.map { |value| value.dig("error", "code") }
-      assert_includes codes, "schema_migration_required", "#{operation_method.upcase} #{operation_path}"
-      assert_operator codes.uniq.length, :>, 1, "#{operation_method.upcase} #{operation_path} must retain its domain conflict"
+      refute_empty codes, "#{operation_method.upcase} #{operation_path}"
+      refute_includes codes, "schema_migration_required", "#{operation_method.upcase} #{operation_path}"
+      refute_includes codes, "unsupported_schema_version",
+                      "#{operation_method.upcase} #{operation_path} must not report schema skew as a 409"
     end
+
+    # The store-health response every operation shares documents it exactly once.
+    store_invalid = resolve(@document.dig("components", "responses", "StoreInvalid"))
+    shared_codes = examples(store_invalid.dig("content", "application/json"))
+              .values.map { |value| value.dig("error", "code") }
+    assert_includes shared_codes, "unsupported_schema_version"
   end
 
   def test_unknown_query_fields_require_an_explicit_adapter_guard

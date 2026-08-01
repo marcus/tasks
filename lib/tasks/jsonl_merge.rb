@@ -40,15 +40,7 @@ module Tasks
     def merge(base_text:, ours_text:, theirs_text:)
       ours = parse_side("ours", ours_text)
       theirs = parse_side("theirs", theirs_text)
-      version = declared_version(ours)
-      unless declared_version(theirs) == version
-        raise MergeError, "ours is schema v#{version} but theirs is v#{declared_version(theirs)}; " \
-                          "run `tasks migrate` on both clones before merging"
-      end
-      if version && version > Format::VERSION
-        raise MergeError, "sides are schema v#{version}, newer than this binary supports (v#{Format::VERSION})"
-      end
-      base = parse_side("base", base_text, allow_empty: true, max_version: version)
+      base = parse_side("base", base_text, allow_empty: true)
       events = []
       base_by_id = index_by_id(base)
       ours_by_id = index_by_id(ours)
@@ -68,7 +60,7 @@ module Tasks
 
       records = order_records(merged_by_id, ours, theirs, base)
       text = Format.dump(records)
-      validation = Check.check_text(text, version: version || Format::VERSION)
+      validation = Check.check_text(text, version: Format::VERSION)
       unless validation.ok?
         details = validation.errors.map { |line, message| "line #{line}: #{message}" }.join("; ")
         raise MergeError, "merged output is invalid: #{details}"
@@ -79,11 +71,10 @@ module Tasks
       Result.new(text: nil, events: [].freeze, error: error.message)
     end
 
-    # A side validates against its own declared schema version so the common
-    # ancestor of two already-migrated clones (still v1) does not abort the
-    # merge. `max_version` caps how old a side may lag: the base may trail
-    # ours/theirs across the migration boundary, but never lead them.
-    def parse_side(label, text, allow_empty: false, max_version: nil)
+    # Every side must declare the schema version this binary implements. There
+    # is no cross-version merge: reconciling records whose meaning differs by
+    # version is exactly the silent corruption a version header exists to stop.
+    def parse_side(label, text, allow_empty: false)
       utf8 = text.dup.force_encoding(Encoding::UTF_8)
       raise MergeError, "#{label} is not valid UTF-8" unless utf8.valid_encoding?
       return [] if allow_empty && utf8.empty?
@@ -94,10 +85,10 @@ module Tasks
         raise MergeError, "#{label} cannot be parsed: #{details}"
       end
       version = declared_version(parsed.records)
-      if max_version && version && version > max_version
-        raise MergeError, "#{label} is schema v#{version}, newer than the sides being merged (v#{max_version})"
+      if version && version != Format::VERSION
+        raise MergeError, "#{label} is schema v#{version}; this binary reads schema v#{Format::VERSION} only"
       end
-      validation = Check.check_parsed(parsed, version: version || Format::VERSION)
+      validation = Check.check_parsed(parsed, version: Format::VERSION)
       unless validation.ok?
         details = validation.errors.map { |line, message| "line #{line}: #{message}" }.join("; ")
         raise MergeError, "#{label} is invalid: #{details}"

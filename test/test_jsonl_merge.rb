@@ -425,44 +425,38 @@ class TestJsonlMerge < Minitest::Test
 
   def base_delegation(records) = JSON.generate(find(records, "10000002")["delegation"])
 
-  def test_v1_merge_base_between_two_migrated_sides_merges_cleanly
-    v1_base = copy(base_records)
-    v1_base.first["version"] = 1
-    ours = change(base_records, "10000002", tags: ["@computer", "travel"], updated: HOME_STAMP)
-    theirs = change(base_records, "10000002", scheduled: "2026-07-19", updated: WORK_STAMP)
+  # v1 is not merged, on any side. Reconciling records field by field across a
+  # schema boundary is exactly the silent corruption the version header exists
+  # to prevent, and there is no migration to point the operator at any more.
+  def test_any_side_at_another_schema_version_refuses_the_merge
+    %w[base ours theirs].each do |side|
+      sides = { base: copy(base_records), ours: copy(base_records), theirs: copy(base_records) }
+      sides[side.to_sym].first["version"] = 1
 
-    records, = merge(v1_base, ours, theirs)
-    task = find(records, "10000002")
+      result = Tasks::JsonlMerge.merge(
+        base_text: Tasks::Format.dump(sides[:base]),
+        ours_text: Tasks::Format.dump(sides[:ours]),
+        theirs_text: Tasks::Format.dump(sides[:theirs])
+      )
 
-    assert_equal 2, records.first["version"]
-    assert_equal ["@computer", "travel"], task["tags"]
-    assert_equal "2026-07-19", task["scheduled"]
+      refute result.ok?, "#{side} at v1 must refuse"
+      assert_equal "#{side} is schema v1; this binary reads schema v2 only", result.error
+      refute_match(/migrat/i, result.error)
+    end
   end
 
-  def test_mixed_schema_versions_between_sides_refuse_with_migrate_hint
-    v1_theirs = change(base_records, "10000003", title: "Call utility")
-    v1_theirs.first["version"] = 1
+  def test_a_future_schema_version_on_a_side_refuses_the_merge
+    v3 = copy(base_records)
+    v3.first["version"] = 3
 
     result = Tasks::JsonlMerge.merge(
       base_text: Tasks::Format.dump(base_records),
       ours_text: Tasks::Format.dump(base_records),
-      theirs_text: Tasks::Format.dump(v1_theirs)
+      theirs_text: Tasks::Format.dump(v3)
     )
 
     refute result.ok?
-    assert_includes result.error, "tasks migrate"
-  end
-
-  def test_two_v1_sides_still_merge_to_a_v1_file
-    v1 = copy(base_records)
-    v1.first["version"] = 1
-    ours = change(v1, "10000002", tags: ["@computer", "travel"], updated: HOME_STAMP)
-    theirs = change(v1, "10000003", title: "Call utility", updated: WORK_STAMP)
-
-    records, = merge(v1, ours, theirs)
-
-    assert_equal 1, records.first["version"]
-    assert_equal "Call utility", find(records, "10000003")["title"]
+    assert_equal "theirs is schema v3; this binary reads schema v2 only", result.error
   end
 
   def test_tags_union_preserves_base_order_and_sorts_concurrent_additions

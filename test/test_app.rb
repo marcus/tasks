@@ -83,7 +83,9 @@ class TestApp < Minitest::Test
     end
   end
 
-  def test_schema_v1_opens_with_a_non_destructive_migration_prompt
+  # The TUI opens on a store it cannot read with a notice, not an offer: there
+  # is no key that converts the file, and every mutating path stays refused.
+  def test_schema_v1_opens_with_an_unsupported_schema_notice_that_offers_no_action
     Dir.mktmpdir do |dir|
       records = FIXTURE_RECORDS.map(&:dup)
       records.first["version"] = 1
@@ -93,21 +95,23 @@ class TestApp < Minitest::Test
 
       app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir), llm_config: default_llm_config)
       assert_equal :modal, ui(app).mode
-      assert_equal :migration_required, ui(app).modal.kind
+      assert_equal :unsupported_schema, ui(app).modal.kind
       text = ui(app).modal.lines.join("\n")
-      assert_includes text, "tasks migrate --dry-run"
-      assert_includes text, ".v1.bak"
-      assert_equal raw, File.read(path)
+      assert_includes text, "schema version this build does not implement"
+      refute_match(/migrat/i, text)
 
+      # The keys the old prompt used to accept a migration on now do nothing but
+      # dismiss; the file is byte-identical either way.
       app.send(:modal_key, "y")
+      assert_equal :modal, ui(app).mode
+      app.send(:modal_key, "\r")
       assert_equal :list, ui(app).mode
-      migrated = Tasks::Format.parse(File.read(path)).records
-      assert_equal 2, migrated.first.fetch("version")
-      assert_equal raw, File.read("#{path}.v1.bak")
+      assert_equal raw, File.read(path)
+      refute File.exist?("#{path}.v1.bak")
     end
   end
 
-  def test_dismissed_schema_v1_prompt_keeps_archive_and_history_read_only
+  def test_dismissed_unsupported_schema_notice_keeps_archive_and_history_read_only
     Dir.mktmpdir do |dir|
       records = FIXTURE_RECORDS.map(&:dup)
       records.first["version"] = 1
@@ -120,11 +124,27 @@ class TestApp < Minitest::Test
       assert_equal :list, ui(app).mode
 
       app.send(:archive_sweep)
-      assert_equal :migration_required, ui(app).modal.kind
+      assert_equal :unsupported_schema, ui(app).modal.kind
       app.send(:modal_key, "\e")
       app.send(:undo_last)
-      assert_equal :migration_required, ui(app).modal.kind
+      assert_equal :unsupported_schema, ui(app).modal.kind
       assert_equal raw, File.read(path)
+    end
+  end
+
+  # Forward skew reaches the same notice: a store from a newer binary is not
+  # opened for editing just because this build cannot name its version.
+  def test_a_future_schema_version_opens_the_same_notice
+    Dir.mktmpdir do |dir|
+      records = FIXTURE_RECORDS.map(&:dup)
+      records.first["version"] = 3
+      path = File.join(dir, "tasks.jsonl")
+      File.write(path, records.map { |record| JSON.generate(record) }.join("\n") + "\n")
+
+      app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir), llm_config: default_llm_config)
+
+      assert_equal :modal, ui(app).mode
+      assert_equal :unsupported_schema, ui(app).modal.kind
     end
   end
 

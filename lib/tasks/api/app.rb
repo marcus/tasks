@@ -894,6 +894,11 @@ module Tasks
             409, :conflict, result.errors.first || Errors.message(:conflict),
             details: { id: id }
           )
+        when :unsupported_schema
+          raise HttpError.new(
+            503, :unsupported_schema_version, Errors.message(:unsupported_schema_version),
+            details: { supported_version: Format::VERSION }
+          )
         when :store_invalid, :unavailable
           raise HttpError.new(503, result.status, Errors.message(result.status))
         else
@@ -1272,6 +1277,11 @@ module Tasks
                       Errors.message(result.status)
                     end
           raise HttpError.new(409, result.status, message, details: details)
+        when :unsupported_schema
+          raise HttpError.new(
+            503, :unsupported_schema_version, Errors.message(:unsupported_schema_version),
+            details: { supported_version: Format::VERSION }
+          )
         when :store_invalid, :unavailable
           raise HttpError.new(503, result.status, Errors.message(result.status))
         else
@@ -1300,10 +1310,10 @@ module Tasks
         case result.status
         when :not_found
           raise HttpError.new(404, :not_found, Errors.message(:not_found))
-        when :migration_required
+        when :unsupported_schema
           raise HttpError.new(
-            409, :schema_migration_required, Errors.message(:schema_migration_required),
-            details: { current_version: 1, required_version: Format::VERSION, command: "tasks migrate" }
+            503, :unsupported_schema_version, Errors.message(:unsupported_schema_version),
+            details: { supported_version: Format::VERSION }
           )
         when :store_invalid, :unavailable
           raise HttpError.new(503, result.status, Errors.message(result.status))

@@ -245,7 +245,7 @@ module Tasks
     # build a tree from untrusted records. Errors carry only source, line, and a
     # safe validation message — never configured filesystem paths.
     class CheckedRead
-      STATUSES = %i[ok migration_required store_invalid unavailable].freeze
+      STATUSES = %i[ok unsupported_schema store_invalid unavailable].freeze
 
       attr_reader :status, :snapshot, :store_revision, :errors, :warnings
 
@@ -261,7 +261,7 @@ module Tasks
       end
 
       def ok? = status == :ok
-      def migration_required? = status == :migration_required
+      def unsupported_schema? = status == :unsupported_schema
       def store_invalid? = status == :store_invalid
       def unavailable? = status == :unavailable
 
@@ -289,10 +289,6 @@ module Tasks
       def open_descendants = blocks.sum { |block| block.open_ids.length }
     end
     ArchiveRefusal = Struct.new(:reason, :preview, :details, keyword_init: true)
-    MigrationResult = Struct.new(:status, :from_version, :to_version, :files, :backups, :errors,
-                                 keyword_init: true) do
-      def ok? = status == :ok || status == :already_current
-    end
 
     ArchivePlan = Struct.new(:kept, :moved, :preview, keyword_init: true)
     private_constant :ArchivePlan
@@ -378,13 +374,17 @@ module Tasks
         warnings = annotated_check_entries(live[:check].warnings, :live) +
                    annotated_check_entries(archive[:check].warnings, :archive)
 
-        versions = [live, archive].filter_map do |source|
-          source[:records].first&.fetch("version", nil) if source[:records].first&.fetch("type", nil) == "meta"
-        end
-        if versions.include?(1)
+        # A store written under a different schema version is refused before its
+        # records are interpreted: reading v1 (or a future v3) bytes as if they
+        # were v2 is how a store gets silently corrupted. There is no migration
+        # path — this binary reads exactly Format::VERSION.
+        skew = [[:live, live], [:archive, archive]].find { |_source, capture| unsupported_meta?(capture[:records]) }
+        if skew
+          source, capture = skew
           return CheckedRead.new(
-            status: :migration_required, store_revision: store_revision,
-            errors: [{ source: nil, line: 1, message: "schema version 1 requires `tasks migrate`" }],
+            status: :unsupported_schema, store_revision: store_revision,
+            errors: [{ source: source, line: 1,
+                       message: unsupported_meta_message(capture[:records].first["version"]) }],
             warnings: warnings
           )
         end
@@ -490,75 +490,9 @@ module Tasks
     # left behind — an out-of-band edit (Claude, another process) makes the step
     # unsafe and it is refused, not forced.
 
-    # Returns [:ok, label] | [:empty] | [:conflict, label] | [:migration_required]
+    # Returns [:ok, label] | [:empty] | [:conflict, label] | [:unsupported_schema]
     def undo! = history_step(-1)
     def redo! = history_step(1)
-
-    def migrate_schema!(dry_run: false)
-      with_lock do
-        before = snapshot
-        sources = { org: @org, archive: @archive }.select { |_kind, path| File.exist?(path) }
-        return MigrationResult.new(status: :invalid, errors: ["tasks.jsonl does not exist"], files: []) unless sources.key?(:org)
-
-        versions = {}
-        errors = []
-        sources.each do |kind, path|
-          raw = File.read(path, encoding: "UTF-8")
-          if raw.empty? && kind == :archive
-            versions[kind] = 1
-            next
-          end
-          parsed = Format.parse(raw)
-          version = parsed.records.first&.fetch("version", nil)
-          versions[kind] = version
-          unless [1, Format::VERSION].include?(version)
-            errors << "#{kind}: unsupported meta version #{version.inspect}"
-            next
-          end
-          check = Check.check_text(raw, version: version)
-          errors.concat(check.errors.map { |line, message| "#{kind} line #{line}: #{message}" }) unless check.ok?
-          if version == 1 && parsed.records.any? { |record| record["scheduled_time"] || record["deadline_time"] }
-            errors << "#{kind}: version 1 must not contain time metadata"
-          end
-        end
-        return MigrationResult.new(status: :invalid, from_version: versions.values.min,
-                                   to_version: Format::VERSION, files: sources.keys, errors: errors) unless errors.empty?
-        if versions.values.all? { |version| version == Format::VERSION }
-          return MigrationResult.new(status: :already_current, from_version: Format::VERSION,
-                                     to_version: Format::VERSION, files: sources.keys, backups: [], errors: [])
-        end
-        migrating = versions.filter_map { |kind, version| kind if version == 1 }
-        return MigrationResult.new(status: :dry_run, from_version: 1, to_version: Format::VERSION,
-                                   files: migrating, backups: [], errors: []) if dry_run
-
-        backups = []
-        begin
-          sources.each do |kind, path|
-            next unless versions[kind] == 1
-            backup = "#{path}.v1.bak"
-            Atomic.write(backup, before.fetch(kind))
-            backups << backup
-            records = before.fetch(kind).to_s.empty? ? [{ "type" => "meta", "version" => Format::VERSION }] :
-                      Format.parse(before.fetch(kind)).records
-            records.first["version"] = Format::VERSION
-            Atomic.write(path, Format.dump(records))
-          end
-          sources.each_value do |path|
-            result = Check.check(path)
-            raise ArgumentError, result.errors.map(&:last).join("; ") unless result.ok?
-          end
-          after = snapshot
-          @journal.barrier(after)
-          reload!
-          MigrationResult.new(status: :ok, from_version: 1, to_version: Format::VERSION,
-                              files: migrating, backups: backups, errors: [])
-        rescue StandardError => e
-          restore(before)
-          MigrationResult.new(status: :rolled_back, from_version: 1, to_version: Format::VERSION,
-                              files: migrating, backups: backups, errors: [safe_patch_error(e)])
-        end
-      end
-    end
 
     # Create one task from a complete typed command in one checked transaction.
     # Unlike the retired capture! path, recurrence and initial notes are part of
@@ -571,9 +505,8 @@ module Tasks
       with_lock do
         @last_rollback = nil
         before = snapshot
-        if schema_migration_required?
-          return MutationResult.new(status: :migration_required, errors: ["run `tasks migrate`"])
-        end
+        refusal = unsupported_schema_refusal
+        return refusal if refusal
         begin
           preflight = create_preflight_failure
           if preflight
@@ -643,9 +576,8 @@ module Tasks
       with_lock do
         @last_rollback = nil
         before = snapshot
-        if schema_migration_required?
-          return MutationResult.new(status: :migration_required, errors: ["run `tasks migrate`"])
-        end
+        refusal = unsupported_schema_refusal
+        return refusal if refusal
         current = nil
         begin
           unless command.id.is_a?(String) && !command.id.empty?
@@ -750,9 +682,8 @@ module Tasks
         @last_rollback = nil
         before = snapshot
         current = nil
-        if schema_migration_required?
-          return MutationResult.new(status: :migration_required, errors: ["run `tasks migrate`"])
-        end
+        refusal = unsupported_schema_refusal
+        return refusal if refusal
         begin
           preflight = Check.check(@org)
           unless preflight.ok?
@@ -987,9 +918,8 @@ module Tasks
       with_lock do
         @last_rollback = nil
         before = snapshot
-        if schema_migration_required?
-          return MutationResult.new(status: :migration_required, errors: ["run `tasks migrate`"])
-        end
+        refusal = unsupported_schema_refusal
+        return refusal if refusal
 
         begin
           if (preflight = create_preflight_failure)
@@ -1157,9 +1087,8 @@ module Tasks
         before = snapshot
         current = nil
         repair = false
-        if schema_migration_required?
-          return MutationResult.new(status: :migration_required, errors: ["run `tasks migrate`"])
-        end
+        refusal = unsupported_schema_refusal
+        return refusal if refusal
         begin
           # Check raw validity before parsing/building: Format.parse assumes a
           # valid UTF-8 String, while Check deliberately contains bad bytes.
@@ -1296,10 +1225,12 @@ module Tasks
       current_read_snapshot(include_archive: true).archive_items
     end
 
-    # Lightweight schema deployment check for legacy adapter mutations whose
-    # own transaction has more specific invalid-store diagnostics. This reads
-    # only meta versions; it does not replace the mutation's validation gate.
-    def migration_required? = schema_migration_required?
+    # Lightweight schema-version check for adapter mutations whose own
+    # transaction has more specific invalid-store diagnostics. This reads only
+    # meta versions; it does not replace the mutation's validation gate. True
+    # when either file declares a schema version this binary cannot read — a
+    # refusal, never an invitation to convert the file.
+    def unsupported_schema? = !unsupported_schema_source.nil?
 
     private
 
@@ -1319,14 +1250,45 @@ module Tasks
       nil
     end
 
-    def schema_migration_required?
-      [@org, (@archive if File.exist?(@archive))].compact.any? do |path|
-        next false if File.zero?(path)
+    # [source, version] for the first file whose meta record declares a schema
+    # version this binary does not implement, or nil when both files are current.
+    # Only an Integer version counts: any other shape is ordinary invalid data
+    # and belongs to Check, which reports it as such.
+    def unsupported_schema_source
+      [[:live, @org], [:archive, (@archive if File.exist?(@archive))]].each do |source, path|
+        next if path.nil? || File.zero?(path)
         records = fresh_records(path)
-        records.first&.fetch("type", nil) == "meta" && records.first["version"] == 1
+        next unless unsupported_meta?(records)
+
+        return [source, records.first["version"]]
       end
+      nil
     rescue StandardError
-      false
+      nil
+    end
+
+    def unsupported_meta?(records)
+      meta = records.first
+      return false unless meta&.fetch("type", nil) == "meta"
+
+      version = meta["version"]
+      version.is_a?(Integer) && version != Format::VERSION
+    end
+
+    def unsupported_meta_message(version)
+      "unsupported meta version #{version.inspect} (expected #{Format::VERSION})"
+    end
+
+    # The shared refusal every mutation returns for a store this binary cannot
+    # read. It writes nothing and offers no conversion: a store at another
+    # schema version needs the matching binary, not a rewrite by this one.
+    def unsupported_schema_refusal
+      source, version = unsupported_schema_source
+      return nil if source.nil?
+
+      message = unsupported_meta_message(version)
+      message = "archive: #{message}" if source == :archive
+      MutationResult.new(status: :unsupported_schema, errors: [message])
     end
 
     def normalize_create_task(command, today:)
@@ -2919,9 +2881,8 @@ module Tasks
         before = snapshot
         current = nil
         repair = false
-        if schema_migration_required?
-          return MutationResult.new(status: :migration_required, errors: ["run `tasks migrate`"])
-        end
+        refusal = unsupported_schema_refusal
+        return refusal if refusal
         begin
           preflight = Check.check(@org)
           unless preflight.ok?
@@ -3555,7 +3516,7 @@ module Tasks
     # the lock so the plan and its commit can't race another writer.
     def history_step(delta)
       with_lock do
-        return [:migration_required] if schema_migration_required?
+        return [:unsupported_schema] if unsupported_schema?
 
         step = @journal.plan(delta)
         return [:empty] unless step
@@ -3672,7 +3633,7 @@ module Tasks
     # equal archived copy; partial or mismatched overlap refuses safely. Returns
     # the count of roots swept, or ArchiveRefusal when a safety gate blocks it.
     def archive_swept_impl(expected_preview)
-      return ArchiveRefusal.new(reason: :migration_required) if schema_migration_required?
+      return ArchiveRefusal.new(reason: :unsupported_schema) if unsupported_schema?
 
       plan = archive_plan(fresh_records(@org))
       if expected_preview && (expected_preview.candidate_ids != plan.preview.candidate_ids ||

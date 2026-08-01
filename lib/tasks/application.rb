@@ -247,12 +247,6 @@ module Tasks
       store_factory.call.edit_snapshot(id)
     end
 
-    # Schema deployment is an operator action, but TUI and CLI entry points use
-    # the same checked Store migration rather than editing either JSONL file.
-    def migrate_schema(dry_run: false)
-      store_factory.call.migrate_schema!(dry_run: dry_run)
-    end
-
     # Typed creation seam. Hash attributes are accepted for adapter convenience
     # but immediately become an immutable CreateTask before Store takes the
     # lock, so CLI, TUI, and a future HTTP adapter share one create transaction.
@@ -450,7 +444,8 @@ module Tasks
                                   field_errors: { title: ["cannot be blank"] })
       end
       store = store_factory.call
-      return migration_required_mutation if store.checked_read_snapshot.migration_required?
+      refusal = unsupported_schema_mutation(store)
+      return refusal if refusal
       if list_projects(today: today).any? { |view| view.title.to_s.strip.casecmp?(title) }
         message = "a project or area named #{title.inspect} already exists"
         return MutationResult.new(status: :invalid, errors: [message],
@@ -467,7 +462,8 @@ module Tasks
       end
 
       store = store_factory.call
-      return migration_required_mutation if store.checked_read_snapshot.migration_required?
+      refusal = unsupported_schema_mutation(store)
+      return refusal if refusal
       touched = store.rename_section!(id: id, to: title)
       return MutationResult.new(status: :ok, touched_ids: [touched]) if touched
       if store.last_rollback
@@ -480,7 +476,8 @@ module Tasks
 
     def complete_project(id, today: Date.today)
       store = store_factory.call
-      return migration_required_mutation if store.checked_read_snapshot.migration_required?
+      refusal = unsupported_schema_mutation(store)
+      return refusal if refusal
       closed = store.complete_project!(id: id, today: today)
       return MutationResult.new(status: :not_found) unless closed
 
@@ -498,7 +495,8 @@ module Tasks
 
     def archive_project(id)
       store = store_factory.call
-      return migration_required_mutation if store.checked_read_snapshot.migration_required?
+      refusal = unsupported_schema_mutation(store)
+      return refusal if refusal
       moved = store.archive_project!(id: id)
       if moved == :proposed_descendants
         return MutationResult.new(
@@ -785,8 +783,17 @@ module Tasks
       TemporalContext.new(now: Time.utc(today.year, today.month, today.day, 12), timezone: "Etc/UTC")
     end
 
-    def migration_required_mutation
-      MutationResult.new(status: :migration_required, errors: ["run `tasks migrate`"])
+    # Project commands run several Store calls, so they gate on the checked read
+    # first: a store at another schema version is refused before any of them
+    # runs, with the same diagnostic a single-transaction mutation produces.
+    def unsupported_schema_mutation(store)
+      checked = store.checked_read_snapshot
+      return nil unless checked.unsupported_schema?
+
+      errors = checked.errors.map do |error|
+        error[:source] == :archive ? "archive: #{error[:message]}" : error[:message]
+      end
+      MutationResult.new(status: :unsupported_schema, errors: errors)
     end
 
     def operation_today(fallback, operation_context)
