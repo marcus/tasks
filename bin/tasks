@@ -1829,7 +1829,7 @@ def parse_lead_input(input)
   result[:canonical]
 end
 
-# Rule 3's CLI-side wording (see docs/plans/active/recurring-lead-time.md §5).
+# Rule 3's CLI-side wording (see docs/plans/implemented/recurring-lead-time.md §5).
 # The store refuses the same shape with its own message; this one fires before
 # a write the store would only reject, so a capture never half-lands.
 def lead_gate_conflict_hint(span)

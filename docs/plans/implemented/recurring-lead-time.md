@@ -3,8 +3,10 @@
 Hide a dated task until a set span before its occurrence date, and keep that
 window as the recurrence rolls.
 
-Epic: td-f18c31. This document is the contract; the child tasks reference
-sections here rather than duplicating them, and this file wins if they disagree.
+**Status: implemented** (epic td-f18c31, 2026-08-01). Every slice below landed,
+including the optional clock units. Proof: `docs/proofs/lead-time.md`. This
+document remains the contract; the child tasks reference sections here rather
+than duplicating them, and this file wins if they disagree.
 
 ## 1. Goal
 
@@ -123,14 +125,16 @@ message names the fix.
    (Clearing with `off` is always allowed.)
 3. **One own timed gate.** A lead may not sit beside a *separate* available-from
    date: setting a lead on a task that carries **both** a deadline and an
-   available-from date is refused, as is setting an available-from date on a
-   deadline-anchored lead task. `tasks defer <ref> <date>` against any lead task
+   available-from date is refused, as is adding the second date to a lead task
+   from either direction (an available-from date beside a deadline-anchored
+   lead, or a deadline beside a scheduled-anchored one — which would flip the
+   anchor and strand the available-from date). `tasks defer <ref> <date>` against any lead task
    is refused for the same reason — the lead already owns "hide until". The
    indefinite hold (`tasks someday`) is unaffected; an own or inherited hold
    still outranks any timed gate.
-4. **Grammar.** A positive whole count and one of `d`/`w`/`m`/`y`. `h` is
-   rejected with a message that names it as planned-but-absent, so the follow-up
-   can land without changing what a valid lead means.
+4. **Grammar.** A positive whole count and one of `d`/`w`/`m`/`y`, plus the
+   clock unit `h` (slice 5b). `m` always means months — never minutes — because
+   the lead grammar shares its unit letters with the recurrence grammar.
 5. **Storable range.** `anchor − lead` must stay a real four-digit-year date,
    the same range guard recurrence has.
 
@@ -181,10 +185,15 @@ availability" human output.
 | 8 | adversarial review | td-526a45 |
 | 9 | proof | td-526a45 |
 
-## 10. Planned clock units
+## 10. Clock units (landed in slice 5b)
 
-`h` is deliberately absent from slice 2 and reserved for td-556c53: accept `h`
-in the grammar (never `m`, which means months), compute `anchor_instant −
-duration`, and keep the result a **raw instant** — rebuilding a `TemporalValue`
-from it would reintroduce DST fall-back ambiguity. All-day anchors accept clock
-leads: `5h` before June 1 is 19:00 on May 31.
+`h` accepts a clock duration: the gate is `anchor_instant − duration`, kept as a
+**raw instant** — rebuilding a `TemporalValue` from it would reintroduce DST
+fall-back ambiguity, so the rebuilt value is used only for display. All-day
+anchors accept clock leads: `5h` before June 1 is 19:00 on May 31 local. Because
+it is a duration rather than a calendar step, a DST change inside the window
+moves the wall time, the opposite of a calendar lead.
+
+Adapters do not re-derive any of this: `TaskQueries` hands `TaskView` the task's
+own window (`lead_opens`, `lead_opens_at`, `lead_opens_value`), and the CLI, the
+API, and the TUI render that single answer.

@@ -319,6 +319,27 @@ class TestLead < Minitest::Test
       refute scheduled.ok?
       assert_match(/second, ignored gate/, scheduled.errors.first)
     end
+
+    # And from the other direction: a deadline added to a scheduled-anchored
+    # lead task would flip the anchor and strand the available-from date.
+    scheduled_anchor = lead_records(scheduled: "2026-10-01", lead: "3w")
+    with_lead_store_files(scheduled_anchor) do |store|
+      snapshot = store.edit_snapshot("bbbb0002")
+      deadline = store.patch_task!(Tasks::TaskPatch.from(snapshot, field: :deadline,
+                                                         value: Date.new(2026, 11, 1)))
+      refute deadline.ok?
+      assert_match(/second, ignored gate/, deadline.errors.first)
+    end
+
+    # Moving the anchor a lead already measures from stays allowed — that is an
+    # edit of the occurrence, not a second gate.
+    with_lead_store_files(lead_records(scheduled: "2026-10-01", lead: "3w")) do |store, org|
+      snapshot = store.edit_snapshot("bbbb0002")
+      moved = store.patch_task!(Tasks::TaskPatch.from(snapshot, field: :scheduled,
+                                                      value: Date.new(2026, 10, 15)))
+      assert moved.ok?, moved.errors.join(", ")
+      assert_equal "2026-10-15", record_for(org, title: "Renew the passport")["scheduled"]
+    end
   end
 
   def test_rule_four_refuses_an_uncanonical_span
@@ -414,6 +435,23 @@ class TestLead < Minitest::Test
     records.last["lead_skip"] = "2026-08-01"
 
     assert_unavailable(records, on: "2026-10-01", until_date: "2026-10-11")
+  end
+
+  # A dry-run previews the state AFTER the write, and every lead write clears
+  # the release stamp — so a preview must not inherit "already released".
+  def test_previewing_a_new_lead_ignores_a_stamp_the_write_would_retire
+    records = lead_records(deadline: "2026-11-01", lead: "3w")
+    records.last["lead_skip"] = "2026-11-01"
+
+    with_lead_store(records, on: "2026-10-01") do |query|
+      item = query.snapshot.items.find { |candidate| candidate.id == "bbbb0002" }
+      assert query.availability(item).available?, "the current occurrence is released"
+
+      preview = query.availability_after(item, deferred: false,
+                                         scheduled: item.scheduled_value, lead: "2w")
+      refute preview.available?, "setting a lead re-arms the window"
+      assert_equal Date.new(2026, 10, 18), preview.scheduled
+    end
   end
 
   # -- create ---------------------------------------------------------------

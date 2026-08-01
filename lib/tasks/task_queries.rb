@@ -524,8 +524,13 @@ module Tasks
 
       gates = candidates.filter_map do |candidate, distance|
         gate = if candidate.equal?(item)
+                 # A previewed lead is a lead the write is about to set, and any
+                 # lead write clears the release stamp — so the preview must
+                 # ignore a stamp the write would retire, or it would promise
+                 # "available now" for a window that is about to re-arm.
                  effective_gate(candidate, scheduled_value: temporalize(own_scheduled),
-                                           lead: own_lead.equal?(UNSET) ? candidate.lead : own_lead)
+                                           lead: own_lead.equal?(UNSET) ? candidate.lead : own_lead,
+                                           released: own_lead.equal?(UNSET) && candidate.lead_skip)
                else
                  effective_gate(candidate)
                end
@@ -558,8 +563,9 @@ module Tasks
     # is measured from the anchor, and the store's rule 3 refuses the shapes
     # that would leave a second, separately-meaningful available-from date
     # behind.
-    def effective_gate(candidate, scheduled_value: candidate.scheduled_value, lead: candidate.lead)
-      gate = lead_gate(candidate, scheduled_value: scheduled_value, lead: lead)
+    def effective_gate(candidate, scheduled_value: candidate.scheduled_value, lead: candidate.lead,
+                       released: candidate.lead_skip)
+      gate = lead_gate(candidate, scheduled_value: scheduled_value, lead: lead, released: released)
       # A released occurrence has NO own timed gate — not even its anchor's own
       # available-from date, which would otherwise re-hide what activate just
       # released.
@@ -575,7 +581,7 @@ module Tasks
     # current anchor date), or nil when there is no lead gate to derive — no
     # anchor to measure from, or no valid span. Nil means "fall back to the
     # available-from date"; SKIPPED means "no own timed gate at all".
-    def lead_gate(candidate, scheduled_value:, lead:)
+    def lead_gate(candidate, scheduled_value:, lead:, released: candidate.lead_skip)
       anchor_value = candidate.deadline_value || scheduled_value
       anchor = Lead.anchor_date(candidate.deadline_value&.date || candidate.deadline,
                                 scheduled_value&.date)
@@ -583,7 +589,7 @@ module Tasks
       # The release stamp is checked before the span, because `activate` also
       # uses it to release a recurring task's next occurrence without deleting
       # the date that occurrence IS.
-      return SKIPPED if candidate.lead_skip == anchor.iso8601
+      return SKIPPED if released == anchor.iso8601
       return nil unless Lead.span?(lead)
 
       if Lead.clock?(lead)

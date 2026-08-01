@@ -598,7 +598,7 @@ module Tui
     end
 
     # The same five rules the store enforces, as far as this field can see them
-    # before a write (docs/plans/active/recurring-lead-time.md §5). Rules 2 and
+    # before a write (docs/plans/implemented/recurring-lead-time.md §5). Rules 2 and
     # 5 stay the store's: state lives in another field the user may be editing
     # in the same session, and the range guard needs the resolved anchor.
     def validate_lead(value, context)

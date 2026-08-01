@@ -1359,7 +1359,7 @@ module Tasks
 
       if lead
         # The same five rules patch_lead enforces, stated against the values
-        # this create is about to write (docs/plans/active/recurring-lead-time.md
+        # this create is about to write (docs/plans/implemented/recurring-lead-time.md
         # §5). A create that would need an immediate repair is a create that
         # should have been refused.
         anchor = Lead.anchor_date(deadline&.date, scheduled&.date)
@@ -2340,10 +2340,13 @@ module Tasks
       rec = records[ri]
       key = kind.to_s
       if date
-        # Rule 3: the lead owns the task's own timed gate. On a deadline-
-        # anchored lead task an available-from date would be a second, silently
-        # ignored gate, so it is refused rather than written and disregarded.
-        if kind == :scheduled && Lead.span?(rec["lead"]) && rec["deadline"]
+        # Rule 3: the lead owns the task's own timed gate. A lead task may not
+        # end up carrying BOTH dates, from either direction — adding an
+        # available-from date beside a deadline-anchored lead, or adding a
+        # deadline to a scheduled-anchored one (which flips the anchor and
+        # leaves the available-from date a second, silently ignored gate).
+        other = kind == :scheduled ? "deadline" : "scheduled"
+        if Lead.span?(rec["lead"]) && rec[other]
           return patch_invalid(lead_gate_conflict_message(rec["lead"]))
         end
 
@@ -2380,7 +2383,7 @@ module Tasks
     end
 
     # Attach, replace, or clear the lead-time window. The five rules the plan
-    # states (docs/plans/active/recurring-lead-time.md §5) all land here, so
+    # states (docs/plans/implemented/recurring-lead-time.md §5) all land here, so
     # every surface refuses the same shapes with the same words. Clearing is
     # always allowed — a refusal a user cannot undo is a trap.
     def patch_lead(records, ri, value)
@@ -2431,9 +2434,10 @@ module Tasks
     # conflict (setting the lead, and setting an available-from date beside a
     # deadline-anchored one), so the user reads the same fix either way.
     def lead_gate_conflict_message(span)
-      "a lead time hides this task until #{Lead.humanize(span)} " \
-        "before its deadline — an available-from date would be a second, ignored gate. " \
-        "Clear one of them (`tasks undate <ref> --kind scheduled`, or `tasks lead <ref> off`)."
+      "a lead time hides this task until #{Lead.humanize(span)} before its date — " \
+        "carrying a deadline AND an available-from date beside it would leave a " \
+        "second, ignored gate. Clear one of them " \
+        "(`tasks undate <ref> --kind scheduled`, or `tasks lead <ref> off`)."
     end
 
     # `lead_skip` releases ONE occurrence, identified by the anchor date it was
