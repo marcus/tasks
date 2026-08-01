@@ -103,14 +103,51 @@ Sections never carry `lead`; add it to `Check::SECTION_FORBIDDEN`.
 
 ### Granularity and release instant
 
-`lead` is date-granular. The derived gate is a date-only `TemporalValue` for
-`anchor.date − lead`, inheriting the anchor's timezone metadata but never its
-local time, so it releases at local start of day in the anchor's effective zone.
-A 9am deadline with `lead: "1d"` therefore becomes available at 00:00 local the
-previous day, not 9am. Time-of-day leads are out of scope.
+This slice ships **calendar units only** (`d`, `w`, `m`, `y`). Clock units are a
+planned follow-up (slice 5b), so the gate is designed instant-shaped from day
+one and adding `h` stays additive rather than a refactor.
+
+The gate resolves to an **instant**, not a date. `build_availability` already
+compares `value.release_instant(context) > context.now`, and `Availability`
+already carries `available_at` as an instant beside its display date. The new
+`effective_gate(candidate)` helper must therefore return an instant (plus the
+display value the reason object needs), never a bare `Date`, even while every
+supported unit happens to produce a midnight-aligned one.
+
+For a calendar unit the arithmetic stays on the *date*: the gate is a date-only
+`TemporalValue` for `anchor.date − lead`, inheriting the anchor's timezone
+metadata but never its local time, so it releases at local start of day in the
+anchor's effective zone. A 9am deadline with `lead: "1d"` becomes available at
+00:00 local the previous day, not 9am. Date arithmetic is what makes "17 days
+before" land on the same wall date whether or not a DST transition falls in
+between; a duration would drift by an hour.
 
 Calendar clamping follows `Recur.step`: `1m` before March 31 is February 28 (or
 29), matching how the recurrence engine already steps months and years.
+
+### Planned clock units (slice 5b)
+
+Recorded here so the model slice does not foreclose it:
+
+- Grammar adds `h` only. `m` already means months in the recurrence grammar and
+  must not be overloaded; minutes, if ever wanted, need an explicit `min`.
+- A clock lead is **duration arithmetic on the anchor's release instant**, and
+  the gate stays that raw instant rather than being rebuilt into a
+  `TemporalValue`. Fold ambiguity only arises going wall-clock → instant, so
+  computing `anchor_instant − 5h` never produces an ambiguous DST fall-back
+  gate. Rebuilding a `TemporalValue` from it would reintroduce that problem;
+  don't.
+- **All-day anchors accept clock leads.** A date-only value releases at local
+  midnight (`Timezones.earliest_on`), so `5h` before June 1 is 19:00 on May 31.
+  This follows the same release rule as the rest of the model rather than
+  inventing a special case, and must be stated explicitly in the CLI spec and
+  agent prompts because it will otherwise surprise.
+- Display surfaces must render a time on the gate, reusing the existing
+  timed-`scheduled` rendering.
+- Before starting 5b, verify that an idle open TUI notices a gate instant
+  passing and makes the row appear without a manual reload. This is already
+  true of any timed `scheduled` date, so it is a verification, not assumed new
+  work — but clock leads make mid-day flips common enough to matter.
 
 ### Ancestors and precedence
 
@@ -260,10 +297,11 @@ approval before production work starts.
 - `lib/tasks/format.rb` (key order), `lib/tasks/check.rb` (validation,
   `SECTION_FORBIDDEN`)
 - `lib/tasks/recur.rb` or a small `lib/tasks/lead.rb` for span parse/humanize/
-  step, reusing `Recur.step`
+  step, reusing `Recur.step`; the parser rejects `h` for now but its shape must
+  leave room for a unit whose arithmetic is a duration rather than a date step
 - `lib/tasks/task_queries.rb` — extract the per-candidate gate in
-  `build_availability` into one `effective_gate(candidate)` helper and apply
-  `lead`/`lead_skip` there
+  `build_availability` into one `effective_gate(candidate)` helper that returns
+  an instant (see Granularity), and apply `lead`/`lead_skip` there
 - `lib/tasks/store.rb` — create normalization, `patch_lead`, `patch_activate`
   stamping, anchor-edit and advancement `lead_skip` cleanup, rules 1–5
 - `lib/tasks/task_view.rb`, `lib/tasks/task_patch.rb`,
@@ -286,11 +324,22 @@ approval before production work starts.
 `lib/tui/task_details.rb`, `lib/tui/export.rb`, `lib/tui/views.rb`,
 `lib/tui/shortcuts.rb`, plus the corresponding app/view/editor/modal tests.
 
+### 5b. Clock units (optional follow-up)
+
+Additive on top of the shipped slices: accept `h` in the span grammar, add the
+duration branch to `effective_gate`, render a time on the gate across CLI/TUI/
+JSON, and document the all-day-anchor definition. Gated on the TUI mid-day
+refresh verification above. Its test matrix is the expensive part — hour leads
+across a DST transition in both directions, on floating vs zoned vs all-day
+anchors, and immediately either side of local midnight.
+
 ### 6. Compatibility matrix
 
 Hermetic cross-surface tests: both motivating cases end to end; deadline-anchored
 and scheduled-anchored leads; boundary days on either side of the derived date;
-month/year clamping; timezone-carrying anchors releasing at local midnight;
+month/year clamping; DST transitions falling between the gate and the anchor,
+proving a calendar lead holds its wall date; timezone-carrying anchors
+releasing at local midnight; `h` rejected by the span parser;
 ancestor leads and mixed own/ancestor precedence; `lead_skip` expiring on roll
 and on anchor edit; every refusal in rules 1–5; reveal mode, flat/tree parity,
 project header counts; undo; conflict behavior; and an old fixture with no
@@ -337,7 +386,9 @@ last.
 
 ## Out of scope
 
-- Time-of-day lead spans.
+- Clock-unit leads in the first release; they are planned as slice 5b, and the
+  model slice must not foreclose them.
+- Sub-hour lead granularity, and any overloading of `m` to mean minutes.
 - A lead that shifts the occurrence itself rather than its visibility.
 - Per-occurrence lead overrides beyond the binary `lead_skip` activation.
 - Relaxing rule 2 to let `lead` coexist with an explicit two-date window.
