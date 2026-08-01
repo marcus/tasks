@@ -213,4 +213,66 @@ class TestSchemaV2 < Minitest::Test
       assert_equal before, File.binread(org)
     end
   end
+
+  # The gate covers BOTH files, and it must not be possible for trouble reading
+  # one to quietly cancel the check on the other. A blanket `rescue nil` around
+  # the whole scan did exactly that: any read error on the live file skipped
+  # the archive check and reported the store "supported" — the gate switched
+  # itself off in response to the I/O trouble that should make it more careful.
+  def test_an_unreadable_live_file_does_not_suppress_the_archive_half_of_the_gate
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, Tasks::Format.dump([{ "type" => "meta", "version" => 2 }]))
+      File.write(archive, Tasks::Format.dump([{ "type" => "meta", "version" => 1 }]))
+      File.chmod(0o000, org)
+      skip "running as a user that ignores file permissions" if File.readable?(org)
+
+      store = Tasks::Store.new(org: org, archive: archive)
+
+      assert store.unsupported_schema?, "the v1 archive must still be seen"
+      assert_equal "archive: unsupported meta version 1 (expected 2)", store.unsupported_schema_error
+    ensure
+      File.chmod(0o600, org) if File.exist?(org)
+    end
+  end
+
+  # An unreadable file is not itself a version refusal — that is Check's report
+  # to make, with a line number. The narrowed rescue tolerates exactly that.
+  def test_an_unreadable_file_alone_is_not_reported_as_version_skew
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      File.write(org, Tasks::Format.dump([{ "type" => "meta", "version" => 2 }]))
+      File.write(archive, Tasks::Format.dump([{ "type" => "meta", "version" => 2 }]))
+      File.chmod(0o000, org)
+      skip "running as a user that ignores file permissions" if File.readable?(org)
+
+      refute Tasks::Store.new(org: org, archive: archive).unsupported_schema?
+    ensure
+      File.chmod(0o600, org) if File.exist?(org)
+    end
+  end
+
+  # One rule, one implementation. The TUI used to hand-roll a third copy of the
+  # version check beside Store's gate and Check's linter; three implementations
+  # of one rule is three chances for a surface to disagree about whether a
+  # store is readable.
+  def test_the_tui_and_the_store_answer_the_version_question_identically
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      archive = File.join(dir, "archive.jsonl")
+      [1, 2, 3].each do |version|
+        File.write(org, Tasks::Format.dump([{ "type" => "meta", "version" => version }]))
+        File.write(archive, Tasks::Format.dump([{ "type" => "meta", "version" => 2 }]))
+        store = Tasks::Store.new(org: org, archive: archive)
+        expected = version != Tasks::Format::VERSION
+
+        assert_equal expected, store.unsupported_schema?, "live v#{version}"
+        assert_equal expected, !Tasks::Check.unsupported_version(
+          Tasks::Format.parse(File.read(org)).records
+        ).nil?, "Check disagrees with Store at v#{version}"
+      end
+    end
+  end
 end

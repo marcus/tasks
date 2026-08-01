@@ -176,6 +176,31 @@ module Tasks
       end
     end
 
+    # The version gate as a value rather than an error tuple: the declared meta
+    # version when a store announces an Integer version this build does not
+    # implement, else nil. This is the ONE definition of "unsupported schema
+    # version" in the codebase — Store's read/mutation gate and the TUI both
+    # ask here, so a divergence between the linter's verdict and the refusal
+    # every surface enforces is not expressible.
+    #
+    # Only an Integer counts. Any other shape (a string, the float 1.0) is
+    # ordinary invalid data belonging to check_meta below, which reports it as
+    # such; treating it as version skew would tell the user to go find a
+    # different binary when what they need is to fix a typo.
+    def unsupported_version(records, version: Format::VERSION)
+      meta = records.first
+      return nil unless meta.is_a?(Hash) && meta["type"] == "meta"
+
+      declared = meta["version"]
+      declared.is_a?(Integer) && declared != version ? declared : nil
+    end
+
+    # The one wording for that condition, shared by `check`, by every CLI and
+    # API refusal, and by the TUI notice.
+    def unsupported_version_message(declared, version: Format::VERSION)
+      "unsupported meta version #{declared.inspect} (expected #{version})"
+    end
+
     # Line 1 must be a well-formed meta record at the current schema version.
     def check_meta(records, errors, version: Format::VERSION)
       meta = records.find { |r| r["line"] == 1 }
@@ -186,7 +211,7 @@ module Tasks
       elsif !meta["version"].is_a?(Integer) || meta["version"] != version
         # A non-Integer version (e.g. the float 1.0, which `1.0 == 1` would
         # otherwise wave through) is unsupported, not just a wrong number.
-        errors << [1, "unsupported meta version #{meta["version"].inspect} (expected #{version})"]
+        errors << [1, unsupported_version_message(meta["version"], version: version)]
       end
     end
 

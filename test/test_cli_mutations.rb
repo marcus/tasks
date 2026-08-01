@@ -1388,6 +1388,52 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  # repair_scope? decides "is every Check error on the record I am about to
+  # rewrite?" purely by line number, and that reasoning has one hole: Check
+  # reports the file's META problems against line 1. With a meta record present
+  # no task can collide with them, because no task sits on line 1. With the
+  # meta record MISSING, the first task IS line 1, "missing meta record on line
+  # 1" gets attributed to it, and the gate concluded the error was the target's
+  # own — repairable.
+  #
+  # It was never data loss: the write ran, the post-write Check failed, and the
+  # journal rolled it back. But it wrote first and asked afterwards, and the
+  # operator got "file failed validation after the edit" for a file that was
+  # invalid before the edit — which points at the wrong cause. A store with no
+  # meta record needs `tasks check`, not a field patch.
+  NO_META_TASK_ON_LINE_ONE = Tasks::Format.dump([
+    { "type" => "task", "id" => "aaaa0002", "state" => "TODO",
+      "title" => "Fix the widget", "scheduled" => "not-a-date" },
+  ]).freeze
+
+  def test_repair_refuses_a_target_on_line_one_where_meta_errors_land
+    run_cli("schedule", "Fix the widget", "2026-08-01",
+            content: NO_META_TASK_ON_LINE_ONE) do |org, _out, err, st|
+      refute st.success?, "a line-1 target must not be treated as repairable"
+      # The refusal is the pre-write one ("already invalid"), NOT the
+      # post-rollback one — proving nothing was written and rolled back.
+      assert_match(/already invalid/, err)
+      refute_match(/failed validation after the edit/, err)
+      assert_equal NO_META_TASK_ON_LINE_ONE, File.read(org), "the file is untouched"
+    end
+  end
+
+  # The same store with a meta record restored: the target moves to line 2, the
+  # invariant holds, and the ordinary targeted repair still works. Line 1 is
+  # the whole difference.
+  def test_repair_still_works_once_a_meta_record_holds_line_one
+    content = Tasks::Format.dump([
+      { "type" => "meta", "version" => 2 },
+      { "type" => "task", "id" => "aaaa0002", "state" => "TODO",
+        "title" => "Fix the widget", "scheduled" => "not-a-date" },
+    ])
+    run_cli("schedule", "Fix the widget", "2026-08-01", content: content) do |org, _out, err, st|
+      assert st.success?, "repair on a line-2 target still applies: #{err}"
+      assert Tasks::Check.check(org).ok?
+      assert_equal "2026-08-01", record_for(org, title: "Fix the widget")["scheduled"]
+    end
+  end
+
   def test_cli_schedule_uses_one_today_for_parse_mutation_and_json
     env = sequenced_today_env("2026-07-14", "2026-07-15")
     run_cli("schedule", "Water the plants", "tomorrow", "--json", env: env) do |org, out, err, st|
@@ -1502,7 +1548,11 @@ class TestCliMutations < Minitest::Test
     %w[undo archive].each do |command|
       run_cli(command, content: v1) do |org, _out, err, st|
         refute st.success?, "#{command} must refuse a v1 store"
-        assert_match(/unsupported schema version/, err)
+        # Naming the version found and the version expected is the whole value
+        # of the refusal: a generic "unsupported schema version" sends the
+        # operator looking for another build without saying which one.
+        assert_match(/unsupported meta version 1 \(expected 2\)/, err)
+        assert_match(/nothing was written/, err)
         refute_match(/migrate/i, err)
         assert_equal 1, JSON.parse(File.foreach(org).first)["version"]
       end

@@ -36,6 +36,13 @@ class TestCliJsonCoverage < Minitest::Test
   end.freeze
   FIXTURE = Tasks::Format.dump(FIXTURE_RECORDS)
 
+  # The same fixture at a schema version this build does not implement. Every
+  # command refuses it identically, which is what makes it usable as a uniform
+  # refusal for the enumeration below.
+  UNSUPPORTED_STORE = Tasks::Format.dump(
+    [{ "type" => "meta", "version" => 3 }] + FIXTURE_RECORDS.drop(1)
+  ).freeze
+
   # How to invoke each command so it reaches its success path. `setup` runs
   # first (output ignored); `args` is then run with `--json` appended.
   Recipe = Struct.new(:args, :setup, :env, keyword_init: true) do
@@ -175,6 +182,70 @@ class TestCliJsonCoverage < Minitest::Test
       end
     end
     assert_empty failures, "commands that accept --json but do not answer in JSON:\n  #{failures.join("\n  ")}"
+  end
+
+  # The same enumeration, on a refusal instead of a success.
+  #
+  # This is the half that was missing, and its absence is exactly how the gap
+  # drifted in through the json-flags merge: every recipe above proves a
+  # command answers in JSON when it WORKS, and nothing proved what it answers
+  # when it refuses. `archive`, `undo` and `redo` emitted the documented error
+  # object; `capture`, `done`, `delete`, `tag`, `project create` and the rest
+  # printed prose to stderr with EMPTY STDOUT and exit 1 — so `tasks done
+  # --json` handed an agent an unparseable empty result on precisely the path
+  # it most needs to branch on.
+  #
+  # The schema refusal is the right refusal to enumerate over: it applies to
+  # every command uniformly, needs no per-command setup (nothing can be set up
+  # on a store nothing will touch), and is the one refusal every surface shares.
+  # A command that answers JSON on success but prose on refusal fails here — so
+  # this closes the class, not the instances.
+  def test_every_json_command_answers_in_json_when_it_refuses_an_unsupported_store
+    exempt = Tasks::CliCommands::GATE_EXEMPT.map(&:name)
+    failures = []
+
+    RECIPES.each do |name, recipe|
+      next if exempt.include?(name)
+
+      out, err, status = run_cli(recipe.args + ["--json"], store: UNSUPPORTED_STORE)
+      if status.exitstatus != 1
+        failures << "#{name}: exit #{status.exitstatus}, expected 1"
+        next
+      end
+      payload = begin
+        JSON.parse(out)
+      rescue JSON::ParserError
+        failures << "#{name}: refusal stdout is not JSON — got #{out.inspect[0, 60]}"
+        next
+      end
+      unless payload["error"] == "unsupported_schema_version"
+        failures << "#{name}: refusal error was #{payload["error"].inspect}"
+      end
+      failures << "#{name}: refusal names no action" if payload["action"].to_s.empty?
+      failures << "#{name}: refusal says nothing on stderr" if err.strip.empty?
+    end
+
+    assert_empty failures,
+                 "commands that accept --json but do not answer in JSON when they refuse:\n  " \
+                 "#{failures.join("\n  ")}"
+  end
+
+  # The exemptions are a decision, not an oversight, so they are asserted as
+  # one: `check` is where every refusal sends the operator, `config` says where
+  # the store is, `help` never opens it. Each must still answer.
+  def test_gate_exempt_commands_still_answer_for_an_unsupported_store
+    Tasks::CliCommands::GATE_EXEMPT.each do |command|
+      refute_empty command.gate_reason.to_s, "#{command.name}: a gate opt-out must state why"
+    end
+
+    exempt = Tasks::CliCommands::GATE_EXEMPT.map(&:name) & RECIPES.keys
+    assert_equal %w[check config help].sort, exempt.sort
+
+    exempt.each do |name|
+      out, _err, status = run_cli(RECIPES.fetch(name).args + ["--json"], store: UNSUPPORTED_STORE)
+      refute_equal 2, status.exitstatus, "#{name} must still run"
+      JSON.parse(out) # must still be one document, refusal or not
+    end
   end
 
   # A refusal must be structured too, or `--json` degrades to silence on exactly
@@ -359,11 +430,11 @@ class TestCliJsonCoverage < Minitest::Test
   # One command in a fresh sandbox, after any setup commands. Uses the same
   # TASKS_FILE/TASKS_ARCHIVE overrides as the other CLI tests, plus a pinned
   # XDG_STATE_HOME so the undo journal is hermetic too.
-  def run_cli(args, setup: [], env: {})
+  def run_cli(args, setup: [], env: {}, store: FIXTURE)
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       archive = File.join(dir, "archive.jsonl")
-      File.write(org, FIXTURE)
+      File.write(org, store)
       File.write(archive, Tasks::Format.dump([{ "type" => "meta", "version" => 2 }]))
       base = {
         "TASKS_FILE" => org, "TASKS_ARCHIVE" => archive,

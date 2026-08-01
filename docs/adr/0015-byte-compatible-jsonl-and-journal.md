@@ -108,6 +108,19 @@ The obligation is bidirectional and byte-level:
   `porting/fixtures/compat/future-schema-v3`. A binary that treated an unknown
   future version as writable would silently downgrade a newer store.
 
+  The **read** half of that clause had no oracle behind it until `td-9f3dd0`:
+  the CLI's read commands used the lenient read path and printed a foreign
+  store with exit 0, so "refused on read" was an assertion the ADR made and
+  nothing tested. It is now enforced by `test/test_schema_gate_reads.rb`
+  (every read command, against both an older and a structurally different
+  newer store, with exit status and message matched against the strict paths)
+  and by `test/test_cli_json_coverage.rb`, which enumerates every `--json`
+  command against an unsupported store so the refusal is structured on all of
+  them. A port that reproduces the lenient read now fails the oracle instead of
+  inheriting the gap. The gate applies to both files: `unsupported_schema_source`
+  consults live and archive, and default `tasks check` reports an archive whose
+  version header is foreign so the refusal's own advice terminates.
+
 The canonical emitter is a first-phase cost, not a discovery. It belongs in the
 estimate before the first slice that writes.
 

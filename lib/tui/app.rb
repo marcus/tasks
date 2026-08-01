@@ -219,17 +219,12 @@ module Tui
     # True when either file declares a schema version this build does not
     # implement. There is no conversion path in either direction: the TUI says
     # so and refuses to edit, rather than rewriting bytes it cannot interpret.
-    def unsupported_schema?
-      [@paths.org, @paths.archive].any? do |path|
-        next false unless File.exist?(path)
-
-        first = JSON.parse(File.open(path, "r", encoding: "UTF-8", &:readline))
-        first["type"] == "meta" && first["version"].is_a?(Integer) &&
-          first["version"] != Tasks::Format::VERSION
-      rescue JSON::ParserError, EOFError, SystemCallError
-        false
-      end
-    end
+    #
+    # This used to be a third hand-rolled copy of the version check, alongside
+    # Store's gate and Check's linter. Three implementations of one rule is
+    # three chances for a surface to disagree about whether a store is
+    # readable, so the TUI now asks the same Store the CLI and the API ask.
+    def unsupported_schema? = @store.unsupported_schema?
 
     def show_unsupported_schema_notice
       @ui.modal = Modal.new(

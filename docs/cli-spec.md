@@ -888,10 +888,18 @@ commands that emit the error object today:
 
 | Command | Error codes |
 |---|---|
+| **every `--json` command** | `unsupported_schema_version` (see the schema version gate below) |
 | `claim`, `release`, `delegate`, `undelegate`, `workref` | `conflict` (lost race / worker mismatch) |
-| `archive` | `conflict` (with `reason`: `open_descendants`, `archive_conflict`, `preview_changed`, `write_failed`), `unsupported_schema_version` |
-| `undo`, `redo` | `empty`, `conflict`, `unsupported_schema_version` |
+| `archive` | `conflict` (with `reason`: `open_descendants`, `archive_conflict`, `preview_changed`, `write_failed`) |
+| `undo`, `redo` | `empty`, `conflict` |
 | `open` | `not_found`, `ambiguous`, `unavailable` |
+
+`unsupported_schema_version` is the first row because it is the one refusal
+every `--json` command answers structurally, and `test_cli_json_coverage.rb`
+enumerates all of them against an unsupported store to prove it. It used to be
+three commands: the rest printed prose with empty stdout, so `tasks done
+--json` handed a caller an unparseable empty result on exactly the path it most
+needed to branch on.
 
 `recur --explain` is older and different: an unreadable schedule comes back as
 `{"input": …, "error": "<prose reason>"}`, with no `action`/`message`.
@@ -1009,7 +1017,7 @@ The sweep's preview pinning matches the endpoint's documented `fingerprint` →
 | `id <ref> [--json]` | | ✅ | Print a task's stable `id`, minting one if absent (post-migration every record already has one — this is the repair path). Idempotent. Resolves refs regardless of state. |
 | `links [<ref>]` | `urls` | ✅ | Links found in task titles/notes, classified by system (`slack`, `jira`, `github`, …; unknown hosts fall back to the host name; Confluence-on-Atlassian is told apart from Jira by its `/wiki` path). One task's links with `<ref>`; every open task's otherwise. `--system <name>` filters (case-insensitive), `--all` widens the listing to done + archived (`<ref>` resolution itself stays live-file only), `--json` emits `{links: [{url, label, system, task, id, line, source}]}`. Recognizes org links `[[url][label]]`, bare URLs, and configured shorthands (below), in file order; org-internal targets (`[[id:…]]`, `[[file:…]]`, headline links) are org navigation, not links. |
 | `open <ref> [n]` | `o` | ✅ | Open a task's link in the browser (macOS `open` / `xdg-open`; `TASKS_OPENER` overrides). One link opens directly; several are listed numbered (exit 1) unless picked by 1-based `n` or `--system <name>`. `--print` prints the URL instead of launching. `--json` reports which link it resolved to (`{id, line, title, url, label, system, opened}`) and, on the branches that refuse, a `not_found`/`ambiguous`/`unavailable` error object; the ambiguous one carries the numbered `links` so a caller can pick without re-running. Resolves refs regardless of state (live file). |
-| `check [--json] [--all-files]` | `k` | ✅ | Validate `tasks.jsonl` structure (records, ids, DFS order, dates). `--all-files` also validates `archive.jsonl` and rejects any stable id present in both files; sync automation uses this after a merge. Exit 1 if errors — including an unreadable schema version: this build reads schema v2 only, and any other declared `meta` version (an older v1 store, or one written by a newer binary) fails with `unsupported meta version <n> (expected 2)`. There is no conversion command in either direction; every read and every mutation refuses such a store without writing, on the CLI, the TUI, and the API (`503 unsupported_schema_version`). The escape hatch after any out-of-band edit — and see Repairing an invalid record below for how a mutation can fix the broken record it names. |
+| `check [--json] [--all-files]` | `k` | ✅ | Validate `tasks.jsonl` structure (records, ids, DFS order, dates). `--all-files` also validates `archive.jsonl` and rejects any stable id present in both files; sync automation uses this after a merge. Exit 1 if errors — including an unreadable schema version: this build reads schema v2 only, and any other declared `meta` version (an older v1 store, or one written by a newer binary) fails with `unsupported meta version <n> (expected 2)`. The **version** header of `archive.jsonl` is consulted even without `--all-files` (its structure still is not), because a foreign archive makes every other command refuse the whole store — see The schema version gate. There is no conversion command in either direction; every read and every mutation refuses such a store without writing, on the CLI, the TUI, and the API (`503 unsupported_schema_version`). `check` itself is one of four commands exempt from that refusal, since it is where the refusal sends you. The escape hatch after any out-of-band edit — and see Repairing an invalid record below for how a mutation can fix the broken record it names. |
 
 JSON list shape (`--json` on list/agenda/next/quadrants/inbox) — a flat array,
 already sorted the way the text view sorts:
@@ -1067,6 +1075,56 @@ display text to parse.
 | `someday <ref>` | | ✅ | Canonical spelling for an indefinite Someday/Maybe / On Hold task. Adds the own `defer` marker without changing either date. Idempotent. |
 | `activate <ref>` | `undefer`, `resume` | ✅ | Make the task available now: clear its own indefinite marker and clear its own `scheduled` only when that date is in the future. On a task with a `lead` — or a **recurring** task, whose future date is its next occurrence rather than a defer — it instead releases exactly that occurrence (stamping the internal `lead_skip`) and keeps every date, so the series still has an anchor to roll from and the window re-arms on the next roll. A blocker inherited from an ancestor remains effective and is reported. Resolves unavailable open tasks. |
 
+### The schema version gate
+
+This build reads schema **v2** and nothing else. A store whose `meta` record
+declares any other Integer version — an older v1 file, or one written by a
+newer binary — is **refused, on read exactly as on write**, on every surface:
+the CLI, the TUI, and the API (`503 unsupported_schema_version`). There is no
+conversion command in either direction; a store at another version needs the
+binary that matches it, not a rewrite by this one.
+
+On the CLI the gate runs once, at dispatch, before the command's handler:
+
+- **Every command is gated** except four, each of which states why in
+  `lib/tasks/cli_commands.rb`: `check` (it is the diagnostic every refusal
+  sends you to), `config` (it reports where the store *is*, never what it
+  holds), `help` (it reads the registry, not the store), and `merge-driver`
+  (Git hands it three explicit paths and never the configured store).
+- The refusal is exit **1**, with one sentence on stderr leading with `check`'s
+  own wording: `unsupported meta version 3 (expected 2) — this build cannot
+  read this task file (nothing was written)`, prefixed `archive: ` when the
+  skew is in `archive.jsonl`.
+- With `--json` it is additionally one error object on stdout:
+  `{"error": "unsupported_schema_version", "action": "<command>", "message": …}`.
+
+Reads were the last surface to comply, and the case that forced it is a
+structurally different store, not a v1 one. v1 and v2 differ only by optional
+`*_time` keys, so a v1 store used to print plausible output. A v3 store that
+renamed fields made `tasks list` print `No matching tasks.` and `list --json`
+print `[]`, exit 0 — every record silently dropped, byte-identical to the
+answer for an empty store. An unreadable store and an empty one must not be
+indistinguishable to a caller that cannot see the file.
+
+**Default `check` consults the archive's version header.** `tasks check`
+without `--all-files` lints `tasks.jsonl` only — archive *structure* is what
+`--all-files` is for. The version gate is the deliberate exception, because it
+is store-wide rather than file-scoped: a v1 `archive.jsonl` under a current
+`tasks.jsonl` makes every read and every mutation refuse the whole store. While
+the default check could not see it, the refusal said "run `tasks check`" and
+`tasks check` answered `ok — no structural errors`: a closed diagnostic loop
+with the answer sitting in a file the command declined to open.
+
+**The merge driver gates the two sides, not the base.** `merge-driver` refuses
+any *side* at another version — reconciling records field by field across a
+schema boundary is the silent corruption a version header exists to prevent.
+The **base** is allowed to be *older*, because a base is never merged: it is
+consulted only to tell "changed" from "unchanged". An ancestor predating a
+schema upgrade is the ordinary shape of a `merge`, `rebase`, `cherry-pick`, or
+`revert` that reaches back far enough, and refusing it aborted the whole merge
+with a `CONFLICT`. A base *newer* than this build is still refused — that means
+this binary is the stale one and cannot know what the ancestor's records meant.
+
 ### Repairing an invalid record
 
 Every mutation preflights the whole file and normally refuses with a "task file
@@ -1087,6 +1145,10 @@ The contract is narrow:
   its own targeted mutation).
 - Raw-safety comes first: a file that isn't valid UTF-8, or that has a line which
   isn't parseable JSON, always refuses — even when that line is the target.
+- The target must not be on **line 1**. `check` reports a file's `meta` problems
+  against line 1, so in a file with no meta record the first task inherits them
+  and "every error is on my record" becomes true of an error the patch cannot
+  fix. Such a file needs `tasks check`, not a field patch.
 - After the write the file must validate **completely**, or the change rolls back
   (exit 1). A repair can't leave the file partially broken.
 - `undo` of a repair faithfully restores the prior (invalid) bytes, so you can

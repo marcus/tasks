@@ -429,6 +429,30 @@ module Tasks
       Check::Result.new([[0, "task store unavailable"]], [])
     end
 
+    # Default `tasks check`: the live file's structural lint, plus the archive's
+    # schema-version header.
+    #
+    # Structural errors stay file-scoped — the archive's own records are what
+    # `--all-files` is for, and folding them in would make the everyday check
+    # noisy about a file the everyday commands do not read. The version gate is
+    # the deliberate exception, because it is the one condition that is
+    # store-wide rather than file-scoped: `unsupported_schema_source` consults
+    # BOTH files, so a v1 archive under a v2 live file makes every read and
+    # every mutation refuse the whole store. A `check` that could not see it
+    # answered "ok — no structural errors" to a user who had just been told, by
+    # the refusal, to run `tasks check` — a closed diagnostic loop with the
+    # answer sitting in a file this command declined to open.
+    def check_live
+      result = Check.check(@org)
+      source, version = unsupported_schema_source
+      return result unless source == :archive
+
+      Check::Result.new(
+        [[1, "archive.jsonl: #{Check.unsupported_version_message(version)}"]] + result.errors,
+        result.warnings
+      )
+    end
+
     def reload!(include_archive: false)
       # Build AND publish under one lock acquisition. Publishing after the lock
       # released let a descheduled reader clobber @records/@read_snapshot with
@@ -1232,6 +1256,22 @@ module Tasks
     # refusal, never an invitation to convert the file.
     def unsupported_schema? = !unsupported_schema_source.nil?
 
+    # The diagnostic for a store this build cannot read, or nil when the store
+    # is current: "unsupported meta version 1 (expected 2)", prefixed with
+    # "archive: " when the skew is in the archive rather than the live file.
+    #
+    # Public because every surface owes the operator the same sentence, and the
+    # only useful part of it — which version, in which file — is knowable only
+    # here. A refusal that says merely "unsupported schema version" tells the
+    # user to go find another build without telling them which one.
+    def unsupported_schema_error
+      source, version = unsupported_schema_source
+      return nil if source.nil?
+
+      message = unsupported_meta_message(version)
+      source == :archive ? "archive: #{message}" : message
+    end
+
     private
 
     # -- creation --------------------------------------------------------------
@@ -1254,40 +1294,51 @@ module Tasks
     # version this binary does not implement, or nil when both files are current.
     # Only an Integer version counts: any other shape is ordinary invalid data
     # and belongs to Check, which reports it as such.
+    #
+    # This runs on EVERY command (the CLI gates its whole dispatch on it), so it
+    # reads line 1 rather than parsing the file: the version header is the only
+    # thing it may consult, and an archive can be large.
+    #
+    # The rescue is per-file and narrow on purpose. A blanket rescue around the
+    # loop would let an unreadable live file suppress the archive half of the
+    # gate and report the store "supported" — the gate would be skipped by
+    # exactly the I/O trouble that should make it more cautious. What it means
+    # to tolerate is a file this method cannot open or decode: that is Check's
+    # story to tell, with a line number, not a version-skew refusal.
     def unsupported_schema_source
       [[:live, @org], [:archive, (@archive if File.exist?(@archive))]].each do |source, path|
-        next if path.nil? || File.zero?(path)
-        records = fresh_records(path)
-        next unless unsupported_meta?(records)
+        next if path.nil?
 
-        return [source, records.first["version"]]
+        version = declared_meta_skew(path)
+        return [source, version] if version
       end
       nil
-    rescue StandardError
+    end
+
+    # The declared version of `path`'s meta record when it is one this build
+    # cannot read, else nil. Unopenable, empty, or unparseable files are nil.
+    def declared_meta_skew(path)
+      return nil if File.zero?(path)
+
+      first = File.open(path, "r", encoding: "UTF-8", &:gets)
+      return nil if first.nil?
+
+      Check.unsupported_version(Format.parse(first).records)
+    rescue SystemCallError, IOError, EncodingError
       nil
     end
 
-    def unsupported_meta?(records)
-      meta = records.first
-      return false unless meta&.fetch("type", nil) == "meta"
+    def unsupported_meta?(records) = !Check.unsupported_version(records).nil?
 
-      version = meta["version"]
-      version.is_a?(Integer) && version != Format::VERSION
-    end
-
-    def unsupported_meta_message(version)
-      "unsupported meta version #{version.inspect} (expected #{Format::VERSION})"
-    end
+    def unsupported_meta_message(version) = Check.unsupported_version_message(version)
 
     # The shared refusal every mutation returns for a store this binary cannot
     # read. It writes nothing and offers no conversion: a store at another
     # schema version needs the matching binary, not a rewrite by this one.
     def unsupported_schema_refusal
-      source, version = unsupported_schema_source
-      return nil if source.nil?
+      message = unsupported_schema_error
+      return nil if message.nil?
 
-      message = unsupported_meta_message(version)
-      message = "archive: #{message}" if source == :archive
       MutationResult.new(status: :unsupported_schema, errors: [message])
     end
 
@@ -1807,6 +1858,24 @@ module Tasks
     # by stable id and require each error's line to equal the target's line; an
     # error anywhere else means the fix wouldn't leave the file fully clean, so
     # we refuse exactly as before and the CLI shows the "already invalid" hint.
+    #
+    # Line-number attribution is the weak part, and it is worth being honest
+    # about what actually protects this. Check reports the file's meta problems
+    # against line 1 — "missing meta record on line 1", a wrong `type`, a
+    # version this build cannot read. When the file HAS a meta record those
+    # errors cannot collide with a task, because a task never sits on line 1.
+    # When it does not, the first task IS on line 1, the meta error is
+    # attributed to it, and "every error is on my record" becomes true of an
+    # error the patch cannot fix. The write then runs and the post-write Check
+    # rolls it back — no data is lost, but the caller gets "file failed
+    # validation after the edit — run `tasks check`" for a file that was
+    # already invalid before the edit, which points at the wrong thing.
+    #
+    # So the rollback is the safety net, not the invariant. The line below is
+    # the invariant: a repairable target never sits on line 1, which makes
+    # "line 1 belongs to meta, every other line belongs to a record" true rather
+    # than merely usual. A store with no meta record needs `tasks check`, not a
+    # field patch that would be rolled back after writing.
     def repair_scope?(preflight, id)
       return false unless id.is_a?(String) && !id.empty?
       raw = File.read(@org, encoding: "UTF-8")
@@ -1815,6 +1884,8 @@ module Tasks
       return false unless parsed.errors.empty?
       target = parsed.records.find { |record| record["type"] == "task" && record["id"] == id }
       return false unless target
+      return false if target["line"] == 1
+
       preflight.errors.all? { |line, _| line == target["line"] }
     rescue Errno::ENOENT, SystemCallError, IOError
       false

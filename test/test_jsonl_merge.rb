@@ -425,11 +425,11 @@ class TestJsonlMerge < Minitest::Test
 
   def base_delegation(records) = JSON.generate(find(records, "10000002")["delegation"])
 
-  # v1 is not merged, on any side. Reconciling records field by field across a
-  # schema boundary is exactly the silent corruption the version header exists
+  # v1 is not merged, on either SIDE. Reconciling records field by field across
+  # a schema boundary is exactly the silent corruption the version header exists
   # to prevent, and there is no migration to point the operator at any more.
-  def test_any_side_at_another_schema_version_refuses_the_merge
-    %w[base ours theirs].each do |side|
+  def test_either_side_at_another_schema_version_refuses_the_merge
+    %w[ours theirs].each do |side|
       sides = { base: copy(base_records), ours: copy(base_records), theirs: copy(base_records) }
       sides[side.to_sym].first["version"] = 1
 
@@ -443,6 +443,50 @@ class TestJsonlMerge < Minitest::Test
       assert_equal "#{side} is schema v1; this binary reads schema v2 only", result.error
       refute_match(/migrat/i, result.error)
     end
+  end
+
+  # The BASE is not a side. It is consulted to tell "changed" from "unchanged",
+  # never merged, so an ancestor older than both sides is safe — and it is the
+  # ordinary shape of a merge that reaches back past a schema upgrade. Marcus's
+  # task-data repo has nine commits carrying a schema-v1 tasks.jsonl before the
+  # 2026-07-16 upgrade, so `merge`, `rebase`, `cherry-pick`, and `revert` can
+  # all still produce this base today. Refusing it aborted the merge outright.
+  def test_a_base_older_than_both_sides_still_merges
+    old_base = copy(base_records)
+    old_base.first["version"] = 1
+    ours = change(base_records, "10000002", title: "Ours edited")
+    theirs = change(base_records, "10000003", title: "Theirs edited")
+
+    result = Tasks::JsonlMerge.merge(
+      base_text: Tasks::Format.dump(old_base),
+      ours_text: Tasks::Format.dump(ours),
+      theirs_text: Tasks::Format.dump(theirs)
+    )
+
+    assert result.ok?, "a v1 base under v2 sides must merge: #{result.error}"
+    records = Tasks::Format.parse(result.text).records
+    # Both sides' independent edits survive, and the output is written at the
+    # version this binary implements — never downgraded to the ancestor's.
+    assert_equal "Ours edited", find(records, "10000002")["title"]
+    assert_equal "Theirs edited", find(records, "10000003")["title"]
+    assert_equal Tasks::Format::VERSION, records.first["version"]
+  end
+
+  # A base NEWER than this binary is still refused: an ancestor ahead of both
+  # sides means this build is the stale one and cannot know what its records
+  # meant, so "unchanged since base" is a comparison it cannot make.
+  def test_a_base_newer_than_this_binary_refuses_the_merge
+    future_base = copy(base_records)
+    future_base.first["version"] = 3
+
+    result = Tasks::JsonlMerge.merge(
+      base_text: Tasks::Format.dump(future_base),
+      ours_text: Tasks::Format.dump(base_records),
+      theirs_text: Tasks::Format.dump(base_records)
+    )
+
+    refute result.ok?
+    assert_equal "base is schema v3; this binary reads schema v2 only", result.error
   end
 
   def test_a_future_schema_version_on_a_side_refuses_the_merge

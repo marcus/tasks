@@ -40,7 +40,7 @@ module Tasks
     def merge(base_text:, ours_text:, theirs_text:)
       ours = parse_side("ours", ours_text)
       theirs = parse_side("theirs", theirs_text)
-      base = parse_side("base", base_text, allow_empty: true)
+      base = parse_side("base", base_text, allow_empty: true, allow_older: true)
       events = []
       base_by_id = index_by_id(base)
       ours_by_id = index_by_id(ours)
@@ -71,10 +71,28 @@ module Tasks
       Result.new(text: nil, events: [].freeze, error: error.message)
     end
 
-    # Every side must declare the schema version this binary implements. There
-    # is no cross-version merge: reconciling records whose meaning differs by
-    # version is exactly the silent corruption a version header exists to stop.
-    def parse_side(label, text, allow_empty: false)
+    # Both SIDES must declare the schema version this binary implements. There
+    # is no cross-version merge of sides: reconciling records whose meaning
+    # differs by version is exactly the silent corruption a version header
+    # exists to stop.
+    #
+    # The BASE is the deliberate exception (`allow_older`), and it is not
+    # symmetry we are giving up — a base is not merged, it is only consulted to
+    # tell "changed" from "unchanged". An older base under two current sides is
+    # the ordinary shape of a merge whose common ancestor predates a schema
+    # upgrade: `git merge`, `rebase`, `cherry-pick`, and `revert` all reach for
+    # ancestors arbitrarily far back, and Marcus's task-data repo has nine
+    # commits carrying a schema-v1 tasks.jsonl (and two a v1 archive.jsonl)
+    # before the 2026-07-16 upgrade, so this is reachable history, not a
+    # hypothetical. Refusing it produced a hard `CONFLICT` with the working file
+    # left as one side's content and no conflict markers — a bad failure for a
+    # case that is safe.
+    #
+    # A NEWER base is still refused: a base ahead of both sides means this
+    # binary is the stale one and cannot know what the ancestor's records meant.
+    # The base is validated against its own declared version, so a v1 ancestor
+    # does not fail the lint for being a faithful v1 file.
+    def parse_side(label, text, allow_empty: false, allow_older: false)
       utf8 = text.dup.force_encoding(Encoding::UTF_8)
       raise MergeError, "#{label} is not valid UTF-8" unless utf8.valid_encoding?
       return [] if allow_empty && utf8.empty?
@@ -85,16 +103,24 @@ module Tasks
         raise MergeError, "#{label} cannot be parsed: #{details}"
       end
       version = declared_version(parsed.records)
-      if version && version != Format::VERSION
+      if version && !acceptable_version?(version, allow_older: allow_older)
         raise MergeError, "#{label} is schema v#{version}; this binary reads schema v#{Format::VERSION} only"
       end
-      validation = Check.check_parsed(parsed, version: Format::VERSION)
+      validation = Check.check_parsed(parsed, version: version || Format::VERSION)
       unless validation.ok?
         details = validation.errors.map { |line, message| "line #{line}: #{message}" }.join("; ")
         raise MergeError, "#{label} is invalid: #{details}"
       end
 
       parsed.records
+    end
+
+    # Current always; older only where the caller says an older file is merely
+    # an ancestor. Never newer, in either position.
+    def acceptable_version?(version, allow_older:)
+      return true if version == Format::VERSION
+
+      allow_older && version < Format::VERSION
     end
 
     def declared_version(records)

@@ -2461,7 +2461,7 @@ def cmd_archive(args = [])
   flags, rest = take_flags(args, "--json")
   abort "usage: tasks archive [--json]" unless rest.empty?
   json = flags["--json"]
-  require_supported_schema_for_mutation!(json: json, action: "archive")
+  require_supported_schema!(json: json, action: "archive")
   # The sweep returns a count; only the pre-sweep preview knows WHICH records
   # moved, which is what a --json caller needs. Pinning the sweep to that
   # preview is what makes the reported ids true: a store that changed in
@@ -2558,7 +2558,7 @@ def cmd_id(args)
   ref = rest.shift
   abort "usage: tasks id <ref>" if ref.nil? || ref.strip.empty?
   item = resolve_ref(ref, include_done: true) # referenceable regardless of state
-  require_supported_schema_for_mutation!
+  require_supported_schema!
   id = store.ensure_id!(item)
   mutation_failed "failed to assign id" unless id
   store.reload!
@@ -2577,15 +2577,15 @@ def run_history(op, args, verb:, past:)
   flags, rest = take_flags(args, "--json")
   abort "usage: tasks #{verb} [--json]" unless rest.empty?
   json = flags["--json"]
-  require_supported_schema_for_mutation!(json: json, action: verb)
+  require_supported_schema!(json: json, action: verb)
   kind, label = store.public_send(op)
   case kind
   when :unsupported_schema
     # Belt and braces: the guard above already refused, but the Store re-checks
     # under its own lock, so a store that changed version in between lands here.
     json_error!("unsupported_schema_version", action: verb,
-                message: UNSUPPORTED_SCHEMA_MESSAGE) if json
-    mutation_failed UNSUPPORTED_SCHEMA_MESSAGE
+                message: unsupported_schema_message) if json
+    mutation_failed unsupported_schema_message
   when :empty
     message = "nothing to #{verb}"
     json_error!("empty", action: verb, message: message) if json
@@ -2604,23 +2604,64 @@ def run_history(op, args, verb:, past:)
   end
 end
 
-UNSUPPORTED_SCHEMA_MESSAGE =
-  "task file uses an unsupported schema version; this build reads " \
-  "schema v#{Tasks::Format::VERSION} only"
+# One sentence for one condition, on every command. It leads with Check's own
+# wording — the version found and the version expected — because that is the
+# only part an operator can act on, and it is what `check`, the Store's
+# mutation refusals, and the API's 503 detail all already say. The suffix is
+# the CLI's promise: this build declined, and the file is as it was.
+def unsupported_schema_message
+  detail = store.unsupported_schema_error || "unsupported schema version"
+  "#{detail} — this build cannot read this task file (nothing was written)"
+end
 
-# Archive, `id`, and undo/redo reach the Store directly rather than through a
-# typed MutationResult, so the schema gate is applied here too: a store at a
-# schema version this build does not implement is refused before it is touched.
-# There is no conversion in either direction — this is a refusal, not an
-# invitation. Commands that emit a JSON result pass `json:`/`action:` so the
-# refusal is an error object rather than an empty stdout; the API names this
-# same condition `unsupported_schema_version`, so the CLI code matches it.
-def require_supported_schema_for_mutation!(json: false, action: nil)
+# A store at a schema version this build does not implement is refused before
+# it is touched — on read exactly as on write. There is no conversion in either
+# direction: this is a refusal, not an invitation.
+#
+# Reads were the hole. `list`, `show`, `next` and the rest went through the
+# lenient read path, so a foreign store was parsed and printed with exit 0
+# while every mutation, `check`, the TUI, and the API refused the same bytes.
+# Worse than inconsistent: v1 and v2 differ only by optional keys, so a v1
+# store printed plausible output, and a v3 store that renamed fields dropped
+# every record and printed "No matching tasks." — an empty store and an
+# unreadable one, indistinguishable, to a caller with no way to tell.
+#
+# Commands that emit a JSON result pass `json:`/`action:` so the refusal is an
+# error object rather than an empty stdout; the API names this same condition
+# `unsupported_schema_version`, so the CLI code matches it.
+def require_supported_schema!(json: false, action: nil)
   return unless store.unsupported_schema?
 
   json_error!("unsupported_schema_version", action: action,
-              message: UNSUPPORTED_SCHEMA_MESSAGE) if json
-  mutation_failed UNSUPPORTED_SCHEMA_MESSAGE
+              message: unsupported_schema_message) if json
+  mutation_failed unsupported_schema_message
+end
+
+# The gate, applied once for the whole CLI rather than per command.
+#
+# Wiring it into individual commands is how it drifted in the first place:
+# three call sites had it, thirty-odd did not, and nothing made the gap
+# visible. Here it is structural — a new command is gated the day it is added,
+# and opting out means saying so in Tasks::CliCommands with a reason.
+#
+# `json:` comes from the registry AND from argv: a command whose registry entry
+# promises no JSON result must not start emitting error objects, and a command
+# that does promise one owes it only when the caller actually asked.
+def enforce_schema_gate!(argv)
+  dispatch = Tasks::CliCommands.dispatch_for(argv[0])
+  return unless dispatch && Tasks::CliCommands.gated?(dispatch)
+
+  command = schema_gate_command(dispatch, argv)
+  require_supported_schema!(json: command&.json? && argv.include?("--json"),
+                            action: command&.name || dispatch)
+end
+
+# The registry entry to name in the refusal. `project show` and `project create`
+# share one dispatch slot, so the sub-verb is resolved for the `action:` field —
+# an agent branching on a refusal should read back the command it ran.
+def schema_gate_command(dispatch, argv)
+  sub = Tasks::CliCommands.subcommands_of(dispatch)[argv[1]] unless argv[1].nil?
+  Tasks::CliCommands.find(sub || dispatch)
 end
 
 STATE_ORDER = Tasks::TaskFilter::STATE_ORDER
@@ -2707,7 +2748,10 @@ def cmd_check(args)
   flags, rest = take_flags(args, "--json", "--all-files")
   abort "usage: tasks check [--json] [--all-files]" unless rest.empty?
   all_files = flags["--all-files"]
-  res = all_files ? store.check_files : Tasks::Check.check(ORG)
+  # Not `Check.check(ORG)`: the default check lints the live file but must also
+  # report an archive whose schema version this build cannot read, because that
+  # archive makes every other command refuse the whole store. See Store#check_live.
+  res = all_files ? store.check_files : store.check_live
   if flags["--json"]
     require "json"
     puts res.to_h.to_json
@@ -3341,6 +3385,7 @@ assert_dispatch_matches_registry!(
 begin
 handler = HANDLERS[Tasks::CliCommands.dispatch_for(ARGV[0])]
 if handler
+  enforce_schema_gate!(ARGV)
   handler.call(ARGV[1..])
 else
   warn "unknown command: #{ARGV[0].inspect}\n\n" if ARGV[0]

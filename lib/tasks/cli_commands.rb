@@ -24,8 +24,14 @@ module Tasks
     # alias reads "project new", never a bare "new" that would look like a
     # top-level command. The two token readers below split that apart for the
     # two slots bin/tasks dispatches on.
-    Command = Struct.new(:name, :aliases, :json, :reason, :early, keyword_init: true) do
+    Command = Struct.new(:name, :aliases, :json, :reason, :early, :gate, :gate_reason,
+                         keyword_init: true) do
       def json? = json == true
+
+      # Whether the schema-version gate applies. Default true: a store whose
+      # declared version this build does not implement is refused by every
+      # command, on read exactly as on write. An exemption must say why.
+      def gated? = gate != false
 
       # True for `merge-driver`, which Git invokes before any config or store
       # resolution and which therefore dispatches ahead of the registry.
@@ -48,14 +54,20 @@ module Tasks
       end
 
       def to_h
-        base = { name: name, aliases: aliases, json: json? }
-        json? ? base : base.merge(json_reason: reason)
+        base = { name: name, aliases: aliases, json: json?, schema_gate: gated? }
+        base = base.merge(json_reason: reason) unless json?
+        gated? ? base : base.merge(schema_gate_reason: gate_reason)
       end
     end
 
-    def self.cmd(name, aliases: [], json: true, reason: nil, early: false)
+    def self.cmd(name, aliases: [], json: true, reason: nil, early: false,
+                 gate: true, gate_reason: nil)
       raise ArgumentError, "#{name}: json: false requires a reason" if !json && (reason.nil? || reason.empty?)
       raise ArgumentError, "#{name}: json: true takes no reason" if json && reason
+      if !gate && (gate_reason.nil? || gate_reason.empty?)
+        raise ArgumentError, "#{name}: gate: false requires a gate_reason"
+      end
+      raise ArgumentError, "#{name}: a gated command takes no gate_reason" if gate && gate_reason
 
       group = name.split(" ").first
       aliases.each do |spelling|
@@ -64,7 +76,8 @@ module Tasks
           spelling.start_with?("#{group} ")
       end
 
-      Command.new(name: name, aliases: aliases, json: json, reason: reason, early: early).freeze
+      Command.new(name: name, aliases: aliases, json: json, reason: reason, early: early,
+                  gate: gate, gate_reason: gate_reason).freeze
     end
     private_class_method :cmd
 
@@ -80,7 +93,10 @@ module Tasks
       cmd("links", aliases: %w[urls]),
       cmd("open", aliases: %w[o]),
       cmd("id"),
-      cmd("check", aliases: %w[k]),
+      cmd("check", aliases: %w[k], gate: false,
+                   gate_reason: "It is the diagnostic the refusal sends you to. A `check` that " \
+                                "refused an unsupported store would close the loop it exists to " \
+                                "open, leaving no command able to name the version."),
 
       # --- Projects -----------------------------------------------------------
       cmd("project create", aliases: ["project new"]),
@@ -123,13 +139,21 @@ module Tasks
       cmd("archive", aliases: %w[x]),
       cmd("undo"),
       cmd("redo"),
-      cmd("config"),
-      cmd("help", aliases: %w[-h --help]),
+      cmd("config", gate: false,
+                    gate_reason: "It reports where the store IS, never what it contains. Finding " \
+                                 "the file is a precondition for fixing a version skew, so it must " \
+                                 "answer for a store no other command will touch."),
+      cmd("help", aliases: %w[-h --help], gate: false,
+                  gate_reason: "It reads this registry, not the store."),
       cmd("-p", aliases: %w[--prompt], json: false,
               reason: "The result is an LLM harness's free-form transcript, not a value this " \
                       "CLI computes; the mutations it makes are readable through the commands " \
                       "that do emit JSON."),
       cmd("merge-driver", json: false, early: true,
+                          gate: false,
+                          gate_reason: "Git hands it three merge-stage paths and never the configured " \
+                                       "store, so there is no store to gate. JsonlMerge applies the " \
+                                       "version rule to each of those three inputs itself.",
                           reason: "Git plumbing. Git supplies the three merge-stage paths and reads " \
                                   "the merged file and the exit code; stdout is not a result surface."),
     ].freeze
@@ -149,6 +173,18 @@ module Tasks
 
     JSON_COMMANDS = ALL.select(&:json?).freeze
     OPT_OUTS = ALL.reject(&:json?).freeze
+
+    # Commands the schema-version gate does not apply to, by dispatch slot.
+    # Everything else — every read, every mutation — refuses a store declaring
+    # a version this build does not implement, which is the same rule `check`,
+    # the TUI, and the API's 503 unsupported_schema_version already enforce.
+    GATE_EXEMPT = ALL.reject(&:gated?).freeze
+    GATE_EXEMPT_DISPATCH = GATE_EXEMPT.map(&:dispatch).freeze
+
+    # True when the command occupying `dispatch` must refuse an unsupported
+    # store. Unknown tokens are gated: an unrecognized command never reaches a
+    # handler, and defaulting to "gated" keeps a future command safe by default.
+    def self.gated?(dispatch) = !GATE_EXEMPT_DISPATCH.include?(dispatch)
 
     def self.dispatch_for(token) = TOKENS[token]
 
