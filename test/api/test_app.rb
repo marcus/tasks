@@ -68,6 +68,25 @@ class TestApiApp < Minitest::Test
     [health, ready, meta, sections].each { |response| assert_contract_response(response) }
   end
 
+  # The CLI's structured-output coverage (docs/cli-spec.md, "Structured output
+  # (--json) coverage") gave `undo`/`redo`/`archive` machine-readable results.
+  # That is a CLI adapter change, not a new shared capability — the API still
+  # routes none of the three, and this holds the advertised flags to that. A
+  # future PR that adds the endpoints must flip the flag and delete the matching
+  # 404 assertion in the same change, which is exactly the parity conversation.
+  def test_unrouted_capabilities_are_advertised_as_false_and_really_are_absent
+    capabilities = JSON.parse(get("/api/v1/meta").body).dig("data", "capabilities")
+
+    # Paths as docs/api/openapi.yaml names them, so this reads as a check
+    # against the written contract rather than against a guess.
+    { "undo" => "/api/v1/history/undo", "redo" => "/api/v1/history/redo",
+      "archive_sweep" => "/api/v1/archive-sweeps" }.each do |capability, path|
+      refute capabilities.fetch(capability), "#{capability} is advertised but has no endpoint"
+      assert_equal 404, get(path).status, "#{path} answers, so #{capability} must be advertised true"
+      assert_equal 404, json_request("POST", path, {}, { "HTTP_ORIGIN" => "http://#{HOST}" }).status
+    end
+  end
+
   def test_health_does_not_touch_store_and_readiness_refuses_invalid_store
     File.write(@org, "{not-json\n")
 

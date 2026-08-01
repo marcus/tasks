@@ -43,6 +43,18 @@ get it from `bin/tasks config`, don't assume the repo root.
 All read commands accept `--json` (flat array, same sort as the text view) —
 prefer it when you need to reason over tasks rather than display them.
 
+**Every command answers in JSON** except `-p` (its result is an LLM transcript)
+and the internal `merge-driver`. `bin/tasks help --json` prints that table
+itself — every command, its aliases, whether it takes `--json`, and the stated
+reason when it does not — so you never have to guess whether a command is
+scriptable.
+
+Refusals are a different story: **branch on the exit code, not on stdout.**
+A nonzero exit means the command refused, and stdout is often empty. `claim`,
+`release`, `delegate`, `archive`, `undo`, `redo`, and `open` additionally print
+an error object (`{"error", "action", "message"}`) you can branch on; most other
+refusals print prose to stderr only. Never read an empty stdout as success.
+
 ## Mutate
 
 ```sh
@@ -79,7 +91,9 @@ bin/tasks recur "<ref>" weekly       # repeat on done: weekly/2w/.+1m; "off" cle
 bin/tasks defer "<ref>" +4           # hide until available four days from today
 bin/tasks someday "<ref>"            # hold indefinitely (someday/maybe/on hold)
 bin/tasks activate "<ref>"           # make available now (undefer/resume)
-bin/tasks archive                    # sweep DONE/CANCELLED to archive.jsonl
+bin/tasks archive                    # sweep DONE/CANCELLED to archive.jsonl; --json → {roots, records, moved_ids}
+bin/tasks undo                       # revert the last mutation; --json → {action, label}
+bin/tasks redo                       # replay the last undone mutation; --json likewise
 bin/tasks delete "<ref>"             # hard-delete a task (--cascade for subtasks); undoable
 ```
 

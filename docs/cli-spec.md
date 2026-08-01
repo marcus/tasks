@@ -865,6 +865,136 @@ the file exists. `--json` adds `memory` (the path), `memory_exists` (boolean),
 and `sources.memory` (`"TASKS_MEMORY env"` / `"config file"` /
 `"beside tasks.jsonl"`, or `"pinned"` under a hermetic sandbox).
 
+## Structured output (`--json`) coverage
+
+Every command in the dispatch table either emits a machine-readable result under
+`--json` or is an explicit opt-out with a stated reason. There is no third
+category: a command that accepted `--json` and printed human text would be
+indistinguishable, to a caller, from a command that produced no result.
+
+This table is the contract, and it is enforced rather than maintained by hand.
+`lib/tasks/cli_commands.rb` is the registry `bin/tasks` dispatches from;
+`tasks help --json` emits it; `test/test_cli_json_coverage.rb` runs every
+command listed here and fails if its stdout is not exactly one JSON document, if
+this table and the registry disagree, or if a new command arrives without a
+decision recorded in both.
+
+**Refusals are only partly structured, and the honest rule is: branch on the
+exit code, not on stdout.** A nonzero exit means the command refused; stdout may
+be empty. Some refusals additionally print one error object on stdout —
+`{"error": "<code>", "action": "<command>", …, "message": "<the same sentence
+stderr got>"}` — but most still print the human sentence to stderr only. The
+commands that emit the error object today:
+
+| Command | Error codes |
+|---|---|
+| `claim`, `release`, `delegate`, `undelegate`, `workref` | `conflict` (lost race / worker mismatch) |
+| `archive` | `conflict` (with `reason`: `open_descendants`, `archive_conflict`, `preview_changed`, `write_failed`), `unsupported_schema_version` |
+| `undo`, `redo` | `empty`, `conflict`, `unsupported_schema_version` |
+| `open` | `not_found`, `ambiguous`, `unavailable` |
+
+`recur --explain` is older and different: an unreadable schedule comes back as
+`{"input": …, "error": "<prose reason>"}`, with no `action`/`message`.
+Everything else — an unknown state, an unparseable date, a depth or cycle
+refusal, a blank title, a `lead` with no anchor date, a `delete` needing
+`--cascade` — exits nonzero with prose on stderr and nothing on stdout.
+Ref resolution is the same for every command alike: no-match/ambiguous exits 2
+with the candidate list on stderr (see Global conventions).
+
+Extending the envelope to the remaining refusal paths is a deliberate follow-up,
+not part of this contract: doing it needs a decision about error codes for the
+whole domain, and the enumeration test below asserts what is true today rather
+than what would be nicer.
+
+| Command | `--json` | Result on success |
+|---|---|---|
+| `agenda` | ✅ | array of task objects |
+| `next` | ✅ | array of task objects |
+| `quadrants` | ✅ | array of task objects, each with `quadrant` |
+| `inbox` | ✅ | array of task objects |
+| `projects` | ✅ | array of project objects |
+| `list` | ✅ | array of task objects |
+| `show` | ✅ | one canonical task resource |
+| `links` | ✅ | `{links: [{url, label, system, task, id, line, source}]}` |
+| `open` | ✅ | `{id, line, title, url, label, system, opened}` — `opened` is false under `--print`. Errors: `not_found` (no links / no such index), `ambiguous` (several links, carrying `links`), `unavailable` (no browser launcher). |
+| `id` | ✅ | `{id, touched: [task]}` |
+| `check` | ✅ | the check result object (`errors`, `warnings`, …) |
+| `project create` | ✅ | the project object |
+| `project show` | ✅ | the project object |
+| `project complete` | ✅ | `{touched: [task]}` |
+| `project archive` | ✅ | `{archived, moved_ids}` |
+| `project rename` | ✅ | the project object |
+| `capture` | ✅ | `{touched: [task]}` |
+| `propose` | ✅ | `{touched: [task]}` |
+| `approve` | ✅ | `{touched: [task]}` |
+| `reject` | ✅ | `{touched: [task]}` |
+| `delegate` | ✅ | `{touched: [task]}`; conflict error object on a lost race |
+| `undelegate` | ✅ | `{touched: [task]}` |
+| `workref` | ✅ | `{touched: [task]}` |
+| `claim` | ✅ | the full canonical task resource; `conflict` error object on a lost race |
+| `release` | ✅ | `{touched: [task]}`; `conflict` error object on a worker mismatch |
+| `done` | ✅ | `{touched: [task]}` |
+| `due` | ✅ | `{touched: [task]}` |
+| `schedule` | ✅ | `{touched: [task]}` |
+| `undate` | ✅ | `{touched: [task]}` |
+| `state` | ✅ | `{touched: [task]}` |
+| `cancel` | ✅ | `{touched: [task]}` |
+| `priority` | ✅ | `{touched: [task]}` |
+| `retitle` | ✅ | `{touched: [task]}` |
+| `tag` | ✅ | `{touched: [task]}` |
+| `note` | ✅ | `{touched: [task]}` |
+| `move` | ✅ | `{touched: [task]}`; the `--before` form adds `placement: {…}` |
+| `delete` | ✅ | `{deleted: [task]}` (pre-delete headlines) |
+| `recur` | ✅ | setting: `{touched: [task], next}`; reading: the preview payload; `--explain`: the engine payload |
+| `lead` | ✅ | setting: `{touched: [task]}`; reading: the window preview payload |
+| `defer` | ✅ | `{touched: [task]}` |
+| `someday` | ✅ | `{touched: [task]}` |
+| `activate` | ✅ | `{touched: [task]}` |
+| `archive` | ✅ | `{roots, records, moved_ids}` — `roots` is what the human line counts, `records` the whole swept subtree (what `moved_ids` lists). Deliberately not named `archived`: the sibling `project archive --json` uses that word for its record count. Refusals: `conflict` with `reason` = `open_descendants` (carrying `blocked` + `open_descendants`), `archive_conflict` (carrying `conflicting_ids`), `preview_changed` (the store changed while the sweep was being prepared — retry), or `write_failed`; `unsupported_schema_version` on a store whose declared schema version this build does not implement. |
+| `undo` | ✅ | `{action: "undo", label}`; errors `empty`, `conflict`, `unsupported_schema_version` |
+| `redo` | ✅ | `{action: "redo", label}`; errors `empty`, `conflict`, `unsupported_schema_version` |
+| `config` | ✅ | the resolved settings object |
+| `help` | ✅ | `{commands: [{name, aliases, json, json_reason}]}` — this table, as data |
+| `-p` | ❌ | Opt-out: the result is an LLM harness's free-form transcript, not a value this CLI computes; the mutations it makes are readable through the commands that do emit JSON. A leading `--json` is **rejected** (exit 1) rather than folded into the prompt. |
+| `merge-driver` | ❌ | Opt-out: Git plumbing. Git supplies the three merge-stage paths and reads the merged file and the exit code; stdout is not a result surface. |
+
+`--json` reporting the ids that moved is why `archive --json` pins the sweep to
+the preview it just took: a store that changed in between refuses (`conflict`
+with `reason: preview_changed`) rather than reporting a stale list. The human
+form takes no preview and is unaffected. Retrying is always the right response,
+including for the one benign case — a sweep prepared either side of local
+midnight, whose day stamp is part of the fingerprint.
+
+`archive`, `undo`, and `redo` reject stray positional arguments (`tasks archive x`
+is now `usage:` + exit 1, where it used to ignore the extra word). `help` is the
+deliberate exception: it accepts anything and prints the reference, because it is
+the command you reach for when you are already unsure.
+
+**API parity.** The HTTP adapter is JSON-only, so structured output is not a
+capability that can drift there — what can drift is which capabilities it routes
+at all. `GET /api/v1/meta` advertises that honestly (`capabilities.undo`,
+`.redo`, `.archive_sweep` are `false` until the manager endpoints exist), and
+`test/api/test_app.rb` holds those flags to what the adapter actually dispatches.
+The CLI gaining structured `undo`/`redo`/`archive` results does not change what
+the API routes, and must not silently flip those flags.
+
+**Reconcile these names when the manager endpoints land.**
+[`docs/api/openapi.yaml`](api/openapi.yaml) already describes the unimplemented
+`/history/undo`, `/history/redo`, and `/archive-sweeps` endpoints, and it chose
+different words for the same things. Whichever adapter is written second must
+adopt the other's vocabulary deliberately rather than by accident:
+
+| Concept | CLI `--json` | `openapi.yaml` |
+|---|---|---|
+| sweep result | `{roots, records, moved_ids}` | `data.swept` (records moved) |
+| blocked sweep | `error: conflict`, `reason: open_descendants` | `code: conflict`, `details.open_descendants` |
+| unreadable schema version | `error: unsupported_schema_version` | `code: unsupported_schema_version` (503) |
+| undo/redo result | `{action, label}` | `HistoryStepResponse` → `data.label` |
+| partial archive overlap | `reason: archive_conflict` | (no analogue yet) |
+
+The sweep's preview pinning matches the endpoint's documented `fingerprint` →
+`409 conflict` design, which is the one place the two already agree.
+
 ## Read commands
 
 | Command | Alias | Status | Description |
@@ -878,7 +1008,7 @@ and `sources.memory` (`"TASKS_MEMORY env"` / `"config file"` /
 | `show <ref>` | `s` | ✅ | One live task in full, including PROPOSED without an extra flag: rendered headline + body/notes + links. Human output labels `scheduled` as `available from` and reports exact effective availability. `--json` keeps nullable ISO `scheduled`/`deadline` and adds nullable `scheduled_time`/`deadline_time` plus `available_at`; time objects carry `local`, stored `timezone`, `fold`, `effective_timezone`, and derived UTC `instant`. Reasons remain `available`, `proposed`, `scheduled`, `on_hold`, `ancestor_scheduled`, `ancestor_on_hold`, or `closed`. |
 | `id <ref> [--json]` | | ✅ | Print a task's stable `id`, minting one if absent (post-migration every record already has one — this is the repair path). Idempotent. Resolves refs regardless of state. |
 | `links [<ref>]` | `urls` | ✅ | Links found in task titles/notes, classified by system (`slack`, `jira`, `github`, …; unknown hosts fall back to the host name; Confluence-on-Atlassian is told apart from Jira by its `/wiki` path). One task's links with `<ref>`; every open task's otherwise. `--system <name>` filters (case-insensitive), `--all` widens the listing to done + archived (`<ref>` resolution itself stays live-file only), `--json` emits `{links: [{url, label, system, task, id, line, source}]}`. Recognizes org links `[[url][label]]`, bare URLs, and configured shorthands (below), in file order; org-internal targets (`[[id:…]]`, `[[file:…]]`, headline links) are org navigation, not links. |
-| `open <ref> [n]` | `o` | ✅ | Open a task's link in the browser (macOS `open` / `xdg-open`; `TASKS_OPENER` overrides). One link opens directly; several are listed numbered (exit 1) unless picked by 1-based `n` or `--system <name>`. `--print` prints the URL instead of launching. Resolves refs regardless of state (live file). |
+| `open <ref> [n]` | `o` | ✅ | Open a task's link in the browser (macOS `open` / `xdg-open`; `TASKS_OPENER` overrides). One link opens directly; several are listed numbered (exit 1) unless picked by 1-based `n` or `--system <name>`. `--print` prints the URL instead of launching. `--json` reports which link it resolved to (`{id, line, title, url, label, system, opened}`) and, on the branches that refuse, a `not_found`/`ambiguous`/`unavailable` error object; the ambiguous one carries the numbered `links` so a caller can pick without re-running. Resolves refs regardless of state (live file). |
 | `check [--json] [--all-files]` | `k` | ✅ | Validate `tasks.jsonl` structure (records, ids, DFS order, dates). `--all-files` also validates `archive.jsonl` and rejects any stable id present in both files; sync automation uses this after a merge. Exit 1 if errors — including an unreadable schema version: this build reads schema v2 only, and any other declared `meta` version (an older v1 store, or one written by a newer binary) fails with `unsupported meta version <n> (expected 2)`. There is no conversion command in either direction; every read and every mutation refuses such a store without writing, on the CLI, the TUI, and the API (`503 unsupported_schema_version`). The escape hatch after any out-of-band edit — and see Repairing an invalid record below for how a mutation can fix the broken record it names. |
 
 JSON list shape (`--json` on list/agenda/next/quadrants/inbox) — a flat array,
@@ -904,7 +1034,7 @@ display text to parse.
 | `capture "text"` | `add`, `c` | ✅ | New accepted INBOX item. `--due` and `--scheduled` accept complete date/time expressions. Each has independent `--due-timezone`/`--scheduled-timezone`, `--due-floating`/`--scheduled-floating`, and `--due-fold`/`--scheduled-fold` modifiers; a modifier without its matching value is rejected. Other flags remain `--priority`, repeatable tags/contexts/notes, `--no-host-context`, state, project/under, recurrence, dry-run, and JSON. `--lead <span>` sets a lead-time window on the new task and needs one of the two dates (`off` is rejected here — a new task has no window to clear); a lead beside BOTH dates is refused. `propose` accepts `--lead` on the same terms. `--recur` takes every input form `recur` does (intervals, natural calendar phrases, canonical grammar — see Recurrence) and stores the canonical value; `off` is rejected here since a new task has no schedule to clear, and a recurring capture with no date is scheduled today so it has something to repeat from. A configured host context is additive with explicit contexts unless suppressed. A capture with either temporal value lands as TODO unless state is explicit. |
 | `propose "text"` | | ✅ | New inert PROPOSED task for owner review. Shares capture's dates, priority, repeatable tags/contexts/notes, host-context, project/under, dry-run, and JSON behavior, but rejects explicit state and recurrence. Agent-authored proposals should use `--note` for concise rationale/evidence. |
 
-## Update (all take `<ref>`, all support `--dry-run`)
+## Update (all take `<ref>`, all support `--dry-run` and `--json`)
 
 | Command | Alias/synonyms | Status | Description |
 |---|---|---|---|
@@ -1002,13 +1132,13 @@ no fuzzy refs (a transport difference per design rule 7). See
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `archive` | `x` | ✅ | Sweep each DONE/CANCELLED subtree to `archive.jsonl` (root drops `parent`, gains `archived`). Refuses with exit 1 when any candidate root has a non-closed descendant, including PROPOSED, and explains how to resolve it. Persistence is retry-safe across interruption: the archive is installed first, and live records are removed only when the archive contains exactly one canonical copy of every moved ID; partial or conflicting overlap refuses without deleting live data. In the TUI, `x` previews root and descendant counts and requires `y` confirmation; the Store validates that exact candidate-ID/content fingerprint under the sweep lock, while `n`/`esc` cancels without writing. |
+| `archive` | `x` | ✅ | Sweep each DONE/CANCELLED subtree to `archive.jsonl` (root drops `parent`, gains `archived`). Refuses with exit 1 when any candidate root has a non-closed descendant, including PROPOSED, and explains how to resolve it. Persistence is retry-safe across interruption: the archive is installed first, and live records are removed only when the archive contains exactly one canonical copy of every moved ID; partial or conflicting overlap refuses without deleting live data. In the TUI, `x` previews root and descendant counts and requires `y` confirmation; the Store validates that exact candidate-ID/content fingerprint under the sweep lock, while `n`/`esc` cancels without writing. `--json` emits `{roots, records, moved_ids}` (`roots` matches the human count; `records` is the whole swept subtree); because only a pre-sweep preview knows which records move, the JSON form pins the sweep to that preview and refuses if the store changed in between. Every refusal is an error object on stdout: `conflict` with `reason` = `open_descendants`, `archive_conflict`, `preview_changed`, or `write_failed`, or `unsupported_schema_version` on a store whose declared schema version this build does not implement. Stray positional arguments are now a usage error (exit 1). |
 | `delete <ref>` | | ✅ | Undoable **hard delete** of a task's subtree from the live file — not an alias for `CANCELLED`, and it never touches `archive.jsonl`. A leaf deletes directly; a task that still has descendants is refused (exit 1) unless `--cascade` removes the whole contiguous subtree as one journal entry. Deleting never hoists or reparents children. PROPOSED and accepted open tasks resolve directly; `--include-done` additionally widens to closed live tasks. Archived-only ids are not found (exit 2 via ref resolution / `not_found`); a section id is rejected (delete targets tasks). Reports every removed task's pre-delete headline (`--json` → `{deleted: [..]}`); `--dry-run` prints what would be deleted, including the descendant count when cascading, and writes nothing. Undoable via `tasks undo` (restores the exact prior bytes). Cancellation/archival is usually the right call — `delete` is for genuine mistakes. |
-| `undo` | | ✅ | Revert the last mutation via the on-disk journal (`Tasks::Journal`, under `$XDG_STATE_HOME/tasks/journal/`), shared with the TUI and across CLI runs. Refuses (exit 1) if `tasks.jsonl` changed out-of-band since that edit — resolve with `git diff` / `git checkout -- tasks.jsonl`. |
-| `redo` | | ✅ | Replay the last undone mutation; same shared journal and conflict guard as `undo`. |
-| `-p [--provider N] [--model N] "prompt"` | | ✅ | Natural-language request via a headless LLM agent (Claude CLI by default, or any configured harness). Leading `--provider`/`--model` override the config default for one run; see [LLM agent settings](#llm-agent-settings). |
+| `undo [--json]` | | ✅ | Revert the last mutation via the on-disk journal (`Tasks::Journal`, under `$XDG_STATE_HOME/tasks/journal/`), shared with the TUI and across CLI runs. Refuses (exit 1) if `tasks.jsonl` changed out-of-band since that edit — resolve with `git diff` / `git checkout -- tasks.jsonl`. `--json` emits `{action: "undo", label}` naming the mutation it reverted, or an `empty`/`conflict` error object. |
+| `redo [--json]` | | ✅ | Replay the last undone mutation; same shared journal and conflict guard as `undo`, including the `{action: "redo", label}` result and its `empty`/`conflict` error objects. |
+| `-p [--provider N] [--model N] "prompt"` | | ✅ | Natural-language request via a headless LLM agent (Claude CLI by default, or any configured harness). Leading `--provider`/`--model` override the config default for one run; see [LLM agent settings](#llm-agent-settings). Deliberately has no `--json` — see the opt-out in Structured output (`--json`) coverage. |
 | `config [--json]` | | ✅ | Print resolved file paths, `urgent_days`, `max_depth`, theme/colors, effective `timezone`, `time_format`, tzdb version, fallback warning, prompt facts, and each setting's source. |
-| `help` | `-h`, `--help` | ✅ | Grouped command reference. Also printed (to stderr, exit 1) on an unknown/absent command. |
+| `help [--json]` | `-h`, `--help` | ✅ | Grouped command reference. Also printed (to stderr, exit 1) on an unknown/absent command. `--json` emits the dispatch registry instead — `{commands: [{name, aliases, json, json_reason}]}` — which is the machine-readable form of Structured output (`--json`) coverage above. |
 
 Ideas beyond this spec live in `docs/ideas.md`.
 
