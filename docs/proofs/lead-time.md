@@ -2,7 +2,8 @@
 
 Proof for `td-526a45` (epic `td-f18c31`), captured on 2026-08-01 against the
 contract in
-[`docs/plans/implemented/recurring-lead-time.md`](../plans/implemented/recurring-lead-time.md).
+[`docs/plans/implemented/recurring-lead-time.md`](../plans/implemented/recurring-lead-time.md),
+after an independent adversarial review and its fix cycle (findings below).
 Every command ran in a temporary task-store sandbox under `/tmp`; nothing in
 this proof wrote to the user's task files.
 
@@ -29,9 +30,11 @@ export TZ=America/Denver RUBYOPT=-r$SUPPORT
 
 on() { TASKS_TEST_TODAY_SEQUENCE="$1" "$BIN" "${@:2}"; }
 
-echo "== motivating case 1: water succulents — 2w:sun, 1d lead"
-on 2026-06-01 capture "water succulents" --recur 2w:sun --lead 1d --state NEXT --scheduled 2026-06-07
+echo "== motivating case 1: water succulents — the contract's capture, verbatim"
+on 2026-06-01 capture "water succulents" --recur 2w:sun --lead 1d
 on 2026-06-01 lead "water succulents"
+echo "-- the schedule's first occurrence is the anchor, not today:"
+on 2026-06-01 lead "water succulents" --json
 echo "-- 2026-06-05, two days out: hidden"
 on 2026-06-05 list
 echo "-- 2026-06-06, the Saturday before: visible"
@@ -45,8 +48,8 @@ echo "-- 2026-06-20, the Saturday before the next occurrence: visible"
 on 2026-06-20 list
 
 echo
-echo "== motivating case 2: clean gutters — y:06-01, 17d lead"
-on 2026-01-05 capture "clean gutters" --recur y:06-01 --lead 17d --state NEXT --due 2026-06-01
+echo "== motivating case 2: clean gutters — the contract's capture, verbatim"
+on 2026-01-05 capture "clean gutters" --recur y:06-01 --lead 17d
 on 2026-01-05 lead "clean gutters"
 echo "-- 2026-05-14: hidden"
 on 2026-05-14 list
@@ -71,7 +74,8 @@ echo "== refusals (rules 1-5)"
 on 2026-06-22 defer "water succulents" 2026-07-01 || true
 on 2026-06-22 lead "water succulents" soonish || true
 on 2026-06-22 capture "no date at all" --lead 3w || true
-on 2026-06-22 schedule "clean gutters" 2026-05-01 || true
+echo "-- rule 3 the other way: a scheduled-anchored lead task MAY move its own anchor"
+on 2026-06-22 schedule "clean gutters" 2027-06-15
 echo "-- rule 5: clearing the last date clears the lead with it"
 on 2026-06-22 undate "clean gutters"
 on 2026-06-22 lead "clean gutters"
@@ -82,9 +86,17 @@ on 2026-06-22 propose "maybe reseal the deck" --due 2026-09-01 --lead 2w
 on 2026-06-22 lead "reseal the deck"
 
 echo
+echo "== activate on a task with NO lead keeps its long-standing meaning"
+on 2026-06-22 capture "weekly report" --recur +1w --scheduled 2026-07-15 --state NEXT
+on 2026-06-22 activate "weekly report"
+on 2026-06-22 show "weekly report"
+
+echo
 echo "== clock lead: 5h before an all-day date is 19:00 the evening before"
 on 2026-05-01 capture "board the flight" --due 2026-06-01 --lead 5h --state NEXT
 on 2026-05-01 lead "board the flight"
+echo "-- and rule 3 on a DEADLINE-anchored lead task refuses a second gate:"
+on 2026-05-01 schedule "board the flight" 2026-05-20 || true
 
 echo
 echo "== check"
@@ -94,62 +106,64 @@ echo "== check"
 Output:
 
 ```text
-== motivating case 1: water succulents — 2w:sun, 1d lead
-NEXT water succulents :@home:
-NEXT water succulents :@home:
+== motivating case 1: water succulents — the contract's capture, verbatim
+TODO water succulents :@home:
+TODO water succulents :@home:
   ⏳ 1 day before (1d)
   opens 2026-06-06 (Sat) — 1 day before 2026-06-07
+-- the schedule's first occurrence is the anchor, not today:
+{"id":"9bd1563b","line":3,"title":"water succulents","lead":"1d","lead_human":"1 day","anchor":"2026-06-07","opens":"2026-06-06","opens_at":"2026-06-06T06:00:00Z","lead_skip":null}
 -- 2026-06-05, two days out: hidden
 No matching tasks.
 -- 2026-06-06, the Saturday before: visible
-NEXT
+TODO
   water succulents  @home  ~6/7  ↻ every 2 weeks on Sunday
 
 -- do it on the Sunday; the anchor rolls two weeks
 ↻ water succulents → next 2026-06-21 (Sun)
-NEXT water succulents :@home:
+TODO water succulents :@home:
 -- 2026-06-08, the rest of the cycle: hidden again, window re-armed
 No matching tasks.
-NEXT
+TODO
   water succulents  @home  ~6/21  ↻ every 2 weeks on Sunday  (unavailable until 2026-06-20 · 1d before 6/21)
 
 -- 2026-06-20, the Saturday before the next occurrence: visible
-NEXT
+TODO
   water succulents  @home  ~6/21  ↻ every 2 weeks on Sunday
 
 
-== motivating case 2: clean gutters — y:06-01, 17d lead
-NEXT clean gutters :@home:
-NEXT clean gutters :@home:
+== motivating case 2: clean gutters — the contract's capture, verbatim
+TODO clean gutters :@home:
+TODO clean gutters :@home:
   ⏳ 17 days before (17d)
   opens 2026-05-15 (Fri) — 17 days before 2026-06-01
 -- 2026-05-14: hidden
 No matching tasks.
 -- 2026-05-15, seventeen days before June 1: visible
-NEXT
-  clean gutters  @home  6/1  ↻ yearly on June 1
+TODO
+  clean gutters  @home  ~6/1  ↻ yearly on June 1
 
 -- do it; the anchor rolls a year and the window follows
 ↻ clean gutters → next 2027-06-01 (Tue)
-NEXT clean gutters :@home:
-NEXT
+TODO clean gutters :@home:
+TODO
   water succulents  @home  ~6/21  ↻ every 2 weeks on Sunday  (unavailable until 2026-06-20 · 1d before 6/21)
-  clean gutters  @home  6/1  ↻ yearly on June 1  (unavailable until 2027-05-15 · 17d before 6/1)
+  clean gutters  @home  ~6/1  ↻ yearly on June 1  (unavailable until 2027-05-15 · 17d before 6/1)
 
 
 == activate releases exactly one occurrence
 activate "water succulents" — available now
-NEXT
+TODO
   water succulents  @home  ~6/21  ↻ every 2 weeks on Sunday
 
-{"id":"d5f82bd5","line":3,"title":"water succulents","lead":"1d","lead_human":"1 day","anchor":"2026-06-21","opens":"2026-06-20","opens_at":"2026-06-20T06:00:00Z","lead_skip":"2026-06-21"}
+{"id":"9bd1563b","line":3,"title":"water succulents","lead":"1d","lead_human":"1 day","anchor":"2026-06-21","opens":"2026-06-20","opens_at":"2026-06-20T06:00:00Z","lead_skip":"2026-06-21"}
 -- the next roll retires the release
 ↻ water succulents → next 2026-07-05 (Sun)
-NEXT water succulents :@home:
+TODO water succulents :@home:
 No matching tasks.
-NEXT
+TODO
   water succulents  @home  ~7/5  ↻ every 2 weeks on Sunday  (unavailable until 2026-07-04 · 1d before 7/5)
-  clean gutters  @home  6/1  ↻ yearly on June 1  (unavailable until 2027-05-15 · 17d before 6/1)
+  clean gutters  @home  ~6/1  ↻ yearly on June 1  (unavailable until 2027-05-15 · 17d before 6/1)
 
 
 == refusals (rules 1-5)
@@ -157,45 +171,62 @@ NEXT
 unrecognized lead time: "soonish"
 try: 3w · 2d · 1m · "3 weeks" · "a week" · "10 days" · off
 a lead time needs a date to hide before — add --due or --scheduled
-a lead time hides this task until 17 days before its date — carrying a deadline AND an available-from date beside it would leave a second, ignored gate. Clear one of them (`tasks undate <ref> --kind scheduled`, or `tasks lead <ref> off`).
+-- rule 3 the other way: a scheduled-anchored lead task MAY move its own anchor
+TODO clean gutters :@home:
 -- rule 5: clearing the last date clears the lead with it
-NEXT clean gutters :@home:
-NEXT clean gutters :@home:
+TODO clean gutters :@home:
+TODO clean gutters :@home:
   no lead time — set one with `tasks lead "clean gutters" 3w`
 
 == a proposal takes a lead on the same terms it takes a deadline
-proposed: maybe reseal the deck [07b3b4a8]
+proposed: maybe reseal the deck [41e06345]
 PROPOSED maybe reseal the deck :@home:
   ⏳ 2 weeks before (2w)
   opens 2026-08-18 (Tue) — 2 weeks before 2026-09-01
+
+== activate on a task with NO lead keeps its long-standing meaning
+NEXT weekly report :@home:
+activate "weekly report" — available now
+NEXT weekly report :@home:
+  id:        61962816
+  project:   Inbox
+  availability: available now
+  recur:     +1w (every week from the scheduled date)
+  Captured [2026-06-22].
 
 == clock lead: 5h before an all-day date is 19:00 the evening before
 NEXT board the flight :@home:
 NEXT board the flight :@home:
   ⏳ 5 hours before (5h)
   opens 2026-05-31 19:00 America/Denver — 5 hours before 2026-06-01
+-- and rule 3 on a DEADLINE-anchored lead task refuses a second gate:
+a lead time of 5 hours hides this task before its date — carrying a deadline AND an available-from date beside it would leave a second, ignored gate. Clear one of them (`tasks undate <ref> --kind scheduled`, or `tasks lead <ref> off`).
 
 == check
-ok — 4 tasks parsed, no structural errors
+ok — 5 tasks parsed, no structural errors
 ```
 
 ## What the transcript shows
 
-- **Motivating case 1 — `--recur 2w:sun --lead 1d`.** "water succulents" is
-  invisible until the Saturday before each occurrence Sunday: absent from `list`
-  on 2026-06-05, present on 2026-06-06, hidden again from 2026-06-08 after
-  `done` rolls the anchor to 2026-06-21, and visible again on 2026-06-20. No
-  per-cycle maintenance, and no due-date commitment the chore did not have.
-- **Motivating case 2 — `--recur y:06-01 --lead 17d`.** "clean gutters" is
-  invisible until May 15 each year, and after completion the window follows the
-  anchor to 2027-05-15.
+- **Motivating case 1, the contract's capture verbatim** —
+  `capture "water succulents" --recur 2w:sun --lead 1d`, no other flags. The
+  schedule's first occurrence becomes the anchor (2026-06-07, not today), and the
+  task is invisible until the Saturday before it: absent from `list` on
+  2026-06-05, present on 2026-06-06, hidden again from 2026-06-08 after `done`
+  rolls the anchor to 2026-06-21, and visible again on 2026-06-20.
+- **Motivating case 2, likewise verbatim** —
+  `capture "clean gutters" --recur y:06-01 --lead 17d` anchors on June 1 and is
+  invisible until May 15, and after completion the window follows the anchor to
+  2027-05-15.
 - **Activation releases exactly one occurrence.** `activate` makes the current
-  occurrence available while keeping the date it is measured from
-  (`lead_skip: "2026-06-21"` in the JSON), and the next roll retires the stamp so
-  the following occurrence is hidden again.
-- **Every refusal names the fix.** A timed defer against a lead task, an
-  unreadable span, a lead with no date to hide before, and `schedule` against a
-  deadline-anchored lead task each exit non-zero with the rule's own sentence.
+  occurrence available while keeping the date it is measured from, and the next
+  roll retires the stamp so the following occurrence is hidden again. A task with
+  **no** lead — including a recurring one — keeps activation's long-standing
+  meaning of clearing a future available-from date.
+- **Rule 3 in both directions.** A timed defer is refused on any lead task, and a
+  second gate is refused on a deadline-anchored one — while a scheduled-anchored
+  lead task may still move its own anchor, which is an occurrence edit rather
+  than a second gate.
 - **Rule 5.** `undate` clears the lead with the last date, in one write.
 - **A proposal carries a lead** on the same terms it carries a deadline, and
   `lead <ref>` resolves it.
@@ -229,32 +260,50 @@ alone.
 
 | command | result |
 | --- | --- |
-| `ruby test/all.rb` | 2044 runs, 29964 assertions, 0 failures, 0 errors |
+| `ruby test/all.rb` | 2047 runs, 29984 assertions, 0 failures, 0 errors |
 | `bundle exec ruby test/api/all.rb` | 106 runs, 2586 assertions, 0 failures, 0 errors |
 | `bin/tasks check` | ok — no structural errors |
 | `git diff --check` | clean |
 
 ## Review findings
 
-Findings from re-reading the shipped code against this contract, all fixed with
-tests before this proof was recorded:
+Six findings came from re-reading the shipped code against the contract, and six
+more from an independent adversarial reviewer who had the contract and the code
+but not the implementer's assumptions. All are fixed, each with a test.
 
-1. **Rule 3 was enforced from one direction only.** Adding an available-from
-   date to a deadline-anchored lead task was refused, but adding a *deadline* to
-   a scheduled-anchored one was not — which flips the anchor and strands the
-   available-from date as the second gate rule 2 forbids.
-2. **A dry-run inherited a release stamp the write would retire.** Previewing a
-   new lead on a task whose current occurrence had been released by `activate`
-   reported "available now", while the real write clears `lead_skip` and re-arms
-   the window.
-3. **Rule 5 was missing.** Clearing the last date left an orphan `lead` with
-   nothing to measure from. `undate` and a date-clearing `due`/`schedule` now
-   retire it in the same changeset, exactly as they already retire `recur`.
-4. **A state rule the contract does not have.** Leads were refused on proposed
-   and closed tasks, which contradicted "propose accepts it on the same terms it
-   accepts other dated fields". Removed; `lead` now rides with the date fields.
-5. **`Check` was silent on two shapes writes refuse.** A lead with no anchor,
-   and a lead beside a two-date window, are reachable by a hand edit or a
-   foreign writer and are now reported.
-6. **`schedule` swallowed the store's reason.** A rule-3 refusal printed the
-   generic "failed to set scheduled"; the store's own sentence now surfaces.
+**First pass (self-review):**
+
+1. Rule 3 was enforced from one direction only — adding a *deadline* to a
+   scheduled-anchored lead task stranded the available-from date.
+2. A dry-run inherited a release stamp the write would retire, promising
+   "available now" for a window about to re-arm.
+3. Rule 5 was missing: clearing the last date left an orphan `lead`.
+4. A state rule the contract does not have refused leads on proposed and closed
+   tasks.
+5. `Check` was silent on two shapes writes refuse (a lead with no anchor, a lead
+   beside a two-date window).
+6. `schedule` swallowed the store's rule-3 sentence behind a generic failure.
+
+**Second pass (independent review):**
+
+7. **P1** — `activate` had been changed for **non-lead recurring** tasks, which
+   the contract explicitly says is unchanged. Reverted; the occurrence-release is
+   now scoped to lead tasks, and a `lead_skip` with no `lead` can no longer erase
+   an ordinary available-from gate (it is reported by `Check` instead).
+8. **P1** — a single changeset that *moved* the anchor (clear one date, set the
+   other) passed through a momentary dateless state, and rule 5's cleanup
+   destroyed the lead with an HTTP 200 and no warning. The cleanup now runs once,
+   after the whole changeset, and only for date-owning fields.
+9. **P1** — `lead --dry-run` passed a bare `Date` where the write uses the full
+   temporal value, so a timed anchor's preview was off by hours.
+10. **P2** — the derived gate ignored the anchor's timezone, contradicting an
+    explicit clause. It now opens at midnight in the anchor's own effective zone.
+11. **P2** — the contract's verbatim captures did not work (a recurring capture
+    with no date anchored on *today*, putting the window in the past), and the
+    test that claimed to prove them quietly added three flags. A lead now seeds
+    the schedule's first occurrence, and the test runs the captures as written.
+12. **P2/P3** — OpenAPI documented a state rule the code does not enforce; the
+    `lead` command printed a dangling em dash on a proposal; a matrix boundary
+    assertion probed mid-day rather than the release instant; the TUI's
+    date-grained fallback could not express a clock lead; error-message grammar
+    ("a 3 weeks lead").

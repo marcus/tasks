@@ -1265,7 +1265,14 @@ module Tui
       return nil if candidate.respond_to?(:lead_skip) && candidate.lead_skip == anchor.iso8601
       return candidate.scheduled unless candidate.respond_to?(:lead_time?) && candidate.lead_time?
 
-      Tasks::Lead.gate_date(anchor, candidate.lead)
+      # A clock lead has no date-grained answer; at this grain the nearest true
+      # statement is the day the duration reaches back to. The canonical
+      # instant-grained answer is the query's (TaskQueries#effective_gate).
+      date = Tasks::Lead.gate_date(anchor, candidate.lead)
+      return date if date
+
+      seconds = Tasks::Lead.duration(candidate.lead)
+      seconds ? anchor - (seconds / 86_400) : nil
     end
 
     def availability_date(item, availability, reader)

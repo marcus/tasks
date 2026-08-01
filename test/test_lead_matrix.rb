@@ -101,10 +101,20 @@ class TestLeadMatrix < Minitest::Test
     assert_equal Date.new(2026, 10, 11), day_before.scheduled
 
     opening_day = availability_on(RECORDS, Date.new(2026, 10, 11))
-    assert opening_day.available?, "available from the first instant of the derived date"
+    assert opening_day.available?
 
     anchor_day = availability_on(RECORDS, Date.new(2026, 11, 1))
     assert anchor_day.available?, "and stays available through the anchor"
+  end
+
+  # The boundary is an INSTANT, so probe the minute either side of it rather
+  # than mid-day, where a whole-day error would go unnoticed.
+  def test_the_window_opens_at_the_first_instant_of_the_derived_date
+    # 2026-10-11T06:00:00Z is 00:00 in Denver (MDT).
+    refute availability_at(Time.utc(2026, 10, 11, 5, 59)).available?,
+           "one minute before the window opens"
+    assert availability_at(Time.utc(2026, 10, 11, 6, 0)).available?,
+           "the first instant of the derived date"
   end
 
   # -- concurrency -----------------------------------------------------------
@@ -182,6 +192,16 @@ class TestLeadMatrix < Minitest::Test
   def tree_rows(store, view, show_deferred: false)
     V.rows(view, store.items, tree: store.tree, show_deferred: show_deferred,
            today: TODAY, urgent_days: 3)
+  end
+
+  def availability_at(now)
+    with_files(RECORDS) do |org, archive|
+      store = Tasks::Store.new(org: org, archive: archive)
+      context = Tasks::TemporalContext.new(now: now, timezone: "America/Denver")
+      query = Tasks::TaskQueries.new(store.read_snapshot, temporal_context: context)
+      item = query.snapshot.items.find { |candidate| candidate.id == "fb000002" }
+      return query.availability(item)
+    end
   end
 
   def availability_on(records, date)

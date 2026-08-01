@@ -195,7 +195,8 @@ for the full grammar, input forms, and edge-date rules.
 A dated task can carry a `lead` span saying how long before its occurrence date
 it should become visible. The **anchor** is the task's `deadline` if it has one,
 otherwise its `scheduled` date — the same precedence a recurrence roll uses — and
-the window opens at local midnight of `anchor - lead`. A clock span (`5h`)
+the window opens at midnight of `anchor - lead` in the anchor's own effective
+zone (the reader's, when the anchor carries none). A clock span (`5h`)
 instead measures a real duration back from the anchor's own instant, so it opens
 partway through a day; `m` always means months, never minutes.
 
@@ -213,7 +214,8 @@ like any deferred task, reports `availability_reason: "scheduled"`, and an own o
 inherited indefinite hold still outranks it. An ancestor's lead gates its whole
 subtree. `activate` releases exactly one occurrence by stamping `lead_skip` with
 the current anchor; the next roll or anchor edit retires the stamp and the window
-comes back. See `docs/cli-spec.md` for the input forms and the refusal rules.
+comes back. For a task with no lead, including a recurring one, `activate` keeps
+its long-standing meaning of clearing a future available-from date. See `docs/cli-spec.md` for the input forms and the refusal rules.
 
 ## Delegation
 

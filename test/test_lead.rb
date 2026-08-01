@@ -109,14 +109,22 @@ class TestLead < Minitest::Test
     assert_equal "2026-10-11T06:00:00Z", availability.available_at.iso8601
   end
 
-  def test_a_timezone_carrying_anchor_still_opens_at_the_readers_local_midnight
+  # A zoned anchor fixes when the work is due, and its window opens at midnight
+  # where that anchor lives — not where the reader happens to be.
+  def test_a_timezone_carrying_anchor_opens_at_midnight_in_the_anchors_zone
     records = lead_records(deadline: "2026-11-01", lead: "3w")
     task = records.last
     task["deadline_time"] = { "local" => "09:00", "timezone" => "Asia/Tokyo" }
 
     availability = availability_on(records, "2026-10-01")
     assert_equal Date.new(2026, 10, 11), availability.scheduled
-    assert_equal "2026-10-11T06:00:00Z", availability.available_at.iso8601
+    assert_equal "2026-10-10T15:00:00Z", availability.available_at.iso8601,
+                 "00:00 on 2026-10-11 in Tokyo, read from Denver"
+
+    # A floating or all-day anchor has no zone of its own, so it keeps opening
+    # at the reader's local midnight.
+    floating = lead_records(deadline: "2026-11-01", lead: "3w")
+    assert_equal "2026-10-11T06:00:00Z", availability_on(floating, "2026-10-01").available_at.iso8601
   end
 
   # US DST ends 2026-11-01; a calendar lead spanning it keeps its wall date and
@@ -483,6 +491,42 @@ class TestLead < Minitest::Test
     records.last["lead_skip"] = "2026-08-01"
 
     assert_unavailable(records, on: "2026-10-01", until_date: "2026-10-11")
+  end
+
+  # A stamp only ever releases a LEAD window. Without a lead it is stale
+  # bookkeeping — it must not erase an ordinary available-from gate — and Check
+  # reports it rather than repairing it.
+  def test_a_stamp_without_a_lead_releases_nothing_and_is_reported
+    records = lead_records(scheduled: "2026-12-01", lead: nil)
+    records.last["lead_skip"] = "2026-12-01"
+
+    availability = availability_on(records, "2026-10-01")
+    refute availability.available?, "the plain available-from gate still holds"
+    assert_equal Date.new(2026, 12, 1), availability.scheduled
+
+    with_lead_files(records) do |org, _archive|
+      messages = Tasks::Check.check(org).errors.map(&:last)
+      assert(messages.any? { |message| message.include?("lead_skip without a lead") })
+    end
+  end
+
+  # Activation is unchanged for a task with no lead, including a recurring one:
+  # the contract scopes the occurrence-release to lead tasks.
+  def test_activation_without_a_lead_keeps_its_long_standing_meaning
+    records = lead_records(scheduled: "2026-04-20", lead: nil)
+    records.last["recur"] = "+3m"
+
+    with_lead_store_files(records) do |store, org|
+      snapshot = store.edit_snapshot("bbbb0002")
+      result = store.apply_changeset!(
+        Tasks::TaskChangeset.from(snapshot, changes: { activate: true }), today: Date.new(2026, 4, 1)
+      )
+      assert result.ok?, result.errors.join(", ")
+      record = record_for(org, title: "Renew the passport")
+      assert_nil record["scheduled"], "a future available-from date is still cleared"
+      refute record.key?("lead_skip")
+      assert Tasks::Check.check(org).ok?
+    end
   end
 
   # A dry-run previews the state AFTER the write, and every lead write clears

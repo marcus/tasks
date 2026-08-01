@@ -304,8 +304,11 @@ def cmd_capture(args, proposed: false)
   if recur
     cookie = parse_recur_input(recur)
     abort "a capture cannot start with recurrence cleared — drop --recur" if cookie == :off
-    # A recurrence needs a date to repeat; default to scheduling it today.
-    scheduled ||= "today" unless due
+    # A recurrence needs a date to repeat; default to scheduling it today —
+    # unless a lead is also set, where "today" would put the window in the past
+    # and hide the schedule's own first occurrence. The store seeds that
+    # occurrence instead, so leave the date unset here.
+    scheduled ||= "today" unless due || lead
   end
 
   span = lead && parse_lead_input(lead)
@@ -327,13 +330,17 @@ def cmd_capture(args, proposed: false)
   pri = nil if pri && %w[NONE CLEAR -].include?(pri)
   abort "priority must be A, B, or C" unless pri.nil? || %w[A B C].include?(pri)
 
-  st = proposed ? "PROPOSED" : (state&.upcase || ((due_date || scheduled_date) ? "TODO" : "INBOX"))
+  # A recurring capture always ends up dated — either from a flag here or from
+  # the first occurrence the store seeds for a lead — so it lands processed as
+  # TODO either way, rather than as an INBOX item that is already scheduled.
+  dated = due_date || scheduled_date || cookie
+  st = proposed ? "PROPOSED" : (state&.upcase || (dated ? "TODO" : "INBOX"))
   valid = ALL_STATES
   abort "unknown state: #{st} (want one of #{valid.join(", ")})" unless valid.include?(st)
   if cookie && (CLOSED_STATES + PROPOSED_STATES).include?(st)
     abort "can't set recurrence on a #{st} task"
   end
-  if span && !(due_date || scheduled_date)
+  if span && !(due_date || scheduled_date) && cookie.nil?
     abort "a lead time needs a date to hide before — add --due or --scheduled"
   end
   if span && due_date && scheduled_date
@@ -1528,7 +1535,14 @@ def availability_context(task_id, today:, read_snapshot:, deferred: PATCH_EXPECT
                    query.availability(item)
                  else
                    own_deferred = deferred.equal?(PATCH_EXPECTED_UNSET) ? item.deferred? : deferred
-                   own_scheduled = scheduled.equal?(PATCH_EXPECTED_UNSET) ? item.scheduled : scheduled
+                   # The VALUE, not the bare date: dropping its time and zone
+                   # would make the preview resolve a different instant than the
+                   # write it is previewing.
+                   own_scheduled = if scheduled.equal?(PATCH_EXPECTED_UNSET)
+                                     item.scheduled_value || item.scheduled
+                                   else
+                                     scheduled
+                                   end
                    own_lead = lead.equal?(PATCH_EXPECTED_UNSET) ? Tasks::TaskQueries::UNSET : lead
                    query.availability_after(item, deferred: own_deferred,
                                             scheduled: own_scheduled, lead: own_lead)
@@ -1547,7 +1561,9 @@ def availability_summary(query, availability)
   when :ancestor_scheduled then "unavailable until #{temporal_label(availability.temporal_value)}#{via}"
   when :on_hold then "on hold indefinitely"
   when :ancestor_on_hold then "still on hold indefinitely#{via}"
+  when :proposed then "awaiting approval"
   when :closed then "closed"
+  else "unavailable"
   end
 end
 

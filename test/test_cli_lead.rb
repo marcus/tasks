@@ -243,23 +243,45 @@ class TestCliLead < Minitest::Test
     end
   end
 
-  # The contract's two motivating captures, verbatim.
+  # The contract's two motivating captures — only `--project` added, because
+  # this sandbox has no Inbox section for a bare capture to land in. A
+  # recurring capture with no date normally starts repeating today, which with a
+  # lead would put the window in the past; the first occurrence is seeded
+  # instead, which is the whole claim the feature is named for.
   def test_the_contracts_motivating_captures_work_exactly
-    in_sandbox(today: "2026-06-01") do |_org, run|
-      out, err, status = run.call("capture", "water succulents", "--recur", "2w:sun",
-                                  "--lead", "1d", "--scheduled", "2026-06-07",
-                                  "--state", "NEXT", "--project", "Work")
+    in_sandbox(today: "2026-05-01") do |org, run|
+      out, err, status = run.call("capture", "water succulents", "--recur", "2w:sun", "--lead", "1d",
+                                  "--project", "Work")
       assert status.success?, out + err
-      refute_match(/water succulents/, run.call("list").first, "hidden two days out")
+      gutters, gutters_err, gutters_status =
+        run.call("capture", "clean gutters", "--recur", "y:06-01", "--lead", "17d", "--project", "Work")
+      assert gutters_status.success?, gutters + gutters_err
+
+      assert_equal "2026-05-03", record_for(org, title: "water succulents")["scheduled"],
+                   "anchored on the schedule's first occurrence, not today"
+      assert_equal "2026-06-01", record_for(org, title: "clean gutters")["scheduled"]
+
+      listed, = run.call("list")
+      refute_match(/water succulents/, listed, "invisible until the Saturday before")
+      refute_match(/clean gutters/, listed, "invisible until May 15")
+
+      hidden, = run.call("list", "--unavailable")
+      assert_match(%r{water succulents.*unavailable until 2026-05-02}, hidden)
+      assert_match(%r{clean gutters.*unavailable until 2026-05-15}, hidden)
+      assert Tasks::Check.check(org).ok?
     end
 
-    in_sandbox(today: "2026-01-05") do |_org, run|
-      out, err, status = run.call("capture", "clean gutters", "--recur", "y:06-01",
-                                  "--lead", "17d", "--due", "2026-06-01",
-                                  "--state", "NEXT", "--project", "Work")
-      assert status.success?, out + err
-      preview, = run.call("lead", "clean gutters")
-      assert_match(/opens 2026-05-15/, preview, "17 days before June 1")
+    # The Saturday before the succulents occurrence, and 17 days before June 1.
+    in_sandbox(today: "2026-05-02") do |_org, run|
+      run.call("capture", "water succulents", "--recur", "2w:sun", "--lead", "1d",
+                                  "--project", "Work")
+      assert_match(/water succulents/, run.call("list").first)
+    end
+
+    in_sandbox(today: "2026-05-15") do |_org, run|
+      run.call("capture", "clean gutters", "--recur", "y:06-01", "--lead", "17d",
+                                  "--project", "Work")
+      assert_match(/clean gutters/, run.call("list").first)
     end
   end
 

@@ -95,6 +95,9 @@ module Tasks
     STATES = Check::STATES
     DONE_STATES = CLOSED_STATES
     REVISION_OWN_FIELDS = (EditSnapshot::FIELDS - [:location]).freeze
+    # The fields whose write can leave a task with no date at all, and so are
+    # the only ones that retire a recurrence or a lead time.
+    DATE_OWNING_FIELDS = %i[scheduled deadline date_clear].freeze
     # A different Fiber on the same thread cannot wait on the sidecar flock:
     # doing so would block the thread's scheduler before the owning Fiber can
     # resume and release it. Callers must resume the owner first.
@@ -1344,8 +1347,16 @@ module Tasks
 
       # Capturing with a recurrence has always meant "start repeating now" when
       # a date was omitted. Keep that behavior in the command, not the CLI, so
-      # every transport gets one definition of a recurring create.
-      scheduled ||= TemporalValue.new(date: today) if recurrence && !deadline
+      # every transport gets one definition of a recurring create — but with a
+      # LEAD that reading is wrong: today's anchor puts the window in the past,
+      # so the task appears immediately and the schedule's own first occurrence
+      # is never used. A lead therefore seeds the first occurrence instead,
+      # which is what makes `--recur y:06-01 --lead 17d` mean "invisible until
+      # May 15" with no further arguments.
+      if recurrence && !deadline && !scheduled
+        seed = lead && first_occurrence(recurrence, today: today)
+        scheduled = TemporalValue.new(date: seed || today)
+      end
       state ||= (scheduled || deadline ? "TODO" : "INBOX")
       if recurrence && (CLOSED_STATES + PROPOSED_STATES).include?(state)
         errors[:state] << "can't set recurrence on a #{state} task"
@@ -1371,7 +1382,7 @@ module Tasks
         else
           gate = Lead.date_bound(anchor, lead)
           unless gate && gate.iso8601.match?(Check::DATE_RE)
-            errors[:lead] << "a #{Lead.humanize(lead)} lead would open before #{anchor.iso8601}, " \
+            errors[:lead] << "a lead of #{Lead.humanize(lead)} would open before #{anchor.iso8601}, " \
                              "outside the four-digit years dates are stored with"
           end
         end
@@ -1490,6 +1501,15 @@ module Tasks
       return value if value.is_a?(String) && Recur.cookie?(value)
 
       errors[:recurrence] << "invalid recurrence cookie"
+      nil
+    end
+
+    # The date a schedule would first fire on, or nil when it cannot be
+    # projected (an unreachable calendar rule); the caller then falls back to
+    # today and the ordinary satisfiability guard reports the real problem.
+    def first_occurrence(recurrence, today:)
+      Recur.next_date(recurrence, from: today, today: today)
+    rescue ArgumentError, Date::Error
       nil
     end
 
@@ -2130,6 +2150,20 @@ module Tasks
         summaries[field] = applied[:summary] if applied[:summary]
       end
 
+      # Recurrence and lead time are intents ABOUT a date, so a write that
+      # clears the last date retires them too — judged after the WHOLE
+      # changeset, never mid-flight, because a changeset that MOVES the anchor
+      # (clear one date, set the other) passes through a momentary dateless
+      # state and would otherwise lose a window the user was relocating.
+      #
+      # Only a date-owning field triggers it. `activate` also leaves a task
+      # dateless, and it deliberately preserves recurrence: activation owns
+      # availability, not the recurrence contract.
+      if (changeset.ordered_fields & DATE_OWNING_FIELDS).any? &&
+         (ri = locate_stable_index(records, changeset.id))
+        clear_dateless_intent(records[ri])
+      end
+
       fields = changeset.ordered_fields
       summary = if fields.length == 1
                   summaries[fields.first]
@@ -2315,12 +2349,11 @@ module Tasks
       # and keeps every date it has: the anchor is what the next window is
       # measured from, and the roll re-arms it.
       #
-      # A recurring task's future available-from date is likewise its next
-      # OCCURRENCE, not a defer: deleting it would retire the series' only
-      # anchor and leave a repeater `done` can never roll. Both release the
-      # occurrence with the stamp instead of destroying the date.
+      # Only a LEAD task takes this path: for everything else, including a
+      # recurring task with no lead, activation keeps its long-standing meaning
+      # of clearing a future available-from date.
       anchor = Lead.anchor_date(to_date(rec["deadline"]), to_date(rec["scheduled"]))
-      if anchor && (Lead.span?(rec["lead"]) || (future && Recur.cookie?(rec["recur"])))
+      if anchor && Lead.span?(rec["lead"])
         rec["lead_skip"] = anchor.iso8601
         return patch_ok(rec)
       end
@@ -2353,7 +2386,6 @@ module Tasks
       else
         rec.delete(key)
         rec.delete("#{key}_time")
-        clear_dateless_intent(rec)
       end
       clear_lead_skip(rec)
       patch_ok(rec)
@@ -2374,7 +2406,6 @@ module Tasks
         rec.delete(field.to_s)
         rec.delete("#{field}_time")
       end
-      clear_dateless_intent(rec)
       clear_lead_skip(rec)
       patch_ok(rec)
     end
@@ -2424,7 +2455,7 @@ module Tasks
       # Rule 5: the derived gate must stay a storable date.
       gate = Lead.date_bound(anchor, value)
       unless gate && gate.iso8601.match?(Check::DATE_RE)
-        return patch_invalid("a #{Lead.humanize(value)} lead would open before " \
+        return patch_invalid("a lead of #{Lead.humanize(value)} would open before " \
                              "#{anchor.iso8601}, outside the four-digit years dates are stored with")
       end
 
@@ -2438,7 +2469,7 @@ module Tasks
     # conflict (setting the lead, and setting an available-from date beside a
     # deadline-anchored one), so the user reads the same fix either way.
     def lead_gate_conflict_message(span)
-      "a lead time hides this task until #{Lead.humanize(span)} before its date — " \
+      "a lead time of #{Lead.humanize(span)} hides this task before its date — " \
         "carrying a deadline AND an available-from date beside it would leave a " \
         "second, ignored gate. Clear one of them " \
         "(`tasks undate <ref> --kind scheduled`, or `tasks lead <ref> off`)."

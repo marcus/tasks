@@ -12,9 +12,11 @@ export TZ=America/Denver RUBYOPT=-r$SUPPORT
 
 on() { TASKS_TEST_TODAY_SEQUENCE="$1" "$BIN" "${@:2}"; }
 
-echo "== motivating case 1: water succulents — 2w:sun, 1d lead"
-on 2026-06-01 capture "water succulents" --recur 2w:sun --lead 1d --state NEXT --scheduled 2026-06-07
+echo "== motivating case 1: water succulents — the contract's capture, verbatim"
+on 2026-06-01 capture "water succulents" --recur 2w:sun --lead 1d
 on 2026-06-01 lead "water succulents"
+echo "-- the schedule's first occurrence is the anchor, not today:"
+on 2026-06-01 lead "water succulents" --json
 echo "-- 2026-06-05, two days out: hidden"
 on 2026-06-05 list
 echo "-- 2026-06-06, the Saturday before: visible"
@@ -28,8 +30,8 @@ echo "-- 2026-06-20, the Saturday before the next occurrence: visible"
 on 2026-06-20 list
 
 echo
-echo "== motivating case 2: clean gutters — y:06-01, 17d lead"
-on 2026-01-05 capture "clean gutters" --recur y:06-01 --lead 17d --state NEXT --due 2026-06-01
+echo "== motivating case 2: clean gutters — the contract's capture, verbatim"
+on 2026-01-05 capture "clean gutters" --recur y:06-01 --lead 17d
 on 2026-01-05 lead "clean gutters"
 echo "-- 2026-05-14: hidden"
 on 2026-05-14 list
@@ -54,7 +56,8 @@ echo "== refusals (rules 1-5)"
 on 2026-06-22 defer "water succulents" 2026-07-01 || true
 on 2026-06-22 lead "water succulents" soonish || true
 on 2026-06-22 capture "no date at all" --lead 3w || true
-on 2026-06-22 schedule "clean gutters" 2026-05-01 || true
+echo "-- rule 3 the other way: a scheduled-anchored lead task MAY move its own anchor"
+on 2026-06-22 schedule "clean gutters" 2027-06-15
 echo "-- rule 5: clearing the last date clears the lead with it"
 on 2026-06-22 undate "clean gutters"
 on 2026-06-22 lead "clean gutters"
@@ -65,9 +68,17 @@ on 2026-06-22 propose "maybe reseal the deck" --due 2026-09-01 --lead 2w
 on 2026-06-22 lead "reseal the deck"
 
 echo
+echo "== activate on a task with NO lead keeps its long-standing meaning"
+on 2026-06-22 capture "weekly report" --recur +1w --scheduled 2026-07-15 --state NEXT
+on 2026-06-22 activate "weekly report"
+on 2026-06-22 show "weekly report"
+
+echo
 echo "== clock lead: 5h before an all-day date is 19:00 the evening before"
 on 2026-05-01 capture "board the flight" --due 2026-06-01 --lead 5h --state NEXT
 on 2026-05-01 lead "board the flight"
+echo "-- and rule 3 on a DEADLINE-anchored lead task refuses a second gate:"
+on 2026-05-01 schedule "board the flight" 2026-05-20 || true
 
 echo
 echo "== check"

@@ -586,11 +586,11 @@ module Tasks
       anchor = Lead.anchor_date(candidate.deadline_value&.date || candidate.deadline,
                                 scheduled_value&.date)
       return nil unless anchor
-      # The release stamp is checked before the span, because `activate` also
-      # uses it to release a recurring task's next occurrence without deleting
-      # the date that occurrence IS.
-      return SKIPPED if released == anchor.iso8601
+      # Both halves matter: a stamp only ever releases a LEAD window, so a
+      # stray `lead_skip` on a task with no lead can never erase that task's
+      # ordinary available-from gate.
       return nil unless Lead.span?(lead)
+      return SKIPPED if released == anchor.iso8601
 
       if Lead.clock?(lead)
         anchor_value ||= TemporalValue.new(date: anchor)
@@ -601,8 +601,14 @@ module Tasks
       date = Lead.gate_date(anchor, lead)
       return nil unless date
 
+      # The gate is a DATE, released at start of day in the anchor's own
+      # effective zone — a zoned anchor fixes when the work is due, and its
+      # window opens at midnight where that anchor lives. The display value
+      # stays date-only (TemporalValue cannot hold a zone without a local
+      # time), so the instant is computed here rather than re-derived from it.
       value = TemporalValue.new(date: date)
-      [value.release_instant(temporal_context), value]
+      zone = anchor_value ? anchor_value.effective_zone(temporal_context) : temporal_context.timezone
+      [Timezones.earliest_on(date, zone), value]
     end
 
     # A DISPLAY value for a clock gate: the raw instant projected into the

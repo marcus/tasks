@@ -598,10 +598,13 @@ tasks, and completing one rolls it forward in place.
 calendar unit (`3w`, `2d`, `1m`, `10y`), or a clock duration in hours (`5h`) —
 saying how long *before* its occurrence date it becomes visible. The **anchor**
 is the task's `deadline` if it has one, otherwise its `scheduled` date (the same
-precedence a recurrence roll uses), and the window opens at local midnight of
-`anchor - lead`. Month and year spans clamp exactly as recurrence intervals do
-(`1m` before Mar 31 = Feb 28 in a common year), and a calendar lead keeps its
-wall date across a DST change.
+precedence a recurrence roll uses), and the window opens at midnight of
+`anchor - lead` **in the anchor's own effective zone** — a deadline that lives in
+Tokyo has a window that starts in Tokyo, whoever is reading; an all-day or
+floating anchor has no zone of its own and opens at the reader's local midnight.
+Month and year spans clamp exactly as recurrence intervals do (`1m` before Mar 31
+= Feb 28 in a common year), and a calendar lead keeps its wall date across a DST
+change.
 
 The lead **owns the task's own timed gate**: it replaces the available-from date
 rather than joining it. On a deadline-anchored task that hides work which would
@@ -655,8 +658,15 @@ minute boundary, exactly as it already does for a timed available-from date.
 `activate` on a lead-gated task releases **this occurrence only**, stamping the
 internal `lead_skip` with the current anchor date and keeping every date the task
 has; the next `done` roll (or any anchor edit) retires the stamp and the window
-re-arms. The same stamp is why activating a **recurring** task no longer deletes
-its future date: that date is the next occurrence, not a defer.
+re-arms. This is the one path that behaves differently: for every other task,
+including a recurring one with no lead, `activate` keeps its long-standing
+meaning of clearing a future available-from date.
+
+A **recurring capture with a lead and no date** seeds the schedule's first
+occurrence rather than today (`tasks capture "clean gutters" --recur y:06-01
+--lead 17d` anchors on June 1 and hides until May 15). Anchoring on today would
+put the window in the past and show the task immediately, which is the opposite
+of what a lead asks for.
 
 An older binary round-trips `lead`/`lead_skip` untouched and simply does not
 apply the gate — the task reads as available. Nothing is lost, and a current

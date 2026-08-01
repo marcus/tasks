@@ -311,6 +311,7 @@ module Tasks
       return unless r["lead_skip"]
 
       check_date(r, "lead_skip", line, errors)
+      errors << [line, "lead_skip without a lead to release"] unless r["lead"]
       unless r["scheduled"] || r["deadline"]
         errors << [line, "lead_skip without a scheduled date or deadline to release"]
       end

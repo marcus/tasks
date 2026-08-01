@@ -3450,8 +3450,10 @@ components:
             task needs one of the two dates to hide before; a lead may not sit
             beside a SEPARATE available-from date (supplying both `deadline`
             and `scheduled` with a lead is refused, since the second gate would
-            be silently ignored); proposed and closed tasks take no lead; and
-            the derived date must stay in the storable year range.
+            be silently ignored); and the derived date must stay in the storable
+            year range. There is no state rule — a lead rides with the date
+            fields, so a proposal takes one on the same terms it takes
+            `deadline`.
             `off`/`none`/`never` clears a lead and is only meaningful on PATCH.
         body:
           description: |
