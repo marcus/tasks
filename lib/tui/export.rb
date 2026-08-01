@@ -20,7 +20,7 @@ module Tui
       md << "- priority: #{item.priority}" if item.priority
       md << "- deadline: #{temporal_text(item, :deadline)}" if item.deadline
       md << "- available from: #{temporal_text(item, :scheduled)}" if item.scheduled
-      md << "- lead time: #{Tasks::Lead.display(item.lead, item.deadline || item.scheduled)}" if lead?(item)
+      md << "- lead time: #{Tasks::Lead.display(item.lead, lead_anchor(item))}" if lead?(item)
       md << "- on hold: yes" if item.deferred?
       if item.respond_to?(:available?) && !item.available?
         reason = item.availability_reason.to_s.tr("_", " ")
@@ -42,6 +42,12 @@ module Tui
 
     def lead?(item)
       item.respond_to?(:lead) && Tasks::Lead.span?(item.lead)
+    end
+
+    def lead_anchor(item)
+      return item.deadline_value || item.scheduled_value if item.respond_to?(:deadline_value)
+
+      item.deadline || item.scheduled
     end
 
     def temporal_text(item, field)

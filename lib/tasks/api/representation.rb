@@ -43,7 +43,8 @@ module Tasks
           # everything it can act on.
           lead: view.lead,
           lead_human: view.lead_human,
-          lead_opens: lead_opens(view),
+          lead_opens: view.lead_opens&.iso8601,
+          lead_opens_at: view.lead_opens_at&.iso8601,
           body: view.body,
           closed: view.closed&.iso8601,
           archived: view.source == :archive,
@@ -58,17 +59,6 @@ module Tasks
           # carries no marker; there is no empty delegation.
           delegation: view.delegation,
         }
-      end
-
-      # The date this task's own lead window opens, or null. Derived from the
-      # task's own anchor rather than from its effective availability, so it
-      # keeps answering "when does MY window open" even while an ancestor's
-      # gate or an indefinite hold is the thing currently hiding the task.
-      def lead_opens(view)
-        return nil unless view.lead_time?
-
-        anchor = view.deadline || view.scheduled
-        Lead.gate_date(anchor, view.lead)&.iso8601
       end
 
       def section(view)

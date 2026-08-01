@@ -2,13 +2,16 @@
 
 require "date"
 require_relative "recur"
+require_relative "timezones"
 
 module Tasks
   # A lead time: how long before its occurrence date a task becomes visible.
   #
   #   lead    3w  2d  1m         a positive count and a calendar unit
+  #           5h                 or a clock duration in hours
   #   anchor  the task's deadline if it has one, else its available-from date
   #   gate    anchor - lead, released at local midnight of that date
+  #           (a clock lead releases at anchor_instant - duration exactly)
   #
   # The stored spelling is exactly `<count><unit>` with no prefix — a lead has
   # no equivalent of a repeater cookie's `+`/`.+`/`++` axis, because it is
@@ -16,21 +19,30 @@ module Tasks
   # phrasings `Recur` does ("2 weeks", "a week", "off"), and the stepping reuses
   # `Recur.step`, so a month lead clamps exactly the way a month interval does.
   #
-  # Clock units (`5h`) are planned but not accepted yet — see docs/plans/active/
-  # recurring-lead-time.md, "Planned clock units". The parser names `h` in its
-  # rejection rather than lumping it in with "unrecognized" so the follow-up can
-  # land without changing what a valid lead means, and #gate_date's caller keeps
-  # the gate instant-shaped for the same reason.
+  # `h` is the one CLOCK unit: `5h` measures a real duration back from the
+  # anchor's instant, so it is arithmetic on instants rather than on dates and
+  # #gate_date cannot express it (see #clock? and #gate_instant). `m` always
+  # means months — never minutes — because a lead shares its unit letters with
+  # the recurrence grammar, and overloading one of them would silently change
+  # what an existing stored value means.
   module Lead
     # The canonical stored form. Zero is excluded: a `0d` lead is not a lead,
     # and would read as "no window" while looking like one.
-    SPAN = /\A([1-9]\d*)([dwmy])\z/
+    SPAN = /\A([1-9]\d*)([dwmyh])\z/
 
-    UNITS = %w[d w m y].freeze
+    UNITS = %w[d w m y h].freeze
+
+    # The unit whose gate is an instant rather than a date.
+    CLOCK_UNITS = %w[h].freeze
 
     OFF_WORDS = Recur::OFF_WORDS
 
-    UNIT_NAMES = Recur::UNIT_NAMES
+    UNIT_NAMES = Recur::UNIT_NAMES.merge("h" => "hour").freeze
+
+    # Clock spellings a human types. `m`/`min` are deliberately ABSENT: `m` is
+    # months here and in the recurrence grammar, and a lead precise to the
+    # minute would be a different feature, not a spelling.
+    CLOCK_WORDS = { "h" => "h", "hr" => "h", "hrs" => "h", "hour" => "h", "hours" => "h" }.freeze
 
     # Friendly single words → count + unit, the lead-time subset of Recur::WORDS
     # (a lead is a span, so "daily"/"weekly" would be a category error).
@@ -68,7 +80,6 @@ module Tasks
       return { canonical: s } if SPAN.match?(s)
 
       count, unit = parse_phrase(s)
-      return clock_rejection(s, raw) if unit.nil? && clock_shaped?(s)
       return { error: "unrecognized lead time: #{raw.inspect}" } if unit.nil?
       return { error: "a lead time must be at least 1 #{UNIT_NAMES[unit]}" } unless count.positive?
 
@@ -98,10 +109,20 @@ module Tasks
 
     # "3 weeks before — opens 2026-10-11", or just "3 weeks before" when there
     # is no anchor to resolve against yet. One rendering of the field for every
-    # surface that shows a span beside the date it derives.
-    def display(span, anchor = nil)
+    # surface that shows a span beside the date it derives. A CLOCK span needs a
+    # context to resolve its instant into a wall time; without one it renders
+    # the span alone rather than guessing a zone.
+    def display(span, anchor = nil, context = nil)
       human = describe(span)
       return nil unless human
+
+      if clock?(span)
+        instant = context && anchor.respond_to?(:instant) && gate_instant(anchor, span, context)
+        return human unless instant
+
+        local = Timezones.local_time(instant, context.timezone)
+        return format("%s — opens %s %02d:%02d", human, local.to_date.iso8601, local.hour, local.min)
+      end
 
       date = anchor.respond_to?(:date) ? anchor.date : anchor
       gate = date && gate_date(date, span)
@@ -117,10 +138,55 @@ module Tasks
       return nil unless anchor.is_a?(Date)
 
       m = span.to_s.match(SPAN)
-      return nil unless m
+      return nil if m.nil? || CLOCK_UNITS.include?(m[2])
 
       Recur.step(anchor, -m[1].to_i, m[2])
     rescue Date::Error, RangeError
+      nil
+    end
+
+    # The earliest calendar date a span's window could open on, for the storable-
+    # range guard. Identical to #gate_date for a calendar span; for a clock span
+    # it is the date the duration could reach at worst, which is all a range
+    # check needs (and needs no zone, which the write path does not have).
+    def date_bound(anchor, span)
+      return nil unless anchor.is_a?(Date)
+
+      seconds = duration(span)
+      return gate_date(anchor, span) unless seconds
+
+      anchor - ((seconds / 86_400.0).ceil + 1)
+    rescue Date::Error, RangeError
+      nil
+    end
+
+    # True when the span measures a clock duration, whose gate is an instant no
+    # date can express — every caller that needs a date has to resolve it in a
+    # zone first.
+    def clock?(span)
+      m = span.to_s.match(SPAN)
+      !m.nil? && CLOCK_UNITS.include?(m[2])
+    end
+
+    # A clock span's duration in seconds, or nil for a calendar span.
+    def duration(span)
+      m = span.to_s.match(SPAN)
+      return nil if m.nil? || !CLOCK_UNITS.include?(m[2])
+
+      m[1].to_i * 3_600
+    end
+
+    # The instant a clock lead's window opens: the anchor's own instant minus
+    # the duration. RAW — deliberately not rebuilt into a TemporalValue, which
+    # would re-resolve an ambiguous local time and could move the gate by an
+    # hour across a DST fall-back. An ALL-DAY anchor resolves to the first
+    # instant of its date, so `5h` before June 1 is 19:00 on May 31 local.
+    def gate_instant(anchor_value, span, context)
+      seconds = duration(span)
+      return nil unless seconds && anchor_value.respond_to?(:instant)
+
+      anchor_value.instant(context) - seconds
+    rescue Timezones::Error, ArgumentError
       nil
     end
 
@@ -139,12 +205,15 @@ module Tasks
       return [nil, nil] if tokens.empty?
 
       if tokens.size == 1
-        word = WORDS[singular(tokens[0])]
+        singular = singular(tokens[0])
+        word = WORDS[singular]
+        return [1, "h"] if word.nil? && CLOCK_WORDS[singular]
         return word ? [word[0], word[1]] : [nil, nil]
       end
       return [nil, nil] unless tokens.size == 2 && tokens[0].match?(/\A\d+\z/)
 
-      unit = Recur::UNIT_WORDS[tokens[1]] || abbreviated_unit(tokens[1])
+      unit = Recur::UNIT_WORDS[tokens[1]] || CLOCK_WORDS[singular(tokens[1])] ||
+             abbreviated_unit(tokens[1])
       [tokens[0].to_i, unit]
     end
 
@@ -163,13 +232,5 @@ module Tasks
       word.end_with?("s") ? word[0..-2] : word
     end
 
-    # `h` parses as a shape but is not a lead time yet. Naming it keeps the
-    # rejection honest — "unrecognized" would read as "never coming".
-    private_class_method def self.clock_shaped?(s) = s.match?(/\A\d+\s*(h|hr|hrs|hour|hours)\z/)
-
-    private_class_method def self.clock_rejection(_s, raw)
-      { error: "lead times are whole days, weeks, months, or years for now — " \
-               "#{raw.inspect} names an hour lead, which isn't supported yet" }
-    end
   end
 end

@@ -43,16 +43,18 @@ class TestLead < Minitest::Test
     refute Tasks::Lead.span?("w:mon"), "a lead is a span, not a calendar schedule"
   end
 
-  # 'h' is planned (td-556c53) but absent, so its rejection must name it rather
-  # than read as "never coming".
-  def test_hour_leads_are_refused_by_name
-    %w[5h 5hr 12hours].each do |input|
-      error = Tasks::Lead.parse_result(input)[:error]
-      assert_match(/hour lead/, error)
-      assert_match(/isn't supported yet/, error)
+  # `h` is the one clock unit; `m` must keep meaning months, in the lead grammar
+  # exactly as in the recurrence grammar it shares its letters with.
+  def test_hour_leads_parse_and_m_still_means_months
+    { "5h" => "5h", "5 hr" => "5h", "12hours" => "12h", "an hour" => "1h" }.each do |input, canonical|
+      assert_equal({ canonical: canonical }, Tasks::Lead.parse_result(input))
     end
-    assert_equal({ canonical: "1m" }, Tasks::Lead.parse_result("1m"),
-                 "m keeps meaning months everywhere")
+    assert Tasks::Lead.clock?("5h")
+    refute Tasks::Lead.clock?("5m")
+    assert_equal({ canonical: "1m" }, Tasks::Lead.parse_result("1m"))
+    assert_equal({ canonical: "6m" }, Tasks::Lead.parse_result("6 months"))
+    assert_nil Tasks::Lead.gate_date(Date.new(2026, 6, 1), "5h"),
+               "a clock gate is an instant no date can express"
   end
 
   def test_humanize_reads_as_a_span
@@ -207,6 +209,76 @@ class TestLead < Minitest::Test
     with_lead_files(section_records) do |org, _archive|
       messages = Tasks::Check.check(org).errors.map(&:last)
       assert(messages.any? { |message| message.include?(%(section must not carry "lead")) })
+    end
+  end
+
+  # -- clock leads (td-556c53) ----------------------------------------------
+
+  # An all-day anchor resolves to the first instant of its date, so a clock lead
+  # opens partway through the previous evening.
+  def test_a_clock_lead_on_an_all_day_anchor_opens_the_evening_before
+    records = lead_records(deadline: "2026-06-01", lead: "5h")
+
+    availability = availability_on(records, "2026-05-31")
+    refute availability.available?
+    assert_equal "2026-06-01T01:00:00Z", availability.available_at.iso8601,
+                 "19:00 on May 31 in Denver (MDT, UTC-6)"
+    assert_equal Date.new(2026, 5, 31), availability.scheduled
+
+    assert_available(records, on: "2026-06-01")
+  end
+
+  def test_a_clock_lead_measures_from_a_timed_anchors_own_instant
+    records = lead_records(deadline: "2026-06-01", lead: "3h")
+    records.last["deadline_time"] = { "local" => "09:00", "timezone" => "America/Denver" }
+
+    availability = availability_on(records, "2026-05-31")
+    assert_equal "2026-06-01T12:00:00Z", availability.available_at.iso8601,
+                 "06:00 local, three hours before a 09:00 deadline"
+  end
+
+  # Either side of local midnight: the window opens on the previous day when the
+  # duration reaches back past 00:00, and on the anchor's own day when it does not.
+  def test_a_clock_lead_lands_on_the_right_side_of_local_midnight
+    late = lead_records(deadline: "2026-06-01", lead: "1h")
+    late.last["deadline_time"] = { "local" => "00:30", "timezone" => "America/Denver" }
+    assert_equal Date.new(2026, 5, 31), availability_on(late, "2026-05-30").scheduled
+
+    early = lead_records(deadline: "2026-06-01", lead: "1h")
+    early.last["deadline_time"] = { "local" => "01:30", "timezone" => "America/Denver" }
+    assert_equal Date.new(2026, 6, 1), availability_on(early, "2026-05-30").scheduled
+  end
+
+  # A clock lead is a real duration, so a DST change inside the window MOVES the
+  # wall time — the opposite of a calendar lead, which holds its wall date. US
+  # DST ends 2026-11-01 (02:00 → 01:00) and begins 2026-03-08 (02:00 → 03:00).
+  def test_a_clock_lead_crossing_dst_keeps_its_duration_not_its_wall_time
+    fall = lead_records(deadline: "2026-11-01", lead: "5h")
+    fall.last["deadline_time"] = { "local" => "12:00", "timezone" => "America/Denver" }
+    # 12:00 MST is 19:00Z; five hours earlier is 14:00Z = 08:00 MDT, an hour
+    # further back in wall-clock terms than a no-DST day would give.
+    assert_equal "2026-11-01T14:00:00Z", availability_on(fall, "2026-10-31").available_at.iso8601
+
+    # Spring forward: 06:00 MDT is 12:00Z, and five real hours earlier is 07:00Z
+    # — 00:00 MST, a six-hour wall-clock step back across the lost hour.
+    spring = lead_records(deadline: "2026-03-08", lead: "5h")
+    spring.last["deadline_time"] = { "local" => "06:00", "timezone" => "America/Denver" }
+    assert_equal "2026-03-08T07:00:00Z", availability_on(spring, "2026-03-07").available_at.iso8601
+
+    # The calendar counterpart, for contrast: same span in days, same wall date.
+    calendar = lead_records(deadline: "2026-11-10", lead: "2w")
+    assert_equal Date.new(2026, 10, 27), availability_on(calendar, "2026-10-01").scheduled
+  end
+
+  def test_a_clock_lead_carries_its_own_window_onto_the_task_view
+    with_lead_store(lead_records(deadline: "2026-06-01", lead: "5h"), on: "2026-05-01") do |query|
+      item = query.snapshot.items.find { |candidate| candidate.id == "bbbb0002" }
+      task = query.task(item)
+      assert_equal "5h", task.lead
+      assert_equal "5 hours", task.lead_human
+      assert_equal Date.new(2026, 5, 31), task.lead_opens
+      assert_equal "2026-06-01T01:00:00Z", task.lead_opens_at.iso8601
+      assert_equal "19:00", task.lead_opens_value.local_time
     end
   end
 

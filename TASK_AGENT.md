@@ -133,7 +133,8 @@ task merely because it also contains task text.
   - place a subtree:  `bin/tasks move "<ref>" --under "<parent-ref>" --before "<sibling-ref>"`
   - place in section: `bin/tasks move "<ref>" "<Section>" --before "<sibling-ref>"`
   - hide it early:    `bin/tasks lead "<ref>" 3w`  (hide until 3 weeks before
-                      its deadline, else its Available from date; `off` clears)
+                      its deadline, else its Available from date; `off` clears.
+                      Units d/w/m/y, plus `h` for hours — `m` is months)
   - preview a window: `bin/tasks lead "<ref>"`  (span + the date it opens)
   - make it recur:    `bin/tasks recur "<ref>" weekly`  (intervals: 2w/.+1m/…;
                       calendar: "every mon,wed"/m:15/"last friday"/"every july 4";

@@ -41,7 +41,7 @@ module Tui
         lines << row("availability", availability_value(item, availability_blocker, today, temporal_context))
       end
       lines << row("repeats", recurrence_value(item)) if recurrence_of(item)
-      lines << row("lead time", lead_value(item)) if lead_of(item)
+      lines << row("lead time", lead_value(item, temporal_context)) if lead_of(item)
       lines << row("closed", item.closed.iso8601) if item.closed
       lines << row("project", T.paint(:project, project)) if project
       contexts = item.contexts
@@ -99,10 +99,11 @@ module Tui
     # The window as prose plus the date it opens — "⏳ 3 weeks before — opens
     # 2026-10-11". The derived date is the whole point of the field, and a
     # deadline-anchored lead task has no stored stamp that shows it.
-    def lead_value(item)
+    def lead_value(item, context = nil)
       span = lead_of(item)
-      anchor = item.deadline || item.scheduled
-      "#{T.paint(:muted, "⏳")} #{Tasks::Lead.display(span, anchor)}"
+      anchor = item.respond_to?(:deadline_value) ? (item.deadline_value || item.scheduled_value) : nil
+      anchor ||= item.deadline || item.scheduled
+      "#{T.paint(:muted, "⏳")} #{Tasks::Lead.display(span, anchor, context)}"
     end
 
     # The delegation section: every field of the marker, in the record's own

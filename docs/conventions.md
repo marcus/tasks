@@ -94,7 +94,7 @@ type id parent state priority title tags scheduled scheduled_time deadline deadl
   spelling: an org-style interval cookie (`.+1w`, `++1m`, `+2d`) or a calendar
   schedule (`w:mon,wed`, `m:15`, `y:07-04`). See [Recurrence](#recurrence).
 - **`lead`** — an optional lead-time window on a dated task: a positive count
-  and a calendar unit (`3w`, `2d`, `1m`, `10y`). The task is hidden until that
+  and a unit — calendar (`3w`, `2d`, `1m`, `10y`) or the clock unit `h` (`5h`). The task is hidden until that
   span before its anchor. See [Lead time](#lead-time).
 - **`lead_skip`** — internal bookkeeping: the anchor date whose occurrence
   `activate` already released early. Written only by activation, retired by any
@@ -195,7 +195,9 @@ for the full grammar, input forms, and edge-date rules.
 A dated task can carry a `lead` span saying how long before its occurrence date
 it should become visible. The **anchor** is the task's `deadline` if it has one,
 otherwise its `scheduled` date — the same precedence a recurrence roll uses — and
-the window opens at local midnight of `anchor - lead`.
+the window opens at local midnight of `anchor - lead`. A clock span (`5h`)
+instead measures a real duration back from the anchor's own instant, so it opens
+partway through a day; `m` always means months, never minutes.
 
 A lead **replaces** the task's own available-from gate rather than joining it, so
 a lead never sits beside a separate `scheduled` date on a deadline-anchored task;

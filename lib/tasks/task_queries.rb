@@ -9,6 +9,7 @@ require_relative "store"
 require_relative "task_view"
 require_relative "temporal_context"
 require_relative "temporal_value"
+require_relative "timezones"
 
 module Tasks
   # Typed selection inputs shared by CLI, TUI, and the forthcoming application
@@ -480,6 +481,7 @@ module Tasks
           tags: item.tags, scheduled: item.scheduled, deadline: item.deadline,
           scheduled_value: item.scheduled_value, deadline_value: item.deadline_value,
           recur: item.recur, lead: item.lead, lead_skip: item.lead_skip,
+          lead_gate: own_lead_gate(item),
           closed: item.closed, source: item.source,
           body: snapshot.body(item), links: snapshot.links(item), headline: headline_for(item),
           parent_id: record && record["parent"], ancestor_ids: ancestor_ids(record, item.source),
@@ -557,24 +559,24 @@ module Tasks
     # that would leave a second, separately-meaningful available-from date
     # behind.
     def effective_gate(candidate, scheduled_value: candidate.scheduled_value, lead: candidate.lead)
-      gate = lead_gate_value(candidate, scheduled_value: scheduled_value, lead: lead)
+      gate = lead_gate(candidate, scheduled_value: scheduled_value, lead: lead)
       # A released occurrence has NO own timed gate — not even its anchor's own
       # available-from date, which would otherwise re-hide what activate just
       # released.
       return nil if gate.equal?(SKIPPED)
+      return gate if gate
+      return nil unless scheduled_value
 
-      value = gate || scheduled_value
-      return nil unless value
-
-      [value.release_instant(temporal_context), value]
+      [scheduled_value.release_instant(temporal_context), scheduled_value]
     end
 
-    # The derived all-day gate for a lead, SKIPPED when `activate` already
-    # released this occurrence (lead_skip stamped with the current anchor
-    # date), or nil when there is no lead gate to derive — no anchor to measure
-    # from, or no valid span. Nil means "fall back to the available-from date";
-    # SKIPPED means "no own timed gate at all".
-    def lead_gate_value(candidate, scheduled_value:, lead:)
+    # A lead's derived gate as [instant, explaining value], SKIPPED when
+    # `activate` already released this occurrence (lead_skip stamped with the
+    # current anchor date), or nil when there is no lead gate to derive — no
+    # anchor to measure from, or no valid span. Nil means "fall back to the
+    # available-from date"; SKIPPED means "no own timed gate at all".
+    def lead_gate(candidate, scheduled_value:, lead:)
+      anchor_value = candidate.deadline_value || scheduled_value
       anchor = Lead.anchor_date(candidate.deadline_value&.date || candidate.deadline,
                                 scheduled_value&.date)
       return nil unless anchor
@@ -584,8 +586,39 @@ module Tasks
       return SKIPPED if candidate.lead_skip == anchor.iso8601
       return nil unless Lead.span?(lead)
 
+      if Lead.clock?(lead)
+        anchor_value ||= TemporalValue.new(date: anchor)
+        instant = Lead.gate_instant(anchor_value, lead, temporal_context)
+        return instant && [instant, clock_gate_display(instant)]
+      end
+
       date = Lead.gate_date(anchor, lead)
-      date && TemporalValue.new(date: date)
+      return nil unless date
+
+      value = TemporalValue.new(date: date)
+      [value.release_instant(temporal_context), value]
+    end
+
+    # A DISPLAY value for a clock gate: the raw instant projected into the
+    # reader's zone. The gate itself stays the raw instant — this value is only
+    # ever rendered, never compared, so a DST fall-back that makes one local
+    # time mean two instants cannot move the window.
+    def clock_gate_display(instant)
+      local = Timezones.local_time(instant, temporal_context.timezone)
+      TemporalValue.new(date: local.to_date,
+                        local_time: format("%02d:%02d", local.hour, local.min),
+                        timezone: temporal_context.timezone_id, validate: false)
+    end
+
+    # This task's OWN lead window as [instant, value], independent of whichever
+    # candidate currently gates it — the answer "when does MY window open",
+    # which every surface renders beside the span. nil when the task carries no
+    # usable lead, or when activate already released this occurrence.
+    def own_lead_gate(item)
+      return nil unless Lead.span?(item.lead)
+
+      gate = lead_gate(item, scheduled_value: item.scheduled_value, lead: item.lead)
+      gate.is_a?(Array) ? gate : nil
     end
 
     # The snapshot's own Item for a possibly-stale caller Item. Every one of

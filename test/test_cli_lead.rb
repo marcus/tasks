@@ -193,17 +193,19 @@ class TestCliLead < Minitest::Test
     end
   end
 
-  def test_rule_four_refuses_junk_and_names_hours_as_unsupported
-    in_sandbox(today: "2026-07-01") do |_org, run|
+  def test_rule_four_refuses_junk_and_accepts_a_clock_lead
+    in_sandbox(today: "2026-07-01") do |org, run|
       _out, err, status = run.call("lead", "passport", "soonish")
       refute status.success?
       assert_match(/unrecognized lead time/, err)
       assert_match(/try: 3w/, err)
 
-      _hour_out, hour_err, hour_status = run.call("lead", "passport", "5h")
-      refute hour_status.success?
-      assert_match(/hour lead/, hour_err)
-      assert_match(/isn't supported yet/, hour_err)
+      hour_out, _hour_err, hour_status = run.call("lead", "passport", "5h")
+      assert hour_status.success?, hour_out
+      assert_equal "5h", record_for(org, title: "Renew the passport")["lead"]
+      # An all-day anchor resolves to the first instant of its date, so 5h
+      # before 2026-11-01 is 19:00 on 2026-10-31 local.
+      assert_match(/2026-10-31 19:00/, hour_out)
     end
   end
 

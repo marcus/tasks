@@ -97,6 +97,7 @@ Tasks::Dates.configure!(date_order: PATHS.date_order)
 require_relative "../lib/tasks/store"
 require_relative "../lib/tasks/application"
 require_relative "../lib/tasks/opener"
+require_relative "../lib/tasks/timezones"
 
 def contexts(item) = item.tags.select { |t| t.start_with?("@") }
 def open?(item)     = OPEN_STATES.include?(item.state)
@@ -989,6 +990,8 @@ def item_json(item, task: nil)
   }
   if task
     row.merge!(
+      lead_opens: task.lead_opens&.iso8601,
+      lead_opens_at: task.lead_opens_at&.iso8601,
       available: task.available?,
       availability_reason: task.availability_reason.to_s,
       availability_blocker_id: task.availability_blocker_id,
@@ -1268,7 +1271,7 @@ def cmd_show(args)
     puts "  availability: #{availability_summary(query, query.availability(item))}"
     puts "  recur:     #{task.recur} #{dim("(#{recur_summary(task.recur)})")}" if task.recur
     if task.lead
-      opens = lead_gate_line(item, task.lead)
+      opens = lead_gate_line(item, task.lead, opens: task.lead_opens_value)
       puts "  lead:      #{task.lead} #{dim("(#{task.lead_human || task.lead})")}"
       puts "  opens:     #{opens}" if opens
     end
@@ -1837,13 +1840,38 @@ end
 # The anchor a lead is measured back from, and the date its window opens.
 def lead_anchor_value(item) = item.deadline_value || item.scheduled_value
 
-def lead_gate_line(item, span)
+# "2026-10-11 (Sun) — 3 weeks before 2026-11-01", or, with a clock lead, the
+# time it opens as well. `opens` is the query's own derived value when the
+# caller holds a TaskView, so a clock gate reads the same instant availability
+# was decided on.
+def lead_gate_line(item, span, opens: nil)
   anchor = lead_anchor_value(item)
-  gate = anchor && Tasks::Lead.gate_date(anchor.date, span)
-  return nil unless gate
+  opens ||= lead_gate_value(item, span)
+  return nil unless opens && anchor
 
-  "#{gate.iso8601} (#{gate.strftime("%a")}) — #{Tasks::Lead.humanize(span)} before " \
-    "#{anchor.date.iso8601}"
+  stamp = opens.local_time ? temporal_label(opens) : "#{opens.date.iso8601} (#{opens.date.strftime("%a")})"
+  "#{stamp} — #{Tasks::Lead.humanize(span)} before #{anchor.date.iso8601}"
+end
+
+# The derived gate for a lead as a TemporalValue, for the read-only paths that
+# hold an Item rather than a TaskView.
+def lead_gate_value(item, span)
+  anchor = lead_anchor_value(item)
+  return nil unless anchor
+
+  if Tasks::Lead.clock?(span)
+    instant = Tasks::Lead.gate_instant(anchor, span, temporal_context)
+    return nil unless instant
+
+    local = Tasks::Timezones.local_time(instant, temporal_context.timezone)
+    return Tasks::TemporalValue.new(
+      date: local.to_date, local_time: format("%02d:%02d", local.hour, local.min),
+      timezone: temporal_context.timezone_id, validate: false
+    )
+  end
+
+  date = Tasks::Lead.gate_date(anchor.date, span)
+  date && Tasks::TemporalValue.new(date: date)
 end
 
 # Attach/replace/clear the lead-time window on a task's date stamp: how long
@@ -1902,14 +1930,15 @@ end
 def lead_preview(item, json:)
   span = item.lead.to_s.strip
   anchor = lead_anchor_value(item)
-  gate = Tasks::Lead.span?(span) && anchor ? Tasks::Lead.gate_date(anchor.date, span) : nil
+  gate = Tasks::Lead.span?(span) ? lead_gate_value(item, span) : nil
 
   if json
     require "json"
     row = { id: item.id, line: item.line, title: item.title,
             lead: span.empty? ? nil : span,
             lead_human: span.empty? ? nil : (Tasks::Lead.humanize(span) || span),
-            anchor: anchor&.date&.iso8601, opens: gate&.iso8601,
+            anchor: anchor&.date&.iso8601, opens: gate&.date&.iso8601,
+            opens_at: gate&.release_instant(temporal_context)&.iso8601,
             lead_skip: item.lead_skip }
     puts JSON.generate(row)
     return

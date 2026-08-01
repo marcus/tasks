@@ -354,6 +354,7 @@ paths:
                         lead: null
                         lead_human: null
                         lead_opens: null
+                        lead_opens_at: null
                         body: ["Captured 2026-07-14.", "Confirm the seat count first."]
                         closed: null
                         archived: false
@@ -467,6 +468,7 @@ paths:
                       lead: null
                       lead_human: null
                       lead_opens: null
+                      lead_opens_at: null
                       body: ["Captured 2026-07-14."]
                       closed: null
                       archived: false
@@ -581,6 +583,7 @@ paths:
                       lead: null
                       lead_human: null
                       lead_opens: null
+                      lead_opens_at: null
                       body: ["Captured 2026-07-14.", "Confirm the seat count first."]
                       closed: null
                       archived: false
@@ -733,6 +736,7 @@ paths:
                       lead: null
                       lead_human: null
                       lead_opens: null
+                      lead_opens_at: null
                       body: ["Captured 2026-07-14.", "Confirm the seat count first."]
                       closed: null
                       archived: false
@@ -1108,6 +1112,7 @@ paths:
                       lead: null
                       lead_human: null
                       lead_opens: null
+                      lead_opens_at: null
                       body: []
                       closed: null
                       archived: false
@@ -1957,6 +1962,7 @@ paths:
                           lead: null
                           lead_human: null
                           lead_opens: null
+                          lead_opens_at: null
                           body: ["Captured 2026-07-14."]
                           closed: null
                           archived: false
@@ -2448,6 +2454,7 @@ components:
                       lead: null
                       lead_human: null
                       lead_opens: null
+                      lead_opens_at: null
                       body: ["Captured 2026-07-14."]
                       closed: null
                       archived: false
@@ -2619,6 +2626,7 @@ components:
         lead: null
         lead_human: null
         lead_opens: null
+        lead_opens_at: null
         body: ["Captured 2026-07-14.", "Confirm the seat count first."]
         closed: null
         archived: false
@@ -2982,6 +2990,7 @@ components:
         - lead
         - lead_human
         - lead_opens
+        - lead_opens_at
         - body
         - closed
         - archived
@@ -3112,6 +3121,16 @@ components:
             "when does my window open" even while an ancestor's gate or an
             indefinite hold is what currently hides the task. For the effective
             answer — including ancestors — read `available`/`available_at`.
+        lead_opens_at:
+          type: [string, "null"]
+          format: date-time
+          readOnly: true
+          description: |
+            The exact instant this task's own lead window opens, or null. For a
+            calendar span this is local midnight of `lead_opens`; for a CLOCK
+            span (`5h`) it is the only precise answer, since the window opens
+            partway through a day. Derived from the task's own anchor, like
+            `lead_opens`.
         body:
           type: array
           description: The task's own notes, split to lines. A child's body never leaks in.
@@ -3422,17 +3441,18 @@ components:
             supplied, otherwise its `scheduled` date. A count and a calendar
             unit, canonical (`3w`, `2d`, `1m`, `10y`) or phrased (`3 weeks`,
             `a week`, `10 days`); both store one canonical value, echoed back
-            as `lead`.
+            as `lead`. `h` is the one clock unit (`5h` opens the window five
+            hours before the anchor's instant — an all-day anchor resolves to
+            the first instant of its date, so `5h` before June 1 is 19:00 on
+            May 31 local). `m` always means months, never minutes.
 
             Rules, each refused with `422` and a message naming the fix: the
             task needs one of the two dates to hide before; a lead may not sit
             beside a SEPARATE available-from date (supplying both `deadline`
             and `scheduled` with a lead is refused, since the second gate would
             be silently ignored); proposed and closed tasks take no lead; and
-            the derived date must stay in the storable year range. Hour leads
-            (`5h`) are named as planned-but-unsupported rather than lumped in
-            with unrecognized input. `off`/`none`/`never` clears a lead and is
-            only meaningful on PATCH.
+            the derived date must stay in the storable year range.
+            `off`/`none`/`never` clears a lead and is only meaningful on PATCH.
         body:
           description: |
             Initial notes. Either one string (newlines allowed) or an ordered

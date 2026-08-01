@@ -594,6 +594,59 @@ nothing lands that `done` could not roll. Dating commands
 opens a recurrence popup on the selected task, a `↻` badge marks recurring
 tasks, and completing one rolls it forward in place.
 
+**Lead time.** A dated task can carry a `lead` span — a positive count and a
+calendar unit (`3w`, `2d`, `1m`, `10y`), or a clock duration in hours (`5h`) —
+saying how long *before* its occurrence date it becomes visible. The **anchor**
+is the task's `deadline` if it has one, otherwise its `scheduled` date (the same
+precedence a recurrence roll uses), and the window opens at local midnight of
+`anchor - lead`. Month and year spans clamp exactly as recurrence intervals do
+(`1m` before Mar 31 = Feb 28 in a common year), and a calendar lead keeps its
+wall date across a DST change.
+
+The lead **owns the task's own timed gate**: it replaces the available-from date
+rather than joining it. On a deadline-anchored task that hides work which would
+otherwise be available today; on a scheduled-anchored task it *releases* the task
+early, before its available-from date. One rule — `anchor - lead` — produces both.
+Nothing else about availability changes: the task is timed-unavailable like any
+deferred one (`availability_reason: "scheduled"`, `available_at` at the derived
+gate), `list --unavailable`/`--deferred` and the TUI reveal toggle show it, an
+ancestor's lead gates its whole subtree, and an own or inherited indefinite hold
+still outranks it.
+
+Input never has to be canonical: `lead`, `capture --lead`, and the API take
+phrases (`3 weeks`, `a week`, `10 days`, `a quarter`, `5 hours`) as well as the
+stored spelling, and `off`/`none`/`never` clear the window. Five rules are refused
+at write time on every surface, each naming the fix: (1) a lead needs a deadline
+or an available-from date to hide before; (2) proposed and closed tasks take no
+lead (clearing is always allowed); (3) a lead may not sit beside a **separate**
+available-from date — setting one on a task carrying both dates is refused, as is
+adding an available-from date (via `schedule`, or `defer <ref> <date>`) to a
+deadline-anchored lead task; (4) the span must be a positive whole count of
+`d`/`w`/`m`/`y`/`h`; (5) the derived date must stay inside the storable four-digit
+year range.
+
+*Clock leads.* `h` is the one clock unit, and `m` always means months — never
+minutes — because the lead grammar shares its unit letters with the recurrence
+grammar. A clock lead measures a real duration back from the anchor's own
+**instant**, so it opens partway through a day: an all-day anchor resolves to the
+first instant of its date, making `5h` before June 1 **19:00 on May 31** local.
+Because it is a duration, a DST change inside the window moves the wall time (the
+opposite of a calendar lead, which holds its wall date). The gate stays a raw
+instant — never rebuilt from a local time, which a fall-back hour would make
+ambiguous — so `available_at` is exact; `lead <ref>`'s `opens_at` and the API's
+`lead_opens_at` carry it. An idle TUI picks up a passing gate instant on its next
+minute boundary, exactly as it already does for a timed available-from date.
+
+`activate` on a lead-gated task releases **this occurrence only**, stamping the
+internal `lead_skip` with the current anchor date and keeping every date the task
+has; the next `done` roll (or any anchor edit) retires the stamp and the window
+re-arms. The same stamp is why activating a **recurring** task no longer deletes
+its future date: that date is the next occurrence, not a defer.
+
+An older binary round-trips `lead`/`lead_skip` untouched and simply does not
+apply the gate — the task reads as available. Nothing is lost, and a current
+binary re-applies the window on the next read.
+
 **Cascading completion.** Completing a parent completes its whole open subtree.
 `done` (or `state … DONE`) on a task closes every open descendant
 (INBOX/TODO/NEXT/WAITING) with the same `closed` date and drops any `defer`
@@ -793,7 +846,7 @@ and `sources.memory` (`"TASKS_MEMORY env"` / `"config file"` /
 
 JSON list shape (`--json` on list/agenda/next/quadrants/inbox) — a flat array,
 already sorted the way the text view sorts:
-`[{"state": "NEXT", "priority": "A", "title": "…", "tags": [..], "contexts": [..], "deferred": false, "scheduled": null, "scheduled_time": null, "deadline": "2026-07-02", "deadline_time": null, "available": true, "available_at": null, "availability_reason": "available", "availability_blocker_id": null, "recur": null, "recur_human": null, "lead": null, "lead_human": null, "line": 17, "source": "live", "headline": "NEXT [#A] …"}]`
+`[{"state": "NEXT", "priority": "A", "title": "…", "tags": [..], "contexts": [..], "deferred": false, "scheduled": null, "scheduled_time": null, "deadline": "2026-07-02", "deadline_time": null, "available": true, "available_at": null, "availability_reason": "available", "availability_blocker_id": null, "recur": null, "recur_human": null, "lead": null, "lead_human": null, "lead_opens": null, "lead_opens_at": null, "line": 17, "source": "live", "headline": "NEXT [#A] …"}]`
 (`headline` is the star-less summary rendered from the record's fields; `source`
 is `"live"` or `"archive"`; `recur` is the stored canonical schedule, e.g.
 `".+1w"` or `"w:mon,wed"`, or `null`, and `recur_human` is that same value
@@ -841,8 +894,8 @@ display text to parse.
 | `recur <ref> <schedule>` | `repeat`, `every` | ✅ | Attach/replace the `recur` value on the task's date. `<schedule>` is any input form the one parser takes (see Recurrence): an interval cookie (`.+1w`/`+2d`/`++1m`) or friendly interval (`weekly`/`2w`/`every 3 days`), a calendar phrase (`every mon,wed`/`weekdays`/`the 15th`/`2nd tuesday`/`last day of the month`/`every july 4`), or the canonical calendar grammar (`w:mon,wed`/`2w:mon`/`m:15`/`m:last`/`m:2tue`/`y:07-04`, optional `+` one-hop prefix); `off`/`none` clears it. Input is stored canonical, so two spellings of one schedule store identically. `--from schedule\|completion` picks `+`/`.+` for a bare **interval** (default `completion` → `.+`); with a calendar schedule it exits 1 naming the prefix the input lacks — bare input is told to write `+w:mon` for one-hop, `+`-prefixed input is told to drop the `+` for catch-up. `--on <date>` seeds a `deadline` when the task has no date yet (else it errors); the seed and the schedule land in **one checked transaction**, so a refused schedule leaves the file byte-unchanged and a successful one is a single `undo`. Unreadable input exits 1 with the parser's reason (quoting the input verbatim) plus an example line; a schedule that could never fire from the task's stamp is refused by the store with its reason. Success prints `↻ <humanized> (<canonical>) → next <date> (<Dow>)` above the touched headline, where `<date>` is the task's stamp after the write — the stamp *is* the next occurrence, the same convention `done` prints; `--json` carries that date as `"next"` beside `touched`. `--dry-run`/`--json`/`--include-done`. |
 | `recur <ref>` | | ✅ | Read-only preview — no schedule argument, no write. Prints the headline, `↻ <humanized> (<canonical>)`, then `--count N` occurrence dates (default 5, max 50). The list **starts with the task's stamp** — that is its next occurrence — and projects forward from there, so `--count 5` is the stamp plus four. A task with no recurrence says so and exits 0. `--json` emits `{"id","line","title","recur","recur_human","anchor","next":[…]}` with `next` starting at the stamp likewise (`recur`/`recur_human` null when absent, `"error"` added when nothing can be projected past the stamp — the stamp itself still lists). Rejects `--from`/`--on`/`--dry-run`, which only make sense when setting. |
 | `recur --explain "<schedule>"` | | ✅ | Taskless parse/preview: no ref, no store access. Prints `<canonical> — <humanized>` and the next `--count N` dates (default 5) from today. Three outcomes: understood and projected (exit 0); understood but never firing from today's anchor (dates empty, reason on stderr, exit 1); unreadable (parser reason plus the example line on stderr, exit 1). `off` reports that it clears the schedule (exit 0). `--json` emits the engine payload verbatim — `{"input","canonical","human","next":[ISO dates]}`, with `"error"` present on either failure and dates as ISO strings — on stdout, with the same exit codes. The agent-facing contract: propose a schedule, explain it, verify the dates, then commit. |
-| `lead <ref> <span>` | `leadtime`, `lead-time` | ✅ | Attach/replace the `lead` window on the task's date: hide it until `<span>` before its anchor (deadline if it has one, else available-from). `<span>` is a count and a unit, canonical (`3w`/`2d`/`1m`/`10y`) or phrased (`3 weeks`/`a week`/`10 days`/`a quarter`); `off`/`none`/`never` clears it. Input stores canonical. Unreadable input exits 1 with the parser's reason plus an example line; an hour span (`5h`) is refused **by name** as planned-but-unsupported. The five rules in Lead time are refused at write time, each naming the fix. Success prints the mutation and the resulting availability on one line (`hide "…" until 3 weeks before its deadline — unavailable until 2026-10-11`), the same shape `defer`/`activate` print. `--dry-run`/`--json`/`--include-done`. |
-| `lead <ref>` | | ✅ | Read-only preview — no span argument, no write. Prints the headline, `⏳ <humanized> before (<canonical>)`, and `opens <date> (<Dow>) — <span> before <anchor>`, plus a note when `activate` already released the current occurrence. A task with no lead says so and exits 0. `--json` emits `{"id","line","title","lead","lead_human","anchor","opens","lead_skip"}`. |
+| `lead <ref> <span>` | `leadtime`, `lead-time` | ✅ | Attach/replace the `lead` window on the task's date: hide it until `<span>` before its anchor (deadline if it has one, else available-from). `<span>` is a count and a unit, canonical (`3w`/`2d`/`1m`/`10y`/`5h`) or phrased (`3 weeks`/`a week`/`10 days`/`a quarter`/`5 hours`); `off`/`none`/`never` clears it. Input stores canonical. Unreadable input exits 1 with the parser's reason plus an example line. The five rules in Lead time are refused at write time, each naming the fix. Success prints the mutation and the resulting availability on one line (`hide "…" until 3 weeks before its deadline — unavailable until 2026-10-11`), the same shape `defer`/`activate` print. `--dry-run`/`--json`/`--include-done`. |
+| `lead <ref>` | | ✅ | Read-only preview — no span argument, no write. Prints the headline, `⏳ <humanized> before (<canonical>)`, and `opens <date> (<Dow>) — <span> before <anchor>`, plus a note when `activate` already released the current occurrence. A task with no lead says so and exits 0. `--json` emits `{"id","line","title","lead","lead_human","anchor","opens","opens_at","lead_skip"}` — `opens` is the gate's local date and `opens_at` the exact instant, which is the only precise answer for a clock span. |
 | `defer <ref> [date-or-date-time]` | `snooze` | ✅ | With a value, atomically set `scheduled` and clear the task's own indefinite marker, preserving `deadline`; accepts the same temporal flags as `schedule`. Without a value, put it On Hold indefinitely. Output and `--dry-run` report exact ancestor-aware availability. |
 | `someday <ref>` | | ✅ | Canonical spelling for an indefinite Someday/Maybe / On Hold task. Adds the own `defer` marker without changing either date. Idempotent. |
 | `activate <ref>` | `undefer`, `resume` | ✅ | Make the task available now: clear its own indefinite marker and clear its own `scheduled` only when that date is in the future. On a task with a `lead` — or a **recurring** task, whose future date is its next occurrence rather than a defer — it instead releases exactly that occurrence (stamping the internal `lead_skip`) and keeps every date, so the series still has an anchor to roll from and the window re-arms on the next roll. A blocker inherited from an ancestor remains effective and is reported. Resolves unavailable open tasks. |

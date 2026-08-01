@@ -206,7 +206,7 @@ module Tui
         ),
         LeadInput.new(
           key: :lead, label: "Lead time", value: values[:lead],
-          metadata: { presets: LEAD_PRESETS },
+          metadata: { presets: LEAD_PRESETS, temporal_context: @temporal_context },
           validate: method(:validate_lead),
         ),
         TermForm::Fields::MultiSelect.new(
@@ -567,7 +567,8 @@ module Tui
         base = super
         return base if context.focused_key == key || context.dirty?(key)
 
-        text = Tasks::Lead.display(value, context[:deadline] || context[:scheduled])
+        text = Tasks::Lead.display(value, context[:deadline] || context[:scheduled],
+                                   metadata[:temporal_context])
         text.nil? || text == value.to_s ? base : base.merge(text: text)
       end
     end

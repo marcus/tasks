@@ -76,7 +76,8 @@ class TestTuiLead < Minitest::Test
       assert_includes session.form.validate[:lead].join, "unrecognized lead time"
 
       session.form.set_value(:lead, "5h")
-      assert_includes session.form.validate[:lead].join, "isn't supported yet"
+      assert_nil session.form.validate[:lead], "a clock lead is valid input"
+      assert_equal "5h", session.edit_form.semantic_value(:lead)
 
       # Rule 3, visible from the form's own buffers: a second timed gate.
       session.form.set_value(:scheduled, Tasks::TemporalValue.new(date: Date.new(2026, 10, 1)))
@@ -131,6 +132,30 @@ class TestTuiLead < Minitest::Test
       rendered = Tui::Views.badge(row.item, reader: app.send(:read_model), today: Date.today)
       assert_match(/⏳/, rendered, "the timed-unavailable marker, not a new one")
       assert_match(%r{10/11}, rendered, "carrying the DERIVED date, which no stamp holds")
+    end
+  end
+
+  # The gate before the clock-unit work (td-556c53): an idle TUI must notice a
+  # gate INSTANT passing on its own. It already does — every minute boundary
+  # invalidates the read model — so this is verification, not new behavior.
+  def test_an_idle_tui_notices_a_gate_instant_passing_without_a_reload
+    app_on(view: :next, select: "Review PR") do |app|
+      refute_includes row_titles(app), "Renew the passport"
+
+      # Move the window into the past exactly as the clock passing it would,
+      # then let one idle tick's minute check run.
+      store = app.instance_variable_get(:@store)
+      snapshot = store.edit_snapshot("22220002")
+      result = store.patch_task!(
+        Tasks::TaskPatch.from(snapshot, field: :deadline, value: Date.today + 1)
+      )
+      assert result.ok?, result.errors.join(", ")
+
+      app.instance_variable_set(:@read_model_minute, -1)
+      assert app.send(:idle_layout_changed?), "a minute boundary invalidates the read model"
+      app.send(:rows)
+      assert_includes row_titles(app), "Renew the passport",
+                     "the row appears without a manual reload"
     end
   end
 

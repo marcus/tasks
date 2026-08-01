@@ -12,7 +12,8 @@ module Tasks
   # reusable callers operate on stable ids and semantic fields only.
   class TaskView
     attr_reader :id, :state, :priority, :title, :tags, :contexts, :scheduled,
-                :deadline, :recur, :lead, :lead_skip, :closed, :source, :body, :links, :headline,
+                :deadline, :recur, :lead, :lead_skip, :lead_opens, :lead_opens_at,
+                :lead_opens_value, :closed, :source, :body, :links, :headline,
                 :parent_id, :ancestor_ids, :child_ids, :section_id,
                 :section_title, :project, :revision, :availability_reason,
                 :availability_blocker_id, :descendant_count, :gate_value, :gate_date,
@@ -21,7 +22,7 @@ module Tasks
 
     def initialize(id:, state:, priority:, title:, tags:, scheduled:, deadline:,
                    scheduled_value: nil, deadline_value: nil, temporal_context: nil,
-                   recur:, lead: nil, lead_skip: nil, closed:, source:, body:, links:, headline:, parent_id:,
+                   recur:, lead: nil, lead_skip: nil, lead_gate: nil, closed:, source:, body:, links:, headline:, parent_id:,
                    ancestor_ids:, child_ids:, section_id:, section_title:, project:,
                    availability:, revision: nil, descendant_count: 0, delegation: nil)
       @id = frozen_text(id)
@@ -39,6 +40,13 @@ module Tasks
       @recur = frozen_text(recur)
       @lead = frozen_text(lead)
       @lead_skip = frozen_text(lead_skip)
+      # This task's OWN window, derived once by the query: the instant it opens
+      # and the value that explains it. Present even while an ancestor's gate or
+      # a hold is what currently hides the task, and absent once `activate` has
+      # released the current occurrence.
+      @lead_opens_value = lead_gate&.last&.freeze
+      @lead_opens = @lead_opens_value&.date&.freeze
+      @lead_opens_at = lead_gate&.first&.utc&.freeze
       @closed = closed&.freeze
       @source = source&.to_sym
       @body = frozen_array(body)
@@ -97,6 +105,7 @@ module Tasks
         availability_reason: availability_reason.to_s,
         availability_blocker_id: availability_blocker_id,
         recur: recur, lead: lead, lead_human: lead_human,
+        lead_opens: lead_opens&.iso8601, lead_opens_at: lead_opens_at&.iso8601,
         closed: closed&.iso8601, source: source,
         body: body, links: links.map(&:to_h), parent_id: parent_id,
         ancestor_ids: ancestor_ids, child_ids: child_ids, section_id: section_id,

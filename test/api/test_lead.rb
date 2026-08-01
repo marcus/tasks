@@ -132,6 +132,22 @@ class TestApiLead < Minitest::Test
     assert_equal "1w", resource.fetch("lead"), "the window itself survives"
   end
 
+  # A clock lead opens partway through a day, so `lead_opens_at` is the only
+  # precise answer and an all-day anchor resolves to the first instant of its
+  # date (5h before Nov 1 is 19:00 on Oct 31 local).
+  def test_a_clock_lead_reports_an_instant_the_date_field_cannot_express
+    created = json_request("POST", "/api/v1/tasks",
+                           title: "Board the flight", deadline: "2036-11-01", lead: "5h")
+    assert_equal 201, created.status, created.body
+    resource = JSON.parse(created.body).fetch("data")
+    assert_equal "5h", resource.fetch("lead")
+    assert_equal "5 hours", resource.fetch("lead_human")
+    assert_equal "2036-10-31", resource.fetch("lead_opens")
+    assert_equal resource.fetch("lead_opens_at"), resource.fetch("available_at"),
+                 "the gate instant IS what availability was decided on"
+    assert_contract_response(created)
+  end
+
   # -- refusals (CLI/API parity) ---------------------------------------------
 
   def test_refusals_carry_the_same_reasons_the_cli_gives
@@ -151,12 +167,6 @@ class TestApiLead < Minitest::Test
     assert_error junk, 422, "validation_failed"
     assert_match(/unrecognized lead time/,
                  JSON.parse(junk.body).dig("error", "details", "fields", "lead").first)
-
-    hours = json_request("POST", "/api/v1/tasks", title: "Hour lead",
-                         deadline: "2026-11-01", lead: "5h")
-    assert_error hours, 422, "validation_failed"
-    assert_match(/isn't supported yet/,
-                 JSON.parse(hours.body).dig("error", "details", "fields", "lead").first)
 
     typed = json_request("POST", "/api/v1/tasks", title: "Wrong type",
                          deadline: "2026-11-01", lead: 3)

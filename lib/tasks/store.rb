@@ -1372,7 +1372,7 @@ module Tasks
         elsif deadline && scheduled
           errors[:lead] << lead_gate_conflict_message(lead)
         else
-          gate = Lead.gate_date(anchor, lead)
+          gate = Lead.date_bound(anchor, lead)
           unless gate && gate.iso8601.match?(Check::DATE_RE)
             errors[:lead] << "a #{Lead.humanize(lead)} lead would open before #{anchor.iso8601}, " \
                              "outside the four-digit years dates are stored with"
@@ -2415,7 +2415,7 @@ module Tasks
         return patch_invalid(lead_gate_conflict_message(value))
       end
       # Rule 5: the derived gate must stay a storable date.
-      gate = Lead.gate_date(anchor, value)
+      gate = Lead.date_bound(anchor, value)
       unless gate && gate.iso8601.match?(Check::DATE_RE)
         return patch_invalid("a #{Lead.humanize(value)} lead would open before " \
                              "#{anchor.iso8601}, outside the four-digit years dates are stored with")
