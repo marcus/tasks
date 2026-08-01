@@ -35,13 +35,48 @@ porting/loop.sh --harness claude -n 1 --on-limit stop   # don't park; exit
 There is nothing to spend here — both harnesses are on subscriptions, so the
 script does no dollar or quota accounting. What it does handle is the usage
 limit: when one is hit, the slot logs a `LIMIT` line, records
-`porting/logs/limit-<harness>.json`, releases the dead tick's td claim, and by
-default parks until the window resets, then resumes on its own.
+`porting/logs/limit-<harness>.json`, releases the dead tick's td claim (one
+`td unstart --session`), and by default parks until the window resets, then
+resumes on its own.
 
 Run it under `nohup`/tmux; it's a foreground supervisor. Mixing harnesses
 is fine — run one invocation per harness; slots coordinate through td, and
 slot worktrees are per-invocation directories under `../tasks-port-slots/`
 (give a second invocation its own `SLOTS_DIR`).
+
+**On `nohup` and stdin.** `codex exec` reads stdin whenever it is not a tty,
+and `nohup` redirects stdout and stderr but *not* stdin. Under a piped or
+`nohup`ed launch that used to make every codex tick print `Reading additional
+input from stdin...` and block for the whole `--tick-timeout`, on every slot,
+forever. `loop.sh` now runs both harnesses with `< /dev/null`, so `nohup
+porting/loop.sh … &` is safe as written. If you ever invoke a harness by hand
+outside the script, redirect stdin yourself.
+
+## How a usage limit is detected
+
+Both harnesses are invoked in JSONL mode (`codex exec --json`, `claude -p
+--output-format stream-json --verbose`), which is what makes detection safe:
+the harness's own typed error records are separable from the agent's output.
+
+1. **Structured** (primary) — only typed error records are matched: codex's
+   `error` / `turn.failed` / `item.completed(item.type=="error")` events,
+   claude's `result` record with `is_error:true` (including the typed
+   `api_error_status`, where 429 alone is enough) and any
+   `is_api_error_message` turn. Agent-authored text can never reach these
+   fields, so this stage runs at any exit status.
+2. **Prose** (documented fallback) — a flat grep of the transcript, for a
+   harness build that emits no JSONL at all. It is reached only when *no*
+   structured records exist **and** the tick exited non-zero **and** the exit
+   was not 124 (our own `timeout` kill).
+
+Those gates are not decoration. This repo's own scripts contain every trigger
+string by necessity, so before them a tick that merely *read* `porting/loop.sh`
+parked the entire fleet — and one such false positive parsed a reset time out
+of a test fixture and held every slot until 9:30am.
+
+The `LIMIT` log line reports both: `stage=structured|prose` says which stage
+fired, `source=` names the exact pattern that claimed the line — which is the
+line of `porting/limit-patterns.<harness>` to fix if it was wrong.
 
 ## Stopping
 
@@ -56,10 +91,22 @@ slot worktrees are per-invocation directories under `../tasks-port-slots/`
 ## Watching
 
 - `tail -f porting/logs/loop.log` — one line per tick: slot, model, exit,
-  duration. Transcripts: `porting/logs/YYYYMMDD/slotN-<ts>.log` (codex also
-  writes the final message to `.last` beside it). Two grep-able tokens matter:
-  `TIMEOUT` (the script killed a tick) and `LIMIT` (the vendor did).
-  `grep LIMIT porting/logs/loop.log` is the whole usage-limit history.
+  duration. Two grep-able tokens matter: `TIMEOUT` (the script killed a tick)
+  and `LIMIT` (the vendor did). `grep LIMIT porting/logs/loop.log` is the whole
+  usage-limit history.
+- Transcripts: `porting/logs/YYYYMMDD/slotN-<ts>.log`, now **JSONL** — that is
+  what structured limit detection reads. Codex also writes the final message
+  as plain text to `.last` beside it, which is usually what you want first.
+  To read a transcript as prose:
+
+  ```sh
+  T=porting/logs/20260801/slot1-20260801-120000.log
+  cat "${T%.log}.last"                                    # codex: final message
+  jq -r 'select(.type=="item.completed") | .item.text // empty' "$T"   # codex
+  jq -r 'select(.type=="assistant") | .message.content[]?.text? // empty' "$T"  # claude
+  jq -r 'select(.type=="result") | .result' "$T"          # claude: final message
+  jq -rc 'select(.type=="error" or .type=="turn.failed")' "$T"         # what broke
+  ```
 - `td status` / `td ready` / `td in-review` / `td blocked` — the work
   itself. `git branch --list 'port/*'` — what the fleet is building.
 - Progress of record is the manifest + evidence, not vibes:
@@ -81,10 +128,12 @@ exited cleanly — whether the tick *did* anything is in td and the manifest.
 | Every codex tick on sol | Review pileup | Reviews failing or being rejected repeatedly — read the review findings; the writer and reviewer may be deadlocked on a real question for you |
 | Same issue claimed, handed off, claimed… | Slice too big or handoffs too thin | Fix the handoff quality or split the slice; more ticks won't help |
 | Ticks burn most tokens re-orienting | Prompt/handoffs carrying too little | Fix `PORTING.md` or the handoff contract — never answer this with more agents |
-| Issue `in_progress`, no recent activity | Claim leaked by a killed tick (every tick is a fresh session; a dead one can't hand off) | After any `TIMEOUT` line: `td list -s in_progress`, then `td unstart <id>` to release. After a `LIMIT` line the script already did this — unless it logged `claim-release skipped`, which means it could not map the tick to a td session and left it to you |
+| Issue `in_progress`, no recent activity | Claim leaked by a killed tick (every tick is a fresh session; a dead one can't hand off) | After any `TIMEOUT` line: `td list -s in_progress`, then `td unstart --session <ses> --force` to release. After a `LIMIT` line the script already did this — unless it logged `claim-release skipped`, which means it could not map the tick to a td session and left it to you. `LIMIT no claim held by …` is the normal, common case: the tick had already handed off |
 | Nothing running, log ends in `parked until …` | A usage limit; the window hasn't reset | Nothing. It resumes itself and logs a still-parked line every 15m. `porting/logs/limit-<harness>.json` has the reset time |
-| Repeated `LIMIT no reset time in the message` | The vendor changed its wording, so the reset time no longer parses | The fallback wait doubles from 30m to 6h, so the fleet still recovers — but fix the pattern: add the new wording to `porting/limit-patterns.<harness>` |
-| `LIMIT` lines but no limit is actually in force | A detection pattern is too broad | Narrow it in `porting/limit-patterns.<harness>` (that file replaces the built-in list) and rerun `porting/test-loop-limits.sh` |
+| Repeated `LIMIT no usable reset time in the message` | The vendor changed its wording, so the reset time no longer parses — or it parsed to something unusable (in the past, or beyond `LIMIT_MAX_WAIT`) | The fallback wait doubles from 30m to 6h, so the fleet still recovers — but fix the pattern: add the new wording to `porting/limit-patterns.<harness>` |
+| `LIMIT parsed reset … exceeds LIMIT_MAX_WAIT; clamping` | A vendor typo or a bad match produced an absurd reset time | Nothing urgent — the clamp is the safety net. Read the `reason` field of `limit-<harness>.json` to see what was matched, and narrow the pattern if it was wrong |
+| `LIMIT` lines but no limit is actually in force | A detection pattern is too broad | Read `stage=` on the LIMIT line first. `stage=structured` means the harness really did report an error, so the pattern matched a genuine failure that isn't a limit. `stage=prose` means the harness emitted no JSONL — check the transcript is really JSONL. Either way, narrow it in `porting/limit-patterns.<harness>` (that file replaces the built-in list) and rerun `porting/test-loop-limits.sh` |
+| `FAILED to rescue dirty worktree` | The salvage commit could not be made | The tick's uncommitted work was discarded so the next tick starts clean — that is deliberate, and the line is your only notice. Read the transcript for what was in flight. `--no-verify` and an explicit commit identity mean a hook or unset `user.email` can no longer cause this, so treat it as a real repo problem |
 
 ## Routine maintenance
 
@@ -125,12 +174,39 @@ output — that rule binds you too.
 | `-n` slots | 1 | Scale only after the loop demonstrably works; 2–3 is plenty for a long time |
 | `--tick-timeout` | 3600s | High-risk slices with fault-injection suites may need more |
 | `--max-ticks` | off | Per-slot cap; good for supervised sessions. A supervision cap, not a cost cap — there is no cost cap |
-| `--on-limit` | `park` | `park` sleeps until the window resets and resumes; `stop` exits the slot cleanly (exit 0 — a usage limit is not a failure) |
-| `LIMIT_COOLDOWN` | 1800s | Wait when the limit message carries no parseable reset time; doubles per consecutive unresolved hit |
-| `LIMIT_MAX_WAIT` | 21600s | Cap on that doubling (6h, comfortably past a 5-hour window) |
-| `LIMIT_GRACE` | 60s | Slack added to a parsed reset time |
-| `LIMIT_PROBE` | off | Optional pre-tick command; exit 3 means limited, and a bare epoch on its stdout is the reset time. The seam for a real headroom check; nothing ships behind it |
-| `porting/limit-patterns.<harness>` | off | One extended regex per line, `#` comments ignored; replaces the built-in detection patterns for that harness. When a vendor changes its wording, the fix is this file, not the script |
+| `--on-limit` | `park` | `park` sleeps until the window resets and resumes; `stop` exits the slot cleanly. **Exit 0 either way** — mid-run, or when preflight finds a limit already in force. A usage limit is a wait, not a failure, and a wrapper script must not have to care when it was noticed |
+| `--once` | off | Never parks. If a limit is in force at the gate, or the single tick ends in one, it reports and exits — `--once` is for debugging, and a debugging run that sleeps until 4pm is not one |
+| `LIMIT_COOLDOWN` | 1800s | Wait when the limit message carries no usable reset time; doubles per consecutive unresolved hit |
+| `LIMIT_MAX_WAIT` | 21600s | Cap on that doubling (6h, comfortably past a 5-hour window) **and on any reset time parsed out of a vendor message**. `resets in 999h99m` is 41 days; without the clamp one typo parks the fleet for weeks |
+| `LIMIT_GRACE` | 60s | Slack added to a parsed reset time (applied before the clamp) |
+| `LIMIT_PROBE` | off | Optional pre-tick command; exit 3 means limited, and a bare epoch on its stdout is the reset time (clamped like any other). The seam for a real headroom check; nothing ships behind it |
+| `porting/limit-patterns.<harness>` | off | One extended regex per line, `#` comments ignored; replaces the built-in detection patterns for that harness. When a vendor changes its wording, the fix is this file, not the script. The built-in lists are derived from the installed binaries' string tables — `loop.sh`'s `limit_patterns` header carries the exact `strings`/`grep` commands to re-derive them after an upgrade |
+
+### Reset times, zones, and what is assumed
+
+A reset time is read from the limit message in four forms: a bare epoch, an
+ISO-8601 timestamp, a wall clock (`resets 4pm`), or a relative interval
+(`resets in 2h30m`). Two assumptions are worth knowing because they are
+deliberate:
+
+- A **wall clock or a naked ISO timestamp with no zone marker** is resolved in
+  the zone the vendor named in parentheses — the real message is `You've hit
+  your session limit · resets 4pm (America/Los_Angeles)` — and failing that in
+  the machine's local zone. Not UTC: on a machine west of UTC, reading it as
+  UTC would place the reset *earlier* than the truth, and resuming early
+  re-hits the limit, re-parks, and (because a reset *was* parsed) never climbs
+  the backoff ladder. Erring late only costs time.
+- A parsed reset that lands **in the past** or **beyond `LIMIT_MAX_WAIT`** is
+  discarded, not used, and the fleet falls back to the doubling ladder.
+
+**`LIMIT_STREAK` is per-slot, on purpose.** The doubling ladder counts
+consecutive unresolved hits within one slot, while the limit record is shared
+by every slot of an invocation. In practice only the slot that discovers a
+limit climbs the ladder — the others learn about it at the gate and park
+without paying a harness call, which is the behaviour you want. Making the
+streak shared would need a read-modify-write lock on the state file for a case
+that costs, at worst, one extra cooldown. If you ever see the ladder failing to
+engage across slots, that is why, and it is documented rather than fixed.
 | `CLAUDE_MODEL`, `CODEX_TOP/MID` | opus, sol/terra | Tier policy itself lives in `PORTING.md` |
 | `CODEX_SANDBOX` | danger-full-access | td's DB lives outside the worktree; tighten to `workspace-write` + `--add-dir` once proven |
 | `PAUSE`/`STAGGER`/backoff | constants in script | Edit in place if they chafe |
@@ -145,12 +221,25 @@ exactly what's wrong; fix and rerun.
 Preflight also reads any leftover `porting/logs/limit-<harness>.json`. If the
 reset time has passed it deletes the record and says so; if it is still in the
 future, `--on-limit park` logs it and lets the slots park, while
-`--on-limit stop` refuses to start and names the reset time. Either way you
-can see from the log why nothing is running.
+`--on-limit stop` names the reset time and **exits 0** without starting — the
+same status a mid-run limit produces. Either way you can see from the log why
+nothing is running.
 
 ## Testing the limit logic
 
-`porting/test-loop-limits.sh` sources `loop.sh` and asserts the detection
-patterns and all four reset-time forms against a pinned clock. Run it after
-editing either the script or a `limit-patterns.*` override; it exits non-zero
-on failure and prints one line per assertion.
+```sh
+porting/test-loop-limits.sh    # exits 0 on success, one line per assertion
+```
+
+It sources `loop.sh` and covers the detection patterns, all four reset-time
+forms against a pinned clock, and — the part that used to be missing —
+`write_limit_state`, `limit_gate`, `park_until`, `preflight_limit_state`,
+`release_tick_claim` (against a `td` stub), `run_limit_probe`, `handle_limit`
+and `prepare_worktree` against a real throwaway git repo. Run it after editing
+the script or a `limit-patterns.*` override.
+
+**The bar for adding a test here: break the behaviour it names, deliberately,
+and confirm the suite goes red.** Every defect this suite now covers was found
+by running the supervisor rather than by testing it, and a test that stays
+green when you revert the thing it claims to cover is worse than no test —
+it is a false assurance sitting exactly where you will stop looking.

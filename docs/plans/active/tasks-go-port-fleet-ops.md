@@ -36,12 +36,26 @@ porting/loop.sh --once --dry-run            # single tick, no harness call
 ```
 
 Per tick: reuse the slot's git worktree (rescuing any uncommitted state a
-killed tick left behind onto a `port/rescue/*` branch — never discarded,
-never inherited) → detach at main → run the harness non-interactively with
-a one-line bootstrap ("read porting/PORTING.md, do one iteration") under a
-wall-clock timeout → capture the transcript under `porting/logs/` → pace
-and repeat. Short ticks read as "no claimable work" and back off
-exponentially to 15 minutes.
+killed tick left behind onto a `port/rescue/*` branch) → detach at main →
+run the harness non-interactively with a one-line bootstrap ("read
+porting/PORTING.md, do one iteration") under a wall-clock timeout, with
+stdin on `/dev/null` and JSONL output → capture the transcript under
+`porting/logs/` → pace and repeat. Short ticks read as "no claimable work"
+and back off exponentially to 15 minutes.
+
+Two details of that sentence are load-bearing and were each a real defect:
+
+- **`< /dev/null`.** `codex exec` reads stdin whenever it is not a tty, and
+  `nohup` — which this runbook recommends — does not redirect it. Without the
+  redirect every codex tick on every slot blocked for the full
+  `--tick-timeout` doing nothing, indefinitely.
+- **"never discarded, never inherited" is now enforced, not asserted.** The
+  rescue commit is made with an explicit identity and `--no-verify`, so
+  neither a repo hook nor an unset `user.email` can fail it; its outcome is
+  reported truthfully rather than logged as success from outside the `&&`
+  chain; and a backstop hard-cleans the tree if a rescue fails anyway,
+  because git carries the index across `checkout --detach` and the next tick
+  would otherwise start on a dead tick's half-finished work.
 
 - `porting/STOP` halts all slots at the next tick boundary and blocks
   restart until removed; `--max-ticks` caps a slot; `--tick-timeout` kills a
@@ -51,22 +65,47 @@ exponentially to 15 minutes.
   calendar day. What actually stops the fleet is a usage limit — Claude's
   5-hour and 7-day windows, Codex's plan limits — which exhausts
   unpredictably and then resets at a *known time*. So the script treats it
-  like `STOP`: after each tick it scans the transcript tail for the vendor's
-  limit wording, extracts a reset time (epoch, ISO-8601, wall clock, or
-  relative), logs a grep-able `LIMIT` line, records
-  `porting/logs/limit-<harness>.json`, releases the dead tick's td claim, and
-  parks until the window reopens (`--on-limit stop` exits cleanly instead).
-  Slots check that record before ticking, so only the slot that discovered
-  the limit pays for it. Detection patterns live in
-  `porting/limit-patterns.<harness>` when a vendor's wording changes: the fix
-  is a text file, not a script edit.
+  like `STOP`: after each tick it classifies the outcome, extracts a reset
+  time (epoch, ISO-8601, wall clock, or relative), logs a grep-able `LIMIT`
+  line, records `porting/logs/limit-<harness>.json`, releases the dead tick's
+  td claim, and parks until the window reopens (`--on-limit stop` exits
+  cleanly instead — with status 0, the same as a mid-run limit, whether the
+  limit is found mid-run or by preflight). Slots check that record before
+  ticking, so only the slot that discovered the limit pays for it.
+- **Detection is structured first, prose second.** Both harnesses run in
+  JSONL mode (`codex exec --json`, `claude -p --output-format stream-json`),
+  and the primary matcher reads only the harness's own typed error records —
+  codex's `turn.failed` / `error` events and its `usage_limit_exceeded` code,
+  claude's `is_error` result record including the typed `api_error_status`.
+  Prose matching survives as a documented fallback for a build that emits no
+  JSONL, gated on the tick exiting non-zero and not on 124 (our own timeout
+  kill). The gates are the whole point: this repo's scripts necessarily
+  contain every trigger string, so an ungated grep parked the fleet whenever
+  a tick happened to *read* `porting/loop.sh`. The override seam is
+  unchanged — `porting/limit-patterns.<harness>` still replaces the built-in
+  list, and the built-in lists are now derived from the installed binaries'
+  string tables rather than guessed. (The previous claude list was anchored
+  on `Claude AI usage limit reached`, a string that appears zero times in the
+  binary; the real prose is `You've hit your …`.)
+- **A parsed reset is a hint, not an instruction.** It is discarded if it
+  lands in the past and clamped to `LIMIT_MAX_WAIT` if it lands beyond it, so
+  a vendor typo (`resets in 999h99m` — 41 days) cannot park the fleet for
+  weeks. A wall clock with no zone marker is resolved in the zone the vendor
+  named, else local — never UTC, because on a machine west of UTC that errs
+  *early*, and resuming early re-hits the limit while also clearing the
+  backoff streak.
 - The claim release is the subtle part. A limited tick is killed mid-work by
   the vendor and never hands off, so its td issue is stranded `in_progress`.
   td records its own session id rather than `TD_CONTEXT_ID`, but derives that
-  id deterministically from it — so `TD_CONTEXT_ID=<ctx> td whoami` resolves
-  the tick to its session, and only issues matching it exactly are unstarted.
-  If the mapping ever fails, the script logs and releases nothing: unstarting
-  by a looser match would steal a live sibling slot's work.
+  id deterministically from it — so `TD_CONTEXT_ID=<ctx> td whoami --json`
+  resolves the tick to its session, and a single `td unstart --session <ses>
+  --force --json` releases exactly that session's claims and cannot touch a
+  live sibling slot's work. `--force` is required (without it the sweep only
+  previews), and the call exits 1 with `{"error":{"code":"not_found"}}` when
+  the session holds nothing — the common case for a tick that handed off
+  cleanly — so the outcome is read from `.error.code` / `.count`, never from
+  the exit status. If the ctx cannot be mapped to a session at all, the
+  script logs and releases nothing.
 - Every tick exports a fresh `TD_CONTEXT_ID`, so each is a distinct td
   session — which is what makes "a different agent reviews" enforceable by
   td rather than aspirational.
@@ -78,6 +117,14 @@ exponentially to 15 minutes.
   worktree; tighten to `workspace-write` + `--add-dir` once proven.
 - The script never chooses slices or roles. Its whole contract is
   isolation, scheduling, and limits.
+- **The supervisor is tested, and the test suite is held to mutation.**
+  `porting/test-loop-limits.sh` covers the limit machinery, the worktree
+  rescue path and the claim release (against a `td` stub and a throwaway git
+  repo), not just the three pure functions it started with. Every fix above
+  was verified by breaking it deliberately and confirming the suite goes red.
+  That standard is written into the suite's header, because the first review
+  of this script found every one of its defects by *running* it — the tests
+  were all green throughout.
 
 ## Model choice per harness
 
