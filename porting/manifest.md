@@ -41,7 +41,7 @@ is one-way: change the manifest, run `porting/manifest-issues sync`.
 | `risk` | `low` \| `medium` \| `high` | PORTING.md's tier table, which decides the required evidence. Tiering *up* is allowed and must be explained in `notes`; tiering down is not. |
 | `source_paths` | array of repo paths | The Ruby this slice **ports** — deliberately the narrow set. Not the drift query's argument: that is the transitive require closure of these paths (below). |
 | `source_sha` | 40-char sha | The Ruby revision this slice was characterized against. See below. |
-| `ruby_tests` | array of `path` or `path#test_name` | The existing Ruby oracle. Every entry is checked to exist by `manifest-issues validate`. Empty is only allowed when `oracle_gaps` says why. |
+| `ruby_tests` | array of `path#test_name` | The existing Ruby oracle — **the tests that prove this slice's behavior**, not the tests that live near it. `validate` checks the file and the `def test_...` inside it, and rejects a bare `path` with no `#test_name`. Empty is only allowed when `oracle_gaps` says why. |
 | `oracle_gaps` | array of strings | What the Ruby suite does *not* prove for this slice, and what is deliberately excluded (usually because it belongs to a later campaign). A gap is a finding to act on, not a blank to leave. |
 | `fixtures` | array of repo paths under `porting/fixtures/` | Fixture directories this slice is proved against — the directory, not the `store/` inside it, because a runner copies the whole thing. Checked to exist. |
 | `fixtures_todo` | string or null | What corpus the slice still needs, named precisely enough to build. A slice may not pass `characterizing` while this is non-null, and its td issue is gated behind a fixture-gap issue for as long as it is set (below). A near-miss wired into `fixtures` is worse than an honest todo: it makes a slice look provable when it is not. |
@@ -165,11 +165,49 @@ What replaced it is contract, and **is** in scope:
 porting/manifest-issues validate    # exits non-zero and names every problem
 ```
 
+**`ruby_tests` names tests, never files.** A whole-file claim is unfalsifiable:
+the file exists, so validation passes, and nobody can tell which of its tests
+are the oracle and which merely live nearby — `test/test_config.rb` has 70, and
+a slice claiming the file claimed all of them. Naming each test is what makes
+the claim checkable, and what makes a test that stops proving the slice's
+behavior fail loudly instead of hiding behind a file path. Two slices may share
+a test where they genuinely share an obligation; the same test twice inside one
+slice is a mistake and is rejected.
+
+### `reach`: an oracle a slice cannot actually run
+
+```sh
+porting/manifest-issues reach       # oracle refs that cannot pass where they are claimed
+porting/manifest-issues reach --json
+```
+
+Existence is a weak check. The 2026-08-01 audit (td-940935) found eight slices
+naming tests that prove something else, and every one had passed `validate` —
+because the test was real, just not this slice's. Three of the four worst shared
+one machine-detectable signature: **the test drives a mutation verb owned by a
+slice that is not upstream of the referencing slice**, so it cannot pass at that
+slice's position in the graph no matter how good the port is.
+
+`reach` is that check, standing. It maps each mutation verb to the slice that
+ports it (`VERB_OWNERS`), reads each claimed test's body, and reports every ref
+whose verbs are owned by neither the slice nor an ancestor. A verb no slice
+ports at all counts too, and is the stronger finding.
+
+A reach is **explained** when one of the slice's `oracle_gaps` sentences names
+the test; `reach` exits non-zero only on the unexplained ones. Explaining is a
+real answer rather than a loophole: for several slices the reaching test is the
+only oracle they have, and "kept, and here is why it cannot pass at this
+position" is more honest than a deletion that leaves the behavior with no
+evidence at all. The fix is sometimes an edge, but more often a note that
+characterization must drive the behavior at its own level — `ensure_id!` rather
+than `capture`, `write_records` rather than `patch_task!`.
+
 It checks: required keys and no unmodelled ones; `risk` and `status`
 vocabularies; every `campaign` has a record; unique ids; dependencies resolve
 and contain no cycle; `evidence` matches the id; `source_sha` is a real 40-char
-sha; every `source_paths` entry exists; **every `ruby_tests` entry exists — the
-file, and the `def test_...` inside it**; every `fixtures` entry exists; and
+sha; every `source_paths` entry exists; **every `ruby_tests` entry names a test —
+the file, and the `def test_...` inside it, never a bare file path**; no test is
+listed twice within one slice; every `fixtures` entry exists; and
 that a slice with no oracle test says so in `oracle_gaps` rather than leaving
 the field silently blank.
 

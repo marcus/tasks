@@ -83,6 +83,22 @@ class TestManifestIssues < Minitest::Test
         issue = state["issues"][args[2]]
         abort "no such issue #{args[2]}" unless issue
         if args[1] == "add"
+          # Real td refuses an edge that would close a cycle, and the generator
+          # has to reorder edges without ever presenting one. A fake that
+          # accepted anything would hide that.
+          reaches = lambda do |from, target|
+            seen = []
+            queue = [from]
+            until queue.empty?
+              node = queue.shift
+              next if seen.include?(node)
+              seen << node
+              return true if node == target
+              queue.concat(state["issues"].fetch(node, {}).fetch("dependencies", []))
+            end
+            false
+          end
+          abort "cycle: #{args[3]} already depends on #{args[2]}" if reaches.call(args[3], args[2])
           issue["dependencies"] |= [args[3]]
         else
           issue["dependencies"] -= [args[3]]
@@ -153,6 +169,15 @@ class TestManifestIssues < Minitest::Test
     end
   end
 
+  # Runs the script against a manifest that is not the tracked one.
+  def with_manifest(slices)
+    Dir.mktmpdir("manifest-alt") do |dir|
+      path = File.join(dir, "manifest.jsonl")
+      File.write(path, slices.map { |s| JSON.generate(s) }.join("\n") + "\n")
+      yield({ "MANIFEST_ISSUES_MANIFEST" => path })
+    end
+  end
+
   def sync(bin)
     stdout, stderr, status = run_script(bin, "sync", "--json")
     assert status.success?, "sync failed: #{stderr}#{stdout}"
@@ -163,6 +188,59 @@ class TestManifestIssues < Minitest::Test
     stdout, stderr, status = Open3.capture3(RbConfig.ruby, SCRIPT, "validate")
     assert status.success?, "validate failed: #{stderr}#{stdout}"
     assert_includes stdout, "every source path and oracle test resolves"
+  end
+
+  # A whole-file oracle claim is unfalsifiable: the file exists, so validation
+  # passes, and nobody can tell which of its tests are the slice's oracle and
+  # which merely live nearby. test/test_config.rb has 70 tests; a slice claiming
+  # the file claims all of them, including the ones proving something else.
+  def test_a_whole_file_oracle_claim_is_rejected
+    slices = manifest_records
+    victim = slices.first
+    victim["ruby_tests"] = ["test/test_config.rb"]
+
+    with_manifest(slices) do |env|
+      stdout, _stderr, status = Open3.capture3(env, RbConfig.ruby, SCRIPT, "validate")
+      refute status.success?, "a bare test-file reference validated"
+      assert_includes stdout, "whole-file claim"
+      assert_includes stdout, victim["id"]
+    end
+  end
+
+  # Existence is a weak check: a real test that proves another slice's behavior
+  # passes it. The machine-detectable half of that is reachability — a test
+  # driving a mutation verb owned by a slice that is not upstream cannot pass at
+  # the referencing slice's position, however good the port is.
+  def test_reach_flags_an_oracle_the_slice_cannot_run_and_accepts_an_explained_one
+    slices = manifest_records
+    victim = slices.find { |s| s["id"] == "format-parse" }
+    # delete_task! is delete-task's, three campaigns downstream of format-parse.
+    victim["ruby_tests"] += ["test/test_delete_task.rb#test_leaf_delete_removes_only_the_target_and_records_one_journal_entry"]
+
+    with_manifest(slices) do |env|
+      stdout, _stderr, status = Open3.capture3(env, RbConfig.ruby, SCRIPT, "reach", "--json")
+      refute status.success?, "an unreachable oracle passed reach"
+      row = JSON.parse(stdout)["reaches"].find { |r| r["slice"] == "format-parse" }
+      refute_nil row
+      assert_includes row["verbs"], "delete_task!"
+      assert_includes row["owners"], "delete-task"
+      refute row["explained"]
+    end
+
+    # Naming the test in oracle_gaps is the escape hatch, and it is the whole
+    # point: the record says why the ref stays.
+    victim["oracle_gaps"] += ["test_leaf_delete_removes_only_the_target_and_records_one_journal_entry " \
+                              "reaches delete-task; kept deliberately for this test."]
+    with_manifest(slices) do |env|
+      _stdout, _stderr, status = Open3.capture3(env, RbConfig.ruby, SCRIPT, "reach")
+      assert status.success?, "an explained reach still failed"
+    end
+  end
+
+  # The committed manifest holds no unexplained reach.
+  def test_the_manifest_has_no_unexplained_unreachable_oracles
+    stdout, stderr, status = Open3.capture3(RbConfig.ruby, SCRIPT, "reach")
+    assert status.success?, "unexplained unreachable oracles:\n#{stdout}#{stderr}"
   end
 
   def test_plan_writes_nothing
@@ -416,6 +494,43 @@ class TestManifestIssues < Minitest::Test
       refute_includes left, "td-deleted"
       assert_includes report["actions"].map { |a| a["target"] }, "slice:tree-build-old"
       refute_nil state_issues["td-retire"], "the retired issue was deleted rather than reported"
+    end
+  end
+
+  # Reversing an edge — B stops depending on A, A starts depending on B — is a
+  # transient cycle if the add is attempted before the removal. td refuses such
+  # an edge, so a generator that writes per slice reports success having quietly
+  # not written one, and needs a second run to converge. Idempotency is not just
+  # "the second run does nothing"; it is "the first run does everything".
+  def test_reversing_a_dependency_converges_in_one_run
+    with_fake_td do |bin|
+      sync(bin)
+      drain_log
+
+      slices = manifest_records
+      a = slices.find { |s| s["id"] == "update-stamp" }
+      b = slices.find { |s| s["id"] == "create-basic" }
+      # As seeded: create-basic depends on update-stamp. Flip it.
+      b["depends_on"] -= ["update-stamp"]
+      a["depends_on"] = (a["depends_on"] + ["create-basic"]).uniq
+
+      with_manifest(slices) do |env|
+        env = env.merge("TD_BIN" => bin, "FAKE_TD_STATE" => @state, "FAKE_TD_LOG" => @log)
+        stdout, stderr, status = Open3.capture3(env, RbConfig.ruby, SCRIPT, "sync", "--json")
+        assert status.success?, "sync failed: #{stderr}#{stdout}"
+
+        by = by_identity
+        assert_includes by.fetch("slice:update-stamp")["dependencies"],
+                        by.fetch("slice:create-basic")["id"],
+                        "the reversed edge was refused and not retried"
+        refute_includes by.fetch("slice:create-basic")["dependencies"],
+                        by.fetch("slice:update-stamp")["id"]
+
+        drain_log
+        _out, _err, again = Open3.capture3(env, RbConfig.ruby, SCRIPT, "sync", "--json")
+        assert again.success?
+        assert_empty drain_log.grep(MUTATING), "a second run still had edges to write"
+      end
     end
   end
 

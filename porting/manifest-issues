@@ -16,6 +16,8 @@
 #   porting/manifest-issues progress        # slice counts, generated from the manifest
 #   porting/manifest-issues validate        # manifest self-consistency + source/test existence
 #   porting/manifest-issues drift           # slices whose Ruby source moved past source_sha
+#   porting/manifest-issues closure         # what drift watches per slice, and why
+#   porting/manifest-issues reach           # oracle refs a slice cannot actually run
 #
 # `sync --dry-run` is a synonym for `plan`.
 #
@@ -96,6 +98,41 @@ module ManifestIssues
                      observable_outputs platforms perf_budget status evidence
                      intentional_differences notes].freeze
 
+  # Mutation verbs, and the slice that ports each. A slice's oracle test may
+  # drive a verb the slice does not own — but only if the owner is *upstream*,
+  # because a test needing behavior from a slice three edges downstream cannot
+  # pass at the referencing slice's position in the graph.
+  #
+  # This is the standing form of the 2026-08-01 oracle audit (td-940935). Three
+  # of the four worst misattributions it found shared exactly this signature,
+  # and every one of them passed a validator that checked only that the named
+  # test existed. An audit finds them once; this finds the next one.
+  #
+  # A verb mapping to nil is unseeded — no slice ports it (td-ee475f). That is a
+  # stronger finding than a misplaced edge, not a weaker one, so it counts as
+  # unreachable too.
+  VERB_OWNERS = {
+    "create_task!" => "create-basic",
+    "patch_task!" => "changeset-apply-basic",
+    "apply_task_changeset!" => "changeset-apply-basic",
+    "apply_changeset!" => "changeset-apply-basic",
+    "delete_task!" => "delete-task",
+    "ensure_id!" => "id-minting",
+    "stamp_changed_tasks!" => "update-stamp",
+    "create_project!" => nil,
+    "create_section!" => nil,
+    "archive_project!" => nil,
+    "archive_swept!" => nil,
+    "complete_project!" => nil,
+    "rename_section!" => nil,
+    "claim_task!" => nil,
+    "release_task!" => nil,
+    "delegate_task!" => nil,
+    "undelegate_task!" => nil,
+    "decide_proposal!" => nil,
+    "set_work_ref!" => nil,
+  }.freeze
+
   Error = Class.new(StandardError)
 
   # ---------------------------------------------------------------- manifest
@@ -159,6 +196,52 @@ module ManifestIssues
       seen.sort
     end
 
+    # Every slice that must be green before this one can start.
+    def ancestors(id, seen = [])
+      Array(slice(id)&.fetch("depends_on", nil)).each do |dep|
+        next if seen.include?(dep)
+        seen << dep
+        ancestors(dep, seen)
+      end
+      seen
+    end
+
+    # Oracle refs reaching for behavior the referencing slice cannot have yet: a
+    # test driving a mutation verb owned by a slice that is neither this one nor
+    # upstream of it.
+    #
+    # An entry is *explained* when one of the slice's `oracle_gaps` sentences
+    # names the test — the same escape hatch the rest of this file uses, and a
+    # real answer rather than a loophole: several of these tests are the only
+    # oracle their slice has, so "kept, and here is why it cannot pass at this
+    # position" is more honest than a deletion that leaves the behavior with no
+    # evidence at all.
+    def unreachable_oracles(root: REPO_ROOT)
+      slices.flat_map do |s|
+        reachable = [s["id"]] + ancestors(s["id"])
+        explained = Array(s["oracle_gaps"]).join(" ")
+        Array(s["ruby_tests"]).filter_map do |ref|
+          file, name = ref.split("#", 2)
+          next unless name
+          body = test_body(File.join(root, file), name)
+          next unless body
+          reaches = VERB_OWNERS.keys.select do |verb|
+            body.include?(verb) && !reachable.include?(VERB_OWNERS[verb])
+          end
+          next if reaches.empty?
+          { "slice" => s["id"], "ref" => ref, "verbs" => reaches,
+            "owners" => reaches.map { |v| VERB_OWNERS[v] || "(unseeded)" }.uniq,
+            "explained" => explained.include?(name) }
+        end
+      end
+    end
+
+    def test_body(path, name)
+      return nil unless File.file?(path)
+      source = (@sources ||= {})[path] ||= File.read(path)
+      source[/^\s*def #{Regexp.escape(name)}\b.*?^\s{2}end$/m]
+    end
+
     # What `closure` adds beyond what the slice already names.
     def transitive_only(slice, root: REPO_ROOT)
       closure(slice, root: root) - Array(slice["source_paths"])
@@ -210,9 +293,22 @@ module ManifestIssues
             out << "#{id}: ruby test file #{file} does not exist"
             next
           end
-          next unless name
+          # A whole-file claim is unfalsifiable: the file exists, so validation
+          # passes, and nobody can tell which of its tests are the oracle and
+          # which happen to live nearby. test/test_config.rb has 70 tests; a
+          # slice that claims the file claims all of them, including the ones
+          # proving something else entirely. Naming each test is what makes the
+          # claim checkable — and what makes a test that stops proving the
+          # slice's behavior fail loudly instead of hiding behind a file path.
+          if name.nil? || name.strip.empty?
+            out << "#{id}: ruby test #{file} is a whole-file claim — name the tests " \
+                   "(#{file}#test_...) that are this slice's oracle"
+            next
+          end
           out << "#{id}: #{file} has no #{name}" unless File.read(full).include?("def #{name}")
         end
+        repeats = Array(s["ruby_tests"]).tally.select { |_, n| n > 1 }.keys
+        out << "#{id}: ruby_tests repeats #{repeats.join(", ")}" unless repeats.empty?
 
         Array(s["fixtures"]).each do |f|
           out << "#{id}: fixture #{f} does not exist" unless File.exist?(File.join(root, f))
@@ -656,6 +752,7 @@ module ManifestIssues
     def normalize(text) = text.to_s.gsub(/\r\n?/, "\n").strip
 
     def sync_dependencies(slice_ids, gate_ids, fleet_ids, apply:)
+      plan = []
       @manifest.slices.each do |slice|
         id = slice_ids[slice["id"]]
         wanted = (Array(slice["depends_on"]).filter_map { |d| slice_ids[d] } +
@@ -685,12 +782,24 @@ module ManifestIssues
         # what the real run does, which is the one thing a dry run may not do.
         pending = gated?(slice) && gate_ids[slice["id"]].nil? ? ["+fixture-gate:#{slice["id"]}"] : []
         next if add.empty? && remove.empty? && pending.empty?
-        if apply
-          add.each { |d| @td.dep_add(id, d) }
-          remove.each { |d| @td.dep_rm(id, d) }
-        end
+        plan << [slice["id"], id, add, remove, pending]
+      end
+
+      # Every removal first, across the whole graph, and only then the
+      # additions. td refuses an edge that would close a cycle, and a
+      # reordering — B no longer depends on A, A now depends on B — presents
+      # exactly that transient if the add is attempted while the old edge is
+      # still there. Per-slice ordering made the reorder of update-stamp cost a
+      # second sync run to converge, which is the idempotency property failing
+      # quietly: the first run reported success having silently not written one
+      # edge.
+      if apply
+        plan.each { |_name, id, _add, remove, _pending| remove.each { |d| @td.dep_rm(id, d) } }
+        plan.each { |_name, id, add, _remove, _pending| add.each { |d| @td.dep_add(id, d) } }
+      end
+      plan.each do |name, id, add, remove, pending|
         detail = (add.map { |d| "+#{d}" } + remove.map { |d| "-#{d}" } + pending).join(" ")
-        @actions << Action.new(kind: :dep, target: "slice #{slice["id"]}", td_id: id, detail: detail)
+        @actions << Action.new(kind: :dep, target: "slice #{name}", td_id: id, detail: detail)
       end
     end
 
@@ -727,7 +836,7 @@ module ManifestIssues
     def run(argv)
       options = { json: false, dry_run: false }
       parser = OptionParser.new do |o|
-        o.banner = "usage: porting/manifest-issues <plan|sync|progress|validate|drift|closure> [--json] [--dry-run]"
+        o.banner = "usage: porting/manifest-issues <plan|sync|progress|validate|drift|closure|reach> [--json] [--dry-run]"
         o.on("--json", "machine-readable output") { options[:json] = true }
         o.on("--dry-run", "with sync: plan only, write nothing") { options[:dry_run] = true }
         o.on("-h", "--help") { puts o; exit 0 }
@@ -748,6 +857,7 @@ module ManifestIssues
       when "validate" then validate(manifest, options)
       when "drift"    then drift(manifest, options)
       when "closure"  then closure(manifest, options)
+      when "reach"    then reach(manifest, options)
       else
         warn "unknown command: #{command}"
         warn parser.banner
@@ -861,6 +971,33 @@ module ManifestIssues
         puts "#{stale} slice(s) pinned to something other than their closure's last-touch commit"
       end
       0
+    end
+
+    # Oracle refs that cannot pass where they are claimed. Exits non-zero on any
+    # that no `oracle_gaps` sentence accounts for.
+    def reach(manifest, options)
+      found = manifest.unreachable_oracles
+      unexplained = found.reject { |r| r["explained"] }
+
+      if options[:json]
+        puts JSON.pretty_generate({ "ok" => unexplained.empty?, "reaches" => found })
+      elsif found.empty?
+        puts "no unreachable oracles: every claimed test's mutation verbs are owned by the " \
+             "slice or by one upstream of it"
+      else
+        found.group_by { |r| r["slice"] }.each do |id, rows|
+          puts id
+          rows.each do |row|
+            mark = row["explained"] ? "explained " : "UNEXPLAINED"
+            puts "  #{mark} #{row["ref"].split("#").last}"
+            puts "              drives #{row["verbs"].join(", ")} — owned by " \
+                 "#{row["owners"].join(", ")}, not upstream of #{id}"
+          end
+        end
+        puts
+        puts "#{found.size} reach(es), #{unexplained.size} unexplained"
+      end
+      unexplained.empty? ? 0 : 1
     end
 
     # PORTING.md's drift rule, made executable: a slice whose source moved past
