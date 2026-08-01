@@ -3,6 +3,7 @@
 require "securerandom"
 require_relative "task_edit_form"
 require_relative "../tasks/patch_result"
+require_relative "../tasks/lead"
 require_relative "../tasks/recur"
 require_relative "../tasks/task_patch"
 
@@ -358,6 +359,17 @@ module Tui
         # canonical value follows, since that is what lands in the record.
         message = value ? "Set recurrence to #{Tasks::Recur.humanize(value)} (#{value})?" : "Clear recurrence?"
         summary = { from: old, to: value }
+      when :lead
+        return nil if value == old
+        # Same shape as the recurrence prompt: the meaning leads, the canonical
+        # span follows, since that is what lands in the record.
+        message = if value
+                    anchor = snapshot.deadline ? "deadline" : "Available from date"
+                    "Hide this task until #{Tasks::Lead.describe(value)} its #{anchor} (#{value})?"
+                  else
+                    "Clear the lead time?"
+                  end
+        summary = { from: old, to: value }
       when :scheduled, :deadline
         other = field == :scheduled ? snapshot.deadline : snapshot.scheduled
         if value.nil? && old && other.nil? && snapshot.recurrence
@@ -456,6 +468,9 @@ module Tui
         owned[field] = value.expected_for(field)
       when :recurrence
         owned[:recurrence] = value.expected_for(:recurrence)
+        predicates[:any_live_date] = true
+      when :lead
+        owned[:lead] = value.expected_for(:lead)
         predicates[:any_live_date] = true
       when :scheduled, :deadline
         owned[field] = value.expected_for(field)

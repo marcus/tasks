@@ -2,6 +2,7 @@
 
 require_relative "../term_form"
 require_relative "../tasks/dates"
+require_relative "../tasks/lead"
 require_relative "../tasks/recur"
 require_relative "../tasks/temporal_context"
 require_relative "../tasks/temporal_parser"
@@ -12,7 +13,7 @@ module Tui
   # expectations used by Store#patch_task!. The session owns external effects.
   class TaskEditForm
     FIELD_ORDER = %i[
-      title priority deferred scheduled deadline recurrence contexts tags body
+      title priority deferred scheduled deadline recurrence lead contexts tags body
       state
     ].freeze
 
@@ -22,7 +23,7 @@ module Tui
     # store/move-level nesting path is untouched — only the form surface is gone.
     GROUPS = {
       basics: %i[title priority deferred],
-      timing: %i[scheduled deadline recurrence],
+      timing: %i[scheduled deadline recurrence lead],
       organization: %i[contexts tags],
       notes: %i[body],
       lifecycle: %i[state],
@@ -31,6 +32,7 @@ module Tui
     STATE_OPTIONS = %w[INBOX TODO NEXT WAITING DONE CANCELLED].freeze
     PRIORITY_OPTIONS = [[nil, "None"], %w[A A], %w[B B], %w[C C]].freeze
     RECURRENCE_PRESETS = %w[daily weekly monthly yearly].freeze
+    LEAD_PRESETS = %w[3d 1w 2w 1m].freeze
     DATE_SUGGESTIONS = ["today", "tomorrow 9am", "fri noon", "+3 17:30"].freeze
 
     attr_reader :form, :snapshot, :store, :today
@@ -100,6 +102,13 @@ module Tui
       when :recurrence
         raw = value.to_s.strip
         raw.empty? ? nil : Tasks::Recur.parse(raw)
+      when :lead
+        # A cleared field and a typed clearing word mean the same thing here,
+        # so both reach the store as nil: the editor has one empty state, and
+        # the confirmation prompt reads "Clear the lead time?" either way.
+        raw = value.to_s.strip
+        span = raw.empty? ? nil : Tasks::Lead.parse(raw)
+        span == :off ? nil : span
       when :contexts then normalize_tokens(value, context: true)
       when :tags then normalize_tokens(value, context: false)
       else value
@@ -194,6 +203,11 @@ module Tui
           key: :recurrence, label: "Recurrence", value: values[:recurrence],
           metadata: { presets: RECURRENCE_PRESETS },
           validate: method(:validate_recurrence),
+        ),
+        LeadInput.new(
+          key: :lead, label: "Lead time", value: values[:lead],
+          metadata: { presets: LEAD_PRESETS },
+          validate: method(:validate_lead),
         ),
         TermForm::Fields::MultiSelect.new(
           key: :contexts, label: "Contexts", value: values[:contexts],
@@ -544,6 +558,20 @@ module Tui
       end
     end
 
+    # A committed span reads as prose with its resolved date ("3 weeks before
+    # — opens 2026-10-11"); the raw canonical span is what gets edited. Same
+    # focus/dirty rule as RecurrenceInput, so the cursor never sits on
+    # characters the editor does not have.
+    class LeadInput < TermForm::Fields::Input
+      def metadata_for(value, context)
+        base = super
+        return base if context.focused_key == key || context.dirty?(key)
+
+        text = Tasks::Lead.display(value, context[:deadline] || context[:scheduled])
+        text.nil? || text == value.to_s ? base : base.merge(text: text)
+      end
+    end
+
     def temporal_field(key, label, value)
       TemporalInput.new(
         key: key, label: label, value: value,
@@ -568,6 +596,31 @@ module Tui
       result[:error]
     end
 
+    # The same five rules the store enforces, as far as this field can see them
+    # before a write (docs/plans/active/recurring-lead-time.md §5). Rules 2 and
+    # 5 stay the store's: state lives in another field the user may be editing
+    # in the same session, and the range guard needs the resolved anchor.
+    def validate_lead(value, context)
+      raw = value.to_s.strip
+      return nil if raw.empty?
+
+      deadline = context[:deadline]
+      scheduled = context[:scheduled]
+      if context.dirty?(:lead)
+        unless deadline.is_a?(Tasks::TemporalValue) || scheduled.is_a?(Tasks::TemporalValue)
+          return "Lead time needs an Available from date or deadline to hide before"
+        end
+        if deadline.is_a?(Tasks::TemporalValue) && scheduled.is_a?(Tasks::TemporalValue)
+          return "Lead time measures from the deadline — clear Available from, or the lead"
+        end
+      end
+      # The engine's own rejection names the fix (including the one that names
+      # hour leads as planned but absent); a field-level "not valid" would
+      # throw that away.
+      result = Tasks::Lead.parse_result(raw)
+      result[:error]
+    end
+
     def snapshot_values(value)
       {
         title: value.title,
@@ -576,6 +629,7 @@ module Tui
         scheduled: value.scheduled_value,
         deadline: value.deadline_value,
         recurrence: value.recurrence.to_s,
+        lead: value.lead.to_s,
         contexts: value.contexts,
         tags: value.tags,
         body: value.body,

@@ -96,6 +96,18 @@ module Tasks
       human && "#{human} before"
     end
 
+    # "3 weeks before — opens 2026-10-11", or just "3 weeks before" when there
+    # is no anchor to resolve against yet. One rendering of the field for every
+    # surface that shows a span beside the date it derives.
+    def display(span, anchor = nil)
+      human = describe(span)
+      return nil unless human
+
+      date = anchor.respond_to?(:date) ? anchor.date : anchor
+      gate = date && gate_date(date, span)
+      gate ? "#{human} — opens #{gate.iso8601}" : human
+    end
+
     # The date a lead's window opens: the anchor stepped back by the span.
     # Months and years step with Date#>>, so the clamp matches recurrence
     # intervals (1m before March 31 is February 28 in a common year). Returns

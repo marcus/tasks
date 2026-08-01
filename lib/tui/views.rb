@@ -1251,6 +1251,12 @@ module Tui
 
     def availability_date(item, availability, reader)
       return availability.scheduled if availability.is_a?(FallbackAvailability) && availability.scheduled
+      # The EFFECTIVE gate the query already resolved, which for a lead is a
+      # derived date no stamp on either task carries. Falling back to a stored
+      # `scheduled` keeps the pre-lead behavior for every other shape and for
+      # the raw-Store renderer tests.
+      gate = availability.respond_to?(:gate_date) ? availability.gate_date : nil
+      return gate if gate
       return item.scheduled if availability.availability_blocker_id == item.id
 
       reader&.respond_to?(:task_for) && reader.task_for(availability.availability_blocker_id)&.scheduled
@@ -1262,8 +1268,9 @@ module Tui
                 elsif reader&.respond_to?(:task_for)
                   reader.task_for(availability.availability_blocker_id)
                 end
-      value = blocker&.respond_to?(:scheduled_value) && blocker.scheduled_value
-      if value&.local_time
+      value = availability.respond_to?(:gate_value) && availability.gate_value
+      value ||= blocker&.respond_to?(:scheduled_value) && blocker.scheduled_value
+      if value.respond_to?(:local_time) && value.local_time
         context = reader&.respond_to?(:temporal_context) && reader.temporal_context
         projected = context ? value.projected(context) : { local: value.local_time }
         return projected.fetch(:local)

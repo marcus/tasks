@@ -1753,6 +1753,14 @@ module Tui
         snapshot = @application.edit_snapshot(item.id)
         next "task no longer exists" unless snapshot
 
+        # Rule 3: the lead already owns "hide until", so a one-off date here
+        # would fight it. `someday` (an indefinite hold) and `now` (which
+        # releases this occurrence) both stay available.
+        if value && Tasks::Lead.span?(snapshot.lead)
+          next "already hides until #{Tasks::Lead.describe(snapshot.lead)} its date — " \
+               "edit Lead time, or clear it first"
+        end
+
         changes, label = defer_until_changes(choice, value, item.title)
         command = Tasks::TaskChangeset.from(
           snapshot, changes: changes, history_label: label
@@ -1807,9 +1815,12 @@ module Tui
       blocker = task.availability_blocker_id && reader.task_for(task.availability_blocker_id)
       case task.availability_reason
       when :scheduled
-        "⏳ #{task.title} unavailable until #{TaskEditForm.format_temporal(task.scheduled_value)}"
+        # The effective gate, which for a lead is a derived date the task
+        # carries no stamp for.
+        gate = task.gate_value || task.scheduled_value
+        "⏳ #{task.title} unavailable until #{gate ? TaskEditForm.format_temporal(gate) : "its lead window"}"
       when :ancestor_scheduled
-        date = blocker&.scheduled&.iso8601 || "a parent date"
+        date = task.gate_date&.iso8601 || blocker&.scheduled&.iso8601 || "a parent date"
         "⏳ #{task.title} unavailable until #{date} via parent#{blocker ? " #{blocker.title}" : ""}"
       when :on_hold
         "⏸ on hold: #{task.title}"

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "store"
+require_relative "../tasks/lead"
 
 module Tui
   # Plain-text/markdown renderings of a task for yanking out of the TUI.
@@ -19,6 +20,7 @@ module Tui
       md << "- priority: #{item.priority}" if item.priority
       md << "- deadline: #{temporal_text(item, :deadline)}" if item.deadline
       md << "- available from: #{temporal_text(item, :scheduled)}" if item.scheduled
+      md << "- lead time: #{Tasks::Lead.display(item.lead, item.deadline || item.scheduled)}" if lead?(item)
       md << "- on hold: yes" if item.deferred?
       if item.respond_to?(:available?) && !item.available?
         reason = item.availability_reason.to_s.tr("_", " ")
@@ -36,6 +38,10 @@ module Tui
         md.concat(notes)
       end
       md.join("\n") + "\n"
+    end
+
+    def lead?(item)
+      item.respond_to?(:lead) && Tasks::Lead.span?(item.lead)
     end
 
     def temporal_text(item, field)

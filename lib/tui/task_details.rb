@@ -6,6 +6,7 @@ require_relative "theme"
 require_relative "store"
 require_relative "../tasks/delegation"
 require_relative "../tasks/links"
+require_relative "../tasks/lead"
 require_relative "../tasks/recur"
 require_relative "views"
 
@@ -40,6 +41,7 @@ module Tui
         lines << row("availability", availability_value(item, availability_blocker, today, temporal_context))
       end
       lines << row("repeats", recurrence_value(item)) if recurrence_of(item)
+      lines << row("lead time", lead_value(item)) if lead_of(item)
       lines << row("closed", item.closed.iso8601) if item.closed
       lines << row("project", T.paint(:project, project)) if project
       contexts = item.contexts
@@ -85,6 +87,22 @@ module Tui
     def recurrence_value(item)
       cookie = recurrence_of(item)
       "#{T.paint(:muted, "↻")} #{Tasks::Recur.humanize(cookie)}"
+    end
+
+    # The stored lead span, or nil when the task carries none. Guarded like the
+    # panel's other optional fields, so a leaner item shape renders without it.
+    def lead_of(item)
+      span = item.respond_to?(:lead) ? item.lead.to_s.strip : ""
+      Tasks::Lead.span?(span) ? span : nil
+    end
+
+    # The window as prose plus the date it opens — "⏳ 3 weeks before — opens
+    # 2026-10-11". The derived date is the whole point of the field, and a
+    # deadline-anchored lead task has no stored stamp that shows it.
+    def lead_value(item)
+      span = lead_of(item)
+      anchor = item.deadline || item.scheduled
+      "#{T.paint(:muted, "⏳")} #{Tasks::Lead.display(span, anchor)}"
     end
 
     # The delegation section: every field of the marker, in the record's own
@@ -149,6 +167,31 @@ module Tui
       T.paint(Views.due_slot(days), "#{date.iso8601} #{date.strftime("%a")} · #{relative}")
     end
 
+    # The EFFECTIVE gate behind an unavailable-until answer. A lead derives a
+    # date neither task carries a stamp for, so the resolved value the query
+    # already produced (TaskView#gate_value) leads; the blocker's own
+    # available-from stamp is the fallback for every other shape, and for a
+    # leaner item that carries no resolved gate.
+    def gate_value(item, blocker, today, context)
+      resolved = item.respond_to?(:gate_value) ? item.gate_value : nil
+      return temporal_gate(resolved, today, context) if resolved
+      return nil unless blocker&.scheduled
+
+      temporal_value(blocker, :scheduled, today, context)
+    end
+
+    def temporal_gate(value, today, context)
+      return date_value(value.date, today) unless value.local_time
+
+      temporal_value(GateItem.new(value), :scheduled, today, context)
+    end
+
+    # A minimal stand-in so a resolved gate renders through the same timed
+    # formatter as a stored stamp, rather than forking that formatting.
+    GateItem = Struct.new(:scheduled_value) do
+      def scheduled = scheduled_value.date
+    end
+
     def temporal_value(item, field, today, context)
       value = item.respond_to?("#{field}_value") && item.public_send("#{field}_value")
       return date_value(item.public_send(field), today) unless value&.local_time
@@ -193,10 +236,11 @@ module Tui
     def availability_value(item, blocker, today, context = nil)
       case item.availability_reason
       when :scheduled
-        "unavailable until #{temporal_value(item, :scheduled, today, context)}"
+        "unavailable until #{gate_value(item, item, today, context)}"
       when :ancestor_scheduled
         suffix = blocker ? " via parent #{blocker.title}" : " via parent"
-        blocker&.scheduled ? "unavailable until #{temporal_value(blocker, :scheduled, today, context)}#{suffix}" : "unavailable#{suffix}"
+        gate = gate_value(item, blocker, today, context)
+        gate ? "unavailable until #{gate}#{suffix}" : "unavailable#{suffix}"
       when :on_hold
         "on hold"
       when :ancestor_on_hold

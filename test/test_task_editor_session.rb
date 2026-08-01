@@ -199,13 +199,13 @@ class TestTaskEditorSession < Minitest::Test
       # The placement/location field is deliberately absent from the form; task
       # nesting is handled outside the editor (Store still accepts :location).
       assert_equal %i[
-        title priority deferred scheduled deadline recurrence contexts tags body
+        title priority deferred scheduled deadline recurrence lead contexts tags body
         state
       ], session.edit_form.field_order
       refute_includes session.edit_form.field_order, :location
       assert_equal [
         "Title", "Priority", "On hold", "Available from", "Deadline", "Recurrence",
-        "Contexts", "Tags", "Notes", "State",
+        "Lead time", "Contexts", "Tags", "Notes", "State",
       ], session.render_model.rows.map(&:label)
       assert_equal({ id: "11110002", closed: nil }, session.read_only)
 
