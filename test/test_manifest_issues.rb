@@ -324,6 +324,101 @@ class TestManifestIssues < Minitest::Test
     end
   end
 
+  # `source_paths` names the Ruby a slice ports; the behavior it must reproduce
+  # is produced by that code plus everything it requires. Watching only the
+  # former means a change to Recur::DAYS can turn a fixture red while `drift`
+  # reports nothing — which is the drift rule failing silently, the one way it
+  # must not fail.
+  def test_drift_watches_the_transitive_require_closure_not_just_source_paths
+    stdout, stderr, status = Open3.capture3(RbConfig.ruby, SCRIPT, "closure", "--json")
+    assert status.success?, stderr
+    rows = JSON.parse(stdout)["slices"].to_h { |r| [r["id"], r] }
+
+    fields = rows.fetch("check-task-fields")
+    assert_equal ["lib/tasks/check.rb"], fields["source_paths"]
+    # check.rb validates the recur cookie through Recur and the `updated` value
+    # through UpdateStamp. Neither is ported by this slice; both can break it.
+    assert_includes fields["watched"], "lib/tasks/recur.rb"
+    assert_includes fields["watched"], "lib/tasks/update_stamp.rb"
+    assert_includes fields["watched"], "lib/tasks/lead.rb"
+
+    rows.each_value do |row|
+      assert_operator row["watched"].size, :>=, row["source_paths"].size
+      assert_equal row["source_sha"], row["last_touch"],
+                   "#{row["id"]} is pinned to something other than its closure's last-touch " \
+                   "commit, so drift will fire on the next run"
+    end
+
+    # The closure is what makes coverage checkable at all: every lib/tasks file
+    # outside the HTTP API is inside some slice's closure, and the API is the
+    # honest exception (no campaign 2-4 slice ports it).
+    covered = rows.values.flat_map { |r| r["watched"] }.uniq
+    uncovered = Dir[File.expand_path("../lib/tasks/**/*.rb", __dir__)]
+                .map { |p| p.delete_prefix("#{File.expand_path("..", __dir__)}/") } - covered
+    assert_equal ["lib/tasks/api/app.rb", "lib/tasks/api/errors.rb",
+                  "lib/tasks/api/representation.rb"], uncovered.sort
+  end
+
+  # Identity is a label. Two issues carrying one identity label is not a state
+  # to resolve quietly: last-one-wins repoints every dependency edge at the
+  # newcomer and orphans the issue an agent may already have claimed, then
+  # converges and reports "nothing to do" over a permanently wrong graph.
+  def test_a_duplicate_identity_label_stops_the_sync_instead_of_stealing_the_slice
+    with_fake_td do |bin|
+      sync(bin)
+      state = JSON.parse(File.read(@state))
+      original = state["issues"].values.find { |i| i["labels"].include?("slice:tree-build") }
+      impostor = original.merge("id" => "td-dupe01", "title" => "a second tree-build")
+      state["issues"]["td-dupe01"] = impostor
+      File.write(@state, JSON.generate(state))
+      drain_log
+
+      stdout, _stderr, status = run_script(bin, "sync", "--json")
+      refute status.success?, "sync accepted two issues carrying slice:tree-build"
+      report = JSON.parse(stdout)
+      refute report["ok"]
+      assert_includes report["error"], "slice:tree-build"
+      assert_includes report["error"], original["id"]
+      assert_includes report["error"], "td-dupe01"
+      assert_empty drain_log.grep(MUTATING), "a refused sync still wrote to td"
+    end
+  end
+
+  # An edge is ours to remove if it points at an issue this script owns — a
+  # retired slice's issue included — or at an id td no longer resolves at all.
+  # Neither can ever be satisfied, and in a fleet whose ready-work query is a
+  # dependency query, an unsatisfiable edge means permanently unstartable.
+  def test_edges_to_retired_and_deleted_issues_are_removed
+    with_fake_td do |bin|
+      sync(bin)
+      state = JSON.parse(File.read(@state))
+      slice = state["issues"].values.find { |i| i["labels"].include?("slice:tree-build") }
+      # What a slice rename leaves behind: the retired issue still carries the
+      # fleet label, and a dependent still points at it.
+      state["issues"]["td-retire"] = {
+        "id" => "td-retire", "title" => "port tree-build (retired)", "type" => "task",
+        "priority" => "P2", "points" => 3, "parent_id" => "",
+        "labels" => %w[porting porting-slice slice:tree-build-old], "description" => "",
+        "acceptance" => "", "status" => "open", "dependencies" => []
+      }
+      slice["dependencies"] |= ["td-retire", "td-deleted"]
+      File.write(@state, JSON.generate(state))
+      drain_log
+
+      report = sync(bin)
+      edge = report["actions"].find { |a| a["action"] == "dep" && a["target"] == "slice tree-build" }
+      refute_nil edge, "the stale edges were not touched"
+      assert_includes edge["detail"], "-td-retire"
+      assert_includes edge["detail"], "-td-deleted", "an edge to a deleted issue was left in place"
+
+      left = state_issues.values.find { |i| i["labels"].include?("slice:tree-build") }["dependencies"]
+      refute_includes left, "td-retire"
+      refute_includes left, "td-deleted"
+      assert_includes report["actions"].map { |a| a["target"] }, "slice:tree-build-old"
+      refute_nil state_issues["td-retire"], "the retired issue was deleted rather than reported"
+    end
+  end
+
   def test_progress_is_generated_from_the_manifest
     stdout, stderr, status = Open3.capture3(RbConfig.ruby, SCRIPT, "progress", "--json")
     assert status.success?, stderr

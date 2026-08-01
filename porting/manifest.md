@@ -39,7 +39,7 @@ is one-way: change the manifest, run `porting/manifest-issues sync`.
 | `target_package` | string | Intended Go package (`internal/record`, `internal/store`, …). A hint for slicing, not a commitment; two slices may share one. |
 | `depends_on` | array of `id` | Slices that must be green first. Edges must be **true**, not merely plausible: canonical write precedes anything that mutates, parsing precedes queries. Cycles are a validation failure. |
 | `risk` | `low` \| `medium` \| `high` | PORTING.md's tier table, which decides the required evidence. Tiering *up* is allowed and must be explained in `notes`; tiering down is not. |
-| `source_paths` | array of repo paths | The Ruby this slice ports. Also the drift query's argument. |
+| `source_paths` | array of repo paths | The Ruby this slice **ports** — deliberately the narrow set. Not the drift query's argument: that is the transitive require closure of these paths (below). |
 | `source_sha` | 40-char sha | The Ruby revision this slice was characterized against. See below. |
 | `ruby_tests` | array of `path` or `path#test_name` | The existing Ruby oracle. Every entry is checked to exist by `manifest-issues validate`. Empty is only allowed when `oracle_gaps` says why. |
 | `oracle_gaps` | array of strings | What the Ruby suite does *not* prove for this slice, and what is deliberately excluded (usually because it belongs to a later campaign). A gap is a finding to act on, not a blank to leave. |
@@ -77,22 +77,47 @@ Ruby changed since a manifest entry's `source_sha`, that entry must end
 **ported**, **not applicable**, or **blocking cutover**.* Without a real sha
 that rule is decoration.
 
-**Chosen** — the last commit that touched the slice's own sources, at the moment
+### The closure, and why `source_paths` is not the drift query
+
+A slice ports the files in `source_paths`. It has to *reproduce* the behavior
+those files produce — and much of that behavior is produced by code they call.
+`check.rb` validates a recur cookie through `Recur` and an `updated` value
+through `UpdateStamp`; `task_queries.rb` requires nine modules and names one;
+`store.rb` requires nineteen. Drop `"wed"` from `Recur::DAYS` and a fixture the
+port is proved against changes its `check` outcome — while a
+`source_paths`-only drift query reports nothing at all. A drift rule with that
+hole is decoration again, in the more dangerous direction: it reads green.
+
+So drift watches the **transitive `require_relative` closure** of
+`source_paths`, computed rather than stored — a derived set copied into the
+manifest is a second thing to rot. Inspect it with:
+
+```sh
+porting/manifest-issues closure          # per slice: what is watched, and the last commit that touched it
+porting/manifest-issues closure --json
+```
+
+Only `require_relative` is followed. `require "json"` is stdlib, and a stdlib
+version bump is not what this rule is for. Coverage is checkable as a
+consequence: every file under `lib/tasks/` sits in some slice's closure except
+`lib/tasks/api/`, which no campaign 2-4 slice ports.
+
+**Chosen** — the last commit that touched the slice's **closure**, at the moment
 the slice is characterized:
 
 ```sh
-git log -1 --format=%H -- <source_paths...>
+git log -1 --format=%H -- $(porting/manifest-issues closure --json | …)
 ```
 
 Not `HEAD`: a sha that moves whenever any unrelated file changes would report
 drift on every commit, and a rule that always fires is a rule nobody reads.
-Pinning to the sources' own last-touch commit means drift fires exactly when
-*this slice's* Ruby moved.
+Pinning to the closure's own last-touch commit means drift fires exactly when
+code that produces *this slice's* behavior moved.
 
 **Checked** — `porting/manifest-issues drift` runs, per slice:
 
 ```sh
-git log --format=%H <source_sha>..HEAD -- <source_paths...>
+git log --format=%H <source_sha>..HEAD -- <closure...>
 ```
 
 Non-empty output is drift. It exits non-zero when a drifted slice is not at a
@@ -173,7 +198,19 @@ scheduler.
 Identity is a **label**, never a title: the issue for slice `format-parse` is
 whichever issue carries `slice:format-parse`. Retitle it, close it, reopen it —
 the mapping survives, because nothing about it is derived from text a human
-might edit. Epics carry `porting-campaign` plus `campaign:<n>`; slice issues
+might edit. Two issues carrying one identity label is therefore not a state to
+resolve quietly, and `sync` **refuses to run** until it is fixed by hand:
+last-one-wins would repoint every dependency edge at the newcomer and silently
+orphan the issue an agent may already have claimed, then converge and report
+"nothing to do" over a permanently wrong graph. Two concurrent syncs are enough
+to produce it.
+
+Edges are cleaned up as well as added. An edge from a slice to an issue this
+script owns — a retired slice's issue included — or to an id td no longer
+resolves at all is removed, because neither can ever be satisfied, and in a
+fleet whose ready-work query is a dependency query, an unsatisfiable edge means
+permanently unstartable. An edge to a live issue outside the fleet is a human's
+and stays. Epics carry `porting-campaign` plus `campaign:<n>`; slice issues
 carry `porting-slice`, `slice:<id>`, `risk:<tier>` and their `campaign:<n>`
 membership. Labels outside that set (a human's `flaky`) are left alone.
 

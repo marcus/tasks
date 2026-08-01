@@ -127,6 +127,43 @@ module ManifestIssues
     def slice(id) = slices.find { |s| s["id"] == id }
     def campaign(number) = campaigns.find { |c| c["campaign"] == number }
 
+    # Every repo file a slice's behavior actually runs: its `source_paths` plus
+    # everything those transitively `require_relative`. `source_paths` names the
+    # Ruby a slice *ports*, which is the smaller set on purpose — but drift has
+    # to watch the larger one, because behavior the slice must reproduce is
+    # produced by code it does not name. check.rb calls into recur.rb; drop a day
+    # from Recur::DAYS and a fixture the port is proved against changes its
+    # `check` outcome while a source_paths-only drift query reports nothing.
+    #
+    # Only require_relative is followed: `require "json"` is stdlib, and a
+    # stdlib version bump is not what the drift rule is for.
+    REQUIRE_RELATIVE = /^\s*require_relative\s+["']([^"']+)["']/
+
+    def closure(slice, root: REPO_ROOT)
+      seen = []
+      queue = Array(slice["source_paths"]).dup
+      until queue.empty?
+        path = queue.shift
+        next if seen.include?(path)
+        full = File.join(root, path)
+        next unless File.file?(full)
+        seen << path
+        File.foreach(full) do |line|
+          match = REQUIRE_RELATIVE.match(line) or next
+          target = File.expand_path(File.join(File.dirname(full), match[1]))
+          target = "#{target}.rb" unless target.end_with?(".rb")
+          next unless File.file?(target) && target.start_with?("#{root}/")
+          queue << target.delete_prefix("#{root}/")
+        end
+      end
+      seen.sort
+    end
+
+    # What `closure` adds beyond what the slice already names.
+    def transitive_only(slice, root: REPO_ROOT)
+      closure(slice, root: root) - Array(slice["source_paths"])
+    end
+
     # Every way the manifest can be wrong that a machine can see. Returns a list
     # of human-readable problems; empty means the manifest is internally
     # consistent AND every source path and oracle test it names really exists.
@@ -235,6 +272,14 @@ module ManifestIssues
     end
 
     def show(id) = run_json("show", id, "--json")
+
+    # Whether td still has this issue. A soft read: `show` on a deleted id exits
+    # non-zero, which `run` turns into an exception, and "the issue is gone" is
+    # an answer rather than a failure here.
+    def exists?(id)
+      _out, _err, status = Open3.capture3(@bin, "--work-dir", @work_dir, "show", id, "--json")
+      status.success?
+    end
 
     def dependencies(id)
       Array(run_json("dep", id, "--json")&.fetch("dependencies", nil))
@@ -473,15 +518,20 @@ module ManifestIssues
     attr_reader :actions
 
     def run(apply:)
-      epics, slices, gates = index(@td.fleet_issues)
+      fleet = @td.fleet_issues
+      epics, slices, gates = index(fleet)
       epic_ids = sync_campaigns(epics, apply: apply)
       slice_ids = sync_slices(slices, epic_ids, apply: apply)
       gate_ids = sync_gates(gates, epic_ids, apply: apply)
-      # Every gate issue td knows about, not only the ones still wanted: a gate
-      # whose gap has closed must have its edge removed, and that means the edge
-      # remover has to recognise it as ours.
-      known_gates = (gate_ids.values + gates.values.map { |i| i["id"] }).compact.uniq
-      sync_dependencies(slice_ids, gate_ids, known_gates, apply: apply)
+      # Every issue this script has ever been responsible for, not only the ones
+      # the manifest still wants. An edge is ours to remove if it points at a
+      # porting issue — including a retired slice's issue and a gate whose gap
+      # has closed. Without that, a slice rename leaves its dependents wired to
+      # both the old issue and the new one, and in a fleet whose ready-work
+      # query is a dependency query, "depends on a retired issue nobody will
+      # ever close" means permanently unstartable.
+      fleet_ids = fleet.map { |i| i["id"] }.compact
+      sync_dependencies(slice_ids, gate_ids, fleet_ids, apply: apply)
       report_orphans(epics, slices, gates)
       @actions
     end
@@ -496,18 +546,34 @@ module ManifestIssues
       epics = {}
       slices = {}
       gates = {}
+      collisions = []
       issues.each do |issue|
         labels = Array(issue["labels"])
-        if labels.include?(CAMPAIGN_LABEL)
-          key = labels.find { |l| l.start_with?("campaign:") }
-          epics[key] = issue if key
-        elsif labels.include?(SLICE_LABEL)
-          key = labels.find { |l| l.start_with?("slice:") }
-          slices[key] = issue if key
-        elsif labels.include?(GATE_LABEL)
-          key = labels.find { |l| l.start_with?("fixture-gate:") }
-          gates[key] = issue if key
-        end
+        index, key = if labels.include?(CAMPAIGN_LABEL)
+                       [epics, labels.find { |l| l.start_with?("campaign:") }]
+                     elsif labels.include?(SLICE_LABEL)
+                       [slices, labels.find { |l| l.start_with?("slice:") }]
+                     elsif labels.include?(GATE_LABEL)
+                       [gates, labels.find { |l| l.start_with?("fixture-gate:") }]
+                     end
+        next unless key
+        # Identity is a label, so two issues carrying one identity label is not
+        # a thing to resolve quietly. Last-one-wins would repoint every
+        # dependency edge at the newcomer and silently orphan the issue an agent
+        # may already have claimed — and then converge, reporting "nothing to
+        # do" forever over a permanently wrong graph. Two concurrent syncs are
+        # enough to produce it. Refuse instead.
+        collisions << [key, index[key]["id"], issue["id"]] if index.key?(key)
+        index[key] = issue
+      end
+
+      unless collisions.empty?
+        detail = collisions.map { |key, first, second| "#{key} on #{first} and #{second}" }
+        raise Error, "duplicate identity label(s) in td — refusing to sync, because a " \
+                     "dependency edge would be repointed at one of them and the other " \
+                     "silently orphaned:\n  #{detail.join("\n  ")}\n" \
+                     "Fix by removing the label from whichever issue is not the real one " \
+                     "(td update <id> --labels ...); nothing here is safe to guess."
       end
       [epics, slices, gates]
     end
@@ -589,7 +655,7 @@ module ManifestIssues
 
     def normalize(text) = text.to_s.gsub(/\r\n?/, "\n").strip
 
-    def sync_dependencies(slice_ids, gate_ids, known_gates, apply:)
+    def sync_dependencies(slice_ids, gate_ids, fleet_ids, apply:)
       @manifest.slices.each do |slice|
         id = slice_ids[slice["id"]]
         wanted = (Array(slice["depends_on"]).filter_map { |d| slice_ids[d] } +
@@ -606,10 +672,14 @@ module ManifestIssues
         end
         current = @td.dependencies(id).uniq.sort
         add = wanted - current
-        # Only edges to slices and to fixture gates are ours to remove; a
-        # human-added edge to an unrelated issue stays.
-        ours = slice_ids.values.compact + known_gates
-        remove = (current & ours) - wanted
+        # Ours to remove: any edge to an issue this script owns (fleet-labelled,
+        # so retired slices and closed gaps included), plus any edge to an id td
+        # no longer resolves at all — a deleted issue can never be satisfied, so
+        # leaving the edge would strand every dependent. A human-added edge to a
+        # live issue outside the fleet stays.
+        ours = (slice_ids.values.compact + gate_ids.values.compact + fleet_ids).uniq
+        dangling = (current - ours - wanted).reject { |d| @td.exists?(d) }
+        remove = ((current & ours) - wanted) + dangling
         # A dry run has no id for a gate it would create, so the gating edge is
         # named rather than numbered. Without this the plan would under-report
         # what the real run does, which is the one thing a dry run may not do.
@@ -657,7 +727,7 @@ module ManifestIssues
     def run(argv)
       options = { json: false, dry_run: false }
       parser = OptionParser.new do |o|
-        o.banner = "usage: porting/manifest-issues <plan|sync|progress|validate|drift> [--json] [--dry-run]"
+        o.banner = "usage: porting/manifest-issues <plan|sync|progress|validate|drift|closure> [--json] [--dry-run]"
         o.on("--json", "machine-readable output") { options[:json] = true }
         o.on("--dry-run", "with sync: plan only, write nothing") { options[:dry_run] = true }
         o.on("-h", "--help") { puts o; exit 0 }
@@ -677,6 +747,7 @@ module ManifestIssues
       when "progress" then progress(manifest, options)
       when "validate" then validate(manifest, options)
       when "drift"    then drift(manifest, options)
+      when "closure"  then closure(manifest, options)
       else
         warn "unknown command: #{command}"
         warn parser.banner
@@ -761,19 +832,55 @@ module ManifestIssues
       problems.empty? ? 0 : 1
     end
 
+    # What drift actually watches per slice, and the last commit that touched
+    # it — which is the sha a not-yet-characterized slice should be pinned to.
+    # Printed rather than stored: a derived set that rots in the manifest is
+    # worse than one computed on demand.
+    def closure(manifest, options)
+      rows = manifest.slices.map do |slice|
+        watched = manifest.closure(slice)
+        last, _err, _status = Open3.capture3(
+          "git", "-C", REPO_ROOT, "log", "-1", "--format=%H", "--", *watched
+        )
+        { "id" => slice["id"], "source_paths" => Array(slice["source_paths"]),
+          "transitive" => manifest.transitive_only(slice), "watched" => watched,
+          "source_sha" => slice["source_sha"], "last_touch" => last.strip }
+      end
+
+      if options[:json]
+        puts JSON.pretty_generate({ "ok" => true, "slices" => rows })
+      else
+        rows.each do |row|
+          mark = row["source_sha"] == row["last_touch"] ? " " : "!"
+          puts "#{mark} #{row["id"]}  #{row["watched"].size} file(s) watched " \
+               "(#{row["source_paths"].size} ported + #{row["transitive"].size} transitive)"
+          row["transitive"].each { |p| puts "      + #{p}" }
+        end
+        stale = rows.count { |r| r["source_sha"] != r["last_touch"] }
+        puts
+        puts "#{stale} slice(s) pinned to something other than their closure's last-touch commit"
+      end
+      0
+    end
+
     # PORTING.md's drift rule, made executable: a slice whose source moved past
     # its source_sha must be at a terminal status, or it is an open question.
     def drift(manifest, options)
       drifted = manifest.slices.filter_map do |slice|
+        # The transitive closure, not just source_paths: a slice is drifted when
+        # any code that produces its behavior moved, including code it calls
+        # rather than ports.
+        watched = manifest.closure(slice)
         commits, _err, status = Open3.capture3(
           "git", "-C", REPO_ROOT, "log", "--format=%H", "#{slice["source_sha"]}..HEAD",
-          "--", *Array(slice["source_paths"])
+          "--", *watched
         )
         next unless status.success?
         shas = commits.split("\n")
         next if shas.empty?
         { "id" => slice["id"], "source_sha" => slice["source_sha"], "status" => slice["status"],
-          "commits_since" => shas, "resolved" => TERMINAL_STATUSES.include?(slice["status"]) }
+          "watched" => watched, "commits_since" => shas,
+          "resolved" => TERMINAL_STATUSES.include?(slice["status"]) }
       end
       unresolved = drifted.reject { |d| d["resolved"] }
 
