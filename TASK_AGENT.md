@@ -44,7 +44,8 @@ back a bad one.
   optional `priority` A|B|C, `title`, `tags` (array, includes `@contexts` and
   the internal `defer` On Hold marker), `scheduled`/`deadline`/`closed` dates
   (`"YYYY-MM-DD"`) with optional `scheduled_time`/`deadline_time` metadata,
-  `recur` schedule (interval cookie or calendar schedule),
+  `recur` schedule (interval cookie or calendar schedule), an optional `lead`
+  window (hide until a span before the task's date),
   optional `delegation` object (who holds the next action —
   see [Delegation](#delegation-handing-work-to-a-person-or-an-agent)),
   `body` notes. `scheduled` is the available-from/start value;
@@ -101,7 +102,7 @@ task merely because it also contains task text.
                       rolls its date forward and stays open, and does not cascade)
   - add a task:       `bin/tasks capture "<text>"` (flags: --due/--scheduled/
                       --priority/--tag/--context/--no-host-context/--state/
-                      --project/--under/--recur/--note)
+                      --project/--under/--recur/--lead/--note)
   - propose a task:   `bin/tasks propose "<text>"` (same filing/metadata flags
                       as capture except state/recurrence; repeat `--note` for
                       concise rationale or evidence)
@@ -131,6 +132,9 @@ task merely because it also contains task text.
   - reorder a subtree:`bin/tasks move "<ref>" --before "<sibling-ref>"`  (infers the sibling's parent)
   - place a subtree:  `bin/tasks move "<ref>" --under "<parent-ref>" --before "<sibling-ref>"`
   - place in section: `bin/tasks move "<ref>" "<Section>" --before "<sibling-ref>"`
+  - hide it early:    `bin/tasks lead "<ref>" 3w`  (hide until 3 weeks before
+                      its deadline, else its Available from date; `off` clears)
+  - preview a window: `bin/tasks lead "<ref>"`  (span + the date it opens)
   - make it recur:    `bin/tasks recur "<ref>" weekly`  (intervals: 2w/.+1m/…;
                       calendar: "every mon,wed"/m:15/"last friday"/"every july 4";
                       "off" clears)
@@ -169,6 +173,21 @@ task merely because it also contains task text.
   `deadline`. Requests saying "someday", "maybe", "on hold", or
   "indefinitely" use `bin/tasks someday "TASK"` instead. A plain `schedule`
   changes only the available-from date; use `defer` when the user asks to defer.
+- Three different ways to hide a task, and they are not interchangeable:
+  - **Lead time** (`bin/tasks lead "TASK" 3w`) — "hide it until N before it's
+    due", "don't show it until a week out", "give me a week of runway". It is a
+    standing window measured from the task's own date, so it keeps working every
+    time a recurring task rolls. Anchored on the `deadline` if the task has one,
+    otherwise the available-from date.
+  - **Timed defer** (`bin/tasks defer "TASK" fri`) — one specific date, this
+    once. It writes the available-from value and a recurrence roll does not
+    maintain it.
+  - **Someday** (`bin/tasks someday "TASK"`) — an indefinite hold with no
+    release date, for "someday", "maybe", "on hold", "not now".
+  A lead-gated task refuses a timed defer (the lead already owns "hide until") —
+  change the window, or clear it with `lead "TASK" off`. `bin/tasks activate`
+  on a lead task releases only the current occurrence; the window returns for
+  the next one.
 - Quadrants (`bin/tasks quadrants`) are computed, not stored: **important** =
   priority `A`/`B` or the `important` tag; **urgent** = a `deadline` within a few
   days or the `urgent` tag. To make something "urgent"/"important", prefer setting

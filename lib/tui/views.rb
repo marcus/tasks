@@ -7,6 +7,7 @@ require_relative "ansi"
 require_relative "theme"
 require_relative "store"
 require_relative "../tasks/delegation"
+require_relative "../tasks/lead"
 require_relative "../tasks/quadrants"
 
 module Tui
@@ -1232,14 +1233,23 @@ module Tui
         )
       end
 
-      timed = candidates.select { |candidate| candidate.scheduled && candidate.scheduled > today }
-                        .max_by(&:scheduled)
+      # Date-grained twin of TaskQueries#effective_gate: a lead REPLACES the
+      # candidate's available-from date, and a released occurrence (lead_skip
+      # stamped with the current anchor) has no own gate at all. The canonical
+      # instant-grained answer stays the query's; this one only has to agree
+      # about which rows are hidden.
+      gated = candidates.filter_map do |candidate|
+        gate = fallback_gate_date(candidate)
+        [candidate, gate] if gate && gate > today
+      end
+      timed = gated.max_by { |_candidate, gate| gate }
       if timed
+        blocker, gate = timed
         return FallbackAvailability.new(
           available: false,
-          availability_reason: timed.id == item.id ? :scheduled : :ancestor_scheduled,
-          availability_blocker_id: timed.id,
-          scheduled: timed.scheduled
+          availability_reason: blocker.id == item.id ? :scheduled : :ancestor_scheduled,
+          availability_blocker_id: blocker.id,
+          scheduled: gate
         )
       end
 
@@ -1247,6 +1257,15 @@ module Tui
         available: true, availability_reason: :available,
         availability_blocker_id: nil, scheduled: nil
       )
+    end
+
+    def fallback_gate_date(candidate)
+      anchor = candidate.respond_to?(:lead_anchor) ? candidate.lead_anchor : candidate.scheduled
+      return candidate.scheduled unless anchor
+      return nil if candidate.respond_to?(:lead_skip) && candidate.lead_skip == anchor.iso8601
+      return candidate.scheduled unless candidate.respond_to?(:lead_time?) && candidate.lead_time?
+
+      Tasks::Lead.gate_date(anchor, candidate.lead)
     end
 
     def availability_date(item, availability, reader)

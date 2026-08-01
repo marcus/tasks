@@ -79,6 +79,7 @@ Comparing `tasks` against traditional task managers across both classic GTD capa
 | **Offline-First & Fast Boot** | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Deep Link & URL Integration** | ✅ | ✅ | ✅ | ✅ | ⚠️ |
 | **Advanced Recurring Task Rules** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Lead Time (hide until N before due, survives a recurrence roll)** | ✅ | ⚠️ (manual) | ✅ (Defer) | ⚠️ | ❌ |
 | **Multi-Device Synchronization** | ✅ (Git driver) | ⚠️ (Manual Git) | ✅ (OmniSync) | ✅ (Things Cloud) | ⚠️ (Taskserver) |
 
 ### Agentic & Modern Developer Features
@@ -162,6 +163,21 @@ tasks -p "defer the Fox task four days"
 tasks -p --provider hermes "capture: renew passport"
 ```
 
+### Lead Time (`tasks lead`)
+
+Hide a dated task until a set span before its own date, and keep that window as
+a recurrence rolls forward:
+
+```sh
+tasks capture "Renew the passport" --due 2026-11-01 --lead 3w   # hidden until 10-11
+tasks lead 4f2a "a week"        # phrases work; off clears
+tasks lead 4f2a                 # read-only: the span and the date it opens
+```
+
+The anchor is the task's deadline if it has one, else its available-from date.
+Unlike a one-off `defer`, the window re-arms every time `done` rolls a recurring
+task; unlike `someday`, it releases itself.
+
 ### Inert Proposals (`tasks propose`)
 
 Agents can suggest changes without committing them. `tasks propose` creates a `PROPOSED` task that remains hidden from active work views until you approve or reject it:
@@ -208,6 +224,7 @@ h / l      collapse / expand selected subtree
 > / <      indent / outdent subtree (Outline view)
 return     open task detail panel; e edits in place
 c d r      complete · reschedule deadline · recur (weekly, 2w, every mon,wed, m:15, off)
+e          edit in place — the Lead time field hides a task until N before its date
 z Z J K    defer (date/time/someday/now) · show unavailable · lower / raise priority
 /          live text filter (enter commits, esc clears)
 u ctrl-r   undo / redo via shared journal

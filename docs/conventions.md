@@ -42,7 +42,7 @@ One record per line. Records serialize with a fixed key order (nil/empty fields
 are omitted), so a single field change is a one-line diff:
 
 ```
-type id parent state priority title tags scheduled scheduled_time deadline deadline_time recur delegation closed archived body
+type id parent state priority title tags scheduled scheduled_time deadline deadline_time recur lead lead_skip delegation closed archived body
 ```
 
 ```json
@@ -93,6 +93,13 @@ type id parent state priority title tags scheduled scheduled_time deadline deadl
 - **`recur`** — a recurrence schedule on a dated task, in one canonical
   spelling: an org-style interval cookie (`.+1w`, `++1m`, `+2d`) or a calendar
   schedule (`w:mon,wed`, `m:15`, `y:07-04`). See [Recurrence](#recurrence).
+- **`lead`** — an optional lead-time window on a dated task: a positive count
+  and a calendar unit (`3w`, `2d`, `1m`, `10y`). The task is hidden until that
+  span before its anchor. See [Lead time](#lead-time).
+- **`lead_skip`** — internal bookkeeping: the anchor date whose occurrence
+  `activate` already released early. Written only by activation, retired by any
+  anchor edit or recurrence roll, and never typed by a user or exposed on the
+  HTTP wire.
 - **`delegation`** — optional object naming who holds the next action; absent
   means not delegated. See [Delegation](#delegation).
 - **`body`** — free-text notes as a single `\n`-joined string; omitted when
@@ -182,6 +189,26 @@ identically; writes accept friendly intervals and natural calendar phrases too.
 Completing a recurring task rolls its date forward and **leaves it open** (no
 `closed`), appending a `- Did [date].` line to the body. See `docs/cli-spec.md`
 for the full grammar, input forms, and edge-date rules.
+
+## Lead time
+
+A dated task can carry a `lead` span saying how long before its occurrence date
+it should become visible. The **anchor** is the task's `deadline` if it has one,
+otherwise its `scheduled` date — the same precedence a recurrence roll uses — and
+the window opens at local midnight of `anchor - lead`.
+
+A lead **replaces** the task's own available-from gate rather than joining it, so
+a lead never sits beside a separate `scheduled` date on a deadline-anchored task;
+that shape is refused at write time. (The `deadline` + `scheduled` pair, whose
+offset a recurrence roll preserves, remains the way to express a runway that must
+move with the occurrence *and* stay separately visible.)
+
+Nothing else about availability changes: a lead-gated task is timed-unavailable
+like any deferred task, reports `availability_reason: "scheduled"`, and an own or
+inherited indefinite hold still outranks it. An ancestor's lead gates its whole
+subtree. `activate` releases exactly one occurrence by stamping `lead_skip` with
+the current anchor; the next roll or anchor edit retires the stamp and the window
+comes back. See `docs/cli-spec.md` for the input forms and the refusal rules.
 
 ## Delegation
 

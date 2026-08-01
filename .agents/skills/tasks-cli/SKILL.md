@@ -74,6 +74,7 @@ bin/tasks move "<ref>" --under "<ref>"  # nest the subtree below another task
 bin/tasks move "<ref>" --top         # unnest the subtree back to the section level
 bin/tasks move "<ref>" --before "<ref>" # reorder before a sibling (infers its parent)
 bin/tasks move "<ref>" --under "<parent>" --before "<sibling>" # reparent at an exact slot
+bin/tasks lead "<ref>" 3w             # hide until 3w before its date; "off" clears
 bin/tasks recur "<ref>" weekly       # repeat on done: weekly/2w/.+1m; "off" clears
 bin/tasks defer "<ref>" +4           # hide until available four days from today
 bin/tasks someday "<ref>"            # hold indefinitely (someday/maybe/on hold)
@@ -141,6 +142,38 @@ what the user means. `activate` removes the own hold and clears an own future
 available-from date. An unavailable ancestor can still block the task. Review
 all effective unavailability with `list --unavailable` (`--deferred` alias), or
 only tasks carrying their own On Hold marker with `list --someday`.
+
+**Lead time** hides a dated task until a set span **before its own date**, and
+keeps that window as a recurrence rolls:
+
+```sh
+bin/tasks lead "<ref>" 3w         # hide until 3 weeks before its date
+bin/tasks lead "<ref>" "a week"   # phrases work: 3 weeks / a week / 10 days
+bin/tasks lead "<ref>" off        # clear the window
+bin/tasks lead "<ref>"            # read-only: the span + the date it opens
+bin/tasks capture "Renew passport" --due 2026-11-01 --lead 3w
+```
+
+The **anchor** is the task's `deadline` if it has one, else its available-from
+date. The window opens at `anchor - lead` and the task is timed-unavailable
+until then — it shows up in `list --unavailable` and the TUI reveal toggle like
+any deferred task, and an ancestor's lead gates its whole subtree.
+
+**Pick the right tool.** "Hide it until N before it's due" / "give me a week of
+runway" is a **lead** — a standing window that survives every recurrence roll.
+"Hide it until Friday" (this once) is a **timed defer** (`defer "<ref>" fri`).
+"Someday / maybe / on hold" with no release date is `someday "<ref>"`.
+
+Refused at write time, each naming the fix: a lead needs a date to hide before;
+proposed and closed tasks take no lead (clearing is always allowed); a lead may
+not sit beside a *separate* available-from date, so `defer <date>` and
+`schedule` against a deadline-anchored lead task are refused; the span must be a
+whole count of `d`/`w`/`m`/`y` (an hour span like `5h` is refused by name — it
+is planned, not supported); and the derived date must stay in four-digit years.
+
+`activate "<ref>"` on a lead task releases **this occurrence only** and keeps
+every date; the next `done` roll re-arms the window. (That same mechanism is why
+activating a recurring task no longer deletes its next occurrence date.)
 
 Recurrence is a `recur` cookie alongside the task's date (`.+1w`, `++1m`, `+2d`).
 `recur "<ref>" weekly` (or `2w`, `.+1m`, `every 3 days`) sets it; `off` clears it.
