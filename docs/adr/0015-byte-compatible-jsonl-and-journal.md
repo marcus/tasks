@@ -41,12 +41,18 @@ lints clean and exits 0. A port must match that lenient `check` *and* still
 emit canonical order on write. Byte compatibility therefore cannot be verified
 by running `check` on Go output; it is a `porting/compare/files` obligation.
 
-**`Tasks::Atomic` has no direct unit test.** No file under `test/` references it
-except `test_schema_v2.rb` and `test_journal.rb`, both indirectly. Symlink
-following, permission carry-over, and directory `fsync` are therefore unproven
-in Ruby. The `store-canonical-write` manifest entry records this as an oracle
-gap whose first step is writing new characterization cases — before any Go is
-written, not as an optional extra.
+**`Tasks::Atomic` is well covered except where it matters most.**
+`test/test_journal.rb:25-100` holds seven direct `Atomic.write` tests: the temp
+sibling, the inode-swapping rename, permission carry-over, symlink and
+dangling-symlink following, and a chmod-refusing filesystem. Those are a usable
+oracle and the port should be held to them.
+
+What is genuinely unproven is **durability**: no test under `test/` references
+`fsync` at all, so neither the file `fsync` nor the directory `fsync` that makes
+a rename survive power loss is characterized. That is the narrow gap the
+`store-canonical-write` manifest entry should record — writing a durability
+characterization case before any Go is written, not a blanket claim that the
+whole of `Atomic` is untested.
 
 **The journal index records the store's canonical absolute path.** The `org`
 field inside `index.json` is a real guard: a journal whose `org` does not match
@@ -127,11 +133,13 @@ is what the `store-canonical-write` slice must surface — deliberately early,
 rather than at cutover. If it cannot, ADR-0020's data-format stop condition is
 what that finding trips.
 
-**What `Tasks::Atomic` actually does.** Symlink following, permission
-carry-over, and directory `fsync` will be *defined* by the characterization
-cases that slice writes. Until they exist, no ADR can assert the contract; it
-can only require that the contract be captured from Ruby before Go is written,
-and never blessed from Go output.
+**Whether `Tasks::Atomic`'s durability contract can be matched.** Symlink
+following, permission carry-over, and the rename semantics are already
+characterized by `test/test_journal.rb:25-100` and are a contract Go must meet.
+The `fsync` behavior is not characterized at all, so it will be *defined* by the
+durability case that slice writes. Until it exists, no ADR can assert that half
+of the contract; it can only require that it be captured from Ruby before Go is
+written, and never blessed from Go output.
 
 ## Consequences
 
