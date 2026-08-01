@@ -40,7 +40,8 @@ class TestCliLead < Minitest::Test
 
       unavailable, = run.call("list", "--unavailable")
       assert_match(/Renew the license/, unavailable)
-      assert_match(/unavailable until 2026-10-11/, unavailable)
+      # The review shows the derived date AND the intent behind it.
+      assert_match(%r{unavailable until 2026-10-11 · 3w before 11/1}, unavailable)
     end
 
     in_sandbox(today: "2026-10-11") do |_org, run|
@@ -78,7 +79,7 @@ class TestCliLead < Minitest::Test
     in_sandbox(today: "2026-07-01") do |org, run|
       out, _err, status = run.call("lead", "passport", "3w")
       assert status.success?
-      assert_match(/hide "Renew the passport" until 3 weeks before its deadline/, out)
+      assert_match(/lead time 3w on "Renew the passport" \(3w before 2026-11-01\)/, out)
       assert_match(/unavailable until 2026-10-11/, out)
       assert_equal "3w", record_for(org, title: "Renew the passport")["lead"]
       assert Tasks::Check.check(org).ok?
@@ -119,7 +120,7 @@ class TestCliLead < Minitest::Test
     in_sandbox(today: "2026-07-01") do |org, run|
       out, _err, status = run.call("lead", "passport", "3w", "--dry-run")
       assert status.success?
-      assert_match(/would hide/, out)
+      assert_match(/would lead time 3w/, out)
       assert_match(/unavailable until 2026-10-11/, out)
       refute record_for(org, title: "Renew the passport").key?("lead")
     end
@@ -167,12 +168,23 @@ class TestCliLead < Minitest::Test
     end
   end
 
-  def test_rule_two_refuses_a_closed_task
-    in_sandbox(today: "2026-07-01") do |_org, run|
-      run.call("done", "passport")
-      out, err, status = run.call("lead", "passport", "3w", "--include-done")
-      refute status.success?
-      assert_match(/reopen it first/, out + err)
+  # A lead rides with the dates, so `propose --lead` works on the same terms as
+  # `propose --due` — the contract's wording, and the reason there is no
+  # state rule.
+  def test_a_proposal_can_carry_a_lead
+    in_sandbox(today: "2026-07-01") do |org, run|
+      out, err, status = run.call("propose", "Maybe renew the lease", "--due", "2026-11-01",
+                                  "--lead", "3w", "--project", "Work")
+      assert status.success?, out + err
+      record = record_for(org, title: "Maybe renew the lease")
+      assert_equal "PROPOSED", record["state"]
+      assert_equal "3w", record["lead"]
+      assert Tasks::Check.check(org).ok?
+
+      # …and `lead` resolves it, like the other fields a proposal carries.
+      preview, _preview_err, preview_status = run.call("lead", "renew the lease")
+      assert preview_status.success?, preview
+      assert_match(/opens 2026-10-11/, preview)
     end
   end
 
@@ -217,15 +229,62 @@ class TestCliLead < Minitest::Test
     end
   end
 
-  def test_capture_refuses_a_lead_with_no_date_and_a_proposal_lead
+  def test_capture_refuses_a_lead_with_no_date_to_hide_before
     in_sandbox(today: "2026-07-01") do |_org, run|
       _out, err, status = run.call("capture", "No date", "--lead", "3w", "--project", "Work")
       refute status.success?
       assert_match(/needs a date to hide before/, err)
 
+      # …including on a proposal, where the refusal is about the missing date,
+      # not about the state.
       _p_out, p_err, p_status = run.call("propose", "Idea", "--lead", "3w", "--project", "Work")
       refute p_status.success?
-      assert_match(/proposals cannot carry a lead time/, p_err)
+      assert_match(/needs a date to hide before/, p_err)
+    end
+  end
+
+  # The contract's two motivating captures, verbatim.
+  def test_the_contracts_motivating_captures_work_exactly
+    in_sandbox(today: "2026-06-01") do |_org, run|
+      out, err, status = run.call("capture", "water succulents", "--recur", "2w:sun",
+                                  "--lead", "1d", "--scheduled", "2026-06-07",
+                                  "--state", "NEXT", "--project", "Work")
+      assert status.success?, out + err
+      refute_match(/water succulents/, run.call("list").first, "hidden two days out")
+    end
+
+    in_sandbox(today: "2026-01-05") do |_org, run|
+      out, err, status = run.call("capture", "clean gutters", "--recur", "y:06-01",
+                                  "--lead", "17d", "--due", "2026-06-01",
+                                  "--state", "NEXT", "--project", "Work")
+      assert status.success?, out + err
+      preview, = run.call("lead", "clean gutters")
+      assert_match(/opens 2026-05-15/, preview, "17 days before June 1")
+    end
+  end
+
+  # Rule 5: a lead is an intent about a date and cannot outlive the last one.
+  def test_clearing_the_last_date_clears_the_lead
+    in_sandbox(today: "2026-07-01") do |org, run|
+      run.call("lead", "passport", "3w")
+      out, err, status = run.call("undate", "passport")
+      assert status.success?, out + err
+      record = record_for(org, title: "Renew the passport")
+      refute record.key?("lead")
+      refute record.key?("deadline")
+      assert Tasks::Check.check(org).ok?
+    end
+  end
+
+  # Rule 3 lands in the store for `schedule`, so the CLI has to surface the
+  # store's own sentence rather than a generic "failed to set scheduled".
+  def test_schedule_against_a_deadline_anchored_lead_task_reports_the_rule
+    in_sandbox(today: "2026-07-01") do |_org, run|
+      run.call("lead", "passport", "3w")
+      out, err, status = run.call("schedule", "passport", "2026-10-01")
+      refute status.success?
+      assert_match(/second, ignored gate/, out + err)
+      refute_match(/failed to set/, out + err)
     end
   end
 

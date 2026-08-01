@@ -289,8 +289,24 @@ module Tasks
     # name — without a date stamp it can only be stale. Both guard the type
     # first: Check must report bad data, never crash on it.
     def check_lead(r, line, errors)
-      if (lead = r["lead"]) && !(lead.is_a?(String) && lead == lead.strip && Lead.span?(lead))
-        errors << [line, "invalid lead #{lead.inspect} (expected a span like 3w, 2d, 1m, 1y)"]
+      if (lead = r["lead"])
+        if lead.is_a?(String) && lead == lead.strip && Lead.span?(lead)
+          # The two shapes a lead cannot mean anything in: nothing to measure
+          # back from, and two dates that already express their own window (so
+          # the lead would be a second, silently ignored gate). Both are refused
+          # at write time; a hand edit or a foreign writer can still produce
+          # them, and a linter that stayed silent would leave a task hidden by
+          # a rule no surface can explain.
+          unless r["scheduled"] || r["deadline"]
+            errors << [line, "lead #{lead.inspect} with no scheduled date or deadline to hide before"]
+          end
+          if r["scheduled"] && r["deadline"]
+            errors << [line, "lead #{lead.inspect} beside both a scheduled date and a deadline " \
+                             "(the two dates already express that window)"]
+          end
+        else
+          errors << [line, "invalid lead #{lead.inspect} (expected a span like 3w, 2d, 1m, 1y, 5h)"]
+        end
       end
       return unless r["lead_skip"]
 

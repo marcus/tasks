@@ -1363,9 +1363,6 @@ module Tasks
         # §5). A create that would need an immediate repair is a create that
         # should have been refused.
         anchor = Lead.anchor_date(deadline&.date, scheduled&.date)
-        if (CLOSED_STATES + PROPOSED_STATES).include?(state)
-          errors[:lead] << "can't set a lead time on a #{state} task"
-        end
         if anchor.nil?
           errors[:lead] << "a lead time needs a date to hide before — " \
                            "add a deadline or an available-from date first"
@@ -2356,7 +2353,7 @@ module Tasks
       else
         rec.delete(key)
         rec.delete("#{key}_time")
-        rec.delete("recur") unless rec["scheduled"] || rec["deadline"]
+        clear_dateless_intent(rec)
       end
       clear_lead_skip(rec)
       patch_ok(rec)
@@ -2377,9 +2374,20 @@ module Tasks
         rec.delete(field.to_s)
         rec.delete("#{field}_time")
       end
-      rec.delete("recur") unless rec["scheduled"] || rec["deadline"]
+      clear_dateless_intent(rec)
       clear_lead_skip(rec)
       patch_ok(rec)
+    end
+
+    # A recurrence and a lead time are both intents ABOUT a date, so neither can
+    # outlive the last one. Clearing the final anchor retires them in the same
+    # changeset — one undo step, and never a stored value with nothing to
+    # measure from (which Check would then have to report).
+    def clear_dateless_intent(rec)
+      return if rec["scheduled"] || rec["deadline"]
+
+      rec.delete("recur")
+      rec.delete("lead")
     end
 
     # Attach, replace, or clear the lead-time window. The five rules the plan
@@ -2400,14 +2408,10 @@ module Tasks
       unless Lead.span?(value)
         return patch_invalid("invalid lead time #{value.inspect} (expected a span like 3w, 2d, 1m, 1y)")
       end
-      # Rule 2: accepted, open tasks only.
-      if PROPOSED_STATES.include?(rec["state"])
-        return patch_invalid("can't set a lead time on a PROPOSED task")
-      end
-      if CLOSED_STATES.include?(rec["state"])
-        return patch_invalid("can't set a lead time on a #{rec["state"]} task — reopen it first")
-      end
-      # Rule 1: a lead needs an anchor to measure back from.
+      # Rule 1: a lead needs an anchor to measure back from. There is
+      # deliberately no state rule here — a lead is an intent about a date, and
+      # it is accepted wherever the date fields themselves are (a proposal
+      # included), unlike recurrence, which `done` has to be able to roll.
       anchor = Lead.anchor_date(to_date(rec["deadline"]), to_date(rec["scheduled"]))
       unless anchor
         return patch_invalid("a lead time needs a date to hide before — " \

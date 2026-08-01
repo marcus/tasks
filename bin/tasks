@@ -241,7 +241,7 @@ def cmd_inbox(args = [])
 end
 
 CAPTURE_USAGE = %(usage: tasks capture "text" [--due d] [--scheduled d] [--priority A|B|C] [--tag t] [--context @x] [--no-host-context] [--state STATE] [--project "Heading" | --under <ref>] [--note "text"])
-PROPOSE_USAGE = %(usage: tasks propose "text" [--due d] [--scheduled d] [--priority A|B|C] [--tag t] [--context @x] [--no-host-context] [--project "Heading" | --under <ref>] [--note "rationale"])
+PROPOSE_USAGE = %(usage: tasks propose "text" [--due d] [--scheduled d] [--lead span] [--priority A|B|C] [--tag t] [--context @x] [--no-host-context] [--project "Heading" | --under <ref>] [--note "rationale"])
 
 def cmd_capture(args, proposed: false)
   context = temporal_context
@@ -292,7 +292,6 @@ def cmd_capture(args, proposed: false)
   abort "can't combine --under and --project\n#{usage}" if under && project
   abort "propose owns state PROPOSED" if proposed && state
   abort "proposals cannot recur" if proposed && recur
-  abort "proposals cannot carry a lead time" if proposed && lead
   abort "due temporal modifiers require --due" if !due && (due_timezone || due_floating || due_fold)
   abort "scheduled temporal modifiers require --scheduled" if !scheduled && (scheduled_timezone || scheduled_floating || scheduled_fold)
   abort "--due-timezone and --due-floating are mutually exclusive" if due_timezone && due_floating
@@ -1160,6 +1159,9 @@ def cmd_set_date(args, kind:, usage:)
   result = patch_task_by_id(task_id, field: kind, value: date,
                             label: "#{key.downcase} → #{temporal_label(date)}: #{item.title}",
                             today: today, context: cli_operation_context(context))
+  # A refusal here names a rule (a lead's single timed gate, say); its own
+  # sentence is the only thing that tells the user what to do instead.
+  mutation_failed(result.errors.first) if result.invalid? && !result.errors.empty?
   mutation_result_failed(result, "failed to set #{key.downcase}")
   report_touched(result_touched_ids(result, fallback: task_id), json: flags["--json"],
                  today: today, read_snapshot: result.read_snapshot, temporal_context: context)
@@ -1275,6 +1277,7 @@ def cmd_show(args)
       puts "  lead:      #{task.lead} #{dim("(#{task.lead_human || task.lead})")}"
       puts "  opens:     #{opens}" if opens
     end
+
     puts "  closed:    #{closed.iso8601}" if closed
     notes.each { |n| puts "  #{n}" }
     unless links.empty?
@@ -1886,7 +1889,7 @@ def cmd_lead(args)
   input = rest.join(" ").strip
   abort LEAD_USAGE if ref.nil? || ref.strip.empty?
 
-  item = resolve_ref(ref, include_done: flags["--include-done"])
+  item = resolve_ref(ref, include_done: flags["--include-done"], include_proposed: true)
   return lead_preview(item, json: flags["--json"]) if input.empty?
 
   span = parse_lead_input(input)
@@ -1899,8 +1902,18 @@ def cmd_lead(args)
   end
   abort lead_gate_conflict_hint(span) if span != :off && item.deadline && item.scheduled
 
-  own_text = span == :off ? %(clear the lead time on "#{item.title}") :
-                            %(hide "#{item.title}" until #{Tasks::Lead.describe(span)} its #{item.deadline ? "deadline" : "available-from date"})
+  own_text =
+    if span == :off
+      %(clear the lead time on "#{item.title}")
+    else
+      anchor = lead_anchor_value(item)
+      opens = lead_gate_value(item, span)
+      # The mutation clause names the window; the availability clause that
+      # follows carries the resulting date, so stating it twice would only
+      # invite the two to disagree.
+      window = anchor ? " (#{span} before #{anchor.date.iso8601})" : ""
+      %(lead time #{span} on "#{item.title}"#{window})
+    end
 
   if flags["--dry-run"]
     print_availability_change(
@@ -2469,7 +2482,7 @@ def list_availability_label(task, today:, context: nil)
             application.get_task(task.availability_blocker_id, today: today, context: context)
   case task.availability_reason
   when :scheduled
-    dim("  (unavailable until #{temporal_label(task.gate_value)})")
+    dim("  (unavailable until #{temporal_label(task.gate_value)}#{lead_span_suffix(task)})")
   when :ancestor_scheduled
     # The effective gate, which for an ancestor with a lead is the derived date
     # rather than any stamp the ancestor carries.
@@ -2480,6 +2493,16 @@ def list_availability_label(task, today:, context: nil)
   else
     dim("  (unavailable)")
   end
+end
+
+# " (3w before 11/1)" for a row a lead is hiding, so an unavailable review shows
+# the intent beside the derived date rather than only the date it produced.
+def lead_span_suffix(task)
+  return "" unless task.respond_to?(:lead_opens) && task.lead_opens
+  return "" unless task.gate_date == task.lead_opens
+
+  anchor = task.deadline || task.scheduled
+  anchor ? " · #{task.lead} before #{anchor.strftime("%-m/%-d")}" : ""
 end
 
 # Validate tasks.jsonl structure. Exit 0 clean, 1 errors found.

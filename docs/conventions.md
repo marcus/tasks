@@ -200,8 +200,11 @@ instead measures a real duration back from the anchor's own instant, so it opens
 partway through a day; `m` always means months, never minutes.
 
 A lead **replaces** the task's own available-from gate rather than joining it, so
-a lead never sits beside a separate `scheduled` date on a deadline-anchored task;
-that shape is refused at write time. (The `deadline` + `scheduled` pair, whose
+a lead never sits beside a two-date window; that shape is refused at write time,
+from either direction. Clearing the last date clears the lead with it, exactly as
+it already retires a `recur` cookie — a lead is an intent about a date and cannot
+outlive the last one. There is no state rule: a lead rides with the dates, so a
+proposal takes one on the same terms it takes a deadline. (The `deadline` + `scheduled` pair, whose
 offset a recurrence roll preserves, remains the way to express a runway that must
 move with the occurrence *and* stay separately visible.)
 

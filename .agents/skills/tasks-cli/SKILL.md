@@ -164,12 +164,18 @@ runway" is a **lead** — a standing window that survives every recurrence roll.
 "Hide it until Friday" (this once) is a **timed defer** (`defer "<ref>" fri`).
 "Someday / maybe / on hold" with no release date is `someday "<ref>"`.
 
+Units are `d`/`w`/`m`/`y` plus `h` for hours; `m` always means **months**, never
+minutes. A clock span (`5h`) measures a real duration back from the task's own
+instant — an all-day date resolves to its first instant, so `5h` before June 1
+opens at 19:00 on May 31 local.
+
 Refused at write time, each naming the fix: a lead needs a date to hide before;
-proposed and closed tasks take no lead (clearing is always allowed); a lead may
-not sit beside a *separate* available-from date, so `defer <date>` and
-`schedule` against a deadline-anchored lead task are refused; the span must be a
-whole count of `d`/`w`/`m`/`y` (an hour span like `5h` is refused by name — it
-is planned, not supported); and the derived date must stay in four-digit years.
+it may not sit beside a two-date window (a deadline AND an available-from date
+already express that window), refused from either direction; `defer <date>` is
+refused on a lead task and `schedule` on a deadline-anchored one, while moving a
+scheduled-anchored task's own date stays a normal anchor edit; and clearing the
+last date clears the lead with it. A lead rides with the dates, so a proposal
+takes one on the same terms it takes `--due`.
 
 `activate "<ref>"` on a lead task releases **this occurrence only** and keeps
 every date; the next `done` roll re-arms the window. (That same mechanism is why

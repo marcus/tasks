@@ -290,18 +290,66 @@ class TestLead < Minitest::Test
     assert_match(/needs a date to hide before/, result.errors.first)
   end
 
-  def test_rule_two_refuses_proposed_and_closed_tasks
+  # A lead is an intent ABOUT a date, so it is accepted wherever the date fields
+  # themselves are — including on a proposal, which the contract requires — and
+  # unlike recurrence, which `done` must be able to roll.
+  def test_a_lead_is_accepted_on_any_state_the_dates_are
     records = lead_records(deadline: "2026-11-01", lead: nil)
     records.last["state"] = "PROPOSED"
     proposed = patch_lead(records, "bbbb0002", "3w")
-    refute proposed.ok?
-    assert_match(/PROPOSED/, proposed.errors.first)
+    assert proposed.ok?, proposed.errors.join(", ")
 
     records.last["state"] = "DONE"
     records.last["closed"] = "2026-07-01"
     done = patch_lead(records, "bbbb0002", "3w")
-    refute done.ok?
-    assert_match(/reopen it first/, done.errors.first)
+    assert done.ok?, done.errors.join(", ")
+  end
+
+  # Rule 5: a lead is an intent about a date and cannot outlive the last one.
+  def test_clearing_the_final_anchor_clears_the_lead_in_the_same_write
+    with_lead_store_files(lead_records(deadline: "2026-11-01", lead: "3w")) do |store, org|
+      snapshot = store.edit_snapshot("bbbb0002")
+      result = store.apply_changeset!(
+        Tasks::TaskChangeset.from(snapshot, changes: { date_clear: nil })
+      )
+      assert result.ok?, result.errors.join(", ")
+      record = record_for(org, title: "Renew the passport")
+      refute record.key?("lead"), "the lead goes with its anchor"
+      refute record.key?("deadline")
+      assert Tasks::Check.check(org).ok?
+    end
+
+    # Clearing ONE date leaves a lead that still has an anchor alone. (A lead
+    # beside BOTH dates is unreachable by any write and reported by Check, so
+    # the only way to reach a one-date clear is from a one-date task.)
+    with_lead_store_files(lead_records(scheduled: "2026-10-01", lead: "3w")) do |store, org|
+      snapshot = store.edit_snapshot("bbbb0002")
+      result = store.patch_task!(
+        Tasks::TaskPatch.from(snapshot, field: :scheduled, value: Date.new(2026, 10, 15))
+      )
+      assert result.ok?, result.errors.join(", ")
+      record = record_for(org, title: "Renew the passport")
+      assert_equal "3w", record["lead"], "moving the anchor keeps the window"
+      assert_equal "2026-10-15", record["scheduled"]
+    end
+  end
+
+  # The linter reports the two shapes a write refuses, because a hand edit or a
+  # foreign writer can still produce them.
+  def test_check_reports_a_lead_with_no_anchor_and_a_lead_beside_both_dates
+    dateless = lead_records(deadline: "2026-11-01", lead: "3w")
+    dateless.last.delete("deadline")
+    with_lead_files(dateless) do |org, _archive|
+      messages = Tasks::Check.check(org).errors.map(&:last)
+      assert(messages.any? { |message| message.include?("no scheduled date or deadline to hide before") })
+    end
+
+    both = lead_records(deadline: "2026-11-01", lead: "3w")
+    both.last["scheduled"] = "2026-10-01"
+    with_lead_files(both) do |org, _archive|
+      messages = Tasks::Check.check(org).errors.map(&:last)
+      assert(messages.any? { |message| message.include?("beside both a scheduled date and a deadline") })
+    end
   end
 
   def test_rule_three_refuses_a_second_timed_gate_from_either_side
