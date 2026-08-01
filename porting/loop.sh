@@ -128,9 +128,12 @@ fmt_epoch() { # fmt_epoch <epoch> <strftime-format>
 }
 
 iso_epoch() { # iso_epoch <epoch> -> 2026-08-01T14:30:00Z, or "unknown"
-  local out
-  out="$(date -u -r "$1" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
-      || date -u -d "@$1" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
+  local e="${1:-}" out
+  # Never let a missing or junk epoch abort a caller under `set -u`; the whole
+  # point of this function is to make a log line readable.
+  case "$e" in ''|*[!0-9]*) printf 'unknown\n'; return 0 ;; esac
+  out="$(date -u -r "$e" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
+      || date -u -d "@$e" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
   if [ -n "$out" ]; then printf '%s\n' "$out"; else printf 'unknown\n'; fi
 }
 
