@@ -64,3 +64,16 @@ porting/runners/ruby/run --out porting/evidence/config-resolution/ruby \
   porting/runners/cases/config-resolution.jsonl
 porting/compare/validate porting/evidence/config-resolution/ruby
 ```
+
+## Translation handoff (partial)
+
+The Go resolver now lives at `go/internal/config`. It ports only this slice's
+store-path concerns: the `TASKS_FILE` / `TASKS_ARCHIVE` / `TASKS_MEMORY` and
+`TASKS_DIR` precedence chain, config-file `dir` / `file` / `archive` / `memory`
+keys, tilde expansion, empty-value fallthrough, provenance labels, and pinned
+`ForDir` paths. Its focused Go tests pass with `go test ./...` and `go vet ./...`.
+
+It is not yet a completed medium-risk slice: no Go `config --json` adapter or
+runner exists, so the five captured Ruby observations cannot yet be compared.
+The next tick should add that adapter/runner seam, run the named differential
+cases, and then request separate source-fidelity and Go-idiom reviews.
