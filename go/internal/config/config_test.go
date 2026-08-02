@@ -144,6 +144,57 @@ func TestResolvePathPrecedenceTable(t *testing.T) {
 	}
 }
 
+func TestResolvePathSourcesAreIndependentAcrossAllOverrides(t *testing.T) {
+	temp := t.TempDir()
+	home := filepath.Join(temp, "home")
+	xdg := filepath.Join(temp, "xdg")
+	configPath := filepath.Join(xdg, "tasks", "config")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("dir = ~/configured-dir\nfile = ~/configured/tasks.jsonl\narchive = ~/configured/archive.jsonl\nmemory = ~/configured/agent-memory.md\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	defaultDir := filepath.Join(temp, "default")
+	configured := filepath.Join(home, "configured")
+	override := filepath.Join(temp, "override")
+	for mask := 0; mask < 8; mask++ {
+		env := map[string]string{"XDG_CONFIG_HOME": xdg}
+		if mask&1 != 0 {
+			env["TASKS_FILE"] = filepath.Join(override, "tasks.jsonl")
+		}
+		if mask&2 != 0 {
+			env["TASKS_ARCHIVE"] = filepath.Join(override, "archive.jsonl")
+		}
+		if mask&4 != 0 {
+			env["TASKS_MEMORY"] = filepath.Join(override, "agent-memory.md")
+		}
+
+		paths, err := Resolve(Options{DefaultDir: defaultDir, HomeDir: home, Env: env})
+		if err != nil {
+			t.Fatalf("mask %03b: %v", mask, err)
+		}
+		wantOrg, wantArchive, wantMemory := filepath.Join(configured, "tasks.jsonl"), filepath.Join(configured, "archive.jsonl"), filepath.Join(configured, "agent-memory.md")
+		wantOrgSource, wantArchiveSource, wantMemorySource := "config file", "config file", "config file"
+		if mask&1 != 0 {
+			wantOrg, wantOrgSource = filepath.Join(override, "tasks.jsonl"), "TASKS_FILE env"
+		}
+		if mask&2 != 0 {
+			wantArchive, wantArchiveSource = filepath.Join(override, "archive.jsonl"), "TASKS_ARCHIVE env"
+		}
+		if mask&4 != 0 {
+			wantMemory, wantMemorySource = filepath.Join(override, "agent-memory.md"), "TASKS_MEMORY env"
+		}
+		if paths.Org != wantOrg || paths.Archive != wantArchive || paths.Memory != wantMemory {
+			t.Fatalf("mask %03b paths = %#v, want org=%q archive=%q memory=%q", mask, paths, wantOrg, wantArchive, wantMemory)
+		}
+		if paths.Sources["org"] != wantOrgSource || paths.Sources["archive"] != wantArchiveSource || paths.Sources["memory"] != wantMemorySource {
+			t.Fatalf("mask %03b sources = %#v", mask, paths.Sources)
+		}
+	}
+}
+
 func TestConfigReportProjectsResolvedPathsAndExistence(t *testing.T) {
 	temp := t.TempDir()
 	memory := filepath.Join(temp, "agent-memory.md")

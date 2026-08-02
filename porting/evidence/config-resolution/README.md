@@ -104,6 +104,13 @@ projection a later CLI adapter or probe will use for its resolved `org`,
 `config_file_exists` fields. It does not invent the unrelated settings fields
 of Ruby's full `config --json` report; those remain owned by their slices.
 
+The resolver's medium-tier property coverage now enumerates all eight
+combinations of `TASKS_FILE`, `TASKS_ARCHIVE`, and `TASKS_MEMORY` overrides.
+For every combination it proves that each path and its provenance change only
+for the matching override; the remaining fields retain their config-file value.
+This guards against the common porting error of resolving one per-file override
+through a shared path source.
+
 ## Go CLI adapter (partial)
 
 `go/internal/cli.WriteConfigJSON` now serializes that resolver-owned projection
