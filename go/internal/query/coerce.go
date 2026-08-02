@@ -1,11 +1,114 @@
 package query
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
-	"sort"
+	"math"
+	"math/big"
+	"strconv"
 	"strings"
 	"unicode"
 )
+
+// Object is a Ruby Hash as it arrives from JSON. Ruby's Hash preserves
+// insertion order and JSON.parse inserts in document order, so `to_s` renders
+// keys in the order the caller wrote them. A Go map cannot carry that order,
+// so the boundary decoder produces this instead and no map ever reaches the
+// rendering below.
+type Object []Entry
+
+// Entry is one Hash pair. Keys are always Strings: JSON has no other key type.
+type Entry struct {
+	Key   string
+	Value any
+}
+
+// index reports where key already sits, or -1. Ruby's Hash#[]= keeps a
+// repeated key in its first position while taking the later value.
+func (object Object) index(key string) int {
+	for position, entry := range object {
+		if entry.Key == key {
+			return position
+		}
+	}
+	return -1
+}
+
+// DecodeValue decodes one JSON document into the shapes this file renders:
+// nil, bool, string, json.Number, []any, and Object. It is the only decoder a
+// dynamic boundary may use — `encoding/json`'s generic decode loses both Hash
+// order and the distinction between an integer and a float literal.
+func DecodeValue(document []byte) (any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.UseNumber()
+	value, err := decodeValue(decoder)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := decoder.Token(); err == nil {
+		return nil, fmt.Errorf("unexpected trailing JSON after the document")
+	}
+	return value, nil
+}
+
+func decodeValue(decoder *json.Decoder) (any, error) {
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	delimiter, isDelimiter := token.(json.Delim)
+	if !isDelimiter {
+		return token, nil
+	}
+	switch delimiter {
+	case '{':
+		return decodeObject(decoder)
+	case '[':
+		return decodeArray(decoder)
+	default:
+		return nil, fmt.Errorf("unexpected %v in JSON document", delimiter)
+	}
+}
+
+func decodeObject(decoder *json.Decoder) (Object, error) {
+	object := Object{}
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return nil, err
+		}
+		key, isKey := token.(string)
+		if !isKey {
+			return nil, fmt.Errorf("JSON object key is not a string: %v", token)
+		}
+		value, err := decodeValue(decoder)
+		if err != nil {
+			return nil, err
+		}
+		if position := object.index(key); position >= 0 {
+			object[position].Value = value
+			continue
+		}
+		object = append(object, Entry{Key: key, Value: value})
+	}
+	_, err := decoder.Token() // consumes `}`
+	return object, err
+}
+
+func decodeArray(decoder *json.Decoder) ([]any, error) {
+	elements := []any{}
+	for decoder.More() {
+		element, err := decodeValue(decoder)
+		if err != nil {
+			return nil, err
+		}
+		elements = append(elements, element)
+	}
+	_, err := decoder.Token() // consumes `]`
+	return elements, err
+}
 
 // CoerceStrings mirrors Ruby's `Array(values).map { |value| value.to_s }`, the
 // coercion TaskFilter#initialize applies to contexts, tags, and text before any
@@ -120,10 +223,10 @@ func rubyArray(value any) []any {
 		return nil
 	case []any:
 		return typed
-	case map[string]any:
+	case Object:
 		pairs := make([]any, 0, len(typed))
-		for _, key := range sortedKeys(typed) {
-			pairs = append(pairs, []any{key, typed[key]})
+		for _, entry := range typed {
+			pairs = append(pairs, []any{entry.Key, entry.Value})
 		}
 		return pairs
 	default:
@@ -165,35 +268,103 @@ func rubyInspect(value any) string {
 			elements = append(elements, rubyInspect(element))
 		}
 		return "[" + strings.Join(elements, ", ") + "]"
-	case map[string]any:
+	case Object:
 		if len(typed) == 0 {
 			return "{}"
 		}
 		pairs := make([]string, 0, len(typed))
-		for _, key := range sortedKeys(typed) {
-			pairs = append(pairs, inspectString(key)+" => "+rubyInspect(typed[key]))
+		for _, entry := range typed {
+			pairs = append(pairs, inspectString(entry.Key)+" => "+rubyInspect(entry.Value))
 		}
 		return "{" + strings.Join(pairs, ", ") + "}"
-	case fmt.Stringer:
-		// json.Number keeps the literal digits, which is what Integer#to_s and
-		// Float#to_s produce for every literal Ruby's JSON parser accepts.
-		return typed.String()
+	case json.Number:
+		return rubyNumber(typed)
 	default:
 		return fmt.Sprint(value)
 	}
 }
 
-// sortedKeys keeps Hash rendering deterministic. JSON objects decode into an
-// unordered Go map, so insertion order — which Ruby preserves — is already
-// lost at the boundary; sorting makes the loss visible and reproducible
-// instead of varying per run.
-func sortedKeys(values map[string]any) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
+// rubyNumber renders a JSON number the way Ruby's JSON parser and then to_s
+// do. Ruby decides Integer or Float from the literal's shape — a `.`, `e`, or
+// `E` makes it a Float — and each class re-renders the value rather than
+// echoing the literal's digits.
+func rubyNumber(number json.Number) string {
+	literal := number.String()
+	if !strings.ContainsAny(literal, ".eE") {
+		// Integer#to_s of an arbitrary-precision value. Ruby's Integer has no
+		// width limit, so a literal wider than int64 must not be truncated;
+		// `-0` is the one literal JSON allows that this renormalises.
+		if integer, ok := new(big.Int).SetString(literal, 10); ok {
+			return integer.String()
+		}
+		return literal
 	}
-	sort.Strings(keys)
-	return keys
+	value, err := strconv.ParseFloat(literal, 64)
+	if err != nil {
+		// Out of range is the only failure a JSON literal can reach, and
+		// ParseFloat still returns the saturated infinity Ruby's parser makes.
+		if !errors.Is(err, strconv.ErrRange) {
+			return literal
+		}
+	}
+	return rubyFloatToS(value)
+}
+
+// rubyFloatToS is Float#to_s. Ruby renders the shortest digit string that
+// round-trips, then chooses a layout from the decimal point's position: fixed
+// while the point sits within the first DBL_DIG (15) digits, fixed at 16 as
+// long as a fractional digit remains, `0.000ddd` down to a point four places
+// left of the digits, and exponent form outside that. A fixed rendering always
+// carries a fractional digit, so `100.0` never prints as `100`.
+func rubyFloatToS(value float64) string {
+	sign := ""
+	if math.Signbit(value) {
+		sign = "-"
+	}
+	if math.IsInf(value, 0) {
+		return sign + "Infinity"
+	}
+	if math.IsNaN(value) {
+		return "NaN"
+	}
+	mantissa, exponent, _ := strings.Cut(strconv.FormatFloat(math.Abs(value), 'e', -1, 64), "e")
+	digits := strings.Replace(mantissa, ".", "", 1)
+	power, err := strconv.Atoi(exponent)
+	if err != nil {
+		return sign + mantissa
+	}
+	// point is where the decimal point falls among the digits: the value is
+	// 0.<digits> * 10**point, which is dtoa's `decpt`.
+	point := power + 1
+	switch {
+	case point > 0 && (point <= 15 || (point == 16 && len(digits) > point)):
+		if len(digits) <= point {
+			return sign + digits + strings.Repeat("0", point-len(digits)) + ".0"
+		}
+		return sign + digits[:point] + "." + digits[point:]
+	case point <= 0 && point > -4:
+		return sign + "0." + strings.Repeat("0", -point) + digits
+	default:
+		fraction := digits[1:]
+		if fraction == "" {
+			fraction = "0"
+		}
+		return fmt.Sprintf("%s%s.%se%s%02d", sign, digits[:1], fraction, exponentSign(point-1), abs(point-1))
+	}
+}
+
+func exponentSign(power int) string {
+	if power < 0 {
+		return "-"
+	}
+	return "+"
+}
+
+func abs(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
 
 var stringEscapes = map[rune]string{
@@ -201,7 +372,12 @@ var stringEscapes = map[rune]string{
 	'\f': `\f`, '\v': `\v`, '\b': `\b`, '\a': `\a`, 0x1b: `\e`,
 }
 
-// inspectString is String#inspect for the characters JSON can deliver.
+// inspectString is String#inspect for the characters JSON can deliver, which
+// is always a UTF-8 String. `\xNN` is Ruby's binary-string form and never
+// appears here: a character with no named escape that Ruby does not consider
+// printable is rendered `\uNNNN`, or `\u{NNNNN}` above the BMP, in uppercase
+// hex. text_query downcases the rendered text afterwards, so the same
+// character reaches `text` uppercase and `text_query` lowercase.
 func inspectString(text string) string {
 	var builder strings.Builder
 	builder.WriteByte('"')
@@ -212,10 +388,12 @@ func inspectString(text string) string {
 			builder.WriteString(stringEscapes[character])
 		case character == '#' && index+1 < len(runes) && strings.ContainsRune("{$@", runes[index+1]):
 			builder.WriteString(`\#`)
-		case character < 0x20 || character == 0x7f:
-			fmt.Fprintf(&builder, `\x%02X`, character)
-		default:
+		case unicode.Is(rubyPrintable, character):
 			builder.WriteRune(character)
+		case character > 0xFFFF:
+			fmt.Fprintf(&builder, `\u{%X}`, character)
+		default:
+			fmt.Fprintf(&builder, `\u%04X`, character)
 		}
 	}
 	builder.WriteByte('"')

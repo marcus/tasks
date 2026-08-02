@@ -1,20 +1,16 @@
 package query
 
 import (
-	"encoding/json"
 	"reflect"
-	"strings"
 	"testing"
 )
 
-// decode mirrors the JSON boundary the probe uses: generic shapes with numbers
-// preserved as json.Number.
+// decode mirrors the JSON boundary the probe uses: the package's own
+// order-preserving decoder, not encoding/json's generic decode.
 func decode(t *testing.T, document string) any {
 	t.Helper()
-	decoder := json.NewDecoder(strings.NewReader(document))
-	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
+	value, err := DecodeValue([]byte(document))
+	if err != nil {
 		t.Fatalf("decode(%s): %v", document, err)
 	}
 	return value
@@ -54,7 +50,7 @@ func TestCoerceStringsInspectsStringsInsideCollections(t *testing.T) {
 		{`[{"key":"a\\b"}]`, `{"key" => "a\\b"}`},
 		{`[{"key":"line\nbreak"}]`, `{"key" => "line\nbreak"}`},
 		{`[{"key":"tab\there"}]`, `{"key" => "tab\there"}`},
-		{`[{"key":"\u0001"}]`, `{"key" => "\x01"}`},
+		{`[{"key":"\u0001"}]`, `{"key" => "\u0001"}`},
 		{`[{"key":"#{x}"}]`, `{"key" => "\#{x}"}`},
 		{`[{"key":"plain # hash"}]`, `{"key" => "plain # hash"}`},
 		{`[{"key":"héllo"}]`, `{"key" => "héllo"}`},

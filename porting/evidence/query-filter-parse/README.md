@@ -3,7 +3,7 @@
 `ruby.jsonl` is the captured Ruby oracle. `go.jsonl` is the Go translation's
 current direct-probe output; it is compared structurally, not promoted to an
 expected result. Run `./porting/evidence/query-filter-parse/conformance` to
-reproduce the 65-case differential result, including explicit `scope: null`,
+reproduce the 76-case differential result, including explicit `scope: null`,
 scalar collection, mixed collection, collection-null, non-boolean boolean
 keyword, non-string scope/priority/state, and unknown-constructor-keyword
 inputs. `symbol-inspect-capture` captures Ruby's `Symbol#inspect` for 73 name
@@ -47,3 +47,15 @@ re-runs 28/28 against the repaired Go. See
 `repair-2026-08-02-unicode-tables.md`. The repair is a slice-local override
 table; the coupling it works around belongs to any later slice that changes
 case.
+
+`source-fidelity-review-2026-08-02-coercion.md` failed with three defects in
+the coercion boundary — sorted Hash keys, JSON-literal Float rendering, and a
+`\xNN` `String#inspect` that escaped nothing above ASCII. All three are
+repaired as of the 76/76 run above; see `repair-2026-08-02-coercion.md`. The
+reviewer's own corpus goes 1/8 to 8/8, the exhaustive whole-Unicode inspect
+differential is 0/1,112,064, and a 200,034-literal float differential is clean.
+`review-2026-08-02-coercion/capture-ruby-inspect.rb` and
+`generate-printable-table.rb` regenerate the ~815k-line capture and the
+`rubyPrintable` table from it; the capture is regenerated, never committed.
+`review-2026-08-02-coercion/number-to-s-ruby.jsonl` is the readable number
+oracle.

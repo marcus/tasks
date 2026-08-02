@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -143,17 +142,17 @@ func decodeFilterOptions(raw json.RawMessage) (query.FilterOptions, error) {
 	if len(raw) == 0 {
 		return options, nil
 	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return query.FilterOptions{}, err
-	}
-	// Ruby rejects unrecognised keywords before initialize's body runs, so this
-	// precedes every coercion and every domain rule below.
-	order, err := keywordOrder(raw)
+	decoded, err := query.DecodeValue(raw)
 	if err != nil {
 		return query.FilterOptions{}, err
 	}
-	if err := rejectUnknownKeywords(order); err != nil {
+	fields, isObject := decoded.(query.Object)
+	if !isObject {
+		return query.FilterOptions{}, fmt.Errorf("kwargs is not an object: %s", raw)
+	}
+	// Ruby rejects unrecognised keywords before initialize's body runs, so this
+	// precedes every coercion and every domain rule below.
+	if err := rejectUnknownKeywords(fields); err != nil {
 		return query.FilterOptions{}, err
 	}
 	// Ruby coerces or truth-tests every keyword before a domain rule sees it,
@@ -167,13 +166,9 @@ func decodeFilterOptions(raw json.RawMessage) (query.FilterOptions, error) {
 		"agent_ready_only": &options.AgentReadyOnly,
 	}
 	for name, target := range booleans {
-		raw, present := fields[name]
+		value, present := lookup(fields, name)
 		if !present {
 			continue
-		}
-		value, err := decodeGeneric(raw)
-		if err != nil {
-			return query.FilterOptions{}, err
 		}
 		*target = query.CoerceBool(value)
 	}
@@ -189,13 +184,9 @@ func decodeFilterOptions(raw json.RawMessage) (query.FilterOptions, error) {
 		"state":    {&options.State, false},
 	}
 	for name, scalar := range scalars {
-		raw, present := fields[name]
+		value, present := lookup(fields, name)
 		if !present {
 			continue
-		}
-		value, err := decodeGeneric(raw)
-		if err != nil {
-			return query.FilterOptions{}, err
 		}
 		if value == nil && !scalar.nullCoerces {
 			continue
@@ -207,17 +198,25 @@ func decodeFilterOptions(raw json.RawMessage) (query.FilterOptions, error) {
 		"contexts": &options.Contexts, "tags": &options.Tags, "text": &options.Text,
 	}
 	for name, target := range collections {
-		raw, present := fields[name]
+		value, present := lookup(fields, name)
 		if !present {
 			continue
-		}
-		value, err := decodeGeneric(raw)
-		if err != nil {
-			return query.FilterOptions{}, err
 		}
 		*target = query.CoerceStrings(value)
 	}
 	return options, nil
+}
+
+// lookup reads a keyword out of the ordered kwargs object. The order matters
+// for the unknown-keyword message, not for the lookups, so a linear scan over
+// thirteen possible keywords is the whole cost of keeping it.
+func lookup(fields query.Object, name string) (any, bool) {
+	for _, entry := range fields {
+		if entry.Key == name {
+			return entry.Value, true
+		}
+	}
+	return nil, false
 }
 
 // knownKeywords is TaskFilter#initialize's keyword list. Anything else is what
@@ -229,43 +228,14 @@ var knownKeywords = map[string]bool{
 	"text": true, "delegated_only": true, "agent_ready_only": true,
 }
 
-// keywordOrder returns the object's keys in the order they were written. A Go
-// map cannot carry that order, and the order is observable: the ArgumentError
-// names unknown keywords as the caller gave them, not sorted.
-func keywordOrder(raw json.RawMessage) ([]string, error) {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	if _, err := decoder.Token(); err != nil { // consumes `{`
-		return nil, err
-	}
-	var order []string
-	seen := map[string]bool{}
-	for decoder.More() {
-		token, err := decoder.Token()
-		if err != nil {
-			return nil, err
-		}
-		key, isKey := token.(string)
-		if !isKey {
-			return nil, fmt.Errorf("kwargs key is not a string: %v", token)
-		}
-		// A repeated key keeps its first position, as Ruby's Hash#[]= does.
-		if !seen[key] {
-			seen[key] = true
-			order = append(order, key)
-		}
-		var discard json.RawMessage
-		if err := decoder.Decode(&discard); err != nil {
-			return nil, err
-		}
-	}
-	return order, nil
-}
-
-func rejectUnknownKeywords(order []string) error {
+// rejectUnknownKeywords reports the unrecognised keywords in the order they
+// were written, which is observable: the ArgumentError names them as the
+// caller gave them, not sorted. query.Object is what carries that order.
+func rejectUnknownKeywords(fields query.Object) error {
 	var unknown []string
-	for _, key := range order {
-		if !knownKeywords[key] {
-			unknown = append(unknown, query.InspectSymbol(key))
+	for _, entry := range fields {
+		if !knownKeywords[entry.Key] {
+			unknown = append(unknown, query.InspectSymbol(entry.Key))
 		}
 	}
 	switch len(unknown) {
@@ -276,18 +246,6 @@ func rejectUnknownKeywords(order []string) error {
 	default:
 		return fmt.Errorf("unknown keywords: %s", strings.Join(unknown, ", "))
 	}
-}
-
-// decodeGeneric keeps numbers as json.Number so integers stringify the way
-// Ruby's Integer#to_s does rather than through float formatting.
-func decodeGeneric(raw json.RawMessage) (any, error) {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
-		return nil, err
-	}
-	return value, nil
 }
 
 func project(filter query.Filter) *filterOutput {

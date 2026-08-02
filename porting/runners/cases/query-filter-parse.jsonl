@@ -80,3 +80,14 @@
 {"case_id":"query-filter-text-query-garay-10d50","operation":"parse_cli","argv":["𐵐"]}
 {"case_id":"query-filter-text-query-16ea0","operation":"parse_cli","argv":["𖺠"]}
 {"case_id":"query-filter-text-query-mixed-new-unicode","operation":"parse_cli","argv":["ABCᲉxyz"]}
+{"case_id":"query-filter-collection-hash-key-order","operation":"new","kwargs":{"contexts":[{"b":1,"a":2}]}}
+{"case_id":"query-filter-collection-top-level-hash-order","operation":"new","kwargs":{"tags":{"z":1,"a":2}}}
+{"case_id":"query-filter-collection-float-exponent","operation":"new","kwargs":{"contexts":[100.0,100.0,0.00001,25000000000.0]}}
+{"case_id":"query-filter-collection-big-integer","operation":"new","kwargs":{"tags":[12345678901234567890]}}
+{"case_id":"query-filter-inspect-control","operation":"new","kwargs":{"contexts":[["\u0001"]]}}
+{"case_id":"query-filter-inspect-c1","operation":"new","kwargs":{"tags":[[""]]}}
+{"case_id":"query-filter-inspect-del","operation":"new","kwargs":{"text":[[""]]}}
+{"case_id":"query-filter-inspect-unassigned","operation":"new","kwargs":{"contexts":[["͸"]]}}
+{"case_id":"query-filter-collection-negative-zero-integer","operation":"new","kwargs":{"tags":[0,0]}}
+{"case_id":"query-filter-collection-float-decpt-16","operation":"new","kwargs":{"contexts":[1e+15,1000000000000000.5,1.2345678901234568e+16]}}
+{"case_id":"query-filter-inspect-above-bmp","operation":"new","kwargs":{"text":[["𐀌"]]}}
