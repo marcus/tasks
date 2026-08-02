@@ -163,6 +163,13 @@ func TestParseUsesRubyMalformedJSONDiagnostics(t *testing.T) {
 		{name: "incomplete exponent sign", input: `{"a":1e+}`, want: "invalid JSON: invalid number: '1e+}' at line 1 column 6"},
 		{name: "leading decimal point", input: `{"a":.1}`, want: "invalid JSON: unexpected character: '.1}' at line 1 column 6"},
 		{name: "unpaired surrogate", input: `{"a":"\uD800"}`, want: `invalid JSON: incomplete surrogate pair at '\uD800"}' at line 1 column 7`},
+		{name: "high high surrogate pair", input: `{"a":"\uD800\uD800"}`, want: `invalid JSON: invalid surrogate pair at '\uD800\uD800"}' at line 1 column 7`},
+		{name: "incomplete negative exponent", input: `{"a": 1e-}`, want: "invalid JSON: invalid number: '1e-}' at line 1 column 7"},
+		{name: "incomplete decimal exponent", input: `{"a": 1.0e}`, want: "invalid JSON: invalid number: '1.0e}' at line 1 column 7"},
+		{name: "negative decimal trailing dot", input: `{"a": -0.}`, want: "invalid JSON: invalid number: '-0.}' at line 1 column 7"},
+		{name: "double zero", input: `{"a": 00}`, want: "invalid JSON: invalid number: '00}' at line 1 column 7"},
+		{name: "adjacent arrays in object value", input: `{"a": [1][2]}`, want: "invalid JSON: expected ',' or '}' after object value, got: '[2]}' at line 1 column 10"},
+		{name: "adjacent objects in object value", input: `{"a": {"b":1}{"c":2}}`, want: `invalid JSON: expected ',' or '}' after object value, got: '{"c":2}}' at line 1 column 14`},
 		{name: "tab before trailing JSON", input: "{\"a\":1}\t []", want: "invalid JSON: unexpected token at end of stream '[]' at line 1 column 10"},
 	}
 

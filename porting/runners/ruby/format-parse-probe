@@ -31,6 +31,10 @@ def transport(value)
     return value if value.finite?
 
     { "$tasks_format_probe_type" => "non-finite-float", "value" => value.infinite? == 1 ? "Infinity" : "-Infinity" }
+  when String
+    return value if value.valid_encoding?
+
+    { "$tasks_format_probe_type" => "invalid-utf8-string", "bytes_hex" => value.bytes.map { |byte| "%02x" % byte }.join }
   else
     value
   end

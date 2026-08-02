@@ -68,6 +68,9 @@ func main() {
 // giving Ruby's non-finite Float values a JSON-safe, typed representation.
 // It is probe-only: persisted JSONL remains the raw record bytes.
 func transport(raw json.RawMessage) (any, error) {
+	if value, ok, err := lowSurrogateTransport(raw); err != nil || ok {
+		return value, err
+	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	var value any
@@ -75,6 +78,34 @@ func transport(raw json.RawMessage) (any, error) {
 		return nil, err
 	}
 	return transportValue(value), nil
+}
+
+// lowSurrogateTransport preserves Ruby JSON's intentionally invalid UTF-8
+// String for an unpaired low surrogate. encoding/json replaces it with U+FFFD,
+// so this probe-only typed transport must inspect the source escape first.
+func lowSurrogateTransport(raw json.RawMessage) (any, bool, error) {
+	var encoded string
+	if err := json.Unmarshal(raw, &encoded); err != nil {
+		return nil, false, nil
+	}
+	for index := 0; index+6 <= len(raw); index++ {
+		if raw[index] != '\\' || raw[index+1] != 'u' {
+			continue
+		}
+		code, err := strconv.ParseUint(string(raw[index+2:index+6]), 16, 16)
+		if err != nil || code < 0xdc00 || code > 0xdfff {
+			continue
+		}
+		if index >= 6 && bytes.Equal(raw[index-6:index-4], []byte(`\u`)) {
+			previous, previousErr := strconv.ParseUint(string(raw[index-4:index]), 16, 16)
+			if previousErr == nil && previous >= 0xd800 && previous <= 0xdbff {
+				continue
+			}
+		}
+		bytes := []byte{byte(0xe0 | code>>12), byte(0x80 | (code>>6)&0x3f), byte(0x80 | code&0x3f)}
+		return map[string]string{"$tasks_format_probe_type": "invalid-utf8-string", "bytes_hex": fmt.Sprintf("%x", bytes)}, true, nil
+	}
+	return nil, false, nil
 }
 
 func transportValue(value any) any {

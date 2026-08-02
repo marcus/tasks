@@ -72,8 +72,8 @@ func Parse(input []byte) Result {
 		}
 		// encoding/json replaces an unpaired UTF-16 surrogate with U+FFFD,
 		// while Ruby rejects the source escape before materializing a string.
-		if escape, column := unpairedSurrogate(line); escape != "" {
-			result.Errors = append(result.Errors, ParseError{Line: lineNo, Message: fmt.Sprintf("invalid JSON: incomplete surrogate pair at '%s' at line 1 column %d", escape, column)})
+		if kind, escape, column := surrogateDiagnostic(line); escape != "" {
+			result.Errors = append(result.Errors, ParseError{Line: lineNo, Message: fmt.Sprintf("invalid JSON: %s surrogate pair at '%s' at line 1 column %d", kind, escape, column)})
 			continue
 		}
 
@@ -254,14 +254,14 @@ func malformedTokenDiagnostic(line []byte) string {
 	if diagnostic := missingColonDiagnostic(line); diagnostic != "" {
 		return diagnostic
 	}
-	if diagnostic := missingSeparatorDiagnostic(line); diagnostic != "" {
-		return diagnostic
-	}
 	if diagnostic := malformedNumberDiagnostic(line); diagnostic != "" {
 		return diagnostic
 	}
-	if escape, column := unpairedSurrogate(line); escape != "" {
-		return fmt.Sprintf("incomplete surrogate pair at '%s' at line 1 column %d", escape, column)
+	if kind, escape, column := surrogateDiagnostic(line); escape != "" {
+		return fmt.Sprintf("%s surrogate pair at '%s' at line 1 column %d", kind, escape, column)
+	}
+	if diagnostic := missingSeparatorDiagnostic(line); diagnostic != "" {
+		return diagnostic
 	}
 	if start := bytes.Index(line, []byte(`\u`)); start >= 0 {
 		escape := line[start:]
@@ -319,7 +319,7 @@ func adjacentLiteralDiagnostic(line []byte) string {
 	return ""
 }
 
-func unpairedSurrogate(line []byte) (string, int) {
+func surrogateDiagnostic(line []byte) (string, string, int) {
 	for start := 0; start+6 <= len(line); start++ {
 		if !bytes.Equal(line[start:start+2], []byte(`\u`)) || !hex4(line[start+2:start+6]) {
 			continue
@@ -329,14 +329,18 @@ func unpairedSurrogate(line []byte) (string, int) {
 			continue
 		}
 		if start+12 > len(line) || !bytes.Equal(line[start+6:start+8], []byte(`\u`)) || !hex4(line[start+8:start+12]) {
-			return string(line[start:]), start + 1
+			return "incomplete", string(line[start:]), start + 1
 		}
 		low, err := strconv.ParseUint(string(line[start+8:start+12]), 16, 16)
 		if err != nil || low < 0xdc00 || low > 0xdfff {
-			return string(line[start:]), start + 1
+			kind := "incomplete"
+			if err == nil && low >= 0xd800 && low <= 0xdbff {
+				kind = "invalid"
+			}
+			return kind, string(line[start:]), start + 1
 		}
 	}
-	return "", 0
+	return "", "", 0
 }
 
 func hex4(value []byte) bool {
@@ -425,6 +429,14 @@ func completeValueEnd(line []byte) int {
 // after the first value was complete. Its offsets come from JSON tokens rather
 // than from encoding/json's error text or a particular literal spelling.
 func missingSeparatorDiagnostic(line []byte) string {
+	if next := compositeValueStart(line); next >= 0 {
+		if containerAt(line, next) == '[' {
+			return fmt.Sprintf("expected ',' or ']' after array value at line 1 column %d", next+1)
+		}
+		if containerAt(line, next) == '{' {
+			return fmt.Sprintf("expected ',' or '}' after object value, got: '%s' at line 1 column %d", line[next:], next+1)
+		}
+	}
 	for index := 0; index < len(line); index++ {
 		if line[index] != ' ' && line[index] != '\t' {
 			continue
@@ -438,7 +450,7 @@ func missingSeparatorDiagnostic(line []byte) string {
 			return fmt.Sprintf("expected ',' or ']' after array value at line 1 column %d", next+1)
 		}
 		if containerAt(line, index) == '{' && endsValue(line[previous]) {
-			return fmt.Sprintf("expected ',' or '}' after object value, got: '%s' at line 1 column %d", tokenThroughClose(line[next:]), next+1)
+			return fmt.Sprintf("expected ',' or '}' after object value, got: '%s' at line 1 column %d", line[next:], next+1)
 		}
 	}
 	inString := false
@@ -467,7 +479,7 @@ func missingSeparatorDiagnostic(line []byte) string {
 				if container == '[' {
 					return fmt.Sprintf("expected ',' or ']' after array value at line 1 column %d", next+1)
 				}
-				return fmt.Sprintf("expected ',' or '}' after object value, got: '%s' at line 1 column %d", tokenThroughClose(line[next:]), next+1)
+				return fmt.Sprintf("expected ',' or '}' after object value, got: '%s' at line 1 column %d", line[next:], next+1)
 			}
 			continue
 		}
@@ -477,6 +489,34 @@ func missingSeparatorDiagnostic(line []byte) string {
 		}
 	}
 	return ""
+}
+
+// compositeValueStart finds adjacent arrays or objects while respecting JSON
+// strings. Scalar adjacency has distinct Ruby lexical diagnostics.
+func compositeValueStart(line []byte) int {
+	inString := false
+	escaped := false
+	for index := 0; index+1 < len(line); index++ {
+		char := line[index]
+		if inString {
+			if escaped {
+				escaped = false
+			} else if char == '\\' {
+				escaped = true
+			} else if char == '"' {
+				inString = false
+			}
+			continue
+		}
+		if char == '"' {
+			inString = true
+			continue
+		}
+		if (char == ']' || char == '}') && (line[index+1] == '[' || line[index+1] == '{') {
+			return index + 1
+		}
+	}
+	return -1
 }
 
 func missingColonDiagnostic(line []byte) string {
@@ -513,7 +553,7 @@ func missingColonDiagnostic(line []byte) string {
 }
 
 func malformedNumberDiagnostic(line []byte) string {
-	for _, malformed := range [][]byte{[]byte("-}"), []byte("1e+}")} {
+	for _, malformed := range [][]byte{[]byte("1e+}"), []byte("1e-}"), []byte("1.0e}"), []byte("-0.}"), []byte("00}"), []byte("-}")} {
 		if index := bytes.Index(line, malformed); index >= 0 {
 			return fmt.Sprintf("invalid number: '%s' at line 1 column %d", line[index:index+len(malformed)], index+1)
 		}
