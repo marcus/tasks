@@ -70,3 +70,12 @@ been decoded into a Go map and therefore rendered in sorted-key order. Ruby's
 decoder tokens, preserving object order while retaining the Ruby spelling for
 scalars and arrays. The added `check-meta-object-version-order` fixture is
 captured from Ruby and included in the direct differential comparator.
+
+## Control-character repair — 2026-08-02
+
+The independent source-fidelity re-review found that Go's `strconv.Quote`
+spelled decoded JSON controls differently from Ruby `String#inspect` (notably
+NUL as `\\x00` instead of `\\u0000` and ESC as `\\x1b` instead of `\\e`).
+`rubyInspectString` now reproduces Ruby's short control escapes and uppercase
+four-digit Unicode escapes. The fixture-backed Ruby oracle and direct
+comparator include NUL, bell, ESC, and unit separator to protect the rule.

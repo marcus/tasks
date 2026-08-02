@@ -220,7 +220,7 @@ func rubyInspectJSONValue(decoder *json.Decoder) (string, error) {
 	case bool:
 		return strconv.FormatBool(typed), nil
 	case string:
-		return strconv.Quote(typed), nil
+		return rubyInspectString(typed), nil
 	case json.Number:
 		return rubyInspectNumber(string(typed)), nil
 	case json.Delim:
@@ -253,7 +253,7 @@ func rubyInspectJSONValue(decoder *json.Decoder) (string, error) {
 				if err != nil {
 					return "", err
 				}
-				pairs = append(pairs, strconv.Quote(keyString)+" => "+value)
+				pairs = append(pairs, rubyInspectString(keyString)+" => "+value)
 			}
 			if _, err := decoder.Token(); err != nil {
 				return "", err
@@ -264,6 +264,48 @@ func rubyInspectJSONValue(decoder *json.Decoder) (string, error) {
 	default:
 		return "", fmt.Errorf("unexpected JSON token %T", token)
 	}
+}
+
+// rubyInspectString matches Ruby String#inspect for the valid UTF-8 strings
+// JSON can decode. strconv.Quote differs for several control characters: for
+// example Ruby spells ESC as \e and NUL as \u0000, while Go uses \x1b and
+// \x00. Check exposes these diagnostics directly, so the spelling is part of
+// the compatibility contract.
+func rubyInspectString(value string) string {
+	var result strings.Builder
+	result.WriteByte('"')
+	for _, char := range value {
+		switch char {
+		case '\\':
+			result.WriteString(`\\`)
+		case '"':
+			result.WriteString(`\"`)
+		case '\a':
+			result.WriteString(`\a`)
+		case '\b':
+			result.WriteString(`\b`)
+		case '\t':
+			result.WriteString(`\t`)
+		case '\n':
+			result.WriteString(`\n`)
+		case '\v':
+			result.WriteString(`\v`)
+		case '\f':
+			result.WriteString(`\f`)
+		case '\r':
+			result.WriteString(`\r`)
+		case 0x1b:
+			result.WriteString(`\e`)
+		default:
+			if char < 0x20 || (char >= 0x7f && char <= 0x9f) || char == 0x2028 || char == 0x2029 {
+				fmt.Fprintf(&result, `\u%04X`, char)
+			} else {
+				result.WriteRune(char)
+			}
+		}
+	}
+	result.WriteByte('"')
+	return result.String()
 }
 
 func rubyInspectNumber(raw string) string {
