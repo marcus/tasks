@@ -1,0 +1,125 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# manifest-merge-driver — Git plumbing for a 3-way merge of
+# porting/manifest.jsonl, keyed on slice `id` rather than line position.
+#
+# Installed by porting/merge/install as:
+#
+#   porting/merge/manifest-merge-driver %O %A %B %P %L %X %Y
+#
+# Git supplies %O/%A/%B as temp-file paths holding the base/ours/theirs blobs,
+# %P the real pathname (for messages/logging only), and %L/%X/%Y the conflict
+# marker size and the ours/theirs labels -- read only on a refusal, to write
+# the markers Git's own text driver would have written. This mirrors
+# lib/tasks/merge_driver_command.rb (`tasks merge-driver`, for tasks.jsonl /
+# archive.jsonl) closely and for the same reasons; see that file's comments
+# for the full rationale. The one thing worth repeating here: %L/%X/%Y MUST
+# stay unquoted in the installed driver command. Git pre-quotes them itself in
+# the rebase/cherry-pick path; quoting them again is a shell syntax error that
+# makes Git skip this driver entirely and fall back to its own line-based text
+# merge on every rebase -- silently, since a broken driver command just never
+# fires.
+#
+# Exit codes match Git's contract for a merge driver: 0 merged cleanly (%A now
+# holds the result), 1 refused (a real conflict; %A now holds conflict
+# markers), 2 usage error.
+
+require_relative "lib/manifest_merge"
+require_relative "../../lib/tasks/atomic"
+
+DEFAULT_MARKER_SIZE = 7
+MINIMUM_MARKER_SIZE = 7
+
+def resolved_marker_size(supplied)
+  text = supplied.to_s.strip
+  return DEFAULT_MARKER_SIZE unless text.match?(/\A\d+\z/)
+
+  [text.to_i, MINIMUM_MARKER_SIZE].max
+end
+
+def label_or(label, fallback)
+  value = label.to_s.gsub(/\s+/, " ").strip
+  value.empty? ? fallback : value
+end
+
+# A side missing its trailing newline would otherwise run straight into the
+# next marker and stop being recoverable by a plain split.
+def terminated(bytes)
+  return bytes if bytes.empty? || bytes.end_with?("\n")
+
+  bytes + "\n".b
+end
+
+# On refusal, Git has already copied the ours blob into %A and will copy %A
+# back over the working file regardless of this script's exit status -- that
+# is how a text driver's markers reach the working tree at all. Leaving %A
+# untouched would therefore not mean "wrote nothing"; it would mean "wrote
+# ours, cleanly, with no markers", which is the silent one-sided-loss failure
+# td-7b9c01 (lib/tasks/merge_driver_command.rb) exists to prevent for
+# tasks.jsonl. The same trap applies here, so the same fix applies here: write
+# what Git's own driver would have -- both sides, verbatim, fenced.
+def write_conflict(ours_path, theirs_path, error:, marker_size:, ours_label:, theirs_label:)
+  size = resolved_marker_size(marker_size)
+  ours = label_or(ours_label, "ours")
+  theirs = label_or(theirs_label, "theirs")
+  reason = error.to_s.gsub(/\s+/, " ").strip
+
+  File.binwrite(ours_path, [
+    "#{"<" * size} #{ours} (manifest merge failed: #{reason})\n".b,
+    terminated(File.binread(ours_path)),
+    "#{"=" * size}\n".b,
+    terminated(File.binread(theirs_path)),
+    "#{">" * size} #{theirs}\n".b,
+  ].join)
+rescue SystemCallError, IOError => write_error
+  warn "manifest merge warning: could not write conflict markers: #{write_error.message}"
+end
+
+def append_log(pathname, lines)
+  return unless pathname
+
+  real_path = File.expand_path(pathname)
+  log_path = File.join(File.dirname(real_path), ".manifest-merge.log")
+  File.open(log_path, "a", encoding: "UTF-8") { |log| lines.each { |line| log.puts(line) } }
+rescue SystemCallError, IOError => error
+  warn "manifest merge warning: could not write audit log: #{error.message}"
+end
+
+def read_utf8(path)
+  File.binread(path).force_encoding(Encoding::UTF_8)
+end
+
+def run(args)
+  unless (4..7).cover?(args.length)
+    warn "usage: manifest-merge-driver <base> <ours> <theirs> <pathname> " \
+         "[marker-size] [ours-label] [theirs-label]"
+    return 2
+  end
+
+  base_path, ours_path, theirs_path, pathname, marker_size, ours_label, theirs_label = args
+  result = Porting::ManifestMerge.merge(
+    base_text: read_utf8(base_path),
+    ours_text: read_utf8(ours_path),
+    theirs_text: read_utf8(theirs_path)
+  )
+
+  unless result.ok?
+    write_conflict(ours_path, theirs_path, error: result.error, marker_size: marker_size,
+                                            ours_label: ours_label, theirs_label: theirs_label)
+    append_log(pathname, result.log_lines(pathname: pathname))
+    warn "manifest merge failed: #{result.error}"
+    return 1
+  end
+
+  Tasks::Atomic.write(ours_path, result.text)
+  append_log(pathname, result.log_lines(pathname: pathname))
+  puts "merged #{pathname}" if ENV["MANIFEST_MERGE_VERBOSE"] == "1"
+  0
+rescue SystemCallError, IOError => error
+  append_log(pathname, ["merge #{pathname}: failed", "  error: #{error.message}"]) if pathname
+  warn "manifest merge failed: #{error.message}"
+  1
+end
+
+exit run(ARGV) if $PROGRAM_NAME == __FILE__
