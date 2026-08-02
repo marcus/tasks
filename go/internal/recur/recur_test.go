@@ -18,6 +18,7 @@ func TestParseIntervalCookiesAndFriendlySpellings(t *testing.T) {
 		{"every\t3 days", ".+", ".+3d"},
 		{"every 3 days", ".+", ".+3d"},
 		{"month", ".+", ".+1m"},
+		{"weekly", "wat", "wat1w"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.input, func(t *testing.T) {
@@ -35,7 +36,7 @@ func TestParseOffAndRejectsZeroOrGarbage(t *testing.T) {
 			t.Fatalf("Parse(%q) = %#v, want off", input, got)
 		}
 	}
-	for _, input := range []string{"++0d", "0 weeks", "2 frogs", "", "d", "w:mon"} {
+	for _, input := range []string{"++0d", "0 weeks", "2 frogs", "2 3 days", "2 3days", "", "d", "w:mon"} {
 		if got := Parse(input, ".+"); got.Error == "" {
 			t.Fatalf("Parse(%q) = %#v, want rejection", input, got)
 		}

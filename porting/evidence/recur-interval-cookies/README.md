@@ -127,3 +127,27 @@ All commands passed. Differential fixture conformance remains unavailable until
 a Go CLI adapter reaches recurrence; this slice remains `translating` pending a
 fresh independent source-fidelity review, Go-idiom review, and the recorded
 differential-harness decision.
+
+## Source-fidelity repair: token boundaries and caller prefix (2026-08-02)
+
+The fresh source-fidelity review found two Go defects in `ba148da`, both now
+repaired. Friendly parsing only treats a count and unit as a joined form when
+they are one token (`2w`); it no longer concatenates numeric tokens, so `2 3
+days` and `2 3days` are rejected as Ruby rejects them. A bare interval now
+preserves the supplied `default_prefix` unchanged, including Ruby's observable
+`parse("weekly", default_prefix: "wat") => "wat1w"` boundary.
+
+Ruby probes confirmed both observations against `lib/tasks/recur.rb`.
+Verification passed:
+
+```sh
+(cd go && go test ./... && go test -race ./internal/recur && go vet ./...)
+ruby test/test_recur.rb
+git diff --check
+```
+
+The focused Ruby oracle remained green: 20 runs and 66 assertions. The Go CLI
+adapter still does not expose recurrence, so differential fixture conformance
+cannot run; this is a documented harness gap, not a substitute for Go output.
+The next step is a fresh independent source-fidelity review (mid-tier), then a
+separate Go-idiom review if it passes.

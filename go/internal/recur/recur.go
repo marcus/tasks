@@ -152,13 +152,18 @@ func parseFriendlyInterval(value string) (string, interval, bool) {
 	if len(parts) > 0 && parts[0] == "every" {
 		parts = parts[1:]
 	}
-	if match := countUnit.FindStringSubmatch(strings.Join(parts, "")); match != nil {
-		n, parsed := new(big.Int).SetString(match[1], 10)
-		unit, ok := units[match[2]]
-		if parsed && n.Sign() > 0 && ok {
-			return "", interval{count: n, unit: unit}, true
+	// Ruby tokenizes a joined count/unit pair ("2w") but does not merge
+	// separate numeric tokens ("2 3days" must remain invalid).
+	if len(parts) == 1 {
+		match := countUnit.FindStringSubmatch(parts[0])
+		if match != nil {
+			n, parsed := new(big.Int).SetString(match[1], 10)
+			unit, ok := units[match[2]]
+			if parsed && n.Sign() > 0 && ok {
+				return "", interval{count: n, unit: unit}, true
+			}
+			return "", interval{}, false
 		}
-		return "", interval{}, false
 	}
 	if len(parts) == 1 {
 		if unit, ok := bareUnits[parts[0]]; ok {
@@ -184,10 +189,7 @@ func prefixOrDefault(prefix, defaultPrefix string) string {
 	if prefix != "" {
 		return prefix
 	}
-	if defaultPrefix == "+" || defaultPrefix == "++" || defaultPrefix == ".+" {
-		return defaultPrefix
-	}
-	return ".+"
+	return defaultPrefix
 }
 
 func isOff(value string) bool {
