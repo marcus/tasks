@@ -26,3 +26,19 @@ The focused Ruby suite passed: 38 runs, 193 assertions. The next step is a
 mid-tier translation against this capture, then property tests and independent
 source-fidelity and Go-idiom reviews. Differential conformance waits for the Go
 check runner; this capture is its Ruby baseline and does not bless Go output.
+
+## Translation step — 2026-08-02
+
+`go/internal/check` now implements the slice-owned metadata and ID rules over
+the already-ported lenient parser: line-one meta/version validation, malformed
+and duplicate IDs, missing-file reporting, and live/archive duplicate IDs.
+Its fixture tests assert the Ruby-captured diagnostics for every owned outcome,
+and its generated ID grammar property test covers 500 mixed valid/invalid
+strings. `go test ./...`, `go vet ./...`, and the race-enabled test suite pass.
+
+This is not yet differential conformance: the Go runner and the full `check`
+CLI/report layer belong to later work. In particular, task-field and tree
+diagnostics remain separate slices, so the new package deliberately does not
+claim the complete output of the `wrong-types` fixture. The next tick must add
+a Go conformance path that compares this slice's owned diagnostics to the Ruby
+baseline, then request independent source-fidelity and Go-idiom reviews.
