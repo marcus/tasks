@@ -10,19 +10,20 @@ func TestParseCLIComposesLegacyFilters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !parsed.JSON || parsed.Filter.Scope != ScopeAll || !parsed.Filter.DeferredOnly || !parsed.Filter.RecurringOnly || !parsed.Filter.BodySearch {
+	filter := parsed.Filter()
+	if !parsed.JSON() || filter.Scope() != ScopeAll || !filter.DeferredOnly() || !filter.RecurringOnly() || !filter.BodySearch() {
 		t.Fatalf("unexpected parsed filter: %#v", parsed)
 	}
-	if got := parsed.Filter.TextQuery(); got != "flight plans" {
+	if got := filter.TextQuery(); got != "flight plans" {
 		t.Fatalf("TextQuery() = %q", got)
 	}
-	if got := parsed.Filter.States(); len(got) != 7 || got[0] != "PROPOSED" || got[6] != "CANCELLED" {
+	if got := filter.States(); len(got) != 7 || got[0] != "PROPOSED" || got[6] != "CANCELLED" {
 		t.Fatalf("States() = %#v", got)
 	}
 }
 
 func TestNewFilterIntersectsStateWithScope(t *testing.T) {
-	filter, err := NewFilter(FilterOptions{Scope: ScopeOpen, State: "done"})
+	filter, err := NewFilter(FilterOptions{Scope: stringPointer(ScopeOpen), State: stringPointer("done")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +35,7 @@ func TestNewFilterIntersectsStateWithScope(t *testing.T) {
 func TestStateIntersectionProperty(t *testing.T) {
 	for _, scope := range []string{ScopeOpen, ScopeProposed, ScopeDone, ScopeArchived, ScopeAll} {
 		for _, state := range []string{"PROPOSED", "INBOX", "TODO", "NEXT", "WAITING", "DONE", "CANCELLED"} {
-			filter, err := NewFilter(FilterOptions{Scope: scope, State: state})
+			filter, err := NewFilter(FilterOptions{Scope: stringPointer(scope), State: stringPointer(state)})
 			if err != nil {
 				t.Fatalf("NewFilter(%q, %q): %v", scope, state, err)
 			}
@@ -57,7 +58,7 @@ func TestStateIntersectionProperty(t *testing.T) {
 
 func NewScopeFilter(t *testing.T, scope string) Filter {
 	t.Helper()
-	filter, err := NewFilter(FilterOptions{Scope: scope})
+	filter, err := NewFilter(FilterOptions{Scope: stringPointer(scope)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,8 +97,55 @@ func TestParseCLIScopeAliasesAreEquivalent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !reflect.DeepEqual(first.Filter, second.Filter) {
-			t.Fatalf("%s and %s differ: %#v %#v", aliases[0], aliases[1], first.Filter, second.Filter)
+		if !reflect.DeepEqual(first.Filter(), second.Filter()) {
+			t.Fatalf("%s and %s differ: %#v %#v", aliases[0], aliases[1], first.Filter(), second.Filter())
 		}
+	}
+}
+
+func TestNewFilterRejectsExplicitInvalidConstructorValues(t *testing.T) {
+	cases := []struct {
+		name    string
+		options FilterOptions
+		want    string
+	}{
+		{"uppercase scope", FilterOptions{Scope: stringPointer("OPEN")}, "unknown task scope: OPEN"},
+		{"empty priority", FilterOptions{Priority: stringPointer("")}, "priority must be A, B, C, or none"},
+		{"empty state", FilterOptions{State: stringPointer("")}, "state must be one of PROPOSED, INBOX, TODO, NEXT, WAITING, DONE, CANCELLED"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := NewFilter(test.options)
+			if err == nil || err.Error() != test.want {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestFilterOwnsConstructorAndAccessorSlices(t *testing.T) {
+	contexts, tags, text := []string{"@computer"}, []string{"important"}, []string{"plans"}
+	filter, err := NewFilter(FilterOptions{Contexts: contexts, Tags: tags, Text: text})
+	if err != nil {
+		t.Fatal(err)
+	}
+	contexts[0], tags[0], text[0] = "@phone", "later", "changed"
+	gotContexts, gotTags, gotText := filter.Contexts(), filter.Tags(), filter.Text()
+	gotContexts[0], gotTags[0], gotText[0] = "@errands", "mutated", "again"
+	if got := filter.Contexts(); !reflect.DeepEqual(got, []string{"@computer"}) {
+		t.Fatalf("Contexts() = %#v", got)
+	}
+	if got := filter.Tags(); !reflect.DeepEqual(got, []string{"important"}) {
+		t.Fatalf("Tags() = %#v", got)
+	}
+	if got := filter.Text(); !reflect.DeepEqual(got, []string{"plans"}) {
+		t.Fatalf("Text() = %#v", got)
+	}
+	defaultFilter, err := NewFilter(FilterOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaultFilter.Contexts() == nil || defaultFilter.Tags() == nil || defaultFilter.Text() == nil {
+		t.Fatal("constructed empty collections must be non-nil")
 	}
 }

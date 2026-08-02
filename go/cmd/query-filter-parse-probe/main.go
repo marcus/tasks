@@ -92,8 +92,9 @@ func run(in input) any {
 	case "parse_cli":
 		var parsed query.ParsedFilter
 		parsed, err = query.ParseCLI(in.Argv)
-		filter = parsed.Filter
-		jsonFlag = &parsed.JSON
+		filter = parsed.Filter()
+		json := parsed.JSON()
+		jsonFlag = &json
 	case "new":
 		filter, err = query.NewFilter(in.Kwargs)
 	default:
@@ -106,7 +107,7 @@ func run(in input) any {
 }
 
 func project(filter query.Filter) *filterOutput {
-	priority, state := filter.Priority, filter.State
+	priority, state := filter.Priority(), filter.State()
 	var priorityOut, stateOut *string
 	if priority != "" {
 		priorityOut = &priority
@@ -114,12 +115,5 @@ func project(filter query.Filter) *filterOutput {
 	if state != "" {
 		stateOut = &state
 	}
-	return &filterOutput{Scope: filter.Scope, IncludeArchive: filter.IncludeArchive(), DeferredOnly: filter.DeferredOnly, UnavailableOnly: filter.UnavailableOnly, SomedayOnly: filter.SomedayOnly, RecurringOnly: filter.RecurringOnly, BodySearch: filter.BodySearch, DelegatedOnly: filter.DelegatedOnly, AgentReadyOnly: filter.AgentReadyOnly, Contexts: nonNil(filter.Contexts), Tags: nonNil(filter.Tags), Priority: priorityOut, State: stateOut, States: filter.States(), Text: nonNil(filter.Text), TextQuery: filter.TextQuery()}
-}
-
-func nonNil(values []string) []string {
-	if values == nil {
-		return []string{}
-	}
-	return values
+	return &filterOutput{Scope: filter.Scope(), IncludeArchive: filter.IncludeArchive(), DeferredOnly: filter.DeferredOnly(), UnavailableOnly: filter.UnavailableOnly(), SomedayOnly: filter.SomedayOnly(), RecurringOnly: filter.RecurringOnly(), BodySearch: filter.BodySearch(), DelegatedOnly: filter.DelegatedOnly(), AgentReadyOnly: filter.AgentReadyOnly(), Contexts: filter.Contexts(), Tags: filter.Tags(), Priority: priorityOut, State: stateOut, States: filter.States(), Text: filter.Text(), TextQuery: filter.TextQuery()}
 }

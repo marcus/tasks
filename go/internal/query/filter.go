@@ -18,24 +18,24 @@ var stateOrder = []string{"PROPOSED", "INBOX", "TODO", "NEXT", "WAITING", "DONE"
 
 // Filter is the immutable selection input shared by read adapters.
 type Filter struct {
-	Scope           string
-	DeferredOnly    bool
-	UnavailableOnly bool
-	SomedayOnly     bool
-	RecurringOnly   bool
-	BodySearch      bool
-	DelegatedOnly   bool
-	AgentReadyOnly  bool
-	Contexts        []string
-	Tags            []string
-	Priority        string
-	State           string
-	Text            []string
+	scope           string
+	deferredOnly    bool
+	unavailableOnly bool
+	somedayOnly     bool
+	recurringOnly   bool
+	bodySearch      bool
+	delegatedOnly   bool
+	agentReadyOnly  bool
+	contexts        []string
+	tags            []string
+	priority        string
+	state           string
+	text            []string
 }
 
 // FilterOptions supplies Filter's constructor fields.
 type FilterOptions struct {
-	Scope           string   `json:"scope"`
+	Scope           *string  `json:"scope"`
 	DeferredOnly    bool     `json:"deferred_only"`
 	UnavailableOnly bool     `json:"unavailable_only"`
 	SomedayOnly     bool     `json:"someday_only"`
@@ -45,19 +45,19 @@ type FilterOptions struct {
 	AgentReadyOnly  bool     `json:"agent_ready_only"`
 	Contexts        []string `json:"contexts"`
 	Tags            []string `json:"tags"`
-	Priority        string   `json:"priority"`
-	State           string   `json:"state"`
+	Priority        *string  `json:"priority"`
+	State           *string  `json:"state"`
 	Text            []string `json:"text"`
 }
 
 // NewFilter validates and normalizes one filter value.
 func NewFilter(options FilterOptions) (Filter, error) {
-	scope := strings.ToLower(options.Scope)
-	if scope == "" {
-		scope = ScopeOpen
+	scope := ScopeOpen
+	if options.Scope != nil {
+		scope = *options.Scope
 	}
 	if !knownScope(scope) {
-		return Filter{}, fmt.Errorf("unknown task scope: %s", options.Scope)
+		return Filter{}, fmt.Errorf("unknown task scope: %s", scope)
 	}
 	if options.DeferredOnly && options.SomedayOnly {
 		return Filter{}, fmt.Errorf("--deferred and --someday are mutually exclusive")
@@ -71,50 +71,56 @@ func NewFilter(options FilterOptions) (Filter, error) {
 	if options.AgentReadyOnly && scope != ScopeOpen {
 		return Filter{}, fmt.Errorf("--agent-ready is only valid with --open")
 	}
-	priority := strings.ToUpper(options.Priority)
-	if priority != "" && priority != "A" && priority != "B" && priority != "C" {
+	priority := ""
+	if options.Priority != nil {
+		priority = strings.ToUpper(*options.Priority)
+	}
+	if options.Priority != nil && priority != "A" && priority != "B" && priority != "C" {
 		return Filter{}, fmt.Errorf("priority must be A, B, C, or none")
 	}
-	state := strings.ToUpper(options.State)
-	if state != "" && !knownState(state) {
+	state := ""
+	if options.State != nil {
+		state = strings.ToUpper(*options.State)
+	}
+	if options.State != nil && !knownState(state) {
 		return Filter{}, fmt.Errorf("state must be one of %s", strings.Join(stateOrder, ", "))
 	}
 	return Filter{
-		Scope: scope, DeferredOnly: options.DeferredOnly, UnavailableOnly: options.UnavailableOnly,
-		SomedayOnly: options.SomedayOnly, RecurringOnly: options.RecurringOnly, BodySearch: options.BodySearch,
-		DelegatedOnly: options.DelegatedOnly, AgentReadyOnly: options.AgentReadyOnly,
-		Contexts: copyStrings(options.Contexts), Tags: copyStrings(options.Tags), Priority: priority,
-		State: state, Text: copyStrings(options.Text),
+		scope: scope, deferredOnly: options.DeferredOnly, unavailableOnly: options.UnavailableOnly,
+		somedayOnly: options.SomedayOnly, recurringOnly: options.RecurringOnly, bodySearch: options.BodySearch,
+		delegatedOnly: options.DelegatedOnly, agentReadyOnly: options.AgentReadyOnly,
+		contexts: copyStrings(options.Contexts), tags: copyStrings(options.Tags), priority: priority,
+		state: state, text: copyStrings(options.Text),
 	}, nil
 }
 
 // ParsedFilter is the legacy list syntax plus its JSON rendering switch.
 type ParsedFilter struct {
-	Filter Filter
-	JSON   bool
+	filter Filter
+	json   bool
 }
 
 // ParseCLI translates the legacy list arguments into a Filter.
 func ParseCLI(args []string) (ParsedFilter, error) {
-	options := FilterOptions{Scope: ScopeOpen}
+	options := FilterOptions{Scope: stringPointer(ScopeOpen)}
 	json := false
 	scopes := make(map[string]struct{})
 	for _, arg := range args {
 		switch arg {
 		case "--open", "-o":
-			options.Scope = ScopeOpen
+			options.Scope = stringPointer(ScopeOpen)
 			scopes[ScopeOpen] = struct{}{}
 		case "--proposed":
-			options.Scope = ScopeProposed
+			options.Scope = stringPointer(ScopeProposed)
 			scopes[ScopeProposed] = struct{}{}
 		case "--done", "-d":
-			options.Scope = ScopeDone
+			options.Scope = stringPointer(ScopeDone)
 			scopes[ScopeDone] = struct{}{}
 		case "--archived", "-x":
-			options.Scope = ScopeArchived
+			options.Scope = stringPointer(ScopeArchived)
 			scopes[ScopeArchived] = struct{}{}
 		case "--all", "-a":
-			options.Scope = ScopeAll
+			options.Scope = stringPointer(ScopeAll)
 			scopes[ScopeAll] = struct{}{}
 		case "--deferred", "-D":
 			options.DeferredOnly = true
@@ -135,7 +141,7 @@ func ParseCLI(args []string) (ParsedFilter, error) {
 		default:
 			switch {
 			case len(arg) == 2 && arg[0] == '-' && strings.ContainsRune("ABC", rune(arg[1])):
-				options.Priority = arg[1:]
+				options.Priority = stringPointer(arg[1:])
 			case strings.HasPrefix(arg, "@"):
 				options.Contexts = append(options.Contexts, arg)
 			case len(arg) > 1 && strings.HasPrefix(arg, "+"):
@@ -156,16 +162,46 @@ func ParseCLI(args []string) (ParsedFilter, error) {
 	if err != nil {
 		return ParsedFilter{}, err
 	}
-	return ParsedFilter{Filter: filter, JSON: json}, nil
+	return ParsedFilter{filter: filter, json: json}, nil
 }
 
+func (parsed ParsedFilter) Filter() Filter { return parsed.filter }
+
+func (parsed ParsedFilter) JSON() bool { return parsed.json }
+
+func (filter Filter) Scope() string { return filter.scope }
+
+func (filter Filter) DeferredOnly() bool { return filter.deferredOnly }
+
+func (filter Filter) UnavailableOnly() bool { return filter.unavailableOnly }
+
+func (filter Filter) SomedayOnly() bool { return filter.somedayOnly }
+
+func (filter Filter) RecurringOnly() bool { return filter.recurringOnly }
+
+func (filter Filter) BodySearch() bool { return filter.bodySearch }
+
+func (filter Filter) DelegatedOnly() bool { return filter.delegatedOnly }
+
+func (filter Filter) AgentReadyOnly() bool { return filter.agentReadyOnly }
+
+func (filter Filter) Contexts() []string { return copyStrings(filter.contexts) }
+
+func (filter Filter) Tags() []string { return copyStrings(filter.tags) }
+
+func (filter Filter) Priority() string { return filter.priority }
+
+func (filter Filter) State() string { return filter.state }
+
+func (filter Filter) Text() []string { return copyStrings(filter.text) }
+
 func (filter Filter) IncludeArchive() bool {
-	return filter.Scope == ScopeArchived || filter.Scope == ScopeAll
+	return filter.scope == ScopeArchived || filter.scope == ScopeAll
 }
 
 func (filter Filter) States() []string {
 	var scoped []string
-	switch filter.Scope {
+	switch filter.scope {
 	case ScopeOpen:
 		scoped = []string{"INBOX", "TODO", "NEXT", "WAITING"}
 	case ScopeProposed:
@@ -175,18 +211,18 @@ func (filter Filter) States() []string {
 	default:
 		scoped = stateOrder
 	}
-	if filter.State == "" {
+	if filter.state == "" {
 		return copyStrings(scoped)
 	}
 	for _, state := range scoped {
-		if state == filter.State {
+		if state == filter.state {
 			return []string{state}
 		}
 	}
 	return []string{}
 }
 
-func (filter Filter) TextQuery() string { return strings.ToLower(strings.Join(filter.Text, " ")) }
+func (filter Filter) TextQuery() string { return strings.ToLower(strings.Join(filter.text, " ")) }
 
 func knownScope(scope string) bool {
 	return scope == ScopeOpen || scope == ScopeProposed || scope == ScopeDone || scope == ScopeArchived || scope == ScopeAll
@@ -200,4 +236,10 @@ func knownState(state string) bool {
 	}
 	return false
 }
-func copyStrings(values []string) []string { return append([]string(nil), values...) }
+func copyStrings(values []string) []string {
+	valuesCopy := make([]string, len(values))
+	copy(valuesCopy, values)
+	return valuesCopy
+}
+
+func stringPointer(value string) *string { return &value }
