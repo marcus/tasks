@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,11 +13,31 @@ import (
 )
 
 type input struct {
-	CaseID    string          `json:"case_id"`
-	Operation string          `json:"operation"`
-	Argv      []string        `json:"argv"`
-	Kwargs    json.RawMessage `json:"kwargs"`
+	CaseID     string          `json:"case_id"`
+	Operation  string          `json:"operation"`
+	Argv       []string        `json:"argv"`
+	ArgvBase64 []string        `json:"argv_base64"`
+	Kwargs     json.RawMessage `json:"kwargs"`
 }
+
+// argv decodes the byte-level argument encoding a case may use instead of
+// `argv`: JSONL cannot carry an argument whose bytes are not valid UTF-8, and
+// ParseCLI treats those arguments differently from every valid one.
+func (in input) argv() ([]string, error) {
+	if in.ArgvBase64 == nil {
+		return in.Argv, nil
+	}
+	args := make([]string, 0, len(in.ArgvBase64))
+	for _, encoded := range in.ArgvBase64 {
+		decoded, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, string(decoded))
+	}
+	return args, nil
+}
+
 type output struct {
 	CaseID string        `json:"case_id"`
 	OK     bool          `json:"ok"`
@@ -92,8 +113,13 @@ func run(in input) any {
 	var err error
 	switch in.Operation {
 	case "parse_cli":
+		var args []string
+		if args, err = in.argv(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
 		var parsed query.ParsedFilter
-		parsed, err = query.ParseCLI(in.Argv)
+		parsed, err = query.ParseCLI(args)
 		filter = parsed.Filter()
 		json := parsed.JSON()
 		jsonFlag = &json

@@ -4,6 +4,7 @@ package query
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -106,6 +107,14 @@ func ParseCLI(args []string) (ParsedFilter, error) {
 	json := false
 	scopes := make(map[string]struct{})
 	for _, arg := range args {
+		// Every `when` below is either a literal String — which an argument
+		// with invalid bytes can never equal — or a Regexp, and matching a
+		// Regexp against such a String raises. Ruby therefore raises here, in
+		// argument order: after an earlier unknown flag, before the post-loop
+		// mutually-exclusive-scopes check.
+		if !utf8.ValidString(arg) {
+			return ParsedFilter{}, fmt.Errorf("invalid byte sequence in UTF-8")
+		}
 		switch arg {
 		case "--open", "-o":
 			options.Scope = stringPointer(ScopeOpen)
@@ -139,13 +148,14 @@ func ParseCLI(args []string) (ParsedFilter, error) {
 		case "--json":
 			json = true
 		default:
+			tag, isTag := tagArgument(arg)
 			switch {
 			case len(arg) == 2 && arg[0] == '-' && strings.ContainsRune("ABC", rune(arg[1])):
 				options.Priority = stringPointer(arg[1:])
 			case strings.HasPrefix(arg, "@"):
 				options.Contexts = append(options.Contexts, arg)
-			case len(arg) > 1 && strings.HasPrefix(arg, "+"):
-				options.Tags = append(options.Tags, arg[1:])
+			case isTag:
+				options.Tags = append(options.Tags, tag)
 			case strings.HasPrefix(arg, "/"):
 				options.Text = append(options.Text, arg[1:])
 			case strings.HasPrefix(arg, "-"):
@@ -163,6 +173,21 @@ func ParseCLI(args []string) (ParsedFilter, error) {
 		return ParsedFilter{}, err
 	}
 	return ParsedFilter{filter: filter, json: json}, nil
+}
+
+// tagArgument reproduces `/\A\+(.+)/`. Ruby's `.` never matches "\n", so the
+// capture is the run of characters between the "+" and the first newline, and
+// an argument whose "+" is followed immediately by a newline does not take the
+// branch at all — it falls through and keeps its leading "+".
+func tagArgument(arg string) (string, bool) {
+	if !strings.HasPrefix(arg, "+") {
+		return "", false
+	}
+	rest := arg[1:]
+	if index := strings.IndexByte(rest, '\n'); index >= 0 {
+		rest = rest[:index]
+	}
+	return rest, rest != ""
 }
 
 func (parsed ParsedFilter) Filter() Filter { return parsed.filter }
@@ -222,7 +247,15 @@ func (filter Filter) States() []string {
 	return []string{}
 }
 
-func (filter Filter) TextQuery() string { return strings.ToLower(strings.Join(filter.text, " ")) }
+// dottedCapitalI is the only character with an unconditional multi-character
+// lowercase mapping, which is the whole of the difference between Ruby's
+// String#downcase (full Unicode case mapping) and strings.ToLower (simple 1:1).
+const dottedCapitalI, dottedCapitalIFolded = "İ", "i̇"
+
+func (filter Filter) TextQuery() string {
+	joined := strings.Join(filter.text, " ")
+	return strings.ToLower(strings.ReplaceAll(joined, dottedCapitalI, dottedCapitalIFolded))
+}
 
 func knownScope(scope string) bool {
 	return scope == ScopeOpen || scope == ScopeProposed || scope == ScopeDone || scope == ScopeArchived || scope == ScopeAll

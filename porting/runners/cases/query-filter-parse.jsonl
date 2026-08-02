@@ -55,3 +55,20 @@
 {"case_id":"query-filter-unknown-keyword-operator","operation":"new","kwargs":{"+":1}}
 {"case_id":"query-filter-unknown-keyword-empty-name","operation":"new","kwargs":{"":1}}
 {"case_id":"query-filter-unknown-keyword-escapes","operation":"new","kwargs":{"quote\"q":1}}
+# `/\A\+(.+)/`: Ruby's `.` never matches "\n", so the tag stops at the first
+# newline and a "+" followed immediately by one is not a tag at all.
+{"case_id":"query-filter-tag-embedded-newline","operation":"parse_cli","argv":["+alpha\nbeta"]}
+{"case_id":"query-filter-tag-leading-newline","operation":"parse_cli","argv":["+\nbeta"]}
+{"case_id":"query-filter-tag-trailing-newline","operation":"parse_cli","argv":["+alpha\n"]}
+{"case_id":"query-filter-tag-only-newline","operation":"parse_cli","argv":["+\n"]}
+# `text_query`'s String#downcase is the full Unicode mapping, not the simple one.
+{"case_id":"query-filter-text-query-dotted-capital-i","operation":"parse_cli","argv":["İ"]}
+{"case_id":"query-filter-text-query-final-sigma","operation":"parse_cli","argv":["ΑΣ"]}
+# argv_base64 carries argument bytes JSONL cannot: matching a Regexp against a
+# String with invalid bytes raises, and it raises inside the loop — before the
+# post-loop mutually-exclusive-scopes check, after an earlier unknown flag.
+{"case_id":"query-filter-argv-base64-equals-argv","operation":"parse_cli","argv_base64":["K2FscGhh"]}
+{"case_id":"query-filter-invalid-utf8-tag","operation":"parse_cli","argv_base64":["K8M="]}
+{"case_id":"query-filter-invalid-utf8-bare","operation":"parse_cli","argv_base64":["ww=="]}
+{"case_id":"query-filter-invalid-utf8-precedes-scope-check","operation":"parse_cli","argv_base64":["LS1kb25l","LS1hcmNoaXZlZA==","ww=="]}
+{"case_id":"query-filter-invalid-utf8-follows-unknown-flag","operation":"parse_cli","argv_base64":["LXo=","ww=="]}

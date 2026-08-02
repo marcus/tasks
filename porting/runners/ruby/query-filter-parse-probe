@@ -6,8 +6,20 @@
 # writes a task store, so introducing a fixture copy would obscure the actual
 # subject of the slice.
 
+require "base64"
 require "json"
 require_relative "../../../lib/tasks/task_queries"
+
+# JSONL cannot carry an argument whose bytes are not valid UTF-8, and parse_cli
+# treats those arguments differently from every valid one. A case may therefore
+# give `argv_base64` — one base64 string per argument — instead of `argv`.
+def argv_for(case_spec)
+  return case_spec.fetch("argv") unless case_spec.key?("argv_base64")
+
+  case_spec.fetch("argv_base64").map do |encoded|
+    Base64.strict_decode64(encoded).force_encoding(Encoding::UTF_8)
+  end
+end
 
 def filter_json(filter)
   {
@@ -33,7 +45,7 @@ end
 def observe(case_spec)
   filter, json = case case_spec.fetch("operation")
                  when "parse_cli"
-                   parsed = Tasks::TaskFilter.parse_cli(case_spec.fetch("argv"))
+                   parsed = Tasks::TaskFilter.parse_cli(argv_for(case_spec))
                    [parsed.filter, parsed.json]
                  when "new"
                    [Tasks::TaskFilter.new(**case_spec.fetch("kwargs", {}).transform_keys(&:to_sym)), nil]
