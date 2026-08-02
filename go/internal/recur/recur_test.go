@@ -17,6 +17,12 @@ func TestParseIntervalCookiesAndFriendlySpellings(t *testing.T) {
 		{"2w", "+", "+2w"},
 		{"every\t3 days", ".+", ".+3d"},
 		{"every 3 days", ".+", ".+3d"},
+		{"a week", ".+", ".+1w"},
+		{"each 2 weeks", ".+", ".+2w"},
+		{"2,weeks", ".+", ".+2w"},
+		{"2/weeks", ".+", ".+2w"},
+		{"in 3 days", ".+", ".+3d"},
+		{"every3days", ".+", ".+3d"},
 		{"month", ".+", ".+1m"},
 		{"weekly", "wat", "wat1w"},
 	}
@@ -27,6 +33,14 @@ func TestParseIntervalCookiesAndFriendlySpellings(t *testing.T) {
 				t.Fatalf("Parse(%q) = %#v, want %q", tc.input, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestParseFriendlyIntervalUsesRubyTokenization(t *testing.T) {
+	for _, input := range []string{"2 3 days", "2 3days", "2and3days", "2,3days"} {
+		if got := Parse(input, ".+"); got.Error == "" {
+			t.Fatalf("Parse(%q) = %#v, want rejection", input, got)
+		}
 	}
 }
 

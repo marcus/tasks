@@ -34,6 +34,11 @@ var bareUnits = map[string]string{"day": "d", "week": "w", "month": "m", "year":
 
 var unitNames = map[string]string{"d": "day", "w": "week", "m": "month", "y": "year"}
 
+var filler = map[string]bool{
+	"on": true, "of": true, "the": true, "each": true, "every": true,
+	"a": true, "an": true, "in": true, "at": true, "and": true,
+}
+
 type interval struct {
 	count *big.Int
 	unit  string
@@ -145,44 +150,72 @@ func Step(date CivilDate, count *big.Int, unit string) CivilDate {
 }
 
 func parseFriendlyInterval(value string) (string, interval, bool) {
-	if word, ok := words[value]; ok {
-		return "", word, true
-	}
-	parts := strings.Fields(value)
-	if len(parts) > 0 && parts[0] == "every" {
-		parts = parts[1:]
-	}
-	// Ruby tokenizes a joined count/unit pair ("2w") but does not merge
-	// separate numeric tokens ("2 3days" must remain invalid).
-	if len(parts) == 1 {
-		match := countUnit.FindStringSubmatch(parts[0])
-		if match != nil {
-			n, parsed := new(big.Int).SetString(match[1], 10)
-			unit, ok := units[match[2]]
-			if parsed && n.Sign() > 0 && ok {
+	parts := tokenize(value)
+	if len(parts) >= 2 && digits(parts[0]) {
+		if unit, ok := units[parts[1]]; ok {
+			n, parsed := new(big.Int).SetString(parts[0], 10)
+			if parsed && n.Sign() > 0 && len(parts) == 2 {
 				return "", interval{count: n, unit: unit}, true
 			}
-			return "", interval{}, false
+		}
+	}
+	if len(parts) >= 1 {
+		if word, ok := words[parts[0]]; ok && len(parts) == 1 {
+			return "", word, true
 		}
 	}
 	if len(parts) == 1 {
 		if unit, ok := bareUnits[parts[0]]; ok {
 			return "", interval{count: big.NewInt(1), unit: unit}, true
 		}
-		return "", interval{}, false
 	}
-	if len(parts) != 2 {
-		return "", interval{}, false
+	return "", interval{}, false
+}
+
+// tokenize is the interval-only counterpart of Ruby Recur.tokenize. It keeps
+// token boundaries intact: count/unit pairs are recognized only when adjacent
+// tokens say so, while filler and punctuation are discarded before the peel.
+func tokenize(value string) []string {
+	var text strings.Builder
+	for _, r := range value {
+		switch r {
+		case ',', '&', '/':
+			text.WriteByte(' ')
+		default:
+			text.WriteRune(r)
+		}
 	}
-	n, parsed := new(big.Int).SetString(parts[0], 10)
-	if !parsed || n.Sign() < 1 {
-		return "", interval{}, false
+	value = text.String()
+	var split strings.Builder
+	var previous rune
+	for index, r := range value {
+		if index > 0 && ((previous >= '0' && previous <= '9' && r >= 'a' && r <= 'z') ||
+			(previous >= 'a' && previous <= 'z' && r >= '0' && r <= '9')) {
+			split.WriteByte(' ')
+		}
+		split.WriteRune(r)
+		previous = r
 	}
-	unit, ok := units[parts[1]]
-	if !ok {
-		return "", interval{}, false
+	parts := strings.Fields(split.String())
+	tokens := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if !filler[part] {
+			tokens = append(tokens, part)
+		}
 	}
-	return "", interval{count: n, unit: unit}, true
+	return tokens
+}
+
+func digits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func prefixOrDefault(prefix, defaultPrefix string) string {

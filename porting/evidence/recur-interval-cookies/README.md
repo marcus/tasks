@@ -249,3 +249,33 @@ Branch state at review time: `go build ./...`, `go vet ./...` and
 unavailable (no Go CLI adapter reaches recurrence) — unchanged harness gap.
 The next tick is a **mid-tier translation** repairing the tokenizer, then a
 fresh independent source-fidelity review, then the Go-idiom review.
+
+## Source-fidelity repair: natural-phrase tokenization (2026-08-02)
+
+`parseFriendlyInterval` now follows Ruby's `tokenize` then `take_interval`
+sequence for the interval-only branch. It removes every `FILLER` token,
+converts `,`, `&`, and `/` to token boundaries, splits ASCII digit/letter
+boundaries in both directions, and then peels only a leading count/unit,
+`WORDS`, or `BARE_UNITS` interval. It deliberately preserves separate token
+boundaries, so two leading numeric tokens remain invalid rather than being
+silently concatenated.
+
+New Go regressions cover Ruby-valid `a week`, `each 2 weeks`, `2,weeks`,
+`2/weeks`, `in 3 days`, and `every3days`, as well as the Ruby-invalid
+`2 3 days`, `2 3days`, `2and3days`, and `2,3days`. A direct Ruby probe returned
+the matching canonical cookies and `nil` rejections for those same cases.
+
+Verification passed:
+
+```sh
+(cd go && gofmt -w internal/recur/recur.go internal/recur/recur_test.go)
+(cd go && go test ./internal/recur && go test ./... && go test -race ./internal/recur && go vet ./...)
+ruby test/test_recur.rb # 20 runs, 66 assertions
+git diff --check
+```
+
+Differential fixture conformance remains unavailable because no Go CLI adapter
+reaches recurrence; this is the existing harness gap, not a substituted Go
+oracle. The next step is a fresh independent mid-tier source-fidelity review,
+followed (only if it passes) by a separate Go-idiom review and independent
+approval.
