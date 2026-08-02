@@ -97,10 +97,10 @@ func TestInspectStringUsesTheUnicodeEscapeForms(t *testing.T) {
 		{`"\u0085"`, `"\u0085"`},
 		{`"\u007F"`, `"\u007F"`},
 		{`"\u0378"`, `"\u0378"`},
-		{`"­"`, "\"­\""},
-		{`"​"`, "\"​\""},
+		{`"\u00AD"`, "\"\u00AD\""},
+		{`"\u200B"`, "\"\u200B\""},
 		{`"𐀌"`, `"\u{1000C}"`},
-		{`"􏿽"`, "\"\U0010FFFD\""},
+		{`"\uDBFF\uDFFD"`, "\"\U0010FFFD\""},
 	}
 	for _, testCase := range cases {
 		got := CoerceStrings(decode(t, `[[`+testCase.element+`]]`))

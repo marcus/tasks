@@ -81,7 +81,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}()
 	// Ruby's JSON.generate leaves `<`, `>`, and `&` unescaped; Go's default
 	// encoder escapes them, which would diverge on any inspected value.
 	encoder := json.NewEncoder(os.Stdout)
