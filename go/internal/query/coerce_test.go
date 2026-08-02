@@ -150,3 +150,29 @@ func TestCoercedScalarsReachTheDomainRule(t *testing.T) {
 		t.Errorf("NewFilter(scope: 5) error = %v", err)
 	}
 }
+
+func TestInspectSymbolMatchesRubySymbolInspect(t *testing.T) {
+	// Every expectation is a captured `Symbol#inspect` result, not a guess:
+	// see porting/evidence/query-filter-parse/symbol-inspect-ruby.jsonl.
+	cases := []struct{ name, want string }{
+		{"nope", ":nope"}, {"a_b9", ":a_b9"}, {"_x", ":_x"}, {"_", ":_"},
+		{"A", ":A"}, {"CONST", ":CONST"}, {"end", ":end"}, {"nil", ":nil"},
+		{"a?", ":a?"}, {"a!", ":a!"}, {"a=", ":a="},
+		{"é", ":é"}, {"é?", ":é?"}, {"αβ", ":αβ"},
+		{"+", ":+"}, {"[]=", ":[]="}, {"+@", ":+@"}, {"`", ":`"},
+		{"~@", `:"~@"`}, {"!@", `:"!@"`},
+		{"@x", ":@x"}, {"@@x", ":@@x"}, {"$x", ":$x"}, {"$1", ":$1"},
+		{"$12", ":$12"}, {"$!", ":$!"}, {"$;", ":$;"},
+		{"@1", `:"@1"`}, {"@@1", `:"@@1"`}, {"@", `:"@"`}, {"@@", `:"@@"`},
+		{"$", `:"$"`}, {"@a?", `:"@a?"`}, {"a?=", `:"a?="`},
+		{"a b", `:"a b"`}, {"a-b", `:"a-b"`}, {"a.b", `:"a.b"`},
+		{"A::B", `:"A::B"`}, {"1a", `:"1a"`}, {"", `:""`},
+		{"tab\there", `:"tab\there"`}, {`quote"q`, `:"quote\"q"`},
+		{`back\s`, `:"back\\s"`},
+	}
+	for _, testCase := range cases {
+		if got := InspectSymbol(testCase.name); got != testCase.want {
+			t.Errorf("InspectSymbol(%q) = %s, want %s", testCase.name, got, testCase.want)
+		}
+	}
+}

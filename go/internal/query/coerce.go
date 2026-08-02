@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 // CoerceStrings mirrors Ruby's `Array(values).map { |value| value.to_s }`, the
@@ -40,6 +41,74 @@ func CoerceBool(value any) bool {
 	}
 	boolean, isBool := value.(bool)
 	return !isBool || boolean
+}
+
+// InspectSymbol mirrors Ruby's Symbol#inspect, which is how the interpreter
+// renders an unrecognised keyword name in the ArgumentError it raises before
+// TaskFilter#initialize runs. A name the parser would accept as a symbol
+// literal prints bare; anything else is quoted with String#inspect.
+func InspectSymbol(name string) string {
+	if bareSymbolName(name) {
+		return ":" + name
+	}
+	return ":" + inspectString(name)
+}
+
+// bareSymbolName reports whether Ruby prints this symbol without quotes: a
+// local or constant name with an optional single trailing `?`, `!`, or `=`; an
+// instance, class, or global variable name; or one of the operator methods.
+// `~@` and `!@` are deliberately absent — Ruby quotes those two.
+func bareSymbolName(name string) bool {
+	switch name {
+	case "+", "-", "*", "/", "%", "**", "==", "===", "!=", ">", ">=", "<", "<=",
+		"<=>", "<<", ">>", "~", "!", "=~", "!~", "&", "|", "^", "[]", "[]=",
+		"+@", "-@", "`":
+		return true
+	}
+	switch {
+	case strings.HasPrefix(name, "@@"):
+		return identifier(name[2:])
+	case strings.HasPrefix(name, "@"):
+		return identifier(name[1:])
+	case strings.HasPrefix(name, "$"):
+		return globalName(name[1:])
+	}
+	if trimmed := strings.TrimRight(name, "?!="); len(trimmed) == len(name)-1 {
+		// One trailing `?`, `!`, or `=` is part of a method name; two are not,
+		// so `a?=` falls through to the quoted form as Ruby renders it.
+		name = trimmed
+	}
+	return identifier(name)
+}
+
+// globalName covers `$foo`, the digit globals `$1`, and the single-character
+// specials such as `$!` and `$;`, all of which Ruby prints bare.
+func globalName(name string) bool {
+	if name == "" {
+		return false
+	}
+	if identifier(name) {
+		return true
+	}
+	if strings.TrimLeft(name, "0123456789") == "" {
+		return true
+	}
+	return len([]rune(name)) == 1
+}
+
+// identifier is Ruby's local-or-constant name shape: a leading letter or
+// underscore, then letters, digits, and underscores. Every non-ASCII rune
+// counts as a letter, which is why `:é?` and `:αβ` print bare.
+func identifier(name string) bool {
+	for index, character := range name {
+		switch {
+		case character == '_' || unicode.IsLetter(character) || character > unicode.MaxASCII:
+		case index > 0 && unicode.IsDigit(character):
+		default:
+			return false
+		}
+	}
+	return name != ""
 }
 
 // rubyArray is Kernel#Array for the JSON value shapes: nil becomes empty, an

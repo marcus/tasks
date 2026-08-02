@@ -26,3 +26,26 @@ func TestDecodeFilterOptionsDistinguishesNullScopeFromOmission(t *testing.T) {
 		t.Fatalf("NewFilter(explicit null) error = %v", err)
 	}
 }
+
+func TestDecodeFilterOptionsRejectsUnknownKeywordsInGivenOrder(t *testing.T) {
+	// Ruby raises before initialize's body, so an unknown keyword outranks the
+	// domain error a sibling keyword would otherwise produce.
+	cases := []struct{ kwargs, want string }{
+		{`{"nope":1}`, "unknown keyword: :nope"},
+		{`{"nope":1,"also":2}`, "unknown keywords: :nope, :also"},
+		{`{"also":2,"nope":1}`, "unknown keywords: :also, :nope"},
+		{`{"scope":"done","nope":1}`, "unknown keyword: :nope"},
+		{`{"state":"BLOCKED","nope":1}`, "unknown keyword: :nope"},
+		{`{"a b":1}`, `unknown keyword: :"a b"`},
+		{`{"nope":1,"nope":2}`, "unknown keyword: :nope"},
+	}
+	for _, testCase := range cases {
+		_, err := decodeFilterOptions([]byte(testCase.kwargs))
+		if err == nil || err.Error() != testCase.want {
+			t.Errorf("decodeFilterOptions(%s) error = %v, want %q", testCase.kwargs, err, testCase.want)
+		}
+	}
+	if _, err := decodeFilterOptions([]byte(`{"scope":"done"}`)); err != nil {
+		t.Errorf("decodeFilterOptions with only known keywords = %v", err)
+	}
+}

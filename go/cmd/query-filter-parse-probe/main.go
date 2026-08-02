@@ -121,6 +121,15 @@ func decodeFilterOptions(raw json.RawMessage) (query.FilterOptions, error) {
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return query.FilterOptions{}, err
 	}
+	// Ruby rejects unrecognised keywords before initialize's body runs, so this
+	// precedes every coercion and every domain rule below.
+	order, err := keywordOrder(raw)
+	if err != nil {
+		return query.FilterOptions{}, err
+	}
+	if err := rejectUnknownKeywords(order); err != nil {
+		return query.FilterOptions{}, err
+	}
 	// Ruby coerces or truth-tests every keyword before a domain rule sees it,
 	// so nothing here may reach a typed decode: a strict decoder would reject
 	// values Ruby accepts, and would answer with a decoder message where Ruby
@@ -183,6 +192,64 @@ func decodeFilterOptions(raw json.RawMessage) (query.FilterOptions, error) {
 		*target = query.CoerceStrings(value)
 	}
 	return options, nil
+}
+
+// knownKeywords is TaskFilter#initialize's keyword list. Anything else is what
+// Ruby's interpreter reports before the body runs.
+var knownKeywords = map[string]bool{
+	"scope": true, "deferred_only": true, "unavailable_only": true,
+	"someday_only": true, "recurring_only": true, "body_search": true,
+	"contexts": true, "tags": true, "priority": true, "state": true,
+	"text": true, "delegated_only": true, "agent_ready_only": true,
+}
+
+// keywordOrder returns the object's keys in the order they were written. A Go
+// map cannot carry that order, and the order is observable: the ArgumentError
+// names unknown keywords as the caller gave them, not sorted.
+func keywordOrder(raw json.RawMessage) ([]string, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	if _, err := decoder.Token(); err != nil { // consumes `{`
+		return nil, err
+	}
+	var order []string
+	seen := map[string]bool{}
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return nil, err
+		}
+		key, isKey := token.(string)
+		if !isKey {
+			return nil, fmt.Errorf("kwargs key is not a string: %v", token)
+		}
+		// A repeated key keeps its first position, as Ruby's Hash#[]= does.
+		if !seen[key] {
+			seen[key] = true
+			order = append(order, key)
+		}
+		var discard json.RawMessage
+		if err := decoder.Decode(&discard); err != nil {
+			return nil, err
+		}
+	}
+	return order, nil
+}
+
+func rejectUnknownKeywords(order []string) error {
+	var unknown []string
+	for _, key := range order {
+		if !knownKeywords[key] {
+			unknown = append(unknown, query.InspectSymbol(key))
+		}
+	}
+	switch len(unknown) {
+	case 0:
+		return nil
+	case 1:
+		return fmt.Errorf("unknown keyword: %s", unknown[0])
+	default:
+		return fmt.Errorf("unknown keywords: %s", strings.Join(unknown, ", "))
+	}
 }
 
 // decodeGeneric keeps numbers as json.Number so integers stringify the way

@@ -1,0 +1,21 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Capture Symbol#inspect for the name shapes a JSON kwargs key can take. The
+# interpreter renders an unknown keyword with this method, so it is part of the
+# slice's observable output even though TaskFilter never calls it.
+
+require "json"
+
+NAMES = [
+  "nope", "a_b9", "_x", "_", "A", "CONST", "end", "nil",
+  "a?", "a!", "a=", "é", "é?", "αβ",
+  "+", "-", "*", "/", "%", "**", "==", "===", "!=", ">", ">=", "<", "<=",
+  "<=>", "<<", ">>", "~", "!", "=~", "!~", "&", "|", "^", "[]", "[]=",
+  "+@", "-@", "~@", "!@", "`",
+  "@x", "@@x", "$x", "$1", "$12", "$a1", "$!", "$&", "$_", "$~", "$0", "$@", "$;",
+  "@1", "@@1", "@", "@@", "$", "@a?", "a?=",
+  "a b", "a-b", "a.b", "A::B", "1a", "", "tab\there", "quote\"q", "back\\s"
+].freeze
+
+NAMES.each { |name| puts JSON.generate({ "name" => name, "inspect" => name.to_sym.inspect }) }

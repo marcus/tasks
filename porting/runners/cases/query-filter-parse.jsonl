@@ -41,3 +41,17 @@
 {"case_id":"sf_state_number","operation":"new","kwargs":{"state":5}}
 {"case_id":"sf_scope_number","operation":"new","kwargs":{"scope":5}}
 {"case_id":"sf_bool_empty_string","operation":"new","kwargs":{"agent_ready_only":""}}
+# Unknown constructor keywords. Ruby raises before initialize's body runs, so
+# the message names every unrecognised key in the order the caller gave them,
+# rendered with Symbol#inspect. Ids uk_* in
+# porting/evidence/query-filter-parse/unknown-keyword-{cases,ruby}.jsonl are
+# the first three of these, recaptured here under corpus-style ids.
+{"case_id":"query-filter-unknown-keyword-single","operation":"new","kwargs":{"nope":1}}
+{"case_id":"query-filter-unknown-keyword-multiple","operation":"new","kwargs":{"nope":1,"also":2}}
+{"case_id":"query-filter-unknown-keyword-reverse-order","operation":"new","kwargs":{"also":2,"nope":1}}
+{"case_id":"query-filter-unknown-keyword-with-known","operation":"new","kwargs":{"scope":"done","nope":1}}
+{"case_id":"query-filter-unknown-keyword-precedes-domain","operation":"new","kwargs":{"state":"BLOCKED","nope":1}}
+{"case_id":"query-filter-unknown-keyword-nonidentifier","operation":"new","kwargs":{"a b":1}}
+{"case_id":"query-filter-unknown-keyword-operator","operation":"new","kwargs":{"+":1}}
+{"case_id":"query-filter-unknown-keyword-empty-name","operation":"new","kwargs":{"":1}}
+{"case_id":"query-filter-unknown-keyword-escapes","operation":"new","kwargs":{"quote\"q":1}}
