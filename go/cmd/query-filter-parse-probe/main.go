@@ -11,10 +11,10 @@ import (
 )
 
 type input struct {
-	CaseID    string              `json:"case_id"`
-	Operation string              `json:"operation"`
-	Argv      []string            `json:"argv"`
-	Kwargs    query.FilterOptions `json:"kwargs"`
+	CaseID    string          `json:"case_id"`
+	Operation string          `json:"operation"`
+	Argv      []string        `json:"argv"`
+	Kwargs    json.RawMessage `json:"kwargs"`
 }
 type output struct {
 	CaseID string        `json:"case_id"`
@@ -96,7 +96,11 @@ func run(in input) any {
 		json := parsed.JSON()
 		jsonFlag = &json
 	case "new":
-		filter, err = query.NewFilter(in.Kwargs)
+		var options query.FilterOptions
+		options, err = decodeFilterOptions(in.Kwargs)
+		if err == nil {
+			filter, err = query.NewFilter(options)
+		}
 	default:
 		err = fmt.Errorf("unknown operation: %s", in.Operation)
 	}
@@ -104,6 +108,25 @@ func run(in input) any {
 		return errorResult{CaseID: in.CaseID, OK: false, Error: errorOutput{Class: "ArgumentError", Message: err.Error()}}
 	}
 	return output{CaseID: in.CaseID, OK: true, JSON: jsonFlag, Filter: project(filter)}
+}
+
+func decodeFilterOptions(raw json.RawMessage) (query.FilterOptions, error) {
+	var options query.FilterOptions
+	if len(raw) == 0 {
+		return options, nil
+	}
+	if err := json.Unmarshal(raw, &options); err != nil {
+		return query.FilterOptions{}, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return query.FilterOptions{}, err
+	}
+	if scope, present := fields["scope"]; present && string(scope) == "null" {
+		empty := ""
+		options.Scope = &empty
+	}
+	return options, nil
 }
 
 func project(filter query.Filter) *filterOutput {

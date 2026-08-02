@@ -19,6 +19,7 @@
 {"case_id":"query-filter-invalid-state","operation":"new","kwargs":{"state":"BLOCKED"}}
 {"case_id":"query-filter-invalid-priority","operation":"new","kwargs":{"priority":"D"}}
 {"case_id":"query-filter-uppercase-scope","operation":"new","kwargs":{"scope":"OPEN"}}
+{"case_id":"query-filter-null-scope","operation":"new","kwargs":{"scope":null}}
 {"case_id":"query-filter-empty-priority","operation":"new","kwargs":{"priority":""}}
 {"case_id":"query-filter-empty-state","operation":"new","kwargs":{"state":""}}
 {"case_id":"query-filter-delegated","operation":"parse_cli","argv":["--delegated"]}

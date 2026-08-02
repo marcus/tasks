@@ -16,6 +16,7 @@
 {"case_id":"query-filter-invalid-state","ok":false,"error":{"class":"ArgumentError","message":"state must be one of PROPOSED, INBOX, TODO, NEXT, WAITING, DONE, CANCELLED"}}
 {"case_id":"query-filter-invalid-priority","ok":false,"error":{"class":"ArgumentError","message":"priority must be A, B, C, or none"}}
 {"case_id":"query-filter-uppercase-scope","ok":false,"error":{"class":"ArgumentError","message":"unknown task scope: OPEN"}}
+{"case_id":"query-filter-null-scope","ok":false,"error":{"class":"ArgumentError","message":"unknown task scope: "}}
 {"case_id":"query-filter-empty-priority","ok":false,"error":{"class":"ArgumentError","message":"priority must be A, B, C, or none"}}
 {"case_id":"query-filter-empty-state","ok":false,"error":{"class":"ArgumentError","message":"state must be one of PROPOSED, INBOX, TODO, NEXT, WAITING, DONE, CANCELLED"}}
 {"case_id":"query-filter-delegated","ok":true,"json":false,"filter":{"scope":"open","include_archive":false,"deferred_only":false,"unavailable_only":false,"someday_only":false,"recurring_only":false,"body_search":false,"delegated_only":true,"agent_ready_only":false,"contexts":[],"tags":[],"priority":null,"state":null,"states":["INBOX","TODO","NEXT","WAITING"],"text":[],"text_query":""}}
