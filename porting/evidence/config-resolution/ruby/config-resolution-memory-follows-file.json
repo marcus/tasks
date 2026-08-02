@@ -1,17 +1,17 @@
 {
   "schema_version": 1,
-  "observation_id": "obs_6994d461-d891-487e-b66c-eb4262c0a089",
+  "observation_id": "obs_d9f1742f-8cee-40ee-96f8-ab469d606c6b",
   "case_id": "config-resolution-memory-follows-file",
   "implementation": {
     "name": "ruby",
-    "version": "199a2d4978089d34532641cc574a4c8455f68697-dirty",
+    "version": "8dcc47f308dff944dbc4acd48a79a8e0184ddbec",
     "runtime": "ruby 4.0.6"
   },
   "fixture": {
     "id": "valid/archive-pair",
     "class": "valid",
     "root_sha256": "fe0384fcd1346ae473eecc7284d744cb201293067a0c425eeeb2e1422727c6de",
-    "copy_root": "/tmp/tasks-conformance/config-resolution-memory-follows-file"
+    "copy_root": "/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-memory-follows-file"
   },
   "invocation": {
     "surface": "cli",
@@ -31,7 +31,7 @@
       },
       {
         "name": "HOME",
-        "value": "/tmp/tasks-conformance/config-resolution-memory-follows-file"
+        "value": "/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-memory-follows-file"
       },
       {
         "name": "LANG",
@@ -51,7 +51,7 @@
       },
       {
         "name": "TASKS_ARCHIVE",
-        "value": "/tmp/tasks-conformance/config-resolution-memory-follows-file/archive.jsonl"
+        "value": "/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-memory-follows-file/archive.jsonl"
       },
       {
         "name": "TASKS_DEVICE",
@@ -59,11 +59,11 @@
       },
       {
         "name": "TASKS_DIR",
-        "value": "/tmp/tasks-conformance/config-resolution-memory-follows-file"
+        "value": "/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-memory-follows-file"
       },
       {
         "name": "TASKS_FILE",
-        "value": "/tmp/tasks-conformance/config-resolution-memory-follows-file/tasks.jsonl"
+        "value": "/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-memory-follows-file/tasks.jsonl"
       },
       {
         "name": "TASKS_MEMORY",
@@ -99,11 +99,11 @@
       },
       {
         "name": "XDG_CONFIG_HOME",
-        "value": "/tmp/tasks-conformance/config-resolution-memory-follows-file/.config"
+        "value": "/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-memory-follows-file/.config"
       },
       {
         "name": "XDG_STATE_HOME",
-        "value": "/tmp/tasks-conformance/config-resolution-memory-follows-file/.state"
+        "value": "/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-memory-follows-file/.state"
       }
     ],
     "pins": [
@@ -175,12 +175,12 @@
     "signal": null,
     "timed_out": false,
     "stdout": {
-      "sha256": "5aceea9a4e8a9e72a11e315bf557b5a7cf36bc5e3ecd81b345f7d3391ac4d83b",
-      "size_bytes": 1049,
+      "sha256": "e9170884967e7437cf47c2d0fead33dc6564d3989ec5219e2f12d3700030f787",
+      "size_bytes": 1113,
       "valid_utf8": true,
-      "bytes_base64": "eyJvcmciOiIvdG1wL3Rhc2tzLWNvbmZvcm1hbmNlL2NvbmZpZy1yZXNvbHV0aW9uLW1lbW9yeS1mb2xsb3dzLWZpbGUvdGFza3MuanNvbmwiLCJhcmNoaXZlIjoiL3RtcC90YXNrcy1jb25mb3JtYW5jZS9jb25maWctcmVzb2x1dGlvbi1tZW1vcnktZm9sbG93cy1maWxlL2FyY2hpdmUuanNvbmwiLCJtZW1vcnkiOiIvdG1wL3Rhc2tzLWNvbmZvcm1hbmNlL2NvbmZpZy1yZXNvbHV0aW9uLW1lbW9yeS1mb2xsb3dzLWZpbGUvYWdlbnQtbWVtb3J5Lm1kIiwidXJnZW50X2RheXMiOjMsIm1heF9kZXB0aCI6NCwidGhlbWUiOiJkZWZhdWx0IiwiY29sb3JzIjp7fSwibW91c2UiOnRydWUsInRpbWV6b25lIjoiVVRDIiwidGltZV9mb3JtYXQiOjEyLCJkYXRlX29yZGVyIjoibWR5IiwidHpkYl92ZXJzaW9uIjoiWm9uZWluZm8gRGF0YVNvdXJjZTogL3Vzci9zaGFyZS96b25laW5mbyIsInRpbWV6b25lX2ZhbGxiYWNrX3dhcm5pbmciOmZhbHNlLCJsaW5rcyI6e30sImxpbmtfc3lzdGVtcyI6e30sInByb21wdF9mYWN0cyI6eyJkYXRldGltZSI6dHJ1ZSwiaG9zdG5hbWUiOnRydWV9LCJob3N0bmFtZSI6ImZpeHR1cmUtaG9zdCIsImhvc3RfY29udGV4dCI6bnVsbCwiaG9zdF9jb250ZXh0X3NvdXJjZSI6bnVsbCwiaG9zdF9jb250ZXh0cyI6e30sInNvdXJjZXMiOnsib3JnIjoiVEFTS1NfRklMRSBlbnYiLCJhcmNoaXZlIjoiVEFTS1NfQVJDSElWRSBlbnYiLCJtZW1vcnkiOiJiZXNpZGUgdGFza3MuanNvbmwiLCJ1cmdlbnRfZGF5cyI6ImRlZmF1bHQiLCJtYXhfZGVwdGgiOiJkZWZhdWx0IiwidGhlbWUiOiJkZWZhdWx0IiwibW91c2UiOiJkZWZhdWx0IiwidGltZXpvbmUiOiJUQVNLU19USU1FWk9ORSBlbnYiLCJ0aW1lX2Zvcm1hdCI6ImRlZmF1bHQiLCJkYXRlX29yZGVyIjoiZGVmYXVsdCJ9LCJtZW1vcnlfZXhpc3RzIjpmYWxzZSwiY29uZmlnX2ZpbGUiOiIvdG1wL3Rhc2tzLWNvbmZvcm1hbmNlL2NvbmZpZy1yZXNvbHV0aW9uLW1lbW9yeS1mb2xsb3dzLWZpbGUvLmNvbmZpZy90YXNrcy9jb25maWciLCJjb25maWdfZmlsZV9leGlzdHMiOmZhbHNlfQo=",
+      "bytes_base64": "eyJvcmciOiIvdG1wL3Rhc2tzLXBvcnQtY29uZmlnLWV2aWRlbmNlLlc3VkRibS9jb25maWctcmVzb2x1dGlvbi1tZW1vcnktZm9sbG93cy1maWxlL3Rhc2tzLmpzb25sIiwiYXJjaGl2ZSI6Ii90bXAvdGFza3MtcG9ydC1jb25maWctZXZpZGVuY2UuVzdWRGJtL2NvbmZpZy1yZXNvbHV0aW9uLW1lbW9yeS1mb2xsb3dzLWZpbGUvYXJjaGl2ZS5qc29ubCIsIm1lbW9yeSI6Ii90bXAvdGFza3MtcG9ydC1jb25maWctZXZpZGVuY2UuVzdWRGJtL2NvbmZpZy1yZXNvbHV0aW9uLW1lbW9yeS1mb2xsb3dzLWZpbGUvYWdlbnQtbWVtb3J5Lm1kIiwidXJnZW50X2RheXMiOjMsIm1heF9kZXB0aCI6NCwidGhlbWUiOiJkZWZhdWx0IiwiY29sb3JzIjp7fSwibW91c2UiOnRydWUsInRpbWV6b25lIjoiVVRDIiwidGltZV9mb3JtYXQiOjEyLCJkYXRlX29yZGVyIjoibWR5IiwidHpkYl92ZXJzaW9uIjoiWm9uZWluZm8gRGF0YVNvdXJjZTogL3Vzci9zaGFyZS96b25laW5mbyIsInRpbWV6b25lX2ZhbGxiYWNrX3dhcm5pbmciOmZhbHNlLCJsaW5rcyI6e30sImxpbmtfc3lzdGVtcyI6e30sInByb21wdF9mYWN0cyI6eyJkYXRldGltZSI6dHJ1ZSwiaG9zdG5hbWUiOnRydWV9LCJob3N0bmFtZSI6ImZpeHR1cmUtaG9zdCIsImhvc3RfY29udGV4dCI6bnVsbCwiaG9zdF9jb250ZXh0X3NvdXJjZSI6bnVsbCwiaG9zdF9jb250ZXh0cyI6e30sInNvdXJjZXMiOnsib3JnIjoiVEFTS1NfRklMRSBlbnYiLCJhcmNoaXZlIjoiVEFTS1NfQVJDSElWRSBlbnYiLCJtZW1vcnkiOiJiZXNpZGUgdGFza3MuanNvbmwiLCJ1cmdlbnRfZGF5cyI6ImRlZmF1bHQiLCJtYXhfZGVwdGgiOiJkZWZhdWx0IiwidGhlbWUiOiJkZWZhdWx0IiwibW91c2UiOiJkZWZhdWx0IiwidGltZXpvbmUiOiJUQVNLU19USU1FWk9ORSBlbnYiLCJ0aW1lX2Zvcm1hdCI6ImRlZmF1bHQiLCJkYXRlX29yZGVyIjoiZGVmYXVsdCJ9LCJtZW1vcnlfZXhpc3RzIjpmYWxzZSwiY29uZmlnX2ZpbGUiOiIvdG1wL3Rhc2tzLXBvcnQtY29uZmlnLWV2aWRlbmNlLlc3VkRibS9jb25maWctcmVzb2x1dGlvbi1tZW1vcnktZm9sbG93cy1maWxlLy5jb25maWcvdGFza3MvY29uZmlnIiwiY29uZmlnX2ZpbGVfZXhpc3RzIjpmYWxzZX0K",
       "truncated_at_bytes": null,
-      "text": "{\"org\":\"/tmp/tasks-conformance/config-resolution-memory-follows-file/tasks.jsonl\",\"archive\":\"/tmp/tasks-conformance/config-resolution-memory-follows-file/archive.jsonl\",\"memory\":\"/tmp/tasks-conformance/config-resolution-memory-follows-file/agent-memory.md\",\"urgent_days\":3,\"max_depth\":4,\"theme\":\"default\",\"colors\":{},\"mouse\":true,\"timezone\":\"UTC\",\"time_format\":12,\"date_order\":\"mdy\",\"tzdb_version\":\"Zoneinfo DataSource: /usr/share/zoneinfo\",\"timezone_fallback_warning\":false,\"links\":{},\"link_systems\":{},\"prompt_facts\":{\"datetime\":true,\"hostname\":true},\"hostname\":\"fixture-host\",\"host_context\":null,\"host_context_source\":null,\"host_contexts\":{},\"sources\":{\"org\":\"TASKS_FILE env\",\"archive\":\"TASKS_ARCHIVE env\",\"memory\":\"beside tasks.jsonl\",\"urgent_days\":\"default\",\"max_depth\":\"default\",\"theme\":\"default\",\"mouse\":\"default\",\"timezone\":\"TASKS_TIMEZONE env\",\"time_format\":\"default\",\"date_order\":\"default\"},\"memory_exists\":false,\"config_file\":\"/tmp/tasks-conformance/config-resolution-memory-follows-file/.config/tasks/config\",\"config_file_exists\":false}\n"
+      "text": "{\"org\":\"/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-memory-follows-file/tasks.jsonl\",\"archive\":\"/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-memory-follows-file/archive.jsonl\",\"memory\":\"/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-memory-follows-file/agent-memory.md\",\"urgent_days\":3,\"max_depth\":4,\"theme\":\"default\",\"colors\":{},\"mouse\":true,\"timezone\":\"UTC\",\"time_format\":12,\"date_order\":\"mdy\",\"tzdb_version\":\"Zoneinfo DataSource: /usr/share/zoneinfo\",\"timezone_fallback_warning\":false,\"links\":{},\"link_systems\":{},\"prompt_facts\":{\"datetime\":true,\"hostname\":true},\"hostname\":\"fixture-host\",\"host_context\":null,\"host_context_source\":null,\"host_contexts\":{},\"sources\":{\"org\":\"TASKS_FILE env\",\"archive\":\"TASKS_ARCHIVE env\",\"memory\":\"beside tasks.jsonl\",\"urgent_days\":\"default\",\"max_depth\":\"default\",\"theme\":\"default\",\"mouse\":\"default\",\"timezone\":\"TASKS_TIMEZONE env\",\"time_format\":\"default\",\"date_order\":\"default\"},\"memory_exists\":false,\"config_file\":\"/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-memory-follows-file/.config/tasks/config\",\"config_file_exists\":false}\n"
     },
     "stderr": {
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -251,7 +251,7 @@
     "states": [],
     "index": {
       "role": "journal_index",
-      "path": ".state/tasks/journal/3985108ee94e04f0/index.json",
+      "path": ".state/tasks/journal/a02cfe0d5944e1d3/index.json",
       "present": false,
       "sha256": null,
       "size_bytes": null,
@@ -309,7 +309,7 @@
     "umask": "0022"
   },
   "metrics": {
-    "wall_ms": 116.36,
+    "wall_ms": 107.085,
     "user_cpu_ms": null,
     "sys_cpu_ms": null,
     "peak_rss_bytes": null,

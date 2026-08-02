@@ -1,17 +1,17 @@
 {
   "schema_version": 1,
-  "observation_id": "obs_c524ade7-e6b1-4298-87a8-610f51515c29",
+  "observation_id": "obs_6d1e4090-5d9e-445b-9503-8c8b34c1776f",
   "case_id": "config-resolution-file-overrides",
   "implementation": {
     "name": "ruby",
-    "version": "199a2d4978089d34532641cc574a4c8455f68697-dirty",
+    "version": "8dcc47f308dff944dbc4acd48a79a8e0184ddbec",
     "runtime": "ruby 4.0.6"
   },
   "fixture": {
     "id": "valid/archive-pair",
     "class": "valid",
     "root_sha256": "b13d0855faa7a3f9628d9fc00c2706afda229b16507d7d24effe132ab5c336e0",
-    "copy_root": "/tmp/tasks-conformance/config-resolution-file-overrides"
+    "copy_root": "/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-file-overrides"
   },
   "invocation": {
     "surface": "cli",
@@ -31,7 +31,7 @@
       },
       {
         "name": "HOME",
-        "value": "/tmp/tasks-conformance/config-resolution-file-overrides"
+        "value": "/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-file-overrides"
       },
       {
         "name": "LANG",
@@ -51,7 +51,7 @@
       },
       {
         "name": "TASKS_ARCHIVE",
-        "value": "/tmp/tasks-conformance/config-resolution-file-overrides/archive.jsonl"
+        "value": "/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-file-overrides/archive.jsonl"
       },
       {
         "name": "TASKS_DEVICE",
@@ -59,15 +59,15 @@
       },
       {
         "name": "TASKS_DIR",
-        "value": "/tmp/tasks-conformance/config-resolution-file-overrides"
+        "value": "/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-file-overrides"
       },
       {
         "name": "TASKS_FILE",
-        "value": "/tmp/tasks-conformance/config-resolution-file-overrides/tasks.jsonl"
+        "value": "/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-file-overrides/tasks.jsonl"
       },
       {
         "name": "TASKS_MEMORY",
-        "value": "/tmp/tasks-conformance/config-resolution-file-overrides/override-memory.md"
+        "value": "/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-file-overrides/override-memory.md"
       },
       {
         "name": "TASKS_PIN_COALESCE_SCOPE",
@@ -99,11 +99,11 @@
       },
       {
         "name": "XDG_CONFIG_HOME",
-        "value": "/tmp/tasks-conformance/config-resolution-file-overrides/.config"
+        "value": "/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-file-overrides/.config"
       },
       {
         "name": "XDG_STATE_HOME",
-        "value": "/tmp/tasks-conformance/config-resolution-file-overrides/.state"
+        "value": "/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-file-overrides/.state"
       }
     ],
     "pins": [
@@ -175,12 +175,12 @@
     "signal": null,
     "timed_out": false,
     "stdout": {
-      "sha256": "819f8902eab7ae41b078fbbad2dbb31c19538c1613beb8db89e04124655e27b5",
-      "size_bytes": 1029,
+      "sha256": "4628d960f09f12c53a21c8ec1fa63c738b0709b2fc4c0f548f3b6afa7deaee02",
+      "size_bytes": 1093,
       "valid_utf8": true,
-      "bytes_base64": "eyJvcmciOiIvdG1wL3Rhc2tzLWNvbmZvcm1hbmNlL2NvbmZpZy1yZXNvbHV0aW9uLWZpbGUtb3ZlcnJpZGVzL3Rhc2tzLmpzb25sIiwiYXJjaGl2ZSI6Ii90bXAvdGFza3MtY29uZm9ybWFuY2UvY29uZmlnLXJlc29sdXRpb24tZmlsZS1vdmVycmlkZXMvYXJjaGl2ZS5qc29ubCIsIm1lbW9yeSI6Ii90bXAvdGFza3MtY29uZm9ybWFuY2UvY29uZmlnLXJlc29sdXRpb24tZmlsZS1vdmVycmlkZXMvb3ZlcnJpZGUtbWVtb3J5Lm1kIiwidXJnZW50X2RheXMiOjMsIm1heF9kZXB0aCI6NCwidGhlbWUiOiJkZWZhdWx0IiwiY29sb3JzIjp7fSwibW91c2UiOnRydWUsInRpbWV6b25lIjoiVVRDIiwidGltZV9mb3JtYXQiOjEyLCJkYXRlX29yZGVyIjoibWR5IiwidHpkYl92ZXJzaW9uIjoiWm9uZWluZm8gRGF0YVNvdXJjZTogL3Vzci9zaGFyZS96b25laW5mbyIsInRpbWV6b25lX2ZhbGxiYWNrX3dhcm5pbmciOmZhbHNlLCJsaW5rcyI6e30sImxpbmtfc3lzdGVtcyI6e30sInByb21wdF9mYWN0cyI6eyJkYXRldGltZSI6dHJ1ZSwiaG9zdG5hbWUiOnRydWV9LCJob3N0bmFtZSI6ImZpeHR1cmUtaG9zdCIsImhvc3RfY29udGV4dCI6bnVsbCwiaG9zdF9jb250ZXh0X3NvdXJjZSI6bnVsbCwiaG9zdF9jb250ZXh0cyI6e30sInNvdXJjZXMiOnsib3JnIjoiVEFTS1NfRklMRSBlbnYiLCJhcmNoaXZlIjoiVEFTS1NfQVJDSElWRSBlbnYiLCJtZW1vcnkiOiJUQVNLU19NRU1PUlkgZW52IiwidXJnZW50X2RheXMiOiJkZWZhdWx0IiwibWF4X2RlcHRoIjoiZGVmYXVsdCIsInRoZW1lIjoiZGVmYXVsdCIsIm1vdXNlIjoiZGVmYXVsdCIsInRpbWV6b25lIjoiVEFTS1NfVElNRVpPTkUgZW52IiwidGltZV9mb3JtYXQiOiJkZWZhdWx0IiwiZGF0ZV9vcmRlciI6ImRlZmF1bHQifSwibWVtb3J5X2V4aXN0cyI6ZmFsc2UsImNvbmZpZ19maWxlIjoiL3RtcC90YXNrcy1jb25mb3JtYW5jZS9jb25maWctcmVzb2x1dGlvbi1maWxlLW92ZXJyaWRlcy8uY29uZmlnL3Rhc2tzL2NvbmZpZyIsImNvbmZpZ19maWxlX2V4aXN0cyI6dHJ1ZX0K",
+      "bytes_base64": "eyJvcmciOiIvdG1wL3Rhc2tzLXBvcnQtY29uZmlnLWV2aWRlbmNlLlc3VkRibS9jb25maWctcmVzb2x1dGlvbi1maWxlLW92ZXJyaWRlcy90YXNrcy5qc29ubCIsImFyY2hpdmUiOiIvdG1wL3Rhc2tzLXBvcnQtY29uZmlnLWV2aWRlbmNlLlc3VkRibS9jb25maWctcmVzb2x1dGlvbi1maWxlLW92ZXJyaWRlcy9hcmNoaXZlLmpzb25sIiwibWVtb3J5IjoiL3RtcC90YXNrcy1wb3J0LWNvbmZpZy1ldmlkZW5jZS5XN1ZEYm0vY29uZmlnLXJlc29sdXRpb24tZmlsZS1vdmVycmlkZXMvb3ZlcnJpZGUtbWVtb3J5Lm1kIiwidXJnZW50X2RheXMiOjMsIm1heF9kZXB0aCI6NCwidGhlbWUiOiJkZWZhdWx0IiwiY29sb3JzIjp7fSwibW91c2UiOnRydWUsInRpbWV6b25lIjoiVVRDIiwidGltZV9mb3JtYXQiOjEyLCJkYXRlX29yZGVyIjoibWR5IiwidHpkYl92ZXJzaW9uIjoiWm9uZWluZm8gRGF0YVNvdXJjZTogL3Vzci9zaGFyZS96b25laW5mbyIsInRpbWV6b25lX2ZhbGxiYWNrX3dhcm5pbmciOmZhbHNlLCJsaW5rcyI6e30sImxpbmtfc3lzdGVtcyI6e30sInByb21wdF9mYWN0cyI6eyJkYXRldGltZSI6dHJ1ZSwiaG9zdG5hbWUiOnRydWV9LCJob3N0bmFtZSI6ImZpeHR1cmUtaG9zdCIsImhvc3RfY29udGV4dCI6bnVsbCwiaG9zdF9jb250ZXh0X3NvdXJjZSI6bnVsbCwiaG9zdF9jb250ZXh0cyI6e30sInNvdXJjZXMiOnsib3JnIjoiVEFTS1NfRklMRSBlbnYiLCJhcmNoaXZlIjoiVEFTS1NfQVJDSElWRSBlbnYiLCJtZW1vcnkiOiJUQVNLU19NRU1PUlkgZW52IiwidXJnZW50X2RheXMiOiJkZWZhdWx0IiwibWF4X2RlcHRoIjoiZGVmYXVsdCIsInRoZW1lIjoiZGVmYXVsdCIsIm1vdXNlIjoiZGVmYXVsdCIsInRpbWV6b25lIjoiVEFTS1NfVElNRVpPTkUgZW52IiwidGltZV9mb3JtYXQiOiJkZWZhdWx0IiwiZGF0ZV9vcmRlciI6ImRlZmF1bHQifSwibWVtb3J5X2V4aXN0cyI6ZmFsc2UsImNvbmZpZ19maWxlIjoiL3RtcC90YXNrcy1wb3J0LWNvbmZpZy1ldmlkZW5jZS5XN1ZEYm0vY29uZmlnLXJlc29sdXRpb24tZmlsZS1vdmVycmlkZXMvLmNvbmZpZy90YXNrcy9jb25maWciLCJjb25maWdfZmlsZV9leGlzdHMiOnRydWV9Cg==",
       "truncated_at_bytes": null,
-      "text": "{\"org\":\"/tmp/tasks-conformance/config-resolution-file-overrides/tasks.jsonl\",\"archive\":\"/tmp/tasks-conformance/config-resolution-file-overrides/archive.jsonl\",\"memory\":\"/tmp/tasks-conformance/config-resolution-file-overrides/override-memory.md\",\"urgent_days\":3,\"max_depth\":4,\"theme\":\"default\",\"colors\":{},\"mouse\":true,\"timezone\":\"UTC\",\"time_format\":12,\"date_order\":\"mdy\",\"tzdb_version\":\"Zoneinfo DataSource: /usr/share/zoneinfo\",\"timezone_fallback_warning\":false,\"links\":{},\"link_systems\":{},\"prompt_facts\":{\"datetime\":true,\"hostname\":true},\"hostname\":\"fixture-host\",\"host_context\":null,\"host_context_source\":null,\"host_contexts\":{},\"sources\":{\"org\":\"TASKS_FILE env\",\"archive\":\"TASKS_ARCHIVE env\",\"memory\":\"TASKS_MEMORY env\",\"urgent_days\":\"default\",\"max_depth\":\"default\",\"theme\":\"default\",\"mouse\":\"default\",\"timezone\":\"TASKS_TIMEZONE env\",\"time_format\":\"default\",\"date_order\":\"default\"},\"memory_exists\":false,\"config_file\":\"/tmp/tasks-conformance/config-resolution-file-overrides/.config/tasks/config\",\"config_file_exists\":true}\n"
+      "text": "{\"org\":\"/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-file-overrides/tasks.jsonl\",\"archive\":\"/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-file-overrides/archive.jsonl\",\"memory\":\"/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-file-overrides/override-memory.md\",\"urgent_days\":3,\"max_depth\":4,\"theme\":\"default\",\"colors\":{},\"mouse\":true,\"timezone\":\"UTC\",\"time_format\":12,\"date_order\":\"mdy\",\"tzdb_version\":\"Zoneinfo DataSource: /usr/share/zoneinfo\",\"timezone_fallback_warning\":false,\"links\":{},\"link_systems\":{},\"prompt_facts\":{\"datetime\":true,\"hostname\":true},\"hostname\":\"fixture-host\",\"host_context\":null,\"host_context_source\":null,\"host_contexts\":{},\"sources\":{\"org\":\"TASKS_FILE env\",\"archive\":\"TASKS_ARCHIVE env\",\"memory\":\"TASKS_MEMORY env\",\"urgent_days\":\"default\",\"max_depth\":\"default\",\"theme\":\"default\",\"mouse\":\"default\",\"timezone\":\"TASKS_TIMEZONE env\",\"time_format\":\"default\",\"date_order\":\"default\"},\"memory_exists\":false,\"config_file\":\"/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-file-overrides/.config/tasks/config\",\"config_file_exists\":true}\n"
     },
     "stderr": {
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -273,7 +273,7 @@
     "states": [],
     "index": {
       "role": "journal_index",
-      "path": ".state/tasks/journal/ae56c3d82fccfe88/index.json",
+      "path": ".state/tasks/journal/f9459114f800fcbc/index.json",
       "present": false,
       "sha256": null,
       "size_bytes": null,
@@ -331,7 +331,7 @@
     "umask": "0022"
   },
   "metrics": {
-    "wall_ms": 116.202,
+    "wall_ms": 103.13,
     "user_cpu_ms": null,
     "sys_cpu_ms": null,
     "peak_rss_bytes": null,

@@ -1,17 +1,17 @@
 {
   "schema_version": 1,
-  "observation_id": "obs_762d4aad-56fb-4d9a-bcae-aa6e1bee2445",
+  "observation_id": "obs_2cdf0995-c37b-4af3-8dd9-2f6eed080205",
   "case_id": "config-resolution-tasks-dir",
   "implementation": {
     "name": "ruby",
-    "version": "199a2d4978089d34532641cc574a4c8455f68697-dirty",
+    "version": "8dcc47f308dff944dbc4acd48a79a8e0184ddbec",
     "runtime": "ruby 4.0.6"
   },
   "fixture": {
     "id": "valid/archive-pair",
     "class": "valid",
     "root_sha256": "fe0384fcd1346ae473eecc7284d744cb201293067a0c425eeeb2e1422727c6de",
-    "copy_root": "/tmp/tasks-conformance/config-resolution-tasks-dir"
+    "copy_root": "/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-tasks-dir"
   },
   "invocation": {
     "surface": "cli",
@@ -31,7 +31,7 @@
       },
       {
         "name": "HOME",
-        "value": "/tmp/tasks-conformance/config-resolution-tasks-dir"
+        "value": "/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-tasks-dir"
       },
       {
         "name": "LANG",
@@ -59,7 +59,7 @@
       },
       {
         "name": "TASKS_DIR",
-        "value": "/tmp/tasks-conformance/config-resolution-tasks-dir"
+        "value": "/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-tasks-dir"
       },
       {
         "name": "TASKS_FILE",
@@ -99,11 +99,11 @@
       },
       {
         "name": "XDG_CONFIG_HOME",
-        "value": "/tmp/tasks-conformance/config-resolution-tasks-dir/.config"
+        "value": "/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-tasks-dir/.config"
       },
       {
         "name": "XDG_STATE_HOME",
-        "value": "/tmp/tasks-conformance/config-resolution-tasks-dir/.state"
+        "value": "/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-tasks-dir/.state"
       }
     ],
     "pins": [
@@ -175,12 +175,12 @@
     "signal": null,
     "timed_out": false,
     "stdout": {
-      "sha256": "a61f6d86ee96bbd4972f13323ab060e444eee0e109b1338ab9984329ab7dc04b",
-      "size_bytes": 1004,
+      "sha256": "e3f428b4194d49f052000cb6c575463e4ed8bd2832fd131f8f012fb927e0427c",
+      "size_bytes": 1068,
       "valid_utf8": true,
-      "bytes_base64": "eyJvcmciOiIvdG1wL3Rhc2tzLWNvbmZvcm1hbmNlL2NvbmZpZy1yZXNvbHV0aW9uLXRhc2tzLWRpci90YXNrcy5qc29ubCIsImFyY2hpdmUiOiIvdG1wL3Rhc2tzLWNvbmZvcm1hbmNlL2NvbmZpZy1yZXNvbHV0aW9uLXRhc2tzLWRpci9hcmNoaXZlLmpzb25sIiwibWVtb3J5IjoiL3RtcC90YXNrcy1jb25mb3JtYW5jZS9jb25maWctcmVzb2x1dGlvbi10YXNrcy1kaXIvYWdlbnQtbWVtb3J5Lm1kIiwidXJnZW50X2RheXMiOjMsIm1heF9kZXB0aCI6NCwidGhlbWUiOiJkZWZhdWx0IiwiY29sb3JzIjp7fSwibW91c2UiOnRydWUsInRpbWV6b25lIjoiVVRDIiwidGltZV9mb3JtYXQiOjEyLCJkYXRlX29yZGVyIjoibWR5IiwidHpkYl92ZXJzaW9uIjoiWm9uZWluZm8gRGF0YVNvdXJjZTogL3Vzci9zaGFyZS96b25laW5mbyIsInRpbWV6b25lX2ZhbGxiYWNrX3dhcm5pbmciOmZhbHNlLCJsaW5rcyI6e30sImxpbmtfc3lzdGVtcyI6e30sInByb21wdF9mYWN0cyI6eyJkYXRldGltZSI6dHJ1ZSwiaG9zdG5hbWUiOnRydWV9LCJob3N0bmFtZSI6ImZpeHR1cmUtaG9zdCIsImhvc3RfY29udGV4dCI6bnVsbCwiaG9zdF9jb250ZXh0X3NvdXJjZSI6bnVsbCwiaG9zdF9jb250ZXh0cyI6e30sInNvdXJjZXMiOnsib3JnIjoiVEFTS1NfRElSIGVudiIsImFyY2hpdmUiOiJUQVNLU19ESVIgZW52IiwibWVtb3J5IjoiYmVzaWRlIHRhc2tzLmpzb25sIiwidXJnZW50X2RheXMiOiJkZWZhdWx0IiwibWF4X2RlcHRoIjoiZGVmYXVsdCIsInRoZW1lIjoiZGVmYXVsdCIsIm1vdXNlIjoiZGVmYXVsdCIsInRpbWV6b25lIjoiVEFTS1NfVElNRVpPTkUgZW52IiwidGltZV9mb3JtYXQiOiJkZWZhdWx0IiwiZGF0ZV9vcmRlciI6ImRlZmF1bHQifSwibWVtb3J5X2V4aXN0cyI6ZmFsc2UsImNvbmZpZ19maWxlIjoiL3RtcC90YXNrcy1jb25mb3JtYW5jZS9jb25maWctcmVzb2x1dGlvbi10YXNrcy1kaXIvLmNvbmZpZy90YXNrcy9jb25maWciLCJjb25maWdfZmlsZV9leGlzdHMiOmZhbHNlfQo=",
+      "bytes_base64": "eyJvcmciOiIvdG1wL3Rhc2tzLXBvcnQtY29uZmlnLWV2aWRlbmNlLlc3VkRibS9jb25maWctcmVzb2x1dGlvbi10YXNrcy1kaXIvdGFza3MuanNvbmwiLCJhcmNoaXZlIjoiL3RtcC90YXNrcy1wb3J0LWNvbmZpZy1ldmlkZW5jZS5XN1ZEYm0vY29uZmlnLXJlc29sdXRpb24tdGFza3MtZGlyL2FyY2hpdmUuanNvbmwiLCJtZW1vcnkiOiIvdG1wL3Rhc2tzLXBvcnQtY29uZmlnLWV2aWRlbmNlLlc3VkRibS9jb25maWctcmVzb2x1dGlvbi10YXNrcy1kaXIvYWdlbnQtbWVtb3J5Lm1kIiwidXJnZW50X2RheXMiOjMsIm1heF9kZXB0aCI6NCwidGhlbWUiOiJkZWZhdWx0IiwiY29sb3JzIjp7fSwibW91c2UiOnRydWUsInRpbWV6b25lIjoiVVRDIiwidGltZV9mb3JtYXQiOjEyLCJkYXRlX29yZGVyIjoibWR5IiwidHpkYl92ZXJzaW9uIjoiWm9uZWluZm8gRGF0YVNvdXJjZTogL3Vzci9zaGFyZS96b25laW5mbyIsInRpbWV6b25lX2ZhbGxiYWNrX3dhcm5pbmciOmZhbHNlLCJsaW5rcyI6e30sImxpbmtfc3lzdGVtcyI6e30sInByb21wdF9mYWN0cyI6eyJkYXRldGltZSI6dHJ1ZSwiaG9zdG5hbWUiOnRydWV9LCJob3N0bmFtZSI6ImZpeHR1cmUtaG9zdCIsImhvc3RfY29udGV4dCI6bnVsbCwiaG9zdF9jb250ZXh0X3NvdXJjZSI6bnVsbCwiaG9zdF9jb250ZXh0cyI6e30sInNvdXJjZXMiOnsib3JnIjoiVEFTS1NfRElSIGVudiIsImFyY2hpdmUiOiJUQVNLU19ESVIgZW52IiwibWVtb3J5IjoiYmVzaWRlIHRhc2tzLmpzb25sIiwidXJnZW50X2RheXMiOiJkZWZhdWx0IiwibWF4X2RlcHRoIjoiZGVmYXVsdCIsInRoZW1lIjoiZGVmYXVsdCIsIm1vdXNlIjoiZGVmYXVsdCIsInRpbWV6b25lIjoiVEFTS1NfVElNRVpPTkUgZW52IiwidGltZV9mb3JtYXQiOiJkZWZhdWx0IiwiZGF0ZV9vcmRlciI6ImRlZmF1bHQifSwibWVtb3J5X2V4aXN0cyI6ZmFsc2UsImNvbmZpZ19maWxlIjoiL3RtcC90YXNrcy1wb3J0LWNvbmZpZy1ldmlkZW5jZS5XN1ZEYm0vY29uZmlnLXJlc29sdXRpb24tdGFza3MtZGlyLy5jb25maWcvdGFza3MvY29uZmlnIiwiY29uZmlnX2ZpbGVfZXhpc3RzIjpmYWxzZX0K",
       "truncated_at_bytes": null,
-      "text": "{\"org\":\"/tmp/tasks-conformance/config-resolution-tasks-dir/tasks.jsonl\",\"archive\":\"/tmp/tasks-conformance/config-resolution-tasks-dir/archive.jsonl\",\"memory\":\"/tmp/tasks-conformance/config-resolution-tasks-dir/agent-memory.md\",\"urgent_days\":3,\"max_depth\":4,\"theme\":\"default\",\"colors\":{},\"mouse\":true,\"timezone\":\"UTC\",\"time_format\":12,\"date_order\":\"mdy\",\"tzdb_version\":\"Zoneinfo DataSource: /usr/share/zoneinfo\",\"timezone_fallback_warning\":false,\"links\":{},\"link_systems\":{},\"prompt_facts\":{\"datetime\":true,\"hostname\":true},\"hostname\":\"fixture-host\",\"host_context\":null,\"host_context_source\":null,\"host_contexts\":{},\"sources\":{\"org\":\"TASKS_DIR env\",\"archive\":\"TASKS_DIR env\",\"memory\":\"beside tasks.jsonl\",\"urgent_days\":\"default\",\"max_depth\":\"default\",\"theme\":\"default\",\"mouse\":\"default\",\"timezone\":\"TASKS_TIMEZONE env\",\"time_format\":\"default\",\"date_order\":\"default\"},\"memory_exists\":false,\"config_file\":\"/tmp/tasks-conformance/config-resolution-tasks-dir/.config/tasks/config\",\"config_file_exists\":false}\n"
+      "text": "{\"org\":\"/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-tasks-dir/tasks.jsonl\",\"archive\":\"/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-tasks-dir/archive.jsonl\",\"memory\":\"/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-tasks-dir/agent-memory.md\",\"urgent_days\":3,\"max_depth\":4,\"theme\":\"default\",\"colors\":{},\"mouse\":true,\"timezone\":\"UTC\",\"time_format\":12,\"date_order\":\"mdy\",\"tzdb_version\":\"Zoneinfo DataSource: /usr/share/zoneinfo\",\"timezone_fallback_warning\":false,\"links\":{},\"link_systems\":{},\"prompt_facts\":{\"datetime\":true,\"hostname\":true},\"hostname\":\"fixture-host\",\"host_context\":null,\"host_context_source\":null,\"host_contexts\":{},\"sources\":{\"org\":\"TASKS_DIR env\",\"archive\":\"TASKS_DIR env\",\"memory\":\"beside tasks.jsonl\",\"urgent_days\":\"default\",\"max_depth\":\"default\",\"theme\":\"default\",\"mouse\":\"default\",\"timezone\":\"TASKS_TIMEZONE env\",\"time_format\":\"default\",\"date_order\":\"default\"},\"memory_exists\":false,\"config_file\":\"/tmp/tasks-port-config-evidence.W7VDbm/config-resolution-tasks-dir/.config/tasks/config\",\"config_file_exists\":false}\n"
     },
     "stderr": {
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -251,7 +251,7 @@
     "states": [],
     "index": {
       "role": "journal_index",
-      "path": ".state/tasks/journal/5f95ed47175d2348/index.json",
+      "path": ".state/tasks/journal/6f90416e13963029/index.json",
       "present": false,
       "sha256": null,
       "size_bytes": null,
@@ -309,7 +309,7 @@
     "umask": "0022"
   },
   "metrics": {
-    "wall_ms": 116.551,
+    "wall_ms": 110.556,
     "user_cpu_ms": null,
     "sys_cpu_ms": null,
     "peak_rss_bytes": null,

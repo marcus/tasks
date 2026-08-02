@@ -57,6 +57,13 @@ fixture-contained `config --json` cases: runner default resolution, explicit
 and the memory sidecar following the final `TASKS_FILE` path. The captured Ruby
 observations are the differential baseline for the Go implementation.
 
+The `config-resolution-default` case is deliberately the Ruby CLI's actual
+default: with `TASKS_DIR` unset, `bin/tasks` resolves its store paths from the
+repository root, not the fixture copy. The fixture still pins `HOME` and XDG
+roots, so its config-file path remains isolated. Its case note records this
+distinction; a Go adapter must use the same repository-root default when the
+runner unsets `TASKS_DIR`.
+
 Reproduce and validate them with:
 
 ```sh

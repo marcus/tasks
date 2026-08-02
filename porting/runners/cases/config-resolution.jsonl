@@ -3,7 +3,7 @@
 # The runner starts with TASKS_DIR set to the copy root. Cases that need the
 # config/default resolution paths explicitly unset it through path_overrides.
 
-{"case_id":"config-resolution-default","fixture":"valid/archive-pair","argv":["config","--json"],"path_overrides":{"tasks_dir":null},"notes":"with the runner's TASKS_DIR unset, both store paths and memory derive from the copy root default"}
+{"case_id":"config-resolution-default","fixture":"valid/archive-pair","argv":["config","--json"],"path_overrides":{"tasks_dir":null},"notes":"with the runner's TASKS_DIR unset, the Ruby CLI uses its repository-root default; the fixture still supplies the isolated HOME and XDG roots"}
 {"case_id":"config-resolution-tasks-dir","fixture":"valid/archive-pair","argv":["config","--json"],"path_overrides":{"tasks_dir":"."},"notes":"TASKS_DIR selects both store files and the sibling memory path"}
 {"case_id":"config-resolution-config-file","fixture":"valid/archive-pair","argv":["config","--json"],"config_file":"config/runner-paths.conf","path_overrides":{"tasks_dir":null},"notes":"fixture-owned config supplies file, archive, and memory after TASKS_DIR is unset"}
 {"case_id":"config-resolution-file-overrides","fixture":"valid/archive-pair","argv":["config","--json"],"config_file":"config/runner-paths.conf","path_overrides":{"tasks_file":"tasks.jsonl","tasks_archive":"archive.jsonl","tasks_memory":"override-memory.md"},"notes":"per-file environment paths outrank config-file keys"}
