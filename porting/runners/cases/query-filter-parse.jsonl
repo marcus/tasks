@@ -1,0 +1,20 @@
+# Direct function oracle for the dependency-free TaskFilter slice.  This is
+# deliberately not a fixture-runner case list: the subject accepts arguments,
+# not a store, and has no filesystem effects.
+{"case_id":"query-filter-default","operation":"parse_cli","argv":[]}
+{"case_id":"query-filter-composed","operation":"parse_cli","argv":["--all","--deferred","--recurring","--body","@computer","+important","-A","/flight","plans","--json"]}
+{"case_id":"query-filter-open-alias","operation":"parse_cli","argv":["-o"]}
+{"case_id":"query-filter-done-alias","operation":"parse_cli","argv":["-d"]}
+{"case_id":"query-filter-archived-alias","operation":"parse_cli","argv":["-x"]}
+{"case_id":"query-filter-all-alias","operation":"parse_cli","argv":["-a","--json"]}
+{"case_id":"query-filter-unavailable","operation":"parse_cli","argv":["--unavailable"]}
+{"case_id":"query-filter-on-hold","operation":"parse_cli","argv":["--on-hold"]}
+{"case_id":"query-filter-unknown-flag","operation":"parse_cli","argv":["--not-a-list-flag"]}
+{"case_id":"query-filter-multiple-scopes","operation":"parse_cli","argv":["--done","--archived"]}
+{"case_id":"query-filter-unavailable-closed","operation":"parse_cli","argv":["--done","--unavailable"]}
+{"case_id":"query-filter-deferred-someday","operation":"parse_cli","argv":["--deferred","--someday"]}
+{"case_id":"query-filter-state-open-next","operation":"new","kwargs":{"scope":"open","state":"next"}}
+{"case_id":"query-filter-state-open-done","operation":"new","kwargs":{"scope":"open","state":"done"}}
+{"case_id":"query-filter-state-done","operation":"new","kwargs":{"scope":"done","state":"done"}}
+{"case_id":"query-filter-invalid-state","operation":"new","kwargs":{"state":"BLOCKED"}}
+{"case_id":"query-filter-invalid-priority","operation":"new","kwargs":{"priority":"D"}}
