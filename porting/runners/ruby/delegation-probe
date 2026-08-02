@@ -1,0 +1,116 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Direct, read-only oracle for the delegation-record-shape slice.
+#
+#   porting/runners/ruby/delegation-probe CASES.jsonl
+#
+# `tasks check` exposes delegation errors only for the shapes a fixture store
+# can legally carry on one JSONL line, which is a small corner of the contract:
+# it cannot spell an invalid-UTF-8 assignee, and it reports nothing at all about
+# `Delegation.ordered`, `#unknown_keys`, or `#stamp`. This probe exposes exactly
+# the module's observable surface for the manifest slice and nothing else — the
+# claim/release lifecycle is campaign 4 and is deliberately not touched here.
+#
+# Each input line is one of:
+#
+#   {"case_id":"…","value":<any JSON>}      shape case: errors/ordered/predicates
+#   {"case_id":"…","stamp":{"epoch":<num>,"utc_offset":"<+HH:MM>"}}   stamp case
+#
+# Any string in `value` may instead be spelled `{"$bytes_hex":"ff"}`, which
+# materializes the exact bytes tagged UTF-8. That is the only way to hand
+# `identifier?` text whose `valid_encoding?` is false, and JSON cannot carry it.
+# Output uses the mirror-image encoding for strings the JSON generator could not
+# emit, so a non-UTF-8 assignee survives the round trip into the observation.
+
+require "json"
+require "time"
+
+ROOT = File.expand_path("../../..", __dir__)
+require_relative "#{ROOT}/lib/tasks/delegation"
+
+path = ARGV.fetch(0) { abort "usage: delegation-probe CASES.jsonl" }
+abort "usage: delegation-probe CASES.jsonl" unless ARGV.one?
+
+BYTES_KEY = "$bytes_hex"
+PROBE_TYPE = "$tasks_delegation_probe_type"
+
+# Input side: {"$bytes_hex":"…"} becomes a String of those exact bytes.
+def materialize(value)
+  case value
+  when Hash
+    if value.keys == [BYTES_KEY]
+      return [value[BYTES_KEY]].pack("H*").force_encoding(Encoding::UTF_8)
+    end
+
+    value.each_with_object({}) { |(key, child), copy| copy[key] = materialize(child) }
+  when Array
+    value.map { |child| materialize(child) }
+  else
+    value
+  end
+end
+
+# Output side: anything JSON.generate would refuse becomes a tagged object.
+def transport(value)
+  case value
+  when Hash
+    value.each_with_object({}) { |(key, child), copy| copy[transport(key)] = transport(child) }
+  when Array
+    value.map { |child| transport(child) }
+  when Float
+    return value if value.finite?
+
+    { PROBE_TYPE => "non-finite-float", "value" => value.infinite? == 1 ? "Infinity" : "-Infinity" }
+  when String
+    return value if value.valid_encoding?
+
+    { PROBE_TYPE => "invalid-utf8-string", "bytes_hex" => value.bytes.map { |byte| format("%02x", byte) }.join }
+  else
+    value
+  end
+end
+
+def observe_shape(value)
+  {
+    "errors" => Tasks::Delegation.errors(value),
+    "valid" => Tasks::Delegation.valid?(value),
+    "ordered" => transport(Tasks::Delegation.ordered(value)),
+    "ordered_keys" => (Tasks::Delegation.ordered(value).keys.map(&:to_s) if value.is_a?(Hash)),
+    "unknown_keys" => Tasks::Delegation.unknown_keys(value),
+    "predicates" => {
+      "object" => Tasks::Delegation.object?(value),
+      "agent" => Tasks::Delegation.agent?(value),
+      "human" => Tasks::Delegation.human?(value),
+      "ready" => Tasks::Delegation.ready?(value),
+      "claimed" => Tasks::Delegation.claimed?(value),
+      "timestamp_at" => Tasks::Delegation.timestamp?(value.is_a?(Hash) ? value["at"] : nil)
+    }
+  }
+end
+
+def observe_stamp(spec)
+  offset = spec.fetch("utc_offset", "+00:00")
+  time = Time.at(spec.fetch("epoch"), in: offset)
+  {
+    "input" => { "epoch" => spec.fetch("epoch"), "utc_offset" => offset, "iso8601" => time.iso8601 },
+    "stamp" => Tasks::Delegation.stamp(time),
+    "round_trips" => Tasks::Delegation.timestamp?(Tasks::Delegation.stamp(time))
+  }
+end
+
+File.readlines(path, chomp: true).each do |line|
+  next if line.strip.empty? || line.strip.start_with?("#")
+
+  spec = JSON.parse(line)
+  case_id = spec.fetch("case_id")
+  observation =
+    if spec.key?("stamp")
+      { "case_id" => case_id, "kind" => "stamp" }.merge(observe_stamp(spec.fetch("stamp")))
+    else
+      value = materialize(spec.fetch("value"))
+      { "case_id" => case_id, "kind" => "shape", "value" => transport(value) }.merge(observe_shape(value))
+    end
+  observation["notes"] = spec["notes"] if spec.key?("notes")
+  puts JSON.generate(observation)
+end

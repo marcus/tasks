@@ -1,0 +1,14 @@
+# delegation-record-shape — CLI oracle for the manifest slice's fixtures.
+#
+# `check` is the surface that stamps Delegation#errors with a line number, and
+# it is where the forward-compatibility posture is observable: an unknown nested
+# key must not fail the file. The boundaries a store cannot legally carry are in
+# delegation-record-shape-direct.jsonl, driven by the direct probe.
+
+{"case_id":"delegation-record-shape-valid-full-field-matrix","fixture":"valid/full-field-matrix","argv":["check"],"notes":"success: the human, ready-agent and claimed-agent shapes all pass"}
+{"case_id":"delegation-record-shape-compat-forward-unknown-keys","fixture":"compat/forward-compat-unknown-keys","argv":["check"],"notes":"an unknown delegation key from a newer binary is a known key here: warned about at most, never a failure"}
+{"case_id":"delegation-record-shape-malformed-wrong-types","fixture":"malformed/wrong-types","argv":["check"],"notes":"an agent delegation with no mode: the errors are line-stamped"}
+{"case_id":"delegation-record-shape-closed-provenance","fixture":"valid/delegation-closed-provenance","argv":["check"],"notes":"a closed task retains its claimed-agent delegation and still validates"}
+{"case_id":"delegation-record-shape-list-delegated","fixture":"valid/full-field-matrix","argv":["list","--all","--delegated","--json"],"notes":"read surface: the delegation object as it reaches a consumer, work_ref included. --all so no availability rule hides a row"}
+{"case_id":"delegation-record-shape-list-delegated-compat","fixture":"compat/forward-compat-unknown-keys","argv":["list","--all","--delegated","--json"],"notes":"the unknown nested key survives the read path rather than being dropped"}
+{"case_id":"delegation-record-shape-list-delegated-closed","fixture":"valid/delegation-closed-provenance","argv":["list","--all","--delegated","--json"],"notes":"closed provenance is reviewable through --all --delegated"}
