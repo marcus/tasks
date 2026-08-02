@@ -137,6 +137,10 @@ module Tasks
 
       # --- Lifecycle ----------------------------------------------------------
       cmd("archive", aliases: %w[x]),
+      # Gated like every other write. A build that cannot read the store's
+      # declared schema version cannot know what its records mean, so "repair"
+      # from here would be corruption; `check` still names the version.
+      cmd("repair", aliases: %w[fix]),
       cmd("undo"),
       cmd("redo"),
       cmd("config", gate: false,

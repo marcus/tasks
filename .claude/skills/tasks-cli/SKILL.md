@@ -30,6 +30,7 @@ bin/tasks projects         # projects & areas rolled up over open tasks (pj); --
 bin/tasks project show "<ref>"  # one project/area in full (counts, date, body); --json
 bin/tasks show "<ref>"     # one task in full (fields + notes); --json
 bin/tasks check            # is the file structurally sound? (exit 1 = no)
+bin/tasks repair --dry-run # what check refuses that repair can fix (fix); --json
 bin/tasks config           # where tasks.jsonl/archive.jsonl resolve + urgent_days; --json
 ```
 
@@ -318,7 +319,13 @@ after every write; use it. Dating an INBOX item promotes it to TODO and marking
 DONE/CANCELLED sets the `closed` date automatically — you don't manage those.
 
 If the file was somehow edited out-of-band (not by you), run `bin/tasks check`
-and fix whatever it reports before finishing.
+and fix whatever it reports before finishing. If two or more records carry the
+same defect, no ordinary mutation can converge the file — every write is
+validated against the whole file, so each attempt refuses or rolls back. Run
+`bin/tasks repair --dry-run` to see what it can fix in one pass, then
+`bin/tasks repair`. It repairs id-less records and unknown keys inside
+`scheduled_time`/`deadline_time`, never touches `updated`, refuses without
+writing anything if it meets a defect it does not know, and is undoable.
 
 ## Remembered defaults (`agent-memory.md`)
 

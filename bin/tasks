@@ -55,6 +55,7 @@
 #   bin/tasks links|urls [<ref>]  links in task notes, grouped by system
 #   bin/tasks open|o <ref> [n]    open a task's link (--print shows it instead)
 #   bin/tasks check|k         validate tasks.jsonl structure (--all-files too)
+#   bin/tasks repair|fix      converge a store check refuses (--dry-run first)
 #   bin/tasks archive|x       move DONE/CANCELLED items to archive.jsonl
 #   bin/tasks undo|redo       revert/replay the last mutation
 #   bin/tasks list|l [...]    list tasks grouped by state, with filters:
@@ -149,6 +150,7 @@ def bold(s)   = color(s, 1)
 def dim(s)    = color(s, 90)
 def red(s)    = color(s, 31)
 def yellow(s) = color(s, 33)
+def green(s)  = color(s, 32)
 def cyan(s)   = color(s, 36)
 
 # Color a deadline by how close it is: red = overdue/today, yellow = next 2 days,
@@ -2871,6 +2873,84 @@ def cmd_check(args)
   exit(res.ok? ? 0 : 1)
 end
 
+# Converge a store `check` refuses. `check` reports; every mutation refuses or
+# rolls back on a file that fails it; the per-record repairs the code documents
+# (ensure_id!, Format's temporal-key drop) each fix ONE record and are validated
+# against the whole file, so with two or more instances nothing converges. This
+# is the one command that fixes every instance it knows about and writes once.
+#
+# Deliberately additive: no existing command's behavior or diagnostics change.
+# The two refusal wordings a mutation can earn — the preflight's "task file is
+# already invalid … (nothing was written)" and the rollback's "file failed
+# validation after the edit" — still say exactly what they said, on exactly the
+# stores they said it on. This command is a new door, not a change to the locks.
+def cmd_repair(args)
+  flags, rest = take_flags(args, "--json", "--dry-run")
+  abort "usage: tasks repair [--dry-run] [--json]" unless rest.empty?
+  json = flags["--json"]
+  dry_run = flags["--dry-run"]
+
+  result = store.repair!(dry_run: dry_run)
+
+  if json
+    require "json"
+    unless result.ok?
+      json_error!(result.status.to_s, action: "repair",
+                  message: repair_refusal_message(result), **result.to_h)
+    end
+    puts JSON.generate({ action: "repair", **result.to_h })
+    exit 0
+  end
+
+  # The verb names what happened, not what was planned: a refused pass wrote
+  # nothing, so its known defects are ones this command *can* fix, not ones it
+  # did. Each line restates the `check` error it answers, so the two reports
+  # read side by side.
+  verb = if !result.ok? then "can fix"
+         elsif result.dry_run? then "would fix"
+         else "fixed"
+         end
+  result.fixes.each do |fix|
+    minted = result.written? && fix.id ? " → minted #{fix.id}" : ""
+    puts "#{green(verb)}  #{fix.file} line #{fix.line}: #{fix.message}#{minted}"
+  end
+  unless result.ok?
+    result.blockers.each do |blocker|
+      location = blocker.file ? "#{blocker.file} line #{blocker.line}: " : ""
+      puts "#{red("error")}  #{location}#{blocker.message}"
+    end
+    abort repair_refusal_message(result)
+  end
+
+  puts repair_success_message(result)
+  exit 0
+end
+
+# The refusal sentence, shared by the human and --json paths so a scripted
+# caller and a person are told the same thing. It always states that nothing was
+# written: a repair that left the file half-converged would be a worse dead end
+# than the one it exists to open.
+def repair_refusal_message(result)
+  if result.status == :unsupported_schema
+    return "cannot repair: #{result.blockers.first&.message} — this build cannot read this " \
+           "task file (nothing was written)"
+  end
+
+  n = result.blockers.size
+  "cannot repair: #{n} error#{n == 1 ? "" : "s"} this command does not know how to fix " \
+    "(nothing was written) — see `tasks check`"
+end
+
+def repair_success_message(result)
+  return "nothing to repair — the store is already valid" if result.fixes.empty?
+
+  n = result.fixes.size
+  noun = "#{n} repair#{n == 1 ? "" : "s"}"
+  return "#{noun} available — nothing was written (--dry-run)" if result.dry_run?
+
+  "#{noun} written — the store validates; `undo` restores the previous bytes"
+end
+
 # Hand a natural-language prompt to an LLM agent with TASK_AGENT.md as context.
 # Runs the configured harness headless; auto-applies, then shows the file diff.
 # `--provider`/`--model` (leading flags) override the config default for one run.
@@ -3282,6 +3362,10 @@ HELP = <<~USAGE
                              --json reports the link it acted on)
     id           <ref>       print a task's stable id (assigns one if absent)
     check     k              validate tasks.jsonl structure
+    repair    fix            fix what check refuses, in one pass, where no
+                             other command can (id-less records, unknown keys
+                             inside scheduled_time/deadline_time).
+                             --dry-run reports without writing; --json
 
   Capture:
     capture   c "text"       new item. Flags: --due --scheduled --priority
@@ -3456,6 +3540,7 @@ HANDLERS = {
   "open"      => ->(argv) { cmd_open(argv) },
   "list"      => ->(argv) { cmd_list(argv) },
   "check"     => ->(argv) { cmd_check(argv) },
+  "repair"    => ->(argv) { cmd_repair(argv) },
   "config"    => ->(argv) { cmd_config(argv) },
   "help"      => ->(argv) { cmd_help(argv) },
 }.freeze

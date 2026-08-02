@@ -116,6 +116,10 @@ class TestCliJsonCoverage < Minitest::Test
 
     # -- Lifecycle ------------------------------------------------------------
     recipe("archive", %w[archive], setup: [["done", EXPENSE]]),
+    # The success path on a store that needs nothing: repair's convergence and
+    # refusal paths are proved in test_repair.rb, which needs malformed fixtures
+    # this one deliberately does not have.
+    recipe("repair", %w[repair]),
     recipe("undo", %w[undo], setup: [["capture", "something to undo"]]),
     recipe("redo", %w[redo], setup: [["capture", "something to redo"], %w[undo]]),
     recipe("config", %w[config]),

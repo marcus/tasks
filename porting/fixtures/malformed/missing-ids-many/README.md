@@ -74,10 +74,30 @@ happened and was undone. A port that adds a preflight to `ensure_id!` — which
 looks like an optimization, since the write is doomed — would produce the first
 message here instead of the second, and would be wrong.
 
-**2. This is a real dead end for a user, not just for the harness.** There is no
-command that repairs this store: every path that could mint the second id is
-gated on the file being clean afterwards, and it never is until the last id is
-minted. The only exit is a hand edit. Recorded, not fixed.
+**2. This was a real dead end for a user, not just for the harness.** No
+*mutation* repairs this store: every path that could mint the second id is gated
+on the file being clean afterwards, and it never is until the last id is minted.
+
+`tasks repair` (td-d6ed92) is the escape hatch added afterwards, and it does not
+disturb anything above. It is a **separate command**, not a change to any path
+this fixture records: `tasks id` still writes, still fails the post-write
+`Check`, and still rolls back with the wording pinned above, and `ensure_id!`
+still has no preflight. `repair` mints an id for *every* id-less record across
+the store in one pass and writes once, so the file `Check` sees is already whole:
+
+```console
+$ tasks repair
+fixed  tasks.jsonl line 3: record missing id → minted <id>
+fixed  tasks.jsonl line 4: record missing id → minted <id>
+fixed  tasks.jsonl line 6: record missing id → minted <id>
+3 repairs written — the store validates; `undo` restores the previous bytes
+exit 0
+```
+
+It leaves `updated` exactly as it found it — a repair asserts nothing about a
+task's content, and `stamp_changed_tasks!` indexes originals by id, so a
+just-minted id would be stamped as a brand-new task. `--dry-run` reports the
+same plan and writes nothing. Every recorded outcome above remains true.
 
 **3. The rollback is invisible in the bytes.** `files.before` and `files.after`
 are identical, exactly as they are for the `capture` refusal on the sibling

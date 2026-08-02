@@ -367,4 +367,7 @@ so the caller has a full audit trail.
 check` reports any structural breakage. You should not be making such edits — but
 if exactly one record is broken, a mutation targeting that record (e.g. `schedule
 <ref> <date>` or `undate <ref>` over a malformed date) repairs it in place; the
-write is refused unless it leaves the whole file valid.*
+write is refused unless it leaves the whole file valid. When SEVERAL records are
+broken no such mutation can converge, and `bin/tasks repair` is the one command
+that can — `--dry-run` first to see what it would fix, and it refuses without
+writing if it meets a defect it does not know.*
