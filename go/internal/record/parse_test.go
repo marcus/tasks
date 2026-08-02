@@ -122,6 +122,31 @@ func TestParseUsesRubyEOFDiagnostics(t *testing.T) {
 	}
 }
 
+func TestParseUsesRubyMalformedJSONDiagnostics(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "object key EOF", input: "{", want: "invalid JSON: expected object key, got EOF at line 1 column 2"},
+		{name: "closing quote", input: `{"a`, want: "invalid JSON: unexpected end of input, expected closing \" at line 1 column 4"},
+		{name: "value EOF", input: `{"a":`, want: "invalid JSON: unexpected end of input at line 1 column 6"},
+		{name: "object key after comma", input: `{"a":1,}`, want: "invalid JSON: expected object key, got: '}' at line 1 column 8"},
+		{name: "array separator", input: `{"a":[1`, want: "invalid JSON: expected ',' or ']' after array value at line 1 column 8"},
+		{name: "invalid escape", input: `{"a":"\q"}`, want: `invalid JSON: invalid escape character in string: '\q"}' at line 1 column 7`},
+		{name: "trailing token", input: `{"a":1} nope`, want: "invalid JSON: unexpected token at end of stream 'nope' at line 1 column 9"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := Parse([]byte(tc.input))
+			if got := result.Errors; !reflect.DeepEqual(got, []ParseError{{Line: 1, Message: tc.want}}) {
+				t.Fatalf("errors = %#v, want %#v", got, []ParseError{{Line: 1, Message: tc.want}})
+			}
+		})
+	}
+}
+
 func FuzzParseKeepsPhysicalLineBounds(f *testing.F) {
 	for _, seed := range [][]byte{
 		nil,

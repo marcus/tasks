@@ -122,14 +122,75 @@ func rubyClass(value any) string {
 // column at the end of the JSONL record, so this adapter receives the source
 // line rather than attempting to recover a location from Go's error string.
 func rubyJSONError(line []byte, err error) string {
+	if trailing := trailingToken(line); trailing != nil {
+		return fmt.Sprintf("unexpected token at end of stream '%s' at line 1 column %d", trailing.token, trailing.column)
+	}
+	if bytes.HasSuffix(line, []byte(",}")) {
+		return fmt.Sprintf("expected object key, got: '}' at line 1 column %d", len(line))
+	}
+	if strings.Contains(err.Error(), "in string escape code") {
+		if escape, column := invalidEscape(line); escape != "" {
+			return fmt.Sprintf("invalid escape character in string: '%s' at line 1 column %d", escape, column)
+		}
+	}
 	if strings.Contains(err.Error(), "unexpected EOF") {
 		column := len(line) + 1
 		if hasUnclosedString(line) {
 			return fmt.Sprintf("unexpected end of input, expected closing \" at line 1 column %d", column)
 		}
-		return fmt.Sprintf("expected object key, got: EOF at line 1 column %d", column)
+		if bytes.HasSuffix(line, []byte(":")) {
+			return fmt.Sprintf("unexpected end of input at line 1 column %d", column)
+		}
+		if hasUnclosedArrayValue(line) {
+			return fmt.Sprintf("expected ',' or ']' after array value at line 1 column %d", column)
+		}
+		separator := ""
+		if bytes.HasSuffix(line, []byte(",")) {
+			separator = ":"
+		}
+		return fmt.Sprintf("expected object key, got%s EOF at line 1 column %d", separator, column)
 	}
 	return err.Error()
+}
+
+type tokenAtColumn struct {
+	token  string
+	column int
+}
+
+// trailingToken recognizes a completed object followed by a non-whitespace
+// token. JSON decoding still establishes that the input is invalid; this only
+// reproduces Ruby's diagnostic for the bounded case captured in the oracle.
+func trailingToken(line []byte) *tokenAtColumn {
+	end := bytes.LastIndexByte(line, '}')
+	if end < 0 || end == len(line)-1 {
+		return nil
+	}
+	rest := line[end+1:]
+	trimmed := bytes.TrimLeft(rest, " \t\r")
+	if len(trimmed) == 0 {
+		return nil
+	}
+	column := len(line) - len(trimmed) + 1
+	return &tokenAtColumn{token: string(trimmed), column: column}
+}
+
+func invalidEscape(line []byte) (string, int) {
+	for index := 0; index+1 < len(line); index++ {
+		if line[index] == '\\' && !bytes.ContainsRune([]byte{'"', '\\', '/', 'b', 'f', 'n', 'r', 't', 'u'}, rune(line[index+1])) {
+			return string(line[index:]), index + 1
+		}
+	}
+	return "", 0
+}
+
+func hasUnclosedArrayValue(line []byte) bool {
+	open := bytes.LastIndexByte(line, '[')
+	if open < 0 || bytes.LastIndexByte(line, ']') > open {
+		return false
+	}
+	value := bytes.TrimSpace(line[open+1:])
+	return len(value) > 0 && value[len(value)-1] != ','
 }
 
 // hasUnclosedString recognizes JSON string delimiters while respecting escape
