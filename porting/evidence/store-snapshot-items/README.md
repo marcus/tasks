@@ -102,7 +102,7 @@ archive source, so later rendering semantics cannot mask a read-model defect.
 
 ```sh
 porting/evidence/store-snapshot-items/conformance
-# store-snapshot-items direct conformance: 7/7 cases matched
+# store-snapshot-items direct conformance: 8/8 cases matched
 ```
 
 This is differential evidence for Item field coercion and source separation.
@@ -123,10 +123,15 @@ Ruby oracle and Go verification for this repair:
 ruby -Ilib -rtmpdir -e 'require "tasks/store"; Dir.mktmpdir { |d| s = Tasks::Store.new(org: File.join(d, "missing.jsonl"), archive: File.join(d, "archive.jsonl")); abort unless s.read_snapshot.items.empty? }'
 (cd go && go test ./internal/store -run TestCaptureTreatsMissingLiveAsAnEmptyOrdinarySnapshot)
 porting/evidence/store-snapshot-items/conformance
-# store-snapshot-items direct conformance: 7/7 cases matched
+# store-snapshot-items direct conformance: 8/8 cases matched
 ```
 
-Next: obtain separate independent source-fidelity and Go-idiom reviews.
+The normalized structured-tags case separately proves Ruby's post-`JSON.parse`
+behavior for duplicate object keys and numeric values (`1e3`, `-0`, and
+`1.2300`), rather than preserving their input token spelling.
+
+Next: obtain a fresh independent source-fidelity review, then independent
+approval if both required reviews remain clean.
 
 ## Source-fidelity repair: structured tag coercion
 

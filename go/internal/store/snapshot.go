@@ -5,6 +5,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math/big"
+	"strconv"
+	"strings"
 	"time"
 
 	"tasks-go/internal/record"
@@ -180,7 +183,7 @@ func rubyString(value any) string {
 	case bool:
 		return fmt.Sprint(typed)
 	case json.Number:
-		return typed.String()
+		return rubyNumberString(typed.String())
 	default:
 		encoded, err := json.Marshal(typed)
 		if err != nil {
@@ -188,6 +191,28 @@ func rubyString(value any) string {
 		}
 		return string(encoded)
 	}
+}
+
+// rubyNumberString mirrors JSON.parse's Integer/Float materialization before
+// Object#to_s. Keeping the JSON token verbatim would incorrectly retain
+// exponent spellings, redundant zeroes, and negative integer zero.
+func rubyNumberString(raw string) string {
+	if !strings.ContainsAny(raw, ".eE") {
+		integer, ok := new(big.Int).SetString(raw, 10)
+		if ok {
+			return integer.String()
+		}
+		return raw
+	}
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return raw
+	}
+	text := strconv.FormatFloat(value, 'g', -1, 64)
+	if !strings.ContainsAny(text, ".eE") {
+		return text + ".0"
+	}
+	return text
 }
 
 // rubyStringJSON preserves an object's JSON member order while spelling arrays
@@ -215,6 +240,8 @@ func (value rubyScalar) string() string {
 	switch typed := value.value.(type) {
 	case nil:
 		return "nil"
+	case json.Number:
+		return rubyNumberString(typed.String())
 	case string:
 		encoded, err := json.Marshal(typed)
 		if err != nil {
@@ -242,6 +269,16 @@ type rubyObjectField struct {
 }
 
 type rubyObject []rubyObjectField
+
+func (fields *rubyObject) set(key string, value rubyValue) {
+	for index := range *fields {
+		if (*fields)[index].key == key {
+			(*fields)[index].value = value
+			return
+		}
+	}
+	*fields = append(*fields, rubyObjectField{key: key, value: value})
+}
 
 func (fields rubyObject) string() string {
 	parts := make([]string, len(fields))
@@ -296,7 +333,7 @@ func decodeRubyValue(decoder *json.Decoder) (rubyValue, error) {
 				if err != nil {
 					return nil, err
 				}
-				fields = append(fields, rubyObjectField{key: key.(string), value: value})
+				fields.set(key.(string), value)
 			}
 			_, err := decoder.Token()
 			return fields, err

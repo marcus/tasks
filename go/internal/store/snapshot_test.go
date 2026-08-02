@@ -107,6 +107,18 @@ func TestSnapshotCoercesStructuredTagsWithRubyToS(t *testing.T) {
 	}
 }
 
+func TestSnapshotNormalizesJSONBeforeCoercingStructuredTags(t *testing.T) {
+	parsed := record.Parse([]byte(`{"type":"task","id":"structured","tags":[{"a":1,"a":2},1e3,-0,1.2300]}`))
+	if !parsed.OK() {
+		t.Fatalf("parse structured tags: %#v", parsed.Errors)
+	}
+
+	items := NewSnapshot(parsed.Records, nil).Items()
+	if got, want := items[0].Tags, []string{`{"a" => 2}`, "1000.0", "0", "1.23"}; !equalStrings(got, want) {
+		t.Fatalf("normalized structured tag coercion = %#v, want %#v", got, want)
+	}
+}
+
 func TestSnapshotReadsDatesAndDoesNotCrossSources(t *testing.T) {
 	live := parseFixture(t, "valid/full-field-matrix/store/tasks.jsonl")
 	archive := parseFixture(t, "valid/archive-pair/store/archive.jsonl")
