@@ -20,7 +20,7 @@ type nextSpec struct {
 type caseSpec struct {
 	CaseID        string    `json:"case_id"`
 	Input         string    `json:"input"`
-	DefaultPrefix string    `json:"default_prefix"`
+	DefaultPrefix *string   `json:"default_prefix"`
 	Humanize      *string   `json:"humanize"`
 	Next          *nextSpec `json:"next"`
 }
@@ -47,9 +47,9 @@ func main() {
 		if err := json.Unmarshal([]byte(line), &spec); err != nil {
 			panic(err)
 		}
-		prefix := spec.DefaultPrefix
-		if prefix == "" {
-			prefix = ".+"
+		prefix := ".+"
+		if spec.DefaultPrefix != nil {
+			prefix = *spec.DefaultPrefix
 		}
 		result := recur.Parse(spec.Input, prefix)
 		out := map[string]any{

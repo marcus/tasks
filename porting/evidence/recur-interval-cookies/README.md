@@ -369,7 +369,7 @@ list documents the deferred control separately so the boundary is visible.
 
 ```console
 $ porting/evidence/recur-interval-cookies/conformance
-recur-interval-cookies direct conformance: 16/16 cases matched
+recur-interval-cookies direct conformance: 17/17 cases matched
 ```
 
 The direct probe compares decoded JSON values, so JSON object-member order in
@@ -388,9 +388,10 @@ absent key from an explicit empty one and would report `.+1w` for the same
 case. `internal/recur.Parse` itself preserves the empty prefix; this is a Go
 direct-probe/conformance defect, not a reason to bless the incomplete corpus.
 
-Correction before a fresh source-fidelity review: decode `default_prefix` as
-presence-aware (for example a `*string`) and default only when the JSON key is
-absent, then add an explicit-empty-prefix direct case and rerun the Ruby-vs-Go
-comparator. No implementation edit was made by this reviewer. The existing
-invalid-UTF-8 boundary remains the separately recorded CLI-adapter ownership
-issue above.
+Correction applied (2026-08-02): `go/cmd/recur-probe` now decodes
+`default_prefix` as a presence-aware `*string`, defaulting only when the JSON
+key is absent. The direct corpus includes `explicit-empty-default-prefix`,
+which pins Ruby's `weekly` plus an explicit empty prefix to `1w`; the Ruby-vs-Go
+comparator passes 17/17 cases. A fresh source-fidelity review is still required
+before approval. The existing invalid-UTF-8 boundary remains the separately
+recorded CLI-adapter ownership issue above.
