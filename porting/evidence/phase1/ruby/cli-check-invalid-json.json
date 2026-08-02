@@ -1,16 +1,16 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "observation_id": "obs_cli-check-invalid-json",
   "case_id": "cli-check-invalid-json",
   "implementation": {
     "name": "ruby",
-    "version": "e75019a3930f02635925ae16af9401bd0c0f0746-dirty",
+    "version": "87d8cc201410669e5b4ed1987eb44a01946ae92f-dirty",
     "runtime": "ruby 4.0.6"
   },
   "fixture": {
     "id": "malformed/invalid-json",
     "class": "malformed",
-    "root_sha256": "0f904cad02cc54881c7d923578d7098716189d433c02700c626c6f7fbae59023",
+    "root_sha256": "e2e5fa9e7541f4ef73ec011af3db2f7cda70546b36a3d70e3b0e712368893377",
     "copy_root": "/tmp/tasks-conformance/cli-check-invalid-json"
   },
   "invocation": {
@@ -24,6 +24,10 @@
     },
     "cwd": ".",
     "env": [
+      {
+        "name": "COLORTERM",
+        "value": null
+      },
       {
         "name": "COLUMNS",
         "value": "100"
@@ -43,6 +47,10 @@
       {
         "name": "LINES",
         "value": "40"
+      },
+      {
+        "name": "NO_COLOR",
+        "value": null
       },
       {
         "name": "PATH",
@@ -89,8 +97,20 @@
         "value": "2026-03-14T15:09:26Z"
       },
       {
+        "name": "TASKS_TEST_TODAY_SEQUENCE",
+        "value": null
+      },
+      {
+        "name": "TASKS_THEME",
+        "value": null
+      },
+      {
         "name": "TASKS_TIMEZONE",
         "value": "UTC"
+      },
+      {
+        "name": "TERM",
+        "value": null
       },
       {
         "name": "TZ",
@@ -106,6 +126,11 @@
       }
     ],
     "pins": [
+      {
+        "name": "COLORTERM",
+        "applied": false,
+        "value": null
+      },
       {
         "name": "COLUMNS",
         "applied": true,
@@ -125,6 +150,11 @@
         "name": "LINES",
         "applied": true,
         "value": "40"
+      },
+      {
+        "name": "NO_COLOR",
+        "applied": false,
+        "value": null
       },
       {
         "name": "TASKS_DEVICE",
@@ -157,9 +187,24 @@
         "value": "2026-03-14T15:09:26Z"
       },
       {
+        "name": "TASKS_TEST_TODAY_SEQUENCE",
+        "applied": false,
+        "value": null
+      },
+      {
+        "name": "TASKS_THEME",
+        "applied": false,
+        "value": null
+      },
+      {
         "name": "TASKS_TIMEZONE",
         "applied": true,
         "value": "UTC"
+      },
+      {
+        "name": "TERM",
+        "applied": false,
+        "value": null
       },
       {
         "name": "TZ",
@@ -167,6 +212,11 @@
         "value": "UTC"
       }
     ],
+    "tty": {
+      "stdin": false,
+      "stdout": false,
+      "stderr": false
+    },
     "timeout_ms": 60000
   },
   "process": {
@@ -175,6 +225,7 @@
     "timed_out": false,
     "stdout": {
       "sha256": "7aec5b910bfa36f64808db431b8296554dc0d450203cf30b22e5b120f2a311b7",
+      "sha256_normalized": "7aec5b910bfa36f64808db431b8296554dc0d450203cf30b22e5b120f2a311b7",
       "size_bytes": 105,
       "valid_utf8": true,
       "bytes_base64": "ZXJyb3IgIGxpbmUgNDogaW52YWxpZCBKU09OOiBleHBlY3RlZCBvYmplY3Qga2V5LCBnb3Q6IEVPRiBhdCBsaW5lIDEgY29sdW1uIDE0OAoxIGVycm9yKHMpLCAwIHdhcm5pbmcocykK",
@@ -183,6 +234,7 @@
     },
     "stderr": {
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sha256_normalized": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "size_bytes": 0,
       "valid_utf8": true,
       "bytes_base64": "",
@@ -194,7 +246,56 @@
     "mutated": false,
     "before": [
       {
+        "role": "other",
+        "kind": "directory",
+        "path": ".",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".config",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".config/tasks",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".state",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
         "role": "store",
+        "kind": "file",
         "path": "tasks.jsonl",
         "present": true,
         "sha256": "bd14aac740798cb4b8020310edb386093ef043ef4aac1d05561f1c56042008e8",
@@ -207,7 +308,56 @@
     ],
     "after": [
       {
+        "role": "other",
+        "kind": "directory",
+        "path": ".",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".config",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".config/tasks",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".state",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
         "role": "store",
+        "kind": "file",
         "path": "tasks.jsonl",
         "present": true,
         "sha256": "bd14aac740798cb4b8020310edb386093ef043ef4aac1d05561f1c56042008e8",
@@ -228,6 +378,7 @@
     "states": [],
     "index": {
       "role": "journal_index",
+      "kind": null,
       "path": ".state/tasks/journal/789d4d0ad2d817cf/index.json",
       "present": false,
       "sha256": null,

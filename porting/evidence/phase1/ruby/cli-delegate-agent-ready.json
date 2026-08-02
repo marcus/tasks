@@ -1,16 +1,16 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "observation_id": "obs_cli-delegate-agent-ready",
   "case_id": "cli-delegate-agent-ready",
   "implementation": {
     "name": "ruby",
-    "version": "e75019a3930f02635925ae16af9401bd0c0f0746-dirty",
+    "version": "87d8cc201410669e5b4ed1987eb44a01946ae92f-dirty",
     "runtime": "ruby 4.0.6"
   },
   "fixture": {
     "id": "valid/small-gtd",
     "class": "valid",
-    "root_sha256": "8a98fc63c60de51b91df6e2576e2c5206a9ebb2ac95afc91f43e4340c8a77cdd",
+    "root_sha256": "36bac2788e134d3aba8ca122b4bf41b66e5cb1202d232dbd3f37cbcd809e7795",
     "copy_root": "/tmp/tasks-conformance/cli-delegate-agent-ready"
   },
   "invocation": {
@@ -27,6 +27,10 @@
     },
     "cwd": ".",
     "env": [
+      {
+        "name": "COLORTERM",
+        "value": null
+      },
       {
         "name": "COLUMNS",
         "value": "100"
@@ -46,6 +50,10 @@
       {
         "name": "LINES",
         "value": "40"
+      },
+      {
+        "name": "NO_COLOR",
+        "value": null
       },
       {
         "name": "PATH",
@@ -92,8 +100,20 @@
         "value": "2026-03-14T15:09:26Z"
       },
       {
+        "name": "TASKS_TEST_TODAY_SEQUENCE",
+        "value": null
+      },
+      {
+        "name": "TASKS_THEME",
+        "value": null
+      },
+      {
         "name": "TASKS_TIMEZONE",
         "value": "UTC"
+      },
+      {
+        "name": "TERM",
+        "value": null
       },
       {
         "name": "TZ",
@@ -109,6 +129,11 @@
       }
     ],
     "pins": [
+      {
+        "name": "COLORTERM",
+        "applied": false,
+        "value": null
+      },
       {
         "name": "COLUMNS",
         "applied": true,
@@ -128,6 +153,11 @@
         "name": "LINES",
         "applied": true,
         "value": "40"
+      },
+      {
+        "name": "NO_COLOR",
+        "applied": false,
+        "value": null
       },
       {
         "name": "TASKS_DEVICE",
@@ -160,9 +190,24 @@
         "value": "2026-03-14T15:09:26Z"
       },
       {
+        "name": "TASKS_TEST_TODAY_SEQUENCE",
+        "applied": false,
+        "value": null
+      },
+      {
+        "name": "TASKS_THEME",
+        "applied": false,
+        "value": null
+      },
+      {
         "name": "TASKS_TIMEZONE",
         "applied": true,
         "value": "UTC"
+      },
+      {
+        "name": "TERM",
+        "applied": false,
+        "value": null
       },
       {
         "name": "TZ",
@@ -170,6 +215,11 @@
         "value": "UTC"
       }
     ],
+    "tty": {
+      "stdin": false,
+      "stdout": false,
+      "stderr": false
+    },
     "timeout_ms": 60000
   },
   "process": {
@@ -178,6 +228,7 @@
     "timed_out": false,
     "stdout": {
       "sha256": "0d145d3b5285d8902fbf8fc45f4d587f87039d0a202fa4531b3d2c01b5455d91",
+      "sha256_normalized": "0d145d3b5285d8902fbf8fc45f4d587f87039d0a202fa4531b3d2c01b5455d91",
       "size_bytes": 669,
       "valid_utf8": true,
       "bytes_base64": "eyJ0b3VjaGVkIjpbeyJpZCI6IjFhMmIzYzAyIiwic3RhdGUiOiJJTkJPWCIsInByaW9yaXR5IjoiQiIsInRpdGxlIjoiU2tpbSB0aGUgcmVsZWFzZSBub3RlcyBmb3IgdGhlIHBhcnNlciBsaWJyYXJ5IiwidGFncyI6W10sImNvbnRleHRzIjpbIkBjb21wdXRlciJdLCJkZWZlcnJlZCI6ZmFsc2UsInNjaGVkdWxlZCI6bnVsbCwic2NoZWR1bGVkX3RpbWUiOm51bGwsImRlYWRsaW5lIjpudWxsLCJkZWFkbGluZV90aW1lIjpudWxsLCJyZWN1ciI6bnVsbCwicmVjdXJfaHVtYW4iOm51bGwsImxlYWQiOm51bGwsImxlYWRfaHVtYW4iOm51bGwsImxpbmUiOjMsInNvdXJjZSI6ImxpdmUiLCJoZWFkbGluZSI6IklOQk9YIFsjQl0gU2tpbSB0aGUgcmVsZWFzZSBub3RlcyBmb3IgdGhlIHBhcnNlciBsaWJyYXJ5IDpAY29tcHV0ZXI6IiwibGVhZF9vcGVucyI6bnVsbCwibGVhZF9vcGVuc19hdCI6bnVsbCwiYXZhaWxhYmxlIjp0cnVlLCJhdmFpbGFiaWxpdHlfcmVhc29uIjoiYXZhaWxhYmxlIiwiYXZhaWxhYmlsaXR5X2Jsb2NrZXJfaWQiOm51bGwsImF2YWlsYWJsZV9hdCI6bnVsbCwicHJvamVjdCI6IkluYm94IiwiZGVsZWdhdGlvbiI6eyJraW5kIjoiYWdlbnQiLCJtb2RlIjoiaW1wbGVtZW50Iiwic3RhdHVzIjoicmVhZHkiLCJhdCI6IjIwMjYtMDMtMTRUMTU6MDk6MjZaIn19XX0K",
@@ -186,6 +237,7 @@
     },
     "stderr": {
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sha256_normalized": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "size_bytes": 0,
       "valid_utf8": true,
       "bytes_base64": "",
@@ -197,7 +249,56 @@
     "mutated": true,
     "before": [
       {
+        "role": "other",
+        "kind": "directory",
+        "path": ".",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".config",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".config/tasks",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".state",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
         "role": "store",
+        "kind": "file",
         "path": "tasks.jsonl",
         "present": true,
         "sha256": "e0ade36b8374dc044b3c0b277e60edb9c2051591785be8b8340d265d0688eabe",
@@ -210,7 +311,104 @@
     ],
     "after": [
       {
+        "role": "other",
+        "kind": "directory",
+        "path": ".",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".config",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".config/tasks",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".state",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".state/tasks",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".state/tasks/journal",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".state/tasks/journal/fc4f7927a7d75733",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".state/tasks/journal/fc4f7927a7d75733/blobs",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
         "role": "journal_blob",
+        "kind": "file",
         "path": ".state/tasks/journal/fc4f7927a7d75733/blobs/2bfd93b235e573a17a5d0314cf7c897039aaea6db54e653984124ad412043fb2",
         "present": true,
         "sha256": "2bfd93b235e573a17a5d0314cf7c897039aaea6db54e653984124ad412043fb2",
@@ -222,6 +420,7 @@
       },
       {
         "role": "journal_blob",
+        "kind": "file",
         "path": ".state/tasks/journal/fc4f7927a7d75733/blobs/e0ade36b8374dc044b3c0b277e60edb9c2051591785be8b8340d265d0688eabe",
         "present": true,
         "sha256": "e0ade36b8374dc044b3c0b277e60edb9c2051591785be8b8340d265d0688eabe",
@@ -233,6 +432,7 @@
       },
       {
         "role": "journal_index",
+        "kind": "file",
         "path": ".state/tasks/journal/fc4f7927a7d75733/index.json",
         "present": true,
         "sha256": "4d10f363c54b7fe80ac0b1b7f0315a136b92bdb1e6dbd8a45c703acf62b66923",
@@ -244,6 +444,7 @@
       },
       {
         "role": "lock",
+        "kind": "file",
         "path": ".tasks.jsonl.lock",
         "present": true,
         "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -255,6 +456,7 @@
       },
       {
         "role": "store",
+        "kind": "file",
         "path": "tasks.jsonl",
         "present": true,
         "sha256": "2bfd93b235e573a17a5d0314cf7c897039aaea6db54e653984124ad412043fb2",
@@ -266,6 +468,30 @@
       }
     ],
     "deltas": [
+      {
+        "path": ".state/tasks",
+        "kind": "created",
+        "before_sha256": null,
+        "after_sha256": null
+      },
+      {
+        "path": ".state/tasks/journal",
+        "kind": "created",
+        "before_sha256": null,
+        "after_sha256": null
+      },
+      {
+        "path": ".state/tasks/journal/fc4f7927a7d75733",
+        "kind": "created",
+        "before_sha256": null,
+        "after_sha256": null
+      },
+      {
+        "path": ".state/tasks/journal/fc4f7927a7d75733/blobs",
+        "kind": "created",
+        "before_sha256": null,
+        "after_sha256": null
+      },
       {
         "path": ".state/tasks/journal/fc4f7927a7d75733/blobs/2bfd93b235e573a17a5d0314cf7c897039aaea6db54e653984124ad412043fb2",
         "kind": "created",
@@ -323,6 +549,7 @@
     ],
     "index": {
       "role": "journal_index",
+      "kind": "file",
       "path": ".state/tasks/journal/fc4f7927a7d75733/index.json",
       "present": true,
       "sha256": "4d10f363c54b7fe80ac0b1b7f0315a136b92bdb1e6dbd8a45c703acf62b66923",

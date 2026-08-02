@@ -389,19 +389,25 @@ class TestPortingCompare < Minitest::Test
   # would have turned recording an input into a per-case harness error, i.e.
   # punished the harness for making a gap visible.
 
-  # Add the same unset-and-unapplied pin to both sides of one case, exactly as
-  # the runner does for NO_COLOR.
+  # Set the unset-and-unapplied pin on both sides of one case, exactly as the
+  # runner does for NO_COLOR. It REPLACES any NO_COLOR the baseline already
+  # carries rather than appending: the runner records the colour pins itself
+  # now, so appending would leave two NO_COLOR entries and the comparator would
+  # match the untouched first one — the test would then pass by never seeing
+  # the state it exists to construct.
   def with_unset_pin(applied_on_candidate: false, requested: nil)
     obs = JSON.parse(File.read(File.join(BASELINE, "cli-list-small-gtd.json")))
     pin = ->(applied) { { "name" => "NO_COLOR", "applied" => applied, "value" => nil } }
     baseline = Conformance::Normalize.deep_dup(obs)
     candidate = Conformance::Normalize.deep_dup(obs)
     [[baseline, false], [candidate, applied_on_candidate]].each do |record, applied|
-      record["invocation"]["pins"] = (record["invocation"]["pins"] + [pin.call(applied)])
-                                     .sort_by { |p| p["name"] }
-      record["invocation"]["env"] = (record["invocation"]["env"] +
-                                     [{ "name" => "NO_COLOR", "value" => requested }])
-                                    .sort_by { |e| e["name"] }
+      record["invocation"]["pins"] =
+        (record["invocation"]["pins"].reject { |p| p["name"] == "NO_COLOR" } + [pin.call(applied)])
+        .sort_by { |p| p["name"] }
+      record["invocation"]["env"] =
+        (record["invocation"]["env"].reject { |e| e["name"] == "NO_COLOR" } +
+         [{ "name" => "NO_COLOR", "value" => requested }])
+        .sort_by { |e| e["name"] }
     end
     Conformance::Comparator.new(
       baseline: Conformance::ObservationSet.new("a", [baseline]),
