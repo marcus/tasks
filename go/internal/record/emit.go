@@ -215,50 +215,13 @@ func encodeInteger(out *bytes.Buffer, key, literal string) error {
 	return nil
 }
 
-// Ruby's JSON generator writes a float in fixed notation while its decimal
-// exponent stays inside this window, and in exponential notation outside it.
-// The bounds are the oracle's, not Float#to_s's: `1e15` is `1e+15` to the
-// generator and `1.0e+15` to Float#to_s.
-const (
-	minFixedExponent = -9
-	maxFixedExponent = 14
-)
-
-// rubyFloat renders a float the way Ruby's JSON generator does: round-trip
-// digits, a fixed form that always carries a fractional digit, and an
-// exponential form outside the fixed window. Digit selection differs from
-// Ruby in the rare case where Ruby's Grisu2 emits a non-shortest
-// representation; see porting/evidence/format-canonical-emit for that gap.
+// rubyFloat renders a float the way Ruby's JSON generator does, by running the
+// same generator: fpconv_dtoa, Ruby's vendored Grisu2, ported in fpconv.go.
+// strconv cannot stand in for it — strconv always emits the shortest
+// round-tripping digits and Grisu2 sometimes does not, so 1e23 is
+// 9.999999999999999e+22 to Ruby and 1e+23 to Go.
 func rubyFloat(value float64) string {
-	if value == 0 {
-		if math.Signbit(value) {
-			return "-0.0"
-		}
-		return "0.0"
-	}
-	shortest := strconv.FormatFloat(value, 'e', -1, 64)
-	sign := ""
-	if shortest[0] == '-' {
-		sign, shortest = "-", shortest[1:]
-	}
-	mantissa, exponentText, _ := strings.Cut(shortest, "e")
-	exponent, _ := strconv.Atoi(exponentText)
-	digits := strings.Replace(mantissa, ".", "", 1)
-
-	switch {
-	case exponent < minFixedExponent || exponent > maxFixedExponent:
-		fraction := ""
-		if len(digits) > 1 {
-			fraction = "." + digits[1:]
-		}
-		return fmt.Sprintf("%s%s%se%+03d", sign, digits[:1], fraction, exponent)
-	case exponent < 0:
-		return sign + "0." + strings.Repeat("0", -exponent-1) + digits
-	case exponent >= len(digits)-1:
-		return sign + digits + strings.Repeat("0", exponent-len(digits)+1) + ".0"
-	default:
-		return sign + digits[:exponent+1] + "." + digits[exponent+1:]
-	}
+	return fpconvDtoa(value)
 }
 
 // encodeString writes a JSON string with Ruby's escape set: the two structural

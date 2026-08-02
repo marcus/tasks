@@ -43,7 +43,7 @@ the one fixture Ruby rewrites (input `39f0fc8d…` → dump `9e94e743…`).
 | Fixture dump bytes vs Ruby | 11/11 identical |
 | Float spellings vs Ruby | 462/467 identical, 5 recorded divergences |
 
-## Numbers: an open Go defect, not an accepted difference
+## Numbers: Ruby's generator, ported rather than approximated
 
 Ruby's JSON generator does **not** use `Float#to_s` — `1e15` is `1e+15` to the
 generator and `1.0e+15` to `Float#to_s`. The spelling rule was derived from the
@@ -52,30 +52,56 @@ oracle rather than from either assumption and captured by
 into [ruby/float-spellings.json](ruby/float-spellings.json) (467 literals,
 ruby 4.0.6 / json 2.18.0):
 
-- fixed notation while the decimal exponent is in `[-9, 14]`, exponential
-  outside it;
 - fixed integers always carry `.0`; exponential form has no `.0` for a
   single-digit mantissa (`1e+15`, not `1.0e+15`);
 - integers print their digits, with `-0` normalized to `0`;
 - `1e400` parses to `Float::INFINITY` and then *raises* `JSON::GeneratorError`,
   so `DumpRecord` returns a `*GeneratorError` rather than inventing a spelling.
 
-Five of the 467 literals still diverge, recorded in
-[float-divergences.json](float-divergences.json) and pinned by the test suite
-so neither a new divergence nor a silent fix can pass unnoticed. Two causes:
+A first pass derived the fixed-vs-exponential rule from the oracle samples — a
+`[-9, 14]` decimal-exponent window over `strconv`'s shortest digits — and five
+of the 467 literals diverged (kept in [float-divergences.json](float-divergences.json)
+under `resolved.was`). Both causes were the same cause:
 
-1. **Non-shortest digits.** Ruby's vendored Grisu2 is not always optimal:
+1. **Non-shortest digits.** Ruby's generator does not emit shortest digits:
    `1e23` prints as `9.999999999999999e+22`. Go's `strconv` is always shortest.
-2. **The decpt 16–17 boundary.** `1470498088023706.2` (17 digits, decimal point
-   after 16) prints fixed in Ruby while `1e15` and `8.642975318642975e+15`
-   print exponential at the same decimal exponent. The `[-9, 14]` window does
-   not explain those cells; the remaining discriminator was not identified.
+2. **No exponent window exists.** `1470498088023706.2` prints fixed while `1e15`
+   prints exponential at the same decimal exponent, because the real rule is
+   digit-count-dependent, not exponent-windowed.
 
-Both are one fix: port the digit generator and emit rule json 2.18 actually
-uses instead of deriving the rule from samples. That is the next tick's work
-and this slice cannot be approved before it lands. No float field exists in the
-schema — floats reach the emitter only through forward-compatible unknown keys
-— so the blast radius is small, but "small" is not "blessed".
+The fix was to stop deriving the rule and port the generator. Ruby's JSON
+extension calls `fpconv_dtoa` from its vendored `ext/json/ext/vendor/fpconv.c`
+— Florian Loitsch's Grisu2 from <https://github.com/night-shift/fpconv>,
+modified upstream to append `.0` to plain floats. It is transliterated into
+[`go/internal/record/fpconv.go`](../../../go/internal/record/fpconv.go), C shape
+and all, so a reviewer can diff it against the C by eye; the 87-entry
+`powers_ten` table was extracted mechanically from that file, not retyped.
+`rubyFloat` is now a call to it. Its emit rule, which the sampled window could
+never have reproduced:
+
+- `K >= 0 && exp < 15` → plain integer plus `.0`;
+- `K < 0 && (K > -7 || exp < 10)` → fixed decimal;
+- otherwise exponential,
+
+where `K` is the decimal exponent of the generated digit string and
+`exp = |K + ndigits - 1|`.
+
+**Conformance.** All 467 captured literals now match Ruby byte for byte
+(`TestFloatSpellingsMatchTheRubyOracle`, which also asserts the open divergence
+list is empty so the file cannot quietly regain entries). Beyond the recorded
+corpus, a randomized differential of **399,863** distinct doubles — half from
+random 64-bit patterns, half from `mantissa × 10^e` for `e` in `[-320, 308]` —
+was generated through ruby 4.0.6 / json 2.18.0 and compared with
+`cmd/format-emit-float-diff`: **zero divergences**. That corpus is a
+verification artifact, not a fixture, so it is not committed; the runner
+`porting/runners/ruby/format-emit-float-oracle` reproduces the recorded 467.
+
+One provenance caveat for the reviewer: the runtime oracle is json **2.18.0**
+(a default gem inside ruby 4.0.6, shipped compiled, no C source on disk), while
+the C that was read and ported came from json **2.21.1** vendored under
+Homebrew. The 399,863-literal differential against the live 2.18.0 generator is
+what establishes that the two agree for this code path; the version skew is
+stated rather than assumed away.
 
 ## Not yet done for a high-risk slice
 

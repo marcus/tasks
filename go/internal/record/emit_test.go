@@ -152,11 +152,10 @@ func TestNumbersUseRubySpelling(t *testing.T) {
 }
 
 // TestFloatSpellingsMatchTheRubyOracle replays every literal Ruby's generator
-// was captured on. Ruby's spelling is the expected value everywhere; the
-// emitter still diverges on the literals recorded in float-divergences.json,
-// which is an open Go defect, not an accepted difference. The test pins that
-// set exactly: a new divergence fails, and a fixed one fails too, so the
-// record cannot silently drift away from what Go actually does.
+// was captured on. Ruby's spelling is the expected value everywhere, and every
+// one of them now matches: float-divergences.json records the five that the
+// pre-Grisu2 emitter got wrong and its open list is empty, which this test
+// also asserts so the file cannot quietly regain entries.
 func TestFloatSpellingsMatchTheRubyOracle(t *testing.T) {
 	evidence := filepath.Join("..", "..", "..", "porting", "evidence", "format-canonical-emit")
 
@@ -188,9 +187,8 @@ func TestFloatSpellingsMatchTheRubyOracle(t *testing.T) {
 	if err := json.Unmarshal(recorded, &known); err != nil {
 		t.Fatalf("decode recorded divergences: %v", err)
 	}
-	open := make(map[string]string, len(known.Divergences))
-	for _, divergence := range known.Divergences {
-		open[divergence.Literal] = divergence.Ruby
+	if len(known.Divergences) != 0 {
+		t.Fatalf("float-divergences.json lists %d open divergences", len(known.Divergences))
 	}
 
 	for literal, want := range oracle.Spellings {
@@ -199,14 +197,8 @@ func TestFloatSpellingsMatchTheRubyOracle(t *testing.T) {
 			t.Fatalf("DumpRecord(%s): %v", literal, err)
 		}
 		got = strings.TrimSuffix(strings.TrimPrefix(got, `{"n":`), `}`)
-		rubySpelling, isKnown := open[literal]
-		switch {
-		case got == want && isKnown:
-			t.Fatalf("%s now matches Ruby; remove it from float-divergences.json", literal)
-		case got == want:
-		case isKnown && rubySpelling == want:
-		default:
-			t.Fatalf("float spelling for %s = %s, want Ruby's %s", literal, got, want)
+		if got != want {
+			t.Errorf("float spelling for %s = %s, want Ruby's %s", literal, got, want)
 		}
 	}
 }
