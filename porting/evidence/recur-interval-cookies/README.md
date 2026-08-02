@@ -353,3 +353,25 @@ direct probe pair — `porting/runners/ruby/delegation-probe` plus
 `recur-interval-cookies-direct.jsonl` with a Ruby and Go `recur-probe` pair is
 the concrete next step that closes this slice's one never-skippable gap. The
 capture script above is oracle evidence, not that harness.
+
+### Direct differential conformance
+
+`porting/runners/ruby/recur-probe` invokes the Ruby interval-package boundary;
+`go/cmd/recur-probe` invokes `internal/recur`. The direct case list covers
+canonical and friendly parsing, exact rejection spelling, cookie acceptance,
+interval humanization, default-prefix passthrough, fixed/completion/catch-up
+projection, Date::ITALY's reform day, and an arbitrary-size count. Calendar
+grammar remains deliberately excluded until `recur-calendar-grammar` owns that
+behavior.
+
+The conformance command runs only the interval-owned cases; the direct case
+list documents the deferred control separately so the boundary is visible.
+
+```console
+$ porting/evidence/recur-interval-cookies/conformance
+recur-interval-cookies direct conformance: 16/16 cases matched
+```
+
+The direct probe compares decoded JSON values, so JSON object-member order in
+the probe transport cannot hide a semantic mismatch. It is package-boundary
+conformance, not a claim that a Go CLI recurrence adapter exists.

@@ -1,0 +1,36 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Compare the direct recurrence package result before a Go CLI recurrence
+# adapter exists. Ruby remains the oracle; this script never writes an expected
+# output from Go.
+
+require "json"
+require "open3"
+require "pathname"
+require "tmpdir"
+
+ROOT = Pathname.new(__dir__).join("../../..").realpath
+CASES = ROOT.join("porting/runners/cases/recur-interval-cookies-direct.jsonl")
+RUBY_PROBE = ROOT.join("porting/runners/ruby/recur-probe")
+
+def run(*command, **options)
+  stdout, stderr, status = Open3.capture3(*command, **options)
+  abort "failed: #{command.join(" ")}\n#{stderr}" unless status.success?
+
+  stdout.lines.reject { |line| line.strip.empty? }.map { |line| JSON.parse(line) }
+end
+
+go_probe = ARGV.empty? ? ["go", "run", "./cmd/recur-probe"] : ARGV
+ruby = run(RUBY_PROBE.to_s, CASES.to_s)
+go = run(*go_probe, CASES.to_s, chdir: ROOT.join("go").to_s)
+if ruby == go
+  puts "recur-interval-cookies direct conformance: #{ruby.length}/#{ruby.length} cases matched"
+  exit 0
+end
+
+Dir.mktmpdir("tasks-recur-conformance-") do |work|
+  File.write(File.join(work, "ruby.json"), JSON.pretty_generate(ruby) + "\n")
+  File.write(File.join(work, "go.json"), JSON.pretty_generate(go) + "\n")
+  abort "recur-interval-cookies mismatch; details in #{work}"
+end
