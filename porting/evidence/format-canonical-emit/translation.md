@@ -41,7 +41,7 @@ the one fixture Ruby rewrites (input `39f0fc8d…` → dump `9e94e743…`).
 | `go test ./...` | pass |
 | `go test -race ./internal/record/` | pass |
 | Fixture dump bytes vs Ruby | 11/11 identical |
-| Float spellings vs Ruby | 462/467 identical, 5 recorded divergences |
+| Float spellings vs Ruby | 467/467 identical, zero open divergences |
 
 ## Numbers: Ruby's generator, ported rather than approximated
 
