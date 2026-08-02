@@ -76,6 +76,11 @@ module PortingRunner
     "TASKS_PIN_NOW" => "2026-03-14T15:09:26Z",
     "TASKS_PIN_IDS" => "bbbb0001",
     "TASKS_PIN_COALESCE_SCOPE" => "pinned-scope",
+    # The per-operation coalescing KEY. Distinct from the scope above and needed
+    # for the same reason: it is persisted into journal index.json, so an
+    # unpinned one makes two identical delegation runs produce different journal
+    # bytes while the store bytes agree. Sixteen hex characters.
+    "TASKS_PIN_DELEGATION_KEYS" => "cccc000000000001",
     "TASKS_PIN_HOSTNAME" => "fixture-host",
     "LINES" => "40",
     "COLUMNS" => "100"
@@ -84,8 +89,26 @@ module PortingRunner
   # Path variables the runner owns: a case may not set them, because they are
   # what makes the run isolated. TASKS_FILE / TASKS_ARCHIVE are recorded as
   # unset on purpose — a per-file override would redirect half a store.
-  PATH_VARS = %w[HOME TASKS_ARCHIVE TASKS_DIR TASKS_FILE XDG_CONFIG_HOME XDG_STATE_HOME].freeze
+  # TASKS_MEMORY belongs here for the same reason and not a weaker one: it names
+  # a *file path*, so a case that set it could point the memory sidecar outside
+  # the copy — outside the observed tree, and potentially at something real.
+  # PATH is here too: it is pinned rather than inherited, and a case that could
+  # set it could put a shim in front of the interpreter.
+  PATH_VARS = %w[HOME PATH TASKS_ARCHIVE TASKS_DIR TASKS_FILE TASKS_MEMORY
+                 XDG_CONFIG_HOME XDG_STATE_HOME].freeze
+  # The floor of what every observation records, not the whole of it: the
+  # observation records the union of this list and the names actually passed to
+  # the process, so a variable a case sets is visible rather than silent. A
+  # constant list alone would let two observations carry byte-identical
+  # `invocation` blocks and produce different store bytes.
   RECORDED_ENV = (DEFAULT_PINS.keys + PATH_VARS).sort.freeze
+
+  # The process umask, pinned. It is not a host fact: it is a per-process
+  # attribute, one syscall away, and it moves `mode` on every file the
+  # implementation creates — which is a compared field. Leaving it unpinned
+  # would bake the capture operator's umask into the baseline and make a genuine
+  # permission regression indistinguishable from a different CI image.
+  UMASK = 0o022
 
   # Where the runner puts the isolated XDG roots inside the copy. Both live
   # inside the copy so that everything the implementation writes is inside the
@@ -111,14 +134,14 @@ module PortingRunner
   # character is `#` are skipped, so a case list can carry section comments.
   Case = Struct.new(:id, :fixture_class, :fixture_name, :surface, :argv, :cwd,
                     :env, :stdin, :stdin_provided, :timeout_ms, :install_journal,
-                    :notes, keyword_init: true) do
+                    :copy_root_mode, :notes, keyword_init: true) do
     def fixture_id = "#{fixture_class}/#{fixture_name}"
     def fixture_dir = File.join(FIXTURES_DIR, fixture_class, fixture_name)
   end
 
   module CaseList
     KNOWN_KEYS = %w[case_id fixture surface argv cwd env stdin stdin_base64
-                    timeout_ms install_journal notes].freeze
+                    timeout_ms install_journal copy_root_mode notes].freeze
 
     module_function
 
@@ -200,17 +223,115 @@ module PortingRunner
         end
       end
 
+      mode = entry["copy_root_mode"]
+      unless mode.nil? || (mode.is_a?(String) && /\A0?[0-7]{3}\z/.match?(mode))
+        raise Error, "#{where}: copy_root_mode must be a three- or four-digit octal string, got #{mode.inspect}"
+      end
+
       Case.new(
         id: id, fixture_class: fixture_class, fixture_name: fixture_name,
         surface: surface, argv: argv, cwd: entry.fetch("cwd", "."),
         env: env, stdin: stdin || "", stdin_provided: !stdin.nil?,
         timeout_ms: entry["timeout_ms"], install_journal: entry.fetch("install_journal", true),
-        notes: entry["notes"]
+        copy_root_mode: mode, notes: entry["notes"]
       )
     end
   end
 
   # --- filesystem observation ----------------------------------------------
+
+  # Which file is what, resolved from the paths the IMPLEMENTATION reported it
+  # was using (probe § paths) rather than from a table of hardcoded names.
+  #
+  # The difference is not cosmetic. `valid/symlinked-store` puts the store's
+  # bytes in `tasks.real.jsonl` and makes `tasks.jsonl` a link to it; a name
+  # table records the file carrying the store as `role: "other"`, which silently
+  # voids the schema's guarantee that "the store and the archive were BOTH
+  # observed" and makes the mutation invariant below fail on a correct run.
+  #
+  # Both spellings of a path get the role: the link is the store the user names,
+  # the target is the store the bytes are in. Everything the implementation does
+  # not name is resolved by shape — the journal layout and the `.lock` suffix are
+  # patterns, not names, and stay correct under any store spelling.
+  class Roles
+    NAMED = %w[store archive memory config].freeze
+
+    # `root` is the root the reported paths are relative to, which is not
+    # necessarily the tree being walked: the probe that reports them runs against
+    # a throwaway pristine copy (see Runner#run_case). The *relative* store,
+    # archive, memory, and config paths are identical in both copies, so they
+    # transfer. `journal_rel` deliberately does not — the journal directory is
+    # named for a digest of the copy's own absolute path — so the caller passes
+    # the one it computed for the tree actually being walked, and the journal
+    # falls back to shape matching when it cannot.
+    def initialize(paths, root, state_subdir:, journal_rel: nil)
+      @state_subdir = state_subdir
+      @journal_rel = journal_rel
+      @table = {}
+      return if paths.nil?
+
+      # Both spellings of the root are tried because the canonical paths are
+      # realpath'd and the root may not be: on macOS `/tmp` is a symlink to
+      # `/private/tmp`, so the store's canonical path and the copy root can
+      # disagree on their prefix while naming the same directory.
+      roots = [root, (File.realpath(root) rescue root)].uniq # rubocop:disable Style/RescueModifier
+      NAMED.each do |role|
+        [paths[role], paths["#{role}_canonical"]].compact.each do |abs|
+          # Tree.relative returns the path unchanged when it is not under the
+          # root, so a still-absolute candidate means "not in this tree".
+          rel = roots.filter_map { |r| Tree.relative(r, abs) }
+                     .find { |candidate| !candidate.start_with?("..", "/") && candidate != "." }
+          @table[rel] = role if rel
+        end
+      end
+    end
+
+    def call(rel)
+      return @table[rel] if @table.key?(rel)
+      return "journal_index" if journal_child?(rel, "index.json")
+      return "journal_blob" if journal_blob?(rel)
+      return "lock" if rel.end_with?(".lock")
+
+      "other"
+    end
+
+    private
+
+    # The journal directory is named for a digest of the store's canonical path,
+    # so it is matched by shape when the implementation did not report it.
+    def journal_child?(rel, name)
+      return rel == File.join(@journal_rel, name) if usable_journal_rel?
+
+      %r{\A#{Regexp.escape(@state_subdir)}/tasks/journal/[^/]+/#{Regexp.escape(name)}\z}.match?(rel)
+    end
+
+    def journal_blob?(rel)
+      return rel.start_with?("#{@journal_rel}/blobs/") if usable_journal_rel?
+
+      %r{\A#{Regexp.escape(@state_subdir)}/tasks/journal/[^/]+/blobs/[^/]+\z}.match?(rel)
+    end
+
+    def usable_journal_rel? = @journal_rel && !@journal_rel.start_with?("..") && @journal_rel != "."
+  end
+
+  # The fallback used before any probe has run — and the only resolver a runner
+  # needs when the implementation reports no paths at all.
+  module DefaultRoles
+    module_function
+
+    def call(rel)
+      case rel
+      when "tasks.jsonl" then "store"
+      when "archive.jsonl" then "archive"
+      when %r{\A#{Regexp.escape(STATE_SUBDIR)}/tasks/journal/[^/]+/index\.json\z} then "journal_index"
+      when %r{\A#{Regexp.escape(STATE_SUBDIR)}/tasks/journal/[^/]+/blobs/[^/]+\z} then "journal_blob"
+      when %r{\A#{Regexp.escape(CONFIG_SUBDIR)}/tasks/config\z} then "config"
+      when /\.lock\z/ then "lock"
+      when "agent-memory.md" then "memory"
+      else "other"
+      end
+    end
+  end
 
   module Tree
     module_function
@@ -218,7 +339,7 @@ module PortingRunner
     # Every file under the copy, sorted by relative path. Nothing is filtered:
     # a leftover `.tasks.jsonl.<pid>.<tid>.tmp` is a real finding (a crashed
     # write), and a harness that hid it would hide the crash.
-    def walk(root)
+    def walk(root, roles = DefaultRoles)
       states = []
       stack = [root]
       while (dir = stack.pop)
@@ -228,16 +349,16 @@ module PortingRunner
           if stat.directory?
             stack << path
           else
-            states << state(root, path, stat)
+            states << state(root, path, roles, stat)
           end
         end
       end
       states.sort_by { |s| s["path"] }
     end
 
-    def state(root, path, stat = File.lstat(path))
+    def state(root, path, roles = DefaultRoles, stat = File.lstat(path))
       rel = relative(root, path)
-      role = role_for(rel)
+      role = roles.call(rel)
       if stat.symlink?
         return {
           "role" => role, "path" => rel, "present" => true, "sha256" => nil,
@@ -260,8 +381,8 @@ module PortingRunner
       }
     end
 
-    def absent(root, rel)
-      { "role" => role_for(rel), "path" => rel, "present" => false, "sha256" => nil,
+    def absent(root, rel, roles = DefaultRoles)
+      { "role" => roles.call(rel), "path" => rel, "present" => false, "sha256" => nil,
         "size_bytes" => nil, "mode" => nil, "content_base64" => nil,
         "line_count" => nil, "symlink_target" => nil }
     end
@@ -270,22 +391,6 @@ module PortingRunner
       full = File.expand_path(path)
       base = File.expand_path(root)
       full == base ? "." : full.delete_prefix("#{base}/")
-    end
-
-    # Roles, not names: the comparator asserts that the store and the archive
-    # were both observed, and a future layout rename must not silently drop half
-    # a consistency boundary.
-    def role_for(rel)
-      case rel
-      when "tasks.jsonl" then "store"
-      when "archive.jsonl" then "archive"
-      when %r{\A#{Regexp.escape(STATE_SUBDIR)}/tasks/journal/[^/]+/index\.json\z} then "journal_index"
-      when %r{\A#{Regexp.escape(STATE_SUBDIR)}/tasks/journal/[^/]+/blobs/[^/]+\z} then "journal_blob"
-      when %r{\A#{Regexp.escape(CONFIG_SUBDIR)}/tasks/config\z} then "config"
-      when /\.lock\z/ then "lock"
-      when "agent-memory.md" then "memory"
-      else "other"
-      end
     end
 
     # A digest over the whole starting tree: sorted "<relpath>\0<sha256>\n"
@@ -320,6 +425,10 @@ module PortingRunner
 
     def run(cases)
       refuse_live_store!
+      # Pinned here, once, before any copy is made or any child is spawned:
+      # the umask is inherited across fork/exec, so setting it in the runner
+      # process is what pins it for the implementation. See UMASK.
+      File.umask(UMASK)
       FileUtils.mkdir_p(@work)
       FileUtils.mkdir_p(@out) if @out
       cases.map { |kase| run_case(kase) }
@@ -353,12 +462,16 @@ module PortingRunner
       copy_root = File.join(@work, kase.id)
       before_root = File.join(@work, "#{kase.id}.before")
       io_dir = File.join(@work, ".io", kase.id)
+      # A previous run may have left the copy root unwritable (a copy_root_mode
+      # case that died before its restore). rm_rf cannot empty such a directory
+      # and fails silently, so the mode is reset first — otherwise stale files
+      # from the last run would leak into this one's `files.before`.
+      [copy_root, before_root].each { |dir| make_removable(dir) }
       [copy_root, before_root, io_dir].each { |dir| FileUtils.rm_rf(dir) }
       FileUtils.mkdir_p(io_dir)
 
       prepare_copy(kase, copy_root)
-      before = Tree.walk(copy_root)
-      root_sha256 = Tree.root_digest(before)
+      apply_copy_root_mode(kase, copy_root)
 
       # The before-probe runs against its own pristine copy, never against the
       # case copy: taking a snapshot acquires the store lock, and a lock file
@@ -366,22 +479,67 @@ module PortingRunner
       # supposed to be observed doing. The store revision is a digest of the
       # store's bytes and nothing else, so a second copy answers the same
       # question the case copy would have.
+      #
+      # It runs BEFORE the tree is walked because it is also where `files[].role`
+      # comes from: roles are resolved from the paths the implementation reports
+      # it resolved, not from a table of filenames. See Roles.
       prepare_copy(kase, before_root, journal: false)
       before_probe = probe(kase, before_root)
+      roles = roles_for(before_probe, before_root, copy_root)
+
+      before = Tree.walk(copy_root, roles)
+      root_sha256 = Tree.root_digest(before)
 
       result = execute(kase, copy_root, io_dir)
 
-      after = Tree.walk(copy_root)
+      after = Tree.walk(copy_root, roles)
       after_probe = probe(kase, copy_root)
 
       observation = build_observation(kase, copy_root, root_sha256, before, after,
-                                      result, before_probe, after_probe)
+                                      result, before_probe, after_probe, roles)
       check_invariants(kase, observation, before_probe, after_probe)
       emit(kase, observation)
+      # Restored only after every observation of the tree has been taken, so the
+      # invocation and both probes saw the mode the case asked for.
+      make_removable(copy_root)
       unless @keep
         [copy_root, before_root, io_dir].each { |dir| FileUtils.rm_rf(dir) }
       end
       observation
+    end
+
+    # The role resolver for one case. The named paths come from the probe (run
+    # against `probe_root`); the journal directory is the one the runner itself
+    # computed for `copy_root`, because that name is a digest of the copy's own
+    # absolute path and the probe's copy has a different one.
+    def roles_for(probe_report, probe_root, copy_root)
+      journal_rel = Tree.relative(
+        copy_root, File.join(copy_root, STATE_SUBDIR, "tasks", "journal", journal_key(copy_root))
+      )
+      Roles.new(probe_report["paths"], probe_root,
+                state_subdir: STATE_SUBDIR, journal_rel: journal_rel)
+    end
+
+    # The case's declared mode for the copy root, applied after the copy is
+    # complete and before anything observes it. It is what makes a write failure
+    # — and therefore a genuine write-then-revert — reachable from a case list:
+    # the runner owns the copy root, so no fixture can constrain its mode.
+    # Deliberately NOT applied to the before-probe's throwaway copy: that copy is
+    # a harness artifact for reading the pristine revision token, and an
+    # unwritable one would fail the probe instead of the invocation.
+    def apply_copy_root_mode(kase, copy_root)
+      return if kase.copy_root_mode.nil?
+
+      File.chmod(kase.copy_root_mode.to_i(8), copy_root)
+    end
+
+    # Undo a restrictive copy_root_mode so the directory can be emptied. Applied
+    # to the root only: nothing below it is ever chmod'd, so file modes recorded
+    # in `files.after` are the implementation's own doing.
+    def make_removable(dir)
+      File.chmod(0o755, dir) if File.directory?(dir)
+    rescue SystemCallError
+      nil
     end
 
     # Copy the fixture, install its journal, and create the isolated XDG roots.
@@ -396,10 +554,49 @@ module PortingRunner
         raise CaseError, "cp -a failed for #{kase.fixture_id}"
       end
 
+      apply_fixture_perms(kase, copy_root)
       FileUtils.mkdir_p(File.join(copy_root, CONFIG_SUBDIR, "tasks"))
       FileUtils.mkdir_p(File.join(copy_root, STATE_SUBDIR))
       install_journal(kase, copy_root) if journal && kase.install_journal
       copy_root
+    end
+
+    # `<fixture>/perms.json` — modes git cannot record, applied to the copy.
+    #
+    # Git tracks exactly one permission bit (the executable bit), so a fixture
+    # whose subject is a restrictive mode cannot ship that mode as file content:
+    # `cp -a` faithfully preserves the 0644 the checkout produced, and
+    # `valid/restricted-mode-store` — a fixture named for the "a chmod-600 store
+    # must not widen to 644 across an atomic replacement" contract — cannot test
+    # it. The map lives with the fixture and not on the case because it is a
+    # property of the corpus (this store IS mode 600, for every case that uses
+    # it), which is exactly the opposite of `copy_root_mode`. See
+    # porting/runners/README.md § "Two modes, and why they are not one key".
+    #
+    # Applied to both copies, and applied to the throwaway probe copy too: the
+    # probe only reads, and a fixture that declares a mode declares it for the
+    # whole corpus, so both copies must start identical.
+    def apply_fixture_perms(kase, copy_root)
+      manifest = File.join(kase.fixture_dir, "perms.json")
+      return unless File.file?(manifest)
+
+      chmod = JSON.parse(File.read(manifest))["chmod"]
+      raise CaseError, "#{manifest}: chmod must be an object" unless chmod.is_a?(Hash)
+
+      chmod.sort.each do |rel, mode|
+        unless mode.is_a?(String) && /\A0?[0-7]{3}\z/.match?(mode)
+          raise CaseError, "#{manifest}: mode for #{rel} must be a three- or four-digit " \
+                           "octal string, got #{mode.inspect}"
+        end
+
+        target = File.expand_path(rel, copy_root)
+        unless target.start_with?("#{copy_root}/")
+          raise CaseError, "#{manifest}: #{rel.inspect} escapes the fixture copy"
+        end
+        raise CaseError, "#{manifest}: no such file in the fixture: #{rel}" unless File.exist?(target)
+
+        File.chmod(mode.to_i(8), target)
+      end
     end
 
     # The journal cannot ship as literal bytes: it lives under a directory named
@@ -426,13 +623,27 @@ module PortingRunner
       end
     end
 
-    def org_path(copy_root) = File.join(File.realpath(copy_root), "tasks.jsonl")
+    # The store's canonical path, mirroring `Journal.canonical`: absolute AND
+    # symlink-resolved. Resolving the link matters — `valid/symlinked-store`
+    # spells the store as a link to `tasks.real.jsonl`, and a key computed from
+    # the unresolved name names a journal directory the implementation never
+    # writes to, so the harness would report `journal.present: false` for a run
+    # that wrote a journal. Falls back to the unresolved path when the store does
+    # not exist yet, exactly as the implementation does.
+    def org_path(copy_root)
+      path = File.join(File.realpath(copy_root), "tasks.jsonl")
+      File.realpath(path)
+    rescue Errno::ENOENT
+      path
+    end
+
     def journal_key(copy_root) = Digest::SHA256.hexdigest(org_path(copy_root))[0, 16]
 
     # --- environment -------------------------------------------------------
 
     def environment_for(kase, copy_root)
       env = DEFAULT_PINS.merge(
+        "PATH" => PATH_VALUE,
         "HOME" => copy_root,
         "TASKS_DIR" => copy_root,
         "XDG_CONFIG_HOME" => File.join(copy_root, CONFIG_SUBDIR),
@@ -457,7 +668,7 @@ module PortingRunner
       budget = kase.timeout_ms || @timeout_ms
 
       started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      pid = Process.spawn(env.merge("PATH" => PATH_VALUE),
+      pid = Process.spawn(env,
                           RbConfig.ruby, CLI, *kase.argv,
                           chdir: cwd, in: stdin_path, out: out_path, err: err_path,
                           unsetenv_others: true)
@@ -488,7 +699,7 @@ module PortingRunner
     # --- probe -------------------------------------------------------------
 
     def probe(kase, root)
-      env = environment_for(kase, root).merge("PATH" => PATH_VALUE)
+      env = environment_for(kase, root)
       out = nil
       IO.popen(env, [RbConfig.ruby, PROBE, root], err: File::NULL,
                                                   unsetenv_others: true) { |io| out = io.read }
@@ -500,7 +711,7 @@ module PortingRunner
     # --- observation -------------------------------------------------------
 
     def build_observation(kase, copy_root, root_sha256, before, after, result,
-                          before_probe, after_probe)
+                          before_probe, after_probe, roles = DefaultRoles)
       deltas = deltas_for(before, after)
       store_changed = before_probe.dig("revisions", "store") != after_probe.dig("revisions", "store")
 
@@ -525,7 +736,7 @@ module PortingRunner
           "stdin" => { "provided" => kase.stdin_provided,
                        "bytes_base64" => Tree.strict_base64(kase.stdin) },
           "cwd" => Tree.relative(copy_root, result[:cwd]),
-          "env" => RECORDED_ENV.map { |name| { "name" => name, "value" => result[:env][name] } },
+          "env" => recorded_env(result[:env]),
           "pins" => after_probe["pins"],
           "timeout_ms" => result[:timeout_ms]
         },
@@ -541,13 +752,15 @@ module PortingRunner
           "before" => before,
           "after" => after,
           "deltas" => deltas,
-          # Left null deliberately: the CLI does not report "I wrote and then
-          # reverted" in any machine-readable form, and inferring it from
-          # stderr wording would bake one implementation's prose into the
-          # protocol. See README § "Known gaps".
-          "rolled_back" => nil
+          # The implementation's own report, read from its --json error
+          # envelope. Never inferred from stderr wording (that would bake one
+          # implementation's prose into a language-neutral protocol) and never
+          # inferred from the file deltas (a write-then-revert and a
+          # never-wrote leave identical bytes — that is why the field exists).
+          # Null means the invocation made no such report.
+          "rolled_back" => rolled_back(result[:stdout])
         },
-        "journal" => journal_state(copy_root, after),
+        "journal" => journal_state(copy_root, after, roles),
         "revisions" => {
           "store" => after_probe.dig("revisions", "store"),
           "resources" => after_probe.dig("revisions", "resources"),
@@ -571,6 +784,17 @@ module PortingRunner
         },
         "notes" => notes_for(kase, after_probe)
       }
+    end
+
+    # The union of the floor (RECORDED_ENV) and the names actually handed to the
+    # process, sorted. The union is the load-bearing half: a constant list lets a
+    # case set a variable the product reads — TASKS_DATE_ORDER, TASKS_WORKER_ID,
+    # TASKS_URGENT_DAYS — and produce two observations with byte-identical
+    # `invocation` blocks and different store bytes, with the input that caused
+    # it recorded nowhere. A name in the floor that was not passed is recorded
+    # with a null value, so "this variable was unset" stays proven.
+    def recorded_env(env)
+      (RECORDED_ENV | env.keys).sort.map { |name| { "name" => name, "value" => env[name] } }
     end
 
     def stream(bytes)
@@ -615,12 +839,12 @@ module PortingRunner
     # the store's absolute path, so it is computed rather than searched for:
     # that way "no journal" reports the path where a journal WOULD have been,
     # instead of an empty string.
-    def journal_state(copy_root, after)
+    def journal_state(copy_root, after, roles = DefaultRoles)
       dir = File.join(copy_root, STATE_SUBDIR, "tasks", "journal", journal_key(copy_root))
       index_path = File.join(dir, "index.json")
       index_rel = Tree.relative(copy_root, index_path)
       present = File.file?(index_path)
-      index = present ? Tree.state(copy_root, index_path) : Tree.absent(copy_root, index_rel)
+      index = present ? Tree.state(copy_root, index_path, roles) : Tree.absent(copy_root, index_rel, roles)
 
       blobs = after.select { |s| s["role"] == "journal_blob" && s["path"].start_with?("#{Tree.relative(copy_root, dir)}/") }
       state = {
@@ -650,6 +874,22 @@ module PortingRunner
           "repair" => s["repair"].nil? ? nil : s["repair"] == true }
       end
       state
+    end
+
+    # Whether the implementation said it wrote and then reverted. Read from the
+    # `--json` error envelope on stdout — `{"error":…,"rolled_back":true|false}`
+    # — exactly as touched_ids is read from the `--json` mutation payload. A
+    # boolean is recorded only when the implementation stated one; anything else
+    # (no envelope, a non-boolean, unparseable stdout) is null, which reads as
+    # "not reported", never as "did not roll back".
+    def rolled_back(stdout)
+      payload = JSON.parse(stdout)
+      return nil unless payload.is_a?(Hash) && payload.key?("error")
+
+      value = payload["rolled_back"]
+      value == true || value == false ? value : nil
+    rescue JSON::ParserError, ArgumentError
+      nil
     end
 
     # The CLI reports what a mutation touched in its own `--json` payload. That
@@ -705,8 +945,15 @@ module PortingRunner
                         "and NOT applied by the implementation")
       end
 
+      # Roles, not names. A store the user reached through a symlink has its
+      # bytes in a file the name table never heard of, and a name-based check
+      # would report a correct run as a runner failure. The role table is built
+      # from the paths the implementation itself resolved, so it follows the
+      # link.
+      roles = (observation["files"]["before"] + observation["files"]["after"])
+              .to_h { |s| [s["path"], s["role"]] }
       changed_paths = observation["files"]["deltas"].map { |d| d["path"] }
-      store_delta = changed_paths.any? { |p| %w[tasks.jsonl archive.jsonl].include?(p) }
+      store_delta = changed_paths.any? { |p| %w[store archive].include?(roles[p]) }
       if observation["files"]["mutated"] != store_delta
         fail_case(kase, "files.mutated=#{observation["files"]["mutated"]} " \
                         "(store revision #{before_probe.dig("revisions", "store")} -> " \

@@ -1,0 +1,26 @@
+[
+  {
+    "slice": "delegation-record-shape",
+    "issue": "td-3cf46c",
+    "cases_add": ["cli-delegate-agent-ready"],
+    "fixtures_add": [],
+    "fixtures_todo": null,
+    "note": "Phase 1 had zero cases that ran a delegation verb, which is why an unpinned SecureRandom.hex(8) minted per delegation operation and persisted into journal index.json survived review: the field it moved (journal.states[].coalesce_key) was permanently null in the baseline and therefore looked stable. cli-delegate-agent-ready runs `delegate 1a2b3c02 implement --json` against valid/small-gtd under the full pin set including the new TASKS_PIN_DELEGATION_KEYS. Two --pin-identity runs are now byte-identical; with the pin unset the same case differs on 12 lines. It also populates journal.states[].coalesce_key and coalesce_scope, the latter being the only proof TASKS_PIN_COALESCE_SCOPE works at all."
+  },
+  {
+    "slice": "atomic-write",
+    "issue": "td-aac6ec",
+    "cases_add": ["cli-capture-restricted-mode"],
+    "fixtures_add": ["porting/fixtures/valid/restricted-mode-store"],
+    "fixtures_todo": null,
+    "note": "The fixture ships perms.json ({\"chmod\": {\"tasks.jsonl\": \"0600\"}}) because git records no permission bit but the executable one, so the 0600 has to be applied to the copy between the copy step and the observe step. The runner now does that (copy protocol step 2, porting/runners/README.md). Before this the fixture could not test the contract it is named for — 'a chmod-600 store must not widen to 644 across an atomic replacement' — and `mode` was a constant column across the whole baseline. The case asserts 0600 in files.before AND in files.after."
+  },
+  {
+    "slice": "journal-key-identity",
+    "issue": "td-aac6ec",
+    "cases_add": ["cli-capture-symlinked-store"],
+    "fixtures_add": ["porting/fixtures/valid/symlinked-store"],
+    "fixtures_todo": null,
+    "note": "Drives the symlinked store: files[].symlink_target populates (0/141 before), and the case proved two runner defects that a name-based role table hid — the file carrying the store's bytes was recorded as role \"other\", and the journal key was computed from the unresolved store path so journal.present read false for a run that wrote a journal. Roles now come from the paths the implementation reported (probe § paths) and the journal key is symlink-resolved."
+  }
+]

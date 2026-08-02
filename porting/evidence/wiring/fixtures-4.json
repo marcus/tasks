@@ -1,0 +1,21 @@
+[
+  {
+    "slice": "changeset-apply-basic",
+    "issue": "td-a53af5",
+    "fixtures_add": ["porting/fixtures/valid/interleaved-tags"],
+    "fixtures_todo": null,
+    "note": "valid/interleaved-tags is the corpus's only store whose `tags` arrays interleave owned and unowned entries — a plain tag between two @contexts (c1a2b3d1) and an @context between two plain tags (c1a2b3d2) — and its only records already carrying the `defer` marker (c1a2b3d3 with defer mid-array, c1a2b3d4 with defer alone). Every other multi-tag record in the corpus is contexts-first-then-tags, so merge_owned_slice could be implemented as 'owned prefix, then keep the rest' and pass the whole corpus; against this fixture that implementation produces the wrong bytes in five of the eleven recorded patches. It also supplies the two patch_deferred branches the corpus could not reach: the tags.delete clear branch (c1a2b3d3 deferred:false -> [\"@home\",\"research\"]; c1a2b3d4 deferred:false -> the `tags` key removed entirely rather than emitted as []) and the equal-value no_change branch that must write zero bytes and consume no undo step. Outcomes were recorded by driving Store#edit_snapshot + Store#patch_task! — the protocol the slice ports — against a fresh copy per case under the pinned environment.",
+    "corpus_readme": "Add to the `valid/` index table, after `full-field-matrix`:\n\n| `interleaved-tags` | owned/unowned tag interleaving in both directions; the corpus's only `defer` records | 0 — `ok — 4 tasks parsed` |\n"
+  },
+  {
+    "slice": "delete-task",
+    "issue": "td-4a64ac",
+    "fixtures_add": [
+      "porting/fixtures/adversarial/journal-undo-redo-delete",
+      "porting/fixtures/adversarial/journal-redo-pending-delete"
+    ],
+    "fixtures_todo": null,
+    "note": "The corpus's three existing journal fixtures are all refusals, so nothing proved a successful replay against a Ruby-written journal and nothing shipped a cursor-behind-tip index. These two close both halves and were generated, not hand-assembled: the real CLI was run through five captures, a leaf delete, a refused parent delete, and a cascade delete under the pinned environment, and the resulting store plus journal were captured verbatim (only the org path templated). journal-undo-redo-delete ships that run at the tip — `tasks undo` replays the cascade delete and then the leaf delete, `tasks redo` replays both forward, and all four targets were verified with `cmp` against the files the generating run left on disk: byte-identical including `updated` stamps, so undo restores stamps rather than refreshing them. journal-redo-pending-delete is the same fixture after one more real `tasks undo`, giving eight states with cursor 6 — the only state in the corpus from which redo is reachable, and the one that drives the redo-tail truncation in Journal#record (a fresh capture there replaces state 7 and `tasks redo` then reports `nothing to redo`, exit 1). Both also carry the unlabelled `org_sha: null` baseline (the history predates the file) and the pluralized `delete 3 tasks: …` label the port must reproduce verbatim.",
+    "corpus_readme": "Add to the `adversarial/` index table, after `journal-foreign-org`:\n\n| `journal-undo-redo-delete` | the undo/redo happy path: a Ruby-written journal at the tip, byte-exact undo and redo of a leaf and a cascade delete | 0 — `ok — 1 task parsed` |\n| `journal-redo-pending-delete` | the only cursor-behind-tip index; redo reachable, and the redo tail truncated by any new mutation | 0 — `ok — 4 tasks parsed` |\n\nAlso update the sentence above that table — \"Three `adversarial/` fixtures ship a `journal/`\" in the \"Installing a journal\" section becomes \"Five\" — and note there that these two are the only journal fixtures whose recorded outcome is a *success* rather than a refusal.\n"
+  }
+]

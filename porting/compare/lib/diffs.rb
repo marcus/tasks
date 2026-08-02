@@ -60,7 +60,11 @@ module Conformance
     def json_diff(a, b, path = "$", out = [], limit: 25)
       return out if out.length >= limit
 
-      if a.class != b.class && !(numeric?(a) && numeric?(b))
+      # `true` and `false` are different Ruby classes and the same JSON type, so
+      # they are compared by value like any other scalar. Without this, flipping
+      # a boolean reports itself as a type change from "boolean" to "boolean" —
+      # a real difference, described in a way that reads as a harness bug.
+      if a.class != b.class && !(numeric?(a) && numeric?(b)) && !(boolean?(a) && boolean?(b))
         out << { "path" => path, "reason" => "type",
                  "baseline" => type_name(a), "candidate" => type_name(b),
                  "baseline_value" => a, "candidate_value" => b }
@@ -102,6 +106,7 @@ module Conformance
     end
 
     def numeric?(v) = v.is_a?(Numeric) && !v.is_a?(TrueClass)
+    def boolean?(v) = v == true || v == false
 
     def type_name(v)
       case v

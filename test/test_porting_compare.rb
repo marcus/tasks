@@ -36,9 +36,18 @@ class TestPortingCompare < Minitest::Test
   SEED = File.join(ROOT, "porting", "compare", "seed")
   COMPARE = File.join(ROOT, "porting", "compare", "compare")
   AUDIT = File.join(ROOT, "porting", "compare", "audit")
+  CASES = File.join(ROOT, "porting", "runners", "cases", "phase1.jsonl")
 
-  # Seeding is a subprocess and the baseline is 27 files, so each seeded set is
-  # built once for the whole class rather than per test.
+  # Derived from the case list rather than written down, because a magic number
+  # here turns "someone added a conformance case" — the thing this whole corpus
+  # wants more of — into four unrelated test failures. What is worth asserting
+  # is that the baseline covers the case list exactly, and that is what the
+  # comparison below does.
+  CASE_COUNT = File.readlines(CASES).map(&:strip)
+                   .count { |l| !l.empty? && !l.start_with?("#") }
+
+  # Seeding is a subprocess and the baseline is one file per case, so each
+  # seeded set is built once for the whole class rather than per test.
   def self.seeded(name)
     @seeded ||= {}
     @seeded[name] ||= begin
@@ -65,6 +74,14 @@ class TestPortingCompare < Minitest::Test
     report["cases"].flat_map { |c| c["findings"] }.select { |f| f["severity"] == "gate" }
   end
 
+  # Implementation paths dirty in the worktree right now, spelled exactly as
+  # porting/evidence/capture spells them in provenance.
+  def implementation_dirty_now
+    `git -C #{ROOT.inspect} status --porcelain 2>/dev/null`
+      .lines.map { |l| l[3..].to_s.strip }.reject(&:empty?)
+      .select { |p| p.start_with?("bin/", "lib/") }
+  end
+
   # The one finding a seed is supposed to produce, located by field prefix.
   def finding_on(report, case_id, field_prefix)
     gate_findings(report).find { |f| f["case_id"] == case_id && f["field"].start_with?(field_prefix) }
@@ -75,7 +92,8 @@ class TestPortingCompare < Minitest::Test
   def test_baseline_exists_and_is_self_consistent
     assert File.directory?(BASELINE), "no committed baseline at #{BASELINE}"
     set = baseline_set
-    assert_equal 27, set.size, "the Phase 1 corpus is 27 cases"
+    assert_equal CASE_COUNT, set.size,
+                 "the baseline must carry one observation per case in #{File.basename(CASES)}"
 
     report = Conformance::Comparator.new(baseline: set, candidate: set).run
     assert_empty gate_findings(report),
@@ -86,9 +104,26 @@ class TestPortingCompare < Minitest::Test
   def test_provenance_records_a_clean_implementation_tree
     prov = JSON.parse(File.read(File.join(ROOT, "porting", "evidence", "phase1", "provenance.json")))
     assert_match(/\A[0-9a-f]{40}\z/, prov.dig("repo", "commit"))
-    assert prov.dig("repo", "implementation_clean"),
-           "a baseline captured against uncommitted bin/ or lib/ changes cannot be reproduced"
-    assert_equal 27, prov.dig("inputs", "case_count")
+
+    # A baseline taken against uncommitted bin/ or lib/ changes cannot be
+    # reproduced from its commit, so a COMMITTED baseline must be a clean one.
+    # Mid-flight that is not yet true and cannot be: a change to the CLI has to
+    # be captured before it can be committed. So the assertion follows the
+    # worktree — in a clean checkout (which is what gets committed, and what CI
+    # runs) the baseline must be clean; while the implementation is dirty, the
+    # provenance must at least say so out loud rather than claim otherwise.
+    if implementation_dirty_now.empty?
+      assert prov.dig("repo", "implementation_clean"),
+             "the committed baseline was captured against a dirty bin/ or lib/ tree. " \
+             "Re-run porting/evidence/capture now that the tree is clean and commit the result."
+    else
+      refute prov.dig("repo", "implementation_clean"),
+             "bin/ or lib/ is dirty, so the baseline cannot honestly claim a clean implementation tree"
+      assert_equal implementation_dirty_now.sort, Array(prov.dig("repo", "implementation_paths_dirty")).sort,
+                   "provenance must name exactly the implementation paths that were dirty at capture; " \
+                   "if these differ, the baseline predates the current edits — re-run porting/evidence/capture"
+    end
+    assert_equal CASE_COUNT, prov.dig("inputs", "case_count")
     %w[case_list_sha256 fixture_corpus_sha256 runner_sha256 probe_sha256 schema_sha256].each do |k|
       assert_match(/\A[0-9a-f]{64}\z/, prov.dig("inputs", k), "provenance is missing #{k}")
     end
@@ -176,26 +211,51 @@ class TestPortingCompare < Minitest::Test
                  "the seed must be an off-by-one token, not a wholesale replacement"
   end
 
-  # Rollback. The honest result: it IS detected, but only as a stderr byte
-  # difference, and it is NOT labelled as a rollback, because files.rolled_back
-  # is null on both sides. Both halves are asserted so a future change that
-  # silently drops either one fails here.
-  def test_detects_rollback_diagnostic_only_through_stderr_bytes
+  # Rollback, the case the harness exists for. The seeded candidate takes the
+  # other internal path — never wrote where Ruby wrote and reverted — and prints
+  # BYTE-IDENTICAL stderr, which is what used to make it undetectable. Exit
+  # status, deltas and store bytes are identical too, so if the label does not
+  # catch it, nothing does.
+  def test_detects_a_rollback_that_differs_in_nothing_but_the_label
     report = report_for(self.class.seeded("rollback"))
-    f = finding_on(report, "cli-capture-torn-file", "process.stderr")
-    refute_nil f, "a wrote-and-reverted vs never-wrote diagnostic difference must be reported"
+    case_id = "cli-capture-readonly-rollback"
+
+    f = finding_on(report, case_id, "files.rolled_back")
+    refute_nil f, "a wrote-and-reverted vs never-wrote difference must be reported on the label"
     assert_equal "go_defect", f["class"]
-    assert_equal "cli", f["dimension"]
+    assert_equal "files", f["dimension"]
+    assert_equal true, f["baseline"]
+    assert_equal false, f["candidate"]
 
-    assert_nil finding_on(report, "cli-capture-torn-file", "files.rolled_back"),
-               "files.rolled_back is null on both sides today, so it cannot be the thing that detected this"
+    assert_nil finding_on(report, case_id, "process.stderr"),
+               "the seed leaves stderr untouched on purpose: the detection must come from the label"
+    assert_nil finding_on(report, case_id, "process.exit_status")
+    assert_empty gate_findings(report).select { |x| x["dimension"] == "files" && x["field"] != "files.rolled_back" },
+                 "nothing on the filesystem distinguishes wrote-and-reverted from never-wrote"
+  end
 
-    case_row = report["cases"].find { |c| c["case_id"] == "cli-capture-torn-file" }
-    assert_equal ["cli"], case_row["findings"].map { |x| x["dimension"] }.uniq,
-                 "nothing on the filesystem distinguishes wrote-and-reverted from never-wrote: " \
-                 "exit status, deltas and store bytes are all identical"
-    assert report.dig("summary", "rollback_unlabelled_cases").positive?,
-           "the report must say out loud that rollback is unlabelled, not leave it to be discovered"
+  # The baseline labels exactly one case, and says nothing about the rest rather
+  # than guessing false — a read reports no rollback flag at all.
+  def test_the_baseline_labels_the_rollback_case_and_only_that_case
+    labelled = baseline_set.by_case.values.reject { |o| o.dig("files", "rolled_back").nil? }
+    assert_equal ["cli-capture-readonly-rollback"], labelled.map { |o| o["case_id"] }
+    assert_equal true, labelled.first.dig("files", "rolled_back")
+    assert_empty labelled.first.dig("files", "deltas"),
+                 "the point of the label: the write was reverted, so the filesystem shows nothing"
+
+    report = Conformance::Comparator.new(baseline: baseline_set, candidate: baseline_set).run
+    assert_equal CASE_COUNT - 1, report.dig("summary", "rollback_unlabelled_cases"),
+                 "the report must count the cases carrying no label, not leave it to be discovered"
+  end
+
+  # true and false are two Ruby classes and one JSON type. Reporting the flip as
+  # a type change would describe a real difference in a way that reads as a
+  # harness bug — and the rollback label is a boolean.
+  def test_a_flipped_boolean_is_a_value_difference_not_a_type_difference
+    diff = Conformance::Diffs.json_diff({ "rolled_back" => true }, { "rolled_back" => false })
+    assert_equal 1, diff.length
+    assert_equal "value", diff.first["reason"]
+    assert_equal [true, false], [diff.first["baseline"], diff.first["candidate"]]
   end
 
   # --- classification, not just detection -----------------------------------
@@ -205,7 +265,7 @@ class TestPortingCompare < Minitest::Test
     FileUtils.cp(Dir[File.join(BASELINE, "*.json")].sort.first(3), dir)
     report = report_for(dir)
     unpaired = report["cases"].select { |c| c["status"] == "unpaired" }
-    assert_equal 24, unpaired.length
+    assert_equal CASE_COUNT - 3, unpaired.length
     assert_equal ["missing_oracle_coverage"], unpaired.flat_map { |c| c["findings"] }.map { |f| f["class"] }.uniq
   ensure
     FileUtils.remove_entry(dir) if dir && File.directory?(dir)
@@ -351,18 +411,37 @@ class TestPortingCompare < Minitest::Test
   # The audit is what keeps a green comparison honest: it names the classes the
   # corpus cannot exercise, so a PASS on those classes is never mistaken for
   # proof.
-  def test_audit_reports_the_rollback_and_exit_status_two_gaps
+  def test_audit_reports_every_gate_class_as_exercised
     out, _err, status = Open3.capture3(RbConfig.ruby, AUDIT, "--json", BASELINE)
     audit = JSON.parse(out)
-    refute status.success?, "an incomplete corpus must exit nonzero"
-    assert_includes audit["gaps"], "rollback"
-    assert_includes audit["gaps"], "exit_status"
+    assert status.success?, "a complete corpus must exit 0: #{out}"
+    assert_empty audit["gaps"]
 
     rollback = audit["classes"].find { |c| c["class"] == "rollback" }
-    refute rollback["exercised"], "no Phase 1 case produces a labelled rollback"
+    assert rollback["exercised"]
+    assert_equal ["cli-capture-readonly-rollback"], rollback["cases"],
+                 "one narrow case, and the audit must keep naming which one"
 
     exits = audit["classes"].find { |c| c["class"] == "exit_status" }
-    assert_equal [0, 1], exits["distinct_values"], "no case exits 2, so the 1-vs-2 collapse is untested by the corpus"
+    assert_equal [0, 1, 2], exits["distinct_values"],
+                 "the corpus must present the 1-vs-2 distinction, not just 'both nonzero'"
+  end
+
+  # The audit's whole job is to refuse to be satisfied by a corpus that never
+  # asks the question, so removing the cases that ask it must reopen the gap.
+  def test_audit_reopens_the_gaps_when_the_cases_that_close_them_are_removed
+    dir = Dir.mktmpdir("audit-narrowed")
+    Dir[File.join(BASELINE, "*.json")].each do |f|
+      next if File.basename(f, ".json") =~ /\A(cli-capture-readonly-rollback|cli-done-(no-match|ambiguous)-ref)\z/
+
+      FileUtils.cp(f, dir)
+    end
+    out, _err, status = Open3.capture3(RbConfig.ruby, AUDIT, "--json", dir)
+    audit = JSON.parse(out)
+    refute status.success?, "an incomplete corpus must exit nonzero"
+    assert_equal %w[exit_status rollback].sort, audit["gaps"].sort
+  ensure
+    FileUtils.remove_entry(dir) if dir && File.directory?(dir)
   end
 
   # --- the executable is usable as a gate ------------------------------------

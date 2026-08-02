@@ -1,0 +1,11 @@
+{"type":"meta","version":2}
+{"type":"section","id":"de000001","title":"Next Actions","body":"Every hold in this store is the `defer` tag; nothing else parks work."}
+{"type":"task","id":"de000002","parent":"de000001","state":"TODO","title":"Open task with no hold at all","tags":["@computer"]}
+{"type":"task","id":"de000003","parent":"de000001","state":"TODO","title":"Own hold, with a context and an ordinary tag","tags":["defer","@computer","research"]}
+{"type":"task","id":"de000004","parent":"de000001","state":"TODO","title":"Held parent","tags":["defer"]}
+{"type":"task","id":"de000005","parent":"de000004","state":"TODO","title":"Held only by inheritance","tags":["@home"]}
+{"type":"task","id":"de000006","parent":"de000005","state":"NEXT","title":"Held two levels up"}
+{"type":"task","id":"de000007","parent":"de000001","state":"WAITING","title":"Own hold on a WAITING task","tags":["defer"]}
+{"type":"task","id":"de000008","parent":"de000001","state":"TODO","title":"Unavailable by a future date, not by a hold","scheduled":"2099-01-01"}
+{"type":"task","id":"de000009","parent":"de000001","state":"DONE","title":"Done record that still carries the defer tag","tags":["defer"],"closed":"2026-06-10"}
+{"type":"task","id":"de00000a","parent":"de000001","state":"PROPOSED","title":"Proposed record carrying the defer tag","tags":["defer"]}

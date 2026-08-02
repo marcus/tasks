@@ -1,0 +1,6 @@
+{"type":"meta","version":2}
+{"type":"section","id":"1e000001","title":"Next Actions"}
+{"type":"task","parent":"1e000001","state":"NEXT","title":"First hand-appended task with no id"}
+{"type":"task","parent":"1e000001","state":"TODO","title":"Second hand-appended task with no id"}
+{"type":"task","id":"1e000002","parent":"1e000001","state":"TODO","title":"Renew the domain registration"}
+{"type":"task","parent":"1e000001","state":"TODO","title":"Third hand-appended task with no id"}

@@ -1,0 +1,29 @@
+{"type":"meta","version":2}
+{"type":"section","id":"5ecb0001","title":"Rejected recur cookies"}
+{"type":"task","id":"5ecb0002","parent":"5ecb0001","state":"TODO","title":"Completion prefix on a calendar schedule","scheduled":"2026-06-01","recur":".+w:mon"}
+{"type":"task","id":"5ecb0003","parent":"5ecb0001","state":"TODO","title":"Catch-up prefix on a calendar schedule","scheduled":"2026-06-01","recur":"++m:15"}
+{"type":"task","id":"5ecb0004","parent":"5ecb0001","state":"TODO","title":"Redundant interval 1 is not canonical","scheduled":"2026-06-01","recur":"1w:mon"}
+{"type":"task","id":"5ecb0005","parent":"5ecb0001","state":"TODO","title":"Interval zero","scheduled":"2026-06-01","recur":"0w:mon"}
+{"type":"task","id":"5ecb0006","parent":"5ecb0001","state":"TODO","title":"Day alias, not the canonical abbreviation","scheduled":"2026-06-01","recur":"w:monday"}
+{"type":"task","id":"5ecb0007","parent":"5ecb0001","state":"TODO","title":"Days out of canonical order","scheduled":"2026-06-01","recur":"w:wed,mon"}
+{"type":"task","id":"5ecb0008","parent":"5ecb0001","state":"TODO","title":"Duplicate day","scheduled":"2026-06-01","recur":"w:mon,mon"}
+{"type":"task","id":"5ecb0009","parent":"5ecb0001","state":"TODO","title":"Empty weekly body","scheduled":"2026-06-01","recur":"w:"}
+{"type":"task","id":"5ecb000a","parent":"5ecb0001","state":"TODO","title":"Trailing empty day","scheduled":"2026-06-01","recur":"w:mon,"}
+{"type":"task","id":"5ecb000b","parent":"5ecb0001","state":"TODO","title":"Unknown day of week","scheduled":"2026-06-01","recur":"w:xyz"}
+{"type":"task","id":"5ecb000c","parent":"5ecb0001","state":"TODO","title":"Day of month below range","scheduled":"2026-06-01","recur":"m:0"}
+{"type":"task","id":"5ecb000d","parent":"5ecb0001","state":"TODO","title":"Day of month above range","scheduled":"2026-06-01","recur":"m:32"}
+{"type":"task","id":"5ecb000e","parent":"5ecb0001","state":"TODO","title":"Zero-padded day of month","scheduled":"2026-06-01","recur":"m:01"}
+{"type":"task","id":"5ecb000f","parent":"5ecb0001","state":"TODO","title":"Monthly rules out of canonical order","scheduled":"2026-06-01","recur":"m:15,1"}
+{"type":"task","id":"5ecb0010","parent":"5ecb0001","state":"TODO","title":"Ordinal weekday above range","scheduled":"2026-06-01","recur":"m:6tue"}
+{"type":"task","id":"5ecb0011","parent":"5ecb0001","state":"TODO","title":"Weekday alias in an ordinal rule","scheduled":"2026-06-01","recur":"m:2tues"}
+{"type":"task","id":"5ecb0012","parent":"5ecb0001","state":"TODO","title":"Empty monthly body","scheduled":"2026-06-01","recur":"m:"}
+{"type":"task","id":"5ecb0013","parent":"5ecb0001","state":"TODO","title":"Month above range","scheduled":"2026-06-01","recur":"y:13-01"}
+{"type":"task","id":"5ecb0014","parent":"5ecb0001","state":"TODO","title":"February has no thirtieth","scheduled":"2026-06-01","recur":"y:02-30"}
+{"type":"task","id":"5ecb0015","parent":"5ecb0001","state":"TODO","title":"Unpadded yearly month","scheduled":"2026-06-01","recur":"y:7-04"}
+{"type":"task","id":"5ecb0016","parent":"5ecb0001","state":"TODO","title":"Unpadded yearly day","scheduled":"2026-06-01","recur":"y:07-4"}
+{"type":"task","id":"5ecb0017","parent":"5ecb0001","state":"TODO","title":"Yearly ordinal weekday above range","scheduled":"2026-06-01","recur":"y:11:6thu"}
+{"type":"task","id":"5ecb0018","parent":"5ecb0001","state":"TODO","title":"Leading whitespace on a stored value","scheduled":"2026-06-01","recur":" w:mon"}
+{"type":"task","id":"5ecb0019","parent":"5ecb0001","state":"TODO","title":"Trailing whitespace on a stored value","scheduled":"2026-06-01","recur":"w:mon "}
+{"type":"task","id":"5ecb001a","parent":"5ecb0001","state":"TODO","title":"Zero interval cookie","scheduled":"2026-06-01","recur":"+0d"}
+{"type":"task","id":"5ecb001b","parent":"5ecb0001","state":"TODO","title":"Uppercase interval unit","scheduled":"2026-06-01","recur":"+1W"}
+{"type":"task","id":"5ecb001d","parent":"5ecb0001","state":"TODO","title":"Non-string recur value","scheduled":"2026-06-01","recur":7}

@@ -47,9 +47,11 @@ module Conformance
                "        environments matched before any other difference is classified.\n"
       end
       if s["rollback_unlabelled_cases"].to_i.positive?
-        out << "  NOTE  files.rolled_back is null on both sides in #{s["rollback_unlabelled_cases"]} case(s).\n" \
-               "        A write-then-revert is detectable only as a stderr byte difference, not as a\n" \
-               "        labelled field. See porting/compare/README.md § The rollback gap.\n"
+        out << "  NOTE  files.rolled_back is null on both sides in #{s["rollback_unlabelled_cases"]} " \
+               "of #{s["cases"]} case(s):\n" \
+               "        those invocations made no machine-readable rollback report, so in them a\n" \
+               "        wrote-and-reverted would be detectable only as a stderr byte difference.\n" \
+               "        See porting/compare/README.md § The rollback gap.\n"
       end
       out << "\n#{report.dig("gate", "passed") ? "GATE PASS" : "GATE FAIL"}\n"
       out

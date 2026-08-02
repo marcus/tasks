@@ -1,0 +1,6 @@
+{
+  "note": "Modes git cannot record. The runner must apply these to the copy after step 1 of the copy protocol and before observing files.before.",
+  "chmod": {
+    "tasks.jsonl": "0600"
+  }
+}

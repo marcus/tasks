@@ -4279,6 +4279,61 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  # -- the --json error envelope on a refused mutation ------------------------
+  #
+  # `--json` must not degrade to "nothing on stdout": a caller cannot tell that
+  # apart from "no result". And one field on the envelope carries information no
+  # other channel does — `rolled_back` separates a mutation that wrote and then
+  # restored the previous bytes from one that was refused before it wrote. Both
+  # exit 1 and both leave the file byte-identical, so if the boolean is wrong or
+  # missing the difference is simply unobservable. porting/specs/errors.md §
+  # "The `--json` error envelope" is the contract the Go port implements.
+
+  TORN_ORG = "#{FIXTURE_ORG.lines[0..-2].join}#{FIXTURE_ORG.lines.last[0, 20]}"
+
+  def test_json_refusal_of_an_invalid_store_reports_that_nothing_was_written
+    run_cli("capture", "must not be written", "--json", content: TORN_ORG) do |_org, out, err, st|
+      assert_equal 1, st.exitstatus
+      envelope = JSON.parse(out)
+      assert_equal "store_invalid", envelope["error"]
+      assert_equal "capture", envelope["action"]
+      assert_equal false, envelope["rolled_back"], "the preflight refused it; nothing was written"
+      assert_equal err.strip, envelope["message"].strip, "the envelope carries the same sentence as stderr"
+    end
+  end
+
+  def test_a_refusal_without_json_still_prints_nothing_on_stdout
+    run_cli("capture", "must not be written", content: TORN_ORG) do |_org, out, err, st|
+      assert_equal 1, st.exitstatus
+      assert_empty out, "the envelope is owed to --json callers only"
+      assert_includes err, "task file is already invalid"
+    end
+  end
+
+  # A genuine write-then-revert. An unwritable store directory whose lock
+  # sidecar already exists lets the mutation begin and makes the atomic replace
+  # fail; the CLI restores the previous bytes and must say so.
+  def test_a_failed_write_is_reported_as_rolled_back_with_the_file_unchanged
+    Dir.mktmpdir do |dir|
+      org = File.join(dir, "tasks.jsonl")
+      File.write(org, FIXTURE_ORG)
+      FileUtils.touch(File.join(dir, ".tasks.jsonl.lock"))
+      env = { "TASKS_FILE" => org, "TASKS_ARCHIVE" => File.join(dir, "archive.jsonl"),
+              "XDG_CONFIG_HOME" => File.join(dir, "xdg"), "XDG_STATE_HOME" => File.join(dir, "state") }
+      File.chmod(0o555, dir)
+      begin
+        out, err, st = Open3.capture3(env, "ruby", BIN, "capture", "must not be written", "--json")
+        assert_equal 1, st.exitstatus
+        envelope = JSON.parse(out)
+        assert_equal true, envelope["rolled_back"], "the write failed after it began; the bytes were restored"
+        assert_includes err.force_encoding("UTF-8"), "file failed validation after the edit"
+        assert_equal FIXTURE_ORG, File.read(org), "the store must be exactly as it was"
+      ensure
+        File.chmod(0o755, dir)
+      end
+    end
+  end
+
   # Out of repo AND absent: nothing to review, so no notice and no diff entry.
   def test_out_of_repo_memory_that_is_absent_is_neither_diffed_nor_flagged
     with_git_task_repo do |dir, org, archive, _memory|

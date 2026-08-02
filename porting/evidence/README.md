@@ -10,7 +10,7 @@ porting/evidence/
   phase1/
     provenance.json    commit, corpus digest, pin set, runner version, host
     GATE.md            the Phase 1 gate result — including what it does NOT prove
-    ruby/              27 observations, one per case in phase1.jsonl
+    ruby/              one observation per case in phase1.jsonl
 ```
 
 ## The baseline
@@ -22,11 +22,13 @@ same commit are byte-identical and a `diff -r` is a valid comparison.
 
 Every record validates against
 [`observations.schema.json`](../specs/observations.schema.json)
-(`Draft202012Validator`, jsonschema 4.26.0):
+(`Draft202012Validator`, jsonschema 4.26.0) **and** passes the consistency pass
+the schema cannot express — digests that match their own bytes, deltas whose
+`kind` agrees with their nullability, arrays that are sorted and duplicate-free:
 
 ```console
 $ porting/compare/validate porting/evidence/phase1/ruby
-validate: 27/27 observations valid against observations.schema.json
+validate: 33/33 observations valid against observations.schema.json and internally coherent
 ```
 
 ## Re-capturing it

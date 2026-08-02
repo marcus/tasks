@@ -8,7 +8,7 @@ it belongs to, and which of the playbook's classifications it falls under.
 $ porting/compare/compare porting/evidence/phase1/ruby /tmp/go-observations
 $ porting/compare/compare --json BASELINE CANDIDATE     # structured report
 $ porting/compare/audit porting/evidence/phase1/ruby    # what can this corpus prove?
-$ porting/compare/validate porting/evidence/phase1/ruby # schema conformance
+$ porting/compare/validate porting/evidence/phase1/ruby # schema + cross-field coherence
 $ porting/compare/seed --list                           # the gate's seeded defects
 ```
 
@@ -38,6 +38,7 @@ porting/compare/
   audit                corpus coverage — what a green run does NOT prove
   seed                 the gate's instrument: deliberately-wrong observation sets
   validate             schema conformance (python jsonschema, Draft202012Validator)
+                       plus the cross-field consistency pass JSON Schema cannot express
   dispositions.jsonl   machine-readable index into ../intentional-differences.md
   lib/
     comparator.rb      pairing, orchestration, exclusions, the report
@@ -230,90 +231,72 @@ journal index is excluded and the exclusion is **recorded in the report** —
 
 ---
 
-## The rollback gap
+## The rollback gap — closed, and by how much
 
 **Read this before treating a green comparison as complete.**
 
-`files.rolled_back` is `null` in every observation, on both sides, always.
+A write that is performed and then reverted is a distinct product outcome that
+leaves no trace on the filesystem: same exit status, same empty `files.deltas`,
+same store bytes as a mutation that was refused before it wrote. `errors.md`
+says it outright — "the filesystem cannot tell you" — which is why
+`files.rolled_back` exists as its own field.
 
-The Ruby CLI performs a genuine write-then-revert — `Store#post_write_failure`
-restores the previous bytes and the result carries `rolled_back: true` — but it
-surfaces that fact to the outside world only as an extra sentence on stderr:
+It used to be `null` in every observation, on both sides, always. The CLI knew
+the fact and spent it on a sentence:
 
 ```text
 could not capture (no "Inbox" section found?)
 file failed validation after the edit — run `tasks check`
 ```
 
-There is no machine-readable signal. `--json` on a failed mutation of this shape
-prints **nothing at all** on stdout; the entire structured-error layer is absent
-for that path. The runner therefore left `files.rolled_back` honestly unset
-rather than parsing Ruby prose into a language-neutral protocol, which was the
-right call: a protocol that pattern-matches one implementation's wording cannot
-be implemented from its specification.
+Under `--json` that path printed **nothing at all** on stdout. The runner
+therefore left the field honestly unset rather than pattern-matching Ruby prose
+into a language-neutral protocol.
 
-### What this means for the gate
+Both halves are now closed, and it took a change on each side:
 
-A rollback divergence **is detected** — as a `process.stderr` byte difference,
-classified `go_defect`. It is **not labelled**. Concretely:
+1. **`bin/tasks` states it.** `mutation_result_failed` emits the same error
+   envelope `claim` already emits, carrying `rolled_back`, on every refusal of a
+   command that promises a `--json` result. `porting/specs/errors.md` §
+   "The `--json` error envelope" is the spec the Go port implements.
+2. **The corpus reaches it.** `cli-capture-readonly-rollback` runs `capture`
+   against a copy root the case declares unwritable (`copy_root_mode`), with the
+   lock sidecar already present. The write raises, the previous bytes are
+   restored, and stdout carries `"rolled_back":true`. See
+   `porting/runners/README.md` § "A failing write, and why the mode lives on the
+   case" for why the mode is a property of the case and not of the fixture.
 
-- A port that performs the write-then-revert but prints a different sentence:
-  **detected** (stderr bytes).
-- A port that never writes and prints the never-wrote sentence where Ruby prints
-  the rollback sentence: **detected** (stderr bytes).
-- A port that fails to restore the previous bytes after a failed validation:
-  **detected** (store bytes).
-- A port that takes the *wrong internal path* — never writing where Ruby wrote
-  and reverted — while printing byte-identical stderr: **not detected.** Exit
-  status, `files.deltas` and store bytes are identical in both cases; `errors.md`
-  says so itself ("the filesystem cannot tell you"), which is why the field
-  exists.
+### What the gate now proves, and what it still does not
 
-That last row is the real hole, and it is narrow. It is also not closable by the
-harness: the harness can only compare what the implementation reports.
+Four port defects, and where each is caught:
 
-### What `bin/tasks` would need
+- Performs the write-then-revert but prints a different sentence: **stderr
+  bytes.**
+- Never writes and prints the never-wrote sentence: **stderr bytes.**
+- Fails to restore the previous bytes after a failed write: **store bytes.**
+- Takes the *wrong internal path* — never writing where Ruby wrote and
+  reverted — while printing byte-identical stderr: **`files.rolled_back`.**
+  This was the hole. It is the seeded `rollback` mismatch, which touches only
+  the label and the envelope it is read from and leaves stderr alone, so the
+  detection can come from nothing else.
 
-One field. On a failed mutation under `--json`, emit the error envelope that
-`claim` already emits, with a rollback flag:
+Still true, and stated rather than buried:
 
-```json
-{"error": "store_invalid",
- "action": "capture",
- "rolled_back": true,
- "message": "file failed validation after the edit — run `tasks check`"}
-```
-
-`bin/tasks` already computes this — `mutation_result_failed` branches on
-`result.rolled_back?` to choose the sentence, then discards the boolean. The
-change is to emit the envelope on stdout under `--json` instead of only warning,
-and the runner then reads `files.rolled_back` from it exactly as it already reads
-`revisions.touched_ids` from the `--json` mutation payload. Filed as a td issue;
-not done here, because `bin/tasks` is another agent's tree.
-
-### Also missing from the corpus
-
-`porting/compare/audit` reports two gaps in the Phase 1 case list, both real:
-
-1. **No case exits `2`.** Every one of the 27 cases exits 0 or 1. A port that
-   collapsed `2` into `1` would pass the entire corpus — and `errors.md` calls
-   the `1` vs `2` distinction "the most important single assertion in the whole
-   error surface". The comparator detects the collapse (proven by seeding it);
-   the *corpus* never presents it. One case with an unresolvable or ambiguous ref
-   closes this.
-2. **No case produces a rollback.** Not an oversight in the case list: it is
-   unreachable through the runner protocol. `Store#create_preflight_failure`
-   validates exactly the same files as `post_write_failure`, so a store that is
-   already invalid is refused *before* the write, and post-write validation
-   cannot fire from fixture content alone. It is reachable through a write
-   *failure* — a read-only store directory with the lock sidecar already
-   present, which reproduces the diagnostic above — but the runner creates the
-   copy root itself, so no fixture can make it read-only. Closing this needs
-   either a fixture that can constrain its own copy root, or a fault-injection
-   hook in the runner.
-
-Neither gap is fixable in this directory. Both are reported by `audit`, which
-exits nonzero while they stand, so they cannot be forgotten.
+- **Exactly one case exercises the class.** One case is not a regime.
+- **It is a failing *write*, not a failing post-write *validation*.** Ruby
+  reaches the same rolled-back result by both routes, but only the write route
+  is reachable from a case list: `Store#create_preflight_failure` validates the
+  same file set as `post_write_failure`, so an already-invalid store is refused
+  before the write and post-write validation cannot fire from fixture content
+  alone. Genuine fault injection (playbook step 7) is what would cover the
+  other route.
+- **`files.rolled_back` is null in the other 29 cases**, because those
+  invocations report nothing — a read, a success, or a refusal without
+  `--json`. Null on both sides is not a mismatch; the comparator counts those
+  cases and says so in its report.
+- **Exit-2 refusals carry no envelope on either side.** Ref resolution fails
+  before a command's `--json` handling is reached. Recorded oracle behavior,
+  not an endorsement.
 
 ---
 

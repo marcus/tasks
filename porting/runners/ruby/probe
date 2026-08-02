@@ -38,6 +38,7 @@ ROOT = File.expand_path("../../..", __dir__)
 require_relative "#{ROOT}/lib/tasks/config"
 require_relative "#{ROOT}/lib/tasks/dates"
 require_relative "#{ROOT}/lib/tasks/determinism"
+require_relative "#{ROOT}/lib/tasks/journal"
 require_relative "#{ROOT}/lib/tasks/store"
 require_relative "#{ROOT}/lib/tasks/timezones"
 require_relative "#{ROOT}/lib/tasks/update_stamp"
@@ -133,9 +134,32 @@ end
 scope = Tasks::Determinism.coalesce_scope(env: env)
 add.call(Tasks::Determinism::COALESCE_SCOPE, !scope.nil?, scope)
 
+delegation_request = requested(env, Tasks::Determinism::DELEGATION_KEYS)
+begin
+  delegation_source = delegation_request && Tasks::Determinism.delegation_key_source(env: env)
+  add.call(Tasks::Determinism::DELEGATION_KEYS, !delegation_source.nil?, delegation_request)
+rescue ArgumentError
+  add.call(Tasks::Determinism::DELEGATION_KEYS, false, delegation_request)
+end
+
+# `applied` for the hostname pin is a CALL-SITE check, not a module check.
+# There are two hostname consumers — Config's host-context selection and the
+# device half of the update stamp — and a pin that reaches only one of them is
+# the exact failure `applied` exists to catch. So each consumer is asked what it
+# actually resolved, and the pin counts as applied only when both agree with it.
+# `TASKS_DEVICE` legitimately out-ranks the hostname for the device slug, so
+# that consumer is only interrogated when no device override is set.
 hostname_request = requested(env, Tasks::Determinism::HOSTNAME)
-add.call(Tasks::Determinism::HOSTNAME, !hostname_request.nil?,
-         hostname_request && Tasks::Determinism.hostname(env: env).call)
+resolved_hostname = Tasks::Determinism.hostname(env: env).call.to_s
+device_override = requested(env, Tasks::Determinism::DEVICE)
+device_slug = Tasks::UpdateStamp.device(env: env)
+hostname_consumers_agree =
+  !hostname_request.nil? &&
+  paths.hostname.to_s == hostname_request &&
+  resolved_hostname == hostname_request &&
+  (!device_override.nil? || device_slug == Tasks::UpdateStamp.slug(hostname_request))
+add.call(Tasks::Determinism::HOSTNAME, hostname_consumers_agree,
+         hostname_request && resolved_hostname)
 
 winsize = Tasks::Determinism.winsize(env: env)
 add.call(Tasks::Determinism::LINES, !winsize.nil?, winsize && winsize[0].to_s)
@@ -172,9 +196,34 @@ end
 
 report = Tasks::Determinism.report(env: env)
 
+# --- paths ------------------------------------------------------------------
+#
+# The paths the implementation ACTUALLY resolved, so the runner can assign
+# `files[].role` from them instead of from a table of hardcoded filenames. The
+# two spellings are both reported because both can appear in the tree: a
+# symlinked store has a `configured` path (the link) and a `canonical` one (the
+# bytes), and a harness that knew only the first would record the file carrying
+# the store's bytes as `role: "other"`.
+def canonical(path)
+  path && Tasks::Journal.canonical(path)
+rescue StandardError
+  path
+end
+
+paths_report = {
+  "store" => paths.org,
+  "store_canonical" => canonical(paths.org),
+  "archive" => paths.archive,
+  "archive_canonical" => canonical(paths.archive),
+  "memory" => paths.memory,
+  "config" => paths.config_file,
+  "journal_dir" => (Tasks::Journal.dir_for(paths.org, env: env) if paths.org)
+}
+
 puts JSON.generate(
   "probe_version" => PROBE_VERSION,
   "revisions" => revisions,
+  "paths" => paths_report,
   "pins" => pins.sort_by { |pin| pin["name"] },
   "environment" => {
     "tzdb_version" => report["tzdb_version"],

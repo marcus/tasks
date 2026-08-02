@@ -2,6 +2,7 @@
 
 require "socket"
 require "time"
+require_relative "determinism"
 
 module Tasks
   # Value object helpers for the per-record last-write stamp carried in JSONL.
@@ -56,9 +57,19 @@ module Tasks
       value.to_s.downcase.split(".", 2).first.to_s.scan(/[a-z0-9]+/).first || "device"
     end
 
-    def device(env: ENV, hostname: Socket.gethostname)
+    # The hostname default goes through Determinism rather than straight to
+    # Socket, because there are two hostname consumers — Config's host-context
+    # selection and this device slug — and one pin has to cover both. With
+    # TASKS_PIN_HOSTNAME unset, Determinism.hostname returns
+    # `-> { Socket.gethostname }`, so the unpinned value is exactly what it was.
+    # Resolved lazily: the default argument used to call Socket.gethostname on
+    # every invocation even when TASKS_DEVICE made the answer irrelevant.
+    def device(env: ENV, hostname: nil)
       override = env["TASKS_DEVICE"].to_s
-      slug(override.strip.empty? ? hostname : override)
+      return slug(override) unless override.strip.empty?
+
+      resolved = hostname.nil? ? Determinism.hostname(env: env).call : hostname
+      slug(resolved.respond_to?(:call) ? resolved.call : resolved)
     end
   end
 end

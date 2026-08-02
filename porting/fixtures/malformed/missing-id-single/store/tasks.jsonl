@@ -1,0 +1,6 @@
+{"type":"meta","version":2}
+{"type":"section","id":"1d000001","title":"Inbox"}
+{"type":"section","id":"1d000002","title":"Next Actions"}
+{"type":"task","id":"1d000003","parent":"1d000002","state":"NEXT","title":"Book the meeting room for the review","tags":["@computer"]}
+{"type":"task","parent":"1d000002","state":"TODO","title":"Hand-appended task with no id","tags":["@computer"]}
+{"type":"task","id":"1d000004","parent":"1d000002","state":"TODO","title":"Renew the domain registration"}

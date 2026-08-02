@@ -1,0 +1,4 @@
+{"type":"meta","version":2}
+{"type":"section","id":"1f000001","title":"Inbox"}
+{"type":"section","id":"1f000002","title":"Next Actions"}
+{"type":"task","id":"bbbb0003","parent":"1f000002","state":"NEXT","title":"Live task holding the third pinned mint id","tags":["@computer"]}

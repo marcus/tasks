@@ -43,7 +43,8 @@ those belongs in `Tasks::Config` or nowhere.
 | `TASKS_PIN_NOW` | Every clock read: update stamps (`updated`), `Captured [date]` bodies, the temporal context used for relative-date parsing, and "today" for availability, agendas, quadrants, and recurrence projection. | ISO8601 instant with an offset, e.g. `2026-03-14T15:09:26Z`. Malformed values raise rather than falling back — a silent fallback to the wall clock produces a green run that proves nothing. | The real clock (`Time.now.utc`), and `Date.today` for the calendar day. |
 | `TASKS_PIN_IDS` | Minted eight-hex task/section ids. | Comma-separated tokens; each is eight hex characters or the literal `seq` (= `00000000`). Ids are handed out in order; after the last token the sequence continues by incrementing it as a 32-bit counter, so a mutation that mints more ids than were listed stays deterministic instead of failing halfway. Example: `TASKS_PIN_IDS=bbbb0001,bbbb0002`. | `SecureRandom.hex(4)`. |
 | `TASKS_PIN_COALESCE_SCOPE` | The journal's coalescing scope token, which is **persisted into `index.json`** and therefore appears in journal bytes. | Any non-empty string. | `SecureRandom.hex(16)`, fresh per process/adapter lifetime. |
-| `TASKS_PIN_HOSTNAME` | The hostname `Tasks::Config` uses to select a `host_context.<hostname>` entry, which decides whether a captured task gets an implicit context tag. | A hostname string. | `Socket.gethostname`. |
+| `TASKS_PIN_DELEGATION_KEYS` | The per-operation coalescing **key** minted for each delegation verb (`delegate`, `undelegate`, `claim`, `release`). Like the scope it is **persisted into `index.json`**; unlike the scope, one is minted per operation rather than per process, so it takes a sequence rather than a single value. | Comma-separated tokens; each is sixteen hex characters or the literal `seq` (= sixteen zeros). Same continuation rule as `TASKS_PIN_IDS`. | `SecureRandom.hex(8)`. |
+| `TASKS_PIN_HOSTNAME` | The hostname used **by both hostname consumers**: the `host_context.<hostname>` selection in `Tasks::Config`, and the device half of an update stamp when `TASKS_DEVICE` is unset. One pin, both call sites — a pin that reached only the first would report `applied: true` while machine-specific bytes went into the store. | A hostname string. | `Socket.gethostname`. |
 | `LINES` / `COLUMNS` | Terminal geometry for the full-screen TUI. Both must be set; either alone is ignored. Has no effect on the CLI, whose output does not depend on terminal width. | Positive integers. | The tty's own `winsize`, then `24`×`80`. |
 
 ### Pre-existing settings the harness also pins
@@ -61,13 +62,31 @@ names.
 | `XDG_STATE_HOME` | Where the undo journal lives — pointed inside the fixture copy so the journal is part of the observed tree. | `$HOME/.local/state`. |
 | `HOME` | The fallback base for both XDG paths above; pinned so an unset XDG variable cannot reach the operator's home. | The real home directory. |
 | `LANG` / `LC_ALL` | Process locale and default external encoding. Store writes are explicitly UTF-8 regardless (`Tasks::Atomic`), so this pins the *reading* and diagnostic side. | The host locale. |
+| `TASKS_TIMEZONE` | The same thing `TZ` fixes, and it **out-ranks** `TZ`: `Config#pick_timezone` reads `TASKS_TIMEZONE` first and only then falls through to `TZ` detection. Pinned to the same value as `TZ` so the highest-precedence source and the fallback agree and nothing is ambiguous. | Unset; `TZ` detection decides. |
+| `PATH` | Which interpreter and which helper binaries the invocation can reach. Pinned to a fixed value rather than inherited so a shim on the operator's `PATH` cannot change behavior. | The operator's `PATH`. |
+
+The mechanism that makes this list exhaustive rather than aspirational is
+`unsetenv_others: true` on the spawn: the child receives the pinned map and
+nothing else, so a variable the operator happens to export cannot reach the
+implementation. The observation records the **union** of a documented floor and
+the names actually passed, so a variable a case sets is visible in
+`invocation.env` rather than silent.
+
+### Pinned by the harness process, not by the environment
+
+| Value | How it is pinned | Why it is not a host fact |
+|---|---|---|
+| **umask** | `File.umask(0o022)` in the runner before any child is spawned; inherited across `fork`/`exec`. | It is a per-process attribute one syscall away, not a property of the machine — and it moves `mode` on every file the implementation creates, which is a **compared** field (see [Tempting but not normalized](#tempting-but-not-normalized)). Left unpinned it would bake the capture operator's umask into the baseline, and a genuine regression that widens the journal index to 0644 would be indistinguishable from a different CI image. `environment.umask` is still recorded — as the proof the pin took, not as an excuse for a mismatch. |
 
 ### Not pinnable — recorded instead
 
 | Value | Why it cannot be pinned | Where it is recorded |
 |---|---|---|
 | IANA time-zone database version | It is a property of the installed tzdata/TZInfo, not of the process. Two implementations resolving the same zone against different tzdb releases can legitimately disagree about a historical offset. | `environment.tzdb_version` in the observation; also printed by `tasks config` / `tasks config --json` and returned by the HTTP config endpoint. Recorded, never compared for equality — but a comparison whose two sides disagree here is re-run before any difference is classified. |
-| Platform, filesystem, umask | Host facts. Locking, atomic replacement, permission bits, and signal numbers are platform-shaped. | `environment.platform`, `environment.filesystem`, `environment.umask`. |
+| Platform, filesystem | Host facts. Locking, atomic replacement, and signal numbers are platform-shaped. | `environment.platform`, `environment.filesystem`. |
+
+umask used to be filed here. It is not a host fact and it is now pinned — see
+[Pinned by the harness process](#pinned-by-the-harness-process-not-by-the-environment).
 
 ### Not pinned, because nothing observable depends on it
 
@@ -152,8 +171,12 @@ will be tempted again.
   existed. Tempting to drop. Kept, because carrying the existing file's
   permission bits across an atomic replacement is a documented safety property —
   a chmod-600 store must not widen to 644 — and dropping mode from the
-  comparison is exactly how that regression would ship. `environment.umask` is
-  recorded so a legitimate umask difference can be told from a defect.
+  comparison is exactly how that regression would ship. The umask half of the
+  dependency is removed by pinning it rather than by tolerating it; the
+  "already existed with a restrictive mode" half is what the corpus tests, via
+  a fixture's `perms.json` (git records no permission bit but the executable
+  one, so the mode has to be applied to the copy). `environment.umask` is still
+  recorded, now as the proof the pin took.
 
 - **Timestamps in `Captured [YYYY-MM-DD]` bodies.** Tempting to treat as
   cosmetic. They are store bytes and a user reads them. Pinned via
@@ -172,6 +195,29 @@ The failure mode a pinned harness cannot detect on its own is a pin that was
    requested value is a hard failure, not a warning.
 2. `Tasks::Determinism.report` returns the same data from inside the process, so
    a runner can assert it without parsing output.
+3. **Interception.** The first two ask the process what it thinks it did, and
+   both compute `applied` from whether `Tasks::Determinism` *resolved* a value —
+   not from whether every call site *used* it. That is a real gap, not a
+   theoretical one: `Application` has some thirty methods with a
+   `today: Date.today` default parameter, and one adapter call site that forgets
+   to pass `today:` produces wall-clock output with `applied: true` recorded
+   beside it. Two shipped defects had exactly that shape (an unpinned
+   `SecureRandom.hex(8)` in journal bytes; `TASKS_PIN_HOSTNAME` not reaching the
+   update stamp's device slug). So `test/test_porting_determinism_seams.rb`
+   patches `Date.today`, `Time.now`, `Socket.gethostname`, and
+   `SecureRandom.hex`/`uuid` **at the source** in a child process
+   (`RUBYOPT=-r test/support/determinism_trap.rb`), runs the fully-pinned
+   commands the corpus runs, and fails on any read from `bin/` or `lib/tasks/`.
+   The only allowed unpinned mint is the operation id, matched by its enclosing
+   method rather than by line number. That is what turns `applied` from a claim
+   into a proof; adding a command to that test's `COMMANDS` list is the whole
+   cost of covering a new code path.
+
+   Pins are also proven end-to-end by the corpus: a case must exist that
+   *exercises* each one. `TASKS_PIN_DELEGATION_KEYS` is the cautionary tale — the
+   defect it fixes survived because no Phase-1 case ran a delegation, so a field
+   that flapped on every re-run was permanently null in the baseline and looked
+   stable.
 
 ## Changing this file
 

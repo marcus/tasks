@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://tasks.invalid/porting/specs/observations.schema.json",
   "title": "Tasks conformance observation",
-  "description": "The complete record of ONE CLI (or HTTP) invocation against ONE fixture copy. An observation is the unit the conformance harness compares: two observations of the same case, one from the Ruby oracle and one from the Go port, must be equal on every field this schema marks as contract. The schema is language-neutral on purpose — nothing here may name Ruby, a Ruby class, a Ruby error, or a Ruby-specific formatting rule. Byte-sensitive payloads are carried base64 because stdout, stderr, and store bytes are not guaranteed valid UTF-8 and a JSON string cannot round-trip invalid bytes. Every map that could have grown open-ended keys is instead a SORTED ARRAY of {name/path, value} objects, so that the serialized observation is itself byte-stable and diffable — a map with arbitrary keys would make observation equality depend on the emitting language's hash ordering.",
+  "description": "The complete record of ONE CLI (or HTTP) invocation against ONE fixture copy. An observation is the unit the conformance harness compares: two observations of the same case, one from the Ruby oracle and one from the Go port, must be equal on every field this schema marks as contract. The schema is language-neutral on purpose — nothing here may name Ruby, a Ruby class, a Ruby error, or a Ruby-specific formatting rule. Byte-sensitive payloads are carried base64 because stdout, stderr, and store bytes are not guaranteed valid UTF-8 and a JSON string cannot round-trip invalid bytes. Every map that could have grown open-ended keys is instead a SORTED ARRAY of {name/path, value} objects, so that the serialized observation is itself byte-stable and diffable — a map with arbitrary keys would make observation equality depend on the emitting language's hash ordering. Those two properties are ENFORCED, not merely described: uniqueness by `uniqueItems` on every such array here, and sortedness by porting/compare/validate, which JSON Schema cannot express. The enforcement is load-bearing for a port: Go randomizes map iteration deliberately, so a runner that forgets one sort emits documents that validate cleanly and then mismatch non-reproducibly on every array field, with a symptom that looks like a real behavioral difference. Likewise `contentEncoding: base64` is an ANNOTATION in JSON Schema 2020-12 and asserts nothing, so every base64 field additionally carries a strict-base64 `pattern` and is decode-checked by validate.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -113,7 +113,8 @@
             "bytes_base64": {
               "description": "Base64 of the exact bytes written to stdin. Base64 because stdin fixtures include deliberately invalid UTF-8 in the adversarial corpus.",
               "type": "string",
-              "contentEncoding": "base64"
+              "contentEncoding": "base64",
+              "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
             }
           }
         },
@@ -122,8 +123,9 @@
           "type": "string"
         },
         "env": {
-          "description": "The environment variables the harness deliberately set or deliberately observed, sorted by name. NOT the whole environment: a full dump would be unstable, would leak secrets, and would make every observation differ on irrelevant grounds. The allowlist is exactly the set documented in porting/specs/determinism.md, and it is recorded in full — including entries with a null value — so 'this variable was unset' is proven rather than inferred.",
+          "description": "The environment variables the harness deliberately set or deliberately observed, sorted by name. NOT the whole environment: a full dump would be unstable, would leak secrets, and would make every observation differ on irrelevant grounds. It is the UNION of a documented floor (the pinned set in porting/specs/determinism.md) and the names actually handed to the process, so a variable a case set is visible rather than silent — a fixed allowlist would let two observations carry byte-identical invocation blocks and different store bytes. The floor is recorded in full, including entries with a null value, so 'this variable was unset' is proven rather than inferred.",
           "type": "array",
+          "uniqueItems": true,
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -144,6 +146,7 @@
         "pins": {
           "description": "The determinism pins ACTUALLY APPLIED by the implementation, as opposed to merely requested via env. Sorted by name. This is the field that catches the harness's worst failure mode: a pin that was set but silently ignored, producing a run that looks reproducible and is not.",
           "type": "array",
+          "uniqueItems": true,
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -210,16 +213,19 @@
         "before": {
           "description": "State of every tracked file immediately before the invocation, sorted by path. Present for reads too: an unchanged before/after pair is the positive evidence that a read is side-effect free.",
           "type": "array",
+          "uniqueItems": true,
           "items": { "$ref": "#/$defs/file_state" }
         },
         "after": {
           "description": "State of every tracked file immediately after the invocation, sorted by path. Store and archive bytes here are the strictest contract in the port — byte identity, not JSON equivalence.",
           "type": "array",
+          "uniqueItems": true,
           "items": { "$ref": "#/$defs/file_state" }
         },
         "deltas": {
           "description": "Every path whose presence or content changed, sorted by path. An empty array is a meaningful, required assertion for reads. Note that a read is NOT expected to be delta-free in general: acquiring the store lock creates the lock sidecar when it is absent, and that creation is a genuine observable effect the port must reproduce.",
           "type": "array",
+          "uniqueItems": true,
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -322,6 +328,7 @@
         "blob_sha256": {
           "description": "Sorted digests of the retained blobs. Proves the blob set — not just its size — matches, which is what a missing-blob or over-eager-prune bug shows up as.",
           "type": "array",
+          "uniqueItems": true,
           "items": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
         }
       }
@@ -339,6 +346,7 @@
         "resources": {
           "description": "Per-resource revisions the invocation reported, sorted by id. Proves a mutation answered from its own committed transaction rather than from a later unrelated read that may have caught a neighboring writer's state.",
           "type": "array",
+          "uniqueItems": true,
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -363,6 +371,7 @@
         "touched_ids": {
           "description": "Ids the mutation reports having touched, sorted. Proves the blast radius of a tree mutation — a move that silently restamps a neighbor is invisible in the store bytes if the neighbor's content did not change.",
           "type": "array",
+          "uniqueItems": true,
           "items": { "type": "string" }
         },
         "http_etag": {
@@ -390,12 +399,14 @@
               "headers": {
                 "description": "Request headers actually sent, sorted by lowercased name. Sorted array rather than a map so the observation stays byte-stable.",
                 "type": "array",
+                "uniqueItems": true,
                 "items": { "$ref": "#/$defs/header" }
               },
               "body_base64": {
                 "description": "Base64 of the request body; empty string for a bodyless request.",
                 "type": "string",
-                "contentEncoding": "base64"
+                "contentEncoding": "base64",
+                "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
               }
             }
           },
@@ -412,12 +423,14 @@
               "headers": {
                 "description": "Response headers, sorted by lowercased name, filtered to the allowlist documented in porting/specs/determinism.md — a full header dump would differ on server identity and dates and prove nothing.",
                 "type": "array",
+                "uniqueItems": true,
                 "items": { "$ref": "#/$defs/header" }
               },
               "body_base64": {
                 "description": "Base64 of the response body bytes.",
                 "type": "string",
-                "contentEncoding": "base64"
+                "contentEncoding": "base64",
+                "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
               }
             }
           }
@@ -516,7 +529,8 @@
         "bytes_base64": {
           "description": "Base64 of the exact bytes, possibly truncated (see truncated_at_bytes). This is what makes a mismatch readable; sha256 is what makes it authoritative.",
           "type": "string",
-          "contentEncoding": "base64"
+          "contentEncoding": "base64",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
         },
         "truncated_at_bytes": {
           "description": "Byte offset at which bytes_base64 was cut, or null when complete. Non-null means bytes_base64 must not be used for equality — only sha256 and size_bytes may be.",
@@ -567,7 +581,8 @@
         "content_base64": {
           "description": "Base64 of the whole file when it is small enough to embed, else null. Makes evidence self-contained; never a substitute for sha256, which is always present when the file is.",
           "type": ["string", "null"],
-          "contentEncoding": "base64"
+          "contentEncoding": "base64",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
         },
         "line_count": {
           "description": "Number of newline-terminated lines, for JSONL files. Diagnostic shortcut: a record-count difference is the most common shape of store mismatch and this makes it visible at a glance.",

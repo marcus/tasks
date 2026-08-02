@@ -17,6 +17,9 @@
 {"case_id":"cli-list-scale-ordering","fixture":"valid/scale-ordering","argv":["list","--json"],"notes":"461 records, 50 sibling groups: ordering at size"}
 {"case_id":"cli-capture-small-gtd","fixture":"valid/small-gtd","argv":["capture","port the runner","--priority","A","--tag","port","--json"],"notes":"mutation: pinned id and clock, journal state appended, touched_ids reported"}
 {"case_id":"cli-done-small-gtd","fixture":"valid/small-gtd","argv":["done","Skim the release notes","--json"],"notes":"mutation: a state transition through the history path"}
+{"case_id":"cli-delegate-agent-ready","fixture":"valid/small-gtd","argv":["delegate","1a2b3c02","implement","--json"],"notes":"mutation through the delegation path: the per-operation journal coalesce_key is minted, and TASKS_PIN_DELEGATION_KEYS is the only thing that makes two runs agree on journal bytes"}
+{"case_id":"cli-capture-restricted-mode","fixture":"valid/restricted-mode-store","argv":["capture","widen me","--json"],"notes":"mode: the store starts 0600 (from the fixture's perms.json, which git cannot record) and must not widen across the atomic replacement"}
+{"case_id":"cli-capture-symlinked-store","fixture":"valid/symlinked-store","argv":["capture","through the link","--json"],"notes":"the store the user names is a symlink; roles must follow it, so files[].symlink_target populates and the mutation invariant still holds"}
 {"case_id":"cli-undo-after-capture","fixture":"valid/single-task","argv":["undo"],"notes":"no journal exists yet: undo must refuse rather than invent one"}
 
 # --- compat: version skew --------------------------------------------------
@@ -41,3 +44,20 @@
 {"case_id":"cli-undo-foreign-org","fixture":"adversarial/journal-foreign-org","argv":["undo"],"notes":"a journal keyed to someone else's store is discarded, not applied"}
 {"case_id":"cli-list-stale-revision","fixture":"adversarial/stale-revision","argv":["list","--json"],"notes":"revision tokens: the observation's revisions.resources must match revisions.json"}
 {"case_id":"cli-claim-same-owner-retry","fixture":"adversarial/same-owner-retry","argv":["claim","Draft the neighbourhood newsletter","--worker","harness/model/worker-alpha","--json"],"notes":"recorded behavior: a same-owner retry is refused, not idempotent"}
+
+# --- ref resolution: the 1-vs-2 distinction --------------------------------
+# errors.md calls this the most important single assertion in the whole error
+# surface: exit 2 exists so an agent can REFINE a ref instead of aborting. A
+# port that collapsed 2 into 1 would pass every other case in this file.
+{"case_id":"cli-done-no-match-ref","fixture":"valid/small-gtd","argv":["done","no such task"],"notes":"exit 2: a ref that matches nothing, against a store where the same command exits 0"}
+{"case_id":"cli-done-ambiguous-ref","fixture":"malformed/duplicate-open-titles","argv":["done","Replace the bathroom bulb"],"notes":"exit 2: an ambiguous title ref, and the candidate list errors.md compares byte for byte"}
+
+# --- rollback: a write that happened and was reverted -----------------------
+# The only case in the corpus that produces one, and it needs the runner's
+# copy_root_mode key to get there: post-write validation cannot fire from
+# fixture content alone (preflight refuses the same file set first), so the
+# reachable route is a write failure — an unwritable store directory whose lock
+# sidecar already exists. Ruby exits 1, restores the previous bytes, and says
+# so on stdout as {"rolled_back":true,…}. See runners/README.md § "A failing
+# write, and why the mode lives on the case".
+{"case_id":"cli-capture-readonly-rollback","fixture":"adversarial/stale-lock-sidecar","argv":["capture","must not be written","--json"],"copy_root_mode":"0555","notes":"rollback: the write fails, the previous bytes are restored, and files.rolled_back is labelled true"}

@@ -1,0 +1,20 @@
+{"type":"meta","version":2}
+{"type":"section","id":"11c00001","title":"Link constructs","body":"One task per link construct. Every URL is on example.invalid or example.com."}
+{"type":"task","id":"11c00002","parent":"11c00001","state":"TODO","title":"Org labelled link","body":"[[https://example.invalid/docs/guide][Deployment guide]]"}
+{"type":"task","id":"11c00003","parent":"11c00001","state":"TODO","title":"Org link with no label","body":"[[https://example.invalid/docs/api]]"}
+{"type":"task","id":"11c00004","parent":"11c00001","state":"TODO","title":"Org link with padded url and label","body":"[[  https://example.invalid/docs/pad  ][  Padded label  ]]"}
+{"type":"task","id":"11c00005","parent":"11c00001","state":"TODO","title":"Bare URL in prose","body":"Read https://example.invalid/notes/plain before the review."}
+{"type":"task","id":"11c00006","parent":"11c00001","state":"TODO","title":"Trailing punctuation is handed back to the sentence","body":"Stop https://example.invalid/notes/stop. Comma https://example.invalid/notes/comma, ellipsis https://example.invalid/notes/dots… semicolon https://example.invalid/notes/semi; bang https://example.invalid/notes/bang!? guillemet https://example.invalid/notes/quote»"}
+{"type":"task","id":"11c00007","parent":"11c00001","state":"TODO","title":"Unbalanced closing paren is trimmed, balanced parens are kept","body":"(see https://example.invalid/notes/paren) but https://example.invalid/wiki/Topic_(section) stays whole."}
+{"type":"task","id":"11c00008","parent":"11c00001","state":"TODO","title":"Org verbatim and code markers are peeled off","body":"Verbatim =https://example.invalid/notes/verbatim= and code ~https://example.invalid/notes/tilde~ inline."}
+{"type":"task","id":"11c00009","parent":"11c00001","state":"TODO","title":"Duplicate url, labelled occurrence first","body":"[[https://example.invalid/dupe/a][Canonical label]] and again bare https://example.invalid/dupe/a here."}
+{"type":"task","id":"11c00010","parent":"11c00001","state":"TODO","title":"Duplicate url, bare occurrence first","body":"Bare https://example.invalid/dupe/b first, then [[https://example.invalid/dupe/b][Later label]]."}
+{"type":"task","id":"11c00011","parent":"11c00001","state":"TODO","title":"Self-hosted jira host classifies as jira","body":"[[https://jira.example.invalid/browse/OPS-1234][OPS-1234]]"}
+{"type":"task","id":"11c00012","parent":"11c00001","state":"TODO","title":"Row order resolves a host matching two systems","body":"https://jira.confluence.example.invalid/wiki/Runbook"}
+{"type":"task","id":"11c00013","parent":"11c00001","state":"TODO","title":"Unknown host falls back to the host, minus www.","body":"Plain https://sub.example.invalid/b and http://www.example.com/a over http."}
+{"type":"task","id":"11c00014","parent":"11c00001","state":"TODO","title":"Host fallback is downcased","body":"https://WWW.EXAMPLE.COM/Case"}
+{"type":"task","id":"11c00015","parent":"11c00001","state":"TODO","title":"An unparseable url classifies as link","body":"Org [[https://example.com:port/x][Bad port]] and bare https://example.com:port/y."}
+{"type":"task","id":"11c00016","parent":"11c00001","state":"TODO","title":"Scheme-only fragments are not links","body":"Nothing here: https://, or https:// alone, or https://."}
+{"type":"task","id":"11c00017","parent":"11c00001","state":"TODO","title":"Org internal links are not reported but are masked","body":"[[My Heading]] [[id:abcd1234]] [[file:notes.org]] then https://example.invalid/after/masking."}
+{"type":"task","id":"11c00018","parent":"11c00001","state":"TODO","title":"A non-web org link scheme is not reported","body":"[[ftp://example.invalid/pub/file][Archive drop]] is org navigation, not a web link."}
+{"type":"task","id":"11c00019","parent":"11c00001","state":"TODO","title":"Title link https://example.invalid/title/link comes first","body":"Body line one.\nSecond line https://example.invalid/body/line-two here.\nThird line https://example.invalid/body/line-three here."}

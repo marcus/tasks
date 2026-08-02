@@ -1,0 +1,4 @@
+{"type":"meta","version":2}
+{"type":"section","id":"a1000001","title":"Temporal forward skew"}
+{"type":"task","id":"a1000002","parent":"a1000001","state":"TODO","title":"Start time carrying an unknown nested key","scheduled":"2026-06-16","scheduled_time":{"local":"09:30","timezone":"Europe/London","precision":"minute"}}
+{"type":"task","id":"a1000003","parent":"a1000001","state":"TODO","title":"Due time carrying an unknown nested key","deadline":"2026-06-18","deadline_time":{"local":"17:00","calendar_uid":"evt-0007"}}

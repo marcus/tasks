@@ -73,14 +73,14 @@ module Seed
       expect: "revisions / revisions.resources[...]"
     },
     "rollback" => {
-      case_id: "cli-capture-torn-file",
+      case_id: "cli-capture-readonly-rollback",
       models: "the pair errors.md names as indistinguishable on the filesystem: 'failed post-write validation " \
               "(wrote, rolled back)' versus 'never wrote'. Same exit status, same empty deltas, same store " \
-              "bytes; the ONLY difference is the diagnostic sentence. The candidate's stderr here is the real " \
-              "byte string the Ruby CLI emits on a genuine rollback (bin/tasks, mutation_result_failed). " \
-              "files.rolled_back is null on both sides, so this is detected as a stderr byte difference and is " \
-              "NOT labelled as a rollback — see porting/compare/README.md § The rollback gap.",
-      expect: "cli / process.stderr (bytes)"
+              "bytes — and here also byte-identical stderr, which is the case that used to be undetectable. " \
+              "The candidate takes the other internal path and says so: rolled_back false, in the field and " \
+              "in the --json error envelope it is read from. stderr is deliberately left untouched, so the " \
+              "detection can only come from the label.",
+      expect: "files / files.rolled_back, plus cli / process.stdout (json) for the envelope it came from"
     }
   }.freeze
 
@@ -252,14 +252,22 @@ module Seed
     set
   end
 
+  # A port that never wrote where Ruby wrote and reverted. Everything the
+  # filesystem can see is identical — exit status, deltas, store bytes — and so
+  # is stderr, on purpose: this seed exists to prove the LABEL detects what the
+  # bytes cannot. The envelope on stdout moves with the field, because an
+  # implementation that reported false in one and true in the other is not a
+  # port anyone could write.
   def seed_rollback(set)
     obs = set.fetch(CATALOG["rollback"][:case_id])
-    bytes = stream_bytes(obs, "stderr").dup.force_encoding(Encoding::UTF_8)
-    never_wrote = "task file is already invalid — run `tasks check` (nothing was written)"
-    wrote_and_reverted = "file failed validation after the edit — run `tasks check`"
-    raise "baseline stderr is not the never-wrote diagnostic" unless bytes.include?(never_wrote)
+    raise "the baseline case does not label a rollback" unless obs.dig("files", "rolled_back") == true
 
-    set_stream(obs, "stderr", bytes.sub(never_wrote, wrote_and_reverted))
+    obs["files"]["rolled_back"] = false
+    bytes = stream_bytes(obs, "stdout").dup.force_encoding(Encoding::UTF_8)
+    envelope = "\"rolled_back\":true"
+    raise "the baseline case's stdout carries no rollback envelope" unless bytes.include?(envelope)
+
+    set_stream(obs, "stdout", bytes.sub(envelope, "\"rolled_back\":false"))
     set
   end
 end

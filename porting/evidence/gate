@@ -50,10 +50,10 @@ EXPECTATIONS = [
     field: "files.after[tasks.jsonl].sha256", klass: "go_defect", dimension: "files" },
   { seed: "revision-token", gate_class: "revision token", case_id: "cli-list-stale-revision",
     field: "revisions.resources[", klass: "go_defect", dimension: "revisions" },
-  { seed: "rollback", gate_class: "rollback behavior", case_id: "cli-capture-torn-file",
-    field: "process.stderr (bytes)", klass: "go_defect", dimension: "cli",
-    caveat: "detected as a stderr byte difference, NOT as a labelled rollback: files.rolled_back is null " \
-            "on both sides because the CLI has no machine-readable rollback signal" },
+  { seed: "rollback", gate_class: "rollback behavior", case_id: "cli-capture-readonly-rollback",
+    field: "files.rolled_back", klass: "go_defect", dimension: "files",
+    caveat: "exercised by exactly one case (cli-capture-readonly-rollback), and by a failing WRITE rather " \
+            "than a failing post-write validation, which stays unreachable from fixture content alone" },
   { seed: "json-key-order", gate_class: "negative control: stdout JSON key order", negative: true,
     case_id: "cli-list-json-small-gtd" }
 ].freeze

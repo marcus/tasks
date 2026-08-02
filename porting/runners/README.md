@@ -53,6 +53,7 @@ otherwise silently change nothing.
 | `stdin_base64` | no | Base64 of the exact stdin bytes. Mutually exclusive with `stdin`; use it for payloads that are not valid UTF-8. |
 | `timeout_ms` | no | Per-case wall budget. Default 60000. |
 | `install_journal` | no | Default `true`: install the fixture's `journal/` when it ships one. Set `false` to observe the same fixture with no history. |
+| `copy_root_mode` | no | Octal string (`"0555"`, or `"555"`) applied to the **copy root directory itself** after the copy is complete. Absent means the mode `cp -a` produced is left alone. See [A failing write](#a-failing-write-and-why-the-mode-lives-on-the-case). |
 | `notes` | no | Free text; copied into the observation's `notes`. Never compared. |
 
 Example:
@@ -75,26 +76,81 @@ Per case, in this order:
    and has just emptied. The trailing `/.` is load-bearing: several fixtures
    carry dotfiles that a `<dir>/*` glob drops. Modes are preserved; the fixture
    itself is never written to.
-2. **Create the isolated roots** inside the copy: `<copy>/.config/tasks/` and
+2. **Apply the fixture's `perms.json`** when it ships one — see
+   [Two modes](#two-modes-and-why-they-are-not-one-key). It is a JSON object
+   `{"chmod": {"<path relative to the copy root>": "<octal>"}}`; apply each entry
+   to the copy, in sorted key order, and refuse the case if a named path escapes
+   the copy or does not exist. Applied to **both** copies (the case copy and the
+   throwaway copy of step 6), because a fixture that declares a mode declares it
+   for the corpus and the two copies must start identical.
+3. **Create the isolated roots** inside the copy: `<copy>/.config/tasks/` and
    `<copy>/.state/`. Both live *inside* the copy so that everything the
    implementation writes is inside the observed tree and every recorded path is
    relative to one root.
-3. **Install the journal** when the fixture ships `journal/` and the case did
+4. **Install the journal** when the fixture ships `journal/` and the case did
    not opt out. The journal cannot ship as literal bytes: it lives at
    `<copy>/.state/tasks/journal/<key>/` where
-   `<key> = sha256(realpath(<copy>/tasks.jsonl))[0:16]`, and its `index.json`
-   records that same absolute path. Copy `journal/blobs/` through unchanged; if
-   `journal/index.json.template` exists, substitute `{{ORG_PATH}}` with
-   `realpath(<copy>)/tasks.jsonl`; if instead a literal `journal/index.json`
-   exists, copy it verbatim — that fixture's subject is a *wrong* org path, and
-   templating it would delete the thing under test.
-4. **Observe the pristine tree** (`files.before`) and compute `fixture.root_sha256`.
-5. **Run the before-probe** — against a *second, throwaway copy*, never against
-   the case copy. See [The probe](#the-probe).
-6. **Invoke** the implementation.
-7. **Observe the resulting tree** (`files.after`) and compute `files.deltas`.
-8. **Run the after-probe** against the case copy.
-9. **Emit** the observation; delete the copies unless `--keep`.
+   `<key> = sha256(canonical(<copy>/tasks.jsonl))[0:16]` and `canonical` is
+   absolute **and symlink-resolved** — `valid/symlinked-store` spells the store
+   as a link, and a key computed from the unresolved name names a directory the
+   implementation never writes to. Its `index.json` records that same canonical
+   path. Copy `journal/blobs/` through unchanged; if
+   `journal/index.json.template` exists, substitute `{{ORG_PATH}}` with the
+   canonical store path; if instead a literal `journal/index.json` exists, copy
+   it verbatim — that fixture's subject is a *wrong* org path, and templating it
+   would delete the thing under test.
+5. **Apply `copy_root_mode`** when the case declares one — after the copy and
+   the journal install, before anything observes the tree, and to the case copy
+   only (never to the throwaway copy of step 6, which exists to read a revision
+   token and would fail the probe if it were unwritable). The runner restores a
+   writable mode on the copy root after step 10, and again before re-emptying the
+   directory on a later run, so a crashed run cannot leave files behind that
+   would leak into the next run's `files.before`. Nothing below the root is ever
+   chmod'd: every file mode in `files.after` is the implementation's own doing.
+6. **Run the before-probe** — against a *second, throwaway copy*, never against
+   the case copy. See [The probe](#the-probe). It runs before the tree is
+   observed because it is also where `files[].role` comes from: see
+   [Roles](#roles-come-from-the-implementation-not-from-a-name-table).
+7. **Observe the pristine tree** (`files.before`) and compute `fixture.root_sha256`.
+8. **Invoke** the implementation.
+9. **Observe the resulting tree** (`files.after`) and compute `files.deltas`.
+10. **Run the after-probe** against the case copy.
+11. **Emit** the observation; delete the copies unless `--keep`.
+
+The probe deliberately runs *after* the tree is observed in step 10 and *before*
+it in step 6–7, and both orderings are load-bearing: taking a snapshot acquires
+the store lock, so a probe against the case copy before the invocation would
+create the lock sidecar the invocation is supposed to be observed creating.
+
+### Roles come from the implementation, not from a name table
+
+`files[].role` must be resolved from the paths the implementation reports it
+resolved (probe § `paths`), not from a table of filenames. The difference is not
+cosmetic: `valid/symlinked-store` puts the store's bytes in `tasks.real.jsonl`
+and makes `tasks.jsonl` a link to it, so a name table records the file carrying
+the store as `role: "other"` — which voids the schema's guarantee that "the store
+and the archive were BOTH observed" and makes the mutation invariant below fail
+on a *correct* run.
+
+Both spellings get the role: the link is the store the user named, the target is
+the store the bytes are in. `files.before` and `files.after` may therefore each
+contain more than one `role: "store"` entry, which is why the store assertion is
+"at least one", not "exactly one".
+
+Two details a port has to get right:
+
+- The probe reports paths from the **throwaway** copy, so only the *relative*
+  store, archive, memory, and config paths transfer to the case copy. The
+  journal directory does not — its name is a digest of the copy's own absolute
+  path — so use the key the runner computed for the case copy in step 4.
+- Canonical paths are symlink-resolved and the copy root may not be (on macOS
+  `/tmp` is a link to `/private/tmp`). Compare against both spellings of the root
+  before concluding a path is outside the tree.
+
+Everything the implementation does not name is resolved by **shape**: the
+journal layout (`<state>/tasks/journal/<key>/index.json`, `…/blobs/<digest>`)
+and the `.lock` suffix are patterns, not names, and stay correct under any store
+spelling.
 
 `fixture.root_sha256` is defined exactly as: SHA-256 over the concatenation, in
 ascending byte order of path, of `<relative-path> 0x00 <file-sha256> 0x0A` for
@@ -106,6 +162,76 @@ implementations compute it identically.
 is a real finding (a crashed write); the lock sidecar is a real observable
 effect, including for reads. See `porting/specs/determinism.md` § "Tempting but
 not normalized".
+
+### A failing write, and why the mode lives on the case
+
+One product outcome cannot be reached by choosing a fixture: a **write that is
+performed and then reverted**. The reason is structural. A store that is already
+invalid is refused by the *preflight* check, which validates the same file set
+the post-write check does, so post-write validation can never fire from fixture
+content alone. The reachable route is a write that *fails*: an unwritable store
+directory whose lock sidecar already exists lets the mutation start and makes
+the atomic replace raise, and the implementation must then restore the previous
+bytes and say so.
+
+The mode has to come from the case rather than the fixture because **the runner
+creates the copy root** — a fixture cannot carry the mode of a directory that
+does not exist until the copy is made. Two other designs were considered:
+
+1. **A fixture-level manifest the runner applies after copying.** Rejected *for
+   this purpose*: the mode is a property of one invocation, not of the corpus,
+   and the same fixture is used by cases that need it writable. (That manifest
+   exists for a different purpose — see
+   [Two modes](#two-modes-and-why-they-are-not-one-key).)
+2. **A fault-injection hook in the implementation** — an env var that makes one
+   write fail. Rejected for Phase 1: it is a test seam every port would have to
+   reimplement identically before it could be compared, and a seam whose own
+   fidelity nothing checks. `copy_root_mode` needs nothing from the
+   implementation at all; it is the operating system doing what it does.
+
+The playbook's step 7 still wants real fault injection ("crash points around
+lock, write, flush, validation, rename, and journal append"). This is not that.
+It buys exactly one crash point — the write — from outside the process.
+
+Portability: `copy_root_mode` is a POSIX directory mode. A runner on a platform
+where an unwritable directory does not prevent replacing a file inside it cannot
+produce this outcome, and must report that rather than emit a passing case.
+
+### Two modes, and why they are not one key
+
+There are two ways a mode reaches a fixture copy, and they were kept separate
+deliberately.
+
+| | `copy_root_mode` (case key) | `perms.json` (fixture file) |
+|---|---|---|
+| Applies to | the copy **root directory** | **files inside** the copy |
+| Owned by | one case | the fixture, for every case that uses it |
+| Applied to the throwaway probe copy | no | yes |
+| Exists because | the runner creates the root, so no fixture can carry its mode | git records no permission bit but the executable one, so no fixture can carry a 0600 in its content |
+| Buys | a write that fails and is reverted | a restrictive starting mode that must survive an atomic replacement |
+
+Folding `perms.json` into `copy_root_mode` was considered and rejected on three
+grounds:
+
+1. **Different owners.** `valid/restricted-mode-store` *is* a 0600 store — that
+   is what the fixture is named for and what its README promises. Restating it
+   on every case that uses the fixture makes the promise a per-case opt-in that
+   a new case can silently forget, and a forgotten one does not fail: it
+   produces a 0644 store and a green comparison of the wrong thing.
+2. **Different scopes.** `copy_root_mode` is one mode on one directory the runner
+   made; `perms.json` is a map over files the fixture shipped. Widening the case
+   key to carry a path→mode map would let a case chmod any file in the corpus
+   copy, which is fault injection through the back door and would make
+   `files.before` a case-authored fiction rather than an observation of the
+   fixture.
+3. **Different lifecycles.** The root mode must *not* reach the throwaway probe
+   copy (an unwritable root fails the probe instead of the invocation); the file
+   modes *must*, so both copies start identical. One key cannot have both
+   behaviors.
+
+Portability: `perms.json` modes are POSIX file modes. A runner on a platform
+without them must report the fixture as unsupported rather than observe it at a
+mode nobody asked for.
 
 ### Never a live store
 
@@ -137,8 +263,9 @@ toolchain variables that could change behavior).
 | `TASKS_DEVICE` | `fixture` | The device half of an update stamp. |
 | `TASKS_PIN_NOW` | `2026-03-14T15:09:26Z` | Every clock read. |
 | `TASKS_PIN_IDS` | `bbbb0001` | Minted ids; the sequence continues by incrementing, so one token is enough for a mutation that mints several. |
-| `TASKS_PIN_COALESCE_SCOPE` | `pinned-scope` | Persisted into journal bytes. |
-| `TASKS_PIN_HOSTNAME` | `fixture-host` | Host-context selection. |
+| `TASKS_PIN_COALESCE_SCOPE` | `pinned-scope` | Persisted into journal bytes; one per process. |
+| `TASKS_PIN_DELEGATION_KEYS` | `cccc000000000001` | The per-operation coalescing **key** every delegation verb mints. Also persisted into journal bytes, but one per operation rather than one per process, so it is a sequence. Without it two identical `delegate` runs agree on store bytes and disagree on `index.json` — see `porting/specs/determinism.md`. |
+| `TASKS_PIN_HOSTNAME` | `fixture-host` | Host-context selection **and** the device half of the update stamp when `TASKS_DEVICE` is unset. Both consumers, one pin. |
 | `LINES`, `COLUMNS` | `40`, `100` | Terminal geometry (no effect on the CLI; pinned for the TUI surface). |
 
 ### Every one of these is mandatory
@@ -161,13 +288,36 @@ sufficient pin set — a `capture` run under it is not reproducible. The corpus
 README needs that correction; this file, not that one, is the protocol.
 
 A case's `env` may override any pin, or unset one with `null`. It may **not**
-set `TASKS_DIR`, `TASKS_FILE`, `TASKS_ARCHIVE`, `HOME`, `XDG_CONFIG_HOME` or
-`XDG_STATE_HOME`: those are what isolation is made of.
+set `PATH`, `TASKS_DIR`, `TASKS_FILE`, `TASKS_ARCHIVE`, `TASKS_MEMORY`, `HOME`,
+`XDG_CONFIG_HOME` or `XDG_STATE_HOME`: those are what isolation is made of.
+`TASKS_MEMORY` belongs on that list for the strongest reason of all — it names a
+*file path*, so a case that set it could point the memory sidecar outside the
+copy, outside the observed tree, and potentially at something real.
 
-`invocation.env` records exactly these names, sorted, including the ones that
-are unset (as `null`). It is not a dump of the process environment: a dump would
-be unstable, would leak secrets, and would make every observation differ on
-irrelevant grounds.
+`invocation.env` records the **union** of these names and the names actually
+handed to the process, sorted, including the ones that are unset (as `null`).
+The union half is not decoration. The product reads variables outside this table
+— `TASKS_DATE_ORDER` changes date parsing, `TASKS_WORKER_ID` is written into the
+store, `TASKS_URGENT_DAYS` changes agenda classification — and with a fixed
+allowlist a case could set one and produce two observations whose entire
+`invocation` block is byte-identical and whose store bytes disagree, with the
+input that caused it recorded nowhere. It is still not a dump of the process
+environment: a dump would be unstable, would leak secrets, and would make every
+observation differ on irrelevant grounds.
+
+### The umask is pinned too
+
+Set the process umask to **0022** before spawning anything. It is inherited
+across `fork`/`exec`, so setting it once in the runner pins it for every child.
+
+It is not a host fact, and filing it as one was a defect: it is a per-process
+attribute one syscall away, and it moves `mode` on every file the implementation
+creates — a **compared** field. Left unpinned, the committed baseline silently
+encodes the capture operator's umask, anyone re-capturing on a different CI image
+gets four spurious `mode` mismatches per journal-bearing case, and — worse,
+symmetrically — a genuine regression that widens the journal index to 0644 is
+indistinguishable from a different image. Keep recording `environment.umask`:
+after pinning it is the proof the pin took, not an excuse for a mismatch.
 
 Standard input is always attached — to the case payload, or to an empty file
 when the case supplies none. A runner never lets the implementation inherit a
@@ -286,23 +436,21 @@ implementations parsing one pin differently.
 | `files.before` / `after` | Every file in the copy, sorted by relative path, with digest, size, mode, symlink target, whole content when ≤ 64 KiB, and line count for the store and archive. |
 | `files.deltas` | Paths whose presence or content changed. Empty is a meaningful assertion, not an omission. |
 | `files.mutated` | **Not** derived from `deltas`: it is true when the implementation's own store revision changed across the invocation (before-probe vs after-probe). The two are then cross-checked — see [Invariants](#invariants). |
+| `files.rolled_back` | The implementation's own `--json` error envelope (`{"error":…,"rolled_back":true\|false}`) read from stdout — see `porting/specs/errors.md` § "The `--json` error envelope". Never inferred from stderr wording, and never from the deltas: a write-then-revert and a never-wrote leave identical bytes, which is why the field exists. `null` when the invocation reported nothing. |
 | `journal.*` | The index parsed structurally (`version`, `cursor`, `states[]` with labels, restored digests, coalesce key/scope, repair flag) *and* the index file's bytes; blob count and sorted blob digests. When no journal exists, `present:false` with the path where one *would* have been. |
 | `revisions.store` / `resources` | The after-probe. |
 | `revisions.touched_ids` | The implementation's own `--json` mutation payload (`{"touched":[{"id":…}]}`), when the case asked for one. Read from stdout, never inferred from the store diff. |
-| `environment.*` | `tzdb_version`, `platform`, `locale`, `runtime` from the probe; `umask` and `filesystem` from the runner's host. Recorded, never compared. |
+| `environment.*` | `tzdb_version`, `platform`, `locale`, `runtime` from the probe; `filesystem` from the runner's host, and `umask` as the value the runner pinned. Recorded, never compared — but `umask` is now a tautology by design, and one that reads anything but `0022` means the pin did not take. |
 | `metrics.wall_ms` | Harness-measured. Advisory; never part of conformance equality. `--pin-identity` fixes it to 0. |
 | `metrics.bytes_written` | Total size of the changed files. Deterministic, so it stays in the byte-identical output. |
 
 ### Known gaps
 
-- **`files.rolled_back` is always `null`.** A write that is performed and then
-  reverted by post-write validation is a distinct product outcome, but the CLI
-  reports it only as an extra sentence on stderr. Inferring it from that
-  sentence would bake one implementation's prose into the protocol, so the field
-  is left honestly unset until the implementations expose the fact
-  machine-readably (a `--json` error field would do it). stderr is compared byte
-  for byte regardless, so the difference is not *lost* — it is simply not
-  labelled.
+- **`files.rolled_back` is null for every invocation that made no rollback
+  report.** That is most of them: reads, successes, and any refusal the caller
+  did not ask for `--json` on. Null means "not reported" and never "did not roll
+  back", and a null on both sides is not a mismatch — but it is the absence of
+  the label, so the comparator counts it and says so.
 - **`metrics.user_cpu_ms` / `sys_cpu_ms` / `peak_rss_bytes` are `null`.** Not
   portably available for a child process; they are advisory-only fields and
   emitting host-noisy values would break byte-identity for no gain.

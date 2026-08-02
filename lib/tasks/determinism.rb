@@ -42,6 +42,14 @@ module Tasks
     # bytes. Unset: SecureRandom.hex(16).
     COALESCE_SCOPE = "TASKS_PIN_COALESCE_SCOPE"
 
+    # The per-operation coalescing KEY minted for each delegation operation
+    # (delegate / undelegate / claim / release). Like the scope, it is persisted
+    # into journal index.json and is therefore observable in journal bytes —
+    # unlike the scope, a fresh one is minted per operation rather than per
+    # process, so it needs a sequence rather than a single value. Same spelling
+    # rules as IDS but sixteen hex characters wide. Unset: SecureRandom.hex(8).
+    DELEGATION_KEYS = "TASKS_PIN_DELEGATION_KEYS"
+
     # Host name used for host-context selection in Config. Unset:
     # Socket.gethostname. (The *device* half of update stamps has its own
     # long-standing setting, TASKS_DEVICE; this module does not duplicate it.)
@@ -60,19 +68,30 @@ module Tasks
     LANG = "LANG"
     LC_ALL = "LC_ALL"
 
-    KEYS = [NOW, IDS, COALESCE_SCOPE, HOSTNAME, LINES, COLUMNS, DEVICE, TZ, LANG, LC_ALL].freeze
+    KEYS = [NOW, IDS, COALESCE_SCOPE, DELEGATION_KEYS, HOSTNAME, LINES, COLUMNS,
+            DEVICE, TZ, LANG, LC_ALL].freeze
 
-    # A monotonic, reproducible id mint. Stateful on purpose: one CLI invocation
-    # can perform several mutations, and each must draw the *next* id rather than
-    # repeat the first. Store's existing collision loop still applies, so an id
-    # already present in the store or archive is skipped exactly as before.
+    # A monotonic, reproducible hex mint. Stateful on purpose: one CLI
+    # invocation can perform several mutations, and each must draw the *next*
+    # token rather than repeat the first. Store's existing collision loop still
+    # applies to ids, so an id already present in the store or archive is
+    # skipped exactly as before.
+    #
+    # `width` is the token length in hex characters — 8 for task/section ids,
+    # 16 for delegation coalescing keys — and `name` is only used in messages,
+    # so a malformed pin names the pin the operator actually set.
     class IdSequence
-      TOKEN = /\A[0-9a-f]{8}\z/
       SPAN = 1 << 32
 
-      def initialize(spec)
+      attr_reader :width
+
+      def initialize(spec, width: 8, name: IDS)
+        @width = Integer(width)
+        @name = name
+        @token = /\A[0-9a-f]{#{@width}}\z/
+        @span = 16**@width
         @queue = parse(spec)
-        raise ArgumentError, "#{IDS} is empty" if @queue.empty?
+        raise ArgumentError, "#{@name} is empty" if @queue.empty?
 
         @counter = nil
       end
@@ -82,8 +101,8 @@ module Tasks
           @counter = token.to_i(16)
           return token
         end
-        @counter = (@counter + 1) % SPAN
-        format("%08x", @counter)
+        @counter = (@counter + 1) % @span
+        format("%0#{@width}x", @counter)
       end
 
       private
@@ -91,9 +110,10 @@ module Tasks
       def parse(spec)
         spec.to_s.split(",").map do |raw|
           token = raw.strip.downcase
-          token = "00000000" if token == "seq"
-          unless TOKEN.match?(token)
-            raise ArgumentError, "#{IDS} token must be 8 hex characters or \"seq\", got #{raw.inspect}"
+          token = "0" * @width if token == "seq"
+          unless @token.match?(token)
+            raise ArgumentError,
+                  "#{@name} token must be #{@width} hex characters or \"seq\", got #{raw.inspect}"
           end
 
           token
@@ -137,6 +157,18 @@ module Tasks
       value.empty? ? nil : value
     end
 
+    # Process-wide mint for delegation coalescing keys. Memoized for the same
+    # reason id_source is: one invocation may build more than one Application
+    # and they must draw from one sequence rather than each restart it.
+    def delegation_key_source(env: ENV)
+      spec = env[DELEGATION_KEYS].to_s.strip
+      return nil if spec.empty?
+      return @delegation_key_source if defined?(@delegation_key_source) && @delegation_key_spec == spec
+
+      @delegation_key_spec = spec
+      @delegation_key_source = IdSequence.new(spec, width: 16, name: DELEGATION_KEYS)
+    end
+
     # Callable, never nil: Config.resolve wants a hostname provider and the
     # unpinned provider is exactly the one it defaulted to before.
     def hostname(env: ENV)
@@ -175,10 +207,12 @@ module Tasks
       }
     end
 
-    # Test-only: drop the memoized id sequence.
+    # Test-only: drop the memoized sequences.
     def reset!
       remove_instance_variable(:@id_source) if defined?(@id_source)
       remove_instance_variable(:@id_source_spec) if defined?(@id_source_spec)
+      remove_instance_variable(:@delegation_key_source) if defined?(@delegation_key_source)
+      remove_instance_variable(:@delegation_key_spec) if defined?(@delegation_key_spec)
       nil
     end
   end

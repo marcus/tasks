@@ -65,6 +65,33 @@ including key order and omitted defaults; stdout JSON is compared as parsed
 data.** The store is a durable format two implementations must round-trip; a
 printed payload is a message.
 
+### The `--json` error envelope
+
+A command that emits a JSON result under `--json` owes one on its refusal paths
+too. Otherwise `--json` degrades to "nothing on stdout", which a caller cannot
+tell apart from "no result" — and a harness cannot tell apart from anything at
+all. The envelope is an object with at least:
+
+| Key | Meaning |
+|---|---|
+| `error` | The condition, as a stable token (`store_invalid`, `unsupported_schema_version`, `unavailable`, `conflict`, `stale`, `not_found`, …). Branch on this, not on the message. |
+| `action` | The command that refused, sub-verb included (`capture`, `project create`). |
+| `message` | The same sentence that went to stderr, verbatim, newlines and all. |
+| `rolled_back` | **On a failed mutation, required.** `true` when the implementation wrote and then restored the previous bytes; `false` when it never wrote. |
+
+Individual conditions add keys (a claim conflict adds `holder` and `at`).
+
+`rolled_back` is the one that carries information nothing else does. A mutation
+that wrote and reverted and a mutation refused before writing exit the same way
+and leave byte-identical files behind; the boolean is the only channel that
+separates them, which is why the harness records it as `files.rolled_back` and
+compares it directly. Exit status stays the human one — the envelope is
+additional, never a substitute.
+
+Ref-resolution failures (exit `2`) are deliberately outside this: they refuse
+before a command's `--json` handling is reached and print no envelope on either
+side. That is the recorded oracle behavior, not an endorsement.
+
 ### Diagnostic text is contract until proved otherwise
 
 stderr is compared byte for byte by default. That is a strong requirement and it
@@ -114,7 +141,7 @@ that separates them. The observation schema is shaped to make each separable:
 |---|---|
 | Invalid changeset rejected *before* lookup vs. rejected after | `exit_status` plus stderr text; `files.deltas` empty in both. |
 | Stale field revision vs. missing task | `exit_status` (1 vs 2) and the structured error; `revisions.resources` present in one. |
-| Failed post-write validation (wrote, rolled back) vs. never wrote | `files.rolled_back` true vs false, with `files.deltas` empty in both. This is exactly why `rolled_back` exists as its own field: the filesystem cannot tell you. |
+| Failed post-write validation (wrote, rolled back) vs. never wrote | `files.rolled_back` true vs false, with `files.deltas` empty in both. This is exactly why `rolled_back` exists as its own field: the filesystem cannot tell you. It is read from the `--json` error envelope above, never from the diagnostic wording. |
 | Same-owner worker retry vs. conflicting claim | `exit_status` and the structured error; store bytes differ (one updates, one does not). |
 | Store invalid vs. schema-version migration required | Structured error code and stderr text; both exit 1. |
 | Malformed line skipped (warning) vs. store rejected (error) | `exit_status` 0 vs 1, and which of the two lists the diagnostic lands in. |

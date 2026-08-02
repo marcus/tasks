@@ -207,6 +207,51 @@ class TestPortingRunner < Minitest::Test
     assert_operator observation.dig("metrics", "bytes_written"), :>, 0
   end
 
+  # --- rollback ------------------------------------------------------------
+
+  # The one product outcome the filesystem cannot show you. An unwritable copy
+  # root with the lock sidecar already present makes the atomic write fail; the
+  # implementation restores the previous bytes and reports that it did, and the
+  # runner records the report rather than inferring anything.
+  ROLLBACK_CASE = { "case_id" => "t-rollback", "fixture" => "adversarial/stale-lock-sidecar",
+                    "argv" => ["capture", "must not be written", "--json"],
+                    "copy_root_mode" => "0555" }.freeze
+
+  def test_a_declared_copy_root_mode_produces_a_labelled_rollback
+    observation = observe(ROLLBACK_CASE).fetch("t-rollback")
+
+    assert_equal 1, observation.dig("process", "exit_status")
+    assert_equal true, observation.dig("files", "rolled_back"),
+                 "the CLI reported a write-then-revert and the runner must record it"
+    # Everything else is indistinguishable from a mutation that never wrote —
+    # which is the entire reason the label exists.
+    refute observation.dig("files", "mutated")
+    assert_empty observation.dig("files", "deltas")
+    assert_includes observation.dig("process", "stdout", "text"), "\"rolled_back\":true"
+  end
+
+  def test_rolled_back_is_null_when_the_implementation_reported_nothing
+    observed = observe(READ_CASE, MUTATION_CASE)
+    assert_nil observed["t-read"].dig("files", "rolled_back"), "a read reports no rollback flag"
+    assert_nil observed["t-mutate"].dig("files", "rolled_back"), "a success reports no rollback flag"
+  end
+
+  # The mode is applied to the copy root and to nothing under it, and it is
+  # undone before cleanup — otherwise the next run could not empty the directory
+  # and stale files would leak into its files.before.
+  def test_a_restrictive_copy_root_mode_does_not_outlive_the_case
+    work = File.join(@tmp, "work-mode")
+    observe(ROLLBACK_CASE, work: work)
+    refute File.exist?(File.join(work, "t-rollback")), "the fixture copy outlived the case"
+  end
+
+  def test_copy_root_mode_must_be_octal
+    _, stderr, status = run_runner("--dry-run",
+                                   write_cases(READ_CASE.merge("copy_root_mode" => "u+rwx"), name: "mode.jsonl"))
+    assert_equal 2, status.exitstatus
+    assert_includes stderr, "copy_root_mode"
+  end
+
   def test_revisions_are_sourced_from_the_implementation
     observation = observe(MUTATION_CASE).fetch("t-mutate")
     assert_match(/\As1\.[0-9a-f]{64}\z/, observation.dig("revisions", "store"))
@@ -238,7 +283,7 @@ class TestPortingRunner < Minitest::Test
     observation = observe(READ_CASE).fetch("t-read")
     pins = observation.dig("invocation", "pins").to_h { |p| [p["name"], p] }
     %w[TZ LANG LC_ALL TASKS_DEVICE TASKS_PIN_NOW TASKS_PIN_IDS TASKS_PIN_COALESCE_SCOPE
-       TASKS_PIN_HOSTNAME LINES COLUMNS].each do |name|
+       TASKS_PIN_DELEGATION_KEYS TASKS_PIN_HOSTNAME LINES COLUMNS].each do |name|
       assert pins.fetch(name)["applied"], "pin #{name} was not applied"
     end
     assert_equal "2026-03-14T15:09:26Z", pins.fetch("TASKS_PIN_NOW")["value"]
@@ -319,6 +364,83 @@ class TestPortingRunner < Minitest::Test
     assert_equal %w[metrics observation_id], differing.sort
     assert_equal runs[0]["metrics"].reject { |k, _| k == "wall_ms" },
                  runs[1]["metrics"].reject { |k, _| k == "wall_ms" }
+  end
+
+  # --- roles, modes, and the recorded environment ---------------------------
+
+  # `files[].role` comes from the paths the implementation resolved, not from a
+  # table of filenames. valid/symlinked-store is the fixture that tells the two
+  # apart: the store the user names is a link, the bytes are somewhere else.
+  # A name table records the file carrying the store as "other", which voids the
+  # schema's "the store and the archive were BOTH observed" guarantee and makes
+  # the mutation invariant fail on a correct run.
+  def test_a_symlinked_store_carries_the_store_role_on_both_spellings
+    observation = observe({ "case_id" => "t-symlink", "fixture" => "valid/symlinked-store",
+                            "argv" => ["capture", "through the link", "--json"] })
+                  .fetch("t-symlink")
+    after = observation.dig("files", "after")
+    stores = after.select { |s| s["role"] == "store" }.map { |s| s["path"] }
+    assert_equal %w[tasks.jsonl tasks.real.jsonl], stores.sort,
+                 "both the link and its target must carry the store role"
+    link = after.find { |s| s["path"] == "tasks.jsonl" }
+    assert_equal "tasks.real.jsonl", link["symlink_target"]
+    assert_nil link["sha256"], "a symlink is recorded by target, not by content"
+    assert observation.dig("journal", "present"),
+           "the journal key must be computed from the symlink-resolved store path"
+    # The invariant that a name table breaks: mutated=true is cross-checked
+    # against deltas whose role is store or archive.
+    assert observation.dig("files", "mutated")
+  end
+
+  # Git records no permission bit but the executable one, so a fixture whose
+  # subject is a restrictive mode has to declare it in perms.json and have the
+  # runner apply it to the copy. Without this the "a chmod-600 store must not
+  # widen to 644 across an atomic replacement" contract is untestable and `mode`
+  # is a constant column in the baseline.
+  def test_a_fixture_perms_manifest_is_applied_to_the_copy
+    observation = observe({ "case_id" => "t-perms", "fixture" => "valid/restricted-mode-store",
+                            "argv" => ["capture", "widen me", "--json"] }).fetch("t-perms")
+    before = observation.dig("files", "before").find { |s| s["role"] == "store" }
+    after = observation.dig("files", "after").find { |s| s["role"] == "store" }
+    assert_equal "0600", before["mode"], "perms.json was not applied to the copy"
+    assert_equal "0600", after["mode"],
+                 "the store widened across the atomic replacement"
+  end
+
+  # A constant allowlist would let a case set a variable the product reads and
+  # produce two observations with byte-identical invocation blocks and different
+  # store bytes. The recorded set is the union of the floor and what was passed.
+  def test_the_env_records_a_variable_the_case_set_outside_the_floor
+    observation = observe(READ_CASE.merge("case_id" => "t-extra-env",
+                                          "env" => { "TASKS_DATE_ORDER" => "dmy" }))
+                  .fetch("t-extra-env")
+    env = observation.dig("invocation", "env").to_h { |e| [e["name"], e["value"]] }
+    assert_equal "dmy", env.fetch("TASKS_DATE_ORDER"),
+                 "a variable the case set must be visible in the observation, not silent"
+    assert_equal "/usr/bin:/bin:/usr/sbin:/sbin", env.fetch("PATH"),
+                 "PATH is pinned, so it is recorded"
+  end
+
+  # umask is a per-process attribute, not a host fact: it moves `mode` on every
+  # file the implementation creates, and mode is compared.
+  def test_the_umask_is_pinned_not_inherited
+    # Deliberately hostile: the runner is launched from a process whose umask is
+    # 0077, which is what a differently-configured CI image looks like. The
+    # observation must report the pin, and the modes must be the pinned ones —
+    # if the runner merely recorded what it inherited, both would read 0600.
+    previous = File.umask(0o077)
+    observation = begin
+      observe(MUTATION_CASE.merge("case_id" => "t-umask")).fetch("t-umask")
+    ensure
+      File.umask(previous)
+    end
+    assert_equal "0022", observation.dig("environment", "umask")
+    # The journal index, because it is CREATED by the invocation: the store file
+    # already existed and keeps its own mode across the atomic replacement, so it
+    # would read 0644 either way and prove nothing.
+    index = observation.dig("journal", "index")
+    assert_equal "0644", index["mode"],
+                 "the operator's umask reached the implementation"
   end
 
   # --- the probe -----------------------------------------------------------

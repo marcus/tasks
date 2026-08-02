@@ -1,0 +1,6 @@
+{"type":"meta","version":2}
+{"type":"section","id":"c1a2b3d0","title":"Inbox"}
+{"type":"task","id":"c1a2b3d1","parent":"c1a2b3d0","state":"NEXT","title":"Return the loaner projector","tags":["@home","urgent","@errands"],"body":"A plain tag between two contexts."}
+{"type":"task","id":"c1a2b3d2","parent":"c1a2b3d0","state":"TODO","title":"Reconcile the equipment ledger","tags":["alpha","@computer","beta"],"body":"A context between two plain tags."}
+{"type":"task","id":"c1a2b3d3","parent":"c1a2b3d0","state":"TODO","title":"Trial the standing desk converter","tags":["@home","defer","research"],"body":"Deferred, with the marker between an owned and an unowned tag."}
+{"type":"task","id":"c1a2b3d4","parent":"c1a2b3d0","state":"TODO","title":"Learn to develop film at home","tags":["defer"],"body":"Deferred and nothing else: clearing empties the list."}

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""validate — check every observation in a set against observations.schema.json.
+"""validate — check every observation in a set against observations.schema.json,
+then against the consistency rules the schema cannot express.
 
     porting/compare/validate porting/evidence/phase1/ruby
     porting/compare/validate --quiet observations.jsonl
 
-Exit 0 when every record validates, 1 when any record does not, 2 on a usage or
-environment error.
+Exit 0 when every record passes both passes, 1 when any record does not, 2 on a
+usage or environment error.
 
 Kept separate from the comparator on purpose. The comparator must run with no
 dependency beyond a stock Ruby, because it is the thing CI and every future
@@ -15,9 +16,41 @@ captured, so it may reach for `jsonschema` (Draft202012Validator).
 An observation that does not validate is not evidence. A comparison over
 records the schema does not recognise proves nothing about the port, only that
 two malformed files agreed.
+
+## Why there is a second pass
+
+JSON Schema is a shape language. It cannot compute a digest, cannot decode
+base64, and cannot say "this array is sorted" — so a document can satisfy every
+constraint in observations.schema.json and still be internally impossible:
+
+    delta kind=created with a non-null before_sha256
+    files.after = []            (the harness observed nothing at all)
+    exit_status = 0 AND signal = 9
+    journal cursor = 999 with 0 states
+    stream sha256 unrelated to its own bytes_base64
+    invocation.env unsorted, or with the same name twice
+
+Every one of those validated before this pass existed. Two of them defeat the
+schema's *stated* purpose: the `files` block exists so that "this changed
+nothing" is an assertion rather than an omission, and an empty `after` array
+recreates exactly the "a harness that never looked" ambiguity it was built to
+prevent; the `role` enum exists so the store and the archive are provably both
+observed, and nothing asserted it.
+
+The ordering checks matter most for a port that is not Ruby. Go randomizes map
+iteration deliberately: a runner that forgets one `sort.Slice` emits documents
+that validate cleanly and then mismatch on every array field, differently on
+every run. Caught here, it is one line of output naming the array; caught at
+comparison, it looks like a real behavioral difference.
+
+Each check names the invariant it enforces, so a failure reads as a statement
+about the record rather than as a stack trace.
 """
 
 import argparse
+import base64
+import binascii
+import hashlib
 import json
 import pathlib
 import sys
@@ -37,10 +70,282 @@ def load(path: pathlib.Path):
                 yield f"{path}:{i}", json.loads(line)
 
 
+# --- the consistency pass ---------------------------------------------------
+
+
+def decode(value):
+    """Strict base64 decode, or None when the string is not strict base64.
+
+    Strict, not permissive: `contentEncoding` promises the bytes round-trip
+    through `Base64.strict_encode64`/`encoding/base64.StdEncoding`, and a
+    tolerant decoder would accept the very payloads the promise excludes.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        return base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+
+
+def sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+class Checker:
+    def __init__(self, record):
+        self.r = record
+        self.problems = []
+
+    def fail(self, where, message):
+        self.problems.append(f"{where}: {message}")
+
+    # -- helpers ------------------------------------------------------------
+
+    def sorted_unique(self, where, items, key):
+        """Sortedness and uniqueness for one array.
+
+        Both halves are the schema's own stated rationale for using arrays
+        instead of maps, and neither is expressible in JSON Schema (uniqueItems
+        covers whole-item duplicates only, not a repeated key with a different
+        value).
+        """
+        keys = [key(item) for item in items]
+        if keys != sorted(keys):
+            self.fail(where, f"not sorted by its documented key (got {keys[:6]}…)")
+        dupes = sorted({k for k in keys if keys.count(k) > 1})
+        if dupes:
+            self.fail(where, f"duplicate key(s) {dupes}")
+
+    def check_bytes(self, where, obj, byte_field, digest_field="sha256",
+                    size_field="size_bytes", truncated=False):
+        """A base64 payload against the digest and size recorded beside it."""
+        raw = obj.get(byte_field)
+        if raw is None:
+            return None
+        data = decode(raw)
+        if data is None:
+            self.fail(f"{where}.{byte_field}", "is not strict base64")
+            return None
+        if truncated:
+            # The digest and size describe the WHOLE stream; the payload is a
+            # prefix. All that can be checked is that the prefix is not longer
+            # than the whole.
+            if size_field and isinstance(obj.get(size_field), int) and len(data) > obj[size_field]:
+                self.fail(where, f"truncated payload ({len(data)} bytes) exceeds {size_field}")
+            return data
+        if digest_field and obj.get(digest_field) is not None and sha(data) != obj[digest_field]:
+            self.fail(f"{where}.{digest_field}", "does not digest its own bytes_base64")
+        if size_field and obj.get(size_field) is not None and len(data) != obj[size_field]:
+            self.fail(f"{where}.{size_field}",
+                      f"is {obj[size_field]} but the payload decodes to {len(data)} bytes")
+        return data
+
+    # -- 1..10 --------------------------------------------------------------
+
+    def run(self):
+        self.check_streams()
+        self.check_process()
+        self.check_files()
+        self.check_journal()
+        self.check_revisions()
+        self.check_invocation()
+        self.check_surface()
+        return self.problems
+
+    def check_streams(self):
+        """1, 2: stream digest, size, and valid_utf8 against the real bytes."""
+        for name in ("stdout", "stderr"):
+            s = self.r.get("process", {}).get(name)
+            if not isinstance(s, dict):
+                continue
+            where = f"process.{name}"
+            truncated = s.get("truncated_at_bytes") is not None
+            data = self.check_bytes(where, s, "bytes_base64", truncated=truncated)
+            if data is None or truncated:
+                continue
+            try:
+                data.decode("utf-8")
+                really_utf8 = True
+            except UnicodeDecodeError:
+                really_utf8 = False
+            if s.get("valid_utf8") is not None and s["valid_utf8"] != really_utf8:
+                self.fail(f"{where}.valid_utf8",
+                          f"claims {s['valid_utf8']} but the bytes are "
+                          f"{'valid' if really_utf8 else 'invalid'} UTF-8")
+            if s.get("text") is not None and really_utf8 and s["text"] != data.decode("utf-8"):
+                self.fail(f"{where}.text", "does not match the decoded bytes")
+            if s.get("text") is not None and not really_utf8:
+                self.fail(f"{where}.text", "is set for a stream that is not valid UTF-8")
+
+        stdin = self.r.get("invocation", {}).get("stdin")
+        if isinstance(stdin, dict):
+            data = self.check_bytes("invocation.stdin", stdin, "bytes_base64",
+                                    digest_field=None, size_field=None)
+            if data is not None and stdin.get("provided") is False and data:
+                self.fail("invocation.stdin", "provided=false with a non-empty payload")
+
+    def check_process(self):
+        """6: exit_status XOR signal, and timed_out coherence."""
+        p = self.r.get("process", {})
+        exit_status, signal = p.get("exit_status"), p.get("signal")
+        if (exit_status is None) == (signal is None):
+            self.fail("process", "exactly one of exit_status and signal must be non-null "
+                                 f"(got exit_status={exit_status!r}, signal={signal!r})")
+        if p.get("timed_out") and exit_status == 0:
+            self.fail("process", "timed_out=true with exit_status=0")
+
+    def check_files(self):
+        f = self.r.get("files", {})
+        before, after = f.get("before"), f.get("after")
+        for name, states in (("before", before), ("after", after)):
+            if not isinstance(states, list):
+                continue
+            where = f"files.{name}"
+            # 5: the store must be observed. Stated as "at least one" rather
+            # than "exactly one" because a store reached through a symlink is
+            # legitimately two paths with role "store" — the link the user names
+            # and the file the bytes are in — and both must be recorded.
+            if not states:
+                self.fail(where, "is empty: an observation with no observed files cannot "
+                                 "distinguish 'nothing changed' from 'the harness never looked'")
+            elif not any(s.get("role") == "store" for s in states):
+                self.fail(where, "records no file with role \"store\"; the schema's guarantee "
+                                 "that the store was observed does not hold")
+            self.sorted_unique(where, states, lambda s: s.get("path"))
+            for s in states:
+                self.check_file_state(f"{where}[{s.get('path')!r}]", s)
+
+        if isinstance(f.get("deltas"), list):
+            self.sorted_unique("files.deltas", f["deltas"], lambda d: d.get("path"))
+            self.check_deltas(f["deltas"], before, after)
+            # A mutation that changed nothing on disk is a contradiction: the
+            # store revision is derived from the store bytes.
+            if f.get("mutated") and not f["deltas"]:
+                self.fail("files", "mutated=true with an empty deltas list")
+
+    def check_file_state(self, where, s):
+        """4: present / symlink_target / sha256, and the embedded content."""
+        present, link = s.get("present"), s.get("symlink_target")
+        fields = ("sha256", "size_bytes", "mode")
+        if present and link is None:
+            missing = [k for k in fields if s.get(k) is None]
+            if missing:
+                self.fail(where, f"present=true and not a symlink, but {', '.join(missing)} is null")
+        if present and link is not None and s.get("sha256") is not None:
+            self.fail(where, "is a symlink and also carries a content digest")
+        if not present:
+            set_fields = [k for k in fields + ("content_base64", "symlink_target")
+                          if s.get(k) is not None]
+            if set_fields:
+                self.fail(where, f"present=false but {', '.join(set_fields)} is set")
+        self.check_bytes(where, s, "content_base64")
+        if s.get("role") not in ("store", "archive") and s.get("line_count") is not None:
+            self.fail(where, "line_count is recorded for a file that is neither store nor archive")
+
+    def check_deltas(self, deltas, before, after):
+        """3: kind against before/after nullability, and against the two trees."""
+        by_path = {}
+        for name, states in (("before", before), ("after", after)):
+            for s in states or []:
+                by_path.setdefault(s.get("path"), {})[name] = s
+        for d in deltas:
+            where = f"files.deltas[{d.get('path')!r}]"
+            kind, b, a = d.get("kind"), d.get("before_sha256"), d.get("after_sha256")
+            seen = by_path.get(d.get("path"), {})
+            if kind == "created":
+                if b is not None:
+                    self.fail(where, "kind=created with a non-null before_sha256")
+                if "before" in seen and seen["before"].get("present"):
+                    self.fail(where, "kind=created but the path is present in files.before")
+            elif kind == "deleted":
+                if a is not None:
+                    self.fail(where, "kind=deleted with a non-null after_sha256")
+                if "after" in seen and seen["after"].get("present"):
+                    self.fail(where, "kind=deleted but the path is present in files.after")
+            elif kind == "modified":
+                # A symlink has no digest, so "modified" for one is recorded
+                # with both digests null; only reject two equal non-null ones.
+                if b is not None and a is not None and b == a:
+                    self.fail(where, "kind=modified but before_sha256 == after_sha256")
+
+    def check_journal(self):
+        """7, 8: presence against contents, cursor range, blob accounting."""
+        j = self.r.get("journal", {})
+        states = j.get("states") or []
+        if j.get("present") is False:
+            if j.get("cursor") is not None:
+                self.fail("journal", "present=false with a non-null cursor")
+            if states:
+                self.fail("journal", f"present=false with {len(states)} state(s)")
+            if j.get("blob_count") not in (None, 0):
+                self.fail("journal", f"present=false with blob_count={j['blob_count']}")
+        cursor = j.get("cursor")
+        if cursor is not None and not (0 <= cursor < len(states)):
+            self.fail("journal", f"cursor={cursor} is outside the {len(states)} recorded state(s)")
+        blobs = j.get("blob_sha256")
+        if isinstance(blobs, list):
+            if blobs != sorted(blobs):
+                self.fail("journal.blob_sha256", "is not sorted")
+            if len(set(blobs)) != len(blobs):
+                self.fail("journal.blob_sha256", "contains duplicates")
+            if j.get("blob_count") is not None and j["blob_count"] != len(blobs):
+                self.fail("journal", f"blob_count={j['blob_count']} but "
+                                     f"{len(blobs)} blob digest(s) are recorded")
+        index = j.get("index")
+        if isinstance(index, dict):
+            self.check_file_state("journal.index", index)
+            if j.get("present") is not None and bool(j["present"]) != bool(index.get("present")):
+                self.fail("journal", "present disagrees with journal.index.present")
+
+    def check_revisions(self):
+        rev = self.r.get("revisions", {})
+        if isinstance(rev.get("resources"), list):
+            self.sorted_unique("revisions.resources", rev["resources"], lambda x: x.get("id"))
+        touched = rev.get("touched_ids")
+        if isinstance(touched, list):
+            if touched != sorted(touched):
+                self.fail("revisions.touched_ids", "is not sorted")
+            if len(set(touched)) != len(touched):
+                self.fail("revisions.touched_ids", "contains duplicates")
+
+    def check_invocation(self):
+        """10, for the two arrays whose ordering the pins depend on."""
+        inv = self.r.get("invocation", {})
+        if isinstance(inv.get("env"), list):
+            self.sorted_unique("invocation.env", inv["env"], lambda e: e.get("name"))
+        if isinstance(inv.get("pins"), list):
+            self.sorted_unique("invocation.pins", inv["pins"], lambda p: p.get("name"))
+            for pin in inv["pins"]:
+                if pin.get("applied") and pin.get("value") is None:
+                    self.fail("invocation.pins", f"{pin.get('name')!r} is applied with a null value")
+
+    def check_surface(self):
+        """9: the CLI surface carries no HTTP evidence."""
+        inv = self.r.get("invocation", {})
+        if inv.get("surface") != "cli":
+            for exchange in self.r.get("http") or []:
+                for half in ("request", "response"):
+                    part = exchange.get(half, {})
+                    self.check_bytes(f"http.{half}", part, "body_base64",
+                                     digest_field=None, size_field=None)
+                    headers = part.get("headers")
+                    if isinstance(headers, list):
+                        self.sorted_unique(f"http.{half}.headers", headers,
+                                           lambda h: h.get("name"))
+            return
+        if self.r.get("http"):
+            self.fail("http", "is non-empty for a cli observation")
+        if self.r.get("revisions", {}).get("http_etag") is not None:
+            self.fail("revisions.http_etag", "is set for a cli observation")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("path", help="directory of <case_id>.json, or a JSONL file")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--schema-only", action="store_true",
+                    help="skip the consistency pass (shape checking only)")
     args = ap.parse_args()
 
     try:
@@ -57,6 +362,7 @@ def main() -> int:
     validator = Draft202012Validator(json.loads(SCHEMA.read_text()))
     total = 0
     bad = 0
+    incoherent = 0
     for name, record in load(path):
         total += 1
         errors = sorted(validator.iter_errors(record), key=lambda e: list(e.absolute_path))
@@ -66,13 +372,24 @@ def main() -> int:
             for e in errors[:5]:
                 where = "$" + "".join(f"[{p!r}]" for p in e.absolute_path)
                 print(f"  {where}: {e.message}", file=sys.stderr)
+            continue
+        if args.schema_only:
+            continue
+        problems = Checker(record).run()
+        if problems:
+            incoherent += 1
+            print(f"INCOHERENT {name}", file=sys.stderr)
+            for p in problems[:8]:
+                print(f"  {p}", file=sys.stderr)
 
     if not total:
         print(f"validate: no observations found in {path}", file=sys.stderr)
         return 2
     if not args.quiet:
-        print(f"validate: {total - bad}/{total} observations valid against {SCHEMA.name}")
-    return 1 if bad else 0
+        good = total - bad - incoherent
+        suffix = "" if args.schema_only else " and internally coherent"
+        print(f"validate: {good}/{total} observations valid against {SCHEMA.name}{suffix}")
+    return 1 if (bad or incoherent) else 0
 
 
 if __name__ == "__main__":

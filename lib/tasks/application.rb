@@ -132,17 +132,27 @@ module Tasks
   # objects. Adapter concerns such as ARGV, terminal rendering, Rack request
   # objects, and HTTP status mapping deliberately remain outside this class.
   class Application
-    def initialize(store_factory:, temporal_context_factory: nil, host_context: nil)
+    # `delegation_key_source` is an injectable mint for the per-operation
+    # coalescing key below — the same shape as Store's `id_source`, and injected
+    # for the same reason: the token is persisted into journal bytes, so an
+    # unpinnable one makes two identical runs produce different journals. The
+    # default is the value it always had.
+    def initialize(store_factory:, temporal_context_factory: nil, host_context: nil,
+                   delegation_key_source: nil)
       unless store_factory.respond_to?(:call)
         raise ArgumentError, "store_factory must respond to #call"
       end
       unless host_context.nil? || (host_context.is_a?(String) && host_context.match?(/\A@\S+\z/))
         raise ArgumentError, "host_context must be an @context or nil"
       end
+      unless delegation_key_source.nil? || delegation_key_source.respond_to?(:call)
+        raise ArgumentError, "delegation_key_source must respond to #call"
+      end
 
       @store_factory = store_factory
       @temporal_context_factory = temporal_context_factory
       @host_context = host_context&.dup&.freeze
+      @delegation_key_source = delegation_key_source
       freeze
     end
 
@@ -564,7 +574,7 @@ module Tasks
       local_today = temporal.local_date
       # One key per operation, so only this operation's own follow-up write
       # merges into its journal entry — never an unrelated neighbouring edit.
-      coalesce_key = "delegation-#{command.action}-#{SecureRandom.hex(8)}"
+      coalesce_key = "delegation-#{command.action}-#{mint_delegation_key}"
       result = invoke_delegation(command, coalesce_key: coalesce_key)
       unless result.ok?
         return delegation_outcome(result, command, temporal: temporal, today: local_today)
@@ -575,6 +585,12 @@ module Tasks
                                        context: context, today: local_today)
       delegation_outcome(result, command, follow_up: follow_up,
                          temporal: temporal, today: local_today)
+    end
+
+    # Sixteen hex characters, from the injected mint when there is one. The
+    # unpinned default is exactly the call this replaced.
+    def mint_delegation_key
+      @delegation_key_source ? @delegation_key_source.call.to_s : SecureRandom.hex(8)
     end
 
     # The marker the write replaced, which decides whether a state side effect

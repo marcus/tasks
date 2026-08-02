@@ -1,0 +1,22 @@
+{"type":"meta","version":2}
+{"type":"section","id":"5eca0001","title":"Recurring"}
+{"type":"task","id":"5eca0002","parent":"5eca0001","state":"TODO","title":"Every other Monday standup","scheduled":"2026-06-01","recur":"2w:mon"}
+{"type":"task","id":"5eca0003","parent":"5eca0001","state":"TODO","title":"Weekly review, one hop from the stamp","scheduled":"2026-06-01","recur":"+w:mon"}
+{"type":"task","id":"5eca0004","parent":"5eca0001","state":"TODO","title":"Three-weekly pair, one hop","scheduled":"2026-06-01","recur":"+3w:tue,thu"}
+{"type":"task","id":"5eca0005","parent":"5eca0001","state":"TODO","title":"Weekday check of the build board","scheduled":"2026-06-01","recur":"w:mon,tue,wed,thu,fri"}
+{"type":"task","id":"5eca0006","parent":"5eca0001","state":"TODO","title":"Weekend watering","scheduled":"2026-06-01","recur":"w:sat,sun"}
+{"type":"task","id":"5eca0007","parent":"5eca0001","state":"TODO","title":"Close the books on the last day","scheduled":"2026-06-01","recur":"m:last"}
+{"type":"task","id":"5eca0008","parent":"5eca0001","state":"TODO","title":"Second Tuesday planning slot","scheduled":"2026-06-01","recur":"m:2tue"}
+{"type":"task","id":"5eca0009","parent":"5eca0001","state":"TODO","title":"Twice-monthly invoice run","scheduled":"2026-06-01","recur":"m:1,15"}
+{"type":"task","id":"5eca000a","parent":"5eca0001","state":"TODO","title":"Last Friday retrospective","scheduled":"2026-06-01","recur":"m:lastfri"}
+{"type":"task","id":"5eca000b","parent":"5eca0001","state":"TODO","title":"Fifth Friday every other month","scheduled":"2026-06-01","recur":"2m:5fri"}
+{"type":"task","id":"5eca000c","parent":"5eca0001","state":"TODO","title":"First and last day of the month","scheduled":"2026-06-01","recur":"m:1,last"}
+{"type":"task","id":"5eca000d","parent":"5eca0001","state":"TODO","title":"Month-end rule that clamps in short months","scheduled":"2026-06-01","recur":"m:31"}
+{"type":"task","id":"5eca000e","parent":"5eca0001","state":"TODO","title":"Third Thursday of November","scheduled":"2026-06-01","recur":"y:11:3thu"}
+{"type":"task","id":"5eca000f","parent":"5eca0001","state":"TODO","title":"Fifth Friday of February, every other year","scheduled":"2026-06-01","recur":"2y:02:5fri"}
+{"type":"task","id":"5eca0010","parent":"5eca0001","state":"TODO","title":"Yearly on a fixed date, one hop","scheduled":"2026-06-01","recur":"+y:12-25"}
+{"type":"task","id":"5eca0011","parent":"5eca0001","state":"TODO","title":"Leap-day anchor","scheduled":"2026-06-01","recur":"y:02-29"}
+{"type":"task","id":"5eca0012","parent":"5eca0001","state":"TODO","title":"Multi-digit interval from completion","scheduled":"2026-06-01","recur":".+10d"}
+{"type":"task","id":"5eca0013","parent":"5eca0001","state":"TODO","title":"Multi-digit catch-up interval","scheduled":"2026-06-01","recur":"++12w"}
+{"type":"task","id":"5eca0014","parent":"5eca0001","state":"TODO","title":"Yearly interval anchored on the stamp","scheduled":"2026-06-01","recur":"+1y"}
+{"type":"task","id":"5eca0015","parent":"5eca0001","state":"TODO","title":"Quarterly from completion","scheduled":"2026-06-01","recur":".+3m"}

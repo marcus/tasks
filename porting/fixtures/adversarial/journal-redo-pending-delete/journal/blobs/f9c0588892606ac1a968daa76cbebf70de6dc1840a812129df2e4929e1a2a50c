@@ -1,0 +1,7 @@
+{"type":"meta","version":2}
+{"type":"section","id":"d06807d7","title":"Inbox"}
+{"type":"task","id":"effebb47","parent":"d06807d7","state":"INBOX","title":"Book the venue for the autumn workshop","tags":["@calls"],"body":"Captured [2026-08-02].","updated":"2026-08-02T01:55:18Z#fixture"}
+{"type":"task","id":"a2e66c43","parent":"d06807d7","state":"INBOX","title":"Rebuild the potting bench","tags":["@home"],"body":"Captured [2026-08-02].","updated":"2026-08-02T01:55:18Z#fixture"}
+{"type":"task","id":"65815e21","parent":"a2e66c43","state":"INBOX","title":"Cut the frame to length","tags":["@home"],"body":"Captured [2026-08-02].","updated":"2026-08-02T01:55:18Z#fixture"}
+{"type":"task","id":"2726174a","parent":"a2e66c43","state":"INBOX","title":"Sand and oil the top","tags":["@home"],"body":"Captured [2026-08-02].","updated":"2026-08-02T01:55:18Z#fixture"}
+{"type":"task","id":"0f209fcb","parent":"d06807d7","state":"INBOX","title":"File the quarterly expenses","tags":["@computer"],"body":"Captured [2026-08-02].","updated":"2026-08-02T01:55:19Z#fixture"}

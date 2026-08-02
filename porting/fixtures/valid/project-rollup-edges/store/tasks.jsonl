@@ -1,0 +1,24 @@
+{"type":"meta","version":2}
+{"type":"section","id":"9c000001","title":"Inbox"}
+{"type":"task","id":"9c000002","parent":"9c000001","state":"INBOX","title":"Uncaptured note"}
+{"type":"section","id":"9c000010","title":"Projects"}
+{"type":"section","id":"9c000011","parent":"9c000010","title":"Project with mixed holds"}
+{"type":"task","id":"9c000012","parent":"9c000011","state":"NEXT","title":"Open next action","scheduled":"2026-06-20"}
+{"type":"task","id":"9c000013","parent":"9c000011","state":"TODO","title":"Own hold in a mixed project","tags":["defer"]}
+{"type":"task","id":"9c000014","parent":"9c000011","state":"TODO","title":"Held parent","tags":["defer"]}
+{"type":"task","id":"9c000015","parent":"9c000014","state":"TODO","title":"Held by inheritance"}
+{"type":"section","id":"9c000020","parent":"9c000010","title":"Project held end to end"}
+{"type":"task","id":"9c000021","parent":"9c000020","state":"TODO","title":"Own hold over the whole project","tags":["defer"]}
+{"type":"task","id":"9c000022","parent":"9c000021","state":"TODO","title":"Inherited hold"}
+{"type":"section","id":"9c000030","parent":"9c000010","title":"Empty project"}
+{"type":"section","id":"9c000040","parent":"9c000010","title":"Done-only project"}
+{"type":"task","id":"9c000041","parent":"9c000040","state":"DONE","title":"Finished work","closed":"2026-06-01"}
+{"type":"section","id":"9c000050","parent":"9c000010","title":"Project with a sub-section"}
+{"type":"section","id":"9c000051","parent":"9c000050","title":"Sub-section inside the project"}
+{"type":"task","id":"9c000052","parent":"9c000051","state":"TODO","title":"Rolls up into the parent project"}
+{"type":"task","id":"9c000053","parent":"9c000051","state":"TODO","title":"Held inside the sub-section","tags":["defer"]}
+{"type":"section","id":"9c000060","title":"Area with open work"}
+{"type":"task","id":"9c000061","parent":"9c000060","state":"NEXT","title":"Open area task"}
+{"type":"task","id":"9c000062","parent":"9c000060","state":"TODO","title":"Held area task","tags":["defer"]}
+{"type":"section","id":"9c000070","title":"Area whose only open work is held"}
+{"type":"task","id":"9c000071","parent":"9c000070","state":"TODO","title":"Own hold in an area","tags":["defer"]}

@@ -1,0 +1,4 @@
+{"type":"meta","version":2}
+{"type":"section","id":"25000001","title":"Inbox"}
+{"type":"section","id":"25000002","title":"Next Actions"}
+{"type":"task","id":"25000003","parent":"25000002","state":"NEXT","title":"Confirm the symlinked store is followed","tags":["@computer"]}

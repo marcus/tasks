@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "org": "{{ORG_PATH}}",
+  "cursor": 7,
+  "states": [
+    {
+      "org_sha": null,
+      "archive_sha": null
+    },
+    {
+      "org_sha": "bc4aca6bc362aae8c3d4467b38bab6548cb18ccdc855d98e4bdbefe50afc1073",
+      "archive_sha": null,
+      "label": "capture: Book the venue for the autumn workshop"
+    },
+    {
+      "org_sha": "30b67f28891f671887942350ca373278434c87e549420d02a7cb3e25aea2b87a",
+      "archive_sha": null,
+      "label": "capture: Rebuild the potting bench"
+    },
+    {
+      "org_sha": "a2dea898e81f8bb671c16db163aa63b9ad6647afbf0133c498bcb26dc90ec99d",
+      "archive_sha": null,
+      "label": "capture: Cut the frame to length"
+    },
+    {
+      "org_sha": "2a4d64466dc1b28d904d295d58c4b4455d664ab202793d8378ed8cb57c7d6f14",
+      "archive_sha": null,
+      "label": "capture: Sand and oil the top"
+    },
+    {
+      "org_sha": "f9c0588892606ac1a968daa76cbebf70de6dc1840a812129df2e4929e1a2a50c",
+      "archive_sha": null,
+      "label": "capture: File the quarterly expenses"
+    },
+    {
+      "org_sha": "2a4d64466dc1b28d904d295d58c4b4455d664ab202793d8378ed8cb57c7d6f14",
+      "archive_sha": null,
+      "label": "delete: File the quarterly expenses"
+    },
+    {
+      "org_sha": "bc4aca6bc362aae8c3d4467b38bab6548cb18ccdc855d98e4bdbefe50afc1073",
+      "archive_sha": null,
+      "label": "delete 3 tasks: Rebuild the potting bench"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+{"type":"meta","version":2}
+{"type":"section","id":"d06807d7","title":"Inbox"}
+{"type":"task","id":"effebb47","parent":"d06807d7","state":"INBOX","title":"Book the venue for the autumn workshop","tags":["@calls"],"body":"Captured [2026-08-02].","updated":"2026-08-02T01:55:18Z#fixture"}
+{"type":"task","id":"a2e66c43","parent":"d06807d7","state":"INBOX","title":"Rebuild the potting bench","tags":["@home"],"body":"Captured [2026-08-02].","updated":"2026-08-02T01:55:18Z#fixture"}

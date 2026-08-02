@@ -41,7 +41,8 @@ OptionParser.new do |o|
   o.on("-h", "--help") { puts o; exit 0 }
 end.parse!
 
-def sh(*cmd) = `#{cmd.map { |c| "'#{c}'" }.join(" ")} 2>/dev/null`.strip
+def sh_raw(*cmd) = `#{cmd.map { |c| "'#{c}'" }.join(" ")} 2>/dev/null`
+def sh(*cmd) = sh_raw(*cmd).strip
 
 # A digest over every file in a tree, defined the same way the runner defines
 # fixture.root_sha256: path, NUL, file digest, LF, in ascending path order. It
@@ -59,7 +60,13 @@ end
 
 def provenance(options, out_dir)
   head = sh("git", "-C", REPO, "rev-parse", "HEAD")
-  dirty = sh("git", "-C", REPO, "status", "--porcelain").lines.map { |l| l[3..].to_s.strip }.reject(&:empty?)
+  # sh_raw, not sh: `git status --porcelain` puts the status in the first two
+  # columns and a worktree-only modification leaves column 1 blank, so stripping
+  # the output would eat the first line's leading space and shift its path by
+  # one character. That silently dropped `bin/tasks` out of the dirty set below —
+  # the one claim a reader of this file relies on.
+  dirty = sh_raw("git", "-C", REPO, "status", "--porcelain")
+          .lines.map { |l| l[3..].to_s.strip }.reject(&:empty?)
   # The only claim that matters for a baseline's trustworthiness: was the code
   # under test modified? porting/compare and porting/evidence are the harness,
   # not the implementation, and are not on bin/tasks' load path.

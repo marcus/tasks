@@ -32,6 +32,11 @@ porting/fixtures/<class>/<name>/
     archive.jsonl     present only where the fixture exercises the archive
     .tasks.jsonl.lock          present only in the stale-lock fixture
     .tasks.jsonl.<pid>.<tid>.tmp   present only in the leftover-temp fixture
+    tasks.real.jsonl           present only in the symlinked-store fixture, where
+                               tasks.jsonl is a symlink pointing at it
+  perms.json          optional. Modes git cannot record (a 0600 bit). The runner
+                      applies these to the copy after copying and BEFORE
+                      observing the pristine tree
   journal/            optional. Undo history — see "Installing a journal"
   <extra>.json        optional fixture-specific data (e.g. captured revision
                       tokens). The fixture's README says what it is
@@ -72,7 +77,15 @@ migration path. `Check` itself was not changed by that work, and no recorded
 
 ### Installing a journal
 
-Three `adversarial/` fixtures ship a `journal/`. The undo journal is **not** part
+Five `adversarial/` fixtures ship a `journal/`. Three of them (`journal-cursor-behind-store`,
+`journal-missing-blob`, `journal-foreign-org`) record a *refusal*; the two added
+with the delete work (`journal-undo-redo-delete`, `journal-redo-pending-delete`)
+are the only journal fixtures whose recorded outcome is a *success*, and the only
+proof that a replay against a Ruby-written journal round-trips byte-exactly. Both
+also carry `org_sha: null` at state 0 — the history predates the file — which is a
+shape no earlier journal fixture has and is not a defect.
+
+The undo journal is **not** part
 of the store directory: it lives under `$XDG_STATE_HOME/tasks/journal/<key>/`,
 where `<key>` is `sha256(realpath(tasks.jsonl))[0,16]`, and its `index.json`
 records the canonical org path as well. Both depend on where the copy landed, so
@@ -106,8 +119,18 @@ where it differs.
 | `small-gtd` | the ordinary healthy store: sections, projects, all open states | 0 — `ok — 8 tasks parsed` |
 | `deep-nesting` | nine levels past `max_depth`; ancestor-stack unwinding | 0 — `ok — 6 tasks parsed` |
 | `full-field-matrix` | every field: all states, times, `fold`, all six recur forms, lead, delegation, unicode | 0 — `ok — 32 tasks parsed` |
+| `delegation-closed-provenance` | a delegation retained on a DONE and on a CANCELLED task; provenance, not routing | 0 — `ok — 2 tasks parsed` |
+| `temporal-both-times` | one record with `scheduled` + `scheduled_time` + `deadline` + `deadline_time`; the KEY_ORDER interleave | 0 — `ok — 1 task parsed` |
+| `interleaved-tags` | owned/unowned tag interleaving in both directions — the corpus's only plain tag between two contexts *and* context between two plain tags | 0 — `ok — 4 tasks parsed` |
+| `recur-calendar-grammar` | twenty canonical recur forms, one per record — the accept side beyond the six simplest | 0 — `ok — 20 tasks parsed` |
+| `symlinked-store` | `tasks.jsonl` is a relative symlink; the write follows it and the link survives | 0 — `ok — 1 task parsed` |
+| `restricted-mode-store` | mode 0600 carried across an atomic replace; needs `perms.json` applied at copy time | 0 — `ok — 1 task parsed` |
 | `archive-pair` | the two-file store; `archived` stamps; `--all-files` | 0 — `ok — 2 tasks parsed` (`--all-files`: 0 — `6 records`) |
+| `id-pin-collision` | the first three pinned mint ids already taken, two archived and one live | 0 — `ok — 1 task parsed` (`--all-files`: 0 — `3 records`) |
 | `scale-ordering` | 461 records, 50 sibling groups — ordering bugs at size | 0 — `ok — 400 tasks parsed` |
+| `link-corpus` | every link construct: org labelled/unlabelled, punctuation and paren trimming, dedupe order, classification and host fallback | 0 — `ok — 18 tasks parsed` |
+| `deferred-tags` | the `defer` hold: own, inherited two levels, and closed/proposed/archived carriers; the scope-dependent `--deferred` | 0 — `ok — 9 tasks parsed` (`--all-files`: 0 — `10 records`) |
+| `project-rollup-edges` | `held_count` over own and inherited holds, plus the empty / done-only / sub-section / held-only-area exclusion edges | 0 — `ok — 13 tasks parsed` |
 
 ### `compat/`
 
@@ -126,11 +149,16 @@ where it differs.
 | `missing-meta` | no schema header | 1 |
 | `meta-out-of-place` | header on line 2, plus a second header later | 1 — 3 errors |
 | `duplicate-ids` | the id uniqueness invariant; error on the *last* line | 1 |
+| `missing-id-single` | one task record with no `id`; the only store `ensure_id!` can repair | 1 — 1 error |
+| `missing-ids-many` | three records with no `id`; the repair writes and is rolled back | 1 — 3 errors |
 | `dangling-parent` | a parent that resolves to nothing; error containment | 1 |
 | `wrong-key-order` | canonical key order violated | **0 — passes. See finding below** |
 | `broken-dfs-order` | a subtree that is not a contiguous run of lines | 1 |
 | `bad-utf8` | invalid encoding; the line-0 whole-file convention | 1 |
+| `bom-prefixed` | a leading UTF-8 BOM; `valid/single-task` plus three bytes | **0 — passes, BOM stripped on read and not re-emitted** |
 | `wrong-types` | 21 records, one violation each; the checker must not raise | 1 — 24 errors |
+| `temporal-unknown-nested-key` | an unknown key inside `scheduled_time` / `deadline_time` — the drop half of `NESTED_FORWARD_COMPAT` | 1 — 2 errors |
+| `recur-non-canonical` | twenty-seven rejected recur values, one per record; the grammar's reject side | 1 — 27 errors |
 | `non-record-lines` | blank line, JSON array, bare JSON string | 1 — 3 errors |
 | `cross-file-duplicate-id` | one id in both files — invisible without `--all-files` | 0 (`--all-files`: 1) |
 | `duplicate-open-titles` | the warnings channel: a hazard that still exits 0 | 0 with 1 warning |
@@ -152,11 +180,14 @@ non-`check` behavior is in each fixture's README.
 | `journal-cursor-behind-store` | an out-of-band edit after the journal tip; undo refuses | 0 |
 | `journal-missing-blob` | a journal blob deleted; undo degrades to "nothing to undo" | 0 |
 | `journal-foreign-org` | a journal keyed to someone else's store; history discarded | 0 |
+| `journal-undo-redo-delete` | the undo/redo happy path: a Ruby-written journal at the tip, byte-exact undo and redo of a leaf and a cascade delete | 0 — `ok — 1 task parsed` |
+| `journal-redo-pending-delete` | the only cursor-behind-tip index; redo reachable, and the redo tail truncated by any new mutation | 0 — `ok — 4 tasks parsed` |
 
 ## What was found while building this
 
-Three things worth carrying into the port. Each is recorded, not fixed — no Ruby
-code was changed for this corpus.
+Ten things worth carrying into the port. Each is recorded, not fixed — no Ruby
+code was changed for this corpus. Findings 4–10 came from the 2026-08-01 fixture
+push; several are filed in td as well, and the id is named where one exists.
 
 **1. `tasks check` does not validate key order.** `docs/conventions.md` names
 canonical key order an invariant the tooling relies on, but `Check` works on
@@ -175,6 +206,80 @@ runs the preflight `Check` that refuses.
 `delegation.status`, not on identity, so a worker retrying after a crash gets
 `conflict: already claimed by <itself>`. Idempotent retry is the design a port is
 likely to reach for; this corpus pins the actual behavior.
+
+**4. The temporal drop path is unreachable, and the store wedges** (td-2addce).
+`Format::NESTED_FORWARD_COMPAT` leaves `scheduled_time` / `deadline_time` out
+deliberately, its comment calling the next write the repair path for an unknown
+key there. That write never happens: `Check.check_temporal_time` makes the unknown
+key a hard error, and every mutation preflights `Check` over the whole file, so
+`malformed/temporal-unknown-nested-key` refuses every mutation with `task file is
+already invalid` and writes nothing. Reads still work. The only exit is a hand
+edit. A port must reproduce the refusal, not the comment.
+
+**5. Link dedupe prefers the *first* occurrence, not the labelled one**
+(td-794997). `links-read`'s behavior sentence and `Links.extract`'s own comment
+("first occurrence wins — it has the best label") both read as "the labelled form
+survives". It survives only when it appears first in the text: the org pass
+records offsets, the list is sorted by offset, and `uniq(&:url)` keeps the
+earliest. `valid/link-corpus` carries the same url in both orders — `11c00009`
+keeps its label, `11c00010` loses it — so an implementation of "prefer the
+labelled one" passes one and fails the other. The manifest's behavior sentence has
+been corrected to match the fixture; the Ruby comment has not, and which way to
+reconcile is open.
+
+**6. A held-only area is unreachable through the project surface.**
+`TaskQueries#projects` lists every section child of `Projects` unconditionally,
+but lists a top-level area only when its `open_count` is positive — and open work
+that is on hold does not count towards `open_count`. So an area whose only open
+task is deferred vanishes from `tasks projects`, and `tasks project show` on it
+answers `no match` with exit 2, while a *project* in the identical state is still
+listed. `valid/project-rollup-edges` carries both halves. Related: `held_count`
+appears in `--json` only, never in the human rendering, so the human surface
+cannot distinguish a project holding three parked tasks from one holding none.
+
+**7. `--deferred` means two different things depending on scope.** At the default
+open scope it is a pure availability test — identical to `--unavailable`, and it
+lists a task that is merely dated in the future and carries no `defer` tag. At any
+non-open scope (`--done`, `--archived`, `--proposed`, `--all`) it drops to the
+literal `defer` tag test, where it returns exactly what `--someday` returns.
+`--someday` is the only spelling that always means the tag, and it reports own
+holds only — an inherited hold is an availability fact, not a tag fact.
+`valid/deferred-tags` records every arm.
+
+**8. Sidecar names follow the symlink; the lock's mode does not follow the
+store's.** In `valid/symlinked-store` both the temp sibling and the lock resolve to
+the *target* name (`.tasks.real.jsonl.lock`), by two independent code paths —
+`Atomic.resolve` and `Journal.canonical`. In `valid/restricted-mode-store` the
+store keeps 0600 across the replace but `Store#with_lock` opens the lock with a
+literal `0o644`, so a deliberately private store acquires a world-readable
+sidecar. The sidecar is empty, so only its existence and mtime are exposed;
+recorded, not fixed.
+
+**9. `Check` discards every reason `Recur` produced.** `Recur.parse_result`
+returns richly specific rejections — `day of month must be 1–31: "32"`, `unknown
+day of week: "xyz"`, the whole explanation of why `.+` cannot prefix a calendar
+schedule. `check_task` calls the boolean `Recur.cookie?` instead, so all
+twenty-seven rows of `malformed/recur-non-canonical` collapse into one message
+that varies only by the inspected value. On the `check` surface a port therefore
+owes `cookie?` fidelity only — accept/reject agreement and the one fixed message —
+and reproducing Ruby's per-reason wording there would be a divergence, not an
+improvement. Those messages *are* user-visible on the input surface (`tasks
+recur`, `Recur.explain`), which is a different slice: one grammar, validated
+twice, at two levels of diagnosis.
+
+**10. Id repair is a record repair, not a store repair** (td-d6ed92).
+`Store#ensure_id!` is reachable from exactly one command (`tasks id`) — never from
+a read, never as a side effect of another write. It mints one id and then
+`with_history`'s post-write `Check` validates the *whole file*, so it converges
+only when that record was the file's last remaining error. A store with two id-less
+records has no command that can fix it; the only exit is a hand edit. Recorded, not
+fixed. Two further details a port must match: the repaired record gains an
+`updated` stamp, because `stamp_changed_tasks!` indexes by id and the just-minted
+id is in no original, so a repair is indistinguishable from a new task; and `tasks
+capture` on such a store reports `could not capture (no "Inbox" section found?)` as
+its first stderr line even when an Inbox is present — the true cause is the second
+line, from the `store_invalid?` branch, and the misleading first line is contract
+now.
 
 ## Why there is a `compat/` class and no `legacy/` one
 
@@ -213,12 +318,24 @@ tasks, which is why their ids are randomly generated and their `updated` stamps
 carry a real timestamp — the stamps' device slug is the injected `fixture`, not a
 hostname.
 
-Verified over the committed tree:
+**What the table below counts** (td-fc2c99). Every row is a count over
+**fixture payload bytes only**: `porting/fixtures/*/*/store/**`,
+`porting/fixtures/*/*/journal/**`, `perms.json`, and any other fixture-specific
+data file. It deliberately excludes all prose — this README, and every per-fixture
+`README.md` — because prose has to *name* the strings it is asserting about, and
+counting it makes the table count itself. Two rows were literally false over the
+whole committed tree for exactly that reason (`email addresses` matched its own
+row; `marcus / aerie / vorwaller` matched four times in this file's prose,
+including the row asserting no matches). The scope is now stated rather than the
+numbers fudged. The prose exclusion is not a loophole: prose is reviewed, and the
+only real name it contains is Marcus's own, by his choice, in a repository he owns.
+
+Verified over the committed tree, payload bytes only:
 
 | Check | Result |
 |---|---|
-| email addresses | one: `sam.rivera@example.com` (invented; reserved domain) |
-| URLs | two, both on the reserved `example.invalid` TLD |
+| email addresses | one distinct address, `sam.rivera@example.com` (invented; reserved domain), used twice — in `valid/full-field-matrix` and `valid/delegation-closed-provenance` |
+| URLs | all on `example.invalid` or `example.com` (both reserved). `valid/link-corpus` holds ~30 of them, one per link construct; no real host appears anywhere in the corpus, which is why the built-in `SYSTEMS` rows keyed to apex domains are proved by unit test rather than by a fixture |
 | absolute home paths | one: `/home/someone-else/tasks/tasks.jsonl`, the deliberate wrong path in `journal-foreign-org` |
 | `updated` device slugs | `fixture` only — no hostname leaked |
 | `marcus` / `aerie` / `vorwaller`, case-insensitive | no matches |

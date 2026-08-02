@@ -1,0 +1,1175 @@
+{
+  "stream": "SLICING",
+  "issues": [
+    "td-ee475f",
+    "td-8df1bb"
+  ],
+  "generated": "2026-08-01",
+  "campaigns": [
+    {
+      "id": "campaign-7-archive-merge",
+      "campaign": 7,
+      "title": "Archive and Git merge behavior",
+      "plan_phase": "Phase 4 (archive, merge, and cross-history convergence)",
+      "summary": "Playbook item 7. The archive sweep and its two-file transaction, section archiving, the `tasks archive` surface, and the record-aware three-way merge git invokes as a merge driver. Sequenced after campaign 4 because every slice here either moves records the mutation slices wrote or merges two histories of them. Recurrence-aware selection stays with campaign 5 and the journal half of undo stays with campaign 6; both are named in the slices' oracle_gaps rather than assumed."
+    }
+  ],
+  "campaign_updates": [
+    {
+      "campaign": 4,
+      "field_changes": {
+        "title": "Mutations: basic, placement, lifecycle, projects, delegation, and proposals",
+        "summary": "Playbook item 4 in full: create, changeset apply, update stamp, placement and delete on a real canonical writer, then the lifecycle half — state transitions and the DONE cascade, section and project mutation, delegation assignment and claim/release, proposal decisions, and the mutation `--json` envelopes. Seeded as one campaign because the playbook's item 4 is one item and campaign numbers are the playbook's; the second half was previously recorded only as a sentence saying it was not sliced, which `progress` could not count. Temporal verbs stay with campaign 5, revisions and the journal with campaign 6, archiving with campaign 7."
+      },
+      "reason": "The record's summary asserted that lifecycle, proposals and delegation were 'the second half and are not sliced yet'. This proposal slices them, so that sentence becomes false on the day WIRING applies it. The title change follows the same fact."
+    }
+  ],
+  "slices": [
+    {
+      "id": "open-command",
+      "campaign": 3,
+      "behavior": "`tasks open`: selecting the link to act on, listing and refusing when a task has several, failing cleanly when it has none, launching through the TASKS_OPENER seam, and the `open --json` object naming the link opened",
+      "target_package": "internal/cli",
+      "depends_on": [
+        "links-read",
+        "cli-read-json-envelopes"
+      ],
+      "risk": "low",
+      "source_paths": [
+        "lib/tasks/opener.rb",
+        "bin/tasks"
+      ],
+      "source_sha": "5eba4b0d2a52b58bd0ccdc1af7f853f8f37b0a15",
+      "ruby_tests": [
+        "test/test_links_feature.rb#test_cli_open_print_single_link",
+        "test/test_links_feature.rb#test_cli_open_multiple_links_lists_and_asks",
+        "test/test_links_feature.rb#test_cli_open_no_links_fails_cleanly",
+        "test/test_links_feature.rb#test_cli_open_launches_via_tasks_opener",
+        "test/test_cli_json_coverage.rb#test_open_json_reports_the_link_it_acted_on"
+      ],
+      "oracle_gaps": [
+        "links-read deliberately excluded these five tests ('`open` is a separate command with a launcher seam'), and no slice picked them up; `lib/tasks/opener.rb` was in no slice's source_paths. This slice is that pickup, and it is also the `open --json` third of td-ee475f's mutation-envelope gap — the only one of the four envelope families named there that is a read.",
+        "The TUI's `o` binding shares Opener and is campaign 12; test/test_links_feature.rb's three TUI cases stay excluded exactly as links-read left them.",
+        "`Opener` shell-splits TASKS_OPENER and otherwise picks a platform launcher (`open`, `xdg-open`, `start`). Only the TASKS_OPENER path is tested, because that is how the suite observes an open without a browser. The platform default has no oracle at all on any platform, which is why this slice is platform-scoped rather than `any`.",
+        "Nothing asserts what `open` does when the resolved link is not a URL a launcher accepts, or when the launcher exits non-zero. Both are reachable from a real store and both need capture before translating."
+      ],
+      "fixtures": [
+        "porting/fixtures/valid/link-corpus",
+        "porting/fixtures/valid/full-field-matrix"
+      ],
+      "fixtures_todo": null,
+      "observable_outputs": [
+        "the launcher command line executed",
+        "stdout link listing",
+        "`open --json` object",
+        "exit status"
+      ],
+      "platforms": [
+        "darwin",
+        "linux",
+        "windows"
+      ],
+      "perf_budget": null,
+      "status": "not_started",
+      "evidence": "porting/evidence/open-command/",
+      "intentional_differences": [],
+      "notes": "The fixture wiring assumes porting/fixtures/valid/link-corpus lands under that name from the FIXTURES stream in this same push; it is the only fixture in the corpus with a task carrying several links, which is what the multi-link branch needs. If that directory is renamed, this becomes a fixtures_todo for exactly that shape. The launcher is an adapter seam in the port, not a syscall: a Go implementation that execs directly cannot be conformance-tested."
+    },
+    {
+      "id": "cli-schema-gate-reads",
+      "campaign": 3,
+      "behavior": "The version gate on the read half of the CLI: every lenient read refuses a store declaring an unimplemented version, matching the strict paths and the API, while `check`, `config` and `help` still answer",
+      "target_package": "internal/cli",
+      "depends_on": [
+        "check-meta-and-ids",
+        "cli-read-json-envelopes",
+        "open-command"
+      ],
+      "risk": "high",
+      "source_paths": [
+        "bin/tasks",
+        "lib/tasks/cli_commands.rb"
+      ],
+      "source_sha": "5eba4b0d2a52b58bd0ccdc1af7f853f8f37b0a15",
+      "ruby_tests": [
+        "test/test_schema_gate_reads.rb#test_every_lenient_read_refuses_a_past_version_store",
+        "test/test_schema_gate_reads.rb#test_every_lenient_read_refuses_a_future_structurally_different_store",
+        "test/test_schema_gate_reads.rb#test_a_structurally_different_store_no_longer_reads_as_an_empty_one",
+        "test/test_schema_gate_reads.rb#test_read_refusals_match_the_strict_paths_and_the_api",
+        "test/test_schema_gate_reads.rb#test_check_and_config_and_help_still_answer_for_an_unreadable_store",
+        "test/test_schema_gate_reads.rb#test_a_past_version_archive_is_reported_by_the_check_the_refusal_names",
+        "test/test_schema_gate_reads.rb#test_default_check_still_ignores_structural_archive_errors",
+        "test/test_schema_gate_reads.rb#test_a_current_store_reads_normally",
+        "test/test_schema_gate_reads.rb#test_an_empty_store_is_not_a_version_refusal",
+        "test/test_schema_gate_reads.rb#test_the_gate_consults_only_the_version_header"
+      ],
+      "oracle_gaps": [
+        "Found by the SLICING survey, not by td-ee475f: test/test_schema_gate_reads.rb is a ten-test file in which NO test was claimed by any slice, and it is the CLI half of the rule six other slices' oracle_gaps call contract. The failure it exists to prevent is the worst read failure in the system and the least visible: a v3 store that renamed `title`/`state`/`tags` made `tasks list` print 'No matching tasks.' and `list --json` print `[]`, exit 0 — byte-identical to the answer for an empty store. An agent driving the CLI would conclude the user had nothing to do. A port that carries the store's gate but not the CLI's reproduces that bug exactly.",
+        "The gate is declared as data (`CliCommands::Command#gated?`, GATE_EXEMPT) with three exemptions, each carrying a written reason: `check` (it is the diagnostic the refusal sends you to), `config` (it reports where the store is, never what it contains) and `help` (it reads the registry). Porting the refusal without porting the exemptions produces a store nobody can diagnose — the refusal names `check`, and `check` would refuse too.",
+        "test/test_cli_json_coverage.rb#test_every_json_command_answers_in_json_when_it_refuses_an_unsupported_store and #test_gate_exempt_commands_still_answer_for_an_unsupported_store are the registry-wide statement of the same rule and are claimed by no slice: they run every entry in the RECIPES table, which includes verbs from campaigns 5, 6, 8 and 10. They belong to the final CLI-parity slice recorded in the SLICING survey.",
+        "The gate 'consults only the version header' — a store whose records are malformed but whose meta says 2 is NOT a version refusal, and is reported by the ordinary read path instead. Conflating the two is the expected defect and turns every parse error into a version error.",
+        "Schema-v1 migration and org-mode are out of scope (Marcus, 2026-08-01, no schema-v1 users exist) and td-09f7de removed them from Ruby, so this slice's oracle no longer carries them: there is no `tasks migrate`, no `migrate_schema!`, and no `migration_required` status. What remains IS contract and must be ported: any declared `meta` version other than 2 is refused identically, older or newer — `Check` reports `unsupported meta version <n> (expected 2)`, `Store#unsupported_schema?` gates mutations on both files, refusals carry the `:unsupported_schema` status and write nothing, and the API answers `503 unsupported_schema_version`. Omitting that gate is a data-corruption bug, not a skipped dead branch. Org-mode remains out of scope entirely."
+      ],
+      "fixtures": [
+        "porting/fixtures/compat/future-schema-v3",
+        "porting/fixtures/valid/small-gtd",
+        "porting/fixtures/valid/empty-store",
+        "porting/fixtures/valid/archive-pair",
+        "porting/fixtures/malformed/truncated-final-line"
+      ],
+      "fixtures_todo": "compat/future-schema-v3 declares version 3 but keeps v2 field names, so it proves the refusal without proving what the refusal PREVENTS. The case that matters is structurally different: a version-3 store whose records rename title/state/tags, which under a missing gate reads as an empty store rather than as an error. Also missing: a v1 store (declared version 1, v2-shaped records) and a v2 live file beside a v1 archive, which is the pair that proves the gate reads both files.",
+      "observable_outputs": [
+        "stderr refusal text naming the version",
+        "exit status",
+        "stdout emptiness (nothing printed for a refused store)",
+        "which commands still answer"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "perf_budget": null,
+      "status": "not_started",
+      "evidence": "porting/evidence/cli-schema-gate-reads/",
+      "intentional_differences": [],
+      "notes": "Read this slice as the sibling of check-meta-and-ids: the same rule at the CLI boundary rather than at the checker. It is tiered high although it writes nothing, on the same reasoning as format-canonical-emit — the failure is silent, plausible, and destroys an agent's picture of the user's work."
+    },
+    {
+      "id": "state-transitions",
+      "campaign": 4,
+      "behavior": "Lifecycle state transitions on one task: the state vocabulary, the closed stamp added on entering DONE/CANCELLED and removed on reopening, one stamp preserved across DONE to CANCELLED, and the defer tag stripped on close",
+      "target_package": "internal/store",
+      "depends_on": [
+        "changeset-apply-basic"
+      ],
+      "risk": "high",
+      "source_paths": [
+        "lib/tasks/store.rb"
+      ],
+      "source_sha": "5eba4b0d2a52b58bd0ccdc1af7f853f8f37b0a15",
+      "ruby_tests": [
+        "test/test_store.rb#test_complete_marks_done_with_closed_stamp",
+        "test/test_store.rb#test_complete_rejects_stale_line_numbers",
+        "test/test_store.rb#test_complete_non_recurring_still_closes",
+        "test/test_store.rb#test_completing_a_deferred_task_strips_the_defer_tag",
+        "test/test_store.rb#test_cancelling_a_deferred_task_via_set_state_strips_the_defer_tag",
+        "test/test_cli_mutations.rb#test_set_state_open_to_open",
+        "test/test_cli_mutations.rb#test_set_state_entering_done_adds_closed_stamp",
+        "test/test_cli_mutations.rb#test_set_state_cancelled_adds_closed_stamp",
+        "test/test_cli_mutations.rb#test_set_state_leaving_done_removes_closed_stamp",
+        "test/test_cli_mutations.rb#test_set_state_done_to_cancelled_keeps_single_closed_stamp",
+        "test/test_cli_mutations.rb#test_set_state_rejects_stale_line_numbers",
+        "test/test_cli_mutations.rb#test_set_state_is_undoable"
+      ],
+      "oracle_gaps": [
+        "Recurrence-aware completion is excluded and is campaign 5: `patch_state` short-circuits into `advance_recurrence_records` whenever the record carries a recur cookie, and test/test_store.rb's fourteen test_complete_recurring_* / test_timed_* / test_catch_up_* cases prove that branch. This slice proves the non-recurring transition only, and a port that implements `patch_state` without the recur guard will pass every test here while silently closing a recurring task.",
+        "The DONE cascade over open descendants is state-cascade-close's, not this slice's, even though `close_open_descendants` is called from the same method. This slice claims only the single-record transition; test_set_state_cancelled_does_not_cascade and its siblings belong there.",
+        "The PROPOSED guards in `patch_state` (remove recurrence before PROPOSED, undelegate before PROPOSED, no accepted descendants, approve before completing, accepted work cannot remain under a proposed task) are proposal-decisions'.",
+        "`settle_delegation_on_close` — closing a task drops a ready marker and retains a claim as provenance — is delegation-claim-release's; this slice's fixtures carry no delegation on a task it closes.",
+        "test/test_cli_mutations.rb#test_set_state_is_undoable is the only undo assertion claimed here and it reaches the journal, which is campaign 6. It is kept because byte-restoration is what proves the transition wrote exactly one semantic change; characterization must capture the before/after bytes directly rather than relying on a journal port that does not exist yet.",
+        "Schema-v1 migration and org-mode are out of scope (Marcus, 2026-08-01, no schema-v1 users exist) and td-09f7de removed them from Ruby, so this slice's oracle no longer carries them: there is no `tasks migrate`, no `migrate_schema!`, and no `migration_required` status. What remains IS contract and must be ported: any declared `meta` version other than 2 is refused identically, older or newer — `Check` reports `unsupported meta version <n> (expected 2)`, `Store#unsupported_schema?` gates mutations on both files, refusals carry the `:unsupported_schema` status and write nothing, and the API answers `503 unsupported_schema_version`. Omitting that gate is a data-corruption bug, not a skipped dead branch. Org-mode remains out of scope entirely."
+      ],
+      "fixtures": [
+        "porting/fixtures/valid/small-gtd",
+        "porting/fixtures/valid/full-field-matrix"
+      ],
+      "fixtures_todo": "No fixture is a store whose records span the closed/open boundary in the shapes this slice turns on. Needed: (a) an open task carrying the `defer` tag, so the strip-on-close branch has a case (the corpus's `defer` gap is already recorded against four other slices); (b) a DONE task with an existing `closed` date older than today, which is the only input that distinguishes DONE→CANCELLED keeping the original stamp from re-stamping it; (c) a CANCELLED task, so reopening out of a non-DONE closed state is observable. full-field-matrix has all states but none of the three combinations.",
+      "observable_outputs": [
+        "tasks.jsonl bytes after the transition",
+        "`state` and `closed` fields",
+        "`tags` after a close",
+        "typed mutation result"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "perf_budget": null,
+      "status": "not_started",
+      "evidence": "porting/evidence/state-transitions/",
+      "intentional_differences": [],
+      "notes": "The two stamp rules are the expected defect and pull in opposite directions: entering a closed state sets `closed` only when it is absent (`||=`), while leaving DONE deletes it unconditionally. A port that writes today's date on every close loses the original completion date on DONE→CANCELLED."
+    },
+    {
+      "id": "state-cascade-close",
+      "campaign": 4,
+      "behavior": "Completing a parent closes every open descendant at all depths as one undoable write, CANCELLED does not cascade, and re-closing an already DONE parent does not re-cascade",
+      "target_package": "internal/store",
+      "depends_on": [
+        "state-transitions",
+        "tree-build"
+      ],
+      "risk": "high",
+      "source_paths": [
+        "lib/tasks/store.rb"
+      ],
+      "source_sha": "5eba4b0d2a52b58bd0ccdc1af7f853f8f37b0a15",
+      "ruby_tests": [
+        "test/test_store.rb#test_complete_cascades_open_descendants_at_all_depths",
+        "test/test_store.rb#test_complete_cascade_is_one_undo_step_restoring_bytes",
+        "test/test_store.rb#test_set_state_done_cascades",
+        "test/test_store.rb#test_set_state_cancelled_does_not_cascade",
+        "test/test_store.rb#test_reclose_of_done_parent_does_not_recascade",
+        "test/test_store.rb#test_cascade_works_on_a_six_deep_file",
+        "test/test_store.rb#test_set_state_waiting_parent_to_done_cascades"
+      ],
+      "oracle_gaps": [
+        "test/test_store.rb#test_complete_cascade_retires_recurring_descendant is excluded: retiring a recurring descendant rather than rolling it forward is recurrence behavior and lands with campaign 5. The consequence is that nothing here proves what the cascade does to a repeating child, which is the one descendant shape whose handling is not 'set DONE plus today'.",
+        "The delegation half of the cascade — test/test_delegation.rb#test_completing_a_parent_settles_its_cascaded_descendants — is claimed by delegation-claim-release, which owns marker settlement. Cascade and settlement are proved separately on purpose so neither slice has to be green before the other can be characterized.",
+        "test/test_store.rb#test_complete_cascade_is_one_undo_step_restoring_bytes reaches the journal (campaign 6). It stays because 'one step' is the cascade's defining property — a port that closes descendants in a loop of writes passes every other test here — and characterization must count writes at Store#save rather than count journal entries.",
+        "Schema-v1 migration and org-mode are out of scope (Marcus, 2026-08-01, no schema-v1 users exist) and td-09f7de removed them from Ruby, so this slice's oracle no longer carries them: there is no `tasks migrate`, no `migrate_schema!`, and no `migration_required` status. What remains IS contract and must be ported: any declared `meta` version other than 2 is refused identically, older or newer — `Check` reports `unsupported meta version <n> (expected 2)`, `Store#unsupported_schema?` gates mutations on both files, refusals carry the `:unsupported_schema` status and write nothing, and the API answers `503 unsupported_schema_version`. Omitting that gate is a data-corruption bug, not a skipped dead branch. Org-mode remains out of scope entirely."
+      ],
+      "fixtures": [
+        "porting/fixtures/valid/deep-nesting",
+        "porting/fixtures/valid/small-gtd"
+      ],
+      "fixtures_todo": "No fixture is a cascade corpus: the Ruby tests build their own (`with_cascade_store`) because the shape is specific. Needed: a project section holding an open parent task with open descendants at three or more depths, at least one already-DONE descendant (which must not be re-stamped), and a sibling subtree outside the target that must stay untouched. deep-nesting has the depth but every record in it is open and there is no closed descendant to prove the skip.",
+      "observable_outputs": [
+        "tasks.jsonl bytes after the cascade",
+        "the list of cascaded ids in the result summary",
+        "number of writes"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "perf_budget": null,
+      "status": "not_started",
+      "evidence": "porting/evidence/state-cascade-close/",
+      "intentional_differences": [],
+      "notes": "`close_open_descendants` walks the contiguous subtree, so the cascade's boundary is the DFS pre-order run, not the parent/child graph. A port that reparents by id lookup will cascade into records that are not in the subtree run when the file's order is broken — which is exactly the state check-tree-structure rejects but readers tolerate."
+    },
+    {
+      "id": "section-create-and-rename",
+      "campaign": 4,
+      "behavior": "Section and project creation and retitling: append at end of file or as last child, the Projects root bootstrapped in the same checked write, duplicate and blank title refusals, and id minting across live and archive",
+      "target_package": "internal/store",
+      "depends_on": [
+        "create-basic",
+        "id-minting",
+        "check-report-and-cli"
+      ],
+      "risk": "high",
+      "source_paths": [
+        "lib/tasks/store.rb",
+        "lib/tasks/application.rb"
+      ],
+      "source_sha": "5eba4b0d2a52b58bd0ccdc1af7f853f8f37b0a15",
+      "ruby_tests": [
+        "test/test_projects.rb#test_create_section_appends_a_top_level_list_at_end_of_file",
+        "test/test_projects.rb#test_create_section_inserts_as_last_child_past_a_nested_subtree",
+        "test/test_projects.rb#test_create_section_rejects_a_blank_title_and_a_missing_parent",
+        "test/test_projects.rb#test_rename_section_retitles_and_round_trips_through_undo",
+        "test/test_projects.rb#test_rename_section_rejects_blank_titles_and_missing_ids",
+        "test/test_projects.rb#test_application_create_project_files_under_the_existing_root",
+        "test/test_projects.rb#test_application_create_project_bootstraps_a_missing_root",
+        "test/test_projects.rb#test_application_create_project_rolls_back_root_and_child_as_one_transaction",
+        "test/test_projects.rb#test_application_create_project_rejects_blank_and_duplicate_titles",
+        "test/test_projects.rb#test_application_rename_project_maps_outcomes",
+        "test/test_projects.rb#test_project_mutations_map_post_write_rollbacks_to_store_invalid",
+        "test/test_schema_v2.rb#test_project_mutation_against_v1_is_refused_as_an_unsupported_schema"
+      ],
+      "oracle_gaps": [
+        "This slice closes half of td-8df1bb. test/test_schema_v2.rb#test_project_mutation_against_v1_is_refused_as_an_unsupported_schema was claimed by no slice before this pass, and six slices' oracle_gaps say the unsupported-schema gate IS contract: a port that gates `patch_task!` and leaves `create_project!` ungated writes v2 records into a v1 file. `Store#create_project!` runs `unsupported_schema_refusal` inside its own `with_lock` rather than through `with_history`, so it is a second, independent implementation of the gate and has to be ported as one.",
+        "`complete_project!` and `archive_project!` are not here: the first is project-complete-and-close, the second is archive-project in campaign 7. This slice covers only the two non-destructive section verbs plus creation.",
+        "The `project create` / `project rename` CLI surface (test/test_cli_projects.rb's eight project_create/project_rename cases) is cli-mutation-json-envelopes'. This slice stops at the Application boundary.",
+        "test/test_projects.rb#test_rename_section_retitles_and_round_trips_through_undo reaches the journal (campaign 6); the retitle half is this slice's and the undo half must be characterized as a byte comparison, not as a journal replay.",
+        "Schema-v1 migration and org-mode are out of scope (Marcus, 2026-08-01, no schema-v1 users exist) and td-09f7de removed them from Ruby, so this slice's oracle no longer carries them: there is no `tasks migrate`, no `migrate_schema!`, and no `migration_required` status. What remains IS contract and must be ported: any declared `meta` version other than 2 is refused identically, older or newer — `Check` reports `unsupported meta version <n> (expected 2)`, `Store#unsupported_schema?` gates mutations on both files, refusals carry the `:unsupported_schema` status and write nothing, and the API answers `503 unsupported_schema_version`. Omitting that gate is a data-corruption bug, not a skipped dead branch. Org-mode remains out of scope entirely."
+      ],
+      "fixtures": [
+        "porting/fixtures/valid/small-gtd",
+        "porting/fixtures/valid/empty-store",
+        "porting/fixtures/compat/future-schema-v3",
+        "porting/fixtures/valid/archive-pair"
+      ],
+      "fixtures_todo": "Two shapes have no corpus. (a) A store with no Projects root at all — the bootstrap branch that creates the root and the project in one write. small-gtd already has a Projects root, so every fixture run takes the else branch. (b) A store whose Projects root holds a project whose subtree ends in a nested sub-section, which is what makes 'insert as LAST child past a nested subtree' differ from 'append after the first child'. A v1 store for the schema-gate case can be materialized by the runner from future-schema-v3's shape (declared version 1 rather than 3) and does not need a committed fixture.",
+      "observable_outputs": [
+        "tasks.jsonl bytes after create/rename",
+        "minted section id",
+        "typed MutationResult status and field_errors",
+        "created_root flag in the result summary"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "perf_budget": null,
+      "status": "not_started",
+      "evidence": "porting/evidence/section-create-and-rename/",
+      "intentional_differences": [],
+      "notes": "`create_project!` is the only mutation in the store that can create two records in one transaction, and the reason is stated in the Ruby: a failed child insertion must not leave an orphan root plus a separate undo entry behind. Splitting it into two writes is the expected defect and is invisible on a store that already has a root."
+    },
+    {
+      "id": "project-complete-and-close",
+      "campaign": 4,
+      "behavior": "Completing a project section: every open descendant task closed with today's date across depth, a clean zero when nothing is open, and a typed miss when the id names no section",
+      "target_package": "internal/store",
+      "depends_on": [
+        "section-create-and-rename",
+        "state-cascade-close"
+      ],
+      "risk": "medium",
+      "source_paths": [
+        "lib/tasks/store.rb",
+        "lib/tasks/application.rb"
+      ],
+      "source_sha": "5eba4b0d2a52b58bd0ccdc1af7f853f8f37b0a15",
+      "ruby_tests": [
+        "test/test_projects.rb#test_complete_project_closes_open_descendants_dropping_defer_and_recur",
+        "test/test_projects.rb#test_complete_project_is_a_clean_zero_when_nothing_is_open",
+        "test/test_projects.rb#test_complete_project_reports_a_missing_section",
+        "test/test_projects.rb#test_application_complete_project_reports_closed_count"
+      ],
+      "oracle_gaps": [
+        "test/test_projects.rb#test_complete_project_closes_open_descendants_dropping_defer_and_recur also asserts that a recurring descendant is retired rather than rolled forward. Recurrence is campaign 5, so that assertion cannot pass at this position; it is kept because it is the only oracle for the verb's headline behavior, and characterization must capture the defer-drop and the close separately from the recur retirement.",
+        "The `project complete` CLI surface (test/test_cli_projects.rb#test_project_complete_closes_open_tasks_and_prints_headlines and its dry-run/json/synonym siblings) is cli-mutation-json-envelopes'.",
+        "A section is completed by closing its task descendants; the section record itself has no state and is not touched. Nothing in the Ruby suite asserts that directly — a port that stamped the section would pass every test here — so characterization must assert the section record is byte-identical after the sweep.",
+        "Schema-v1 migration and org-mode are out of scope (Marcus, 2026-08-01, no schema-v1 users exist) and td-09f7de removed them from Ruby, so this slice's oracle no longer carries them: there is no `tasks migrate`, no `migrate_schema!`, and no `migration_required` status. What remains IS contract and must be ported: any declared `meta` version other than 2 is refused identically, older or newer — `Check` reports `unsupported meta version <n> (expected 2)`, `Store#unsupported_schema?` gates mutations on both files, refusals carry the `:unsupported_schema` status and write nothing, and the API answers `503 unsupported_schema_version`. Omitting that gate is a data-corruption bug, not a skipped dead branch. Org-mode remains out of scope entirely."
+      ],
+      "fixtures": [
+        "porting/fixtures/valid/small-gtd"
+      ],
+      "fixtures_todo": "Needs a project section holding a mix the count can distinguish: open tasks at two depths, one already-DONE task (excluded from the count), one deferred task (closed, and the `defer` tag dropped), and an empty sibling project that must return zero. small-gtd's projects are all-open and shallow, so the returned count equals the descendant count on every fixture in the corpus and a port that ignored state entirely would still match.",
+      "observable_outputs": [
+        "tasks.jsonl bytes after the project close",
+        "the count of tasks closed",
+        "false / typed miss for an unknown section id"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "perf_budget": null,
+      "status": "not_started",
+      "evidence": "porting/evidence/project-complete-and-close/",
+      "intentional_differences": [],
+      "notes": "The return value is a count, not a boolean, and `0` is success while `false` is a miss — a distinction Go's zero value erases if the port returns an int. That is the expected defect here."
+    },
+    {
+      "id": "delegation-assign",
+      "campaign": 4,
+      "behavior": "Assigning and revoking a delegation: the ready marker written whole, agent versus human kinds, eligibility refusals on proposed/closed/archived tasks, typed input refusals, and undelegate's single-record repair scope",
+      "target_package": "internal/store",
+      "depends_on": [
+        "changeset-apply-basic",
+        "delegation-record-shape"
+      ],
+      "risk": "high",
+      "source_paths": [
+        "lib/tasks/store.rb",
+        "lib/tasks/delegation_command.rb"
+      ],
+      "source_sha": "5eba4b0d2a52b58bd0ccdc1af7f853f8f37b0a15",
+      "ruby_tests": [
+        "test/test_delegation.rb#test_human_delegation_records_an_email_assignee",
+        "test/test_delegation.rb#test_delegation_refuses_proposed_closed_and_archived_tasks",
+        "test/test_delegation.rb#test_invalid_delegation_input_is_a_typed_refusal",
+        "test/test_delegation.rb#test_replacing_the_kind_replaces_the_whole_marker",
+        "test/test_delegation.rb#test_delegating_to_an_at_prefixed_word_is_refused_and_leaves_the_state_alone",
+        "test/test_delegation.rb#test_store_refuses_to_write_a_marker_the_schema_would_reject",
+        "test/test_delegation.rb#test_an_unknown_nested_key_is_not_an_error_and_survives_a_write",
+        "test/test_store.rb#test_undelegate_repairs_an_invalid_marker_on_its_own_record",
+        "test/test_store.rb#test_undelegate_refuses_when_another_record_is_also_invalid"
+      ],
+      "oracle_gaps": [
+        "Claim, release and work-ref are delegation-claim-release's. This slice covers only the owner-side verbs `delegate_task!` and `undelegate_task!`; every test here operates on a marker in the `ready` state or on no marker at all.",
+        "test/test_delegation.rb#test_delegation_is_revision_aware_and_undoable and #test_idempotent_repeats_do_not_burn_an_undo_slot are excluded: expected-revision checking is campaign 6, and the second is claimed by delegation-claim-release where the claim path makes the repeat observable.",
+        "delegation-record-shape already owns the schema (FIELD, KEY_ORDER, canonical `at`, the unknown-key set) and this slice owns writing it. The overlap is deliberate and the boundary is the store: a rule that can be checked on a hash belongs there, a rule that needs a file belongs here.",
+        "Nothing in the suite proves that an undelegate on a task with no marker is a no-op that writes no bytes — every undelegate test starts from a marker. That is the branch a port is most likely to get wrong (writing an unchanged file and burning history), so characterization must add it.",
+        "Schema-v1 migration and org-mode are out of scope (Marcus, 2026-08-01, no schema-v1 users exist) and td-09f7de removed them from Ruby, so this slice's oracle no longer carries them: there is no `tasks migrate`, no `migrate_schema!`, and no `migration_required` status. What remains IS contract and must be ported: any declared `meta` version other than 2 is refused identically, older or newer — `Check` reports `unsupported meta version <n> (expected 2)`, `Store#unsupported_schema?` gates mutations on both files, refusals carry the `:unsupported_schema` status and write nothing, and the API answers `503 unsupported_schema_version`. Omitting that gate is a data-corruption bug, not a skipped dead branch. Org-mode remains out of scope entirely."
+      ],
+      "fixtures": [
+        "porting/fixtures/valid/full-field-matrix",
+        "porting/fixtures/compat/forward-compat-unknown-keys",
+        "porting/fixtures/malformed/wrong-types"
+      ],
+      "fixtures_todo": "The corpus has delegation markers but no store shaped for the refusal side of this slice: needed are a PROPOSED task, a DONE task, and an archived task in one store, so the three eligibility refusals can be driven against a single file, plus a store carrying an invalid marker on a record OTHER than the target — the input that separates undelegate's own-record repair from a whole-file repair. malformed/wrong-types holds an invalid delegation but among 23 other violations, so it proves the diagnostic rather than the repair scope.",
+      "observable_outputs": [
+        "the delegation object in tasks.jsonl bytes",
+        "typed refusal status and message",
+        "tasks.jsonl unchanged after a refusal"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "perf_budget": null,
+      "status": "not_started",
+      "evidence": "porting/evidence/delegation-assign/",
+      "intentional_differences": [],
+      "notes": "`delegation_mutation!` writes the marker as one object; there is no field-level path into it. The repair scope is the subtle rule: `undelegate` may fix an invalid marker on the record it targets, and must refuse when any other record in the file is invalid."
+    },
+    {
+      "id": "delegation-claim-release",
+      "campaign": 4,
+      "behavior": "Claim, release and work-ref: claim as a compare-and-set with exactly one winner, release restricted to the holding worker unless the owner forces it, owner revocation defeating a stale worker, work-ref bounds, and marker settlement when a task closes",
+      "target_package": "internal/store",
+      "depends_on": [
+        "delegation-assign",
+        "state-cascade-close"
+      ],
+      "risk": "high",
+      "source_paths": [
+        "lib/tasks/store.rb",
+        "lib/tasks/delegation_command.rb"
+      ],
+      "source_sha": "5eba4b0d2a52b58bd0ccdc1af7f853f8f37b0a15",
+      "ruby_tests": [
+        "test/test_delegation.rb#test_agent_delegation_claim_work_ref_and_release_round_trip",
+        "test/test_delegation.rb#test_claim_is_a_compare_and_set_with_one_winner",
+        "test/test_delegation.rb#test_concurrent_claims_across_stores_leave_exactly_one_holder",
+        "test/test_delegation.rb#test_claim_refuses_undelegated_and_human_delegated_tasks",
+        "test/test_delegation.rb#test_release_requires_the_matching_worker_unless_the_owner_forces_it",
+        "test/test_delegation.rb#test_owner_revocation_defeats_a_stale_worker",
+        "test/test_delegation.rb#test_work_ref_is_owner_writable_and_worker_writable_only_while_the_claim_matches",
+        "test/test_delegation.rb#test_work_ref_refuses_blank_and_multiline_references",
+        "test/test_delegation.rb#test_work_ref_is_bounded_so_one_paste_cannot_own_a_jsonl_line",
+        "test/test_delegation.rb#test_mode_updates_while_ready_and_refuses_while_claimed",
+        "test/test_delegation.rb#test_close_clears_a_ready_marker_and_retains_a_claim_as_provenance",
+        "test/test_delegation.rb#test_completing_a_parent_settles_its_cascaded_descendants",
+        "test/test_delegation.rb#test_a_control_character_worker_id_never_reaches_the_store",
+        "test/test_delegation.rb#test_idempotent_repeats_do_not_burn_an_undo_slot"
+      ],
+      "oracle_gaps": [
+        "test/test_delegation.rb#test_concurrent_claims_across_stores_leave_exactly_one_holder proves the race across two Store objects over one file, which is a locking property and campaign 6 owns locking. It stays because 'exactly one holder' is the whole point of a compare-and-set claim; characterization must record that the proof depends on the lock and re-run it once campaign 6 lands.",
+        "test/test_delegation.rb#test_delegation_is_revision_aware_and_undoable is excluded — expected-revision checking is campaign 6.",
+        "test/test_delegation.rb#test_archive_sweep_carries_the_marker_verbatim is claimed by archive-sweep (campaign 7), which owns the sweep; the marker's survival is a property of the sweep's serialization, not of the claim.",
+        "Two tests here reach verbs owned elsewhere and are kept deliberately: #test_close_clears_a_ready_marker_and_retains_a_claim_as_provenance and #test_completing_a_parent_settles_its_cascaded_descendants both drive the close path that state-transitions and state-cascade-close own. `settle_delegation_on_close` is this slice's rule — the close is only how it is triggered — and state-cascade-close is a declared dependency so both are reachable at this position.",
+        "Schema-v1 migration and org-mode are out of scope (Marcus, 2026-08-01, no schema-v1 users exist) and td-09f7de removed them from Ruby, so this slice's oracle no longer carries them: there is no `tasks migrate`, no `migrate_schema!`, and no `migration_required` status. What remains IS contract and must be ported: any declared `meta` version other than 2 is refused identically, older or newer — `Check` reports `unsupported meta version <n> (expected 2)`, `Store#unsupported_schema?` gates mutations on both files, refusals carry the `:unsupported_schema` status and write nothing, and the API answers `503 unsupported_schema_version`. Omitting that gate is a data-corruption bug, not a skipped dead branch. Org-mode remains out of scope entirely."
+      ],
+      "fixtures": [
+        "porting/fixtures/adversarial/conflicting-claim",
+        "porting/fixtures/adversarial/same-owner-retry",
+        "porting/fixtures/valid/full-field-matrix"
+      ],
+      "fixtures_todo": "The two adversarial fixtures cover the lost race and the same-owner retry, which is the hard half. Missing: a claimed task that also carries a work_ref (so the worker-writable-while-holding rule has an input), a human-delegated task (claim must refuse it), and a claimed task in a DONE state — the provenance shape whose absence is already recorded against delegation-record-shape. The work-ref bound needs no fixture: it is a length rule over an argument.",
+      "observable_outputs": [
+        "the delegation object's kind/state/assignee/worker_id/at/work_ref in tasks.jsonl bytes",
+        "typed refusal status",
+        "history depth after a repeated claim"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "perf_budget": null,
+      "status": "not_started",
+      "evidence": "porting/evidence/delegation-claim-release/",
+      "intentional_differences": [],
+      "notes": "Claim is the only compare-and-set in the store and the only place two processes race for one field. The expected defect is a port that reads, decides, and writes without holding the lock across all three — it passes every single-process test in this list."
+    },
+    {
+      "id": "proposal-decisions",
+      "campaign": 4,
+      "behavior": "Proposals: creating an inert PROPOSED task, approving and rejecting as one checked undoable write with repeatable notes, and the guards that keep accepted work and proposed work from interleaving",
+      "target_package": "internal/store",
+      "depends_on": [
+        "create-basic",
+        "state-transitions",
+        "delegation-assign"
+      ],
+      "risk": "high",
+      "source_paths": [
+        "lib/tasks/store.rb",
+        "lib/tasks/proposal_decision.rb"
+      ],
+      "source_sha": "5eba4b0d2a52b58bd0ccdc1af7f853f8f37b0a15",
+      "ruby_tests": [
+        "test/test_proposals.rb#test_create_and_explicit_scope_keep_proposal_out_of_accepted_work",
+        "test/test_proposals.rb#test_approve_and_reject_are_checked_atomic_and_undoable",
+        "test/test_proposals.rb#test_reject_appends_repeatable_notes_in_the_same_write",
+        "test/test_proposals.rb#test_decision_refuses_non_proposals_stale_revisions_and_proposal_trees",
+        "test/test_proposals.rb#test_accepted_work_cannot_be_moved_or_reopened_beneath_a_proposal",
+        "test/test_proposals.rb#test_accepted_parent_cannot_become_proposed_while_accepted_descendants_remain",
+        "test/test_proposals.rb#test_proposals_cannot_recur_complete_or_archive_as_live_descendants",
+        "test/test_delegation.rb#test_a_delegated_task_cannot_be_turned_back_into_a_proposal"
+      ],
+      "oracle_gaps": [
+        "test/test_proposals.rb#test_decision_refuses_non_proposals_stale_revisions_and_proposal_trees asserts the stale-revision refusal alongside the two in-scope ones. Expected-revision checking is campaign 6, so that third assertion cannot pass here; the test is kept because it is the only oracle for the non-proposal and proposal-tree refusals, and characterization must drive those two with a nil expected revision.",
+        "test/test_proposals.rb#test_proposals_cannot_recur_complete_or_archive_as_live_descendants reaches three verbs this slice does not own: recurrence (campaign 5), the DONE transition (state-transitions, a declared dependency) and `archive_project!` (archive-project, campaign 7). It is kept because the guards themselves live in `patch_state` and are this slice's; the archive third of it cannot pass until campaign 7 lands, and characterization must capture the recur and archive refusals separately at their own level.",
+        "test/test_proposals.rb#test_project_archive_never_sweeps_an_undecided_proposal_even_when_forced is claimed by archive-project: it is a rule about what the sweep selects, not about how a decision is made.",
+        "The `propose` / `approve` / `reject` CLI surface (test/test_cli_mutations.rb#test_cli_propose_creates_inert_task_with_note_and_explicit_list_scope and its four siblings) is cli-mutation-json-envelopes'.",
+        "Schema-v1 migration and org-mode are out of scope (Marcus, 2026-08-01, no schema-v1 users exist) and td-09f7de removed them from Ruby, so this slice's oracle no longer carries them: there is no `tasks migrate`, no `migrate_schema!`, and no `migration_required` status. What remains IS contract and must be ported: any declared `meta` version other than 2 is refused identically, older or newer — `Check` reports `unsupported meta version <n> (expected 2)`, `Store#unsupported_schema?` gates mutations on both files, refusals carry the `:unsupported_schema` status and write nothing, and the API answers `503 unsupported_schema_version`. Omitting that gate is a data-corruption bug, not a skipped dead branch. Org-mode remains out of scope entirely."
+      ],
+      "fixtures": [
+        "porting/fixtures/valid/small-gtd"
+      ],
+      "fixtures_todo": "No fixture carries a PROPOSED task at all — the string appears nowhere under porting/fixtures/ — so every guard in this slice is unreachable against the corpus and `Item#proposed?` returns false for all 716 records. Needed: a store with an undecided proposal at top level, a proposal with an accepted (non-proposed) child (the state the accepted-descendants guard refuses), an accepted task nested under a proposal (the reopen/move guard), and a proposal carrying a delegation marker (which check-tree-structure already refuses, so it must be built as an invalid-store case rather than a valid one).",
+      "observable_outputs": [
+        "state field and body notes in tasks.jsonl bytes",
+        "typed decision result",
+        "which refusal message a doubly-invalid decision reports"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "perf_budget": null,
+      "status": "not_started",
+      "evidence": "porting/evidence/proposal-decisions/",
+      "intentional_differences": [],
+      "notes": "The guards are ordered inside `patch_state` and the order is observable, exactly as in task-placement: a task that is both recurring and delegated reports the recurrence refusal first. Reordering the checks is a behavior change even when every input still fails."
+    },
+    {
+      "id": "cli-mutation-json-envelopes",
+      "campaign": 4,
+      "behavior": "The mutation CLI surface: the `{touched: [...]}` envelope and its per-row resource, the `{error, action, message}` refusal object, exit statuses, and `--dry-run` as a hypothetical that writes nothing",
+      "target_package": "internal/cli",
+      "depends_on": [
+        "cli-read-json-envelopes",
+        "state-transitions",
+        "delegation-claim-release",
+        "proposal-decisions",
+        "section-create-and-rename",
+        "project-complete-and-close",
+        "delete-task",
+        "task-placement"
+      ],
+      "risk": "medium",
+      "source_paths": [
+        "bin/tasks",
+        "lib/tasks/cli_commands.rb",
+        "lib/tasks/patch_result.rb",
+        "lib/tasks/application.rb"
+      ],
+      "source_sha": "5eba4b0d2a52b58bd0ccdc1af7f853f8f37b0a15",
+      "ruby_tests": [
+        "test/test_cli_mutations.rb#test_patch_style_cli_commands_route_through_the_application_boundary",
+        "test/test_cli_mutations.rb#test_cli_mutation_adapter_has_no_legacy_store_calls",
+        "test/test_cli_mutations.rb#test_cli_json_output",
+        "test/test_cli_mutations.rb#test_cli_capture_json",
+        "test/test_cli_mutations.rb#test_cli_done_json_touched_array_has_all_entries",
+        "test/test_cli_mutations.rb#test_cli_delete_leaf_json_shape_matches_other_mutations",
+        "test/test_cli_mutations.rb#test_cli_move_before_json_names_stable_placement_and_touched_task",
+        "test/test_cli_mutations.rb#test_cli_claim_json_emits_the_full_task_resource",
+        "test/test_cli_mutations.rb#test_cli_dry_run_writes_nothing",
+        "test/test_cli_mutations.rb#test_cli_done_dry_run_reports_descendant_count",
+        "test/test_cli_mutations.rb#test_cli_mutation_against_a_v1_store_is_refused_without_writing",
+        "test/test_cli_mutations.rb#test_cli_propose_creates_inert_task_with_note_and_explicit_list_scope",
+        "test/test_cli_mutations.rb#test_cli_approve_and_reject_reach_store_preconditions_for_any_live_task",
+        "test/test_cli_projects.rb#test_project_create_json_emits_the_new_project",
+        "test/test_cli_projects.rb#test_project_rename_json_emits_the_updated_project",
+        "test/test_cli_projects.rb#test_project_complete_json_reports_touched",
+        "test/test_cli_projects.rb#test_project_create_dry_run_writes_nothing",
+        "test/test_cli_projects.rb#test_project_create_duplicate_title_exits_1",
+        "test/test_cli_projects.rb#test_project_create_blank_title_aborts",
+        "test/test_cli_projects.rb#test_unknown_project_verb_aborts"
+      ],
+      "oracle_gaps": [
+        "This slice closes the third gap named in td-ee475f, but only its mutation half. The registry-wide coverage tests — test/test_cli_json_coverage.rb#test_registry_matches_the_spec_coverage_table, #test_every_json_command_prints_exactly_one_json_document, #test_every_command_has_a_coverage_recipe_or_a_stated_opt_out, #test_every_json_command_answers_in_json_when_it_refuses_an_unsupported_store, #test_gate_exempt_commands_still_answer_for_an_unsupported_store, #test_dispatch_tokens_are_unambiguous, #test_every_alias_dispatches, #test_project_sub_verbs_dispatch_through_the_registry, #test_early_dispatch_branches_are_declared_in_the_registry and #test_prompt_rejects_json_instead_of_swallowing_it — assert over the whole RECIPES table, which includes `recur` and `lead` (campaign 5), `undo` and `redo` (campaign 6), `open` (unsliced) and `-p` (campaign 10). No slice can honestly claim them until those land; they are recorded in the SLICING survey as needing a final parity slice, and claiming them here would repeat the misattribution td-940935 removed.",
+        "test/test_cli_json_coverage.rb#test_refusals_under_json_are_error_objects is the canonical oracle for the `{error, action, message}` object but drives it through `undo`, `archive` and `open`. It is claimed by archive-cli (campaign 7), which owns two of those three. This slice proves the same object shape through a mutation refusal instead, which is why test_cli_mutation_against_a_v1_store_is_refused_without_writing is claimed here.",
+        "Human (non-JSON) mutation output — headlines printed after `done`, the cascade list, the actionable move errors — is campaign 8, as it is for the read commands. Only the JSON envelopes, the refusal object and exit statuses are in scope.",
+        "`recur`, `lead`, `due`, `schedule`, `undate`, `defer`, `someday` and `activate` are temporal verbs whose envelopes carry availability and recurrence fields this port cannot yet produce; their --json tests belong with campaign 5. The envelope SHAPE is shared, so proving it on the eight non-temporal verbs here is the point of the slice.",
+        "Schema-v1 migration and org-mode are out of scope (Marcus, 2026-08-01, no schema-v1 users exist) and td-09f7de removed them from Ruby, so this slice's oracle no longer carries them: there is no `tasks migrate`, no `migrate_schema!`, and no `migration_required` status. What remains IS contract and must be ported: any declared `meta` version other than 2 is refused identically, older or newer — `Check` reports `unsupported meta version <n> (expected 2)`, `Store#unsupported_schema?` gates mutations on both files, refusals carry the `:unsupported_schema` status and write nothing, and the API answers `503 unsupported_schema_version`. Omitting that gate is a data-corruption bug, not a skipped dead branch. Org-mode remains out of scope entirely."
+      ],
+      "fixtures": [
+        "porting/fixtures/valid/small-gtd",
+        "porting/fixtures/valid/empty-store",
+        "porting/fixtures/valid/full-field-matrix",
+        "porting/fixtures/compat/future-schema-v3"
+      ],
+      "fixtures_todo": "The envelope's per-row resource carries `available`, `availability_reason` and `availability_blocker_id` on every mutation, including this slice's non-temporal ones — so a fixture whose tasks are all trivially available proves only the default. Needed: a store where one task is blocked by an ancestor hold and one is available, so the row's availability triple is observably computed rather than constant. That corpus is campaign 5's to build; the honest position is that this slice can prove the envelope's shape and key set against the current fixtures but not those three values.",
+      "observable_outputs": [
+        "stdout JSON for every mutation verb",
+        "the refusal object",
+        "stderr text",
+        "exit status",
+        "tasks.jsonl unchanged after a dry run or a refusal"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "perf_budget": null,
+      "status": "not_started",
+      "evidence": "porting/evidence/cli-mutation-json-envelopes/",
+      "intentional_differences": [],
+      "notes": "The row shape is `report_touched`'s `item_json` and is shared by every mutation command including `delete`, which is what test_cli_delete_leaf_json_shape_matches_other_mutations asserts. Porting it per command instead of once is the expected defect and produces a CLI that is JSON-complete and inconsistent."
+    },
+    {
+      "id": "archive-sweep",
+      "campaign": 7,
+      "behavior": "The archive sweep: selecting fully closed subtrees, the blocked/conflict/preview-changed refusals, the archive-first two-file transaction, and retry safety after an interrupted sweep",
+      "target_package": "internal/store",
+      "depends_on": [
+        "store-canonical-write",
+        "state-transitions",
+        "tree-build",
+        "delegation-claim-release"
+      ],
+      "risk": "high",
+      "source_paths": [
+        "lib/tasks/store.rb"
+      ],
+      "source_sha": "5eba4b0d2a52b58bd0ccdc1af7f853f8f37b0a15",
+      "ruby_tests": [
+        "test/test_store.rb#test_archive_sweeps_done_blocks",
+        "test/test_store.rb#test_archive_preview_counts_roots_and_descendants_without_writing",
+        "test/test_store.rb#test_archive_nested_subtree_preserves_dfs_structure_and_undo",
+        "test/test_store.rb#test_archive_refuses_closed_root_with_open_descendant",
+        "test/test_store.rb#test_archive_refuses_complete_id_overlap_when_canonical_content_differs",
+        "test/test_store.rb#test_archive_refuses_partial_prior_archive_without_deleting_live_subtree",
+        "test/test_store.rb#test_archive_expected_preview_is_validated_atomically_by_candidate_fingerprint",
+        "test/test_store.rb#test_archive_interruption_after_archive_write_is_retry_safe_and_idempotent",
+        "test/test_store.rb#test_archive_with_nothing_to_do",
+        "test/test_store.rb#test_undo_archive_sweep_restores_both_files",
+        "test/test_delegation.rb#test_archive_sweep_carries_the_marker_verbatim",
+        "test/test_schema_v2.rb#test_archive_and_history_against_v1_are_refused_as_an_unsupported_schema"
+      ],
+      "oracle_gaps": [
+        "This slice closes the second half of td-8df1bb. test/test_schema_v2.rb#test_archive_and_history_against_v1_are_refused_as_an_unsupported_schema was claimed by no slice before this pass. It asserts two refusals: `archive_swept!` returning an ArchiveRefusal with reason :unsupported_schema (this slice's, and a third independent implementation of the gate — `archive_swept_impl` checks `unsupported_schema?` itself rather than going through `unsupported_schema_refusal`) and `undo!` returning [:unsupported_schema], which is campaign 6's journal. The undo half cannot pass here; the archive half is the reason the test is claimed.",
+        "test/test_store.rb#test_undo_archive_sweep_restores_both_files and the undo half of #test_archive_nested_subtree_preserves_dfs_structure_and_undo reach the journal (campaign 6). Both stay: restoring BOTH files is the property that distinguishes the sweep from every other mutation in the store, and characterization must capture it as a two-file byte comparison rather than as a journal replay.",
+        "`archive_project!` — moving a named section's subtree — is archive-project's. This slice covers only the sweep of closed task subtrees.",
+        "The `tasks archive` CLI surface is archive-cli's.",
+        "Interruption between the two writes is proved by an injected failing writer in the Ruby test, not by a real crash. The port's retry safety therefore rests on the same seam, and a Go implementation that does not expose an equivalent injection point cannot be conformance-tested here at all — that is a porting constraint, not a fixture gap.",
+        "Schema-v1 migration and org-mode are out of scope (Marcus, 2026-08-01, no schema-v1 users exist) and td-09f7de removed them from Ruby, so this slice's oracle no longer carries them: there is no `tasks migrate`, no `migrate_schema!`, and no `migration_required` status. What remains IS contract and must be ported: any declared `meta` version other than 2 is refused identically, older or newer — `Check` reports `unsupported meta version <n> (expected 2)`, `Store#unsupported_schema?` gates mutations on both files, refusals carry the `:unsupported_schema` status and write nothing, and the API answers `503 unsupported_schema_version`. Omitting that gate is a data-corruption bug, not a skipped dead branch. Org-mode remains out of scope entirely."
+      ],
+      "fixtures": [
+        "porting/fixtures/valid/archive-pair",
+        "porting/fixtures/valid/small-gtd",
+        "porting/fixtures/malformed/cross-file-duplicate-id",
+        "porting/fixtures/compat/future-schema-v3"
+      ],
+      "fixtures_todo": "No fixture is a sweep corpus. Needed, and each one is a distinct branch: (a) a store with two DONE roots, one of them carrying DONE descendants, so roots and records disagree in the preview; (b) a CANCELLED root with an open descendant — the `blocked` refusal, which is not reachable from any current fixture because CANCELLED does not cascade; (c) a live/archive pair where one moved id already exists in the archive with byte-identical content (the retry-safe :complete state) and a sibling pair where the archived copy differs (:conflict); (d) a pair where only some of the moved ids are already archived — partial overlap, which must refuse without deleting live records. archive-pair is a swept store, i.e. the OUTPUT of this behavior, and cross-file-duplicate-id is the diagnostic for (c) rather than an input to it.",
+      "observable_outputs": [
+        "tasks.jsonl and archive.jsonl bytes after the sweep",
+        "the `archived` stamp and dropped `parent` on each moved root",
+        "ArchiveRefusal reason and details",
+        "preview roots/descendants/blocks/candidate_ids/fingerprint",
+        "no live record deleted after a refusal"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "perf_budget": null,
+      "status": "not_started",
+      "evidence": "porting/evidence/archive-sweep/",
+      "intentional_differences": [],
+      "notes": "The write order is the safety property: archive first, re-read it, then rewrite live. A port that writes live first, or that trusts its own writer instead of re-reading, converts an interruption from 'retry-safe duplicates' into silent data loss. The fingerprint over `Format.dump(moved)` also makes this slice a consumer of format-canonical-emit's byte contract — a different canonical writer produces a different fingerprint and every expected_preview check fails."
+    },
+    {
+      "id": "archive-project",
+      "campaign": 7,
+      "behavior": "Archiving a named section: the whole contiguous subtree moved with the sweep's serialization, the root's parent dropped and `archived` stamped, open descendants refused unless forced, and an undecided proposal never swept",
+      "target_package": "internal/store",
+      "depends_on": [
+        "archive-sweep",
+        "section-create-and-rename",
+        "proposal-decisions"
+      ],
+      "risk": "high",
+      "source_paths": [
+        "lib/tasks/store.rb",
+        "bin/tasks"
+      ],
+      "source_sha": "5eba4b0d2a52b58bd0ccdc1af7f853f8f37b0a15",
+      "ruby_tests": [
+        "test/test_projects.rb#test_archive_project_moves_the_subtree_and_undo_deletes_a_fresh_archive",
+        "test/test_projects.rb#test_archive_project_reports_a_missing_section",
+        "test/test_projects.rb#test_application_archive_project_returns_moved_ids",
+        "test/test_proposals.rb#test_project_archive_never_sweeps_an_undecided_proposal_even_when_forced",
+        "test/test_cli_projects.rb#test_project_archive_refuses_while_open_tasks_remain",
+        "test/test_cli_projects.rb#test_project_archive_refuses_a_deferred_only_project_without_force",
+        "test/test_cli_projects.rb#test_project_archive_force_sweeps_a_deferred_only_project",
+        "test/test_cli_projects.rb#test_project_archive_force_never_sweeps_an_undecided_proposal",
+        "test/test_cli_projects.rb#test_project_archive_force_sweeps_the_subtree",
+        "test/test_cli_projects.rb#test_project_archive_empty_project_needs_no_force",
+        "test/test_cli_projects.rb#test_project_archive_dry_run_writes_nothing",
+        "test/test_cli_projects.rb#test_project_archive_json_lists_moved_ids"
+      ],
+      "oracle_gaps": [
+        "The store and the CLI are one slice here on purpose, and the reason is stated in the Ruby: `archive_project!` does not block on open descendants because 'blocking is caller policy'. The refusal and the `--force` override live in bin/tasks, so a slice that stopped at the store would port a verb whose only safety gate is somewhere else. The `--force` semantics cannot be characterized without the CLI.",
+        "test/test_projects.rb#test_archive_project_moves_the_subtree_and_undo_deletes_a_fresh_archive asserts that undo removes an archive file the sweep created, which reaches campaign 6's journal. It stays because 'a fresh archive is deleted, not truncated' is a property of this verb's two-file transaction.",
+        "Human output for `project archive` (the printed headline list and the recovery text) is campaign 8; the --json envelope and exit statuses are in scope here because the moved-id list is the verb's only machine-readable result.",
+        "Schema-v1 migration and org-mode are out of scope (Marcus, 2026-08-01, no schema-v1 users exist) and td-09f7de removed them from Ruby, so this slice's oracle no longer carries them: there is no `tasks migrate`, no `migrate_schema!`, and no `migration_required` status. What remains IS contract and must be ported: any declared `meta` version other than 2 is refused identically, older or newer — `Check` reports `unsupported meta version <n> (expected 2)`, `Store#unsupported_schema?` gates mutations on both files, refusals carry the `:unsupported_schema` status and write nothing, and the API answers `503 unsupported_schema_version`. Omitting that gate is a data-corruption bug, not a skipped dead branch. Org-mode remains out of scope entirely."
+      ],
+      "fixtures": [
+        "porting/fixtures/valid/small-gtd",
+        "porting/fixtures/valid/archive-pair"
+      ],
+      "fixtures_todo": "Needed: a project section whose subtree mixes open, deferred-only and closed tasks (the three states the force policy discriminates), an empty project section (archivable without force), and a project holding an undecided proposal — which must never move even under --force, and which no fixture can express today because the corpus has no PROPOSED record at all. Also needed: a store with NO archive.jsonl, so 'undo deletes the file the archive created' is distinguishable from 'undo truncates it'.",
+      "observable_outputs": [
+        "tasks.jsonl and archive.jsonl bytes",
+        "moved stable ids",
+        ":proposed_descendants refusal",
+        "exit status and --json moved_ids"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "perf_budget": null,
+      "status": "not_started",
+      "evidence": "porting/evidence/archive-project/",
+      "intentional_differences": [],
+      "notes": "This verb and the sweep share a serialization but not a selection rule: the sweep picks closed subtrees, this picks one named section whatever its contents. Porting them as one function is the expected defect — the force policy then leaks into the sweep, which has no force."
+    },
+    {
+      "id": "archive-cli",
+      "campaign": 7,
+      "behavior": "The `tasks archive` command: the sweep's counts and moved ids under --json, the blocked and conflict refusals as error objects with recovery text, and the lifecycle commands' usage errors",
+      "target_package": "internal/cli",
+      "depends_on": [
+        "archive-sweep",
+        "cli-mutation-json-envelopes"
+      ],
+      "risk": "medium",
+      "source_paths": [
+        "bin/tasks",
+        "lib/tasks/application.rb"
+      ],
+      "source_sha": "5eba4b0d2a52b58bd0ccdc1af7f853f8f37b0a15",
+      "ruby_tests": [
+        "test/test_cli_mutations.rb#test_cli_archive_sweeps_to_archive_file",
+        "test/test_cli_mutations.rb#test_cli_archive_nothing_to_do",
+        "test/test_cli_mutations.rb#test_cli_archive_refuses_open_descendants_with_actionable_error",
+        "test/test_cli_mutations.rb#test_cli_archive_conflict_preserves_live_data_and_explains_recovery",
+        "test/test_cli_mutations.rb#test_cli_archive_child_only_overlap_reports_conflict_instead_of_crashing",
+        "test/test_cli_mutations.rb#test_cli_archive_duplicate_id_overlap_reports_conflict_instead_of_crashing",
+        "test/test_cli_mutations.rb#test_cli_undo_and_archive_against_a_v1_store_are_refused",
+        "test/test_cli_json_coverage.rb#test_refusals_under_json_are_error_objects"
+      ],
+      "oracle_gaps": [
+        "test/test_cli_json_coverage.rb#test_refusals_under_json_are_error_objects is the canonical oracle for the `{error, action, message}` refusal object and for the archive envelope's roots/records/moved_ids disagreement, and it is claimed here because two of the three commands it drives are archive commands. Its other two thirds cannot pass at this position: `undo`/`redo` are campaign 6's journal and `open --json` has no slice at all. Characterization must capture the archive half and record the other two as unproved until those slices exist.",
+        "test/test_cli_mutations.rb#test_cli_undo_and_archive_against_a_v1_store_are_refused likewise spans `undo` (campaign 6) and `archive` (this slice); it is the CLI-level proof of the schema gate on the lifecycle commands, which is the hole td-8df1bb named, so it is kept rather than deferred with the undo work.",
+        "The recovery *wording* for a conflict is asserted here rather than in campaign 8 because it names files and ids the user must reconcile by hand — it is an interface to a recovery procedure, not formatting. The rest of `archive`'s human output is campaign 8.",
+        "`undo` and `redo` have no slice, so this slice cannot prove that the three lifecycle commands share one envelope; it proves archive's. The shared shape is a campaign 6 obligation.",
+        "Schema-v1 migration and org-mode are out of scope (Marcus, 2026-08-01, no schema-v1 users exist) and td-09f7de removed them from Ruby, so this slice's oracle no longer carries them: there is no `tasks migrate`, no `migrate_schema!`, and no `migration_required` status. What remains IS contract and must be ported: any declared `meta` version other than 2 is refused identically, older or newer — `Check` reports `unsupported meta version <n> (expected 2)`, `Store#unsupported_schema?` gates mutations on both files, refusals carry the `:unsupported_schema` status and write nothing, and the API answers `503 unsupported_schema_version`. Omitting that gate is a data-corruption bug, not a skipped dead branch. Org-mode remains out of scope entirely."
+      ],
+      "fixtures": [
+        "porting/fixtures/valid/small-gtd",
+        "porting/fixtures/valid/archive-pair",
+        "porting/fixtures/compat/future-schema-v3"
+      ],
+      "fixtures_todo": "Depends on archive-sweep's corpus and adds one shape of its own: a live/archive pair in the conflict state that a CLI run can hit without an injected writer, so the recovery text can be observed end to end. Until archive-sweep's (c) and (d) fixtures exist, every conflict case here has to be built inside the test.",
+      "observable_outputs": [
+        "stdout JSON (roots, records, moved_ids, blocked)",
+        "stderr recovery text",
+        "exit status",
+        "tasks.jsonl and archive.jsonl unchanged after a refusal"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "perf_budget": null,
+      "status": "not_started",
+      "evidence": "porting/evidence/archive-cli/",
+      "intentional_differences": [],
+      "notes": "`records` and `roots` must disagree whenever a swept root drags a subtree — a port that reports one number twice passes the empty and single-task cases and fails only on the shape users actually have."
+    },
+    {
+      "id": "jsonl-merge-records",
+      "campaign": 7,
+      "behavior": "Three-way record merge, field level: non-overlapping fields union, same-field conflicts resolved last-writer-wins on `updated` and commutatively, temporal date/time pairs resolved as one value, tags unioned, body prefix-append, state progression, and the schema-version refusals on all three sides",
+      "target_package": "internal/merge",
+      "depends_on": [
+        "format-parse",
+        "format-canonical-emit",
+        "check-meta-and-ids",
+        "update-stamp"
+      ],
+      "risk": "high",
+      "source_paths": [
+        "lib/tasks/jsonl_merge.rb"
+      ],
+      "source_sha": "5eba4b0d2a52b58bd0ccdc1af7f853f8f37b0a15",
+      "ruby_tests": [
+        "test/test_jsonl_merge.rb#test_non_overlapping_fields_merge_without_conflict",
+        "test/test_jsonl_merge.rb#test_same_field_uses_newer_updated_and_is_commutative",
+        "test/test_jsonl_merge.rb#test_pre_timestamp_conflict_is_ours_wins_and_logged_low_confidence",
+        "test/test_jsonl_merge.rb#test_temporal_pair_conflict_takes_the_whole_pair_from_the_lww_winner",
+        "test/test_jsonl_merge.rb#test_temporal_pair_single_side_change_wins_without_conflict",
+        "test/test_jsonl_merge.rb#test_undate_vs_retime_never_emits_orphan_time_metadata",
+        "test/test_jsonl_merge.rb#test_tags_union_preserves_base_order_and_sorts_concurrent_additions",
+        "test/test_jsonl_merge.rb#test_progressed_state_beats_open_state_and_carries_closed_date",
+        "test/test_jsonl_merge.rb#test_body_prefix_chooses_longer_append",
+        "test/test_jsonl_merge.rb#test_either_side_at_another_schema_version_refuses_the_merge",
+        "test/test_jsonl_merge.rb#test_a_base_older_than_both_sides_still_merges",
+        "test/test_jsonl_merge.rb#test_a_base_newer_than_this_binary_refuses_the_merge",
+        "test/test_jsonl_merge.rb#test_a_future_schema_version_on_a_side_refuses_the_merge",
+        "test/test_jsonl_merge.rb#test_malformed_or_duplicate_side_fails_without_text"
+      ],
+      "oracle_gaps": [
+        "The delegation object and the structural (add/delete/order) rules are the other two merge slices'. This slice covers scalar fields, the two temporal pairs, tags, body and state only.",
+        "The merge's version rule is NOT the store's: `allow_older` is true for the base and false for both sides, so a base at an older version still merges while a side at any version other than Format::VERSION refuses. A port that reuses `Store#unsupported_schema?` here would refuse merges git can currently resolve. This asymmetry has no counterpart anywhere else in the codebase and is the single most likely misport in the slice.",
+        "`updated` and `line` are excluded from the merge (EXCLUDED_FIELDS) but `updated` is also the tiebreaker — the field the merge reads and never writes. Nothing in the suite asserts what the merged record's own `updated` value ends up as, because the driver leaves it to the next write. Characterization must pin it before translating.",
+        "Merge decisions are logged as events and the log text is written to `.tasks-merge.log` by the driver, so `format_event`'s wording is observable to users. No test asserts the exact wording of more than a few events; merge-driver-git claims the log-shape test and this slice must capture the event vocabulary it produces.",
+        "Schema-v1 migration and org-mode are out of scope (Marcus, 2026-08-01, no schema-v1 users exist) and td-09f7de removed them from Ruby, so this slice's oracle no longer carries them: there is no `tasks migrate`, no `migrate_schema!`, and no `migration_required` status. What remains IS contract and must be ported: any declared `meta` version other than 2 is refused identically, older or newer — `Check` reports `unsupported meta version <n> (expected 2)`, `Store#unsupported_schema?` gates mutations on both files, refusals carry the `:unsupported_schema` status and write nothing, and the API answers `503 unsupported_schema_version`. Omitting that gate is a data-corruption bug, not a skipped dead branch. Org-mode remains out of scope entirely."
+      ],
+      "fixtures": [],
+      "fixtures_todo": "The entire fixture corpus is single stores; a three-way merge needs a base/ours/theirs triple and there is not one anywhere under porting/fixtures/. Needed as a new class (`merge/<case>/` with base.jsonl, ours.jsonl, theirs.jsonl and the expected merged.jsonl): a non-overlapping field edit, a same-field edit with distinct `updated` stamps on each side, a same-field edit with NO `updated` on either side (the pre-timestamp ours-wins path), a scheduled date changed on one side while its scheduled_time changed on the other, an undate against a retime, concurrent tag additions, both sides appending to one body, one side closing while the other progresses the state, and one side declaring version 3. Each is small — three files of a handful of records — but none can be derived from the existing corpus, because every existing fixture is a single store with no divergent history.",
+      "observable_outputs": [
+        "merged JSONL text",
+        "Result#ok? and #error",
+        "the events list and its log lines"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "perf_budget": null,
+      "status": "not_started",
+      "evidence": "porting/evidence/jsonl-merge-records/",
+      "intentional_differences": [],
+      "notes": "Commutativity is asserted directly (ours/theirs swapped must produce the same text) and is the property a port is most likely to lose, because Go map iteration order is randomized and the Ruby implementation walks an ordered union of ids. Any iteration over a Go map in the merge is a bug even when the tests pass once."
+    },
+    {
+      "id": "jsonl-merge-delegation",
+      "campaign": 7,
+      "behavior": "Merging the delegation marker: taken whole and never field by field, concurrent claims resolved to the earlier `at` with a deterministic tiebreak, owner intent beating a worker claim, and settlement against a concurrent close or proposal",
+      "target_package": "internal/merge",
+      "depends_on": [
+        "jsonl-merge-records",
+        "delegation-record-shape"
+      ],
+      "risk": "high",
+      "source_paths": [
+        "lib/tasks/jsonl_merge.rb"
+      ],
+      "source_sha": "5eba4b0d2a52b58bd0ccdc1af7f853f8f37b0a15",
+      "ruby_tests": [
+        "test/test_jsonl_merge.rb#test_one_sided_delegation_change_wins_without_conflict",
+        "test/test_jsonl_merge.rb#test_concurrent_claims_resolve_to_the_earlier_at_symmetrically",
+        "test/test_jsonl_merge.rb#test_simultaneous_claims_tiebreak_on_the_smaller_assignee",
+        "test/test_jsonl_merge.rb#test_delegation_is_taken_whole_never_field_by_field",
+        "test/test_jsonl_merge.rb#test_owner_undelegate_beats_a_concurrent_claim_in_either_direction",
+        "test/test_jsonl_merge.rb#test_owner_undelegate_against_an_unchanged_side_simply_removes_it",
+        "test/test_jsonl_merge.rb#test_non_claim_delegation_conflicts_take_the_most_recent_owner_intent",
+        "test/test_jsonl_merge.rb#test_close_against_claim_keeps_provenance_but_drops_a_ready_marker",
+        "test/test_jsonl_merge.rb#test_delegation_against_a_concurrent_proposal_is_dropped_not_fatal",
+        "test/test_jsonl_merge.rb#test_merged_delegation_still_validates_and_lands_in_canonical_order",
+        "test/test_jsonl_merge.rb#test_pairwise_merge_order_cannot_change_the_claim_holder",
+        "test/test_jsonl_merge.rb#test_a_live_claim_outranks_a_concurrent_release_and_keeps_its_provenance",
+        "test/test_jsonl_merge.rb#test_removal_still_absorbs_a_live_claim_from_either_side",
+        "test/test_jsonl_merge.rb#test_delegation_on_a_record_that_merged_into_a_section_is_dropped_not_fatal",
+        "test/test_jsonl_merge.rb#test_delegation_resolution_is_order_independent_across_three_devices"
+      ],
+      "oracle_gaps": [
+        "This is the only place in the port where two devices can both believe they hold a claim, and the resolution rule is not the store's compare-and-set: the merge picks the EARLIER `at`, tiebreaking on the smaller assignee, while the store's claim rejects any second claimant outright. delegation-claim-release ports the store rule and this slice ports the merge rule; a port that shares one function between them will hand the claim to the wrong worker in exactly the situation the design exists for.",
+        "Order independence across three devices (#test_delegation_resolution_is_order_independent_across_three_devices, #test_pairwise_merge_order_cannot_change_the_claim_holder) is an algebraic property proved on hand-built triples. Nothing generates random histories, so the property is asserted on the cases someone thought of; a port should treat these as a property-test seed rather than a fixed oracle.",
+        "`delegation_bytes` compares JSON.generate(Delegation.ordered(value)) — the tiebreak is over canonical bytes, so this slice inherits format-nested-key-order's nested KEY_ORDER contract transitively. It is not in depends_on because the tiebreak only needs a stable ordering, but a port whose nested order differs will break ties differently than Ruby on the same input.",
+        "Schema-v1 migration and org-mode are out of scope (Marcus, 2026-08-01, no schema-v1 users exist) and td-09f7de removed them from Ruby, so this slice's oracle no longer carries them: there is no `tasks migrate`, no `migrate_schema!`, and no `migration_required` status. What remains IS contract and must be ported: any declared `meta` version other than 2 is refused identically, older or newer — `Check` reports `unsupported meta version <n> (expected 2)`, `Store#unsupported_schema?` gates mutations on both files, refusals carry the `:unsupported_schema` status and write nothing, and the API answers `503 unsupported_schema_version`. Omitting that gate is a data-corruption bug, not a skipped dead branch. Org-mode remains out of scope entirely."
+      ],
+      "fixtures": [],
+      "fixtures_todo": "Needs its own base/ours/theirs triples, none of which exist: two devices claiming the same ready task with different `at` stamps; two claiming with identical `at` and different assignees (the tiebreak); an owner undelegating while a worker claims (both orderings); a release against a live claim; a close on one side against a claim on the other; a delegation against a side that turned the record into a section; and a three-device chain merged pairwise in two different orders. porting/fixtures/adversarial/conflicting-claim is the single-store analogue of the first case and is the right starting point for its content, but it is one file where three are needed.",
+      "observable_outputs": [
+        "the delegation object in the merged text",
+        "which worker holds the claim",
+        "events naming the delegation decision and its reason"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "perf_budget": null,
+      "status": "not_started",
+      "evidence": "porting/evidence/jsonl-merge-delegation/",
+      "intentional_differences": [],
+      "notes": "Read this slice next to delegation-claim-release. Two different correct answers to 'who holds the claim' is the design, not a bug: the store arbitrates within one file, the merge arbitrates between two histories that were both locally valid."
+    },
+    {
+      "id": "jsonl-merge-structure",
+      "campaign": 7,
+      "behavior": "Structural merge: adds from both sides kept ours-first, delete against unchanged versus delete against edit, ancestors restored under a subtree delete, concurrent reordering resolved to ours and logged, and the cross-file archive check",
+      "target_package": "internal/merge",
+      "depends_on": [
+        "jsonl-merge-records",
+        "check-tree-structure"
+      ],
+      "risk": "high",
+      "source_paths": [
+        "lib/tasks/jsonl_merge.rb"
+      ],
+      "source_sha": "5eba4b0d2a52b58bd0ccdc1af7f853f8f37b0a15",
+      "ruby_tests": [
+        "test/test_jsonl_merge.rb#test_delete_vs_unchanged_deletes_but_delete_vs_edit_keeps_edit",
+        "test/test_jsonl_merge.rb#test_subtree_delete_vs_descendant_edit_restores_required_ancestor_chain",
+        "test/test_jsonl_merge.rb#test_adds_from_both_sides_are_kept_in_valid_ours_first_order",
+        "test/test_jsonl_merge.rb#test_theirs_only_parent_and_child_are_inserted_as_a_contiguous_subtree",
+        "test/test_jsonl_merge.rb#test_concurrent_reordering_uses_ours_and_is_logged",
+        "test/test_jsonl_merge.rb#test_empty_base_supports_concurrent_first_archive_creation",
+        "test/test_jsonl_merge.rb#test_archive_vs_concurrent_edit_pair_is_rejected_by_cross_file_check",
+        "test/test_jsonl_merge.rb#test_real_world_sixt_pse_stash_divergence_matches_hand_resolution"
+      ],
+      "oracle_gaps": [
+        "The merged file must satisfy check-tree-structure's DFS pre-order invariant — `order_records` and `restore_required_ancestors!` exist for that reason — but no test in test/test_jsonl_merge.rb runs `Check` over the merged output. The invariant is asserted indirectly, by comparing to an expected text. Characterization must run the checker over every merge result, because a port that produces a valid-looking but non-contiguous subtree will match no expected text and give no useful diagnosis.",
+        "test/test_jsonl_merge.rb#test_archive_vs_concurrent_edit_pair_is_rejected_by_cross_file_check reaches the live/archive relationship that archive-sweep owns; it is claimed here because the check is implemented in the merge, not in the store, and archive-sweep is not a dependency because the merge never runs a sweep.",
+        "#test_real_world_sixt_pse_stash_divergence_matches_hand_resolution is a captured real divergence and the most valuable single case in the file. It is also the only test whose expected output was produced by a human rather than by the implementation, which makes it the one case that can falsify the implementation rather than merely pin it.",
+        "Schema-v1 migration and org-mode are out of scope (Marcus, 2026-08-01, no schema-v1 users exist) and td-09f7de removed them from Ruby, so this slice's oracle no longer carries them: there is no `tasks migrate`, no `migrate_schema!`, and no `migration_required` status. What remains IS contract and must be ported: any declared `meta` version other than 2 is refused identically, older or newer — `Check` reports `unsupported meta version <n> (expected 2)`, `Store#unsupported_schema?` gates mutations on both files, refusals carry the `:unsupported_schema` status and write nothing, and the API answers `503 unsupported_schema_version`. Omitting that gate is a data-corruption bug, not a skipped dead branch. Org-mode remains out of scope entirely."
+      ],
+      "fixtures": [],
+      "fixtures_todo": "Needs base/ours/theirs triples for: a record deleted on one side and untouched on the other; the same record deleted on one side and edited on the other; a subtree deleted on one side with a descendant edited on the other (the ancestor-restoration path); adds on both sides; a parent-and-child pair present only on theirs; the same records reordered differently on each side; an empty base with both sides creating an archive; and a live/archive pair whose cross-file check must reject. The real-world sixt/pse divergence should be sanitized into the corpus as its own triple — it is currently inline in the test and is the only case with a human-authored expected result.",
+      "observable_outputs": [
+        "merged JSONL text and record order",
+        "which records survive a delete conflict",
+        "events naming order conflicts and restorations"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "perf_budget": null,
+      "status": "not_started",
+      "evidence": "porting/evidence/jsonl-merge-structure/",
+      "intentional_differences": [],
+      "notes": "Ours-first ordering plus a final DFS walk is two rules that can disagree; the walk wins. A port that orders records once, in one pass, will pass the flat cases and produce parent-after-child files on the nested ones."
+    },
+    {
+      "id": "merge-driver-git",
+      "campaign": 7,
+      "behavior": "The git integration: `tasks merge-driver` as git's %O %A %B %P contract with its exit codes and audit log, and `bin/install-merge-driver` registering a repo-local absolute driver against .gitattributes",
+      "target_package": "internal/cli",
+      "depends_on": [
+        "jsonl-merge-records",
+        "jsonl-merge-delegation",
+        "jsonl-merge-structure",
+        "store-canonical-write"
+      ],
+      "risk": "medium",
+      "source_paths": [
+        "lib/tasks/merge_driver_command.rb",
+        "bin/install-merge-driver"
+      ],
+      "source_sha": "5eba4b0d2a52b58bd0ccdc1af7f853f8f37b0a15",
+      "ruby_tests": [
+        "test/test_jsonl_merge.rb#test_cli_driver_leaves_ours_untouched_on_failure_and_logs_it",
+        "test/test_install_merge_driver.rb#test_installer_writes_repo_local_absolute_driver_config",
+        "test/test_install_merge_driver.rb#test_installer_refuses_partial_attributes_registration",
+        "test/test_install_merge_driver.rb#test_real_git_merge_invokes_driver_and_resolves_same_line_divergence"
+      ],
+      "oracle_gaps": [
+        "The driver's success path is proved only through #test_real_git_merge_invokes_driver_and_resolves_same_line_divergence, which shells out to a real `git merge`. That is the right proof and it is also the only one: no test drives `MergeDriverCommand.run` directly with four paths and asserts exit 0 plus the rewritten ours file. Characterization must add it, because the failure path (exit 1, ours untouched) is the only one currently covered at the unit level.",
+        "The argv arity check (exit 2 on anything but four arguments) has no test at all.",
+        "The `.tasks-merge.log` audit file is written beside the merged path and appended to on both success and failure; its warning path (log unwritable) swallows the error to stderr. Neither the append semantics nor the warning is tested.",
+        "TASKS_MERGE_VERBOSE=1 changes stdout. It is untested and is the kind of env-var branch a port silently drops.",
+        "`merge-driver` is the CLI's one `early: true`, `json: false`, `gate: false` command — dispatched before config or store resolution, because git hands it three merge-stage paths and never the configured store. A port that routes it through normal dispatch will try to resolve a store during a git merge. test/test_cli_json_coverage.rb#test_early_dispatch_branches_are_declared_in_the_registry asserts that property but is a whole-registry test and is claimed by no slice (see the SLICING survey).",
+        "The installer is a standalone script in bin/, not a library, so it is the one thing in this slice with no Go package home. Whether the port ships an equivalent installer or a `tasks merge-driver --install` subcommand is a design decision this slice must surface rather than assume.",
+        "Schema-v1 migration and org-mode are out of scope (Marcus, 2026-08-01, no schema-v1 users exist) and td-09f7de removed them from Ruby, so this slice's oracle no longer carries them: there is no `tasks migrate`, no `migrate_schema!`, and no `migration_required` status. What remains IS contract and must be ported: any declared `meta` version other than 2 is refused identically, older or newer — `Check` reports `unsupported meta version <n> (expected 2)`, `Store#unsupported_schema?` gates mutations on both files, refusals carry the `:unsupported_schema` status and write nothing, and the API answers `503 unsupported_schema_version`. Omitting that gate is a data-corruption bug, not a skipped dead branch. Org-mode remains out of scope entirely."
+      ],
+      "fixtures": [],
+      "fixtures_todo": "Needs a git-shaped fixture rather than a store-shaped one: a repo with .gitattributes registering tasks.jsonl and archive.jsonl, two branches that diverge on one line of tasks.jsonl, and the expected post-merge file. The existing corpus has no git repositories at all, and the fixture contract (a directory containing store/) does not describe one, so this needs a new fixture class or an explicit decision that the merge cases are built by the runner instead. That decision is worth taking before building anything: a committed git repo inside a git repo is awkward, and a runner that runs `git init` and two commits is deterministic enough for conformance.",
+      "observable_outputs": [
+        "exit status 0/1/2",
+        "the rewritten ours file bytes",
+        "`.tasks-merge.log` contents",
+        "stderr on failure"
+      ],
+      "platforms": [
+        "darwin",
+        "linux",
+        "windows"
+      ],
+      "perf_budget": null,
+      "status": "not_started",
+      "evidence": "porting/evidence/merge-driver-git/",
+      "intentional_differences": [],
+      "notes": "This is the capability users install into their own repos, so its failure mode is other people's data. The contract with git is that a non-zero exit leaves the conflict for the human — which makes 'ours untouched on failure' the single most important assertion in the slice."
+    }
+  ],
+  "td_8df1bb_resolution": {
+    "choice": "(a) — seed the project/section-mutation and archive-sweep slices and let them claim the two orphaned tests",
+    "test/test_schema_v2.rb#test_project_mutation_against_v1_is_refused_as_an_unsupported_schema": "claimed by section-create-and-rename (campaign 4). The test drives Application#create_project, which is that slice's verb. Store#create_project! implements the gate inline in its own with_lock rather than through with_history, so it is a second implementation of the rule and has to be ported deliberately.",
+    "test/test_schema_v2.rb#test_archive_and_history_against_v1_are_refused_as_an_unsupported_schema": "claimed by archive-sweep (campaign 7). The test asserts two refusals: archive_swept! returning an ArchiveRefusal with reason :unsupported_schema, and undo! returning [:unsupported_schema]. The archive half is archive-sweep's and is a THIRD implementation of the gate (archive_swept_impl checks unsupported_schema? directly). The undo half belongs to campaign 6's journal work and is recorded as an explained gap on the slice, not silently claimed.",
+    "consequence_for_store_canonical_write": "store-canonical-write's fourth oracle_gap ('Two schema-gate tests have no slice at all …') is now stale in its final clause. WIRING should replace it with a sentence naming section-create-and-rename and archive-sweep as the slices that carry them, and keep the substance — that the gate has three independent implementations in Ruby and a port that writes one of them is still corruptible on the other two paths.",
+    "gate_implementations_found": [
+      "Store#unsupported_schema_refusal via with_history — the task mutation path (store-canonical-write)",
+      "Store#create_project! — inline inside its own with_lock (section-create-and-rename)",
+      "Store#archive_swept_impl — a direct unsupported_schema? check returning ArchiveRefusal (archive-sweep)",
+      "JsonlMerge.parse_side — a DIFFERENT rule: allow_older for the base, strict for both sides (jsonl-merge-records)",
+      "CliCommands gate/GATE_EXEMPT — the CLI-level gate with three declared exemptions (cli-mutation-json-envelopes, archive-cli)"
+    ]
+  },
+  "unclaimed_after": [
+    {
+      "group": "Temporal: parsing, availability, lead, recurrence, time zones",
+      "prospective_campaign": 5,
+      "source_paths": [
+        "lib/tasks/dates.rb",
+        "lib/tasks/lead.rb",
+        "lib/tasks/recur.rb",
+        "lib/tasks/temporal_context.rb",
+        "lib/tasks/temporal_parser.rb",
+        "lib/tasks/temporal_value.rb",
+        "lib/tasks/timezones.rb"
+      ],
+      "test_files_with_zero_claimed_tests": [
+        "test/test_dates.rb",
+        "test/test_lead.rb",
+        "test/test_lead_matrix.rb",
+        "test/test_cli_lead.rb",
+        "test/test_recur.rb",
+        "test/test_recur_calendar.rb",
+        "test/test_store_recur_calendar.rb",
+        "test/test_temporal.rb",
+        "test/test_temporal_queries.rb",
+        "test/test_views.rb"
+      ],
+      "approximate_unclaimed_tests": 289,
+      "reason": "Deferred deliberately, and it is the one deferral the manifest already states out loud: eleven slices in campaigns 2-4 name campaign 5 in their oracle_gaps as the home for availability gating, lead spans, recurrence and the calendar grammar. Unlike the three holes td-ee475f found, this behavior is not invisible — it is scheduled, and every slice that excluded it said so. Seeding it well is a comparable amount of work to this whole proposal and needs its own pass; seeding it badly would be worse than leaving it, because the exclusion sentences that currently make the boundary legible would be replaced by thin records."
+    },
+    {
+      "group": "Journal, undo/redo, locking, revisions, coalescing",
+      "prospective_campaign": 6,
+      "source_paths": [
+        "lib/tasks/journal.rb"
+      ],
+      "test_files_with_zero_claimed_tests": [],
+      "notable_unclaimed_tests": [
+        "test/test_journal.rb (32 of 40 unclaimed — store-canonical-write claims the eight Atomic cases only)",
+        "test/test_store.rb#test_undo_with_empty_history, #test_undo_and_redo_roundtrip_a_complete, #test_undo_stacks_multiple_mutations_in_order, #test_new_mutation_clears_redo, #test_undo_refuses_after_external_edit, #test_failed_mutation_records_no_history, #test_undo_history_is_capped",
+        "test/test_store.rb#test_with_lock_rejects_cross_fiber_contention_and_cleans_up, #test_shared_store_reads_stay_coherent_across_threads, #test_changed_detects_external_writes",
+        "test/test_store_patches.rb (36 of 47 unclaimed — the revision-aware patch cases)",
+        "test/test_delete_task.rb (11 of 18 unclaimed — the revision-aware delete cases)"
+      ],
+      "reason": "Same reasoning as campaign 5: named as campaign 6 in nine existing oracle_gaps, and this proposal adds five more references to it. It is scheduled work with a written boundary, not a hole. Note that the three journal fixtures already exist (adversarial/journal-*), so this campaign is closer to seedable than campaign 5 is."
+    },
+    {
+      "group": "Whole-registry CLI parity tests",
+      "prospective_campaign": 8,
+      "source_paths": [],
+      "unclaimed_tests": [
+        "test/test_cli_json_coverage.rb#test_registry_matches_the_spec_coverage_table",
+        "test/test_cli_json_coverage.rb#test_every_command_has_a_coverage_recipe_or_a_stated_opt_out",
+        "test/test_cli_json_coverage.rb#test_every_json_command_prints_exactly_one_json_document",
+        "test/test_cli_json_coverage.rb#test_every_json_command_answers_in_json_when_it_refuses_an_unsupported_store",
+        "test/test_cli_json_coverage.rb#test_gate_exempt_commands_still_answer_for_an_unsupported_store",
+        "test/test_cli_json_coverage.rb#test_dispatch_tokens_are_unambiguous",
+        "test/test_cli_json_coverage.rb#test_every_alias_dispatches",
+        "test/test_cli_json_coverage.rb#test_project_sub_verbs_dispatch_through_the_registry",
+        "test/test_cli_json_coverage.rb#test_early_dispatch_branches_are_declared_in_the_registry",
+        "test/test_cli_json_coverage.rb#test_unknown_command_still_prints_help_to_stderr",
+        "test/test_cli_json_coverage.rb#test_undo_and_redo_name_the_mutation_they_moved",
+        "test/test_cli_json_coverage.rb#test_prompt_rejects_json_instead_of_swallowing_it",
+        "test/test_cli_json_coverage.rb#test_refusals_under_json_are_error_objects (claimed by archive-cli for its archive third; its undo/redo and open thirds stay unproved there)"
+      ],
+      "reason": "Deferred on principle, and this is the recommendation I would most like reviewed. Each of these asserts over the entire CliCommands::ALL table — 50 commands including `recur` and `lead` (campaign 5), `undo` and `redo` (campaign 6), `-p` (campaign 10). No slice can claim them honestly until those campaigns land, and seeding a 'CLI parity' slice now would put an issue in `td ready` that no agent can finish, with depends_on edges that cannot be written because the slices they would point at do not exist. td-940935 already removed two of these from cli-read-json-envelopes for exactly this reason; re-adding them under a different slice id would undo that finding. What they need is one final parity slice, seeded when campaigns 5, 6 and 8 exist, whose whole job is 'every command in the registry, one JSON document, one gate rule'. Recommend recording that as a td issue now so the obligation is not carried only by this file."
+    },
+    {
+      "group": "HTTP API",
+      "prospective_campaign": 9,
+      "source_paths": [
+        "lib/tasks/api/app.rb",
+        "lib/tasks/api/errors.rb",
+        "lib/tasks/api/representation.rb",
+        "bin/tasks-api"
+      ],
+      "test_files_with_zero_claimed_tests": [
+        "test/api/test_app.rb",
+        "test/api/test_black_box.rb",
+        "test/api/test_delegation.rb",
+        "test/api/test_lead.rb",
+        "test/api/test_projects.rb",
+        "test/api/test_recurrence.rb",
+        "test/api/test_toolchain.rb"
+      ],
+      "approximate_unclaimed_tests": 108,
+      "reason": "Out of scope for campaigns 2-7 by construction: manifest.md states that lib/tasks/api/ is the one part of the tree no campaign 2-4 slice ports, and it is still the only part of lib/tasks/ outside every slice's drift closure — which means it is also the only Ruby whose change no `drift` run would report. That is worth fixing when campaign 9 is seeded; until then it is a stated carve-out rather than a discovery. Note that task-view-projection's oracle_gaps already leans on api/representation.rb's key set as a contrast case, so the two projections are entangled and campaign 9 should be read against that slice."
+    },
+    {
+      "group": "Agent execution and prompt assembly",
+      "prospective_campaign": 10,
+      "source_paths": [
+        "lib/tasks/agent_context.rb",
+        "lib/tasks/agent_diff.rb",
+        "lib/tasks/prompt_facts.rb",
+        "lib/llm/**"
+      ],
+      "test_files_with_zero_claimed_tests": [
+        "test/test_agent_context.rb",
+        "test/test_agent_activity.rb",
+        "test/test_agent_queue.rb",
+        "test/test_prompt_facts.rb",
+        "test/test_llm.rb"
+      ],
+      "approximate_unclaimed_tests": 77,
+      "reason": "Playbook item 10. Also the part of the tree whose port is least obviously required: `tasks -p` is the one command that opts out of --json with a stated reason, and an agent harness is exactly the kind of capability a port may decide to leave in Ruby or drop. Recommend a scope decision from Marcus before slicing, in the same shape as the schema-v1/org-mode decision — a slice seeded and then marked not_applicable is more expensive than a decision taken first."
+    },
+    {
+      "group": "TUI",
+      "prospective_campaign": 12,
+      "source_paths": [
+        "lib/tui/**",
+        "lib/term_form/**",
+        "lib/term_form.rb",
+        "lib/char_width.rb",
+        "bin/tasks-tui"
+      ],
+      "test_files_with_zero_claimed_tests": [
+        "test/test_app.rb",
+        "test/test_app_modals.rb",
+        "test/test_app_agent_queue.rb",
+        "test/test_app_paint_perf.rb",
+        "test/test_action_palette.rb",
+        "test/test_context_palette.rb",
+        "test/test_ansi.rb",
+        "test/test_border.rb",
+        "test/test_choice_picker.rb",
+        "test/test_export.rb",
+        "test/test_form.rb",
+        "test/test_form_renderer.rb",
+        "test/test_frame.rb",
+        "test/test_hit_map.rb",
+        "test/test_modal.rb",
+        "test/test_modals.rb",
+        "test/test_mouse.rb",
+        "test/test_mouse_router.rb",
+        "test/test_right_panel.rb",
+        "test/test_screen_layout.rb",
+        "test/test_session.rb",
+        "test/test_shortcuts.rb",
+        "test/test_task_editor_session.rb",
+        "test/test_term_form.rb",
+        "test/test_term_form_choice_date_fields.rb",
+        "test/test_term_form_text_fields.rb",
+        "test/test_text_input.rb",
+        "test/test_theme.rb",
+        "test/test_tui_lead.rb",
+        "test/test_ui_state.rb"
+      ],
+      "approximate_unclaimed_tests": 640,
+      "reason": "Playbook item 12 and the largest single block of unclaimed tests in the repo by a wide margin. Deferred without hesitation: it is a presentation layer over capabilities the earlier campaigns own, the playbook puts it last, and slicing it before the domain is ported would produce records nobody can start."
+    },
+    {
+      "group": "Legacy store verbs proving behavior an existing slice already owns",
+      "prospective_campaign": null,
+      "recommendation": "add to existing slices' ruby_tests rather than seed new slices",
+      "unclaimed_tests": [
+        "test/test_store.rb#test_set_priority_replaces_existing_cookie, #test_set_priority_adds_cookie_to_unprioritized_item, #test_set_priority_nil_removes_cookie, #test_set_priority_rejects_stale_line_numbers → changeset-apply-basic (patch_priority)",
+        "test/test_store.rb#test_set_deferred_adds_defer_tag_and_keeps_state, #test_set_deferred_preserves_existing_tags, #test_set_deferred_false_removes_defer_tag, #test_set_deferred_is_undoable, #test_set_deferred_rejects_stale_line_numbers → changeset-apply-basic (patch_deferred); these are also the only oracle for the clear direction its fixtures_todo says has no store",
+        "test/test_store.rb#test_capture_under_appends_as_last_child, #test_capture_under_at_cap_returns_too_deep_and_leaves_file_unchanged → create-basic / task-placement",
+        "test/test_store.rb#test_move_under_moves_whole_subtree_contiguously, #test_move_under_depth_math, #test_move_under_cycle_guard, #test_move_top_reparents_to_nearest_section, #test_move_top_on_top_level_task_is_a_noop_that_burns_no_undo → task-placement",
+        "test/test_store.rb#test_headline_renders_state_priority_title_tags, #test_headline_omits_priority_when_absent, #test_headline_omits_tags_when_absent → no slice ports Item#headline, and it is emitted in every mutation JSON row; the natural home is task-view-projection",
+        "test/test_store.rb#test_simple_record_update_refuses_an_invalid_store_before_writing, #test_simple_record_noop_does_not_consume_undo_history, #test_mutation_rolls_back_cleanly_in_a_file_with_a_non_string_id, #test_present_but_missing_id_does_not_fall_back_to_line_title, #test_patch_repairs_only_when_every_error_is_on_the_targeted_record, #test_string_tags_does_not_crash_readers → changeset-apply-basic (repair scope and pre-write validation)"
+      ],
+      "reason": "These prove behavior slices already own, through the store's older line-based verbs rather than through the changeset API. Seeding slices for them would double-claim behavior, which the brief forbids and which would inflate the denominator without adding coverage. They are listed because several of them are the ONLY oracle for a branch an existing slice's fixtures_todo says it cannot reach — the deferred-clear direction especially. WIRING may add any of them to the named slice's ruby_tests; `reach` will accept them because the verbs resolve to the owning slice itself."
+    },
+    {
+      "group": "Item#headline",
+      "prospective_campaign": 3,
+      "source_paths": [
+        "lib/tasks/store.rb (Item#headline)"
+      ],
+      "reason": "Called out separately because it is the one genuinely unported READ behavior this survey found outside the temporal work. `headline` renders state, priority, title and tags into one string, it is a key in every mutation JSON row (`report_touched`'s item_json) and in `tasks show`, and no slice's behavior statement mentions it. It is three tests and belongs in task-view-projection rather than in a slice of its own."
+    },
+    {
+      "group": "Inert or non-behavioral",
+      "prospective_campaign": null,
+      "source_paths": [
+        "lib/tasks/operation_context.rb"
+      ],
+      "test_files_with_zero_claimed_tests": [
+        "test/test_manifest_issues.rb",
+        "test/test_porting_compare.rb",
+        "test/test_porting_runner.rb",
+        "test/test_tasks_require_boundary.rb",
+        "test/test_term_form_require_boundary.rb",
+        "test/test_helper.rb"
+      ],
+      "reason": "operation_context.rb carries operation_id/source/actor through the Application facade and its own comment says commands do not interpret it yet — there is no observable behavior to port, and it should be seeded with campaign 9's audit seam or marked not_applicable, not sliced now. test/test_manifest_issues.rb and test/test_porting_* test the porting harness itself, which is not part of the product being ported. The two require-boundary tests assert an architectural invariant of the Ruby tree (what may require what) that has no meaning in Go."
+    }
+  ],
+  "verb_owners_additions": {
+    "note": "porting/manifest-issues' VERB_OWNERS maps nine of these verbs to nil today. Until it is updated, `reach` will report every ruby_test in the new slices as reaching an '(unseeded)' verb and will exit non-zero on the unexplained ones. porting/manifest-issues is GATE's path, not SLICING's, so this is a request, not a change.",
+    "mapping": {
+      "create_project!": "section-create-and-rename",
+      "create_section!": "section-create-and-rename",
+      "rename_section!": "section-create-and-rename",
+      "complete_project!": "project-complete-and-close",
+      "archive_swept!": "archive-sweep",
+      "archive_project!": "archive-project",
+      "claim_task!": "delegation-claim-release",
+      "release_task!": "delegation-claim-release",
+      "set_work_ref!": "delegation-claim-release",
+      "delegate_task!": "delegation-assign",
+      "undelegate_task!": "delegation-assign",
+      "decide_proposal!": "proposal-decisions"
+    }
+  }
+}

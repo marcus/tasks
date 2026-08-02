@@ -133,13 +133,15 @@ module Conformance
       # exit status, identical (empty) deltas, identical store bytes. The
       # filesystem cannot tell you, which is exactly why the field exists.
       #
-      # Today `files.rolled_back` is ALWAYS null on both sides, because the Ruby
-      # CLI signals a write-then-revert only as an extra sentence on stderr and
-      # the runner correctly refused to parse Ruby prose into a language-neutral
-      # protocol. So this comparison is live but currently vacuous, and the
-      # difference is caught one layer down, as a stderr byte difference — real
-      # detection, but unlabelled. See porting/compare/README.md § "The rollback
-      # gap" and porting/evidence/phase1/GATE.md.
+      # The value is the implementation's own report, read by the runner from the
+      # `--json` error envelope — never parsed out of stderr prose, which would
+      # bake one implementation's wording into a language-neutral protocol.
+      #
+      # It is null for every invocation that made no such report: a read, a
+      # success, a refusal without --json. Null on both sides therefore is not a
+      # mismatch, but it IS the absence of the label, so it is counted and
+      # reported — see porting/compare/README.md § "The rollback gap" and
+      # porting/evidence/phase1/GATE.md.
       def rolled_back(ctx)
         va = ctx.a.dig("files", "rolled_back")
         vb = ctx.b.dig("files", "rolled_back")

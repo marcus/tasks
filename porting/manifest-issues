@@ -119,18 +119,22 @@ module ManifestIssues
     "delete_task!" => "delete-task",
     "ensure_id!" => "id-minting",
     "stamp_changed_tasks!" => "update-stamp",
-    "create_project!" => nil,
-    "create_section!" => nil,
-    "archive_project!" => nil,
-    "archive_swept!" => nil,
-    "complete_project!" => nil,
-    "rename_section!" => nil,
-    "claim_task!" => nil,
-    "release_task!" => nil,
-    "delegate_task!" => nil,
-    "undelegate_task!" => nil,
-    "decide_proposal!" => nil,
-    "set_work_ref!" => nil,
+    # Seeded 2026-08-01 by the SLICING pass (td-ee475f, td-8df1bb). These twelve
+    # mapped to nil until campaign 4's second half and campaign 7 existed; with
+    # them named, `reach` resolves the four pre-existing slices whose recorded
+    # reaches into archive_swept! had nowhere to land.
+    "create_project!" => "section-create-and-rename",
+    "create_section!" => "section-create-and-rename",
+    "rename_section!" => "section-create-and-rename",
+    "complete_project!" => "project-complete-and-close",
+    "archive_swept!" => "archive-sweep",
+    "archive_project!" => "archive-project",
+    "claim_task!" => "delegation-claim-release",
+    "release_task!" => "delegation-claim-release",
+    "set_work_ref!" => "delegation-claim-release",
+    "delegate_task!" => "delegation-assign",
+    "undelegate_task!" => "delegation-assign",
+    "decide_proposal!" => "proposal-decisions",
   }.freeze
 
   Error = Class.new(StandardError)
@@ -806,11 +810,22 @@ module ManifestIssues
     # A td issue labelled for a slice the manifest no longer has. Reported, never
     # deleted: removing a slice from the manifest is a decision, and the issue
     # may carry the evidence of why.
+    #
+    # An orphan whose issue is already CLOSED is not reported. The report is an
+    # instruction ("close this issue") and `fleet_issues` passes `--all`, so
+    # without this the instruction never converges: acting on it changes nothing
+    # the next run can see, and `plan` can never be clean again once any gap has
+    # ever closed. Closed is the human having acted, which is the whole ask.
+    # Note this is not a filter on `fleet_issues` — reconcile still needs to find
+    # a closed issue by its identity label if the manifest ever wants it back,
+    # and `sync_dependencies` still needs its id to strip stale edges.
     def report_orphans(epics, slices, gates)
       known_epics = @manifest.campaigns.map { |c| "campaign:#{c["campaign"]}" }
       known_slices = @manifest.slices.map { |s| "slice:#{s["id"]}" }
       [[epics, known_epics], [slices, known_slices]].each do |index, known|
         (index.keys - known).sort.each do |key|
+          next if closed?(index[key])
+
           @actions << Action.new(kind: :orphan, target: key, td_id: index[key]["id"],
                                  detail: "labelled for a record the manifest no longer has")
         end
@@ -820,10 +835,14 @@ module ManifestIssues
       # left for a human to close, because it holds the record of what was built.
       wanted_gates = @manifest.slices.select { |s| gated?(s) }.map { |s| "fixture-gate:#{s["id"]}" }
       (gates.keys - wanted_gates).sort.each do |key|
+        next if closed?(gates[key])
+
         @actions << Action.new(kind: :orphan, target: key, td_id: gates[key]["id"],
                                detail: "fixtures_todo is null now — the gap closed, close this issue")
       end
     end
+
+    def closed?(issue) = issue["status"].to_s == "closed"
   end
 
   # ---------------------------------------------------------------- cli

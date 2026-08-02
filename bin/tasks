@@ -114,6 +114,7 @@ STORE_PINS = {
   coalesce_scope: Tasks::Determinism.coalesce_scope
 }.compact.freeze
 CAPTURE_PINS = { clock: Tasks::Determinism.clock }.compact.freeze
+APPLICATION_PINS = { delegation_key_source: Tasks::Determinism.delegation_key_source }.compact.freeze
 PINNED_NOW = Tasks::Determinism.now
 
 # The model layer owns parsing and every mutation; the CLI adds dispatch,
@@ -855,7 +856,8 @@ def application
       Tasks::TemporalContext.capture(timezone: PATHS.timezone, time_format: PATHS.time_format,
                                      **CAPTURE_PINS)
     },
-    host_context: PATHS.host_context
+    host_context: PATHS.host_context,
+    **APPLICATION_PINS
   )
 end
 
@@ -953,8 +955,51 @@ def mutation_result_failed(result, msg)
             else
               msg
             end
+
+  # Under --json the refusal is a document on stdout, not only prose on stderr.
+  # `rolled_back` is the load-bearing field: a mutation that wrote and then
+  # reverted, and one that was refused before it wrote, leave byte-identical
+  # files behind and exit the same way. The boolean is the only thing that tells
+  # them apart, so it is stated rather than implied by the wording above.
+  if json_result_requested?
+    json_error!(mutation_error_code(result), action: json_result_action,
+                message: message, exit_code: result.cli_exit_code,
+                rolled_back: result.rolled_back?)
+  end
   warn message
   exit result.cli_exit_code
+end
+
+# Statuses spelled differently on the wire than in the result vocabulary. The
+# schema refusal keeps the name the API and `require_supported_schema!` already
+# use, so a caller branches on one spelling across every surface.
+MUTATION_ERROR_CODES = { unsupported_schema: "unsupported_schema_version" }.freeze
+
+def mutation_error_code(result) = MUTATION_ERROR_CODES.fetch(result.status, result.status.to_s)
+
+# Whether this invocation asked for a machine-readable result — decided exactly
+# as the schema gate decides it: the registry must promise a JSON result for the
+# command, and the caller must actually have passed --json. Reading ARGV rather
+# than threading a flag through two dozen call sites keeps the answer the same
+# one `enforce_schema_gate!` computed at dispatch.
+def json_result_requested?
+  command = registry_command_for(ARGV)
+  !!(command&.json? && ARGV.include?("--json"))
+end
+
+# The command name to put in an error envelope's `action`: the sub-verb when
+# there is one (`project create`, not `project`), so an agent reads back the
+# command it ran.
+def json_result_action
+  dispatch = Tasks::CliCommands.dispatch_for(ARGV[0])
+  return nil unless dispatch
+
+  registry_command_for(ARGV)&.name || dispatch
+end
+
+def registry_command_for(argv)
+  dispatch = Tasks::CliCommands.dispatch_for(argv[0])
+  dispatch && schema_gate_command(dispatch, argv)
 end
 
 def result_touched_ids(result, fallback:)

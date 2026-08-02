@@ -1,0 +1,4 @@
+{"type":"meta","version":2}
+{"type":"section","id":"d1000001","title":"Closed provenance"}
+{"type":"task","id":"d1000002","parent":"d1000001","state":"DONE","title":"Agent finished the migration note","delegation":{"kind":"agent","mode":"implement","status":"claimed","assignee":"harness/model/session-0042","at":"2026-06-03T11:15:00Z","work_ref":"https://example.invalid/runs/0042"},"closed":"2026-06-04"}
+{"type":"task","id":"d1000003","parent":"d1000001","state":"CANCELLED","title":"Person never took the handover","delegation":{"kind":"human","status":"delegated","assignee":"sam.rivera@example.com","at":"2026-06-01T10:00:00Z"},"closed":"2026-06-05"}

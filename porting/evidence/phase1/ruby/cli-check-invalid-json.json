@@ -4,7 +4,7 @@
   "case_id": "cli-check-invalid-json",
   "implementation": {
     "name": "ruby",
-    "version": "5eba4b0d2a52b58bd0ccdc1af7f853f8f37b0a15-dirty",
+    "version": "c50086663542ed3339711f90d36c09142e3fce97-dirty",
     "runtime": "ruby 4.0.6"
   },
   "fixture": {
@@ -45,6 +45,10 @@
         "value": "40"
       },
       {
+        "name": "PATH",
+        "value": "/usr/bin:/bin:/usr/sbin:/sbin"
+      },
+      {
         "name": "TASKS_ARCHIVE",
         "value": null
       },
@@ -61,8 +65,16 @@
         "value": null
       },
       {
+        "name": "TASKS_MEMORY",
+        "value": null
+      },
+      {
         "name": "TASKS_PIN_COALESCE_SCOPE",
         "value": "pinned-scope"
+      },
+      {
+        "name": "TASKS_PIN_DELEGATION_KEYS",
+        "value": "cccc000000000001"
       },
       {
         "name": "TASKS_PIN_HOSTNAME",
@@ -123,6 +135,11 @@
         "name": "TASKS_PIN_COALESCE_SCOPE",
         "applied": true,
         "value": "pinned-scope"
+      },
+      {
+        "name": "TASKS_PIN_DELEGATION_KEYS",
+        "applied": true,
+        "value": "cccc000000000001"
       },
       {
         "name": "TASKS_PIN_HOSTNAME",

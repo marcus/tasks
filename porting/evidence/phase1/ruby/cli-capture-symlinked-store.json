@@ -1,0 +1,397 @@
+{
+  "schema_version": 1,
+  "observation_id": "obs_cli-capture-symlinked-store",
+  "case_id": "cli-capture-symlinked-store",
+  "implementation": {
+    "name": "ruby",
+    "version": "c50086663542ed3339711f90d36c09142e3fce97-dirty",
+    "runtime": "ruby 4.0.6"
+  },
+  "fixture": {
+    "id": "valid/symlinked-store",
+    "class": "valid",
+    "root_sha256": "ae18ecbddcbf950698df4d526fea1667a33066c5dba1d2dc4970ac64e5fe2bb0",
+    "copy_root": "/tmp/tasks-conformance/cli-capture-symlinked-store"
+  },
+  "invocation": {
+    "surface": "cli",
+    "argv": [
+      "capture",
+      "through the link",
+      "--json"
+    ],
+    "stdin": {
+      "provided": false,
+      "bytes_base64": ""
+    },
+    "cwd": ".",
+    "env": [
+      {
+        "name": "COLUMNS",
+        "value": "100"
+      },
+      {
+        "name": "HOME",
+        "value": "/tmp/tasks-conformance/cli-capture-symlinked-store"
+      },
+      {
+        "name": "LANG",
+        "value": "en_US.UTF-8"
+      },
+      {
+        "name": "LC_ALL",
+        "value": "en_US.UTF-8"
+      },
+      {
+        "name": "LINES",
+        "value": "40"
+      },
+      {
+        "name": "PATH",
+        "value": "/usr/bin:/bin:/usr/sbin:/sbin"
+      },
+      {
+        "name": "TASKS_ARCHIVE",
+        "value": null
+      },
+      {
+        "name": "TASKS_DEVICE",
+        "value": "fixture"
+      },
+      {
+        "name": "TASKS_DIR",
+        "value": "/tmp/tasks-conformance/cli-capture-symlinked-store"
+      },
+      {
+        "name": "TASKS_FILE",
+        "value": null
+      },
+      {
+        "name": "TASKS_MEMORY",
+        "value": null
+      },
+      {
+        "name": "TASKS_PIN_COALESCE_SCOPE",
+        "value": "pinned-scope"
+      },
+      {
+        "name": "TASKS_PIN_DELEGATION_KEYS",
+        "value": "cccc000000000001"
+      },
+      {
+        "name": "TASKS_PIN_HOSTNAME",
+        "value": "fixture-host"
+      },
+      {
+        "name": "TASKS_PIN_IDS",
+        "value": "bbbb0001"
+      },
+      {
+        "name": "TASKS_PIN_NOW",
+        "value": "2026-03-14T15:09:26Z"
+      },
+      {
+        "name": "TASKS_TIMEZONE",
+        "value": "UTC"
+      },
+      {
+        "name": "TZ",
+        "value": "UTC"
+      },
+      {
+        "name": "XDG_CONFIG_HOME",
+        "value": "/tmp/tasks-conformance/cli-capture-symlinked-store/.config"
+      },
+      {
+        "name": "XDG_STATE_HOME",
+        "value": "/tmp/tasks-conformance/cli-capture-symlinked-store/.state"
+      }
+    ],
+    "pins": [
+      {
+        "name": "COLUMNS",
+        "applied": true,
+        "value": "100"
+      },
+      {
+        "name": "LANG",
+        "applied": true,
+        "value": "UTF-8"
+      },
+      {
+        "name": "LC_ALL",
+        "applied": true,
+        "value": "UTF-8"
+      },
+      {
+        "name": "LINES",
+        "applied": true,
+        "value": "40"
+      },
+      {
+        "name": "TASKS_DEVICE",
+        "applied": true,
+        "value": "fixture"
+      },
+      {
+        "name": "TASKS_PIN_COALESCE_SCOPE",
+        "applied": true,
+        "value": "pinned-scope"
+      },
+      {
+        "name": "TASKS_PIN_DELEGATION_KEYS",
+        "applied": true,
+        "value": "cccc000000000001"
+      },
+      {
+        "name": "TASKS_PIN_HOSTNAME",
+        "applied": true,
+        "value": "fixture-host"
+      },
+      {
+        "name": "TASKS_PIN_IDS",
+        "applied": true,
+        "value": "bbbb0001"
+      },
+      {
+        "name": "TASKS_PIN_NOW",
+        "applied": true,
+        "value": "2026-03-14T15:09:26Z"
+      },
+      {
+        "name": "TASKS_TIMEZONE",
+        "applied": true,
+        "value": "UTC"
+      },
+      {
+        "name": "TZ",
+        "applied": true,
+        "value": "UTC"
+      }
+    ],
+    "timeout_ms": 60000
+  },
+  "process": {
+    "exit_status": 0,
+    "signal": null,
+    "timed_out": false,
+    "stdout": {
+      "sha256": "200ae451c4eb40fad7a778f355d2d13df3fee1e61653dc4a2bc06dcbe5878d72",
+      "size_bytes": 508,
+      "valid_utf8": true,
+      "bytes_base64": "eyJ0b3VjaGVkIjpbeyJpZCI6ImJiYmIwMDAxIiwic3RhdGUiOiJJTkJPWCIsInByaW9yaXR5IjpudWxsLCJ0aXRsZSI6InRocm91Z2ggdGhlIGxpbmsiLCJ0YWdzIjpbXSwiY29udGV4dHMiOltdLCJkZWZlcnJlZCI6ZmFsc2UsInNjaGVkdWxlZCI6bnVsbCwic2NoZWR1bGVkX3RpbWUiOm51bGwsImRlYWRsaW5lIjpudWxsLCJkZWFkbGluZV90aW1lIjpudWxsLCJyZWN1ciI6bnVsbCwicmVjdXJfaHVtYW4iOm51bGwsImxlYWQiOm51bGwsImxlYWRfaHVtYW4iOm51bGwsImxpbmUiOjMsInNvdXJjZSI6ImxpdmUiLCJoZWFkbGluZSI6IklOQk9YIHRocm91Z2ggdGhlIGxpbmsiLCJsZWFkX29wZW5zIjpudWxsLCJsZWFkX29wZW5zX2F0IjpudWxsLCJhdmFpbGFibGUiOnRydWUsImF2YWlsYWJpbGl0eV9yZWFzb24iOiJhdmFpbGFibGUiLCJhdmFpbGFiaWxpdHlfYmxvY2tlcl9pZCI6bnVsbCwiYXZhaWxhYmxlX2F0IjpudWxsLCJwcm9qZWN0IjoiSW5ib3giLCJkZWxlZ2F0aW9uIjpudWxsfV19Cg==",
+      "truncated_at_bytes": null,
+      "text": "{\"touched\":[{\"id\":\"bbbb0001\",\"state\":\"INBOX\",\"priority\":null,\"title\":\"through the link\",\"tags\":[],\"contexts\":[],\"deferred\":false,\"scheduled\":null,\"scheduled_time\":null,\"deadline\":null,\"deadline_time\":null,\"recur\":null,\"recur_human\":null,\"lead\":null,\"lead_human\":null,\"line\":3,\"source\":\"live\",\"headline\":\"INBOX through the link\",\"lead_opens\":null,\"lead_opens_at\":null,\"available\":true,\"availability_reason\":\"available\",\"availability_blocker_id\":null,\"available_at\":null,\"project\":\"Inbox\",\"delegation\":null}]}\n"
+    },
+    "stderr": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "valid_utf8": true,
+      "bytes_base64": "",
+      "truncated_at_bytes": null,
+      "text": ""
+    }
+  },
+  "files": {
+    "mutated": true,
+    "before": [
+      {
+        "role": "store",
+        "path": "tasks.jsonl",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": null,
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": "tasks.real.jsonl"
+      },
+      {
+        "role": "store",
+        "path": "tasks.real.jsonl",
+        "present": true,
+        "sha256": "41d6e6002ebd41959dc31c34814f1bb2003c2edaced6993ba09bdaa581372ea6",
+        "size_bytes": 275,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6IjI1MDAwMDAxIiwidGl0bGUiOiJJbmJveCJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6IjI1MDAwMDAyIiwidGl0bGUiOiJOZXh0IEFjdGlvbnMifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiIyNTAwMDAwMyIsInBhcmVudCI6IjI1MDAwMDAyIiwic3RhdGUiOiJORVhUIiwidGl0bGUiOiJDb25maXJtIHRoZSBzeW1saW5rZWQgc3RvcmUgaXMgZm9sbG93ZWQiLCJ0YWdzIjpbIkBjb21wdXRlciJdfQo=",
+        "line_count": 4,
+        "symlink_target": null
+      }
+    ],
+    "after": [
+      {
+        "role": "journal_blob",
+        "path": ".state/tasks/journal/b36269764981b90a/blobs/41d6e6002ebd41959dc31c34814f1bb2003c2edaced6993ba09bdaa581372ea6",
+        "present": true,
+        "sha256": "41d6e6002ebd41959dc31c34814f1bb2003c2edaced6993ba09bdaa581372ea6",
+        "size_bytes": 275,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6IjI1MDAwMDAxIiwidGl0bGUiOiJJbmJveCJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6IjI1MDAwMDAyIiwidGl0bGUiOiJOZXh0IEFjdGlvbnMifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiIyNTAwMDAwMyIsInBhcmVudCI6IjI1MDAwMDAyIiwic3RhdGUiOiJORVhUIiwidGl0bGUiOiJDb25maXJtIHRoZSBzeW1saW5rZWQgc3RvcmUgaXMgZm9sbG93ZWQiLCJ0YWdzIjpbIkBjb21wdXRlciJdfQo=",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "journal_blob",
+        "path": ".state/tasks/journal/b36269764981b90a/blobs/e8225f7f0d5a0ca7f8420309e918e74d4a4d6246cf9482a70c13b80435a466bd",
+        "present": true,
+        "sha256": "e8225f7f0d5a0ca7f8420309e918e74d4a4d6246cf9482a70c13b80435a466bd",
+        "size_bytes": 443,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6IjI1MDAwMDAxIiwidGl0bGUiOiJJbmJveCJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImJiYmIwMDAxIiwicGFyZW50IjoiMjUwMDAwMDEiLCJzdGF0ZSI6IklOQk9YIiwidGl0bGUiOiJ0aHJvdWdoIHRoZSBsaW5rIiwiYm9keSI6IkNhcHR1cmVkIFsyMDI2LTAzLTE0XS4iLCJ1cGRhdGVkIjoiMjAyNi0wMy0xNFQxNTowOToyNlojZml4dHVyZSJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6IjI1MDAwMDAyIiwidGl0bGUiOiJOZXh0IEFjdGlvbnMifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiIyNTAwMDAwMyIsInBhcmVudCI6IjI1MDAwMDAyIiwic3RhdGUiOiJORVhUIiwidGl0bGUiOiJDb25maXJtIHRoZSBzeW1saW5rZWQgc3RvcmUgaXMgZm9sbG93ZWQiLCJ0YWdzIjpbIkBjb21wdXRlciJdfQo=",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "journal_index",
+        "path": ".state/tasks/journal/b36269764981b90a/index.json",
+        "present": true,
+        "sha256": "639e7c6ea48056842f25b52eca46aee22bb477edb02a360d7839e9ea6a5bf876",
+        "size_bytes": 431,
+        "mode": "0644",
+        "content_base64": "ewogICJ2ZXJzaW9uIjogMSwKICAib3JnIjogIi9wcml2YXRlL3RtcC90YXNrcy1jb25mb3JtYW5jZS9jbGktY2FwdHVyZS1zeW1saW5rZWQtc3RvcmUvdGFza3MucmVhbC5qc29ubCIsCiAgImN1cnNvciI6IDEsCiAgInN0YXRlcyI6IFsKICAgIHsKICAgICAgIm9yZ19zaGEiOiAiNDFkNmU2MDAyZWJkNDE5NTlkYzMxYzM0ODE0ZjFiYjIwMDNjMmVkYWNlZDY5OTNiYTA5YmRhYTU4MTM3MmVhNiIsCiAgICAgICJhcmNoaXZlX3NoYSI6IG51bGwKICAgIH0sCiAgICB7CiAgICAgICJvcmdfc2hhIjogImU4MjI1ZjdmMGQ1YTBjYTdmODQyMDMwOWU5MThlNzRkNGE0ZDYyNDZjZjk0ODJhNzBjMTNiODA0MzVhNDY2YmQiLAogICAgICAiYXJjaGl2ZV9zaGEiOiBudWxsLAogICAgICAibGFiZWwiOiAiY2FwdHVyZTogdGhyb3VnaCB0aGUgbGluayIKICAgIH0KICBdCn0=",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "lock",
+        "path": ".tasks.real.jsonl.lock",
+        "present": true,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": 0,
+        "mode": "0644",
+        "content_base64": "",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "store",
+        "path": "tasks.jsonl",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": null,
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": "tasks.real.jsonl"
+      },
+      {
+        "role": "store",
+        "path": "tasks.real.jsonl",
+        "present": true,
+        "sha256": "e8225f7f0d5a0ca7f8420309e918e74d4a4d6246cf9482a70c13b80435a466bd",
+        "size_bytes": 443,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6IjI1MDAwMDAxIiwidGl0bGUiOiJJbmJveCJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImJiYmIwMDAxIiwicGFyZW50IjoiMjUwMDAwMDEiLCJzdGF0ZSI6IklOQk9YIiwidGl0bGUiOiJ0aHJvdWdoIHRoZSBsaW5rIiwiYm9keSI6IkNhcHR1cmVkIFsyMDI2LTAzLTE0XS4iLCJ1cGRhdGVkIjoiMjAyNi0wMy0xNFQxNTowOToyNlojZml4dHVyZSJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6IjI1MDAwMDAyIiwidGl0bGUiOiJOZXh0IEFjdGlvbnMifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiIyNTAwMDAwMyIsInBhcmVudCI6IjI1MDAwMDAyIiwic3RhdGUiOiJORVhUIiwidGl0bGUiOiJDb25maXJtIHRoZSBzeW1saW5rZWQgc3RvcmUgaXMgZm9sbG93ZWQiLCJ0YWdzIjpbIkBjb21wdXRlciJdfQo=",
+        "line_count": 5,
+        "symlink_target": null
+      }
+    ],
+    "deltas": [
+      {
+        "path": ".state/tasks/journal/b36269764981b90a/blobs/41d6e6002ebd41959dc31c34814f1bb2003c2edaced6993ba09bdaa581372ea6",
+        "kind": "created",
+        "before_sha256": null,
+        "after_sha256": "41d6e6002ebd41959dc31c34814f1bb2003c2edaced6993ba09bdaa581372ea6"
+      },
+      {
+        "path": ".state/tasks/journal/b36269764981b90a/blobs/e8225f7f0d5a0ca7f8420309e918e74d4a4d6246cf9482a70c13b80435a466bd",
+        "kind": "created",
+        "before_sha256": null,
+        "after_sha256": "e8225f7f0d5a0ca7f8420309e918e74d4a4d6246cf9482a70c13b80435a466bd"
+      },
+      {
+        "path": ".state/tasks/journal/b36269764981b90a/index.json",
+        "kind": "created",
+        "before_sha256": null,
+        "after_sha256": "639e7c6ea48056842f25b52eca46aee22bb477edb02a360d7839e9ea6a5bf876"
+      },
+      {
+        "path": ".tasks.real.jsonl.lock",
+        "kind": "created",
+        "before_sha256": null,
+        "after_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "tasks.real.jsonl",
+        "kind": "modified",
+        "before_sha256": "41d6e6002ebd41959dc31c34814f1bb2003c2edaced6993ba09bdaa581372ea6",
+        "after_sha256": "e8225f7f0d5a0ca7f8420309e918e74d4a4d6246cf9482a70c13b80435a466bd"
+      }
+    ],
+    "rolled_back": null
+  },
+  "journal": {
+    "present": true,
+    "version": 1,
+    "cursor": 1,
+    "states": [
+      {
+        "label": null,
+        "store_sha256": "41d6e6002ebd41959dc31c34814f1bb2003c2edaced6993ba09bdaa581372ea6",
+        "archive_sha256": null,
+        "coalesce_key": null,
+        "coalesce_scope": null,
+        "repair": null
+      },
+      {
+        "label": "capture: through the link",
+        "store_sha256": "e8225f7f0d5a0ca7f8420309e918e74d4a4d6246cf9482a70c13b80435a466bd",
+        "archive_sha256": null,
+        "coalesce_key": null,
+        "coalesce_scope": null,
+        "repair": null
+      }
+    ],
+    "index": {
+      "role": "journal_index",
+      "path": ".state/tasks/journal/b36269764981b90a/index.json",
+      "present": true,
+      "sha256": "639e7c6ea48056842f25b52eca46aee22bb477edb02a360d7839e9ea6a5bf876",
+      "size_bytes": 431,
+      "mode": "0644",
+      "content_base64": "ewogICJ2ZXJzaW9uIjogMSwKICAib3JnIjogIi9wcml2YXRlL3RtcC90YXNrcy1jb25mb3JtYW5jZS9jbGktY2FwdHVyZS1zeW1saW5rZWQtc3RvcmUvdGFza3MucmVhbC5qc29ubCIsCiAgImN1cnNvciI6IDEsCiAgInN0YXRlcyI6IFsKICAgIHsKICAgICAgIm9yZ19zaGEiOiAiNDFkNmU2MDAyZWJkNDE5NTlkYzMxYzM0ODE0ZjFiYjIwMDNjMmVkYWNlZDY5OTNiYTA5YmRhYTU4MTM3MmVhNiIsCiAgICAgICJhcmNoaXZlX3NoYSI6IG51bGwKICAgIH0sCiAgICB7CiAgICAgICJvcmdfc2hhIjogImU4MjI1ZjdmMGQ1YTBjYTdmODQyMDMwOWU5MThlNzRkNGE0ZDYyNDZjZjk0ODJhNzBjMTNiODA0MzVhNDY2YmQiLAogICAgICAiYXJjaGl2ZV9zaGEiOiBudWxsLAogICAgICAibGFiZWwiOiAiY2FwdHVyZTogdGhyb3VnaCB0aGUgbGluayIKICAgIH0KICBdCn0=",
+      "line_count": null,
+      "symlink_target": null
+    },
+    "blob_count": 2,
+    "blob_sha256": [
+      "41d6e6002ebd41959dc31c34814f1bb2003c2edaced6993ba09bdaa581372ea6",
+      "e8225f7f0d5a0ca7f8420309e918e74d4a4d6246cf9482a70c13b80435a466bd"
+    ]
+  },
+  "revisions": {
+    "store": "s1.533efc991a20d17e4a6b9c260610683aae575d10f03b15e93e2aa839a56abd88",
+    "resources": [
+      {
+        "id": "25000003",
+        "kind": "task",
+        "revision": "v1.c6e64be0e80a0c51d985b7a2b0a197d19507ff13fe40b5a5f2c9e39d6958850a.36c9dffde39c9ba8d20c90cba8526efe4a5d732713f5b2c633345e647832581a.098ace0988dc341e35d0443ad59fd246864eb8aad3b7682e7e9a6152f1ebd2b3"
+      },
+      {
+        "id": "bbbb0001",
+        "kind": "task",
+        "revision": "v1.bbd3678ddc1b6204bc5ac202a83deec888e710e6cf92b7d43148fcfa95c27e0c.91699d5acb142b03f8440ae7803a9c4a671ece13ce1a7ac4bf079e351dfecc68.68e05497613da191ae4185a4e7a860ddb9a0e82702317220776773a945d883a9"
+      }
+    ],
+    "touched_ids": [
+      "bbbb0001"
+    ],
+    "http_etag": null
+  },
+  "http": [],
+  "environment": {
+    "tzdb_version": "Zoneinfo DataSource: /usr/share/zoneinfo",
+    "platform": "arm64-darwin23",
+    "filesystem": "/",
+    "locale": "UTF-8",
+    "umask": "0022"
+  },
+  "metrics": {
+    "wall_ms": 0,
+    "user_cpu_ms": null,
+    "sys_cpu_ms": null,
+    "peak_rss_bytes": null,
+    "bytes_written": 1592
+  },
+  "notes": "the store the user names is a symlink; roles must follow it, so files[].symlink_target populates and the mutation invariant still holds"
+}

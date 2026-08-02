@@ -1,0 +1,3 @@
+{"type":"meta","version":2}
+{"type":"section","id":"e1000001","title":"Interleaved temporal keys"}
+{"type":"task","id":"e1000002","parent":"e1000001","state":"NEXT","title":"Window with a start time and a due time","scheduled":"2026-06-16","scheduled_time":{"local":"09:30","timezone":"Europe/London"},"deadline":"2026-06-18","deadline_time":{"local":"17:00","timezone":"America/Los_Angeles"}}
