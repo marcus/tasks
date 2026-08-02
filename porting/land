@@ -66,7 +66,6 @@ SLICE="$1"
 case "$SLICE" in
   ''|*[!A-Za-z0-9_-]*) usage ;;
 esac
-BRANCH="port/$SLICE"
 
 # ---------------------------------------------------------------- repo root
 # Refs (branches, objects) are shared across every worktree of this repo, but
@@ -100,6 +99,26 @@ command -v jq >/dev/null || die "jq not on PATH"
 command -v td >/dev/null || die "td not on PATH"
 MANIFEST="$REPO_ROOT/porting/manifest.jsonl"
 [ -f "$MANIFEST" ] || die "no manifest at $MANIFEST"
+
+# PORTING.md's iteration steps and `td` itself hand an agent the td issue id
+# (e.g. td-2f853a), not the manifest slice id this script was originally
+# keyed on (e.g. format-parse) — invoking with the td id is the mistake an
+# agent following those docs will actually make. Accept both: a td id is
+# resolved to its slice via the same slice:<name> label step 2 below relies
+# on, so an id that lacks that label fails there with the same message step 2
+# would already give, not a confusing new one.
+case "$SLICE" in
+  td-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])
+    RESOLVED_ISSUE="$(cd "$REPO_ROOT" && td show "$SLICE" --json 2>/dev/null)"
+    [ -n "$RESOLVED_ISSUE" ] || die "no td issue $SLICE"
+    RESOLVED_SLICE="$(printf '%s' "$RESOLVED_ISSUE" | jq -r '
+      [(.labels // [])[] | select(startswith("slice:"))][0] // empty' | sed 's/^slice://')"
+    [ -n "$RESOLVED_SLICE" ] || die "td issue $SLICE has no slice:<name> label"
+    log "resolved td id $SLICE to slice '$RESOLVED_SLICE'"
+    SLICE="$RESOLVED_SLICE"
+    ;;
+esac
+BRANCH="port/$SLICE"
 # Inside .git, not the working tree: a lock directory living under
 # porting/ would show up as an untracked file in `git status --porcelain`,
 # tripping this very script's own clean-checkout check.
@@ -274,16 +293,30 @@ if ! g merge --no-ff --no-edit -m "Land port/$SLICE: ${BEHAVIOR:-$SLICE}" "$BRAN
   die "merge of $BRANCH failed even after a clean merge-tree check"
 fi
 
-if ! manifest_set_status "$SLICE" "ported"; then
-  g reset -q --hard "$MAIN_BEFORE"
-  record "$ISSUE_ID" "porting/land refused: could not update manifest status to ported; $DEFAULT_BRANCH reset to $MAIN_BEFORE"
-  die "failed to rewrite manifest status for $SLICE"
-fi
-g add porting/manifest.jsonl >/dev/null 2>&1
-if ! g commit -q -m "porting: mark $SLICE ported (landed $BRANCH)"; then
-  g reset -q --hard "$MAIN_BEFORE"
-  record "$ISSUE_ID" "porting/land refused: could not commit manifest status update; $DEFAULT_BRANCH reset to $MAIN_BEFORE"
-  die "failed to commit manifest status update for $SLICE"
+# Agents already advance the manifest status ON their port branch as part of
+# doing the work (e.g. "porting: mark format parser ported" landing with
+# format-parse) — this is the normal, expected path, not an edge case. When
+# the merge has already brought the target status in, there is nothing left
+# to change: skip straight to the test suite rather than writing an
+# identical status and asking git to commit a no-op diff, which git refuses
+# (nothing staged) and which this script must not mistake for a real failure.
+POST_MERGE_STATUS="$(manifest_status "$SLICE")"
+if [ "$POST_MERGE_STATUS" = "ported" ]; then
+  log "$SLICE manifest status already 'ported' (set by $BRANCH itself); skipping status commit"
+else
+  if ! manifest_set_status "$SLICE" "ported"; then
+    g reset -q --hard "$MAIN_BEFORE"
+    record "$ISSUE_ID" "porting/land refused: could not update manifest status to ported; $DEFAULT_BRANCH reset to $MAIN_BEFORE"
+    die "failed to rewrite manifest status for $SLICE"
+  fi
+  g add porting/manifest.jsonl >/dev/null 2>&1
+  if git -C "$REPO_ROOT" diff --cached --quiet -- porting/manifest.jsonl; then
+    log "$SLICE manifest status update produced no diff; skipping empty commit"
+  elif ! g commit -q -m "porting: mark $SLICE ported (landed $BRANCH)"; then
+    g reset -q --hard "$MAIN_BEFORE"
+    record "$ISSUE_ID" "porting/land refused: could not commit manifest status update; $DEFAULT_BRANCH reset to $MAIN_BEFORE"
+    die "failed to commit manifest status update for $SLICE"
+  fi
 fi
 
 # ---------------------------------------------------------------- test suite

@@ -86,14 +86,14 @@ seed_manifest() { # seed_manifest <path> <n-dummies> <slice-id> <slice-status>
 # manifest snapshot plus the slice's own record advanced, and a source file
 # representing the ported code — so the merge exercises both the manifest
 # merge driver and an ordinary file addition, same as a real slice.
-advance_slice_branch() { # advance_slice_branch <path> <slice>
-  local path="$1" slice="$2" i
+advance_slice_branch() { # advance_slice_branch <path> <slice> [branch-status]
+  local path="$1" slice="$2" branch_status="${3:-reviewing}" i
   ( cd "$path" && git switch -q -c "port/$slice" )
   : >"$path/porting/manifest.jsonl"
   for i in $(seq 1 43); do
     dummy_record "$(printf 'dummy-%04d' "$i")" "not_started" >>"$path/porting/manifest.jsonl"
   done
-  dummy_record "$slice" "reviewing" >>"$path/porting/manifest.jsonl"
+  dummy_record "$slice" "$branch_status" >>"$path/porting/manifest.jsonl"
   mkdir -p "$path/internal/record"
   printf 'package record\n\n// %s: pretend Go port of the slice.\n' "$slice" \
     >"$path/internal/record/$slice.go"
@@ -260,6 +260,66 @@ out="$TMPROOT/stale-lock-land.out"
 TASKS_REPO="$r" LAND_LOCK_TIMEOUT=15 LAND_TEST_CMD="true" "$LAND" stuck-slice >"$out" 2>&1
 rc=$?
 assert_status "(lock) reclaims a lock held by a dead pid instead of deadlocking" 0 "$rc"
+
+# ================================================================== (f)
+# Regression: the branch already advanced the manifest status to "ported"
+# itself (the normal path — agents commit that as part of doing the work, as
+# port/format-parse's real "porting: mark format parser ported" commit did).
+# land must not try to write an identical status and choke on git refusing
+# an empty commit; it must recognize the status is already right and land
+# straight through to a clean success.
+r="$(new_repo already-ported)"
+seed_manifest "$r" 12 "preadvanced-slice" "not_started"
+advance_slice_branch "$r" "preadvanced-slice" "ported"
+issue="$(approve_slice "$r" "preadvanced-slice")"
+before="$(sha "$r" main)"
+
+out="$TMPROOT/preadvanced-land.out"
+TASKS_REPO="$r" LAND_TEST_CMD="true" "$LAND" preadvanced-slice >"$out" 2>&1
+rc=$?
+assert_status "(f) land exits 0 when the branch already set status to ported" 0 "$rc"
+after="$(sha "$r" main)"
+if [ "$before" != "$after" ]; then ok "(f) main advanced"; else bad "(f) main did not advance"; fi
+merged="$(git -C "$r" log --merges -1 --format=%s main 2>/dev/null)"
+case "$merged" in
+  *"Land port/preadvanced-slice"*) ok "(f) an identifiable merge commit landed" ;;
+  *) bad "(f) no merge commit found (got: $merged)" ;;
+esac
+status_now="$(git -C "$r" show main:porting/manifest.jsonl | jq -rc 'select(.id=="preadvanced-slice") | .status')"
+assert_eq "(f) manifest still marks preadvanced-slice ported" "ported" "$status_now"
+if git -C "$r" rev-parse --verify -q refs/heads/port/preadvanced-slice >/dev/null 2>&1; then
+  bad "(f) port/preadvanced-slice branch was not deleted"
+else
+  ok "(f) port/preadvanced-slice branch deleted"
+fi
+[ -d "$(git -C "$r" rev-parse --absolute-git-dir)/porting-land.lock" ] \
+  && bad "(f) lock directory left behind" || ok "(f) lock released"
+
+# ================================================================== (g)
+# Regression: invoking with the td issue id (what PORTING.md's iteration
+# steps and `td` itself hand an agent, e.g. td-2f853a) must work identically
+# to invoking with the manifest slice id.
+r="$(new_repo by-td-id)"
+seed_manifest "$r" 7 "tdid-slice" "not_started"
+advance_slice_branch "$r" "tdid-slice"
+issue="$(approve_slice "$r" "tdid-slice")"
+before="$(sha "$r" main)"
+
+out="$TMPROOT/by-td-id-land.out"
+TASKS_REPO="$r" LAND_TEST_CMD="true" "$LAND" "$issue" >"$out" 2>&1
+rc=$?
+assert_status "(g) land exits 0 when invoked by td id" 0 "$rc"
+after="$(sha "$r" main)"
+if [ "$before" != "$after" ]; then ok "(g) main advanced"; else bad "(g) main did not advance"; fi
+merged="$(git -C "$r" log --merges -1 --format=%s main 2>/dev/null)"
+case "$merged" in
+  *"Land port/tdid-slice"*) ok "(g) td id resolved to the correct slice/branch" ;;
+  *) bad "(g) no merge commit found for the resolved slice (got: $merged)" ;;
+esac
+status_now="$(git -C "$r" show main:porting/manifest.jsonl | jq -rc 'select(.id=="tdid-slice") | .status')"
+assert_eq "(g) manifest marks tdid-slice ported" "ported" "$status_now"
+git -C "$r" rev-parse --verify -q refs/heads/port/tdid-slice >/dev/null 2>&1 \
+  && bad "(g) port/tdid-slice branch was not deleted" || ok "(g) port/tdid-slice branch deleted"
 
 # ================================================================== summary
 echo "----------------------------------------"
