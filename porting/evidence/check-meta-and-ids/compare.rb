@@ -37,6 +37,7 @@ def ruby_owned(case_id)
 end
 
 failures = []
+comparisons = 0
 CASES.each_line do |line|
   next if line.strip.empty? || line.lstrip.start_with?("#")
 
@@ -52,10 +53,11 @@ CASES.each_line do |line|
   end
   actual = JSON.parse(stdout).fetch("errors")
   expected = ruby_owned(testcase.fetch("case_id"))
+  comparisons += 1
   next if actual == expected
 
   failures << "#{testcase.fetch("case_id")}: expected #{expected.inspect}, got #{actual.inspect}"
 end
 
 abort failures.join("\n") unless failures.empty?
-puts "check-meta-and-ids: 9 Ruby/Go diagnostic comparisons passed"
+puts "check-meta-and-ids: #{comparisons} Ruby/Go diagnostic comparisons passed"

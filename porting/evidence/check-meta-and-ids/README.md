@@ -4,16 +4,17 @@ Captured on 2026-08-02 from Ruby at source revision `174165be85c9`. No Go
 implementation was present or exercised.
 
 `porting/runners/ruby/run --out porting/evidence/check-meta-and-ids/ruby
-porting/runners/cases/check-meta-and-ids.jsonl` produced the nine checked-in
+porting/runners/cases/check-meta-and-ids.jsonl` produced the checked-in
 observations. The two healthy cases exit 0 without mutation:
 
 - `check-meta-valid-empty-store`: `ok — 0 tasks parsed, no structural errors`
 - `check-meta-valid-archive-pair`: `ok — 6 records parsed, no structural errors`
 
-The seven malformed or incompatible cases exit 1 without mutation. Their raw
+The malformed or incompatible cases exit 1 without mutation. Their raw
 stdout and byte hashes are in `ruby/*.json`; the cases cover missing/non-meta
 line one, later meta records, an empty file, same-file and cross-file duplicate
-ids, a non-string id (reported, not raised), and future schema version 3.
+ids, a non-string id (reported, not raised), future schema version 3, exponent
+and null schema versions, and an unknown type with no ID.
 
 Two test-only branches were also characterized directly before any Go work:
 
@@ -38,12 +39,25 @@ strings. `go test ./...`, `go vet ./...`, and the race-enabled test suite pass.
 
 The direct differential path is `ruby
 porting/evidence/check-meta-and-ids/compare.rb`. It drives
-`go/cmd/check-meta-and-ids-probe` over the same nine fixtures and compares its
-owned metadata/ID entries to the checked-in Ruby CLI observations. It passes
-all nine comparisons. The comparator extracts only this slice's declared
+`go/cmd/check-meta-and-ids-probe` over the initial nine fixtures and compares
+its owned metadata/ID entries to the checked-in Ruby CLI observations. It
+initially passed all nine comparisons. The comparator extracts only this
+slice's declared
 diagnostics from Ruby's full report: task-field and tree diagnostics in the
 `wrong-types` fixture remain separate slices, rather than becoming an
 unintentional completion claim here.
 
-The remaining medium-tier work is the split independent source-fidelity and
-Go-idiom reviews; independent approval is required before landing.
+The remaining medium-tier work at that point was the split independent
+source-fidelity and Go-idiom reviews; independent approval is required before
+landing.
+
+## Source-fidelity repair — 2026-08-02
+
+The later source-fidelity review found two diagnostic/order divergences in the
+initial translation. `rubyInspect` now decodes JSON before rendering it, so
+`2e0` is reported as Ruby's `2.0` and JSON `null` as Ruby's `nil`. The ID pass
+now runs only for `section` and `task` records, matching Ruby's unknown-type
+short-circuit. The oracle corpus and differential comparator now cover all 12
+fixture cases and pass 12/12; the unknown-type case intentionally compares an
+empty slice-owned diagnostic set until the shared report owns its one unknown
+type error.

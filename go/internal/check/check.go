@@ -2,11 +2,14 @@
 package check
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
+	"strings"
 
 	"tasks-go/internal/record"
 )
@@ -61,7 +64,13 @@ func CheckText(input []byte) Result {
 			}
 			continue
 		}
-		checkID(parsedRecord, &errors, duplicates)
+		// Ruby short-circuits records outside its declared type vocabulary
+		// before validating their IDs. The shared report will eventually add
+		// the unknown-type diagnostic; this slice must not add an ID error
+		// that Ruby never emits alongside it.
+		if typeName := stringField(parsedRecord, "type"); typeName == "section" || typeName == "task" {
+			checkID(parsedRecord, &errors, duplicates)
+		}
 	}
 	for id, lines := range duplicates {
 		if len(lines) > 1 {
@@ -187,7 +196,69 @@ func rubyInspect(raw json.RawMessage) string {
 	if raw == nil {
 		return "nil"
 	}
-	return string(raw)
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return string(raw)
+	}
+	return rubyInspectValue(value)
+}
+
+// rubyInspectValue renders JSON-decoded values using the parts of Ruby's
+// Object#inspect that Check exposes in diagnostics. Raw JSON is subtly wrong:
+// JSON `null` is Ruby nil, and exponent notation is parsed to a Float before
+// its value is interpolated.
+func rubyInspectValue(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return "nil"
+	case bool:
+		return strconv.FormatBool(typed)
+	case string:
+		return strconv.Quote(typed)
+	case json.Number:
+		return rubyInspectNumber(string(typed))
+	case []any:
+		items := make([]string, len(typed))
+		for index, item := range typed {
+			items[index] = rubyInspectValue(item)
+		}
+		return "[" + strings.Join(items, ", ") + "]"
+	case map[string]any:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		pairs := make([]string, 0, len(keys))
+		for _, key := range keys {
+			pairs = append(pairs, strconv.Quote(key)+"=>"+rubyInspectValue(typed[key]))
+		}
+		return "{" + strings.Join(pairs, ", ") + "}"
+	default:
+		return fmt.Sprint(value)
+	}
+}
+
+func rubyInspectNumber(raw string) string {
+	if !strings.ContainsAny(raw, ".eE") {
+		return raw
+	}
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return raw
+	}
+	formatted := strconv.FormatFloat(value, 'g', -1, 64)
+	if !strings.ContainsAny(formatted, ".eE") {
+		return formatted + ".0"
+	}
+	if !strings.Contains(formatted, ".") {
+		if exponent := strings.IndexAny(formatted, "eE"); exponent >= 0 {
+			formatted = formatted[:exponent] + ".0" + formatted[exponent:]
+		}
+	}
+	return formatted
 }
 
 func joinLines(lines []int) string {

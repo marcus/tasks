@@ -40,12 +40,31 @@ func TestStoreChecksCrossFileDuplicateAgainstRubyOracle(t *testing.T) {
 	}
 }
 
-func TestMissingFileAndFloatVersionMatchRubyOracle(t *testing.T) {
+func TestMissingFileAndMetadataVersionInspectionMatchRubyOracle(t *testing.T) {
 	if got, want := Check("/definitely-not-present/tasks.jsonl").Errors, []Entry{{0, "file not found: /definitely-not-present/tasks.jsonl"}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("missing file = %#v, want %#v", got, want)
 	}
-	if got, want := CheckText([]byte(`{"type":"meta","version":2.0}`)).Errors, []Entry{{1, "unsupported meta version 2.0 (expected 2)"}}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("float version = %#v, want %#v", got, want)
+	for _, tc := range []struct {
+		name string
+		text string
+		want string
+	}{
+		{"decimal float", `{"type":"meta","version":2.0}`, "unsupported meta version 2.0 (expected 2)"},
+		{"exponent float", `{"type":"meta","version":2e0}`, "unsupported meta version 2.0 (expected 2)"},
+		{"null", `{"type":"meta","version":null}`, "unsupported meta version nil (expected 2)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, want := CheckText([]byte(tc.text)).Errors, []Entry{{1, tc.want}}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("errors = %#v, want %#v", got, want)
+			}
+		})
+	}
+}
+
+func TestUnknownTypeDoesNotAlsoValidateID(t *testing.T) {
+	text := []byte("{\"type\":\"meta\",\"version\":2}\n{\"type\":\"widget\"}")
+	if got := CheckText(text).Errors; len(got) != 0 {
+		t.Fatalf("unknown type ID diagnostics = %#v, want none until the shared report owns unknown types", got)
 	}
 }
 

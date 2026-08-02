@@ -1,10 +1,10 @@
 {
   "schema_version": 2,
-  "observation_id": "obs_d682ad01-6766-44c2-8122-73f0e18df3b8",
+  "observation_id": "obs_4a2c5ec2-10b6-4006-a2a9-06cc6914d7b0",
   "case_id": "check-meta-valid-empty-store",
   "implementation": {
     "name": "ruby",
-    "version": "14d703559bfdb51f42a7ae0eb0c00746eaaa9567-dirty",
+    "version": "53996362f3f5bacfc6ee49f709c0853983df6003-dirty",
     "runtime": "ruby 4.0.6"
   },
   "fixture": {
@@ -425,7 +425,7 @@
     "umask": "0022"
   },
   "metrics": {
-    "wall_ms": 103.958,
+    "wall_ms": 115.893,
     "user_cpu_ms": null,
     "sys_cpu_ms": null,
     "peak_rss_bytes": null,

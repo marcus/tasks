@@ -1,17 +1,17 @@
 {
   "schema_version": 2,
-  "observation_id": "obs_142a2582-b6df-4eb2-b327-38b209e5bbf3",
-  "case_id": "check-meta-duplicate-ids",
+  "observation_id": "obs_7d6decfc-8e4a-438e-8408-359b6188f002",
+  "case_id": "check-meta-unknown-type-no-id",
   "implementation": {
     "name": "ruby",
     "version": "53996362f3f5bacfc6ee49f709c0853983df6003-dirty",
     "runtime": "ruby 4.0.6"
   },
   "fixture": {
-    "id": "malformed/duplicate-ids",
+    "id": "malformed/unknown-type-no-id",
     "class": "malformed",
-    "root_sha256": "ad741c9f8d939d1dd3aefcd581e51b9c32c19e53ff1a24c50fa2ccd817c6bac0",
-    "copy_root": "/tmp/tasks-conformance/check-meta-duplicate-ids"
+    "root_sha256": "7eaead92c8777de8dff4816aa699c666be662c220537ba1b534bf3612b02e8c7",
+    "copy_root": "/tmp/tasks-conformance/check-meta-unknown-type-no-id"
   },
   "invocation": {
     "surface": "cli",
@@ -34,7 +34,7 @@
       },
       {
         "name": "HOME",
-        "value": "/tmp/tasks-conformance/check-meta-duplicate-ids"
+        "value": "/tmp/tasks-conformance/check-meta-unknown-type-no-id"
       },
       {
         "name": "LANG",
@@ -66,7 +66,7 @@
       },
       {
         "name": "TASKS_DIR",
-        "value": "/tmp/tasks-conformance/check-meta-duplicate-ids"
+        "value": "/tmp/tasks-conformance/check-meta-unknown-type-no-id"
       },
       {
         "name": "TASKS_FILE",
@@ -118,11 +118,11 @@
       },
       {
         "name": "XDG_CONFIG_HOME",
-        "value": "/tmp/tasks-conformance/check-meta-duplicate-ids/.config"
+        "value": "/tmp/tasks-conformance/check-meta-unknown-type-no-id/.config"
       },
       {
         "name": "XDG_STATE_HOME",
-        "value": "/tmp/tasks-conformance/check-meta-duplicate-ids/.state"
+        "value": "/tmp/tasks-conformance/check-meta-unknown-type-no-id/.state"
       }
     ],
     "pins": [
@@ -224,13 +224,13 @@
     "signal": null,
     "timed_out": false,
     "stdout": {
-      "sha256": "1cd8741337a14cb558bb0f55f7ac38e9a2147eee52352af00172ce768fabeb73",
-      "sha256_normalized": "1cd8741337a14cb558bb0f55f7ac38e9a2147eee52352af00172ce768fabeb73",
-      "size_bytes": 103,
+      "sha256": "02921231382504849df5f45059ee400069842a2ba50b78afbbf84ce6319cea6d",
+      "sha256_normalized": "02921231382504849df5f45059ee400069842a2ba50b78afbbf84ce6319cea6d",
+      "size_bytes": 69,
       "valid_utf8": true,
-      "bytes_base64": "ZXJyb3IgIGxpbmUgNDogZHVwbGljYXRlIGlkICJjMDAwMDAwMiIgKGxpbmVzIDMsIDQpIOKAlCBpZCByZWZzIHdpbGwgYmUgd3JvbmcKMSBlcnJvcihzKSwgMCB3YXJuaW5nKHMpCg==",
+      "bytes_base64": "ZXJyb3IgIGxpbmUgMjogdW5rbm93biByZWNvcmQgdHlwZSAid2lkZ2V0IgoxIGVycm9yKHMpLCAwIHdhcm5pbmcocykK",
       "truncated_at_bytes": null,
-      "text": "error  line 4: duplicate id \"c0000002\" (lines 3, 4) — id refs will be wrong\n1 error(s), 0 warning(s)\n"
+      "text": "error  line 2: unknown record type \"widget\"\n1 error(s), 0 warning(s)\n"
     },
     "stderr": {
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -298,11 +298,11 @@
         "kind": "file",
         "path": "tasks.jsonl",
         "present": true,
-        "sha256": "9e56f9a789b75880c676bda1e440cba65a2a654594d87f3b22e49a42bd81b5ec",
-        "size_bytes": 582,
+        "sha256": "1d7e7a43e8fdb34f31ab51fc513e0c8bf8adaedcfd48f384c22d4dbf32ef17bd",
+        "size_bytes": 46,
         "mode": "0644",
-        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImMwMDAwMDAxIiwidGl0bGUiOiJOZXh0IEFjdGlvbnMifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMDAwMDAwMiIsInBhcmVudCI6ImMwMDAwMDAxIiwic3RhdGUiOiJORVhUIiwidGl0bGUiOiJSZXBsYWNlIHRoZSBiYXRocm9vbSBidWxiIiwidGFncyI6WyJAaG9tZSJdfQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMDAwMDAwMiIsInBhcmVudCI6ImMwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJSZXR1cm4gdGhlIGxpYnJhcnkgYm9va3MiLCJkZWFkbGluZSI6IjIwMjYtMDYtMTQiLCJib2R5IjoiVHdvIG92ZXJkdWUuIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiYzAwMDAwMDQiLCJ0aXRsZSI6IlByb2plY3RzIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiYzAwMDAwMDUiLCJwYXJlbnQiOiJjMDAwMDAwNCIsInRpdGxlIjoiR2FyYWdlIHRpZHktdXAifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMDAwMDAwNiIsInBhcmVudCI6ImMwMDAwMDA1Iiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJTb3J0IHRoZSB0b29sYm94In0K",
-        "line_count": 7,
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6IndpZGdldCJ9Cg==",
+        "line_count": 2,
         "symlink_target": null
       }
     ],
@@ -360,11 +360,11 @@
         "kind": "file",
         "path": "tasks.jsonl",
         "present": true,
-        "sha256": "9e56f9a789b75880c676bda1e440cba65a2a654594d87f3b22e49a42bd81b5ec",
-        "size_bytes": 582,
+        "sha256": "1d7e7a43e8fdb34f31ab51fc513e0c8bf8adaedcfd48f384c22d4dbf32ef17bd",
+        "size_bytes": 46,
         "mode": "0644",
-        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImMwMDAwMDAxIiwidGl0bGUiOiJOZXh0IEFjdGlvbnMifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMDAwMDAwMiIsInBhcmVudCI6ImMwMDAwMDAxIiwic3RhdGUiOiJORVhUIiwidGl0bGUiOiJSZXBsYWNlIHRoZSBiYXRocm9vbSBidWxiIiwidGFncyI6WyJAaG9tZSJdfQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMDAwMDAwMiIsInBhcmVudCI6ImMwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJSZXR1cm4gdGhlIGxpYnJhcnkgYm9va3MiLCJkZWFkbGluZSI6IjIwMjYtMDYtMTQiLCJib2R5IjoiVHdvIG92ZXJkdWUuIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiYzAwMDAwMDQiLCJ0aXRsZSI6IlByb2plY3RzIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiYzAwMDAwMDUiLCJwYXJlbnQiOiJjMDAwMDAwNCIsInRpdGxlIjoiR2FyYWdlIHRpZHktdXAifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMDAwMDAwNiIsInBhcmVudCI6ImMwMDAwMDA1Iiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJTb3J0IHRoZSB0b29sYm94In0K",
-        "line_count": 7,
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6IndpZGdldCJ9Cg==",
+        "line_count": 2,
         "symlink_target": null
       }
     ],
@@ -379,7 +379,7 @@
     "index": {
       "role": "journal_index",
       "kind": null,
-      "path": ".state/tasks/journal/947de47775aae725/index.json",
+      "path": ".state/tasks/journal/58a7ff7e4a7e2018/index.json",
       "present": false,
       "sha256": null,
       "size_bytes": null,
@@ -392,7 +392,7 @@
     "blob_sha256": []
   },
   "revisions": {
-    "store": "s1.07af0a08d0246db1354be7e0579d63a5456b087279af78e2cf1a37681b93af11",
+    "store": "s1.414c0abd5e056ac054d7a178332050a48a1cbcb4149b5aa90d95863a0fb2a2da",
     "resources": [],
     "touched_ids": [],
     "http_etag": null
@@ -406,11 +406,11 @@
     "umask": "0022"
   },
   "metrics": {
-    "wall_ms": 107.31,
+    "wall_ms": 105.75,
     "user_cpu_ms": null,
     "sys_cpu_ms": null,
     "peak_rss_bytes": null,
     "bytes_written": 0
   },
-  "notes": "same-file duplicate id reports final occurrence | probe read status: store_invalid"
+  "notes": "unknown types short-circuit before ID validation | probe read status: store_invalid"
 }

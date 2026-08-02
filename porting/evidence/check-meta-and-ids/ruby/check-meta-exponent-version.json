@@ -1,17 +1,17 @@
 {
   "schema_version": 2,
-  "observation_id": "obs_142a2582-b6df-4eb2-b327-38b209e5bbf3",
-  "case_id": "check-meta-duplicate-ids",
+  "observation_id": "obs_3494bb9f-b24e-469e-89ae-9f404b073e36",
+  "case_id": "check-meta-exponent-version",
   "implementation": {
     "name": "ruby",
     "version": "53996362f3f5bacfc6ee49f709c0853983df6003-dirty",
     "runtime": "ruby 4.0.6"
   },
   "fixture": {
-    "id": "malformed/duplicate-ids",
+    "id": "malformed/meta-version-exponent",
     "class": "malformed",
-    "root_sha256": "ad741c9f8d939d1dd3aefcd581e51b9c32c19e53ff1a24c50fa2ccd817c6bac0",
-    "copy_root": "/tmp/tasks-conformance/check-meta-duplicate-ids"
+    "root_sha256": "9836f751dad0d72b9bea79146c03dc7434127e36817306abc4abd04c6ff7987c",
+    "copy_root": "/tmp/tasks-conformance/check-meta-exponent-version"
   },
   "invocation": {
     "surface": "cli",
@@ -34,7 +34,7 @@
       },
       {
         "name": "HOME",
-        "value": "/tmp/tasks-conformance/check-meta-duplicate-ids"
+        "value": "/tmp/tasks-conformance/check-meta-exponent-version"
       },
       {
         "name": "LANG",
@@ -66,7 +66,7 @@
       },
       {
         "name": "TASKS_DIR",
-        "value": "/tmp/tasks-conformance/check-meta-duplicate-ids"
+        "value": "/tmp/tasks-conformance/check-meta-exponent-version"
       },
       {
         "name": "TASKS_FILE",
@@ -118,11 +118,11 @@
       },
       {
         "name": "XDG_CONFIG_HOME",
-        "value": "/tmp/tasks-conformance/check-meta-duplicate-ids/.config"
+        "value": "/tmp/tasks-conformance/check-meta-exponent-version/.config"
       },
       {
         "name": "XDG_STATE_HOME",
-        "value": "/tmp/tasks-conformance/check-meta-duplicate-ids/.state"
+        "value": "/tmp/tasks-conformance/check-meta-exponent-version/.state"
       }
     ],
     "pins": [
@@ -224,13 +224,13 @@
     "signal": null,
     "timed_out": false,
     "stdout": {
-      "sha256": "1cd8741337a14cb558bb0f55f7ac38e9a2147eee52352af00172ce768fabeb73",
-      "sha256_normalized": "1cd8741337a14cb558bb0f55f7ac38e9a2147eee52352af00172ce768fabeb73",
-      "size_bytes": 103,
+      "sha256": "4aab7b659b2e96ad5da9b8082dad55848b08c4b44e833d2000f51de614ee588c",
+      "sha256_normalized": "4aab7b659b2e96ad5da9b8082dad55848b08c4b44e833d2000f51de614ee588c",
+      "size_bytes": 82,
       "valid_utf8": true,
-      "bytes_base64": "ZXJyb3IgIGxpbmUgNDogZHVwbGljYXRlIGlkICJjMDAwMDAwMiIgKGxpbmVzIDMsIDQpIOKAlCBpZCByZWZzIHdpbGwgYmUgd3JvbmcKMSBlcnJvcihzKSwgMCB3YXJuaW5nKHMpCg==",
+      "bytes_base64": "ZXJyb3IgIGxpbmUgMTogdW5zdXBwb3J0ZWQgbWV0YSB2ZXJzaW9uIDIuMCAoZXhwZWN0ZWQgMikKMSBlcnJvcihzKSwgMCB3YXJuaW5nKHMpCg==",
       "truncated_at_bytes": null,
-      "text": "error  line 4: duplicate id \"c0000002\" (lines 3, 4) — id refs will be wrong\n1 error(s), 0 warning(s)\n"
+      "text": "error  line 1: unsupported meta version 2.0 (expected 2)\n1 error(s), 0 warning(s)\n"
     },
     "stderr": {
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -298,11 +298,11 @@
         "kind": "file",
         "path": "tasks.jsonl",
         "present": true,
-        "sha256": "9e56f9a789b75880c676bda1e440cba65a2a654594d87f3b22e49a42bd81b5ec",
-        "size_bytes": 582,
+        "sha256": "61ae5d77ce42157f95b24c19c6c3025619c18c585f837a3895d61b88fff02bf8",
+        "size_bytes": 30,
         "mode": "0644",
-        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImMwMDAwMDAxIiwidGl0bGUiOiJOZXh0IEFjdGlvbnMifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMDAwMDAwMiIsInBhcmVudCI6ImMwMDAwMDAxIiwic3RhdGUiOiJORVhUIiwidGl0bGUiOiJSZXBsYWNlIHRoZSBiYXRocm9vbSBidWxiIiwidGFncyI6WyJAaG9tZSJdfQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMDAwMDAwMiIsInBhcmVudCI6ImMwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJSZXR1cm4gdGhlIGxpYnJhcnkgYm9va3MiLCJkZWFkbGluZSI6IjIwMjYtMDYtMTQiLCJib2R5IjoiVHdvIG92ZXJkdWUuIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiYzAwMDAwMDQiLCJ0aXRsZSI6IlByb2plY3RzIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiYzAwMDAwMDUiLCJwYXJlbnQiOiJjMDAwMDAwNCIsInRpdGxlIjoiR2FyYWdlIHRpZHktdXAifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMDAwMDAwNiIsInBhcmVudCI6ImMwMDAwMDA1Iiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJTb3J0IHRoZSB0b29sYm94In0K",
-        "line_count": 7,
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJlMH0K",
+        "line_count": 1,
         "symlink_target": null
       }
     ],
@@ -360,11 +360,11 @@
         "kind": "file",
         "path": "tasks.jsonl",
         "present": true,
-        "sha256": "9e56f9a789b75880c676bda1e440cba65a2a654594d87f3b22e49a42bd81b5ec",
-        "size_bytes": 582,
+        "sha256": "61ae5d77ce42157f95b24c19c6c3025619c18c585f837a3895d61b88fff02bf8",
+        "size_bytes": 30,
         "mode": "0644",
-        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImMwMDAwMDAxIiwidGl0bGUiOiJOZXh0IEFjdGlvbnMifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMDAwMDAwMiIsInBhcmVudCI6ImMwMDAwMDAxIiwic3RhdGUiOiJORVhUIiwidGl0bGUiOiJSZXBsYWNlIHRoZSBiYXRocm9vbSBidWxiIiwidGFncyI6WyJAaG9tZSJdfQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMDAwMDAwMiIsInBhcmVudCI6ImMwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJSZXR1cm4gdGhlIGxpYnJhcnkgYm9va3MiLCJkZWFkbGluZSI6IjIwMjYtMDYtMTQiLCJib2R5IjoiVHdvIG92ZXJkdWUuIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiYzAwMDAwMDQiLCJ0aXRsZSI6IlByb2plY3RzIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiYzAwMDAwMDUiLCJwYXJlbnQiOiJjMDAwMDAwNCIsInRpdGxlIjoiR2FyYWdlIHRpZHktdXAifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMDAwMDAwNiIsInBhcmVudCI6ImMwMDAwMDA1Iiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJTb3J0IHRoZSB0b29sYm94In0K",
-        "line_count": 7,
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJlMH0K",
+        "line_count": 1,
         "symlink_target": null
       }
     ],
@@ -379,7 +379,7 @@
     "index": {
       "role": "journal_index",
       "kind": null,
-      "path": ".state/tasks/journal/947de47775aae725/index.json",
+      "path": ".state/tasks/journal/c48891a0da2defee/index.json",
       "present": false,
       "sha256": null,
       "size_bytes": null,
@@ -392,7 +392,7 @@
     "blob_sha256": []
   },
   "revisions": {
-    "store": "s1.07af0a08d0246db1354be7e0579d63a5456b087279af78e2cf1a37681b93af11",
+    "store": "s1.b59a6e5d6d92a0706bdb1e97ddc91557206050a90dcbf3040b39b7c0c22fb6a4",
     "resources": [],
     "touched_ids": [],
     "http_etag": null
@@ -406,11 +406,11 @@
     "umask": "0022"
   },
   "metrics": {
-    "wall_ms": 107.31,
+    "wall_ms": 106.99,
     "user_cpu_ms": null,
     "sys_cpu_ms": null,
     "peak_rss_bytes": null,
     "bytes_written": 0
   },
-  "notes": "same-file duplicate id reports final occurrence | probe read status: store_invalid"
+  "notes": "JSON exponent is decoded to Ruby Float before diagnostic interpolation | probe read status: store_invalid"
 }
