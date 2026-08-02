@@ -375,3 +375,22 @@ recur-interval-cookies direct conformance: 16/16 cases matched
 The direct probe compares decoded JSON values, so JSON object-member order in
 the probe transport cannot hide a semantic mismatch. It is package-boundary
 conformance, not a claim that a Go CLI recurrence adapter exists.
+
+### Independent source-fidelity review (2026-08-02): rejected
+
+The 16/16 direct corpus and declared test gates pass, but the Go conformance
+adapter is not faithful at one observable package boundary. Ruby's probe uses
+`spec.fetch("default_prefix", ".+")`, so an explicitly supplied empty prefix is
+preserved: `Tasks::Recur.parse_result("weekly", default_prefix: "")` returns
+`{canonical: "1w"}`. In contrast, `go/cmd/recur-probe/main.go` decodes into a
+plain string and then replaces `""` with `".+"`, so it cannot distinguish an
+absent key from an explicit empty one and would report `.+1w` for the same
+case. `internal/recur.Parse` itself preserves the empty prefix; this is a Go
+direct-probe/conformance defect, not a reason to bless the incomplete corpus.
+
+Correction before a fresh source-fidelity review: decode `default_prefix` as
+presence-aware (for example a `*string`) and default only when the JSON key is
+absent, then add an explicit-empty-prefix direct case and rerun the Ruby-vs-Go
+comparator. No implementation edit was made by this reviewer. The existing
+invalid-UTF-8 boundary remains the separately recorded CLI-adapter ownership
+issue above.
