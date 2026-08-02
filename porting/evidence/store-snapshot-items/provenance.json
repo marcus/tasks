@@ -1,0 +1,46 @@
+{
+  "provenance_version": 1,
+  "captured_at": "2026-08-02T21:09:01Z",
+  "oracle": "ruby",
+  "repo": {
+    "commit": "14d703559bfdb51f42a7ae0eb0c00746eaaa9567",
+    "worktree_dirty": true,
+    "dirty_paths": [
+      "porting/evidence/store-snapshot-items/",
+      "porting/runners/cases/store-snapshot-items.jsonl"
+    ],
+    "implementation_paths_dirty": [],
+    "implementation_clean": true
+  },
+  "inputs": {
+    "case_list": "porting/runners/cases/store-snapshot-items.jsonl",
+    "case_list_sha256": "7f72a0343ae694fbdd91f1e569f4f80c4f9905be0c224a034e79859ce042768f",
+    "case_count": 5,
+    "fixture_corpus": "porting/fixtures",
+    "fixture_corpus_sha256": "4b3853d730bc0f2495224c0bbd30170d50f4e49f92240f8167a75d49b8653def",
+    "runner": "porting/runners/ruby/run",
+    "runner_sha256": "d559be6019a63873864e3378b803d7730ce83992a944f8d9837c459502effa0b",
+    "probe_sha256": "e6080f35e585a4159184d6a7b22c6c21e06a10659988c28773bb24b5008e1b31",
+    "schema_sha256": "6e8d0ce207b080d049ac754fdc8364b1100f0b7cb21a8b4378087783390e859c"
+  },
+  "invocation": {
+    "command": [
+      "porting/runners/ruby/run",
+      "--out",
+      "porting/evidence/store-snapshot-items/ruby",
+      "--work",
+      "/tmp/tasks-store-snapshot-items",
+      "--pin-identity",
+      "--quiet",
+      "porting/runners/cases/store-snapshot-items.jsonl"
+    ],
+    "work_root": "/tmp/tasks-store-snapshot-items",
+    "pin_identity": true
+  },
+  "host": {
+    "ruby": "ruby 4.0.6 (2026-07-14 revision 03b6d3f889) +PRISM [arm64-darwin23]",
+    "ruby_path": "/Users/marcus/.local/share/mise/installs/ruby/4.0.6/bin/ruby",
+    "platform": "arm64-darwin23",
+    "uname": "Darwin 25.5.0 arm64"
+  }
+}

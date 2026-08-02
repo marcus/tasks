@@ -1,0 +1,8 @@
+# Ruby CLI observations for the immutable Store snapshot slice. Internal
+# coherence and defensive-coercion boundaries are characterized by the focused
+# Ruby tests recorded in porting/evidence/store-snapshot-items/README.md.
+{"case_id":"store-snapshot-full-field-matrix","fixture":"valid/full-field-matrix","argv":["list","--all","--json"],"notes":"all task field combinations through a lenient read snapshot"}
+{"case_id":"store-snapshot-archive-pair","fixture":"valid/archive-pair","argv":["list","--archived","--json"],"notes":"archive items come from the same explicit archive snapshot"}
+{"case_id":"store-snapshot-wrong-types","fixture":"malformed/wrong-types","argv":["list","--all","--json"],"notes":"lenient reads coerce malformed task fields instead of raising before Check"}
+{"case_id":"store-snapshot-torn-file","fixture":"adversarial/mid-write-torn-file","argv":["list","--all","--json"],"notes":"a malformed trailing record does not prevent the prior parsed snapshot from being read"}
+{"case_id":"store-snapshot-empty-store","fixture":"valid/empty-store","argv":["list","--all","--json"],"notes":"the meta-only empty collection boundary"}
