@@ -199,6 +199,12 @@ func copyItems(items []Item) []Item {
 }
 
 func copyItem(item Item) Item {
+	item.State = copyJSONValue(item.State)
+	item.Priority = copyJSONValue(item.Priority)
+	item.Title = copyJSONValue(item.Title)
+	item.Recur = copyJSONValue(item.Recur)
+	item.Lead = copyJSONValue(item.Lead)
+	item.LeadSkip = copyJSONValue(item.LeadSkip)
 	item.Tags = append([]string(nil), item.Tags...)
 	if item.ID != nil {
 		id := *item.ID
@@ -217,4 +223,26 @@ func copyItem(item Item) Item {
 		item.Closed = &date
 	}
 	return item
+}
+
+// copyJSONValue keeps malformed-but-readable JSON values private to the
+// snapshot. Structural validation belongs to Check, so Item fields may hold an
+// arbitrary JSON array or object even where the schema later rejects it.
+func copyJSONValue(value any) any {
+	switch typed := value.(type) {
+	case []any:
+		copied := make([]any, len(typed))
+		for index, child := range typed {
+			copied[index] = copyJSONValue(child)
+		}
+		return copied
+	case map[string]any:
+		copied := make(map[string]any, len(typed))
+		for key, child := range typed {
+			copied[key] = copyJSONValue(child)
+		}
+		return copied
+	default:
+		return value
+	}
 }

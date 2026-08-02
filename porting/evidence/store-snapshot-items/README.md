@@ -55,9 +55,22 @@ porting/evidence/capture --out porting/evidence/store-snapshot-items/ruby \
 porting/compare/validate porting/evidence/store-snapshot-items/ruby
 ```
 
-The next step is a **medium-risk translation** by a different agent. It must
-implement only `internal/store` snapshot construction against this capture,
-then add property tests and obtain separate source-fidelity and Go-idiom
-reviews before seeking independent approval. It must not turn lenient reads
+## Go translation progress
+
+The initial `internal/store` projection is present on the slice branch. Its
+accessor boundary deep-copies every JSON-valued Item field, including malformed
+objects and arrays that ordinary reads must carry until Check reports them. The
+property-style fuzz test mutates nested values returned by an accessor and
+proves a later read of the held snapshot retains the original values.
+
+Verified on this branch:
+
+```sh
+(cd go && go test ./... && go test -race ./... && go vet ./...)
+```
+
+The remaining medium-risk work is file-backed coherent capture, a Go probe
+that can be differentially compared to the Ruby observations above, then
+separate source-fidelity and Go-idiom reviews. It must not turn lenient reads
 into eager validation, invent a mixed live/archive snapshot, or treat a Go
 output as an expectation.

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -33,6 +34,40 @@ func TestSnapshotBuildsDefensiveItemsAndSourceIndexes(t *testing.T) {
 	if got, ok := snapshot.ItemByID(Archive, "a0000102"); !ok || got.Source != Archive {
 		t.Fatalf("archive id index = %#v, %v", got, ok)
 	}
+}
+
+func FuzzSnapshotAccessorsKeepMalformedJSONPrivate(f *testing.F) {
+	for _, seed := range []string{"value", "nested", "\U0001f4cb"} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, value string) {
+		recordJSON, err := json.Marshal(map[string]any{
+			"type":  "task",
+			"id":    "private1",
+			"state": map[string]any{"nested": []any{value}},
+			"title": []any{map[string]any{"value": value}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed := record.Parse(recordJSON)
+		if !parsed.OK() {
+			t.Fatalf("parse generated record: %#v", parsed.Errors)
+		}
+
+		snapshot := NewSnapshot(parsed.Records, nil)
+		item := snapshot.Items()[0]
+		item.State.(map[string]any)["nested"].([]any)[0] = "changed"
+		item.Title.([]any)[0].(map[string]any)["value"] = "changed"
+
+		again := snapshot.Items()[0]
+		if got := again.State.(map[string]any)["nested"].([]any)[0]; got != value {
+			t.Fatalf("state mutated through accessor = %#v, want %#v", got, value)
+		}
+		if got := again.Title.([]any)[0].(map[string]any)["value"]; got != value {
+			t.Fatalf("title mutated through accessor = %#v, want %#v", got, value)
+		}
+	})
 }
 
 func TestSnapshotAccessorsDoNotPermitMutation(t *testing.T) {
