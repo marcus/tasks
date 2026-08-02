@@ -85,3 +85,24 @@ arbitrary-size count defect remains unresolved: parse, humanize, and projection
 still use `int`/`strconv.Atoi`, so a fresh source-fidelity review is premature.
 The next tick must replace that representation and define a range-safe date
 projection before requesting review.
+
+## Arbitrary-size projection characterization (2026-08-02)
+
+The follow-up Ruby probe establishes that this is not merely an input parsing
+edge. With `n = 999999999999999999999999999999999`, Ruby accepts
+`"#{n} days"`, stores `.+#{n}d`, humanizes it as
+`"every #{n} days from completion"`, and projects from 2026-01-01 to
+`2737907006988507635338165741226-09-01`. The same count is accepted for all
+four units; `+#{n}m` projects to
+`83333333333333333333333333335359-04-30` and `+#{n}y` to
+`1000000000000000000000000000002025-01-31`.
+
+This classifies the outstanding mismatch as a **Go defect**, not an intentional
+difference: `time.Time` cannot represent Ruby's valid projected dates. The
+next translation tick must introduce an arbitrary-precision civil-date value at
+the recurrence package boundary (including Gregorian day arithmetic and
+Ruby-compatible month/year clamp), then migrate `NextDate`/`Step` and their
+tests to that value. Do not add an overflow rejection or truncate the count:
+either would reject or change a valid Ruby result. The current branch has no
+code change from this characterization; its last implementation commit remains
+`a3485d9`.
