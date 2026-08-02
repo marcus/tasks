@@ -25,6 +25,10 @@ needs; do not re-read them front to back each iteration.
 - **Behavior-preserving only.** No format changes, no CLI redesign, no new
   features, no refactoring-while-translating. An improvement you notice is an
   intentional-difference record for Marcus to decide, never something you land.
+- **Writing Go is the job, not a gate.** Every slice's expected output is
+  working Go application code, and that needs no human sign-off — only an
+  intentional-difference decision (see above) escalates to Marcus. Blocking a
+  slice to "await approval" to write Go is itself the error, not caution.
 - **Byte-compatible JSONL.** The Go writer emits byte-identical canonical
   output for every Ruby fixture. `encoding/json` cannot do this; the canonical
   emitter is the only writer.
@@ -82,10 +86,12 @@ needs; do not re-read them front to back each iteration.
    verify it is open and retains the handoff. For a completed slice, run
    `td review <id>` and verify it is in review. Never exit with a slice branch
    checked out or partial handed-off work claimed by the exiting session.
-6. **Land approved work.** If `td reviewable --include-approved` (or your own
-   prior review) shows an approved, closed slice, run `porting/land <slice>`.
-   It merges to main, marks the manifest, deletes the branch, or refuses and
-   records why — never touch `port/*` or main by hand for this.
+6. **Land approved work.** Run `porting/land --auto` every iteration,
+   unconditionally — it finds landable slices itself (`td reviewable` cannot:
+   an approved slice is closed, not `in_review`). It merges each eligible
+   slice to main, marks the manifest, deletes the branch, or refuses and
+   records why. "Nothing eligible" is the normal outcome and exits 0. Never
+   touch `port/*` or main by hand for this.
 
 ## The slice loop, scaled by risk
 

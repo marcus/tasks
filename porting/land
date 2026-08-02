@@ -3,6 +3,7 @@
 # land — merge one approved porting slice into main, or refuse cleanly.
 #
 #   porting/land <slice-id>
+#   porting/land --auto
 #
 # This is the fleet's missing landing step: PORTING.md's iteration ends with
 # `td review` / `td approve`, and until this script existed nothing ever
@@ -12,7 +13,18 @@
 # line and this file should carry the logic — deterministic, testable
 # identically under both harnesses.
 #
-# What it does, in order:
+# `--auto` exists because `td reviewable` cannot see this work: an approved
+# slice is CLOSED, and `td reviewable` only surfaces `in_review` issues. No
+# discovery mechanism ever found a landable slice, so ticks never landed
+# anything. `--auto` replaces "ask the agent to notice" with "scan for it
+# yourself": it walks every local `port/<name>` branch, applies the same
+# cheap closed+approved check step 2 below uses (no merge-tree, no lock, no
+# test suite) to each one, and only pays for a real landing attempt — lock,
+# merge-tree, test suite — on branches that pass. "Nothing eligible" is the
+# common, expected outcome on most ticks and exits 0 without touching
+# anything.
+#
+# What single-slice landing does, in order:
 #   1. Refuse unless already landed (idempotent no-op) is ruled out.
 #   2. Verify the slice's td issue is actually approved and closed — the real
 #      representation, not an invented one: `status == "closed"` AND a
@@ -28,6 +40,12 @@
 #   7. On any failure past this point: `git reset --hard` main back to
 #      exactly where it was, log why on the td issue, exit non-zero. On
 #      success: delete `port/<slice>`, log the landing, exit 0.
+#
+# `--auto` runs that same sequence once per eligible branch, each under its
+# own acquisition of the same lock (so it serializes correctly against a
+# concurrent single-slice or --auto invocation from the other harness), and
+# reports a per-slice outcome. It exits 0 unless a slice it attempted to land
+# failed; a branch that was merely ineligible is not a failure.
 #
 # Never uses --force, --ours/--theirs, or a force-push. Never touches a repo
 # other than the one worktree that actually has DEFAULT_BRANCH checked out —
@@ -45,8 +63,9 @@
 #                     (default: 900) — reclaimed immediately regardless if its
 #                     pid is no longer alive
 #
-# Exit codes: 0 success (including "already landed"), 1 a named precondition
-# or step failed and main is untouched, 2 usage error.
+# Exit codes: 0 success (including "already landed" and, for --auto,
+# "nothing eligible"), 1 a named precondition or step failed and main is
+# untouched (for --auto: at least one attempted slice failed), 2 usage error.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -59,13 +78,18 @@ LOCK_POLL=2
 
 log()  { printf '%s land: %s\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "$*" >&2; }
 die()  { log "REFUSED: $*"; exit 1; }
-usage() { echo "usage: porting/land <slice-id>" >&2; exit 2; }
+usage() { echo "usage: porting/land <slice-id> | porting/land --auto" >&2; exit 2; }
 
 [ $# -eq 1 ] || usage
-SLICE="$1"
-case "$SLICE" in
-  ''|*[!A-Za-z0-9_-]*) usage ;;
-esac
+if [ "$1" = "--auto" ]; then
+  AUTO_MODE=1
+else
+  AUTO_MODE=0
+  SLICE_ARG="$1"
+  case "$SLICE_ARG" in
+    ''|*[!A-Za-z0-9_-]*) usage ;;
+  esac
+fi
 
 # ---------------------------------------------------------------- repo root
 # Refs (branches, objects) are shared across every worktree of this repo, but
@@ -100,29 +124,10 @@ command -v td >/dev/null || die "td not on PATH"
 MANIFEST="$REPO_ROOT/porting/manifest.jsonl"
 [ -f "$MANIFEST" ] || die "no manifest at $MANIFEST"
 
-# PORTING.md's iteration steps and `td` itself hand an agent the td issue id
-# (e.g. td-2f853a), not the manifest slice id this script was originally
-# keyed on (e.g. format-parse) — invoking with the td id is the mistake an
-# agent following those docs will actually make. Accept both: a td id is
-# resolved to its slice via the same slice:<name> label step 2 below relies
-# on, so an id that lacks that label fails there with the same message step 2
-# would already give, not a confusing new one.
-case "$SLICE" in
-  td-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])
-    RESOLVED_ISSUE="$(cd "$REPO_ROOT" && td show "$SLICE" --json 2>/dev/null)"
-    [ -n "$RESOLVED_ISSUE" ] || die "no td issue $SLICE"
-    RESOLVED_SLICE="$(printf '%s' "$RESOLVED_ISSUE" | jq -r '
-      [(.labels // [])[] | select(startswith("slice:"))][0] // empty' | sed 's/^slice://')"
-    [ -n "$RESOLVED_SLICE" ] || die "td issue $SLICE has no slice:<name> label"
-    log "resolved td id $SLICE to slice '$RESOLVED_SLICE'"
-    SLICE="$RESOLVED_SLICE"
-    ;;
-esac
-BRANCH="port/$SLICE"
+GIT_DIR="$(g rev-parse --absolute-git-dir 2>/dev/null)" || die "cannot resolve .git dir for $REPO_ROOT"
 # Inside .git, not the working tree: a lock directory living under
 # porting/ would show up as an untracked file in `git status --porcelain`,
 # tripping this very script's own clean-checkout check.
-GIT_DIR="$(g rev-parse --absolute-git-dir 2>/dev/null)" || die "cannot resolve .git dir for $REPO_ROOT"
 LOCK_DIR="$GIT_DIR/porting-land.lock"
 
 TIMEOUT_BIN="$(command -v gtimeout || command -v timeout || true)"
@@ -156,7 +161,6 @@ record() { # record <issue-id> <message>
 }
 
 # ---------------------------------------------------------------- lock
-LOCK_HELD=0
 acquire_lock() {
   local waited=0 holder_pid holder_at now
   while ! mkdir "$LOCK_DIR" 2>/dev/null; do
@@ -187,141 +191,15 @@ acquire_lock() {
 }
 
 release_lock() {
-  [ "$LOCK_HELD" = 1 ] || return 0
+  [ "${LOCK_HELD:-0}" = 1 ] || return 0
   rm -rf "$LOCK_DIR" 2>/dev/null
   LOCK_HELD=0
 }
 
-# main_before is set once we know we are about to mutate; cleanup restores it
-# on any signal or early return so a killed script never leaves main
-# half-merged.
-MAIN_BEFORE=""
-cleanup() {
-  local rc=$?
-  if [ -n "$MAIN_BEFORE" ]; then
-    g merge --abort >/dev/null 2>&1
-    if [ "$(g rev-parse "$DEFAULT_BRANCH" 2>/dev/null)" != "$MAIN_BEFORE" ]; then
-      log "restoring $DEFAULT_BRANCH to $MAIN_BEFORE after interruption"
-      g reset -q --hard "$MAIN_BEFORE" 2>/dev/null
-    fi
-  fi
-  release_lock
-  exit "$rc"
-}
-trap cleanup EXIT INT TERM
-
-# ---------------------------------------------------------------- 1. already landed?
-BRANCH_EXISTS=0
-g rev-parse --verify -q "refs/heads/$BRANCH" >/dev/null 2>&1 && BRANCH_EXISTS=1
-CURRENT_STATUS="$(manifest_status "$SLICE")"
-if [ "$BRANCH_EXISTS" = 0 ] && [ "$CURRENT_STATUS" = "ported" ]; then
-  log "slice '$SLICE' already landed ($BRANCH gone, manifest status ported); nothing to do"
-  exit 0
-fi
-[ -n "$CURRENT_STATUS" ] || die "no manifest entry for slice '$SLICE'"
-
-# ---------------------------------------------------------------- 2. td approval
-ISSUE_JSON="$(cd "$REPO_ROOT" && td list -l "slice:$SLICE" -a --format json 2>/dev/null)"
-ISSUE_ID="$(printf '%s' "$ISSUE_JSON" | jq -r --arg lbl "slice:$SLICE" '
-  [.[] | select(.labels != null and (.labels | index($lbl)))][0].id // empty' 2>/dev/null)"
-[ -n "$ISSUE_ID" ] || die "no td issue labeled slice:$SLICE"
-
-ISSUE="$(cd "$REPO_ROOT" && td show "$ISSUE_ID" --json 2>/dev/null)"
-[ -n "$ISSUE" ] || die "td show $ISSUE_ID failed"
-
-ISSUE_STATUS="$(printf '%s' "$ISSUE" | jq -r '.status // empty')"
-APPROVED="$(printf '%s' "$ISSUE" | jq -r '
-  [(.review_history // [])[] | select(.decision == "approved" and (.superseded | not))] | length > 0')"
-if [ "$ISSUE_STATUS" != "closed" ] || [ "$APPROVED" != "true" ]; then
-  die "$ISSUE_ID (slice $SLICE) is not approved+closed (status=$ISSUE_STATUS, approved=$APPROVED)"
-fi
-
-# ---------------------------------------------------------------- 3. branch exists
-[ "$BRANCH_EXISTS" = 1 ] || die "branch $BRANCH does not exist"
-
-# NOTE: the "on $DEFAULT_BRANCH, working tree clean" check deliberately does
-# NOT happen here. $REPO_ROOT is a single shared checkout: while a sibling
-# invocation holds the lock and is mid-merge, this checkout is transiently
-# dirty through no fault of ours. Checking cleanliness before the lock made
-# a concurrent, perfectly healthy landing look like a dirty-tree refusal.
-# The real check happens once we hold the lock ourselves, below.
-
-# ---------------------------------------------------------------- 4. cheap pre-check
 merge_would_conflict() { # merge_would_conflict <branch>
   ! g merge-tree --write-tree "$DEFAULT_BRANCH" "$1" >/dev/null 2>&1
 }
-if merge_would_conflict "$BRANCH"; then
-  record "$ISSUE_ID" "porting/land refused: $BRANCH would conflict with $DEFAULT_BRANCH; landing skipped, main untouched"
-  die "$BRANCH would conflict with $DEFAULT_BRANCH (pre-check)"
-fi
 
-# ---------------------------------------------------------------- 5. lock
-acquire_lock || die "timed out after ${LAND_LOCK_TIMEOUT}s waiting for the landing lock ($LOCK_DIR)"
-
-# A sibling invocation (the other harness) may have landed this exact slice
-# while we were waiting for the lock — re-check the idempotent-no-op
-# condition now that we hold it, before touching anything. Without this, the
-# re-verify below would run merge-tree against a branch that no longer
-# exists and misreport it as a conflict.
-if ! g rev-parse --verify -q "refs/heads/$BRANCH" >/dev/null 2>&1 \
-   && [ "$(manifest_status "$SLICE")" = "ported" ]; then
-  log "slice '$SLICE' was landed by a concurrent run while waiting for the lock; nothing to do"
-  exit 0
-fi
-
-# Now that we hold the lock, $REPO_ROOT's checkout is ours alone to inspect
-# and mutate: no sibling invocation can be mid-merge here too.
-[ "$(g symbolic-ref -q --short HEAD 2>/dev/null)" = "$DEFAULT_BRANCH" ] \
-  || die "$REPO_ROOT is not on $DEFAULT_BRANCH (detached or on another branch)"
-[ -z "$(g status --porcelain 2>/dev/null)" ] \
-  || die "$REPO_ROOT working tree is not clean"
-
-# ---------------------------------------------------------------- 6. re-verify + merge
-MAIN_BEFORE="$(g rev-parse "$DEFAULT_BRANCH")"
-
-if merge_would_conflict "$BRANCH"; then
-  record "$ISSUE_ID" "porting/land refused: $BRANCH would conflict with $DEFAULT_BRANCH (re-checked under lock); landing skipped, main untouched"
-  MAIN_BEFORE=""   # nothing mutated yet; cleanup should not touch main
-  die "$BRANCH would conflict with $DEFAULT_BRANCH (re-check under lock)"
-fi
-
-BEHAVIOR="$(jq -rc --arg id "$SLICE" 'select(.id == $id) | .behavior' "$MANIFEST" | head -1)"
-if ! g merge --no-ff --no-edit -m "Land port/$SLICE: ${BEHAVIOR:-$SLICE}" "$BRANCH" >/dev/null 2>&1; then
-  g merge --abort >/dev/null 2>&1
-  MAIN_BEFORE=""
-  record "$ISSUE_ID" "porting/land refused: merge of $BRANCH into $DEFAULT_BRANCH failed unexpectedly; main untouched"
-  die "merge of $BRANCH failed even after a clean merge-tree check"
-fi
-
-# Agents already advance the manifest status ON their port branch as part of
-# doing the work (e.g. "porting: mark format parser ported" landing with
-# format-parse) — this is the normal, expected path, not an edge case. When
-# the merge has already brought the target status in, there is nothing left
-# to change: skip straight to the test suite rather than writing an
-# identical status and asking git to commit a no-op diff, which git refuses
-# (nothing staged) and which this script must not mistake for a real failure.
-POST_MERGE_STATUS="$(manifest_status "$SLICE")"
-if [ "$POST_MERGE_STATUS" = "ported" ]; then
-  log "$SLICE manifest status already 'ported' (set by $BRANCH itself); skipping status commit"
-else
-  if ! manifest_set_status "$SLICE" "ported"; then
-    g reset -q --hard "$MAIN_BEFORE"
-    record "$ISSUE_ID" "porting/land refused: could not update manifest status to ported; $DEFAULT_BRANCH reset to $MAIN_BEFORE"
-    die "failed to rewrite manifest status for $SLICE"
-  fi
-  g add porting/manifest.jsonl >/dev/null 2>&1
-  if git -C "$REPO_ROOT" diff --cached --quiet -- porting/manifest.jsonl; then
-    log "$SLICE manifest status update produced no diff; skipping empty commit"
-  elif ! g commit -q -m "porting: mark $SLICE ported (landed $BRANCH)"; then
-    g reset -q --hard "$MAIN_BEFORE"
-    record "$ISSUE_ID" "porting/land refused: could not commit manifest status update; $DEFAULT_BRANCH reset to $MAIN_BEFORE"
-    die "failed to commit manifest status update for $SLICE"
-  fi
-fi
-
-# ---------------------------------------------------------------- test suite
-# LAND_TEST_CMD is a shell command string (default "ruby test/all.rb"), run
-# through `sh -c` so an override may use shell syntax (pipes, &&, …).
 run_tests() {
   if [ -n "$TIMEOUT_BIN" ]; then
     ( cd "$REPO_ROOT" && "$TIMEOUT_BIN" -k 30 "$LAND_TEST_TIMEOUT" sh -c "$LAND_TEST_CMD" )
@@ -330,24 +208,257 @@ run_tests() {
   fi
 }
 
-if ! TEST_OUTPUT="$(run_tests 2>&1)"; then
-  g reset -q --hard "$MAIN_BEFORE"
-  record "$ISSUE_ID" "porting/land refused: test suite failed on the merge of $BRANCH; $DEFAULT_BRANCH reset to $MAIN_BEFORE. Tail: $(printf '%s' "$TEST_OUTPUT" | tail -c 500)"
-  die "test suite failed on the merged result; $DEFAULT_BRANCH restored to $MAIN_BEFORE"
+# cleanup restores $DEFAULT_BRANCH on any signal or early return so a killed
+# script never leaves main half-merged. MAIN_BEFORE and LOCK_HELD are set by
+# land_one, below; bash's dynamic scoping means this function (and
+# acquire_lock/release_lock above) see land_one's `local` copies whenever
+# they are invoked from within it — one lock/cleanup per land_one call, which
+# is exactly what --auto needs when it lands several slices in one process.
+cleanup() {
+  local rc=$?
+  if [ -n "${MAIN_BEFORE:-}" ]; then
+    g merge --abort >/dev/null 2>&1
+    if [ "$(g rev-parse "$DEFAULT_BRANCH" 2>/dev/null)" != "$MAIN_BEFORE" ]; then
+      log "restoring $DEFAULT_BRANCH to $MAIN_BEFORE after interruption"
+      g reset -q --hard "$MAIN_BEFORE" 2>/dev/null
+    fi
+  fi
+  release_lock
+  return "$rc"
+}
+
+# ---------------------------------------------------------------- land_one
+# Lands exactly one slice: every precondition, the lock, the merge, the test
+# suite, and cleanup-on-failure that used to be this whole script's top
+# level. Always run inside a `( land_one ... )` subshell by its callers below
+# so that `die`'s `exit 1` and the EXIT trap only end that one landing
+# attempt, never the process — required for --auto to keep going after one
+# ineligible or failing slice.
+land_one() {
+  local SLICE="$1" BRANCH ISSUE_JSON ISSUE_ID ISSUE ISSUE_STATUS APPROVED
+  local CURRENT_STATUS BRANCH_EXISTS BEHAVIOR POST_MERGE_STATUS TEST_OUTPUT LANDED_SHA
+  # Deliberately NOT `local`: the EXIT/INT/TERM trap fires after land_one's
+  # own stack frame is already gone, so a handler like `cleanup` (and
+  # `release_lock`, which it calls) cannot see a `local` here — bash pops
+  # function-local scope before running EXIT traps. These stay plain
+  # globals instead; per-invocation isolation still holds because every
+  # caller below runs land_one inside its own `( ... )` subshell, so this
+  # "global" never survives past one landing attempt.
+  MAIN_BEFORE=""
+  LOCK_HELD=0
+  trap cleanup EXIT INT TERM
+
+  # PORTING.md's iteration steps and `td` itself hand an agent the td issue
+  # id (e.g. td-2f853a), not the manifest slice id this script was
+  # originally keyed on (e.g. format-parse) — invoking with the td id is the
+  # mistake an agent following those docs will actually make. Accept both: a
+  # td id is resolved to its slice via the same slice:<name> label step 2
+  # below relies on, so an id that lacks that label fails there with the
+  # same message step 2 would already give, not a confusing new one.
+  case "$SLICE" in
+    td-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])
+      local RESOLVED_ISSUE RESOLVED_SLICE
+      RESOLVED_ISSUE="$(cd "$REPO_ROOT" && td show "$SLICE" --json 2>/dev/null)"
+      [ -n "$RESOLVED_ISSUE" ] || die "no td issue $SLICE"
+      RESOLVED_SLICE="$(printf '%s' "$RESOLVED_ISSUE" | jq -r '
+        [(.labels // [])[] | select(startswith("slice:"))][0] // empty' | sed 's/^slice://')"
+      [ -n "$RESOLVED_SLICE" ] || die "td issue $SLICE has no slice:<name> label"
+      log "resolved td id $SLICE to slice '$RESOLVED_SLICE'"
+      SLICE="$RESOLVED_SLICE"
+      ;;
+  esac
+  BRANCH="port/$SLICE"
+
+  # ---------------------------------------------------------- 1. already landed?
+  BRANCH_EXISTS=0
+  g rev-parse --verify -q "refs/heads/$BRANCH" >/dev/null 2>&1 && BRANCH_EXISTS=1
+  CURRENT_STATUS="$(manifest_status "$SLICE")"
+  if [ "$BRANCH_EXISTS" = 0 ] && [ "$CURRENT_STATUS" = "ported" ]; then
+    log "slice '$SLICE' already landed ($BRANCH gone, manifest status ported); nothing to do"
+    return 0
+  fi
+  [ -n "$CURRENT_STATUS" ] || die "no manifest entry for slice '$SLICE'"
+
+  # ---------------------------------------------------------- 2. td approval
+  ISSUE_JSON="$(cd "$REPO_ROOT" && td list -l "slice:$SLICE" -a --format json 2>/dev/null)"
+  ISSUE_ID="$(printf '%s' "$ISSUE_JSON" | jq -r --arg lbl "slice:$SLICE" '
+    [.[] | select(.labels != null and (.labels | index($lbl)))][0].id // empty' 2>/dev/null)"
+  [ -n "$ISSUE_ID" ] || die "no td issue labeled slice:$SLICE"
+
+  ISSUE="$(cd "$REPO_ROOT" && td show "$ISSUE_ID" --json 2>/dev/null)"
+  [ -n "$ISSUE" ] || die "td show $ISSUE_ID failed"
+
+  ISSUE_STATUS="$(printf '%s' "$ISSUE" | jq -r '.status // empty')"
+  APPROVED="$(printf '%s' "$ISSUE" | jq -r '
+    [(.review_history // [])[] | select(.decision == "approved" and (.superseded | not))] | length > 0')"
+  if [ "$ISSUE_STATUS" != "closed" ] || [ "$APPROVED" != "true" ]; then
+    die "$ISSUE_ID (slice $SLICE) is not approved+closed (status=$ISSUE_STATUS, approved=$APPROVED)"
+  fi
+
+  # ---------------------------------------------------------- 3. branch exists
+  [ "$BRANCH_EXISTS" = 1 ] || die "branch $BRANCH does not exist"
+
+  # NOTE: the "on $DEFAULT_BRANCH, working tree clean" check deliberately does
+  # NOT happen here. $REPO_ROOT is a single shared checkout: while a sibling
+  # invocation holds the lock and is mid-merge, this checkout is transiently
+  # dirty through no fault of ours. Checking cleanliness before the lock made
+  # a concurrent, perfectly healthy landing look like a dirty-tree refusal.
+  # The real check happens once we hold the lock ourselves, below.
+
+  # ---------------------------------------------------------- 4. cheap pre-check
+  if merge_would_conflict "$BRANCH"; then
+    record "$ISSUE_ID" "porting/land refused: $BRANCH would conflict with $DEFAULT_BRANCH; landing skipped, main untouched"
+    die "$BRANCH would conflict with $DEFAULT_BRANCH (pre-check)"
+  fi
+
+  # ---------------------------------------------------------- 5. lock
+  acquire_lock || die "timed out after ${LAND_LOCK_TIMEOUT}s waiting for the landing lock ($LOCK_DIR)"
+
+  # A sibling invocation (the other harness, or another slice in the same
+  # --auto run) may have landed this exact slice while we were waiting for
+  # the lock — re-check the idempotent-no-op condition now that we hold it,
+  # before touching anything. Without this, the re-verify below would run
+  # merge-tree against a branch that no longer exists and misreport it as a
+  # conflict.
+  if ! g rev-parse --verify -q "refs/heads/$BRANCH" >/dev/null 2>&1 \
+     && [ "$(manifest_status "$SLICE")" = "ported" ]; then
+    log "slice '$SLICE' was landed by a concurrent run while waiting for the lock; nothing to do"
+    return 0
+  fi
+
+  # Now that we hold the lock, $REPO_ROOT's checkout is ours alone to inspect
+  # and mutate: no sibling invocation can be mid-merge here too.
+  [ "$(g symbolic-ref -q --short HEAD 2>/dev/null)" = "$DEFAULT_BRANCH" ] \
+    || die "$REPO_ROOT is not on $DEFAULT_BRANCH (detached or on another branch)"
+  [ -z "$(g status --porcelain 2>/dev/null)" ] \
+    || die "$REPO_ROOT working tree is not clean"
+
+  # ---------------------------------------------------------- 6. re-verify + merge
+  MAIN_BEFORE="$(g rev-parse "$DEFAULT_BRANCH")"
+
+  if merge_would_conflict "$BRANCH"; then
+    record "$ISSUE_ID" "porting/land refused: $BRANCH would conflict with $DEFAULT_BRANCH (re-checked under lock); landing skipped, main untouched"
+    MAIN_BEFORE=""   # nothing mutated yet; cleanup should not touch main
+    die "$BRANCH would conflict with $DEFAULT_BRANCH (re-check under lock)"
+  fi
+
+  BEHAVIOR="$(jq -rc --arg id "$SLICE" 'select(.id == $id) | .behavior' "$MANIFEST" | head -1)"
+  if ! g merge --no-ff --no-edit -m "Land port/$SLICE: ${BEHAVIOR:-$SLICE}" "$BRANCH" >/dev/null 2>&1; then
+    g merge --abort >/dev/null 2>&1
+    MAIN_BEFORE=""
+    record "$ISSUE_ID" "porting/land refused: merge of $BRANCH into $DEFAULT_BRANCH failed unexpectedly; main untouched"
+    die "merge of $BRANCH failed even after a clean merge-tree check"
+  fi
+
+  # Agents already advance the manifest status ON their port branch as part of
+  # doing the work (e.g. "porting: mark format parser ported" landing with
+  # format-parse) — this is the normal, expected path, not an edge case. When
+  # the merge has already brought the target status in, there is nothing left
+  # to change: skip straight to the test suite rather than writing an
+  # identical status and asking git to commit a no-op diff, which git refuses
+  # (nothing staged) and which this script must not mistake for a real failure.
+  POST_MERGE_STATUS="$(manifest_status "$SLICE")"
+  if [ "$POST_MERGE_STATUS" = "ported" ]; then
+    log "$SLICE manifest status already 'ported' (set by $BRANCH itself); skipping status commit"
+  else
+    if ! manifest_set_status "$SLICE" "ported"; then
+      g reset -q --hard "$MAIN_BEFORE"
+      record "$ISSUE_ID" "porting/land refused: could not update manifest status to ported; $DEFAULT_BRANCH reset to $MAIN_BEFORE"
+      die "failed to rewrite manifest status for $SLICE"
+    fi
+    g add porting/manifest.jsonl >/dev/null 2>&1
+    if git -C "$REPO_ROOT" diff --cached --quiet -- porting/manifest.jsonl; then
+      log "$SLICE manifest status update produced no diff; skipping empty commit"
+    elif ! g commit -q -m "porting: mark $SLICE ported (landed $BRANCH)"; then
+      g reset -q --hard "$MAIN_BEFORE"
+      record "$ISSUE_ID" "porting/land refused: could not commit manifest status update; $DEFAULT_BRANCH reset to $MAIN_BEFORE"
+      die "failed to commit manifest status update for $SLICE"
+    fi
+  fi
+
+  # ---------------------------------------------------------------- test suite
+  # LAND_TEST_CMD is a shell command string (default "ruby test/all.rb"), run
+  # through `sh -c` so an override may use shell syntax (pipes, &&, …).
+  if ! TEST_OUTPUT="$(run_tests 2>&1)"; then
+    g reset -q --hard "$MAIN_BEFORE"
+    record "$ISSUE_ID" "porting/land refused: test suite failed on the merge of $BRANCH; $DEFAULT_BRANCH reset to $MAIN_BEFORE. Tail: $(printf '%s' "$TEST_OUTPUT" | tail -c 500)"
+    die "test suite failed on the merged result; $DEFAULT_BRANCH restored to $MAIN_BEFORE"
+  fi
+
+  # ---------------------------------------------------------------- 7. success
+  LANDED_SHA="$(g rev-parse "$DEFAULT_BRANCH")"
+  MAIN_BEFORE=""   # landed; cleanup must not revert on later, unrelated signals
+
+  if [ "$ISSUE_STATUS" != "closed" ]; then
+    ( cd "$REPO_ROOT" && td close "$ISSUE_ID" --admin "landed by porting/land" >/dev/null 2>&1 )
+  fi
+
+  if ! g branch -d "$BRANCH" >/dev/null 2>&1; then
+    log "WARNING: $DEFAULT_BRANCH advanced to $LANDED_SHA but could not delete $BRANCH (checked out elsewhere? not fully merged?) — remove it by hand"
+  fi
+
+  record "$ISSUE_ID" "porting/land: merged $BRANCH into $DEFAULT_BRANCH at $LANDED_SHA, manifest marked ported, branch deleted"
+  log "landed $SLICE: $DEFAULT_BRANCH now at $LANDED_SHA"
+  return 0
+}
+
+# ---------------------------------------------------------------- --auto discovery
+# The cheap half of step 2 above (td list + td show, no merge-tree, no lock,
+# no test suite) applied to a candidate slice, with none of the mutation.
+# Kept deliberately cheap and side-effect-free so scanning every port/*
+# branch costs a couple of `td` calls each, not a merge attempt each.
+is_eligible() { # is_eligible <slice>
+  local slice="$1" status issue_json issue_id issue issue_status approved
+  status="$(manifest_status "$slice")"
+  [ -n "$status" ] || return 1
+  issue_json="$(cd "$REPO_ROOT" && td list -l "slice:$slice" -a --format json 2>/dev/null)"
+  issue_id="$(printf '%s' "$issue_json" | jq -r --arg lbl "slice:$slice" '
+    [.[] | select(.labels != null and (.labels | index($lbl)))][0].id // empty' 2>/dev/null)"
+  [ -n "$issue_id" ] || return 1
+  issue="$(cd "$REPO_ROOT" && td show "$issue_id" --json 2>/dev/null)"
+  [ -n "$issue" ] || return 1
+  issue_status="$(printf '%s' "$issue" | jq -r '.status // empty')"
+  approved="$(printf '%s' "$issue" | jq -r '
+    [(.review_history // [])[] | select(.decision == "approved" and (.superseded | not))] | length > 0')"
+  [ "$issue_status" = "closed" ] && [ "$approved" = "true" ]
+}
+
+run_auto() {
+  local branches slice rc landed=0 failed=0 skipped=0
+  branches="$(g for-each-ref --format='%(refname:short)' 'refs/heads/port/*' 2>/dev/null | sort)"
+  if [ -z "$branches" ]; then
+    log "auto: no port/* branches exist; nothing to land"
+    return 0
+  fi
+  while IFS= read -r b; do
+    [ -n "$b" ] || continue
+    slice="${b#port/}"
+    if ! is_eligible "$slice"; then
+      log "auto: $slice not eligible (not closed+approved); skipping"
+      skipped=$((skipped + 1))
+      continue
+    fi
+    log "auto: $slice is closed+approved; landing"
+    ( land_one "$slice" )
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+      landed=$((landed + 1))
+    else
+      failed=$((failed + 1))
+      log "auto: FAILED landing $slice (exit $rc) — see the td log entries above for why"
+    fi
+  done <<EOF
+$branches
+EOF
+  log "auto: done — landed=$landed failed=$failed skipped=$skipped"
+  [ "$failed" -eq 0 ]
+}
+
+# ---------------------------------------------------------------- dispatch
+if [ "$AUTO_MODE" = 1 ]; then
+  run_auto
+  exit $?
+else
+  ( land_one "$SLICE_ARG" )
+  exit $?
 fi
-
-# ---------------------------------------------------------------- 7. success
-LANDED_SHA="$(g rev-parse "$DEFAULT_BRANCH")"
-MAIN_BEFORE=""   # landed; cleanup must not revert on later, unrelated signals
-
-if [ "$ISSUE_STATUS" != "closed" ]; then
-  ( cd "$REPO_ROOT" && td close "$ISSUE_ID" --admin "landed by porting/land" >/dev/null 2>&1 )
-fi
-
-if ! g branch -d "$BRANCH" >/dev/null 2>&1; then
-  log "WARNING: $DEFAULT_BRANCH advanced to $LANDED_SHA but could not delete $BRANCH (checked out elsewhere? not fully merged?) — remove it by hand"
-fi
-
-record "$ISSUE_ID" "porting/land: merged $BRANCH into $DEFAULT_BRANCH at $LANDED_SHA, manifest marked ported, branch deleted"
-log "landed $SLICE: $DEFAULT_BRANCH now at $LANDED_SHA"
-exit 0

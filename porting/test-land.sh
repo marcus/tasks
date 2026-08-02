@@ -321,6 +321,103 @@ assert_eq "(g) manifest marks tdid-slice ported" "ported" "$status_now"
 git -C "$r" rev-parse --verify -q refs/heads/port/tdid-slice >/dev/null 2>&1 \
   && bad "(g) port/tdid-slice branch was not deleted" || ok "(g) port/tdid-slice branch deleted"
 
+# ================================================================== (h)
+# --auto with nothing eligible: several port/* branches exist but none are
+# closed+approved (one not_started/no issue, one still in review). Must exit
+# 0, touch nothing, and must NOT run the test suite — LAND_TEST_CMD is set to
+# a sentinel that writes a marker file; if --auto's cheap eligibility scan
+# ever fell through to landing, the marker would appear.
+r="$(new_repo auto-none)"
+seed_manifest "$r" 6 "auto-none-slice" "not_started"
+advance_slice_branch "$r" "auto-none-untouched-1"   # no td issue at all
+( cd "$r" && git branch port/auto-none-untouched-2 main )  # branch with no manifest entry either
+marker="$TMPROOT/auto-none-marker"
+rm -f "$marker"
+before="$(sha "$r" main)"
+
+out="$TMPROOT/auto-none.out"
+TASKS_REPO="$r" LAND_TEST_CMD="touch '$marker' && true" "$LAND" --auto >"$out" 2>&1
+rc=$?
+assert_status "(h) --auto exits 0 when nothing is eligible" 0 "$rc"
+after="$(sha "$r" main)"
+assert_eq "(h) main untouched" "$before" "$after"
+[ -f "$marker" ] && bad "(h) test suite ran even though nothing was eligible" \
+  || ok "(h) test suite never ran (cheap checks only)"
+git -C "$r" rev-parse --verify -q refs/heads/port/auto-none-untouched-1 >/dev/null 2>&1 \
+  && ok "(h) ineligible branch (no td issue) retained" || bad "(h) ineligible branch was deleted"
+git -C "$r" rev-parse --verify -q refs/heads/port/auto-none-untouched-2 >/dev/null 2>&1 \
+  && ok "(h) ineligible branch (no manifest entry) retained" || bad "(h) ineligible branch was deleted"
+[ -d "$(git -C "$r" rev-parse --absolute-git-dir)/porting-land.lock" ] \
+  && bad "(h) lock directory left behind" || ok "(h) lock released (never acquired)"
+
+# ================================================================== (i)
+# --auto with exactly one eligible slice among several ineligible branches:
+# only the eligible one lands; the rest are untouched.
+r="$(new_repo auto-one)"
+seed_manifest "$r" 6 "auto-one-eligible" "not_started"
+advance_slice_branch "$r" "auto-one-eligible"
+eligible_issue="$(approve_slice "$r" "auto-one-eligible")"
+
+advance_slice_branch "$r" "auto-one-not-approved"
+not_approved_issue="$(cd "$r" && td create "port auto-one-not-approved" --minor \
+      --labels "porting,porting-slice,slice:auto-one-not-approved" --type task --json | jq -r '.id')"
+( cd "$r" && td start "$not_approved_issue" >/dev/null && td review "$not_approved_issue" >/dev/null )
+
+advance_slice_branch "$r" "auto-one-no-issue"   # branch exists, no td issue labeled for it
+
+before="$(sha "$r" main)"
+out="$TMPROOT/auto-one.out"
+TASKS_REPO="$r" LAND_TEST_CMD="true" "$LAND" --auto >"$out" 2>&1
+rc=$?
+assert_status "(i) --auto exits 0 when the eligible slice lands cleanly" 0 "$rc"
+after="$(sha "$r" main)"
+if [ "$before" != "$after" ]; then ok "(i) main advanced"; else bad "(i) main did not advance"; fi
+merged="$(git -C "$r" log --merges -1 --format=%s main 2>/dev/null)"
+case "$merged" in
+  *"Land port/auto-one-eligible"*) ok "(i) the eligible slice landed" ;;
+  *) bad "(i) wrong or no merge commit landed (got: $merged)" ;;
+esac
+git -C "$r" rev-parse --verify -q refs/heads/port/auto-one-eligible >/dev/null 2>&1 \
+  && bad "(i) eligible branch was not deleted" || ok "(i) eligible branch deleted"
+git -C "$r" rev-parse --verify -q refs/heads/port/auto-one-not-approved >/dev/null 2>&1 \
+  && ok "(i) not-yet-approved branch retained" || bad "(i) not-yet-approved branch was touched"
+git -C "$r" rev-parse --verify -q refs/heads/port/auto-one-no-issue >/dev/null 2>&1 \
+  && ok "(i) no-issue branch retained" || bad "(i) no-issue branch was touched"
+status_now="$(git -C "$r" show main:porting/manifest.jsonl | jq -rc 'select(.id=="auto-one-not-approved") | .status')"
+assert_eq "(i) ineligible slice's branch was never merged into main" "" "$status_now"
+[ -d "$(git -C "$r" rev-parse --absolute-git-dir)/porting-land.lock" ] \
+  && bad "(i) lock directory left behind" || ok "(i) lock released"
+
+# ================================================================== (j)
+# --auto respects the landing lock: a lock held by a live, competing --auto
+# (or single-slice) invocation must make this one wait, not race main.
+r="$(new_repo auto-lock)"
+seed_manifest "$r" 4 "auto-lock-slice" "not_started"
+advance_slice_branch "$r" "auto-lock-slice"
+approve_slice "$r" "auto-lock-slice" >/dev/null
+before="$(sha "$r" main)"
+
+out1="$TMPROOT/auto-lock1.out"; out2="$TMPROOT/auto-lock2.out"
+rc1f="$TMPROOT/auto-lock-rc1"; rc2f="$TMPROOT/auto-lock-rc2"
+( TASKS_REPO="$r" LAND_TEST_CMD="sleep 3 && true" "$LAND" auto-lock-slice >"$out1" 2>&1; echo $? >"$rc1f" ) &
+p1=$!
+sleep 1
+( TASKS_REPO="$r" LAND_TEST_CMD="true" "$LAND" --auto >"$out2" 2>&1; echo $? >"$rc2f" ) &
+p2=$!
+wait "$p1" "$p2"
+rc1="$(cat "$rc1f")"; rc2="$(cat "$rc2f")"
+
+if [ "$rc1" = 0 ] && [ "$rc2" = 0 ]; then
+  ok "(j) both the single-slice landing and the --auto scan exited 0"
+else
+  bad "(j) unexpected exit codes: rc1=$rc1 rc2=$rc2 (log1: $(cat "$out1") | log2: $(cat "$out2"))"
+fi
+after="$(sha "$r" main)"
+merge_count="$(git -C "$r" log --merges --format=%s main | grep -c "^Land port/auto-lock-slice:" || true)"
+assert_eq "(j) exactly one merge landed (auto waited on the lock, did not double-land)" "1" "$merge_count"
+[ -d "$(git -C "$r" rev-parse --absolute-git-dir)/porting-land.lock" ] \
+  && bad "(j) lock directory left behind" || ok "(j) lock released after contention"
+
 # ================================================================== summary
 echo "----------------------------------------"
 echo "porting/test-land.sh: $PASS passed, $FAIL failed"
