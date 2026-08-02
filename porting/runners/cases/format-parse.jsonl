@@ -1,0 +1,16 @@
+# format-parse — Ruby oracle observations for manifest slice format-parse.
+#
+# This is deliberately read-only: `tasks check` exposes parser error tuples,
+# while `list` on the torn store proves reads retain successfully parsed records.
+
+{"case_id":"format-parse-valid-full-field-matrix","fixture":"valid/full-field-matrix","argv":["check"],"notes":"success: all 33 JSONL records parse, including nested fields and unicode"}
+{"case_id":"format-parse-compat-forward-unknown-keys","fixture":"compat/forward-compat-unknown-keys","argv":["check"],"notes":"success: parser accepts forward-compatible top-level and delegation keys"}
+{"case_id":"format-parse-empty-file","fixture":"malformed/empty-file","argv":["check"],"notes":"boundary: an empty input parses to no records, then Check reports the missing meta record"}
+{"case_id":"format-parse-invalid-json","fixture":"malformed/invalid-json","argv":["check"],"notes":"malformed JSON between valid lines: parser preserves the physical line and Ruby diagnostic wording"}
+{"case_id":"format-parse-non-record-lines","fixture":"malformed/non-record-lines","argv":["check"],"notes":"blank, array, and scalar lines: parser reports each and continues"}
+{"case_id":"format-parse-truncated-final-line","fixture":"malformed/truncated-final-line","argv":["check"],"notes":"malformed final record: parser returns preceding records and a final-line error"}
+{"case_id":"format-parse-bad-utf8","fixture":"malformed/bad-utf8","argv":["check"],"notes":"invalid UTF-8: total parser returns the line-zero whole-file diagnostic without raising"}
+{"case_id":"format-parse-wrong-key-order","fixture":"malformed/wrong-key-order","argv":["check"],"notes":"parse accepts noncanonical serialized key order; key-order validation belongs to canonical emission, not parsing"}
+{"case_id":"format-parse-bom-prefixed","fixture":"malformed/bom-prefixed","argv":["check"],"notes":"boundary: a leading UTF-8 BOM is stripped before line-one JSON parsing"}
+{"case_id":"format-parse-torn-file-check","fixture":"adversarial/mid-write-torn-file","argv":["check"],"notes":"check surfaces the malformed trailing record as a parser error"}
+{"case_id":"format-parse-torn-file-list","fixture":"adversarial/mid-write-torn-file","argv":["list"],"notes":"read behavior: list consumes successfully parsed records despite the parser error and exits successfully"}
