@@ -197,3 +197,55 @@ The focused Ruby oracle remains 20 runs and 66 assertions. Differential
 fixture conformance remains unavailable because no Go CLI adapter reaches
 recurrence. The next steps are fresh, independent mid-tier source-fidelity
 and Go-idiom reviews; reviewers must not edit the implementation.
+
+## Source-fidelity review: natural-phrase tokenization (2026-08-02)
+
+**Rejected — repair required before the Go-idiom review.** This review is a
+fresh independent context; it read `1ce36ed` against `lib/tasks/recur.rb` and
+made no implementation edits. The signed-year, Italy-reform, arbitrary-count,
+nullable-humanize and prefix repairs all hold. One blocking divergence remains,
+with two sub-causes that share a root:
+
+**Blocking — `parseFriendlyInterval` is not `tokenize` + `take_interval`.**
+`go/internal/recur/recur.go:147-186` recognizes only a leading literal
+`"every"` and then whitespace-separated fields. Ruby reaches the same
+"bare interval" result (`lib/tasks/recur.rb:465-478`) through
+`tokenize` (`:504-513`) and `take_interval` (`:517-527`), which do three
+things Go does not:
+
+1. `FILLER` (`:108`) drops *every* filler token anywhere in the phrase —
+   `on of the each every a an in at and` — not just one leading `every`. So
+   Ruby stores `"a week" => ".+1w"`, `"each 2 weeks" => ".+2w"`,
+   `"in 3 days" => ".+3d"`, `"and 2 days" => ".+2d"`; Go rejects all of them.
+2. `tokenize` translates `, & /` to spaces (`text = s.tr(",&/", "   ")`), so
+   `"2,weeks"` and `"2/weeks"` both store `".+2w"`; Go rejects both.
+3. `tokenize` splits digit/letter boundaries in *both* directions
+   (`(\d)([a-z])` and `([a-z])(\d)`), so `"every3days"` stores `".+3d"`. Go's
+   `countUnit` regexp only covers the digits-then-letters joined form.
+
+Observed divergence table (13 of 19 probes disagree, all Go-rejects-valid):
+`porting/evidence/recur-interval-cookies/source-fidelity-probe-tokenize.txt`.
+
+Classification: **Go defect**, not an intentional difference and not a legacy
+Ruby rule to preserve-by-omission — the affected inputs produce an observable
+canonical stored cookie in Ruby today. Correction: port `tokenize` and
+`take_interval` faithfully (separator translation, digit/letter splitting,
+ordinal marking, filler removal, then the count+unit / `WORDS` / `BARE_UNITS`
+peel) and drive the bare-interval branch from `spec.empty? && unit &&
+count.positive?` as Ruby does, rather than pattern-matching field counts.
+Non-interval `spec` remainders stay out of scope for this slice, but they must
+fall through to the calendar/monthly path's rejection rather than being
+unreachable.
+
+Confirmed still correct on this branch: `2 3days`, `2 3 days`, `days`,
+`weeks`, `every-3-days`, `+007d`, `.+0d`, `++0d`, `0 days`, `2 wks`,
+`one week`, `twice weekly`, `every fortnight` all reject in both; `weekly`,
+`WEEKLY`, ` .+1w `, `++12w`, `+1y`, `5 Days`, `3 d`, `07 days`, `biweekly`,
+`fortnightly`, `quarterly`, `annually`, the four bare units, and all six off
+words agree exactly.
+
+Branch state at review time: `go build ./...`, `go vet ./...` and
+`go test ./internal/recur` pass. Differential fixture conformance is still
+unavailable (no Go CLI adapter reaches recurrence) — unchanged harness gap.
+The next tick is a **mid-tier translation** repairing the tokenizer, then a
+fresh independent source-fidelity review, then the Go-idiom review.

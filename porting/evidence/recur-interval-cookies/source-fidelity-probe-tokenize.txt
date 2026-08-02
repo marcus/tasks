@@ -1,0 +1,26 @@
+# Source-fidelity review probe — natural-phrase tokenization (2026-08-02)
+
+Ruby: ruby -Ilib -r tasks/recur (lib/tasks/recur.rb @ 28424b77950f)
+Go:   go/internal/recur.Parse(input, ".+") at 1ce36ed, run from a scratch copy
+      (no repository file was modified to take these observations).
+
+INPUT                  RUBY       GO
+"a week"               ".+1w"     nil
+"each 2 weeks"         ".+2w"     nil
+"the 2 weeks"          ".+2w"     nil
+"in 3 days"            ".+3d"     nil
+"at 2 days"            ".+2d"     nil
+"and 2 days"           ".+2d"     nil
+"of 2 days"            ".+2d"     nil
+"a 2 weeks"            ".+2w"     nil
+"every a week"         ".+1w"     nil
+"every every 2 weeks"  ".+2w"     nil
+"2,weeks"              ".+2w"     nil
+"2/weeks"              ".+2w"     nil
+"every3days"           ".+3d"     nil
+"an hour"              nil        nil
+"2 weeks week"         nil        nil
+"2 3days"              nil        nil
+"every 3 days"         ".+3d"     ".+3d"
+"3days"                ".+3d"     ".+3d"
+"weekly"               ".+1w"     ".+1w"
