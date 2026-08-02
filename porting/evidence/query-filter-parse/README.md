@@ -78,6 +78,17 @@ and the exhaustive sweep runs clean for all four sigils — 17,376 of 17,376
 cases, 4,448,256 names, 0 mismatches. Those sweep files are regenerated, never
 committed; the four case files alone are ~500 MB.
 
+`source-fidelity-review-2026-08-02-global-names.md` is the fresh independent
+review at c2dbd9e, aimed at the gap the previous sweep left: names of more than
+one codepoint behind a sigil. It **fails** with two `globalName` defects —
+`$-x` prints bare in Ruby and quoted in Go, and `$00`/`$01` print quoted in Ruby
+and bare in Go — and clears `ParseCLI`'s regex branches, `filter.go`'s
+state-intersection vocabulary, and the `hexC0` split of the two escape
+vocabularies. `review-2026-08-02-global-names/` holds three corpora with both
+captures (96 symbol names at 86/96, 110 argv/constructor cases at 110/110, 206
+escape cases at 206/206), their generators, and two Ruby probes that
+characterise the exact `$-X` and leading-zero rules.
+
 Every differential here compares parsed output, never bytes: Ruby's
 `JSON.generate` emits U+2028 and U+2029 raw where Go's encoder escapes them, so
 a byte diff reports a divergence for a value both probes agree on.
