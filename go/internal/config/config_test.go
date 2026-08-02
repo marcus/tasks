@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -140,5 +141,46 @@ func TestResolvePathPrecedenceTable(t *testing.T) {
 				t.Fatalf("Sources = %#v, want org=%q archive=%q memory=%q", paths.Sources, tc.orgSource, tc.archiveSource, tc.memorySource)
 			}
 		})
+	}
+}
+
+func TestConfigReportProjectsResolvedPathsAndExistence(t *testing.T) {
+	temp := t.TempDir()
+	memory := filepath.Join(temp, "agent-memory.md")
+	configFile := filepath.Join(temp, "config")
+	if err := os.WriteFile(memory, []byte("notes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	paths := Paths{
+		Org:        filepath.Join(temp, "tasks.jsonl"),
+		Archive:    filepath.Join(temp, "archive.jsonl"),
+		Memory:     memory,
+		ConfigFile: configFile,
+		Sources:    map[string]string{"org": "default", "archive": "default", "memory": "beside tasks.jsonl"},
+	}
+
+	report := ConfigReport(paths)
+	if !report.MemoryExists || report.ConfigFileExists {
+		t.Fatalf("existence = memory:%t config:%t, want memory:true config:false", report.MemoryExists, report.ConfigFileExists)
+	}
+	if report.Org != paths.Org || report.Archive != paths.Archive || report.Memory != paths.Memory || report.ConfigFile != paths.ConfigFile {
+		t.Fatalf("report paths = %#v, want projection of %#v", report, paths)
+	}
+	if report.Sources["memory"] != "beside tasks.jsonl" {
+		t.Fatalf("sources = %#v", report.Sources)
+	}
+
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"org", "archive", "memory", "sources", "memory_exists", "config_file", "config_file_exists"} {
+		if _, ok := decoded[key]; !ok {
+			t.Fatalf("JSON report omitted %q: %s", key, encoded)
+		}
 	}
 }

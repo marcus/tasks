@@ -91,5 +91,12 @@ keys, tilde expansion, empty-value fallthrough, provenance labels, and pinned
 
 It is not yet a completed medium-risk slice: no Go `config --json` adapter or
 runner exists, so the five captured Ruby observations cannot yet be compared.
-The next tick should add that adapter/runner seam, run the named differential
-cases, and then request separate source-fidelity and Go-idiom reviews.
+The Go resolver now also exposes `config.ConfigReport`, the narrow shared
+projection a later CLI adapter or probe will use for its resolved `org`,
+`archive`, `memory`, `sources`, `memory_exists`, `config_file`, and
+`config_file_exists` fields. It does not invent the unrelated settings fields
+of Ruby's full `config --json` report; those remain owned by their slices.
+
+The next tick should add the CLI adapter and protocol-conforming runner around
+this projection, run the named differential cases, and then arrange separate
+source-fidelity and Go-idiom reviews.
