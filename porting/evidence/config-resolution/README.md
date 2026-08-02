@@ -127,3 +127,20 @@ differential cases.
 The next tick should add the protocol-conforming runner/probe around this
 projection, compose the remaining public settings, run the named differential
 cases, and then arrange separate source-fidelity and Go-idiom reviews.
+
+## Public envelope composition inventory
+
+Re-reading the captured `config-resolution-tasks-dir` Ruby observation shows
+that the public `config --json` object has 25 keys. This slice's
+`ConfigReport` owns exactly the resolver projection: `org`, `archive`,
+`memory`, `sources` (for those three paths), `memory_exists`, `config_file`,
+and `config_file_exists`.
+
+The composing CLI layer must add, from their owning settings providers,
+`urgent_days`, `max_depth`, `theme`, `colors`, `mouse`, `timezone`,
+`time_format`, `date_order`, `tzdb_version`,
+`timezone_fallback_warning`, `links`, `link_systems`, `prompt_facts`,
+`hostname`, `host_context`, `host_context_source`, and `host_contexts`.
+It must also merge the settings providers' provenance into `sources`; replacing
+the Ruby map with the three resolver entries is a visible mismatch. The
+partial adapter remains intentionally non-public until that composition exists.
