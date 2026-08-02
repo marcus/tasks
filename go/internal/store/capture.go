@@ -31,8 +31,9 @@ type Paths struct {
 // Capture reads the live and archive files through one caller-supplied lock
 // acquisition, then returns an immutable read projection. Parsing remains
 // lenient: malformed lines do not prevent sound task records from appearing in
-// the snapshot. A missing archive is an empty history; a missing live file is
-// an error, matching Store's read boundary.
+// the snapshot. Ordinary Ruby Store reads treat a missing source file as an
+// empty snapshot. Checked-read validation is a later boundary, so this
+// lenient capture treats both a missing live file and archive as empty.
 func Capture(paths Paths, locker ReadLocker) (Snapshot, error) {
 	if paths.Live == "" {
 		return Snapshot{}, errors.New("live store path is required")
@@ -43,7 +44,7 @@ func Capture(paths Paths, locker ReadLocker) (Snapshot, error) {
 
 	var snapshot Snapshot
 	err := locker.WithReadLock(func() error {
-		live, err := readRecords(paths.Live, false)
+		live, err := readRecords(paths.Live, true)
 		if err != nil {
 			return err
 		}

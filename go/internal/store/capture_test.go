@@ -54,6 +54,17 @@ func TestCaptureTreatsMissingArchiveAsEmptyAndLeavesMalformedRecordsReadable(t *
 	}
 }
 
+func TestCaptureTreatsMissingLiveAsAnEmptyOrdinarySnapshot(t *testing.T) {
+	dir := t.TempDir()
+	snapshot, err := Capture(Paths{Live: filepath.Join(dir, "missing.jsonl")}, Unlocked{})
+	if err != nil {
+		t.Fatalf("Capture missing live store: %v", err)
+	}
+	if got := snapshot.Items(); len(got) != 0 {
+		t.Fatalf("missing live items = %#v, want empty", got)
+	}
+}
+
 func TestCaptureRequiresLivePathAndReadLocker(t *testing.T) {
 	if _, err := Capture(Paths{}, Unlocked{}); err == nil {
 		t.Fatal("missing live path did not fail")

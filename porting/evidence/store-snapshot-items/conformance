@@ -44,5 +44,21 @@ Dir.mktmpdir("tasks-store-snapshot-conformance-") do |work|
     abort "store-snapshot-items mismatch for #{kase.fetch("case_id")}; details in #{work}"
   end
 
-  puts "store-snapshot-items direct conformance: #{cases.length}/#{cases.length} cases matched"
+  missing_live = File.join(work, "missing-tasks.jsonl")
+  missing_archive = File.join(work, "missing-archive.jsonl")
+  ruby = run("ruby", "-I#{ROOT.join("lib")}", "-rjson", "-e", <<~'RUBY', missing_live, missing_archive)
+    require "tasks/store"
+    store = Tasks::Store.new(org: ARGV.fetch(0), archive: ARGV.fetch(1))
+    snapshot = store.read_snapshot
+    puts JSON.generate("live" => snapshot.items, "archive" => snapshot.archive_items)
+  RUBY
+  go = run(*go_probe, missing_live, missing_archive, chdir: ROOT.join("go").to_s)
+  unless ruby == go
+    File.write(File.join(work, "missing-live-ruby.json"), JSON.pretty_generate(ruby) + "\n")
+    File.write(File.join(work, "missing-live-go.json"), JSON.pretty_generate(go) + "\n")
+    abort "store-snapshot-items mismatch for missing-live; details in #{work}"
+  end
+
+  total = cases.length + 1
+  puts "store-snapshot-items direct conformance: #{total}/#{total} cases matched"
 end

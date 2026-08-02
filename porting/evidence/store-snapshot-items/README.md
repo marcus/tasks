@@ -102,11 +102,28 @@ archive source, so later rendering semantics cannot mask a read-model defect.
 
 ```sh
 porting/evidence/store-snapshot-items/conformance
-# store-snapshot-items direct conformance: 5/5 cases matched
+# store-snapshot-items direct conformance: 6/6 cases matched
 ```
 
 This is differential evidence for Item field coercion and source separation.
 Snapshot identity, freezing, and coherent capture remain covered by the Go
 tests above; tree/query behavior remains with later slices.
+
+## Source-fidelity repair: missing ordinary live store
+
+Ruby's ordinary `Store#read_snapshot` rescues a missing live store into an
+empty snapshot; only the later checked-read boundary reports it as invalid.
+`Capture` now follows that ordinary-read rule for its live source, while still
+requiring the caller to provide a non-empty live path. The direct Go regression
+is `TestCaptureTreatsMissingLiveAsAnEmptyOrdinarySnapshot`.
+
+Ruby oracle and Go verification for this repair:
+
+```sh
+ruby -Ilib -rtmpdir -e 'require "tasks/store"; Dir.mktmpdir { |d| s = Tasks::Store.new(org: File.join(d, "missing.jsonl"), archive: File.join(d, "archive.jsonl")); abort unless s.read_snapshot.items.empty? }'
+(cd go && go test ./internal/store -run TestCaptureTreatsMissingLiveAsAnEmptyOrdinarySnapshot)
+porting/evidence/store-snapshot-items/conformance
+# store-snapshot-items direct conformance: 6/6 cases matched
+```
 
 Next: obtain separate independent source-fidelity and Go-idiom reviews.
