@@ -1,0 +1,14 @@
+{
+  "slice": "delegation-record-shape",
+  "probe": "porting/runners/ruby/delegation-probe",
+  "cases": "porting/runners/cases/delegation-record-shape-direct.jsonl",
+  "source_blob_sha": "88d6e43a54ae1e23ace1edd5b0029da379941a5e",
+  "source_sha": "46f4955ff1c5d567b50e6ae104d0dd4796fae911",
+  "ruby": "ruby 4.0.6 (2026-07-14 revision 03b6d3f889) +PRISM [arm64-darwin23]",
+  "env": {
+    "TZ": "UTC"
+  },
+  "cases_sha256": "df4c99a39ee134b7c11ddc1a61698d12ca7a4161ee982616e90ae45a1bb14a4e",
+  "observations_sha256": "796cdcfd43b74c1932d8a1e80710c7fb74885913293987e3e0b803f8402b2529",
+  "case_count": 102
+}
