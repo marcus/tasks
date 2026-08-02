@@ -49,16 +49,25 @@ needs; do not re-read them front to back each iteration.
 
 ## Your iteration
 
-1. **Orient.** `td usage --new-session -q`. Prefer, in order: a slice in
-   review you did not write; in-progress work handed off and unclaimed; the
-   next ready slice whose manifest dependencies are green.
+1. **Orient.** `td usage --new-session -q`. Prefer, in order: a slice from
+   `td reviewable --json`; an open porting slice with a saved partial handoff
+   from `td query 'status = open AND handoff.remaining ~ "" AND labels ~ "porting-slice"' --json`;
+   the next ready slice whose manifest dependencies are green. A partial
+   handoff is open after its prior tick unstarts it, not in progress; read its
+   handoff before choosing generic ready work.
 2. **Claim and branch.** `td start <id>` is the atomic claim. If it fails,
    someone else has it — pick another. Read the issue's `slice:<name>` label,
    then switch to its durable branch: `git switch port/<name>` when it exists,
    otherwise `git switch -c port/<name>`. Verify a resumed handoff's commit is
-   reachable from that branch before working. **Never commit on detached
-   HEAD.** Assume sibling agents are running: never share a fixture copy,
-   port, build dir, or store with them.
+   reachable from that branch before working. If any branch switch or resumed
+   commit verification fails after `td start`, first run `git switch --detach
+   HEAD`. Only after detachment succeeds, run `td unstart <id> --reason "Branch
+   setup failed after claim"` and verify the issue is open before choosing
+   another. If detachment fails, retain the claim, record the blocker with
+   `td log <id>`, and exit; never expose a claimable handoff whose branch is
+   still occupied. **Never commit on detached HEAD.** Assume sibling agents
+   are running: never share a fixture copy, port, build dir, or store with
+   them.
 3. **Work one step** of the slice loop below — not necessarily the whole
    slice. Low-risk slices fit in one iteration; high-risk slices should span
    several agents on purpose, so the translator and the oracle-capturer and

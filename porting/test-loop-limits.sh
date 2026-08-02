@@ -47,6 +47,13 @@ assert_not_contains() { # assert_not_contains <label> <needle> <haystack>
   case "$3" in *"$2"*) bad "$1 (unexpected '$2' in: $3)" ;; *) ok "$1" ;; esac
 }
 
+assert_before() { # assert_before <label> <first> <second> <haystack>
+  case "$4" in
+    *"$2"*"$3"*) ok "$1" ;;
+    *) bad "$1 ('$2' does not precede '$3' in: $4)" ;;
+  esac
+}
+
 exists() { [ -e "$1" ] && echo yes || echo no; }
 
 # ---------------------------------------------------------------- harnesses
@@ -765,6 +772,76 @@ echo '--- sourcing loop.sh does not run the supervisor ---'
 # REPO_ROOT and friends are reassigned above, so re-check in a fresh shell.
 out="$(bash -c '. "'"$DIR"'/loop.sh"; printf "[%s][%s]" "$REPO_ROOT" "$TIMEOUT_BIN"' 2>&1)"
 assert_eq 'setup_paths and preflight did not run on source' '[][]' "$out"
+
+# ---------------------------------------------------------------- prompt claim lifecycle
+echo '--- prompt preserves saved handoffs and rolls back failed branch setup ---'
+PROMPT="$DIR/PORTING.md"
+ORIENT_BLOCK="$(sed -n '/1\. \*\*Orient/,/2\. \*\*Claim/p' "$PROMPT")"
+CLAIM_BLOCK="$(sed -n '/2\. \*\*Claim/,/3\. \*\*Work/p' "$PROMPT")"
+assert_contains 'saved handoff query requires open porting slices with handoffs' \
+  "td query 'status = open AND handoff.remaining ~ \"\" AND labels ~ \"porting-slice\"' --json" \
+  "$ORIENT_BLOCK"
+assert_before 'saved partial handoffs precede generic ready work' \
+  'handoff.remaining ~ ""' 'the next ready slice' "$ORIENT_BLOCK"
+assert_contains 'the prompt names the real open state of a partial handoff' \
+  'handoff is open after' "$ORIENT_BLOCK"
+assert_contains 'rollback covers branch switch and resumed commit verification' \
+  'If any branch switch or resumed' "$CLAIM_BLOCK"
+assert_contains 'rollback applies only after a successful claim' \
+  'commit verification fails after `td start`' "$CLAIM_BLOCK"
+assert_before 'branch setup rollback detaches before releasing the claim' \
+  'git switch --detach' 'td unstart' "$CLAIM_BLOCK"
+assert_contains 'claim release is conditional on successful detachment' \
+  'Only after detachment succeeds' "$CLAIM_BLOCK"
+assert_contains 'branch setup failure releases the exact claimed issue' \
+  'td unstart' "$CLAIM_BLOCK"
+assert_contains 'claim rollback targets id and records its reason' \
+  '<id> --reason "Branch' "$CLAIM_BLOCK"
+assert_contains 'claim rollback records the branch setup failure reason' \
+  'setup failed after claim"' "$CLAIM_BLOCK"
+assert_contains 'claim rollback verifies open before another choice' \
+  'issue is open before choosing' "$CLAIM_BLOCK"
+assert_contains 'failed detachment retains the claim' \
+  'If detachment fails, retain the claim' "$CLAIM_BLOCK"
+assert_contains 'failed detachment exits instead of exposing the branch' \
+  'never expose a claimable handoff whose branch is' "$CLAIM_BLOCK"
+
+# The query is a cross-entity contract, not just prompt spelling. `has()` only
+# checks issue fields and silently returned no handoffs, so exercise a real td
+# database with both a saved open handoff and an otherwise-ready porting slice.
+HANDOFF_REPO="$TMPROOT/handoff-query-repo"
+mkdir -p "$HANDOFF_REPO"
+git -C "$HANDOFF_REPO" init -q -b main
+git -C "$HANDOFF_REPO" config user.name test
+git -C "$HANDOFF_REPO" config user.email test@example.invalid
+touch "$HANDOFF_REPO/seed"
+git -C "$HANDOFF_REPO" add seed
+git -C "$HANDOFF_REPO" commit -qm seed
+td -w "$HANDOFF_REPO" init >/dev/null 2>&1
+SAVED_ID="$(TD_CONTEXT_ID=prompt-query-test td -w "$HANDOFF_REPO" \
+  create 'saved partial slice' --type task --labels porting-slice --json \
+  | jq -r '.issue.id')"
+TD_CONTEXT_ID=prompt-query-test td -w "$HANDOFF_REPO" \
+  create 'generic ready slice' --type task --labels porting-slice >/dev/null 2>&1
+DONE_ONLY_ID="$(TD_CONTEXT_ID=prompt-query-test td -w "$HANDOFF_REPO" \
+  create 'done-only partial slice' --type task --labels porting-slice --json \
+  | jq -r '.issue.id')"
+TD_CONTEXT_ID=prompt-query-test td -w "$HANDOFF_REPO" start "$SAVED_ID" >/dev/null 2>&1
+TD_CONTEXT_ID=prompt-query-test td -w "$HANDOFF_REPO" \
+  handoff "$SAVED_ID" --remaining 'translate' >/dev/null 2>&1
+TD_CONTEXT_ID=prompt-query-test td -w "$HANDOFF_REPO" \
+  unstart "$SAVED_ID" --reason 'handoff saved' >/dev/null 2>&1
+TD_CONTEXT_ID=prompt-query-test td -w "$HANDOFF_REPO" start "$DONE_ONLY_ID" >/dev/null 2>&1
+TD_CONTEXT_ID=prompt-query-test td -w "$HANDOFF_REPO" \
+  handoff "$DONE_ONLY_ID" --done 'oracle captured' >/dev/null 2>&1
+TD_CONTEXT_ID=prompt-query-test td -w "$HANDOFF_REPO" \
+  unstart "$DONE_ONLY_ID" --reason 'handoff saved' >/dev/null 2>&1
+HANDOFF_QUERY='status = open AND handoff.remaining ~ "" AND labels ~ "porting-slice"'
+QUERY_IDS="$(td -w "$HANDOFF_REPO" query "$HANDOFF_QUERY" --json \
+  | jq -r 'map(.id) | sort | join(",")')"
+EXPECTED_IDS="$(printf '%s\n%s\n' "$SAVED_ID" "$DONE_ONLY_ID" | sort | paste -sd, -)"
+assert_eq 'the prompt query finds both handoff shapes and excludes generic ready work' \
+  "$EXPECTED_IDS" "$QUERY_IDS"
 
 echo
 echo "passed: $PASS   failed: $FAIL"
