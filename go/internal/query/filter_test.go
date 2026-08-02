@@ -2,6 +2,7 @@ package query
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -147,5 +148,32 @@ func TestFilterOwnsConstructorAndAccessorSlices(t *testing.T) {
 	}
 	if defaultFilter.Contexts() == nil || defaultFilter.Tags() == nil || defaultFilter.Text() == nil {
 		t.Fatal("constructed empty collections must be non-nil")
+	}
+}
+
+// TestNewerUnicodeLowerOverrides pins the Unicode 16.0/17.0 downcase overrides
+// against the sweep in
+// porting/evidence/query-filter-parse/downcase-divergence-2026-08-02.jsonl:
+// TextQuery must produce Ruby's lowered form for each of the 55 codepoints, and
+// every lowered form must already be lowercase so the table stays correct when
+// Go's own tables catch up and ToLower starts doing the work itself.
+func TestNewerUnicodeLowerOverrides(t *testing.T) {
+	if len(newerUnicodeLower) != 55 {
+		t.Fatalf("override table has %d entries, want the 55 swept divergences", len(newerUnicodeLower))
+	}
+	for upper, lower := range newerUnicodeLower {
+		if upper == lower {
+			t.Fatalf("U+%04X maps to itself", upper)
+		}
+		if got := strings.ToLower(string(lower)); got != string(lower) {
+			t.Fatalf("lowered form of U+%04X is not lowercase: ToLower(%q) = %q", upper, string(lower), got)
+		}
+		filter, err := NewFilter(FilterOptions{Text: []string{string(upper)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := filter.TextQuery(); got != string(lower) {
+			t.Fatalf("TextQuery() for U+%04X = %q, want %q", upper, got, string(lower))
+		}
 	}
 }

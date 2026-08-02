@@ -72,3 +72,11 @@
 {"case_id":"query-filter-invalid-utf8-bare","operation":"parse_cli","argv_base64":["ww=="]}
 {"case_id":"query-filter-invalid-utf8-precedes-scope-check","operation":"parse_cli","argv_base64":["LS1kb25l","LS1hcmNoaXZlZA==","ww=="]}
 {"case_id":"query-filter-invalid-utf8-follows-unknown-flag","operation":"parse_cli","argv_base64":["LXo=","ww=="]}
+# Ruby 4.0.6's downcase tables are Unicode 17.0.0 and Go 1.26.5's are 15.0.0.
+# These are the five reproduction cases of that divergence, from
+# source-fidelity-unicode-cases-2026-08-02.jsonl (sfr2-text-query-*).
+{"case_id":"query-filter-text-query-cyrillic-1c89","operation":"parse_cli","argv":["Ᲊ"]}
+{"case_id":"query-filter-text-query-latin-a7cb","operation":"parse_cli","argv":["Ɤ"]}
+{"case_id":"query-filter-text-query-garay-10d50","operation":"parse_cli","argv":["𐵐"]}
+{"case_id":"query-filter-text-query-16ea0","operation":"parse_cli","argv":["𖺠"]}
+{"case_id":"query-filter-text-query-mixed-new-unicode","operation":"parse_cli","argv":["ABCᲉxyz"]}

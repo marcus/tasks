@@ -3,7 +3,7 @@
 `ruby.jsonl` is the captured Ruby oracle. `go.jsonl` is the Go translation's
 current direct-probe output; it is compared structurally, not promoted to an
 expected result. Run `./porting/evidence/query-filter-parse/conformance` to
-reproduce the 60-case differential result, including explicit `scope: null`,
+reproduce the 65-case differential result, including explicit `scope: null`,
 scalar collection, mixed collection, collection-null, non-boolean boolean
 keyword, non-string scope/priority/state, and unknown-constructor-keyword
 inputs. `symbol-inspect-capture` captures Ruby's `Symbol#inspect` for 73 name
@@ -38,6 +38,12 @@ Unicode 15.0.0 tables while Ruby 4.0.6 uses 17.0.0, leaving 55 codepoints
 uppercased. Its adversarial corpus is
 `source-fidelity-unicode-{cases,ruby,go}-2026-08-02.jsonl` (23/28 matched) and
 the exhaustive whole-Unicode sweep is
-`downcase-divergence-2026-08-02.jsonl`. Those cases are deliberately *not* in
-`porting/runners/cases/query-filter-parse.jsonl` yet — the repair tick moves
-them there so conformance guards the fix.
+`downcase-divergence-2026-08-02.jsonl`.
+
+That defect is repaired as of the 65/65 run above: the five reproduction cases
+now live in `porting/runners/cases/query-filter-parse.jsonl` as
+`query-filter-text-query-*`, and the reviewer's 28-case adversarial corpus
+re-runs 28/28 against the repaired Go. See
+`repair-2026-08-02-unicode-tables.md`. The repair is a slice-local override
+table; the coupling it works around belongs to any later slice that changes
+case.
