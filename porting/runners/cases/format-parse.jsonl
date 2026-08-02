@@ -31,3 +31,6 @@
 {"case_id":"format-parse-diagnostic-object-missing-colon-value","fixture":"malformed/diagnostic-object-missing-colon-value","argv":["check"],"notes":"review-discovered Ruby malformed-diagnostic oracle: nested object key requires a colon"}
 {"case_id":"format-parse-diagnostic-number-trailing-dot","fixture":"malformed/diagnostic-number-trailing-dot","argv":["check"],"notes":"review-discovered Ruby malformed-diagnostic oracle: malformed decimal number"}
 {"case_id":"format-parse-diagnostic-trailing-malformed-object","fixture":"malformed/diagnostic-trailing-malformed-object","argv":["check"],"notes":"review-discovered Ruby malformed-diagnostic oracle: trailing malformed JSON retains token and column"}
+{"case_id":"format-parse-diagnostic-nul-blank","fixture":"malformed/diagnostic-nul-blank","argv":["check"],"notes":"review-discovered Ruby strip boundary: NUL-only line is blank"}
+{"case_id":"format-parse-diagnostic-repeated-bom","fixture":"malformed/diagnostic-repeated-bom","argv":["check"],"notes":"review-discovered BOM boundary: only the leading file BOM is stripped"}
+{"case_id":"format-parse-non-finite-number","fixture":"valid/non-finite-number","argv":["check"],"notes":"review-discovered parser transport boundary: Ruby parses 1e400 as Infinity"}

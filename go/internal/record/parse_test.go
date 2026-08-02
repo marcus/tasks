@@ -34,6 +34,9 @@ func TestParseBoundaries(t *testing.T) {
 		{name: "trailing newline", input: []byte("{\"type\":\"meta\"}\n"), records: []int{1}},
 		{name: "lone newline", input: []byte("\n"), records: []int{}, errors: []ParseError{{Line: 1, Message: "blank line"}}},
 		{name: "bom", input: append([]byte{0xef, 0xbb, 0xbf}, []byte("{\"type\":\"meta\"}\n")...), records: []int{1}},
+		{name: "nul blank", input: []byte{0}, records: []int{}, errors: []ParseError{{Line: 1, Message: "blank line"}}},
+		{name: "non-breaking space is not blank", input: []byte("\u00a0"), records: []int{}, errors: []ParseError{{Line: 1, Message: "invalid JSON: unexpected character: '' at line 1 column 1"}}},
+		{name: "second bom is invalid JSON", input: append([]byte("{}\n"), append([]byte{0xef, 0xbb, 0xbf}, []byte("{}")...)...), records: []int{1}, errors: []ParseError{{Line: 2, Message: "invalid JSON: unexpected character: '\ufeff{}' at line 1 column 1"}}},
 		{name: "bad utf8", input: []byte{0xff}, records: []int{}, errors: []ParseError{{Line: 0, Message: "file is not valid UTF-8"}}},
 	}
 

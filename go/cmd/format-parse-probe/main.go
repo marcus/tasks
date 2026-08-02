@@ -3,8 +3,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 
@@ -12,8 +14,8 @@ import (
 )
 
 type output struct {
-	Records []map[string]json.RawMessage `json:"records"`
-	Errors  []parseError                 `json:"errors"`
+	Records []map[string]any `json:"records"`
+	Errors  []parseError     `json:"errors"`
 }
 
 type parseError struct {
@@ -34,13 +36,18 @@ func main() {
 	}
 	result := record.Parse(input)
 	out := output{
-		Records: make([]map[string]json.RawMessage, 0, len(result.Records)),
+		Records: make([]map[string]any, 0, len(result.Records)),
 		Errors:  make([]parseError, 0, len(result.Errors)),
 	}
 	for _, parsed := range result.Records {
-		fields := make(map[string]json.RawMessage, len(parsed.Fields)+1)
+		fields := make(map[string]any, len(parsed.Fields)+1)
 		for _, field := range parsed.Fields {
-			fields[field.Key] = field.Value
+			value, err := transport(field.Value)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			fields[field.Key] = value
 		}
 		fields["line"] = json.RawMessage(strconv.Itoa(parsed.Line))
 		out.Records = append(out.Records, fields)
@@ -55,4 +62,44 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Println(string(encoded))
+}
+
+// transport preserves parsed JSON values for the differential runner while
+// giving Ruby's non-finite Float values a JSON-safe, typed representation.
+// It is probe-only: persisted JSONL remains the raw record bytes.
+func transport(raw json.RawMessage) (any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	return transportValue(value), nil
+}
+
+func transportValue(value any) any {
+	switch typed := value.(type) {
+	case json.Number:
+		parsed, err := strconv.ParseFloat(string(typed), 64)
+		if err != nil && math.IsInf(parsed, 0) {
+			infinity := "Infinity"
+			if math.Signbit(parsed) {
+				infinity = "-Infinity"
+			}
+			return map[string]string{"$tasks_format_probe_type": "non-finite-float", "value": infinity}
+		}
+		return typed
+	case []any:
+		for index := range typed {
+			typed[index] = transportValue(typed[index])
+		}
+		return typed
+	case map[string]any:
+		for key, child := range typed {
+			typed[key] = transportValue(child)
+		}
+		return typed
+	default:
+		return value
+	}
 }

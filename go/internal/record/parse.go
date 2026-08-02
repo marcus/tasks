@@ -65,7 +65,7 @@ func Parse(input []byte) Result {
 	for index, line := range lines {
 		lineNo := index + 1
 		line = bytes.TrimSuffix(line, []byte{'\r'})
-		if len(bytes.TrimSpace(line)) == 0 {
+		if len(rubyStrip(line)) == 0 {
 			result.Errors = append(result.Errors, ParseError{Line: lineNo, Message: "blank line"})
 			continue
 		}
@@ -87,6 +87,25 @@ func Parse(input []byte) Result {
 		result.Records = append(result.Records, Record{Fields: fields, Line: lineNo})
 	}
 	return result
+}
+
+// rubyStrip implements the byte-level whitespace set used by Ruby
+// String#strip for the already UTF-8-validated JSONL line. In particular,
+// NUL is blank to Ruby while non-breaking space is not; bytes.TrimSpace has
+// the opposite behavior for those two boundary cases.
+func rubyStrip(line []byte) []byte {
+	start, end := 0, len(line)
+	for start < end && rubyWhitespace(line[start]) {
+		start++
+	}
+	for end > start && rubyWhitespace(line[end-1]) {
+		end--
+	}
+	return line[start:end]
+}
+
+func rubyWhitespace(char byte) bool {
+	return char == 0 || char == ' ' || (char >= '\t' && char <= '\r')
 }
 
 // parseFields decodes an already-validated object without collapsing it into a
@@ -177,6 +196,15 @@ func rubyClass(value any) string {
 // the original JSONL record.
 func rubyJSONError(line []byte, err error) string {
 	_ = err
+	// Only the first BOM is stripped before line splitting, matching
+	// String#sub(/\A<U+FEFF>/, "") in the Ruby oracle. A second (or line-two) BOM is
+	// an observable JSON parser error, not whitespace.
+	if bytes.HasPrefix(line, []byte{0xef, 0xbb, 0xbf}) {
+		return fmt.Sprintf("unexpected character: '%s' at line 1 column 1", line)
+	}
+	if bytes.Equal(line, []byte{0xc2, 0xa0}) {
+		return "unexpected character: '' at line 1 column 1"
+	}
 	if bytes.Equal(bytes.TrimSpace(line), []byte("[")) {
 		return fmt.Sprintf("unexpected end of input at line 1 column %d", len(line)+1)
 	}
