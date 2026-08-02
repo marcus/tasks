@@ -205,14 +205,44 @@ func rubyNumberString(raw string) string {
 		return raw
 	}
 	value, err := strconv.ParseFloat(raw, 64)
-	if err != nil {
+	if err != nil && value == 0 {
 		return raw
 	}
-	text := strconv.FormatFloat(value, 'g', -1, 64)
-	if !strings.ContainsAny(text, ".eE") {
+	if value > 0 && value > 1.7976931348623157e+308 {
+		return "Infinity"
+	}
+	if value < 0 && value < -1.7976931348623157e+308 {
+		return "-Infinity"
+	}
+
+	abs := value
+	if abs < 0 {
+		abs = -abs
+	}
+	if abs != 0 && (abs < 1e-4 || abs >= 1e15) {
+		return rubyScientificFloat(value)
+	}
+	return rubyFixedFloat(value)
+}
+
+func rubyFixedFloat(value float64) string {
+	text := strconv.FormatFloat(value, 'f', -1, 64)
+	if !strings.Contains(text, ".") {
 		return text + ".0"
 	}
 	return text
+}
+
+func rubyScientificFloat(value float64) string {
+	text := strconv.FormatFloat(value, 'e', -1, 64)
+	mantissa, exponent, found := strings.Cut(text, "e")
+	if !found {
+		return rubyFixedFloat(value)
+	}
+	if !strings.Contains(mantissa, ".") {
+		mantissa += ".0"
+	}
+	return mantissa + "e" + exponent
 }
 
 // rubyStringJSON preserves an object's JSON member order while spelling arrays

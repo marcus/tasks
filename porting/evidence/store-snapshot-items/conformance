@@ -85,6 +85,19 @@ Dir.mktmpdir("tasks-store-snapshot-conformance-") do |work|
     abort "store-snapshot-items mismatch for normalized-structured-tags; details in #{work}"
   end
 
-  total = cases.length + 3
+  float_live = File.join(work, "float-structured-tags.jsonl")
+  File.write(float_live, <<~JSONL)
+    {"type":"meta","version":2}
+    {"type":"task","id":"floats","state":"TODO","title":"Float structured tags","tags":[1e6,1e7,1e-5,-0.0,0.000001,12345678901234567890.0,1e309]}
+  JSONL
+  ruby = run(RUBY_PROBE.to_s, float_live)
+  go = run(*go_probe, float_live, chdir: ROOT.join("go").to_s)
+  unless ruby == go
+    File.write(File.join(work, "float-structured-tags-ruby.json"), JSON.pretty_generate(ruby) + "\n")
+    File.write(File.join(work, "float-structured-tags-go.json"), JSON.pretty_generate(go) + "\n")
+    abort "store-snapshot-items mismatch for float-structured-tags; details in #{work}"
+  end
+
+  total = cases.length + 4
   puts "store-snapshot-items direct conformance: #{total}/#{total} cases matched"
 end

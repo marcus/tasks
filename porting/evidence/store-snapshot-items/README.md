@@ -102,7 +102,7 @@ archive source, so later rendering semantics cannot mask a read-model defect.
 
 ```sh
 porting/evidence/store-snapshot-items/conformance
-# store-snapshot-items direct conformance: 8/8 cases matched
+# store-snapshot-items direct conformance: 9/9 cases matched
 ```
 
 This is differential evidence for Item field coercion and source separation.
@@ -129,6 +129,11 @@ porting/evidence/store-snapshot-items/conformance
 The normalized structured-tags case separately proves Ruby's post-`JSON.parse`
 behavior for duplicate object keys and numeric values (`1e3`, `-0`, and
 `1.2300`), rather than preserving their input token spelling.
+
+The float-structured-tags case separately fixes the reviewed Ruby Float#to_s
+boundary: fixed notation is used for absolute values from 1e-4 through below
+1e15, scientific notation outside that range, signed zero retains its decimal,
+and overflowing JSON float tokens materialize as Infinity.
 
 Next: obtain a fresh independent source-fidelity review, then independent
 approval if both required reviews remain clean.

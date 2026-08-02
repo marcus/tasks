@@ -119,6 +119,19 @@ func TestSnapshotNormalizesJSONBeforeCoercingStructuredTags(t *testing.T) {
 	}
 }
 
+func TestSnapshotCoercesFloatTagsWithRubyToSBoundaries(t *testing.T) {
+	parsed := record.Parse([]byte(`{"type":"task","id":"floats","tags":[1e6,1e7,1e-5,-0.0,0.000001,12345678901234567890.0,1e309]}`))
+	if !parsed.OK() {
+		t.Fatalf("parse float tags: %#v", parsed.Errors)
+	}
+
+	items := NewSnapshot(parsed.Records, nil).Items()
+	want := []string{"1000000.0", "10000000.0", "1.0e-05", "-0.0", "1.0e-06", "1.2345678901234567e+19", "Infinity"}
+	if got := items[0].Tags; !equalStrings(got, want) {
+		t.Fatalf("float tag coercion = %#v, want %#v", got, want)
+	}
+}
+
 func TestSnapshotReadsDatesAndDoesNotCrossSources(t *testing.T) {
 	live := parseFixture(t, "valid/full-field-matrix/store/tasks.jsonl")
 	archive := parseFixture(t, "valid/archive-pair/store/archive.jsonl")
