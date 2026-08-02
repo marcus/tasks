@@ -70,7 +70,7 @@ func Parse(input, defaultPrefix string) Result {
 	if prefix, value, ok := parseFriendlyInterval(s); ok {
 		return Result{Canonical: prefixOrDefault(prefix, defaultPrefix) + value.count.String() + value.unit}
 	}
-	return Result{Error: fmt.Sprintf("unrecognized schedule: %q", raw)}
+	return Result{Error: "unrecognized schedule: " + rubyInspect(raw)}
 }
 
 // Cookie reports whether value is an exactly canonical interval cookie.
@@ -114,7 +114,7 @@ func Humanize(value string) *string {
 func NextDate(value string, from, today CivilDate) (CivilDate, error) {
 	match := cookie.FindStringSubmatch(rubyStrip(value))
 	if match == nil {
-		return CivilDate{}, fmt.Errorf("not a repeater cookie: %q", value)
+		return CivilDate{}, fmt.Errorf("not a repeater cookie: %s", rubyInspect(value))
 	}
 	n, _ := new(big.Int).SetString(match[2], 10)
 	switch match[1] {

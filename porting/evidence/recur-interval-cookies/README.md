@@ -279,3 +279,77 @@ reaches recurrence; this is the existing harness gap, not a substituted Go
 oracle. The next step is a fresh independent mid-tier source-fidelity review,
 followed (only if it passes) by a separate Go-idiom review and independent
 approval.
+
+## Source-fidelity repair: Ruby `String#inspect` rejection spelling (2026-08-02)
+
+The prior review classified Go's `%q` echo as a Go defect. Both Recur error
+sites now render the echoed input with `rubyInspect`
+(`go/internal/recur/inspect.go`) instead: `Parse`'s `unrecognized schedule:`
+and `NextDate`'s `not a repeater cookie:`. Ruby quotes the caller's spelling
+through `String#inspect` at `lib/tasks/recur.rb:283`, `:335`, `:382`, `:467`
+and `:476`, so the quoted form is user-visible output, not a formatting detail.
+
+Ruby oracle capture (39 inputs against both error sites, plus a hex dump of
+every input so the Go table is transcribed from bytes rather than from a
+literal an editor could rewrite):
+
+```sh
+ruby porting/evidence/recur-interval-cookies/oracle-inspect-probe.rb
+```
+
+Its output is recorded verbatim in [`oracle-inspect.txt`](oracle-inspect.txt).
+The divergences it pins, all of which `%q` got wrong:
+
+- ESC is `\e`, where Go writes `\x1b`.
+- Other C0/C1 controls and DEL use Ruby's 4-digit `\uXXXX` escape with
+  UPPERCASE hex, where Go writes `\x00`-style escapes.
+- An interpolation-introducing `#` is escaped (`\#{`, `\#$`, `\#@`), which Go
+  never does; a bare or trailing `#` stays unescaped in both.
+- Format (Cf) and private-use (Co) characters print verbatim — soft hyphen,
+  ZWSP, BOM, tag characters, U+1D173, U+E000, U+F0000 — where Go's `%q`
+  escapes them, because `unicode.IsPrint` excludes both categories.
+- U+2028, U+2029 and unassigned codepoints (U+0378, U+2FFFF, U+10FFFF) are
+  escaped, using the braced `\u{...}` form above the BMP.
+
+`rubyPrintable` therefore tests `unicode.IsGraphic || Cf || Co`, which is what
+Onigmo's print property comes to for these inputs.
+`go/internal/recur/inspect_test.go` asserts all 39 captures against both error
+sites.
+
+Verification passed:
+
+```sh
+(cd go && gofmt -l internal/recur && go build ./... && go vet ./... && go test ./... && go test -race ./internal/recur)
+ruby test/test_recur.rb  # 20 runs, 66 assertions, 0 failures
+git diff --check
+```
+
+### Found while capturing: invalid UTF-8 raises in Ruby (unrepaired Go defect)
+
+The capture's last section feeds Recur three byte strings tagged UTF-8 that are
+not valid UTF-8. Ruby never reaches `inspect` for them — the regexp match
+raises first: `ArgumentError: invalid byte sequence in UTF-8` for `"\xff"`, and
+`Encoding::CompatibilityError: invalid byte sequence in UTF-8` for `"zz\xe6"`
+and `"zz\x80"`. `Recur.next_date` propagates the same message. Go's `regexp`
+does not raise, so Go returns an ordinary rejection where Ruby raises.
+
+Classified a **Go defect**, not an intentional difference — but outside this
+repair's scope, because matching it means deciding how the Go boundary spells a
+raised Ruby exception, which is a package-interface question the CLI adapter
+slice has to answer anyway. `rubyInspect`'s `\xHH` branch is retained and is
+correct for `String#inspect` itself; it is simply unreachable through `Recur`
+today. The next source-fidelity reviewer should treat this as recorded, not
+overlooked.
+
+### Correction to the standing differential-conformance claim
+
+Earlier entries here say differential fixture conformance "remains unavailable
+because no Go CLI adapter exposes internal/recur." That is no longer the whole
+picture: three landed slices reach a non-CLI package another way, through a
+direct probe pair — `porting/runners/ruby/delegation-probe` plus
+`go/cmd/delegation-probe`, driven by
+`porting/runners/cases/delegation-record-shape-direct.jsonl`, and likewise for
+`format-parse` and `check-meta-and-ids`. Building a
+`recur-interval-cookies-direct.jsonl` with a Ruby and Go `recur-probe` pair is
+the concrete next step that closes this slice's one never-skippable gap. The
+capture script above is oracle evidence, not that harness.
