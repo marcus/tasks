@@ -98,6 +98,24 @@ Dir.mktmpdir("tasks-store-snapshot-conformance-") do |work|
     abort "store-snapshot-items mismatch for float-structured-tags; details in #{work}"
   end
 
-  total = cases.length + 4
+  structured_id_live = File.join(work, "structured-ids.jsonl")
+  File.write(structured_id_live, <<~JSONL)
+    {"type":"meta","version":2}
+    {"type":"task","id":{"b":1,"a":[true,null,"x"]},"state":"TODO","title":"Hash id"}
+    {"type":"task","id":["a",{"n":1.5},[]],"state":"TODO","title":"Array id"}
+    {"type":"task","id":12,"state":"TODO","title":"Integer id"}
+    {"type":"task","id":1e3,"state":"TODO","title":"Float id"}
+    {"type":"task","id":true,"state":"TODO","title":"Boolean id"}
+    {"type":"task","id":"","state":"TODO","title":"Empty id"}
+  JSONL
+  ruby = run(RUBY_PROBE.to_s, structured_id_live)
+  go = run(*go_probe, structured_id_live, chdir: ROOT.join("go").to_s)
+  unless ruby == go
+    File.write(File.join(work, "structured-ids-ruby.json"), JSON.pretty_generate(ruby) + "\n")
+    File.write(File.join(work, "structured-ids-go.json"), JSON.pretty_generate(go) + "\n")
+    abort "store-snapshot-items mismatch for structured-ids; details in #{work}"
+  end
+
+  total = cases.length + 5
   puts "store-snapshot-items direct conformance: #{total}/#{total} cases matched"
 end

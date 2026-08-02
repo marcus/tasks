@@ -1,0 +1,51 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Oracle for `Store#to_date`'s parser. `to_date` calls Date.iso8601, whose
+# accepted grammar is much wider than YYYY-MM-DD, so the Go port needs the
+# whole accept/reject set — not a spot check — before it can implement it.
+#
+# The corpus is emitted with the `today` it was captured under, because the
+# truncated forms (--MM-DD, ---DD, -DDD, -Www-D) complete their missing
+# components from the current date. Regenerate with the same case list; compare
+# against a recorded capture only when `today` matches, or re-run both sides.
+
+require "date"
+require "json"
+
+CASES = [
+  # Extended and basic calendar dates.
+  "2026-08-02", "20260802", "-2026-08-02", "+2026-08-02", "2026-8-2", "2026-08-2",
+  # Reduced precision.
+  "2026-08", "2026", "202608",
+  # Ordinal dates.
+  "2026-215", "2026215", "2026-000", "2026-366", "2024-366", "2025-366",
+  # Week dates.
+  "2026-W31-7", "2026W317", "2026-W01-1", "2026W011", "2026-W31",
+  "2026-W00-1", "2026-W54-1", "2026-W31-0", "2026-W31-8",
+  # Out-of-range calendar components.
+  "2026-13-01", "2026-00-01", "2026-02-30", "2024-02-29", "2025-02-29",
+  # Datetime prefixes: the time part is parsed and discarded, not rejected.
+  "2026-08-02T10:11:12", "2026-08-02T10:11:12.5", "2026-08-02T10:11:12Z",
+  "2026-08-02T10:11:12+05:00", "20260802T101112Z", "2026-215T10:11",
+  "2026-W31-7T10:11", "2026-08-02T25:00:00", "2026-08-02T10", "2026-08-02Z",
+  # Truncated forms: completed from today.
+  "--08-02", "--0802", "---02", "-08-02", "-W31-7", "-W31", "-215", "08-02",
+  # Surrounding whitespace is tolerated; an interior space is not.
+  "", " ", "2026-08-02 ", " 2026-08-02", "\t2026-08-02\n", "2026-08-02\n",
+  "2026-08-02 10:11:12", "2026-08-02 ",
+  # Non-dates.
+  "02-08-2026", "2026/08/02", "x", "2026-08-02x", "x2026-08-02"
+].freeze
+
+cases = CASES.map do |input|
+  parts = Date._iso8601(input)
+  begin
+    { "input" => input, "parts" => parts, "date" => Date.iso8601(input).iso8601 }
+  rescue ArgumentError, Date::Error => e
+    { "input" => input, "parts" => parts, "date" => nil, "error" => e.class.to_s }
+  end
+end
+
+puts JSON.pretty_generate("ruby" => RUBY_VERSION, "today" => Date.today.iso8601,
+                          "cases" => cases)

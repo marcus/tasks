@@ -113,7 +113,10 @@ func buildItems(records []record.Record, source Source) []Item {
 			Source:    source,
 		}
 		if id, present := fields["id"]; present && !isNull(id) {
-			text := rubyString(value(id))
+			// `rec["id"]&.to_s` is Object#to_s, so a structured id must be
+			// spelled the Ruby way and keep its source member order — the same
+			// coercion tags get, not a JSON re-encoding.
+			text := rubyStringJSON(id)
 			item.ID = &text
 		}
 		items = append(items, item)

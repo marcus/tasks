@@ -1,0 +1,525 @@
+{
+  "ruby": "4.0.6",
+  "today": "2026-08-02",
+  "cases": [
+    {
+      "input": "2026-08-02",
+      "parts": {
+        "mday": 2,
+        "year": 2026,
+        "mon": 8
+      },
+      "date": "2026-08-02"
+    },
+    {
+      "input": "20260802",
+      "parts": {
+        "mday": 2,
+        "year": 2026,
+        "mon": 8
+      },
+      "date": "2026-08-02"
+    },
+    {
+      "input": "-2026-08-02",
+      "parts": {
+        "mday": 2,
+        "year": -2026,
+        "mon": 8
+      },
+      "date": "-2026-08-02"
+    },
+    {
+      "input": "+2026-08-02",
+      "parts": {
+        "mday": 2,
+        "year": 2026,
+        "mon": 8
+      },
+      "date": "2026-08-02"
+    },
+    {
+      "input": "2026-8-2",
+      "parts": {},
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "2026-08-2",
+      "parts": {},
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "2026-08",
+      "parts": {
+        "year": 2026,
+        "mon": 8
+      },
+      "date": "2026-08-01"
+    },
+    {
+      "input": "2026",
+      "parts": {
+        "hour": 20,
+        "min": 26
+      },
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "202608",
+      "parts": {
+        "mday": 8,
+        "year": 2020,
+        "mon": 26
+      },
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "2026-215",
+      "parts": {
+        "yday": 215,
+        "year": 2026
+      },
+      "date": "2026-08-03"
+    },
+    {
+      "input": "2026215",
+      "parts": {
+        "yday": 215,
+        "year": 2026
+      },
+      "date": "2026-08-03"
+    },
+    {
+      "input": "2026-000",
+      "parts": {
+        "yday": 0,
+        "year": 2026
+      },
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "2026-366",
+      "parts": {
+        "yday": 366,
+        "year": 2026
+      },
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "2024-366",
+      "parts": {
+        "yday": 366,
+        "year": 2024
+      },
+      "date": "2024-12-31"
+    },
+    {
+      "input": "2025-366",
+      "parts": {
+        "yday": 366,
+        "year": 2025
+      },
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "2026-W31-7",
+      "parts": {
+        "cweek": 31,
+        "cwday": 7,
+        "cwyear": 2026
+      },
+      "date": "2026-08-02"
+    },
+    {
+      "input": "2026W317",
+      "parts": {
+        "cweek": 31,
+        "cwday": 7,
+        "cwyear": 2026
+      },
+      "date": "2026-08-02"
+    },
+    {
+      "input": "2026-W01-1",
+      "parts": {
+        "cweek": 1,
+        "cwday": 1,
+        "cwyear": 2026
+      },
+      "date": "2025-12-29"
+    },
+    {
+      "input": "2026W011",
+      "parts": {
+        "cweek": 1,
+        "cwday": 1,
+        "cwyear": 2026
+      },
+      "date": "2025-12-29"
+    },
+    {
+      "input": "2026-W31",
+      "parts": {},
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "2026-W00-1",
+      "parts": {
+        "cweek": 0,
+        "cwday": 1,
+        "cwyear": 2026
+      },
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "2026-W54-1",
+      "parts": {
+        "cweek": 54,
+        "cwday": 1,
+        "cwyear": 2026
+      },
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "2026-W31-0",
+      "parts": {
+        "cweek": 31,
+        "cwday": 0,
+        "cwyear": 2026
+      },
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "2026-W31-8",
+      "parts": {
+        "cweek": 31,
+        "cwday": 8,
+        "cwyear": 2026
+      },
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "2026-13-01",
+      "parts": {
+        "mday": 1,
+        "year": 2026,
+        "mon": 13
+      },
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "2026-00-01",
+      "parts": {
+        "mday": 1,
+        "year": 2026,
+        "mon": 0
+      },
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "2026-02-30",
+      "parts": {
+        "mday": 30,
+        "year": 2026,
+        "mon": 2
+      },
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "2024-02-29",
+      "parts": {
+        "mday": 29,
+        "year": 2024,
+        "mon": 2
+      },
+      "date": "2024-02-29"
+    },
+    {
+      "input": "2025-02-29",
+      "parts": {
+        "mday": 29,
+        "year": 2025,
+        "mon": 2
+      },
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "2026-08-02T10:11:12",
+      "parts": {
+        "mday": 2,
+        "year": 2026,
+        "mon": 8,
+        "hour": 10,
+        "min": 11,
+        "sec": 12
+      },
+      "date": "2026-08-02"
+    },
+    {
+      "input": "2026-08-02T10:11:12.5",
+      "parts": {
+        "mday": 2,
+        "year": 2026,
+        "mon": 8,
+        "hour": 10,
+        "min": 11,
+        "sec": 12,
+        "sec_fraction": "1/2"
+      },
+      "date": "2026-08-02"
+    },
+    {
+      "input": "2026-08-02T10:11:12Z",
+      "parts": {
+        "mday": 2,
+        "year": 2026,
+        "mon": 8,
+        "hour": 10,
+        "min": 11,
+        "sec": 12,
+        "zone": "Z",
+        "offset": 0
+      },
+      "date": "2026-08-02"
+    },
+    {
+      "input": "2026-08-02T10:11:12+05:00",
+      "parts": {
+        "mday": 2,
+        "year": 2026,
+        "mon": 8,
+        "hour": 10,
+        "min": 11,
+        "sec": 12,
+        "zone": "+05:00",
+        "offset": 18000
+      },
+      "date": "2026-08-02"
+    },
+    {
+      "input": "20260802T101112Z",
+      "parts": {
+        "mday": 2,
+        "year": 2026,
+        "mon": 8,
+        "hour": 10,
+        "min": 11,
+        "sec": 12,
+        "zone": "Z",
+        "offset": 0
+      },
+      "date": "2026-08-02"
+    },
+    {
+      "input": "2026-215T10:11",
+      "parts": {
+        "yday": 215,
+        "year": 2026,
+        "hour": 10,
+        "min": 11
+      },
+      "date": "2026-08-03"
+    },
+    {
+      "input": "2026-W31-7T10:11",
+      "parts": {
+        "cweek": 31,
+        "cwday": 7,
+        "cwyear": 2026,
+        "hour": 10,
+        "min": 11
+      },
+      "date": "2026-08-02"
+    },
+    {
+      "input": "2026-08-02T25:00:00",
+      "parts": {
+        "mday": 2,
+        "year": 2026,
+        "mon": 8,
+        "hour": 25,
+        "min": 0,
+        "sec": 0
+      },
+      "date": "2026-08-02"
+    },
+    {
+      "input": "2026-08-02T10",
+      "parts": {},
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "2026-08-02Z",
+      "parts": {},
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "--08-02",
+      "parts": {
+        "mday": 2,
+        "mon": 8
+      },
+      "date": "2026-08-02"
+    },
+    {
+      "input": "--0802",
+      "parts": {
+        "mday": 2,
+        "mon": 8
+      },
+      "date": "2026-08-02"
+    },
+    {
+      "input": "---02",
+      "parts": {
+        "mday": 2
+      },
+      "date": "2026-08-02"
+    },
+    {
+      "input": "-08-02",
+      "parts": {
+        "year": 1992,
+        "mon": 2
+      },
+      "date": "1992-02-01"
+    },
+    {
+      "input": "-W31-7",
+      "parts": {
+        "cweek": 31,
+        "cwday": 7
+      },
+      "date": "2026-08-02"
+    },
+    {
+      "input": "-W31",
+      "parts": {},
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "-215",
+      "parts": {
+        "yday": 215
+      },
+      "date": "2026-08-03"
+    },
+    {
+      "input": "08-02",
+      "parts": {
+        "year": 2008,
+        "mon": 2
+      },
+      "date": "2008-02-01"
+    },
+    {
+      "input": "",
+      "parts": {},
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": " ",
+      "parts": {},
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "2026-08-02 ",
+      "parts": {
+        "mday": 2,
+        "year": 2026,
+        "mon": 8
+      },
+      "date": "2026-08-02"
+    },
+    {
+      "input": " 2026-08-02",
+      "parts": {
+        "mday": 2,
+        "year": 2026,
+        "mon": 8
+      },
+      "date": "2026-08-02"
+    },
+    {
+      "input": "\t2026-08-02\n",
+      "parts": {
+        "mday": 2,
+        "year": 2026,
+        "mon": 8
+      },
+      "date": "2026-08-02"
+    },
+    {
+      "input": "2026-08-02\n",
+      "parts": {
+        "mday": 2,
+        "year": 2026,
+        "mon": 8
+      },
+      "date": "2026-08-02"
+    },
+    {
+      "input": "2026-08-02 10:11:12",
+      "parts": {},
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "2026-08-02 ",
+      "parts": {},
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "02-08-2026",
+      "parts": {},
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "2026/08/02",
+      "parts": {},
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "x",
+      "parts": {},
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "2026-08-02x",
+      "parts": {},
+      "date": null,
+      "error": "Date::Error"
+    },
+    {
+      "input": "x2026-08-02",
+      "parts": {},
+      "date": null,
+      "error": "Date::Error"
+    }
+  ]
+}

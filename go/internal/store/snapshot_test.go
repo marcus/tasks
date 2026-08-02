@@ -132,6 +132,23 @@ func TestSnapshotCoercesFloatTagsWithRubyToSBoundaries(t *testing.T) {
 	}
 }
 
+func TestSnapshotCoercesStructuredIDsWithRubyToS(t *testing.T) {
+	parsed := record.Parse([]byte(`{"type":"task","id":{"b":1,"a":[true,null,"x"]}}` + "\n" +
+		`{"type":"task","id":["a",{"n":1.5},[]]}` + "\n" +
+		`{"type":"task","id":1e3}`))
+	if !parsed.OK() {
+		t.Fatalf("parse structured ids: %#v", parsed.Errors)
+	}
+
+	items := NewSnapshot(parsed.Records, nil).Items()
+	want := []string{`{"b" => 1, "a" => [true, nil, "x"]}`, `["a", {"n" => 1.5}, []]`, "1000.0"}
+	for index, expected := range want {
+		if items[index].ID == nil || *items[index].ID != expected {
+			t.Fatalf("id coercion[%d] = %v, want %q", index, items[index].ID, expected)
+		}
+	}
+}
+
 func TestSnapshotReadsDatesAndDoesNotCrossSources(t *testing.T) {
 	live := parseFixture(t, "valid/full-field-matrix/store/tasks.jsonl")
 	archive := parseFixture(t, "valid/archive-pair/store/archive.jsonl")

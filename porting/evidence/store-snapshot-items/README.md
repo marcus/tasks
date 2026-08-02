@@ -147,3 +147,29 @@ produce that spelling, and the direct conformance command includes a generated
 structured-tags store that compares the production Ruby `build_item` result to
 the Go projection. This keeps malformed tags readable without letting Go's
 JSON encoder redefine the contract.
+
+## Source-fidelity repair: structured id coercion
+
+Ruby builds the id with `rec["id"]&.to_s`, the same `Object#to_s` coercion tags
+get. `buildItems` now renders a structured id through `rubyStringJSON` rather
+than re-encoding it as JSON, so a hand-edited hash id reads as
+`{"b" => 1, "a" => [true, nil, "x"]}` in both languages and keeps its source
+member order. The direct conformance command grew a structured-ids store
+covering hash, array, integer, float, boolean, and empty-string ids.
+
+```sh
+(cd go && go test -race ./internal/store -run TestSnapshotCoercesStructuredIDsWithRubyToS)
+porting/evidence/store-snapshot-items/conformance
+# store-snapshot-items direct conformance: 10/10 cases matched
+```
+
+## Oracle capture: the date grammar `to_date` actually accepts
+
+`to_date` is `Date.iso8601`, whose accepted set is far wider than `YYYY-MM-DD`
+(basic, ordinal, week, and datetime-prefixed forms all parse) and whose
+truncated forms complete from the current date. The full accept/reject set is
+captured in `date-iso8601-oracle-2026-08-02.md` with a 60-case machine-readable
+corpus at `ruby/date-iso8601-grammar.json`, regenerable via
+`porting/runners/ruby/date-iso8601-probe`. `isoDate`'s repair is still open and
+must satisfy that corpus; the today-relative rows are classified there as
+nondeterminism to inject, not to normalize.
