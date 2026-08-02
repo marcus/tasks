@@ -154,7 +154,7 @@ func InspectSymbol(name string) string {
 	if bareSymbolName(name) {
 		return ":" + name
 	}
-	return ":" + inspectString(name)
+	return ":" + quoteSymbol(name)
 }
 
 // bareSymbolName reports whether Ruby prints this symbol without quotes: a
@@ -196,16 +196,27 @@ func globalName(name string) bool {
 	if strings.TrimLeft(name, "0123456789") == "" {
 		return true
 	}
-	return len([]rune(name)) == 1
+	return len([]rune(name)) == 1 && strings.ContainsAny(name, specialGlobals)
 }
 
+// specialGlobals is Ruby's fixed one-character global vocabulary, the whole of
+// it. It is a set, not "any single character": `$;` is a global and `$%` is
+// not, so `:$%` quotes. `$` alone is not in the set either — globalName's
+// empty-name guard rejects that before this test.
+const specialGlobals = "!\"$&'*+,./:;<=>?@\\`~"
+
 // identifier is Ruby's local-or-constant name shape: a leading letter or
-// underscore, then letters, digits, and underscores. Every non-ASCII rune
-// counts as a letter, which is why `:é?` and `:αβ` print bare.
+// underscore, then letters, digits, and underscores. A printable non-ASCII
+// rune counts as a letter in any position, which is why `:é?` and `:αβ` print
+// bare — but a non-printable one does not, so `:""` quotes.
 func identifier(name string) bool {
 	for index, character := range name {
 		switch {
-		case character == '_' || unicode.IsLetter(character) || character > unicode.MaxASCII:
+		case character > unicode.MaxASCII:
+			if !symbolPrintable(character) {
+				return false
+			}
+		case character == '_' || unicode.IsLetter(character):
 		case index > 0 && unicode.IsDigit(character):
 		default:
 			return false
@@ -213,6 +224,16 @@ func identifier(name string) bool {
 	}
 	return name != ""
 }
+
+// symbolPrintable is the non-ASCII half of Ruby's bare-symbol predicate. It is
+// String#inspect's printable set plus U+0085, the one codepoint a String
+// escapes (`""`) and a Symbol still prints bare.
+func symbolPrintable(character rune) bool {
+	return unicode.Is(rubyPrintable, character) || character == nextLine
+}
+
+// nextLine is U+0085 NEL, the sole exception in symbolPrintable.
+const nextLine = 0x85
 
 // rubyArray is Kernel#Array for the JSON value shapes: nil becomes empty, an
 // Array is itself, a Hash becomes its [key, value] pairs, and any other value
@@ -379,6 +400,21 @@ var stringEscapes = map[rune]string{
 // hex. text_query downcases the rendered text afterwards, so the same
 // character reaches `text` uppercase and `text_query` lowercase.
 func inspectString(text string) string {
+	return quoteRuby(text, false)
+}
+
+// quoteSymbol is the quoted form of Symbol#inspect, which shares String's
+// named escapes and `#` rule but spells an unnamed C0 or DEL character `\xNN`
+// where a String spells it `\uNNNN`. The two vocabularies really do differ:
+// U+0001 is `""` as a String and `:"\x01"` as a Symbol.
+func quoteSymbol(name string) string {
+	return quoteRuby(name, true)
+}
+
+// quoteRuby renders the shared body of String#inspect and Symbol#inspect.
+// hexC0 selects the caller's spelling for an unnamed character below U+0020 or
+// U+007F; everything else is identical between the two.
+func quoteRuby(text string, hexC0 bool) string {
 	var builder strings.Builder
 	builder.WriteByte('"')
 	runes := []rune(text)
@@ -390,6 +426,8 @@ func inspectString(text string) string {
 			builder.WriteString(`\#`)
 		case unicode.Is(rubyPrintable, character):
 			builder.WriteRune(character)
+		case hexC0 && (character < 0x20 || character == 0x7F):
+			fmt.Fprintf(&builder, `\x%02X`, character)
 		case character > 0xFFFF:
 			fmt.Fprintf(&builder, `\u{%X}`, character)
 		default:

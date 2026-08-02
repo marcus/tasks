@@ -71,6 +71,13 @@ Reproduction is `source-fidelity-symbol-{cases,ruby,go}-2026-08-02.jsonl` at
 non-surrogate codepoint and replaces the 73 hand-written name shapes that hid
 those defects through four reviews.
 
+All three of those defects are repaired as of the 154/154 run above; see
+`repair-2026-08-02-symbol-inspect.md`. The reviewer's corpus goes 30/78 to
+78/78 and is now folded into `porting/runners/cases/query-filter-parse.jsonl`,
+and the exhaustive sweep runs clean for all four sigils — 17,376 of 17,376
+cases, 4,448,256 names, 0 mismatches. Those sweep files are regenerated, never
+committed; the four case files alone are ~500 MB.
+
 Every differential here compares parsed output, never bytes: Ruby's
 `JSON.generate` emits U+2028 and U+2029 raw where Go's encoder escapes them, so
 a byte diff reports a divergence for a value both probes agree on.
