@@ -2822,8 +2822,9 @@ end
 # Say so instead of folding `--json` into the prompt text and exiting 0 — a
 # caller that scripted it would get an LLM transcript where it expected a
 # document. Only the leading position is rejected: "explain --json to me" is a
-# legitimate prompt. Kept out of cmd_prompt because that method's rescue clause
-# names constants its own body requires.
+# legitimate prompt. Kept out of cmd_prompt so the refusal costs nothing: it
+# answers at dispatch, before that method loads the registry and the agent
+# context it would otherwise never use.
 def reject_prompt_json!(args)
   _provider, _model, words = extract_llm_flags(Array(args))
   return unless words.first == "--json"
@@ -2833,12 +2834,17 @@ def reject_prompt_json!(args)
 end
 
 def cmd_prompt(args)
+  # Loaded before any abort in this body, not after the argument check: unwinding
+  # a SystemExit evaluates the rescue clause below, and naming a constant that is
+  # not defined yet turns a one-line usage abort into a NameError backtrace with
+  # absolute source paths in it (td-231878).
+  require_relative "../lib/llm/registry"
+  require_relative "../lib/tasks/agent_context"
+
   provider, model, words = extract_llm_flags(Array(args))
   prompt = words.join(" ")
   abort %(usage: tasks -p [--provider NAME] [--model NAME] "do something with my tasks") if prompt.strip.empty?
 
-  require_relative "../lib/llm/registry"
-  require_relative "../lib/tasks/agent_context"
   data_dir = File.dirname(ORG)
   # Build the system context (TASK_AGENT.md + file locations + task-set memory)
   # before spawning: an oversize/unreadable agent-memory.md must abort with the
