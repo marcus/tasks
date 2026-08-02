@@ -3,10 +3,9 @@ package recur
 
 import (
 	"fmt"
+	"math/big"
 	"regexp"
-	"strconv"
 	"strings"
-	"time"
 )
 
 var (
@@ -15,14 +14,14 @@ var (
 )
 
 var words = map[string]interval{
-	"daily":       {count: 1, unit: "d"},
-	"weekly":      {count: 1, unit: "w"},
-	"monthly":     {count: 1, unit: "m"},
-	"yearly":      {count: 1, unit: "y"},
-	"annually":    {count: 1, unit: "y"},
-	"biweekly":    {count: 2, unit: "w"},
-	"fortnightly": {count: 2, unit: "w"},
-	"quarterly":   {count: 3, unit: "m"},
+	"daily":       {count: big.NewInt(1), unit: "d"},
+	"weekly":      {count: big.NewInt(1), unit: "w"},
+	"monthly":     {count: big.NewInt(1), unit: "m"},
+	"yearly":      {count: big.NewInt(1), unit: "y"},
+	"annually":    {count: big.NewInt(1), unit: "y"},
+	"biweekly":    {count: big.NewInt(2), unit: "w"},
+	"fortnightly": {count: big.NewInt(2), unit: "w"},
+	"quarterly":   {count: big.NewInt(3), unit: "m"},
 }
 
 var units = map[string]string{
@@ -36,7 +35,7 @@ var bareUnits = map[string]string{"day": "d", "week": "w", "month": "m", "year":
 var unitNames = map[string]string{"d": "day", "w": "week", "m": "month", "y": "year"}
 
 type interval struct {
-	count int
+	count *big.Int
 	unit  string
 }
 
@@ -64,7 +63,7 @@ func Parse(input, defaultPrefix string) Result {
 	}
 
 	if prefix, value, ok := parseFriendlyInterval(s); ok {
-		return Result{Canonical: prefixOrDefault(prefix, defaultPrefix) + strconv.Itoa(value.count) + value.unit}
+		return Result{Canonical: prefixOrDefault(prefix, defaultPrefix) + value.count.String() + value.unit}
 	}
 	return Result{Error: fmt.Sprintf("unrecognized schedule: %q", raw)}
 }
@@ -84,11 +83,11 @@ func Humanize(value string) *string {
 	if match == nil {
 		return &s
 	}
-	n, _ := strconv.Atoi(match[2])
+	n, _ := new(big.Int).SetString(match[2], 10)
 	name := unitNames[match[3]]
 	every := "every " + name
-	if n != 1 {
-		every = fmt.Sprintf("every %d %ss", n, name)
+	if n.Cmp(big.NewInt(1)) != 0 {
+		every = fmt.Sprintf("every %s %ss", n, name)
 	}
 	switch match[1] {
 	case ".+":
@@ -107,16 +106,12 @@ func Humanize(value string) *string {
 // A catch-up cookie intentionally may land on today, matching Ruby's date-only
 // projection (the temporal completion path decides whether a timed stamp has
 // already passed today).
-func NextDate(value string, from, today time.Time) (time.Time, error) {
+func NextDate(value string, from, today CivilDate) (CivilDate, error) {
 	match := cookie.FindStringSubmatch(rubyStrip(value))
 	if match == nil {
-		return time.Time{}, fmt.Errorf("not a repeater cookie: %q", value)
+		return CivilDate{}, fmt.Errorf("not a repeater cookie: %q", value)
 	}
-	n, err := strconv.Atoi(match[2])
-	if err != nil {
-		return time.Time{}, fmt.Errorf("not a repeater cookie: %q", value)
-	}
-	from, today = dateOnly(from), dateOnly(today)
+	n, _ := new(big.Int).SetString(match[2], 10)
 	switch match[1] {
 	case ".+":
 		return Step(today, n, match[3]), nil
@@ -134,19 +129,18 @@ func NextDate(value string, from, today time.Time) (time.Time, error) {
 // Step advances a civil date. Month and year units clamp overflowing days;
 // time.Time.AddDate cannot be used because it normalizes Jan 31 + one month
 // into March instead of Ruby Date#>>'s February clamp.
-func Step(date time.Time, count int, unit string) time.Time {
-	date = dateOnly(date)
+func Step(date CivilDate, count *big.Int, unit string) CivilDate {
 	switch unit {
 	case "d":
-		return date.AddDate(0, 0, count)
+		return date.addDays(count)
 	case "w":
-		return date.AddDate(0, 0, 7*count)
+		return date.addDays(new(big.Int).Mul(count, big.NewInt(7)))
 	case "m":
-		return addMonthsClamped(date, count)
+		return date.addMonths(count)
 	case "y":
-		return addMonthsClamped(date, 12*count)
+		return date.addMonths(new(big.Int).Mul(count, big.NewInt(12)))
 	default:
-		return time.Time{}
+		return CivilDate{}
 	}
 }
 
@@ -159,24 +153,24 @@ func parseFriendlyInterval(value string) (string, interval, bool) {
 		parts = parts[1:]
 	}
 	if match := countUnit.FindStringSubmatch(strings.Join(parts, "")); match != nil {
-		n, err := strconv.Atoi(match[1])
+		n, parsed := new(big.Int).SetString(match[1], 10)
 		unit, ok := units[match[2]]
-		if err == nil && n > 0 && ok {
+		if parsed && n.Sign() > 0 && ok {
 			return "", interval{count: n, unit: unit}, true
 		}
 		return "", interval{}, false
 	}
 	if len(parts) == 1 {
 		if unit, ok := bareUnits[parts[0]]; ok {
-			return "", interval{count: 1, unit: unit}, true
+			return "", interval{count: big.NewInt(1), unit: unit}, true
 		}
 		return "", interval{}, false
 	}
 	if len(parts) != 2 {
 		return "", interval{}, false
 	}
-	n, err := strconv.Atoi(parts[0])
-	if err != nil || n < 1 {
+	n, parsed := new(big.Int).SetString(parts[0], 10)
+	if !parsed || n.Sign() < 1 {
 		return "", interval{}, false
 	}
 	unit, ok := units[parts[1]]
@@ -207,28 +201,4 @@ func isOff(value string) bool {
 
 func rubyStrip(value string) string {
 	return strings.Trim(value, "\x00\x09\x0a\x0b\x0c\x0d ")
-}
-
-func dateOnly(value time.Time) time.Time {
-	return time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, time.UTC)
-}
-
-func addMonthsClamped(date time.Time, months int) time.Time {
-	year, month, day := date.Date()
-	monthIndex := int(month) - 1 + months
-	year += monthIndex / 12
-	monthIndex %= 12
-	if monthIndex < 0 {
-		monthIndex += 12
-		year--
-	}
-	targetMonth := time.Month(monthIndex + 1)
-	if max := daysInMonth(year, targetMonth); day > max {
-		day = max
-	}
-	return time.Date(year, targetMonth, day, 0, 0, 0, 0, time.UTC)
-}
-
-func daysInMonth(year int, month time.Month) int {
-	return time.Date(year, month+1, 0, 0, 0, 0, 0, time.UTC).Day()
 }

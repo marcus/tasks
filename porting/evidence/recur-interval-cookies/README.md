@@ -106,3 +106,24 @@ tests to that value. Do not add an overflow rejection or truncate the count:
 either would reject or change a valid Ruby result. The current branch has no
 code change from this characterization; its last implementation commit remains
 `a3485d9`.
+
+## Arbitrary-size projection repair (2026-08-02)
+
+The Go recurrence boundary now uses arbitrary-precision interval counts and an
+un-zoned proleptic-Gregorian `CivilDate`, rather than `int` and `time.Time`.
+`Step` and `NextDate` therefore preserve Ruby's valid projections outside
+`time.Time`'s range while retaining Date-style month/year clamping. The focused
+test includes the oracle's 33-digit count for day, month, and year projections.
+
+Verification after the repair:
+
+```sh
+(cd go && go test ./internal/recur && go test ./... && go vet ./... && go test -race ./internal/recur)
+ruby test/test_recur.rb
+git diff --check
+```
+
+All commands passed. Differential fixture conformance remains unavailable until
+a Go CLI adapter reaches recurrence; this slice remains `translating` pending a
+fresh independent source-fidelity review, Go-idiom review, and the recorded
+differential-harness decision.
