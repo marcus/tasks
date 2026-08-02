@@ -51,8 +51,19 @@ module Tasks
     # All web links in `text` (a String or an array of lines — newline-terminated
     # or not, both normalize the same), in FILE ORDER (masking preserves string
     # offsets, so the three passes interleave correctly — `open <n>` counts the
-    # same way the note reads), de-duplicated by URL (first occurrence wins —
-    # it has the best label).
+    # same way the note reads), de-duplicated by URL.
+    #
+    # Dedupe keeps the most useful spelling, not the earliest one: among the
+    # occurrences of one URL, the first LABELLED occurrence wins, and only if
+    # none is labelled does the first (bare) occurrence stand in. Which spelling
+    # survives is therefore independent of where in the text each one sits —
+    # `[[url][label]]` beats a bare `url` whether it comes before or after it.
+    # Two different labels for the same URL do not merge: the first labelled
+    # occurrence wins outright and later labels are dropped.
+    #
+    # Position still decides ORDER: each surviving link is listed at its URL's
+    # FIRST occurrence, whichever spelling that was, so adding a label to a URL
+    # already in the text never moves anything in the listing.
     #
     # `shorthands` (name => URL template with %s, from config `link.<name>` rows)
     # additionally expands compact tokens like `jira:OPS-1234` — the terse way
@@ -79,7 +90,16 @@ module Tasks
       # its whole match span (even for rejected matches), so no later pass can
       # begin inside — or at the start of — an earlier one.
       found.sort_by!(&:first)
-      found.map(&:last).uniq(&:url)
+
+      # Insertion-ordered by URL, so the result stays in first-occurrence order;
+      # a later labelled occurrence replaces an unlabelled one in place rather
+      # than being appended, which upgrades the spelling without moving the row.
+      best = {}
+      found.each do |(_offset, link)|
+        seen = best[link.url]
+        best[link.url] = link if seen.nil? || (seen.label.nil? && !link.label.nil?)
+      end
+      best.values
     end
 
     # The system name for a URL — a custom `systems` row (host suffix; user

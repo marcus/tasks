@@ -179,6 +179,40 @@ class TestTree < Minitest::Test
     assert_equal "labeled", links[0].label
   end
 
+  def test_extract_prefers_the_labelled_form_regardless_of_position
+    # The labelled spelling wins in BOTH orders — the old `uniq(&:url)` kept the
+    # earliest occurrence, so this case (bare first) dropped the label.
+    bare_first = Tasks::Links.extract(
+      "Bare https://a.co/x first, then [[https://a.co/x][later label]]."
+    )
+    assert_equal 1, bare_first.size
+    assert_equal "later label", bare_first[0].label
+
+    labelled_first = Tasks::Links.extract(
+      "[[https://a.co/x][early label]] and again bare https://a.co/x."
+    )
+    assert_equal 1, labelled_first.size
+    assert_equal "early label", labelled_first[0].label
+  end
+
+  def test_extract_keeps_first_occurrence_order_when_a_later_label_wins
+    # Only WHICH spelling survives changes; a link is still listed at its url's
+    # first occurrence, so upgrading a label never reorders the listing.
+    links = Tasks::Links.extract(
+      "Bare https://a.co/x, then [[https://b.co/y][bee]], then [[https://a.co/x][ex]]."
+    )
+    assert_equal ["https://a.co/x", "https://b.co/y"], links.map(&:url)
+    assert_equal ["ex", "bee"], links.map(&:label)
+  end
+
+  def test_extract_keeps_the_first_label_when_a_url_carries_two
+    links = Tasks::Links.extract(
+      "[[https://a.co/x][first label]] then [[https://a.co/x][second label]]."
+    )
+    assert_equal 1, links.size
+    assert_equal "first label", links[0].label
+  end
+
   def test_classify_known_systems_and_fallback
     { "https://acme.slack.com/x"            => "slack",
       "https://acme.atlassian.net/browse/1" => "jira",
