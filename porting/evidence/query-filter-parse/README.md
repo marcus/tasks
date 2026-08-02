@@ -29,5 +29,15 @@ new divergence (unknown constructor keywords) with its Ruby capture in
 their cases in the committed corpus — see
 `repair-2026-08-02-parse-cli-regexes.md`. That repair also gave both probes an
 `argv_base64` argument encoding, because JSONL cannot carry the invalid-UTF-8
-arguments finding 2 turns on. The review's verdict is repaired, not re-passed: a
-fresh independent source-fidelity review at the repaired commit is still owed.
+arguments finding 2 turns on.
+
+That fresh independent review is
+`source-fidelity-review-2026-08-02-unicode-tables.md`. It confirms all three
+repairs and **fails** with one new Go defect: `text_query` downcases with Go's
+Unicode 15.0.0 tables while Ruby 4.0.6 uses 17.0.0, leaving 55 codepoints
+uppercased. Its adversarial corpus is
+`source-fidelity-unicode-{cases,ruby,go}-2026-08-02.jsonl` (23/28 matched) and
+the exhaustive whole-Unicode sweep is
+`downcase-divergence-2026-08-02.jsonl`. Those cases are deliberately *not* in
+`porting/runners/cases/query-filter-parse.jsonl` yet — the repair tick moves
+them there so conformance guards the fix.
