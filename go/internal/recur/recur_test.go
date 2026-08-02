@@ -42,8 +42,14 @@ func TestParseOffAndRejectsZeroOrGarbage(t *testing.T) {
 }
 
 func TestHumanizeAndNextDate(t *testing.T) {
-	if got, want := Humanize("++2w"), "every 2 weeks from the scheduled date (catching up)"; got != want {
-		t.Fatalf("Humanize = %q, want %q", got, want)
+	if got, want := Humanize("++2w"), "every 2 weeks from the scheduled date (catching up)"; got == nil || *got != want {
+		t.Fatalf("Humanize = %v, want %q", got, want)
+	}
+	if got := Humanize(" \t "); got != nil {
+		t.Fatalf("Humanize(blank) = %q, want nil", *got)
+	}
+	if got, want := Humanize("w:mon"), "w:mon"; got == nil || *got != want {
+		t.Fatalf("Humanize(non-interval) = %v, want %q", got, want)
 	}
 	from := mustDate(t, "2026-01-31")
 	if got, err := NextDate("+1m", from, mustDate(t, "2026-02-01")); err != nil || !got.Equal(mustDate(t, "2026-02-28")) {

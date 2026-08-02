@@ -64,3 +64,24 @@ No source-fidelity approval is granted. This review made no implementation
 edits. After repair, rerun the focused Ruby oracle and Go package tests, then
 request a new source-fidelity review from a different context; the independent
 Go-idiom review and differential-harness decision remain outstanding.
+
+## Nullable humanization repair (2026-08-02)
+
+`Humanize` now returns `nil` for blank or whitespace-only input, matching
+Ruby's `Recur.humanize`; non-interval values remain a non-nil trimmed string.
+The Go interface is deliberately nullable so the later calendar humanizer can
+preserve the same distinction. Added package tests cover both boundaries.
+
+Verification after the repair:
+
+```sh
+(cd go && go test ./... && go test -race ./internal/recur && go vet ./...)
+ruby test/test_recur.rb
+git diff --check
+```
+
+All commands passed (the Ruby focused oracle: 20 runs, 66 assertions). The
+arbitrary-size count defect remains unresolved: parse, humanize, and projection
+still use `int`/`strconv.Atoi`, so a fresh source-fidelity review is premature.
+The next tick must replace that representation and define a range-safe date
+projection before requesting review.

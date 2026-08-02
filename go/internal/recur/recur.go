@@ -72,14 +72,17 @@ func Parse(input, defaultPrefix string) Result {
 // Cookie reports whether value is an exactly canonical interval cookie.
 func Cookie(value string) bool { return cookie.MatchString(rubyStrip(value)) }
 
-// Humanize renders an interval cookie as Ruby does. It returns value unchanged
-// when it is not an interval cookie, allowing the calendar package to own its
-// own rendering later.
-func Humanize(value string) string {
+// Humanize renders an interval cookie as Ruby does. It returns nil for blank
+// input and the trimmed value when it is not an interval cookie, allowing the
+// calendar package to own its own rendering later.
+func Humanize(value string) *string {
 	s := rubyStrip(value)
+	if s == "" {
+		return nil
+	}
 	match := cookie.FindStringSubmatch(s)
 	if match == nil {
-		return s
+		return &s
 	}
 	n, _ := strconv.Atoi(match[2])
 	name := unitNames[match[3]]
@@ -89,11 +92,14 @@ func Humanize(value string) string {
 	}
 	switch match[1] {
 	case ".+":
-		return every + " from completion"
+		result := every + " from completion"
+		return &result
 	case "+":
-		return every + " from the scheduled date"
+		result := every + " from the scheduled date"
+		return &result
 	default:
-		return every + " from the scheduled date (catching up)"
+		result := every + " from the scheduled date (catching up)"
+		return &result
 	}
 }
 
