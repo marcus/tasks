@@ -913,12 +913,23 @@ protect_detached_commit() { # protect_detached_commit <slot> <wt>
 # immediately and there may be no next boundary in this slot.
 release_worktree_branch() { # release_worktree_branch <slot> <wt>
   local slot="$1" wt="$2" branch
-  branch="$(git -C "$wt" symbolic-ref -q --short HEAD 2>/dev/null)" || return 0
+  branch="$(git -C "$wt" symbolic-ref -q --short HEAD 2>/dev/null)" || branch=""
   if [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]; then
     if ! rescue_dirty_worktree "$slot" "$wt"; then
-      log "slot=$slot FAILED to release dirty worktree branch $branch"
+      log "slot=$slot FAILED to release dirty worktree branch ${branch:-detached-HEAD}"
       return 1
     fi
+    # A detached dirty tree is now on the rescue branch created above. Treat
+    # that branch like any other so it is not left locked after a stopping tick.
+    [ -n "$branch" ] \
+      || branch="$(git -C "$wt" symbolic-ref -q --short HEAD 2>/dev/null)" \
+      || return 1
+  fi
+  if [ -z "$branch" ]; then
+    # There may be no later prepare_worktree call (--once, STOP, max ticks, or
+    # manual slot removal), so protect a clean detached commit now.
+    protect_detached_commit "$slot" "$wt"
+    return $?
   fi
   if git -C "$wt" checkout -q --detach HEAD 2>/dev/null; then
     log "slot=$slot released worktree branch $branch"

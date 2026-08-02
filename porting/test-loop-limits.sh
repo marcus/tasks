@@ -649,8 +649,8 @@ assert_eq 'the worktree is created' 'yes' "$(exists "$SLOTS_DIR/slot-1")"
   git add committed.txt
   git commit -qm 'detached tick result' )
 DETACHED_HEAD="$(git -C "$SLOTS_DIR/slot-1" rev-parse HEAD)"
-out="$(prepare_worktree 1 2>&1)"
-assert_contains 'a clean detached commit is protected before reset' \
+out="$(release_worktree_branch 1 "$SLOTS_DIR/slot-1" 2>&1)"
+assert_contains 'a clean detached commit is protected when its tick exits' \
   'protected detached commit' "$out"
 DETACHED_RESCUE="$(git -C "$REPO_ROOT" branch --contains "$DETACHED_HEAD" \
   --list 'port/rescue/*-committed*' --format '%(refname:short)' | head -1)"
@@ -658,6 +658,7 @@ assert_eq 'the detached rescue branch exists' 1 \
   "$(printf '%s' "$DETACHED_RESCUE" | grep -c 'port/rescue/')"
 assert_eq 'and it contains the committed work' 'completed tick' \
   "$(git -C "$REPO_ROOT" show "$DETACHED_RESCUE:committed.txt" 2>/dev/null)"
+out="$(prepare_worktree 1 2>&1)"
 assert_eq 'the slot resets to the default branch afterwards' \
   "$(git -C "$REPO_ROOT" rev-parse main)" \
   "$(git -C "$SLOTS_DIR/slot-1" rev-parse HEAD)"
