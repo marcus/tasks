@@ -147,6 +147,20 @@ func TestParseUsesRubyMalformedJSONDiagnostics(t *testing.T) {
 	}
 }
 
+func TestParseRejectsTrailingValidJSONValue(t *testing.T) {
+	result := Parse([]byte(`{"a":1} []`))
+	want := []ParseError{{
+		Line:    1,
+		Message: "invalid JSON: unexpected token at end of stream '[]' at line 1 column 9",
+	}}
+	if !reflect.DeepEqual(result.Errors, want) {
+		t.Fatalf("errors = %#v, want %#v", result.Errors, want)
+	}
+	if len(result.Records) != 0 {
+		t.Fatalf("records = %#v, want none", result.Records)
+	}
+}
+
 func FuzzParseKeepsPhysicalLineBounds(f *testing.F) {
 	for _, seed := range [][]byte{
 		nil,

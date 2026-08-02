@@ -89,6 +89,9 @@ func decode(line []byte) (any, error) {
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("additional JSON value")
+		}
 		return nil, err
 	}
 	return value, nil

@@ -40,6 +40,6 @@ Dir.mktmpdir("tasks-format-parse-conformance-") do |work|
     File.write(File.join(work, "#{kase.fetch("case_id")}-go.json"), JSON.pretty_generate(go) + "\n")
     abort "format-parse mismatch for #{kase.fetch("case_id")}; details in #{work}"
   end
-end
 
-puts "format-parse direct conformance: 11/11 cases matched"
+  puts "format-parse direct conformance: #{cases.length}/#{cases.length} cases matched"
+end

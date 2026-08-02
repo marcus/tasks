@@ -14,3 +14,4 @@
 {"case_id":"format-parse-bom-prefixed","fixture":"malformed/bom-prefixed","argv":["check"],"notes":"boundary: a leading UTF-8 BOM is stripped before line-one JSON parsing"}
 {"case_id":"format-parse-torn-file-check","fixture":"adversarial/mid-write-torn-file","argv":["check"],"notes":"check surfaces the malformed trailing record as a parser error"}
 {"case_id":"format-parse-torn-file-list","fixture":"adversarial/mid-write-torn-file","argv":["list"],"notes":"read behavior: list consumes successfully parsed records despite the parser error and exits successfully"}
+{"case_id":"format-parse-trailing-valid-json","fixture":"malformed/trailing-valid-json","argv":["check"],"notes":"a complete second JSON value is still an invalid JSONL record and reports Ruby's trailing-token diagnostic"}
