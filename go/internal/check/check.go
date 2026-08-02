@@ -198,46 +198,71 @@ func rubyInspect(raw json.RawMessage) string {
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
+	value, err := rubyInspectJSONValue(decoder)
+	if err != nil {
 		return string(raw)
 	}
-	return rubyInspectValue(value)
+	return value
 }
 
-// rubyInspectValue renders JSON-decoded values using the parts of Ruby's
-// Object#inspect that Check exposes in diagnostics. Raw JSON is subtly wrong:
-// JSON `null` is Ruby nil, and exponent notation is parsed to a Float before
-// its value is interpolated.
-func rubyInspectValue(value any) string {
-	switch typed := value.(type) {
+// rubyInspectJSONValue renders a JSON value with the Ruby Object#inspect
+// spelling Check exposes in diagnostics. It walks decoder tokens rather than
+// decoding objects into a map, because Ruby Hash#inspect preserves JSON member
+// insertion order while Go map iteration does not.
+func rubyInspectJSONValue(decoder *json.Decoder) (string, error) {
+	token, err := decoder.Token()
+	if err != nil {
+		return "", err
+	}
+	switch typed := token.(type) {
 	case nil:
-		return "nil"
+		return "nil", nil
 	case bool:
-		return strconv.FormatBool(typed)
+		return strconv.FormatBool(typed), nil
 	case string:
-		return strconv.Quote(typed)
+		return strconv.Quote(typed), nil
 	case json.Number:
-		return rubyInspectNumber(string(typed))
-	case []any:
-		items := make([]string, len(typed))
-		for index, item := range typed {
-			items[index] = rubyInspectValue(item)
+		return rubyInspectNumber(string(typed)), nil
+	case json.Delim:
+		switch typed {
+		case '[':
+			items := []string{}
+			for decoder.More() {
+				item, err := rubyInspectJSONValue(decoder)
+				if err != nil {
+					return "", err
+				}
+				items = append(items, item)
+			}
+			if _, err := decoder.Token(); err != nil {
+				return "", err
+			}
+			return "[" + strings.Join(items, ", ") + "]", nil
+		case '{':
+			pairs := []string{}
+			for decoder.More() {
+				key, err := decoder.Token()
+				if err != nil {
+					return "", err
+				}
+				keyString, ok := key.(string)
+				if !ok {
+					return "", fmt.Errorf("object key is not a string")
+				}
+				value, err := rubyInspectJSONValue(decoder)
+				if err != nil {
+					return "", err
+				}
+				pairs = append(pairs, strconv.Quote(keyString)+" => "+value)
+			}
+			if _, err := decoder.Token(); err != nil {
+				return "", err
+			}
+			return "{" + strings.Join(pairs, ", ") + "}", nil
 		}
-		return "[" + strings.Join(items, ", ") + "]"
-	case map[string]any:
-		keys := make([]string, 0, len(typed))
-		for key := range typed {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		pairs := make([]string, 0, len(keys))
-		for _, key := range keys {
-			pairs = append(pairs, strconv.Quote(key)+"=>"+rubyInspectValue(typed[key]))
-		}
-		return "{" + strings.Join(pairs, ", ") + "}"
+		return "", fmt.Errorf("unexpected JSON delimiter %q", typed)
 	default:
-		return fmt.Sprint(value)
+		return "", fmt.Errorf("unexpected JSON token %T", token)
 	}
 }
 

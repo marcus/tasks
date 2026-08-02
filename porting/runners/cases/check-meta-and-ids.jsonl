@@ -11,4 +11,5 @@
 {"case_id":"check-meta-future-schema","fixture":"compat/future-schema-v3","argv":["check"],"notes":"integer schema version other than 2 is unsupported"}
 {"case_id":"check-meta-exponent-version","fixture":"malformed/meta-version-exponent","argv":["check"],"notes":"JSON exponent is decoded to Ruby Float before diagnostic interpolation"}
 {"case_id":"check-meta-null-version","fixture":"malformed/meta-version-null","argv":["check"],"notes":"JSON null is rendered as Ruby nil in the diagnostic"}
+{"case_id":"check-meta-object-version-order","fixture":"malformed/meta-version-object-order","argv":["check"],"notes":"JSON object member order is preserved in Ruby Hash#inspect diagnostics"}
 {"case_id":"check-meta-unknown-type-no-id","fixture":"malformed/unknown-type-no-id","argv":["check"],"notes":"unknown types short-circuit before ID validation"}

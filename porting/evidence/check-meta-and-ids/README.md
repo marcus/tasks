@@ -13,8 +13,8 @@ observations. The two healthy cases exit 0 without mutation:
 The malformed or incompatible cases exit 1 without mutation. Their raw
 stdout and byte hashes are in `ruby/*.json`; the cases cover missing/non-meta
 line one, later meta records, an empty file, same-file and cross-file duplicate
-ids, a non-string id (reported, not raised), future schema version 3, exponent
-and null schema versions, and an unknown type with no ID.
+ids, a non-string id (reported, not raised), future schema version 3, exponent,
+null, and object-valued schema versions, and an unknown type with no ID.
 
 Two test-only branches were also characterized directly before any Go work:
 
@@ -61,3 +61,12 @@ short-circuit. The oracle corpus and differential comparator now cover all 12
 fixture cases and pass 12/12; the unknown-type case intentionally compares an
 empty slice-owned diagnostic set until the shared report owns its one unknown
 type error.
+
+## Object-order repair — 2026-08-02
+
+The source-fidelity re-review found that malformed object-valued metadata had
+been decoded into a Go map and therefore rendered in sorted-key order. Ruby's
+`Hash#inspect` retains parsed JSON member order. `rubyInspect` now walks JSON
+decoder tokens, preserving object order while retaining the Ruby spelling for
+scalars and arrays. The added `check-meta-object-version-order` fixture is
+captured from Ruby and included in the direct differential comparator.

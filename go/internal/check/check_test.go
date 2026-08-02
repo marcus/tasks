@@ -52,6 +52,7 @@ func TestMissingFileAndMetadataVersionInspectionMatchRubyOracle(t *testing.T) {
 		{"decimal float", `{"type":"meta","version":2.0}`, "unsupported meta version 2.0 (expected 2)"},
 		{"exponent float", `{"type":"meta","version":2e0}`, "unsupported meta version 2.0 (expected 2)"},
 		{"null", `{"type":"meta","version":null}`, "unsupported meta version nil (expected 2)"},
+		{"object preserves member order", `{"type":"meta","version":{"b":1,"a":2}}`, `unsupported meta version {"b" => 1, "a" => 2} (expected 2)`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got, want := CheckText([]byte(tc.text)).Errors, []Entry{{1, tc.want}}; !reflect.DeepEqual(got, want) {
