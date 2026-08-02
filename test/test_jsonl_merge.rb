@@ -692,6 +692,71 @@ class TestJsonlMerge < Minitest::Test
     end
   end
 
+  # Every refusal must return the merge file to Git byte-for-byte as Git
+  # supplied it: Git copies %A back over the working file whatever the exit
+  # status, so a driver that wrote one side's content — or markers, or a partial
+  # result — would be rewriting the working file on the way out. Asserting the
+  # exit status alone would not catch that; these compare the bytes.
+  def assert_driver_refuses_without_writing(ours_records, theirs_records, base: base_records)
+    Dir.mktmpdir do |dir|
+      base_path = File.join(dir, "base.jsonl")
+      ours_path = File.join(dir, "ours.jsonl")
+      theirs_path = File.join(dir, "theirs.jsonl")
+      pathname = File.join(dir, "tasks.jsonl")
+      File.write(base_path, Tasks::Format.dump(base))
+      File.write(ours_path, Tasks::Format.dump(ours_records))
+      File.write(theirs_path, theirs_records.is_a?(String) ? theirs_records : Tasks::Format.dump(theirs_records))
+      before = File.binread(ours_path)
+
+      _stdout, stderr, status = Open3.capture3(RbConfig.ruby, BIN, "merge-driver",
+                                               base_path, ours_path, theirs_path, pathname)
+
+      refute status.success?, "driver should refuse: #{stderr}"
+      assert_equal before, File.binread(ours_path),
+                   "refusal rewrote the merge file Git copies back over the working file"
+      stderr
+    end
+  end
+
+  def test_cli_driver_writes_nothing_when_a_side_is_another_schema_version
+    theirs = change(base_records, "10000003", title: "Call PSE billing", updated: WORK_STAMP)
+    theirs.first["version"] = 1
+
+    stderr = assert_driver_refuses_without_writing(
+      change(base_records, "10000002", title: "Book Sixt car (ours)", updated: HOME_STAMP), theirs
+    )
+
+    assert_includes stderr, "theirs is schema v1"
+  end
+
+  def test_cli_driver_writes_nothing_when_a_side_is_unparseable
+    stderr = assert_driver_refuses_without_writing(
+      change(base_records, "10000002", title: "Book Sixt car (ours)", updated: HOME_STAMP),
+      "#{Tasks::Format.dump(base_records).lines.first}{not json at all}\n"
+    )
+
+    assert_includes stderr, "cannot be parsed"
+  end
+
+  def test_cli_driver_writes_nothing_when_the_merged_result_is_invalid
+    # Each side reparents one task under the other and is individually valid;
+    # only their merge is cyclic, so the refusal happens after the merged text
+    # has been built — the case a write-then-validate ordering would already
+    # have written by the time it failed.
+    ours = change(base_records, "10000003", parent: "10000002", updated: HOME_STAMP)
+    theirs = copy(base_records)
+    moved = theirs.delete_at(theirs.index { |record| record["id"] == "10000002" })
+    moved["parent"] = "10000003"
+    moved["updated"] = WORK_STAMP
+    theirs.insert(theirs.index { |record| record["id"] == "10000003" } + 1, moved)
+    assert Tasks::Check.check_text(Tasks::Format.dump(ours)).ok?
+    assert Tasks::Check.check_text(Tasks::Format.dump(theirs)).ok?
+
+    stderr = assert_driver_refuses_without_writing(ours, theirs)
+
+    assert_includes stderr, "cyclic parents"
+  end
+
   def test_real_world_sixt_pse_stash_divergence_matches_hand_resolution
     ours = copy(base_records)
     find(ours, "10000002")["tags"] = %w[@computer travel]

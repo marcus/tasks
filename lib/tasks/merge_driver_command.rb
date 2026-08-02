@@ -19,6 +19,26 @@ module Tasks
         ours_text: read_utf8(ours_path),
         theirs_text: read_utf8(theirs_path)
       )
+      # A refusal writes NOTHING to the merge file and returns nonzero, which is
+      # what leaves the working file byte-for-byte at its pre-merge content.
+      #
+      # That follows from Git's contract, so it is worth stating: Git hands the
+      # driver three TEMP files and copies whatever %A holds back over the
+      # working file when the driver returns — on failure exactly as on success
+      # (that is how a text driver's conflict markers reach the working tree).
+      # Git seeds %A with the ours blob and has already checked that same blob
+      # into the working file before the driver runs, in `merge`, `rebase`,
+      # `cherry-pick`, and `checkout -m` alike. So an untouched %A means the
+      # copy-back is a byte-for-byte no-op, and the path is still left UU with a
+      # nonzero exit: nothing is resolved, nothing is silently rewritten.
+      #
+      # The corollary is the rule for anyone changing this method (the Go port
+      # included): never write %A before the merged result is known to be valid.
+      # A write-then-validate ordering would leave a rejected merge's output in
+      # the working file, and returning nonzero afterwards could not take it
+      # back. JsonlMerge builds and validates entirely in memory, and only a
+      # result that passed carries `text`, so the single write below is reached
+      # only by a merge that is already known good.
       unless result.ok?
         append_log(pathname, result.log_lines(pathname: pathname), stderr: stderr)
         stderr.puts "tasks JSONL merge failed: #{result.error}"
