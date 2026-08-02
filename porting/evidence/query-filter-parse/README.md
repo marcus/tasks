@@ -59,3 +59,18 @@ differential is 0/1,112,064, and a 200,034-literal float differential is clean.
 `rubyPrintable` table from it; the capture is regenerated, never committed.
 `review-2026-08-02-coercion/number-to-s-ruby.jsonl` is the readable number
 oracle.
+
+`source-fidelity-review-2026-08-02-symbol-inspect.md` is the fresh independent
+review at 84df4c5. It clears all three attacks that review was directed at —
+the `point == 16` float rule, the `rubyPrintable` table's provenance, and
+`DecodeValue`'s repeated-key handling — and **fails** with three
+`InspectSymbol` defects, one of them a regression introduced by 84df4c5.
+Reproduction is `source-fidelity-symbol-{cases,ruby,go}-2026-08-02.jsonl` at
+30/78. `review-2026-08-02-symbol-inspect/` holds the four generators, including
+`generate-symbol-sweep.rb`, which sweeps `Symbol#inspect` over every
+non-surrogate codepoint and replaces the 73 hand-written name shapes that hid
+those defects through four reviews.
+
+Every differential here compares parsed output, never bytes: Ruby's
+`JSON.generate` emits U+2028 and U+2029 raw where Go's encoder escapes them, so
+a byte diff reports a divergence for a value both probes agree on.

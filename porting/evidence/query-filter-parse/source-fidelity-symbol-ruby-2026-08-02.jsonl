@@ -1,0 +1,78 @@
+{"case_id":"sym-c0-00","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\x00\""}}
+{"case_id":"sym-c0-01","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\x01\""}}
+{"case_id":"sym-c0-02","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\x02\""}}
+{"case_id":"sym-c0-03","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\x03\""}}
+{"case_id":"sym-c0-04","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\x04\""}}
+{"case_id":"sym-c0-05","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\x05\""}}
+{"case_id":"sym-c0-06","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\x06\""}}
+{"case_id":"sym-c0-0E","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\x0E\""}}
+{"case_id":"sym-c0-0F","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\x0F\""}}
+{"case_id":"sym-c0-10","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\x10\""}}
+{"case_id":"sym-c0-11","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\x11\""}}
+{"case_id":"sym-c0-12","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\x12\""}}
+{"case_id":"sym-c0-13","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\x13\""}}
+{"case_id":"sym-c0-14","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\x14\""}}
+{"case_id":"sym-c0-15","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\x15\""}}
+{"case_id":"sym-c0-16","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\x16\""}}
+{"case_id":"sym-c0-17","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\x17\""}}
+{"case_id":"sym-c0-18","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\x18\""}}
+{"case_id":"sym-c0-19","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\x19\""}}
+{"case_id":"sym-c0-1A","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\x1A\""}}
+{"case_id":"sym-c0-1C","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\x1C\""}}
+{"case_id":"sym-c0-1D","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\x1D\""}}
+{"case_id":"sym-c0-1E","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\x1E\""}}
+{"case_id":"sym-c0-1F","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\x1F\""}}
+{"case_id":"sym-c0-7F","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\x7F\""}}
+{"case_id":"sym-c0-embedded","ok":false,"error":{"class":"ArgumentError","message":"unknown keywords: :\"a\\x01\", :\"\\x7Fz\""}}
+{"case_id":"sym-named-escapes","ok":false,"error":{"class":"ArgumentError","message":"unknown keywords: :\"\\a\", :\"\\b\", :\"\\t\", :\"\\n\", :\"\\v\", :\"\\f\", :\"\\r\", :\"\\e\""}}
+{"case_id":"sym-nonprintable-0080","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\u0080\""}}
+{"case_id":"sym-nonprintable-0081","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\u0081\""}}
+{"case_id":"sym-nonprintable-009F","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\u009F\""}}
+{"case_id":"sym-nonprintable-00A0","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: : "}}
+{"case_id":"sym-nonprintable-2028","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\u2028\""}}
+{"case_id":"sym-nonprintable-2029","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\u2029\""}}
+{"case_id":"sym-nonprintable-202A","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :‪"}}
+{"case_id":"sym-nonprintable-FFFE","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\uFFFE\""}}
+{"case_id":"sym-nonprintable-10FFFF","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\u{10FFFF}\""}}
+{"case_id":"sym-nonprintable-E0002","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"\\u{E0002}\""}}
+{"case_id":"sym-nonprintable-embedded","ok":false,"error":{"class":"ArgumentError","message":"unknown keywords: :\"a\\u0080\", :\"\\u2028z\", :\"ok\\uFFFEnope\""}}
+{"case_id":"sym-nel-bare","ok":false,"error":{"class":"ArgumentError","message":"unknown keywords: :, :a, :a"}}
+{"case_id":"sym-printable-nonascii","ok":false,"error":{"class":"ArgumentError","message":"unknown keywords: :→, :①, :é, :あ, :😀, :­, :​, :﻿, :𝅳"}}
+{"case_id":"sym-global-reject-20","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"$ \""}}
+{"case_id":"sym-global-reject-23","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"$#\""}}
+{"case_id":"sym-global-reject-25","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"$%\""}}
+{"case_id":"sym-global-reject-28","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"$(\""}}
+{"case_id":"sym-global-reject-29","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"$)\""}}
+{"case_id":"sym-global-reject-2D","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"$-\""}}
+{"case_id":"sym-global-reject-5B","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"$[\""}}
+{"case_id":"sym-global-reject-5D","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"$]\""}}
+{"case_id":"sym-global-reject-5E","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"$^\""}}
+{"case_id":"sym-global-reject-7B","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"${\""}}
+{"case_id":"sym-global-reject-7C","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"$|\""}}
+{"case_id":"sym-global-reject-7D","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :\"$}\""}}
+{"case_id":"sym-global-accept-21","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :$!"}}
+{"case_id":"sym-global-accept-22","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :$\""}}
+{"case_id":"sym-global-accept-24","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :$$"}}
+{"case_id":"sym-global-accept-26","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :$&"}}
+{"case_id":"sym-global-accept-27","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :$'"}}
+{"case_id":"sym-global-accept-2A","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :$*"}}
+{"case_id":"sym-global-accept-2B","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :$+"}}
+{"case_id":"sym-global-accept-2C","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :$,"}}
+{"case_id":"sym-global-accept-2E","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :$."}}
+{"case_id":"sym-global-accept-2F","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :$/"}}
+{"case_id":"sym-global-accept-3A","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :$:"}}
+{"case_id":"sym-global-accept-3B","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :$;"}}
+{"case_id":"sym-global-accept-3C","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :$<"}}
+{"case_id":"sym-global-accept-3D","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :$="}}
+{"case_id":"sym-global-accept-3E","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :$>"}}
+{"case_id":"sym-global-accept-3F","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :$?"}}
+{"case_id":"sym-global-accept-40","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :$@"}}
+{"case_id":"sym-global-accept-5C","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :$\\"}}
+{"case_id":"sym-global-accept-60","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :$`"}}
+{"case_id":"sym-global-accept-7E","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :$~"}}
+{"case_id":"sym-global-digits","ok":false,"error":{"class":"ArgumentError","message":"unknown keywords: :$1, :$0, :$99, :$_, :$foo, :\"$\""}}
+{"case_id":"sym-global-nonprintable","ok":false,"error":{"class":"ArgumentError","message":"unknown keywords: :\"$\\u0080\", :$, :$→"}}
+{"case_id":"sym-operators","ok":false,"error":{"class":"ArgumentError","message":"unknown keywords: :+, :-, :**, :<=>, :[], :[]=, :+@, :-@, :`, :!, :~"}}
+{"case_id":"sym-quoted-operators","ok":false,"error":{"class":"ArgumentError","message":"unknown keywords: :\"~@\", :\"!@\", :\"&&\", :\"||\", :\"=\""}}
+{"case_id":"sym-ivars","ok":false,"error":{"class":"ArgumentError","message":"unknown keywords: :@a, :@@a, :\"@1\", :\"@@1\", :\"@\", :\"@@\""}}
+{"case_id":"sym-trailing","ok":false,"error":{"class":"ArgumentError","message":"unknown keywords: :a?, :a!, :a=, :\"a?=\", :\"a!!\", :\"a==\""}}
