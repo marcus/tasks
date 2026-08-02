@@ -135,6 +135,15 @@ module ManifestIssues
     "delegate_task!" => "delegation-assign",
     "undelegate_task!" => "delegation-assign",
     "decide_proposal!" => "proposal-decisions",
+    # Seeded 2026-08-02 with campaigns 5, 6, 9 and 12. Extending this table is
+    # part of landing a campaign that owns a store verb, and forgetting it is
+    # silent: `reach` only reports a reach it can NAME, so an unmapped verb
+    # makes every test that drives it look edge-free. A clean `reach` over a
+    # manifest that just grew by 91 slices is therefore not evidence until this
+    # table has grown with it.
+    "undo!" => "undo-redo-apply",
+    "redo!" => "undo-redo-apply",
+    "repair!" => "store-repair",
   }.freeze
 
   Error = Class.new(StandardError)
