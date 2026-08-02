@@ -52,17 +52,27 @@ needs; do not re-read them front to back each iteration.
 1. **Orient.** `td usage --new-session -q`. Prefer, in order: a slice in
    review you did not write; in-progress work handed off and unclaimed; the
    next ready slice whose manifest dependencies are green.
-2. **Claim.** `td start <id>` is the atomic claim. If it fails, someone else
-   has it — pick another. Assume sibling agents are running: never share a
-   fixture copy, port, build dir, or store with them.
+2. **Claim and branch.** `td start <id>` is the atomic claim. If it fails,
+   someone else has it — pick another. Read the issue's `slice:<name>` label,
+   then switch to its durable branch: `git switch port/<name>` when it exists,
+   otherwise `git switch -c port/<name>`. Verify a resumed handoff's commit is
+   reachable from that branch before working. **Never commit on detached
+   HEAD.** Assume sibling agents are running: never share a fixture copy,
+   port, build dir, or store with them.
 3. **Work one step** of the slice loop below — not necessarily the whole
    slice. Low-risk slices fit in one iteration; high-risk slices should span
    several agents on purpose, so the translator and the oracle-capturer and
    the reviewer are different contexts.
 4. **Record.** `td log` what you proved and the evidence path. Update the
    manifest entry if its status changed. Commit small, reviewable changes.
-5. **Hand off or conclude.** `td handoff <id>` stating what is proven, what
-   is next, and the next step's risk tier — or move it to review. Then exit.
+5. **Hand off or conclude.** Record `td handoff <id>` with what is proven,
+   what is next, the branch and commit, and the next step's risk tier. Then
+   free the branch with `git switch --detach HEAD` **before** exposing the td
+   transition, so another slot can resume immediately. For partial work, run
+   `td unstart <id> --reason "Handoff recorded for the next porting tick"`;
+   verify it is open and retains the handoff. For a completed slice, run
+   `td review <id>` and verify it is in review. Never exit with a slice branch
+   checked out or partial handed-off work claimed by the exiting session.
 
 ## The slice loop, scaled by risk
 

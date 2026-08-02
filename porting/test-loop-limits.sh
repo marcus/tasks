@@ -622,6 +622,9 @@ assert_contains 'and which pattern claimed it' "source=You've" "$out"
 assert_eq 'state is recorded for the resume' "$LIMIT_EPOCH" "$(limit_state_reset_at)"
 assert_eq 'with the slot that hit it' 2 "$(jq -r .slot "$STATE")"
 assert_contains 'and the claim release is attempted' 'nothing to release' "$out"
+out="$(handle_limit 2 5 'port-slot2-y' "$LIMIT_EPOCH" 'pattern' 0 2>&1)"
+assert_contains 'an unsafe branch retains its tick claim' \
+  'retaining tick claim because its worktree branch could not be released' "$out"
 clear_limit_state
 PATH="$OLDPATH"
 
@@ -639,10 +642,63 @@ mkdir -p "$REPO_ROOT"
 prepare_worktree 1 >/dev/null 2>&1
 assert_eq 'the worktree is created' 'yes' "$(exists "$SLOTS_DIR/slot-1")"
 
+# A clean commit made on detached HEAD is invisible to status --porcelain.
+# Before the fix, prepare_worktree reset it away without creating any ref.
+( cd "$SLOTS_DIR/slot-1"
+  echo 'completed tick' >committed.txt
+  git add committed.txt
+  git commit -qm 'detached tick result' )
+DETACHED_HEAD="$(git -C "$SLOTS_DIR/slot-1" rev-parse HEAD)"
+out="$(prepare_worktree 1 2>&1)"
+assert_contains 'a clean detached commit is protected before reset' \
+  'protected detached commit' "$out"
+DETACHED_RESCUE="$(git -C "$REPO_ROOT" branch --contains "$DETACHED_HEAD" \
+  --list 'port/rescue/*-committed*' --format '%(refname:short)' | head -1)"
+assert_eq 'the detached rescue branch exists' 1 \
+  "$(printf '%s' "$DETACHED_RESCUE" | grep -c 'port/rescue/')"
+assert_eq 'and it contains the committed work' 'completed tick' \
+  "$(git -C "$REPO_ROOT" show "$DETACHED_RESCUE:committed.txt" 2>/dev/null)"
+assert_eq 'the slot resets to the default branch afterwards' \
+  "$(git -C "$REPO_ROOT" rev-parse main)" \
+  "$(git -C "$SLOTS_DIR/slot-1" rev-parse HEAD)"
+
+# Handoffs become claimable before the next prepare_worktree call. A clean
+# branch therefore has to be released immediately when its tick exits.
+( cd "$SLOTS_DIR/slot-1"
+  git switch -qc port/releasable
+  echo 'slice result' >slice.txt
+  git add slice.txt
+  git commit -qm 'slice result' )
+SLICE_HEAD="$(git -C "$SLOTS_DIR/slot-1" rev-parse HEAD)"
+out="$(release_worktree_branch 1 "$SLOTS_DIR/slot-1" 2>&1)"
+assert_contains 'a clean slice branch is released after the tick' \
+  'released worktree branch port/releasable' "$out"
+assert_eq 'the slot is detached after releasing the slice branch' '' \
+  "$(git -C "$SLOTS_DIR/slot-1" symbolic-ref -q --short HEAD 2>/dev/null)"
+assert_eq 'and the slice commit remains on its durable branch' "$SLICE_HEAD" \
+  "$(git -C "$REPO_ROOT" rev-parse port/releasable)"
+
+# An interrupted dirty slice must also be freed before a usage-limit handler
+# can expose its claim to another slot. Its partial state remains inspectable.
+git -C "$SLOTS_DIR/slot-1" switch -qc port/dirty-slice
+echo 'interrupted slice' >"$SLOTS_DIR/slot-1/dirty.txt"
+out="$(release_worktree_branch 1 "$SLOTS_DIR/slot-1" 2>&1)"
+assert_contains 'a dirty slice is rescued immediately after the tick' \
+  'rescued dirty worktree' "$out"
+assert_contains 'and its original branch is released' \
+  'released worktree branch port/dirty-slice' "$out"
+assert_eq 'the dirty slice slot is detached' '' \
+  "$(git -C "$SLOTS_DIR/slot-1" symbolic-ref -q --short HEAD 2>/dev/null)"
+DIRTY_RESCUE="$(printf '%s\n' "$out" | sed -n \
+  's/.*rescued dirty worktree to \([^ ]*\).*/\1/p' | tail -1)"
+assert_eq 'the dirty rescue contains the interrupted state' 'interrupted slice' \
+  "$(git -C "$REPO_ROOT" show "$DIRTY_RESCUE:dirty.txt" 2>/dev/null)"
+
 echo 'half-finished work' >"$SLOTS_DIR/slot-1/wip.txt"
 out="$(prepare_worktree 1 2>&1)"
 assert_contains 'a successful rescue says so' 'rescued dirty worktree' "$out"
-RESCUE="$(git -C "$REPO_ROOT" branch --list 'port/rescue/*' --format '%(refname:short)' | head -1)"
+RESCUE="$(printf '%s\n' "$out" | sed -n \
+  's/.*rescued dirty worktree to \([^ ]*\).*/\1/p' | tail -1)"
 assert_eq 'the rescue branch exists' 1 "$(printf '%s' "$RESCUE" | grep -c 'port/rescue/')"
 assert_eq 'and it actually contains the work' 'half-finished work' \
   "$(git -C "$REPO_ROOT" show "$RESCUE:wip.txt" 2>/dev/null)"

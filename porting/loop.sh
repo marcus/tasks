@@ -44,7 +44,7 @@
 #   SLOTS_DIR       where slot worktrees live (default: <repo>-port-slots)
 #   DEFAULT_BRANCH  branch slices land on (default: main)
 #   CLAUDE_MODEL    tick model for claude (default: opus)
-#   CODEX_TOP / CODEX_MID   codex tier models (default: sol / terra)
+#   CODEX_TOP / CODEX_MID   codex tier models (default: full sol / terra IDs)
 #   CODEX_SANDBOX   codex sandbox mode (default: danger-full-access — td's
 #                   database (.todos/) and its config live outside the slot
 #                   worktree, so workspace-write would need --add-dir for the
@@ -100,8 +100,8 @@ PARK_HEARTBEAT=900    # log a still-parked line at least this often
 
 DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
 CLAUDE_MODEL="${CLAUDE_MODEL:-opus}"
-CODEX_TOP="${CODEX_TOP:-sol}"
-CODEX_MID="${CODEX_MID:-terra}"
+CODEX_TOP="${CODEX_TOP:-gpt-5.6-sol}"
+CODEX_MID="${CODEX_MID:-gpt-5.6-terra}"
 CODEX_SANDBOX="${CODEX_SANDBOX:-danger-full-access}"
 
 LIMIT_COOLDOWN="${LIMIT_COOLDOWN:-1800}"
@@ -724,13 +724,18 @@ run_limit_probe() {
 # Everything a limit hit does, in one place: log with a grep-able LIMIT
 # token, record resumable state, release the stranded claim. Parking or
 # stopping is the caller's decision.
-handle_limit() { # handle_limit <slot> <tick> <ctx> <reset|""> <source>
-  local slot="$1" tick="$2" ctx="$3" reset="$4" src="$5" when="unknown"
+handle_limit() { # handle_limit <slot> <tick> <ctx> <reset|""> <source> [claim-safe]
+  local slot="$1" tick="$2" ctx="$3" reset="$4" src="$5"
+  local claim_safe="${6:-1}" when="unknown"
   [ -n "$reset" ] && when="$(iso_epoch "$reset")"
   log "slot=$slot tick=$tick LIMIT harness=$HARNESS reset_at=$when" \
       "stage=${LIMIT_MATCH_SOURCE:-$src} source=${LIMIT_MATCH_PATTERN:-$src}"
   write_limit_state "$reset" "$LIMIT_MATCH_LINE" "$slot" "$tick" "$ctx" "$src"
-  release_tick_claim "$slot" "$ctx"
+  if [ "$claim_safe" = 1 ]; then
+    release_tick_claim "$slot" "$ctx"
+  else
+    log "slot=$slot retaining tick claim because its worktree branch could not be released"
+  fi
 }
 
 # ---------------------------------------------------------------- arguments
@@ -853,6 +858,7 @@ prepare_worktree() {
     log "slot=$slot created worktree $wt"
   fi
   rescue_dirty_worktree "$slot" "$wt"
+  protect_detached_commit "$slot" "$wt" || return 1
   git -C "$wt" checkout -q --detach "$DEFAULT_BRANCH" \
     || { log "slot=$slot FAILED to reset worktree to $DEFAULT_BRANCH"; return 1; }
   # Backstop. git carries the index across `checkout --detach`, so a failed
@@ -871,6 +877,55 @@ prepare_worktree() {
     fi
   fi
   return 0
+}
+
+# A clean tree can still hold irreplaceable work: a successful tick may commit
+# while the slot is detached and then exit. The next checkout would make that
+# commit unreachable even though there is nothing for rescue_dirty_worktree to
+# see. Agents are required to use port/<slice> branches, but this backstop makes
+# the process manager keep its stronger promise even when one forgets.
+protect_detached_commit() { # protect_detached_commit <slot> <wt>
+  local slot="$1" wt="$2" head base rescue i=1
+  git -C "$wt" symbolic-ref -q HEAD >/dev/null 2>&1 && return 0
+  head="$(git -C "$wt" rev-parse -q --verify HEAD 2>/dev/null)" || return 0
+  # Any local branch containing HEAD is a durable ref, including a slice branch
+  # whose tip has advanced beyond the worktree's detached commit.
+  [ -n "$(git -C "$wt" for-each-ref --contains="$head" --format='%(refname)' refs/heads 2>/dev/null)" ] \
+    && return 0
+
+  base="port/rescue/slot$slot-$(date +%Y%m%d-%H%M%S)-committed"
+  rescue="$base"
+  while git -C "$wt" rev-parse --verify -q "refs/heads/$rescue" >/dev/null 2>&1; do
+    rescue="$base-$i"; i=$((i + 1))
+  done
+  if git -C "$wt" branch "$rescue" "$head" 2>/dev/null; then
+    log "slot=$slot protected detached commit $head on $rescue"
+    return 0
+  fi
+  log "slot=$slot FAILED to protect detached commit $head; skipping reset"
+  return 1
+}
+
+# A slice branch must be free before another slot can claim its handoff or
+# review. The prompt detaches before exposing the td transition; this is the
+# immediate post-tick backstop for an agent that forgets. Interrupted dirty
+# work is rescued first, because a usage-limit path may expose the td claim
+# immediately and there may be no next boundary in this slot.
+release_worktree_branch() { # release_worktree_branch <slot> <wt>
+  local slot="$1" wt="$2" branch
+  branch="$(git -C "$wt" symbolic-ref -q --short HEAD 2>/dev/null)" || return 0
+  if [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]; then
+    if ! rescue_dirty_worktree "$slot" "$wt"; then
+      log "slot=$slot FAILED to release dirty worktree branch $branch"
+      return 1
+    fi
+  fi
+  if git -C "$wt" checkout -q --detach HEAD 2>/dev/null; then
+    log "slot=$slot released worktree branch $branch"
+    return 0
+  fi
+  log "slot=$slot FAILED to release worktree branch $branch"
+  return 1
 }
 
 # Returns 0 if the tree was clean or the rescue committed, 1 if it could not.
@@ -924,7 +979,7 @@ pick_codex_model() {
 # Returns 2 when the tick ended in a usage limit.
 run_tick() {
   local slot="$1" tick="$2" wt="$SLOTS_DIR/slot-$1"
-  local ts day tlog last model ctx rc start dur reset wait
+  local ts day tlog last model ctx rc start dur reset wait branch_safe=1
   ts="$(date +%Y%m%d-%H%M%S)"; day="$(date +%Y%m%d)"
   mkdir -p "$LOG_DIR/$day"
   tlog="$LOG_DIR/$day/slot$slot-$ts.log"
@@ -977,6 +1032,7 @@ run_tick() {
           "$BOOTSTRAP" </dev/null ) >"$tlog" 2>&1
     rc=$?
   fi
+  release_worktree_branch "$slot" "$wt" || branch_safe=0
   dur=$((SECONDS - start))
   LAST_TICK_DUR=$dur
 
@@ -1000,7 +1056,7 @@ run_tick() {
     else
       LIMIT_STREAK=0
     fi
-    handle_limit "$slot" "$tick" "$ctx" "$reset" "pattern"
+    handle_limit "$slot" "$tick" "$ctx" "$reset" "pattern" "$branch_safe"
     return 2
   fi
 
