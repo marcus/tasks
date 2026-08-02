@@ -21,6 +21,7 @@ func TestMetadataAndIDFixtureDiagnosticsMatchRubyOracle(t *testing.T) {
 		{"duplicate", fixture("malformed", "duplicate-ids", "tasks.jsonl"), []Entry{{4, `duplicate id "c0000002" (lines 3, 4) — id refs will be wrong`}}},
 		{"future schema", fixture("compat", "future-schema-v3", "tasks.jsonl"), []Entry{{1, "unsupported meta version 3 (expected 2)"}}},
 		{"non string id", fixture("malformed", "wrong-types", "tasks.jsonl"), []Entry{{3, "malformed id 12345678 (expected 8 hex chars)"}, {20, `malformed id "short" (expected 8 hex chars)`}, {21, "record missing id"}}},
+		{"null id", fixture("malformed", "null-id", "tasks.jsonl"), []Entry{{2, "record missing id"}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

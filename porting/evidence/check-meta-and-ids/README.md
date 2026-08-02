@@ -14,7 +14,8 @@ The malformed or incompatible cases exit 1 without mutation. Their raw
 stdout and byte hashes are in `ruby/*.json`; the cases cover missing/non-meta
 line one, later meta records, an empty file, same-file and cross-file duplicate
 ids, a non-string id (reported, not raised), future schema version 3, exponent,
-null, and object-valued schema versions, and an unknown type with no ID.
+null, and object-valued schema versions, an explicit JSON `id: null`, and an
+unknown type with no ID.
 
 Two test-only branches were also characterized directly before any Go work:
 

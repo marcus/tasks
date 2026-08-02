@@ -8,6 +8,7 @@
 {"case_id":"check-meta-duplicate-ids","fixture":"malformed/duplicate-ids","argv":["check"],"notes":"same-file duplicate id reports final occurrence"}
 {"case_id":"check-meta-cross-file-duplicate","fixture":"malformed/cross-file-duplicate-id","argv":["check","--all-files"],"notes":"cross-file duplicate is visible only with all-files"}
 {"case_id":"check-meta-non-string-id","fixture":"malformed/wrong-types","argv":["check"],"notes":"integer id is reported rather than raising; remaining field errors are retained as context"}
+{"case_id":"check-meta-null-id","fixture":"malformed/null-id","argv":["check"],"notes":"explicit JSON null ID has Ruby nil semantics and is reported as missing"}
 {"case_id":"check-meta-future-schema","fixture":"compat/future-schema-v3","argv":["check"],"notes":"integer schema version other than 2 is unsupported"}
 {"case_id":"check-meta-exponent-version","fixture":"malformed/meta-version-exponent","argv":["check"],"notes":"JSON exponent is decoded to Ruby Float before diagnostic interpolation"}
 {"case_id":"check-meta-null-version","fixture":"malformed/meta-version-null","argv":["check"],"notes":"JSON null is rendered as Ruby nil in the diagnostic"}

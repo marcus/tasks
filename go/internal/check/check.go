@@ -124,7 +124,7 @@ func checkMeta(records []record.Record, errors *[]Entry) {
 
 func checkID(parsed record.Record, errors *[]Entry, duplicates map[string][]int) {
 	raw := rawField(parsed, "id")
-	if raw == nil || string(raw) == `""` {
+	if raw == nil || string(raw) == `""` || string(raw) == "null" {
 		*errors = append(*errors, Entry{Line: parsed.Line, Message: "record missing id"})
 		return
 	}
