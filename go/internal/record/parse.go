@@ -166,6 +166,15 @@ func rubyJSONError(line []byte, err error) string {
 // Every clause is selected from source tokens and physical offsets, never from
 // encoding/json error strings, which change across Go releases.
 func malformedTokenDiagnostic(line []byte) string {
+	if diagnostic := missingColonDiagnostic(line); diagnostic != "" {
+		return diagnostic
+	}
+	if diagnostic := missingSeparatorDiagnostic(line); diagnostic != "" {
+		return diagnostic
+	}
+	if diagnostic := malformedNumberDiagnostic(line); diagnostic != "" {
+		return diagnostic
+	}
 	if start := bytes.Index(line, []byte(`\u`)); start >= 0 {
 		escape := line[start:]
 		if len(escape) >= 6 && !hex4(escape[2:6]) {
@@ -229,17 +238,175 @@ type tokenAtColumn struct {
 // token. JSON decoding still establishes that the input is invalid; this only
 // reproduces Ruby's diagnostic for the bounded case captured in the oracle.
 func trailingToken(line []byte) *tokenAtColumn {
-	end := bytes.LastIndexByte(line, '}')
-	if end < 0 || end == len(line)-1 {
+	end := completeValueEnd(line)
+	if end < 0 || end == len(line) {
 		return nil
 	}
-	rest := line[end+1:]
+	rest := line[end:]
 	trimmed := bytes.TrimLeft(rest, " \t\r")
 	if len(trimmed) == 0 {
 		return nil
 	}
 	column := len(line) - len(trimmed) + 1
 	return &tokenAtColumn{token: string(trimmed), column: column}
+}
+
+// completeValueEnd returns the byte immediately after a balanced top-level
+// object or array. It is deliberately lexical: json.Decoder establishes
+// validity, while this preserves the source position Ruby names when a valid
+// value is followed by malformed JSON.
+func completeValueEnd(line []byte) int {
+	start := len(line) - len(bytes.TrimLeft(line, " \t\r"))
+	if start == len(line) || (line[start] != '{' && line[start] != '[') {
+		return -1
+	}
+	depth := 0
+	inString := false
+	escaped := false
+	for index := start; index < len(line); index++ {
+		char := line[index]
+		if inString {
+			if escaped {
+				escaped = false
+			} else if char == '\\' {
+				escaped = true
+			} else if char == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch char {
+		case '"':
+			inString = true
+		case '{', '[':
+			depth++
+		case '}', ']':
+			depth--
+			if depth == 0 {
+				return index + 1
+			}
+		}
+	}
+	return -1
+}
+
+// missingSeparatorDiagnostic identifies a second value in an object or array
+// after the first value was complete. Its offsets come from JSON tokens rather
+// than from encoding/json's error text or a particular literal spelling.
+func missingSeparatorDiagnostic(line []byte) string {
+	for index := 0; index < len(line); index++ {
+		if line[index] != ' ' && line[index] != '\t' {
+			continue
+		}
+		previous := previousNonSpace(line, index-1)
+		next := nextNonSpace(line, index+1)
+		if previous < 0 || next >= len(line) || !startsValue(line[next]) {
+			continue
+		}
+		if containerAt(line, index) == '[' && endsValue(line[previous]) {
+			return fmt.Sprintf("expected ',' or ']' after array value at line 1 column %d", next+1)
+		}
+		if containerAt(line, index) == '{' && endsValue(line[previous]) {
+			return fmt.Sprintf("expected ',' or '}' after object value, got: '%s' at line 1 column %d", tokenThroughClose(line[next:]), next+1)
+		}
+	}
+	return ""
+}
+
+func missingColonDiagnostic(line []byte) string {
+	for index := 0; index < len(line); index++ {
+		if line[index] != ' ' && line[index] != '\t' || containerAt(line, index) != '{' {
+			continue
+		}
+		previous := previousNonSpace(line, index-1)
+		next := nextNonSpace(line, index+1)
+		if previous >= 0 && line[previous] == '"' && next < len(line) && startsValue(line[next]) {
+			return fmt.Sprintf("expected ':' after object key at line 1 column %d", next+1)
+		}
+	}
+	return ""
+}
+
+func malformedNumberDiagnostic(line []byte) string {
+	for index := 0; index+1 < len(line); index++ {
+		if line[index] != '.' || line[index+1] != '}' {
+			continue
+		}
+		start := index
+		for start > 0 && (line[start-1] >= '0' && line[start-1] <= '9') {
+			start--
+		}
+		if start < index {
+			return fmt.Sprintf("invalid number: '%s' at line 1 column %d", line[start:index+2], start+1)
+		}
+	}
+	return ""
+}
+
+func previousNonSpace(line []byte, index int) int {
+	for ; index >= 0; index-- {
+		if line[index] != ' ' && line[index] != '\t' && line[index] != '\r' {
+			return index
+		}
+	}
+	return -1
+}
+
+func nextNonSpace(line []byte, index int) int {
+	for ; index < len(line); index++ {
+		if line[index] != ' ' && line[index] != '\t' && line[index] != '\r' {
+			return index
+		}
+	}
+	return len(line)
+}
+
+func startsValue(char byte) bool {
+	return char == '"' || char == '{' || char == '[' || char == '-' || (char >= '0' && char <= '9') || char == 't' || char == 'f' || char == 'n'
+}
+
+func endsValue(char byte) bool {
+	return char == '"' || char == '}' || char == ']' || (char >= '0' && char <= '9') || char == 'e' || char == 'l'
+}
+
+func containerAt(line []byte, before int) byte {
+	stack := make([]byte, 0, 4)
+	inString := false
+	escaped := false
+	for _, char := range line[:before] {
+		if inString {
+			if escaped {
+				escaped = false
+			} else if char == '\\' {
+				escaped = true
+			} else if char == '"' {
+				inString = false
+			}
+			continue
+		}
+		if char == '"' {
+			inString = true
+			continue
+		}
+		if char == '{' || char == '[' {
+			stack = append(stack, char)
+		}
+		if (char == '}' || char == ']') && len(stack) > 0 {
+			stack = stack[:len(stack)-1]
+		}
+	}
+	if len(stack) == 0 {
+		return 0
+	}
+	return stack[len(stack)-1]
+}
+
+func tokenThroughClose(line []byte) string {
+	end := bytes.IndexByte(line, '}')
+	if end < 0 {
+		return string(line)
+	}
+	return string(line[:end+1])
 }
 
 func invalidEscape(line []byte) (string, int) {
