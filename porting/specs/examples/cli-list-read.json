@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "observation_id": "obs_cli-list-read",
   "case_id": "cli-list-open",
   "implementation": {
@@ -133,6 +133,11 @@
         "value": "America/Denver"
       }
     ],
+    "tty": {
+      "stdin": false,
+      "stdout": false,
+      "stderr": false
+    },
     "timeout_ms": null
   },
   "process": {
@@ -141,6 +146,7 @@
     "timed_out": false,
     "stdout": {
       "sha256": "228b5f01954482a7364b6dc000f0adde85d0ee34d7f37096937d2bdccf25daf5",
+      "sha256_normalized": "228b5f01954482a7364b6dc000f0adde85d0ee34d7f37096937d2bdccf25daf5",
       "size_bytes": 19,
       "valid_utf8": true,
       "bytes_base64": "SU5CT1gKICBzZWVkIHRhc2sKCg==",
@@ -149,6 +155,7 @@
     },
     "stderr": {
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sha256_normalized": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "size_bytes": 0,
       "valid_utf8": true,
       "bytes_base64": "",
@@ -161,6 +168,43 @@
     "before": [
       {
         "role": "other",
+        "kind": "directory",
+        "path": ".",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": "config",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": "config/tasks",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "file",
         "path": "config/tasks/config",
         "present": true,
         "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -171,7 +215,20 @@
         "symlink_target": null
       },
       {
+        "role": "other",
+        "kind": "directory",
+        "path": "state",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
         "role": "store",
+        "kind": "file",
         "path": "tasks.jsonl",
         "present": true,
         "sha256": "1a607039774186df9b4e6bf4f25d2db65171222b102704ae99e180d8331ca187",
@@ -184,7 +241,20 @@
     ],
     "after": [
       {
+        "role": "other",
+        "kind": "directory",
+        "path": ".",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
         "role": "lock",
+        "kind": "file",
         "path": ".tasks.jsonl.lock",
         "present": true,
         "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -196,6 +266,31 @@
       },
       {
         "role": "other",
+        "kind": "directory",
+        "path": "config",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": "config/tasks",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "file",
         "path": "config/tasks/config",
         "present": true,
         "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -206,7 +301,20 @@
         "symlink_target": null
       },
       {
+        "role": "other",
+        "kind": "directory",
+        "path": "state",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
         "role": "store",
+        "kind": "file",
         "path": "tasks.jsonl",
         "present": true,
         "sha256": "1a607039774186df9b4e6bf4f25d2db65171222b102704ae99e180d8331ca187",
@@ -234,6 +342,7 @@
     "states": [],
     "index": {
       "role": "journal_index",
+      "kind": null,
       "path": "state/tasks/journal/<key>/index.json",
       "present": false
     },

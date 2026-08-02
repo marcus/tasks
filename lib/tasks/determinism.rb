@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "date"
 require "securerandom"
 require "socket"
 require "time"
@@ -61,6 +62,18 @@ module Tasks
     LINES = "LINES"
     COLUMNS = "COLUMNS"
 
+    # A pre-existing TEST-ONLY clock input, moved here rather than left where it
+    # was. When it is set, the CLI's "now" becomes noon UTC of `Date.today` —
+    # which `test/support/sequenced_today.rb` replaces with a scripted sequence,
+    # so a CLI boundary test can walk a task across day boundaries in one
+    # process. It is dominated by NOW and always was, so moving it changes no
+    # behavior; what it changes is that the module is now the single seam. Every
+    # other pinned input was read in exactly one place and `determinism.md`
+    # claimed all of them were, while this one was read from `bin/tasks`. An
+    # input that the doc says lives here and does not is worse than an
+    # undocumented one: the doc is what a port reads.
+    TEST_TODAY_SEQUENCE = "TASKS_TEST_TODAY_SEQUENCE"
+
     # Pre-existing settings the harness also pins; listed so `report` can show
     # the complete applied set without inventing new names for them.
     DEVICE = "TASKS_DEVICE"
@@ -69,7 +82,7 @@ module Tasks
     LC_ALL = "LC_ALL"
 
     KEYS = [NOW, IDS, COALESCE_SCOPE, DELEGATION_KEYS, HOSTNAME, LINES, COLUMNS,
-            DEVICE, TZ, LANG, LC_ALL].freeze
+            TEST_TODAY_SEQUENCE, DEVICE, TZ, LANG, LC_ALL].freeze
 
     # A monotonic, reproducible hex mint. Stateful on purpose: one CLI
     # invocation can perform several mutations, and each must draw the *next*
@@ -133,6 +146,33 @@ module Tasks
       Time.iso8601(raw).utc.freeze
     rescue ArgumentError
       raise ArgumentError, "#{NOW} must be an ISO8601 instant with an offset, got #{raw.inspect}"
+    end
+
+    # The instant an adapter should start its temporal context from, resolved
+    # through the whole clock precedence in one place:
+    #
+    #   1. TASKS_PIN_NOW           — the harness pin, and it DOMINATES.
+    #   2. TASKS_TEST_TODAY_SEQUENCE — test-only; noon UTC of Date.today, which
+    #                                the test support file scripts.
+    #   3. the wall clock.
+    #
+    # The order is the order that was already in `bin/tasks`; this method exists
+    # to hold it rather than to change it, and `test/test_determinism.rb`
+    # asserts step 1 beats step 2 against a stubbed `Date.today` so an inversion
+    # fails rather than merely looking different.
+    #
+    # Presence, not non-emptiness, is what triggers step 2 — `if ENV[name]` is
+    # what `bin/tasks` and `test/support/sequenced_today.rb` both did, and under
+    # Ruby's truthiness an empty string takes that branch. Preserved exactly:
+    # this is a relocation, and a relocation that quietly tightened a guard
+    # would be the kind of change that is impossible to attribute later.
+    def now_for_adapter(env: ENV)
+      pinned = now(env: env)
+      return pinned if pinned
+      return Time.now.utc if env[TEST_TODAY_SEQUENCE].nil?
+
+      today = Date.today
+      Time.utc(today.year, today.month, today.day, 12)
     end
 
     # Clock lambda in the shape Store/StoreFactory/TemporalContext already take.

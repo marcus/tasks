@@ -122,6 +122,45 @@ it in step 6–7, and both orderings are load-bearing: taking a snapshot acquire
 the store lock, so a probe against the case copy before the invocation would
 create the lock sidecar the invocation is supposed to be observed creating.
 
+### Directories are entries too
+
+Walk the copy and record **every** entry, not only regular files: directories and
+symlinks get a row in `files.before` and `files.after` on the same terms, and so
+does the copy root, spelled `.`. Each row carries a `kind` — `file`,
+`directory`, or `symlink`.
+
+The rule that matters is that directories are recorded *whether or not they
+changed*. Recording only the ones that moved recreates precisely the ambiguity
+the three-part `files` block exists to kill: "no directory row" would mean both
+"nothing happened to it" and "this harness does not look at directories", and it
+was the second reading that made a create, a removal, or a chmod of a directory
+produce an observation byte-identical to doing nothing. A port that forgot to
+create the journal directory, left an empty one behind, or created it `0700`
+instead of `0755` was invisible.
+
+A directory's row is deliberately thin — `mode` and `present`, everything else
+null:
+
+- **Not its children.** Every child already has its own row; repeating them
+  inside each ancestor would make the record quadratic and surface one file's
+  change on every directory above it.
+- **Not `size_bytes`.** A directory inode's size is a filesystem-implementation
+  number with no product meaning that two correct hosts disagree about.
+- **`mode` is therefore the whole of its observable state**, which is why
+  `files.deltas` treats a permission change as `modified`. That rule applies to
+  every kind, not only directories: a chmod that widened a file without touching
+  its bytes is an effect a delta list that ignored mode would report as nothing
+  having happened.
+
+Recording the copy root as `.` is what finally makes a case's `copy_root_mode`
+visible: it is an input the case declares and the observation carried nowhere, so
+a case whose entire subject is an unwritable store directory could not show what
+it made unwritable. Being harness-chosen it is identical on both sides by
+construction, so the row proves the mode was applied and asserts nothing about
+the port — the standing `environment.umask` has. Two orderings keep it honest:
+the root's mode is applied before anything observes the tree, and the runner
+restores a writable mode only *after* the last observation is taken.
+
 ### Roles come from the implementation, not from a name table
 
 `files[].role` must be resolved from the paths the implementation reports it
@@ -267,6 +306,8 @@ toolchain variables that could change behavior).
 | `TASKS_PIN_DELEGATION_KEYS` | `cccc000000000001` | The per-operation coalescing **key** every delegation verb mints. Also persisted into journal bytes, but one per operation rather than one per process, so it is a sequence. Without it two identical `delegate` runs agree on store bytes and disagree on `index.json` — see `porting/specs/determinism.md`. |
 | `TASKS_PIN_HOSTNAME` | `fixture-host` | Host-context selection **and** the device half of the update stamp when `TASKS_DEVICE` is unset. Both consumers, one pin. |
 | `LINES`, `COLUMNS` | `40`, `100` | Terminal geometry (no effect on the CLI; pinned for the TUI surface). |
+| `NO_COLOR`, `TASKS_THEME`, `COLORTERM`, `TERM` | **unset** | The complete set of colour inputs the implementation reads — read off the source, not the conventional list; `CLICOLOR`/`CLICOLOR_FORCE` appear nowhere in it and are deliberately not pinned. Pinned to *unset* rather than to values because `NO_COLOR=1` resolves the theme to `mono` and changes `tasks config --json`: a harness must not alter the behavior it observes to tidy itself. Recorded as `null` in `invocation.env`, so "colour was configured by nothing" is proven per observation. See `porting/specs/determinism.md` § Colour for the coverage limit that survives the pin. |
+| `TASKS_TEST_TODAY_SEQUENCE` | **unset** | A test-only second clock seam, dominated by `TASKS_PIN_NOW`. Pinned to unset and recorded so "dominated" is evidenced rather than asserted. |
 
 ### Every one of these is mandatory
 
@@ -323,6 +364,20 @@ Standard input is always attached — to the case payload, or to an empty file
 when the case supplies none. A runner never lets the implementation inherit a
 terminal. `invocation.stdin.provided` distinguishes "the case supplied a
 payload" from "the runner attached an empty one".
+
+### Terminal-ness is pinned too, and recorded
+
+All three standard streams are redirected to files, so none of them is a
+terminal. Record that in `invocation.tty` as three booleans, all `false` under
+this protocol. It is not bookkeeping: `$stdout.tty?` is the CLI's colour switch,
+which makes terminal-ness an **input that changes stdout bytes** — pinned by the
+harness process exactly as umask is, and previously recorded nowhere.
+
+Recording it does not cover the colour path; it makes the gap legible. No case
+reaches a tty, so no observation contains an ANSI escape and a green run is not
+evidence about colour rendering in either direction. `porting/specs/determinism.md`
+§ Colour states that limit in full, and a runner that starts attaching a
+pseudo-terminal must set this field truthfully rather than keep emitting `false`.
 
 ---
 
@@ -422,6 +477,19 @@ Note that `value` is the *resolved* value, not the string that was handed in:
 reports `applied: false`. Comparing resolved values is what catches two
 implementations parsing one pin differently.
 
+`applied: false` on its own is **not** a failure, and reading it as one is a
+mistake worth naming: some inputs are deliberately pinned to *unset* — the four
+colour names, `TASKS_TEST_TODAY_SEQUENCE` — and they report themselves unapplied
+on every case, honestly. The fatal combination is `applied: false` **with a
+non-null request**, which is what both the runner's invariant and the comparator
+check. What the comparator adds is that the two sides must *agree* about
+`applied`: one implementation honouring an input the other ignores is a real
+defect, and it is what is left to catch once set-and-ignored is excluded. Being
+legitimately out-ranked also counts as applied — `TASKS_DEVICE` over the
+hostname pin, `TASKS_THEME` over `NO_COLOR`, `TASKS_PIN_NOW` over the test
+sequence — because reporting a correct override as a dropped pin fails a correct
+case, which is how an invariant stops being believed.
+
 ---
 
 ## What the runner fills in
@@ -432,9 +500,10 @@ implementations parsing one pin differently.
 | `implementation.version` | Build identity of the implementation (git sha, `-dirty` when the tree is not clean). |
 | `fixture.*` | The case's fixture, the pristine tree digest, the copy root. |
 | `invocation.*` | The case, plus the pinned environment as constructed; `pins` from the after-probe. |
-| `process.*` | Exit status, signal, timeout flag, and the exact stdout/stderr bytes (base64; `text` only as a convenience decode when the bytes are valid UTF-8). |
-| `files.before` / `after` | Every file in the copy, sorted by relative path, with digest, size, mode, symlink target, whole content when ≤ 64 KiB, and line count for the store and archive. |
-| `files.deltas` | Paths whose presence or content changed. Empty is a meaningful assertion, not an omission. |
+| `process.*` | Exit status, signal, timeout flag, and the exact stdout/stderr bytes (base64; `text` only as a convenience decode when the bytes are valid UTF-8). Each stream carries **two** digests: `sha256` over the raw bytes, and `sha256_normalized` over the same bytes after the copy-root rewrite. Compute the second with the *same* rewrite the comparator applies to short streams — never a second implementation of it. It is what a truncated stream is compared on, and the only place it can be computed: past the 256 KiB embed limit the comparator no longer has the bytes, so a raw digest would make truncation and cross-path comparison mutually exclusive. |
+| `invocation.tty` | Three booleans, all `false`: every stream is redirected to a file. See [Terminal-ness](#terminal-ness-is-pinned-too-and-recorded). |
+| `files.before` / `after` | Every **entry** in the copy — files, symlinks and directories, plus the copy root itself as `.` — sorted by relative path, each with a `kind`. Files carry digest, size, mode, whole content when ≤ 64 KiB, and line count for the store and archive; symlinks carry their target and nothing else; directories carry `mode` and nothing else. See [Directories](#directories-are-entries-too). |
+| `files.deltas` | Paths whose presence, content, link target **or permission bits** changed. Empty is a meaningful assertion, not an omission. |
 | `files.mutated` | **Not** derived from `deltas`: it is true when the implementation's own store revision changed across the invocation (before-probe vs after-probe). The two are then cross-checked — see [Invariants](#invariants). |
 | `files.rolled_back` | The implementation's own `--json` error envelope (`{"error":…,"rolled_back":true\|false}`) read from stdout — see `porting/specs/errors.md` § "The `--json` error envelope". Never inferred from stderr wording, and never from the deltas: a write-then-revert and a never-wrote leave identical bytes, which is why the field exists. `null` when the invocation reported nothing. |
 | `journal.*` | The index parsed structurally (`version`, `cursor`, `states[]` with labels, restored digests, coalesce key/scope, repair flag) *and* the index file's bytes; blob count and sorted blob digests. When no journal exists, `present:false` with the path where one *would* have been. |
@@ -456,6 +525,18 @@ implementations parsing one pin differently.
   emitting host-noisy values would break byte-identity for no gain.
 - **`http` is always empty and `surface` is always `cli`.** The HTTP adapter is
   not ported in Phase 1.
+- **No case reaches a terminal, so the colour path is unexercised.** Every
+  stream is redirected to a file; `invocation.tty` records that, which makes the
+  gap visible but does not close it. Zero observations contain an ANSI escape,
+  and a port that emitted no colour, the wrong codes, or colour unconditionally
+  would pass every case identically. Closing it needs a pseudo-terminal in the
+  protocol, not a pin. `porting/specs/determinism.md` § Colour is the record.
+- **`--cross-path` is unblocked for streams and still blocked by
+  `fixture.root_sha256`.** `sha256_normalized` fixed the truncated-stream half.
+  A journal-bearing fixture's installed journal directory is named for a digest
+  of the copy's own absolute path, so the whole-tree digest moves with the copy
+  root and is compared as a precondition — so cross-path comparison of such a
+  case still reports a harness error.
 
 ---
 
@@ -464,8 +545,9 @@ implementations parsing one pin differently.
 Checked by the runner after each case; a violation is reported on stderr and
 makes the run exit `1`, while the observation is still emitted as evidence.
 
-1. **No requested pin was dropped.** For every pin the runner set, the probe
-   must report `applied: true`.
+1. **No requested pin was dropped.** For every pin the runner set to a non-empty
+   value, the probe must report `applied: true`. Inputs pinned to *unset* are
+   exempt by construction — there was no request to drop.
 2. **`files.mutated` agrees with the store/archive deltas.** The two are measured
    independently — one from the implementation's revision token, one from the
    harness's own digests — precisely so that disagreement is detectable. It

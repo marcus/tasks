@@ -28,6 +28,8 @@ require "json"
 require "fileutils"
 require "optparse"
 
+require_relative "lib/normalize"
+
 module Seed
   # Each seed: the case it lands in, the real port defect it models, and the
   # comparator field that must report it.
@@ -104,6 +106,15 @@ module Seed
   def set_stream(obs, which, bytes)
     s = obs["process"][which]
     s["sha256"] = Digest::SHA256.hexdigest(bytes)
+    # Kept coherent with the bytes, through the comparator's own rewrite. A seed
+    # that left a stale normalized digest behind would be a mismatch nobody
+    # asked for — and, worse, would model a runner bug rather than the port
+    # defect the seed is named for.
+    if s.key?("sha256_normalized")
+      spellings = Conformance::Normalize.copy_root_spellings(obs.dig("fixture", "copy_root"))
+      s["sha256_normalized"] =
+        Digest::SHA256.hexdigest(Conformance::Normalize.rewrite_copy_root_bytes(bytes, spellings))
+    end
     s["size_bytes"] = bytes.bytesize
     text = bytes.dup.force_encoding(Encoding::UTF_8)
     s["valid_utf8"] = text.valid_encoding?

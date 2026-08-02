@@ -2271,14 +2271,11 @@ def extract_value(args, flag)
 end
 
 def temporal_context
-  now = Tasks::Determinism.now ||
-        if ENV["TASKS_TEST_TODAY_SEQUENCE"]
-          date = Date.today
-          Time.utc(date.year, date.month, date.day, 12)
-        else
-          Time.now.utc
-        end
-  Tasks::TemporalContext.new(now: now, timezone: PATHS.timezone, time_format: PATHS.time_format)
+  # Every clock input, including the test-only sequence seam, resolves inside
+  # Tasks::Determinism — the one place porting/specs/determinism.md says pins
+  # are read. TASKS_PIN_NOW still dominates; see Determinism.now_for_adapter.
+  Tasks::TemporalContext.new(now: Tasks::Determinism.now_for_adapter,
+                             timezone: PATHS.timezone, time_format: PATHS.time_format)
 end
 
 def cli_operation_context(context)

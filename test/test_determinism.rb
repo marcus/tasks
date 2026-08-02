@@ -137,6 +137,60 @@ class TestDeterminism < Minitest::Test
     assert_nil D.winsize(env: { "LINES" => "wide", "COLUMNS" => "100" })
   end
 
+  # -- the clock precedence, in one place --------------------------------------
+  #
+  # `TASKS_TEST_TODAY_SEQUENCE` used to be read in bin/tasks, outside this
+  # module, which made determinism.md's "all pins are read in exactly one place"
+  # false. Moving it is only safe if the precedence it had is the precedence it
+  # keeps: TASKS_PIN_NOW dominates. These three tests are written so that an
+  # inversion FAILS rather than merely produces a different-looking instant —
+  # the stubbed `Date.today` is a year away from the pin, so the two branches
+  # can never be confused for each other.
+  STUBBED_TODAY = Date.new(2020, 1, 2)
+  PINNED_NOW = "2026-03-14T15:09:26Z"
+
+  def with_stubbed_today
+    original = Date.method(:today)
+    Date.define_singleton_method(:today) { TestDeterminism::STUBBED_TODAY }
+    yield
+  ensure
+    Date.define_singleton_method(:today, original)
+  end
+
+  def test_the_pinned_instant_dominates_the_test_today_sequence
+    with_stubbed_today do
+      resolved = D.now_for_adapter(env: { "TASKS_PIN_NOW" => PINNED_NOW,
+                                          "TASKS_TEST_TODAY_SEQUENCE" => "2020-01-02" })
+      assert_equal Time.utc(2026, 3, 14, 15, 9, 26), resolved,
+                   "TASKS_PIN_NOW must out-rank TASKS_TEST_TODAY_SEQUENCE; if this reads " \
+                   "2020-01-02T12:00:00Z the precedence inverted when the read moved"
+    end
+  end
+
+  def test_the_test_today_sequence_applies_only_when_nothing_is_pinned
+    with_stubbed_today do
+      resolved = D.now_for_adapter(env: { "TASKS_TEST_TODAY_SEQUENCE" => "2020-01-02" })
+      assert_equal Time.utc(2020, 1, 2, 12), resolved
+    end
+  end
+
+  # Presence, not non-emptiness: `if ENV[name]` is what bin/tasks did, and under
+  # Ruby's truthiness an empty string takes the branch. Preserved deliberately —
+  # a relocation that quietly tightened the guard would be unattributable later.
+  def test_an_empty_test_today_sequence_still_takes_the_branch
+    with_stubbed_today do
+      assert_equal Time.utc(2020, 1, 2, 12), D.now_for_adapter(env: { "TASKS_TEST_TODAY_SEQUENCE" => "" })
+    end
+  end
+
+  def test_unset_everything_falls_through_to_the_wall_clock
+    before = Time.now.utc
+    resolved = D.now_for_adapter(env: {})
+    assert_operator resolved, :>=, before - 5
+    assert_operator resolved, :<=, Time.now.utc + 5
+    assert_equal "UTC", resolved.zone
+  end
+
   # -- report ------------------------------------------------------------------
 
   # An unset pin is recorded as null rather than omitted: "no pin was applied" is

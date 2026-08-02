@@ -50,6 +50,14 @@ module Conformance
         ctx.equal!(NAME, "invocation.env", ctx.a.dig("invocation", "env"), ctx.b.dig("invocation", "env"),
                    klass: Finding::HARNESS_ERROR,
                    rule: "runners/README.md § The pinned environment — the pin set is mandatory and identical")
+        # Terminal-ness is the CLI's colour switch, so it is an input, and an
+        # input the two sides disagree about invalidates every stdout comparison
+        # downstream of it. Harness error rather than defect: no runner lets the
+        # implementation choose what it is handed.
+        ctx.equal!(NAME, "invocation.tty", ctx.a.dig("invocation", "tty"), ctx.b.dig("invocation", "tty"),
+                   klass: Finding::HARNESS_ERROR,
+                   rule: "runners/README.md § The pinned environment — every stream is redirected to a " \
+                         "file, so no side may observe a terminal")
       end
 
       # --- pins ---------------------------------------------------------------
@@ -72,18 +80,49 @@ module Conformance
                     detail: "pin reported by only one side")
             next
           end
-          if pa["applied"] == false || pb["applied"] == false
+          # determinism.md § "Verifying a pin actually took effect" is precise
+          # about which combination is fatal: "`applied: false` with a NON-NULL
+          # REQUESTED VALUE is a hard failure". Not `applied: false` on its own —
+          # several inputs are deliberately pinned to *unset* (the colour names,
+          # the test-only clock seam), and those honestly report themselves
+          # unapplied on every case. Reading the weaker rule turned each of them
+          # into a per-case harness error, i.e. it punished the runner for
+          # recording an input rather than leaving it invisible, which is the
+          # opposite of what recording it is for. So the request is looked up in
+          # `invocation.env`, where the runner records the floor including its
+          # nulls, and only a set-and-ignored pin fails.
+          requested_a = requested_env(ctx.a, name)
+          requested_b = requested_env(ctx.b, name)
+          if (pa["applied"] == false && requested_a) || (pb["applied"] == false && requested_b)
             ctx.add(NAME, "invocation.pins[#{name}].applied", Finding::HARNESS_ERROR,
-                    "runners/README.md § The probe — applied:false is a hard failure, not a warning",
+                    "runners/README.md § The probe — applied:false with a requested value is a hard " \
+                    "failure, not a warning",
                     baseline: pa["applied"], candidate: pb["applied"],
                     detail: "a pin was set and silently ignored; the run is not reproducible")
             next
           end
+          # Both sides must still agree about whether the pin took: one
+          # implementation honouring an input the other ignores is a real
+          # defect, and it is the only thing left to catch once "set and
+          # ignored" is excluded.
+          ctx.equal!(NAME, "invocation.pins[#{name}].applied", pa["applied"], pb["applied"],
+                     klass: Finding::GO_DEFECT,
+                     rule: "runners/README.md § Why `pins` comes from a probe — two implementations must " \
+                           "agree about which inputs they honoured")
           ctx.equal!(NAME, "invocation.pins[#{name}].value", pa["value"], pb["value"],
                      klass: Finding::GO_DEFECT,
                      rule: "runners/README.md § Why `pins` comes from a probe — comparing RESOLVED values " \
                            "catches two implementations parsing one pin differently")
         end
+      end
+
+      # Whether the harness actually handed this variable a value. `invocation.env`
+      # records the floor including its nulls, so "absent from env" and "recorded
+      # as null" both mean not requested — the distinction the pin rule turns on.
+      def requested_env(obs, name)
+        entry = Array(obs.dig("invocation", "env")).find { |e| e["name"] == name }
+        value = entry && entry["value"]
+        !value.nil? && !value.to_s.strip.empty?
       end
 
       def index_pins(obs)
@@ -140,17 +179,43 @@ module Conformance
         bytes_a = ctx.stream_bytes(ctx.a, which)
         bytes_b = ctx.stream_bytes(ctx.b, which)
 
-        # Truncated capture: sha256 is authoritative, bytes_base64 must not be
+        # Truncated capture: a digest is authoritative, bytes_base64 must not be
         # used for equality. Say so rather than comparing a prefix.
+        #
+        # The digest compared is `sha256_normalized`, not `sha256`. `sha256`
+        # digests raw bytes, so a stream past the embed limit that names the
+        # fixture copy could never compare equal across two copy roots — which
+        # made truncation and cross-path comparison mutually exclusive, with the
+        # incompatibility masked only by the same-absolute-path requirement.
+        # `sha256_normalized` is the digest after exactly the copy-root rewrite
+        # applied to every untruncated stream below, computed by the runner
+        # because past the limit nobody else still has the bytes. That makes the
+        # truncated and untruncated paths agree about what they compare instead
+        # of the first being strictly stricter for an accidental reason.
         if bytes_a.nil? || bytes_b.nil?
-          ctx.equal!(NAME, "#{field}.sha256", sa["sha256"], sb["sha256"],
+          ctx.equal!(NAME, "#{field}.sha256_normalized",
+                     sa["sha256_normalized"], sb["sha256_normalized"],
                      klass: Finding::GO_DEFECT,
-                     rule: "errors.md § Non-UTF-8 diagnostics — sha256 is authoritative")
+                     rule: "determinism.md § Normalizations — a truncated stream is compared by its " \
+                           "copy-root-normalized digest, the same rewrite an untruncated stream gets")
           ctx.equal!(NAME, "#{field}.size_bytes", sa["size_bytes"], sb["size_bytes"],
                      klass: Finding::GO_DEFECT, rule: "observations.schema.json — stream.size_bytes")
-          ctx.add(NAME, "#{field}.bytes_base64", Finding::HARNESS_ERROR,
-                  "observations.schema.json — a truncated stream must not be used for equality",
-                  detail: "stream truncated; compared by digest only, so the difference is not localisable")
+          # Truncation used to raise a harness error unconditionally, so a
+          # truncated stream failed the gate even when the two sides agreed
+          # perfectly. That was right while the only available digest was over
+          # raw bytes and therefore not trustworthy across copy roots; with a
+          # normalized digest the comparison above is a real one, and a matching
+          # pair is a pass. What survives is the honest caveat, and only when
+          # there IS a difference: it was found by digest, so it cannot be
+          # localised to a byte.
+          if sa["sha256_normalized"] == sb["sha256_normalized"]
+            ctx.observe(NAME, "#{field}.truncated_at_bytes", sa["truncated_at_bytes"])
+          else
+            ctx.add(NAME, "#{field}.bytes_base64", Finding::HARNESS_ERROR,
+                    "observations.schema.json — a truncated stream must not be used for equality",
+                    detail: "stream truncated; the difference was found by digest and cannot be " \
+                            "localised to a byte — re-run with a larger embed limit to see it")
+          end
           return
         end
 

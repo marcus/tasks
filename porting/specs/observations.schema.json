@@ -21,9 +21,9 @@
   ],
   "properties": {
     "schema_version": {
-      "description": "Version of THIS schema the record was written against. Proves a comparison is between two observations that mean the same thing by the same field names; a harness refusing to compare across versions is correct behavior, not a bug.",
+      "description": "Version of THIS schema the record was written against. Proves a comparison is between two observations that mean the same thing by the same field names; a harness refusing to compare across versions is correct behavior, not a bug. Version 2 (2026-08) added `process.<stream>.sha256_normalized`, `invocation.tty`, and `file_state.kind` — the first two additive, the third a widening of what `files.before`/`after` enumerate (directories are now recorded, so `fixture.root_sha256` and every delta list move). There is no in-place migration from 1 to 2 and there deliberately is none: an observation is a measurement, and a measurement taken before directories were observed cannot be back-filled with what nobody looked at. The migration is a re-capture.",
       "type": "integer",
-      "const": 1
+      "const": 2
     },
     "observation_id": {
       "description": "Unique id for this single record, assigned by the harness. Proves provenance and lets evidence files reference one run. It is harness metadata and is NEVER compared between implementations.",
@@ -74,7 +74,7 @@
           "enum": ["valid", "compat", "malformed", "adversarial"]
         },
         "root_sha256": {
-          "description": "Digest over the fixture copy's whole starting tree (a stable digest of sorted relative-path + content-digest pairs). Proves the copy was pristine and identical on both sides before the invocation.",
+          "description": "Digest over the fixture copy's whole starting tree (a stable digest of sorted relative-path + content-digest pairs, over every entry in `files.before` including directories, which contribute their path and no digest). Proves the copy was pristine and identical on both sides before the invocation. Note that it is NOT copy-root-neutral for a journal-bearing fixture: the installed journal directory is named for a digest of the copy's own absolute path, so this value is stable only between two runs at one path — the same constraint the journal index's `org` field imposes, and a residual blocker for cross-path comparison that `sha256_normalized` does not lift.",
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"
         },
@@ -88,7 +88,7 @@
       "description": "Everything the harness controlled about the invocation. Two implementations must be driven by identical values here; if they are not, no downstream comparison means anything.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["surface", "argv", "stdin", "cwd", "env", "pins"],
+      "required": ["surface", "argv", "stdin", "cwd", "env", "pins", "tty"],
       "properties": {
         "surface": {
           "description": "Which adapter was driven. Proves the case is comparing like with like: the CLI and the HTTP API are deliberately allowed to differ in mechanics (fuzzy refs, status codes) while sharing an outcome.",
@@ -168,6 +168,17 @@
             }
           }
         },
+        "tty": {
+          "description": "Whether each of the implementation's three standard streams was attached to a terminal. Under this protocol all three are false — the runner redirects stdin, stdout and stderr to files — and recording that is the point rather than a formality: terminal-ness is the CLI's colour switch, so it is an INPUT that changes stdout bytes, and an unrecorded input makes a green run silent about a whole rendering path instead of merely uncovered. Compared like `env`: if two implementations were handed different descriptors, nothing downstream of it is a statement about the port. Note what this field does NOT claim — recording that no stream was a terminal is not evidence about what the implementation would print if one were. See porting/specs/determinism.md § Colour.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["stdin", "stdout", "stderr"],
+          "properties": {
+            "stdin": { "description": "Whether standard input was a terminal.", "type": "boolean" },
+            "stdout": { "description": "Whether standard output was a terminal. This is the one the CLI branches on.", "type": "boolean" },
+            "stderr": { "description": "Whether standard error was a terminal.", "type": "boolean" }
+          }
+        },
         "timeout_ms": {
           "description": "Wall-clock budget the harness allowed. Diagnostic; a timeout shows up as process.timed_out, which IS compared.",
           "type": ["integer", "null"],
@@ -211,19 +222,19 @@
           "type": "boolean"
         },
         "before": {
-          "description": "State of every tracked file immediately before the invocation, sorted by path. Present for reads too: an unchanged before/after pair is the positive evidence that a read is side-effect free.",
+          "description": "State of every tracked entry — files, directories and symlinks, including the copy root as `.` — immediately before the invocation, sorted by path. Present for reads too: an unchanged before/after pair is the positive evidence that a read is side-effect free.",
           "type": "array",
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/file_state" }
         },
         "after": {
-          "description": "State of every tracked file immediately after the invocation, sorted by path. Store and archive bytes here are the strictest contract in the port — byte identity, not JSON equivalence.",
+          "description": "State of every tracked entry immediately after the invocation, sorted by path, on the same terms as `before`. Store and archive bytes here are the strictest contract in the port — byte identity, not JSON equivalence.",
           "type": "array",
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/file_state" }
         },
         "deltas": {
-          "description": "Every path whose presence or content changed, sorted by path. An empty array is a meaningful, required assertion for reads. Note that a read is NOT expected to be delta-free in general: acquiring the store lock creates the lock sidecar when it is absent, and that creation is a genuine observable effect the port must reproduce.",
+          "description": "Every path whose presence, content, link target or permission bits changed, sorted by path. An empty array is a meaningful, required assertion for reads. Note that a read is NOT expected to be delta-free in general: acquiring the store lock creates the lock sidecar when it is absent, and that creation is a genuine observable effect the port must reproduce.",
           "type": "array",
           "uniqueItems": true,
           "items": {
@@ -237,12 +248,12 @@
                 "minLength": 1
               },
               "kind": {
-                "description": "How the path changed. 'created' and 'deleted' are distinguished from 'modified' because a rollback that restores prior bytes and a mutation that never ran are different outcomes with the same after-digest.",
+                "description": "How the path changed. 'created' and 'deleted' are distinguished from 'modified' because a rollback that restores prior bytes and a mutation that never ran are different outcomes with the same after-digest. 'modified' covers content, symlink target, AND permission bits — one rule for every entry rather than a per-kind one: a directory has no bytes, so a mode change is the only modification it can express, and a chmod that widened a file without touching it is an effect a delta list that ignored mode would report as nothing happening.",
                 "type": "string",
                 "enum": ["created", "modified", "deleted"]
               },
               "before_sha256": {
-                "description": "Digest before, or null when the path did not exist.",
+                "description": "Digest before, or null when the path did not exist or has no bytes to digest (a directory, a symlink). A `modified` delta with both digests null is therefore legitimate and means the change was in the mode or the link target — look at the matching `files.before`/`after` rows for which.",
                 "type": ["string", "null"],
                 "pattern": "^[0-9a-f]{64}$"
               },
@@ -510,10 +521,15 @@
       "description": "One captured output stream. Carried as bytes because CLI output is not guaranteed valid UTF-8 — malformed fixtures round-trip invalid bytes into diagnostics on purpose — and a JSON string cannot represent those.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["sha256", "size_bytes", "valid_utf8", "bytes_base64"],
+      "required": ["sha256", "sha256_normalized", "size_bytes", "valid_utf8", "bytes_base64"],
       "properties": {
         "sha256": {
-          "description": "Digest of the exact bytes. The comparison field: cheap, total, and immune to truncation policy.",
+          "description": "Digest of the exact bytes, verbatim. Cheap, total, and immune to truncation policy — but NOT copy-root-neutral: a stream that names a path inside the fixture copy digests differently at every copy root. Compare it only when both sides ran at the same absolute path; otherwise compare sha256_normalized.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "sha256_normalized": {
+          "description": "Digest of the same bytes after the copy-root rewrite the comparator applies to every untruncated stream (porting/specs/determinism.md § Normalizations, entry 2): every spelling of the fixture copy root replaced by the fixed token `<copy-root>`, longest spelling first. This is the comparison field for a TRUNCATED stream, and the reason it exists: past the embed limit only a digest survives, `sha256` digests raw bytes, and a stream over that limit that names the copy root could therefore never compare equal across two copy roots — which made stream truncation and cross-path comparison mutually exclusive. Equal to `sha256` exactly when the stream does not name the copy root. It is the SAME normalization applied to short streams, not a second one: a divergence between the two would silently reclassify a real difference as a copy-root artifact, so an implementation must reuse one rewrite for both and never re-derive it.",
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"
         },
@@ -533,7 +549,7 @@
           "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
         },
         "truncated_at_bytes": {
-          "description": "Byte offset at which bytes_base64 was cut, or null when complete. Non-null means bytes_base64 must not be used for equality — only sha256 and size_bytes may be.",
+          "description": "Byte offset at which bytes_base64 was cut, or null when complete. Non-null means bytes_base64 must not be used for equality — only sha256_normalized and size_bytes may be (and sha256 only when both sides ran at one absolute path).",
           "type": ["integer", "null"],
           "minimum": 0
         },
@@ -544,37 +560,42 @@
       }
     },
     "file_state": {
-      "description": "One tracked file at one instant. Small files carry their whole content so an evidence record is self-contained and a mismatch is readable without re-running anything; large files carry digest and size only.",
+      "description": "One tracked filesystem entry at one instant — a regular file, a directory, or a symlink. Small files carry their whole content so an evidence record is self-contained and a mismatch is readable without re-running anything; large files carry digest and size only. DIRECTORIES ARE ENTRIES TOO, and are enumerated on the same terms as files: every directory in the copy appears in `before` and `after`, whether or not it changed. Recording only the ones that changed would recreate exactly the ambiguity the three-part `files` block exists to prevent — 'no directory row' would mean both 'nothing happened to it' and 'the harness does not look at directories' — and it is the second reading that made a create/remove/chmod of a directory produce an observation identical to doing nothing at all. A directory's observation is deliberately THIN: `mode` and `present`, and nothing else. It does not carry its children, because every child is already its own row and duplicating the tree inside each ancestor would make the observation quadratic and make one file's change show up in every directory above it.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["role", "path", "present"],
+      "required": ["role", "kind", "path", "present"],
       "properties": {
+        "kind": {
+          "description": "What the entry IS to the filesystem, as distinct from `role`, which is what it is to the product. Null only when `present` is false — the harness recorded a path that does not exist and there is nothing there to have a kind. `directory` entries carry `mode` and null for every content field; `symlink` entries carry `symlink_target` and null for every content field (a link is recorded by target, never followed); `file` entries carry digest, size and mode. The axis is separate from `role` on purpose: a directory can legitimately hold a product role (the journal directory) and most hold none, so folding 'is a directory' into the role enum would have forced a choice between the two facts.",
+          "type": ["string", "null"],
+          "enum": ["file", "directory", "symlink", null]
+        },
         "role": {
           "description": "What the file is to the product. Roles, not names, so the port can be compared even if a future layout renames a file — and so the harness can assert that the store and archive were BOTH observed, since they are one consistency boundary and checking only one hides half of every archive bug.",
           "type": "string",
           "enum": ["store", "archive", "lock", "journal_index", "journal_blob", "config", "memory", "other"]
         },
         "path": {
-          "description": "Path relative to the fixture copy root. Relative because the absolute path differs per run by construction.",
+          "description": "Path relative to the fixture copy root. Relative because the absolute path differs per run by construction. The copy root itself is spelled `.` and is recorded like any other directory: its mode is the case's declared `copy_root_mode`, which is otherwise an input that appears nowhere in the observation, and a case whose whole subject is an unwritable store directory could not previously show what it made unwritable. Being a harness-chosen value it is identical on both sides by construction, so comparing it asserts nothing about the port and proves the mode was applied — the same standing as `environment.umask`.",
           "type": "string",
           "minLength": 1
         },
         "present": {
-          "description": "Whether the file existed at this instant. Absence is a state, not a gap: 'archive.jsonl does not exist yet' is the first-run contract and must be distinguishable from 'the harness did not look'.",
+          "description": "Whether the entry existed at this instant. Absence is a state, not a gap: 'archive.jsonl does not exist yet' is the first-run contract and must be distinguishable from 'the harness did not look'.",
           "type": "boolean"
         },
         "sha256": {
-          "description": "Digest of the file's bytes, or null when absent. The authoritative comparison field for store and archive bytes.",
+          "description": "Digest of the file's bytes, or null when absent, a directory, or a symlink. The authoritative comparison field for store and archive bytes.",
           "type": ["string", "null"],
           "pattern": "^[0-9a-f]{64}$"
         },
         "size_bytes": {
-          "description": "Byte length, or null when absent.",
+          "description": "Byte length, or null when absent, a directory, or a symlink. Deliberately null for a directory rather than the directory inode's own size, which is a filesystem-implementation number that carries no product meaning and differs between two correct hosts.",
           "type": ["integer", "null"],
           "minimum": 0
         },
         "mode": {
-          "description": "Permission bits as a 4-digit octal string, or null when absent or unavailable. Contract on the store: a chmod-600 store must not widen to 644 across an atomic replacement.",
+          "description": "Permission bits as a 4-digit octal string, or null when absent or unavailable. Contract on the store: a chmod-600 store must not widen to 644 across an atomic replacement. For a directory this is the WHOLE of its observable state, which is why a directory whose mode changed and whose bytes cannot change is still recorded as a `modified` delta.",
           "type": ["string", "null"],
           "pattern": "^[0-7]{4}$"
         },

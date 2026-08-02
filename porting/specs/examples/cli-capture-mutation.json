@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "observation_id": "obs_cli-capture-mutation",
   "case_id": "cli-capture-basic",
   "implementation": {
@@ -138,6 +138,11 @@
         "value": "America/Denver"
       }
     ],
+    "tty": {
+      "stdin": false,
+      "stdout": false,
+      "stderr": false
+    },
     "timeout_ms": null
   },
   "process": {
@@ -146,6 +151,7 @@
     "timed_out": false,
     "stdout": {
       "sha256": "3a810fe8d31c047b9bb21e77b597a61f188ba824f2ad5ef0f0f5cba03f3ab29e",
+      "sha256_normalized": "3a810fe8d31c047b9bb21e77b597a61f188ba824f2ad5ef0f0f5cba03f3ab29e",
       "size_bytes": 42,
       "valid_utf8": true,
       "bytes_base64": "SU5CT1ggWyNBXSBhZGQgdGhlIHBvcnRlZCBiZWhhdmlvciA6cG9ydDoK",
@@ -154,6 +160,7 @@
     },
     "stderr": {
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sha256_normalized": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "size_bytes": 0,
       "valid_utf8": true,
       "bytes_base64": "",
@@ -166,6 +173,43 @@
     "before": [
       {
         "role": "other",
+        "kind": "directory",
+        "path": ".",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": "config",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": "config/tasks",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "file",
         "path": "config/tasks/config",
         "present": true,
         "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -176,7 +220,20 @@
         "symlink_target": null
       },
       {
+        "role": "other",
+        "kind": "directory",
+        "path": "state",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
         "role": "store",
+        "kind": "file",
         "path": "tasks.jsonl",
         "present": true,
         "sha256": "1a607039774186df9b4e6bf4f25d2db65171222b102704ae99e180d8331ca187",
@@ -189,7 +246,20 @@
     ],
     "after": [
       {
+        "role": "other",
+        "kind": "directory",
+        "path": ".",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
         "role": "lock",
+        "kind": "file",
         "path": ".tasks.jsonl.lock",
         "present": true,
         "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -201,6 +271,31 @@
       },
       {
         "role": "other",
+        "kind": "directory",
+        "path": "config",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": "config/tasks",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "file",
         "path": "config/tasks/config",
         "present": true,
         "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -211,7 +306,68 @@
         "symlink_target": null
       },
       {
+        "role": "other",
+        "kind": "directory",
+        "path": "state",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": "state/tasks",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": "state/tasks/journal",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": "state/tasks/journal/<key>",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": "state/tasks/journal/<key>/blobs",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
         "role": "journal_blob",
+        "kind": "file",
         "path": "state/tasks/journal/<key>/blobs/1a607039774186df9b4e6bf4f25d2db65171222b102704ae99e180d8331ca187",
         "present": true,
         "sha256": "1a607039774186df9b4e6bf4f25d2db65171222b102704ae99e180d8331ca187",
@@ -223,6 +379,7 @@
       },
       {
         "role": "journal_blob",
+        "kind": "file",
         "path": "state/tasks/journal/<key>/blobs/e3b2074bde5a47693220117a344d5926ba593754160273dc05fcc2107a09c510",
         "present": true,
         "sha256": "e3b2074bde5a47693220117a344d5926ba593754160273dc05fcc2107a09c510",
@@ -234,6 +391,7 @@
       },
       {
         "role": "journal_index",
+        "kind": "file",
         "path": "state/tasks/journal/<key>/index.json",
         "present": true,
         "sha256": "49b1a2a5ce1cd9a3f07707161d29d64ef2967bfaae41e589ccddad6fa279b4ea",
@@ -245,6 +403,7 @@
       },
       {
         "role": "store",
+        "kind": "file",
         "path": "tasks.jsonl",
         "present": true,
         "sha256": "e3b2074bde5a47693220117a344d5926ba593754160273dc05fcc2107a09c510",
@@ -261,6 +420,30 @@
         "kind": "created",
         "before_sha256": null,
         "after_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "state/tasks",
+        "kind": "created",
+        "before_sha256": null,
+        "after_sha256": null
+      },
+      {
+        "path": "state/tasks/journal",
+        "kind": "created",
+        "before_sha256": null,
+        "after_sha256": null
+      },
+      {
+        "path": "state/tasks/journal/<key>",
+        "kind": "created",
+        "before_sha256": null,
+        "after_sha256": null
+      },
+      {
+        "path": "state/tasks/journal/<key>/blobs",
+        "kind": "created",
+        "before_sha256": null,
+        "after_sha256": null
       },
       {
         "path": "state/tasks/journal/<key>/blobs/1a607039774186df9b4e6bf4f25d2db65171222b102704ae99e180d8331ca187",
@@ -313,6 +496,7 @@
     ],
     "index": {
       "role": "journal_index",
+      "kind": "file",
       "path": "state/tasks/journal/<key>/index.json",
       "present": true,
       "sha256": "49b1a2a5ce1cd9a3f07707161d29d64ef2967bfaae41e589ccddad6fa279b4ea",

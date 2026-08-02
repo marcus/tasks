@@ -379,6 +379,100 @@ class TestPortingCompare < Minitest::Test
                     "by running both sides at the same path, not by rewriting the bytes"
   end
 
+  # --- pins: what `applied: false` does and does not mean ---------------------
+  #
+  # determinism.md's rule is "applied:false WITH A NON-NULL REQUESTED VALUE is a
+  # hard failure". The comparator used to read the weaker "applied:false is a
+  # hard failure", which is fine only as long as nothing is deliberately pinned
+  # to *unset*. The colour inputs and the test-only clock seam are, and they
+  # honestly report themselves unapplied on every case — so the weaker rule
+  # would have turned recording an input into a per-case harness error, i.e.
+  # punished the harness for making a gap visible.
+
+  # Add the same unset-and-unapplied pin to both sides of one case, exactly as
+  # the runner does for NO_COLOR.
+  def with_unset_pin(applied_on_candidate: false, requested: nil)
+    obs = JSON.parse(File.read(File.join(BASELINE, "cli-list-small-gtd.json")))
+    pin = ->(applied) { { "name" => "NO_COLOR", "applied" => applied, "value" => nil } }
+    baseline = Conformance::Normalize.deep_dup(obs)
+    candidate = Conformance::Normalize.deep_dup(obs)
+    [[baseline, false], [candidate, applied_on_candidate]].each do |record, applied|
+      record["invocation"]["pins"] = (record["invocation"]["pins"] + [pin.call(applied)])
+                                     .sort_by { |p| p["name"] }
+      record["invocation"]["env"] = (record["invocation"]["env"] +
+                                     [{ "name" => "NO_COLOR", "value" => requested }])
+                                    .sort_by { |e| e["name"] }
+    end
+    Conformance::Comparator.new(
+      baseline: Conformance::ObservationSet.new("a", [baseline]),
+      candidate: Conformance::ObservationSet.new("b", [candidate])
+    ).run
+  end
+
+  def test_a_pin_that_was_never_requested_is_not_a_harness_error_for_being_unapplied
+    report = with_unset_pin(applied_on_candidate: false, requested: nil)
+    assert_empty gate_findings(report),
+                 "an input pinned to UNSET reports applied:false on every case; treating that as a " \
+                 "harness error punishes the runner for recording the input at all"
+  end
+
+  def test_a_pin_that_was_requested_and_ignored_is_still_a_hard_failure
+    report = with_unset_pin(applied_on_candidate: false, requested: "1")
+    f = gate_findings(report).find { |x| x["field"] == "invocation.pins[NO_COLOR].applied" }
+    refute_nil f, "set-and-silently-ignored must remain a hard failure"
+    assert_equal "harness_error", f["class"]
+  end
+
+  # The check that replaces the blanket rule: once "set and ignored" is
+  # excluded, two sides disagreeing about whether they honoured an input is the
+  # remaining real defect, and it must not become invisible.
+  def test_two_sides_disagreeing_about_applied_is_a_defect
+    report = with_unset_pin(applied_on_candidate: true, requested: nil)
+    f = gate_findings(report).find { |x| x["field"] == "invocation.pins[NO_COLOR].applied" }
+    refute_nil f, "one implementation honouring an input the other ignores must be reported"
+    assert_equal "go_defect", f["class"]
+  end
+
+  # --- truncated streams ------------------------------------------------------
+  #
+  # `stream.sha256` digests raw bytes, so a stream past the 256 KiB embed limit
+  # that names the copy root could never compare equal across two copy roots —
+  # and past the limit no downstream normalization can fix it, because the bytes
+  # are gone. `sha256_normalized` is that digest taken after the copy-root
+  # rewrite, and it is what a truncated stream is compared on.
+
+  def truncated_pair(baseline_digest, candidate_digest)
+    obs = JSON.parse(File.read(File.join(BASELINE, "cli-list-small-gtd.json")))
+    pair = [baseline_digest, candidate_digest].map do |digest|
+      record = Conformance::Normalize.deep_dup(obs)
+      record["process"]["stdout"].merge!(
+        "truncated_at_bytes" => 262_144, "text" => nil,
+        "sha256" => "0" * 64, "sha256_normalized" => digest, "size_bytes" => 300_000
+      )
+      record
+    end
+    Conformance::Comparator.new(
+      baseline: Conformance::ObservationSet.new("a", [pair.first]),
+      candidate: Conformance::ObservationSet.new("b", [pair.last])
+    ).run
+  end
+
+  def test_a_truncated_stream_that_agrees_on_the_normalized_digest_is_a_pass
+    report = truncated_pair("a" * 64, "a" * 64)
+    assert_empty gate_findings(report),
+                 "truncation used to fail the gate unconditionally, which made the normalized " \
+                 "digest buy nothing; a matching pair must now pass"
+  end
+
+  def test_a_truncated_stream_that_disagrees_is_reported_on_the_normalized_digest
+    report = truncated_pair("a" * 64, "b" * 64)
+    f = finding_on(report, "cli-list-small-gtd", "process.stdout.sha256_normalized")
+    refute_nil f, "the truncated comparison must report on the digest it actually compared"
+    assert_equal "go_defect", f["class"]
+    caveat = gate_findings(report).find { |x| x["field"] == "process.stdout.bytes_base64" }
+    refute_nil caveat, "a difference found by digest cannot be localised, and the report must say so"
+  end
+
   # --- the same-absolute-path requirement ------------------------------------
 
   def test_differing_copy_roots_are_a_harness_error_not_a_silent_exclusion

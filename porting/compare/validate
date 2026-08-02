@@ -29,6 +29,8 @@ constraint in observations.schema.json and still be internally impossible:
     journal cursor = 999 with 0 states
     stream sha256 unrelated to its own bytes_base64
     invocation.env unsorted, or with the same name twice
+    kind=directory carrying a content digest, or carrying no mode
+    sha256_normalized copied from sha256 for a stream that names the copy root
 
 Every one of those validated before this pass existed. Two of them defeat the
 schema's *stated* purpose: the `files` block exists so that "this changed
@@ -164,6 +166,7 @@ class Checker:
             data = self.check_bytes(where, s, "bytes_base64", truncated=truncated)
             if data is None or truncated:
                 continue
+            self.check_stream_normalized(where, s, data)
             try:
                 data.decode("utf-8")
                 really_utf8 = True
@@ -184,6 +187,30 @@ class Checker:
                                     digest_field=None, size_field=None)
             if data is not None and stdin.get("provided") is False and data:
                 self.fail("invocation.stdin", "provided=false with a non-empty payload")
+
+    def check_stream_normalized(self, where, s, data):
+        """11: sha256_normalized is a real normalization, not a copy of sha256.
+
+        Deliberately ONE-DIRECTIONAL. Re-deriving the normalized digest here
+        would mean writing a third copy-root rewrite — after the comparator's
+        and the runner's — and the whole reason `sha256_normalized` exists is
+        that two rewrites which drift silently reclassify a real difference as a
+        copy-root artifact. A validator that disagreed with the comparator would
+        fail correct evidence, so it asserts only what needs no rewrite of its
+        own: bytes that contain the copy root verbatim CANNOT digest the same
+        before and after a rewrite that replaces it. That is exactly the shape a
+        runner which emitted `sha256_normalized = sha256` unconditionally has.
+        """
+        normalized = s.get("sha256_normalized")
+        if normalized is None:
+            return
+        root = self.r.get("fixture", {}).get("copy_root")
+        if not root:
+            return
+        if root.encode() in data and normalized == s.get("sha256"):
+            self.fail(f"{where}.sha256_normalized",
+                      "equals sha256 although the stream names the copy root verbatim; "
+                      "the copy-root rewrite was not applied")
 
     def check_process(self):
         """6: exit_status XOR signal, and timed_out coherence."""
@@ -212,6 +239,16 @@ class Checker:
             elif not any(s.get("role") == "store" for s in states):
                 self.fail(where, "records no file with role \"store\"; the schema's guarantee "
                                  "that the store was observed does not hold")
+            # The copy root, spelled ".". Its presence is what proves the walk
+            # enumerated DIRECTORIES and not only files — the whole of finding
+            # 15 — and it is the row that makes a case's `copy_root_mode`
+            # visible at all. A runner that quietly reverted to a file-only walk
+            # would otherwise produce evidence that validates and silently
+            # cannot express a directory-only effect.
+            elif not any(s.get("path") == "." and s.get("kind") == "directory" for s in states):
+                self.fail(where, "does not record the copy root (path \".\", kind \"directory\"); "
+                                 "directories are not being observed, so a create, remove or "
+                                 "chmod of one is indistinguishable from no effect")
             self.sorted_unique(where, states, lambda s: s.get("path"))
             for s in states:
                 self.check_file_state(f"{where}[{s.get('path')!r}]", s)
@@ -225,15 +262,44 @@ class Checker:
                 self.fail("files", "mutated=true with an empty deltas list")
 
     def check_file_state(self, where, s):
-        """4: present / symlink_target / sha256, and the embedded content."""
-        present, link = s.get("present"), s.get("symlink_target")
+        """4: kind against present, and each kind's fields against its kind.
+
+        `kind` is what makes a directory-only effect expressible at all, so the
+        checks that matter are the ones which stop it from being decorative: a
+        directory that carried a digest, or one recorded without the mode that
+        is its ONLY observable state, would let a chmod go unnoticed exactly as
+        it did before the field existed.
+        """
+        present, link, kind = s.get("present"), s.get("symlink_target"), s.get("kind")
         fields = ("sha256", "size_bytes", "mode")
-        if present and link is None:
+
+        if present and kind is None:
+            self.fail(where, "present=true with a null kind: the harness recorded an entry "
+                             "without saying what it is")
+        if not present and kind is not None:
+            self.fail(where, f"present=false but kind={kind!r}: nothing that is absent has a kind")
+        if kind == "symlink" and link is None:
+            self.fail(where, "kind=symlink with a null symlink_target")
+        if kind != "symlink" and link is not None:
+            self.fail(where, f"kind={kind!r} carries a symlink_target")
+
+        if present and kind == "file":
             missing = [k for k in fields if s.get(k) is None]
             if missing:
-                self.fail(where, f"present=true and not a symlink, but {', '.join(missing)} is null")
-        if present and link is not None and s.get("sha256") is not None:
-            self.fail(where, "is a symlink and also carries a content digest")
+                self.fail(where, f"kind=file, but {', '.join(missing)} is null")
+        if present and kind == "directory":
+            if s.get("mode") is None:
+                self.fail(where, "kind=directory with a null mode; mode is the whole of a "
+                                 "directory's observable state, so a chmod would be invisible")
+            content = [k for k in ("sha256", "size_bytes", "content_base64", "line_count")
+                       if s.get(k) is not None]
+            if content:
+                self.fail(where, f"kind=directory but {', '.join(content)} is set")
+        if present and kind == "symlink":
+            content = [k for k in fields + ("content_base64", "line_count") if s.get(k) is not None]
+            if content:
+                self.fail(where, f"kind=symlink but {', '.join(content)} is set; a link is "
+                                 "recorded by target, never followed")
         if not present:
             set_fields = [k for k in fields + ("content_base64", "symlink_target")
                           if s.get(k) is not None]

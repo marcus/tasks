@@ -39,8 +39,16 @@ require "securerandom"
 require "fileutils"
 require "shellwords"
 
+# The comparator's normalization module, required rather than reimplemented.
+# `stream.sha256_normalized` must be the digest of the bytes AFTER exactly the
+# copy-root rewrite the comparator applies to short streams — a second,
+# lookalike rewrite living here would diverge on the first edge case (macOS's
+# /private spelling was the first) and would then reclassify a real difference
+# as a copy-root artifact, or the reverse. One implementation, two callers.
+require_relative "../../compare/lib/normalize"
+
 module PortingRunner
-  SCHEMA_VERSION = 1
+  SCHEMA_VERSION = 2
   IMPLEMENTATION = "ruby"
 
   RUNNER_DIR = File.expand_path(__dir__)
@@ -86,6 +94,41 @@ module PortingRunner
     "COLUMNS" => "100"
   }.freeze
 
+  # Colour. These four names are the complete set the implementation actually
+  # consults — read off the source, not assumed from the conventional list:
+  #
+  #   NO_COLOR    Config#pick_theme (selects the attribute-only "mono" theme)
+  #               and Tui::Border.truecolor?
+  #   TASKS_THEME Config#pick_theme, and it OUT-RANKS NO_COLOR
+  #   COLORTERM   Tui::Border.truecolor?
+  #   TERM        Tui::Border.truecolor?, Tui::App#mouse_enabled?
+  #
+  # CLICOLOR and CLICOLOR_FORCE appear nowhere in bin/ or lib/ and are therefore
+  # NOT pinned: pinning a variable the product does not read would be a false
+  # assurance in the one document that claims to be exhaustive.
+  #
+  # They are pinned to UNSET rather than to values, and that is the deliberate
+  # half. `unsetenv_others: true` is what makes "unset" a pin and not a wish —
+  # the child receives this map and nothing else, so an operator with TERM
+  # exported cannot reach the implementation. Pinning them to *set* values would
+  # not be neutral: NO_COLOR=1 resolves the theme to "mono" and changes
+  # `tasks config --json` output, so the harness would be altering the behavior
+  # it exists to observe in order to make itself tidier. Listing them in the
+  # recorded floor is the other half: every one is written into
+  # `invocation.env` with a null value, so "colour was configured by nothing"
+  # is proven per observation rather than inferred from this comment.
+  #
+  # A case MAY set any of them — that is how the colour path would eventually be
+  # exercised — and the union rule makes such a case visible in `invocation.env`.
+  COLOR_VARS = %w[COLORTERM NO_COLOR TASKS_THEME TERM].freeze
+
+  # The test-only clock seam. Pinned to unset for the same reason as the colour
+  # names — `unsetenv_others` makes that a pin — and recorded because it is a
+  # CLOCK input: it is dominated by TASKS_PIN_NOW, and "dominated" is a claim an
+  # observation should carry evidence for rather than a claim a comment makes.
+  # It resolves inside Tasks::Determinism like every other pin.
+  CLOCK_TEST_VARS = %w[TASKS_TEST_TODAY_SEQUENCE].freeze
+
   # Path variables the runner owns: a case may not set them, because they are
   # what makes the run isolated. TASKS_FILE / TASKS_ARCHIVE are recorded as
   # unset on purpose — a per-file override would redirect half a store.
@@ -101,7 +144,7 @@ module PortingRunner
   # the process, so a variable a case sets is visible rather than silent. A
   # constant list alone would let two observations carry byte-identical
   # `invocation` blocks and produce different store bytes.
-  RECORDED_ENV = (DEFAULT_PINS.keys + PATH_VARS).sort.freeze
+  RECORDED_ENV = (DEFAULT_PINS.keys + PATH_VARS + COLOR_VARS + CLOCK_TEST_VARS).sort.freeze
 
   # The process umask, pinned. It is not a host fact: it is a per-process
   # attribute, one syscall away, and it moves `mode` on every file the
@@ -336,21 +379,34 @@ module PortingRunner
   module Tree
     module_function
 
-    # Every file under the copy, sorted by relative path. Nothing is filtered:
-    # a leftover `.tasks.jsonl.<pid>.<tid>.tmp` is a real finding (a crashed
+    # Every entry under the copy — files, symlinks AND directories, plus the
+    # copy root itself as ".". Sorted by relative path. Nothing is filtered: a
+    # leftover `.tasks.jsonl.<pid>.<tid>.tmp` is a real finding (a crashed
     # write), and a harness that hid it would hide the crash.
+    #
+    # Directories are recorded whether or not they changed, on the same terms as
+    # files, because the alternative — recording only the ones that moved — is
+    # what made a directory-only effect indistinguishable from no effect at all.
+    # A create, a remove, or a chmod of a directory produced a byte-identical
+    # observation to doing nothing, so a port that forgot to create the journal
+    # directory, or left an empty one behind, or created it 0700 instead of
+    # 0755, was invisible.
+    #
+    # The root is included for the case it makes observable: `copy_root_mode` is
+    # an input the case declares and the observation recorded nowhere, so
+    # `cli-capture-readonly-rollback` could not show what it made unwritable.
+    # Both sides get the same mode by construction, so the row proves the mode
+    # was applied and asserts nothing about the port — the standing of
+    # `environment.umask`.
     def walk(root, roles = DefaultRoles)
-      states = []
+      states = [state(root, root, roles)]
       stack = [root]
       while (dir = stack.pop)
-        Dir.children(dir).sort.each do |name|
-          path = File.join(dir, name)
+        Dir.children(dir).sort.each do |path_name|
+          path = File.join(dir, path_name)
           stat = File.lstat(path)
-          if stat.directory?
-            stack << path
-          else
-            states << state(root, path, roles, stat)
-          end
+          stack << path if stat.directory?
+          states << state(root, path, roles, stat)
         end
       end
       states.sort_by { |s| s["path"] }
@@ -359,31 +415,38 @@ module PortingRunner
     def state(root, path, roles = DefaultRoles, stat = File.lstat(path))
       rel = relative(root, path)
       role = roles.call(rel)
-      if stat.symlink?
-        return {
-          "role" => role, "path" => rel, "present" => true, "sha256" => nil,
-          "size_bytes" => nil, "mode" => nil, "content_base64" => nil,
-          "line_count" => nil, "symlink_target" => File.readlink(path)
-        }
+      blank = { "role" => role, "kind" => nil, "path" => rel, "present" => true,
+                "sha256" => nil, "size_bytes" => nil, "mode" => nil,
+                "content_base64" => nil, "line_count" => nil, "symlink_target" => nil }
+
+      # A symlink is recorded by target and never followed, so it has no mode
+      # and no digest of its own — checked FIRST because lstat reports a link to
+      # a directory as a link, and following it would walk outside the copy.
+      return blank.merge("kind" => "symlink", "symlink_target" => File.readlink(path)) if stat.symlink?
+
+      # A directory carries mode and nothing else. Not its children: every child
+      # is already its own row, and repeating them here would make the record
+      # quadratic and surface one file's change on every ancestor. Not its
+      # size_bytes either: the directory inode's size is a filesystem number
+      # with no product meaning that two correct hosts disagree about.
+      if stat.directory?
+        return blank.merge("kind" => "directory", "mode" => format("%04o", stat.mode & 0o7777))
       end
 
       bytes = File.binread(path)
-      {
-        "role" => role,
-        "path" => rel,
-        "present" => true,
+      blank.merge(
+        "kind" => "file",
         "sha256" => Digest::SHA256.hexdigest(bytes),
         "size_bytes" => bytes.bytesize,
         "mode" => format("%04o", stat.mode & 0o7777),
         "content_base64" => bytes.bytesize <= FILE_EMBED_LIMIT ? strict_base64(bytes) : nil,
-        "line_count" => %w[store archive].include?(role) ? bytes.count("\n") : nil,
-        "symlink_target" => nil
-      }
+        "line_count" => %w[store archive].include?(role) ? bytes.count("\n") : nil
+      )
     end
 
     def absent(root, rel, roles = DefaultRoles)
-      { "role" => roles.call(rel), "path" => rel, "present" => false, "sha256" => nil,
-        "size_bytes" => nil, "mode" => nil, "content_base64" => nil,
+      { "role" => roles.call(rel), "kind" => nil, "path" => rel, "present" => false,
+        "sha256" => nil, "size_bytes" => nil, "mode" => nil, "content_base64" => nil,
         "line_count" => nil, "symlink_target" => nil }
     end
 
@@ -714,6 +777,7 @@ module PortingRunner
                           before_probe, after_probe, roles = DefaultRoles)
       deltas = deltas_for(before, after)
       store_changed = before_probe.dig("revisions", "store") != after_probe.dig("revisions", "store")
+      spellings = Conformance::Normalize.copy_root_spellings(copy_root)
 
       {
         "schema_version" => SCHEMA_VERSION,
@@ -738,14 +802,23 @@ module PortingRunner
           "cwd" => Tree.relative(copy_root, result[:cwd]),
           "env" => recorded_env(result[:env]),
           "pins" => after_probe["pins"],
+          # Colour's real switch is `$stdout.tty?`, not an environment variable,
+          # and it is pinned by the harness PROCESS rather than by the child's
+          # environment — exactly like umask: all three descriptors are
+          # redirected to files (see #execute), so no stream is ever a terminal.
+          # Recorded rather than assumed, because an input that changes stdout
+          # bytes and appears in no observation is an input a green run is
+          # silent about. Recording it does NOT cover the colour path; it makes
+          # the coverage gap legible. See porting/specs/determinism.md § Colour.
+          "tty" => { "stdin" => false, "stdout" => false, "stderr" => false },
           "timeout_ms" => result[:timeout_ms]
         },
         "process" => {
           "exit_status" => result[:exit_status],
           "signal" => result[:signal],
           "timed_out" => result[:timed_out],
-          "stdout" => stream(result[:stdout]),
-          "stderr" => stream(result[:stderr])
+          "stdout" => stream(result[:stdout], spellings),
+          "stderr" => stream(result[:stderr], spellings)
         },
         "files" => {
           "mutated" => store_changed,
@@ -797,12 +870,27 @@ module PortingRunner
       (RECORDED_ENV | env.keys).sort.map { |name| { "name" => name, "value" => env[name] } }
     end
 
-    def stream(bytes)
+    # `sha256_normalized` is the digest of the same bytes after the comparator's
+    # copy-root rewrite — the SAME function, required from
+    # porting/compare/lib/normalize.rb rather than reimplemented here.
+    #
+    # It exists because a stream past STREAM_EMBED_LIMIT survives only as a
+    # digest, and a digest of raw bytes can never be copy-root-neutral: a
+    # 300 KiB diagnostic naming the fixture copy digests differently at every
+    # copy root, so stream truncation and cross-path comparison were mutually
+    # exclusive. Computing it here, per side, from that side's own copy root is
+    # equivalent to the comparator's union-of-spellings pass — a side's bytes can
+    # only ever contain its own copy root — and it is the only place it CAN be
+    # computed, because past the embed limit the comparator no longer has the
+    # bytes.
+    def stream(bytes, spellings)
       truncated = bytes.bytesize > STREAM_EMBED_LIMIT
       body = truncated ? bytes.byteslice(0, STREAM_EMBED_LIMIT) : bytes
       valid = bytes.dup.force_encoding(Encoding::UTF_8).valid_encoding?
+      normalized = Conformance::Normalize.rewrite_copy_root_bytes(bytes, spellings)
       {
         "sha256" => Digest::SHA256.hexdigest(bytes),
+        "sha256_normalized" => Digest::SHA256.hexdigest(normalized),
         "size_bytes" => bytes.bytesize,
         "valid_utf8" => valid,
         "bytes_base64" => Tree.strict_base64(body),
@@ -818,9 +906,20 @@ module PortingRunner
       (old.keys | new.keys).sort.filter_map do |path|
         a = old[path]
         b = new[path]
+        # `mode` participates, and it is one rule for every entry rather than a
+        # per-kind one. A directory has no bytes, so a chmod is the only
+        # modification it can express and a delta list that ignored mode would
+        # report a chmod'd directory as nothing having happened. Applying the
+        # same rule to files costs nothing (an atomic replacement preserves the
+        # existing mode, so no current case emits a mode-only file delta) and
+        # closes the same hole one level up: a widened store that kept its bytes
+        # is a real regression, and it should fail loudly here rather than sit
+        # in `after` waiting for someone to read the column.
         kind = if a.nil? then "created"
                elsif b.nil? then "deleted"
-               elsif a["sha256"] != b["sha256"] || a["symlink_target"] != b["symlink_target"]
+               elsif a["sha256"] != b["sha256"] ||
+                     a["symlink_target"] != b["symlink_target"] ||
+                     a["mode"] != b["mode"]
                  "modified"
                end
         next if kind.nil?
