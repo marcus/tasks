@@ -35,7 +35,8 @@ how strongly the port is bound to them.
 abort. That makes the **`1` vs `2` distinction a product feature**, and the most
 important single assertion in the whole error surface. A Go port that collapses
 them into "nonzero" passes a naive comparator and breaks every agent using the
-CLI.
+CLI. Under `--json` an exit-`2` refusal also hands the agent the candidate set
+as data so it *can* refine — see "The `--json` error envelope" below.
 
 Rules:
 
@@ -88,9 +89,27 @@ separates them, which is why the harness records it as `files.rolled_back` and
 compares it directly. Exit status stays the human one — the envelope is
 additional, never a substitute.
 
-Ref-resolution failures (exit `2`) are deliberately outside this: they refuse
-before a command's `--json` handling is reached and print no envelope on either
-side. That is the recorded oracle behavior, not an endorsement.
+Ref-resolution failures (exit `2`) emit the same envelope, with one added key
+(td-d842ed). They used to print nothing on stdout, which made `--json` degrade
+to empty output for the exact caller exit `2` was invented for: an agent that
+should refine an ambiguous ref rather than abort had to parse the stderr prose
+back out. The envelope is:
+
+| Key | Meaning |
+|---|---|
+| `error` | `not_found` (no match, or an `L<line>` that names nothing), `ambiguous` (more than one in-scope match), or `out_of_scope` (the ref names a live task or tasks the command's scope excludes). |
+| `action` | As above — the command that refused. |
+| `message` | The full stderr text verbatim, newlines and all. For an ambiguous ref that includes the candidate lines. |
+| `candidates` | The candidate set as **data**, never the stderr lines reformatted. Always present, `[]` when there is nothing to offer. Task refs: `{id, line, state, title}`. Project refs: `{id, line, kind, title}`. Order matches the stderr list, which is file order. |
+
+Three properties of that envelope are contract, not decoration:
+
+- The **exit status stays `2`**. The envelope is additive; it does not soften
+  the 1-vs-2 distinction in any way.
+- **stderr is unchanged, byte for byte, with and without `--json`.** stdout was
+  empty before; only stdout gained anything.
+- `rolled_back` is **absent** here. Nothing was attempted, let alone written —
+  ref resolution refuses before the mutation begins.
 
 ### Diagnostic text is contract until proved otherwise
 
@@ -107,6 +126,22 @@ Byte comparison of stderr covers the parts that are easy to get wrong:
 - The **repair hint** distinguishing a post-write validation rollback from a
   stale-line conflict — two failures that look identical in the store and are
   not the same event.
+- The **rollback hint, and which STAGE it names.** A rolled-back mutation gets
+  exactly one of two sentences appended to the command's own message, and which
+  one is chosen is contract (td-fea097):
+
+  | Stage | Sentence |
+  |---|---|
+  | Post-write validation failed (the bytes landed, `check` refused them, they were reverted) | ``file failed validation after the edit — run `tasks check``` |
+  | The write itself failed (the atomic replace raised; validation never ran) | `could not write the task file — the previous contents were restored (nothing was changed)` |
+
+  A port that keys this off "was it rolled back" alone reproduces the bug this
+  replaced: it sends the user to `tasks check` for a file that is valid, and
+  blames a stage that never ran. The write sentence deliberately carries **no
+  path and no exception text** — the underlying message is
+  `Permission denied @ rb_sysopen - <abs path>`, and interpolating it would make
+  stderr differ per machine, which is exactly the determinism failure td-231878
+  removed. Both sentences are compared byte for byte like everything else here.
 - **Line and record numbers** in `check` diagnostics.
 - The **line ordering** of multiple diagnostics.
 
@@ -118,10 +153,19 @@ between two implementations given identical pins, or because the harness itself
 caused it.
 
 1. **ANSI colour sequences.** Colour is applied only when stdout is a tty
-   (`$stdout.tty?`), and the harness always captures through a pipe, so both
+   (`$stdout.tty?`), and the harness redirects every stream to a file, so both
    implementations emit uncoloured output. The comparator therefore does not
    need to strip anything — but if a case is ever run under a pty, colour is
    compared, not stripped: which words are highlighted is a real difference.
+
+   Say the consequence plainly rather than filing it as an exclusion: this is
+   not "colour is presentation", it is "colour is unreachable". No case in the
+   corpus produces an ANSI escape, so a green run is not evidence about colour
+   rendering in either direction, and a port that emitted none, or the wrong
+   codes, passes every case. The tty-ness is pinned by the harness process and
+   recorded in `invocation.tty` so the gap is legible in the evidence;
+   `porting/specs/determinism.md` § Colour is the full record, including the
+   four environment names the implementation actually reads.
 2. **Absolute paths inside the fixture copy.** Each run gets its own copy at its
    own path, so a diagnostic naming the store's absolute path differs by
    construction. The comparator rewrites the copy root to a fixed token in both
@@ -142,6 +186,8 @@ that separates them. The observation schema is shaped to make each separable:
 | Invalid changeset rejected *before* lookup vs. rejected after | `exit_status` plus stderr text; `files.deltas` empty in both. |
 | Stale field revision vs. missing task | `exit_status` (1 vs 2) and the structured error; `revisions.resources` present in one. |
 | Failed post-write validation (wrote, rolled back) vs. never wrote | `files.rolled_back` true vs false, with `files.deltas` empty in both. This is exactly why `rolled_back` exists as its own field: the filesystem cannot tell you. It is read from the `--json` error envelope above, never from the diagnostic wording. |
+| Failed WRITE (rolled back) vs. failed post-write VALIDATION (rolled back) | Both are `rolled_back` true with `files.deltas` empty, and `rolled_back` alone cannot separate them — the **diagnostic sentence** does, and the structured error code agrees with it (`unavailable` for the write, `store_invalid` for validation). They are different events with different next steps, so naming the wrong one is a defect even though every other channel matches. |
+| Ref failure vs. refused mutation | `exit_status` 2 vs 1, and the envelope: an exit-2 envelope carries `candidates` and no `rolled_back`; an exit-1 mutation envelope carries `rolled_back` and no `candidates`. |
 | Same-owner worker retry vs. conflicting claim | `exit_status` and the structured error; store bytes differ (one updates, one does not). |
 | Store invalid vs. schema-version migration required | Structured error code and stderr text; both exit 1. |
 | Malformed line skipped (warning) vs. store rejected (error) | `exit_status` 0 vs 1, and which of the two lists the diagnostic lands in. |
@@ -154,9 +200,18 @@ diagnostics quote the offending bytes. That is why `process.stdout` and
 JSON strings: a JSON string cannot round-trip an invalid byte, and a lossy decode
 would silently equalise two implementations that mangle the bytes differently.
 
-Comparison rule: `sha256` is authoritative. `bytes_base64` is for reading.
-`text` is a convenience decode that exists only when `valid_utf8` is true, and is
+Comparison rule: a digest is authoritative, `bytes_base64` is for reading, and
+`text` is a convenience decode that exists only when `valid_utf8` is true and is
 never compared.
+
+*Which* digest depends on whether the capture was truncated. An untruncated
+stream is compared on its decoded bytes after the copy-root rewrite (exclusion 2
+above). A stream past the 256 KiB embed limit has no bytes left to rewrite, so it
+is compared on `sha256_normalized` — the same rewrite applied before hashing, at
+capture time. `sha256` (over the raw bytes) stays recorded and stays comparable
+only when both sides ran at one absolute path: it is the field that made
+truncation and cross-path comparison mutually exclusive, which is why the
+normalized one exists.
 
 ## What is not compared at all
 

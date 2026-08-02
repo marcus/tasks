@@ -476,10 +476,8 @@ module Tasks
       return refusal if refusal
       touched = store.rename_section!(id: id, to: title)
       return MutationResult.new(status: :ok, touched_ids: [touched]) if touched
-      if store.last_rollback
-        return MutationResult.new(status: :store_invalid, errors: [store.last_rollback],
-                                  rolled_back: true)
-      end
+      rollback = rollback_mutation(store)
+      return rollback if rollback
 
       MutationResult.new(status: :not_found)
     end
@@ -492,12 +490,13 @@ module Tasks
       return MutationResult.new(status: :not_found) unless closed
 
       # complete_project! returns 0 both for a genuine no-op (already fully
-      # closed) and for a post-write validation rollback. Only the latter sets
-      # last_rollback, so a rolled-back write maps to the same :store_invalid
-      # failure other mutations produce rather than masquerading as clean.
-      if closed == 0 && store.last_rollback
-        return MutationResult.new(status: :store_invalid, errors: [store.last_rollback],
-                                  rolled_back: true)
+      # closed) and for a rollback. Only the latter sets last_rollback, so a
+      # rolled-back mutation maps to the same failure other mutations produce
+      # rather than masquerading as clean — with the STAGE preserved, so a
+      # failed write is not reported as a validation failure (td-fea097).
+      if closed == 0
+        rollback = rollback_mutation(store)
+        return rollback if rollback
       end
 
       MutationResult.new(status: :ok, summary: { closed: closed })
@@ -515,10 +514,9 @@ module Tasks
         )
       end
       unless moved
-        if store.last_rollback
-          return MutationResult.new(status: :store_invalid, errors: [store.last_rollback],
-                                    rolled_back: true)
-        end
+        rollback = rollback_mutation(store)
+        return rollback if rollback
+
         return MutationResult.new(status: :not_found)
       end
 
@@ -719,7 +717,8 @@ module Tasks
           status: result.status, snapshot: result.snapshot, read_snapshot: result.read_snapshot,
           store_revision: result.store_revision, errors: result.errors,
           field_errors: result.field_errors, form_errors: result.form_errors,
-          touched_ids: result.touched_ids, summary: summary, rolled_back: result.rolled_back?
+          touched_ids: result.touched_ids, summary: summary, rolled_back: result.rolled_back?,
+          rollback_stage: result.rollback_stage
         )
       end
 
@@ -810,6 +809,21 @@ module Tasks
         error[:source] == :archive ? "archive: #{error[:message]}" : error[:message]
       end
       MutationResult.new(status: :unsupported_schema, errors: errors)
+    end
+
+    # The multi-call project commands report failure through a boolean/count, so
+    # the Store's recorded rollback is the only evidence a mutation wrote and
+    # reverted. Fold it into the same MutationResult shape single-transaction
+    # mutations return, keeping the STAGE: a failed write is :unavailable and a
+    # failed post-write Check is :store_invalid. Collapsing both to
+    # :store_invalid is what made a failed write blame validation (td-fea097).
+    def rollback_mutation(store)
+      return nil unless store.last_rollback
+
+      stage = store.last_rollback_stage
+      MutationResult.new(status: stage == :write ? :unavailable : :store_invalid,
+                         errors: [store.last_rollback], rolled_back: true,
+                         rollback_stage: stage || :validation)
     end
 
     def operation_today(fallback, operation_context)

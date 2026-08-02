@@ -309,6 +309,15 @@ module Tasks
     # apart from a genuine stale-line staleness. Cleared at each mutation's entry.
     attr_reader :last_rollback
 
+    # WHICH STAGE produced #last_rollback: `:write` when the atomic replace
+    # itself raised (validation never ran), `:validation` when the bytes landed
+    # and the post-write Check refused them. nil when the last mutation was
+    # clean. `last_rollback` alone cannot answer this — both stages set it — and
+    # a caller that guesses blames validation for a failure it never saw
+    # (td-fea097). Set and cleared only through #record_rollback/#clear_rollback
+    # so the pair can never drift apart.
+    attr_reader :last_rollback_stage
+
     UNDO_LIMIT = 50 # deepest undo history the journal retains
 
     # `journal_dir` defaults to an XDG_STATE_HOME location derived from the live
@@ -335,6 +344,8 @@ module Tasks
       @read_snapshot = nil
       @link_shorthands = links
       @link_systems = link_systems
+      @last_rollback = nil
+      @last_rollback_stage = nil
       @now = now
       @device = UpdateStamp.slug(device || UpdateStamp.device)
       @journal = Journal.new(dir: journal_dir || Journal.dir_for(org), org: org, limit: undo_limit,
@@ -527,7 +538,7 @@ module Tasks
       end
 
       with_lock do
-        @last_rollback = nil
+        clear_rollback
         before = snapshot
         refusal = unsupported_schema_refusal
         return refusal if refusal
@@ -561,9 +572,10 @@ module Tasks
         begin
           write_records(@org, planned[:records])
           if (reason = post_write_failure)
-            @last_rollback = reason
+            record_rollback(reason, stage: :validation)
             restore(before)
-            return MutationResult.new(status: :store_invalid, errors: [reason], rolled_back: true)
+            return MutationResult.new(status: :store_invalid, errors: [reason], rolled_back: true,
+                                      rollback_stage: @last_rollback_stage)
           end
 
           after = snapshot
@@ -579,9 +591,10 @@ module Tasks
             summary: { parent_id: planned[:parent_id], inserted_id: planned[:id] }
           )
         rescue StandardError => e
-          @last_rollback = safe_patch_error(e)
+          record_rollback(safe_patch_error(e), stage: :write)
           restore(before)
-          MutationResult.new(status: :unavailable, errors: [safe_patch_error(e)], rolled_back: true)
+          MutationResult.new(status: :unavailable, errors: [safe_patch_error(e)], rolled_back: true,
+                             rollback_stage: @last_rollback_stage)
         end
       end
     end
@@ -598,7 +611,7 @@ module Tasks
       end
 
       with_lock do
-        @last_rollback = nil
+        clear_rollback
         before = snapshot
         refusal = unsupported_schema_refusal
         return refusal if refusal
@@ -664,11 +677,12 @@ module Tasks
         begin
           write_records(@org, working_records)
           if (reason = post_write_failure)
-            @last_rollback = reason
+            record_rollback(reason, stage: :validation)
             restore(before)
             return MutationResult.new(status: :store_invalid,
                                       snapshot: restored_edit_snapshot(command.id), errors: [reason],
-                                      rolled_back: true)
+                                      rolled_back: true,
+                                      rollback_stage: @last_rollback_stage)
           end
           after = snapshot
           @journal.record(label: label, before: before, after: after)
@@ -684,9 +698,10 @@ module Tasks
             }
           )
         rescue StandardError => e
-          @last_rollback = safe_patch_error(e)
+          record_rollback(safe_patch_error(e), stage: :write)
           restore(before)
-          MutationResult.new(status: :unavailable, errors: [safe_patch_error(e)], rolled_back: true)
+          MutationResult.new(status: :unavailable, errors: [safe_patch_error(e)], rolled_back: true,
+                             rollback_stage: @last_rollback_stage)
         end
       end
     end
@@ -703,7 +718,7 @@ module Tasks
       end
 
       with_lock do
-        @last_rollback = nil
+        clear_rollback
         before = snapshot
         current = nil
         refusal = unsupported_schema_refusal
@@ -795,11 +810,12 @@ module Tasks
         begin
           write_records(@org, working_records)
           if (reason = post_write_failure)
-            @last_rollback = reason
+            record_rollback(reason, stage: :validation)
             restore(before)
             return MutationResult.new(status: :store_invalid,
                                       snapshot: restored_edit_snapshot(command.id),
-                                      errors: [reason], rolled_back: true)
+                                      errors: [reason], rolled_back: true,
+                                      rollback_stage: @last_rollback_stage)
           end
           after = snapshot
           label = "#{command.action} proposal: #{records[ri]["title"]}"
@@ -815,10 +831,11 @@ module Tasks
             summary: { action: command.action, from: "PROPOSED", to: target }
           )
         rescue StandardError => e
-          @last_rollback = safe_patch_error(e)
+          record_rollback(safe_patch_error(e), stage: :write)
           restore(before)
           MutationResult.new(status: :unavailable, snapshot: current,
-                             errors: [safe_patch_error(e)], rolled_back: true)
+                             errors: [safe_patch_error(e)], rolled_back: true,
+                             rollback_stage: @last_rollback_stage)
         end
       end
     end
@@ -940,7 +957,7 @@ module Tasks
       end
 
       with_lock do
-        @last_rollback = nil
+        clear_rollback
         before = snapshot
         refusal = unsupported_schema_refusal
         return refusal if refusal
@@ -991,10 +1008,11 @@ module Tasks
         begin
           write_records(@org, records)
           if (reason = post_write_failure)
-            @last_rollback = reason
+            record_rollback(reason, stage: :validation)
             restore(before)
             return MutationResult.new(status: :store_invalid, errors: [reason],
-                                      rolled_back: true)
+                                      rolled_back: true,
+                                      rollback_stage: @last_rollback_stage)
           end
 
           after = snapshot
@@ -1006,10 +1024,11 @@ module Tasks
             summary: { created_id: project_id, root_id: root_id, created_root: created_root }
           )
         rescue StandardError => e
-          @last_rollback = safe_patch_error(e)
+          record_rollback(safe_patch_error(e), stage: :write)
           restore(before)
           MutationResult.new(status: :unavailable, errors: [safe_patch_error(e)],
-                             rolled_back: true)
+                             rolled_back: true,
+                             rollback_stage: @last_rollback_stage)
         end
       end
     end
@@ -1107,7 +1126,7 @@ module Tasks
       end
 
       with_lock do
-        @last_rollback = nil
+        clear_rollback
         before = snapshot
         current = nil
         repair = false
@@ -1205,11 +1224,12 @@ module Tasks
         begin
           write_records(@org, working_records)
           if (reason = post_write_failure)
-            @last_rollback = reason
+            record_rollback(reason, stage: :validation)
             restore(before)
             return MutationResult.new(status: :store_invalid,
                                       snapshot: restored_edit_snapshot(changeset.id),
-                                      errors: [reason], rolled_back: true)
+                                      errors: [reason], rolled_back: true,
+                                      rollback_stage: @last_rollback_stage)
           end
           after = snapshot
           @journal.record(label: label, before: before, after: after,
@@ -1225,11 +1245,12 @@ module Tasks
             summary: applied[:summary]
           )
         rescue StandardError => e
-          @last_rollback = safe_patch_error(e)
+          record_rollback(safe_patch_error(e), stage: :write)
           restore(before)
           MutationResult.new(status: :unavailable,
                              snapshot: restored_edit_snapshot(changeset.id),
-                             errors: [safe_patch_error(e)], rolled_back: true)
+                             errors: [safe_patch_error(e)], rolled_back: true,
+                             rollback_stage: @last_rollback_stage)
         end
       end
     end
@@ -2634,6 +2655,24 @@ module Tasks
       merged
     end
 
+    # The single writer for the rollback pair. Every mutation entry point calls
+    # #clear_rollback before it starts and #record_rollback on exactly one of
+    # its two rollback arms, so the reason and the stage are always set together
+    # or cleared together.
+    def clear_rollback
+      @last_rollback = nil
+      @last_rollback_stage = nil
+    end
+
+    def record_rollback(reason, stage:)
+      unless MutationResult::ROLLBACK_STAGES.include?(stage)
+        raise ArgumentError, "unknown rollback stage #{stage.inspect}"
+      end
+
+      @last_rollback_stage = stage
+      @last_rollback = reason
+    end
+
     def safe_patch_error(error)
       error.message.to_s.encode(Encoding::UTF_8, invalid: :replace,
                                 undef: :replace, replace: "�")
@@ -2948,7 +2987,7 @@ module Tasks
     # across processes.
     def delegation_mutation!(id, expected_revision:, coalesce_key: nil, allow_repair: false)
       with_lock do
-        @last_rollback = nil
+        clear_rollback
         before = snapshot
         current = nil
         repair = false
@@ -3011,10 +3050,11 @@ module Tasks
         begin
           write_records(@org, working_records)
           if (reason = post_write_failure)
-            @last_rollback = reason
+            record_rollback(reason, stage: :validation)
             restore(before)
             return MutationResult.new(status: :store_invalid, snapshot: restored_edit_snapshot(id),
-                                      errors: [reason], rolled_back: true)
+                                      errors: [reason], rolled_back: true,
+                                      rollback_stage: @last_rollback_stage)
           end
           after = snapshot
           @journal.record(label: planned[:label], before: before, after: after,
@@ -3030,10 +3070,11 @@ module Tasks
             summary: planned[:summary]
           )
         rescue StandardError => e
-          @last_rollback = safe_patch_error(e)
+          record_rollback(safe_patch_error(e), stage: :write)
           restore(before)
           MutationResult.new(status: :unavailable, snapshot: current,
-                             errors: [safe_patch_error(e)], rolled_back: true)
+                             errors: [safe_patch_error(e)], rolled_back: true,
+                             rollback_stage: @last_rollback_stage)
         end
       end
     end
@@ -3661,7 +3702,7 @@ module Tasks
     # can't slip between the steps.
     def with_history(label, coalesce_key: nil)
       with_lock do
-        @last_rollback = nil
+        clear_rollback
         before = snapshot
         result = yield
         if result && result != 0
@@ -3675,7 +3716,7 @@ module Tasks
           # sweep writes the archive too). If it would, record why, roll back —
           # both files are snapshotted — and report failure instead.
           if (reason = post_write_failure)
-            @last_rollback = reason
+            record_rollback(reason, stage: :validation)
             restore(before)
             return result.is_a?(Integer) ? 0 : false
           end

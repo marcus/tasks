@@ -428,7 +428,8 @@ def cmd_capture(args, proposed: false)
                                         field_errors: result.field_errors,
                                         form_errors: result.form_errors,
                                         touched_ids: result.touched_ids, summary: result.summary,
-                                        rolled_back: result.rolled_back?)
+                                        rolled_back: result.rolled_back?,
+                                        rollback_stage: result.rollback_stage)
   end
   # A field refusal (an unreachable schedule, a lead outside the storable range)
   # already says what to fix; the section guess is only right when nothing else
@@ -546,12 +547,20 @@ end
 # its refusal paths too — otherwise --json degrades to "nothing on stdout",
 # which is exactly what a caller cannot tell apart from "no result".
 def json_error!(error, action:, message:, exit_code: 1, **extra)
+  json_error_document(error, action: action, message: message, **extra)
+  warn message
+  exit exit_code
+end
+
+# The envelope on its own, for the callers that print their own stderr. Ref
+# resolution is the one: its diagnostic is several lines (the candidate list),
+# and those bytes are contract, so it emits them itself rather than letting this
+# reformat them. Every --json refusal envelope in the CLI is generated here.
+def json_error_document(error, action:, message:, **extra)
   require "json"
   # `extra` is splatted FIRST so a payload key can never shadow the envelope's
   # own discriminators, whatever a caller passes.
   puts JSON.generate({ **extra, error: error, action: action, message: message })
-  warn message
-  exit exit_code
 end
 
 # Typed refusals mapped to the CLI's error contract. A conflict is the
@@ -861,13 +870,27 @@ def application
   )
 end
 
+# The two sentences a rollback can earn, keyed by the stage that failed. They
+# are separate because they name different events and different next steps: a
+# post-write Check failure is repairable with `check`, while a failed write left
+# nothing to repair. Neither interpolates the underlying exception — its message
+# carries an absolute path, which would make the diagnostic differ per machine
+# (see porting/specs/errors.md, and td-231878 for the determinism bug that is).
+ROLLBACK_HINTS = {
+  validation: "file failed validation after the edit — run `tasks check`",
+  write: "could not write the task file — the previous contents were restored " \
+         "(nothing was changed)",
+}.freeze
+
+def rollback_hint(stage) = ROLLBACK_HINTS.fetch(stage, ROLLBACK_HINTS[:validation])
+
 # Abort a failed mutation. A false return is usually a stale line, but it's also
-# how a post-write validation rollback surfaces — if the store recorded one,
-# append a pointed hint so the user runs `check` instead of chasing a phantom
-# concurrent edit.
+# how a rollback surfaces — if the store recorded one, append a pointed hint
+# naming the stage that actually failed, so the user is not sent to `check` for
+# a file validation never looked at, nor left chasing a phantom concurrent edit.
 def mutation_failed(msg)
   if store.last_rollback
-    abort "#{msg}\nfile failed validation after the edit — run `tasks check`"
+    abort "#{msg}\n#{rollback_hint(store.last_rollback_stage)}"
   else
     abort msg
   end
@@ -907,7 +930,8 @@ def patch_task_by_id(task_id, field:, value:, label:, expected: PATCH_EXPECTED_U
                              errors: result.errors, field_errors: result.field_errors,
                              form_errors: result.form_errors,
                              touched_ids: result.touched_ids, summary: result.summary,
-                             rolled_back: result.rolled_back?)
+                             rolled_back: result.rolled_back?,
+                             rollback_stage: result.rollback_stage)
 end
 
 # Apply an atomic multi-field command from one Store-produced revision. Timed
@@ -927,7 +951,8 @@ def changeset_task_by_id(task_id, changes:, label:, today:, snapshot: nil, conte
                             errors: result.errors, field_errors: result.field_errors,
                             form_errors: result.form_errors,
                             touched_ids: result.touched_ids, summary: result.summary,
-                            rolled_back: result.rolled_back?)
+                            rolled_back: result.rolled_back?,
+                            rollback_stage: result.rollback_stage)
 end
 
 def patch_expected(snapshot, field)
@@ -945,8 +970,11 @@ def mutation_result_failed(result, msg)
 
   # The result carries this distinction because Application mutations run on a
   # short-lived Store that the CLI never sees.
+  # The stage matters as much as the fact: a rolled-back WRITE never reached
+  # validation, so pointing at `tasks check` names a stage that never ran
+  # (td-fea097).
   message = if result.rolled_back?
-              "#{msg}\nfile failed validation after the edit — run `tasks check`"
+              "#{msg}\n#{rollback_hint(result.rollback_stage)}"
             elsif result.respond_to?(:unsupported_schema?) && result.unsupported_schema?
               "#{msg}\n#{result.errors.first || "unsupported schema version"} — this build cannot " \
                 "read this task file (nothing was written)"
@@ -1126,6 +1154,35 @@ def task_resource_json(item, task)
   )
 end
 
+# Refuse a ref that did not resolve to exactly one target: exit 2, the
+# diagnostic on stderr byte for byte as before, and — new in td-d842ed — the
+# same refusal as a `{error, action, message, candidates}` envelope on stdout
+# under --json. Exit 2 exists precisely so an AGENT can refine an ambiguous ref
+# instead of aborting, and the --json caller was the one caller that got nothing
+# and had to parse the prose back. `candidates` is DATA, never the stderr lines
+# reformatted: ids, lines, and enough of each record to choose between them.
+# The exit code is untouched — the 1-vs-2 distinction is the strongest assertion
+# in the error surface (porting/specs/errors.md).
+def ref_failed!(error, message, candidates: [])
+  if json_result_requested?
+    json_error_document(error, action: json_result_action, message: message,
+                        candidates: candidates)
+  end
+  warn message
+  exit 2
+end
+
+# One candidate row. `line` is presentation the human list also shows, and the
+# only handle an id-less legacy record has; `id` is what a caller should send
+# back. Both are stated so neither has to be parsed out of the message.
+def ref_candidate_json(item)
+  { id: item.id, line: item.line, state: item.state, title: item.title }
+end
+
+def project_candidate_json(view)
+  { id: view.id, line: view.line, kind: view.kind, title: view.title }
+end
+
 # Resolve <ref> to exactly one in-scope item (or exit 2). `L<line>` targets an
 # exact headline line. When a ref names a live task outside the requested scope,
 # say so explicitly instead of pretending the task does not exist.
@@ -1150,8 +1207,7 @@ def resolve_ref(ref, include_done: false, proposed_only: false, include_proposed
       ref_outside_scope!(ref, outside, proposed_only: proposed_only,
                          include_done: include_done, include_proposed: include_proposed) if outside
       qualifier = proposed_only ? "proposed " : (include_done ? "" : "open ")
-      warn "no #{qualifier}task with a headline on line #{m[1]}"
-      exit 2
+      ref_failed! "not_found", "no #{qualifier}task with a headline on line #{m[1]}"
     end
     return item
   end
@@ -1177,16 +1233,18 @@ def resolve_ref(ref, include_done: false, proposed_only: false, include_proposed
     elsif outside_matches.size > 1
       scope = ref_scope_description(proposed_only: proposed_only, include_done: include_done,
                                     include_proposed: include_proposed)
-      warn "ref outside scope: #{ref} — #{outside_matches.size} title matches, none is #{scope}:"
-      outside_matches.each { |i| warn "  L#{i.line}: #{item_headline(i)}" }
-      exit 2
+      header = "ref outside scope: #{ref} — #{outside_matches.size} title matches, " \
+               "none is #{scope}:"
+      ref_failed! "out_of_scope",
+                  [header, *outside_matches.map { |i| "  L#{i.line}: #{item_headline(i)}" }].join("\n"),
+                  candidates: outside_matches.map { |i| ref_candidate_json(i) }
     end
-    warn "no match: #{ref}"
-    exit 2
+    ref_failed! "not_found", "no match: #{ref}"
   elsif matches.size > 1
-    warn "ambiguous: #{ref} — matches #{matches.size} tasks:"
-    matches.each { |i| warn "  L#{i.line}: #{item_headline(i)}" }
-    exit 2
+    ref_failed! "ambiguous",
+                ["ambiguous: #{ref} — matches #{matches.size} tasks:",
+                 *matches.map { |i| "  L#{i.line}: #{item_headline(i)}" }].join("\n"),
+                candidates: matches.map { |i| ref_candidate_json(i) }
   end
   matches.first
 end
@@ -1194,8 +1252,9 @@ end
 def ref_outside_scope!(ref, item, proposed_only:, include_done:, include_proposed:)
   scope = ref_scope_description(proposed_only: proposed_only, include_done: include_done,
                                 include_proposed: include_proposed)
-  warn "ref outside scope: #{ref} — task is #{item.state}; expected #{scope}"
-  exit 2
+  ref_failed! "out_of_scope",
+              "ref outside scope: #{ref} — task is #{item.state}; expected #{scope}",
+              candidates: [ref_candidate_json(item)]
 end
 
 def ref_scope_description(proposed_only:, include_done:, include_proposed:)
@@ -3060,10 +3119,7 @@ def resolve_project(ref, today: today_local)
 
   if (m = ref.match(/\AL(\d+)\z/i))
     view = views.find { |v| v.line == m[1].to_i }
-    unless view
-      warn "no project section on line #{m[1]}"
-      exit 2
-    end
+    ref_failed! "not_found", "no project section on line #{m[1]}" unless view
     return view
   end
 
@@ -3074,12 +3130,12 @@ def resolve_project(ref, today: today_local)
   q = ref.dup.force_encoding("UTF-8").strip.downcase
   matches = views.select { |v| v.title.to_s.downcase.include?(q) }
   if matches.empty?
-    warn "no match: #{ref}"
-    exit 2
+    ref_failed! "not_found", "no match: #{ref}"
   elsif matches.size > 1
-    warn "ambiguous: #{ref} — matches #{matches.size} projects:"
-    matches.each { |v| warn "  L#{v.line}: #{v.title}" }
-    exit 2
+    ref_failed! "ambiguous",
+                ["ambiguous: #{ref} — matches #{matches.size} projects:",
+                 *matches.map { |v| "  L#{v.line}: #{v.title}" }].join("\n"),
+                candidates: matches.map { |v| project_candidate_json(v) }
   end
   matches.first
 end

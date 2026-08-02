@@ -55,12 +55,20 @@ module Tasks
       unavailable: "task list unavailable",
     }.freeze
 
+    # Which stage of a mutation failed and forced the rollback. `:write` means
+    # the atomic replace itself raised — validation never ran. `:validation`
+    # means the bytes landed and the post-write Check refused them. nil means no
+    # rollback happened. The two are indistinguishable in `rolled_back` alone,
+    # and naming the wrong one misattributes the failure in the only diagnostic
+    # the user gets (td-fea097).
+    ROLLBACK_STAGES = %i[write validation].freeze
+
     attr_reader :status, :snapshot, :read_snapshot, :errors, :field_errors,
-                :form_errors, :touched_ids, :summary, :store_revision
+                :form_errors, :touched_ids, :summary, :store_revision, :rollback_stage
 
     def initialize(status:, snapshot: nil, read_snapshot: nil, errors: [], field_errors: {},
                    form_errors: nil, touched_ids: [], summary: nil, store_revision: nil,
-                   rolled_back: false)
+                   rolled_back: false, rollback_stage: nil)
       @status = self.class.normalize_status(status)
 
       # Distinguishes a failed mutation that wrote and restored bytes from a
@@ -68,6 +76,7 @@ module Tasks
       # the short-lived Store instance after it returns, so this fact belongs on
       # the immutable result.
       @rolled_back = !!rolled_back
+      @rollback_stage = self.class.normalize_rollback_stage(rollback_stage)
       @snapshot = snapshot
       @read_snapshot = read_snapshot
       @errors = immutable(Array(errors))
@@ -94,6 +103,14 @@ module Tasks
     def unavailable? = status == :unavailable
     def rolled_back? = @rolled_back
 
+    # True when this mutation's WRITE failed and the previous bytes were put
+    # back. Validation never ran, so a diagnostic must not blame it.
+    def rolled_back_write? = @rolled_back && @rollback_stage == :write
+
+    # True when the write landed and the post-write Check refused the result.
+    # `check` is the actionable next step only in this case.
+    def rolled_back_validation? = @rolled_back && @rollback_stage == :validation
+
     # Adapter-only interpretations. They deliberately do not alter #status:
     # commands can reason about one vocabulary while each adapter preserves its
     # established external behavior during the staged migration.
@@ -106,6 +123,15 @@ module Tasks
       return normalized if STATUSES.include?(normalized)
 
       raise ArgumentError, "unknown mutation status #{status.inspect}"
+    end
+
+    def self.normalize_rollback_stage(stage)
+      return nil if stage.nil?
+
+      normalized = stage.to_sym
+      return normalized if ROLLBACK_STAGES.include?(normalized)
+
+      raise ArgumentError, "unknown rollback stage #{stage.inspect}"
     end
 
     private
