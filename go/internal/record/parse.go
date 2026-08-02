@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -67,6 +68,12 @@ func Parse(input []byte) Result {
 		line = bytes.TrimSuffix(line, []byte{'\r'})
 		if len(rubyStrip(line)) == 0 {
 			result.Errors = append(result.Errors, ParseError{Line: lineNo, Message: "blank line"})
+			continue
+		}
+		// encoding/json replaces an unpaired UTF-16 surrogate with U+FFFD,
+		// while Ruby rejects the source escape before materializing a string.
+		if escape, column := unpairedSurrogate(line); escape != "" {
+			result.Errors = append(result.Errors, ParseError{Line: lineNo, Message: fmt.Sprintf("invalid JSON: incomplete surrogate pair at '%s' at line 1 column %d", escape, column)})
 			continue
 		}
 
@@ -253,6 +260,9 @@ func malformedTokenDiagnostic(line []byte) string {
 	if diagnostic := malformedNumberDiagnostic(line); diagnostic != "" {
 		return diagnostic
 	}
+	if escape, column := unpairedSurrogate(line); escape != "" {
+		return fmt.Sprintf("incomplete surrogate pair at '%s' at line 1 column %d", escape, column)
+	}
 	if start := bytes.Index(line, []byte(`\u`)); start >= 0 {
 		escape := line[start:]
 		if len(escape) >= 6 && !hex4(escape[2:6]) {
@@ -268,8 +278,8 @@ func malformedTokenDiagnostic(line []byte) string {
 	if index := bytes.Index(line, []byte(`,]}`)); index >= 0 {
 		return fmt.Sprintf("unexpected character: ']}' at line 1 column %d", index+2)
 	}
-	if index := bytes.Index(line, []byte(`true false}`)); index >= 0 {
-		return fmt.Sprintf("expected ',' or '}' after object value, got: 'false}' at line 1 column %d", index+6)
+	if diagnostic := adjacentLiteralDiagnostic(line); diagnostic != "" {
+		return diagnostic
 	}
 	if index := bytes.Index(line, []byte(`tru}`)); index >= 0 {
 		return fmt.Sprintf("unexpected token 'tru}' at line 1 column %d", index+1)
@@ -284,6 +294,49 @@ func malformedTokenDiagnostic(line []byte) string {
 		return fmt.Sprintf("unexpected token at end of stream '%s' at line 1 column %d", line[index+1:], index+2)
 	}
 	return ""
+}
+
+// adjacentLiteralDiagnostic identifies two JSON literals written together. A
+// decoder rejects this in either container, but Ruby names the containing
+// separator and the first byte of the second literal.
+func adjacentLiteralDiagnostic(line []byte) string {
+	for _, first := range [][]byte{[]byte("true"), []byte("false"), []byte("null")} {
+		for _, second := range [][]byte{[]byte("true"), []byte("false"), []byte("null")} {
+			needle := append(append([]byte{}, first...), second...)
+			index := bytes.Index(line, needle)
+			if index < 0 {
+				continue
+			}
+			secondIndex := index + len(first)
+			if containerAt(line, secondIndex) == '[' {
+				return fmt.Sprintf("expected ',' or ']' after array value at line 1 column %d", secondIndex+1)
+			}
+			if containerAt(line, secondIndex) == '{' {
+				return fmt.Sprintf("expected ',' or '}' after object value, got: '%s' at line 1 column %d", tokenThroughClose(line[secondIndex:]), secondIndex+1)
+			}
+		}
+	}
+	return ""
+}
+
+func unpairedSurrogate(line []byte) (string, int) {
+	for start := 0; start+6 <= len(line); start++ {
+		if !bytes.Equal(line[start:start+2], []byte(`\u`)) || !hex4(line[start+2:start+6]) {
+			continue
+		}
+		code, err := strconv.ParseUint(string(line[start+2:start+6]), 16, 16)
+		if err != nil || code < 0xd800 || code > 0xdbff {
+			continue
+		}
+		if start+12 > len(line) || !bytes.Equal(line[start+6:start+8], []byte(`\u`)) || !hex4(line[start+8:start+12]) {
+			return string(line[start:]), start + 1
+		}
+		low, err := strconv.ParseUint(string(line[start+8:start+12]), 16, 16)
+		if err != nil || low < 0xdc00 || low > 0xdfff {
+			return string(line[start:]), start + 1
+		}
+	}
+	return "", 0
 }
 
 func hex4(value []byte) bool {
@@ -460,6 +513,14 @@ func missingColonDiagnostic(line []byte) string {
 }
 
 func malformedNumberDiagnostic(line []byte) string {
+	for _, malformed := range [][]byte{[]byte("-}"), []byte("1e+}")} {
+		if index := bytes.Index(line, malformed); index >= 0 {
+			return fmt.Sprintf("invalid number: '%s' at line 1 column %d", line[index:index+len(malformed)], index+1)
+		}
+	}
+	if index := bytes.Index(line, []byte(".1}")); index >= 0 {
+		return fmt.Sprintf("unexpected character: '%s' at line 1 column %d", line[index:], index+1)
+	}
 	for index := 0; index+1 < len(line); index++ {
 		if line[index] != '.' || line[index+1] != '}' {
 			continue

@@ -156,6 +156,14 @@ func TestParseUsesRubyMalformedJSONDiagnostics(t *testing.T) {
 		{name: "adjacent value separator", input: `{"a":"x"1}`, want: "invalid JSON: expected ',' or '}' after object value, got: '1}' at line 1 column 9"},
 		{name: "number trailing dot", input: `{"a": 1.}`, want: "invalid JSON: invalid number: '1.}' at line 1 column 7"},
 		{name: "trailing malformed object", input: `{"a":1} {bad}`, want: "invalid JSON: unexpected token at end of stream '{bad}' at line 1 column 9"},
+		{name: "tab-separated missing colon", input: "{\"a\"\t1}", want: "invalid JSON: expected ':' after object key at line 1 column 6"},
+		{name: "adjacent object literals", input: `{"a":truefalse}`, want: "invalid JSON: expected ',' or '}' after object value, got: 'false}' at line 1 column 10"},
+		{name: "adjacent array literals", input: `{"a":[truefalse]}`, want: "invalid JSON: expected ',' or ']' after array value at line 1 column 11"},
+		{name: "bare minus", input: `{"a":-}`, want: "invalid JSON: invalid number: '-}' at line 1 column 6"},
+		{name: "incomplete exponent sign", input: `{"a":1e+}`, want: "invalid JSON: invalid number: '1e+}' at line 1 column 6"},
+		{name: "leading decimal point", input: `{"a":.1}`, want: "invalid JSON: unexpected character: '.1}' at line 1 column 6"},
+		{name: "unpaired surrogate", input: `{"a":"\uD800"}`, want: `invalid JSON: incomplete surrogate pair at '\uD800"}' at line 1 column 7`},
+		{name: "tab before trailing JSON", input: "{\"a\":1}\t []", want: "invalid JSON: unexpected token at end of stream '[]' at line 1 column 10"},
 	}
 
 	for _, tc := range cases {
