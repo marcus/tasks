@@ -184,8 +184,9 @@ func bareSymbolName(name string) bool {
 	return identifier(name)
 }
 
-// globalName covers `$foo`, the digit globals `$1`, and the single-character
-// specials such as `$!` and `$;`, all of which Ruby prints bare.
+// globalName covers `$foo`, the digit globals `$1`, the `$-x` command-line
+// globals, and the single-character specials such as `$!` and `$;`, all of
+// which Ruby prints bare.
 func globalName(name string) bool {
 	if name == "" {
 		return false
@@ -193,17 +194,41 @@ func globalName(name string) bool {
 	if identifier(name) {
 		return true
 	}
-	if strings.TrimLeft(name, "0123456789") == "" {
+	if strings.HasPrefix(name, "-") {
+		return dashGlobalName(name[1:])
+	}
+	// `$1`..`$9` and their longer forms are backreference globals; a leading
+	// zero is not one of them. `$0` is bare through specialGlobals below, where
+	// Ruby keeps it, so `$00` and `$0123` quote as Ruby quotes them.
+	if name[0] >= '1' && name[0] <= '9' && strings.TrimLeft(name, "0123456789") == "" {
 		return true
 	}
 	return len([]rune(name)) == 1 && strings.ContainsAny(name, specialGlobals)
 }
 
+// dashGlobalName is Ruby's `$-X` rule: bare iff exactly one character follows
+// the `-`, and that character is an identifier character. Non-ASCII counts as
+// one subject to the same printability predicate a solo bare symbol uses, so
+// `$-é` prints bare and `$-͸` quotes, exactly as `:é` and `:͸` do. `$-` alone
+// and `$-ab` are quoted: the length is strict.
+func dashGlobalName(suffix string) bool {
+	characters := []rune(suffix)
+	if len(characters) != 1 {
+		return false
+	}
+	character := characters[0]
+	if character > unicode.MaxASCII {
+		return symbolPrintable(character)
+	}
+	return character == '_' || unicode.IsLetter(character) || unicode.IsDigit(character)
+}
+
 // specialGlobals is Ruby's fixed one-character global vocabulary, the whole of
 // it. It is a set, not "any single character": `$;` is a global and `$%` is
-// not, so `:$%` quotes. `$` alone is not in the set either — globalName's
-// empty-name guard rejects that before this test.
-const specialGlobals = "!\"$&'*+,./:;<=>?@\\`~"
+// not, so `:$%` quotes. `0` is a member — Ruby's own bitmap keeps `$0` here
+// rather than with the digit globals, which is why `$00` quotes. `$` alone is
+// not in the set — globalName's empty-name guard rejects that before this test.
+const specialGlobals = "!\"$&'*+,./0:;<=>?@\\`~"
 
 // identifier is Ruby's local-or-constant name shape: a leading letter or
 // underscore, then letters, digits, and underscores. A printable non-ASCII

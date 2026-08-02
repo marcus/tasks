@@ -70,3 +70,43 @@ func TestGlobalNameUsesTheFixedSpecialSet(t *testing.T) {
 		t.Errorf(`InspectSymbol("$") = %s, want :"$"`, got)
 	}
 }
+
+// `$-X` is bare for exactly one identifier character after the dash, non-ASCII
+// admitted on the same printability rule a solo bare symbol uses. Length is
+// strict in both directions: `$-` alone and `$-ab` quote.
+func TestDashGlobalNameTakesExactlyOneIdentifierCharacter(t *testing.T) {
+	bare := []string{
+		"$-w", "$-Z", "$-0", "$-9", "$-_",
+		"$-é", "$-À", "$-あ", "$-\U0001f600", "$-\u0085", "$-\u200b",
+	}
+	for _, name := range bare {
+		if got := InspectSymbol(name); got != ":"+name {
+			t.Errorf("InspectSymbol(%q) = %s, want the bare form", name, got)
+		}
+	}
+	quoted := []string{
+		"$-", "$--", "$-!", "$- ", "$-.", "$-$", "$-@", "$-\x01", "$-\x7f",
+		"$-ww", "$-_x", "$-\u0080", "$-͸",
+	}
+	for _, name := range quoted {
+		if got := InspectSymbol(name); !strings.HasPrefix(got, `:"`) {
+			t.Errorf("InspectSymbol(%q) = %s, want the quoted form", name, got)
+		}
+	}
+}
+
+// A digit global is bare as `$0` — a member of Ruby's punct set, which ends the
+// name after one character — or as digits led by 1-9. A leading zero in a
+// longer name quotes.
+func TestDigitGlobalNameRejectsALeadingZero(t *testing.T) {
+	for _, name := range []string{"$0", "$1", "$9", "$10", "$19", "$90", "$190"} {
+		if got := InspectSymbol(name); got != ":"+name {
+			t.Errorf("InspectSymbol(%q) = %s, want the bare form", name, got)
+		}
+	}
+	for _, name := range []string{"$00", "$01", "$09", "$0123", "$0a", "$1a"} {
+		if got := InspectSymbol(name); !strings.HasPrefix(got, `:"`) {
+			t.Errorf("InspectSymbol(%q) = %s, want the quoted form", name, got)
+		}
+	}
+}

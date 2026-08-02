@@ -174,3 +174,11 @@
 {"case_id":"sym-quoted-operators","operation":"new","kwargs":{"~@":1,"!@":1,"&&":1,"||":1,"=":1}}
 {"case_id":"sym-ivars","operation":"new","kwargs":{"@a":1,"@@a":1,"@1":1,"@@1":1,"@":1,"@@":1}}
 {"case_id":"sym-trailing","operation":"new","kwargs":{"a?":1,"a!":1,"a=":1,"a?=":1,"a!!":1,"a==":1}}
+# Global-variable symbol names, the two rules of the 2026-08-02
+# global-names source-fidelity review: $-X is bare only for exactly one
+# identifier character after the dash, and a digit global is bare only as $0
+# or with a nonzero leading digit. Swept exhaustively by
+# review-2026-08-02-symbol-inspect/generate-symbol-sweep.rb; these are the
+# reproductions kept in the standing corpus.
+{"case_id":"sym-dash-globals","operation":"new","kwargs":{"$-w":1,"$-1":1,"$-_":1,"$-é":1,"$-À":1,"$-あ":1,"$-😀":1,"$-\u0001":1,"$-":1,"$--":1,"$-":1,"$-ww":1,"$-@":1,"$- ":1,"$-_x":1}}
+{"case_id":"sym-digit-globals","operation":"new","kwargs":{"$0":1,"$00":1,"$01":1,"$09":1,"$0123":1,"$1":1,"$9":1,"$10":1,"$19":1,"$123":1,"$0a":1,"$1a":1}}
