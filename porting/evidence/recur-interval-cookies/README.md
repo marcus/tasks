@@ -38,3 +38,29 @@ is available. Calendar schedules remain explicitly out of scope. The next
 medium-tier context must perform source-fidelity and Go-idiom reviews, then
 either wire a legal differential surface or record the resulting harness
 blocker before this slice can move to review.
+
+## Source-fidelity review (2026-08-02)
+
+**Rejected — repair required before Go-idiom review.** A separate review of
+`go/internal/recur/recur.go` against `lib/tasks/recur.rb` found these exact
+divergences:
+
+1. **Blocking:** `parseFriendlyInterval` converts a friendly count with
+   `strconv.Atoi` (Go lines 151 and 166), and `NextDate` does the same (line
+   102). Ruby's `String#to_i` / `Integer` are arbitrary precision, so a valid
+   positive input such as `999999999999999999999999999999999 days` is accepted,
+   canonicalized, humanized, and projected by Ruby but rejected or fails later
+   in Go. The manifest's prior handoff called this uncertainty out; it is a Go
+   defect, not an intentional difference. Represent counts without a machine
+   `int` limit (and define safely bounded date stepping) or explicitly block
+   the slice through the required Marcus decision; do not silently reject
+   values Ruby accepts.
+2. **Blocking:** Ruby `Recur.humanize` returns `nil` for an empty/whitespace
+   value (`lib/tasks/recur.rb:178-180`), while Go `Humanize` returns `""`
+   (`go/internal/recur/recur.go:75-80`). Preserve the nullable result in the
+   Go interface before the downstream calendar humanizer consumes it.
+
+No source-fidelity approval is granted. This review made no implementation
+edits. After repair, rerun the focused Ruby oracle and Go package tests, then
+request a new source-fidelity review from a different context; the independent
+Go-idiom review and differential-harness decision remain outstanding.
