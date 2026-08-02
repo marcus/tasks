@@ -95,6 +95,18 @@ func TestSnapshotAccessorsPreserveEmptyTagsAsAnArray(t *testing.T) {
 	}
 }
 
+func TestSnapshotCoercesStructuredTagsWithRubyToS(t *testing.T) {
+	parsed := record.Parse([]byte(`{"type":"task","id":"structured","tags":[["x",{"a":1}],{"first":"one","second":[true,null,"x"]}]}`))
+	if !parsed.OK() {
+		t.Fatalf("parse structured tags: %#v", parsed.Errors)
+	}
+
+	items := NewSnapshot(parsed.Records, nil).Items()
+	if got, want := items[0].Tags, []string{`["x", {"a" => 1}]`, `{"first" => "one", "second" => [true, nil, "x"]}`}; !equalStrings(got, want) {
+		t.Fatalf("structured tag coercion = %#v, want %#v", got, want)
+	}
+}
+
 func TestSnapshotReadsDatesAndDoesNotCrossSources(t *testing.T) {
 	live := parseFixture(t, "valid/full-field-matrix/store/tasks.jsonl")
 	archive := parseFixture(t, "valid/archive-pair/store/archive.jsonl")
@@ -120,4 +132,16 @@ func parseFixture(t *testing.T, path string) record.Result {
 		t.Fatalf("parse fixture %s: %#v", path, result.Errors)
 	}
 	return result
+}
+
+func equalStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for index := range got {
+		if got[index] != want[index] {
+			return false
+		}
+	}
+	return true
 }

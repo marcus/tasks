@@ -59,6 +59,19 @@ Dir.mktmpdir("tasks-store-snapshot-conformance-") do |work|
     abort "store-snapshot-items mismatch for missing-live; details in #{work}"
   end
 
-  total = cases.length + 1
+  structured_live = File.join(work, "structured-tags.jsonl")
+  File.write(structured_live, <<~JSONL)
+    {"type":"meta","version":2}
+    {"type":"task","id":"structured","state":"TODO","title":"Structured tags","tags":[["x",{"a":1}],{"first":"one","second":[true,null,"x"]}]}
+  JSONL
+  ruby = run(RUBY_PROBE.to_s, structured_live)
+  go = run(*go_probe, structured_live, chdir: ROOT.join("go").to_s)
+  unless ruby == go
+    File.write(File.join(work, "structured-tags-ruby.json"), JSON.pretty_generate(ruby) + "\n")
+    File.write(File.join(work, "structured-tags-go.json"), JSON.pretty_generate(go) + "\n")
+    abort "store-snapshot-items mismatch for structured-tags; details in #{work}"
+  end
+
+  total = cases.length + 2
   puts "store-snapshot-items direct conformance: #{total}/#{total} cases matched"
 end

@@ -145,13 +145,13 @@ func stringValue(raw json.RawMessage) string {
 }
 
 func stringArray(raw json.RawMessage) []string {
-	values, ok := value(raw).([]any)
-	if !ok {
+	var values []json.RawMessage
+	if err := json.Unmarshal(raw, &values); err != nil {
 		return []string{}
 	}
 	strings := make([]string, len(values))
 	for index, entry := range values {
-		strings[index] = rubyString(entry)
+		strings[index] = rubyStringJSON(entry)
 	}
 	return strings
 }
@@ -188,6 +188,121 @@ func rubyString(value any) string {
 		}
 		return string(encoded)
 	}
+}
+
+// rubyStringJSON preserves an object's JSON member order while spelling arrays
+// and hashes as Ruby Object#to_s does. Tags are coercively rendered by
+// tags.map(&:to_s), so JSON encoding (with ':' separators) is observably wrong
+// for a malformed structured tag.
+func rubyStringJSON(raw json.RawMessage) string {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	value, err := decodeRubyValue(decoder)
+	if err != nil {
+		return ""
+	}
+	if scalar, ok := value.(rubyScalar); ok {
+		return rubyString(scalar.value)
+	}
+	return value.string()
+}
+
+type rubyValue interface{ string() string }
+
+type rubyScalar struct{ value any }
+
+func (value rubyScalar) string() string {
+	switch typed := value.value.(type) {
+	case nil:
+		return "nil"
+	case string:
+		encoded, err := json.Marshal(typed)
+		if err != nil {
+			return typed
+		}
+		return string(encoded)
+	default:
+		return rubyString(typed)
+	}
+}
+
+type rubyArray []rubyValue
+
+func (values rubyArray) string() string {
+	parts := make([]string, len(values))
+	for index, value := range values {
+		parts[index] = value.string()
+	}
+	return "[" + joinRuby(parts) + "]"
+}
+
+type rubyObjectField struct {
+	key   string
+	value rubyValue
+}
+
+type rubyObject []rubyObjectField
+
+func (fields rubyObject) string() string {
+	parts := make([]string, len(fields))
+	for index, field := range fields {
+		key, err := json.Marshal(field.key)
+		if err != nil {
+			key = []byte(`""`)
+		}
+		parts[index] = string(key) + " => " + field.value.string()
+	}
+	return "{" + joinRuby(parts) + "}"
+}
+
+func joinRuby(parts []string) string {
+	if len(parts) == 0 {
+		return ""
+	}
+	joined := parts[0]
+	for _, part := range parts[1:] {
+		joined += ", " + part
+	}
+	return joined
+}
+
+func decodeRubyValue(decoder *json.Decoder) (rubyValue, error) {
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	switch token := token.(type) {
+	case json.Delim:
+		switch token {
+		case '[':
+			var values rubyArray
+			for decoder.More() {
+				value, err := decodeRubyValue(decoder)
+				if err != nil {
+					return nil, err
+				}
+				values = append(values, value)
+			}
+			_, err := decoder.Token()
+			return values, err
+		case '{':
+			var fields rubyObject
+			for decoder.More() {
+				key, err := decoder.Token()
+				if err != nil {
+					return nil, err
+				}
+				value, err := decodeRubyValue(decoder)
+				if err != nil {
+					return nil, err
+				}
+				fields = append(fields, rubyObjectField{key: key.(string), value: value})
+			}
+			_, err := decoder.Token()
+			return fields, err
+		}
+	}
+	return rubyScalar{value: token}, nil
 }
 
 func copyItems(items []Item) []Item {

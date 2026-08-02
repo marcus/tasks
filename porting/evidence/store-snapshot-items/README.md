@@ -102,7 +102,7 @@ archive source, so later rendering semantics cannot mask a read-model defect.
 
 ```sh
 porting/evidence/store-snapshot-items/conformance
-# store-snapshot-items direct conformance: 6/6 cases matched
+# store-snapshot-items direct conformance: 7/7 cases matched
 ```
 
 This is differential evidence for Item field coercion and source separation.
@@ -123,7 +123,17 @@ Ruby oracle and Go verification for this repair:
 ruby -Ilib -rtmpdir -e 'require "tasks/store"; Dir.mktmpdir { |d| s = Tasks::Store.new(org: File.join(d, "missing.jsonl"), archive: File.join(d, "archive.jsonl")); abort unless s.read_snapshot.items.empty? }'
 (cd go && go test ./internal/store -run TestCaptureTreatsMissingLiveAsAnEmptyOrdinarySnapshot)
 porting/evidence/store-snapshot-items/conformance
-# store-snapshot-items direct conformance: 6/6 cases matched
+# store-snapshot-items direct conformance: 7/7 cases matched
 ```
 
 Next: obtain separate independent source-fidelity and Go-idiom reviews.
+
+## Source-fidelity repair: structured tag coercion
+
+Ruby builds tags with `tags.map(&:to_s)`. A JSON array or object is therefore
+rendered with Ruby's array/hash spelling (including `=>` and source member
+order), not JSON. `stringArray` now retains each tag's raw JSON long enough to
+produce that spelling, and the direct conformance command includes a generated
+structured-tags store that compares the production Ruby `build_item` result to
+the Go projection. This keeps malformed tags readable without letting Go's
+JSON encoder redefine the contract.
