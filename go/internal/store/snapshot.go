@@ -205,7 +205,9 @@ func copyItem(item Item) Item {
 	item.Recur = copyJSONValue(item.Recur)
 	item.Lead = copyJSONValue(item.Lead)
 	item.LeadSkip = copyJSONValue(item.LeadSkip)
-	item.Tags = append([]string(nil), item.Tags...)
+	tags := item.Tags
+	item.Tags = make([]string, len(tags))
+	copy(item.Tags, tags)
 	if item.ID != nil {
 		id := *item.ID
 		item.ID = &id

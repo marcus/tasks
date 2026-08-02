@@ -1,0 +1,48 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Compare the direct Store Item projection until the query and CLI slices make
+# the full language-neutral runner applicable to this read-model boundary.
+
+require "json"
+require "open3"
+require "pathname"
+require "tmpdir"
+
+ROOT = Pathname.new(__dir__).join("../../..").realpath
+CASES = ROOT.join("porting/runners/cases/store-snapshot-items.jsonl")
+RUBY_PROBE = ROOT.join("porting/runners/ruby/store-snapshot-probe")
+
+def run(*command, **options)
+  stdout, stderr, status = Open3.capture3(*command, **options)
+  abort "failed: #{command.join(" ")}\n#{stderr}" unless status.success?
+
+  JSON.parse(stdout)
+end
+
+go_probe = ARGV.empty? ? ["go", "run", "./cmd/store-snapshot-probe"] : ARGV
+Dir.mktmpdir("tasks-store-snapshot-conformance-") do |work|
+  cases = CASES.readlines(chomp: true).filter_map do |line|
+    stripped = line.strip
+    next if stripped.empty? || stripped.start_with?("#")
+
+    JSON.parse(stripped)
+  end
+
+  cases.each do |kase|
+    fixture = ROOT.join("porting/fixtures", kase.fetch("fixture"), "store")
+    live = fixture.join("tasks.jsonl").to_s
+    archive = fixture.join("archive.jsonl")
+    arguments = [live]
+    arguments << archive.to_s if archive.exist?
+    ruby = run(RUBY_PROBE.to_s, *arguments)
+    go = run(*go_probe, *arguments, chdir: ROOT.join("go").to_s)
+    next if ruby == go
+
+    File.write(File.join(work, "#{kase.fetch("case_id")}-ruby.json"), JSON.pretty_generate(ruby) + "\n")
+    File.write(File.join(work, "#{kase.fetch("case_id")}-go.json"), JSON.pretty_generate(go) + "\n")
+    abort "store-snapshot-items mismatch for #{kase.fetch("case_id")}; details in #{work}"
+  end
+
+  puts "store-snapshot-items direct conformance: #{cases.length}/#{cases.length} cases matched"
+end

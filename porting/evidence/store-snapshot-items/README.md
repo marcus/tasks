@@ -91,6 +91,22 @@ Verified on this branch:
 (cd go && go test ./... && go test -race ./... && go vet ./...)
 ```
 
-Next: add the Go observation probe and differential comparison against the
-captured Ruby observations, then obtain separate independent source-fidelity
-and Go-idiom reviews.
+## Direct differential conformance
+
+The full runner compares CLI observations, but its `list` projection depends
+on later query and CLI slices. Until those surfaces exist, this slice compares
+the Store-owned Item projection directly. The Ruby probe uses Store's actual
+`build_item` coercion seam; the Go probe uses `store.Capture` and its immutable
+snapshot accessors. Both emit only the fields owned here, for each live and
+archive source, so later rendering semantics cannot mask a read-model defect.
+
+```sh
+porting/evidence/store-snapshot-items/conformance
+# store-snapshot-items direct conformance: 5/5 cases matched
+```
+
+This is differential evidence for Item field coercion and source separation.
+Snapshot identity, freezing, and coherent capture remain covered by the Go
+tests above; tree/query behavior remains with later slices.
+
+Next: obtain separate independent source-fidelity and Go-idiom reviews.

@@ -86,6 +86,15 @@ func TestSnapshotAccessorsDoNotPermitMutation(t *testing.T) {
 	}
 }
 
+func TestSnapshotAccessorsPreserveEmptyTagsAsAnArray(t *testing.T) {
+	live := parseFixture(t, "valid/full-field-matrix/store/tasks.jsonl")
+	snapshot := NewSnapshot(live.Records, nil)
+
+	if tags := snapshot.Items()[0].Tags; tags == nil || len(tags) != 0 {
+		t.Fatalf("empty tags = %#v, want a non-nil empty array", tags)
+	}
+}
+
 func TestSnapshotReadsDatesAndDoesNotCrossSources(t *testing.T) {
 	live := parseFixture(t, "valid/full-field-matrix/store/tasks.jsonl")
 	archive := parseFixture(t, "valid/archive-pair/store/archive.jsonl")

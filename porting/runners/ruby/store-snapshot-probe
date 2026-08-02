@@ -1,0 +1,49 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Direct, read-only oracle for the Store Item projection. This deliberately
+# stops before tree/query rendering, which belongs to later campaign-3 slices.
+
+require "json"
+
+ROOT = File.expand_path("../../..", __dir__)
+require_relative "#{ROOT}/lib/tasks/format"
+require_relative "#{ROOT}/lib/tasks/store"
+
+live_path = ARGV.fetch(0) { abort "usage: store-snapshot-probe LIVE [ARCHIVE]" }
+archive_path = ARGV[1]
+abort "usage: store-snapshot-probe LIVE [ARCHIVE]" unless (1..2).cover?(ARGV.length)
+
+# `build_item` is the Store's one defensive-coercion seam. Calling it directly
+# avoids creating a lock sidecar next to a corpus fixture while still using the
+# production Item construction behavior.
+store = Tasks::Store.new(org: live_path, archive: archive_path || "")
+
+def project(store, path, source)
+  return [] unless path && File.exist?(path)
+
+  Tasks::Format.parse(File.read(path, encoding: "UTF-8")).records
+               .select { |record| record["type"] == "task" }
+               .map { |record| item_json(store.send(:build_item, record, source)) }
+end
+
+def item_json(item)
+  {
+    "state" => item.state,
+    "priority" => item.priority,
+    "title" => item.title,
+    "tags" => item.tags,
+    "scheduled" => item.scheduled&.iso8601,
+    "deadline" => item.deadline&.iso8601,
+    "recur" => item.recur,
+    "lead" => item.lead,
+    "lead_skip" => item.lead_skip,
+    "id" => item.id,
+    "closed" => item.closed&.iso8601,
+    "line" => item.line,
+    "source" => item.source.to_s,
+  }
+end
+
+puts JSON.generate("live" => project(store, live_path, :live),
+                   "archive" => project(store, archive_path, :archive))
