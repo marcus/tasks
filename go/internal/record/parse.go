@@ -10,11 +10,20 @@ import (
 	"unicode/utf8"
 )
 
-// Record is one parsed JSONL object. Fields retain the JSON representation so
-// later validation and canonical emission can make their own type decisions.
-// Line is physical and is never part of the persisted record schema.
+// Field is one parsed object member. The parser retains source member order so
+// a later canonical emitter can append forward-compatible keys in the same
+// order Ruby's Hash preserves them.
+type Field struct {
+	Key   string
+	Value json.RawMessage
+}
+
+// Record is one parsed JSONL object. Fields retain JSON representations and
+// source order so later validation and canonical emission can make their own
+// type decisions. Line is physical and is never part of the persisted record
+// schema.
 type Record struct {
-	Fields map[string]json.RawMessage
+	Fields []Field
 	Line   int
 }
 
@@ -70,14 +79,55 @@ func Parse(input []byte) Result {
 			result.Errors = append(result.Errors, ParseError{Line: lineNo, Message: "expected a JSON object, got " + rubyClass(value)})
 			continue
 		}
-		var fields map[string]json.RawMessage
-		if err := json.Unmarshal(line, &fields); err != nil {
+		fields, err := parseFields(line)
+		if err != nil {
 			result.Errors = append(result.Errors, ParseError{Line: lineNo, Message: "invalid JSON: " + rubyJSONError(line, err)})
 			continue
 		}
 		result.Records = append(result.Records, Record{Fields: fields, Line: lineNo})
 	}
 	return result
+}
+
+// parseFields decodes an already-validated object without collapsing it into a
+// Go map. A duplicate key has Ruby Hash semantics: its first position remains
+// stable while its final value wins.
+func parseFields(line []byte) ([]Field, error) {
+	decoder := json.NewDecoder(bytes.NewReader(line))
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	if delimiter, ok := token.(json.Delim); !ok || delimiter != '{' {
+		return nil, fmt.Errorf("expected JSON object")
+	}
+
+	fields := make([]Field, 0)
+	positions := make(map[string]int)
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return nil, err
+		}
+		key, ok := token.(string)
+		if !ok {
+			return nil, fmt.Errorf("expected object key")
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return nil, err
+		}
+		if position, exists := positions[key]; exists {
+			fields[position].Value = value
+			continue
+		}
+		positions[key] = len(fields)
+		fields = append(fields, Field{Key: key, Value: value})
+	}
+	if _, err := decoder.Token(); err != nil {
+		return nil, err
+	}
+	return fields, nil
 }
 
 func decode(line []byte) (any, error) {

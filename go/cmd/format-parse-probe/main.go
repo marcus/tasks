@@ -39,8 +39,8 @@ func main() {
 	}
 	for _, parsed := range result.Records {
 		fields := make(map[string]json.RawMessage, len(parsed.Fields)+1)
-		for key, value := range parsed.Fields {
-			fields[key] = value
+		for _, field := range parsed.Fields {
+			fields[field.Key] = field.Value
 		}
 		fields["line"] = json.RawMessage(strconv.Itoa(parsed.Line))
 		out.Records = append(out.Records, fields)

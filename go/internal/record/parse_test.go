@@ -177,6 +177,24 @@ func TestParseRejectsTrailingValidJSONValue(t *testing.T) {
 	}
 }
 
+func TestParsePreservesFieldOrderAndRubyDuplicateKeySemantics(t *testing.T) {
+	result := Parse([]byte(`{"type":"task","future_a":1,"title":"first","future_b":2,"title":"last"}`))
+	if len(result.Errors) != 0 || len(result.Records) != 1 {
+		t.Fatalf("result = %#v, want one valid record", result)
+	}
+	fields := result.Records[0].Fields
+	gotKeys := make([]string, len(fields))
+	for index, field := range fields {
+		gotKeys[index] = field.Key
+	}
+	if want := []string{"type", "future_a", "title", "future_b"}; !reflect.DeepEqual(gotKeys, want) {
+		t.Fatalf("field keys = %v, want %v", gotKeys, want)
+	}
+	if got, want := string(fields[2].Value), `"last"`; got != want {
+		t.Fatalf("duplicate title = %s, want %s", got, want)
+	}
+}
+
 func FuzzParseKeepsPhysicalLineBounds(f *testing.F) {
 	for _, seed := range [][]byte{
 		nil,
