@@ -36,9 +36,14 @@ Its fixture tests assert the Ruby-captured diagnostics for every owned outcome,
 and its generated ID grammar property test covers 500 mixed valid/invalid
 strings. `go test ./...`, `go vet ./...`, and the race-enabled test suite pass.
 
-This is not yet differential conformance: the Go runner and the full `check`
-CLI/report layer belong to later work. In particular, task-field and tree
-diagnostics remain separate slices, so the new package deliberately does not
-claim the complete output of the `wrong-types` fixture. The next tick must add
-a Go conformance path that compares this slice's owned diagnostics to the Ruby
-baseline, then request independent source-fidelity and Go-idiom reviews.
+The direct differential path is `ruby
+porting/evidence/check-meta-and-ids/compare.rb`. It drives
+`go/cmd/check-meta-and-ids-probe` over the same nine fixtures and compares its
+owned metadata/ID entries to the checked-in Ruby CLI observations. It passes
+all nine comparisons. The comparator extracts only this slice's declared
+diagnostics from Ruby's full report: task-field and tree diagnostics in the
+`wrong-types` fixture remain separate slices, rather than becoming an
+unintentional completion claim here.
+
+The remaining medium-tier work is the split independent source-fidelity and
+Go-idiom reviews; independent approval is required before landing.
