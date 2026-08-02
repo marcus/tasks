@@ -82,6 +82,10 @@ needs; do not re-read them front to back each iteration.
    verify it is open and retains the handoff. For a completed slice, run
    `td review <id>` and verify it is in review. Never exit with a slice branch
    checked out or partial handed-off work claimed by the exiting session.
+6. **Land approved work.** If `td reviewable --include-approved` (or your own
+   prior review) shows an approved, closed slice, run `porting/land <slice>`.
+   It merges to main, marks the manifest, deletes the branch, or refuses and
+   records why — never touch `port/*` or main by hand for this.
 
 ## The slice loop, scaled by risk
 
@@ -105,7 +109,9 @@ review or a new executable test, not a vote.
 Reviews happen on a **later iteration by a different agent** claiming the
 in-review issue — never a subagent of the writer, which inherits the writer's
 framing. Approve from the reviewing session: `td approve <id> --reason "..."`.
-Writers self-approve only low-tier slices.
+Writers self-approve only low-tier slices. Approval is the trigger for
+`porting/land` (iteration step 6): a closed issue with a recorded approval
+and an unlanded `port/<slice>` branch is landable by anyone's next tick.
 
 ## Model policy
 

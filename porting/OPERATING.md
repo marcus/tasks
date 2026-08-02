@@ -112,6 +112,20 @@ line of `porting/limit-patterns.<harness>` to fix if it was wrong.
 - Progress of record is the manifest + evidence, not vibes:
   `jq -r '.status' porting/manifest.jsonl | sort | uniq -c`.
 
+## Landing
+
+An approved, closed slice lands on its own: any tick's step 6 runs
+`porting/land <slice>`, which merges to main (no-ff), runs the test suite,
+marks the manifest `ported`, and deletes `port/<slice>` — or refuses and
+leaves main untouched, logging why on the td issue (`td log <id>`). Both
+harnesses serialize through a lock in `.git/porting-land.lock`; a dead
+holder's lock is reclaimed automatically. Nothing to run by hand; watch for
+it in `td log` on a slice's issue, and in `git branch --list 'port/*'`
+shrinking as `porting/manifest.jsonl` statuses reach `ported`.
+`porting/test-land.sh` proves the mechanism against scratch repos. To pause
+just landing without stopping the fleet, there is no separate switch —
+`touch porting/STOP` stops everything at the next tick boundary.
+
 **Healthy:** ticks run minutes not seconds, end in a td handoff or review,
 the in-review queue drains, manifest statuses advance, `port/*` branches
 merge and disappear.
@@ -134,6 +148,8 @@ exited cleanly — whether the tick *did* anything is in td and the manifest.
 | `LIMIT parsed reset … exceeds LIMIT_MAX_WAIT; clamping` | A vendor typo or a bad match produced an absurd reset time | Nothing urgent — the clamp is the safety net. Read the `reason` field of `limit-<harness>.json` to see what was matched, and narrow the pattern if it was wrong |
 | `LIMIT` lines but no limit is actually in force | A detection pattern is too broad | Read `stage=` on the LIMIT line first. `stage=structured` means the harness really did report an error, so the pattern matched a genuine failure that isn't a limit. `stage=prose` means the harness emitted no JSONL — check the transcript is really JSONL. Either way, narrow it in `porting/limit-patterns.<harness>` (that file replaces the built-in list) and rerun `porting/test-loop-limits.sh` |
 | `FAILED to rescue dirty worktree` | The salvage commit could not be made | The tick's uncommitted work was discarded so the next tick starts clean — that is deliberate, and the line is your only notice. Read the transcript for what was in flight. `--no-verify` and an explicit commit identity mean a hook or unset `user.email` can no longer cause this, so treat it as a real repo problem |
+| `porting/land` `REFUSED` in `td log` on a slice | A precondition failed: not approved, branch missing, real conflict, or failing tests | The log line names the exact check. Main is guaranteed untouched — read the tail, fix the cause (re-review, rebase the slice, fix the break), and the next tick's step 6 retries on its own |
+| `port/*` branches accumulate despite closed, approved issues | `porting/land` isn't being reached, or the merge genuinely conflicts every time | Check a recent transcript for step 6; if it never runs, fix `PORTING.md`'s step 6 or the harness's context budget. If it runs and refuses, the branch is stale against main — the next tick's translator should rebase or a human should look |
 
 ## Routine maintenance
 

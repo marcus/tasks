@@ -1,0 +1,46 @@
+{
+  "provenance_version": 1,
+  "captured_at": "2026-08-02T05:24:50Z",
+  "oracle": "ruby",
+  "repo": {
+    "commit": "cd5c911041426a1b8b9985d2e850ec1ca6d08b7a",
+    "worktree_dirty": true,
+    "dirty_paths": [
+      "porting/evidence/format-parse/",
+      "porting/runners/cases/format-parse.jsonl"
+    ],
+    "implementation_paths_dirty": [],
+    "implementation_clean": true
+  },
+  "inputs": {
+    "case_list": "porting/runners/cases/format-parse.jsonl",
+    "case_list_sha256": "b70c3dd87514b1c3ec289c347f4bed43a0b24372f3ea7c1e1f578760fcd0f6ca",
+    "case_count": 11,
+    "fixture_corpus": "porting/fixtures",
+    "fixture_corpus_sha256": "ebd308f9900fb6c7daf6a4900c7f337990593cf9b994aa1905b2595bb5789e2f",
+    "runner": "porting/runners/ruby/run",
+    "runner_sha256": "0d095d363e195e55775b3bd0e48a620532d0b749318201fa2e810e4d7dcaa835",
+    "probe_sha256": "6a6aeb13a22aacf95ce22f06bcbe8cffbfab7040a5300810673ec15e55830bc4",
+    "schema_sha256": "f0633d1e9ec4d300acf37d38348415660229e9d4ea7368b39e297f1a51b4e80b"
+  },
+  "invocation": {
+    "command": [
+      "porting/runners/ruby/run",
+      "--out",
+      "porting/evidence/format-parse/ruby",
+      "--work",
+      "/tmp/tasks-format-parse",
+      "--pin-identity",
+      "--quiet",
+      "porting/runners/cases/format-parse.jsonl"
+    ],
+    "work_root": "/tmp/tasks-format-parse",
+    "pin_identity": true
+  },
+  "host": {
+    "ruby": "ruby 4.0.6 (2026-07-14 revision 03b6d3f889) +PRISM [arm64-darwin23]",
+    "ruby_path": "/Users/marcus/.local/share/mise/installs/ruby/4.0.6/bin/ruby",
+    "platform": "arm64-darwin23",
+    "uname": "Darwin 25.5.0 arm64"
+  }
+}

@@ -40,3 +40,4 @@ vendor/bundle/
 # committed.
 /porting/logs/
 /porting/STOP
+/porting/.manifest-merge.log

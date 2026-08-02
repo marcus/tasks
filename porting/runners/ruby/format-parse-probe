@@ -1,0 +1,46 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Direct, read-only oracle for the format-parse slice. This is deliberately
+# narrower than the CLI runner: it exposes exactly the manifest's observable
+# parser result while `tasks-go check` and the full Go runner are still owned by
+# later validation and CLI slices.
+
+require "json"
+
+ROOT = File.expand_path("../../..", __dir__)
+require_relative "#{ROOT}/lib/tasks/format"
+
+path = ARGV.fetch(0) { abort "usage: format-parse-probe PATH" }
+abort "usage: format-parse-probe PATH" unless ARGV.one?
+
+raw = File.binread(path).force_encoding(Encoding::UTF_8)
+result = if raw.valid_encoding?
+           Tasks::Format.parse(raw)
+         else
+           Tasks::Format::Result.new([], [[0, "file is not valid UTF-8"]])
+         end
+
+def transport(value)
+  case value
+  when Hash
+    value.transform_values { |child| transport(child) }
+  when Array
+    value.map { |child| transport(child) }
+  when Float
+    return value if value.finite?
+
+    { "$tasks_format_probe_type" => "non-finite-float", "value" => value.infinite? == 1 ? "Infinity" : "-Infinity" }
+  when String
+    return value if value.valid_encoding?
+
+    { "$tasks_format_probe_type" => "invalid-utf8-string", "bytes_hex" => value.bytes.map { |byte| "%02x" % byte }.join }
+  else
+    value
+  end
+end
+
+puts JSON.generate(
+  "records" => result.records.map { |record| transport(record) },
+  "errors" => result.errors.map { |line, message| { "line" => line, "message" => message } }
+)
