@@ -22,3 +22,19 @@ No Go code or Go output was used to produce this capture. The next step is a
 cookie parser/projection in `internal/recur`, add the medium-tier property
 coverage, then compile and run differential conformance without changing this
 Ruby baseline.
+
+## Translation handoff (2026-08-02)
+
+The interval-only translation now lives in `go/internal/recur`. It implements
+the positive-count cookie grammar, friendly interval words and bare intervals,
+off words, canonical rendering, fixed/from-completion/catch-up projection, and
+the Ruby `Date#>>` month/year clamp. Its table tests and month-clamp property
+test pass under `go test ./...` and `go vet ./...`.
+
+This is not conformance evidence and does not change the Ruby baseline. No Go
+CLI adapter exists yet to invoke this package against the listed fixtures, so
+the required differential run remains for a later slice/tick once that adapter
+is available. Calendar schedules remain explicitly out of scope. The next
+medium-tier context must perform source-fidelity and Go-idiom reviews, then
+either wire a legal differential surface or record the resulting harness
+blocker before this slice can move to review.
