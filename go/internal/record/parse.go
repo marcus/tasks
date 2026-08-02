@@ -4,6 +4,7 @@ package record
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"unicode/utf8"
@@ -62,7 +63,7 @@ func Parse(input []byte) Result {
 
 		value, err := decode(line)
 		if err != nil {
-			result.Errors = append(result.Errors, ParseError{Line: lineNo, Message: "invalid JSON: " + rubyJSONError(err)})
+			result.Errors = append(result.Errors, ParseError{Line: lineNo, Message: "invalid JSON: " + rubyJSONError(line, err)})
 			continue
 		}
 		if _, ok := value.(map[string]any); !ok {
@@ -71,7 +72,7 @@ func Parse(input []byte) Result {
 		}
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal(line, &fields); err != nil {
-			result.Errors = append(result.Errors, ParseError{Line: lineNo, Message: "invalid JSON: " + rubyJSONError(err)})
+			result.Errors = append(result.Errors, ParseError{Line: lineNo, Message: "invalid JSON: " + rubyJSONError(line, err)})
 			continue
 		}
 		result.Records = append(result.Records, Record{Fields: fields, Line: lineNo})
@@ -116,13 +117,39 @@ func rubyClass(value any) string {
 	}
 }
 
-// rubyJSONError keeps the stable portion of Ruby's parser diagnostics. The
-// exact token/location rendering is completed with the CLI error adapter,
-// where the conformance runner observes it; Go's encoding/json diagnostics are
-// otherwise implementation-specific.
-func rubyJSONError(err error) string {
+// rubyJSONError translates EOF diagnostics emitted by encoding/json into the
+// wording produced by Ruby's JSON parser. Ruby reports a one-based physical
+// column at the end of the JSONL record, so this adapter receives the source
+// line rather than attempting to recover a location from Go's error string.
+func rubyJSONError(line []byte, err error) string {
 	if strings.Contains(err.Error(), "unexpected EOF") {
-		return "unexpected end of input"
+		column := len(line) + 1
+		if hasUnclosedString(line) {
+			return fmt.Sprintf("unexpected end of input, expected closing \" at line 1 column %d", column)
+		}
+		return fmt.Sprintf("expected object key, got: EOF at line 1 column %d", column)
 	}
 	return err.Error()
+}
+
+// hasUnclosedString recognizes JSON string delimiters while respecting escape
+// runs. It is intentionally a lexical helper: encoding/json remains the
+// parser, while this only chooses Ruby's EOF diagnostic clause.
+func hasUnclosedString(line []byte) bool {
+	inString := false
+	escaped := false
+	for _, char := range line {
+		if inString && escaped {
+			escaped = false
+			continue
+		}
+		if inString && char == '\\' {
+			escaped = true
+			continue
+		}
+		if char == '"' {
+			inString = !inString
+		}
+	}
+	return inString
 }

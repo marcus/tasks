@@ -82,6 +82,46 @@ func TestParseFixtureInputsRemainLenient(t *testing.T) {
 	}
 }
 
+func TestParseUsesRubyEOFDiagnostics(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+		want string
+	}{
+		{
+			name: "object key",
+			path: filepath.Join("..", "..", "..", "porting", "fixtures", "malformed", "invalid-json", "store", "tasks.jsonl"),
+			want: "invalid JSON: expected object key, got: EOF at line 1 column 148",
+		},
+		{
+			name: "closing quote",
+			path: filepath.Join("..", "..", "..", "porting", "fixtures", "malformed", "truncated-final-line", "store", "tasks.jsonl"),
+			want: "invalid JSON: unexpected end of input, expected closing \" at line 1 column 65",
+		},
+		{
+			name: "torn quote",
+			path: filepath.Join("..", "..", "..", "porting", "fixtures", "adversarial", "mid-write-torn-file", "store", "tasks.jsonl"),
+			want: "invalid JSON: unexpected end of input, expected closing \" at line 1 column 13",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			input, err := os.ReadFile(tc.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := Parse(input)
+			if len(got.Errors) != 1 {
+				t.Fatalf("errors = %#v, want one", got.Errors)
+			}
+			if got.Errors[0].Message != tc.want {
+				t.Fatalf("error = %q, want %q", got.Errors[0].Message, tc.want)
+			}
+		})
+	}
+}
+
 func FuzzParseKeepsPhysicalLineBounds(f *testing.F) {
 	for _, seed := range [][]byte{
 		nil,
