@@ -4,7 +4,7 @@
   "case_id": "cli-capture-small-gtd",
   "implementation": {
     "name": "ruby",
-    "version": "c50086663542ed3339711f90d36c09142e3fce97-dirty",
+    "version": "e75019a3930f02635925ae16af9401bd0c0f0746-dirty",
     "runtime": "ruby 4.0.6"
   },
   "fixture": {
