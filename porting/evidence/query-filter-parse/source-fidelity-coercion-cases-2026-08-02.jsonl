@@ -1,0 +1,8 @@
+{"case_id":"rev-hash-key-order","operation":"new","kwargs":{"contexts":[{"b":1,"a":2}]}}
+{"case_id":"rev-top-level-hash-order","operation":"new","kwargs":{"tags":{"z":1,"a":2}}}
+{"case_id":"rev-float-exponent","operation":"new","kwargs":{"contexts":[100.0,100.0,0.00001,25000000000.0]}}
+{"case_id":"rev-big-integer","operation":"new","kwargs":{"tags":[12345678901234567890]}}
+{"case_id":"rev-inspect-control","operation":"new","kwargs":{"contexts":[["\u0001"]]}}
+{"case_id":"rev-inspect-c1","operation":"new","kwargs":{"tags":[[""]]}}
+{"case_id":"rev-inspect-del","operation":"new","kwargs":{"text":[[""]]}}
+{"case_id":"rev-inspect-unassigned","operation":"new","kwargs":{"contexts":[["͸"]]}}
