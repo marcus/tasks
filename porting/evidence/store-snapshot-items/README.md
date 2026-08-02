@@ -170,6 +170,53 @@ porting/evidence/store-snapshot-items/conformance
 truncated forms complete from the current date. The full accept/reject set is
 captured in `date-iso8601-oracle-2026-08-02.md` with a 60-case machine-readable
 corpus at `ruby/date-iso8601-grammar.json`, regenerable via
-`porting/runners/ruby/date-iso8601-probe`. `isoDate`'s repair is still open and
-must satisfy that corpus; the today-relative rows are classified there as
-nondeterminism to inject, not to normalize.
+`porting/runners/ruby/date-iso8601-probe`. The today-relative rows are
+classified there as nondeterminism to inject, not to normalize. `isoDate`'s
+repair against that corpus is the next section.
+
+## Source-fidelity repair: the date grammar `to_date` accepts
+
+`isoDate` no longer calls `time.Parse("2006-01-02")`. `internal/store/isodate.go`
+implements `Date.iso8601`: the two date patterns Ruby's date extension compiles
+(`iso8601_ext_datetime` and `iso8601_bas_datetime`, transcribed verbatim, applied
+case-insensitively, with Ruby's `\s` spelled out because it includes a vertical
+tab), Ruby's two-digit year completion (triggered by the matched year *text*
+being shorter than four characters, so `202-08-02` is 2102 and `-08-02` is 1992),
+`complete_frags`' rule that elements more significant than the first supplied one
+come from today while less significant ones default to 1, and validation under
+`Date::ITALY` — Julian before 1582-10-15, Gregorian after, with the ten skipped
+days of October 1582 refused. Ruby's remaining two patterns are time-only and a
+time with no date element always raises, so an input only they would match
+returns no date either way.
+
+**Where today enters.** `NewSnapshot` and `Capture` keep their signatures and
+read the wall clock exactly as Ruby does; `NewSnapshotOn` and `CaptureOn` take
+`today` explicitly. That is the injection seam for probes and tests, chosen over
+a package-level clock variable so nothing hidden decides a read, and over a
+required parameter so the ordinary read shape still matches Ruby's. This was the
+slicing question the prior tick deferred: the public shape grows two functions
+and loses none.
+
+```sh
+(cd go && gofmt -l . && go vet ./... && go test ./... && go test -race ./...)
+porting/evidence/store-snapshot-items/conformance
+# store-snapshot-items direct conformance: 11/11 cases matched
+porting/evidence/store-snapshot-items/date-conformance
+# store-snapshot-items date grammar: 5737/5741 cases matched (4 recorded divergences)
+```
+
+`date-conformance` enumerates the corpus rather than sampling it: every branch of
+both patterns, the component ranges that decide validity, the reform window, the
+datetime prefixes, and the junk that must be refused. Ruby and Go run in one
+invocation under one `today`, which the Go probe takes as an argument, so the
+comparison is reproducible on any day. The Go side goes through the production
+snapshot coercion seam, not a test-only entry point.
+
+**The 4 divergences are recorded, not blessed.** Ruby's `Date` is a Julian Day
+Number rendered in the calendar in effect, so `1500-02-29` is a real date to it;
+Go's `time.Time` is proleptic Gregorian and normalizes that day to `1500-03-01`.
+The port matches Ruby's accept and reject sets everywhere and matches its printed
+date for every other pre-reform date. The disposition — carry a civil `Date` type
+through the read model, or accept the difference — is an intentional-difference
+decision and therefore Marcus's, filed as **td-f2665e** and recorded in the
+manifest entry. `date-conformance` prints these four and fails on anything else.

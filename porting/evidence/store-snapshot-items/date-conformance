@@ -1,0 +1,168 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Differential conformance for `Store#to_date`'s parser. Ruby's Date.iso8601 is
+# the oracle; the Go side goes through the production snapshot coercion seam
+# (`cmd/date-iso8601-probe` builds a task record and reads back its scheduled
+# date), so this compares what a real read does, not a test-only entry point.
+#
+# Both sides run in one invocation under one `today`, which the Go probe takes
+# as an argument. The truncated ISO 8601 forms complete from the current date,
+# so pinning it is the only way this comparison is reproducible; it is injected
+# rather than normalized because the completion is real, user-visible Ruby
+# behavior.
+
+require "date"
+require "json"
+require "open3"
+require "pathname"
+
+ROOT = Pathname.new(__dir__).join("../../..").realpath
+RECORDED = ROOT.join("porting/evidence/store-snapshot-items/ruby/date-iso8601-grammar.json")
+
+# The corpus is enumerated, not sampled: every branch of both ISO 8601 patterns
+# (extended and basic; calendar, ordinal, week, and truncated forms), the
+# component ranges that decide validity, the Julian/Gregorian reform window, and
+# the surrounding-junk cases that must be refused.
+def corpus
+  cases = JSON.parse(RECORDED.read).fetch("cases").map { |kase| kase.fetch("input") }
+  years = ["2026", "26", "08", "68", "69", "99", "0008", "202", "12345", "+2026", "-2026",
+           "-08", "-69", "-12345", "1582", "1500", "1900", "2000", "2024", "0000"]
+  months = %w[00 01 02 08 09 12 13 99]
+  days = %w[00 01 04 05 14 15 28 29 30 31 32 99]
+
+  years.each do |year|
+    months.each do |month|
+      days.each do |day|
+        cases << "#{year}-#{month}-#{day}"
+        cases << "#{year}#{month}#{day}" if year.match?(/\A\d{2}(\d{2})?\z/)
+      end
+      cases << "#{year}-#{month}"
+      cases << "--#{month}"
+    end
+  end
+
+  # Reduced, truncated, and sign-only forms.
+  days.each do |day|
+    cases << "---#{day}"
+    months.each do |month|
+      cases << "--#{month}-#{day}"
+      cases << "--#{month}#{day}"
+    end
+  end
+  years.each { |year| cases << "#{year}-" << "#{year}--01" << "#{year}--" }
+
+  # Ordinal dates, including the year-length boundaries.
+  ordinals = %w[000 001 059 060 100 215 244 245 365 366 367 999]
+  years.each do |year|
+    ordinals.each do |yday|
+      cases << "#{year}-#{yday}"
+      cases << "#{year}#{yday}" if year.match?(/\A[-+]?\d{2}(\d{2})?\z/)
+    end
+  end
+  ordinals.each { |yday| cases << "-#{yday}" }
+
+  # Week dates: week and weekday ranges around the 52/53-week boundary.
+  weeks = %w[00 01 02 31 52 53 54 99]
+  weekdays = %w[0 1 4 7 8]
+  years.each do |year|
+    weeks.each do |week|
+      weekdays.each do |weekday|
+        cases << "#{year}-W#{week}-#{weekday}"
+        cases << "#{year}W#{week}#{weekday}" if year.match?(/\A\d{2}(\d{2})?\z/)
+      end
+      cases << "#{year}-W#{week}"
+    end
+  end
+  weeks.each do |week|
+    weekdays.each do |weekday|
+      cases << "-W#{week}-#{weekday}" << "-W#{week}#{weekday}"
+    end
+  end
+  weekdays.each { |weekday| cases << "-W-#{weekday}" }
+
+  # The whole reform window in both calendars, where Ruby accepts 1500-02-29 and
+  # refuses the ten days October 1582 skipped.
+  (1..31).each { |day| cases << format("1582-10-%02d", day) }
+
+  # Datetime prefixes: the time is parsed and discarded, never validated, but a
+  # malformed one still rejects the whole string.
+  %w[T t].each do |t|
+    cases << "2026-08-02#{t}10:11" << "2026-08-02#{t}10:11:12" << "2026-08-02#{t}10:11:12.5"
+    cases << "2026-08-02#{t}10:11:12,25" << "2026-08-02#{t}10:11:12Z" << "2026-08-02#{t}10:11:12z"
+    cases << "2026-08-02#{t}10:11:12+05:00" << "2026-08-02#{t}10:11:12+0500"
+    cases << "2026-08-02#{t}10:11:12+05" << "2026-08-02#{t}25:61:61" << "2026-08-02#{t}10"
+    cases << "2026-08-02#{t}1011" << "20260802#{t}101112" << "2026-215#{t}10:11"
+    cases << "2026-W31-7#{t}10:11" << "2026-08-02#{t}"
+  end
+
+  # Whitespace, case, and junk.
+  ["2026-08-02", "2026-W31-7", "20260802"].each do |base|
+    cases << " #{base}" << "#{base} " << "\t#{base}\n" << "\v#{base}\v" << " #{base}"
+    cases << base.downcase << base.upcase << "#{base}x" << "x#{base}" << "#{base} #{base}"
+  end
+  cases << "" << " " << "\n" << "x" << "2026/08/02" << "02-08-2026" << "2026.08.02"
+  cases << "-" << "--" << "---" << "----" << "+" << "2026-08-02 10:11:12"
+
+  cases.uniq
+end
+
+cases = corpus
+today = Date.today
+
+ruby_dates = cases.map do |input|
+  Date.iso8601(input)
+rescue ArgumentError, Date::Error
+  nil
+end
+ruby = ruby_dates.map { |date| date&.iso8601 }
+
+request = JSON.generate("today" => today.iso8601, "cases" => cases)
+stdout, stderr, status = Open3.capture3(*(ARGV.empty? ? ["go", "run", "./cmd/date-iso8601-probe"] : ARGV),
+                                        stdin_data: request, chdir: ROOT.join("go").to_s)
+abort "go probe failed:\n#{stderr}" unless status.success?
+go = JSON.parse(stdout).fetch("cases")
+
+abort "case count mismatch: #{cases.length} vs #{go.length}" unless go.length == cases.length
+
+# Recorded, escalated divergence — not a blessed Go result. Ruby's Date is a
+# Julian Day Number rendered in the calendar Date::ITALY has in effect, so a
+# Julian-only leap day (a year divisible by 4 that is not a Gregorian leap year,
+# before the 1582 reform) is a real date to Ruby. Go's time.Time is proleptic
+# Gregorian and normalizes it to March 1st. The port matches Ruby's accept and
+# reject sets everywhere, and matches its printed date for every pre-reform date
+# that also exists in the proleptic Gregorian calendar; only these leap days
+# shift. Deciding the disposition — carry a civil Date type through the read
+# model, or accept the difference — is Marcus's call, tracked in td-f2665e.
+REFORM = Date.new(1582, 10, 15)
+KNOWN_DIVERGENT = lambda do |date|
+  !date.nil? && date < REFORM && date.mon == 2 && date.mday == 29
+end
+
+known = []
+mismatches = cases.each_index.filter_map do |index|
+  next if go[index].fetch("date") == ruby[index]
+
+  row = { "input" => cases[index], "ruby" => ruby[index], "go" => go[index].fetch("date") }
+  if KNOWN_DIVERGENT.call(ruby_dates[index])
+    known << row
+    next
+  end
+
+  row
+end
+
+unless known.empty?
+  puts "known pre-reform Julian leap-day divergences (td-f2665e): #{known.length}"
+  known.each { |row| puts "  #{row.fetch("input")}: ruby #{row.fetch("ruby")} / go #{row.fetch("go")}" }
+end
+
+unless mismatches.empty?
+  puts JSON.pretty_generate("today" => today.iso8601, "mismatches" => mismatches.first(40),
+                            "mismatch_count" => mismatches.length)
+  abort "date grammar mismatch: #{mismatches.length}/#{cases.length} cases"
+end
+
+matched = cases.length - known.length
+puts "store-snapshot-items date grammar: #{matched}/#{cases.length} cases matched " \
+     "(today #{today.iso8601}; #{known.length} recorded divergences)"

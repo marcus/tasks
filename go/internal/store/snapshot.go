@@ -52,10 +52,21 @@ type Snapshot struct {
 
 // NewSnapshot builds one read view from already parsed inputs. It deliberately
 // selects only task records and does no structural validation.
+//
+// Ruby's date coercion completes truncated forms from the current date, so a
+// read genuinely depends on today. NewSnapshot reads the wall clock exactly as
+// Ruby does; NewSnapshotOn is the injection seam for reproducible callers such
+// as conformance probes and tests.
 func NewSnapshot(live, archive []record.Record) Snapshot {
+	return NewSnapshotOn(live, archive, time.Now())
+}
+
+// NewSnapshotOn builds the same read view with today supplied rather than read
+// from the clock.
+func NewSnapshotOn(live, archive []record.Record, today time.Time) Snapshot {
 	snapshot := Snapshot{
-		liveItems:    buildItems(live, Live),
-		archiveItems: buildItems(archive, Archive),
+		liveItems:    buildItems(live, Live, today),
+		archiveItems: buildItems(archive, Archive, today),
 		liveByID:     make(map[string]Item),
 		archiveByID:  make(map[string]Item),
 	}
@@ -91,7 +102,7 @@ func (s Snapshot) ItemByID(source Source, id string) (Item, bool) {
 	return copyItem(item), ok
 }
 
-func buildItems(records []record.Record, source Source) []Item {
+func buildItems(records []record.Record, source Source, today time.Time) []Item {
 	items := make([]Item, 0)
 	for _, rec := range records {
 		fields := fieldsByName(rec)
@@ -103,12 +114,12 @@ func buildItems(records []record.Record, source Source) []Item {
 			Priority:  value(fields["priority"]),
 			Title:     value(fields["title"]),
 			Tags:      stringArray(fields["tags"]),
-			Scheduled: isoDate(fields["scheduled"]),
-			Deadline:  isoDate(fields["deadline"]),
+			Scheduled: isoDate(fields["scheduled"], today),
+			Deadline:  isoDate(fields["deadline"], today),
 			Recur:     value(fields["recur"]),
 			Lead:      value(fields["lead"]),
 			LeadSkip:  value(fields["lead_skip"]),
-			Closed:    isoDate(fields["closed"]),
+			Closed:    isoDate(fields["closed"], today),
 			Line:      rec.Line,
 			Source:    source,
 		}
@@ -162,13 +173,16 @@ func stringArray(raw json.RawMessage) []string {
 	return strings
 }
 
-func isoDate(raw json.RawMessage) *time.Time {
+// isoDate is Ruby's `to_date`: the `is_a?(String) && !empty?` guard, then
+// Date.iso8601 rescued to nil. The accepted grammar is Date.iso8601's, not
+// YYYY-MM-DD — see parseISO8601Date.
+func isoDate(raw json.RawMessage, today time.Time) *time.Time {
 	text, ok := value(raw).(string)
 	if !ok || text == "" {
 		return nil
 	}
-	parsed, err := time.Parse("2006-01-02", text)
-	if err != nil {
+	parsed, ok := parseISO8601Date(text, today)
+	if !ok {
 		return nil
 	}
 	return &parsed

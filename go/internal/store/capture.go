@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"time"
 
 	"tasks-go/internal/record"
 )
@@ -35,6 +36,12 @@ type Paths struct {
 // empty snapshot. Checked-read validation is a later boundary, so this
 // lenient capture treats both a missing live file and archive as empty.
 func Capture(paths Paths, locker ReadLocker) (Snapshot, error) {
+	return CaptureOn(paths, locker, time.Now())
+}
+
+// CaptureOn is Capture with today supplied rather than read from the clock, so
+// a caller that needs a reproducible read of truncated date forms can pin it.
+func CaptureOn(paths Paths, locker ReadLocker, today time.Time) (Snapshot, error) {
 	if paths.Live == "" {
 		return Snapshot{}, errors.New("live store path is required")
 	}
@@ -52,7 +59,7 @@ func Capture(paths Paths, locker ReadLocker) (Snapshot, error) {
 		if err != nil {
 			return err
 		}
-		snapshot = NewSnapshot(live, archive)
+		snapshot = NewSnapshotOn(live, archive, today)
 		return nil
 	})
 	return snapshot, err

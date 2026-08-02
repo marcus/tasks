@@ -116,6 +116,30 @@ Dir.mktmpdir("tasks-store-snapshot-conformance-") do |work|
     abort "store-snapshot-items mismatch for structured-ids; details in #{work}"
   end
 
-  total = cases.length + 5
+  # Date forms through the whole store boundary, not just the parser: every one
+  # of these is a form `time.Parse("2006-01-02")` silently dropped to nil. Only
+  # absolute forms appear here, so this case stays independent of today; the
+  # today-relative forms are compared under one injected date by
+  # `porting/evidence/store-snapshot-items/date-conformance`.
+  date_live = File.join(work, "date-forms.jsonl")
+  File.write(date_live, <<~JSONL)
+    {"type":"meta","version":2}
+    {"type":"task","id":"basic","state":"TODO","title":"Basic","scheduled":"20260802","deadline":"2026-08","closed":"2024-366"}
+    {"type":"task","id":"ordinal","state":"TODO","title":"Ordinal","scheduled":"2026-215","deadline":"2026215","closed":"2026-366"}
+    {"type":"task","id":"week","state":"TODO","title":"Week","scheduled":"2026-W31-7","deadline":"2026W011","closed":"2026-W31"}
+    {"type":"task","id":"datetime","state":"TODO","title":"Datetime","scheduled":"2026-08-02T10:11:12Z","deadline":"20260802T101112Z","closed":"2026-08-02 10:11:12"}
+    {"type":"task","id":"padded","state":"TODO","title":"Padded","scheduled":" 2026-08-02","deadline":"\\t2026-08-02\\n","closed":"2026-08-02x"}
+    {"type":"task","id":"refused","state":"TODO","title":"Refused","scheduled":"2026-8-2","deadline":"2026-02-30","closed":"2026-W31-0"}
+    {"type":"task","id":"reform","state":"TODO","title":"Reform","scheduled":"1582-10-04","deadline":"1582-10-10","closed":"1582-10-15"}
+  JSONL
+  ruby = run(RUBY_PROBE.to_s, date_live)
+  go = run(*go_probe, date_live, chdir: ROOT.join("go").to_s)
+  unless ruby == go
+    File.write(File.join(work, "date-forms-ruby.json"), JSON.pretty_generate(ruby) + "\n")
+    File.write(File.join(work, "date-forms-go.json"), JSON.pretty_generate(go) + "\n")
+    abort "store-snapshot-items mismatch for date-forms; details in #{work}"
+  end
+
+  total = cases.length + 6
   puts "store-snapshot-items direct conformance: #{total}/#{total} cases matched"
 end
