@@ -134,14 +134,20 @@ module PortingRunner
   # character is `#` are skipped, so a case list can carry section comments.
   Case = Struct.new(:id, :fixture_class, :fixture_name, :surface, :argv, :cwd,
                     :env, :stdin, :stdin_provided, :timeout_ms, :install_journal,
-                    :copy_root_mode, :notes, keyword_init: true) do
+                    :copy_root_mode, :config_file, :path_overrides, :notes, keyword_init: true) do
     def fixture_id = "#{fixture_class}/#{fixture_name}"
     def fixture_dir = File.join(FIXTURES_DIR, fixture_class, fixture_name)
   end
 
   module CaseList
     KNOWN_KEYS = %w[case_id fixture surface argv cwd env stdin stdin_base64
-                    timeout_ms install_journal copy_root_mode notes].freeze
+                    timeout_ms install_journal copy_root_mode config_file path_overrides notes].freeze
+    PATH_OVERRIDE_ENV = {
+      "tasks_dir" => "TASKS_DIR",
+      "tasks_file" => "TASKS_FILE",
+      "tasks_archive" => "TASKS_ARCHIVE",
+      "tasks_memory" => "TASKS_MEMORY"
+    }.freeze
 
     module_function
 
@@ -228,14 +234,54 @@ module PortingRunner
         raise Error, "#{where}: copy_root_mode must be a three- or four-digit octal string, got #{mode.inspect}"
       end
 
+      config_file = entry["config_file"]
+      unless config_file.nil? || (config_file.is_a?(String) && !config_file.empty?)
+        raise Error, "#{where}: config_file must be a non-empty fixture-relative path"
+      end
+      validate_fixture_path!(config_file, fixture_class, fixture_name, where) if config_file
+
+      path_overrides = entry.fetch("path_overrides", {})
+      raise Error, "#{where}: path_overrides must be an object" unless path_overrides.is_a?(Hash)
+
+      unknown_overrides = path_overrides.keys - PATH_OVERRIDE_ENV.keys
+      unless unknown_overrides.empty?
+        raise Error, "#{where}: unknown path_overrides key(s) #{unknown_overrides.join(", ")}"
+      end
+      path_overrides.each do |name, value|
+        unless value.nil? || (value.is_a?(String) && !value.empty?)
+          raise Error, "#{where}: path_overrides #{name} must be a non-empty string or null"
+        end
+        validate_copy_relative_path!(value, where, "path_overrides #{name}") if value
+      end
+
       Case.new(
         id: id, fixture_class: fixture_class, fixture_name: fixture_name,
         surface: surface, argv: argv, cwd: entry.fetch("cwd", "."),
         env: env, stdin: stdin || "", stdin_provided: !stdin.nil?,
         timeout_ms: entry["timeout_ms"], install_journal: entry.fetch("install_journal", true),
-        copy_root_mode: mode, notes: entry["notes"]
+        copy_root_mode: mode, config_file: config_file, path_overrides: path_overrides, notes: entry["notes"]
       )
     end
+
+    def validate_fixture_path!(path, fixture_class, fixture_name, where)
+      root = File.realpath(File.join(FIXTURES_DIR, fixture_class, fixture_name))
+      candidate = File.expand_path(path, root)
+      unless candidate.start_with?("#{root}/") && File.file?(candidate) &&
+             File.realpath(candidate).start_with?("#{root}/")
+        raise Error, "#{where}: config_file must name a regular file inside its fixture"
+      end
+    rescue Errno::ENOENT
+      raise Error, "#{where}: config_file must name a regular file inside its fixture"
+    end
+    private_class_method :validate_fixture_path!
+
+    def validate_copy_relative_path!(path, where, label)
+      candidate = File.expand_path(path, "/copy-root")
+      return if candidate.start_with?("/copy-root/") || candidate == "/copy-root"
+
+      raise Error, "#{where}: #{label} must stay inside the fixture copy"
+    end
+    private_class_method :validate_copy_relative_path!
   end
 
   # --- filesystem observation ----------------------------------------------
@@ -557,8 +603,20 @@ module PortingRunner
       apply_fixture_perms(kase, copy_root)
       FileUtils.mkdir_p(File.join(copy_root, CONFIG_SUBDIR, "tasks"))
       FileUtils.mkdir_p(File.join(copy_root, STATE_SUBDIR))
+      stage_config_file(kase, copy_root)
       install_journal(kase, copy_root) if journal && kase.install_journal
       copy_root
+    end
+
+    # Config bytes belong to the fixture, not the case list: a case can select
+    # one fixture-relative file, but cannot inject arbitrary host paths or
+    # content. Stage it in both copies before either probe resolves paths.
+    def stage_config_file(kase, copy_root)
+      return unless kase.config_file
+
+      source = File.join(kase.fixture_dir, kase.config_file)
+      destination = File.join(copy_root, CONFIG_SUBDIR, "tasks", "config")
+      File.binwrite(destination, File.binread(source))
     end
 
     # `<fixture>/perms.json` — modes git cannot record, applied to the copy.
@@ -649,6 +707,10 @@ module PortingRunner
         "XDG_CONFIG_HOME" => File.join(copy_root, CONFIG_SUBDIR),
         "XDG_STATE_HOME" => File.join(copy_root, STATE_SUBDIR)
       )
+      kase.path_overrides.each do |name, value|
+        env_name = CaseList::PATH_OVERRIDE_ENV.fetch(name)
+        value.nil? ? env.delete(env_name) : env[env_name] = File.expand_path(value, copy_root)
+      end
       kase.env.each { |name, value| value.nil? ? env.delete(name) : env[name] = value }
       env
     end

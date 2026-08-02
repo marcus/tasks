@@ -54,6 +54,8 @@ otherwise silently change nothing.
 | `timeout_ms` | no | Per-case wall budget. Default 60000. |
 | `install_journal` | no | Default `true`: install the fixture's `journal/` when it ships one. Set `false` to observe the same fixture with no history. |
 | `copy_root_mode` | no | Octal string (`"0555"`, or `"555"`) applied to the **copy root directory itself** after the copy is complete. Absent means the mode `cp -a` produced is left alone. See [A failing write](#a-failing-write-and-why-the-mode-lives-on-the-case). |
+| `config_file` | no | A non-empty path to a regular file inside the selected fixture. The runner copies its bytes to `<copy>/.config/tasks/config` before either probe runs. Cases select fixture-owned config; they cannot supply config content. |
+| `path_overrides` | no | Object with only `tasks_dir`, `tasks_file`, `tasks_archive`, and `tasks_memory`. Each value is a non-empty path relative to the fixture copy, or `null` to unset that runner-owned variable. It becomes the corresponding `TASKS_*` variable. Paths escaping the copy are rejected. |
 | `notes` | no | Free text; copied into the observation's `notes`. Never compared. |
 
 Example:
@@ -84,9 +86,10 @@ Per case, in this order:
    throwaway copy of step 6), because a fixture that declares a mode declares it
    for the corpus and the two copies must start identical.
 3. **Create the isolated roots** inside the copy: `<copy>/.config/tasks/` and
-   `<copy>/.state/`. Both live *inside* the copy so that everything the
-   implementation writes is inside the observed tree and every recorded path is
-   relative to one root.
+   `<copy>/.state/`. When `config_file` is set, copy that fixture-owned file to
+   `<copy>/.config/tasks/config` now. Both roots live *inside* the copy so that
+   everything the implementation writes is inside the observed tree and every
+   recorded path is relative to one root.
 4. **Install the journal** when the fixture ships `journal/` and the case did
    not opt out. The journal cannot ship as literal bytes: it lives at
    `<copy>/.state/tasks/journal/<key>/` where

@@ -36,3 +36,17 @@ that mechanism, validate the observations, and leave the Ruby test selection
 above as the direct oracle for `Config.for_dir`. This is a harness coverage
 requirement, not an intentional difference and not permission to relax the
 runner's live-store protections.
+
+## Runner prerequisite completed
+
+The runner now accepts a fixture-owned `config_file` and a separately validated
+`path_overrides` object. It copies only a regular file from the selected fixture
+to the copy's isolated XDG configuration path; it accepts only relative
+`TASKS_DIR`, `TASKS_FILE`, `TASKS_ARCHIVE`, and `TASKS_MEMORY` overrides, with
+`null` meaning unset. The ordinary `env` path-variable guard remains unchanged.
+
+`ruby test/test_porting_runner.rb` proves both the config-file and per-file-env
+precedence paths through `tasks config --json`; `ruby test/all.rb` passed after
+the extension. The next tick can add named config-resolution cases to a case
+list, capture their Ruby observations under this directory, validate them, and
+then hand translation to a separate mid-tier session.

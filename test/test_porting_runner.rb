@@ -30,6 +30,14 @@ class TestPortingRunner < Minitest::Test
   READ_CASE = { "case_id" => "t-read", "fixture" => "valid/single-task", "argv" => ["list"] }.freeze
   MUTATION_CASE = { "case_id" => "t-mutate", "fixture" => "valid/small-gtd",
                     "argv" => ["capture", "runner test", "--json"] }.freeze
+  CONFIG_CASE = { "case_id" => "t-config", "fixture" => "valid/archive-pair",
+                  "argv" => ["config", "--json"], "config_file" => "config/runner-paths.conf",
+                  "path_overrides" => { "tasks_dir" => nil } }.freeze
+  PATH_OVERRIDE_CASE = { "case_id" => "t-path-overrides", "fixture" => "valid/archive-pair",
+                         "argv" => ["config", "--json"],
+                         "path_overrides" => { "tasks_file" => "tasks.jsonl",
+                                               "tasks_archive" => "archive.jsonl",
+                                               "tasks_memory" => "override-memory.md" } }.freeze
 
   def setup
     @tmp = Dir.mktmpdir("porting-runner-test")
@@ -88,6 +96,9 @@ class TestPortingRunner < Minitest::Test
       "unknown fixture class" => READ_CASE.merge("fixture" => "nonesuch/thing"),
       "non-string argv" => READ_CASE.merge("argv" => [1]),
       "runner-owned env" => READ_CASE.merge("env" => { "TASKS_DIR" => "/elsewhere" }),
+      "escaping path override" => READ_CASE.merge("path_overrides" => { "tasks_file" => "../elsewhere" }),
+      "unknown path override" => READ_CASE.merge("path_overrides" => { "org" => "tasks.jsonl" }),
+      "non-fixture config" => READ_CASE.merge("config_file" => "../config"),
       "http surface" => READ_CASE.merge("surface" => "http"),
     }.each do |what, entry|
       _, stderr, status = run_runner("--dry-run", write_cases(entry, name: "bad.jsonl"))
@@ -293,6 +304,38 @@ class TestPortingRunner < Minitest::Test
     assert_nil env.fetch("TASKS_ARCHIVE")
     assert env.fetch("XDG_CONFIG_HOME").end_with?("/.config")
     assert_equal env.fetch("TASKS_DIR"), observation.dig("fixture", "copy_root")
+  end
+
+  def test_fixture_owned_config_and_copy_relative_path_overrides_are_staged_safely
+    observation = observe(CONFIG_CASE).fetch("t-config")
+    payload = JSON.parse(observation.dig("process", "stdout", "text"))
+
+    ["tasks.jsonl", "archive.jsonl", "configured-memory.md"].each do |basename|
+      path = payload.fetch({ "tasks.jsonl" => "org", "archive.jsonl" => "archive",
+                             "configured-memory.md" => "memory" }.fetch(basename))
+      assert path.end_with?("/work/t-config/#{basename}"), "#{path.inspect} escaped the fixture copy"
+    end
+    assert_equal "config file", payload.dig("sources", "org")
+    assert_equal "config file", payload.dig("sources", "archive")
+    assert_equal "config file", payload.dig("sources", "memory")
+    env = observation.dig("invocation", "env").to_h { |entry| [entry["name"], entry["value"]] }
+    assert_nil env.fetch("TASKS_DIR"), "the case must be able to unmask its staged config"
+    assert_equal ".config/tasks/config",
+                 observation.dig("files", "after").find { |f| f["role"] == "config" }.fetch("path")
+  end
+
+  def test_copy_relative_path_overrides_are_reported_as_paths_inside_the_copy
+    observation = observe(PATH_OVERRIDE_CASE).fetch("t-path-overrides")
+    payload = JSON.parse(observation.dig("process", "stdout", "text"))
+    env = observation.dig("invocation", "env").to_h { |entry| [entry["name"], entry["value"]] }
+
+    assert_equal "TASKS_FILE env", payload.dig("sources", "org")
+    assert_equal "TASKS_ARCHIVE env", payload.dig("sources", "archive")
+    assert_equal "TASKS_MEMORY env", payload.dig("sources", "memory")
+    %w[TASKS_FILE TASKS_ARCHIVE TASKS_MEMORY].each do |name|
+      assert env.fetch(name).end_with?("/work/t-path-overrides/#{File.basename(env.fetch(name))}"),
+             "#{name}=#{env.fetch(name).inspect} escaped the fixture copy"
+    end
   end
 
   # A case may unset a pin; when it does, the pin must report itself unapplied
