@@ -904,7 +904,7 @@
     {
       "id": "merge-driver-git",
       "campaign": 7,
-      "behavior": "The git integration: `tasks merge-driver` as git's %O %A %B %P contract with its exit codes and audit log, and `bin/install-merge-driver` registering a repo-local absolute driver against .gitattributes",
+      "behavior": "The git integration: `tasks merge-driver` as git's %O %A %B %P %L %X %Y contract with its exit codes, conflict-marked refusals and audit log, and `bin/install-merge-driver` registering a repo-local absolute driver against .gitattributes",
       "target_package": "internal/cli",
       "depends_on": [
         "jsonl-merge-records",

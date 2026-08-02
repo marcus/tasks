@@ -158,10 +158,19 @@ behavior is exactly as documented everywhere else in this spec. The complete
 list, defaults, and rules live in
 [`porting/specs/determinism.md`](../porting/specs/determinism.md).
 
-`tasks merge-driver <base> <ours> <theirs> <pathname>` is an internal,
-Git-invoked CLI-only adapter. It performs a deterministic field-level 3-way
-merge by stable id and writes valid canonical JSONL to `<ours>`; hard failure
-leaves `<ours>` untouched and exits 1. `bin/install-merge-driver [data-repo]`
+`tasks merge-driver <base> <ours> <theirs> <pathname> [markers] [ours-label]
+[theirs-label]` is an internal, Git-invoked CLI-only adapter. It performs a
+deterministic field-level 3-way merge by stable id and writes valid canonical
+JSONL to `<ours>`; hard failure writes a **conflicted** `<ours>` — both sides
+verbatim inside `<<<<<<<` / `=======` / `>>>>>>>` fences, the reason on the
+opening marker line — and exits 1. Git copies `<ours>` over the working file
+whichever way the driver exits, so refusing without writing would leave a clean,
+markerless file that `tasks check` accepts and `git add` stages, silently
+discarding the other side; the markers are what make a refused merge
+self-evident and make `tasks check` fail on it. The trailing three arguments are
+Git's `%L` marker size and `%X`/`%Y` conflict labels; they are optional, so an
+installation predating them still works with 7-wide markers labeled
+`ours`/`theirs`. `bin/install-merge-driver [data-repo]`
 registers the absolute command in that repository's local Git config after
 verifying `.gitattributes` selects `merge=tasksjsonl`. This is intentionally
 not an HTTP capability: it is local Git transport plumbing, not user-visible

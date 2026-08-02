@@ -87,7 +87,7 @@ When installed via `bin/install-merge-driver`, Git uses custom 3-way domain logi
 4. **Timestamp Conflict Resolution**: The `updated` timestamp is used exclusively for resolving genuine same-field edits.
 5. **Order Preservation**: Ours-first sibling ordering is maintained.
 6. **Audit Logging**: Merge choices are logged to `.tasks-merge.log` in the data repository.
-7. **Failure Safety**: Malformed input files or validation failures exit with non-zero status without overwriting Git's working copy.
+7. **Failure Safety**: Malformed input files or validation failures exit with non-zero status and leave the path conflicted — both sides written verbatim inside ordinary `<<<<<<<` / `=======` / `>>>>>>>` fences, with the reason on the opening marker. Nothing is merged, nothing is summarized, and `tasks check` refuses the result, so a refused merge cannot be staged by reflex.
 
 ---
 

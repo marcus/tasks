@@ -112,7 +112,9 @@ TASKS_DIR=~/tasks ~/code/tasks/bin/tasks check --all-files
 
 The first command should report `merge: tasksjsonl` for both files. The second
 should show the absolute path to this checkout's `bin/tasks` followed by
-`merge-driver %O %A %B %P`.
+`merge-driver %O %A %B %P %L %X %Y`. An older installation shows the same line
+without `%L %X %Y`; it still merges correctly, and re-running the installer
+upgrades it so refusals label their conflict markers the way Git does.
 
 On each additional machine, clone both repositories, write its
 `~/.config/tasks/config`, choose its `TASKS_DEVICE`, and run the installer. Do
