@@ -92,3 +92,61 @@ func TestCoerceStringsFeedsFilterConstruction(t *testing.T) {
 		t.Fatalf("TextQuery() = %q", got)
 	}
 }
+
+func TestCoerceBoolIsRubyTruthiness(t *testing.T) {
+	// Only nil and false are false in Ruby; `0` and `""` are true, which is the
+	// whole reason a JSON boolean decode cannot stand in for `!!value`.
+	cases := []struct {
+		document string
+		want     bool
+	}{
+		{"null", false},
+		{"false", false},
+		{"true", true},
+		{"0", true},
+		{`""`, true},
+		{`"yes"`, true},
+		{"[]", true},
+		{"{}", true},
+	}
+	for _, testCase := range cases {
+		if got := CoerceBool(decode(t, testCase.document)); got != testCase.want {
+			t.Errorf("CoerceBool(%s) = %t, want %t", testCase.document, got, testCase.want)
+		}
+	}
+}
+
+func TestCoerceStringMatchesRubyToS(t *testing.T) {
+	cases := []struct {
+		document string
+		want     string
+	}{
+		{"null", ""},
+		{`"a"`, "a"},
+		{"5", "5"},
+		{"true", "true"},
+		{"false", "false"},
+		{`["a",1]`, `["a", 1]`},
+		{`{"key":"value"}`, `{"key" => "value"}`},
+	}
+	for _, testCase := range cases {
+		if got := CoerceString(decode(t, testCase.document)); got != testCase.want {
+			t.Errorf("CoerceString(%s) = %q, want %q", testCase.document, got, testCase.want)
+		}
+	}
+}
+
+func TestCoercedScalarsReachTheDomainRule(t *testing.T) {
+	// A coerced non-String value must be rejected by the ported domain message,
+	// the slice's observable output, rather than by a decoder.
+	priority := CoerceString(decode(t, "5"))
+	if _, err := NewFilter(FilterOptions{Priority: &priority}); err == nil ||
+		err.Error() != "priority must be A, B, C, or none" {
+		t.Errorf("NewFilter(priority: 5) error = %v", err)
+	}
+	scope := CoerceString(decode(t, "5"))
+	if _, err := NewFilter(FilterOptions{Scope: &scope}); err == nil ||
+		err.Error() != "unknown task scope: 5" {
+		t.Errorf("NewFilter(scope: 5) error = %v", err)
+	}
+}

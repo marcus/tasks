@@ -23,6 +23,25 @@ func CoerceStrings(value any) []string {
 	return coerced
 }
 
+// CoerceString mirrors Ruby's `value.to_s`, the coercion TaskFilter#initialize
+// applies to scope, priority, and state before any domain rule sees them. A
+// dynamic boundary applies it so a non-String value is rejected by the ported
+// domain message rather than by a decoder.
+func CoerceString(value any) string {
+	return rubyToS(value)
+}
+
+// CoerceBool mirrors Ruby's `!!value`, the coercion TaskFilter#initialize
+// applies to every boolean keyword. Only nil and false are false in Ruby: `0`
+// and `""` are truthy, so JSON falsiness must not be mapped onto it.
+func CoerceBool(value any) bool {
+	if value == nil {
+		return false
+	}
+	boolean, isBool := value.(bool)
+	return !isBool || boolean
+}
+
 // rubyArray is Kernel#Array for the JSON value shapes: nil becomes empty, an
 // Array is itself, a Hash becomes its [key, value] pairs, and any other value
 // is wrapped in a one-element Array.

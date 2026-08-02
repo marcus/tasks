@@ -121,24 +121,52 @@ func decodeFilterOptions(raw json.RawMessage) (query.FilterOptions, error) {
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return query.FilterOptions{}, err
 	}
-	// The coerced collections are decoded separately below; Ruby accepts any
-	// value there, so they must not reach the typed decode.
-	scalars := make(map[string]json.RawMessage, len(fields))
-	for name, value := range fields {
-		if name != "contexts" && name != "tags" && name != "text" {
-			scalars[name] = value
+	// Ruby coerces or truth-tests every keyword before a domain rule sees it,
+	// so nothing here may reach a typed decode: a strict decoder would reject
+	// values Ruby accepts, and would answer with a decoder message where Ruby
+	// answers with the ported domain message.
+	booleans := map[string]*bool{
+		"deferred_only": &options.DeferredOnly, "unavailable_only": &options.UnavailableOnly,
+		"someday_only": &options.SomedayOnly, "recurring_only": &options.RecurringOnly,
+		"body_search": &options.BodySearch, "delegated_only": &options.DelegatedOnly,
+		"agent_ready_only": &options.AgentReadyOnly,
+	}
+	for name, target := range booleans {
+		raw, present := fields[name]
+		if !present {
+			continue
 		}
+		value, err := decodeGeneric(raw)
+		if err != nil {
+			return query.FilterOptions{}, err
+		}
+		*target = query.CoerceBool(value)
 	}
-	encoded, err := json.Marshal(scalars)
-	if err != nil {
-		return query.FilterOptions{}, err
+	// `scope.to_s` runs unconditionally, so an explicit null scope becomes the
+	// empty scope and is rejected by name; `priority&.to_s` and `state&.to_s`
+	// skip null, which stays indistinguishable from omitted.
+	scalars := map[string]struct {
+		target      **string
+		nullCoerces bool
+	}{
+		"scope":    {&options.Scope, true},
+		"priority": {&options.Priority, false},
+		"state":    {&options.State, false},
 	}
-	if err := json.Unmarshal(encoded, &options); err != nil {
-		return query.FilterOptions{}, err
-	}
-	if scope, present := fields["scope"]; present && string(scope) == "null" {
-		empty := ""
-		options.Scope = &empty
+	for name, scalar := range scalars {
+		raw, present := fields[name]
+		if !present {
+			continue
+		}
+		value, err := decodeGeneric(raw)
+		if err != nil {
+			return query.FilterOptions{}, err
+		}
+		if value == nil && !scalar.nullCoerces {
+			continue
+		}
+		coerced := query.CoerceString(value)
+		*scalar.target = &coerced
 	}
 	collections := map[string]*[]string{
 		"contexts": &options.Contexts, "tags": &options.Tags, "text": &options.Text,

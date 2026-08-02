@@ -33,3 +33,11 @@
 {"case_id":"query-filter-null-contexts","operation":"new","kwargs":{"contexts":null}}
 {"case_id":"query-filter-null-tags","operation":"new","kwargs":{"tags":null}}
 {"case_id":"query-filter-null-text","operation":"new","kwargs":{"text":null}}
+{"case_id":"sf_bool_string","operation":"new","kwargs":{"deferred_only":"yes"}}
+{"case_id":"sf_bool_zero","operation":"new","kwargs":{"deferred_only":0}}
+{"case_id":"sf_bool_null","operation":"new","kwargs":{"body_search":null}}
+{"case_id":"sf_priority_number","operation":"new","kwargs":{"priority":5}}
+{"case_id":"sf_priority_true","operation":"new","kwargs":{"priority":true}}
+{"case_id":"sf_state_number","operation":"new","kwargs":{"state":5}}
+{"case_id":"sf_scope_number","operation":"new","kwargs":{"scope":5}}
+{"case_id":"sf_bool_empty_string","operation":"new","kwargs":{"agent_ready_only":""}}
