@@ -7,5 +7,10 @@ reproduce the 32-case differential result, including explicit `scope: null`,
 scalar collection, mixed collection, and collection-null constructor inputs.
 
 The package also has a state-intersection property test across every scope and
-state vocabulary value. Source-fidelity and Go-idiom review remain independent
-medium-tier steps and are not claimed by this translation handoff.
+state vocabulary value, plus `coerce_test.go` for the `Array(values).map(&:to_s)`
+collection coercion described in `translation.md`. Source-fidelity and Go-idiom
+review remain independent medium-tier steps and are not claimed by this
+translation handoff.
+
+`source-fidelity-review-2026-08-02-scalar-collections.md` is repaired as of the
+32/32 run above; its reproduction case set is now part of the committed corpus.

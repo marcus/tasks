@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -61,6 +62,10 @@ func main() {
 		os.Exit(2)
 	}
 	defer file.Close()
+	// Ruby's JSON.generate leaves `<`, `>`, and `&` unescaped; Go's default
+	// encoder escapes them, which would diverge on any inspected value.
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetEscapeHTML(false)
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		if line := strings.TrimSpace(scanner.Text()); line == "" || strings.HasPrefix(line, "#") {
@@ -71,12 +76,9 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
 		}
-		result := run(in)
-		encoded, err := json.Marshal(result)
-		if err != nil {
+		if err := encoder.Encode(run(in)); err != nil {
 			panic(err)
 		}
-		fmt.Println(string(encoded))
 	}
 	if err := scanner.Err(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -115,18 +117,56 @@ func decodeFilterOptions(raw json.RawMessage) (query.FilterOptions, error) {
 	if len(raw) == 0 {
 		return options, nil
 	}
-	if err := json.Unmarshal(raw, &options); err != nil {
-		return query.FilterOptions{}, err
-	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
+		return query.FilterOptions{}, err
+	}
+	// The coerced collections are decoded separately below; Ruby accepts any
+	// value there, so they must not reach the typed decode.
+	scalars := make(map[string]json.RawMessage, len(fields))
+	for name, value := range fields {
+		if name != "contexts" && name != "tags" && name != "text" {
+			scalars[name] = value
+		}
+	}
+	encoded, err := json.Marshal(scalars)
+	if err != nil {
+		return query.FilterOptions{}, err
+	}
+	if err := json.Unmarshal(encoded, &options); err != nil {
 		return query.FilterOptions{}, err
 	}
 	if scope, present := fields["scope"]; present && string(scope) == "null" {
 		empty := ""
 		options.Scope = &empty
 	}
+	collections := map[string]*[]string{
+		"contexts": &options.Contexts, "tags": &options.Tags, "text": &options.Text,
+	}
+	for name, target := range collections {
+		raw, present := fields[name]
+		if !present {
+			continue
+		}
+		value, err := decodeGeneric(raw)
+		if err != nil {
+			return query.FilterOptions{}, err
+		}
+		*target = query.CoerceStrings(value)
+	}
 	return options, nil
+}
+
+// decodeGeneric keeps numbers as json.Number so integers stringify the way
+// Ruby's Integer#to_s does rather than through float formatting.
+func decodeGeneric(raw json.RawMessage) (any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	return value, nil
 }
 
 func project(filter query.Filter) *filterOutput {
