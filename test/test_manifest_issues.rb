@@ -428,13 +428,17 @@ class TestManifestIssues < Minitest::Test
     end
 
     # The closure is what makes coverage checkable at all: every lib/tasks file
-    # outside the HTTP API is inside some slice's closure, and the API is the
-    # honest exception (no campaign 2-4 slice ports it).
+    # is inside some slice's closure. The HTTP API used to be the honest
+    # exception — no campaign 2-4 slice ports it — and campaign 9 closed it, so
+    # this is now a total claim rather than a list with a carve-out. A file
+    # appearing here means it is ported by nobody AND watched by nobody, so a
+    # change to it turns no slice stale: the silent-drift hole, not a style nit.
     covered = rows.values.flat_map { |r| r["watched"] }.uniq
     uncovered = Dir[File.expand_path("../lib/tasks/**/*.rb", __dir__)]
                 .map { |p| p.delete_prefix("#{File.expand_path("..", __dir__)}/") } - covered
-    assert_equal ["lib/tasks/api/app.rb", "lib/tasks/api/errors.rb",
-                  "lib/tasks/api/representation.rb"], uncovered.sort
+    assert_empty uncovered.sort,
+                 "these lib/tasks files are in no slice's drift closure, so changing them " \
+                 "makes no slice stale — give each an owner or record why it has none"
   end
 
   # Identity is a label. Two issues carrying one identity label is not a state

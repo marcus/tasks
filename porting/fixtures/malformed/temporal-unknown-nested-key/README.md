@@ -73,11 +73,39 @@ task file is already invalid — run `tasks check` (nothing was written)
 exit 1
 ```
 
-The file is unchanged. So the store is wedged: the write that would repair it is
-the write the error blocks, and the only way out is a hand edit. No fixture can
-close this, because no CLI invocation reaches `Format.dump_record`'s drop branch
-on a store carrying the key — the drop is observable only at the unit level.
+The file is unchanged. So the store was wedged: the write that would repair it is
+the write the error blocks. No ordinary mutation can close this, and no fixture
+built from ordinary mutations can either.
 
 A port must reproduce **this** behavior (refuse, write nothing), not the
-comment's. Whether the refusal should have a repair escape hatch is a Ruby
-design question, recorded here and deliberately not fixed for the corpus.
+comment's. The recorded outcomes above stay exactly as they are.
+
+### The escape hatch: `tasks repair`
+
+td-2addce asked whether the refusal should have one. It does now, as a
+**separate command** — nothing above changed. `tasks repair` drops the unknown
+keys from every temporal object in the store in one pass and writes once, so the
+`Check` that follows the write sees a file already whole:
+
+```console
+$ tasks repair
+fixed  tasks.jsonl line 3: scheduled_time has unknown keys: precision
+fixed  tasks.jsonl line 4: deadline_time has unknown keys: calendar_uid
+2 repairs written — the store validates; `undo` restores the previous bytes
+exit 0
+```
+
+Afterwards `tasks check` exits 0 and `tasks priority a1000002 A` succeeds. The
+refusal recorded above is what `priority` still does on the store as shipped
+here; a port must implement that refusal, and separately the repair command.
+
+Two consequences for the corpus:
+
+- `Format.dump_record`'s drop branch is now reachable end to end, through this
+  one command. A port that omits the drop no longer passes trivially — though
+  the asymmetry is still only observable *via* `repair`, never via a mutation.
+- `repair` does **not** re-stamp `updated`. Dropping a key a newer binary wrote
+  is a loss this build cannot avoid locally; bumping the stamp would additionally
+  hand this device the last-write-wins victory over the binary that understood
+  the field. Whatever `updated` a record carried survives the repair byte for
+  byte — these two carry none, and gain none.

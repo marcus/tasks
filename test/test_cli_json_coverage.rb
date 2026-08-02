@@ -116,6 +116,10 @@ class TestCliJsonCoverage < Minitest::Test
 
     # -- Lifecycle ------------------------------------------------------------
     recipe("archive", %w[archive], setup: [["done", EXPENSE]]),
+    # The success path on a store that needs nothing: repair's convergence and
+    # refusal paths are proved in test_repair.rb, which needs malformed fixtures
+    # this one deliberately does not have.
+    recipe("repair", %w[repair]),
     recipe("undo", %w[undo], setup: [["capture", "something to undo"]]),
     recipe("redo", %w[redo], setup: [["capture", "something to redo"], %w[undo]]),
     recipe("config", %w[config]),
@@ -399,6 +403,17 @@ class TestCliJsonCoverage < Minitest::Test
     _out, err, status = run_cli(["-p", "--json", "water the garden"])
     assert_equal 1, status.exitstatus
     assert_match(/-p has no --json/, err)
+  end
+
+  # An abort inside `cmd_prompt` unwinds through a rescue clause that names
+  # LLM/AgentContext constants, so those files must already be loaded when it
+  # fires. They were not, and the usage line arrived with a NameError backtrace
+  # stapled to it — absolute source paths and all, which is both ugly and
+  # machine-dependent (td-231878). stderr is the usage line and nothing else.
+  def test_prompt_with_no_words_prints_only_the_usage_line
+    _out, err, status = run_cli(["-p"])
+    assert_equal 1, status.exitstatus
+    assert_equal %(usage: tasks -p [--provider NAME] [--model NAME] "do something with my tasks"\n), err
   end
 
   private

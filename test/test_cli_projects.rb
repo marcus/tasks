@@ -101,6 +101,46 @@ class TestCliProjects < Minitest::Test
     end
   end
 
+  # td-d842ed: the project ref resolver is the second exit-2 path and owes the
+  # same envelope. `kind` is on each candidate because a project and an area
+  # are different things to act on and the prose only shows the title.
+  def test_show_ambiguous_emits_a_json_envelope_with_structured_candidates
+    run_cli("project", "show", "s", "--json") do |_org, out, err, st|
+      assert_equal 2, st.exitstatus
+      envelope = JSON.parse(out)
+      assert_equal "ambiguous", envelope["error"]
+      assert_equal "project show", envelope["action"]
+      assert_equal err.chomp, envelope["message"]
+      candidates = envelope["candidates"]
+      assert_operator candidates.size, :>, 1
+      assert_equal err.scan(/^  L\d+: /).size, candidates.size
+      candidates.each { |c| assert_equal %w[id kind line title], c.keys.sort }
+      assert_includes candidates.map { |c| c["title"] }, "Site launch"
+      assert_includes candidates.map { |c| c["kind"] }, "project"
+    end
+  end
+
+  def test_show_no_match_emits_a_json_envelope_with_an_empty_candidate_list
+    run_cli("project", "show", "nonesuch", "--json") do |_org, out, err, st|
+      assert_equal 2, st.exitstatus
+      envelope = JSON.parse(out)
+      assert_equal "not_found", envelope["error"]
+      assert_equal "project show", envelope["action"]
+      assert_equal [], envelope["candidates"]
+      assert_equal err.chomp, envelope["message"]
+    end
+  end
+
+  # Additive only: the stderr bytes the harness compares must not move.
+  def test_a_project_ref_failure_leaves_stderr_bytes_unchanged_under_json
+    plain = nil
+    run_cli("project", "show", "s") { |_org, _out, err, st| plain = [err, st.exitstatus] }
+    run_cli("project", "show", "s", "--json") do |_org, out, err, st|
+      assert_equal plain, [err, st.exitstatus]
+      refute_empty out
+    end
+  end
+
   # -- project rename --------------------------------------------------------
 
   def test_project_rename_retitles_the_section

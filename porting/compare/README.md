@@ -123,10 +123,21 @@ Every finding carries one of the playbook's step-6 classes:
 
 `harness_error` is a sixth class, added on purpose and named here rather than
 folded into one of the five. It covers: the two sides ran different argv, cwd,
-stdin or fixture; they started from different tree digests; a pin was reported
-`applied: false`; a process timed out; a stream was truncated before it could be
-compared; or the two sides ran at different absolute paths without
-`--cross-path`. None of those are statements about the port. Calling them
+stdin or fixture; they started from different tree digests; a pin was **set and
+then reported `applied: false`**; the two sides were handed different
+`invocation.tty` descriptors; a process timed out; or the two sides ran at
+different absolute paths without `--cross-path`.
+
+"Set and then" is the whole of the pin rule, and the weaker reading —
+`applied: false` alone — is wrong. Several inputs are deliberately pinned to
+*unset* (the colour names, the test-only clock seam) and honestly report
+themselves unapplied on every case; treating that as a harness error would
+punish the runner for recording an input instead of leaving it invisible, which
+is backwards. What replaces the blanket rule is that the two sides must AGREE
+about `applied`, which is where one implementation honouring an input the other
+ignores shows up. A truncated stream is no longer in this list either: it is
+compared by `sha256_normalized`, which is a real comparison rather than an
+untrustworthy one, and the report says so instead of raising a harness error. None of those are statements about the port. Calling them
 `go_defect` would blame the port for a harness fault; calling them
 `missing_oracle_coverage` would make a broken run look like a gap in the corpus.
 They fail the gate, because a comparison you cannot trust must not report PASS.

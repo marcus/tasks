@@ -161,6 +161,28 @@ hostname_consumers_agree =
 add.call(Tasks::Determinism::HOSTNAME, hostname_consumers_agree,
          hostname_request && resolved_hostname)
 
+# The test-only clock seam, reported because it is a clock input and because
+# `Tasks::Determinism` is now where it resolves. The reported `value` is the
+# instant the whole clock precedence actually produced, so an implementation
+# that got the precedence backwards reports a different one — which is the only
+# way this seam can be checked from outside the process.
+#
+# Being out-ranked by TASKS_PIN_NOW counts as APPLIED, not as a dropped pin —
+# the same rule TASKS_DEVICE gets against the hostname pin above. Reporting a
+# legitimate override as `applied: false` would make the runner fail a correct
+# case, which is how an invariant stops being believed.
+sequence_request = requested(env, Tasks::Determinism::TEST_TODAY_SEQUENCE)
+sequence_resolved =
+  begin
+    sequence_request && Tasks::Determinism.now_for_adapter(env: env).utc.iso8601
+  rescue ArgumentError
+    # A malformed TASKS_PIN_NOW; that pin already reported itself unapplied
+    # above and this seam has nothing further to say about it.
+    nil
+  end
+add.call(Tasks::Determinism::TEST_TODAY_SEQUENCE,
+         !sequence_request.nil? && !sequence_resolved.nil?, sequence_resolved)
+
 winsize = Tasks::Determinism.winsize(env: env)
 add.call(Tasks::Determinism::LINES, !winsize.nil?, winsize && winsize[0].to_s)
 add.call(Tasks::Determinism::COLUMNS, !winsize.nil?, winsize && winsize[1].to_s)
@@ -192,6 +214,45 @@ locale_encoding = Encoding.default_external.to_s
   applied = !request.nil? &&
             request.split(".", 2).last.to_s.delete("-").casecmp?(locale_encoding.delete("-"))
   add.call(name, applied, request && locale_encoding)
+end
+
+# Colour. Four environment names and no more — read off the source rather than
+# taken from the conventional list. `NO_COLOR` and `TASKS_THEME` reach
+# `Config#pick_theme` (TASKS_THEME out-ranks NO_COLOR, and the resolved answer is
+# `paths.theme`); `COLORTERM` and `TERM` reach `Tui::Border.truecolor?` and
+# `Tui::App#mouse_enabled?`, which the CLI surface does not run. `CLICOLOR` and
+# `CLICOLOR_FORCE` are read NOWHERE in bin/ or lib/ and are deliberately absent.
+#
+# The harness pins all four to unset, so `applied` is false and `value` is null
+# on every Phase-1 observation. That is the honest report and it is worth
+# emitting: it says the implementation resolved colour from nothing, which is a
+# fact about the run, whereas a missing pin row says only that nobody asked.
+#
+# What is NOT reported here, on purpose: whether stdout was a terminal. That is
+# the input the CLI's `color()` actually branches on, and this probe cannot
+# answer it — the probe's own stdout is a pipe, so any answer it gave would
+# describe the probe rather than the invocation. Only the runner knows what it
+# attached, so it records it, in `invocation.tty`.
+#
+# `applied` for both theme inputs is answered from the implementation's own
+# precedence report (`Config` records WHICH source decided the theme), not from
+# a re-derivation here. NO_COLOR is legitimately out-ranked by TASKS_THEME and
+# by a config-file `theme` key, so — exactly as TASKS_DEVICE out-ranks the
+# hostname pin above — being overridden counts as applied rather than as a
+# dropped pin, which would otherwise fail a perfectly correct case.
+theme_source = paths.sources[:theme].to_s
+theme_request = requested(env, "TASKS_THEME")
+add.call("TASKS_THEME", !theme_request.nil? && theme_source == "TASKS_THEME env",
+         theme_request && paths.theme)
+
+no_color_request = requested(env, "NO_COLOR")
+add.call("NO_COLOR",
+         !no_color_request.nil? && ["NO_COLOR env", "TASKS_THEME env", "config file"].include?(theme_source),
+         no_color_request && paths.theme)
+
+%w[TERM COLORTERM].each do |name|
+  request = requested(env, name)
+  add.call(name, !request.nil?, request)
 end
 
 report = Tasks::Determinism.report(env: env)

@@ -43,7 +43,12 @@ Every URL is on `example.invalid` or `example.com`. No real host appears — see
    closing paren, and a verbatim/code marker only when the character just before
    the match is the same marker.
 4. Drop a match that punctuation-trimming reduces to a bare scheme.
-5. De-duplicate by exact url string, **first occurrence wins**.
+5. De-duplicate by exact url string, **preferring the labelled form**: among the
+   occurrences of one url the first *labelled* one survives, and only when none
+   is labelled does the first (bare) occurrence stand in. Position decides
+   *order*, never *which spelling* — each surviving link is listed at its url's
+   first occurrence, whichever spelling that was. Two different labels for the
+   same url do not merge; the first labelled occurrence wins outright.
 6. Classify by host; fall back to the downcased host minus `www.`; fall back to
    `"link"` when the url will not parse.
 
@@ -84,7 +89,7 @@ Org verbatim and code markers are peeled off
 Duplicate url, labelled occurrence first
   example.invalid     https://example.invalid/dupe/a  (Canonical label)
 Duplicate url, bare occurrence first
-  example.invalid     https://example.invalid/dupe/b
+  example.invalid     https://example.invalid/dupe/b  (Later label)
 Self-hosted jira host classifies as jira
   jira                https://jira.example.invalid/browse/OPS-1234  (OPS-1234)
 Row order resolves a host matching two systems
@@ -137,19 +142,22 @@ URL. The first three and the two dedupe entries:
 {"url":"https://example.invalid/docs/api","label":null,"system":"example.invalid","task":"Org link with no label","id":"11c00003","line":4,"source":"live"}
 {"url":"https://example.invalid/docs/pad","label":"Padded label","system":"example.invalid","task":"Org link with padded url and label","id":"11c00004","line":5,"source":"live"}
 {"url":"https://example.invalid/dupe/a","label":"Canonical label","system":"example.invalid","task":"Duplicate url, labelled occurrence first","id":"11c00009","line":10,"source":"live"}
-{"url":"https://example.invalid/dupe/b","label":null,"system":"example.invalid","task":"Duplicate url, bare occurrence first","id":"11c00010","line":11,"source":"live"}
+{"url":"https://example.invalid/dupe/b","label":"Later label","system":"example.invalid","task":"Duplicate url, bare occurrence first","id":"11c00010","line":11,"source":"live"}
 ```
 
 ## Findings
 
-**1. Dedupe does not prefer the labelled form — it prefers the *first* form.**
-`links-read`'s behavior sentence (and `Links.extract`'s comment, "first
-occurrence wins — it has the best label") says the labelled occurrence survives.
-It only survives when it comes first in the text. `11c00009` and `11c00010` are
-the same construct in the two orders, and `11c00010` loses its label: the org
-pass records links with their text offsets, the whole list is sorted by offset,
-and `uniq(&:url)` then keeps the earliest. A port that implements "prefer the
-labelled one" passes `11c00009` and fails `11c00010`.
+**1. Dedupe prefers the labelled form, independently of position.** `11c00009`
+and `11c00010` are the same construct in the two orders, and both keep their
+label. This was not always so: when this corpus was first recorded, `Links.extract`
+sorted by offset and applied `uniq(&:url)`, so the *earliest* occurrence survived
+and `11c00010` lost its label — while both written specs (the `links-read`
+behavior sentence and `Links.extract`'s own comment) said the labelled form won.
+td-794997 resolved the conflict in favor of the prose: Ruby was changed, and this
+recording moved with it (the one `tasks links` row for `11c00010` gained
+`(Later label)`). The dedupe now keeps a per-url best spelling in first-occurrence
+order, so a port must not implement "keep the earliest". `11c00009` is the
+control: it was unchanged by the fix.
 
 **2. An unparseable url is still reported, verbatim.** `https://example.com:port/x`
 raises `URI::InvalidURIError`; `classify` rescues to `"link"` and the url string

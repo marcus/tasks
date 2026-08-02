@@ -216,16 +216,23 @@ key a hard error, and every mutation preflights `Check` over the whole file, so
 already invalid` and writes nothing. Reads still work. The only exit is a hand
 edit. A port must reproduce the refusal, not the comment.
 
-**5. Link dedupe prefers the *first* occurrence, not the labelled one**
-(td-794997). `links-read`'s behavior sentence and `Links.extract`'s own comment
-("first occurrence wins — it has the best label") both read as "the labelled form
-survives". It survives only when it appears first in the text: the org pass
-records offsets, the list is sorted by offset, and `uniq(&:url)` keeps the
-earliest. `valid/link-corpus` carries the same url in both orders — `11c00009`
-keeps its label, `11c00010` loses it — so an implementation of "prefer the
-labelled one" passes one and fails the other. The manifest's behavior sentence has
-been corrected to match the fixture; the Ruby comment has not, and which way to
-reconcile is open.
+**5. Link dedupe prefers the labelled form — as of the td-794997 fix, and not
+before it.** Both written specs (`links-read`'s behavior sentence and
+`Links.extract`'s comment) said the labelled form survives a dedupe. The
+implementation disagreed: it recorded offsets, sorted by them, and `uniq(&:url)`
+kept the earliest, so a label survived only when it happened to appear first.
+`valid/link-corpus` carries the same url in both orders — `11c00009`
+labelled-first, `11c00010` bare-first — which is how the divergence was caught,
+and an implementation written from either written spec passed the first and
+failed the second. Marcus decided the behavior was wrong rather than the prose,
+so `Links.extract` was changed: the first LABELLED occurrence now wins outright,
+a bare one stands in only when no occurrence is labelled, and order is untouched
+(a later label replaces an earlier bare entry in place, so every surviving link
+still sits at its url's first occurrence). This README's recorded output was
+re-recorded from the fixed oracle — `11c00010` gains its label, `11c00009` is
+byte-identical and is the control. **A port must not implement
+`uniq`-by-first-occurrence**: that is the pre-fix oracle, and no fixture here
+describes it any more.
 
 **6. A held-only area is unreachable through the project surface.**
 `TaskQueries#projects` lists every section child of `Projects` unconditionally,

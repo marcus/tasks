@@ -237,4 +237,73 @@ class TestCreateTask < Minitest::Test
       assert_raises(ArgumentError) { app.create_task(command, context: :cli) }
     end
   end
+
+  # -- rollback staging (td-fea097) -------------------------------------------
+  #
+  # `rolled_back` says a mutation wrote and reverted; it does not say WHICH
+  # stage failed. Both stages set the Store's rollback record, and the CLI's
+  # only diagnostic is chosen from it, so a store that cannot tell them apart
+  # makes a failed write claim the file failed validation.
+
+  def test_a_failed_write_records_the_write_stage_and_restores_the_bytes
+    with_create_store do |store, org, _archive|
+      before = File.binread(org)
+      raiser = ->(_path, _records) { raise Errno::EACCES, "tasks.jsonl" }
+
+      result = store.stub(:write_records, raiser) { store.create_task!(command) }
+
+      assert_equal :unavailable, result.status
+      assert result.rolled_back?
+      assert_equal :write, result.rollback_stage
+      assert result.rolled_back_write?
+      refute result.rolled_back_validation?, "validation never ran"
+      assert_equal :write, store.last_rollback_stage
+      assert_equal before, File.binread(org), "the pre-mutation bytes are back"
+    end
+  end
+
+  def test_a_failed_post_write_check_records_the_validation_stage
+    with_create_store do |store, org, archive|
+      # post_write_failure validates the archive too. Tearing it as part of the
+      # write is what the preflight cannot catch and the post-write Check
+      # exists for: the write itself succeeds, and the Check after it refuses.
+      before = File.binread(org)
+      writer = store.method(:write_records)
+      torn = lambda do |path, records|
+        File.write(archive, %({"broken))
+        writer.call(path, records)
+      end
+
+      result = store.stub(:write_records, torn) { store.create_task!(command) }
+
+      assert_equal :store_invalid, result.status
+      assert result.rolled_back?
+      assert_equal :validation, result.rollback_stage
+      assert result.rolled_back_validation?
+      refute result.rolled_back_write?, "the write itself succeeded"
+      assert_equal :validation, store.last_rollback_stage
+      assert_equal before, File.binread(org)
+    end
+  end
+
+  # The reason and the stage are written and cleared together, so a later clean
+  # mutation can never be read as a rollback of the earlier one's stage.
+  def test_a_clean_mutation_clears_both_halves_of_the_rollback_record
+    with_create_store do |store, _org, _archive|
+      raiser = ->(_path, _records) { raise Errno::EACCES, "tasks.jsonl" }
+      store.stub(:write_records, raiser) { store.create_task!(command) }
+      assert_equal :write, store.last_rollback_stage
+
+      assert_equal :ok, store.create_task!(command(title: "Second")).status
+      assert_nil store.last_rollback
+      assert_nil store.last_rollback_stage
+    end
+  end
+
+  def test_a_rollback_stage_outside_the_vocabulary_is_refused
+    assert_raises(ArgumentError) do
+      Tasks::MutationResult.new(status: :unavailable, rolled_back: true, rollback_stage: :nonsense)
+    end
+    assert_nil Tasks::MutationResult.new(status: :ok).rollback_stage
+  end
 end

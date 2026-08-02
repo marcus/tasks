@@ -207,7 +207,7 @@ without paying a harness call, which is the behaviour you want. Making the
 streak shared would need a read-modify-write lock on the state file for a case
 that costs, at worst, one extra cooldown. If you ever see the ladder failing to
 engage across slots, that is why, and it is documented rather than fixed.
-| `CLAUDE_MODEL`, `CODEX_TOP/MID` | opus, sol/terra | Tier policy itself lives in `PORTING.md` |
+| `CLAUDE_MODEL`, `CODEX_TOP/MID` | opus, gpt-5.6-sol/gpt-5.6-terra | Tier policy itself lives in `PORTING.md`; use full Codex model identifiers because the ChatGPT-account CLI rejects the short aliases |
 | `CODEX_SANDBOX` | danger-full-access | td's DB lives outside the worktree; tighten to `workspace-write` + `--add-dir` once proven |
 | `PAUSE`/`STAGGER`/backoff | constants in script | Edit in place if they chafe |
 

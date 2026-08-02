@@ -67,7 +67,11 @@ module Conformance
       # Shared with the journal dimension, which compares the index file with
       # exactly these rules.
       def compare_file_state(ctx, dimension, field, fa, fb, klass:, rule:)
-        %w[role present size_bytes line_count symlink_target].each do |k|
+        # `kind` is compared for the same reason `role` is: one side recording a
+        # path as a directory and the other as a file is a real difference, and
+        # without it a port that created a file where a directory belongs agrees
+        # on every remaining field (both carry null bytes, null size).
+        %w[role kind present size_bytes line_count symlink_target].each do |k|
           ctx.equal!(dimension, "#{field}.#{k}", fa[k], fb[k], klass: klass, rule: rule)
         end
 

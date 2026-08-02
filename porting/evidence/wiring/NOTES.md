@@ -33,11 +33,12 @@ owns, so it would otherwise fall between them.
 
 ## From FIXTURES-2
 
-- **td-794997 blocks `links-read` from passing `characterizing`.** Both written
-  specs — the slice's own behavior sentence and `Links.extract`'s comment — say
-  dedupe prefers the labelled form. It actually keeps the first occurrence. The
-  behavior sentence in `manifest.jsonl` must be corrected (or the code changed)
-  before that slice describes its own oracle. Do not wire it as done.
+- **td-794997 is resolved; `links-read` describes its own oracle again.** Both
+  written specs — the slice's behavior sentence and `Links.extract`'s comment —
+  said dedupe prefers the labelled form, and the implementation kept the first
+  occurrence instead. Marcus chose to change the code rather than the prose, so
+  the labelled form now wins regardless of position and `valid/link-corpus` was
+  re-recorded from the fixed oracle. The blocker on `characterizing` is lifted.
 - `links-read`'s `fixtures_todo` is proposed null with two residuals moved to
   `oracle_gaps`: `SYSTEMS` rows keyed to real apex domains, and config-driven
   shorthands. Both are genuinely not store-shaped — the corpus bans real hosts and

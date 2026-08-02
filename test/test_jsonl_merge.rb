@@ -672,7 +672,7 @@ class TestJsonlMerge < Minitest::Test
     end
   end
 
-  def test_cli_driver_leaves_ours_untouched_on_failure_and_logs_it
+  def test_cli_driver_conflicts_ours_on_failure_and_logs_it
     Dir.mktmpdir do |dir|
       base = File.join(dir, "base.jsonl")
       ours = File.join(dir, "ours.jsonl")
@@ -687,9 +687,120 @@ class TestJsonlMerge < Minitest::Test
 
       refute status.success?
       assert_includes stderr, "merge failed"
-      assert_equal before, File.binread(ours)
+      after = File.binread(ours)
+      # Four arguments only — the pre-%L/%X/%Y command string an existing
+      # install still carries. The markers must appear anyway, at Git's default
+      # width and with fallback labels.
+      assert_match(/\A<{7} ours \(tasks JSONL merge failed: .+\)\n/, after)
+      assert_includes after, "\n#{"=" * 7}\n"
+      assert after.end_with?(">>>>>>> theirs\n")
+      assert_includes after, before
       assert_includes File.read(File.join(dir, ".tasks-merge.log")), "failed"
     end
+  end
+
+  # Every refusal must hand Git back a CONFLICTED merge file. Git copies %A over
+  # the working file whatever the exit status, so whatever this leaves in %A is
+  # what the user is holding: leaving it alone leaves ours' full content there,
+  # clean and markerless, and `git add` then discards all of theirs (td-7b9c01).
+  # So the assertion is the marked-up shape — and, just as load-bearing, that
+  # BOTH sides survive inside it verbatim, which is what makes the discarded
+  # side recoverable by hand.
+  def assert_driver_refuses_with_conflict_markers(ours_records, theirs_records, base: base_records,
+                                                  extra_args: [], marker_size: 7)
+    Dir.mktmpdir do |dir|
+      base_path = File.join(dir, "base.jsonl")
+      ours_path = File.join(dir, "ours.jsonl")
+      theirs_path = File.join(dir, "theirs.jsonl")
+      pathname = File.join(dir, "tasks.jsonl")
+      File.write(base_path, Tasks::Format.dump(base))
+      File.write(ours_path, Tasks::Format.dump(ours_records))
+      File.write(theirs_path, theirs_records.is_a?(String) ? theirs_records : Tasks::Format.dump(theirs_records))
+      ours_before = File.binread(ours_path)
+      theirs_before = File.binread(theirs_path)
+
+      _stdout, stderr, status = Open3.capture3(RbConfig.ruby, BIN, "merge-driver",
+                                               base_path, ours_path, theirs_path, pathname, *extra_args)
+
+      refute status.success?, "driver should refuse: #{stderr}"
+      conflicted = File.binread(ours_path)
+      assert_conflict_shape(conflicted, ours_before, theirs_before, size: marker_size)
+      refute Tasks::Check.check_text(conflicted.dup.force_encoding(Encoding::UTF_8)).ok?,
+             "a refused merge must not leave a file `tasks check` accepts"
+      [stderr, conflicted]
+    end
+  end
+
+  # Split on the fences and compare, rather than matching a rendered string:
+  # that is exactly how a human or a script recovers a side, so asserting it
+  # this way asserts the recovery works.
+  def assert_conflict_shape(conflicted, ours_before, theirs_before, size: 7)
+    head, rest = conflicted.split(/^#{"<" * size}[^\n]*\n/, 2)
+    assert_empty head.to_s, "conflict markers must open the file, with nothing before them"
+    ours_side, tail = rest.to_s.split(/^#{"=" * size}\n/, 2)
+    theirs_side, after = tail.to_s.split(/^#{">" * size}[^\n]*\n/, 2)
+    assert_equal ours_before, ours_side, "ours is not recoverable verbatim from the conflicted file"
+    assert_equal theirs_before, theirs_side, "theirs is not recoverable verbatim from the conflicted file"
+    assert_empty after.to_s, "nothing may follow the closing marker"
+  end
+
+  def test_cli_driver_writes_conflict_markers_when_a_side_is_another_schema_version
+    theirs = change(base_records, "10000003", title: "Call PSE billing", updated: WORK_STAMP)
+    theirs.first["version"] = 1
+
+    stderr, conflicted = assert_driver_refuses_with_conflict_markers(
+      change(base_records, "10000002", title: "Book Sixt car (ours)", updated: HOME_STAMP), theirs
+    )
+
+    assert_includes stderr, "theirs is schema v1"
+    # The reason travels with the file, not only with the terminal that has
+    # since scrolled away.
+    assert_includes conflicted, "<<<<<<< ours (tasks JSONL merge failed: theirs is schema v1"
+  end
+
+  def test_cli_driver_writes_conflict_markers_when_a_side_is_unparseable
+    # The unparseable side is not JSONL at all, so it cannot be re-serialized —
+    # only its raw bytes can be carried across, and they must be.
+    stderr, conflicted = assert_driver_refuses_with_conflict_markers(
+      change(base_records, "10000002", title: "Book Sixt car (ours)", updated: HOME_STAMP),
+      "#{Tasks::Format.dump(base_records).lines.first}{not json at all}\n"
+    )
+
+    assert_includes stderr, "cannot be parsed"
+    assert_includes conflicted, "{not json at all}\n"
+  end
+
+  # Git's %L widens the fences; an unparseable side that itself contains
+  # seven-character markers is exactly why Git offers it, and the driver must
+  # honor it rather than nest markers of its own width inside that content.
+  def test_cli_driver_honors_the_conflict_marker_size_git_supplies
+    _stderr, conflicted = assert_driver_refuses_with_conflict_markers(
+      change(base_records, "10000002", title: "Book Sixt car (ours)", updated: HOME_STAMP),
+      "#{Tasks::Format.dump(base_records).lines.first}<<<<<<< not json at all\n",
+      extra_args: ["12", "HEAD", "sync-branch"], marker_size: 12
+    )
+
+    assert_match(/\A<{12} HEAD \(tasks JSONL merge failed: /, conflicted)
+    assert conflicted.end_with?("#{">" * 12} sync-branch\n")
+  end
+
+  def test_cli_driver_writes_conflict_markers_when_the_merged_result_is_invalid
+    # Each side reparents one task under the other and is individually valid;
+    # only their merge is cyclic, so the refusal happens after the merged text
+    # has been built — the case a write-then-validate ordering would already
+    # have written by the time it failed.
+    ours = change(base_records, "10000003", parent: "10000002", updated: HOME_STAMP)
+    theirs = copy(base_records)
+    moved = theirs.delete_at(theirs.index { |record| record["id"] == "10000002" })
+    moved["parent"] = "10000003"
+    moved["updated"] = WORK_STAMP
+    theirs.insert(theirs.index { |record| record["id"] == "10000003" } + 1, moved)
+    assert Tasks::Check.check_text(Tasks::Format.dump(ours)).ok?
+    assert Tasks::Check.check_text(Tasks::Format.dump(theirs)).ok?
+
+    stderr, = assert_driver_refuses_with_conflict_markers(ours, theirs)
+
+    assert_includes stderr, "cyclic parents"
   end
 
   def test_real_world_sixt_pse_stash_divergence_matches_hand_resolution

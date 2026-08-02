@@ -293,6 +293,52 @@ module Tasks
     ArchivePlan = Struct.new(:kept, :moved, :preview, keyword_init: true)
     private_constant :ArchivePlan
 
+    # One defect #repair! knows how to converge, named by the file and physical
+    # line it sits on. `kind` is the machine-readable discriminator (:minted_id,
+    # :dropped_temporal_keys).
+    #
+    # `message` deliberately restates the DEFECT in Check's own wording, not the
+    # action taken: the report then reads as a line-for-line answer to what
+    # `tasks check` just printed, and it means the same thing whether the pass
+    # wrote or refused. `id` carries the minted id, and only a written pass
+    # should show it — a plan that is never written mints an id nothing will
+    # ever hold.
+    RepairFix = Struct.new(:file, :line, :kind, :message, :id, keyword_init: true) do
+      def to_h
+        base = { file: file, line: line, kind: kind.to_s, message: message }
+        id ? base.merge(id: id) : base
+      end
+    end
+
+    # A defect #repair! does NOT know how to converge. Reported so the caller
+    # learns what still blocks the store rather than only that repair refused.
+    RepairBlocker = Struct.new(:file, :line, :message, keyword_init: true) do
+      def to_h = { file: file, line: line, message: message }
+    end
+
+    # The outcome of one #repair! pass. `:ok` means the store validates now (or
+    # would, under --dry-run); `:unrepairable` means at least one blocker was
+    # left and NOTHING was written; `:unsupported_schema` is the version gate.
+    # `written` distinguishes a pass that changed the files from a clean store
+    # and from a dry run, so a caller never has to infer it from `fixes`.
+    RepairResult = Struct.new(:status, :fixes, :blockers, :written, :dry_run, keyword_init: true) do
+      def ok? = status == :ok
+      def written? = written == true
+      def dry_run? = dry_run == true
+
+      def to_h
+        {
+          ok: ok?, status: status.to_s, dry_run: dry_run?, written: written?,
+          # A minted id is reported only when it was actually written. A dry run
+          # and a refused pass both mint one to prove the file would validate,
+          # and that id is discarded — publishing it would invite a caller to
+          # record an id no record will ever carry.
+          fixes: fixes.map { |fix| written? ? fix.to_h : fix.to_h.except(:id) },
+          blockers: blockers.map(&:to_h),
+        }
+      end
+    end
+
     # Semantic tag marking a task as deferred (someday/maybe). See Item#deferred?.
     DEFER_TAG = "defer"
 
@@ -308,6 +354,15 @@ module Tasks
     # mutation was clean. Lets the CLI tell a validation rollback (run `check`)
     # apart from a genuine stale-line staleness. Cleared at each mutation's entry.
     attr_reader :last_rollback
+
+    # WHICH STAGE produced #last_rollback: `:write` when the atomic replace
+    # itself raised (validation never ran), `:validation` when the bytes landed
+    # and the post-write Check refused them. nil when the last mutation was
+    # clean. `last_rollback` alone cannot answer this — both stages set it — and
+    # a caller that guesses blames validation for a failure it never saw
+    # (td-fea097). Set and cleared only through #record_rollback/#clear_rollback
+    # so the pair can never drift apart.
+    attr_reader :last_rollback_stage
 
     UNDO_LIMIT = 50 # deepest undo history the journal retains
 
@@ -335,6 +390,8 @@ module Tasks
       @read_snapshot = nil
       @link_shorthands = links
       @link_systems = link_systems
+      @last_rollback = nil
+      @last_rollback_stage = nil
       @now = now
       @device = UpdateStamp.slug(device || UpdateStamp.device)
       @journal = Journal.new(dir: journal_dir || Journal.dir_for(org), org: org, limit: undo_limit,
@@ -527,7 +584,7 @@ module Tasks
       end
 
       with_lock do
-        @last_rollback = nil
+        clear_rollback
         before = snapshot
         refusal = unsupported_schema_refusal
         return refusal if refusal
@@ -561,9 +618,10 @@ module Tasks
         begin
           write_records(@org, planned[:records])
           if (reason = post_write_failure)
-            @last_rollback = reason
+            record_rollback(reason, stage: :validation)
             restore(before)
-            return MutationResult.new(status: :store_invalid, errors: [reason], rolled_back: true)
+            return MutationResult.new(status: :store_invalid, errors: [reason], rolled_back: true,
+                                      rollback_stage: @last_rollback_stage)
           end
 
           after = snapshot
@@ -579,9 +637,10 @@ module Tasks
             summary: { parent_id: planned[:parent_id], inserted_id: planned[:id] }
           )
         rescue StandardError => e
-          @last_rollback = safe_patch_error(e)
+          record_rollback(safe_patch_error(e), stage: :write)
           restore(before)
-          MutationResult.new(status: :unavailable, errors: [safe_patch_error(e)], rolled_back: true)
+          MutationResult.new(status: :unavailable, errors: [safe_patch_error(e)], rolled_back: true,
+                             rollback_stage: @last_rollback_stage)
         end
       end
     end
@@ -598,7 +657,7 @@ module Tasks
       end
 
       with_lock do
-        @last_rollback = nil
+        clear_rollback
         before = snapshot
         refusal = unsupported_schema_refusal
         return refusal if refusal
@@ -664,11 +723,12 @@ module Tasks
         begin
           write_records(@org, working_records)
           if (reason = post_write_failure)
-            @last_rollback = reason
+            record_rollback(reason, stage: :validation)
             restore(before)
             return MutationResult.new(status: :store_invalid,
                                       snapshot: restored_edit_snapshot(command.id), errors: [reason],
-                                      rolled_back: true)
+                                      rolled_back: true,
+                                      rollback_stage: @last_rollback_stage)
           end
           after = snapshot
           @journal.record(label: label, before: before, after: after)
@@ -684,9 +744,10 @@ module Tasks
             }
           )
         rescue StandardError => e
-          @last_rollback = safe_patch_error(e)
+          record_rollback(safe_patch_error(e), stage: :write)
           restore(before)
-          MutationResult.new(status: :unavailable, errors: [safe_patch_error(e)], rolled_back: true)
+          MutationResult.new(status: :unavailable, errors: [safe_patch_error(e)], rolled_back: true,
+                             rollback_stage: @last_rollback_stage)
         end
       end
     end
@@ -703,7 +764,7 @@ module Tasks
       end
 
       with_lock do
-        @last_rollback = nil
+        clear_rollback
         before = snapshot
         current = nil
         refusal = unsupported_schema_refusal
@@ -795,11 +856,12 @@ module Tasks
         begin
           write_records(@org, working_records)
           if (reason = post_write_failure)
-            @last_rollback = reason
+            record_rollback(reason, stage: :validation)
             restore(before)
             return MutationResult.new(status: :store_invalid,
                                       snapshot: restored_edit_snapshot(command.id),
-                                      errors: [reason], rolled_back: true)
+                                      errors: [reason], rolled_back: true,
+                                      rollback_stage: @last_rollback_stage)
           end
           after = snapshot
           label = "#{command.action} proposal: #{records[ri]["title"]}"
@@ -815,10 +877,11 @@ module Tasks
             summary: { action: command.action, from: "PROPOSED", to: target }
           )
         rescue StandardError => e
-          @last_rollback = safe_patch_error(e)
+          record_rollback(safe_patch_error(e), stage: :write)
           restore(before)
           MutationResult.new(status: :unavailable, snapshot: current,
-                             errors: [safe_patch_error(e)], rolled_back: true)
+                             errors: [safe_patch_error(e)], rolled_back: true,
+                             rollback_stage: @last_rollback_stage)
         end
       end
     end
@@ -940,7 +1003,7 @@ module Tasks
       end
 
       with_lock do
-        @last_rollback = nil
+        clear_rollback
         before = snapshot
         refusal = unsupported_schema_refusal
         return refusal if refusal
@@ -991,10 +1054,11 @@ module Tasks
         begin
           write_records(@org, records)
           if (reason = post_write_failure)
-            @last_rollback = reason
+            record_rollback(reason, stage: :validation)
             restore(before)
             return MutationResult.new(status: :store_invalid, errors: [reason],
-                                      rolled_back: true)
+                                      rolled_back: true,
+                                      rollback_stage: @last_rollback_stage)
           end
 
           after = snapshot
@@ -1006,10 +1070,11 @@ module Tasks
             summary: { created_id: project_id, root_id: root_id, created_root: created_root }
           )
         rescue StandardError => e
-          @last_rollback = safe_patch_error(e)
+          record_rollback(safe_patch_error(e), stage: :write)
           restore(before)
           MutationResult.new(status: :unavailable, errors: [safe_patch_error(e)],
-                             rolled_back: true)
+                             rolled_back: true,
+                             rollback_stage: @last_rollback_stage)
         end
       end
     end
@@ -1107,7 +1172,7 @@ module Tasks
       end
 
       with_lock do
-        @last_rollback = nil
+        clear_rollback
         before = snapshot
         current = nil
         repair = false
@@ -1205,11 +1270,12 @@ module Tasks
         begin
           write_records(@org, working_records)
           if (reason = post_write_failure)
-            @last_rollback = reason
+            record_rollback(reason, stage: :validation)
             restore(before)
             return MutationResult.new(status: :store_invalid,
                                       snapshot: restored_edit_snapshot(changeset.id),
-                                      errors: [reason], rolled_back: true)
+                                      errors: [reason], rolled_back: true,
+                                      rollback_stage: @last_rollback_stage)
           end
           after = snapshot
           @journal.record(label: label, before: before, after: after,
@@ -1225,11 +1291,12 @@ module Tasks
             summary: applied[:summary]
           )
         rescue StandardError => e
-          @last_rollback = safe_patch_error(e)
+          record_rollback(safe_patch_error(e), stage: :write)
           restore(before)
           MutationResult.new(status: :unavailable,
                              snapshot: restored_edit_snapshot(changeset.id),
-                             errors: [safe_patch_error(e)], rolled_back: true)
+                             errors: [safe_patch_error(e)], rolled_back: true,
+                             rollback_stage: @last_rollback_stage)
         end
       end
     end
@@ -1241,6 +1308,76 @@ module Tasks
     def ensure_id!(item)
       return item.id if item.id
       with_history("id: #{item.title}") { ensure_id_impl(item) }
+    end
+
+    # Converge a readable-but-unwritable store in ONE pass, and write once.
+    #
+    # `ensure_id!` above, and Format's "dropped on the next write" comment for an
+    # unknown key inside a temporal object, are both RECORD repairs. Every
+    # mutation pre- or post-flights Check over the WHOLE file, so either repair
+    # lands only when its record is the file's last remaining error. With two or
+    # more instances the file never validates, every attempt refuses or rolls
+    # back, and the store is readable but unrepairable except by hand
+    # (td-d6ed92, td-2addce). This is the command that closes that loop: it fixes
+    # every instance it knows about across the store, then writes — so the file
+    # Check sees is already converged.
+    #
+    # It repairs the ARCHIVE as well as the live file, because `post_write_failure`
+    # validates both: a live-only repair would leave every mutation still refusing
+    # on account of the archive, which is the same dead end one file over.
+    #
+    # Two invariants, both load-bearing:
+    #
+    #   * It never writes a partially repaired file. The repaired records are
+    #     re-Checked in memory first, and any remaining error refuses the whole
+    #     pass with nothing written. Unparseable lines therefore always refuse —
+    #     Check folds Format's parse errors in — so a write can never silently
+    #     drop a line this binary could not read.
+    #   * It never touches `updated`. See #write_records' `stamp:` argument.
+    def repair!(dry_run: false)
+      with_lock do
+        if unsupported_schema?
+          source, version = unsupported_schema_source
+          return RepairResult.new(
+            status: :unsupported_schema, fixes: [], written: false, dry_run: dry_run,
+            blockers: [RepairBlocker.new(file: repair_file_name(source), line: 1,
+                                         message: Check.unsupported_version_message(version))]
+          )
+        end
+
+        plans = repair_plans
+        fixes = plans.flat_map { |plan| plan[:fixes] }
+        blockers = plans.flat_map { |plan| plan[:blockers] }
+        if blockers.any?
+          return RepairResult.new(status: :unrepairable, fixes: fixes, blockers: blockers,
+                                  written: false, dry_run: dry_run)
+        end
+        if fixes.empty? || dry_run
+          return RepairResult.new(status: :ok, fixes: fixes, blockers: [],
+                                  written: false, dry_run: dry_run)
+        end
+
+        # `repair: true` marks the journal step the same way a targeted repair
+        # marks its own, so `undo` restores the malformed bytes on request
+        # instead of refusing to write a file that fails today's invariants.
+        wrote = with_history("repair store", repair: true) do
+          plans.each do |plan|
+            next if plan[:fixes].empty?
+            write_records(plan[:path], plan[:records], stamp: false)
+          end
+          reload!
+          true
+        end
+        unless wrote
+          return RepairResult.new(
+            status: :unrepairable, fixes: fixes, written: false, dry_run: dry_run,
+            blockers: [RepairBlocker.new(file: nil, line: 0,
+                                         message: last_rollback || "validation failed after the repair")]
+          )
+        end
+
+        RepairResult.new(status: :ok, fixes: fixes, blockers: [], written: true, dry_run: dry_run)
+      end
     end
 
     # Items parsed from the archive file (source: :archive). Not cached — the
@@ -2634,6 +2771,24 @@ module Tasks
       merged
     end
 
+    # The single writer for the rollback pair. Every mutation entry point calls
+    # #clear_rollback before it starts and #record_rollback on exactly one of
+    # its two rollback arms, so the reason and the stage are always set together
+    # or cleared together.
+    def clear_rollback
+      @last_rollback = nil
+      @last_rollback_stage = nil
+    end
+
+    def record_rollback(reason, stage:)
+      unless MutationResult::ROLLBACK_STAGES.include?(stage)
+        raise ArgumentError, "unknown rollback stage #{stage.inspect}"
+      end
+
+      @last_rollback_stage = stage
+      @last_rollback = reason
+    end
+
     def safe_patch_error(error)
       error.message.to_s.encode(Encoding::UTF_8, invalid: :replace,
                                 undef: :replace, replace: "�")
@@ -2948,7 +3103,7 @@ module Tasks
     # across processes.
     def delegation_mutation!(id, expected_revision:, coalesce_key: nil, allow_repair: false)
       with_lock do
-        @last_rollback = nil
+        clear_rollback
         before = snapshot
         current = nil
         repair = false
@@ -3011,10 +3166,11 @@ module Tasks
         begin
           write_records(@org, working_records)
           if (reason = post_write_failure)
-            @last_rollback = reason
+            record_rollback(reason, stage: :validation)
             restore(before)
             return MutationResult.new(status: :store_invalid, snapshot: restored_edit_snapshot(id),
-                                      errors: [reason], rolled_back: true)
+                                      errors: [reason], rolled_back: true,
+                                      rollback_stage: @last_rollback_stage)
           end
           after = snapshot
           @journal.record(label: planned[:label], before: before, after: after,
@@ -3030,10 +3186,11 @@ module Tasks
             summary: planned[:summary]
           )
         rescue StandardError => e
-          @last_rollback = safe_patch_error(e)
+          record_rollback(safe_patch_error(e), stage: :write)
           restore(before)
           MutationResult.new(status: :unavailable, snapshot: current,
-                             errors: [safe_patch_error(e)], rolled_back: true)
+                             errors: [safe_patch_error(e)], rolled_back: true,
+                             rollback_stage: @last_rollback_stage)
         end
       end
     end
@@ -3422,8 +3579,17 @@ module Tasks
 
     # -- write plumbing --------------------------------------------------------
 
-    def write_records(path, records)
-      stamp_changed_tasks!(fresh_records(path), records)
+    # `stamp: false` writes the records with their `updated` values exactly as
+    # they were read. The one caller is #repair!, and the reason is semantic: a
+    # repair asserts nothing about the task's content, so stamping it would
+    # (a) falsify "when this task last changed", (b) hand the repairing device an
+    # undeserved win in the last-write-wins merge — which, for a dropped unknown
+    # temporal key, means overwriting the newer binary that understood the field
+    # with the copy that just discarded it — and (c) for a just-minted id, be
+    # indistinguishable from a task created now, since stamp_changed_tasks!
+    # indexes originals by id and a fresh id is in no index (td-d6ed92).
+    def write_records(path, records, stamp: true)
+      stamp_changed_tasks!(fresh_records(path), records) if stamp
       Atomic.write(path, Format.dump(records))
     end
 
@@ -3659,9 +3825,13 @@ module Tasks
     # succeeds but must not burn an undo slot with a label that reverts nothing.
     # The whole read-modify-write runs under the lock so a concurrent writer
     # can't slip between the steps.
-    def with_history(label, coalesce_key: nil)
+    # `repair: true` flags the journal step as one whose BEFORE-state is invalid
+    # bytes the user deliberately asked to fix, so `undo` restores them instead
+    # of refusing (see history_step). Default false: an ordinary mutation's undo
+    # stays gated on the restored file validating.
+    def with_history(label, coalesce_key: nil, repair: false)
       with_lock do
-        @last_rollback = nil
+        clear_rollback
         before = snapshot
         result = yield
         if result && result != 0
@@ -3675,12 +3845,12 @@ module Tasks
           # sweep writes the archive too). If it would, record why, roll back —
           # both files are snapshotted — and report failure instead.
           if (reason = post_write_failure)
-            @last_rollback = reason
+            record_rollback(reason, stage: :validation)
             restore(before)
             return result.is_a?(Integer) ? 0 : false
           end
           @journal.record(label: label, before: before, after: after,
-                          coalesce_key: coalesce_key)
+                          coalesce_key: coalesce_key, repair: repair)
         end
         result
       end
@@ -3811,6 +3981,98 @@ module Tasks
         kept: kept, moved: moved,
         preview: preview
       )
+    end
+
+    # -- store repair ----------------------------------------------------------
+
+    # The keys a temporal object may carry. Deliberately the same set
+    # Check.check_temporal_time subtracts and Format::NESTED_KEY_ORDER declares:
+    # a repair that dropped a different set than Check refuses would either fail
+    # to converge or destroy a field Check was happy with.
+    TEMPORAL_KEYS = %w[local timezone fold].freeze
+    private_constant :TEMPORAL_KEYS
+
+    def repair_file_name(source) = source == :archive ? File.basename(@archive) : File.basename(@org)
+
+    # Plan the repair of every file in the store. Ids are minted from ONE pool
+    # spanning both files, so a repair can never invent an id that collides with
+    # a swept task (the cross-file duplicate `check --all-files` refuses).
+    def repair_plans
+      taken = Set.new
+      targets = [[@org, File.basename(@org)]]
+      targets << [@archive, File.basename(@archive)] if File.exist?(@archive)
+      parsed = targets.filter_map do |path, name|
+        raw = begin
+          File.read(path, encoding: "UTF-8")
+        rescue Errno::ENOENT
+          nil
+        end
+        next nil if raw.nil?
+
+        unless raw.valid_encoding?
+          next { path: path, file: name, records: [], fixes: [],
+                 blockers: [RepairBlocker.new(file: name, line: 0, message: "file is not valid UTF-8")] }
+        end
+        result = Format.parse(raw)
+        result.records.each { |record| taken << record["id"] if record["id"].is_a?(String) }
+        { path: path, file: name, parsed: result }
+      end
+
+      parsed.map { |plan| plan.key?(:parsed) ? repair_plan(plan, taken) : plan }
+    end
+
+    # Apply the known repairs to one file's records, then re-Check the result in
+    # memory. Whatever Check still reports is a blocker: a defect this command
+    # does not know how to converge, reported rather than written over.
+    def repair_plan(plan, taken)
+      records = plan[:parsed].records
+      fixes = apply_known_repairs!(records, plan[:file], taken)
+      after = Check.check_parsed(Format::Result.new(records, plan[:parsed].errors))
+      blockers = after.errors.map do |line, message|
+        RepairBlocker.new(file: plan[:file], line: line, message: message)
+      end
+      { path: plan[:path], file: plan[:file], records: records, fixes: fixes, blockers: blockers }
+    end
+
+    # The two known members of the class. Both are repairs the codebase already
+    # documents and neither can reach the file today:
+    #
+    #   * a record with no id — `ensure_id!` mints one, but only for the record
+    #     it was asked about. An id-less record can never be a parent (Check
+    #     resolves `parent` against ids it has already seen), so minting one
+    #     cannot invalidate a reference. A MALFORMED id is deliberately left
+    #     alone: children may point at it, and reminting would orphan them.
+    #   * an unknown key inside `scheduled_time`/`deadline_time` — the drop
+    #     `Format::NESTED_FORWARD_COMPAT` calls "the repair path, not data loss".
+    #     Dropped explicitly rather than left to `Format.dump_record`, so the
+    #     in-memory re-Check below sees the repaired state and the fix is
+    #     enumerable in the report.
+    def apply_known_repairs!(records, file, taken)
+      fixes = []
+      records.each do |record|
+        next if record["type"] == "meta"
+        line = record["line"]
+        id = record["id"]
+        if id.nil? || (id.is_a?(String) && id.empty?)
+          minted = gen_id(taken)
+          taken << minted
+          record["id"] = minted
+          fixes << RepairFix.new(file: file, line: line, kind: :minted_id,
+                                 message: "record missing id", id: minted)
+        end
+        %w[scheduled_time deadline_time].each do |key|
+          value = record[key]
+          next unless value.is_a?(Hash)
+
+          unknown = value.keys.map(&:to_s) - TEMPORAL_KEYS
+          next if unknown.empty?
+
+          unknown.each { |unknown_key| value.delete(unknown_key) }
+          fixes << RepairFix.new(file: file, line: line, kind: :dropped_temporal_keys,
+                                 message: "#{key} has unknown keys: #{unknown.join(", ")}")
+        end
+      end
+      fixes
     end
 
     def ensure_id_impl(item)

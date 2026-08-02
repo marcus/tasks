@@ -511,6 +511,85 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  # td-d842ed. Exit 2 exists so an agent can REFINE an ambiguous ref, and the
+  # --json caller was the one caller handed nothing on stdout. Asserting the
+  # exit code alone would pass against the old behavior, so this asserts the
+  # envelope and the candidates as data.
+  def test_an_ambiguous_ref_emits_a_json_envelope_with_structured_candidates
+    run_cli("done", "e", "--json") do |_org, out, err, st|
+      assert_equal 2, st.exitstatus, "the 1-vs-2 distinction is untouched"
+      envelope = JSON.parse(out)
+      assert_equal "ambiguous", envelope["error"]
+      assert_equal "done", envelope["action"]
+      assert_equal err.chomp, envelope["message"], "the envelope carries the stderr text verbatim"
+      candidates = envelope["candidates"]
+      assert_operator candidates.size, :>, 1
+      assert_equal err.scan(/^  L\d+: /).size, candidates.size,
+                   "one candidate per listed line"
+      candidates.each do |candidate|
+        assert_equal %w[id line state title], candidate.keys.sort
+        assert_match(/\A[0-9a-f]{8}\z/, candidate["id"], "an agent addresses the retry by id")
+        assert_kind_of Integer, candidate["line"]
+      end
+      assert_includes candidates.map { |c| c["id"] }, FIX[:pr]
+      assert_includes candidates.map { |c| c["title"] }, "Review PR backlog"
+    end
+  end
+
+  # The envelope is ADDITIVE: stdout was empty, stderr is contract and compared
+  # byte for byte by the porting harness. --json must not shift a single byte
+  # of it.
+  def test_a_ref_failure_leaves_stderr_bytes_unchanged_under_json
+    plain = nil
+    run_cli("done", "e") { |_org, _out, err, st| plain = [err, st.exitstatus] }
+    run_cli("done", "e", "--json") do |_org, out, err, st|
+      assert_equal plain, [err, st.exitstatus]
+      refute_empty out, "and stdout is no longer empty"
+    end
+  end
+
+  def test_a_no_match_ref_emits_a_json_envelope_with_an_empty_candidate_list
+    run_cli("done", "nonexistent-task", "--json") do |_org, out, err, st|
+      assert_equal 2, st.exitstatus
+      envelope = JSON.parse(out)
+      assert_equal "not_found", envelope["error"]
+      assert_equal "done", envelope["action"]
+      assert_equal [], envelope["candidates"], "nothing matched, but the key is still stated"
+      assert_equal err.chomp, envelope["message"]
+    end
+  end
+
+  # A ref that names a live task the command's scope excludes: the offending
+  # task IS the candidate, and its state is the reason.
+  def test_an_out_of_scope_ref_emits_the_offending_task_as_a_candidate
+    run_cli("done", "Old finished thing", "--json") do |_org, out, _err, st|
+      assert_equal 2, st.exitstatus
+      envelope = JSON.parse(out)
+      assert_equal "out_of_scope", envelope["error"]
+      assert_equal [FIX[:old]], envelope["candidates"].map { |c| c["id"] }
+      assert_equal ["DONE"], envelope["candidates"].map { |c| c["state"] }
+    end
+  end
+
+  # An L<line> miss has nothing to offer, but a caller still gets a document to
+  # branch on rather than empty stdout.
+  def test_a_line_ref_miss_emits_a_json_envelope
+    run_cli("done", "L999", "--json") do |_org, out, err, st|
+      assert_equal 2, st.exitstatus
+      envelope = JSON.parse(out)
+      assert_equal "not_found", envelope["error"]
+      assert_equal [], envelope["candidates"]
+      assert_equal err.chomp, envelope["message"]
+    end
+  end
+
+  def test_a_ref_failure_without_json_still_prints_nothing_on_stdout
+    run_cli("done", "e") do |_org, out, _err, st|
+      assert_equal 2, st.exitstatus
+      assert_empty out, "the envelope is owed to --json callers only"
+    end
+  end
+
   def test_cli_done_synonyms
     %w[complete close].each do |syn|
       run_cli(syn, "Book flight") do |org, _out, _err, st|
@@ -3288,6 +3367,10 @@ class TestCliMutations < Minitest::Test
       refute st.success?
       assert_match(/file failed validation after the edit/, err)
       refute_match(/nothing was written/, err)
+      # The other half of td-fea097: a rollback whose POST-WRITE CHECK failed
+      # keeps the validation wording and the `check` hint. The write itself
+      # succeeded here, so the write sentence would be as wrong as the reverse.
+      refute_match(/could not write the task file/, err)
       assert_equal "2026-07-02", record_for(org, title: "Book flight in Concur")["deadline"]
     end
   end
@@ -4313,7 +4396,7 @@ class TestCliMutations < Minitest::Test
   # A genuine write-then-revert. An unwritable store directory whose lock
   # sidecar already exists lets the mutation begin and makes the atomic replace
   # fail; the CLI restores the previous bytes and must say so.
-  def test_a_failed_write_is_reported_as_rolled_back_with_the_file_unchanged
+  def with_failed_write_store
     Dir.mktmpdir do |dir|
       org = File.join(dir, "tasks.jsonl")
       File.write(org, FIXTURE_ORG)
@@ -4322,14 +4405,55 @@ class TestCliMutations < Minitest::Test
               "XDG_CONFIG_HOME" => File.join(dir, "xdg"), "XDG_STATE_HOME" => File.join(dir, "state") }
       File.chmod(0o555, dir)
       begin
-        out, err, st = Open3.capture3(env, "ruby", BIN, "capture", "must not be written", "--json")
-        assert_equal 1, st.exitstatus
-        envelope = JSON.parse(out)
-        assert_equal true, envelope["rolled_back"], "the write failed after it began; the bytes were restored"
-        assert_includes err.force_encoding("UTF-8"), "file failed validation after the edit"
-        assert_equal FIXTURE_ORG, File.read(org), "the store must be exactly as it was"
+        yield dir, org, env
       ensure
         File.chmod(0o755, dir)
+      end
+    end
+  end
+
+  def test_a_failed_write_is_reported_as_rolled_back_with_the_file_unchanged
+    with_failed_write_store do |_dir, org, env|
+      out, err, st = Open3.capture3(env, "ruby", BIN, "capture", "must not be written", "--json")
+      err = err.force_encoding("UTF-8")
+      assert_equal 1, st.exitstatus
+      envelope = JSON.parse(out)
+      assert_equal true, envelope["rolled_back"], "the write failed after it began; the bytes were restored"
+      assert_includes err, "could not write the task file — the previous contents were restored"
+      assert_equal FIXTURE_ORG, File.read(org), "the store must be exactly as it was"
+    end
+  end
+
+  # td-fea097: the write failed, so validation never ran. Blaming it — and
+  # sending the user to `tasks check` for a file that is perfectly valid — is
+  # the bug. Asserting the exit code alone cannot see this; the sentence is the
+  # only diagnostic the user gets.
+  def test_a_failed_write_never_blames_validation
+    with_failed_write_store do |_dir, _org, env|
+      _out, err, st = Open3.capture3(env, "ruby", BIN, "capture", "must not be written")
+      err = err.force_encoding("UTF-8")
+      assert_equal 1, st.exitstatus
+      refute_includes err, "failed validation after the edit"
+      refute_includes err, "tasks check"
+      assert_includes err, "nothing was changed"
+    end
+  end
+
+  # The sentence is compared byte for byte by the porting harness
+  # (porting/specs/errors.md), so it must not carry anything that differs
+  # between two machines: the underlying exception message is
+  # "Permission denied @ rb_sysopen - /abs/path/...", and interpolating it would
+  # put the run's own temp directory into the oracle.
+  def test_a_failed_write_diagnostic_carries_no_path_and_no_exception_text
+    with_failed_write_store do |dir, _org, env|
+      out, err, st = Open3.capture3(env, "ruby", BIN, "capture", "must not be written", "--json")
+      err = err.force_encoding("UTF-8")
+      out = out.force_encoding("UTF-8")
+      assert_equal 1, st.exitstatus
+      [err, out, JSON.parse(out)["message"]].each do |stream|
+        refute_includes stream, dir, "the run's own path must not reach the diagnostic"
+        refute_includes stream, "rb_sysopen"
+        refute_includes stream, "Permission denied"
       end
     end
   end

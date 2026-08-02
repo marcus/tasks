@@ -47,6 +47,13 @@ assert_not_contains() { # assert_not_contains <label> <needle> <haystack>
   case "$3" in *"$2"*) bad "$1 (unexpected '$2' in: $3)" ;; *) ok "$1" ;; esac
 }
 
+assert_before() { # assert_before <label> <first> <second> <haystack>
+  case "$4" in
+    *"$2"*"$3"*) ok "$1" ;;
+    *) bad "$1 ('$2' does not precede '$3' in: $4)" ;;
+  esac
+}
+
 exists() { [ -e "$1" ] && echo yes || echo no; }
 
 # ---------------------------------------------------------------- harnesses
@@ -622,6 +629,9 @@ assert_contains 'and which pattern claimed it' "source=You've" "$out"
 assert_eq 'state is recorded for the resume' "$LIMIT_EPOCH" "$(limit_state_reset_at)"
 assert_eq 'with the slot that hit it' 2 "$(jq -r .slot "$STATE")"
 assert_contains 'and the claim release is attempted' 'nothing to release' "$out"
+out="$(handle_limit 2 5 'port-slot2-y' "$LIMIT_EPOCH" 'pattern' 0 2>&1)"
+assert_contains 'an unsafe branch retains its tick claim' \
+  'retaining tick claim because its worktree branch could not be released' "$out"
 clear_limit_state
 PATH="$OLDPATH"
 
@@ -639,10 +649,69 @@ mkdir -p "$REPO_ROOT"
 prepare_worktree 1 >/dev/null 2>&1
 assert_eq 'the worktree is created' 'yes' "$(exists "$SLOTS_DIR/slot-1")"
 
+out="$(release_worktree_branch 9 "$SLOTS_DIR/missing-slot" 2>&1)"; rc=$?
+assert_eq 'a missing worktree fails branch release closed' 1 "$rc"
+assert_contains 'and explains that its claim must be retained' \
+  'retaining any tick claim' "$out"
+
+# A clean commit made on detached HEAD is invisible to status --porcelain.
+# Before the fix, prepare_worktree reset it away without creating any ref.
+( cd "$SLOTS_DIR/slot-1"
+  echo 'completed tick' >committed.txt
+  git add committed.txt
+  git commit -qm 'detached tick result' )
+DETACHED_HEAD="$(git -C "$SLOTS_DIR/slot-1" rev-parse HEAD)"
+out="$(release_worktree_branch 1 "$SLOTS_DIR/slot-1" 2>&1)"
+assert_contains 'a clean detached commit is protected when its tick exits' \
+  'protected detached commit' "$out"
+DETACHED_RESCUE="$(git -C "$REPO_ROOT" branch --contains "$DETACHED_HEAD" \
+  --list 'port/rescue/*-committed*' --format '%(refname:short)' | head -1)"
+assert_eq 'the detached rescue branch exists' 1 \
+  "$(printf '%s' "$DETACHED_RESCUE" | grep -c 'port/rescue/')"
+assert_eq 'and it contains the committed work' 'completed tick' \
+  "$(git -C "$REPO_ROOT" show "$DETACHED_RESCUE:committed.txt" 2>/dev/null)"
+out="$(prepare_worktree 1 2>&1)"
+assert_eq 'the slot resets to the default branch afterwards' \
+  "$(git -C "$REPO_ROOT" rev-parse main)" \
+  "$(git -C "$SLOTS_DIR/slot-1" rev-parse HEAD)"
+
+# Handoffs become claimable before the next prepare_worktree call. A clean
+# branch therefore has to be released immediately when its tick exits.
+( cd "$SLOTS_DIR/slot-1"
+  git switch -qc port/releasable
+  echo 'slice result' >slice.txt
+  git add slice.txt
+  git commit -qm 'slice result' )
+SLICE_HEAD="$(git -C "$SLOTS_DIR/slot-1" rev-parse HEAD)"
+out="$(release_worktree_branch 1 "$SLOTS_DIR/slot-1" 2>&1)"
+assert_contains 'a clean slice branch is released after the tick' \
+  'released worktree branch port/releasable' "$out"
+assert_eq 'the slot is detached after releasing the slice branch' '' \
+  "$(git -C "$SLOTS_DIR/slot-1" symbolic-ref -q --short HEAD 2>/dev/null)"
+assert_eq 'and the slice commit remains on its durable branch' "$SLICE_HEAD" \
+  "$(git -C "$REPO_ROOT" rev-parse port/releasable)"
+
+# An interrupted dirty slice must also be freed before a usage-limit handler
+# can expose its claim to another slot. Its partial state remains inspectable.
+git -C "$SLOTS_DIR/slot-1" switch -qc port/dirty-slice
+echo 'interrupted slice' >"$SLOTS_DIR/slot-1/dirty.txt"
+out="$(release_worktree_branch 1 "$SLOTS_DIR/slot-1" 2>&1)"
+assert_contains 'a dirty slice is rescued immediately after the tick' \
+  'rescued dirty worktree' "$out"
+assert_contains 'and its original branch is released' \
+  'released worktree branch port/dirty-slice' "$out"
+assert_eq 'the dirty slice slot is detached' '' \
+  "$(git -C "$SLOTS_DIR/slot-1" symbolic-ref -q --short HEAD 2>/dev/null)"
+DIRTY_RESCUE="$(printf '%s\n' "$out" | sed -n \
+  's/.*rescued dirty worktree to \([^ ]*\).*/\1/p' | tail -1)"
+assert_eq 'the dirty rescue contains the interrupted state' 'interrupted slice' \
+  "$(git -C "$REPO_ROOT" show "$DIRTY_RESCUE:dirty.txt" 2>/dev/null)"
+
 echo 'half-finished work' >"$SLOTS_DIR/slot-1/wip.txt"
 out="$(prepare_worktree 1 2>&1)"
 assert_contains 'a successful rescue says so' 'rescued dirty worktree' "$out"
-RESCUE="$(git -C "$REPO_ROOT" branch --list 'port/rescue/*' --format '%(refname:short)' | head -1)"
+RESCUE="$(printf '%s\n' "$out" | sed -n \
+  's/.*rescued dirty worktree to \([^ ]*\).*/\1/p' | tail -1)"
 assert_eq 'the rescue branch exists' 1 "$(printf '%s' "$RESCUE" | grep -c 'port/rescue/')"
 assert_eq 'and it actually contains the work' 'half-finished work' \
   "$(git -C "$REPO_ROOT" show "$RESCUE:wip.txt" 2>/dev/null)"
@@ -703,6 +772,76 @@ echo '--- sourcing loop.sh does not run the supervisor ---'
 # REPO_ROOT and friends are reassigned above, so re-check in a fresh shell.
 out="$(bash -c '. "'"$DIR"'/loop.sh"; printf "[%s][%s]" "$REPO_ROOT" "$TIMEOUT_BIN"' 2>&1)"
 assert_eq 'setup_paths and preflight did not run on source' '[][]' "$out"
+
+# ---------------------------------------------------------------- prompt claim lifecycle
+echo '--- prompt preserves saved handoffs and rolls back failed branch setup ---'
+PROMPT="$DIR/PORTING.md"
+ORIENT_BLOCK="$(sed -n '/1\. \*\*Orient/,/2\. \*\*Claim/p' "$PROMPT")"
+CLAIM_BLOCK="$(sed -n '/2\. \*\*Claim/,/3\. \*\*Work/p' "$PROMPT")"
+assert_contains 'saved handoff query requires open porting slices with handoffs' \
+  "td query 'status = open AND handoff.remaining ~ \"\" AND labels ~ \"porting-slice\"' --json" \
+  "$ORIENT_BLOCK"
+assert_before 'saved partial handoffs precede generic ready work' \
+  'handoff.remaining ~ ""' 'the next ready slice' "$ORIENT_BLOCK"
+assert_contains 'the prompt names the real open state of a partial handoff' \
+  'handoff is open after' "$ORIENT_BLOCK"
+assert_contains 'rollback covers branch switch and resumed commit verification' \
+  'If any branch switch or resumed' "$CLAIM_BLOCK"
+assert_contains 'rollback applies only after a successful claim' \
+  'commit verification fails after `td start`' "$CLAIM_BLOCK"
+assert_before 'branch setup rollback detaches before releasing the claim' \
+  'git switch --detach' 'td unstart' "$CLAIM_BLOCK"
+assert_contains 'claim release is conditional on successful detachment' \
+  'Only after detachment succeeds' "$CLAIM_BLOCK"
+assert_contains 'branch setup failure releases the exact claimed issue' \
+  'td unstart' "$CLAIM_BLOCK"
+assert_contains 'claim rollback targets id and records its reason' \
+  '<id> --reason "Branch' "$CLAIM_BLOCK"
+assert_contains 'claim rollback records the branch setup failure reason' \
+  'setup failed after claim"' "$CLAIM_BLOCK"
+assert_contains 'claim rollback verifies open before another choice' \
+  'issue is open before choosing' "$CLAIM_BLOCK"
+assert_contains 'failed detachment retains the claim' \
+  'If detachment fails, retain the claim' "$CLAIM_BLOCK"
+assert_contains 'failed detachment exits instead of exposing the branch' \
+  'never expose a claimable handoff whose branch is' "$CLAIM_BLOCK"
+
+# The query is a cross-entity contract, not just prompt spelling. `has()` only
+# checks issue fields and silently returned no handoffs, so exercise a real td
+# database with both a saved open handoff and an otherwise-ready porting slice.
+HANDOFF_REPO="$TMPROOT/handoff-query-repo"
+mkdir -p "$HANDOFF_REPO"
+git -C "$HANDOFF_REPO" init -q -b main
+git -C "$HANDOFF_REPO" config user.name test
+git -C "$HANDOFF_REPO" config user.email test@example.invalid
+touch "$HANDOFF_REPO/seed"
+git -C "$HANDOFF_REPO" add seed
+git -C "$HANDOFF_REPO" commit -qm seed
+td -w "$HANDOFF_REPO" init >/dev/null 2>&1
+SAVED_ID="$(TD_CONTEXT_ID=prompt-query-test td -w "$HANDOFF_REPO" \
+  create 'saved partial slice' --type task --labels porting-slice --json \
+  | jq -r '.issue.id')"
+TD_CONTEXT_ID=prompt-query-test td -w "$HANDOFF_REPO" \
+  create 'generic ready slice' --type task --labels porting-slice >/dev/null 2>&1
+DONE_ONLY_ID="$(TD_CONTEXT_ID=prompt-query-test td -w "$HANDOFF_REPO" \
+  create 'done-only partial slice' --type task --labels porting-slice --json \
+  | jq -r '.issue.id')"
+TD_CONTEXT_ID=prompt-query-test td -w "$HANDOFF_REPO" start "$SAVED_ID" >/dev/null 2>&1
+TD_CONTEXT_ID=prompt-query-test td -w "$HANDOFF_REPO" \
+  handoff "$SAVED_ID" --remaining 'translate' >/dev/null 2>&1
+TD_CONTEXT_ID=prompt-query-test td -w "$HANDOFF_REPO" \
+  unstart "$SAVED_ID" --reason 'handoff saved' >/dev/null 2>&1
+TD_CONTEXT_ID=prompt-query-test td -w "$HANDOFF_REPO" start "$DONE_ONLY_ID" >/dev/null 2>&1
+TD_CONTEXT_ID=prompt-query-test td -w "$HANDOFF_REPO" \
+  handoff "$DONE_ONLY_ID" --done 'oracle captured' >/dev/null 2>&1
+TD_CONTEXT_ID=prompt-query-test td -w "$HANDOFF_REPO" \
+  unstart "$DONE_ONLY_ID" --reason 'handoff saved' >/dev/null 2>&1
+HANDOFF_QUERY='status = open AND handoff.remaining ~ "" AND labels ~ "porting-slice"'
+QUERY_IDS="$(td -w "$HANDOFF_REPO" query "$HANDOFF_QUERY" --json \
+  | jq -r 'map(.id) | sort | join(",")')"
+EXPECTED_IDS="$(printf '%s\n%s\n' "$SAVED_ID" "$DONE_ONLY_ID" | sort | paste -sd, -)"
+assert_eq 'the prompt query finds both handoff shapes and excludes generic ready work' \
+  "$EXPECTED_IDS" "$QUERY_IDS"
 
 echo
 echo "passed: $PASS   failed: $FAIL"

@@ -35,7 +35,24 @@ unless missing.empty?
         "(missing: #{missing.join(", ")})"
 end
 
-driver = "#{Shellwords.escape(TASKS_BIN)} merge-driver %O %A %B %P"
+# %L (conflict-marker size) and %X/%Y (the ours/theirs conflict labels) are only
+# read when the driver REFUSES, to write the markers Git would have written
+# itself. Measured on Git 2.50: `merge` gives "HEAD"/"<branch>", `rebase` and
+# `cherry-pick` give "HEAD"/"<sha> (<subject>)", `checkout -m` gives
+# "ours"/"theirs" — never empty in any of them.
+#
+# They are deliberately NOT quoted here. Git substitutes into a string it hands
+# to the shell, and it already quotes these itself wherever the value can
+# contain spaces (the rebase/cherry-pick subject form arrives as `'a1b2c3
+# (subject)'`). Adding our own quotes produces `''a1b2c3 (subject)''`, which is
+# a shell syntax error — the driver then never runs at all and Git falls back to
+# its own text merge, silently bypassing this driver on every rebase.
+#
+# An install predating this line leaves the four-argument command in that
+# repository's config; the driver treats all three as optional and falls back to
+# marker size 7 and the labels "ours"/"theirs", so an old install keeps working
+# and re-running this installer is the whole upgrade.
+driver = "#{Shellwords.escape(TASKS_BIN)} merge-driver %O %A %B %P %L %X %Y"
 git_config(repo, "merge.tasksjsonl.name", "tasks jsonl 3-way record merge")
 git_config(repo, "merge.tasksjsonl.driver", driver)
 

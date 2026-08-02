@@ -158,10 +158,19 @@ behavior is exactly as documented everywhere else in this spec. The complete
 list, defaults, and rules live in
 [`porting/specs/determinism.md`](../porting/specs/determinism.md).
 
-`tasks merge-driver <base> <ours> <theirs> <pathname>` is an internal,
-Git-invoked CLI-only adapter. It performs a deterministic field-level 3-way
-merge by stable id and writes valid canonical JSONL to `<ours>`; hard failure
-leaves `<ours>` untouched and exits 1. `bin/install-merge-driver [data-repo]`
+`tasks merge-driver <base> <ours> <theirs> <pathname> [markers] [ours-label]
+[theirs-label]` is an internal, Git-invoked CLI-only adapter. It performs a
+deterministic field-level 3-way merge by stable id and writes valid canonical
+JSONL to `<ours>`; hard failure writes a **conflicted** `<ours>` — both sides
+verbatim inside `<<<<<<<` / `=======` / `>>>>>>>` fences, the reason on the
+opening marker line — and exits 1. Git copies `<ours>` over the working file
+whichever way the driver exits, so refusing without writing would leave a clean,
+markerless file that `tasks check` accepts and `git add` stages, silently
+discarding the other side; the markers are what make a refused merge
+self-evident and make `tasks check` fail on it. The trailing three arguments are
+Git's `%L` marker size and `%X`/`%Y` conflict labels; they are optional, so an
+installation predating them still works with 7-wide markers labeled
+`ours`/`theirs`. `bin/install-merge-driver [data-repo]`
 registers the absolute command in that repository's local Git config after
 verifying `.gitattributes` selects `merge=tasksjsonl`. This is intentionally
 not an HTTP capability: it is local Git transport plumbing, not user-visible
@@ -959,6 +968,7 @@ than what would be nicer.
 | `someday` | ✅ | `{touched: [task]}` |
 | `activate` | ✅ | `{touched: [task]}` |
 | `archive` | ✅ | `{roots, records, moved_ids}` — `roots` is what the human line counts, `records` the whole swept subtree (what `moved_ids` lists). Deliberately not named `archived`: the sibling `project archive --json` uses that word for its record count. Refusals: `conflict` with `reason` = `open_descendants` (carrying `blocked` + `open_descendants`), `archive_conflict` (carrying `conflicting_ids`), `preview_changed` (the store changed while the sweep was being prepared — retry), or `write_failed`; `unsupported_schema_version` on a store whose declared schema version this build does not implement. |
+| `repair` | ✅ | `{action: "repair", ok, status, dry_run, written, fixes: [{file, line, kind, message, id?}], blockers: [{file, line, message}]}`. `kind` is `minted_id` or `dropped_temporal_keys`; `message` restates the `check` error the fix answers, so the two reports read line for line. `id` appears only on a pass that actually wrote — a dry run and a refused pass both mint an id to prove the file would validate and then discard it. Errors: `unrepairable` (carrying the same `fixes`/`blockers` document), `unsupported_schema_version`. |
 | `undo` | ✅ | `{action: "undo", label}`; errors `empty`, `conflict`, `unsupported_schema_version` |
 | `redo` | ✅ | `{action: "redo", label}`; errors `empty`, `conflict`, `unsupported_schema_version` |
 | `config` | ✅ | the resolved settings object |
@@ -1017,7 +1027,7 @@ The sweep's preview pinning matches the endpoint's documented `fingerprint` →
 | `id <ref> [--json]` | | ✅ | Print a task's stable `id`, minting one if absent (post-migration every record already has one — this is the repair path). Idempotent. Resolves refs regardless of state. |
 | `links [<ref>]` | `urls` | ✅ | Links found in task titles/notes, classified by system (`slack`, `jira`, `github`, …; unknown hosts fall back to the host name; Confluence-on-Atlassian is told apart from Jira by its `/wiki` path). One task's links with `<ref>`; every open task's otherwise. `--system <name>` filters (case-insensitive), `--all` widens the listing to done + archived (`<ref>` resolution itself stays live-file only), `--json` emits `{links: [{url, label, system, task, id, line, source}]}`. Recognizes org links `[[url][label]]`, bare URLs, and configured shorthands (below), in file order; org-internal targets (`[[id:…]]`, `[[file:…]]`, headline links) are org navigation, not links. |
 | `open <ref> [n]` | `o` | ✅ | Open a task's link in the browser (macOS `open` / `xdg-open`; `TASKS_OPENER` overrides). One link opens directly; several are listed numbered (exit 1) unless picked by 1-based `n` or `--system <name>`. `--print` prints the URL instead of launching. `--json` reports which link it resolved to (`{id, line, title, url, label, system, opened}`) and, on the branches that refuse, a `not_found`/`ambiguous`/`unavailable` error object; the ambiguous one carries the numbered `links` so a caller can pick without re-running. Resolves refs regardless of state (live file). |
-| `check [--json] [--all-files]` | `k` | ✅ | Validate `tasks.jsonl` structure (records, ids, DFS order, dates). `--all-files` also validates `archive.jsonl` and rejects any stable id present in both files; sync automation uses this after a merge. Exit 1 if errors — including an unreadable schema version: this build reads schema v2 only, and any other declared `meta` version (an older v1 store, or one written by a newer binary) fails with `unsupported meta version <n> (expected 2)`. The **version** header of `archive.jsonl` is consulted even without `--all-files` (its structure still is not), because a foreign archive makes every other command refuse the whole store — see The schema version gate. There is no conversion command in either direction; every read and every mutation refuses such a store without writing, on the CLI, the TUI, and the API (`503 unsupported_schema_version`). `check` itself is one of four commands exempt from that refusal, since it is where the refusal sends you. The escape hatch after any out-of-band edit — and see Repairing an invalid record below for how a mutation can fix the broken record it names. |
+| `check [--json] [--all-files]` | `k` | ✅ | Validate `tasks.jsonl` structure (records, ids, DFS order, dates). `--all-files` also validates `archive.jsonl` and rejects any stable id present in both files; sync automation uses this after a merge. Exit 1 if errors — including an unreadable schema version: this build reads schema v2 only, and any other declared `meta` version (an older v1 store, or one written by a newer binary) fails with `unsupported meta version <n> (expected 2)`. The **version** header of `archive.jsonl` is consulted even without `--all-files` (its structure still is not), because a foreign archive makes every other command refuse the whole store — see The schema version gate. There is no conversion command in either direction; every read and every mutation refuses such a store without writing, on the CLI, the TUI, and the API (`503 unsupported_schema_version`). `check` itself is one of four commands exempt from that refusal, since it is where the refusal sends you. The escape hatch after any out-of-band edit — and see Repairing an invalid record below for how a mutation can fix the broken record it names, or `repair` for the defects no mutation can reach. |
 
 JSON list shape (`--json` on list/agenda/next/quadrants/inbox) — a flat array,
 already sorted the way the text view sorts:
@@ -1162,6 +1172,61 @@ The contract is narrow:
   `expected_revision`/`If-Match`, whose baseline was computed over the
   malformed bytes.
 
+### Converging a wedged store
+
+The targeted repair above fixes **one** broken record, and it engages only when
+that record is the file's last remaining error. That is a real limit, not a
+detail, and it produced a dead end (td-d6ed92, td-2addce):
+
+- `check` refuses the **whole file**, and every mutation pre- or post-flights it
+  over the whole file.
+- The two repairs this codebase documents are **record** repairs. `ensure_id!`
+  mints an id for the one record it was asked about; `Format`'s
+  `NESTED_FORWARD_COMPAT` comment says an unknown key inside a temporal object
+  is "dropped on the next write … the repair path, not data loss".
+- So with **two or more** instances of either defect, neither repair can ever
+  land. `tasks id` mints one id, the file still fails `check` on the others, and
+  the write rolls back. A mutation on a store with two unknown temporal keys
+  never reaches the write that would drop them. Reads still work. The store is
+  readable and unwritable, and before `repair` the only exit was a hand edit —
+  which is exactly what the on-disk format exists to avoid.
+
+`tasks repair` is the converging answer: it fixes **every** instance of every
+defect it knows, across both files, and writes **once**, so the file `check`
+sees afterwards is already whole. It is deliberately **additive**. No existing
+command changed its behavior or its diagnostics:
+
+- `tasks id` on a store with several id-less records still writes, still fails
+  the post-write `check`, and still rolls back with `file failed validation
+  after the edit — run \`tasks check\``. `ensure_id!` gained no preflight —
+  that looks like a harmless optimization and would silently produce the
+  *other* wording.
+- A mutation on a store with unknown temporal keys still refuses before writing,
+  with `task file is already invalid — run \`tasks check\` (nothing was
+  written)`.
+
+The two sentences are how a port proves it kept "refused before writing" apart
+from "wrote and rolled back" — the files are byte-identical either way, so the
+wording and the exit status are the only evidence. `test/test_repair.rb` asserts
+both, each against the store the porting corpus records it on, and asserts the
+absence of the other.
+
+**`updated` is never touched by a repair.** Not written, not cleared, not
+bumped. A repair asserts nothing about a task's content — it converges bytes the
+store refuses to write over — so stamping it would falsify "when this task last
+changed"; would hand the repairing device an unearned win in the last-write-wins
+merge, which for a dropped unknown temporal key means beating the newer binary
+that understood the field with the copy that just discarded it; and, for a
+just-minted id, would be indistinguishable from a task created now, since
+`stamp_changed_tasks!` indexes originals by id and a fresh id is in no index.
+
+**What it will not repair.** Anything whose fix requires guessing intent or
+would break a reference: a malformed (not absent) `id`, since children may point
+at it; a duplicate `id`, since nothing says which copy is canonical; an invalid
+state, priority, date, or recur cookie; a `*_time` with no date beside it; a
+missing or wrong `meta` record. Each is reported as a blocker in `check`'s own
+wording and vetoes the whole pass, which writes nothing.
+
 ## Projects
 
 `projects` (alias `pj`) lists projects and areas; the `project <verb>` command
@@ -1196,6 +1261,7 @@ no fuzzy refs (a transport difference per design rule 7). See
 |---|---|---|---|
 | `archive` | `x` | ✅ | Sweep each DONE/CANCELLED subtree to `archive.jsonl` (root drops `parent`, gains `archived`). Refuses with exit 1 when any candidate root has a non-closed descendant, including PROPOSED, and explains how to resolve it. Persistence is retry-safe across interruption: the archive is installed first, and live records are removed only when the archive contains exactly one canonical copy of every moved ID; partial or conflicting overlap refuses without deleting live data. In the TUI, `x` previews root and descendant counts and requires `y` confirmation; the Store validates that exact candidate-ID/content fingerprint under the sweep lock, while `n`/`esc` cancels without writing. `--json` emits `{roots, records, moved_ids}` (`roots` matches the human count; `records` is the whole swept subtree); because only a pre-sweep preview knows which records move, the JSON form pins the sweep to that preview and refuses if the store changed in between. Every refusal is an error object on stdout: `conflict` with `reason` = `open_descendants`, `archive_conflict`, `preview_changed`, or `write_failed`, or `unsupported_schema_version` on a store whose declared schema version this build does not implement. Stray positional arguments are now a usage error (exit 1). |
 | `delete <ref>` | | ✅ | Undoable **hard delete** of a task's subtree from the live file — not an alias for `CANCELLED`, and it never touches `archive.jsonl`. A leaf deletes directly; a task that still has descendants is refused (exit 1) unless `--cascade` removes the whole contiguous subtree as one journal entry. Deleting never hoists or reparents children. PROPOSED and accepted open tasks resolve directly; `--include-done` additionally widens to closed live tasks. Archived-only ids are not found (exit 2 via ref resolution / `not_found`); a section id is rejected (delete targets tasks). Reports every removed task's pre-delete headline (`--json` → `{deleted: [..]}`); `--dry-run` prints what would be deleted, including the descendant count when cascading, and writes nothing. Undoable via `tasks undo` (restores the exact prior bytes). Cancellation/archival is usually the right call — `delete` is for genuine mistakes. |
+| `repair [--dry-run] [--json]` | `fix` | ✅ | Converge a store `check` refuses, in **one pass, one write**. It is the only command that can: every mutation validates the whole file, so the per-record repairs the code already documents cannot land while a second instance of the same defect is present, and the store is readable but unwritable (see Converging a wedged store below). Repairs, across `tasks.jsonl` **and** `archive.jsonl`: a record with no `id` (one is minted, from a pool spanning both files); an unknown key inside `scheduled_time`/`deadline_time` (dropped, the repair `Format::NESTED_FORWARD_COMPAT` documents). Anything else is a **blocker**: the pass refuses with exit 1, reports every blocker with `check`'s own wording, and writes nothing — it never leaves a partially repaired file. A file with an unparseable line or invalid UTF-8 always refuses, since writing would delete the line this build could not read. `--dry-run` reports the same plan and writes nothing. Never touches `updated` (see below). Journaled as a **repair** step, so `undo` faithfully restores the malformed bytes. `--json`: `{action, ok, status, dry_run, written, fixes: [{file, line, kind, message, id?}], blockers: [{file, line, message}]}`; a refusal is the standard error envelope with `error` = `unrepairable` or `unsupported_schema_version`. |
 | `undo [--json]` | | ✅ | Revert the last mutation via the on-disk journal (`Tasks::Journal`, under `$XDG_STATE_HOME/tasks/journal/`), shared with the TUI and across CLI runs. Refuses (exit 1) if `tasks.jsonl` changed out-of-band since that edit — resolve with `git diff` / `git checkout -- tasks.jsonl`. `--json` emits `{action: "undo", label}` naming the mutation it reverted, or an `empty`/`conflict` error object. |
 | `redo [--json]` | | ✅ | Replay the last undone mutation; same shared journal and conflict guard as `undo`, including the `{action: "redo", label}` result and its `empty`/`conflict` error objects. |
 | `-p [--provider N] [--model N] "prompt"` | | ✅ | Natural-language request via a headless LLM agent (Claude CLI by default, or any configured harness). Leading `--provider`/`--model` override the config default for one run; see [LLM agent settings](#llm-agent-settings). Deliberately has no `--json` — see the opt-out in Structured output (`--json`) coverage. |
