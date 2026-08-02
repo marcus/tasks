@@ -65,6 +65,22 @@ porting/runners/ruby/run --out porting/evidence/config-resolution/ruby \
 porting/compare/validate porting/evidence/config-resolution/ruby
 ```
 
+## Go precedence characterization
+
+`go/internal/config/config_test.go` now has a table-driven characterization of
+the path-resolution boundary: config-file path keys outrank `TASKS_DIR`,
+per-file environment overrides outrank both, empty overrides are ignored, and
+the fallback memory path follows the final `TASKS_FILE`. This distinction is
+deliberate: `TASKS_DIR` chooses the fallback directory, while a config-file
+`file` or `archive` key is a more-specific path selection.
+
+Reproduced in this partial tick with:
+
+```sh
+(cd go && go test ./... && go vet ./...)
+ruby test/test_config.rb -n '/test_defaults_to_default_dir|test_tasks_dir_env_points_both_files|test_per_file_env_beats_tasks_dir|test_config_file_dir_key|test_config_file_per_file_keys_beat_dir_key|test_env_beats_config_file|test_empty_env_values_are_ignored|test_memory_defaults_beside_resolved_tasks_file|test_memory_follows_tasks_dir|test_memory_follows_the_final_tasks_file_override_not_the_base_dir|test_memory_config_key_beats_sibling_default|test_memory_config_key_expands_tilde|test_tasks_memory_env_beats_config_key_and_sibling|test_tasks_memory_empty_env_is_ignored|test_config_file_ignores_comments_blanks_and_unknown_keys|test_config_file_expands_tilde|test_missing_config_file_is_fine|test_for_dir_pins_both_files_ignoring_env_and_config|test_cli_config_reports_paths_and_sources|test_cli_config_reports_memory_from_tasks_file_sibling_and_existence|test_cli_reads_tasks_from_config_file_dir/'
+```
+
 ## Translation handoff (partial)
 
 The Go resolver now lives at `go/internal/config`. It ports only this slice's
