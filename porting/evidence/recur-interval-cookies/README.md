@@ -176,3 +176,24 @@ The Ruby focused oracle remains 20 runs and 66 assertions. Differential fixture
 conformance is still unavailable because no Go CLI adapter reaches recurrence.
 The next step is a fresh independent, mid-tier source-fidelity review of this
 repair; the Go-idiom review follows only if that review passes.
+
+## Source-fidelity repair: signed proleptic years (2026-08-02)
+
+`CivilDate.String` now writes negative years with Ruby `Date`'s signed,
+zero-padded spelling: `-0001-01-01`, rather than Go's former `00-1-01-01`.
+The package regression covers both direct formatting and `NextDate("+1d")`
+from that date. A direct Ruby oracle probe produced `-0001-01-01` and
+`-0001-01-02` for the same inputs.
+
+Verification passed:
+
+```sh
+(cd go && go test ./internal/recur && go test ./... && go test -race ./internal/recur && go vet ./...)
+ruby test/test_recur.rb
+git diff --check
+```
+
+The focused Ruby oracle remains 20 runs and 66 assertions. Differential
+fixture conformance remains unavailable because no Go CLI adapter reaches
+recurrence. The next steps are fresh, independent mid-tier source-fidelity
+and Go-idiom reviews; reviewers must not edit the implementation.

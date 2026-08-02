@@ -116,6 +116,16 @@ func TestArbitrarySizeCountsPreserveRubyProjection(t *testing.T) {
 	}
 }
 
+func TestCivilDateStringPreservesRubySignedYearPadding(t *testing.T) {
+	if got, want := NewCivilDate(-1, 1, 1).String(), "-0001-01-01"; got != want {
+		t.Fatalf("negative year string = %q, want %q", got, want)
+	}
+	got, err := NextDate("+1d", NewCivilDate(-1, 1, 1), NewCivilDate(-1, 1, 1))
+	if err != nil || got.String() != "-0001-01-02" {
+		t.Fatalf("negative year projection = %s, %v", got, err)
+	}
+}
+
 func mustDate(value string) CivilDate {
 	var year int64
 	var month, day int

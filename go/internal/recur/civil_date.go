@@ -20,7 +20,13 @@ func NewCivilDate(year int64, month, day int) CivilDate {
 }
 
 func (d CivilDate) String() string {
-	return fmt.Sprintf("%04s-%02d-%02d", d.Year.String(), d.Month, d.Day)
+	year := d.Year.String()
+	if d.Year.Sign() < 0 {
+		year = "-" + fmt.Sprintf("%04s", new(big.Int).Abs(d.Year).String())
+	} else {
+		year = fmt.Sprintf("%04s", year)
+	}
+	return fmt.Sprintf("%s-%02d-%02d", year, d.Month, d.Day)
 }
 
 func (d CivilDate) Before(other CivilDate) bool { return d.Compare(other) < 0 }
