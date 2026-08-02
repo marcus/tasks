@@ -26,3 +26,8 @@
 {"case_id":"format-parse-diagnostic-adjacent-objects","fixture":"malformed/diagnostic-adjacent-objects","argv":["check"],"notes":"direct Ruby malformed-diagnostic oracle: adjacent JSON objects"}
 {"case_id":"format-parse-diagnostic-invalid-escape","fixture":"malformed/diagnostic-invalid-escape","argv":["check"],"notes":"direct Ruby malformed-diagnostic oracle: invalid string escape"}
 {"case_id":"format-parse-diagnostic-exponent","fixture":"malformed/diagnostic-exponent","argv":["check"],"notes":"direct Ruby malformed-diagnostic oracle: invalid exponent"}
+{"case_id":"format-parse-diagnostic-object-null-adjacent","fixture":"malformed/diagnostic-object-null-adjacent","argv":["check"],"notes":"review-discovered Ruby malformed-diagnostic oracle: object value requires a separator"}
+{"case_id":"format-parse-diagnostic-array-missing-separator","fixture":"malformed/diagnostic-array-missing-separator","argv":["check"],"notes":"review-discovered Ruby malformed-diagnostic oracle: array value requires a separator"}
+{"case_id":"format-parse-diagnostic-object-missing-colon-value","fixture":"malformed/diagnostic-object-missing-colon-value","argv":["check"],"notes":"review-discovered Ruby malformed-diagnostic oracle: nested object key requires a colon"}
+{"case_id":"format-parse-diagnostic-number-trailing-dot","fixture":"malformed/diagnostic-number-trailing-dot","argv":["check"],"notes":"review-discovered Ruby malformed-diagnostic oracle: malformed decimal number"}
+{"case_id":"format-parse-diagnostic-trailing-malformed-object","fixture":"malformed/diagnostic-trailing-malformed-object","argv":["check"],"notes":"review-discovered Ruby malformed-diagnostic oracle: trailing malformed JSON retains token and column"}

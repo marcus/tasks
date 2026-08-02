@@ -47,3 +47,24 @@ $ ruby -Ilib -r tasks/format -r json <extended malformed diagnostic matrix>
 
 The exact command and JSON output were recorded in the td session log for
 `td-2f853a`; the table above is the durable, reviewable oracle capture.
+
+## Review follow-up characterization
+
+The independent reviews at `a106e3c` found five additional observable
+diagnostics that the existing corpus did not cover. These fixtures were added
+from Ruby output only; the current Go output is a defect and was not used as
+an expectation.
+
+| Input | Ruby diagnostic suffix | Current Go result |
+| --- | --- | --- |
+| `{"a": null null}` | `expected ',' or '}' after object value, got: 'null}' at line 1 column 12` | generic trailing-token error |
+| `{"a": [1 2]}` | `expected ',' or ']' after array value at line 1 column 10` | generic trailing-token error |
+| `{"a": {"b" 1}}` | `expected ':' after object key at line 1 column 12` | generic trailing-token error |
+| `{"a": 1.}` | `invalid number: '1.}' at line 1 column 7` | generic trailing-token error |
+| `{"a":1} {bad}` | `unexpected token at end of stream '{bad}' at line 1 column 9` | generic trailing-token error |
+
+The persistent fixtures are `malformed/diagnostic-{object-null-adjacent,array-missing-separator,object-missing-colon-value,number-trailing-dot,trailing-malformed-object}`.
+The direct conformance runner now stops on the first new case, so the prior
+23/23 result is no longer a completion signal. The slice is back in
+characterization until a source-position-aware diagnostic implementation
+matches these Ruby observations.
