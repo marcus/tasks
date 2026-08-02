@@ -69,8 +69,28 @@ Verified on this branch:
 (cd go && go test ./... && go test -race ./... && go vet ./...)
 ```
 
-The remaining medium-risk work is file-backed coherent capture, a Go probe
-that can be differentially compared to the Ruby observations above, then
-separate source-fidelity and Go-idiom reviews. It must not turn lenient reads
-into eager validation, invent a mixed live/archive snapshot, or treat a Go
-output as an expectation.
+The remaining medium-risk work is a Go probe that can be differentially
+compared to the Ruby observations above, then separate source-fidelity and
+Go-idiom reviews. It must not turn lenient reads into eager validation, invent
+a mixed live/archive snapshot, or treat a Go output as an expectation.
+
+## File-backed capture step
+
+`internal/store.Capture` now reads the live file and optional archive under
+one caller-provided `ReadLocker` acquisition and builds the existing immutable
+projection from those exact descriptor reads. The lock is deliberately an
+interface rather than a new lock implementation: persistence and locking are a
+later high-risk slice. `Unlocked` is limited to fixtures and single-reader
+callers. A missing archive remains empty; a missing live store and lock failure
+are returned to the caller; parse defects remain lenient so valid preceding
+records can still be read.
+
+Verified on this branch:
+
+```sh
+(cd go && go test ./... && go test -race ./... && go vet ./...)
+```
+
+Next: add the Go observation probe and differential comparison against the
+captured Ruby observations, then obtain separate independent source-fidelity
+and Go-idiom reviews.
