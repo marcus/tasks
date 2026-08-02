@@ -92,3 +92,18 @@ characterise the exact `$-X` and leading-zero rules.
 Every differential here compares parsed output, never bytes: Ruby's
 `JSON.generate` emits U+2028 and U+2029 raw where Go's encoder escapes them, so
 a byte diff reports a divergence for a value both probes agree on.
+
+`source-fidelity-review-2026-08-02-composition.md` is the fresh independent
+review at `b13485b`, and it **passes** — the first source-fidelity pass this
+slice has had. It attacks the shapes the exhaustive single-code-point sweeps
+cannot express: multi-code-point symbol names composing a sigil, a trailing
+`?`/`!`/`=` and printable-versus-non-printable non-ASCII; Ruby's operator table
+and its near misses; nested containers and the `point == 15/16/17` float-layout
+boundaries; `parse_cli`'s regex-boundary argument shapes; and
+unknown-keyword-versus-domain-error precedence. Its two corpora are
+`review-2026-08-02-composition/{cases,ruby,go}.jsonl` at 188/188 and
+`.../cases2.jsonl` at 18/18; `review-2026-08-02-composition/generate-cases.py`
+regenerates the first. It also independently re-ran all six symbol sweeps —
+26,064 cases, 6,672,384 names, 0 mismatches — which reproduces both `b13485b`
+rules and shows the four earlier sigil sweeps unregressed. Go-idiom
+re-confirmation and independent approval are what remain.
