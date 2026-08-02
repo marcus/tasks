@@ -388,18 +388,72 @@ func missingSeparatorDiagnostic(line []byte) string {
 			return fmt.Sprintf("expected ',' or '}' after object value, got: '%s' at line 1 column %d", tokenThroughClose(line[next:]), next+1)
 		}
 	}
+	inString := false
+	escaped := false
+	stringStart := 0
+	for index, char := range line {
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if char == '\\' {
+				escaped = true
+				continue
+			}
+			if char != '"' {
+				continue
+			}
+			inString = false
+			next := nextNonSpace(line, index+1)
+			previous := previousNonSpace(line, stringStart-1)
+			container := containerAt(line, index)
+			objectValue := container == '{' && previous >= 0 && line[previous] == ':'
+			arrayValue := container == '[' && previous >= 0 && (line[previous] == '[' || line[previous] == ',')
+			if next < len(line) && startsValue(line[next]) && (objectValue || arrayValue) {
+				if container == '[' {
+					return fmt.Sprintf("expected ',' or ']' after array value at line 1 column %d", next+1)
+				}
+				return fmt.Sprintf("expected ',' or '}' after object value, got: '%s' at line 1 column %d", tokenThroughClose(line[next:]), next+1)
+			}
+			continue
+		}
+		if char == '"' {
+			inString = true
+			stringStart = index
+		}
+	}
 	return ""
 }
 
 func missingColonDiagnostic(line []byte) string {
-	for index := 0; index < len(line); index++ {
-		if line[index] != ' ' && line[index] != '\t' || containerAt(line, index) != '{' {
+	inString := false
+	escaped := false
+	stringStart := 0
+	for index, char := range line {
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if char == '\\' {
+				escaped = true
+				continue
+			}
+			if char != '"' {
+				continue
+			}
+			inString = false
+			next := nextNonSpace(line, index+1)
+			previous := previousNonSpace(line, stringStart-1)
+			if containerAt(line, index) == '{' && previous >= 0 && (line[previous] == '{' || line[previous] == ',') && next < len(line) && startsValue(line[next]) {
+				return fmt.Sprintf("expected ':' after object key at line 1 column %d", next+1)
+			}
 			continue
 		}
-		previous := previousNonSpace(line, index-1)
-		next := nextNonSpace(line, index+1)
-		if previous >= 0 && line[previous] == '"' && next < len(line) && startsValue(line[next]) {
-			return fmt.Sprintf("expected ':' after object key at line 1 column %d", next+1)
+		if char == '"' {
+			inString = true
+			stringStart = index
 		}
 	}
 	return ""

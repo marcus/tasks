@@ -152,6 +152,8 @@ func TestParseUsesRubyMalformedJSONDiagnostics(t *testing.T) {
 		{name: "object null separator", input: `{"a": null null}`, want: "invalid JSON: expected ',' or '}' after object value, got: 'null}' at line 1 column 12"},
 		{name: "array missing separator", input: `{"a": [1 2]}`, want: "invalid JSON: expected ',' or ']' after array value at line 1 column 10"},
 		{name: "nested missing colon", input: `{"a": {"b" 1}}`, want: "invalid JSON: expected ':' after object key at line 1 column 12"},
+		{name: "adjacent missing colon", input: `{"a"1}`, want: "invalid JSON: expected ':' after object key at line 1 column 5"},
+		{name: "adjacent value separator", input: `{"a":"x"1}`, want: "invalid JSON: expected ',' or '}' after object value, got: '1}' at line 1 column 9"},
 		{name: "number trailing dot", input: `{"a": 1.}`, want: "invalid JSON: invalid number: '1.}' at line 1 column 7"},
 		{name: "trailing malformed object", input: `{"a":1} {bad}`, want: "invalid JSON: unexpected token at end of stream '{bad}' at line 1 column 9"},
 	}
