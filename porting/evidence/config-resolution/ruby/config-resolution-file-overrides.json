@@ -1,0 +1,341 @@
+{
+  "schema_version": 1,
+  "observation_id": "obs_c524ade7-e6b1-4298-87a8-610f51515c29",
+  "case_id": "config-resolution-file-overrides",
+  "implementation": {
+    "name": "ruby",
+    "version": "199a2d4978089d34532641cc574a4c8455f68697-dirty",
+    "runtime": "ruby 4.0.6"
+  },
+  "fixture": {
+    "id": "valid/archive-pair",
+    "class": "valid",
+    "root_sha256": "b13d0855faa7a3f9628d9fc00c2706afda229b16507d7d24effe132ab5c336e0",
+    "copy_root": "/tmp/tasks-conformance/config-resolution-file-overrides"
+  },
+  "invocation": {
+    "surface": "cli",
+    "argv": [
+      "config",
+      "--json"
+    ],
+    "stdin": {
+      "provided": false,
+      "bytes_base64": ""
+    },
+    "cwd": ".",
+    "env": [
+      {
+        "name": "COLUMNS",
+        "value": "100"
+      },
+      {
+        "name": "HOME",
+        "value": "/tmp/tasks-conformance/config-resolution-file-overrides"
+      },
+      {
+        "name": "LANG",
+        "value": "en_US.UTF-8"
+      },
+      {
+        "name": "LC_ALL",
+        "value": "en_US.UTF-8"
+      },
+      {
+        "name": "LINES",
+        "value": "40"
+      },
+      {
+        "name": "PATH",
+        "value": "/usr/bin:/bin:/usr/sbin:/sbin"
+      },
+      {
+        "name": "TASKS_ARCHIVE",
+        "value": "/tmp/tasks-conformance/config-resolution-file-overrides/archive.jsonl"
+      },
+      {
+        "name": "TASKS_DEVICE",
+        "value": "fixture"
+      },
+      {
+        "name": "TASKS_DIR",
+        "value": "/tmp/tasks-conformance/config-resolution-file-overrides"
+      },
+      {
+        "name": "TASKS_FILE",
+        "value": "/tmp/tasks-conformance/config-resolution-file-overrides/tasks.jsonl"
+      },
+      {
+        "name": "TASKS_MEMORY",
+        "value": "/tmp/tasks-conformance/config-resolution-file-overrides/override-memory.md"
+      },
+      {
+        "name": "TASKS_PIN_COALESCE_SCOPE",
+        "value": "pinned-scope"
+      },
+      {
+        "name": "TASKS_PIN_DELEGATION_KEYS",
+        "value": "cccc000000000001"
+      },
+      {
+        "name": "TASKS_PIN_HOSTNAME",
+        "value": "fixture-host"
+      },
+      {
+        "name": "TASKS_PIN_IDS",
+        "value": "bbbb0001"
+      },
+      {
+        "name": "TASKS_PIN_NOW",
+        "value": "2026-03-14T15:09:26Z"
+      },
+      {
+        "name": "TASKS_TIMEZONE",
+        "value": "UTC"
+      },
+      {
+        "name": "TZ",
+        "value": "UTC"
+      },
+      {
+        "name": "XDG_CONFIG_HOME",
+        "value": "/tmp/tasks-conformance/config-resolution-file-overrides/.config"
+      },
+      {
+        "name": "XDG_STATE_HOME",
+        "value": "/tmp/tasks-conformance/config-resolution-file-overrides/.state"
+      }
+    ],
+    "pins": [
+      {
+        "name": "COLUMNS",
+        "applied": true,
+        "value": "100"
+      },
+      {
+        "name": "LANG",
+        "applied": true,
+        "value": "UTF-8"
+      },
+      {
+        "name": "LC_ALL",
+        "applied": true,
+        "value": "UTF-8"
+      },
+      {
+        "name": "LINES",
+        "applied": true,
+        "value": "40"
+      },
+      {
+        "name": "TASKS_DEVICE",
+        "applied": true,
+        "value": "fixture"
+      },
+      {
+        "name": "TASKS_PIN_COALESCE_SCOPE",
+        "applied": true,
+        "value": "pinned-scope"
+      },
+      {
+        "name": "TASKS_PIN_DELEGATION_KEYS",
+        "applied": true,
+        "value": "cccc000000000001"
+      },
+      {
+        "name": "TASKS_PIN_HOSTNAME",
+        "applied": true,
+        "value": "fixture-host"
+      },
+      {
+        "name": "TASKS_PIN_IDS",
+        "applied": true,
+        "value": "bbbb0001"
+      },
+      {
+        "name": "TASKS_PIN_NOW",
+        "applied": true,
+        "value": "2026-03-14T15:09:26Z"
+      },
+      {
+        "name": "TASKS_TIMEZONE",
+        "applied": true,
+        "value": "UTC"
+      },
+      {
+        "name": "TZ",
+        "applied": true,
+        "value": "UTC"
+      }
+    ],
+    "timeout_ms": 60000
+  },
+  "process": {
+    "exit_status": 0,
+    "signal": null,
+    "timed_out": false,
+    "stdout": {
+      "sha256": "819f8902eab7ae41b078fbbad2dbb31c19538c1613beb8db89e04124655e27b5",
+      "size_bytes": 1029,
+      "valid_utf8": true,
+      "bytes_base64": "eyJvcmciOiIvdG1wL3Rhc2tzLWNvbmZvcm1hbmNlL2NvbmZpZy1yZXNvbHV0aW9uLWZpbGUtb3ZlcnJpZGVzL3Rhc2tzLmpzb25sIiwiYXJjaGl2ZSI6Ii90bXAvdGFza3MtY29uZm9ybWFuY2UvY29uZmlnLXJlc29sdXRpb24tZmlsZS1vdmVycmlkZXMvYXJjaGl2ZS5qc29ubCIsIm1lbW9yeSI6Ii90bXAvdGFza3MtY29uZm9ybWFuY2UvY29uZmlnLXJlc29sdXRpb24tZmlsZS1vdmVycmlkZXMvb3ZlcnJpZGUtbWVtb3J5Lm1kIiwidXJnZW50X2RheXMiOjMsIm1heF9kZXB0aCI6NCwidGhlbWUiOiJkZWZhdWx0IiwiY29sb3JzIjp7fSwibW91c2UiOnRydWUsInRpbWV6b25lIjoiVVRDIiwidGltZV9mb3JtYXQiOjEyLCJkYXRlX29yZGVyIjoibWR5IiwidHpkYl92ZXJzaW9uIjoiWm9uZWluZm8gRGF0YVNvdXJjZTogL3Vzci9zaGFyZS96b25laW5mbyIsInRpbWV6b25lX2ZhbGxiYWNrX3dhcm5pbmciOmZhbHNlLCJsaW5rcyI6e30sImxpbmtfc3lzdGVtcyI6e30sInByb21wdF9mYWN0cyI6eyJkYXRldGltZSI6dHJ1ZSwiaG9zdG5hbWUiOnRydWV9LCJob3N0bmFtZSI6ImZpeHR1cmUtaG9zdCIsImhvc3RfY29udGV4dCI6bnVsbCwiaG9zdF9jb250ZXh0X3NvdXJjZSI6bnVsbCwiaG9zdF9jb250ZXh0cyI6e30sInNvdXJjZXMiOnsib3JnIjoiVEFTS1NfRklMRSBlbnYiLCJhcmNoaXZlIjoiVEFTS1NfQVJDSElWRSBlbnYiLCJtZW1vcnkiOiJUQVNLU19NRU1PUlkgZW52IiwidXJnZW50X2RheXMiOiJkZWZhdWx0IiwibWF4X2RlcHRoIjoiZGVmYXVsdCIsInRoZW1lIjoiZGVmYXVsdCIsIm1vdXNlIjoiZGVmYXVsdCIsInRpbWV6b25lIjoiVEFTS1NfVElNRVpPTkUgZW52IiwidGltZV9mb3JtYXQiOiJkZWZhdWx0IiwiZGF0ZV9vcmRlciI6ImRlZmF1bHQifSwibWVtb3J5X2V4aXN0cyI6ZmFsc2UsImNvbmZpZ19maWxlIjoiL3RtcC90YXNrcy1jb25mb3JtYW5jZS9jb25maWctcmVzb2x1dGlvbi1maWxlLW92ZXJyaWRlcy8uY29uZmlnL3Rhc2tzL2NvbmZpZyIsImNvbmZpZ19maWxlX2V4aXN0cyI6dHJ1ZX0K",
+      "truncated_at_bytes": null,
+      "text": "{\"org\":\"/tmp/tasks-conformance/config-resolution-file-overrides/tasks.jsonl\",\"archive\":\"/tmp/tasks-conformance/config-resolution-file-overrides/archive.jsonl\",\"memory\":\"/tmp/tasks-conformance/config-resolution-file-overrides/override-memory.md\",\"urgent_days\":3,\"max_depth\":4,\"theme\":\"default\",\"colors\":{},\"mouse\":true,\"timezone\":\"UTC\",\"time_format\":12,\"date_order\":\"mdy\",\"tzdb_version\":\"Zoneinfo DataSource: /usr/share/zoneinfo\",\"timezone_fallback_warning\":false,\"links\":{},\"link_systems\":{},\"prompt_facts\":{\"datetime\":true,\"hostname\":true},\"hostname\":\"fixture-host\",\"host_context\":null,\"host_context_source\":null,\"host_contexts\":{},\"sources\":{\"org\":\"TASKS_FILE env\",\"archive\":\"TASKS_ARCHIVE env\",\"memory\":\"TASKS_MEMORY env\",\"urgent_days\":\"default\",\"max_depth\":\"default\",\"theme\":\"default\",\"mouse\":\"default\",\"timezone\":\"TASKS_TIMEZONE env\",\"time_format\":\"default\",\"date_order\":\"default\"},\"memory_exists\":false,\"config_file\":\"/tmp/tasks-conformance/config-resolution-file-overrides/.config/tasks/config\",\"config_file_exists\":true}\n"
+    },
+    "stderr": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "valid_utf8": true,
+      "bytes_base64": "",
+      "truncated_at_bytes": null,
+      "text": ""
+    }
+  },
+  "files": {
+    "mutated": false,
+    "before": [
+      {
+        "role": "config",
+        "path": ".config/tasks/config",
+        "present": true,
+        "sha256": "080c6680e00b084bdbdf51f857e88b1eb41b465bdbd7882dfe2372b1fffa6408",
+        "size_bytes": 157,
+        "mode": "0644",
+        "content_base64": "IyBGaXh0dXJlLW93bmVkIHJ1bm5lciBjb25maWd1cmF0aW9uIGZvciBjb25maWctcmVzb2x1dGlvbiBjb25mb3JtYW5jZSBjYXNlcy4KZmlsZSA9IH4vdGFza3MuanNvbmwKYXJjaGl2ZSA9IH4vYXJjaGl2ZS5qc29ubAptZW1vcnkgPSB+L2NvbmZpZ3VyZWQtbWVtb3J5Lm1kCg==",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "archive",
+        "path": "archive.jsonl",
+        "present": true,
+        "sha256": "771f2c1fb5a3b661635686ee718435aae708a4d86ac7ff8bffaf941e0492154a",
+        "size_bytes": 628,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImEwMDAwMTAxIiwidGl0bGUiOiJTcHJpbmcgY2xlYXItb3V0IiwiYXJjaGl2ZWQiOiIyMDI2LTA1LTMxIiwiYm9keSI6IlN3ZXB0IGFmdGVyIGNvbXBsZXRpb24uIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiYTAwMDAxMDIiLCJwYXJlbnQiOiJhMDAwMDEwMSIsInN0YXRlIjoiRE9ORSIsInRpdGxlIjoiRW1wdHkgdGhlIGxvZnQiLCJjbG9zZWQiOiIyMDI2LTA1LTIwIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiYTAwMDAxMDMiLCJwYXJlbnQiOiJhMDAwMDEwMSIsInN0YXRlIjoiRE9ORSIsInRpdGxlIjoiQm9vayB0aGUgc2tpcCIsImNsb3NlZCI6IjIwMjYtMDUtMTgifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJhMDAwMDEwNCIsInBhcmVudCI6ImEwMDAwMTAxIiwic3RhdGUiOiJDQU5DRUxMRUQiLCJ0aXRsZSI6IlNlbGwgdGhlIG9sZCBib29rY2FzZSIsImNsb3NlZCI6IjIwMjYtMDUtMTkifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJhMDAwMDEwNSIsInN0YXRlIjoiRE9ORSIsInRpdGxlIjoiU3RhbmRhbG9uZSBhcmNoaXZlZCB0YXNrIiwiY2xvc2VkIjoiMjAyNi0wNC0wMiIsImFyY2hpdmVkIjoiMjAyNi0wNS0zMSJ9Cg==",
+        "line_count": 6,
+        "symlink_target": null
+      },
+      {
+        "role": "store",
+        "path": "tasks.jsonl",
+        "present": true,
+        "sha256": "2088e054eaf73252f97824a008cbf24e6ccdda3ed3dbce0a9d45e7faa70e1a37",
+        "size_bytes": 435,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImEwMDAwMDAxIiwidGl0bGUiOiJOZXh0IEFjdGlvbnMifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJhMDAwMDAwMiIsInBhcmVudCI6ImEwMDAwMDAxIiwic3RhdGUiOiJORVhUIiwidGl0bGUiOiJCb29rIHRoZSBhbm51YWwgc2VydmljZSIsInRhZ3MiOlsiQGNhbGxzIl19CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImEwMDAwMDAzIiwidGl0bGUiOiJQcm9qZWN0cyJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImEwMDAwMDA0IiwicGFyZW50IjoiYTAwMDAwMDMiLCJ0aXRsZSI6IktpdGNoZW4gcmVwYWludCJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImEwMDAwMDA1IiwicGFyZW50IjoiYTAwMDAwMDQiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IkNob29zZSB0aGUgZmluaXNoIn0K",
+        "line_count": 6,
+        "symlink_target": null
+      }
+    ],
+    "after": [
+      {
+        "role": "config",
+        "path": ".config/tasks/config",
+        "present": true,
+        "sha256": "080c6680e00b084bdbdf51f857e88b1eb41b465bdbd7882dfe2372b1fffa6408",
+        "size_bytes": 157,
+        "mode": "0644",
+        "content_base64": "IyBGaXh0dXJlLW93bmVkIHJ1bm5lciBjb25maWd1cmF0aW9uIGZvciBjb25maWctcmVzb2x1dGlvbiBjb25mb3JtYW5jZSBjYXNlcy4KZmlsZSA9IH4vdGFza3MuanNvbmwKYXJjaGl2ZSA9IH4vYXJjaGl2ZS5qc29ubAptZW1vcnkgPSB+L2NvbmZpZ3VyZWQtbWVtb3J5Lm1kCg==",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "archive",
+        "path": "archive.jsonl",
+        "present": true,
+        "sha256": "771f2c1fb5a3b661635686ee718435aae708a4d86ac7ff8bffaf941e0492154a",
+        "size_bytes": 628,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImEwMDAwMTAxIiwidGl0bGUiOiJTcHJpbmcgY2xlYXItb3V0IiwiYXJjaGl2ZWQiOiIyMDI2LTA1LTMxIiwiYm9keSI6IlN3ZXB0IGFmdGVyIGNvbXBsZXRpb24uIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiYTAwMDAxMDIiLCJwYXJlbnQiOiJhMDAwMDEwMSIsInN0YXRlIjoiRE9ORSIsInRpdGxlIjoiRW1wdHkgdGhlIGxvZnQiLCJjbG9zZWQiOiIyMDI2LTA1LTIwIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiYTAwMDAxMDMiLCJwYXJlbnQiOiJhMDAwMDEwMSIsInN0YXRlIjoiRE9ORSIsInRpdGxlIjoiQm9vayB0aGUgc2tpcCIsImNsb3NlZCI6IjIwMjYtMDUtMTgifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJhMDAwMDEwNCIsInBhcmVudCI6ImEwMDAwMTAxIiwic3RhdGUiOiJDQU5DRUxMRUQiLCJ0aXRsZSI6IlNlbGwgdGhlIG9sZCBib29rY2FzZSIsImNsb3NlZCI6IjIwMjYtMDUtMTkifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJhMDAwMDEwNSIsInN0YXRlIjoiRE9ORSIsInRpdGxlIjoiU3RhbmRhbG9uZSBhcmNoaXZlZCB0YXNrIiwiY2xvc2VkIjoiMjAyNi0wNC0wMiIsImFyY2hpdmVkIjoiMjAyNi0wNS0zMSJ9Cg==",
+        "line_count": 6,
+        "symlink_target": null
+      },
+      {
+        "role": "store",
+        "path": "tasks.jsonl",
+        "present": true,
+        "sha256": "2088e054eaf73252f97824a008cbf24e6ccdda3ed3dbce0a9d45e7faa70e1a37",
+        "size_bytes": 435,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImEwMDAwMDAxIiwidGl0bGUiOiJOZXh0IEFjdGlvbnMifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJhMDAwMDAwMiIsInBhcmVudCI6ImEwMDAwMDAxIiwic3RhdGUiOiJORVhUIiwidGl0bGUiOiJCb29rIHRoZSBhbm51YWwgc2VydmljZSIsInRhZ3MiOlsiQGNhbGxzIl19CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImEwMDAwMDAzIiwidGl0bGUiOiJQcm9qZWN0cyJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImEwMDAwMDA0IiwicGFyZW50IjoiYTAwMDAwMDMiLCJ0aXRsZSI6IktpdGNoZW4gcmVwYWludCJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImEwMDAwMDA1IiwicGFyZW50IjoiYTAwMDAwMDQiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IkNob29zZSB0aGUgZmluaXNoIn0K",
+        "line_count": 6,
+        "symlink_target": null
+      }
+    ],
+    "deltas": [],
+    "rolled_back": null
+  },
+  "journal": {
+    "present": false,
+    "version": null,
+    "cursor": null,
+    "states": [],
+    "index": {
+      "role": "journal_index",
+      "path": ".state/tasks/journal/ae56c3d82fccfe88/index.json",
+      "present": false,
+      "sha256": null,
+      "size_bytes": null,
+      "mode": null,
+      "content_base64": null,
+      "line_count": null,
+      "symlink_target": null
+    },
+    "blob_count": null,
+    "blob_sha256": []
+  },
+  "revisions": {
+    "store": "s1.514c25c002249be9c7ed4efe25fd62d4452c490f040ac2823d8581456073174d",
+    "resources": [
+      {
+        "id": "a0000002",
+        "kind": "task",
+        "revision": "v1.f3dada1008439e21efad62cd39bbba5caf4ede6d2951e6f507d8cc2f7187159b.c9e704ff3b0cfdad4b933f3825702c6dd55d9639f031e2c6882fa30efee8f365.ccee9a7af88dacdeb7767eaf73deb8bf6bfd80fbf4509009ed15e63bfac82095"
+      },
+      {
+        "id": "a0000005",
+        "kind": "task",
+        "revision": "v1.5df15f9d2a244b5e7716cc98ae96a6ff08386230af4e8c00ed2e198097169a44.31aa3c09c17705ae20424d12013324178a3c2ef918ec9cec53ac83e608981fa2.f3c1f72fc30aad2608d2ac82683f552a25e9aae2857ca437be889ebcdcf11590"
+      },
+      {
+        "id": "a0000102",
+        "kind": "archived_task",
+        "revision": "v1.10155c07b2b113399b7bec70d6c97f530066dd6226ff6d45e52d786c941ccbf6.a820057d76e578f5783daf17af3d7175bdd9509e8dd5aafc8453c5a53dcf579b.bb24b9baf079ce50ef0e7d7f87943bfb997952ae8d93b33eb15faa922d1f0b52"
+      },
+      {
+        "id": "a0000103",
+        "kind": "archived_task",
+        "revision": "v1.66a4ebfa2a504d035be4258006f12e0aa43bfd00c98100813d4a789d2eb77398.280f2eedab588c4368b0fc7b6f70e43e7ee68ca8d7ccda80b32d7e498ebee5c6.1628bb9f8fd9c1905561b5360ed4671e6e6244e478bae0fb756f03f94d6e151b"
+      },
+      {
+        "id": "a0000104",
+        "kind": "archived_task",
+        "revision": "v1.7fd3b363061f47a22860d0aeaa27c8d9dbdcc28196dd1cbdd384f7ece5976761.7e73af9ec918f9fd9d109288c9a68f8b9d272b9081f6f135120856293e785dfb.cbf514113fd708a0167265353ecade77a7de8f16a43b564f83eac1310f19cfde"
+      },
+      {
+        "id": "a0000105",
+        "kind": "archived_task",
+        "revision": "v1.37ba4553148c0e4bdf6295198a069405050b9891e0811e999578af26a46050f1.6d80886a770b62284a5c43f73337d0dbfc9da2e4f18a46ed8c06d137358c1cc1.d1f591168e5ace8657cb6afdfec702d05d0c794d37f4a4fc85c8df49b6b640d3"
+      }
+    ],
+    "touched_ids": [],
+    "http_etag": null
+  },
+  "http": [],
+  "environment": {
+    "tzdb_version": "Zoneinfo DataSource: /usr/share/zoneinfo",
+    "platform": "arm64-darwin23",
+    "filesystem": "/",
+    "locale": "UTF-8",
+    "umask": "0022"
+  },
+  "metrics": {
+    "wall_ms": 116.202,
+    "user_cpu_ms": null,
+    "sys_cpu_ms": null,
+    "peak_rss_bytes": null,
+    "bytes_written": 0
+  },
+  "notes": "per-file environment paths outrank config-file keys"
+}

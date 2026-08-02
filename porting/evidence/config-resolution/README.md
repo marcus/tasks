@@ -47,6 +47,20 @@ to the copy's isolated XDG configuration path; it accepts only relative
 
 `ruby test/test_porting_runner.rb` proves both the config-file and per-file-env
 precedence paths through `tasks config --json`; `ruby test/all.rb` passed after
-the extension. The next tick can add named config-resolution cases to a case
-list, capture their Ruby observations under this directory, validate them, and
-then hand translation to a separate mid-tier session.
+the extension.
+
+## Named CLI observations
+
+`porting/runners/cases/config-resolution.jsonl` provides five
+fixture-contained `config --json` cases: runner default resolution, explicit
+`TASKS_DIR`, fixture-owned config-file paths, per-file environment precedence,
+and the memory sidecar following the final `TASKS_FILE` path. The captured Ruby
+observations are the differential baseline for the Go implementation.
+
+Reproduce and validate them with:
+
+```sh
+porting/runners/ruby/run --out porting/evidence/config-resolution/ruby \
+  porting/runners/cases/config-resolution.jsonl
+porting/compare/validate porting/evidence/config-resolution/ruby
+```
