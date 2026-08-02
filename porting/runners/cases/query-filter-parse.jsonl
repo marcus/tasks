@@ -26,3 +26,10 @@
 {"case_id":"query-filter-agent-ready","operation":"parse_cli","argv":["--agent-ready","--json"]}
 {"case_id":"query-filter-delegation-mutually-exclusive","operation":"parse_cli","argv":["--delegated","--agent-ready"]}
 {"case_id":"query-filter-agent-ready-closed","operation":"parse_cli","argv":["--done","--agent-ready"]}
+{"case_id":"query-filter-scalar-context","operation":"new","kwargs":{"contexts":"@work"}}
+{"case_id":"query-filter-scalar-tag","operation":"new","kwargs":{"tags":"important"}}
+{"case_id":"query-filter-scalar-text","operation":"new","kwargs":{"text":"Plan"}}
+{"case_id":"query-filter-collection-coercion","operation":"new","kwargs":{"contexts":["@work",1,true,null,{"key":"value"}],"tags":["important",2,false,null,{"key":"value"}],"text":["Plan",3,true,null,{"key":"value"}]}}
+{"case_id":"query-filter-null-contexts","operation":"new","kwargs":{"contexts":null}}
+{"case_id":"query-filter-null-tags","operation":"new","kwargs":{"tags":null}}
+{"case_id":"query-filter-null-text","operation":"new","kwargs":{"text":null}}
