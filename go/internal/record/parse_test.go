@@ -135,6 +135,17 @@ func TestParseUsesRubyMalformedJSONDiagnostics(t *testing.T) {
 		{name: "array separator", input: `{"a":[1`, want: "invalid JSON: expected ',' or ']' after array value at line 1 column 8"},
 		{name: "invalid escape", input: `{"a":"\q"}`, want: `invalid JSON: invalid escape character in string: '\q"}' at line 1 column 7`},
 		{name: "trailing token", input: `{"a":1} nope`, want: "invalid JSON: unexpected token at end of stream 'nope' at line 1 column 9"},
+		{name: "array EOF", input: `[`, want: "invalid JSON: unexpected end of input at line 1 column 2"},
+		{name: "truncated true", input: `{"a":tru}`, want: "invalid JSON: unexpected token 'tru}' at line 1 column 6"},
+		{name: "leading zero", input: `{"a":01}`, want: "invalid JSON: invalid number: '01}' at line 1 column 6"},
+		{name: "bad unicode escape", input: `{"a":"\u12G4"}`, want: `invalid JSON: incomplete unicode character escape sequence at '\u12G4"}' at line 1 column 7`},
+		{name: "missing object separator", input: `{"a" "b"}`, want: "invalid JSON: expected ':' after object key at line 1 column 6"},
+		{name: "missing value", input: `{"a":,}`, want: "invalid JSON: unexpected character: ',}' at line 1 column 6"},
+		{name: "trailing array comma", input: `{"a": [1,]}`, want: "invalid JSON: unexpected character: ']}' at line 1 column 10"},
+		{name: "missing object value separator", input: `{"a": true false}`, want: "invalid JSON: expected ',' or '}' after object value, got: 'false}' at line 1 column 12"},
+		{name: "adjacent objects", input: `{"a":1}{"b":2}`, want: "invalid JSON: unexpected token at end of stream '{\"b\":2}' at line 1 column 8"},
+		{name: "invalid escape x", input: `{"a": "\x"}`, want: `invalid JSON: invalid escape character in string: '\x"}' at line 1 column 8`},
+		{name: "invalid exponent", input: `{"a": 1e}`, want: "invalid JSON: invalid number: '1e}' at line 1 column 7"},
 	}
 
 	for _, tc := range cases {

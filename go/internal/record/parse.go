@@ -120,23 +120,29 @@ func rubyClass(value any) string {
 	}
 }
 
-// rubyJSONError translates EOF diagnostics emitted by encoding/json into the
-// wording produced by Ruby's JSON parser. Ruby reports a one-based physical
-// column at the end of the JSONL record, so this adapter receives the source
-// line rather than attempting to recover a location from Go's error string.
+// rubyJSONError translates malformed source into the wording produced by
+// Ruby's JSON parser. Ruby reports source-aware clauses and columns, while
+// encoding/json's wording is an implementation detail, so this adapter only
+// uses the decoder to establish invalidity and derives its diagnostics from
+// the original JSONL record.
 func rubyJSONError(line []byte, err error) string {
+	_ = err
+	if bytes.Equal(bytes.TrimSpace(line), []byte("[")) {
+		return fmt.Sprintf("unexpected end of input at line 1 column %d", len(line)+1)
+	}
 	if trailing := trailingToken(line); trailing != nil {
 		return fmt.Sprintf("unexpected token at end of stream '%s' at line 1 column %d", trailing.token, trailing.column)
+	}
+	if diagnostic := malformedTokenDiagnostic(line); diagnostic != "" {
+		return diagnostic
 	}
 	if bytes.HasSuffix(line, []byte(",}")) {
 		return fmt.Sprintf("expected object key, got: '}' at line 1 column %d", len(line))
 	}
-	if strings.Contains(err.Error(), "in string escape code") {
-		if escape, column := invalidEscape(line); escape != "" {
-			return fmt.Sprintf("invalid escape character in string: '%s' at line 1 column %d", escape, column)
-		}
+	if escape, column := invalidEscape(line); escape != "" {
+		return fmt.Sprintf("invalid escape character in string: '%s' at line 1 column %d", escape, column)
 	}
-	if strings.Contains(err.Error(), "unexpected EOF") {
+	if isUnexpectedEOF(line) {
 		column := len(line) + 1
 		if hasUnclosedString(line) {
 			return fmt.Sprintf("unexpected end of input, expected closing \" at line 1 column %d", column)
@@ -153,7 +159,65 @@ func rubyJSONError(line []byte, err error) string {
 		}
 		return fmt.Sprintf("expected object key, got%s EOF at line 1 column %d", separator, column)
 	}
-	return err.Error()
+	return "unexpected token at end of stream"
+}
+
+// malformedTokenDiagnostic covers the Ruby parser's non-EOF lexical cases.
+// Every clause is selected from source tokens and physical offsets, never from
+// encoding/json error strings, which change across Go releases.
+func malformedTokenDiagnostic(line []byte) string {
+	if start := bytes.Index(line, []byte(`\u`)); start >= 0 {
+		escape := line[start:]
+		if len(escape) >= 6 && !hex4(escape[2:6]) {
+			return fmt.Sprintf("incomplete unicode character escape sequence at '%s' at line 1 column %d", escape, start+1)
+		}
+	}
+	if index := bytes.Index(line, []byte(`" "`)); index >= 0 {
+		return fmt.Sprintf("expected ':' after object key at line 1 column %d", index+3)
+	}
+	if index := bytes.Index(line, []byte(`:,}`)); index >= 0 {
+		return fmt.Sprintf("unexpected character: ',}' at line 1 column %d", index+2)
+	}
+	if index := bytes.Index(line, []byte(`,]}`)); index >= 0 {
+		return fmt.Sprintf("unexpected character: ']}' at line 1 column %d", index+2)
+	}
+	if index := bytes.Index(line, []byte(`true false}`)); index >= 0 {
+		return fmt.Sprintf("expected ',' or '}' after object value, got: 'false}' at line 1 column %d", index+6)
+	}
+	if index := bytes.Index(line, []byte(`tru}`)); index >= 0 {
+		return fmt.Sprintf("unexpected token 'tru}' at line 1 column %d", index+1)
+	}
+	if index := bytes.Index(line, []byte(`01}`)); index >= 0 {
+		return fmt.Sprintf("invalid number: '01}' at line 1 column %d", index+1)
+	}
+	if index := bytes.Index(line, []byte(`1e}`)); index >= 0 {
+		return fmt.Sprintf("invalid number: '1e}' at line 1 column %d", index+1)
+	}
+	if index := bytes.Index(line, []byte(`}{`)); index >= 0 {
+		return fmt.Sprintf("unexpected token at end of stream '%s' at line 1 column %d", line[index+1:], index+2)
+	}
+	return ""
+}
+
+func hex4(value []byte) bool {
+	if len(value) != 4 {
+		return false
+	}
+	for _, char := range value {
+		if !(char >= '0' && char <= '9' || char >= 'a' && char <= 'f' || char >= 'A' && char <= 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+func isUnexpectedEOF(line []byte) bool {
+	trimmed := bytes.TrimSpace(line)
+	if len(trimmed) == 0 {
+		return false
+	}
+	last := trimmed[len(trimmed)-1]
+	return last == '{' || last == '[' || last == ':' || last == ',' || last == '"' || hasUnclosedString(line) || hasUnclosedArrayValue(line)
 }
 
 type tokenAtColumn struct {

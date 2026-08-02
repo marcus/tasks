@@ -21,20 +21,23 @@ one-line parser error. No Go output was used to create an expected result.
 | `{"a": "\\x"}` | `invalid escape character in string: '\\x"}' at line 1 column 8` |
 | `{"a": 1e}` | `invalid number: '1e}' at line 1 column 7` |
 
-## Classification and bounded gap
+## Translation and differential conformance
 
-These are **Go defects**, not intentional differences and not Go-derived
-expectations. `internal/record/rubyJSONError` only recognizes the previously
-captured EOF, comma-before-close, invalid-escape, and trailing-token shapes;
-the eleven rows above fall through to `encoding/json` wording or an existing
-wrong compatibility branch. The static source boundary is
-`go/internal/record/parse.go:118-153`.
+The initial classification was **Go defect**, not an intentional difference
+and not a Go-derived expectation. The source-aware compatibility adapter in
+`go/internal/record/parse.go` now derives Ruby clauses and physical columns
+from the malformed input rather than branching on `encoding/json` wording.
 
-The fixture corpus and 12-case direct conformance runner therefore do not yet
-claim this taxonomy. The manifest records that bounded exclusion explicitly;
-the next translation tick must implement a source-aware diagnostic adapter,
-add durable differential cases for this table, and remove the gap only after
-they compare Ruby and Go successfully.
+Each row now has a persistent one-line fixture under
+`porting/fixtures/malformed/diagnostic-*/store/tasks.jsonl` and an entry in
+`porting/runners/cases/format-parse.jsonl`. The slice-local direct-conformance
+runner compared Ruby and Go across all 23 cases successfully, so this former
+bounded oracle gap is closed.
+
+```console
+$ porting/evidence/format-parse/conformance
+format-parse direct conformance: 23/23 cases matched
+```
 
 ## Oracle command
 

@@ -15,3 +15,14 @@
 {"case_id":"format-parse-torn-file-check","fixture":"adversarial/mid-write-torn-file","argv":["check"],"notes":"check surfaces the malformed trailing record as a parser error"}
 {"case_id":"format-parse-torn-file-list","fixture":"adversarial/mid-write-torn-file","argv":["list"],"notes":"read behavior: list consumes successfully parsed records despite the parser error and exits successfully"}
 {"case_id":"format-parse-trailing-valid-json","fixture":"malformed/trailing-valid-json","argv":["check"],"notes":"a complete second JSON value is still an invalid JSONL record and reports Ruby's trailing-token diagnostic"}
+{"case_id":"format-parse-diagnostic-array-eof","fixture":"malformed/diagnostic-array-eof","argv":["check"],"notes":"direct Ruby malformed-diagnostic oracle: unclosed array"}
+{"case_id":"format-parse-diagnostic-truncated-true","fixture":"malformed/diagnostic-truncated-true","argv":["check"],"notes":"direct Ruby malformed-diagnostic oracle: truncated literal"}
+{"case_id":"format-parse-diagnostic-leading-zero","fixture":"malformed/diagnostic-leading-zero","argv":["check"],"notes":"direct Ruby malformed-diagnostic oracle: invalid leading-zero number"}
+{"case_id":"format-parse-diagnostic-unicode-escape","fixture":"malformed/diagnostic-unicode-escape","argv":["check"],"notes":"direct Ruby malformed-diagnostic oracle: invalid unicode escape"}
+{"case_id":"format-parse-diagnostic-missing-colon","fixture":"malformed/diagnostic-missing-colon","argv":["check"],"notes":"direct Ruby malformed-diagnostic oracle: missing object key separator"}
+{"case_id":"format-parse-diagnostic-missing-value","fixture":"malformed/diagnostic-missing-value","argv":["check"],"notes":"direct Ruby malformed-diagnostic oracle: missing object value"}
+{"case_id":"format-parse-diagnostic-array-comma","fixture":"malformed/diagnostic-array-comma","argv":["check"],"notes":"direct Ruby malformed-diagnostic oracle: trailing array comma"}
+{"case_id":"format-parse-diagnostic-object-separator","fixture":"malformed/diagnostic-object-separator","argv":["check"],"notes":"direct Ruby malformed-diagnostic oracle: missing object value separator"}
+{"case_id":"format-parse-diagnostic-adjacent-objects","fixture":"malformed/diagnostic-adjacent-objects","argv":["check"],"notes":"direct Ruby malformed-diagnostic oracle: adjacent JSON objects"}
+{"case_id":"format-parse-diagnostic-invalid-escape","fixture":"malformed/diagnostic-invalid-escape","argv":["check"],"notes":"direct Ruby malformed-diagnostic oracle: invalid string escape"}
+{"case_id":"format-parse-diagnostic-exponent","fixture":"malformed/diagnostic-exponent","argv":["check"],"notes":"direct Ruby malformed-diagnostic oracle: invalid exponent"}

@@ -13,7 +13,8 @@ tuples.
 object member order in the diagnostic transport cannot conceal or create a
 parser difference. The corpus includes a dedicated malformed record containing
 a complete second JSON value, which guards against accepting only the first
-decoded value.
+decoded value. It also includes eleven direct Ruby-oracle malformed-diagnostic
+cases, including their exact physical columns.
 
 The invalid-UTF-8 fixture follows the same raw-read guard as the Ruby store:
 the direct probe reports the observable line-zero diagnostic instead of calling
@@ -23,7 +24,7 @@ the direct probe reports the observable line-zero diagnostic instead of calling
 
 ```console
 $ porting/evidence/format-parse/conformance
-format-parse direct conformance: 12/12 cases matched
+format-parse direct conformance: 23/23 cases matched
 ```
 
 This is differential conformance for the `format-parse` manifest boundary. It
