@@ -5,9 +5,10 @@ import (
 	"math/big"
 )
 
-// CivilDate is an unzoned proleptic-Gregorian date. Its year is arbitrary
-// precision because Ruby Date accepts interval projections beyond time.Time's
-// range.
+// CivilDate is an unzoned Ruby Date-compatible civil date. Its year is
+// arbitrary precision because Ruby Date accepts interval projections beyond
+// time.Time's range. Ruby Date's default Date::ITALY start means dates before
+// 1582-10-15 use the Julian calendar, with the ten reform days omitted.
 type CivilDate struct {
 	Year  *big.Int
 	Month int
@@ -66,7 +67,7 @@ func (d CivilDate) addMonths(months *big.Int) CivilDate {
 	if max := daysInMonth(year, month); day > max {
 		day = max
 	}
-	return CivilDate{Year: year, Month: month, Day: day}
+	return normalizeReformGap(CivilDate{Year: year, Month: month, Day: day})
 }
 
 func daysInMonth(year *big.Int, month int) int {
@@ -84,6 +85,9 @@ func daysInMonth(year *big.Int, month int) int {
 }
 
 func leapYear(year *big.Int) bool {
+	if year.Cmp(big.NewInt(1582)) < 0 {
+		return mod(year, 4) == 0
+	}
 	return mod(year, 4) == 0 && (mod(year, 100) != 0 || mod(year, 400) == 0)
 }
 
@@ -91,10 +95,20 @@ func mod(value *big.Int, divisor int64) int64 {
 	return new(big.Int).Mod(value, big.NewInt(divisor)).Int64()
 }
 
-// daysFromCivil and civilFromDays are the arbitrary-precision form of the
-// proleptic-Gregorian conversion used by time libraries. Day zero is
-// 1970-01-01, which makes addition exact without constructing a time.Time.
+var italyReform = CivilDate{Year: big.NewInt(1582), Month: 10, Day: 15}
+
+// daysFromCivil and civilFromDays use Ruby Date's default Date::ITALY
+// calendar: Julian before 1582-10-15, Gregorian from that date onward. Day
+// zero is 1970-01-01, which makes addition exact without constructing a
+// time.Time.
 func daysFromCivil(d CivilDate) *big.Int {
+	if d.Before(italyReform) {
+		return julianDaysFromCivil(d)
+	}
+	return gregorianDaysFromCivil(d)
+}
+
+func gregorianDaysFromCivil(d CivilDate) *big.Int {
 	year := new(big.Int).Set(d.Year)
 	if d.Month <= 2 {
 		year.Sub(year, big.NewInt(1))
@@ -117,6 +131,13 @@ func daysFromCivil(d CivilDate) *big.Int {
 }
 
 func civilFromDays(days *big.Int) CivilDate {
+	if days.Cmp(gregorianDaysFromCivil(italyReform)) < 0 {
+		return julianCivilFromDays(days)
+	}
+	return gregorianCivilFromDays(days)
+}
+
+func gregorianCivilFromDays(days *big.Int) CivilDate {
 	z := new(big.Int).Add(days, big.NewInt(719468))
 	era, doe := floorDiv(z, 146097)
 	yoe := new(big.Int).Set(doe)
@@ -148,6 +169,59 @@ func civilFromDays(days *big.Int) CivilDate {
 		year.Add(year, big.NewInt(1))
 	}
 	return CivilDate{Year: year, Month: month, Day: int(day.Int64())}
+}
+
+func julianDaysFromCivil(d CivilDate) *big.Int {
+	year := new(big.Int).Set(d.Year)
+	if d.Month <= 2 {
+		year.Sub(year, big.NewInt(1))
+	}
+	month := d.Month
+	if month > 2 {
+		month -= 3
+	} else {
+		month += 9
+	}
+	doy := (153*month+2)/5 + d.Day - 1
+	result := new(big.Int).Mul(year, big.NewInt(365))
+	quarters, _ := floorDiv(year, 4)
+	result.Add(result, quarters)
+	result.Add(result, big.NewInt(int64(doy+1721118-2440588)))
+	return result
+}
+
+func julianCivilFromDays(days *big.Int) CivilDate {
+	// This is the inverse Julian-day conversion, with the Unix epoch offset
+	// removed and arbitrary-precision quotients retained throughout.
+	z := new(big.Int).Add(days, big.NewInt(2440588+32082))
+	fourZ := new(big.Int).Mul(z, big.NewInt(4))
+	fourZ.Add(fourZ, big.NewInt(3))
+	d, _ := floorDiv(fourZ, 1461)
+	e := new(big.Int).Mul(d, big.NewInt(1461))
+	e, _ = floorDiv(e, 4)
+	e.Sub(z, e)
+	fiveE := new(big.Int).Mul(e, big.NewInt(5))
+	fiveE.Add(fiveE, big.NewInt(2))
+	m, _ := floorDiv(fiveE, 153)
+	dayTerm := new(big.Int).Mul(m, big.NewInt(153))
+	dayTerm.Add(dayTerm, big.NewInt(2))
+	dayTerm.Quo(dayTerm, big.NewInt(5))
+	day := new(big.Int).Sub(e, dayTerm)
+	day.Add(day, big.NewInt(1))
+	month := int(m.Int64()) + 3
+	year := new(big.Int).Sub(d, big.NewInt(4800))
+	if month > 12 {
+		month -= 12
+		year.Add(year, big.NewInt(1))
+	}
+	return CivilDate{Year: year, Month: month, Day: int(day.Int64())}
+}
+
+func normalizeReformGap(d CivilDate) CivilDate {
+	if d.Year.Cmp(big.NewInt(1582)) == 0 && d.Month == 10 && d.Day >= 5 && d.Day <= 14 {
+		return CivilDate{Year: big.NewInt(1582), Month: 10, Day: 4}
+	}
+	return d
 }
 
 func floorDiv(value *big.Int, divisor int64) (*big.Int, *big.Int) {

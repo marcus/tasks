@@ -82,6 +82,21 @@ func TestStepMonthAndYearClampProperty(t *testing.T) {
 	}
 }
 
+func TestStepPreservesRubyItalyReformCalendar(t *testing.T) {
+	if got := Step(mustDate("1582-10-04"), big.NewInt(1), "d"); !got.Equal(mustDate("1582-10-15")) {
+		t.Fatalf("Italy reform day step = %s, want 1582-10-15", got)
+	}
+	if got := Step(mustDate("1500-02-28"), big.NewInt(1), "d"); !got.Equal(mustDate("1500-02-29")) {
+		t.Fatalf("Julian leap-day step = %s, want 1500-02-29", got)
+	}
+	if got := Step(mustDate("1582-09-10"), big.NewInt(1), "m"); !got.Equal(mustDate("1582-10-04")) {
+		t.Fatalf("month step into reform gap = %s, want 1582-10-04", got)
+	}
+	if got, err := NextDate("+1d", mustDate("1582-10-04"), mustDate("1582-10-04")); err != nil || !got.Equal(mustDate("1582-10-15")) {
+		t.Fatalf("reform next date = %s, %v; want 1582-10-15", got, err)
+	}
+}
+
 func TestArbitrarySizeCountsPreserveRubyProjection(t *testing.T) {
 	const count = "999999999999999999999999999999999"
 	if got := Parse(count+" days", ".+"); got.Error != "" || got.Canonical != ".+"+count+"d" {

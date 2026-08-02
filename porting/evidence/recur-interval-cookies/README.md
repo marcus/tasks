@@ -151,3 +151,28 @@ adapter still does not expose recurrence, so differential fixture conformance
 cannot run; this is a documented harness gap, not a substitute for Go output.
 The next step is a fresh independent source-fidelity review (mid-tier), then a
 separate Go-idiom review if it passes.
+
+## Source-fidelity repair: Ruby Date Italy reform (2026-08-02)
+
+`CivilDate` now preserves Ruby `Date`'s default `Date::ITALY` calendar rather
+than applying a proleptic Gregorian calendar to every year. Day and week
+projection use Julian arithmetic before 1582-10-15 and Gregorian arithmetic
+from that date, so `1582-10-04 + 1d` becomes `1582-10-15`. Month and year
+projection retain Ruby's clamp behavior when their target lands in the omitted
+1582-10-05 through 1582-10-14 range: `1582-09-10 >> 1` becomes `1582-10-04`.
+The pre-reform leap rule is also Julian (`1500-02-28 + 1d` becomes
+`1500-02-29`).
+
+The package regression covers those three direct projections plus the public
+`NextDate("+1d", 1582-10-04)` path. Verification passed:
+
+```sh
+(cd go && go test ./internal/recur && go test ./... && go test -race ./internal/recur && go vet ./...)
+ruby test/test_recur.rb
+git diff --check
+```
+
+The Ruby focused oracle remains 20 runs and 66 assertions. Differential fixture
+conformance is still unavailable because no Go CLI adapter reaches recurrence.
+The next step is a fresh independent, mid-tier source-fidelity review of this
+repair; the Go-idiom review follows only if that review passes.
