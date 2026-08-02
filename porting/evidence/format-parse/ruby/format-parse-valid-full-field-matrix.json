@@ -1,0 +1,444 @@
+{
+  "schema_version": 1,
+  "observation_id": "obs_format-parse-valid-full-field-matrix",
+  "case_id": "format-parse-valid-full-field-matrix",
+  "implementation": {
+    "name": "ruby",
+    "version": "cd5c911041426a1b8b9985d2e850ec1ca6d08b7a-dirty",
+    "runtime": "ruby 4.0.6"
+  },
+  "fixture": {
+    "id": "valid/full-field-matrix",
+    "class": "valid",
+    "root_sha256": "a17a23b1af7363feb7ccb5c4d4b4e3f03c66c7845fe3ad21679a5f53e489c891",
+    "copy_root": "/tmp/tasks-format-parse/format-parse-valid-full-field-matrix"
+  },
+  "invocation": {
+    "surface": "cli",
+    "argv": [
+      "check"
+    ],
+    "stdin": {
+      "provided": false,
+      "bytes_base64": ""
+    },
+    "cwd": ".",
+    "env": [
+      {
+        "name": "COLUMNS",
+        "value": "100"
+      },
+      {
+        "name": "HOME",
+        "value": "/tmp/tasks-format-parse/format-parse-valid-full-field-matrix"
+      },
+      {
+        "name": "LANG",
+        "value": "en_US.UTF-8"
+      },
+      {
+        "name": "LC_ALL",
+        "value": "en_US.UTF-8"
+      },
+      {
+        "name": "LINES",
+        "value": "40"
+      },
+      {
+        "name": "PATH",
+        "value": "/usr/bin:/bin:/usr/sbin:/sbin"
+      },
+      {
+        "name": "TASKS_ARCHIVE",
+        "value": null
+      },
+      {
+        "name": "TASKS_DEVICE",
+        "value": "fixture"
+      },
+      {
+        "name": "TASKS_DIR",
+        "value": "/tmp/tasks-format-parse/format-parse-valid-full-field-matrix"
+      },
+      {
+        "name": "TASKS_FILE",
+        "value": null
+      },
+      {
+        "name": "TASKS_MEMORY",
+        "value": null
+      },
+      {
+        "name": "TASKS_PIN_COALESCE_SCOPE",
+        "value": "pinned-scope"
+      },
+      {
+        "name": "TASKS_PIN_DELEGATION_KEYS",
+        "value": "cccc000000000001"
+      },
+      {
+        "name": "TASKS_PIN_HOSTNAME",
+        "value": "fixture-host"
+      },
+      {
+        "name": "TASKS_PIN_IDS",
+        "value": "bbbb0001"
+      },
+      {
+        "name": "TASKS_PIN_NOW",
+        "value": "2026-03-14T15:09:26Z"
+      },
+      {
+        "name": "TASKS_TIMEZONE",
+        "value": "UTC"
+      },
+      {
+        "name": "TZ",
+        "value": "UTC"
+      },
+      {
+        "name": "XDG_CONFIG_HOME",
+        "value": "/tmp/tasks-format-parse/format-parse-valid-full-field-matrix/.config"
+      },
+      {
+        "name": "XDG_STATE_HOME",
+        "value": "/tmp/tasks-format-parse/format-parse-valid-full-field-matrix/.state"
+      }
+    ],
+    "pins": [
+      {
+        "name": "COLUMNS",
+        "applied": true,
+        "value": "100"
+      },
+      {
+        "name": "LANG",
+        "applied": true,
+        "value": "UTF-8"
+      },
+      {
+        "name": "LC_ALL",
+        "applied": true,
+        "value": "UTF-8"
+      },
+      {
+        "name": "LINES",
+        "applied": true,
+        "value": "40"
+      },
+      {
+        "name": "TASKS_DEVICE",
+        "applied": true,
+        "value": "fixture"
+      },
+      {
+        "name": "TASKS_PIN_COALESCE_SCOPE",
+        "applied": true,
+        "value": "pinned-scope"
+      },
+      {
+        "name": "TASKS_PIN_DELEGATION_KEYS",
+        "applied": true,
+        "value": "cccc000000000001"
+      },
+      {
+        "name": "TASKS_PIN_HOSTNAME",
+        "applied": true,
+        "value": "fixture-host"
+      },
+      {
+        "name": "TASKS_PIN_IDS",
+        "applied": true,
+        "value": "bbbb0001"
+      },
+      {
+        "name": "TASKS_PIN_NOW",
+        "applied": true,
+        "value": "2026-03-14T15:09:26Z"
+      },
+      {
+        "name": "TASKS_TIMEZONE",
+        "applied": true,
+        "value": "UTC"
+      },
+      {
+        "name": "TZ",
+        "applied": true,
+        "value": "UTC"
+      }
+    ],
+    "timeout_ms": 60000
+  },
+  "process": {
+    "exit_status": 0,
+    "signal": null,
+    "timed_out": false,
+    "stdout": {
+      "sha256": "1a40fec7f770c6a6a6ff8576fa908249e59c6e959341f63146025b5aaa10e97b",
+      "size_bytes": 45,
+      "valid_utf8": true,
+      "bytes_base64": "b2sg4oCUIDMyIHRhc2tzIHBhcnNlZCwgbm8gc3RydWN0dXJhbCBlcnJvcnMK",
+      "truncated_at_bytes": null,
+      "text": "ok — 32 tasks parsed, no structural errors\n"
+    },
+    "stderr": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "valid_utf8": true,
+      "bytes_base64": "",
+      "truncated_at_bytes": null,
+      "text": ""
+    }
+  },
+  "files": {
+    "mutated": false,
+    "before": [
+      {
+        "role": "store",
+        "path": "tasks.jsonl",
+        "present": true,
+        "sha256": "b1520184b16fe4ebf48839fad38beb615d4e9f17d334ec9b75275de0d33fd4d7",
+        "size_bytes": 5173,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImYwMDAwMDAxIiwidGl0bGUiOiJGaWVsZCBtYXRyaXgiLCJib2R5IjoiT25lIHJlY29yZCBwZXIgaW50ZXJlc3RpbmcgZmllbGQgY29tYmluYXRpb24uIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiZjAwMDAwMTAiLCJwYXJlbnQiOiJmMDAwMDAwMSIsInN0YXRlIjoiUFJPUE9TRUQiLCJ0aXRsZSI6IlByb3Bvc2VkOiBhZGQgYSBzZWNvbmQgYmFja3VwIHRhcmdldCIsImJvZHkiOiJTdWdnZXN0ZWQgYnkgdGhlIGFnZW50OyBhd2FpdGluZyBhcHByb3ZhbC4ifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDAxMSIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJJTkJPWCIsInRpdGxlIjoiSW5ib3ggaXRlbSB3aXRoIG5vdGhpbmcgZWxzZSBzZXQifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDAxMiIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwicHJpb3JpdHkiOiJDIiwidGl0bGUiOiJUb2RvIHdpdGggcHJpb3JpdHkgQyJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImYwMDAwMDEzIiwicGFyZW50IjoiZjAwMDAwMDEiLCJzdGF0ZSI6Ik5FWFQiLCJwcmlvcml0eSI6IkEiLCJ0aXRsZSI6Ik5leHQgd2l0aCBwcmlvcml0eSBBIGFuZCBib3RoIHRhZ3MiLCJ0YWdzIjpbIkBjb21wdXRlciIsImltcG9ydGFudCIsInVyZ2VudCJdfQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDAxNCIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJXQUlUSU5HIiwidGl0bGUiOiJXYWl0aW5nIG9uIHRoZSBsZXR0aW5nIGFnZW50IiwidGFncyI6WyJAd2FpdGluZyJdfQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDAxNSIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJET05FIiwidGl0bGUiOiJEb25lIGxhc3Qgd2VlayIsImNsb3NlZCI6IjIwMjYtMDUtMjgiLCJ1cGRhdGVkIjoiMjAyNi0wNS0yOFQwOToxNDowMlojZml4dHVyZSJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImYwMDAwMDE2IiwicGFyZW50IjoiZjAwMDAwMDEiLCJzdGF0ZSI6IkNBTkNFTExFRCIsInRpdGxlIjoiQ2FuY2VsbGVkIGFmdGVyIHRoZSB0cmlwIHdhcyBtb3ZlZCIsImNsb3NlZCI6IjIwMjYtMDUtMjkifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDAyMCIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJTY2hlZHVsZWQsIGRhdGUgb25seSIsInNjaGVkdWxlZCI6IjIwMjYtMDYtMTUifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDAyMSIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJEZWFkbGluZSwgZGF0ZSBvbmx5IiwiZGVhZGxpbmUiOiIyMDI2LTA2LTIwIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiZjAwMDAwMjIiLCJwYXJlbnQiOiJmMDAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiQm90aCBhIHN0YXJ0IGRhdGUgYW5kIGEgZHVlIGRhdGUiLCJzY2hlZHVsZWQiOiIyMDI2LTA2LTE1IiwiZGVhZGxpbmUiOiIyMDI2LTA2LTIwIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiZjAwMDAwMjMiLCJwYXJlbnQiOiJmMDAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiRmxvYXRpbmcgbG9jYWwgdGltZSAobm8gem9uZSkiLCJzY2hlZHVsZWQiOiIyMDI2LTA2LTE2Iiwic2NoZWR1bGVkX3RpbWUiOnsibG9jYWwiOiIwOTozMCJ9fQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDAyNCIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJGaXhlZC16b25lIGRlYWRsaW5lIHRpbWUiLCJkZWFkbGluZSI6IjIwMjYtMDYtMTgiLCJkZWFkbGluZV90aW1lIjp7ImxvY2FsIjoiMTc6MDAiLCJ0aW1lem9uZSI6IkV1cm9wZS9Mb25kb24ifX0KeyJ0eXBlIjoidGFzayIsImlkIjoiZjAwMDAwMjUiLCJwYXJlbnQiOiJmMDAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiU2Vjb25kIGluc3RhbnQgb2YgYSBEU1Qgb3ZlcmxhcCIsInNjaGVkdWxlZCI6IjIwMjYtMTEtMDEiLCJzY2hlZHVsZWRfdGltZSI6eyJsb2NhbCI6IjAxOjMwIiwidGltZXpvbmUiOiJBbWVyaWNhL0xvc19BbmdlbGVzIiwiZm9sZCI6MX19CnsidHlwZSI6InRhc2siLCJpZCI6ImYwMDAwMDI2IiwicGFyZW50IjoiZjAwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IkxlYXAgZGF5Iiwic2NoZWR1bGVkIjoiMjAyOC0wMi0yOSJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImYwMDAwMDMwIiwicGFyZW50IjoiZjAwMDAwMDEiLCJzdGF0ZSI6Ik5FWFQiLCJ0aXRsZSI6IldlZWtseSBmcm9tIGNvbXBsZXRpb24gKC4rMXcpIiwic2NoZWR1bGVkIjoiMjAyNi0wNi0wOCIsInJlY3VyIjoiLisxdyJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImYwMDAwMDMxIiwicGFyZW50IjoiZjAwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6Ik1vbnRobHksIGNhdGNoIHVwIHRvIHRvZGF5ICgrKzFtKSIsInNjaGVkdWxlZCI6IjIwMjYtMDYtMDEiLCJyZWN1ciI6IisrMW0ifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDAzMiIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJFdmVyeSBvdGhlciBkYXkgKCsyZCkiLCJzY2hlZHVsZWQiOiIyMDI2LTA2LTAyIiwicmVjdXIiOiIrMmQifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDAzMyIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJXZWVrZGF5cyBieSBuYW1lICh3Om1vbix3ZWQpIiwic2NoZWR1bGVkIjoiMjAyNi0wNi0wMSIsInJlY3VyIjoidzptb24sd2VkIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiZjAwMDAwMzQiLCJwYXJlbnQiOiJmMDAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiRGF5IG9mIG1vbnRoIChtOjE1KSIsImRlYWRsaW5lIjoiMjAyNi0wNi0xNSIsInJlY3VyIjoibToxNSJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImYwMDAwMDM1IiwicGFyZW50IjoiZjAwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IkFubnVhbCAoeTowNy0wNCkiLCJzY2hlZHVsZWQiOiIyMDI2LTA3LTA0IiwicmVjdXIiOiJ5OjA3LTA0In0KeyJ0eXBlIjoidGFzayIsImlkIjoiZjAwMDAwNDAiLCJwYXJlbnQiOiJmMDAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiSGlkZGVuIHVudGlsIHRocmVlIHdlZWtzIGJlZm9yZSB0aGUgZGVhZGxpbmUiLCJkZWFkbGluZSI6IjIwMjYtMDgtMDEiLCJsZWFkIjoiM3cifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDA0MSIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJIaWRkZW4gdW50aWwgZml2ZSBob3VycyBiZWZvcmUgdGhlIHN0YXJ0IHRpbWUiLCJzY2hlZHVsZWQiOiIyMDI2LTA2LTE0Iiwic2NoZWR1bGVkX3RpbWUiOnsibG9jYWwiOiIxNDowMCJ9LCJsZWFkIjoiNWgifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDA0MiIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJMZWFkIGFscmVhZHkgcmVsZWFzZWQgZm9yIHRoaXMgb2NjdXJyZW5jZSIsInNjaGVkdWxlZCI6IjIwMjYtMDYtMjIiLCJyZWN1ciI6Ii4rMXciLCJsZWFkIjoiMmQiLCJsZWFkX3NraXAiOiIyMDI2LTA2LTIyIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiZjAwMDAwNTAiLCJwYXJlbnQiOiJmMDAwMDAwMSIsInN0YXRlIjoiV0FJVElORyIsInRpdGxlIjoiRGVsZWdhdGVkIHRvIGEgcGVyc29uIiwiZGVsZWdhdGlvbiI6eyJraW5kIjoiaHVtYW4iLCJzdGF0dXMiOiJkZWxlZ2F0ZWQiLCJhc3NpZ25lZSI6InNhbS5yaXZlcmFAZXhhbXBsZS5jb20iLCJhdCI6IjIwMjYtMDYtMDFUMTA6MDA6MDBaIn19CnsidHlwZSI6InRhc2siLCJpZCI6ImYwMDAwMDUxIiwicGFyZW50IjoiZjAwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6Ik9mZmVyZWQgdG8gdGhlIGFnZW50IHBvb2wsIHVuY2xhaW1lZCIsImRlbGVnYXRpb24iOnsia2luZCI6ImFnZW50IiwibW9kZSI6InJlc2VhcmNoIiwic3RhdHVzIjoicmVhZHkiLCJhdCI6IjIwMjYtMDYtMDJUMDg6MzA6MDBaIn19CnsidHlwZSI6InRhc2siLCJpZCI6ImYwMDAwMDUyIiwicGFyZW50IjoiZjAwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IkNsYWltZWQgYnkgYSB3b3JrZXIsIHdpdGggYSB3b3JrIHJlZmVyZW5jZSIsImRlbGVnYXRpb24iOnsia2luZCI6ImFnZW50IiwibW9kZSI6ImltcGxlbWVudCIsInN0YXR1cyI6ImNsYWltZWQiLCJhc3NpZ25lZSI6Imhhcm5lc3MvbW9kZWwvc2Vzc2lvbi0wMDAxIiwiYXQiOiIyMDI2LTA2LTAyVDA5OjAwOjAwWiIsIndvcmtfcmVmIjoiaHR0cHM6Ly9leGFtcGxlLmludmFsaWQvcnVucy8wMDAxIn19CnsidHlwZSI6InRhc2siLCJpZCI6ImYwMDAwMDYwIiwicGFyZW50IjoiZjAwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6Ik11bHRpLWxpbmUgYm9keSB3aXRoIGEgbGluayIsImJvZHkiOiJGaXJzdCBsaW5lLlxuU2Vjb25kIGxpbmUgd2l0aCBodHRwczovL2V4YW1wbGUuaW52YWxpZC9kb2NzL3BhZ2Vcbi0gYSBidWxsZXQifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDA2MSIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJVbmljb2RlIHRpdGxlIOKAlCBuYcOvdmUsIHLDqXN1bcOpLCDml6XmnKzoqp4sIGVtb2ppIPCfjLEiLCJ0YWdzIjpbIkBob21lIl0sImJvZHkiOiJHcsO8w59lIOKAlCDDvG7Dr2PDtmTDqSBib2R5LCBpZGVvZ3JhcGhpYyBzcGFjZTrjgIBlbmQuIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiZjAwMDAwNjIiLCJwYXJlbnQiOiJmMDAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiUXVvdGVzIFwiaW5zaWRlXCIgdGhlIHRpdGxlIGFuZCBhIGJhY2tzbGFzaCBcXCB0b28ifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDA3MCIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJQYXJlbnQgdGFzayB3aXRoIGNoaWxkcmVuIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiZjAwMDAwNzEiLCJwYXJlbnQiOiJmMDAwMDA3MCIsInN0YXRlIjoiTkVYVCIsInRpdGxlIjoiRmlyc3QgY2hpbGQgYWN0aW9uIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiZjAwMDAwNzIiLCJwYXJlbnQiOiJmMDAwMDA3MCIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiU2Vjb25kIGNoaWxkIGFjdGlvbiJ9Cg==",
+        "line_count": 34,
+        "symlink_target": null
+      }
+    ],
+    "after": [
+      {
+        "role": "lock",
+        "path": ".tasks.jsonl.lock",
+        "present": true,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": 0,
+        "mode": "0644",
+        "content_base64": "",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "store",
+        "path": "tasks.jsonl",
+        "present": true,
+        "sha256": "b1520184b16fe4ebf48839fad38beb615d4e9f17d334ec9b75275de0d33fd4d7",
+        "size_bytes": 5173,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImYwMDAwMDAxIiwidGl0bGUiOiJGaWVsZCBtYXRyaXgiLCJib2R5IjoiT25lIHJlY29yZCBwZXIgaW50ZXJlc3RpbmcgZmllbGQgY29tYmluYXRpb24uIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiZjAwMDAwMTAiLCJwYXJlbnQiOiJmMDAwMDAwMSIsInN0YXRlIjoiUFJPUE9TRUQiLCJ0aXRsZSI6IlByb3Bvc2VkOiBhZGQgYSBzZWNvbmQgYmFja3VwIHRhcmdldCIsImJvZHkiOiJTdWdnZXN0ZWQgYnkgdGhlIGFnZW50OyBhd2FpdGluZyBhcHByb3ZhbC4ifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDAxMSIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJJTkJPWCIsInRpdGxlIjoiSW5ib3ggaXRlbSB3aXRoIG5vdGhpbmcgZWxzZSBzZXQifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDAxMiIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwicHJpb3JpdHkiOiJDIiwidGl0bGUiOiJUb2RvIHdpdGggcHJpb3JpdHkgQyJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImYwMDAwMDEzIiwicGFyZW50IjoiZjAwMDAwMDEiLCJzdGF0ZSI6Ik5FWFQiLCJwcmlvcml0eSI6IkEiLCJ0aXRsZSI6Ik5leHQgd2l0aCBwcmlvcml0eSBBIGFuZCBib3RoIHRhZ3MiLCJ0YWdzIjpbIkBjb21wdXRlciIsImltcG9ydGFudCIsInVyZ2VudCJdfQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDAxNCIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJXQUlUSU5HIiwidGl0bGUiOiJXYWl0aW5nIG9uIHRoZSBsZXR0aW5nIGFnZW50IiwidGFncyI6WyJAd2FpdGluZyJdfQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDAxNSIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJET05FIiwidGl0bGUiOiJEb25lIGxhc3Qgd2VlayIsImNsb3NlZCI6IjIwMjYtMDUtMjgiLCJ1cGRhdGVkIjoiMjAyNi0wNS0yOFQwOToxNDowMlojZml4dHVyZSJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImYwMDAwMDE2IiwicGFyZW50IjoiZjAwMDAwMDEiLCJzdGF0ZSI6IkNBTkNFTExFRCIsInRpdGxlIjoiQ2FuY2VsbGVkIGFmdGVyIHRoZSB0cmlwIHdhcyBtb3ZlZCIsImNsb3NlZCI6IjIwMjYtMDUtMjkifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDAyMCIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJTY2hlZHVsZWQsIGRhdGUgb25seSIsInNjaGVkdWxlZCI6IjIwMjYtMDYtMTUifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDAyMSIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJEZWFkbGluZSwgZGF0ZSBvbmx5IiwiZGVhZGxpbmUiOiIyMDI2LTA2LTIwIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiZjAwMDAwMjIiLCJwYXJlbnQiOiJmMDAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiQm90aCBhIHN0YXJ0IGRhdGUgYW5kIGEgZHVlIGRhdGUiLCJzY2hlZHVsZWQiOiIyMDI2LTA2LTE1IiwiZGVhZGxpbmUiOiIyMDI2LTA2LTIwIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiZjAwMDAwMjMiLCJwYXJlbnQiOiJmMDAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiRmxvYXRpbmcgbG9jYWwgdGltZSAobm8gem9uZSkiLCJzY2hlZHVsZWQiOiIyMDI2LTA2LTE2Iiwic2NoZWR1bGVkX3RpbWUiOnsibG9jYWwiOiIwOTozMCJ9fQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDAyNCIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJGaXhlZC16b25lIGRlYWRsaW5lIHRpbWUiLCJkZWFkbGluZSI6IjIwMjYtMDYtMTgiLCJkZWFkbGluZV90aW1lIjp7ImxvY2FsIjoiMTc6MDAiLCJ0aW1lem9uZSI6IkV1cm9wZS9Mb25kb24ifX0KeyJ0eXBlIjoidGFzayIsImlkIjoiZjAwMDAwMjUiLCJwYXJlbnQiOiJmMDAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiU2Vjb25kIGluc3RhbnQgb2YgYSBEU1Qgb3ZlcmxhcCIsInNjaGVkdWxlZCI6IjIwMjYtMTEtMDEiLCJzY2hlZHVsZWRfdGltZSI6eyJsb2NhbCI6IjAxOjMwIiwidGltZXpvbmUiOiJBbWVyaWNhL0xvc19BbmdlbGVzIiwiZm9sZCI6MX19CnsidHlwZSI6InRhc2siLCJpZCI6ImYwMDAwMDI2IiwicGFyZW50IjoiZjAwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IkxlYXAgZGF5Iiwic2NoZWR1bGVkIjoiMjAyOC0wMi0yOSJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImYwMDAwMDMwIiwicGFyZW50IjoiZjAwMDAwMDEiLCJzdGF0ZSI6Ik5FWFQiLCJ0aXRsZSI6IldlZWtseSBmcm9tIGNvbXBsZXRpb24gKC4rMXcpIiwic2NoZWR1bGVkIjoiMjAyNi0wNi0wOCIsInJlY3VyIjoiLisxdyJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImYwMDAwMDMxIiwicGFyZW50IjoiZjAwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6Ik1vbnRobHksIGNhdGNoIHVwIHRvIHRvZGF5ICgrKzFtKSIsInNjaGVkdWxlZCI6IjIwMjYtMDYtMDEiLCJyZWN1ciI6IisrMW0ifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDAzMiIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJFdmVyeSBvdGhlciBkYXkgKCsyZCkiLCJzY2hlZHVsZWQiOiIyMDI2LTA2LTAyIiwicmVjdXIiOiIrMmQifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDAzMyIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJXZWVrZGF5cyBieSBuYW1lICh3Om1vbix3ZWQpIiwic2NoZWR1bGVkIjoiMjAyNi0wNi0wMSIsInJlY3VyIjoidzptb24sd2VkIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiZjAwMDAwMzQiLCJwYXJlbnQiOiJmMDAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiRGF5IG9mIG1vbnRoIChtOjE1KSIsImRlYWRsaW5lIjoiMjAyNi0wNi0xNSIsInJlY3VyIjoibToxNSJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImYwMDAwMDM1IiwicGFyZW50IjoiZjAwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IkFubnVhbCAoeTowNy0wNCkiLCJzY2hlZHVsZWQiOiIyMDI2LTA3LTA0IiwicmVjdXIiOiJ5OjA3LTA0In0KeyJ0eXBlIjoidGFzayIsImlkIjoiZjAwMDAwNDAiLCJwYXJlbnQiOiJmMDAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiSGlkZGVuIHVudGlsIHRocmVlIHdlZWtzIGJlZm9yZSB0aGUgZGVhZGxpbmUiLCJkZWFkbGluZSI6IjIwMjYtMDgtMDEiLCJsZWFkIjoiM3cifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDA0MSIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJIaWRkZW4gdW50aWwgZml2ZSBob3VycyBiZWZvcmUgdGhlIHN0YXJ0IHRpbWUiLCJzY2hlZHVsZWQiOiIyMDI2LTA2LTE0Iiwic2NoZWR1bGVkX3RpbWUiOnsibG9jYWwiOiIxNDowMCJ9LCJsZWFkIjoiNWgifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDA0MiIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJMZWFkIGFscmVhZHkgcmVsZWFzZWQgZm9yIHRoaXMgb2NjdXJyZW5jZSIsInNjaGVkdWxlZCI6IjIwMjYtMDYtMjIiLCJyZWN1ciI6Ii4rMXciLCJsZWFkIjoiMmQiLCJsZWFkX3NraXAiOiIyMDI2LTA2LTIyIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiZjAwMDAwNTAiLCJwYXJlbnQiOiJmMDAwMDAwMSIsInN0YXRlIjoiV0FJVElORyIsInRpdGxlIjoiRGVsZWdhdGVkIHRvIGEgcGVyc29uIiwiZGVsZWdhdGlvbiI6eyJraW5kIjoiaHVtYW4iLCJzdGF0dXMiOiJkZWxlZ2F0ZWQiLCJhc3NpZ25lZSI6InNhbS5yaXZlcmFAZXhhbXBsZS5jb20iLCJhdCI6IjIwMjYtMDYtMDFUMTA6MDA6MDBaIn19CnsidHlwZSI6InRhc2siLCJpZCI6ImYwMDAwMDUxIiwicGFyZW50IjoiZjAwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6Ik9mZmVyZWQgdG8gdGhlIGFnZW50IHBvb2wsIHVuY2xhaW1lZCIsImRlbGVnYXRpb24iOnsia2luZCI6ImFnZW50IiwibW9kZSI6InJlc2VhcmNoIiwic3RhdHVzIjoicmVhZHkiLCJhdCI6IjIwMjYtMDYtMDJUMDg6MzA6MDBaIn19CnsidHlwZSI6InRhc2siLCJpZCI6ImYwMDAwMDUyIiwicGFyZW50IjoiZjAwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IkNsYWltZWQgYnkgYSB3b3JrZXIsIHdpdGggYSB3b3JrIHJlZmVyZW5jZSIsImRlbGVnYXRpb24iOnsia2luZCI6ImFnZW50IiwibW9kZSI6ImltcGxlbWVudCIsInN0YXR1cyI6ImNsYWltZWQiLCJhc3NpZ25lZSI6Imhhcm5lc3MvbW9kZWwvc2Vzc2lvbi0wMDAxIiwiYXQiOiIyMDI2LTA2LTAyVDA5OjAwOjAwWiIsIndvcmtfcmVmIjoiaHR0cHM6Ly9leGFtcGxlLmludmFsaWQvcnVucy8wMDAxIn19CnsidHlwZSI6InRhc2siLCJpZCI6ImYwMDAwMDYwIiwicGFyZW50IjoiZjAwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6Ik11bHRpLWxpbmUgYm9keSB3aXRoIGEgbGluayIsImJvZHkiOiJGaXJzdCBsaW5lLlxuU2Vjb25kIGxpbmUgd2l0aCBodHRwczovL2V4YW1wbGUuaW52YWxpZC9kb2NzL3BhZ2Vcbi0gYSBidWxsZXQifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDA2MSIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJVbmljb2RlIHRpdGxlIOKAlCBuYcOvdmUsIHLDqXN1bcOpLCDml6XmnKzoqp4sIGVtb2ppIPCfjLEiLCJ0YWdzIjpbIkBob21lIl0sImJvZHkiOiJHcsO8w59lIOKAlCDDvG7Dr2PDtmTDqSBib2R5LCBpZGVvZ3JhcGhpYyBzcGFjZTrjgIBlbmQuIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiZjAwMDAwNjIiLCJwYXJlbnQiOiJmMDAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiUXVvdGVzIFwiaW5zaWRlXCIgdGhlIHRpdGxlIGFuZCBhIGJhY2tzbGFzaCBcXCB0b28ifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmMDAwMDA3MCIsInBhcmVudCI6ImYwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJQYXJlbnQgdGFzayB3aXRoIGNoaWxkcmVuIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiZjAwMDAwNzEiLCJwYXJlbnQiOiJmMDAwMDA3MCIsInN0YXRlIjoiTkVYVCIsInRpdGxlIjoiRmlyc3QgY2hpbGQgYWN0aW9uIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiZjAwMDAwNzIiLCJwYXJlbnQiOiJmMDAwMDA3MCIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiU2Vjb25kIGNoaWxkIGFjdGlvbiJ9Cg==",
+        "line_count": 34,
+        "symlink_target": null
+      }
+    ],
+    "deltas": [
+      {
+        "path": ".tasks.jsonl.lock",
+        "kind": "created",
+        "before_sha256": null,
+        "after_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    ],
+    "rolled_back": null
+  },
+  "journal": {
+    "present": false,
+    "version": null,
+    "cursor": null,
+    "states": [],
+    "index": {
+      "role": "journal_index",
+      "path": ".state/tasks/journal/b3f823cd27994801/index.json",
+      "present": false,
+      "sha256": null,
+      "size_bytes": null,
+      "mode": null,
+      "content_base64": null,
+      "line_count": null,
+      "symlink_target": null
+    },
+    "blob_count": null,
+    "blob_sha256": []
+  },
+  "revisions": {
+    "store": "s1.80879ae149870fbc283b495aef2494c1ad3f826889cd0b1c72c3b1c8932b0c45",
+    "resources": [
+      {
+        "id": "f0000010",
+        "kind": "task",
+        "revision": "v1.22c564a42e315f223f72d90552f96d4300913f230650c039964fa7b7d4ced551.572eb0e215df33011254edefd44d0dac4ca90affb601784f696ecdd04e3eff4b.25283044ec8a881397d04989dcee1cff76388b68274eaa3255cff2747cbdc270"
+      },
+      {
+        "id": "f0000011",
+        "kind": "task",
+        "revision": "v1.82790c4512f00059f44e1c2fd00140617a10af30b26512347c28f51e4dd1d8a8.3853c679c19db83a2eb6b556983c4b4efef390f4e5e2646aecf41973c2a08ece.9fd04f22de3352f16b370d242afb5fa9cd85f601510947aab9a2588cd552424c"
+      },
+      {
+        "id": "f0000012",
+        "kind": "task",
+        "revision": "v1.6c5b6cec7133f76482ca7dbf98cce611c77ad5e8d3aa239c0d2c76f678427cb1.990e72d1e3cbb87f48b0894c34c49a5fa8cd1410d64385e84502655f55883781.73b2efb622c2696ecd1136da0221e40b998921ff48bc14e19a5102e5fdbeda05"
+      },
+      {
+        "id": "f0000013",
+        "kind": "task",
+        "revision": "v1.d1a0cdc4ac4e9ddb2d705175758af3c9013d7c1dfaffc49e2c85062c76d53aaa.850c032ea9cdb91ee01e618b06e022cfac6f103f0084b0199ff87240e298752e.43e7401a3dda9b377a8c3fa9a9a71729438a4ecd48771536a44b72569b782504"
+      },
+      {
+        "id": "f0000014",
+        "kind": "task",
+        "revision": "v1.ef0241a2ed104642568eff6d199ddac181e0f407064f95d74c70f536a037c06f.e6849ae47b4db6e4a2daed5837c7806ecfbcde5a6bf614199bc73b3cdcd22737.cdb384e793dab00bb8e807efb278a02a75a959b73c660d9284c5c80868268c7f"
+      },
+      {
+        "id": "f0000015",
+        "kind": "task",
+        "revision": "v1.4e9deea77fa9aa9501b2ab5c464afb18dc8cf3bf15e312153de235ac4cf5b711.c84ae82f25bd02053b1af85064d5b15383727fac0af2916d6afa357294e89017.a9c7eb6b359d7dae5f0e7ce3977e04b4d9ff7a88c6c8200a4bfef9f31bb63062"
+      },
+      {
+        "id": "f0000016",
+        "kind": "task",
+        "revision": "v1.3b497595e5668f0b0e4afe46a2d960dc03e41f946c3f3dc22940639158aacae1.42cb77974ed2f97b95497ec73f2253cc329bb8cf062c68be3907fb933a12ef4a.7f95e2c66b1c9da43f303969feb4dd559a10a419f15eddab80e56e86a004a19e"
+      },
+      {
+        "id": "f0000020",
+        "kind": "task",
+        "revision": "v1.5d670a9a96a8668ff9f2d2ceea43d0090167310fa1e2fb5c174dd2cb2794c999.db566861afa8db9d93b0513e888db6d7a2844bfabf73def1971376fdcf2fc1b3.f65897416460f505b83456c92a0a729fec32880e8c94153610b1c4ea5bd495ee"
+      },
+      {
+        "id": "f0000021",
+        "kind": "task",
+        "revision": "v1.a580000ce8475889a9c448d5f0b48a4ace1d375d49428ccfd2b59904bb70d579.05133b4a2f0e81641709c165a9542bc0d3566234fc02752a2fed2b8415f6e6d6.e9b0b1ecad7cb3674c75809c8c7fad6ea399ae63dada11f673e02dbdd5ea8bba"
+      },
+      {
+        "id": "f0000022",
+        "kind": "task",
+        "revision": "v1.76c5ec968d7e65c1b10166cee56f632a98fb6a2ee03df3fa2900c490ba572276.04ea5334a2edd8f82cef5d56f82c2040bdbc50b60570e7becfcceb5ce2fbf4c6.22247a3f7b22a6cbffe68afaf18f59b0baf4304275455325f77fecf32c894309"
+      },
+      {
+        "id": "f0000023",
+        "kind": "task",
+        "revision": "v1.e1dceee55a1014e0aa6cb2bbc93c0c667b07e2bbef6b9e6b73d5aa46b10ddef4.10b8096f82e89703c57d5e85ffffcfd2b911328d8a5c1972b51c66d13e9a5932.7a03d491407e46fb1e441e9e37b8b925f894739f45993068105835239bd75091"
+      },
+      {
+        "id": "f0000024",
+        "kind": "task",
+        "revision": "v1.8534c7e5aaead4164364056267e68cd9eca021d0361694d25f5fbb4c3cf54194.6beacddb87c531590bf480c9f2eccbc6ff23d9e2a2dc328a7b27dcbc61b8ddcd.79a802eee60deffeede1ab0f1d1e39fcee58c12baa804741041f79fb98693399"
+      },
+      {
+        "id": "f0000025",
+        "kind": "task",
+        "revision": "v1.b159fdf2672df6423f0412190cca7f59cadb179df2dc7c92b131e9e885465297.f7ec649861af6f128f0e0e7fdf96d4bd811dc758fb67d6130c34b0ed14356411.75697779fb792e1db4f36f7bb069e421f6c4cd6d909ad5dce5926b32cbda37c4"
+      },
+      {
+        "id": "f0000026",
+        "kind": "task",
+        "revision": "v1.26f768f7fb7a881a7fc9fcf797b603b0b0aedaf6aafa7c48342e1a578a6eca3c.ef62067027904f60684ac1988db95e209996adecee9b78f142076e45686f13d6.e4157627b181c27ed3964aa7b11946ecc61da8acb025543a12a21829981d940a"
+      },
+      {
+        "id": "f0000030",
+        "kind": "task",
+        "revision": "v1.396b867f4718773f9465870258a1515531c0c27dab95f1f4ddf42e65d4018833.3779c0678892d02b5f6afd108c9466261f59c38347d4a5011ae45fb9a85932f7.afb1eb68f9eecb8c4d7cfe6f784e55a5ff6dfa2333c095e6faad5d0c0cd0cbb1"
+      },
+      {
+        "id": "f0000031",
+        "kind": "task",
+        "revision": "v1.9f33be6c78546ad3bf2def5fdfc3395b4370611a9298fadaab223f333c9c5abf.1b667d9e82e6460b147d77aaa290296ef78eb91750eef7e34402fd435a93bea7.d251d3dad7879b491511429489b2d9bfc8b9503525068b4028511b0db0798769"
+      },
+      {
+        "id": "f0000032",
+        "kind": "task",
+        "revision": "v1.5067773de64631df9e063254c1f89d7a6829ecdd6cddc3b96833a0912b223743.74ec9f77793c8365956da24bc82a2a268338c87da1f973b0ee4222fca3865216.e2139567555032af33f47221ac9d4074a9d5c0eb0c8011db7ca85871fc65d5cc"
+      },
+      {
+        "id": "f0000033",
+        "kind": "task",
+        "revision": "v1.5f6a4e62150364a8c49e39f1f73c658eb2709bdd91a45388ce57ecb33bb3e430.d02f9eb2bb86f4d370f05b4e3c8814fae92f124a0992c392ac7284e9add580ac.145bc3f2f2707d76128bcee940d77030debd54eb16a32ea6679e6c03aa38da6c"
+      },
+      {
+        "id": "f0000034",
+        "kind": "task",
+        "revision": "v1.4160470af86141b4d0e319f460b19a5bdbb66564c138bd6236528ee7235e5abc.70d0743a737d81410a9310ad2d60afffeb2a8d2d38cf27ee38e53cfb4460f725.215a95280e8a6d564b5580fd01ecaa1b6b29c45da5accd35caf16d5c746d041b"
+      },
+      {
+        "id": "f0000035",
+        "kind": "task",
+        "revision": "v1.2059a5e8f9964592ee26c113ec320a5febe3c2351a4dbb4ea3a5ca73268a30f7.4e4b329c35aa5af3f783ddfcdca04a8f96cbae93db4480eee115e9e7d65f9720.8201381af447d4f1820e5fbe2fc68629b077ce4bbd6d83c23b1d3dd4a832729d"
+      },
+      {
+        "id": "f0000040",
+        "kind": "task",
+        "revision": "v1.6e08d632b289d32133ffb2621fb242fb748f9b30b9949ce283a49cfe9d5c2f4e.c6ecc101fa56fc6ba3378a9c1d2c042393d32b39bbf1c323adeef529f8372d36.dee2efe615cd74c821675f5655cec261510001eed2b6cd3c68782d79079ec6a4"
+      },
+      {
+        "id": "f0000041",
+        "kind": "task",
+        "revision": "v1.8232f95ed098b13f8e4cd32b6a23db7286561cc67325f5b9b1310a476ad8cbd2.2e845e0d732c32571a58b97816c08ace78f1edfdb7d8cf754ef78329eda39b17.072143e4b276e4845ef12486004b3e74b62a2ee421a769881b243c0bcc4ec7c1"
+      },
+      {
+        "id": "f0000042",
+        "kind": "task",
+        "revision": "v1.d0176659620af3143fd4e996e7635451504291bb69b7345c9173e4145d3c2416.9354274fb7fb77c0f68f7e0d776fe17cc28e88185857de7315347f755d9153e7.42112befadde4785b680ef2a84217c11b67a3843042ebd86ae70e222da2405f8"
+      },
+      {
+        "id": "f0000050",
+        "kind": "task",
+        "revision": "v1.b0c15b95ecfdddbc006a6b71956cacf91243b48760fc41175c09d6c5a95d6db9.070958baef15570699f94eb039e405a5c221027a56712d2e35f62fab5d201492.991c9ee3bd8b541ee2ef57f2e728c5ca5401a0fa2b39a9ef5d8fa0093c9e8863"
+      },
+      {
+        "id": "f0000051",
+        "kind": "task",
+        "revision": "v1.8af56b4d4d5efa49cd4f32e54af8c0e5e1be0eda778dc8df04486c6521dc2bc4.7fb87f33ed6904141b9466c2f9269d667e193b5b27caab538007e6a5c932b477.0ed2b6673671ebe8467a5616da9cad2f5cf98cd9574666bdde027e77628051ca"
+      },
+      {
+        "id": "f0000052",
+        "kind": "task",
+        "revision": "v1.7d1c877c0b59a2d22891c5bef0b1ff23f95bfc27ca7a08b8d8339a20287c1a5c.fddc21403079a3e9bc851dcd780c2d2de441ae0150b4f61193f8748f454d802b.8bebc6b1f388f33cccec84134d35ce275ce2d017659d888b3e39da4da26cf2a1"
+      },
+      {
+        "id": "f0000060",
+        "kind": "task",
+        "revision": "v1.95c53e7040835d4e7d9166288432d94f8d03e172237a68a2dd3390b0e891bea0.9056bf5ebc98d0711b87d21b7baa56929941b8c9e648bc63134dc6d0cddc870c.0dfcb4bf81a437cbc1dd30835019efe2e998e9b2e7cf6e18d4d5d1b3745f756e"
+      },
+      {
+        "id": "f0000061",
+        "kind": "task",
+        "revision": "v1.d3370408d80b169b642f5a514245694f48c8308d5c957f4ab809cafdebf7de4a.984a7e55c829415817c7892989a67ee526fbe036558db044a7d8543d1ccac009.dd1b3d638283c4b184e82ed8e6d130559ca4754776093ec83a70cea56810e81b"
+      },
+      {
+        "id": "f0000062",
+        "kind": "task",
+        "revision": "v1.dfff7a7c8c4cade50ca7bdf471d79e3374c7b00dcb228b6ddb14a1ffd4e0f6c4.3d98c7311311c1437f4ce6d678dfd97f709c5dc8c7ceb4eb76b46781682a920a.7eca64bd88514d6f64544c64b59edcb84ca8dd7737920686f6904ea224ccf976"
+      },
+      {
+        "id": "f0000070",
+        "kind": "task",
+        "revision": "v1.3718de8a7d9a5ba374d2e1182f278f92116d1713c4ea48dde3d7b36e43d7b520.52c8d035ec9ac4a14ca64679d0cc8492b4932824ea9ebd6d24ac827104d13151.d7ff96ed3b69c3c3a7ebcfa22e6430692c801128550000e26226ad66e55cff8f"
+      },
+      {
+        "id": "f0000071",
+        "kind": "task",
+        "revision": "v1.903609f70ab09bfd4ae74e995b80e881e6d7d83f452a59f627faaf5ba05d8d1c.b24fe9018b981dc15d089b3bfa363e28387b6630e29d65d7ad974717d39b28fd.62a1a4397110929ea254b35ff6a3d69de71e92d4a376e102f90e03be3b684f83"
+      },
+      {
+        "id": "f0000072",
+        "kind": "task",
+        "revision": "v1.277a6414ac95cfa308c1f0a90d26acdfeaf9ad236b4c763adcc25d57c1711449.44fa093b278e281e67ec91ec7e2d42defed54b1498bc5c77fd0bf5740f9e8224.657f35dc777351ae7a6191867ac229627ba8e60b0161cf65e5fb3caa83fdbda2"
+      }
+    ],
+    "touched_ids": [],
+    "http_etag": null
+  },
+  "http": [],
+  "environment": {
+    "tzdb_version": "Zoneinfo DataSource: /usr/share/zoneinfo",
+    "platform": "arm64-darwin23",
+    "filesystem": "/",
+    "locale": "UTF-8",
+    "umask": "0022"
+  },
+  "metrics": {
+    "wall_ms": 0,
+    "user_cpu_ms": null,
+    "sys_cpu_ms": null,
+    "peak_rss_bytes": null,
+    "bytes_written": 0
+  },
+  "notes": "success: all 33 JSONL records parse, including nested fields and unicode"
+}
