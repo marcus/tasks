@@ -1,17 +1,10 @@
-# Query-filter parse oracle capture
+# Query-filter parse oracle and translation
 
-This medium-risk slice is a pure `argv`/constructor-to-`TaskFilter` boundary;
-it has no task-store input or filesystem effect. The capture therefore uses the
-reproducible direct probe instead of the fixture-copy runner.
+`ruby.jsonl` is the captured Ruby oracle. `go.jsonl` is the Go translation's
+current direct-probe output; it is compared structurally, not promoted to an
+expected result. Run `./porting/evidence/query-filter-parse/conformance` to
+reproduce the 17-case differential result.
 
-```sh
-porting/runners/ruby/query-filter-parse-probe \
-  porting/runners/cases/query-filter-parse.jsonl \
-  > porting/evidence/query-filter-parse/ruby.jsonl
-ruby test/test_task_queries.rb
-```
-
-`ruby.jsonl` records every observable filter field, the derived `states` and
-`text_query` values, `--json`, and exact `ArgumentError` messages for rejected
-inputs. It is Ruby oracle evidence only; no Go output has been compared or
-blessed.
+The package also has a state-intersection property test across every scope and
+state vocabulary value. Source-fidelity and Go-idiom review remain independent
+medium-tier steps and are not claimed by this translation handoff.
