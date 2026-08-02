@@ -104,6 +104,26 @@ projection a later CLI adapter or probe will use for its resolved `org`,
 `config_file_exists` fields. It does not invent the unrelated settings fields
 of Ruby's full `config --json` report; those remain owned by their slices.
 
-The next tick should add the CLI adapter and protocol-conforming runner around
-this projection, run the named differential cases, and then arrange separate
-source-fidelity and Go-idiom reviews.
+## Go CLI adapter (partial)
+
+`go/internal/cli.WriteConfigJSON` now serializes that resolver-owned projection
+through one thin adapter. Its test verifies the final `TASKS_FILE` path and
+provenance flow unchanged into the JSON document. This is deliberately not yet
+the public `tasks config --json` command: Ruby's envelope contains settings
+owned by other slices, and emitting an incomplete envelope as though it were
+compatible would be a false conformance claim.
+
+Verified in this tick:
+
+```sh
+(cd go && go test ./... && go vet ./...)
+ruby test/test_config.rb -n '/test_defaults_to_default_dir|test_tasks_dir_env_points_both_files|test_per_file_env_beats_tasks_dir|test_config_file_dir_key|test_config_file_per_file_keys_beat_dir_key|test_env_beats_config_file|test_empty_env_values_are_ignored|test_memory_defaults_beside_resolved_tasks_file|test_memory_follows_tasks_dir|test_memory_follows_the_final_tasks_file_override_not_the_base_dir|test_memory_config_key_beats_sibling_default|test_tasks_memory_env_beats_config_key_and_sibling|test_tasks_memory_empty_env_is_ignored|test_config_file_ignores_comments_blanks_and_unknown_keys|test_config_file_expands_tilde|test_missing_config_file_is_fine|test_for_dir_pins_both_files_ignoring_env_and_config|test_cli_config_reports_paths_and_sources|test_cli_config_reports_memory_from_tasks_file_sibling_and_existence|test_cli_reads_tasks_from_config_file_dir/'
+```
+
+The next tick should provide the protocol-conforming Go runner/probe and a
+complete composed public config envelope before running the named Ruby-vs-Go
+differential cases.
+
+The next tick should add the protocol-conforming runner/probe around this
+projection, compose the remaining public settings, run the named differential
+cases, and then arrange separate source-fidelity and Go-idiom reviews.
