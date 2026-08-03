@@ -1,6 +1,7 @@
 package recur
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 )
@@ -17,6 +18,34 @@ type CivilDate struct {
 
 func NewCivilDate(year int64, month, day int) CivilDate {
 	return CivilDate{Year: big.NewInt(year), Month: month, Day: day}
+}
+
+// ErrInvalidDate is the Go spelling of the Date::Error Ruby raises for a
+// well-formed but non-existent civil date. Its text is Ruby's message verbatim
+// because the probe reports it where Ruby reports the rescued message.
+var ErrInvalidDate = errors.New("invalid date")
+
+// NewCheckedCivilDate applies Ruby Date's validity rule under Date::ITALY:
+// month 1..12, day within the month's length on the calendar in force for that
+// year, and none of the ten days the 1582 reform omitted.
+func NewCheckedCivilDate(year *big.Int, month, day int) (CivilDate, error) {
+	if month < 1 || month > 12 {
+		return CivilDate{}, ErrInvalidDate
+	}
+	if day < 1 || day > daysInMonth(year, month) {
+		return CivilDate{}, ErrInvalidDate
+	}
+	date := CivilDate{Year: new(big.Int).Set(year), Month: month, Day: day}
+	if inReformGap(date) {
+		return CivilDate{}, ErrInvalidDate
+	}
+	return date, nil
+}
+
+// inReformGap reports the ten days Date::ITALY skips: 1582-10-05 through
+// 1582-10-14 name no day at all.
+func inReformGap(d CivilDate) bool {
+	return d.Year.Cmp(big.NewInt(1582)) == 0 && d.Month == 10 && d.Day >= 5 && d.Day <= 14
 }
 
 func (d CivilDate) String() string {
@@ -224,7 +253,7 @@ func julianCivilFromDays(days *big.Int) CivilDate {
 }
 
 func normalizeReformGap(d CivilDate) CivilDate {
-	if d.Year.Cmp(big.NewInt(1582)) == 0 && d.Month == 10 && d.Day >= 5 && d.Day <= 14 {
+	if inReformGap(d) {
 		return CivilDate{Year: big.NewInt(1582), Month: 10, Day: 4}
 	}
 	return d

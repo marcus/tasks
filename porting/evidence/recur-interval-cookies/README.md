@@ -451,3 +451,97 @@ the case corpus. The invalid-UTF-8 boundary remains owned by the later CLI
 adapter slice, as recorded above. The next step is a **fresh independent
 mid-tier source-fidelity review**, then the Go-idiom review and independent
 approval.
+
+### Conformance-adapter repair: Date.iso8601 shape and validity (2026-08-02)
+
+The independent source-fidelity review at `fa313b0` rejected the slice on a Go
+**conformance-adapter** defect: `civilDate` in `go/cmd/recur-probe/main.go`
+accepted date strings Ruby's `Date.iso8601` rejects, and crashed rather than
+reporting a rejection. Two consequences, both observable at the direct probe
+boundary:
+
+1. Narrow fields (`2026-1-1`), out-of-range fields (`2026-13-01`, `2026-04-31`,
+   `2026-02-29`) and the ten omitted `Date::ITALY` reform days (`1582-10-05`
+   through `1582-10-14`) were all accepted by Go and turned into projections,
+   where Ruby raises `Date::Error: invalid date`.
+2. Ruby's `next_outcome` rescues `ArgumentError`, and `Date::Error` *is* an
+   `ArgumentError`, so both `Date.iso8601` calls sit inside that rescue: a
+   rejected `from` or `today` is reported as `{"value": null, "error":
+   "invalid date"}`. Go's probe panicked instead, so no corpus could pin it.
+
+Repairs, adapter-side only apart from one new exported constructor:
+
+- `recur.NewCheckedCivilDate` applies Ruby `Date`'s validity rule under
+  `Date::ITALY` — month 1..12, day within the month's length on the calendar in
+  force for that year, and none of the ten reform days — returning
+  `recur.ErrInvalidDate`, whose text is Ruby's message verbatim. The existing
+  month-clamp path now shares its `inReformGap` predicate.
+- `civilDate` requires an optional sign, then a year, then two-digit month and
+  day. The sign is part of the year *and* suppresses Ruby's short-year
+  expansion, so a signed year of any length is literal while an unsigned one
+  must be four digits or more (`Date.iso8601("1-01-01")` raises, but
+  `"12-01-01"` is 2012 and `"123-01-01"` is 2023).
+- `nextOutcome` mirrors the Ruby probe's rescue placement and its `from`-then-
+  `today` evaluation order.
+
+**Recorded probe-domain restriction.** `Date.iso8601` also accepts basic
+(`20260101`), ordinal (`2026-001`), week-date (`2026-W01-1`), truncated
+(`--01-01`) and datetime (`2026-01-01T12:00`) forms, and expands an unsigned
+two-or-three-digit year. The Go probe models none of them. Rather than guess —
+a silent divergence — it prints `recur-probe: "…" is outside the probe's ISO
+8601 date domain` and exits 2, so any future case using one of those shapes
+fails loudly instead of being answered wrongly. This is a deliberate limit of
+the harness, not of `internal/recur`; it is recorded in the manifest entry's
+`oracle_gaps`.
+
+Sixteen direct cases were added. Every expected value below is Ruby's, produced
+by `porting/runners/ruby/recur-probe`; none was read from Go:
+
+| case | `from` | Ruby result |
+|---|---|---|
+| `review-narrow-month-and-day` | `2026-1-1` | `invalid date` |
+| `review-narrow-day-only` | `2026-01-1` | `invalid date` |
+| `review-one-digit-year` | `1-01-01` | `invalid date` |
+| `review-month-out-of-range` | `2026-13-01` | `invalid date` |
+| `review-month-zero` | `2026-00-10` | `invalid date` |
+| `review-day-zero` | `2026-01-00` | `invalid date` |
+| `review-day-past-month-length` | `2026-04-31` | `invalid date` |
+| `review-non-leap-february-29` | `2026-02-29` | `invalid date` |
+| `review-julian-leap-february-29` | `1500-02-29` | `1500-03-01` |
+| `review-negative-year-leap-february-29` | `-0044-02-29` | `-0044-03-01` |
+| `review-negative-year-non-leap-february-29` | `-0045-02-29` | `invalid date` |
+| `review-reform-gap-first-day` | `1582-10-05` | `invalid date` |
+| `review-reform-gap-last-day` | `1582-10-14` | `invalid date` |
+| `review-reform-gap-boundaries-valid` | `1582-10-04` | `1582-10-15` |
+| `review-invalid-today-after-valid-from` | `today` `2026-02-30` | `invalid date` |
+| `review-invalid-from-precedes-invalid-today` | both invalid | `invalid date` |
+
+The last four rows are the point of the group: February 29 is valid in 1500 and
+in 44 BCE under the Julian leap rule and invalid in 2026 and in 45 BCE, and the
+reform gap's two edges bracket a valid day on each side — so the corpus
+exercises the calendar split, not only the string shape.
+
+The new corpus has teeth: checking out the pre-repair `go/cmd/recur-probe`
+against it makes the comparator abort with a mismatch, and restoring the repair
+makes it pass.
+
+Verification passed:
+
+```console
+$ porting/evidence/recur-interval-cookies/conformance
+recur-interval-cookies direct conformance: 41/41 cases matched
+```
+
+```sh
+(cd go && gofmt -l . && go vet ./... && go test ./... && go test -race ./internal/recur)
+ruby test/test_recur.rb  # 20 runs, 66 assertions, 0 failures
+git diff --check
+```
+
+`TestNewCheckedCivilDateMatchesRubyDateValidity` pins the same validity rule as
+a package unit test, its expectations transcribed from Ruby. No `internal/recur`
+*behavior* changed: the new constructor is additive and unused by `Parse`,
+`Humanize`, `NextDate` or `Step`. The invalid-UTF-8 boundary remains owned by
+the later CLI adapter slice, as recorded above. The next step is a **fresh
+independent mid-tier source-fidelity review**, then the Go-idiom review and
+independent approval.

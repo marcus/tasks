@@ -1,6 +1,7 @@
 package recur
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 	"testing"
@@ -137,6 +138,48 @@ func TestCivilDateStringPreservesRubySignedYearPadding(t *testing.T) {
 	got, err := NextDate("+1d", NewCivilDate(-1, 1, 1), NewCivilDate(-1, 1, 1))
 	if err != nil || got.String() != "-0001-01-02" {
 		t.Fatalf("negative year projection = %s, %v", got, err)
+	}
+}
+
+// Expectations transcribed from Ruby Date.iso8601 / Date.new under the default
+// Date::ITALY calendar; see porting/evidence/recur-interval-cookies/README.md.
+func TestNewCheckedCivilDateMatchesRubyDateValidity(t *testing.T) {
+	cases := []struct {
+		year  int64
+		month int
+		day   int
+		valid bool
+	}{
+		{2026, 1, 1, true},
+		{2026, 13, 1, false},
+		{2026, 0, 10, false},
+		{2026, 1, 0, false},
+		{2026, 4, 31, false},
+		{2026, 2, 29, false},
+		{2024, 2, 29, true},
+		{1500, 2, 29, true}, // Julian leap rule before the reform
+		{-44, 2, 29, true},
+		{-45, 2, 29, false},
+		{1582, 10, 4, true},
+		{1582, 10, 5, false}, // the ten omitted reform days
+		{1582, 10, 14, false},
+		{1582, 10, 15, true},
+	}
+	for _, test := range cases {
+		got, err := NewCheckedCivilDate(big.NewInt(test.year), test.month, test.day)
+		if test.valid {
+			if err != nil {
+				t.Errorf("%d-%02d-%02d rejected: %v", test.year, test.month, test.day, err)
+				continue
+			}
+			if want := NewCivilDate(test.year, test.month, test.day); !got.Equal(want) {
+				t.Errorf("%s != %s", got, want)
+			}
+			continue
+		}
+		if !errors.Is(err, ErrInvalidDate) {
+			t.Errorf("%d-%02d-%02d accepted as %s (err %v), want ErrInvalidDate", test.year, test.month, test.day, got, err)
+		}
 	}
 }
 
