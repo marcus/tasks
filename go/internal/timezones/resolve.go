@@ -90,6 +90,18 @@ func EarliestOn(year int, month time.Month, day int, location *time.Location) (t
 	}
 }
 
+// Ambiguous reports a wall time that names TWO instants — the hour a fall-back
+// transition repeats. It is the question `fold` answers, and the only way a
+// caller can know that answering it matters.
+func Ambiguous(year int, month time.Month, day, hour, minute int, location *time.Location) bool {
+	return len(InstantsFor(year, month, day, hour, minute, location)) > 1
+}
+
+// LocalTime projects an instant into a zone.
+func LocalTime(instant time.Time, location *time.Location) time.Time {
+	return instant.UTC().In(location)
+}
+
 // FirstValidLocalAfter is the hint a nonexistent-time diagnostic carries: the
 // next wall time on the same date that the zone does observe.
 func FirstValidLocalAfter(year int, month time.Month, day, hour, minute int, location *time.Location) (string, bool) {

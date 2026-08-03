@@ -273,11 +273,13 @@ func leadSpanSuffix(queries *taskquery.Queries, item store.Item) string {
 	if !ok {
 		return ""
 	}
-	human, known := lead.Humanize(item.Lead)
-	if !known {
+	// The SPAN, not its humanized form: this suffix sits at the end of an
+	// already long row, and Ruby prints "3w before 11/1" here while spelling
+	// "3 weeks before 2026-11-01" in the places that have room for it.
+	if !lead.Span(item.Lead) {
 		return ""
 	}
-	return fmt.Sprintf(" · %s before %d/%d", human, int(anchor.Month), anchor.Day)
+	return fmt.Sprintf(" · %s before %d/%d", item.Lead, int(anchor.Month), anchor.Day)
 }
 
 // recurSummary is the human gloss of a stored recurrence value. An unparsable

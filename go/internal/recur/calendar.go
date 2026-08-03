@@ -114,7 +114,7 @@ func parseSchedule(value string) (schedule, bool) {
 	if !calendarShape.MatchString(value) {
 		return schedule{}, false
 	}
-	parsed, err := canonicalCalendar(value)
+	parsed, err := canonicalCalendar(value, value)
 	if err != nil {
 		return schedule{}, false
 	}
@@ -124,14 +124,20 @@ func parseSchedule(value string) (schedule, bool) {
 	return parsed, true
 }
 
-func canonicalCalendar(value string) (schedule, error) {
+// canonicalCalendar validates and normalizes a canonical-grammar calendar
+// schedule. `echo` is the spelling quoted in rejections — the caller's own, not
+// the parser's downcased working copy, because a rejection is read by the
+// person who typed it.
+func canonicalCalendar(value, echo string) (schedule, error) {
 	match := calendar.FindStringSubmatch(value)
 	if match == nil {
-		return schedule{}, fmt.Errorf("unrecognized schedule")
+		return schedule{}, fmt.Errorf("unrecognized schedule: %s", rubyInspect(echo))
 	}
 	prefix := match[1]
 	if prefix == ".+" || prefix == "++" {
-		return schedule{}, fmt.Errorf("%q is an interval prefix", prefix)
+		return schedule{}, fmt.Errorf("%s is an interval prefix; a calendar schedule already "+
+			"advances to the next occurrence after today — drop the prefix, or use "+
+			"%q to advance one occurrence at a time", rubyInspect(prefix), "+")
 	}
 	interval := 1
 	if match[2] != "" {
@@ -160,11 +166,11 @@ func canonicalWeekly(prefix string, interval int, body string) (schedule, error)
 	selected := []string{}
 	for _, part := range parts {
 		if part == "" {
-			return schedule{}, fmt.Errorf("weekly schedules need at least one day")
+			return schedule{}, fmt.Errorf(`weekly schedules need at least one day, e.g. "w:mon"`)
 		}
 		day, known := dayAliases[part]
 		if !known {
-			return schedule{}, fmt.Errorf("unknown day of week: %q", part)
+			return schedule{}, fmt.Errorf("unknown day of week: %s", rubyInspect(part))
 		}
 		selected = append(selected, day)
 	}
@@ -192,11 +198,11 @@ func canonicalMonthly(prefix string, interval int, body string) (schedule, error
 	for _, part := range parts {
 		switch {
 		case part == "":
-			return schedule{}, fmt.Errorf("monthly schedules need at least one rule")
+			return schedule{}, fmt.Errorf(`monthly schedules need at least one rule, e.g. "m:15"`)
 		case monthDay.MatchString(part):
 			day, _ := strconv.Atoi(part)
 			if day < 1 || day > 31 {
-				return schedule{}, fmt.Errorf("day of month must be 1–31: %q", part)
+				return schedule{}, fmt.Errorf("day of month must be 1–31: %s", rubyInspect(part))
 			}
 			specs = append(specs, monthSpec{day: day})
 		case part == "last":
@@ -204,17 +210,17 @@ func canonicalMonthly(prefix string, interval int, body string) (schedule, error
 		default:
 			match := ordinalDay.FindStringSubmatch(part)
 			if match == nil {
-				return schedule{}, fmt.Errorf("unrecognized monthly rule: %q", part)
+				return schedule{}, fmt.Errorf("unrecognized monthly rule: %s", rubyInspect(part))
 			}
 			weekday, known := dayAliases[match[2]]
 			if !known {
-				return schedule{}, fmt.Errorf("unknown day of week: %q", match[2])
+				return schedule{}, fmt.Errorf("unknown day of week: %s", rubyInspect(match[2]))
 			}
 			ordinal := lastOrdinal
 			if match[1] != "last" {
 				parsed, err := strconv.Atoi(match[1])
 				if err != nil || parsed < 1 || parsed > 5 {
-					return schedule{}, fmt.Errorf("ordinal weekdays run from 1 to 5 or \"last\": %q", part)
+					return schedule{}, fmt.Errorf(`ordinal weekdays run from 1 to 5 or "last": %s`, rubyInspect(part))
 				}
 				ordinal = parsed
 			}
@@ -273,31 +279,31 @@ func canonicalYearly(prefix string, interval int, body string) (schedule, error)
 		month, _ := strconv.Atoi(match[1])
 		day, _ := strconv.Atoi(match[2])
 		if month < 1 || month > 12 || !validDate(2024, month, day) {
-			return schedule{}, fmt.Errorf("invalid yearly date: %q", body)
+			return schedule{}, fmt.Errorf("invalid yearly date: %s", rubyInspect(body))
 		}
 		return schedule{prefix: prefix, interval: interval, kind: yearly, month: month, day: day}, nil
 	}
 	if match := yearlyOrdinal.FindStringSubmatch(body); match != nil {
 		month, _ := strconv.Atoi(match[1])
 		if month < 1 || month > 12 {
-			return schedule{}, fmt.Errorf("invalid month: %q", match[1])
+			return schedule{}, fmt.Errorf("invalid month: %s", rubyInspect(match[1]))
 		}
 		weekday, known := dayAliases[match[3]]
 		if !known {
-			return schedule{}, fmt.Errorf("unknown day of week: %q", match[3])
+			return schedule{}, fmt.Errorf("unknown day of week: %s", rubyInspect(match[3]))
 		}
 		ordinal := lastOrdinal
 		if match[2] != "last" {
 			parsed, err := strconv.Atoi(match[2])
 			if err != nil || parsed < 1 || parsed > 5 {
-				return schedule{}, fmt.Errorf("ordinal weekdays run from 1 to 5 or \"last\": %q", body)
+				return schedule{}, fmt.Errorf(`ordinal weekdays run from 1 to 5 or "last": %s`, rubyInspect(body))
 			}
 			ordinal = parsed
 		}
 		return schedule{prefix: prefix, interval: interval, kind: yearly, month: month,
 			ordinal: &monthSpec{ordinal: ordinal, weekday: weekday, ordinalY: true}}, nil
 	}
-	return schedule{}, fmt.Errorf("unrecognized yearly rule: %q", body)
+	return schedule{}, fmt.Errorf(`unrecognized yearly rule: %s (use "y:07-04" or "y:11:3thu")`, rubyInspect(body))
 }
 
 func validDate(year, month, day int) bool {

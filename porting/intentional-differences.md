@@ -1,7 +1,7 @@
 # Intentional differences
 
 Every place the Go implementation is allowed to behave differently from Ruby.
-The list is empty, and it should stay short.
+The list should stay short.
 
 The porting rule is behavior preservation: Ruby is the oracle until cutover,
 and a conformance mismatch is a defect until proven otherwise. Nothing lands on
@@ -72,6 +72,65 @@ One `##` section per accepted difference, in the order they were accepted:
 - **Conformance disposition:** no comparator exception needed — no fixture
   contains such a stamp, and none should be added. If a future case does, it
   belongs to this section rather than to a broadened comparison rule.
+
+## year-less-feb-29-rolls-to-the-next-real-one — accepted 2026-08-03
+
+- **Slices:** none (Wave 1, temporal and recurrence packet)
+- **Ruby behavior:** `Dates.build_month_date` and the bare month-day branch of
+  `Dates.parse_numeric` construct THIS year's date before deciding whether to
+  roll forward. For a year-less February 29 typed in a non-leap year that
+  construction raises `Date::Error`, which `parse_when` rescues to nil — so
+  `tasks due "feb 29"` and `tasks due "2/29"` are refused outright in 2023,
+  2025, 2026 and 2027, with the generic "could not understand that date".
+- **Go behavior:** `temporal.rollForward` tries this year and then next year, so
+  the same input resolves to 2024-02-29 when typed in 2023. Everything else is
+  unchanged: the date is still never CLAMPED to the 28th, and the roll still
+  looks at most one year ahead, so "feb 29" typed in June 2024 — where the next
+  real one is four years out — is still refused, exactly as Ruby refuses it.
+- **Who can see it:** anyone scheduling something for the next February 29 from
+  a non-leap year. Under Ruby the input is rejected and the user has to type
+  the full `2024-02-29`; under Go it is accepted. No stored value differs — the
+  date written is the one the user asked for either way — and no existing store
+  can contain a difference, because this is input parsing only.
+- **Why accepted:** Ruby's refusal is incidental rather than designed. The
+  documented rule in `dates.rb` is "reject, do not clamp", and rolling to the
+  next real February 29 obeys that rule; refusing it obeys only the order in
+  which the Ruby method happens to build its candidates. A person typing
+  "feb 29" means the 29th, and the one-year horizon keeps the answer close
+  enough to be what they meant. Decided by the Wave 1 packet agent.
+- **Evidence:** `go/internal/temporal/dates_test.go`,
+  `TestYearLessLeapDayRollsToTheNextRealFebruary29` tables both spellings, the
+  cases that agree with Ruby, and the four-years-out case that still refuses.
+- **Conformance disposition:** no comparator exception needed — date input is
+  not a stored value, and no fixture drives the CLI with a bare "feb 29". If
+  one is added, it belongs to this section.
+
+## date-order-is-a-parameter-not-a-process-global — accepted 2026-08-03
+
+- **Slices:** none (Wave 1, temporal and recurrence packet)
+- **Ruby behavior:** `Tasks::Dates` keeps the month-first/day-first choice in a
+  module-level `@date_order`, installed once by `Dates.configure!` from
+  `Config#date_order` and readable as `Dates.date_order`. `parse_when` takes a
+  `date_order:` keyword that defaults to that global. `Dates.reset!` exists
+  only so tests can undo the install.
+- **Go behavior:** `temporal.ParseWhen` takes the order as a required argument
+  and `temporal` holds no mutable package state. `temporal.OrderNamed` converts
+  the config string, degrading anything that is neither "mdy" nor "dmy" to MDY
+  — the same degrade `configure!` performs.
+- **Who can see it:** nobody. The resolved order is identical, and `Config`
+  already computes it; the difference is only in who stores it between
+  resolution and use. There is no Ruby surface that reads `Dates.date_order`
+  other than `parse_when`'s own default.
+- **Why accepted:** a process-wide mutable default is a shared-state hazard the
+  Go build has no reason to inherit — it makes the parser untestable without a
+  reset hook, and it would be a data race the moment the API surface serves two
+  requests at once. Threading the value is the same design rule the plan
+  applies elsewhere: the caller that resolved a setting passes it. Decided by
+  the Wave 1 packet agent.
+- **Evidence:** `go/internal/temporal/dates_test.go`,
+  `TestOrderNamedFallsBackOnInvalidValue` covers the degrade `configure!` owned,
+  and `TestDateOrderDMYFlipsBareAndYearForms` covers the threading.
+- **Conformance disposition:** no exception needed; no observable differs.
 
 ## Notes on the record
 

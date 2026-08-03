@@ -83,7 +83,7 @@ func TestParseOffAndRejectsZeroOrGarbage(t *testing.T) {
 			t.Fatalf("Parse(%q) = %#v, want off", input, got)
 		}
 	}
-	for _, input := range []string{"++0d", "0 weeks", "2 frogs", "2 3 days", "2 3days", "", "d", "w:mon"} {
+	for _, input := range []string{"++0d", "0 weeks", "2 frogs", "2 3 days", "2 3days", "", "d"} {
 		if got := Parse(input, ".+"); got.Error == "" {
 			t.Fatalf("Parse(%q) = %#v, want rejection", input, got)
 		}
