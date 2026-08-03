@@ -124,3 +124,8 @@ func (s *surfaceContext) patchAndReport(args []string, item store.Item, field st
 	}
 	return s.reportTouched(result, touched, asJSON)
 }
+
+func init() {
+	register("priority", nil, (*surfaceContext).priority)
+	register("done", []string{"d"}, (*surfaceContext).done)
+}

@@ -307,3 +307,7 @@ func delegationHeadline(queries *taskquery.Queries, item store.Item) string {
 		return "delegated: " + item.Title
 	}
 }
+
+func init() {
+	register("list", []string{"l"}, (*surfaceContext).list)
+}

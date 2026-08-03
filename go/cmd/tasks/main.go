@@ -42,35 +42,6 @@ func main() {
 	os.Exit(run(os.Args[1:]))
 }
 
-// aliases maps every accepted spelling to its canonical command name, matching
-// Tasks::CliCommands. Only the commands this port implements appear here.
-var aliases = map[string]string{
-	"config": "config",
-	"check":  "check", "k": "check",
-	"list": "list", "l": "list",
-	"agenda": "agenda", "a": "agenda",
-	"undo": "undo",
-	"done": "done", "d": "done",
-	"capture": "capture", "c": "capture",
-	"propose":  "propose",
-	"priority": "priority",
-	"delegate": "delegate",
-	"claim":    "claim",
-}
-
-// writeCommands are the mutations Ruby implements that this build does NOT.
-// They are named here so an invocation gets an explicit refusal rather than
-// "unknown command", which would misreport a supported command as a typo.
-var writeCommands = map[string]bool{
-	"approve": true, "reject": true,
-	"undelegate": true, "workref": true, "release": true,
-	"due": true, "schedule": true, "undate": true, "state": true, "cancel": true,
-	"drop": true, "retitle": true, "tag": true, "note": true,
-	"move": true, "delete": true, "recur": true, "lead": true, "defer": true,
-	"snooze": true, "someday": true, "activate": true, "archive": true, "x": true,
-	"redo": true, "repair": true, "fix": true, "id": true, "project": true,
-}
-
 func run(argv []string) int {
 	if len(argv) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: tasks <command> [args]")
@@ -81,38 +52,18 @@ func run(argv []string) int {
 	paths := config.Resolve(repoRoot(), env, nil)
 	surface := &surfaceContext{paths: paths, store: store.New(paths.Org, paths.Archive)}
 
-	switch aliases[name] {
-	case "config":
-		return surface.config(rest)
-	case "check":
-		return surface.check(rest)
-	case "list":
-		return surface.list(rest)
-	case "agenda":
-		return surface.agenda(rest)
-	case "undo":
-		return surface.undo(rest)
-	case "done":
-		return surface.done(rest)
-	case "capture":
-		return surface.capture(rest, false)
-	case "propose":
-		return surface.capture(rest, true)
-	case "priority":
-		return surface.priority(rest)
-	case "delegate":
-		return surface.delegate(rest)
-	case "claim":
-		return surface.claim(rest)
-	}
-
-	if writeCommands[name] {
+	handler, isCommand := dispatch(name)
+	switch {
+	case handler != nil:
+		return handler(surface, rest)
+	case isCommand:
 		fmt.Fprintf(os.Stderr, "%s: not implemented in the Go port — this build has no write path, "+
 			"and refusing is the only answer that cannot leave a half-written store\n", name)
 		return notImplementedExit
+	default:
+		fmt.Fprintf(os.Stderr, "unknown command: %q\n", name)
+		return 1
 	}
-	fmt.Fprintf(os.Stderr, "unknown command: %q\n", name)
-	return 1
 }
 
 // surfaceContext is what every command needs and nothing more: the resolved

@@ -181,3 +181,8 @@ func isFile(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.Mode().IsRegular()
 }
+
+// config is dispatched here so main.go never lists the commands.
+func init() {
+	register("config", nil, (*surfaceContext).config)
+}

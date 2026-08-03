@@ -305,3 +305,12 @@ func rubyInspectQuote(value string) string {
 const captureUsageText = `usage: tasks capture "text" [--due d] [--scheduled d] [--priority A|B|C] [--tag t] [--context @x] [--no-host-context] [--state STATE] [--project "Heading" | --under <ref>] [--note "text"]`
 
 const proposeUsage = `usage: tasks propose "text" [--due d] [--scheduled d] [--lead span] [--priority A|B|C] [--tag t] [--context @x] [--no-host-context] [--project "Heading" | --under <ref>] [--note "rationale"]`
+
+func init() {
+	register("capture", []string{"c"}, func(s *surfaceContext, args []string) int {
+		return s.capture(args, false)
+	})
+	register("propose", nil, func(s *surfaceContext, args []string) int {
+		return s.capture(args, true)
+	})
+}

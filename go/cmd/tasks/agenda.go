@@ -65,3 +65,7 @@ func hasFlag(args []string, name string) bool {
 	}
 	return false
 }
+
+func init() {
+	register("agenda", []string{"a"}, (*surfaceContext).agenda)
+}

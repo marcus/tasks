@@ -122,3 +122,7 @@ func takeFlags(args []string, names ...string) (map[string]bool, []string, error
 }
 
 var _ = store.New
+
+func init() {
+	register("check", []string{"k"}, (*surfaceContext).check)
+}

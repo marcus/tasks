@@ -191,3 +191,8 @@ func defaultText(value, fallback string) string {
 	}
 	return value
 }
+
+func init() {
+	register("delegate", nil, (*surfaceContext).delegate)
+	register("claim", nil, (*surfaceContext).claim)
+}

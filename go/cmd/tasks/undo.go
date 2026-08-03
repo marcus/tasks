@@ -54,3 +54,7 @@ func unsupportedSchemaMessage(detail string) string {
 	}
 	return detail + " — this build cannot read this task file (nothing was written)"
 }
+
+func init() {
+	register("undo", nil, (*surfaceContext).undo)
+}
