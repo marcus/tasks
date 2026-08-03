@@ -308,6 +308,36 @@ Run the generated 482-case corpus once as a wave-level CLI gate. It is a batch
 verification tool, not 482 work items. Review each substantial packet once and
 then review the integrated surface for parity.
 
+### Corpus baseline — 2026-08-03, start of Wave 2
+
+Regenerate and run it with:
+
+```sh
+porting/corpus/generate --seed 20260802 --out porting/corpus/generated/cases.jsonl
+porting/conform --cases porting/corpus/generated/cases.jsonl
+```
+
+At the start of Wave 2 this stood at **219 of 482 matching**. The number is a
+progress metric, not a defect count: the mismatches are dominated by commands
+and flags the Go build has not ported, and it refuses them honestly rather than
+answering wrongly. Spot-checked to confirm that — `done --dry-run` prints
+Ruby's preview and exits 0, while Go refuses and exits 1.
+
+**Fully matching (12):** `agenda`, `check`, `config`, `inbox`, `links`, `list`,
+`next`, `open`, `projects`, `quadrants`, `show`, plus the fixture probe.
+
+**Partially matching (7)** — these are the ones worth attention, because the
+command IS implemented and still diverges: `capture` 8/12, `done` 10/12,
+`priority` 8/10, `propose` 6/8, `delegate` 5/7, `claim` 4/6, `undo` 2/5. Every
+gap inspected so far is an unported *flag* within a ported command (`--dry-run`
+is the most common), which the build refuses.
+
+**Zero matching (31):** every remaining write command, plus `help`, `-p`,
+`redo`, `id`, `repair`, `merge-driver` and the five `project` subcommands.
+
+Re-run this at each wave boundary and record the new number here. A wave that
+does not move it has not moved the product.
+
 ## Wave 4: rebuild the TUI
 
 The TUI is a separate implementation wave because it is the largest remaining
