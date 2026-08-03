@@ -1,9 +1,9 @@
 # Tasks Ruby-to-Go port: velocity plan
 
-- **Status:** accepted and controlling — Waves 0 and 1 complete, Wave 2 ready
-  to start
+- **Status:** accepted and controlling — Waves 0, 1 and 2 complete, Wave 3
+  ready to start
 - **Accepted:** 2026-08-03
-- **Last progress:** 2026-08-03 (Wave 1)
+- **Last progress:** 2026-08-03 (Wave 2)
 - **Scope:** finish the macOS Go application, prove it against copied real data,
   and cut over safely
 - **Supersedes:**
@@ -337,6 +337,35 @@ is the most common), which the build refuses.
 
 Re-run this at each wave boundary and record the new number here. A wave that
 does not move it has not moved the product.
+
+### Corpus after Wave 2 — 221 of 482
+
+**Wave 2 moved the number by two.** That is not a failure of the wave; it is the
+metric working. Wave 2 built the write path's *capability* — `PatchField` from 2
+fields to 14, the recurrence roll, the changeset, targeted repair, the whole
+application layer, JSONL merge — and almost none of it is reachable from the
+command line yet, because the commands that would call it are not written.
+`merge-driver` is the only new fully-matching command.
+
+The corpus measures the **surface**, not the capability behind it. Both numbers
+matter and they are not the same number, so record both:
+
+- capability: `internal/store` patches 14 fields, `internal/application` and
+  `internal/merge` exist, ~3,500 Go tests' worth of behavior;
+- surface: 13 of 50 commands reach parity.
+
+**This is what Wave 3 is for, and it should now be mostly cheap.** The 31
+zero-matching commands are dominated by field patches the store already
+performs — `due`, `schedule`, `undate`, `state`, `cancel`, `retitle`, `tag`,
+`note`, `defer`, `someday`, `activate`, `lead`, `recur` are all `PatchField`
+calls behind a command file that registers itself. The genuinely unbuilt ones
+are `move`/`location` (needs placement), `delete`, `archive`, `repair`, `redo`,
+the proposal verbs, the five `project` subcommands, `help`, and `-p`.
+
+The seven partially-matching commands are unchanged from the Wave 2 baseline:
+`capture` 8/12, `done` 10/12, `priority` 8/10, `propose` 6/8, `delegate` 5/7,
+`claim` 4/6, `undo` 2/5 — still mostly `--dry-run`, which no ported command
+implements.
 
 ## Wave 4: rebuild the TUI
 
