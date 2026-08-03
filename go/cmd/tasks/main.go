@@ -10,9 +10,10 @@
 //
 // The commands that ARE implemented are the read-only surfaces and the
 // refusals that precede a write: `config`, `check`, `list`, `agenda`, `undo`
-// (which, with no applicable journal entry, only ever refuses), and `done`'s
-// ref resolution, whose exit-2-on-no-match/ambiguous distinction exists so an
-// agent can refine a ref instead of aborting.
+// (which, with no applicable journal entry, only ever refuses), `done`'s ref
+// resolution — whose exit-2-on-no-match/ambiguous distinction exists so an
+// agent can refine a ref instead of aborting — and `capture`'s preflight,
+// which decides whether the store may be extended at all.
 package main
 
 import (
@@ -49,13 +50,15 @@ var aliases = map[string]string{
 	"agenda": "agenda", "a": "agenda",
 	"undo": "undo",
 	"done": "done", "d": "done",
+	"capture": "capture", "c": "capture",
+	"propose": "propose",
 }
 
 // writeCommands are the names Ruby implements as mutations. They are named
 // here so an invocation gets an explicit refusal rather than "unknown
 // command", which would misreport a supported command as a typo.
 var writeCommands = map[string]bool{
-	"capture": true, "c": true, "propose": true, "approve": true, "reject": true,
+	"approve": true, "reject": true,
 	"delegate": true, "undelegate": true, "workref": true, "claim": true, "release": true,
 	"due": true, "schedule": true, "undate": true, "state": true, "cancel": true,
 	"drop": true, "priority": true, "retitle": true, "tag": true, "note": true,
@@ -87,6 +90,10 @@ func run(argv []string) int {
 		return surface.undo(rest)
 	case "done":
 		return surface.done(rest)
+	case "capture":
+		return surface.capture(rest, false)
+	case "propose":
+		return surface.capture(rest, true)
 	}
 
 	if writeCommands[name] {

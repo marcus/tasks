@@ -171,3 +171,51 @@ func readLine(reader io.Reader) ([]byte, error) {
 		}
 	}
 }
+
+// CreatePreflightFailure is the gate a creating mutation passes before it may
+// inspect or extend the store: both files must already validate. It returns the
+// FIRST error's message, which is what the refusal quotes.
+//
+// An empty or missing live file is the deliberate exception — that is the
+// first-run state, and creation bootstraps its meta and Inbox records. Any
+// non-empty file, including an archive, has to be valid first: extending a file
+// that is already broken is how one bad record becomes two.
+func (s *Store) CreatePreflightFailure() (string, bool) {
+	message, ok := "", true
+	// Under the store lock, exactly as the mutation that follows it would be:
+	// the preflight has to describe the bytes another writer cannot be changing
+	// underneath it, and taking the lock is itself an observable effect.
+	if err := s.withLock(func() error {
+		message, ok = s.createPreflightFailure()
+		return nil
+	}); err != nil {
+		return "task store unavailable", false
+	}
+	return message, ok
+}
+
+func (s *Store) createPreflightFailure() (string, bool) {
+	paths := []string{s.org}
+	if _, err := os.Stat(s.archive); err == nil {
+		paths = append(paths, s.archive)
+	}
+	for _, path := range paths {
+		if path == s.org && emptyOrMissing(path) {
+			continue
+		}
+		result := check.Check(path)
+		if result.OK() {
+			continue
+		}
+		if len(result.Errors) > 0 {
+			return result.Errors[0].Message, false
+		}
+		return "validation failed", false
+	}
+	return "", true
+}
+
+func emptyOrMissing(path string) bool {
+	info, err := os.Stat(path)
+	return err != nil || info.Size() == 0
+}
