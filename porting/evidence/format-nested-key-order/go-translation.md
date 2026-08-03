@@ -24,6 +24,8 @@ diff -u <(jq -S . porting/evidence/format-nested-key-order/ruby-direct/observati
 
 The focused implementation tests cover temporal ordering and unknown-key drop,
 empty nested omission, delegation forward compatibility, `false`/`0`
-preservation, and malformed non-object pass-through. Medium-tier property
-testing plus independent source-fidelity and Go-idiom reviews remain for the
-next ticks; this commit is not ready for approval.
+preservation, and malformed non-object pass-through. Medium-tier permutation
+property testing is recorded in
+[`property-testing-2026-08-02.md`](property-testing-2026-08-02.md).
+Independent source-fidelity and Go-idiom reviews remain for later ticks; this
+slice is not ready for approval.
