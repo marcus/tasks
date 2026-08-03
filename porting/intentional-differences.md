@@ -190,6 +190,81 @@ One `##` section per accepted difference, in the order they were accepted:
   configures overlapping custom system hosts, and the corpus does not generate
   config files. A future fixture that did would belong to this section.
 
+## application-refuses-where-ruby-raises — accepted 2026-08-03
+
+- **Slices:** none (Wave 2, application layer)
+- **Ruby behavior:** `Tasks::Application` raises `ArgumentError` for a malformed
+  request rather than returning a result. `list_tasks(:open)` raises
+  "filter must be a Tasks::TaskFilter"; a `context:` that is not an
+  `OperationContext` raises; `get_task_result(id, source: :other)` raises;
+  `delegate_task(command, mode: "implement")` — a prebuilt command plus loose
+  keywords — raises; `DelegationCommand.new(action: :promote)` raises. Each
+  aborts the caller with a backtrace.
+- **Go behavior:** the same requests are typed refusals. An unknown delegation
+  action, an unknown proposal action, a blank task id and an unknown read source
+  return `invalid` / `not_found` results carrying the same message text. The
+  cases that were Ruby type checks — the filter class, the context class, the
+  prebuilt-command-plus-keywords mix — are unrepresentable in Go's signatures
+  and cannot be reached at all. Construction-time errors that Ruby raises from
+  `Application.new` (a missing factory, a host context that is not an
+  `@context`) are returned as an `error` from `application.New`.
+- **Who can see it:** an adapter author, and eventually an API client. Through
+  the CLI, nobody: no CLI path constructs a malformed command. Through the
+  future HTTP surface the difference is the whole point — a request body naming
+  `"source": "other"` becomes a 404 with a message instead of a 500 with a
+  backtrace.
+- **Why accepted:** decided by the Wave 2 application-packet agent. The
+  application layer is explicitly the seam a transport sits on, and the plan
+  gives it to the CLI, the API and the TUI equally. A layer that panics on a
+  query parameter cannot serve a transport, and Ruby itself already treats the
+  distinction as incidental — `decide_proposal` rescues its own `ArgumentError`
+  into an `:invalid` result, which is exactly the behavior generalized here.
+- **Evidence:** `go/internal/application/delegate_test.go`,
+  `TestAnUnknownDelegationActionIsRefused`;
+  `go/internal/application/project_test.go`,
+  `TestAMalformedProposalDecisionIsARefusalNotAPanic`;
+  `go/internal/application/read_test.go`,
+  `TestCheckedTaskLookupIsExactToTheRequestedSource` (the unknown-source case);
+  `go/internal/application/create_test.go`, `TestHostContextMustBeAnAtContext`
+  and `TestNewRefusesAMissingStoreFactory`.
+- **Conformance disposition:** no comparator exception needed — no fixture and
+  no CLI invocation reaches a malformed application command. If the API surface
+  lands a fixture that does, its expected output belongs to this section.
+
+## empty-work-ref-clears-like-off — accepted 2026-08-03
+
+- **Slices:** none (Wave 2, application layer)
+- **Ruby behavior:** `DelegationCommand#normalize_work_ref` treats `nil`, `off`
+  and `none` as "clear this reference", and everything else as a reference the
+  store validates. The empty string is *everything else*: it survives
+  normalization as `""` and reaches `Store#set_work_ref!`, which refuses it as
+  blank. So `tasks workref <ref> ""` is an error while `tasks workref <ref> off`
+  clears.
+- **Go behavior:** `DelegationCommand.WorkRef` is a plain string in which `""`
+  IS the clear instruction, alongside `off` and `none`. There is deliberately no
+  spelling that asks to store a blank reference.
+- **Who can see it:** a caller that passes an empty string where it means "no
+  value" — an HTTP body with `"work_ref": ""`, a TUI field cleared to empty, a
+  shell variable that expanded to nothing. Under Ruby that is a refusal the user
+  has to re-type as `off`; under Go it clears. No stored value differs: neither
+  implementation can persist a blank reference, so the file is identical either
+  way and only the outcome of the request differs.
+- **Why accepted:** decided by the Wave 2 application-packet agent. Ruby's
+  `nil`-versus-`""` distinction is a Ruby fact, not a product decision — the
+  comment in `delegation_command.rb` says clearing "is spelled `off` or `none`
+  at every surface … and reaches Store as nil", and an empty field is the fourth
+  surface spelling of the same intent. Refusing it buys nothing: the only other
+  possible answer for a blank reference is the refusal the store already gives,
+  so no information is lost by treating the two as one.
+- **Evidence:** `go/internal/application/delegate_test.go`,
+  `TestWorkRefClearWordsNormalizeAtEverySurface` tables every clearing spelling
+  including the empty one, and the references that are NOT clear instructions
+  (`offline`, `https://example.com/off`).
+- **Conformance disposition:** no comparator exception needed — the corpus does
+  not invoke `workref` with an empty argument, and `workref … off` behaves
+  identically on both sides. A fixture that added the empty spelling would
+  belong to this section.
+
 ## Notes on the record
 
 The last field is the one that rots. A difference recorded here but not

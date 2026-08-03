@@ -126,6 +126,12 @@ func (q *Queries) Links(item store.Item) []links.Link {
 // Context is the reader this model answers for.
 func (q *Queries) Context() temporal.Context { return q.context }
 
+// Snapshot is the exact read this model was built over. A caller that already
+// holds the queries can ask for the underlying records — the section list, the
+// raw live half — without capturing a SECOND snapshot that could disagree with
+// the one every other answer came from.
+func (q *Queries) Snapshot() *store.Snapshot { return q.snapshot }
+
 // Today is the reader's own calendar day, which every date-sensitive read is
 // measured against.
 func (q *Queries) Today() temporal.Date { return q.context.LocalDate() }
