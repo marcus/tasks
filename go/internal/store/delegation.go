@@ -38,6 +38,9 @@ type delegationPlan struct {
 	// holds the work and since when.
 	holder string
 	at     string
+	// previous is the marker this plan replaced, as stored JSON. Captured by
+	// the plan, which is the only place that sees the record before and after.
+	previous string
 }
 
 // delegationMutation is the shared transaction every delegation verb runs in.
@@ -77,16 +80,25 @@ func (s *Store) delegationMutation(id, coalesceKey string, plan func(*record.Rec
 		}
 
 		working := record.CloneAll(records)
+		previousMarker := ""
+		if marker, present := working[index].Get(DelegationField); present {
+			previousMarker = string(marker)
+		}
 		planned := plan(&working[index])
+		if planned.previous == "" {
+			planned.previous = previousMarker
+		}
 		if planned.status != MutationOK {
 			result = MutationResult{
 				Status: planned.status, Errors: planned.errors,
-				Summary: MutationSummary{Holder: planned.holder, At: planned.at},
+				Summary: MutationSummary{
+					Holder: planned.holder, At: planned.at, Previous: planned.previous},
 			}
 			return nil
 		}
 		if planned.noChange {
-			result = MutationResult{Status: MutationNoChange}
+			result = MutationResult{Status: MutationNoChange,
+				Summary: MutationSummary{Previous: planned.previous}}
 			return nil
 		}
 		if marker, present := working[index].Get(DelegationField); present {
@@ -104,6 +116,7 @@ func (s *Store) delegationMutation(id, coalesceKey string, plan func(*record.Rec
 		if result.Status == MutationOK {
 			result.TouchedIDs = []string{id}
 		}
+		result.Summary.Previous = planned.previous
 		return nil
 	})
 	if err != nil {
@@ -130,6 +143,124 @@ func (s *Store) Claim(id, worker, coalesceKey string) MutationResult {
 	result.Summary.Action = "claim"
 	result.Summary.TaskID = id
 	return result
+}
+
+// Undelegate clears the marker: an ordinary undelegate, or the revocation of a
+// live claim. Revocation wins — afterwards the stale worker's release and
+// work-ref calls fail their worker match. It is allowed whatever the marker's
+// status and whatever the task's state, because clearing provenance from a
+// closed task is an owner's prerogative; an undelegated task is no_change.
+func (s *Store) Undelegate(id, coalesceKey string) MutationResult {
+	result := s.delegationMutation(id, coalesceKey, func(target *record.Record) delegationPlan {
+		return planUndelegate(target)
+	})
+	result.Summary.Action = "undelegate"
+	result.Summary.TaskID = id
+	return result
+}
+
+// Release hands a claim back to the ready queue: claimed → ready, dropping the
+// assignee. A worker must supply the id that matches the live claim; the owner
+// passes force (with no worker id) to clear a stale claim without undelegating.
+func (s *Store) Release(id, worker string, force bool, coalesceKey string) MutationResult {
+	result := s.delegationMutation(id, coalesceKey, func(target *record.Record) delegationPlan {
+		return s.planRelease(target, worker, force)
+	})
+	result.Summary.Action = "release"
+	result.Summary.TaskID = id
+	return result
+}
+
+// SetWorkRef records where the work lives, or clears it with an empty ref. One
+// reference: setting overwrites. The owner (an empty worker) may always set it;
+// a worker only while its own claim stands. It is not a status transition, so
+// `at` is deliberately left alone.
+func (s *Store) SetWorkRef(id, workRef, worker, coalesceKey string) MutationResult {
+	result := s.delegationMutation(id, coalesceKey, func(target *record.Record) delegationPlan {
+		return planWorkRef(target, workRef, worker)
+	})
+	result.Summary.Action = "work_ref"
+	result.Summary.TaskID = id
+	return result
+}
+
+func planUndelegate(target *record.Record) delegationPlan {
+	existing, present := target.Get(DelegationField)
+	if !present {
+		return delegationPlan{status: MutationOK, noChange: true}
+	}
+	target.Delete(DelegationField)
+	return delegationPlan{
+		status: MutationOK, label: "undelegate: " + target.String("title"),
+		previous: string(existing),
+	}
+}
+
+func (s *Store) planRelease(target *record.Record, worker string, force bool) delegationPlan {
+	worker = strings.TrimSpace(worker)
+	existing := delegationMarker(*target)
+	if existing == nil || markerKind(existing) != "agent" || markerStatus(existing) != DelegationClaimed {
+		return delegationPlan{status: MutationInvalid, errors: []string{"task is not claimed"}}
+	}
+	if plan := delegationIneligible(target, "released"); plan != nil {
+		return *plan
+	}
+	if !force && worker != existing["assignee"] {
+		return delegationPlan{
+			status: MutationConflict,
+			errors: []string{"claim is held by " + existing["assignee"] + ", not " +
+				rubyInspectText(worker)},
+			holder: existing["assignee"], at: existing["at"],
+		}
+	}
+	released := map[string]string{}
+	for key, value := range existing {
+		released[key] = value
+	}
+	released["status"] = DelegationReady
+	released["assignee"] = ""
+	released["at"] = DelegationStamp(s.now())
+	target.Set(DelegationField, orderedDelegation(released, markerOrder(*target)))
+	return delegationPlan{status: MutationOK, label: "release: " + target.String("title")}
+}
+
+func planWorkRef(target *record.Record, workRef, worker string) delegationPlan {
+	existing := delegationMarker(*target)
+	if existing == nil {
+		return delegationPlan{status: MutationInvalid, errors: []string{"task is not delegated"}}
+	}
+	if worker != "" {
+		held := strings.TrimSpace(worker)
+		if markerKind(existing) != "agent" || markerStatus(existing) != DelegationClaimed ||
+			existing["assignee"] != held {
+			return delegationPlan{
+				status: MutationConflict,
+				errors: []string{"a work reference from a worker requires a matching claim"},
+				holder: existing["assignee"], at: existing["at"],
+			}
+		}
+	}
+	reference := strings.TrimSpace(workRef)
+	if reference != "" {
+		if problems := record.DelegationWorkRefErrors(reference); len(problems) > 0 {
+			return delegationPlan{status: MutationInvalid, errors: problems[:1]}
+		}
+	}
+	candidate := map[string]string{}
+	for key, value := range existing {
+		candidate[key] = value
+	}
+	candidate["work_ref"] = reference
+	encoded := orderedDelegation(candidate, markerOrder(*target))
+	if current, present := target.Get(DelegationField); present && string(current) == string(encoded) {
+		return delegationPlan{status: MutationOK, noChange: true}
+	}
+	target.Set(DelegationField, encoded)
+	label := "clear work ref: " + target.String("title")
+	if reference != "" {
+		label = "work ref → " + reference + ": " + target.String("title")
+	}
+	return delegationPlan{status: MutationOK, label: label}
 }
 
 func (s *Store) planDelegate(target *record.Record, kind, mode, assignee string) delegationPlan {

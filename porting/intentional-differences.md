@@ -190,6 +190,83 @@ One `##` section per accepted difference, in the order they were accepted:
   configures overlapping custom system hosts, and the corpus does not generate
   config files. A future fixture that did would belong to this section.
 
+## recurrence-roll-out-of-range-refuses-before-writing — accepted 2026-08-03
+
+- **Slices:** none (Wave 2, store field-patch vocabulary)
+- **Ruby behavior:** `advance_recurrence_records` has no storable-range guard on
+  the roll itself. Completing a task anchored at `9999-12-31` with `+1y` writes
+  `"scheduled":"10000-12-31"`, the post-write `Check` refuses the bytes, and the
+  whole file is restored: `status :store_invalid`, `rolled_back true`, error
+  `scheduled "10000-12-31" is not a YYYY-MM-DD date`. `patch_recurrence` guards
+  the same shape at SET time (`unreachable_recurrence`) and says so — the guard
+  is simply missing on the completion side.
+- **Go behavior:** the roll refuses before touching the file: `status invalid`,
+  `rolled_back false`, error `recurrence left the storable year range at
+  10000-12-31`. The stored bytes and the journal are identical to Ruby's, which
+  rolled back to the same file.
+- **Who can see it:** anyone completing a recurring task whose next occurrence
+  lands past year 9999 — reachable only by a hand-written anchor in the last
+  storable year, or a cookie like `+9999y` that Ruby's own set-time guard would
+  have refused. They read a different sentence and a different status; the file
+  is byte-identical either way, so nothing downstream of the store can tell.
+- **Why accepted:** writing bytes you already know are invalid, to have a
+  validator refuse them, is the failure mode `patch_recurrence`'s own comment
+  describes as "rolling every completion back forever". Refusing up front is the
+  behavior Ruby documents and only half-implements. Decided by the Wave 2 store
+  packet agent.
+- **Evidence:** `go/internal/store/patch_test.go`,
+  `TestRecurrenceRollOutOfRangeRefusesWithoutWriting`; measured against Ruby by
+  the differential harness described in the Wave 2 report (batch 2, `edge-0`
+  and `edge-1`).
+- **Conformance disposition:** no comparator exception needed — no fixture
+  anchors a recurring task in year 9999, and none should be added.
+
+## off-is-nil-not-the-word — accepted 2026-08-03
+
+- **Slices:** none (Wave 2, store field-patch vocabulary)
+- **Ruby behavior:** `patch_lead` and `patch_recurrence` accept `nil` or the
+  SYMBOL `:off` as "clear this". The STRING `"off"` is neither, so it falls
+  through to the value validators and is refused —
+  `invalid lead time "off" (expected a span like 3w, 2d, 1m, 1y)` and
+  `invalid recurrence cookie`. The CLI translates the typed word to the symbol
+  before the store sees it.
+- **Go behavior:** identical, and deliberately so. `PatchValue.off()` is true
+  only for `NoValue()`. An earlier draft treated the literal string `"off"` as
+  clearing, which the differential harness caught immediately: 14 cases where
+  Ruby refused and Go cleared the field and wrote.
+- **Who can see it:** nobody, now. This entry records a DECISION rather than a
+  live difference — the friendly spelling belongs to the adapter that read the
+  word, not to the store, and an adapter that forgets to translate gets a
+  refusal rather than a silent write.
+- **Why accepted:** recorded so the next agent building `tasks lead <ref> off`
+  knows the translation is theirs to do. Decided by the Wave 2 store packet
+  agent.
+- **Evidence:** the differential harness's first batch (377 cases) agrees on
+  every `lead`/`recurrence` `"off"` case.
+- **Conformance disposition:** none needed; no observable differs.
+
+## activate-has-a-baseline-where-ruby-raises — accepted 2026-08-03
+
+- **Slices:** none (Wave 2, store field-patch vocabulary)
+- **Ruby behavior:** `activate` is in `TaskChangeset::SPECIAL_FIELDS` but has no
+  entry in `EditSnapshot#baselines`, so routing it through `TaskPatch` raises
+  `KeyError: key not found: :activate` from `EditSnapshot#expected_for`. The
+  path is unreachable in the product — `tasks activate` sends a changeset
+  guarded by a whole-task revision — so the crash is latent, not live.
+- **Go behavior:** `fieldBaseline` gives `activate` the pair activation actually
+  reads: the defer marker and the available-from expectation. A single-field
+  entry point needs a baseline, and a `KeyError` is not one.
+- **Who can see it:** nobody through the Ruby CLI. A caller that reaches the Go
+  store's single-field `Patch` with `activate` gets a narrow conflict check
+  where Ruby would have crashed.
+- **Why accepted:** the Ruby behavior is a defect, not a specification. It is
+  left unfixed only because nothing reaches it; whoever ports `apply_changeset!`
+  should fix `patch_expected_for` at the same time. Decided by the Wave 2 store
+  packet agent.
+- **Evidence:** the differential harness drives Ruby's `activate` through
+  `apply_changeset!` instead, and the two agree on all 18 cases.
+- **Conformance disposition:** none needed; the CLI path is unchanged.
+
 ## Notes on the record
 
 The last field is the one that rots. A difference recorded here but not

@@ -176,6 +176,12 @@ func delegationEmail(value any) bool {
 	}
 	return true
 }
+
+// DelegationWorkRefErrors is Delegation.work_ref_errors for one reference. The
+// work-ref writer validates BEFORE it builds a marker, so the user reads the
+// reference's own problem rather than a whole-marker shape report.
+func DelegationWorkRefErrors(value any) []string { return delegationWorkRefErrors(value) }
+
 func delegationWorkRefErrors(value any) []string {
 	text, ok := value.(string)
 	if !ok || !utf8.ValidString(text) || strings.TrimSpace(text) == "" {
