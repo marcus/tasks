@@ -86,12 +86,10 @@ needs; do not re-read them front to back each iteration.
    verify it is open and retains the handoff. For a completed slice, run
    `td review <id>` and verify it is in review. Never exit with a slice branch
    checked out or partial handed-off work claimed by the exiting session.
-6. **Land approved work.** Run `porting/land --auto` every iteration,
-   unconditionally — it finds landable slices itself (`td reviewable` cannot:
-   an approved slice is closed, not `in_review`). It merges each eligible
-   slice to main, marks the manifest, deletes the branch, or refuses and
-   records why. "Nothing eligible" is the normal outcome and exits 0. Never
-   touch `port/*` or main by hand for this.
+6. **Landing is not your job.** `porting/loop.sh` runs `porting/land --auto`
+   itself, from the main checkout, after every tick. Never run `porting/land`
+   yourself and never touch `port/*` or main by hand — a slot worktree's copy
+   of the script can be stale enough to misparse its own flags.
 
 ## The slice loop, scaled by risk
 
@@ -116,8 +114,9 @@ Reviews happen on a **later iteration by a different agent** claiming the
 in-review issue — never a subagent of the writer, which inherits the writer's
 framing. Approve from the reviewing session: `td approve <id> --reason "..."`.
 Writers self-approve only low-tier slices. Approval is the trigger for
-`porting/land` (iteration step 6): a closed issue with a recorded approval
-and an unlanded `port/<slice>` branch is landable by anyone's next tick.
+`porting/land`, which the supervisor runs after every tick (see step 6): a
+closed issue with a recorded approval and an unlanded `port/<slice>` branch
+is landable on the next tick boundary, by anyone's slot.
 
 ## Model policy
 

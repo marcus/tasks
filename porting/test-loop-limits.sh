@@ -747,6 +747,121 @@ assert_contains 'and the backstop says what it did' 'still dirty' "$out"
 assert_eq 'and the next tick starts on a clean tree regardless' '' \
   "$(git -C "$SLOTS_DIR/slot-1" status --porcelain)"
 
+# ---------------------------------------------------------------- L12: land after tick
+echo '--- L12: run_land_auto runs porting/land --auto from THIS checkout, never signals it ---'
+LOG_DIR="$TMPROOT/land-logs"; mkdir -p "$LOG_DIR"
+LAND_STUB_DIR="$TMPROOT/land-stub"; mkdir -p "$LAND_STUB_DIR"
+LAND_AFTER_TICK=1
+LAND_AUTO_TIMEOUT=2
+
+# A stub `land` that mimics the real one just enough for this wrapper: records
+# what it was invoked with, then does whatever the test body (appended below)
+# asks.
+write_land_stub() { # write_land_stub <name> <body>
+  local f="$LAND_STUB_DIR/$1"
+  { printf '#!/usr/bin/env bash\n'
+    printf 'printf "%%s|%%s|%%s\\n" "$1" "$TASKS_REPO" "$(pwd)" >>"%s/calls.log"\n' "$LAND_STUB_DIR"
+    printf '%s\n' "$2"
+  } >"$f"
+  chmod +x "$f"
+}
+
+reset_land_test() { rm -f "$LOG_DIR/loop.log" "$LAND_STUB_DIR/calls.log"; }
+
+# (a) nothing eligible ("no port/* branches" quiet exit): no log line at all.
+write_land_stub none 'echo "auto: no port/* branches exist; nothing to land"; exit 0'
+LAND_BIN="$LAND_STUB_DIR/none"
+reset_land_test
+run_land_auto 1 1
+[ -s "$LOG_DIR/loop.log" ] \
+  && bad "L12(a) nothing-eligible logged something: $(cat "$LOG_DIR/loop.log")" \
+  || ok "L12(a) nothing-eligible produced no log line"
+
+# (b) everything skipped (landed=0 failed=0 skipped=N): still quiet — same
+# common case, just discovered a different way.
+write_land_stub skipped 'echo "auto: done — landed=0 failed=0 skipped=3"; exit 0'
+LAND_BIN="$LAND_STUB_DIR/skipped"
+reset_land_test
+run_land_auto 1 1
+[ -s "$LOG_DIR/loop.log" ] \
+  && bad "L12(b) all-skipped logged something: $(cat "$LOG_DIR/loop.log")" \
+  || ok "L12(b) all-skipped produced no log line"
+
+# (c) something actually landed: one grep-able line, naming slot/tick/summary.
+write_land_stub landed 'echo "auto: done — landed=2 failed=0 skipped=1"; exit 0'
+LAND_BIN="$LAND_STUB_DIR/landed"
+reset_land_test
+run_land_auto 3 7
+assert_contains 'L12(c) a landed summary is logged' \
+  'landed=2 failed=0 skipped=1' "$(cat "$LOG_DIR/loop.log" 2>/dev/null)"
+assert_contains 'L12(c) the log line carries slot and tick' \
+  'slot=3 tick=7' "$(cat "$LOG_DIR/loop.log" 2>/dev/null)"
+
+# (d) a failure must be logged even though nothing landed.
+write_land_stub failed 'echo "auto: done — landed=0 failed=1 skipped=0"; exit 1'
+LAND_BIN="$LAND_STUB_DIR/failed"
+reset_land_test
+run_land_auto 2 2
+assert_contains 'L12(d) a failed summary is logged even with landed=0' \
+  'landed=0 failed=1 skipped=0' "$(cat "$LOG_DIR/loop.log" 2>/dev/null)"
+
+# (e) missing/non-executable LAND_BIN: one clear line, never a crash.
+LAND_BIN="$LAND_STUB_DIR/does-not-exist"
+reset_land_test
+run_land_auto 1 1
+assert_contains 'L12(e) a missing land binary is logged' \
+  'missing or not executable' "$(cat "$LOG_DIR/loop.log" 2>/dev/null)"
+
+# (f) LAND_AFTER_TICK=0 disables it entirely: never invoked, never logged.
+write_land_stub should-not-run 'exit 0'
+LAND_BIN="$LAND_STUB_DIR/should-not-run"
+LAND_AFTER_TICK=0
+reset_land_test
+run_land_auto 1 1
+[ -f "$LAND_STUB_DIR/calls.log" ] \
+  && bad "L12(f) LAND_AFTER_TICK=0 still invoked land" \
+  || ok "L12(f) LAND_AFTER_TICK=0 never invokes land"
+[ -s "$LOG_DIR/loop.log" ] \
+  && bad "L12(f) LAND_AFTER_TICK=0 logged something" \
+  || ok "L12(f) LAND_AFTER_TICK=0 produced no log line"
+LAND_AFTER_TICK=1
+
+# (g) invocation shape: --auto as $1, TASKS_REPO forced to REPO_ROOT, and it
+# runs from REPO_ROOT's own cwd — never a worktree's copy of the script.
+LAND_BIN="$LAND_STUB_DIR/none"
+reset_land_test
+run_land_auto 1 1
+call_line="$(cat "$LAND_STUB_DIR/calls.log" 2>/dev/null)"
+assert_eq 'L12(g) invoked with --auto' '--auto' "$(printf '%s' "$call_line" | cut -d'|' -f1)"
+assert_eq 'L12(g) TASKS_REPO forced to REPO_ROOT' "$REPO_ROOT" "$(printf '%s' "$call_line" | cut -d'|' -f2)"
+assert_eq 'L12(g) runs with REPO_ROOT as cwd' "$REPO_ROOT" "$(printf '%s' "$call_line" | cut -d'|' -f3)"
+
+# (h) running past LAND_AUTO_TIMEOUT: run_land_auto must return promptly
+# (bounded by the timeout, not by how long the stub actually takes), must NOT
+# kill the stub (it keeps running and finishes on its own), and must log that
+# it is moving on without signaling it.
+write_land_stub slow 'sleep 6; touch "'"$LAND_STUB_DIR"'/slow-finished"'
+LAND_BIN="$LAND_STUB_DIR/slow"
+reset_land_test; rm -f "$LAND_STUB_DIR/slow-finished"
+t0=$SECONDS
+run_land_auto 1 1
+t1=$SECONDS
+if [ $((t1 - t0)) -lt 5 ]; then
+  ok "L12(h) returns promptly, bounded by LAND_AUTO_TIMEOUT (${LAND_AUTO_TIMEOUT}s), not the stub's own runtime"
+else
+  bad "L12(h) took $((t1 - t0))s — did not return at LAND_AUTO_TIMEOUT"
+fi
+assert_contains 'L12(h) logs that it is moving on without signaling it' \
+  'not signaling it' "$(cat "$LOG_DIR/loop.log" 2>/dev/null)"
+[ -f "$LAND_STUB_DIR/slow-finished" ] \
+  && bad "L12(h) the stub had already finished — the test's own timing is too tight, not a real result" \
+  || ok "L12(h) the stub was left running (not signaled) at the moment run_land_auto returned"
+sleep 5
+[ -f "$LAND_STUB_DIR/slow-finished" ] \
+  && ok "L12(h) the stub went on to finish undisturbed in the background" \
+  || bad "L12(h) the stub never finished — something killed it after all"
+LAND_AUTO_TIMEOUT=2
+
 # ---------------------------------------------------------------- overrides
 echo '--- pattern override file ---'
 OVERRIDE_DIR="$TMPROOT/override"; mkdir -p "$OVERRIDE_DIR"

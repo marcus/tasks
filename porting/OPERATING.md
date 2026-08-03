@@ -114,16 +114,33 @@ line of `porting/limit-patterns.<harness>` to fix if it was wrong.
 
 ## Landing
 
-An approved, closed slice lands on its own: any tick's step 6 runs
-`porting/land <slice>`, which merges to main (no-ff), runs the test suite,
-marks the manifest `ported`, and deletes `port/<slice>` — or refuses and
-leaves main untouched, logging why on the td issue (`td log <id>`). Both
-harnesses serialize through a lock in `.git/porting-land.lock`; a dead
-holder's lock is reclaimed automatically. Nothing to run by hand; watch for
-it in `td log` on a slice's issue, and in `git branch --list 'port/*'`
-shrinking as `porting/manifest.jsonl` statuses reach `ported`.
-`porting/test-land.sh` proves the mechanism against scratch repos. To pause
-just landing without stopping the fleet, there is no separate switch —
+An approved, closed slice lands on its own — the **supervisor** does it, not
+the agent. `loop.sh` runs `porting/land --auto` after every tick, from the
+main checkout (never a slot worktree's copy, which can be stale enough to
+misparse its own flags — this replaced an earlier design where the agent ran
+it itself for exactly that reason). It merges each eligible slice to main
+(no-ff), runs the test suite, marks the manifest `ported`, and deletes
+`port/<slice>` — or refuses and leaves main untouched, logging why on the td
+issue (`td log <id>`). Both harnesses' loops, and any slice-by-slice or
+`--auto` call a human runs by hand, serialize through a lock in
+`.git/porting-land.lock`; a dead holder's lock is reclaimed automatically.
+
+`loop.sh` never sends `porting/land` a signal to bound it: an external kill
+delivered mid-test-suite can bypass its cleanup trap (confirmed by
+reproduction on this fleet's `/usr/bin/env bash`, Apple's bash 3.2) and leave
+main sitting on an untested merge. Instead, `run_land_auto` waits up to
+`LAND_AUTO_TIMEOUT` (default 2400s) and, if `--auto` is still running past
+that, logs it and moves on to the next tick without touching the process —
+it keeps running, protected by its own `LAND_LOCK_TIMEOUT`/`LAND_TEST_TIMEOUT`
+bounds, `disown`ed so a later Ctrl-C/STOP doesn't reach it either.
+`LAND_AFTER_TICK=0` disables the supervisor's landing entirely (falls back to
+nothing running it — land by hand, or re-enable). Nothing to run by hand in
+the normal case; watch for it in `porting/logs/*/loop.log` (grep `land`), in
+`td log` on a slice's issue, and in `git branch --list 'port/*'` shrinking as
+`porting/manifest.jsonl` statuses reach `ported`. `porting/test-land.sh`
+proves the landing mechanism itself against scratch repos;
+`porting/test-loop-limits.sh` proves the supervisor's wrapping of it. To
+pause just landing without stopping the fleet, set `LAND_AFTER_TICK=0`;
 `touch porting/STOP` stops everything at the next tick boundary.
 
 **Healthy:** ticks run minutes not seconds, end in a td handoff or review,
@@ -148,8 +165,9 @@ exited cleanly — whether the tick *did* anything is in td and the manifest.
 | `LIMIT parsed reset … exceeds LIMIT_MAX_WAIT; clamping` | A vendor typo or a bad match produced an absurd reset time | Nothing urgent — the clamp is the safety net. Read the `reason` field of `limit-<harness>.json` to see what was matched, and narrow the pattern if it was wrong |
 | `LIMIT` lines but no limit is actually in force | A detection pattern is too broad | Read `stage=` on the LIMIT line first. `stage=structured` means the harness really did report an error, so the pattern matched a genuine failure that isn't a limit. `stage=prose` means the harness emitted no JSONL — check the transcript is really JSONL. Either way, narrow it in `porting/limit-patterns.<harness>` (that file replaces the built-in list) and rerun `porting/test-loop-limits.sh` |
 | `FAILED to rescue dirty worktree` | The salvage commit could not be made | The tick's uncommitted work was discarded so the next tick starts clean — that is deliberate, and the line is your only notice. Read the transcript for what was in flight. `--no-verify` and an explicit commit identity mean a hook or unset `user.email` can no longer cause this, so treat it as a real repo problem |
-| `porting/land` `REFUSED` in `td log` on a slice | A precondition failed: not approved, branch missing, real conflict, or failing tests | The log line names the exact check. Main is guaranteed untouched — read the tail, fix the cause (re-review, rebase the slice, fix the break), and the next tick's step 6 retries on its own |
-| `port/*` branches accumulate despite closed, approved issues | `porting/land` isn't being reached, or the merge genuinely conflicts every time | Check a recent transcript for step 6; if it never runs, fix `PORTING.md`'s step 6 or the harness's context budget. If it runs and refuses, the branch is stale against main — the next tick's translator should rebase or a human should look |
+| `porting/land` `REFUSED` in `td log` on a slice | A precondition failed: not approved, branch missing, real conflict, or failing tests | The log line names the exact check. Main is guaranteed untouched — read the tail, fix the cause (re-review, rebase the slice, fix the break), and the next tick's `run_land_auto` call retries on its own |
+| `port/*` branches accumulate despite closed, approved issues | The supervisor's landing isn't running (check `LAND_AFTER_TICK`), or the merge genuinely conflicts every time | Grep `loop.log` for `land`; if there's never a line, check `LAND_AFTER_TICK` and that `LAND_BIN`/`porting/land` is executable. If it runs and refuses, the branch is stale against main — the next tick's translator should rebase or a human should look |
+| `land: still running after …s; not signaling it` | `--auto` is landing a burst of slices (or one slow test suite) and outran `LAND_AUTO_TIMEOUT` | Nothing urgent — it is still running in the background, protected by its own `LAND_LOCK_TIMEOUT`/`LAND_TEST_TIMEOUT`, and will finish and log normally. Raise `LAND_AUTO_TIMEOUT` if this is routine rather than a one-off backlog |
 
 ## Routine maintenance
 
@@ -197,6 +215,9 @@ output — that rule binds you too.
 | `LIMIT_GRACE` | 60s | Slack added to a parsed reset time (applied before the clamp) |
 | `LIMIT_PROBE` | off | Optional pre-tick command; exit 3 means limited, and a bare epoch on its stdout is the reset time (clamped like any other). The seam for a real headroom check; nothing ships behind it |
 | `porting/limit-patterns.<harness>` | off | One extended regex per line, `#` comments ignored; replaces the built-in detection patterns for that harness. When a vendor changes its wording, the fix is this file, not the script. The built-in lists are derived from the installed binaries' string tables — `loop.sh`'s `limit_patterns` header carries the exact `strings`/`grep` commands to re-derive them after an upgrade |
+| `LAND_AFTER_TICK` | 1 | Runs `porting/land --auto` from the main checkout after every tick. `0` disables the supervisor's landing entirely |
+| `LAND_AUTO_TIMEOUT` | 2400s | How long a tick waits on that `--auto` call before logging and moving on — never a kill; see [Landing](#landing) |
+| `LAND_LOCK_TIMEOUT` / `LAND_TEST_TIMEOUT` / `LAND_LOCK_STALE` | 600s / 1800s / 900s | `porting/land`'s own bounds (lock wait, test suite, stale-lock reclaim) — see `porting/land`'s header |
 
 ### Reset times, zones, and what is assumed
 

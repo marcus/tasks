@@ -418,6 +418,181 @@ assert_eq "(j) exactly one merge landed (auto waited on the lock, did not double
 [ -d "$(git -C "$r" rev-parse --absolute-git-dir)/porting-land.lock" ] \
   && bad "(j) lock directory left behind" || ok "(j) lock released after contention"
 
+# ================================================================== (k)
+# Regression: a slice that already landed (main's manifest already says
+# ported) but whose branch delete failed last time — recreated here to
+# simulate exactly that state — is cleaned up on the next run without
+# re-merging or re-running the test suite.
+r="$(new_repo linger)"
+seed_manifest "$r" 9 "linger-slice" "not_started"
+advance_slice_branch "$r" "linger-slice"
+issue="$(approve_slice "$r" "linger-slice")"
+branch_sha="$(sha "$r" port/linger-slice)"
+TASKS_REPO="$r" LAND_TEST_CMD="true" "$LAND" linger-slice >/dev/null 2>&1
+if git -C "$r" rev-parse --verify -q refs/heads/port/linger-slice >/dev/null 2>&1; then
+  echo "FATAL: (k) setup expected the first land to delete the branch"; exit 1
+fi
+git -C "$r" branch port/linger-slice "$branch_sha"   # simulate a delete that failed last time
+before="$(sha "$r" main)"
+
+marker="$TMPROOT/linger-marker"; rm -f "$marker"
+out="$TMPROOT/linger-land.out"
+TASKS_REPO="$r" LAND_TEST_CMD="touch '$marker' && true" "$LAND" linger-slice >"$out" 2>&1
+rc=$?
+assert_status "(k) cleanup of a lingering landed branch exits 0" 0 "$rc"
+after="$(sha "$r" main)"
+assert_eq "(k) main untouched (no re-merge)" "$before" "$after"
+[ -f "$marker" ] && bad "(k) test suite ran again for an already-landed slice" \
+  || ok "(k) test suite did not run again"
+git -C "$r" rev-parse --verify -q refs/heads/port/linger-slice >/dev/null 2>&1 \
+  && bad "(k) lingering branch was not deleted" || ok "(k) lingering branch deleted"
+grep -qi "already landed" "$out" && ok "(k) message says already landed" \
+  || bad "(k) unclear message: $(cat "$out")"
+[ -d "$(git -C "$r" rev-parse --absolute-git-dir)/porting-land.lock" ] \
+  && bad "(k) lock directory left behind" || ok "(k) lock released"
+
+# ================================================================== (l)
+# Same lingering-branch state, but the branch is checked out in another
+# worktree at the moment of the retry: land must defer the deletion (not
+# error, not force it) and leave the branch alone for a later run — then
+# actually delete it once that worktree lets go.
+r="$(new_repo linger-checked-out)"
+seed_manifest "$r" 5 "linger-wt-slice" "not_started"
+advance_slice_branch "$r" "linger-wt-slice"
+issue="$(approve_slice "$r" "linger-wt-slice")"
+branch_sha="$(sha "$r" port/linger-wt-slice)"
+TASKS_REPO="$r" LAND_TEST_CMD="true" "$LAND" linger-wt-slice >/dev/null 2>&1
+git -C "$r" branch port/linger-wt-slice "$branch_sha"
+wt="$TMPROOT/linger-wt-checkout"
+git -C "$r" worktree add --quiet "$wt" port/linger-wt-slice >/dev/null 2>&1
+before="$(sha "$r" main)"
+
+out="$TMPROOT/linger-wt-land.out"
+TASKS_REPO="$r" LAND_TEST_CMD="true" "$LAND" linger-wt-slice >"$out" 2>&1
+rc=$?
+assert_status "(l) deferring a branch checked out elsewhere exits 0" 0 "$rc"
+after="$(sha "$r" main)"
+assert_eq "(l) main untouched" "$before" "$after"
+git -C "$r" rev-parse --verify -q refs/heads/port/linger-wt-slice >/dev/null 2>&1 \
+  && ok "(l) checked-out branch retained (deferred)" || bad "(l) branch was deleted while checked out elsewhere"
+grep -qi "checked out at" "$out" && ok "(l) message names the deferral" \
+  || bad "(l) unclear message: $(cat "$out")"
+
+git -C "$r" worktree remove --force "$wt" >/dev/null 2>&1
+out2="$TMPROOT/linger-wt-land2.out"
+TASKS_REPO="$r" LAND_TEST_CMD="true" "$LAND" linger-wt-slice >"$out2" 2>&1
+rc2=$?
+assert_status "(l) a later run deletes it once released" 0 "$rc2"
+git -C "$r" rev-parse --verify -q refs/heads/port/linger-wt-slice >/dev/null 2>&1 \
+  && bad "(l) branch was not deleted after the worktree released it" || ok "(l) branch deleted after release"
+[ -d "$(git -C "$r" rev-parse --absolute-git-dir)/porting-land.lock" ] \
+  && bad "(l) lock directory left behind" || ok "(l) lock released"
+
+# ================================================================== (m)
+# Regression: an external SIGTERM delivered to `porting/land` itself while it
+# is blocked inside the test suite. This is NOT loop.sh's own timeout (loop.sh
+# deliberately never signals `land`, see run_land_auto's header comment) —
+# it is the scenario Marcus reproduced by hand: something outside this
+# script (an operator's Ctrl-C, a process manager, a machine restart) kills
+# `land` mid-run_tests. On this fleet's bash (Apple's bash 3.2), a process
+# blocked on a command-substitution `wait()` can die by the signal's default
+# action without running its own EXIT/INT/TERM trap — so `cleanup` may never
+# fire. Two things must still be true after that:
+#   1. the landing lock is left with a dead pid inside it, not held forever;
+#   2. the NEXT invocation that actually needs the lock (not short-circuited
+#      by the already-landed fast path) detects the dead pid and reclaims it,
+#      and lands cleanly.
+# What this does NOT claim: that main is left "clean" in the sense of
+# untouched. It is not — the merge and manifest-status commit happen BEFORE
+# run_tests, so a kill during the test run leaves main holding a merge whose
+# tests never ran, marked ported anyway, with its branch undeleted. That is
+# the concrete reason run_land_auto refuses to signal `land`: doing so from
+# loop.sh would be able to trigger exactly this. Recovery here is about the
+# LOCK, not about retroactively validating a merge that a kill interrupted.
+r="$(new_repo sigterm)"
+seed_manifest "$r" 3 "sigterm-slice" "not_started"
+advance_slice_branch "$r" "sigterm-slice"
+approve_slice "$r" "sigterm-slice" >/dev/null
+
+out="$TMPROOT/sigterm-land.out"
+TASKS_REPO="$r" LAND_TEST_CMD="sleep 20" LAND_LOCK_STALE=5 "$LAND" sigterm-slice >"$out" 2>&1 &
+land_pid=$!
+
+waited=0
+while [ ! -d "$(git -C "$r" rev-parse --absolute-git-dir)/porting-land.lock" ] && [ "$waited" -lt 50 ]; do
+  sleep 0.2; waited=$((waited + 1))
+done
+if [ ! -d "$(git -C "$r" rev-parse --absolute-git-dir)/porting-land.lock" ]; then
+  bad "(m) setup: land never acquired the lock before the kill"
+else
+  ok "(m) setup: land acquired the lock and is inside the test suite"
+fi
+kill -TERM "$land_pid" 2>/dev/null
+wait "$land_pid" 2>/dev/null
+sleep 1
+kill -0 "$land_pid" 2>/dev/null \
+  && bad "(m) land process survived SIGTERM (test setup invalid)" \
+  || ok "(m) the killed land process is gone"
+
+# A second, unrelated slice forces a REAL lock acquisition attempt (the first
+# slice's own idempotent fast path would short-circuit before ever touching
+# the lock, proving nothing about reclaim).
+seed_manifest2_append() { # append one more manifest record + commit, on main
+  dummy_record "$2" "not_started" >> "$1/porting/manifest.jsonl"
+  ( cd "$1" && git switch -q main >/dev/null 2>&1 || true
+    git add porting/manifest.jsonl && git commit -q -m "test: seed $2" )
+}
+( cd "$r" && git switch -q main )
+seed_manifest2_append "$r" "sigterm-other-slice"
+advance_slice_branch "$r" "sigterm-other-slice"
+approve_slice "$r" "sigterm-other-slice" >/dev/null
+
+out2="$TMPROOT/sigterm-land-recover.out"
+TASKS_REPO="$r" LAND_TEST_CMD="true" LAND_LOCK_TIMEOUT=20 LAND_LOCK_STALE=1 \
+  "$LAND" sigterm-other-slice >"$out2" 2>&1
+rc2=$?
+assert_status "(m) a later run reclaims the dead-pid lock and lands cleanly" 0 "$rc2"
+grep -qi "dead pid" "$out2" && ok "(m) the reclaim is logged" \
+  || bad "(m) no dead-pid reclaim message: $(cat "$out2")"
+[ -d "$(git -C "$r" rev-parse --absolute-git-dir)/porting-land.lock" ] \
+  && bad "(m) lock directory left behind after recovery" || ok "(m) lock released after recovery"
+git -C "$r" show main:porting/manifest.jsonl | jq -rc 'select(.id=="sigterm-other-slice") | .status' \
+  | grep -q ported && ok "(m) the second slice landed despite the stranded lock" \
+  || bad "(m) the second slice did not land"
+
+# ================================================================== (n)
+# The exact production bug: `--auto`'s branch scan (not a direct single-slice
+# call) rescanning a landed-but-undeleted branch must be a clean pass, never
+# a spurious FAILED from re-attempting a merge of an already-merged branch.
+# `td close` already ran on the first landing, so the issue is closed+
+# approved and `is_eligible` legitimately re-selects it — the fix has to be
+# in land_one's idempotency check (proven above by (k)/(l)), not in auto's
+# discovery. This proves the two compose correctly end to end.
+r="$(new_repo autolinger)"
+seed_manifest "$r" 4 "autolinger-slice" "not_started"
+advance_slice_branch "$r" "autolinger-slice"
+approve_slice "$r" "autolinger-slice" >/dev/null
+branch_sha="$(sha "$r" port/autolinger-slice)"
+TASKS_REPO="$r" LAND_TEST_CMD="true" "$LAND" autolinger-slice >/dev/null 2>&1
+git -C "$r" branch port/autolinger-slice "$branch_sha"   # simulate last time's failed delete
+before="$(sha "$r" main)"
+
+marker="$TMPROOT/autolinger-marker"; rm -f "$marker"
+out="$TMPROOT/autolinger-auto.out"
+TASKS_REPO="$r" LAND_TEST_CMD="touch '$marker' && true" "$LAND" --auto >"$out" 2>&1
+rc=$?
+assert_status "(n) --auto exits 0 rescanning a landed-but-lingering branch" 0 "$rc"
+after="$(sha "$r" main)"
+assert_eq "(n) main untouched (no re-merge via --auto)" "$before" "$after"
+[ -f "$marker" ] && bad "(n) --auto re-ran the test suite for an already-landed slice" \
+  || ok "(n) --auto did not re-run the test suite"
+git -C "$r" rev-parse --verify -q refs/heads/port/autolinger-slice >/dev/null 2>&1 \
+  && bad "(n) --auto left the lingering branch in place" || ok "(n) --auto deleted the lingering branch"
+grep -q "FAILED landing" "$out" && bad "(n) --auto reported a spurious FAILED: $(cat "$out")" \
+  || ok "(n) --auto reported no FAILED"
+grep -q "failed=0" "$out" && ok "(n) auto summary reports zero failed" \
+  || bad "(n) auto summary did not report failed=0: $(cat "$out")"
+
 # ================================================================== summary
 echo "----------------------------------------"
 echo "porting/test-land.sh: $PASS passed, $FAIL failed"

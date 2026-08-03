@@ -13,6 +13,16 @@
 # model from one observable fact: review work waiting => top tier.
 # Design rationale: docs/plans/active/tasks-go-port-fleet-ops.md.
 #
+# It also runs `porting/land --auto` after every tick, from THIS checkout —
+# never delegated to the agent. An agent invokes porting/land from inside a
+# slot worktree, which sits on whatever `port/*` branch it last checked out;
+# that branch's copy of the script is only as fresh as the commit it was cut
+# from, so a fleet with any worktree on a stale branch runs a stale `land`
+# and can misparse its own flags (`--auto` read as a slice id, once,
+# in production). This checkout's copy is always current, and landing itself
+# is mechanical — precondition checks and git, no judgment — so there is
+# nothing an agent's judgment was buying here anyway.
+#
 # There is no dollar or quota accounting here on purpose: the harnesses run
 # on subscriptions, so there is no per-tick price to cap and no reason to
 # ration ticks per calendar day. What actually stops the fleet is a usage
@@ -55,6 +65,14 @@
 #   LIMIT_GRACE     slack added to a parsed reset time (default 60s)
 #   LIMIT_PROBE     optional pre-tick command; exit 3 = limited, and a bare
 #                   epoch on its stdout is taken as the reset time
+#   LAND_AFTER_TICK 1 (default) runs `porting/land --auto` from this checkout
+#                   after every tick; 0 disables it (landing then falls back
+#                   to whatever the agent's own prompt step does, or nothing)
+#   LAND_AUTO_TIMEOUT  seconds this tick waits on that --auto call before
+#                   logging that it is taking a while and moving on WITHOUT
+#                   killing it (default 2400 = 40m: --auto may land several
+#                   slices sequentially, each paying for a full test-suite
+#                   run, ~8m apiece). Not a kill timeout — see run_land_auto.
 #
 # Usage-limit detection is two-stage, and the order matters:
 #
@@ -108,6 +126,10 @@ LIMIT_COOLDOWN="${LIMIT_COOLDOWN:-1800}"
 LIMIT_MAX_WAIT="${LIMIT_MAX_WAIT:-21600}"
 LIMIT_GRACE="${LIMIT_GRACE:-60}"
 LIMIT_PROBE="${LIMIT_PROBE:-}"
+
+LAND_AFTER_TICK="${LAND_AFTER_TICK:-1}"
+LAND_AUTO_TIMEOUT="${LAND_AUTO_TIMEOUT:-2400}"
+LAND_BIN="${LAND_BIN:-}"   # resolved in setup_paths; override lets tests stub it
 
 # Declared up front so `set -u` is safe when porting/test-loop-limits.sh
 # sources this file and calls individual functions.
@@ -776,6 +798,7 @@ setup_paths() {
   STOP_FILE="$PORTING_DIR/STOP"
   [ -n "$SLOTS_DIR" ] || SLOTS_DIR="${REPO_ROOT}-port-slots"
   PROMPT_FILE="$PORTING_DIR/PORTING.md"
+  [ -n "$LAND_BIN" ] || LAND_BIN="$PORTING_DIR/land"
 
   BOOTSTRAP="Read porting/PORTING.md and perform exactly one iteration of the porting loop described there, then exit."
   [ -f "$PORTING_DIR/BOOTSTRAP" ] && BOOTSTRAP="$(cat "$PORTING_DIR/BOOTSTRAP")"
@@ -797,6 +820,9 @@ preflight() {
   ( cd "$REPO_ROOT" && td list -n 1 --format json >/dev/null 2>&1 ) \
     || die "td does not answer in $REPO_ROOT"
   [ -f "$STOP_FILE" ] && die "porting/STOP exists; remove it to start the fleet"
+  if [ "$LAND_AFTER_TICK" = 1 ]; then
+    [ -x "$LAND_BIN" ] || die "LAND_AFTER_TICK=1 but $LAND_BIN is missing or not executable (set LAND_AFTER_TICK=0 to disable)"
+  fi
   mkdir -p "$LOG_DIR" "$SLOTS_DIR"
   preflight_limit_state
 }
@@ -993,6 +1019,100 @@ pick_codex_model() {
   if [ "$n" -gt 0 ]; then echo "$CODEX_TOP"; else echo "$CODEX_MID"; fi
 }
 
+# ---------------------------------------------------------------- land
+# The fleet's landing step, taken away from the agent entirely (see the file
+# header). Runs from $REPO_ROOT — never a worktree's copy of the script,
+# because $LAND_BIN is resolved once in setup_paths from $PORTING_DIR, which
+# is derived from $REPO_ROOT, not from any slot path. TASKS_REPO is forced to
+# the same value so `porting/land` never has to fall back to its own
+# worktree-discovery guess.
+#
+# LAND_AUTO_TIMEOUT bounds how long THIS tick waits on it, but — unlike
+# TICK_TIMEOUT above — it is deliberately NOT enforced by sending
+# `porting/land` a signal. Confirmed by reproduction, not assumed: an
+# external SIGTERM delivered while `porting/land` is blocked inside its own
+# test-suite run can kill the WRONG thing. `run_tests()`'s inner `timeout`
+# moves itself into a brand-new process group the instant it starts — every
+# `timeout` invocation does, nested or not — so a signal aimed at
+# porting/land's own group never reaches it. And on this fleet's
+# `/usr/bin/env bash` (Apple's bash 3.2), a bash process blocked on that
+# command substitution's `wait()` does not reliably defer to its own
+# EXIT/INT/TERM trap when killed like this: it can simply die by the
+# signal's default action instead, as if untrapped. That skips straight past
+# the reset-on-failure step — main is left sitting on the merge commit,
+# untested, and the lock directory is stranded. (`porting/land`'s own
+# internal bounds, LAND_LOCK_TIMEOUT and LAND_TEST_TIMEOUT, do not have this
+# problem: they kill only the test subprocess itself, a plain in-band exit
+# status its ordinary, unsignaled control flow already handles correctly —
+# see test-land.sh's failing-tests case.)
+#
+# So this waits for `porting/land --auto` to finish on its own terms. If it
+# is still running when LAND_AUTO_TIMEOUT elapses, this logs that and moves
+# on to the next tick WITHOUT signaling it — never TERM, never KILL. It is
+# `disown`ed the moment it starts (not just on timeout) so a later fleet-wide
+# Ctrl-C/STOP (whose own trap runs `kill $(jobs -p)`) cannot reach it either.
+# It keeps running, protected by its own bounds, in the background; the
+# landing lock keeps a concurrent tick's own --auto call (or a human's) from
+# racing it in the meantime — proved for the analogous single-vs-auto case in
+# test-land.sh's lock-contention tests.
+#
+# Logging is deliberately terse: "nothing eligible" is the expected outcome
+# on most ticks (PORTING.md said so of the old agent-run step this
+# replaces), so it produces no log line at all. Anything that actually
+# landed, failed, ran long, or could not even be summarized gets one
+# grep-able line.
+run_land_auto() { # run_land_auto <slot> <tick>
+  local slot="$1" tick="$2" start dur out_f pid waited rc out summary landed_n failed_n
+  [ "$LAND_AFTER_TICK" = 1 ] || return 0
+  if [ -z "${LAND_BIN:-}" ] || [ ! -x "$LAND_BIN" ]; then
+    log "slot=$slot tick=$tick land: $LAND_BIN missing or not executable; skipping"
+    return 0
+  fi
+  out_f="$(mktemp "${TMPDIR:-/tmp}/porting-land-auto.XXXXXX" 2>/dev/null)" || {
+    log "slot=$slot tick=$tick land: could not create a temp file for its output; skipping"
+    return 0
+  }
+
+  start=$SECONDS
+  ( cd "$REPO_ROOT" && TASKS_REPO="$REPO_ROOT" "$LAND_BIN" --auto ) >"$out_f" 2>&1 &
+  pid=$!
+  disown "$pid" 2>/dev/null
+
+  waited=0
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$waited" -ge "$LAND_AUTO_TIMEOUT" ]; then
+      log "slot=$slot tick=$tick land: still running after ${LAND_AUTO_TIMEOUT}s;" \
+          "not signaling it (an external kill mid-test-suite can corrupt main — see the comment above" \
+          "run_land_auto), letting it finish on its own bounds and moving on"
+      rm -f "$out_f"   # still being written; nothing here for this tick to read
+      return 0
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  wait "$pid" 2>/dev/null
+  rc=$?
+  dur=$((SECONDS - start))
+  out="$(cat "$out_f" 2>/dev/null)"
+  rm -f "$out_f"
+
+  summary="$(printf '%s\n' "$out" | grep -oE 'landed=[0-9]+ failed=[0-9]+ skipped=[0-9]+' | tail -1)"
+  if [ -z "$summary" ]; then
+    # No branches existed at all (--auto's other quiet exit) or something
+    # blew up before a summary was printed. The latter deserves a line; the
+    # former does not — it is the everyday no-op, same as "nothing eligible".
+    [ "$rc" -eq 0 ] || log "slot=$slot tick=$tick land exit=$rc dur=${dur}s (no summary line) tail: $(printf '%s' "$out" | tail -c 300 | tr '\n' ' ')"
+    return 0
+  fi
+  landed_n="$(printf '%s' "$summary" | grep -oE 'landed=[0-9]+' | cut -d= -f2)"
+  failed_n="$(printf '%s' "$summary" | grep -oE 'failed=[0-9]+' | cut -d= -f2)"
+  if [ "${landed_n:-0}" -eq 0 ] && [ "${failed_n:-0}" -eq 0 ]; then
+    return 0   # nothing eligible; the common case, stay quiet
+  fi
+  log "slot=$slot tick=$tick land $summary exit=$rc dur=${dur}s"
+  return 0
+}
+
 # ---------------------------------------------------------------- ticks
 # Each tick gets its own TD_CONTEXT_ID, so every tick is a distinct td
 # session — which is what makes "a different agent claims the review"
@@ -1088,6 +1208,7 @@ run_tick() {
   else
     log "slot=$slot tick=$tick done exit=$rc dur=${dur}s"
   fi
+  run_land_auto "$slot" "$tick"
   return 0
 }
 

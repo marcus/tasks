@@ -200,6 +200,46 @@ merge_would_conflict() { # merge_would_conflict <branch>
   ! g merge-tree --write-tree "$DEFAULT_BRANCH" "$1" >/dev/null 2>&1
 }
 
+# Which worktree, if any, has <branch> checked out (non-detached) — git
+# refuses to delete a branch checked out anywhere, including a slot worktree
+# that is not $REPO_ROOT. Empty output means it is free to delete.
+branch_checked_out_at() { # branch_checked_out_at <branch>
+  g worktree list --porcelain 2>/dev/null | awk -v want="refs/heads/$1" '
+    /^worktree / { wt = substr($0, 10) }
+    /^branch /   { if (substr($0, 8) == want) { print wt; found=1 } }
+    END { exit (found ? 0 : 1) }
+  '
+}
+
+# A branch a previous run already merged into $DEFAULT_BRANCH (main's own
+# manifest already says the slice is "ported"), whose delete failed at the
+# time — most commonly because it was checked out (non-detached) in a slot
+# worktree at that exact moment: PORTING.md step 5 detaches before exposing
+# the td transition, but a tick killed mid-step, or one that forgot, leaves
+# it checked out for a while. Retried on every --auto scan until the
+# worktree lets go. Never re-merges and never re-runs the test suite: the
+# slice was already proven and is already on $DEFAULT_BRANCH, so doing either
+# again would be pure waste (and, for the test suite, minutes of it per tick,
+# forever, for every branch stuck in this state).
+cleanup_landed_branch() { # cleanup_landed_branch <slice> <branch>
+  local slice="$1" branch="$2" where
+  if ! g rev-parse --verify -q "refs/heads/$branch" >/dev/null 2>&1; then
+    log "slice '$slice' already landed; $branch already gone"
+    return 0
+  fi
+  where="$(branch_checked_out_at "$branch")"
+  if [ -n "$where" ]; then
+    log "slice '$slice' already landed; $branch still checked out at $where — deferring deletion to a later run"
+    return 0
+  fi
+  if g branch -d "$branch" >/dev/null 2>&1; then
+    log "slice '$slice' already landed; deleted stale $branch"
+  else
+    log "WARNING: slice '$slice' already landed but could not delete $branch (not fully merged into $DEFAULT_BRANCH?) — remove it by hand"
+  fi
+  return 0
+}
+
 run_tests() {
   if [ -n "$TIMEOUT_BIN" ]; then
     ( cd "$REPO_ROOT" && "$TIMEOUT_BIN" -k 30 "$LAND_TEST_TIMEOUT" sh -c "$LAND_TEST_CMD" )
@@ -273,8 +313,17 @@ land_one() {
   BRANCH_EXISTS=0
   g rev-parse --verify -q "refs/heads/$BRANCH" >/dev/null 2>&1 && BRANCH_EXISTS=1
   CURRENT_STATUS="$(manifest_status "$SLICE")"
-  if [ "$BRANCH_EXISTS" = 0 ] && [ "$CURRENT_STATUS" = "ported" ]; then
-    log "slice '$SLICE' already landed ($BRANCH gone, manifest status ported); nothing to do"
+  # $CURRENT_STATUS reads $DEFAULT_BRANCH's own manifest, not the slice
+  # branch's — so "ported" here can only be true once a merge already landed
+  # it (a branch mid-work sets that status on ITSELF, which main does not see
+  # until the merge). BRANCH_EXISTS=1 alongside it is exactly the gap this
+  # closes: landed, but the branch delete did not happen (or has not yet).
+  if [ "$CURRENT_STATUS" = "ported" ]; then
+    if [ "$BRANCH_EXISTS" = 0 ]; then
+      log "slice '$SLICE' already landed ($BRANCH gone, manifest status ported); nothing to do"
+      return 0
+    fi
+    cleanup_landed_branch "$SLICE" "$BRANCH"
     return 0
   fi
   [ -n "$CURRENT_STATUS" ] || die "no manifest entry for slice '$SLICE'"
@@ -394,7 +443,14 @@ land_one() {
   fi
 
   if ! g branch -d "$BRANCH" >/dev/null 2>&1; then
-    log "WARNING: $DEFAULT_BRANCH advanced to $LANDED_SHA but could not delete $BRANCH (checked out elsewhere? not fully merged?) — remove it by hand"
+    local where
+    where="$(branch_checked_out_at "$BRANCH")"
+    if [ -n "$where" ]; then
+      log "$DEFAULT_BRANCH advanced to $LANDED_SHA but $BRANCH is checked out at $where;" \
+          "a later --auto run will delete it once that worktree releases it"
+    else
+      log "WARNING: $DEFAULT_BRANCH advanced to $LANDED_SHA but could not delete $BRANCH (not fully merged?) — remove it by hand"
+    fi
   fi
 
   record "$ISSUE_ID" "porting/land: merged $BRANCH into $DEFAULT_BRANCH at $LANDED_SHA, manifest marked ported, branch deleted"
