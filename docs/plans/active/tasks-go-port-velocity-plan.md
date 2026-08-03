@@ -1,8 +1,9 @@
 # Tasks Ruby-to-Go port: velocity plan
 
-- **Status:** accepted and controlling — Wave 0 complete, Wave 1 ready to start
+- **Status:** accepted and controlling — Waves 0 and 1 complete, Wave 2 ready
+  to start
 - **Accepted:** 2026-08-03
-- **Last progress:** 2026-08-03 (Wave 0)
+- **Last progress:** 2026-08-03 (Wave 1)
 - **Scope:** finish the macOS Go application, prove it against copied real data,
   and cut over safely
 - **Supersedes:**
@@ -214,6 +215,54 @@ Wave 0 left this packet a head start: `check` has its vocabulary properties and
 `test/test_config.rb` is urgent days, max depth, timezone resolution and the
 fallback warning, date order, theme and colors, mouse, time format, and host
 contexts. `determinism` and `updatestamp` remain untested.
+
+### Wave 1 outcome — COMPLETE 2026-08-03
+
+All three packets landed, were independently reviewed against the Ruby sources,
+and are merged. Packages that had **zero** direct tests — `temporal`, `lead`,
+`timezones`, `determinism`, `updatestamp` — now have 119 between them; `config`
+went 13 → 75, `check` 20 → 71, `recur` 13 → 74, `record` 71 → 112, and
+`links` plus a new black-box CLI harness added 103.
+
+Seven read commands work with human and `--json` output: `next`, `inbox`,
+`quadrants`, `projects`, `show`, `links`, `open`.
+
+**The bugs that mattered were found by differential comparison against the Ruby
+binary, not by reading code and not by unit tests.** Wave 2 should assume the
+same and run comparisons early rather than at the wave boundary:
+
+- `takeFlags` accepted an unknown `--flag` as a positional where
+  `bin/tasks:1072` aborts — live in `check`, `priority` and `delegate`, so a
+  mistyped `--dry-run` became a title word and performed the mutation it was
+  meant to preview;
+- the unsupported-schema gate reached no read command, so `list` answered from
+  a v1 store as though it could read it;
+- `crossFileDuplicates` walked a Go map, making `check`'s output order
+  **randomized between runs**;
+- `writeStore` built a fresh id mint per store, so a second store in one
+  invocation would re-mint an id the first had used; and
+- `list` disagreed with Ruby on 6 fixtures — see the oracle fix below.
+
+Four intentional differences stand: `update-stamp-real-instants`,
+`year-less-feb-29-rolls-to-the-next-real-one`,
+`date-order-is-a-parameter-not-a-process-global`, `calendar-interval-beyond-int64`,
+and `custom-link-system-order`. Two were recorded and then **retired** by fixing
+the cause instead — the config timezone warning, and the list tie order.
+
+**One Ruby oracle fix.** `cmd_list` sorted priority groups with a bare
+unstable `sort_by`, so ties landed wherever introsort left them — deterministic
+for one input, permuted by an unrelated row elsewhere in the file. Reproducing
+that in Go meant porting `ruby_qsort` and pinning it to an MRI version to
+preserve an ordering carrying no information, and it is a latent bug for Ruby
+users regardless of the port. Fixed in `bin/tasks` with the stable idiom
+`TaskQueries#stable_sort` already used. Verified across 864 comparisons — 4
+clock pins x 18 fixtures x 12 invocations — now byte-identical.
+
+**Known pre-existing failure, not caused by this wave:**
+`test_cli_mutations.rb#test_cli_recur_preview_honors_count_and_json` fails
+against unmodified `bin/tasks`. It expects a projection relative to the real
+current date, so it is wall-clock dependent and fails on some days. Wave 2's
+recurrence or CLI owner should pin its clock.
 
 Integrate the three packets, run the full Go suite, and complete one independent
 review of the integrated wave.
