@@ -29,6 +29,7 @@ import (
 	"tasks-go/internal/taskquery"
 	"tasks-go/internal/temporal"
 	"tasks-go/internal/tui"
+	"tasks-go/internal/tui/term"
 	"tasks-go/internal/updatestamp"
 )
 
@@ -124,11 +125,21 @@ func buildModel(paths config.Paths, env determinism.Env) (*tui.Model, error) {
 		return nil, err
 	}
 
+	// The real styler, not the PlainStyler default. config.Resolve has already
+	// applied the theme precedence — TASKS_THEME, then the config file, then
+	// NO_COLOR selecting "mono" — so the name and the colour overrides arrive
+	// resolved and this layer only has to honour them.
+	//
+	// This is also what makes the layout correct rather than merely colourful:
+	// PlainStyler measures a rune as one cell, so a CJK title or an emoji would
+	// misalign every column beside it. Every width decision in internal/tui
+	// goes through Styler.Width.
 	return tui.New(tui.Options{
 		App:     app,
 		Paths:   paths,
 		Env:     env,
 		Session: tui.LoadSession(env),
+		Styler:  term.NewStyler(paths.Theme, paths.Colors),
 	}), nil
 }
 
