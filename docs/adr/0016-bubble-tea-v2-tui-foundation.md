@@ -118,5 +118,5 @@ process-completion messages.
   preserve
 - [ADR-0017](0017-embeddable-tui-component.md) — the embedding constraint that
   makes this a hard requirement rather than a preference
-- Plan: [`docs/plans/active/tasks-go-port-plan.md`](../plans/active/tasks-go-port-plan.md),
+- Plan: [`docs/plans/deprecated/tasks-go-port-plan.md`](../plans/deprecated/tasks-go-port-plan.md),
   "Rebuilding the TUI with Bubble Tea"

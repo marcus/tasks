@@ -106,7 +106,7 @@ should say yes.
 
 ## Related
 
-- Plan: [`docs/plans/active/tasks-go-port-plan.md`](../plans/active/tasks-go-port-plan.md)
-- Method: [`docs/plans/active/language-porting-playbook.md`](../plans/active/language-porting-playbook.md)
+- Plan: [`docs/plans/deprecated/tasks-go-port-plan.md`](../plans/deprecated/tasks-go-port-plan.md)
+- Method: [`docs/plans/deprecated/language-porting-playbook.md`](../plans/deprecated/language-porting-playbook.md)
 - Fleet rules: [`porting/PORTING.md`](../../porting/PORTING.md)
 - Stop conditions: [ADR-0020](0020-port-stop-conditions.md)

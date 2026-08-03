@@ -1,5 +1,11 @@
 # A modern language-porting playbook
 
+> **Research reference only for the active Tasks port.** The accepted delivery
+> method is
+> [tasks-go-port-velocity-plan.md](../active/tasks-go-port-velocity-plan.md).
+> Its direct source-and-test packets replace this playbook's micro-slice proof
+> workflow for the remainder of this port.
+
 - **Status:** research and proposed method; no Tasks port is approved
 - **Research snapshot:** 2026-07-31
 - **Related issue:** `td-ecae44`

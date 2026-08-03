@@ -1,14 +1,20 @@
 # Operating the Go-port fleet
 
+> **Retired runbook.** Keep the fleet stopped. The active port uses direct
+> source-and-test packets described in the accepted
+> [velocity plan](../docs/plans/active/tasks-go-port-velocity-plan.md). The
+> commands below are retained for historical diagnosis, not normal operation.
+
 > The runbook for the human at the terminal, next to `loop.sh`. Agents read
 > [PORTING.md](PORTING.md); design rationale is in
-> [tasks-go-port-fleet-ops.md](../docs/plans/active/tasks-go-port-fleet-ops.md).
+> [tasks-go-port-fleet-ops.md](../docs/plans/deprecated/tasks-go-port-fleet-ops.md).
 > All paths below are relative to the tasks repo root.
 
 ## One-time setup
 
 1. Already done by the scaffold: `porting/loop.sh` (executable),
-   `porting/PORTING.md`, plan + playbook under `docs/plans/active/`,
+   `porting/PORTING.md`, deprecated plan + playbook under
+   `docs/plans/deprecated/`,
    `porting/logs/` and `porting/STOP` gitignored.
 2. Build the control plane (Phase 1): `porting/manifest.jsonl`, fixtures,
    runners, comparators. Generate one td issue per slice, campaigns as

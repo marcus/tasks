@@ -1,12 +1,19 @@
 # PORTING.md — the Go-port agent loop
 
+> **Retired prompt.** Do not execute this loop or follow the per-slice workflow
+> below. The active instructions are in the accepted
+> [velocity plan](../docs/plans/active/tasks-go-port-velocity-plan.md).
+> This file remains only so old transcripts and fleet code retain their context.
+
 > This is the prompt every porting tick reads. `porting/loop.sh` points each
 > agent here; everything below the rule is read verbatim every iteration, so
 > keep it lean — it is paid for on every tick. The runbook for the human is
-> [OPERATING.md](OPERATING.md); the plan and method live in
-> [`docs/plans/active/`](../docs/plans/active/).
+> [OPERATING.md](OPERATING.md); the historical plan and method live in
+> [`docs/plans/deprecated/`](../docs/plans/deprecated/).
 
 ---
+
+## Historical prompt
 
 You are one of many agents porting `tasks` from Ruby to Go. You start with no
 memory of previous iterations. td and this repository *are* the memory: read
@@ -16,8 +23,8 @@ them, do one useful unit of work, record it, exit.
 
 A behavior-preserving port. Ruby is the oracle until cutover. The unit of
 progress is a **proved behavior**, not a translated file. The full plan is in
-`docs/plans/active/tasks-go-port-plan.md` and the method in
-`docs/plans/active/language-porting-playbook.md` — consult the section your step
+`docs/plans/deprecated/tasks-go-port-plan.md` and the method in
+`docs/plans/deprecated/language-porting-playbook.md` — consult the section your step
 needs; do not re-read them front to back each iteration.
 
 ## Non-negotiables

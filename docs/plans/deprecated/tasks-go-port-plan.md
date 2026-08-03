@@ -1,5 +1,12 @@
 # Hypothetical Go port plan for `tasks`
 
+> **Superseded for execution on 2026-08-03.** This document preserves the
+> original research and target architecture. Agents implementing the port must
+> follow
+> [tasks-go-port-velocity-plan.md](../active/tasks-go-port-velocity-plan.md), which
+> replaces the micro-slice manifest and fleet workflow with direct Go-and-test
+> packets and one independent review per substantial packet.
+
 - **Status:** exploratory; no port is approved
 - **Research snapshot:** 2026-07-31
 - **Related issue:** `td-2b768f`; Phase 1 epic in the tasks repo:

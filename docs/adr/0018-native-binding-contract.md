@@ -121,5 +121,5 @@ JSON payload versioning is the hedge: the surface can grow without breaking.
 - [ADR-0005](0005-application-boundary.md) — the facade this narrows
 - [ADR-0014](0014-go-package-boundary.md) — the platform ports
 - [ADR-0019](0019-sync-deferred-from-the-port.md) — explicitly not in scope
-- Plan: [`docs/plans/active/tasks-go-port-plan.md`](../plans/active/tasks-go-port-plan.md),
+- Plan: [`docs/plans/deprecated/tasks-go-port-plan.md`](../plans/deprecated/tasks-go-port-plan.md),
   "Native bindings need a smaller API than HTTP"

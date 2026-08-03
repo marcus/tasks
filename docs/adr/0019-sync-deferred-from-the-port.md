@@ -121,5 +121,5 @@ direction above, and would be worth knowing before any sync work starts.
   which merge determinism depends
 - [ADR-0018](0018-native-binding-contract.md) — the offline engine sync would
   eventually serve
-- Plan: [`docs/plans/active/tasks-go-port-plan.md`](../plans/active/tasks-go-port-plan.md),
+- Plan: [`docs/plans/deprecated/tasks-go-port-plan.md`](../plans/deprecated/tasks-go-port-plan.md),
   "Mobile sync remains a separate product"

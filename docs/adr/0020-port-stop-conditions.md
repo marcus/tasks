@@ -12,7 +12,7 @@ Date: 2026-08-01
 The port plan names three conditions under which the port should stop rather
 than push through sunk cost: a required data-format break, an unmatchable
 temporal behavior, and a permanent dual domain implementation
-(`docs/plans/active/tasks-go-port-plan.md`, Phase 0). As prose they are
+(`docs/plans/deprecated/tasks-go-port-plan.md`, Phase 0). As prose they are
 correct and useless. "Cannot match temporal behavior" is exactly the sentence a
 motivated engineer at month five reads as "cannot match *yet*".
 
@@ -161,7 +161,7 @@ slice being expensive. Effort spent on oracle gaps that were *identified* in
 Phase 1 — those are already in the estimate.
 
 **Why it is here.** Phase 1 exists to produce an honest estimate
-(`docs/plans/active/tasks-go-port-plan.md`, closing paragraph). An estimate is
+(`docs/plans/deprecated/tasks-go-port-plan.md`, closing paragraph). An estimate is
 only honest while it is still being checked. This condition is the one that
 makes "the port is bigger than we thought" a recorded fact rather than an
 accumulating mood.

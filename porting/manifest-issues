@@ -545,7 +545,7 @@ module ManifestIssues
       <<~TEXT.strip
         #{campaign["summary"]}
 
-        Maps onto #{campaign["plan_phase"]} of docs/plans/active/tasks-go-port-plan.md.
+        Maps onto #{campaign["plan_phase"]} of docs/plans/deprecated/tasks-go-port-plan.md.
 
         #{generated_footer}
       TEXT

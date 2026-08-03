@@ -2,6 +2,10 @@
 #
 # loop.sh — process manager for the Go-port agent fleet.
 #
+# RETIRED: keep this supervisor stopped. The active port uses direct
+# source-and-test packets from docs/plans/active/tasks-go-port-velocity-plan.md.
+# This script remains for historical diagnosis and is not the current workflow.
+#
 # This script is deliberately dumb. It owns:
 #   - isolation:  one git worktree per slot, shared object store and refs
 #   - scheduling: ticks, idle backoff, stagger, STOP file
@@ -11,7 +15,7 @@
 # working model either — the Opus-class tick orchestrator delegates down.
 # For Codex (flat, no per-subagent override) the script picks the tick
 # model from one observable fact: review work waiting => top tier.
-# Design rationale: docs/plans/active/tasks-go-port-fleet-ops.md.
+# Design rationale: docs/plans/deprecated/tasks-go-port-fleet-ops.md.
 #
 # It also runs `porting/land --auto` after every tick, from THIS checkout —
 # never delegated to the agent. An agent invokes porting/land from inside a

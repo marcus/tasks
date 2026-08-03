@@ -127,7 +127,7 @@ Every fixture directory has a `README.md` (checked, none missing) and a `store/`
 
 ### Criterion 2 — corpus covers the plan's Phase 1 list — **MET**
 
-`docs/plans/active/tasks-go-port-plan.md` § Phase 1 names "valid, compat,
+`docs/plans/deprecated/tasks-go-port-plan.md` § Phase 1 names "valid, compat,
 malformed, and adversarial (concurrent) cases — the four classes in
 `porting/fixtures/`". The plan text has itself been updated by td-09f7de to say
 `compat/` rather than `legacy/`, and to state why. All four classes exist and are

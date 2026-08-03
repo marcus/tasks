@@ -161,5 +161,5 @@ precondition here.
   presupposes
 - [ADR-0014](0014-go-package-boundary.md) — why the TUI is `pkg/`, not
   `internal/`
-- Plan: [`docs/plans/active/tasks-go-port-plan.md`](../plans/active/tasks-go-port-plan.md),
+- Plan: [`docs/plans/deprecated/tasks-go-port-plan.md`](../plans/deprecated/tasks-go-port-plan.md),
   "Design the TUI to be embeddable in sidecar"

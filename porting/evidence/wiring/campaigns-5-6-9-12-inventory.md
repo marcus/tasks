@@ -146,7 +146,7 @@ agent seeding 5/6/9/12 should claim any of them.**
 There is no Ruby under `lib/` or `bin/` and no test under `test/` that
 corresponds to campaign 11. `grep` for `mobile|ffi|jni|swift|gomobile` over the
 Ruby tree returns nothing; the only mentions live in
-`docs/plans/active/tasks-go-port-plan.md` §"Native bindings need a smaller API
+`docs/plans/deprecated/tasks-go-port-plan.md` §"Native bindings need a smaller API
 than HTTP" and §"Phase 6". Campaign 11 is net-new Go work with **no oracle at
 all**, so when it is seeded its slices will carry empty `ruby_tests` with an
 `oracle_gaps` sentence saying why — the shape `manifest.md` allows. It is

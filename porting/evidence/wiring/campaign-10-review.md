@@ -294,7 +294,7 @@ is wrong in three of eight places teaches the next reader to skim them.
 ## 11. `plan_phase` names a phase the port plan does not have
 
 The record says `"Phase 5 (agent execution and external process invocation)"`.
-`docs/plans/active/tasks-go-port-plan.md:556` — "**Phase 5: replace the CLI and
+`docs/plans/deprecated/tasks-go-port-plan.md:556` — "**Phase 5: replace the CLI and
 HTTP adapters**", whose body does include "agent invocation", so the *number* is
 right. The other four campaign records quote the plan's own title. Use
 `"Phase 5 (replace the CLI and HTTP adapters)"`.
@@ -380,7 +380,7 @@ branches are named in gap #5. Honest.
 
 **Campaign-number cross-references survive.** Playbook item 10 is "Agent
 execution and platform process trees"
-(docs/plans/active/language-porting-playbook.md:502) — the mapping is right.
+(docs/plans/deprecated/language-porting-playbook.md:502) — the mapping is right.
 Every campaign reference across the file (2×2, 4×3, 5×15, 6×20, 7×5, 8×11, 9×1,
 10×9, 12×3) still matches the playbook's items: 5 = temporal/recurrence, 6 =
 locking/journal/undo, 9 = OpenAPI server, 12 = Bubble Tea TUI. Nothing in this

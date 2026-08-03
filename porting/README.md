@@ -1,11 +1,13 @@
 # `porting/` — the Go-port control plane
 
-**The port is not approved.** This tree exists so that Phase 1 of
-[td-27fbf5](../docs/plans/active/tasks-go-port-plan.md) can produce an honest
-estimate — a conformance harness that provably catches seeded mismatches, and
-a manifest that says how much behavior there actually is to move. That
-estimate is what informs the decision to port or not. Nothing here ports
-application code, and no Go code lands until Marcus says so.
+> **Retired workflow.** The port is approved, but this control plane is no
+> longer its working method. Do not restart `loop.sh`, schedule work from the
+> 144-slice manifest, or add per-slice evidence. Follow the accepted
+> [velocity plan](../docs/plans/active/tasks-go-port-velocity-plan.md).
+
+This tree remains useful for fixtures, runners, and differential conformance.
+The loop, manifest scheduler, evidence workflow, and material below describe
+the earlier fleet approach and are retained as historical context.
 
 Everything in this tree is language-neutral on purpose: it describes `tasks`'
 observable behavior, not its implementation. Ruby is the oracle; a second
@@ -32,38 +34,33 @@ implementation is the thing being judged against it.
 
 | File | Audience | What it is |
 |---|---|---|
-| `PORTING.md` | agents | the prompt every tick reads verbatim. Policy: mission, non-negotiables, the slice loop, when to stop and escalate |
-| `OPERATING.md` | you | the runbook — running, stopping, watching, warning signs, tuning knobs |
-| `loop.sh` | — | the supervisor: worktree isolation, scheduling, timeouts, usage-limit parking. Contains no porting knowledge |
+| `PORTING.md` | historical | retired prompt that every fleet tick read verbatim |
+| `OPERATING.md` | historical | retired runbook for running and diagnosing the fleet |
+| `loop.sh` | historical | retired supervisor retained for diagnosis; do not start it for active work |
 | `test-loop-limits.sh` | — | asserts `loop.sh`'s usage-limit detection and reset-time parsing. Run it after touching either |
 
-## Which document is authoritative
+## Document map
 
-- **What to port, in what order, and the phase gates** —
-  [`docs/plans/active/tasks-go-port-plan.md`](../docs/plans/active/tasks-go-port-plan.md).
-- **How to port it** — the conformance method, the control-plane shape this
-  tree implements, the per-slice loop —
-  [`docs/plans/active/language-porting-playbook.md`](../docs/plans/active/language-porting-playbook.md).
-- **Why the fleet is built this way** — layers, td as coordination bus, model
-  policy, branch strategy —
-  [`docs/plans/active/tasks-go-port-fleet-ops.md`](../docs/plans/active/tasks-go-port-fleet-ops.md).
-- **What an agent does on a tick** — `PORTING.md`. It is deliberately short;
-  it points at the plans rather than restating them, because it is paid for on
-  every tick.
-- **Progress** — `manifest.jsonl` and `evidence/`, never a hand-written
-  percentage and never a td query. `porting/manifest-issues progress` is the
-  command that counts it.
+- **Current delivery plan** —
+  [`tasks-go-port-velocity-plan.md`](../docs/plans/active/tasks-go-port-velocity-plan.md).
+- **Deprecated original scope and phase gates** —
+  [`docs/plans/deprecated/tasks-go-port-plan.md`](../docs/plans/deprecated/tasks-go-port-plan.md).
+- **Deprecated porting method** — the conformance method and per-slice loop —
+  [`docs/plans/deprecated/language-porting-playbook.md`](../docs/plans/deprecated/language-porting-playbook.md).
+- **Deprecated fleet rationale** — layers, td coordination, model policy, and
+  branch strategy —
+  [`docs/plans/deprecated/tasks-go-port-fleet-ops.md`](../docs/plans/deprecated/tasks-go-port-fleet-ops.md).
+- **Retired tick prompt and runbook** — `PORTING.md` and `OPERATING.md`.
+- **Reusable verification tools** — fixtures, runners, `porting/conform`, and
+  the focused persistence evidence named by the velocity plan.
+
+The manifest and evidence directories no longer measure completion.
 
 ## Getting started
 
 ```sh
 porting/conform                      # the conformance verdict, phase1, both sides
 porting/conform --quick              # the eight-case smoke subset, ~4s
-porting/loop.sh --once --dry-run     # preflight only; touches no harness
-porting/test-loop-limits.sh          # the one unit-tested part of loop.sh
-porting/manifest-issues validate     # manifest is self-consistent and resolves
-porting/manifest-issues plan         # what a td sync would do; touches nothing
 ```
 
-Read [`OPERATING.md`](OPERATING.md) before starting the fleet for real, and
-[`manifest.md`](manifest.md) before editing a slice record.
+Do not start the fleet or edit slice records as part of the active port.

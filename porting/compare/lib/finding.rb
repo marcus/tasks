@@ -10,7 +10,7 @@ module Conformance
   # "differs" is not actionable, so every finding must carry one of these and
   # the rule that justifies it.
   class Finding
-    # The five classes from docs/plans/active/language-porting-playbook.md § 6.
+    # The five classes from docs/plans/deprecated/language-porting-playbook.md § 6.
     GO_DEFECT = "go_defect"
     LEGACY_RUBY_RULE = "legacy_ruby_rule"
     NONDETERMINISM = "nondeterminism"

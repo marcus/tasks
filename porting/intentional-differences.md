@@ -45,5 +45,5 @@ machine. Both directions are review failures.
 - Manifest entries carry an `intentional_differences` array pointing at the
   section names here: `porting/manifest.jsonl`.
 - Method and classification rules:
-  [`docs/plans/active/language-porting-playbook.md`](../docs/plans/active/language-porting-playbook.md).
+  [`docs/plans/deprecated/language-porting-playbook.md`](../docs/plans/deprecated/language-porting-playbook.md).
 - The agent-facing rule: [`PORTING.md`](PORTING.md), "Never bless Go output".

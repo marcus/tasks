@@ -121,5 +121,5 @@ dependency-count exercise.
 - [ADR-0005](0005-application-boundary.md) — the boundary being preserved
 - [ADR-0007](0007-concurrency-and-revisions.md) — the revision scopes that must
   stay distinct
-- Plan: [`docs/plans/active/tasks-go-port-plan.md`](../plans/active/tasks-go-port-plan.md),
+- Plan: [`docs/plans/deprecated/tasks-go-port-plan.md`](../plans/deprecated/tasks-go-port-plan.md),
   "Target shape"

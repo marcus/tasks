@@ -1,5 +1,10 @@
 # Fleet operations for the Go port loop
 
+> **Superseded for execution on 2026-08-03.** The loop remains stopped and this
+> file is historical design rationale. Do not restart or extend the fleet for
+> the active port. Follow
+> [tasks-go-port-velocity-plan.md](../active/tasks-go-port-velocity-plan.md).
+
 - **Status:** landed — this is the design rationale for
   [`porting/loop.sh`](../../../porting/loop.sh); companion to the agent prompt
   [`porting/PORTING.md`](../../../porting/PORTING.md)
