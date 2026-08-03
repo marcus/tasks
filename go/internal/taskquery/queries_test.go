@@ -1,6 +1,7 @@
 package taskquery
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -11,9 +12,14 @@ import (
 
 // buildQueries loads a conformance fixture at the pinned instant the harness
 // uses, so these assertions and the corpus are talking about the same day.
+//
+// The fixture is COPIED first. Reading a store takes its sidecar lock, and
+// creating that lock is a real side effect — pointing a test at the fixture
+// tree in place would leave `.tasks.jsonl.lock` behind and change the
+// fixture's root digest, which every observation records.
 func buildQueries(t *testing.T, class, name string) *Queries {
 	t.Helper()
-	root := filepath.Join("..", "..", "..", "porting", "fixtures", class, name, "store")
+	root := copyFixture(t, filepath.Join("..", "..", "..", "porting", "fixtures", class, name, "store"))
 	snapshot, err := store.New(filepath.Join(root, "tasks.jsonl"), filepath.Join(root, "archive.jsonl")).
 		ReadSnapshot(true)
 	if err != nil {
@@ -28,6 +34,28 @@ func buildQueries(t *testing.T, class, name string) *Queries {
 		t.Fatalf("context: %v", err)
 	}
 	return New(snapshot, context)
+}
+
+func copyFixture(t *testing.T, source string) string {
+	t.Helper()
+	destination := t.TempDir()
+	entries, err := os.ReadDir(source)
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		content, err := os.ReadFile(filepath.Join(source, entry.Name()))
+		if err != nil {
+			t.Fatalf("read fixture file: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(destination, entry.Name()), content, 0o644); err != nil {
+			t.Fatalf("write fixture copy: %v", err)
+		}
+	}
+	return destination
 }
 
 func itemByID(t *testing.T, queries *Queries, id string) store.Item {
