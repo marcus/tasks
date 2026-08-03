@@ -1,0 +1,9 @@
+# format-nested-key-order — direct Ruby oracle cases for Tasks::Format.nested_object.
+#
+# `tasks check` observes validation but never invokes serialization. These cases
+# make the nested writer's byte-visible contract directly comparable.
+{"case_id":"temporal-declared-order-and-drop-unknown","record":{"type":"task","title":"T","scheduled":"2026-07-27","scheduled_time":{"timezone":"Europe/Berlin","offset":"+02:00","fold":1,"local":"09:00"},"deadline":"2026-07-28","deadline_time":{"fold":0,"unknown":"discarded","timezone":"UTC","local":"10:30"}},"notes":"Temporal objects use declared order and discard unknown keys."}
+{"case_id":"delegation-declared-order-and-forward-unknowns","record":{"type":"task","title":"T","delegation":{"lease_until":"2026-07-28T00:00:00Z","status":"ready","zeta":false,"kind":"agent","at":"2026-07-27T18:04:11Z","mode":"research","alpha":0}},"notes":"Delegation emits declared keys first, then unknown keys in source insertion order."}
+{"case_id":"empty-nested-objects-are-elided","record":{"type":"task","title":"T","scheduled_time":{},"deadline_time":{"local":"","timezone":null},"delegation":{}},"notes":"Nested omission can make the entire top-level field absent."}
+{"case_id":"nested-false-and-zero-survive","record":{"type":"task","title":"T","scheduled_time":{"fold":false,"local":"09:00","timezone":""},"delegation":{"status":"ready","kind":"agent","mode":"research","at":"2026-07-27T18:04:11Z","budget":0,"paused":false}},"notes":"Only nil and empty values omit; false and zero remain."}
+{"case_id":"non-object-nested-values-pass-through","record":{"type":"task","title":"T","scheduled_time":"09:00","deadline_time":["unexpected"],"delegation":false},"notes":"Format preserves malformed non-object values for Check to report."}

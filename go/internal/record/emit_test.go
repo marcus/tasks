@@ -71,6 +71,127 @@ func TestDumpRecordOrdersKnownKeysAndOmitsAbsentFields(t *testing.T) {
 	}
 }
 
+func TestDumpRecordCanonicalizesNestedObjects(t *testing.T) {
+	cases := []struct{ input, want string }{
+		{`{"type":"task","title":"T","scheduled_time":{"unknown":1,"fold":1,"timezone":"Europe/Berlin","local":"09:00"}}`, `{"type":"task","title":"T","scheduled_time":{"local":"09:00","timezone":"Europe/Berlin","fold":1}}`},
+		{`{"type":"task","title":"T","deadline_time":{"unknown":1}}`, `{"type":"task","title":"T"}`},
+		{`{"type":"task","title":"T","delegation":{"zeta":false,"at":"2026-07-27T18:04:11Z","kind":"agent","alpha":0,"status":"ready","mode":"research"}}`, `{"type":"task","title":"T","delegation":{"kind":"agent","mode":"research","status":"ready","at":"2026-07-27T18:04:11Z","zeta":false,"alpha":0}}`},
+		{`{"type":"task","title":"T","scheduled_time":"09:00","delegation":false}`, `{"type":"task","title":"T","scheduled_time":"09:00","delegation":false}`},
+	}
+	for _, testCase := range cases {
+		got, err := DumpRecord(parseOne(t, testCase.input))
+		if err != nil || got != testCase.want {
+			t.Fatalf("DumpRecord(%s) = %q, %v; want %q", testCase.input, got, err, testCase.want)
+		}
+	}
+}
+
+// TestNestedCanonicalizationAcrossPermutations is the medium-tier property
+// check for the nested writer. It makes the two deliberately different
+// forward-compatibility rules falsifiable for every source ordering: temporal
+// unknowns disappear, while delegation unknowns keep their relative order.
+func TestNestedCanonicalizationAcrossPermutations(t *testing.T) {
+	temporal := []nestedWireField{
+		{key: "local", value: `"09:00"`},
+		{key: "timezone", value: `"Europe/Berlin"`},
+		{key: "fold", value: "false"},
+		{key: "future_a", value: "1"},
+		{key: "future_b", value: "2"},
+	}
+	for _, fields := range nestedPermutations(temporal) {
+		got := dumpNested(t, "scheduled_time", fields)
+		want := `{"type":"task","title":"T","scheduled_time":{"local":"09:00","timezone":"Europe/Berlin","fold":false}}`
+		if got != want {
+			t.Fatalf("temporal permutation %v = %s, want %s", nestedKeys(fields), got, want)
+		}
+	}
+
+	delegation := []nestedWireField{
+		{key: "kind", value: `"agent"`},
+		{key: "mode", value: `"research"`},
+		{key: "status", value: `"ready"`},
+		{key: "assignee", value: `"worker"`},
+		{key: "at", value: `"2026-07-27T18:04:11Z"`},
+		{key: "work_ref", value: `"td-123"`},
+	}
+	delegationWant := `{"type":"task","title":"T","delegation":{"kind":"agent","mode":"research","status":"ready","assignee":"worker","at":"2026-07-27T18:04:11Z","work_ref":"td-123"}}`
+	for _, fields := range nestedPermutations(delegation) {
+		got := dumpNested(t, DelegationField, fields)
+		if got != delegationWant {
+			t.Fatalf("delegation declared-key permutation %v = %s, want %s", nestedKeys(fields), got, delegationWant)
+		}
+	}
+
+	// Permuting both declared and unknown fields proves the unknown suffix is
+	// source ordered, rather than merely preserving an incidental test order.
+	forward := []nestedWireField{
+		{key: "kind", value: `"agent"`},
+		{key: "status", value: `"ready"`},
+		{key: "zeta", value: "false"},
+		{key: "alpha", value: "0"},
+		{key: "future", value: `"kept"`},
+	}
+	for _, fields := range nestedPermutations(forward) {
+		unknown := make([]nestedWireField, 0, 3)
+		for _, field := range fields {
+			if field.key == "zeta" || field.key == "alpha" || field.key == "future" {
+				unknown = append(unknown, field)
+			}
+		}
+		want := `{"type":"task","title":"T","delegation":{"kind":"agent","status":"ready"` + nestedObjectSuffix(unknown) + `}}`
+		got := dumpNested(t, DelegationField, fields)
+		if got != want {
+			t.Fatalf("delegation forward-compat permutation %v = %s, want %s", nestedKeys(fields), got, want)
+		}
+	}
+}
+
+type nestedWireField struct{ key, value string }
+
+func dumpNested(t *testing.T, key string, fields []nestedWireField) string {
+	t.Helper()
+	parts := make([]string, len(fields))
+	for index, field := range fields {
+		parts[index] = `"` + field.key + `":` + field.value
+	}
+	got, err := DumpRecord(parseOne(t, `{"type":"task","title":"T","`+key+`":{`+strings.Join(parts, ",")+`}}`))
+	if err != nil {
+		t.Fatalf("DumpRecord: %v", err)
+	}
+	return got
+}
+
+func nestedObjectSuffix(fields []nestedWireField) string {
+	parts := make([]string, len(fields))
+	for index, field := range fields {
+		parts[index] = `,"` + field.key + `":` + field.value
+	}
+	return strings.Join(parts, "")
+}
+
+func nestedKeys(fields []nestedWireField) []string {
+	keys := make([]string, len(fields))
+	for index, field := range fields {
+		keys[index] = field.key
+	}
+	return keys
+}
+
+func nestedPermutations(fields []nestedWireField) [][]nestedWireField {
+	if len(fields) == 0 {
+		return [][]nestedWireField{{}}
+	}
+	permutations := make([][]nestedWireField, 0)
+	for index, field := range fields {
+		rest := append([]nestedWireField{}, fields[:index]...)
+		rest = append(rest, fields[index+1:]...)
+		for _, permutation := range nestedPermutations(rest) {
+			permutations = append(permutations, append([]nestedWireField{field}, permutation...))
+		}
+	}
+	return permutations
+}
+
 func TestDumpFileShape(t *testing.T) {
 	if got, err := Dump(nil); err != nil || got != "" {
 		t.Fatalf("Dump(nil) = %q, %v; want empty string", got, err)

@@ -1,0 +1,31 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Direct, read-only oracle for the format-nested-key-order slice.
+#
+# The CLI's read commands do not serialize records, so this probe exposes the
+# byte-visible writer boundary without involving a mutation owned by campaign 4.
+# It accepts JSONL records and emits the exact serialized line plus the parsed
+# record (including Format's physical line marker).
+
+require "json"
+
+ROOT = File.expand_path("../../..", __dir__)
+require_relative "#{ROOT}/lib/tasks/format"
+
+path = ARGV.fetch(0) { abort "usage: format-nested-key-order-probe CASES.jsonl" }
+abort "usage: format-nested-key-order-probe CASES.jsonl" unless ARGV.one?
+
+File.readlines(path, chomp: true).each do |line|
+  next if line.strip.empty? || line.strip.start_with?("#")
+
+  spec = JSON.parse(line)
+  dumped = Tasks::Format.dump_record(spec.fetch("record"))
+  observation = {
+    "case_id" => spec.fetch("case_id"),
+    "dumped" => dumped,
+    "parsed" => Tasks::Format.parse(dumped).records.fetch(0),
+  }
+  observation["notes"] = spec["notes"] if spec.key?("notes")
+  puts JSON.generate(observation)
+end

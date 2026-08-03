@@ -63,14 +63,14 @@ func DumpRecord(record Record) (string, error) {
 	out.WriteByte('{')
 	written := 0
 
-	emit := func(field Field) error {
+	emit := func(field Field, value json.RawMessage) error {
 		if written > 0 {
 			out.WriteByte(',')
 		}
 		written++
 		encodeString(&out, field.Key)
 		out.WriteByte(':')
-		return encodeValue(&out, field.Key, field.Value)
+		return encodeValue(&out, field.Key, value)
 	}
 
 	known := make(map[string]int, len(record.Fields))
@@ -83,10 +83,17 @@ func DumpRecord(record Record) (string, error) {
 	for _, key := range KeyOrder {
 		ordered[key] = true
 		index, present := known[key]
-		if !present || omit(record.Fields[index].Value) {
+		if !present {
 			continue
 		}
-		if err := emit(record.Fields[index]); err != nil {
+		value, err := nestedObject(key, record.Fields[index].Value)
+		if err != nil {
+			return "", err
+		}
+		if omit(value) {
+			continue
+		}
+		if err := emit(record.Fields[index], value); err != nil {
 			return "", err
 		}
 	}
@@ -94,13 +101,72 @@ func DumpRecord(record Record) (string, error) {
 		if known[field.Key] != index || field.Key == LineKey || ordered[field.Key] || omit(field.Value) {
 			continue
 		}
-		if err := emit(field); err != nil {
+		if err := emit(field, field.Value); err != nil {
 			return "", err
 		}
 	}
 
 	out.WriteByte('}')
 	return out.String(), nil
+}
+
+var nestedKeyOrder = map[string][]string{
+	"scheduled_time": {"local", "timezone", "fold"},
+	"deadline_time":  {"local", "timezone", "fold"},
+	DelegationField:  DelegationKeyOrder,
+}
+
+// nestedObject applies Ruby's one-level canonical nested-object rule. Temporal
+// objects discard unknown keys; delegation retains them after its declared
+// fields in source order. Non-objects pass through for Check to diagnose.
+func nestedObject(key string, raw json.RawMessage) (json.RawMessage, error) {
+	order, recognized := nestedKeyOrder[key]
+	trimmed := bytes.TrimSpace(raw)
+	if !recognized || len(trimmed) == 0 || trimmed[0] != '{' {
+		return raw, nil
+	}
+	fields, err := parseFields(trimmed)
+	if err != nil {
+		return nil, err
+	}
+	first := make(map[string]int, len(fields))
+	for index, field := range fields {
+		if _, seen := first[field.Key]; !seen {
+			first[field.Key] = index
+		}
+	}
+	known := make(map[string]bool, len(order))
+	for _, child := range order {
+		known[child] = true
+	}
+	ordered := make([]Field, 0, len(fields))
+	for _, child := range order {
+		if index, present := first[child]; present && !omit(fields[index].Value) {
+			ordered = append(ordered, fields[index])
+		}
+	}
+	if key == DelegationField {
+		for index, field := range fields {
+			if first[field.Key] != index || known[field.Key] || omit(field.Value) {
+				continue
+			}
+			ordered = append(ordered, field)
+		}
+	}
+	var out bytes.Buffer
+	out.WriteByte('{')
+	for index, field := range ordered {
+		if index > 0 {
+			out.WriteByte(',')
+		}
+		encodeString(&out, field.Key)
+		out.WriteByte(':')
+		if err := encodeValue(&out, field.Key, field.Value); err != nil {
+			return nil, err
+		}
+	}
+	out.WriteByte('}')
+	return out.Bytes(), nil
 }
 
 // omit reports whether a value represents an absent field. Ruby omits nil and
