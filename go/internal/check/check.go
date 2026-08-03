@@ -110,8 +110,13 @@ func CheckStore(livePath, archivePath string) Result {
 	errors := annotate(live.Errors, "tasks.jsonl")
 	errors = append(errors, annotate(archive.Errors, "archive.jsonl")...)
 	errors = append(errors, crossFileDuplicates(livePath, archivePath)...)
+	warnings := append(annotate(live.Warnings, "tasks.jsonl"), annotate(archive.Warnings, "archive.jsonl")...)
 	sortEntries(errors)
-	return Result{Errors: errors, Warnings: append(annotate(live.Warnings, "tasks.jsonl"), annotate(archive.Warnings, "archive.jsonl")...)}
+	// Ruby sorts BOTH lists by line. Sorting only the errors left the warnings
+	// interleaved live-then-archive, which reads as two files' diagnostics
+	// concatenated rather than one store's report.
+	sortEntries(warnings)
+	return Result{Errors: errors, Warnings: warnings}
 }
 
 // UnsupportedVersion reports the version a store DECLARES when it is one this
@@ -195,14 +200,24 @@ func checkID(parsed record.Record, errors *[]Entry, duplicates *duplicateIndex) 
 	duplicates.add(id, parsed.Line)
 }
 
+// crossFileDuplicates reports every id visible in BOTH stores. Ruby emits them
+// in sorted id order; Go map iteration is randomized, so two ids duplicated on
+// the same line would otherwise swap places between runs — and the stable sort
+// by line that follows cannot put them back.
 func crossFileDuplicates(livePath, archivePath string) []Entry {
 	live := idsFor(livePath)
 	archive := idsFor(archivePath)
-	errors := make([]Entry, 0)
-	for id, archiveLine := range archive {
-		if liveLine, exists := live[id]; exists {
-			errors = append(errors, Entry{Line: archiveLine, Message: fmt.Sprintf("id %q appears in both tasks.jsonl line %d and archive.jsonl line %d", id, liveLine, archiveLine)})
+	shared := make([]string, 0)
+	for id := range archive {
+		if _, exists := live[id]; exists {
+			shared = append(shared, id)
 		}
+	}
+	sort.Strings(shared)
+	errors := make([]Entry, 0, len(shared))
+	for _, id := range shared {
+		errors = append(errors, Entry{Line: archive[id],
+			Message: fmt.Sprintf("id %q appears in both tasks.jsonl line %d and archive.jsonl line %d", id, live[id], archive[id])})
 	}
 	return errors
 }

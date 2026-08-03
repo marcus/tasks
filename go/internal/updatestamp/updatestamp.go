@@ -1,7 +1,11 @@
-// Package updatestamp carries the device half of the per-record last-write
-// stamp. It is the Go counterpart of lib/tasks/update_stamp.rb, ported here
-// only as far as the read path and the probe need it: the device slug, which
-// is one of the two consumers TASKS_PIN_HOSTNAME has to reach.
+// Package updatestamp is the per-record last-write stamp: one sortable token
+// that keeps the timestamp and the device tiebreaker from ever drifting apart.
+// It is the Go counterpart of lib/tasks/update_stamp.rb.
+//
+// The whole value object lives here — validation, the ordering key, comparison,
+// and formatting — because the stamp is what decides last-write-wins when two
+// devices edited the same record. A second spelling of "which stamp is newer"
+// living in the merge path would be a second answer waiting to diverge.
 package updatestamp
 
 import (
@@ -57,4 +61,57 @@ func Valid(value string) bool {
 	}
 	_, err := time.Parse("2006-01-02T15:04:05Z", match[1])
 	return err == nil
+}
+
+// Key is the ordering key of a stamp: its timestamp half and its device half,
+// or ok=false when the value is not a stamp at all. The two are compared in
+// that order, which is why the stored spelling is one token — sorting the file
+// by `updated` and sorting it by (timestamp, device) are the same sort.
+func Key(value string) (timestamp, device string, ok bool) {
+	if !Valid(value) {
+		return "", "", false
+	}
+	timestamp, device, _ = strings.Cut(value, "#")
+	return timestamp, device, true
+}
+
+// Compare orders two stamps the way UpdateStamp.compare does: -1, 0, or 1.
+//
+// An unparseable or absent stamp sorts BEFORE every real one, and two of them
+// compare equal. That is the rule last-write-wins depends on: a record whose
+// stamp a hand edit destroyed must never win against a record that carries a
+// real one, and it must not oscillate when neither side has one.
+func Compare(left, right string) int {
+	leftTime, leftDevice, leftOK := Key(left)
+	rightTime, rightDevice, rightOK := Key(right)
+	switch {
+	case !leftOK && !rightOK:
+		return 0
+	case !leftOK:
+		return -1
+	case !rightOK:
+		return 1
+	}
+	if leftTime != rightTime {
+		return strings.Compare(leftTime, rightTime)
+	}
+	return strings.Compare(leftDevice, rightDevice)
+}
+
+// Max is the later of two stamps, preferring the LEFT one on a tie — the same
+// bias Ruby's `compare(left, right).negative? ? right : left` has, so a merge
+// that finds two equal stamps keeps the value it already held.
+func Max(left, right string) string {
+	if Compare(left, right) < 0 {
+		return right
+	}
+	return left
+}
+
+// Format renders the stamp a writer stores: the instant in UTC, then the device
+// slug. Ruby additionally raises on an empty slug; Slug cannot return one (it
+// falls back to "device"), so the guard is unreachable in both languages and is
+// not reproduced as an error return.
+func Format(instant time.Time, device string) string {
+	return instant.UTC().Format("2006-01-02T15:04:05Z") + "#" + Slug(device)
 }
