@@ -97,8 +97,22 @@ func TestHumanizeAndNextDate(t *testing.T) {
 	if got := Humanize(" \t "); got != nil {
 		t.Fatalf("Humanize(blank) = %q, want nil", *got)
 	}
-	if got, want := Humanize("w:mon"), "w:mon"; got == nil || *got != want {
-		t.Fatalf("Humanize(non-interval) = %v, want %q", got, want)
+	// Calendar schedules now render through the same one renderer, so a value
+	// that used to echo verbatim is glossed. An UNPARSEABLE value still echoes.
+	for _, tc := range []struct{ cookie, want string }{
+		{"w:mon", "every Monday"},
+		{"w:mon,wed", "every Mon, Wed"},
+		{"m:15", "monthly on the 15th"},
+		{"m:last,2tue", "monthly on the last day and 2nd Tuesday"},
+		{"y:07-04", "yearly on July 4"},
+		{"y:11:3thu", "yearly on the 3rd Thursday of November"},
+		{"2w:sat", "every 2 weeks on Saturday"},
+		{"+w:fri", "every Friday (one hop)"},
+		{"w:monday", "w:monday"},
+	} {
+		if got := Humanize(tc.cookie); got == nil || *got != tc.want {
+			t.Fatalf("Humanize(%q) = %v, want %q", tc.cookie, got, tc.want)
+		}
 	}
 	from := mustDate("2026-01-31")
 	if got, err := NextDate("+1m", from, mustDate("2026-02-01")); err != nil || !got.Equal(mustDate("2026-02-28")) {

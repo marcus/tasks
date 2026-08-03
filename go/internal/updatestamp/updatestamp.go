@@ -5,7 +5,9 @@
 package updatestamp
 
 import (
+	"regexp"
 	"strings"
+	"time"
 
 	"tasks-go/internal/determinism"
 )
@@ -40,4 +42,19 @@ func Device(env determinism.Env) string {
 		return Slug(override)
 	}
 	return Slug(determinism.Hostname(env)())
+}
+
+// valuePattern is UpdateStamp::VALUE_RE: one sortable token that keeps the
+// timestamp and the device tiebreaker from drifting apart.
+var valuePattern = regexp.MustCompile(`\A(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)#([a-z0-9]+)\z`)
+
+// Valid reports whether a stored `updated` value is a well-formed stamp: an
+// RFC3339 UTC timestamp naming a real instant, then the device slug.
+func Valid(value string) bool {
+	match := valuePattern.FindStringSubmatch(value)
+	if match == nil {
+		return false
+	}
+	_, err := time.Parse("2006-01-02T15:04:05Z", match[1])
+	return err == nil
 }

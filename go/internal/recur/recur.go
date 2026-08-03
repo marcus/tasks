@@ -73,8 +73,14 @@ func Parse(input, defaultPrefix string) Result {
 	return Result{Error: "unrecognized schedule: " + rubyInspect(raw)}
 }
 
-// Cookie reports whether value is an exactly canonical interval cookie.
-func Cookie(value string) bool { return cookie.MatchString(rubyStrip(value)) }
+// Cookie reports whether value is already a STORED recurrence value: an
+// interval cookie or a calendar schedule, each in its exact canonical
+// spelling. Both halves matter — a store holds one spelling per schedule, so
+// "w:monday" is readable input and not a stored value.
+func Cookie(value string) bool {
+	stripped := rubyStrip(value)
+	return cookie.MatchString(stripped) || Calendar(stripped)
+}
 
 // Humanize renders an interval cookie as Ruby does. It returns nil for blank
 // input and the trimmed value when it is not an interval cookie, allowing the
@@ -86,6 +92,10 @@ func Humanize(value string) *string {
 	}
 	match := cookie.FindStringSubmatch(s)
 	if match == nil {
+		if parsed, ok := parseSchedule(s); ok {
+			rendered := humanizeCalendar(parsed)
+			return &rendered
+		}
 		return &s
 	}
 	n, _ := new(big.Int).SetString(match[2], 10)

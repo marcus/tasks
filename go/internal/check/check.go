@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"tasks-go/internal/record"
 )
@@ -47,8 +48,13 @@ func Check(path string) Result {
 	return CheckText(input)
 }
 
-// CheckText validates parsed metadata and IDs while retaining parser errors.
+// CheckText validates a whole file's bytes. Invalid encoding short-circuits
+// everything else: the file cannot be split into records at all, so reporting
+// a missing meta record beside it would describe a file nobody could read.
 func CheckText(input []byte) Result {
+	if !utf8.Valid(input) {
+		return Result{Errors: []Entry{{Line: 0, Message: "file is not valid UTF-8"}}, Warnings: []Entry{}}
+	}
 	return CheckParsed(record.Parse(input))
 }
 
@@ -61,31 +67,37 @@ func CheckParsed(parsed record.Result) Result {
 	for _, parseErr := range parsed.Errors {
 		errors = append(errors, Entry{Line: parseErr.Line, Message: parseErr.Message})
 	}
+	warnings := make([]Entry, 0)
 
 	checkMeta(parsed.Records, &errors)
-	duplicates := map[string][]int{}
-	for _, parsedRecord := range parsed.Records {
-		if stringField(parsedRecord, "type") == "meta" {
-			if parsedRecord.Line != 1 {
-				errors = append(errors, Entry{Line: parsedRecord.Line, Message: "unexpected meta record (only valid on line 1)"})
-			}
+	duplicates := &duplicateIndex{lines: map[string][]int{}}
+	validate(parsed.Records, &errors, &warnings, duplicates)
+	for _, id := range duplicates.order {
+		lines := duplicates.lines[id]
+		if len(lines) < 2 {
 			continue
 		}
-		// Ruby short-circuits records outside its declared type vocabulary
-		// before validating their IDs. The shared report will eventually add
-		// the unknown-type diagnostic; this slice must not add an ID error
-		// that Ruby never emits alongside it.
-		if typeName := stringField(parsedRecord, "type"); typeName == "section" || typeName == "task" {
-			checkID(parsedRecord, &errors, duplicates)
-		}
-	}
-	for id, lines := range duplicates {
-		if len(lines) > 1 {
-			errors = append(errors, Entry{Line: lines[len(lines)-1], Message: fmt.Sprintf("duplicate id %q (lines %s) — id refs will be wrong", id, joinLines(lines))})
-		}
+		errors = append(errors, Entry{Line: lines[len(lines)-1],
+			Message: fmt.Sprintf("duplicate id %s (lines %s) — id refs will be wrong", rubyInspectString(id), joinLines(lines))})
 	}
 	sortEntries(errors)
-	return Result{Errors: errors, Warnings: []Entry{}}
+	sortEntries(warnings)
+	return Result{Errors: errors, Warnings: warnings}
+}
+
+// duplicateIndex is id → the lines it appeared on, in first-seen order. Ruby
+// walks its Hash in insertion order when it emits these diagnostics, and Go map
+// iteration would reorder two ids duplicated on the same line.
+type duplicateIndex struct {
+	lines map[string][]int
+	order []string
+}
+
+func (d *duplicateIndex) add(id string, line int) {
+	if _, seen := d.lines[id]; !seen {
+		d.order = append(d.order, id)
+	}
+	d.lines[id] = append(d.lines[id], line)
 }
 
 // CheckStore validates both stores and rejects an ID visible in each file.
@@ -169,7 +181,7 @@ func checkMeta(records []record.Record, errors *[]Entry) {
 	}
 }
 
-func checkID(parsed record.Record, errors *[]Entry, duplicates map[string][]int) {
+func checkID(parsed record.Record, errors *[]Entry, duplicates *duplicateIndex) {
 	raw := rawField(parsed, "id")
 	if raw == nil || string(raw) == `""` || string(raw) == "null" {
 		*errors = append(*errors, Entry{Line: parsed.Line, Message: "record missing id"})
@@ -180,7 +192,7 @@ func checkID(parsed record.Record, errors *[]Entry, duplicates map[string][]int)
 		*errors = append(*errors, Entry{Line: parsed.Line, Message: fmt.Sprintf("malformed id %s (expected 8 hex chars)", rubyInspect(raw))})
 		return
 	}
-	duplicates[id] = append(duplicates[id], parsed.Line)
+	duplicates.add(id, parsed.Line)
 }
 
 func crossFileDuplicates(livePath, archivePath string) []Entry {

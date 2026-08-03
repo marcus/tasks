@@ -319,9 +319,15 @@ var newerUnicodeLower = map[rune]rune{
 	0x16EB8: 0x16ED3, // U+16EB8 → U+16ED3
 }
 
-func (filter Filter) TextQuery() string {
-	joined := strings.Join(filter.text, " ")
-	folded := strings.ReplaceAll(joined, dottedCapitalI, dottedCapitalIFolded)
+func (filter Filter) TextQuery() string { return Downcase(strings.Join(filter.text, " ")) }
+
+// Downcase is Ruby's String#downcase, which strings.ToLower alone is not: it
+// applies the one unconditional multi-character mapping and the case pairs
+// added in Unicode versions newer than Go's tables. Every surface that folds
+// case for comparison — the text filter, the title index, ref resolution — goes
+// through here, so there is one place for that difference to live.
+func Downcase(value string) string {
+	folded := strings.ReplaceAll(value, dottedCapitalI, dottedCapitalIFolded)
 	folded = strings.Map(func(candidate rune) rune {
 		if lowered, ok := newerUnicodeLower[candidate]; ok {
 			return lowered

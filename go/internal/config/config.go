@@ -63,6 +63,7 @@ type Paths struct {
 	HostContext             string
 	HostContextSource       string
 	HostContexts            map[string]string
+	PromptFacts             map[string]bool
 	Sources                 map[string]string
 	ConfigFile              string
 }
@@ -108,6 +109,7 @@ func Resolve(defaultDir string, env determinism.Env, hostname func() string) Pat
 		Links:     conf.links, LinkSystems: conf.linkSystems,
 		Hostname: detectedHostname, HostContext: hostContext,
 		HostContextSource: hostContextSource, HostContexts: conf.hostContexts,
+		PromptFacts: conf.promptFacts,
 		Sources: map[string]string{
 			"org": orgSource, "archive": archiveSource, "memory": memorySource,
 			"urgent_days": urgentSource, "max_depth": maxDepthSource, "theme": themeSource,
