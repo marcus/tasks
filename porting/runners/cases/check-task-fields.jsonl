@@ -1,0 +1,19 @@
+# Ruby oracle corpus for the check-task-fields slice.
+# Fixtures are copied by the runner; no live task store is read or modified.
+# Each fixture is observed twice: once on the human surface (the summary line
+# and the exit status) and once with --json (the (line, message) entries the
+# port's differential comparator pairs against).
+{"case_id":"check-task-fields-wrong-types","fixture":"malformed/wrong-types","argv":["check"],"notes":"the field-rule corpus: state, priority, title, dates, tags, recur, closed-on-open, update stamp"}
+{"case_id":"check-task-fields-wrong-types-json","fixture":"malformed/wrong-types","argv":["check","--json"],"notes":"same store, structured entries"}
+{"case_id":"check-task-fields-recur-non-canonical","fixture":"malformed/recur-non-canonical","argv":["check"],"notes":"twenty-seven rejected recur values collapsing to one message shape"}
+{"case_id":"check-task-fields-recur-non-canonical-json","fixture":"malformed/recur-non-canonical","argv":["check","--json"],"notes":"same store, structured entries"}
+{"case_id":"check-task-fields-recur-calendar-grammar","fixture":"valid/recur-calendar-grammar","argv":["check"],"notes":"the accept side of the same guard; twenty canonical forms"}
+{"case_id":"check-task-fields-recur-calendar-grammar-json","fixture":"valid/recur-calendar-grammar","argv":["check","--json"],"notes":"same store, structured entries"}
+{"case_id":"check-task-fields-full-field-matrix","fixture":"valid/full-field-matrix","argv":["check"],"notes":"every field populated and every state legal; no diagnostic at all"}
+{"case_id":"check-task-fields-full-field-matrix-json","fixture":"valid/full-field-matrix","argv":["check","--json"],"notes":"same store, structured entries"}
+{"case_id":"check-task-fields-duplicate-open-titles","fixture":"malformed/duplicate-open-titles","argv":["check"],"notes":"the warnings channel: a hazard that still exits 0"}
+{"case_id":"check-task-fields-duplicate-open-titles-json","fixture":"malformed/duplicate-open-titles","argv":["check","--json"],"notes":"same store, structured entries"}
+{"case_id":"check-task-fields-duplicate-closed-titles","fixture":"valid/duplicate-closed-titles","argv":["check"],"notes":"closed and proposed titles do not participate; a group of one open carrier is silent"}
+{"case_id":"check-task-fields-duplicate-closed-titles-json","fixture":"valid/duplicate-closed-titles","argv":["check","--json"],"notes":"same store, structured entries"}
+{"case_id":"check-task-fields-unknown-keys","fixture":"compat/forward-compat-unknown-keys","argv":["check"],"notes":"unknown top-level and delegation keys warn and are preserved"}
+{"case_id":"check-task-fields-unknown-keys-json","fixture":"compat/forward-compat-unknown-keys","argv":["check","--json"],"notes":"same store, structured entries"}

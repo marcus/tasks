@@ -131,6 +131,7 @@ where it differs.
 | `link-corpus` | every link construct: org labelled/unlabelled, punctuation and paren trimming, dedupe order, classification and host fallback | 0 — `ok — 18 tasks parsed` |
 | `deferred-tags` | the `defer` hold: own, inherited two levels, and closed/proposed/archived carriers; the scope-dependent `--deferred` | 0 — `ok — 9 tasks parsed` (`--all-files`: 0 — `10 records`) |
 | `project-rollup-edges` | `held_count` over own and inherited holds, plus the empty / done-only / sub-section / held-only-area exclusion edges | 0 — `ok — 13 tasks parsed` |
+| `duplicate-closed-titles` | the negative half of the duplicate-title rule: closed and proposed carriers, and a group of one open carrier | 0 — `ok — 6 tasks parsed`, no warning |
 
 ### `compat/`
 

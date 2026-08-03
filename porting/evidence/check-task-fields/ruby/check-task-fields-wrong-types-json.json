@@ -1,0 +1,417 @@
+{
+  "schema_version": 2,
+  "observation_id": "obs_84115988-da6d-40b8-8c45-c3be6f662bdf",
+  "case_id": "check-task-fields-wrong-types-json",
+  "implementation": {
+    "name": "ruby",
+    "version": "b4be7a00f5432242b0c3ea24447568974b9627fd-dirty",
+    "runtime": "ruby 4.0.6"
+  },
+  "fixture": {
+    "id": "malformed/wrong-types",
+    "class": "malformed",
+    "root_sha256": "089eb2f91041a621b7f064c3965b75e6a1767bcc3fbb2aa8ff2d23829001862f",
+    "copy_root": "/tmp/tasks-conformance/check-task-fields-wrong-types-json"
+  },
+  "invocation": {
+    "surface": "cli",
+    "argv": [
+      "check",
+      "--json"
+    ],
+    "stdin": {
+      "provided": false,
+      "bytes_base64": ""
+    },
+    "cwd": ".",
+    "env": [
+      {
+        "name": "COLORTERM",
+        "value": null
+      },
+      {
+        "name": "COLUMNS",
+        "value": "100"
+      },
+      {
+        "name": "HOME",
+        "value": "/tmp/tasks-conformance/check-task-fields-wrong-types-json"
+      },
+      {
+        "name": "LANG",
+        "value": "en_US.UTF-8"
+      },
+      {
+        "name": "LC_ALL",
+        "value": "en_US.UTF-8"
+      },
+      {
+        "name": "LINES",
+        "value": "40"
+      },
+      {
+        "name": "NO_COLOR",
+        "value": null
+      },
+      {
+        "name": "PATH",
+        "value": "/usr/bin:/bin:/usr/sbin:/sbin"
+      },
+      {
+        "name": "TASKS_ARCHIVE",
+        "value": null
+      },
+      {
+        "name": "TASKS_DEVICE",
+        "value": "fixture"
+      },
+      {
+        "name": "TASKS_DIR",
+        "value": "/tmp/tasks-conformance/check-task-fields-wrong-types-json"
+      },
+      {
+        "name": "TASKS_FILE",
+        "value": null
+      },
+      {
+        "name": "TASKS_MEMORY",
+        "value": null
+      },
+      {
+        "name": "TASKS_PIN_COALESCE_SCOPE",
+        "value": "pinned-scope"
+      },
+      {
+        "name": "TASKS_PIN_DELEGATION_KEYS",
+        "value": "cccc000000000001"
+      },
+      {
+        "name": "TASKS_PIN_HOSTNAME",
+        "value": "fixture-host"
+      },
+      {
+        "name": "TASKS_PIN_IDS",
+        "value": "bbbb0001"
+      },
+      {
+        "name": "TASKS_PIN_NOW",
+        "value": "2026-03-14T15:09:26Z"
+      },
+      {
+        "name": "TASKS_TEST_TODAY_SEQUENCE",
+        "value": null
+      },
+      {
+        "name": "TASKS_THEME",
+        "value": null
+      },
+      {
+        "name": "TASKS_TIMEZONE",
+        "value": "UTC"
+      },
+      {
+        "name": "TERM",
+        "value": null
+      },
+      {
+        "name": "TZ",
+        "value": "UTC"
+      },
+      {
+        "name": "XDG_CONFIG_HOME",
+        "value": "/tmp/tasks-conformance/check-task-fields-wrong-types-json/.config"
+      },
+      {
+        "name": "XDG_STATE_HOME",
+        "value": "/tmp/tasks-conformance/check-task-fields-wrong-types-json/.state"
+      }
+    ],
+    "pins": [
+      {
+        "name": "COLORTERM",
+        "applied": false,
+        "value": null
+      },
+      {
+        "name": "COLUMNS",
+        "applied": true,
+        "value": "100"
+      },
+      {
+        "name": "LANG",
+        "applied": true,
+        "value": "UTF-8"
+      },
+      {
+        "name": "LC_ALL",
+        "applied": true,
+        "value": "UTF-8"
+      },
+      {
+        "name": "LINES",
+        "applied": true,
+        "value": "40"
+      },
+      {
+        "name": "NO_COLOR",
+        "applied": false,
+        "value": null
+      },
+      {
+        "name": "TASKS_DEVICE",
+        "applied": true,
+        "value": "fixture"
+      },
+      {
+        "name": "TASKS_PIN_COALESCE_SCOPE",
+        "applied": true,
+        "value": "pinned-scope"
+      },
+      {
+        "name": "TASKS_PIN_DELEGATION_KEYS",
+        "applied": true,
+        "value": "cccc000000000001"
+      },
+      {
+        "name": "TASKS_PIN_HOSTNAME",
+        "applied": true,
+        "value": "fixture-host"
+      },
+      {
+        "name": "TASKS_PIN_IDS",
+        "applied": true,
+        "value": "bbbb0001"
+      },
+      {
+        "name": "TASKS_PIN_NOW",
+        "applied": true,
+        "value": "2026-03-14T15:09:26Z"
+      },
+      {
+        "name": "TASKS_TEST_TODAY_SEQUENCE",
+        "applied": false,
+        "value": null
+      },
+      {
+        "name": "TASKS_THEME",
+        "applied": false,
+        "value": null
+      },
+      {
+        "name": "TASKS_TIMEZONE",
+        "applied": true,
+        "value": "UTC"
+      },
+      {
+        "name": "TERM",
+        "applied": false,
+        "value": null
+      },
+      {
+        "name": "TZ",
+        "applied": true,
+        "value": "UTC"
+      }
+    ],
+    "tty": {
+      "stdin": false,
+      "stdout": false,
+      "stderr": false
+    },
+    "timeout_ms": 60000
+  },
+  "process": {
+    "exit_status": 1,
+    "signal": null,
+    "timed_out": false,
+    "stdout": {
+      "sha256": "bdff5b0cd34c0acb9d14e49e577bb8a5053a9461e1cb99d7cc9d6c49f6ca70ba",
+      "sha256_normalized": "bdff5b0cd34c0acb9d14e49e577bb8a5053a9461e1cb99d7cc9d6c49f6ca70ba",
+      "size_bytes": 1695,
+      "valid_utf8": true,
+      "bytes_base64": "eyJvayI6ZmFsc2UsImVycm9ycyI6W3sibGluZSI6MywibWVzc2FnZSI6Im1hbGZvcm1lZCBpZCAxMjM0NTY3OCAoZXhwZWN0ZWQgOCBoZXggY2hhcnMpIn0seyJsaW5lIjo0LCJtZXNzYWdlIjoiaW52YWxpZCBzdGF0ZSBcIlNUQVJURURcIiAoZXhwZWN0ZWQgUFJPUE9TRUQvSU5CT1gvVE9ETy9ORVhUL1dBSVRJTkcvRE9ORS9DQU5DRUxMRUQpIn0seyJsaW5lIjo1LCJtZXNzYWdlIjoiaW52YWxpZCBwcmlvcml0eSBcIlpcIiAoZXhwZWN0ZWQgQSwgQiwgb3IgQykifSx7ImxpbmUiOjYsIm1lc3NhZ2UiOiJ0aXRsZSBtdXN0IGJlIGEgc3RyaW5nIn0seyJsaW5lIjo3LCJtZXNzYWdlIjoidGFncyBtdXN0IGJlIGFuIGFycmF5In0seyJsaW5lIjo4LCJtZXNzYWdlIjoidGFncyBtdXN0IGFsbCBiZSBzdHJpbmdzIn0seyJsaW5lIjo5LCJtZXNzYWdlIjoic2NoZWR1bGVkIDIwMjYtMDItMzAgaXMgbm90IGEgcmVhbCBkYXRlIn0seyJsaW5lIjoxMCwibWVzc2FnZSI6ImRlYWRsaW5lIFwiMTQvMDYvMjAyNlwiIGlzIG5vdCBhIFlZWVktTU0tREQgZGF0ZSJ9LHsibGluZSI6MTEsIm1lc3NhZ2UiOiJjbG9zZWQgZGF0ZSBvbiBhbiBvcGVuIHRhc2sgKFRPRE8pIn0seyJsaW5lIjoxMiwibWVzc2FnZSI6ImludmFsaWQgcmVjdXIgY29va2llIFwiZXZlcnkgd2Vla1wiIChleHBlY3RlZCBlLmcuIC4rMXcsICsrMW0sICsyZCwgdzptb24sIG06MTUsIHk6MDctMDQpIn0seyJsaW5lIjoxMywibWVzc2FnZSI6ImxlYWQgXCIzd1wiIHdpdGggbm8gc2NoZWR1bGVkIGRhdGUgb3IgZGVhZGxpbmUgdG8gaGlkZSBiZWZvcmUifSx7ImxpbmUiOjE0LCJtZXNzYWdlIjoibGVhZCBcIjJkXCIgYmVzaWRlIGJvdGggYSBzY2hlZHVsZWQgZGF0ZSBhbmQgYSBkZWFkbGluZSAodGhlIHR3byBkYXRlcyBhbHJlYWR5IGV4cHJlc3MgdGhhdCB3aW5kb3cpIn0seyJsaW5lIjoxNSwibWVzc2FnZSI6InNjaGVkdWxlZF90aW1lIHJlcXVpcmVzIHNjaGVkdWxlZCJ9LHsibGluZSI6MTYsIm1lc3NhZ2UiOiJzY2hlZHVsZWRfdGltZS5sb2NhbCBtdXN0IGJlIEhIOk1NIn0seyJsaW5lIjoxNywibWVzc2FnZSI6InVwZGF0ZWQgXCIyMDI2LTA2LTAxVDEwOjAwOjAwWlwiIGlzIG5vdCBhbiBSRkMzMzM5IFVUQyB0aW1lc3RhbXAgd2l0aCBkZXZpY2Ugc2x1ZyJ9LHsibGluZSI6MTgsIm1lc3NhZ2UiOiJkZWxlZ2F0aW9uIG9uIGEgcHJvcG9zZWQgdGFzayAoUFJPUE9TRUQpIn0seyJsaW5lIjoxOCwibWVzc2FnZSI6ImRlbGVnYXRpb24ubW9kZSBuaWwgbXVzdCBiZSBvbmUgb2YgcmVmaW5lL3Jlc2VhcmNoL2ltcGxlbWVudCJ9LHsibGluZSI6MTksIm1lc3NhZ2UiOiJzZWN0aW9uIG11c3Qgbm90IGNhcnJ5IFwic3RhdGVcIiJ9LHsibGluZSI6MTksIm1lc3NhZ2UiOiJzZWN0aW9uIG11c3Qgbm90IGNhcnJ5IFwiZGVhZGxpbmVcIiJ9LHsibGluZSI6MTksIm1lc3NhZ2UiOiJzZWN0aW9uIG11c3Qgbm90IGNhcnJ5IFwidGFnc1wiIn0seyJsaW5lIjoyMCwibWVzc2FnZSI6Im1hbGZvcm1lZCBpZCBcInNob3J0XCIgKGV4cGVjdGVkIDggaGV4IGNoYXJzKSJ9LHsibGluZSI6MjEsIm1lc3NhZ2UiOiJyZWNvcmQgbWlzc2luZyBpZCJ9LHsibGluZSI6MjIsIm1lc3NhZ2UiOiJ0YXNrIGhhcyBubyB0aXRsZSJ9LHsibGluZSI6MjMsIm1lc3NhZ2UiOiJ1bmtub3duIHJlY29yZCB0eXBlIFwid2lkZ2V0XCIifV0sIndhcm5pbmdzIjpbXX0K",
+      "truncated_at_bytes": null,
+      "text": "{\"ok\":false,\"errors\":[{\"line\":3,\"message\":\"malformed id 12345678 (expected 8 hex chars)\"},{\"line\":4,\"message\":\"invalid state \\\"STARTED\\\" (expected PROPOSED/INBOX/TODO/NEXT/WAITING/DONE/CANCELLED)\"},{\"line\":5,\"message\":\"invalid priority \\\"Z\\\" (expected A, B, or C)\"},{\"line\":6,\"message\":\"title must be a string\"},{\"line\":7,\"message\":\"tags must be an array\"},{\"line\":8,\"message\":\"tags must all be strings\"},{\"line\":9,\"message\":\"scheduled 2026-02-30 is not a real date\"},{\"line\":10,\"message\":\"deadline \\\"14/06/2026\\\" is not a YYYY-MM-DD date\"},{\"line\":11,\"message\":\"closed date on an open task (TODO)\"},{\"line\":12,\"message\":\"invalid recur cookie \\\"every week\\\" (expected e.g. .+1w, ++1m, +2d, w:mon, m:15, y:07-04)\"},{\"line\":13,\"message\":\"lead \\\"3w\\\" with no scheduled date or deadline to hide before\"},{\"line\":14,\"message\":\"lead \\\"2d\\\" beside both a scheduled date and a deadline (the two dates already express that window)\"},{\"line\":15,\"message\":\"scheduled_time requires scheduled\"},{\"line\":16,\"message\":\"scheduled_time.local must be HH:MM\"},{\"line\":17,\"message\":\"updated \\\"2026-06-01T10:00:00Z\\\" is not an RFC3339 UTC timestamp with device slug\"},{\"line\":18,\"message\":\"delegation on a proposed task (PROPOSED)\"},{\"line\":18,\"message\":\"delegation.mode nil must be one of refine/research/implement\"},{\"line\":19,\"message\":\"section must not carry \\\"state\\\"\"},{\"line\":19,\"message\":\"section must not carry \\\"deadline\\\"\"},{\"line\":19,\"message\":\"section must not carry \\\"tags\\\"\"},{\"line\":20,\"message\":\"malformed id \\\"short\\\" (expected 8 hex chars)\"},{\"line\":21,\"message\":\"record missing id\"},{\"line\":22,\"message\":\"task has no title\"},{\"line\":23,\"message\":\"unknown record type \\\"widget\\\"\"}],\"warnings\":[]}\n"
+    },
+    "stderr": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sha256_normalized": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "valid_utf8": true,
+      "bytes_base64": "",
+      "truncated_at_bytes": null,
+      "text": ""
+    }
+  },
+  "files": {
+    "mutated": false,
+    "before": [
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".config",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".config/tasks",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".state",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "store",
+        "kind": "file",
+        "path": "tasks.jsonl",
+        "present": true,
+        "sha256": "ee83f45d0100570cf14db4cc2591777561d216e0ff981229044bc9720e5a8f32",
+        "size_bytes": 2604,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImMxMDAwMDAxIiwidGl0bGUiOiJOZXh0IEFjdGlvbnMifQp7InR5cGUiOiJ0YXNrIiwiaWQiOjEyMzQ1Njc4LCJwYXJlbnQiOiJjMTAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiSW50ZWdlciBpZCJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImMxMDAwMDAzIiwicGFyZW50IjoiYzEwMDAwMDEiLCJzdGF0ZSI6IlNUQVJURUQiLCJ0aXRsZSI6IlVua25vd24gc3RhdGUifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMTAwMDAwNCIsInBhcmVudCI6ImMxMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwicHJpb3JpdHkiOiJaIiwidGl0bGUiOiJQcmlvcml0eSBvdXRzaWRlIEEvQi9DIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiYzEwMDAwMDUiLCJwYXJlbnQiOiJjMTAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjo0Mn0KeyJ0eXBlIjoidGFzayIsImlkIjoiYzEwMDAwMDYiLCJwYXJlbnQiOiJjMTAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiVGFncyBhcyBhIHN0cmluZyIsInRhZ3MiOiJAaG9tZSJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImMxMDAwMDA3IiwicGFyZW50IjoiYzEwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IlRhZ3MgY29udGFpbmluZyBhIG51bWJlciIsInRhZ3MiOlsiQGhvbWUiLDddfQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMTAwMDAwOCIsInBhcmVudCI6ImMxMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJJbXBvc3NpYmxlIGRhdGUiLCJzY2hlZHVsZWQiOiIyMDI2LTAyLTMwIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiYzEwMDAwMDkiLCJwYXJlbnQiOiJjMTAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiRGF0ZSBpbiB0aGUgd3Jvbmcgc2hhcGUiLCJkZWFkbGluZSI6IjE0LzA2LzIwMjYifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMTAwMDAwYSIsInBhcmVudCI6ImMxMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJDbG9zZWQgZGF0ZSBvbiBhbiBvcGVuIHRhc2siLCJjbG9zZWQiOiIyMDI2LTA2LTAxIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiYzEwMDAwMGIiLCJwYXJlbnQiOiJjMTAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiVW5wYXJzZWFibGUgcmVjdXIgY29va2llIiwic2NoZWR1bGVkIjoiMjAyNi0wNi0xMCIsInJlY3VyIjoiZXZlcnkgd2VlayJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImMxMDAwMDBjIiwicGFyZW50IjoiYzEwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IkxlYWQgd2l0aCBub3RoaW5nIHRvIGhpZGUgYmVmb3JlIiwibGVhZCI6IjN3In0KeyJ0eXBlIjoidGFzayIsImlkIjoiYzEwMDAwMGQiLCJwYXJlbnQiOiJjMTAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiTGVhZCBiZXNpZGUgYm90aCBkYXRlcyIsInNjaGVkdWxlZCI6IjIwMjYtMDYtMTAiLCJkZWFkbGluZSI6IjIwMjYtMDYtMjAiLCJsZWFkIjoiMmQifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMTAwMDAwZSIsInBhcmVudCI6ImMxMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJUaW1lIG1ldGFkYXRhIHdpdGggbm8gZGF0ZSIsInNjaGVkdWxlZF90aW1lIjp7ImxvY2FsIjoiMDk6MDAifX0KeyJ0eXBlIjoidGFzayIsImlkIjoiYzEwMDAwMGYiLCJwYXJlbnQiOiJjMTAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiVGltZSBtZXRhZGF0YSBpbiB0aGUgd3Jvbmcgc2hhcGUiLCJzY2hlZHVsZWQiOiIyMDI2LTA2LTEwIiwic2NoZWR1bGVkX3RpbWUiOnsibG9jYWwiOiI5YW0ifX0KeyJ0eXBlIjoidGFzayIsImlkIjoiYzEwMDAwMTAiLCJwYXJlbnQiOiJjMTAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiVXBkYXRlIHN0YW1wIHdpdGhvdXQgYSBkZXZpY2Ugc2x1ZyIsInVwZGF0ZWQiOiIyMDI2LTA2LTAxVDEwOjAwOjAwWiJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImMxMDAwMDExIiwicGFyZW50IjoiYzEwMDAwMDEiLCJzdGF0ZSI6IlBST1BPU0VEIiwidGl0bGUiOiJEZWxlZ2F0aW9uIG9uIGEgcHJvcG9zZWQgdGFzayIsImRlbGVnYXRpb24iOnsia2luZCI6ImFnZW50Iiwic3RhdHVzIjoicmVhZHkiLCJhdCI6IjIwMjYtMDYtMDFUMTA6MDA6MDBaIn19CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImMxMDAwMDEyIiwicGFyZW50IjoiYzEwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IlNlY3Rpb24gY2FycnlpbmcgdGFzayBmaWVsZHMiLCJ0YWdzIjpbIkBob21lIl0sImRlYWRsaW5lIjoiMjAyNi0wNi0zMCJ9CnsidHlwZSI6InRhc2siLCJpZCI6InNob3J0IiwicGFyZW50IjoiYzEwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IklkIHRvbyBzaG9ydCJ9CnsidHlwZSI6InRhc2siLCJwYXJlbnQiOiJjMTAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiTm8gaWQgYXQgYWxsIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiYzEwMDAwMTMiLCJwYXJlbnQiOiJjMTAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiICAgIn0KeyJ0eXBlIjoid2lkZ2V0IiwiaWQiOiJjMTAwMDAxNCIsInBhcmVudCI6ImMxMDAwMDAxIiwidGl0bGUiOiJVbmtub3duIHJlY29yZCB0eXBlIn0K",
+        "line_count": 23,
+        "symlink_target": null
+      }
+    ],
+    "after": [
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".config",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".config/tasks",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".state",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "store",
+        "kind": "file",
+        "path": "tasks.jsonl",
+        "present": true,
+        "sha256": "ee83f45d0100570cf14db4cc2591777561d216e0ff981229044bc9720e5a8f32",
+        "size_bytes": 2604,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImMxMDAwMDAxIiwidGl0bGUiOiJOZXh0IEFjdGlvbnMifQp7InR5cGUiOiJ0YXNrIiwiaWQiOjEyMzQ1Njc4LCJwYXJlbnQiOiJjMTAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiSW50ZWdlciBpZCJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImMxMDAwMDAzIiwicGFyZW50IjoiYzEwMDAwMDEiLCJzdGF0ZSI6IlNUQVJURUQiLCJ0aXRsZSI6IlVua25vd24gc3RhdGUifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMTAwMDAwNCIsInBhcmVudCI6ImMxMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwicHJpb3JpdHkiOiJaIiwidGl0bGUiOiJQcmlvcml0eSBvdXRzaWRlIEEvQi9DIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiYzEwMDAwMDUiLCJwYXJlbnQiOiJjMTAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjo0Mn0KeyJ0eXBlIjoidGFzayIsImlkIjoiYzEwMDAwMDYiLCJwYXJlbnQiOiJjMTAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiVGFncyBhcyBhIHN0cmluZyIsInRhZ3MiOiJAaG9tZSJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImMxMDAwMDA3IiwicGFyZW50IjoiYzEwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IlRhZ3MgY29udGFpbmluZyBhIG51bWJlciIsInRhZ3MiOlsiQGhvbWUiLDddfQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMTAwMDAwOCIsInBhcmVudCI6ImMxMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJJbXBvc3NpYmxlIGRhdGUiLCJzY2hlZHVsZWQiOiIyMDI2LTAyLTMwIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiYzEwMDAwMDkiLCJwYXJlbnQiOiJjMTAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiRGF0ZSBpbiB0aGUgd3Jvbmcgc2hhcGUiLCJkZWFkbGluZSI6IjE0LzA2LzIwMjYifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMTAwMDAwYSIsInBhcmVudCI6ImMxMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJDbG9zZWQgZGF0ZSBvbiBhbiBvcGVuIHRhc2siLCJjbG9zZWQiOiIyMDI2LTA2LTAxIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiYzEwMDAwMGIiLCJwYXJlbnQiOiJjMTAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiVW5wYXJzZWFibGUgcmVjdXIgY29va2llIiwic2NoZWR1bGVkIjoiMjAyNi0wNi0xMCIsInJlY3VyIjoiZXZlcnkgd2VlayJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImMxMDAwMDBjIiwicGFyZW50IjoiYzEwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IkxlYWQgd2l0aCBub3RoaW5nIHRvIGhpZGUgYmVmb3JlIiwibGVhZCI6IjN3In0KeyJ0eXBlIjoidGFzayIsImlkIjoiYzEwMDAwMGQiLCJwYXJlbnQiOiJjMTAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiTGVhZCBiZXNpZGUgYm90aCBkYXRlcyIsInNjaGVkdWxlZCI6IjIwMjYtMDYtMTAiLCJkZWFkbGluZSI6IjIwMjYtMDYtMjAiLCJsZWFkIjoiMmQifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMTAwMDAwZSIsInBhcmVudCI6ImMxMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJUaW1lIG1ldGFkYXRhIHdpdGggbm8gZGF0ZSIsInNjaGVkdWxlZF90aW1lIjp7ImxvY2FsIjoiMDk6MDAifX0KeyJ0eXBlIjoidGFzayIsImlkIjoiYzEwMDAwMGYiLCJwYXJlbnQiOiJjMTAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiVGltZSBtZXRhZGF0YSBpbiB0aGUgd3Jvbmcgc2hhcGUiLCJzY2hlZHVsZWQiOiIyMDI2LTA2LTEwIiwic2NoZWR1bGVkX3RpbWUiOnsibG9jYWwiOiI5YW0ifX0KeyJ0eXBlIjoidGFzayIsImlkIjoiYzEwMDAwMTAiLCJwYXJlbnQiOiJjMTAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiVXBkYXRlIHN0YW1wIHdpdGhvdXQgYSBkZXZpY2Ugc2x1ZyIsInVwZGF0ZWQiOiIyMDI2LTA2LTAxVDEwOjAwOjAwWiJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImMxMDAwMDExIiwicGFyZW50IjoiYzEwMDAwMDEiLCJzdGF0ZSI6IlBST1BPU0VEIiwidGl0bGUiOiJEZWxlZ2F0aW9uIG9uIGEgcHJvcG9zZWQgdGFzayIsImRlbGVnYXRpb24iOnsia2luZCI6ImFnZW50Iiwic3RhdHVzIjoicmVhZHkiLCJhdCI6IjIwMjYtMDYtMDFUMTA6MDA6MDBaIn19CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImMxMDAwMDEyIiwicGFyZW50IjoiYzEwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IlNlY3Rpb24gY2FycnlpbmcgdGFzayBmaWVsZHMiLCJ0YWdzIjpbIkBob21lIl0sImRlYWRsaW5lIjoiMjAyNi0wNi0zMCJ9CnsidHlwZSI6InRhc2siLCJpZCI6InNob3J0IiwicGFyZW50IjoiYzEwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IklkIHRvbyBzaG9ydCJ9CnsidHlwZSI6InRhc2siLCJwYXJlbnQiOiJjMTAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiTm8gaWQgYXQgYWxsIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiYzEwMDAwMTMiLCJwYXJlbnQiOiJjMTAwMDAwMSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiICAgIn0KeyJ0eXBlIjoid2lkZ2V0IiwiaWQiOiJjMTAwMDAxNCIsInBhcmVudCI6ImMxMDAwMDAxIiwidGl0bGUiOiJVbmtub3duIHJlY29yZCB0eXBlIn0K",
+        "line_count": 23,
+        "symlink_target": null
+      }
+    ],
+    "deltas": [],
+    "rolled_back": null
+  },
+  "journal": {
+    "present": false,
+    "version": null,
+    "cursor": null,
+    "states": [],
+    "index": {
+      "role": "journal_index",
+      "kind": null,
+      "path": ".state/tasks/journal/a2576dda55654bfe/index.json",
+      "present": false,
+      "sha256": null,
+      "size_bytes": null,
+      "mode": null,
+      "content_base64": null,
+      "line_count": null,
+      "symlink_target": null
+    },
+    "blob_count": null,
+    "blob_sha256": []
+  },
+  "revisions": {
+    "store": "s1.3501418da131a644a9c0bbe4b288357a735c5aca7a3e0ccb48b8acfef4d6e7b3",
+    "resources": [],
+    "touched_ids": [],
+    "http_etag": null
+  },
+  "http": [],
+  "environment": {
+    "tzdb_version": "Zoneinfo DataSource: /usr/share/zoneinfo",
+    "platform": "arm64-darwin23",
+    "filesystem": "/",
+    "locale": "UTF-8",
+    "umask": "0022"
+  },
+  "metrics": {
+    "wall_ms": 105.417,
+    "user_cpu_ms": null,
+    "sys_cpu_ms": null,
+    "peak_rss_bytes": null,
+    "bytes_written": 0
+  },
+  "notes": "same store, structured entries | probe read status: store_invalid"
+}
