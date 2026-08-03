@@ -700,3 +700,29 @@ No source-fidelity divergence was found in the interval-cookie slice. The
 remaining next step is a **separate independent Go-idiom review**, followed by
 independent approval if it passes. The recorded invalid-UTF-8 package-boundary
 gap and the five calendar-grammar rows remain out of scope for this review.
+
+## Independent Go-idiom review: passed (2026-08-02)
+
+An independent medium-tier Go-idiom review made no implementation edits. It
+reviewed `go/internal/recur` and `go/cmd/recur-probe` for Go ownership,
+arbitrary-precision value handling, error boundaries, and probe input
+validation. In particular, the review found no shared mutable `big.Int` state:
+the package-level interval counts are only rendered, while every arithmetic
+operation allocates its receiver before mutating it. `CivilDate` copies a
+caller-provided year at its checked construction boundary, and the direct probe
+keeps JSON-field presence for `default_prefix` distinct from an explicitly
+empty value.
+
+The review also corrected the stale handoff premise that differential
+conformance was unavailable: the committed direct Ruby/Go harness is now the
+required differential evidence and passed **42/42** cases. Re-run gates all
+passed:
+
+- `porting/evidence/recur-interval-cookies/conformance` (42/42);
+- `ruby test/test_recur.rb` (20 runs, 66 assertions);
+- `go test ./...`, `go test -race ./internal/recur`, `go vet ./...`, and
+  `gofmt -d internal/recur` from `go/`;
+- `ruby porting/manifest-issues validate` and `git diff --check`.
+
+No Go-idiom or Go-boundary defect was found. The next step is **independent
+approval** in a separate session; medium risk forbids reviewer self-approval.
