@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"syscall"
 	"unicode/utf8"
 
@@ -78,6 +79,13 @@ type Store struct {
 	org     string
 	archive string
 	options Options
+
+	// rollbackMu guards the last-rollback pair. A Store is shared by a surface
+	// that may serve two requests at once, and the pair is written on a failure
+	// path where a torn read would misattribute the stage.
+	rollbackMu        sync.Mutex
+	lastRollback      string
+	lastRollbackStage RollbackStage
 }
 
 // New builds a store over the two resolved paths.

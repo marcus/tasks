@@ -11,6 +11,7 @@ import (
 	"tasks-go/internal/journal"
 	"tasks-go/internal/query"
 	"tasks-go/internal/record"
+	"tasks-go/internal/recur"
 )
 
 // DeferTag is the semantic tag that means someday/maybe. Closing a task drops
@@ -326,157 +327,34 @@ func (s *Store) archivedIDs() []string { return idsOf(freshRecords(s.archive)) }
 
 // PatchField names the single-field patches this build implements. The set is
 // deliberately closed: a field the port has not reached refuses at the CLI
-// rather than silently taking a default path through the transaction.
+// rather than silently taking a default path through the transaction. The
+// vocabulary and the transaction both live in patch.go.
 type PatchField string
 
-// The implemented fields.
+// The two fields whose value is a plain word. The rest are in patch.go, with
+// the value shapes they accept.
 const (
 	FieldPriority PatchField = "priority"
 	FieldState    PatchField = "state"
 )
 
-// PatchTask applies one field-owned semantic change in the same transaction
-// shape a changeset uses.
-//
-// `expected` is the patch's narrow conflict check: the value the caller read
-// before deciding. It is compared against the value under the write lock, so an
-// edit that landed in between refuses instead of silently overwriting.
-func (s *Store) PatchTask(id string, field PatchField, value string, expected string, label string, today string) MutationResult {
-	var result MutationResult
-	err := s.withLock(func() error {
-		before := s.fileSnapshot()
-		if refusal := s.unsupportedSchemaRefusal(); refusal != nil {
-			result = *refusal
-			return nil
-		}
-		preflight := check.Check(s.org)
-		if !preflight.OK() {
-			// A targeted repair is Ruby's route out of an invalid file for a
-			// field-owned patch, and this build does not implement it: refusing
-			// is the conservative half of that rule, never the permissive half.
-			messages := []string{}
-			for _, entry := range preflight.Errors {
-				messages = append(messages, entry.Message)
-			}
-			result = MutationResult{Status: MutationStoreInvalid, Errors: messages}
-			return nil
-		}
-
-		records := freshRecords(s.org)
-		index := locateStableIndex(records, id)
-		if index < 0 {
-			result = MutationResult{Status: MutationNotFound}
-			return nil
-		}
-		actual, err := expectedFor(records, index, field)
-		if err != nil {
-			result = MutationResult{Status: MutationInvalid, Errors: []string{err.Error()}}
-			return nil
-		}
-		if actual != expected {
-			result = MutationResult{Status: MutationConflict}
-			return nil
-		}
-
-		original, err := record.Dump(records)
-		if err != nil {
-			result = MutationResult{Status: MutationInvalid, Errors: []string{err.Error()}}
-			return nil
-		}
-		working := record.CloneAll(records)
-		applied := applyFieldPatch(working, index, field, value, today)
-		if applied.status != MutationOK {
-			result = MutationResult{Status: applied.status, Errors: applied.errors}
-			return nil
-		}
-		proposed, err := record.Dump(working)
-		if err != nil {
-			result = MutationResult{Status: MutationInvalid, Errors: []string{err.Error()}}
-			return nil
-		}
-		if proposed == original {
-			snapshot, revision := s.readAfterWrite()
-			result = MutationResult{Status: MutationNoChange, ReadSnapshot: snapshot, StoreRevision: revision}
-			return nil
-		}
-
-		result = s.commit(before, working, label, "")
-		if result.Status == MutationOK {
-			result.TouchedIDs = applied.touchedIDs
-		}
-		return nil
-	})
-	if err != nil {
-		return MutationResult{Status: MutationUnavailable, Errors: []string{"task store unavailable"}}
-	}
-	return result
-}
-
-// ExpectedFor is the baseline a caller reads before proposing a patch. It is
-// exported because the conflict check is only meaningful when the SAME
-// expression produces the value on both sides of the decision.
-func (s *Store) ExpectedFor(id string, field PatchField) (string, bool) {
-	var value string
-	found := false
-	_ = s.withLock(func() error {
-		if !check.Check(s.org).OK() {
-			return nil
-		}
-		records := freshRecords(s.org)
-		index := locateStableIndex(records, id)
-		if index < 0 {
-			return nil
-		}
-		expected, err := expectedFor(records, index, field)
-		if err != nil {
-			return nil
-		}
-		value, found = expected, true
-		return nil
-	})
-	return value, found
-}
-
-// expectedFor is EditSnapshot#expected_for: a plain baseline for a field that
-// owns only itself, and a FINGERPRINT for one whose change has wider effects.
-// State is the fingerprint case — completing a task can cascade to descendants,
-// so the baseline has to cover the lifecycle of the whole subtree, not one word.
-func expectedFor(records []record.Record, index int, field PatchField) (string, error) {
-	switch field {
-	case FieldPriority:
-		return records[index].String("priority"), nil
-	case FieldState:
-		return lifecycleFingerprint(records, index)
-	}
-	return "", nil
-}
-
 type patchOutcome struct {
 	status     MutationStatus
 	errors     []string
 	touchedIDs []string
+	summary    MutationSummary
 }
 
-func applyFieldPatch(records []record.Record, index int, field PatchField, value, today string) patchOutcome {
-	switch field {
-	case FieldPriority:
-		return patchPriority(records, index, value)
-	case FieldState:
-		return patchState(records, index, value, today)
+func patchPriority(records []record.Record, index int, value PatchValue) patchOutcome {
+	if value.kind != kindNone && (value.kind != kindText || !contains(Priorities, value.text)) {
+		return patchInvalid("priority must be A, B, C, or nil")
 	}
-	return patchOutcome{status: MutationInvalid, errors: []string{"unknown field"}}
-}
-
-func patchPriority(records []record.Record, index int, value string) patchOutcome {
-	if value != "" && !contains(Priorities, value) {
-		return patchOutcome{status: MutationInvalid, errors: []string{"priority must be A, B, C, or nil"}}
-	}
-	if value == "" {
+	if value.kind == kindNone {
 		records[index].Delete("priority")
 	} else {
-		records[index].SetString("priority", value)
+		records[index].SetString("priority", value.text)
 	}
-	return patchOutcome{status: MutationOK, touchedIDs: []string{records[index].String("id")}}
+	return patchOK(records[index])
 }
 
 // patchState is the transition, and the effects a transition owns: a closed
@@ -484,47 +362,95 @@ func patchPriority(records []record.Record, index int, value string) patchOutcom
 // delegation, and — for DONE — cascades to its open descendants, because
 // finishing a project finishes its work.
 //
-// Recurrence advance is NOT implemented here, and a recurring task is refused
-// rather than closed: rolling the date forward is a different product outcome,
-// and writing the wrong one is worse than declining.
-func patchState(records []record.Record, index int, value, today string) patchOutcome {
-	if !contains(check.States, value) {
-		return patchOutcome{status: MutationInvalid, errors: []string{"invalid task state"}}
+// Completing a RECURRING task is not a close at all: the cookie rolls the
+// anchor forward and the task stays open. See advanceRecurrence.
+func patchState(records []record.Record, index int, value PatchValue, context patchContext) patchOutcome {
+	if value.kind != kindText || !contains(check.States, value.text) {
+		return patchInvalid("invalid task state")
 	}
+	state := value.text
 	target := records[index]
 	from := target.String("state")
+	today := context.today.ISO()
 
-	if contains(check.ProposedStates, value) && target.String("recur") != "" {
-		return patchOutcome{status: MutationInvalid, errors: []string{"remove recurrence before setting PROPOSED"}}
-	}
-	if contains(check.ProposedStates, from) && value == "DONE" {
-		return patchOutcome{status: MutationInvalid, errors: []string{"approve the proposal before completing it"}}
-	}
-	if !contains(check.ClosedStates, value) && !contains(check.ProposedStates, value) &&
-		proposedTaskAncestor(records, target) {
-		return patchOutcome{status: MutationInvalid, errors: []string{"accepted work cannot remain under a proposed task"}}
-	}
-	if value == "DONE" && target.String("recur") != "" {
-		return patchOutcome{
-			status: MutationInvalid,
-			errors: []string{"completing a recurring task is not implemented in the Go port — " +
-				"the date roll is a separate behavior and this build will not guess it"},
+	if contains(check.ProposedStates, state) {
+		if recur.Cookie(target.String("recur")) {
+			return patchInvalid("remove recurrence before setting PROPOSED")
+		}
+		// Approval and delegation are independent owner decisions, and an
+		// undecided proposal carries neither a claim nor an assignee.
+		if delegationMarker(target) != nil {
+			return patchInvalid("undelegate before setting PROPOSED")
+		}
+		if !contains(check.ProposedStates, from) {
+			end := subtreeEnd(records, index)
+			for position := index + 1; position < end; position++ {
+				if records[position].String("type") == "task" &&
+					!contains(check.ProposedStates, records[position].String("state")) {
+					return patchInvalid("cannot set PROPOSED while accepted descendants remain")
+				}
+			}
 		}
 	}
+	if contains(check.ProposedStates, from) && state == "DONE" {
+		return patchInvalid("approve the proposal before completing it")
+	}
+	if !contains(check.ClosedStates, state) && !contains(check.ProposedStates, state) &&
+		proposedTaskAncestor(records, target) {
+		return patchInvalid("accepted work cannot remain under a proposed task")
+	}
+	if state == "DONE" && recur.Cookie(target.String("recur")) {
+		outcome := advanceRecurrence(records, index, context)
+		if outcome.status == MutationOK {
+			outcome.summary = MutationSummary{Action: "recurrence_advanced", TaskID: target.String("id")}
+		}
+		return outcome
+	}
 
-	records[index].SetString("state", value)
+	records[index].SetString("state", state)
 	touched := []string{records[index].String("id")}
-	if contains(check.ClosedStates, value) && !contains(check.ClosedStates, from) {
+	if contains(check.ClosedStates, state) && !contains(check.ClosedStates, from) {
 		records[index].SetOptional("tags", record.RawStrings(withoutTag(semanticTags(records[index]), DeferTag)))
 		records[index].SetDefault("closed", record.RawString(today))
 		settleDelegationOnClose(&records[index])
-		if value == "DONE" {
+		if state == "DONE" {
 			touched = append(touched, closeOpenDescendants(records, index, today)...)
 		}
-	} else if contains(check.ClosedStates, from) && !contains(check.ClosedStates, value) {
+	} else if contains(check.ClosedStates, from) && !contains(check.ClosedStates, state) {
 		records[index].Delete("closed")
 	}
 	return patchOutcome{status: MutationOK, touchedIDs: touched}
+}
+
+// rollDelegationForward re-arms a marker onto the next occurrence: a human
+// delegation keeps its assignee and goes back to awaiting the person, an agent
+// delegation returns to the unclaimed pool, and both drop the work reference,
+// because the work that reference names belongs to the occurrence just closed.
+func rollDelegationForward(target *record.Record, context patchContext) {
+	existing := delegationMarker(*target)
+	if existing == nil {
+		return
+	}
+	kind := markerKind(existing)
+	if kind != "agent" && kind != "human" {
+		// A marker of no recognized kind cannot describe intent to carry over;
+		// a fresh occurrence is the right place to drop it.
+		target.Delete(DelegationField)
+		return
+	}
+	rolled := map[string]string{}
+	for key, value := range existing {
+		rolled[key] = value
+	}
+	if kind == "human" {
+		rolled["status"] = DelegationDelegated
+	} else {
+		rolled["status"] = DelegationReady
+		rolled["assignee"] = ""
+	}
+	rolled["at"] = context.stamp
+	rolled["work_ref"] = ""
+	target.Set(DelegationField, orderedDelegation(rolled, markerOrder(*target)))
 }
 
 func proposedTaskAncestor(records []record.Record, target record.Record) bool {

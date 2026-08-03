@@ -78,6 +78,12 @@ type MutationSummary struct {
 	Holder string
 	At     string
 	TaskID string
+	// Previous is the delegation marker this write REPLACED, as stored JSON,
+	// captured inside the transaction. A caller that read it before the write
+	// instead would be racing: whether an inherited WAITING is cleared depends
+	// on what the marker was at the moment the marker changed, not a moment
+	// earlier.
+	Previous string
 }
 
 // OK is MutationResult#ok?: a no-op that succeeded is a success.
@@ -312,9 +318,20 @@ func (s *Store) unsupportedSchemaRefusal() *MutationResult {
 // pointing at bytes that never survived; the journal runs before the re-read,
 // so the snapshot a caller renders is the one the history recorded.
 func (s *Store) commit(before journal.Snapshot, records []record.Record, label, coalesceKey string) MutationResult {
+	return s.commitRepair(before, records, label, coalesceKey, false)
+}
+
+// commitRepair is commit with the journal's repair flag, which a targeted
+// repair sets so history can tell a converge-the-file write apart from an
+// ordinary edit.
+func (s *Store) commitRepair(before journal.Snapshot, records []record.Record, label, coalesceKey string,
+	repair bool) MutationResult {
+
+	s.clearRollback()
 	if err := s.writeRecords(s.org, records); err != nil {
 		// The write itself raised. Validation never ran, so the rollback is
 		// staged `write` and the diagnostic must not send the user to `check`.
+		s.recordRollback(err.Error(), RollbackWrite)
 		_ = s.restore(before)
 		return MutationResult{
 			Status: MutationUnavailable, Errors: []string{err.Error()},
@@ -322,6 +339,7 @@ func (s *Store) commit(before journal.Snapshot, records []record.Record, label, 
 		}
 	}
 	if reason := s.postWriteFailure(); reason != "" {
+		s.recordRollback(reason, RollbackValidation)
 		_ = s.restore(before)
 		return MutationResult{
 			Status: MutationStoreInvalid, Errors: []string{reason},
@@ -329,7 +347,7 @@ func (s *Store) commit(before journal.Snapshot, records []record.Record, label, 
 		}
 	}
 	after := s.fileSnapshot()
-	s.journal().Record(label, before, after, coalesceKey, false)
+	s.journal().Record(label, before, after, coalesceKey, repair)
 	snapshot, revision := s.readAfterWrite()
 	return MutationResult{
 		Status: MutationOK, ReadSnapshot: snapshot, StoreRevision: revision,
@@ -459,4 +477,32 @@ func sortedIDs(ids []string) []string {
 	out := append([]string{}, ids...)
 	sort.Strings(out)
 	return out
+}
+
+// -- the rollback record -------------------------------------------------------
+
+// LastRollback is the reason and the stage of the most recent mutation that
+// WROTE a file and then restored it, or ("", "") when the last mutation was
+// clean.
+//
+// It exists for the operations that report failure through a bare boolean or
+// count — the project lifecycle calls — where the recorded rollback is the only
+// evidence that anything was written at all. Set and cleared together through
+// the single writer below, so the pair can never drift apart.
+func (s *Store) LastRollback() (string, RollbackStage) {
+	s.rollbackMu.Lock()
+	defer s.rollbackMu.Unlock()
+	return s.lastRollback, s.lastRollbackStage
+}
+
+func (s *Store) clearRollback() {
+	s.rollbackMu.Lock()
+	defer s.rollbackMu.Unlock()
+	s.lastRollback, s.lastRollbackStage = "", ""
+}
+
+func (s *Store) recordRollback(reason string, stage RollbackStage) {
+	s.rollbackMu.Lock()
+	defer s.rollbackMu.Unlock()
+	s.lastRollback, s.lastRollbackStage = reason, stage
 }

@@ -3,7 +3,9 @@ package main
 import (
 	"strings"
 
+	"tasks-go/internal/recur"
 	"tasks-go/internal/store"
+	"tasks-go/internal/temporal"
 )
 
 // priority sets or clears a task's priority cookie.
@@ -80,13 +82,48 @@ func (s *surfaceContext) changeState(args []string, target, usage string) int {
 		return notPorted("done --dry-run")
 	}
 
+	// Completing a RECURRING task rolls it to its next occurrence rather than
+	// closing it, so the two reports are mutually exclusive: the roll announces
+	// the new date, and the archive hint is suppressed. Telling the user to
+	// archive a task that is still open and now scheduled would be wrong.
+	recurringDone := target == "DONE" && recur.Cookie(item.Recur)
+
 	label := "state → " + target + ": " + item.Title
 	status = s.patchAndReport(args, item, store.FieldState, target, label,
-		"done", "failed to set state", flags["--json"])
-	if status == 0 && !flags["--json"] {
+		"done", "failed to set state", flags["--json"], func(result store.MutationResult) {
+			if recurringDone && !flags["--json"] {
+				out(recurrenceRollLine(item, result))
+			}
+		})
+	if status == 0 && !flags["--json"] && !recurringDone {
 		out("Run `tasks archive` to move it out of tasks.jsonl.")
 	}
 	return status
+}
+
+// recurrenceRollLine is bin/tasks' "↻ title → next 2026-08-10 (Mon)", read from
+// the snapshot the write returned. The date half is omitted when the rolled
+// task carries neither stamp, which is Ruby's `d ? … : ""`.
+func recurrenceRollLine(item store.Item, result store.MutationResult) string {
+	line := "↻ " + item.Title
+	if result.ReadSnapshot == nil {
+		return line
+	}
+	for _, fresh := range result.ReadSnapshot.Items {
+		if fresh.ID != item.ID {
+			continue
+		}
+		// DEADLINE over SCHEDULED, matching the store's own precedence.
+		stamp := fresh.Deadline
+		if stamp == "" {
+			stamp = fresh.Scheduled
+		}
+		if date, ok := temporal.ParseDate(stamp); ok {
+			line += " → next " + date.ISO() + " (" + date.Weekday().String()[:3] + ")"
+		}
+		break
+	}
+	return line
 }
 
 // patchAndReport is the shared tail of every field patch: read the baseline,
@@ -96,8 +133,11 @@ func (s *surfaceContext) changeState(args []string, target, usage string) int {
 // oversight. The expectation is what makes the write refuse when another writer
 // changed the field in between, so it has to be captured before the write takes
 // its own lock rather than derived inside it.
+//
+// beforeReport, when set, runs after a successful write and BEFORE the touched
+// report, which is where bin/tasks prints the recurrence roll.
 func (s *surfaceContext) patchAndReport(args []string, item store.Item, field store.PatchField,
-	value, label, action, summary string, asJSON bool) int {
+	value, label, action, summary string, asJSON bool, beforeReport ...func(store.MutationResult)) int {
 	if item.ID == "" {
 		return abort("task has no stable id")
 	}
@@ -117,6 +157,9 @@ func (s *surfaceContext) patchAndReport(args []string, item store.Item, field st
 	result := writer.PatchTask(item.ID, field, value, expected, label, today)
 	if !result.OK() {
 		return mutationResultFailed(result, args, action, summary)
+	}
+	for _, hook := range beforeReport {
+		hook(result)
 	}
 	touched := result.TouchedIDs
 	if len(touched) == 0 {

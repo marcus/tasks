@@ -96,11 +96,12 @@ func TestHumanDelegationMovesToWaiting(t *testing.T) {
 	h.assertChecks()
 }
 
-// The composed write is a SEPARATE undo step until the store can coalesce, and
-// that fact is reported rather than hidden. Ruby folds both writes into one
-// journal entry via the delegation's coalesce key.
+// Against a store that CANNOT coalesce, the composed write is a separate undo
+// step and that fact is reported rather than hidden. The real store now
+// coalesces, so this runs against bareStore — the branch is contract for any
+// Store lacking the capability, not scaffolding that expires.
 func TestComposedDelegationWriteReportsItsUndoGranularity(t *testing.T) {
-	h := newHarness(t, harnessOptions{})
+	h := newHarness(t, harnessOptions{wrap: bareFactory()})
 
 	result := h.app.DelegateTask(DelegationCommand{
 		ID: fixPlants, Kind: "human", Assignee: "pat@example.com",
@@ -674,8 +675,12 @@ func TestEveryDelegationVerbGetsItsOwnCoalesceKey(t *testing.T) {
 
 // A capability the store does not implement REFUSES. It does not report success
 // for something that never happened.
+//
+// Run against bareStore: the real store has since grown undelegate, release and
+// work_ref, and this branch must keep its coverage for the ones it has not —
+// and for any other Store the application is handed.
 func TestUnsupportedCapabilitiesRefuseRatherThanSilentlySucceed(t *testing.T) {
-	h := newHarness(t, harnessOptions{})
+	h := newHarness(t, harnessOptions{wrap: bareFactory()})
 
 	for name, run := range map[string]func() Outcome{
 		"undelegate": func() Outcome { return h.app.UndelegateTask(DelegationCommand{ID: fixPlants}, nil) },

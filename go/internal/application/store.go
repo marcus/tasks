@@ -98,27 +98,26 @@ type ProjectWriter interface {
 
 // -- capability probes --------------------------------------------------------
 
-// supportedPatchFields mirrors the store's closed PatchField vocabulary.
+// supportedPatchFields is the last-resort assumption for a Store that does NOT
+// publish its own vocabulary through FieldPatcher.
 //
-// It is a copy rather than a query because the store does not publish its set.
-// When the store widens `PatchField` to the whole EditSnapshot field list, add
-// the names here in the same change: an unlisted field is refused up front
-// instead of reaching a transaction that would fall through its switch and
-// return a status no vocabulary contains.
+// It is deliberately the two fields every store has always had, not a mirror
+// of the current one. *store.Store publishes its set now, so this is reached
+// only by an alternative Store — a test double, or a future adapter — and
+// guessing wide on its behalf would refuse nothing and let an unpatchable
+// field reach a transaction that falls through its switch.
 var supportedPatchFields = map[store.PatchField]bool{
 	store.FieldPriority: true,
 	store.FieldState:    true,
 }
 
-// FieldBody is the body patch the release-note composition needs. It is spelled
-// as a conversion rather than as `store.FieldBody` because that constant does
-// not exist yet; the string is the one Ruby's EditSnapshot::FIELDS uses, so the
-// two agree the moment the store declares it.
-const FieldBody = store.PatchField("body")
+// FieldBody is the body patch the release-note composition needs.
+const FieldBody = store.FieldBody
 
 // FieldPatcher is a store that publishes its own patchable field set. A store
-// that implements it is believed over the mirrored default above, which is what
-// lets the vocabulary widen from the side that owns it.
+// that implements it is believed over the default above, which is what lets the
+// vocabulary widen from the side that owns it — as *store.Store now does,
+// across all fourteen fields it patches.
 type FieldPatcher interface {
 	PatchesField(field store.PatchField) bool
 }

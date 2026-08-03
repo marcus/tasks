@@ -295,3 +295,55 @@ func (s *scriptedStore) DecideProposal(id, action string, notes []string, expect
 	s.calls = append(s.calls, recordedCall{verb: "decide:" + action, id: id, detail: today})
 	return s.proposalResult
 }
+
+// -- the store that grew nothing ----------------------------------------------
+
+// bareStore exposes ONLY the base Store interface, hiding whatever optional
+// capabilities the real store has grown.
+//
+// It exists because the fallback paths must stay covered as the store catches
+// up. The optional-capability design means a Store may legitimately lack
+// PatchTaskCoalesced or Undelegate — that is the whole reason they are separate
+// interfaces — so the branches that report degraded granularity or refuse
+// outright are contract, not scaffolding, and must not lose their tests the
+// moment *store.Store happens to implement the capability.
+//
+// It delegates by explicit method rather than by embedding, because an embedded
+// *store.Store would re-expose every optional capability through the type
+// assertion and defeat the point.
+type bareStore struct{ inner Store }
+
+func bareFactory() func(*store.Store) Store {
+	return func(built *store.Store) Store { return bareStore{inner: built} }
+}
+
+func (b bareStore) Org() string     { return b.inner.Org() }
+func (b bareStore) Archive() string { return b.inner.Archive() }
+
+func (b bareStore) ReadSnapshot(includeArchive bool) (*store.Snapshot, error) {
+	return b.inner.ReadSnapshot(includeArchive)
+}
+
+func (b bareStore) CheckedReadSnapshot() (store.CheckedRead, error) {
+	return b.inner.CheckedReadSnapshot()
+}
+
+func (b bareStore) CreateTask(command store.CreateCommand, today string) store.MutationResult {
+	return b.inner.CreateTask(command, today)
+}
+
+func (b bareStore) PatchTask(id string, field store.PatchField, value, expected, label, today string) store.MutationResult {
+	return b.inner.PatchTask(id, field, value, expected, label, today)
+}
+
+func (b bareStore) ExpectedFor(id string, field store.PatchField) (string, bool) {
+	return b.inner.ExpectedFor(id, field)
+}
+
+func (b bareStore) Delegate(id, kind, mode, assignee, coalesceKey string) store.MutationResult {
+	return b.inner.Delegate(id, kind, mode, assignee, coalesceKey)
+}
+
+func (b bareStore) Claim(id, worker, coalesceKey string) store.MutationResult {
+	return b.inner.Claim(id, worker, coalesceKey)
+}
