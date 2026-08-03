@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"tasks-go/internal/determinism"
-	"tasks-go/internal/lead"
 	"tasks-go/internal/query"
 	"tasks-go/internal/recur"
 	"tasks-go/internal/store"
@@ -60,9 +59,19 @@ func (s *surfaceContext) list(args []string) int {
 			continue
 		}
 		out(bold(state))
-		// Priority orders the group; ties keep file order. Ruby's sort_by is
-		// unstable, so this has to be an explicitly stable sort or same-priority
-		// rows would shuffle between runs.
+		// Priority orders the group; ties keep FILE order.
+		//
+		// This is a deliberate divergence, not a translation. bin/tasks' cmd_list
+		// sorts with a bare `sort_by { |i| i.priority || "Z" }`, and MRI's sort_by
+		// is not stable, so rows that tie on priority come out wherever
+		// introsort's partitioning left them. That order is reproducible for a
+		// given array and meaningless as an order: capturing one unrelated task
+		// into the same state group reshuffles rows you did not touch.
+		//
+		// Ruby's own read model already rejects this — TaskQueries#stable_sort
+		// carries the source index precisely so the named views keep file order —
+		// and cmd_list is the one place in the read path that never adopted it.
+		// See porting/intentional-differences.md § list-priority-tie-order.
 		sorted := append([]store.Item{}, group...)
 		sort.SliceStable(sorted, func(left, right int) bool {
 			return priorityKey(sorted[left]) < priorityKey(sorted[right])
@@ -269,6 +278,11 @@ func temporalLabel(value *temporal.Value) string {
 // leadSpanSuffix is " · 3w before 11/1" on a row a lead is hiding, so an
 // unavailable review shows the intent beside the derived date rather than only
 // the date it produced.
+//
+// The span is the STORED cookie, not its rendering. A list row is already dense
+// — priority, title, contexts, date, recurrence, availability — and "3w" is
+// what the file says and what `tasks lead` would take back. `show` has room for
+// the sentence and spells it out there; this line does not.
 func leadSpanSuffix(queries *taskquery.Queries, item store.Item) string {
 	opens, hasOpens := queries.LeadOpens(item)
 	if !hasOpens {
@@ -286,11 +300,7 @@ func leadSpanSuffix(queries *taskquery.Queries, item store.Item) string {
 	if !ok {
 		return ""
 	}
-	human, known := lead.Humanize(item.Lead)
-	if !known {
-		return ""
-	}
-	return fmt.Sprintf(" · %s before %d/%d", human, int(anchor.Month), anchor.Day)
+	return fmt.Sprintf(" · %s before %d/%d", item.Lead, int(anchor.Month), anchor.Day)
 }
 
 // recurSummary is the human gloss of a stored recurrence value. An unparsable

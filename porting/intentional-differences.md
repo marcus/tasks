@@ -107,6 +107,74 @@ One `##` section per accepted difference, in the order they were accepted:
   configures overlapping custom system hosts, and the corpus does not generate
   config files. A future fixture that did would belong to this section.
 
+## list-priority-tie-order — accepted 2026-08-03
+
+- **Slices:** none (found by the Wave 1 integration review's differential sweep;
+  the behavior predates that packet)
+- **Ruby behavior:** `bin/tasks` `cmd_list` orders each state group with
+  `list.sort_by { |i| i.priority || "Z" }`. MRI's `sort_by` is **not stable**,
+  so rows that tie on priority come out in whatever order introsort's
+  partitioning left them in. On
+  `porting/fixtures/valid/scale-ordering/store` the INBOX `[B]` rows print as
+  Review (2.3.4), Measure (4.3.2), Plan (3.3.3), Check (1.3.5), Book (5.3.1) —
+  file lines 71, 165, 118, 23, 206. On `link-corpus` and
+  `recur-calendar-grammar`, where every row ties, median-of-three pivot
+  selection swaps the first and last rows of the group.
+- **Go behavior:** `sort.SliceStable` on the same key, so a priority tie keeps
+  ascending file order: Check (1.3.5), Review (2.3.4), Plan (3.3.3), Measure
+  (4.3.2), Book (5.3.1).
+- **Who can see it:** anyone running `tasks list` on a store with two or more
+  same-priority tasks in one state group — which is most stores. The observable
+  is stdout row order. **Only the human form**: `list --json` emits the
+  selection in file order without the adapter's sort, so both implementations
+  already agree there, and no row is ever added, dropped, or altered — a sweep
+  of 4 clock pins × 18 valid fixtures × 6 filter scopes found 52 differing
+  invocations and confirmed all 52 print the identical multiset of lines.
+- **Why accepted:** decided by the Wave 1 read-model agent. Ruby's order is not
+  a rule to port. It is reproducible for a fixed input array and arbitrary as a
+  user-facing order: appending one unrelated unprioritized INBOX row to
+  `scale-ordering` — a row that is not in the `[B]` group and does not move any
+  row that is — reshuffles those five rows from
+  `[Review, Measure, Plan, Check, Book]` to `[Plan, Review, Check, Book, Measure]`.
+  The same instability is why several fixtures diverge at one clock pin and
+  agree at another: the availability filter changes the array length, and the
+  permutation follows. Reproducing it would mean porting MRI's `ruby_qsort`
+  and pinning the port to a Ruby version, to preserve an ordering that carries
+  no information and that Ruby's own read model already rejects —
+  `lib/tasks/task_queries.rb:453-469`'s `stable_sort` carries the source index
+  for exactly this reason, and its comment names the symptom ("visible as
+  `tasks next` shuffling same-priority tasks, and as a nondeterministic
+  canonical order for the future HTTP API"). `cmd_list` is the single place in
+  the read path that never adopted it.
+- **Evidence:** the arbitrariness is reproducible in two commands. Copy
+  `porting/fixtures/valid/scale-ordering/store/tasks.jsonl`, run
+  `tasks list` and note the INBOX `[B]` run, then append
+
+  ```
+  {"type":"task","id":"5cffff01","parent":"5c000001","state":"INBOX","title":"Zzz unrelated extra capture"}
+  ```
+
+  and run it again. Ruby goes from `Review Measure Plan Check Book` to
+  `Plan Review Check Book Measure`; Go prints `Check Review Plan Measure Book`
+  both times. The added row is unprioritized, is not in the `[B]` group, and
+  changes no `[B]` row's line number.
+
+  In Go: `go/cmd/tasks/listorder_test.go`.
+  `TestListOrdersByPriorityThenFileOrderWithinEveryStateGroup` checks the rule
+  as a property against every valid fixture;
+  `TestListTieOrderDivergesFromRubyOnTheseFixtures` pins the three concrete
+  sequences and fails if Ruby ever stops diverging;
+  `TestListJSONIsFileOrderAndUnaffectedByTheTieBreak` pins that the structured
+  form is unaffected.
+- **Conformance disposition:** `porting/conform`'s curated cases do not include
+  a `list` invocation over a tie-bearing fixture, so the gate is unaffected and
+  needs no exception today. A future `list` case must either use a fixture with
+  no priority tie in any state group, or compare `--json` rather than the human
+  form. **Preferred resolution:** fix `cmd_list` in Ruby to use the same stable
+  idiom `TaskQueries#stable_sort` already uses, which retires this entry
+  entirely. That is a one-line change to the oracle and was deliberately left
+  to the integration owner rather than made from inside a port packet.
+
 ## Notes on the record
 
 The last field is the one that rots. A difference recorded here but not
