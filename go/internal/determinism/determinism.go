@@ -203,7 +203,14 @@ var hexToken = regexp.MustCompile(`\A[0-9a-f]+\z`)
 // characters or the literal "seq".
 func NewIDSequence(spec string, width int, name string) (*IDSequence, error) {
 	queue := []string{}
-	for _, raw := range strings.Split(spec, ",") {
+	// Ruby's String#split drops TRAILING empty fields, so ",," yields no tokens
+	// while "a,,b" yields three. Mirrored so an empty spec reports "is empty"
+	// rather than a token diagnostic about a field Ruby never produced.
+	fields := strings.Split(spec, ",")
+	for len(fields) > 0 && fields[len(fields)-1] == "" {
+		fields = fields[:len(fields)-1]
+	}
+	for _, raw := range fields {
 		token := strings.ToLower(strings.TrimSpace(raw))
 		if token == "seq" {
 			token = strings.Repeat("0", width)
@@ -213,8 +220,7 @@ func NewIDSequence(spec string, width int, name string) (*IDSequence, error) {
 		}
 		queue = append(queue, token)
 	}
-	// Ruby's String#split drops trailing empty fields, so ",," is empty rather
-	// than three blanks — and an empty queue is the error the pin reports.
+
 	if len(queue) == 0 {
 		return nil, fmt.Errorf("%s is empty", name)
 	}

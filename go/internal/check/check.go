@@ -115,11 +115,25 @@ func UnsupportedVersion(records []record.Record) (json.RawMessage, bool) {
 	if stringField(first, "type") != "meta" {
 		return nil, false
 	}
-	version, ok := integerField(first, "version")
+	raw := rawField(first, "version")
+	version, ok := strictInteger(raw)
 	if !ok || version == Version {
 		return nil, false
 	}
-	return rawField(first, "version"), true
+	return raw, true
+}
+
+// strictInteger is Ruby's `declared.is_a?(Integer)` test. It cannot be
+// integerField: encoding/json accepts a JSON null into an int and leaves the
+// zero value behind, which would make a `"version":null` store report itself
+// as version 0 — an UNSUPPORTED schema rather than the malformed meta record
+// it actually is, and the two statuses send a caller somewhere different.
+func strictInteger(raw json.RawMessage) (int, bool) {
+	if raw == nil || string(bytes.TrimSpace(raw)) == "null" {
+		return 0, false
+	}
+	var value int
+	return value, json.Unmarshal(raw, &value) == nil
 }
 
 // UnsupportedVersionMessage is the one wording for that condition, shared by

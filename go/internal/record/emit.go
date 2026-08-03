@@ -321,3 +321,20 @@ func encodeString(out *bytes.Buffer, value string) {
 	}
 	out.WriteByte('"')
 }
+
+// EncodeJSON writes one already-parsed JSON value the way Ruby's
+// JSON.generate writes it: no whitespace, object members in source order, and
+// Ruby's escape set and number spellings. It is the seam the store's revision
+// digests need — those digest `JSON.generate(...)` output, so a Go emitter
+// that escaped `<` or reordered a nested object would compute a different
+// token from identical bytes.
+func EncodeJSON(out *bytes.Buffer, raw json.RawMessage) error {
+	return encodeValue(out, "", raw)
+}
+
+// EncodeString writes a Go string as a JSON string with Ruby's escape set.
+func EncodeString(out *bytes.Buffer, value string) { encodeString(out, value) }
+
+// Fields parses a JSON object's members, retaining source order and each
+// member's raw representation.
+func Fields(raw json.RawMessage) ([]Field, error) { return parseFields(raw) }

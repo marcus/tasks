@@ -1,0 +1,21 @@
+#!/bin/sh
+# build — compile the Go port's binaries into go/bin/.
+#
+# Runs in the OPERATOR's environment, once, before any case: the pinned PATH an
+# invocation gets is /usr/bin:/bin:/usr/sbin:/sbin, which has no Go toolchain on
+# it by design. That is also why the runner's `probe` and `cli` entries are
+# plain absolute-path execs of the products of this script rather than `go run`.
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+cd "$root/go"
+
+mkdir -p bin
+go build -o bin/tasks-probe ./cmd/tasks-probe
+
+# The CLI is built when it exists. It is a separate deliverable, and a runner
+# that refused to build the probe until the CLI landed would block the only
+# comparison that can be made before then.
+if [ -d ./cmd/tasks ]; then
+  go build -o bin/tasks ./cmd/tasks
+fi

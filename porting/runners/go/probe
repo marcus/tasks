@@ -1,0 +1,13 @@
+#!/bin/sh
+# probe — the Go port's probe.
+#
+# A shim, not a program: the object the probe prints is computed by Go code
+# that links the port's own store package (see go/cmd/tasks-probe), because a
+# probe that did not would be reporting the harness's opinion rather than the
+# implementation's.
+#
+# It runs under a PINNED PATH of /usr/bin:/bin:/usr/sbin:/sbin with
+# unsetenv_others, so it uses nothing but a shell parameter expansion and a
+# plain exec — no `dirname`, no `go run`, no toolchain, no PATH lookup at all.
+# Build the binary first with ../go/build.
+exec "${0%/*}/../../../go/bin/tasks-probe" "$@"
