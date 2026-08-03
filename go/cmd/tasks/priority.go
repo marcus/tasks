@@ -28,7 +28,7 @@ func (s *surfaceContext) priority(args []string) int {
 		return abort("priority must be A, B, C, or none")
 	}
 
-	queries, status := s.readQueries()
+	queries, status := s.readQueries(args, "priority")
 	if status != 0 {
 		return status
 	}
@@ -68,7 +68,7 @@ func (s *surfaceContext) changeState(args []string, target, usage string) int {
 		return abort("usage: " + usage)
 	}
 
-	queries, status := s.readQueries()
+	queries, status := s.readQueries(args, strings.ToLower(target))
 	if status != 0 {
 		return status
 	}

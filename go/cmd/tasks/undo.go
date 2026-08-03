@@ -17,7 +17,10 @@ import (
 func (s *surfaceContext) undo(args []string) int { return s.history(args, -1, "undo", "undone") }
 
 func (s *surfaceContext) history(args []string, delta int, verb, past string) int {
-	flags, rest, _ := takeFlags(args, "--json")
+	flags, rest, err := takeFlags(args, "--json")
+	if err != nil {
+		return abort(err.Error())
+	}
 	if len(rest) > 0 {
 		return abort(fmt.Sprintf("usage: tasks %s [--json]", verb))
 	}

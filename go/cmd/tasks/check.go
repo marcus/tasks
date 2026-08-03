@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"tasks-go/internal/check"
 	"tasks-go/internal/jsonout"
@@ -21,7 +22,10 @@ import (
 // that refusal, to run `tasks check`.
 func (s *surfaceContext) check(args []string) int {
 	flags, rest, err := takeFlags(args, "--json", "--all-files")
-	if err != nil || len(rest) > 0 {
+	if err != nil {
+		return abort(err.Error())
+	}
+	if len(rest) > 0 {
 		return abort("usage: tasks check [--json] [--all-files]")
 	}
 	allFiles := flags["--all-files"]
@@ -102,8 +106,13 @@ func checkJSON(result check.Result) string {
 }
 
 // takeFlags is bin/tasks' take_flags: the recognized flags as a set, everything
-// else in argv order. An unrecognized `--flag` is a positional here exactly as
-// it is in Ruby — the caller decides whether leftovers are an error.
+// else in argv order.
+//
+// An unrecognized `--flag` is an ERROR, not a positional. That distinction is
+// the whole point: a misspelled `--dry-run` accepted as a title word would
+// perform the mutation it was meant to preview. A single-dash argument is left
+// alone, because that is where a ref like `-A` or a negative index lives, and
+// the caller decides whether leftovers are an error.
 func takeFlags(args []string, names ...string) (map[string]bool, []string, error) {
 	known := map[string]bool{}
 	for _, name := range names {
@@ -112,11 +121,15 @@ func takeFlags(args []string, names ...string) (map[string]bool, []string, error
 	flags := map[string]bool{}
 	rest := []string{}
 	for _, arg := range args {
-		if known[arg] {
+		switch {
+		case known[arg]:
 			flags[arg] = true
-			continue
+		case strings.HasPrefix(arg, "--"):
+			return nil, nil, fmt.Errorf("unknown flag: %s (this command accepts: %s)",
+				arg, strings.Join(names, ", "))
+		default:
+			rest = append(rest, arg)
 		}
-		rest = append(rest, arg)
 	}
 	return flags, rest, nil
 }

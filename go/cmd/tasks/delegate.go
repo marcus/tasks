@@ -40,7 +40,7 @@ func (s *surfaceContext) delegate(args []string) int {
 		return notPorted("delegate --keep-state")
 	}
 
-	queries, status := s.readQueries()
+	queries, status := s.readQueries(args, "delegate")
 	if status != 0 {
 		return status
 	}
@@ -88,7 +88,7 @@ func (s *surfaceContext) claim(args []string) int {
 		return abort("missing worker id — " + workerHint)
 	}
 
-	queries, status := s.readQueries()
+	queries, status := s.readQueries(args, "claim")
 	if status != 0 {
 		return status
 	}

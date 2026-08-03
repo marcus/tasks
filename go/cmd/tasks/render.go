@@ -23,6 +23,7 @@ func bold(text string) string   { return colorize(text, 1) }
 func dim(text string) string    { return colorize(text, 90) }
 func red(text string) string    { return colorize(text, 31) }
 func yellow(text string) string { return colorize(text, 33) }
+func cyan(text string) string   { return colorize(text, 36) }
 
 // dueColor grades a deadline by how close it is: red = overdue or today,
 // yellow = the next two days, cyan = this week, dim = further out.

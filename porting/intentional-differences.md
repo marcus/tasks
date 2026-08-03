@@ -73,6 +73,40 @@ One `##` section per accepted difference, in the order they were accepted:
   contains such a stamp, and none should be added. If a future case does, it
   belongs to this section rather than to a broadened comparison rule.
 
+## custom-link-system-order — accepted 2026-08-03
+
+- **Slices:** none (Wave 1, read model and queries — `links`, `open`, `show`)
+- **Ruby behavior:** `Links.classify` walks the configured `system.<name>` rows
+  with `systems.each`, which is the config file's INSERTION order. When one URL
+  host matches two configured rows — `system.broad = acme.io` and
+  `system.narrow = git.acme.io`, against `https://git.acme.io/x` — the row
+  written first in the config file wins, so `tasks links --json` reports
+  `"system":"broad"` for a config listing `broad` first and `"narrow"` for one
+  listing it second.
+- **Go behavior:** the rows are held in a `map[string]string`, which has no
+  order at all, so classification tries the LONGEST configured host first and
+  breaks a length tie by name. The same URL reports `"system":"narrow"`
+  whichever order the config file used.
+- **Who can see it:** only a user whose config declares two custom systems
+  where one host is a suffix of the other, and who then classifies a URL under
+  the narrower one. With a single custom row, or with unrelated hosts, the two
+  implementations cannot disagree — a host matches at most one row. The
+  observable is the `system` field of a link row and the `--system` filter that
+  reads it.
+- **Why accepted:** decided by the Wave 1 read-model agent. Preserving Ruby's
+  answer would mean carrying config-file line order through `Config` into the
+  read model purely to reproduce an ordering the user never stated. Specificity
+  is also the better answer: a user who writes `system.narrow = git.acme.io`
+  alongside a broader row is asking for the narrow one to win, and Ruby's
+  behavior there is an artifact of hash iteration rather than a decision.
+- **Evidence:** `go/internal/links/links_test.go`,
+  `TestCustomSystemsPreferTheMoreSpecificHost` names the case; the
+  documented-behavior cases (`TestCustomSystemRowsClassifySelfHosted`) pin the
+  agreeing majority.
+- **Conformance disposition:** no comparator exception needed — no fixture
+  configures overlapping custom system hosts, and the corpus does not generate
+  config files. A future fixture that did would belong to this section.
+
 ## Notes on the record
 
 The last field is the one that rots. A difference recorded here but not

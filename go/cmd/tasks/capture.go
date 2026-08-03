@@ -243,7 +243,17 @@ func (s *surfaceContext) refuseUnsupportedSchema(args []string, action string) i
 	}
 	message := unsupportedSchemaMessage(detail)
 	if slices.Contains(args, "--json") {
-		out(errorDocument("unsupported_schema_version", action, message, false))
+		// No `rolled_back` member here, and that is not an oversight: this gate
+		// fires BEFORE anything is attempted, on reads as on writes, so there is
+		// no write to have been rolled back. The field belongs to the mutation
+		// envelope, where false genuinely means "refused before writing".
+		w := jsonWriter()
+		w.BeginObject()
+		w.KeyStr("error", "unsupported_schema_version")
+		w.KeyStr("action", action)
+		w.KeyStr("message", message)
+		w.EndObject()
+		out(w.String())
 	}
 	fmt.Fprintln(os.Stderr, message)
 	return 1

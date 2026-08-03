@@ -33,6 +33,16 @@ func (s *surfaceContext) emitItemsJSON(queries *taskquery.Queries, items []store
 }
 
 func writeItemJSON(w *jsonout.Writer, queries *taskquery.Queries, item store.Item) {
+	writeItemJSONWith(w, queries, item, nil)
+}
+
+// writeItemJSONWith is the same row plus whatever the view adds to it —
+// `quadrants` contributes its classification, `show` its closed date, notes and
+// links. The rider writes INSIDE the object and after every standard member, so
+// a view can extend the shape without forking it: Ruby merges its extras onto
+// the same hash for exactly this reason.
+func writeItemJSONWith(w *jsonout.Writer, queries *taskquery.Queries, item store.Item,
+	extra func(*jsonout.Writer)) {
 	w.BeginObject()
 	w.KeyStrOrNull("id", item.ID)
 	w.KeyStr("state", item.State)
@@ -108,6 +118,9 @@ func writeItemJSON(w *jsonout.Writer, queries *taskquery.Queries, item store.Ite
 	}
 	w.Key("delegation")
 	writeDelegation(w, item.Delegation)
+	if extra != nil {
+		extra(w)
+	}
 	w.EndObject()
 }
 
@@ -121,6 +134,12 @@ func writeAPITime(w *jsonout.Writer, queries *taskquery.Queries, value temporal.
 		w.Null()
 		return
 	}
+	writeAPITimeValue(w, api)
+}
+
+// writeAPITimeValue is the object itself, shared with the project resource so a
+// stamp reads the same wherever it appears.
+func writeAPITimeValue(w *jsonout.Writer, api taskquery.APITime) {
 	w.BeginObject()
 	w.KeyStr("local", api.Local)
 	w.KeyStrOrNull("timezone", api.Timezone)
