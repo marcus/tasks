@@ -3545,7 +3545,12 @@ module Tasks
         return :proposed_descendants
       end
       moved[0].delete("parent")
-      moved[0]["archived"] = Date.today.iso8601
+      # The store's own clock, not Date.today. Every other date this store
+      # writes — the sweep's `archived`, a close's `closed` — comes from an
+      # injected clock, so a harness pin reaches them; Date.today ignored the
+      # pin and made this one stamp the only nondeterministic byte a project
+      # archive produced.
+      moved[0]["archived"] = @now.call.to_date.iso8601
       kept = records[0...ri] + records[rj..]
 
       arch = File.exist?(@archive) ? fresh_records(@archive) : []

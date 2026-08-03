@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"tasks-go/internal/store"
-	"tasks-go/internal/taskquery"
 )
 
 const delegateUsage = "usage: tasks delegate <ref> <refine|research|implement>  |  " +
@@ -163,18 +162,20 @@ func (s *surfaceContext) claimResource(result store.MutationResult, id string, a
 	return notPorted("claim --json success payload")
 }
 
+// printDelegationHeadline prints the DELEGATION line, not the task headline:
+// who holds the task and in what capacity, which is the question the verb was
+// asked. `delegate`, `claim`, `release` and `list --delegated` all print through
+// the same function so the four surfaces cannot drift apart.
 func (s *surfaceContext) printDelegationHeadline(result store.MutationResult, id string) int {
-	snapshot := result.ReadSnapshot
-	if snapshot == nil {
+	queries, status := s.readQueries(nil, "delegate")
+	if status != 0 {
+		return status
+	}
+	item, found := s.delegationItem(result, id)
+	if !found {
 		return abort("task store unavailable")
 	}
-	for _, item := range snapshot.Items {
-		if item.ID != id {
-			continue
-		}
-		out(taskquery.Headline(item))
-		return 0
-	}
+	out(delegationHeadline(queries, item))
 	return 0
 }
 

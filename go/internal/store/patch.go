@@ -33,6 +33,11 @@ type PatchValue struct {
 	add     []string
 	remove  []string
 	value   temporal.Value
+	// placement is the structural destination of a `location` change. It has
+	// its own kind rather than reusing text because "move under this parent"
+	// and "put this exactly here" are different operations with different
+	// refusals, and a single string cannot tell them apart.
+	placement Placement
 }
 
 type valueKind int
@@ -44,6 +49,8 @@ const (
 	kindList
 	kindTagDelta
 	kindTemporal
+	kindPlacement
+	kindUnnest
 )
 
 // NoValue is Ruby's `nil`: clear this field.
@@ -297,6 +304,20 @@ type patchContext struct {
 	// other write keeps the rule, or a plain `state` patch would become a way
 	// around the proposal gate entirely.
 	allowProposedAncestor bool
+	// maxDepth is the nesting cap a move may not push a subtree past. It rides
+	// on the context because applyFieldPatch is a free function shared by both
+	// transactions, and a package-level global would be a data race the moment
+	// two stores wrote at once.
+	maxDepth int
+	// force is `patch_location`'s `force:`. Without it a move to the parent the
+	// task already has is a satisfied no-op; with it the subtree is re-appended
+	// at the end of that parent's children, which is what `move --under` and
+	// `move "Section"` mean when the task is already there.
+	force bool
+	// placementTargets are the destination indexes a changeset resolved BEFORE
+	// the field loop, so a bad id refuses as not_found with field errors rather
+	// than as a generic invalid halfway through.
+	placementTargets *placementTargets
 }
 
 func patchInvalid(message string) patchOutcome {
@@ -807,6 +828,10 @@ type PatchRequest struct {
 	Context temporal.Context
 	// CoalesceKey groups byte-contiguous edits into one undo step.
 	CoalesceKey string
+	// Force is `patch_location`'s `force:` — re-append a subtree to the parent
+	// it already has instead of treating the move as satisfied. No other field
+	// reads it, which is why it is a request flag rather than part of the value.
+	Force bool
 }
 
 // PatchTask applies one field-owned semantic change in the same transaction
@@ -861,13 +886,11 @@ func (s *Store) PatchTaskCoalesced(id string, field PatchField, value, expected,
 // moment a field lands here.
 func (s *Store) PatchesField(field PatchField) bool { return patchableFields[field] }
 
-// patchableFields is every field applyFieldPatch can actually write. `location`
-// is deliberately absent: it is in EditSnapshot::FIELDS and it refuses, so a
-// caller that asks first is told no before a transaction it cannot complete.
+// patchableFields is every field applyFieldPatch can actually write.
 var patchableFields = map[PatchField]bool{
 	FieldTitle: true, FieldPriority: true, FieldDeferred: true, FieldScheduled: true,
 	FieldDeadline: true, FieldRecurrence: true, FieldLead: true, FieldContexts: true,
-	FieldTags: true, FieldBody: true, FieldState: true,
+	FieldTags: true, FieldBody: true, FieldState: true, FieldLocation: true,
 	FieldTagDelta: true, FieldActivate: true, FieldDateClear: true,
 }
 
@@ -931,7 +954,10 @@ func (s *Store) Patch(request PatchRequest) MutationResult {
 		}
 		applied := applyFieldPatch(working, index, request.Field, request.Value, context)
 		if applied.status != MutationOK {
-			result = MutationResult{Status: applied.status, Errors: applied.errors}
+			result = MutationResult{
+				Status: applied.status, Errors: applied.errors,
+				FieldErrors: applied.fieldErrors, Summary: applied.summary,
+			}
 			return nil
 		}
 		if containsField(dateOwningFields, request.Field) {
@@ -944,7 +970,10 @@ func (s *Store) Patch(request PatchRequest) MutationResult {
 		}
 		if proposed == original {
 			snapshot, revision := s.readAfterWrite()
-			result = MutationResult{Status: MutationNoChange, ReadSnapshot: snapshot, StoreRevision: revision}
+			result = MutationResult{
+				Status: MutationNoChange, ReadSnapshot: snapshot, StoreRevision: revision,
+				Summary: applied.summary,
+			}
 			return nil
 		}
 
@@ -984,7 +1013,7 @@ func (s *Store) patchContext(request PatchRequest) (patchContext, error) {
 		context = built
 	}
 	return patchContext{today: today, temporal: context, stamp: DelegationStamp(s.now()),
-		explicit: explicit}, nil
+		explicit: explicit, maxDepth: s.options.MaxDepth, force: request.Force}, nil
 }
 
 // ExpectedFor is the baseline a caller reads before proposing a patch. It is
@@ -1015,8 +1044,7 @@ func (s *Store) ExpectedFor(id string, field PatchField) (string, bool) {
 // applyFieldPatch dispatches to the one field that owns the change.
 //
 // The default arm REFUSES. A field the port has not reached must never fall
-// through to a write: `location` is in EditSnapshot::FIELDS and is deliberately
-// unimplemented here, so it names itself rather than silently doing nothing.
+// through to a write, so it names itself rather than silently doing nothing.
 func applyFieldPatch(records []record.Record, index int, field PatchField, value PatchValue,
 	context patchContext) patchOutcome {
 
@@ -1048,8 +1076,7 @@ func applyFieldPatch(records []record.Record, index int, field PatchField, value
 	case FieldState:
 		return patchState(records, index, value, context)
 	case FieldLocation:
-		return patchInvalid("moving a task is not implemented in the Go port — " +
-			"placement, cycle and depth rules are a separate behavior and this build will not guess them")
+		return patchLocation(records, index, value, context, context.placementTargets)
 	}
 	return patchInvalid("unknown editable field")
 }

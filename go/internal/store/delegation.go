@@ -150,8 +150,15 @@ func (s *Store) Claim(id, worker, coalesceKey string) MutationResult {
 // work-ref calls fail their worker match. It is allowed whatever the marker's
 // status and whatever the task's state, because clearing provenance from a
 // closed task is an owner's prerogative; an undelegated task is no_change.
-func (s *Store) Undelegate(id, coalesceKey string) MutationResult {
-	result := s.delegationMutation(id, coalesceKey, func(target *record.Record) delegationPlan {
+//
+// The coalesce key is accepted and DELIBERATELY IGNORED. Ruby's
+// `undelegate_task!` takes none — only `delegate` and `release` compose a second
+// write that has to share an undo step — so honouring one here would merge a
+// revocation into whatever unrelated delegation write happened to precede it,
+// and one undo would then revert two decisions. The parameter stays in the
+// signature because the application layer's optional interface declares it.
+func (s *Store) Undelegate(id, _ string) MutationResult {
+	result := s.delegationMutation(id, "", func(target *record.Record) delegationPlan {
 		return planUndelegate(target)
 	})
 	result.Summary.Action = "undelegate"
@@ -175,8 +182,12 @@ func (s *Store) Release(id, worker string, force bool, coalesceKey string) Mutat
 // reference: setting overwrites. The owner (an empty worker) may always set it;
 // a worker only while its own claim stands. It is not a status transition, so
 // `at` is deliberately left alone.
-func (s *Store) SetWorkRef(id, workRef, worker, coalesceKey string) MutationResult {
-	result := s.delegationMutation(id, coalesceKey, func(target *record.Record) delegationPlan {
+//
+// The coalesce key is accepted and DELIBERATELY IGNORED, for the same reason it
+// is on Undelegate: Ruby's `set_work_ref!` takes none, and merging a reference
+// update into a neighbouring delegation write would make one undo revert both.
+func (s *Store) SetWorkRef(id, workRef, worker, _ string) MutationResult {
+	result := s.delegationMutation(id, "", func(target *record.Record) delegationPlan {
 		return planWorkRef(target, workRef, worker)
 	})
 	result.Summary.Action = "work_ref"

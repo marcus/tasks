@@ -363,11 +363,14 @@ func (s *Server) patchChanges(body *jsonObject, queries *taskquery.Queries,
 			}
 			changes = append(changes, store.Change{Field: store.FieldLead, Value: value})
 		case "parent_id", "placement":
-			// Both spellings name the same structural destination, which the
-			// store owns and this build does not implement. The change is still
-			// SENT so the refusal comes from the layer that owns the rule.
+			// Both spellings name the same structural destination, and the store
+			// owns every rule about it — cycles, depth, the anchor's parent. What
+			// this layer owes is the VALUE's shape: a null parent_id is UNNEST, a
+			// named one is an append, and `placement` may also carry the anchor.
+			// Flattening the anchor away would be exactly the silent half-work a
+			// stated refusal exists to prevent.
 			changes = append(changes, store.Change{
-				Field: store.FieldLocation, Value: store.TextValue(locationTarget(body, key)),
+				Field: store.FieldLocation, Value: locationValue(body, key),
 			})
 		}
 	}
@@ -399,20 +402,21 @@ func textOrNone(body *jsonObject, key string) store.PatchValue {
 	return store.TextValue(value)
 }
 
-func locationTarget(body *jsonObject, key string) string {
+func locationValue(body *jsonObject, key string) store.PatchValue {
 	if key == "parent_id" {
 		if body.isNull(key) {
-			return ""
+			return store.UnnestValue()
 		}
 		value, _ := body.text(key)
-		return value
+		return store.TextValue(value)
 	}
 	placement, ok := body.object(key)
 	if !ok {
-		return ""
+		return store.TextValue("")
 	}
-	value, _ := placement.text("parent_id")
-	return value
+	parent, _ := placement.text("parent_id")
+	before, _ := placement.text("before_id")
+	return store.PlacementValue(parent, before)
 }
 
 // normalizeBody is App#normalize_body: a list of lines joins with newlines.

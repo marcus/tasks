@@ -1,0 +1,331 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# store-completion-diff — the differential harness for the store-completion
+# packet: placement (`move`), the project lifecycle, the three delegation verbs
+# that had no store operation, `id`, and the dated create.
+#
+# It is deliberately the same shape as lifecycle-diff, and for the same reason:
+# every bug that mattered in Waves 1-3 was found by running the two binaries
+# against byte-identical sandboxes and diffing what an observer can see —
+# stdout, stderr, exit status, tasks.jsonl, archive.jsonl and the journal. Unit
+# tests found none of them.
+#
+# Usage:  porting/compare/store-completion-diff [--verbose]
+
+require "fileutils"
+require "json"
+require "open3"
+require "tmpdir"
+
+ROOT = File.expand_path("../..", __dir__)
+RUBY_BIN = File.join(ROOT, "bin", "tasks")
+GO_BIN = File.join(ROOT, "go", "bin", "tasks")
+FIXTURES = File.join(ROOT, "porting", "fixtures")
+
+VERBOSE = ARGV.include?("--verbose")
+
+PINS = {
+  "TASKS_PIN_NOW" => "2026-03-14T15:09:26Z",
+  "TASKS_PIN_IDS" => "dddd0001,dddd0002,dddd0003,dddd0004,dddd0005,dddd0006",
+  "TASKS_PIN_COALESCE_SCOPE" => "pinned-scope",
+  "TASKS_PIN_DELEGATION_KEYS" => "eeee0001eeee0001,eeee0002eeee0002",
+  "TASKS_DEVICE" => "fixture",
+  "TASKS_TIMEZONE" => "Etc/UTC",
+}.freeze
+
+def sandbox(dir, org_text, archive_text = nil)
+  FileUtils.mkdir_p(dir)
+  File.write(File.join(dir, "tasks.jsonl"), org_text)
+  File.write(File.join(dir, "archive.jsonl"), archive_text) if archive_text
+  dir
+end
+
+def env_for(dir)
+  PINS.merge(
+    "TASKS_FILE" => File.join(dir, "tasks.jsonl"),
+    "TASKS_ARCHIVE" => File.join(dir, "archive.jsonl"),
+    "XDG_STATE_HOME" => File.join(dir, "state"),
+    "XDG_CONFIG_HOME" => File.join(dir, "config"),
+    "NO_COLOR" => "1"
+  )
+end
+
+def run(binary, dir, argv)
+  command = binary == :ruby ? ["ruby", RUBY_BIN] : [GO_BIN]
+  out, err, status = Open3.capture3(env_for(dir), *command, *argv)
+  { stdout: out.force_encoding("UTF-8"), stderr: err.force_encoding("UTF-8"),
+    status: status.exitstatus }
+end
+
+# Everything an observer can see afterwards. The journal index is included
+# because an undo's whole correctness is "where does the cursor point now".
+def observe(dir)
+  state = {}
+  %w[tasks.jsonl archive.jsonl].each do |name|
+    path = File.join(dir, name)
+    state[name] = File.exist?(path) ? File.read(path, encoding: "UTF-8") : nil
+  end
+  index = Dir.glob(File.join(dir, "state", "tasks", "journal", "*", "index.json")).first
+  if index
+    data = JSON.parse(File.read(index))
+    state["journal.cursor"] = data["cursor"]
+    state["journal.labels"] = data["states"].map { |s| s["label"] }
+    state["journal.repair"] = data["states"].map { |s| s["repair"] }
+  else
+    state["journal"] = nil
+  end
+  state
+end
+
+$cases = 0
+$failures = []
+
+def scenario(name, org:, archive: nil, steps:)
+  $cases += 1
+  Dir.mktmpdir do |root|
+    ruby_dir = sandbox(File.join(root, "ruby"), org, archive)
+    go_dir = sandbox(File.join(root, "go"), org, archive)
+
+    steps.each_with_index do |argv, index|
+      ruby = run(:ruby, ruby_dir, argv)
+      go = run(:go, go_dir, argv)
+      label = "#{name} [#{index}] #{argv.join(" ")}"
+
+      %i[stdout stderr status].each do |field|
+        next if ruby[field] == go[field]
+
+        $failures << "#{label}\n  #{field}:\n    ruby: #{ruby[field].inspect}\n    go:   #{go[field].inspect}"
+      end
+      ruby_state = observe(ruby_dir)
+      go_state = observe(go_dir)
+      ruby_state.each_key do |key|
+        next if ruby_state[key] == go_state[key]
+
+        $failures << "#{label}\n  #{key}:\n    ruby: #{ruby_state[key].inspect}\n    go:   #{go_state[key].inspect}"
+      end
+      warn "  ok #{label}" if VERBOSE && $failures.empty?
+    end
+  end
+end
+
+def fixture(name)
+  File.read(File.join(FIXTURES, "valid", name, "store", "tasks.jsonl"), encoding: "UTF-8")
+end
+
+SMALL = fixture("small-gtd")
+PROJECTS = fixture("project-rollup-edges")
+MATRIX = fixture("full-field-matrix")
+DEEP = fixture("deep-nesting")
+EMPTY_STORE = fixture("empty-store")
+
+FUTURE_STORE = <<~JSONL
+  {"type":"meta","version":99}
+  {"type":"section","id":"1e000001","title":"Next Actions"}
+JSONL
+
+PROPOSALS = <<~JSONL
+  {"type":"meta","version":2}
+  {"type":"section","id":"ccdd0001","title":"Inbox"}
+  {"type":"section","id":"ccdd0005","title":"Projects"}
+  {"type":"section","id":"ccdd0006","title":"Held","parent":"ccdd0005"}
+  {"type":"task","id":"ccdd0002","parent":"ccdd0006","state":"PROPOSED","title":"Parent proposal"}
+  {"type":"task","id":"ccdd0003","parent":"ccdd0002","state":"PROPOSED","title":"Child proposal"}
+  {"type":"task","id":"ccdd0004","parent":"ccdd0001","state":"TODO","title":"Accepted work"}
+JSONL
+
+NO_IDS = <<~JSONL
+  {"type":"meta","version":2}
+  {"type":"section","id":"1e000001","title":"Next Actions"}
+  {"type":"task","parent":"1e000001","state":"NEXT","title":"Hand-appended task with no id"}
+JSONL
+
+# -- move ------------------------------------------------------------------------
+
+scenario "move-usage", org: SMALL,
+         steps: [%w[move], ["move", "   "], ["move", "Draft"],
+                 ["move", "Draft", "Next Actions", "--top"],
+                 ["move", "Draft", "--corpus-unknown"]]
+scenario "move-to-a-section", org: SMALL,
+         steps: [["move", "Draft", "Next Actions"], %w[undo],
+                 ["move", "Draft", "Next Actions", "--json"], %w[undo]]
+scenario "move-to-a-missing-section", org: SMALL, steps: [["move", "Draft", "Nowhere at all"]]
+scenario "move-dry-run", org: SMALL,
+         steps: [["move", "Draft", "Next Actions", "--dry-run"],
+                 ["move", "Draft", "--top", "--dry-run"]]
+scenario "move-under", org: SMALL,
+         steps: [["move", "Reply to the supplier", "--under", "Draft"], %w[undo],
+                 ["move", "Reply to the supplier", "--under", "Draft", "--json"]]
+scenario "move-under-itself", org: SMALL, steps: [["move", "Draft", "--under", "Draft"]]
+scenario "move-top", org: SMALL,
+         steps: [["move", "Reply to the supplier", "--under", "Draft"],
+                 ["move", "Reply to the supplier", "--top"],
+                 ["move", "Reply to the supplier", "--top"], %w[undo]]
+scenario "move-top-include-done", org: SMALL,
+         steps: [["move", "Draft", "--top", "--include-done"]]
+scenario "move-before", org: SMALL,
+         steps: [["move", "Reply to the supplier", "--under", "Draft"],
+                 ["move", "Book the dentist", "--under", "Draft",
+                  "--before", "Reply to the supplier"],
+                 %w[undo]]
+scenario "move-before-itself", org: SMALL,
+         steps: [["move", "Draft", "--before", "Draft"]]
+scenario "move-before-a-non-sibling", org: SMALL,
+         steps: [["move", "Draft", "--before", "Book the dentist"]]
+scenario "move-before-dry-run-json", org: SMALL,
+         steps: [["move", "Reply to the supplier", "--under", "Draft",
+                  "--before", "Draft", "--dry-run", "--json"]]
+scenario "move-before-missing-anchor", org: SMALL,
+         steps: [["move", "Draft", "--before", "nothing-matches-this"]]
+scenario "move-too-deep", org: DEEP, steps: [["move", "Level 1", "--under", "Level 4"]]
+scenario "move-proposed-parent", org: PROPOSALS,
+         steps: [["move", "Accepted work", "--under", "Parent proposal"]]
+scenario "move-unsupported-schema", org: FUTURE_STORE,
+         steps: [["move", "Draft", "Next Actions"], ["move", "Draft", "Next Actions", "--json"]]
+
+# -- project ---------------------------------------------------------------------
+
+scenario "project-usage", org: PROJECTS,
+         steps: [%w[project], %w[project nonsense], %w[project create], %w[project show],
+                 %w[project rename], %w[project complete], %w[project archive]]
+scenario "project-create", org: PROJECTS,
+         steps: [["project", "create", "Generated project"], %w[undo],
+                 ["project", "create", "Generated project", "--json"],
+                 ["project", "create", "Generated project"]]
+scenario "project-create-bootstraps-root", org: EMPTY_STORE,
+         steps: [["project", "create", "First project"], %w[projects]]
+scenario "project-create-dry-run", org: PROJECTS,
+         steps: [["project", "create", "Dated project", "--dry-run"],
+                 ["project", "create", "Dated project", "--dry-run", "--json"]]
+scenario "project-create-alias", org: PROJECTS, steps: [["project", "new", "Generated project"]]
+scenario "project-show", org: PROJECTS,
+         steps: [["project", "show", "Project with mixed holds"],
+                 ["project", "show", "Project with mixed holds", "--json"],
+                 ["project", "show", "no-such-project"],
+                 ["project", "show", "Project with mixed holds", "--corpus-unknown"]]
+scenario "project-rename", org: PROJECTS,
+         steps: [["project", "rename", "Empty project", "Renamed generated project"], %w[undo],
+                 ["project", "rename", "Empty project", "Renamed generated project", "--json"],
+                 ["project", "rename", "Empty project", "Renamed generated project", "--dry-run"]]
+scenario "project-complete", org: PROJECTS,
+         steps: [["project", "complete", "Project with mixed holds"], %w[undo],
+                 ["project", "complete", "Project with mixed holds", "--json"],
+                 ["project", "complete", "Project with mixed holds"]]
+scenario "project-complete-dry-run", org: PROJECTS,
+         steps: [["project", "complete", "Project with mixed holds", "--dry-run"],
+                 ["project", "complete", "Project with mixed holds", "--dry-run", "--json"]]
+scenario "project-complete-alias", org: PROJECTS,
+         steps: [["project", "done", "Project with mixed holds"]]
+scenario "project-archive", org: PROJECTS,
+         steps: [["project", "archive", "Empty project"], %w[undo],
+                 ["project", "archive", "Empty project", "--json"]]
+scenario "project-archive-blocked", org: PROJECTS,
+         steps: [["project", "archive", "Project with mixed holds"],
+                 ["project", "archive", "Project with mixed holds", "--force", "--dry-run", "--json"],
+                 ["project", "archive", "Project with mixed holds", "--force"]]
+scenario "project-archive-proposals", org: PROPOSALS, steps: [["project", "archive", "Held"]]
+scenario "project-unsupported-schema", org: FUTURE_STORE,
+         steps: [["project", "create", "Generated project"],
+                 ["project", "create", "Generated project", "--json"],
+                 ["project", "show", "Next Actions"],
+                 ["project", "rename", "Next Actions", "Renamed"],
+                 ["project", "complete", "Next Actions"],
+                 ["project", "archive", "Next Actions"]]
+
+# -- delegation verbs ------------------------------------------------------------
+
+scenario "undelegate", org: MATRIX,
+         steps: [["undelegate", "Claimed by a worker"], %w[undo],
+                 ["undelegate", "Claimed by a worker", "--json"],
+                 ["undelegate", "Claimed by a worker"],
+                 %w[undelegate], ["undelegate", "Claimed by a worker", "--corpus-unknown"]]
+scenario "release", org: MATRIX,
+         steps: [["release", "Claimed by a worker", "--worker", "harness/model/session-0001"],
+                 %w[undo],
+                 ["release", "Claimed by a worker", "--worker", "harness/model/session-0001", "--json"],
+                 ["release", "Claimed by a worker", "--worker", "nobody/else"],
+                 %w[release]]
+scenario "release-force-and-note", org: MATRIX,
+         steps: [["release", "Claimed by a worker", "--force"], %w[undo],
+                 ["release", "Claimed by a worker", "--worker", "harness/model/session-0001",
+                  "--note", "generated blocker", "--json"], %w[undo]]
+scenario "workref", org: MATRIX,
+         steps: [["workref", "Claimed by a worker", "https://example.test/work/1"], %w[undo],
+                 ["workref", "Claimed by a worker", "https://example.test/work/1", "--json"],
+                 ["work-ref", "Claimed by a worker", "https://example.test/work/1"],
+                 ["workref", "Claimed by a worker", "off", "--worker",
+                  "harness/model/session-0001", "--json"],
+                 %w[workref],
+                 ["workref", "Claimed by a worker", "https://example.test/work/1",
+                  "--corpus-unknown"]]
+scenario "workref-on-an-undelegated-task", org: SMALL,
+         steps: [["workref", "Draft", "https://example.test/work/1"]]
+scenario "delegation-unsupported-schema", org: FUTURE_STORE,
+         steps: [["undelegate", "Draft"], ["undelegate", "Draft", "--json"],
+                 ["release", "Draft", "--worker", "w1"],
+                 ["release", "Draft", "--worker", "w1", "--json"],
+                 ["workref", "Draft", "https://x"], ["workref", "Draft", "https://x", "--json"]]
+
+# -- id --------------------------------------------------------------------------
+
+scenario "id", org: SMALL,
+         steps: [["id", "Draft"], ["id", "Draft", "--json"], %w[id],
+                 ["id", "Draft", "--corpus-unknown"]]
+scenario "id-mints-a-missing-one", org: NO_IDS,
+         steps: [["id", "Hand-appended"], %w[check], %w[undo]]
+scenario "id-unsupported-schema", org: FUTURE_STORE,
+         steps: [["id", "Next Actions"], ["id", "Next Actions", "--json"]]
+
+# -- the dated create -------------------------------------------------------------
+
+scenario "capture-dated", org: SMALL,
+         steps: [["capture", "Dated", "--due", "2026-09-09"], %w[undo],
+                 ["capture", "Dated", "--scheduled", "2026-09-01", "--json"], %w[undo],
+                 ["capture", "Dated", "--due", "2026-09-09", "--scheduled", "2026-09-01"]]
+scenario "capture-recurring", org: SMALL,
+         steps: [["capture", "Recurring", "--recur", "weekly"], %w[undo],
+                 ["capture", "Recurring", "--recur", "weekly", "--lead", "2d"], %w[undo],
+                 ["capture", "Recurring", "--recur", "y:06-01", "--lead", "17d", "--json"]]
+scenario "capture-lead-refusals", org: SMALL,
+         steps: [["capture", "Leaded", "--lead", "2d"],
+                 ["capture", "Leaded", "--lead", "2d", "--due", "2026-09-09",
+                  "--scheduled", "2026-09-01"],
+                 ["capture", "Leaded", "--lead", "off"],
+                 ["capture", "Recurring", "--recur", "off"],
+                 ["capture", "Recurring", "--recur", "weekly", "--state", "DONE"]]
+scenario "capture-temporal-modifiers", org: SMALL,
+         steps: [["capture", "Timed", "--due", "2026-11-01 01:30", "--due-timezone",
+                  "America/Los_Angeles", "--due-fold", "later", "--scheduled",
+                  "2026-09-01 09:30", "--scheduled-floating", "--dry-run"],
+                 ["capture", "Timed", "--due-timezone", "Europe/London"],
+                 ["capture", "Timed", "--scheduled-floating"],
+                 ["capture", "Timed", "--due", "2026-09-09", "--due-fold", "sideways"],
+                 ["capture", "Timed", "--due", "2026-09-09 09:30", "--due-timezone",
+                  "Europe/London", "--due-floating"],
+                 ["capture", "Timed", "--due", "not-a-date"]]
+scenario "capture-under", org: SMALL,
+         steps: [["capture", "Child", "--under", "Draft", "--dry-run"],
+                 ["capture", "Child", "--under", "Draft"], %w[undo],
+                 ["capture", "Child", "--under", "no-such-task"],
+                 ["capture", "Child", "--under", "Draft", "--project", "Inbox"]]
+scenario "capture-full", org: SMALL,
+         steps: [["capture", "Generated full task", "--due", "2026-09-09", "--priority", "A",
+                  "--tag", "generated", "--context", "@computer", "--no-host-context",
+                  "--state", "TODO", "--project", "Next Actions", "--recur", "weekly",
+                  "--lead", "2d", "--note", "generated note", "--dry-run", "--json"]]
+scenario "propose-dated", org: SMALL,
+         steps: [["propose", "Generated proposal", "--due", "2026-09-09", "--lead", "2d",
+                  "--priority", "B", "--tag", "generated", "--context", "@computer",
+                  "--no-host-context", "--project", "Next Actions", "--note", "rationale",
+                  "--dry-run", "--json"],
+                 ["propose", "Generated proposal", "--recur", "weekly"],
+                 ["propose", "Generated proposal", "--due", "2026-09-09"], %w[undo]]
+
+puts "#{$cases} scenarios"
+if $failures.empty?
+  puts "DIFF CLEAN"
+  exit 0
+end
+puts "#{$failures.length} difference(s):"
+$failures.each { |failure| puts "\n#{failure}" }
+exit 1

@@ -410,14 +410,9 @@ func TestRoutesThisBuildRefusesSayWhy(t *testing.T) {
 		{"claim", "POST", "/api/v1/tasks/" + fixPR + "/claim", `{"worker":"w1"}`, "claim over HTTP"},
 		{"release", "POST", "/api/v1/tasks/" + fixPR + "/release", `{"worker":"w1"}`, "release over HTTP"},
 		{"work_ref", "PUT", "/api/v1/tasks/" + fixPR + "/work_ref", `{"work_ref":"https://x"}`, "work_ref over HTTP"},
-		{"placement", "PATCH", "/api/v1/tasks/" + fixPR, `{"placement":{"parent_id":"aaaa0009"}}`, "not implemented in the Go port"},
-		{"unnest", "PATCH", "/api/v1/tasks/" + fixChild, `{"parent_id":null}`, "not implemented in the Go port"},
 	}
 	for _, testCase := range cases {
 		headers := h.withIfMatch(tag)
-		if testCase.name == "unnest" || testCase.name == "placement" {
-			headers = h.withIfMatch(h.etagOf(strings.TrimPrefix(testCase.path, "/api/v1/tasks/")))
-		}
 		answered := h.json(testCase.method, testCase.path, testCase.body, headers)
 		assertError(t, answered, 501, "not_implemented")
 		if !strings.Contains(answered.message(), testCase.expect) {
