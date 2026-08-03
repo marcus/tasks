@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -168,7 +169,71 @@ func positiveInteger(value string) (int, bool) {
 	return number, true
 }
 
-// IDSource is the process-wide id mint, or nil when TASKS_PIN_IDS is unset.
+// shared holds the process-wide mints. Ruby memoizes these inside the module
+// for a reason that is not cosmetic: ONE invocation can build several stores
+// (a CLI store and an application factory), and they must draw from one
+// sequence rather than each restarting it at the first pinned token — two
+// records would otherwise be minted the same id and the store's collision loop
+// would silently renumber the second.
+var shared struct {
+	sync.Mutex
+	idSpec         string
+	idSource       *IDSequence
+	delegationSpec string
+	delegationKeys *IDSequence
+}
+
+// SharedIDSource is IDSource memoized per spec: the same env yields the same
+// sequence, and changing the pin rebuilds it. Adapters that mint ids more than
+// once in a process should use this rather than IDSource.
+func SharedIDSource(env Env) (*IDSequence, error) {
+	spec := strings.TrimSpace(env.Get(NameIDs))
+	if spec == "" {
+		return nil, nil
+	}
+	shared.Lock()
+	defer shared.Unlock()
+	if shared.idSource != nil && shared.idSpec == spec {
+		return shared.idSource, nil
+	}
+	sequence, err := NewIDSequence(spec, 8, NameIDs)
+	if err != nil {
+		return nil, err
+	}
+	shared.idSpec, shared.idSource = spec, sequence
+	return sequence, nil
+}
+
+// SharedDelegationKeySource is DelegationKeySource memoized per spec, for the
+// same reason: one invocation may build more than one application.
+func SharedDelegationKeySource(env Env) (*IDSequence, error) {
+	spec := strings.TrimSpace(env.Get(NameDelegationKeys))
+	if spec == "" {
+		return nil, nil
+	}
+	shared.Lock()
+	defer shared.Unlock()
+	if shared.delegationKeys != nil && shared.delegationSpec == spec {
+		return shared.delegationKeys, nil
+	}
+	sequence, err := NewIDSequence(spec, 16, NameDelegationKeys)
+	if err != nil {
+		return nil, err
+	}
+	shared.delegationSpec, shared.delegationKeys = spec, sequence
+	return sequence, nil
+}
+
+// Reset drops the memoized sequences. Test-only, exactly as Determinism.reset!
+// is: a test that pinned one spec must not leak its position into the next.
+func Reset() {
+	shared.Lock()
+	defer shared.Unlock()
+	shared.idSpec, shared.idSource = "", nil
+	shared.delegationSpec, shared.delegationKeys = "", nil
+}
+
+// IDSource is a fresh id mint, or nil when TASKS_PIN_IDS is unset.
 func IDSource(env Env) (*IDSequence, error) {
 	spec := strings.TrimSpace(env.Get(NameIDs))
 	if spec == "" {
@@ -190,6 +255,9 @@ func DelegationKeySource(env Env) (*IDSequence, error) {
 // IDSequence is a monotonic, reproducible hex mint. Stateful on purpose: one
 // invocation can perform several mutations and each must draw the next token.
 type IDSequence struct {
+	// A shared sequence can be drawn from more than one goroutine (the store
+	// and the journal both mint), and the draw mutates the queue and counter.
+	mu      sync.Mutex
 	width   int
 	name    string
 	queue   []string
@@ -234,6 +302,8 @@ func (s *IDSequence) Width() int { return s.width }
 // Call draws the next token: the queued ones in order, then the last one
 // incremented as a counter of the same width.
 func (s *IDSequence) Call() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if len(s.queue) > 0 {
 		token := s.queue[0]
 		s.queue = s.queue[1:]
