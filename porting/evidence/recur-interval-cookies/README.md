@@ -678,3 +678,25 @@ cases, with only the five declared calendar-grammar boundary rows differing;
 passed. A new independent source-fidelity review is still required; it should
 validate this correction against the Ruby probe before proceeding to Go-idiom
 review or approval.
+
+## Independent source-fidelity review: passed (2026-08-02)
+
+An independent medium-tier review of `f7c8b70` made no implementation edits.
+The manifest source closure is still byte-identical at
+`lib/tasks/recur.rb` to `28424b77950f59f2d78bf089be316c38d9f54aec`.
+
+The review re-ran the Ruby-owned direct corpus and the package boundaries:
+
+- direct Ruby-vs-Go conformance: **42/42** cases matched;
+- the Unicode adversarial corpus: **57/62** matched, with exactly the five
+  documented `recur-calendar-grammar` boundary rows differing;
+- direct Ruby probes confirm `KEEKLY` is rejected, `weeKly` canonicalizes to
+  `.+1w`, and `DAİLY` is rejected; the focused Go regressions match;
+- `ruby test/test_recur.rb` (20 runs, 66 assertions), `go test ./...`,
+  `go test -race ./internal/recur`, `go vet ./...`, `gofmt -l .`, and
+  `git diff --check` all passed.
+
+No source-fidelity divergence was found in the interval-cookie slice. The
+remaining next step is a **separate independent Go-idiom review**, followed by
+independent approval if it passes. The recorded invalid-UTF-8 package-boundary
+gap and the five calendar-grammar rows remain out of scope for this review.
