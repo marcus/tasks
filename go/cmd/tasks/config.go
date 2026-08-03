@@ -184,5 +184,5 @@ func isFile(path string) bool {
 
 // config is dispatched here so main.go never lists the commands.
 func init() {
-	register("config", nil, (*surfaceContext).config)
+	register("config", (*surfaceContext).config)
 }

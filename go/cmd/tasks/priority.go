@@ -126,6 +126,6 @@ func (s *surfaceContext) patchAndReport(args []string, item store.Item, field st
 }
 
 func init() {
-	register("priority", nil, (*surfaceContext).priority)
-	register("done", []string{"d"}, (*surfaceContext).done)
+	register("priority", (*surfaceContext).priority)
+	register("done", (*surfaceContext).done)
 }

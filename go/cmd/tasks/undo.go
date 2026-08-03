@@ -56,5 +56,5 @@ func unsupportedSchemaMessage(detail string) string {
 }
 
 func init() {
-	register("undo", nil, (*surfaceContext).undo)
+	register("undo", (*surfaceContext).undo)
 }

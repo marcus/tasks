@@ -57,8 +57,12 @@ func run(argv []string) int {
 	case handler != nil:
 		return handler(surface, rest)
 	case isCommand:
-		fmt.Fprintf(os.Stderr, "%s: not implemented in the Go port — this build has no write path, "+
-			"and refusing is the only answer that cannot leave a half-written store\n", name)
+		// A real command this build has not ported. Refusing is the only
+		// answer that cannot mislead: approximating a read would report a
+		// wrong list as if it were the list, and approximating a write could
+		// leave a half-written store.
+		fmt.Fprintf(os.Stderr, "%s: not implemented in the Go port yet — "+
+			"refusing rather than approximating it\n", name)
 		return notImplementedExit
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %q\n", name)
