@@ -17,3 +17,11 @@
 {"case_id":"catch-up-can-land-today","input":"++1w","default_prefix":".+","next":{"from":"2026-01-01","today":"2026-01-15"}}
 {"case_id":"italy-reform-day","input":"+1d","default_prefix":".+","next":{"from":"1582-10-04","today":"1582-10-04"}}
 {"case_id":"huge-day-count","input":"+999999999999999999999999999999999d","default_prefix":".+","next":{"from":"2026-01-01","today":"2026-01-01"}}
+{"case_id":"negative-year-fixed-hop","input":"+1d","default_prefix":".+","next":{"from":"-0044-03-15","today":"-0044-03-15"}}
+{"case_id":"negative-year-month-clamp","input":"+1m","default_prefix":".+","next":{"from":"-0044-01-31","today":"-0044-02-01"}}
+{"case_id":"negative-year-catch-up","input":"++1w","default_prefix":".+","next":{"from":"-0044-03-01","today":"-0044-03-29"}}
+{"case_id":"year-zero-boundary","input":"+1y","default_prefix":".+","next":{"from":"0000-12-31","today":"0001-01-01"}}
+{"case_id":"explicit-plus-year","input":"+1d","default_prefix":".+","next":{"from":"+2026-01-01","today":"2026-01-01"}}
+{"case_id":"five-digit-year","input":"+1d","default_prefix":".+","next":{"from":"10000-02-28","today":"10000-02-28"}}
+{"case_id":"review-signed-negative-year","input":"+1d","default_prefix":".+","next":{"from":"-0001-01-01","today":"-0001-01-01"}}
+{"case_id":"review-signed-zero-year","input":"+1d","default_prefix":".+","next":{"from":"+0000-01-01","today":"+0000-01-01"}}

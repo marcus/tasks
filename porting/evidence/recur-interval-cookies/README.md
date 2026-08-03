@@ -395,3 +395,59 @@ which pins Ruby's `weekly` plus an explicit empty prefix to `1w`; the Ruby-vs-Go
 comparator passes 17/17 cases. A fresh source-fidelity review is still required
 before approval. The existing invalid-UTF-8 boundary remains the separately
 recorded CLI-adapter ownership issue above.
+
+### Conformance-adapter repair: signed ISO years (2026-08-02)
+
+The independent source-fidelity review at `786ee22` rejected the slice on a Go
+**conformance-adapter** defect, not an `internal/recur` defect: `civilDate` in
+`go/cmd/recur-probe/main.go` split the whole date on `-`, so a Ruby-valid
+signed year such as `-0001-01-01` produced four segments and panicked. Direct
+conformance passed only because the corpus carried no signed year, which left
+the arbitrary-precision `CivilDate` boundary unproved at the observable edge.
+
+`civilDate` now peels an optional leading `+`/`-` into the year before
+splitting the three components, requires all three components to be digits,
+and keeps the year arbitrary-precision. This mirrors the Ruby probe's
+`Date.iso8601`, which accepts `-0044-03-15`, `+0000-01-01`, `+2026-01-01` and
+`10000-01-01` and renders a negative year back with a signed, zero-padded
+spelling.
+
+Eight direct cases were added to
+`porting/runners/cases/recur-interval-cookies-direct.jsonl`, including the two
+the review named:
+
+| case | from → next |
+|---|---|
+| `negative-year-fixed-hop` (`+1d`) | `-0044-03-15` → `-0044-03-16` |
+| `negative-year-month-clamp` (`+1m`) | `-0044-01-31` → `-0044-02-29` |
+| `negative-year-catch-up` (`++1w`) | `-0044-03-01` → `-0044-03-29` |
+| `year-zero-boundary` (`+1y`) | `0000-12-31` → `0001-12-31` |
+| `explicit-plus-year` (`+1d`) | `+2026-01-01` → `2026-01-02` |
+| `five-digit-year` (`+1d`) | `10000-02-28` → `10000-02-29` |
+| `review-signed-negative-year` (`+1d`) | `-0001-01-01` → `-0001-01-02` |
+| `review-signed-zero-year` (`+1d`) | `+0000-01-01` → `0000-01-02` |
+
+Every expected value above is Ruby's, produced by
+`porting/runners/ruby/recur-probe`; none was read from Go. The negative-year
+month clamp and the five-digit-year hop both land on a Feb 29, which is Ruby
+`Date`'s proleptic-Julian leap rule before 1582 and the Gregorian rule after —
+so these cases exercise the calendar split, not only the string parsing.
+
+Verification passed:
+
+```console
+$ porting/evidence/recur-interval-cookies/conformance
+recur-interval-cookies direct conformance: 25/25 cases matched
+```
+
+```sh
+(cd go && gofmt -l . && go vet ./... && go test ./... && go test -race ./internal/recur)
+ruby test/test_recur.rb  # 20 runs, 66 assertions, 0 failures
+git diff --check
+```
+
+No `internal/recur` behavior changed in this repair; only the probe adapter and
+the case corpus. The invalid-UTF-8 boundary remains owned by the later CLI
+adapter slice, as recorded above. The next step is a **fresh independent
+mid-tier source-fidelity review**, then the Go-idiom review and independent
+approval.

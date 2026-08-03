@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"strconv"
 	"strings"
 
 	"tasks-go/internal/recur"
@@ -97,18 +98,45 @@ func nullIfEmpty(value string) any {
 	return value
 }
 
+// civilDate parses the extended ISO 8601 calendar dates Date.iso8601 accepts in
+// the Ruby probe, including the signed years ("-0044-03-15", "+2026-01-01")
+// whose leading sign is part of the year, not a field separator.
 func civilDate(value string) (recur.CivilDate, error) {
-	parts := strings.Split(value, "-")
+	rest := value
+	sign := ""
+	if strings.HasPrefix(rest, "-") || strings.HasPrefix(rest, "+") {
+		sign, rest = rest[:1], rest[1:]
+	}
+	parts := strings.Split(rest, "-")
 	if len(parts) != 3 {
 		return recur.CivilDate{}, fmt.Errorf("invalid civil date %q", value)
 	}
-	year, ok := new(big.Int).SetString(parts[0], 10)
+	if !allDigits(parts[0]) || !allDigits(parts[1]) || !allDigits(parts[2]) {
+		return recur.CivilDate{}, fmt.Errorf("invalid civil date %q", value)
+	}
+	year, ok := new(big.Int).SetString(sign+parts[0], 10)
 	if !ok {
 		return recur.CivilDate{}, fmt.Errorf("invalid civil date %q", value)
 	}
-	var month, day int
-	if _, err := fmt.Sscanf(parts[1]+"-"+parts[2], "%d-%d", &month, &day); err != nil {
+	month, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return recur.CivilDate{}, fmt.Errorf("invalid civil date %q", value)
+	}
+	day, err := strconv.Atoi(parts[2])
+	if err != nil {
 		return recur.CivilDate{}, fmt.Errorf("invalid civil date %q", value)
 	}
 	return recur.CivilDate{Year: year, Month: month, Day: day}, nil
+}
+
+func allDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
 }
