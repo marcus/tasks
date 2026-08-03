@@ -1,0 +1,43 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Captures Ruby's JSON generator spelling for a corpus of float literals, so
+# the Go canonical emitter can be checked against the oracle rather than
+# against an assumption about Float#to_s. Ruby's generator does NOT use
+# Float#to_s: `1e15` prints as `1e+15` here and `1000000000000000.0` there.
+#
+# Usage: format-emit-float-oracle > porting/evidence/format-canonical-emit/ruby/float-spellings.json
+
+require "json"
+
+literals = %w[
+  0.0 -0.0 1.0 -1.0 1.5 1.50 -2.5 0.1 0.2 0.3 3.141592653589793
+  1e0 1e1 1e2 1e3 1e7 1e8 1e9 1e14 1e15 1e16 1e17 1e20 1e100 1e300
+  1.5e7 1.5e8 1.5e15 1.5e16 1.25e10 9.99e5
+  1e-1 1e-2 1e-3 1e-4 1e-5 1e-6 1e-7 1e-8 1e-9 1e-20 1e-100 1e-300
+  2.5e-7 2.5e-8 -2.5e-7 1.234e-5 1.234e-6 1.234e-7
+  0.0001 0.00001 0.000001 123456789.123 1234567890123456.0
+  5e-324 2.2250738585072014e-308 1.7976931348623157e308
+  -1e15 -1e-15 -0.0001 100.0 12345.6789
+  1e23 -1e23 9.999999999999999e22 1e-23 8.98846567431158e307
+]
+
+# Deterministic pseudo-random coverage of the whole exponent range: a fixed
+# seed keeps the oracle reproducible across captures.
+random = Random.new(20260802)
+400.times do
+  mantissa = random.rand
+  exponent = random.rand(-40..40)
+  literals << format("%.17g", mantissa * (10.0**exponent))
+end
+
+spellings = literals.uniq.each_with_object({}) do |literal, out|
+  generated = JSON.generate(JSON.parse("{\"n\":#{literal}}"))
+  out[literal] = generated[/\A\{"n":(.*)\}\z/, 1]
+end
+
+puts JSON.pretty_generate(
+  "ruby" => RUBY_VERSION,
+  "json" => JSON::VERSION,
+  "spellings" => spellings,
+)
