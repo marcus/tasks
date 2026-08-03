@@ -81,8 +81,44 @@ func (d Date) AddDays(days int) Date {
 	return Date{Year: shifted.Year(), Month: shifted.Month(), Day: shifted.Day()}
 }
 
+// AddMonths is Ruby Date#>>: a calendar step whose day of month CLAMPS to the
+// target month's length rather than overflowing into the next month, so
+// January 31 plus one month is February 28 (29 in a leap year). Go's
+// time.Time.AddDate normalizes instead, which would say March 3.
+func (d Date) AddMonths(months int) Date {
+	total := int(d.Month) - 1 + months
+	year := d.Year + floorDiv(total, 12)
+	month := time.Month(floorMod(total, 12) + 1)
+	day := d.Day
+	if length := DaysIn(year, month); day > length {
+		day = length
+	}
+	return Date{Year: year, Month: month, Day: day}
+}
+
+// DaysIn is the length of a calendar month.
+func DaysIn(year int, month time.Month) int {
+	return time.Date(year, month+1, 0, 0, 0, 0, 0, time.UTC).Day()
+}
+
+func floorDiv(value, divisor int) int {
+	quotient := value / divisor
+	if value%divisor != 0 && (value < 0) != (divisor < 0) {
+		quotient--
+	}
+	return quotient
+}
+
+func floorMod(value, divisor int) int { return value - floorDiv(value, divisor)*divisor }
+
+// Weekday is the day of week, Sunday being zero, as Ruby's Date#wday reports.
+func (d Date) Weekday() time.Weekday { return d.time().Weekday() }
+
 // Before reports chronological order.
 func (d Date) Before(other Date) bool { return d.time().Before(other.time()) }
+
+// After reports chronological order the other way round.
+func (d Date) After(other Date) bool { return other.Before(d) }
 
 // Equal reports identity.
 func (d Date) Equal(other Date) bool { return d == other }
@@ -224,6 +260,83 @@ func (v Value) Projected(context Context) (Projection, error) {
 		Local:      fmt.Sprintf("%02d:%02d", local.Hour(), local.Minute()),
 		TimezoneID: context.TimezoneID,
 	}, nil
+}
+
+// DueBoundary is the instant a value stops being on time. An ALL-DAY value is
+// due at the end of its day, so its boundary is the first instant of the NEXT
+// date — not the stored date's own midnight.
+func (v Value) DueBoundary(context Context) (time.Time, error) {
+	if v.AllDay() {
+		next := v.Date.AddDays(1)
+		return timezones.EarliestOn(next.Year, next.Month, next.Day, context.Timezone)
+	}
+	return v.Instant(context)
+}
+
+// Overdue reports whether this value has passed. Date-only: overdue the moment
+// the local date passes. Timed: on time AT the exact instant, overdue strictly
+// after it.
+func (v Value) Overdue(context Context) (bool, error) {
+	boundary, err := v.DueBoundary(context)
+	if err != nil {
+		return false, err
+	}
+	if v.AllDay() {
+		return !context.Now.Before(boundary), nil
+	}
+	return context.Now.After(boundary), nil
+}
+
+// Released reports whether an available-from value has arrived: true at its
+// instant, not only after it.
+func (v Value) Released(context Context) (bool, error) {
+	instant, err := v.ReleaseInstant(context)
+	if err != nil {
+		return false, err
+	}
+	return !context.Now.Before(instant), nil
+}
+
+// TimeMetadata is the stored `<field>_time` object, or ok=false for an all-day
+// value which has none. `fold` is written only when it is set, and `timezone`
+// only when the value carries one, so a floating value round-trips as one.
+func (v Value) TimeMetadata() (local, timezone string, fold int, ok bool) {
+	if v.AllDay() {
+		return "", "", 0, false
+	}
+	return v.LocalTime, v.Timezone, v.Fold, true
+}
+
+// Shift moves a value by whole days, keeping its wall time, zone and fold.
+func (v Value) Shift(days int) (Value, error) {
+	return NewValue(v.Date.AddDays(days), v.LocalTime, v.Timezone, v.Fold, true)
+}
+
+// WithDate re-dates a value, keeping everything else. It is how a recurrence
+// roll proposes its next occurrence.
+func (v Value) WithDate(date Date) (Value, error) {
+	return NewValue(date, v.LocalTime, v.Timezone, v.Fold, true)
+}
+
+// Equal compares the four stored fields, which is what identity means for a
+// value: two values naming the same instant through different zones are not
+// the same stored value.
+func (v Value) Equal(other Value) bool { return v == other }
+
+// FromRecord reads a stored date field and its paired `<field>_time` object.
+// A time object that does not survive validation degrades to the date alone
+// rather than losing the record: a hand-edited time must not make a task
+// disappear from a read, and Check is what reports it.
+func FromRecord(date string, local, timezone string, fold int, validate bool) (Value, bool) {
+	parsed, ok := ParseDate(date)
+	if !ok {
+		return Value{}, false
+	}
+	value, err := NewValue(parsed, local, timezone, fold, validate)
+	if err != nil {
+		return Value{Date: parsed}, true
+	}
+	return value, true
 }
 
 func splitLocal(value string) (int, int, bool) {
