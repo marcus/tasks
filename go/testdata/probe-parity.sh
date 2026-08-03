@@ -25,12 +25,22 @@
 #               corpus. Slower, no runner, and no invocation — it is the wider
 #               net, and it is where the remaining internal/check gaps show up.
 #
+# The work directory is NOT the runner's default /tmp/tasks-conformance, and
+# that is safe here in a way it would not be for observations: the protocol's
+# same-absolute-path requirement exists because the journal key is a digest of
+# the store's canonical path, and here BOTH probes read the same copy at the
+# same path. Keeping this run out of the runner's tree stops it from clobbering
+# a corpus run in progress.
+#
 # Exit status: 0 when every store compared identical, 1 otherwise.
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-work=${WORK:-/tmp/tasks-probe-parity}
 mode=${1:-cases}
+# The two modes get separate trees on purpose: they materialize different
+# stores under the same names, and a shared tree would let one run read the
+# leftovers of the other.
+work=${WORK:-/tmp/tasks-probe-parity}/${mode#--}
 
 ruby_probe="$root/porting/runners/ruby/probe"
 go_probe="$root/go/bin/tasks-probe"
@@ -71,6 +81,10 @@ compare() {
     "$work/out/$name.ruby.json" "$work/out/$name.go.json" "$name"
 }
 
+# A case may declare copy_root_mode 0555, and files cannot be unlinked from a
+# directory that is not writable — so a plain `rm -rf` of a previous run leaves
+# part of the tree behind. Widen first, then remove.
+chmod -R u+rwx "$work" 2>/dev/null || true
 rm -rf "$work"
 mkdir -p "$work/out"
 failed=0
