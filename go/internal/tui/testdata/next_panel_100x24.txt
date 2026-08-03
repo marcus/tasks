@@ -1,0 +1,24 @@
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ 1 Agenda 2 Next 3 Quadrants 4 Projects 5 Outline 6 Inbox 1                       6 open · ? help │
+├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+│  @computer                                                 │ task                                │
+│ ›    [A] Book flight in Concur  7/2                        │ ────────────────────────────────────│
+│      [B] Review PR backlog                                 │ Book flight in Concur               │
+│                                                            │                                     │
+│  @home                                                     │ state      NEXT                     │
+│      Water the plants                                      │ priority   [#A]                     │
+│                                                            │ deadline   2026-07-02 Thu · 12d ago │
+│                                                            │ project    Work                     │
+│                                                            │ contexts   @computer                │
+│                                                            │ tags       important  urgent        │
+│                                                            │ id         aaaa0004                 │
+│                                                            │                                     │
+│                                                            │                                     │
+│                                                            │                                     │
+│                                                            │                                     │
+│                                                            │                                     │
+│                                                            │                                     │
+│                                                            │                                     │
+├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ j/k move · 1-6 views · h/l fold · enter details · v unavailable · / search · q quit              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
