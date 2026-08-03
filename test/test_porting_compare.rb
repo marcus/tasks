@@ -283,12 +283,14 @@ class TestPortingCompare < Minitest::Test
     FileUtils.remove_entry(dir) if dir && File.directory?(dir)
   end
 
-  # errors.md: a run whose two sides disagree in environment AND elsewhere must
-  # be re-run with the environments matched before the difference is classified.
-  # The finding still fails the gate; what is withheld is the attribution.
+  # errors.md: a run whose two sides disagree in environment.tzdb_version (or
+  # .locale) AND elsewhere must be re-run with the environments matched before
+  # the difference is classified. The finding still fails the gate; what is
+  # withheld is the attribution. `platform`/`filesystem`/`umask` are excluded
+  # from this cascade — see the harness_error tests below.
   def test_environment_difference_marks_other_findings_for_rerun
     dir = mutate_case("cli-list-small-gtd") do |obs|
-      obs["environment"]["platform"] = "x86_64-linux"
+      obs["environment"]["tzdb_version"] = "tzdata-2099a"
       obs["process"]["exit_status"] = 1
     end
     report = report_for(dir)
@@ -297,6 +299,49 @@ class TestPortingCompare < Minitest::Test
     assert f["requires_rerun"], "an exit-status difference alongside an environment difference is not yet attributable"
     assert report.dig("summary", "requires_rerun")
     assert_equal 1, report.dig("gate", "exit_status"), "it is still a gate failure"
+  ensure
+    FileUtils.remove_entry(dir) if dir && File.directory?(dir)
+  end
+
+  # environment.platform is a harness-supplied host fact (runners/README.md §
+  # "environment.platform is a host fact, not a probe answer"), computed once
+  # by the shared harness and stamped on both sides. A disagreement can never
+  # be resolved by re-running — no re-run makes two implementations disagree
+  # about which machine they're on — so it is harness_error, at gate severity,
+  # on its own: it must not poison unrelated findings with an unsatisfiable
+  # "re-run required" instruction the way a genuine environment difference does.
+  def test_platform_difference_is_a_harness_error_and_does_not_cascade
+    dir = mutate_case("cli-list-small-gtd") do |obs|
+      obs["environment"]["platform"] = "x86_64-linux"
+      obs["process"]["exit_status"] = 1
+    end
+    report = report_for(dir)
+
+    platform_finding = finding_on(report, "cli-list-small-gtd", "environment.platform")
+    refute_nil platform_finding
+    assert_equal "harness_error", platform_finding["class"]
+    assert_equal "gate", platform_finding["severity"]
+    refute platform_finding["requires_rerun"]
+
+    exit_status_finding = finding_on(report, "cli-list-small-gtd", "process.exit_status")
+    refute_nil exit_status_finding
+    refute exit_status_finding["requires_rerun"],
+           "a platform disagreement must not stamp an unsatisfiable re-run instruction on other findings"
+    refute report.dig("summary", "requires_rerun")
+  ensure
+    FileUtils.remove_entry(dir) if dir && File.directory?(dir)
+  end
+
+  # filesystem and umask are host facts too, and were already sourced from the
+  # harness rather than the implementation — this asserts they get the same
+  # harness_error classification as platform, for consistency.
+  def test_filesystem_and_umask_differences_are_also_harness_errors
+    dir = mutate_case("cli-list-small-gtd") { |obs| obs["environment"]["filesystem"] = "ext4" }
+    report = report_for(dir)
+    f = finding_on(report, "cli-list-small-gtd", "environment.filesystem")
+    refute_nil f
+    assert_equal "harness_error", f["class"]
+    assert_equal "gate", f["severity"]
   ensure
     FileUtils.remove_entry(dir) if dir && File.directory?(dir)
   end

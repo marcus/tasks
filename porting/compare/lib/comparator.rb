@@ -255,10 +255,24 @@ module Conformance
         "rollback_unlabelled" => ctx.rollback_unlabelled? }
     end
 
+    # `platform`, `filesystem` and `umask` are HARNESS-SUPPLIED HOST FACTS
+    # (runners/README.md § "environment.platform is a host fact, not a probe
+    # answer"): the harness computes them itself — the same code, run once per
+    # side, on the same machine — rather than asking either implementation.
+    # Both sides therefore MUST agree; a disagreement means the harness or the
+    # run environment is broken, not a legitimate cross-implementation
+    # difference, so it is `harness_error` at gate severity and it must NOT
+    # feed the `requires_rerun` cascade below — no re-run can fix a broken
+    # harness, and stamping every other finding with an unsatisfiable
+    # instruction is exactly the defect this classification replaces.
+    HOST_FACTS = %w[platform filesystem umask].freeze
+
     # environment.* is recorded, never an assertion: "a conformance run whose
     # two sides disagree in environment and agree everywhere else is fine".
     # Classified nondeterminism ("add the pin, do not normalize the output") at
-    # advisory severity, so it cannot fail the gate on its own.
+    # advisory severity, so it cannot fail the gate on its own. This applies
+    # only to the fields the IMPLEMENTATION genuinely answers (`tzdb_version`,
+    # `locale`) — see HOST_FACTS above for the other three.
     def environment(ctx)
       ea = ctx.a["environment"] || {}
       eb = ctx.b["environment"] || {}
@@ -266,12 +280,21 @@ module Conformance
       (ea.keys | eb.keys).sort.each do |k|
         next if ea[k] == eb[k]
 
-        mismatch = true
-        ctx.add("cli", "environment.#{k}", Finding::NONDETERMINISM,
-                "errors.md § What is not compared at all — environment is recorded so a difference elsewhere " \
-                "can be attributed to a tzdb release or a platform, never itself an assertion. " \
-                "determinism.md § Not pinnable: recorded instead.",
-                baseline: ea[k], candidate: eb[k], severity: "advisory")
+        if HOST_FACTS.include?(k)
+          ctx.add("cli", "environment.#{k}", Finding::HARNESS_ERROR,
+                  "runners/README.md § environment.platform is a host fact, not a probe answer — " \
+                  "platform/filesystem/umask are computed by the harness itself, once per side, on the same " \
+                  "machine, so both sides must report the same value. A disagreement means the harness or the " \
+                  "run environment is broken, not a legitimate implementation difference.",
+                  baseline: ea[k], candidate: eb[k])
+        else
+          mismatch = true
+          ctx.add("cli", "environment.#{k}", Finding::NONDETERMINISM,
+                  "errors.md § What is not compared at all — environment is recorded so a difference elsewhere " \
+                  "can be attributed to a tzdb release, never itself an assertion. " \
+                  "determinism.md § Not pinnable: recorded instead.",
+                  baseline: ea[k], candidate: eb[k], severity: "advisory")
+        end
       end
       mismatch
     end

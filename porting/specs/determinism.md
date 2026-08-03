@@ -157,6 +157,20 @@ out of the corpus's reach and this section is the record of that.
 umask used to be filed here. It is not a host fact and it is now pinned — see
 [Pinned by the harness process](#pinned-by-the-harness-process-not-by-the-environment).
 
+**`platform` is computed by the harness, not asked of the implementation.**
+It used to be read from each target's own probe — Ruby's `RUBY_PLATFORM`
+("arm64-darwin23") versus Go's `runtime.GOOS`/`GOARCH` ("arm64-darwin") — and
+those two strings describe the runtime, correctly, and can therefore never
+match, unlike a true host fact such as `filesystem`. The harness now computes
+`platform` itself (`RUBY_PLATFORM` of the harness process, which drives both
+targets) and stamps the same value on both sides, exactly as it already does
+for `filesystem`. A disagreement in a harness-computed host fact
+(`platform`, `filesystem`, `umask`) is therefore not filed as an "environment
+differs, re-run" nondeterminism — it means the harness or the run is broken,
+and `porting/compare` classifies it `harness_error`. See
+`porting/runners/README.md` § "environment.platform is a host fact, not a
+probe answer".
+
 ### Not pinned, because nothing observable depends on it
 
 - **Operation id** (`cli_<hex>` / `tui_<hex>` / the HTTP request id). It is

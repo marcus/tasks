@@ -86,7 +86,8 @@ Three strengths of binding, from `errors.md`:
 | Store / archive files | **bytes**, including key order | a durable format two implementations must round-trip |
 | Journal index and blobs | **bytes** | the index is the proof; the structure above it is for readability |
 | Revision tokens | exactly | one wrong character is a lost-update bug for every conditional write |
-| `environment.*` | recorded, advisory | a tzdb or platform difference is attribution, never an assertion |
+| `environment.tzdb_version`, `.locale` | recorded, advisory | a tzdb or locale difference is attribution, never an assertion |
+| `environment.platform`, `.filesystem`, `.umask` | recorded, gate | harness-supplied host facts; identical by construction, so a disagreement is `harness_error`, not attribution |
 | `metrics.*` | never | performance is a separate gate with its own budgets |
 | `observation_id`, `fixture.copy_root`, `implementation.*`, `notes`, stream `text` | never | harness and provenance metadata |
 
@@ -116,7 +117,7 @@ Every finding carries one of the playbook's step-6 classes:
 |---|---|---|
 | `go_defect` | the default for any real difference in a compared field | fails |
 | `legacy_ruby_rule` | a Ruby behavior known to be wrong but preserved as the compatibility rule; only ever set from `dispositions.jsonl` | fails (Go must still match) |
-| `nondeterminism` | `environment.*` differs — pin it, do not normalize the output | advisory |
+| `nondeterminism` | `environment.tzdb_version`/`.locale` differs — pin it, do not normalize the output | advisory |
 | `intentional_difference` | recorded by **Marcus** in `../intentional-differences.md` and indexed in `dispositions.jsonl` | accepted |
 | `missing_oracle_coverage` | a case observed on one side only; an HTTP exchange with no Phase 5 rules yet | fails |
 | `harness_error` | the comparison itself is untrustworthy | fails |
@@ -125,8 +126,12 @@ Every finding carries one of the playbook's step-6 classes:
 folded into one of the five. It covers: the two sides ran different argv, cwd,
 stdin or fixture; they started from different tree digests; a pin was **set and
 then reported `applied: false`**; the two sides were handed different
-`invocation.tty` descriptors; a process timed out; or the two sides ran at
-different absolute paths without `--cross-path`.
+`invocation.tty` descriptors; a process timed out; the two sides ran at
+different absolute paths without `--cross-path`; or `environment.platform`,
+`.filesystem`, or `.umask` disagree — these are harness-computed once per side
+on the same machine, so a disagreement means the harness or the run is broken,
+never the port (`porting/runners/README.md` § "environment.platform is a host
+fact, not a probe answer").
 
 "Set and then" is the whole of the pin rule, and the weaker reading —
 `applied: false` alone — is wrong. Several inputs are deliberately pinned to
@@ -154,11 +159,21 @@ difference-hiding machine.
 
 ### `environment` differs
 
-`errors.md`: a run whose two sides disagree in `environment` **and** also
-elsewhere must be re-run with the environments matched before any difference is
-classified. The comparator does not suppress those findings — they are real and
-they still fail — it marks each one `requires_rerun` and says so in the summary.
-What is withheld is the confident attribution, not the finding.
+`errors.md`: a run whose two sides disagree in `environment.tzdb_version` or
+`.locale` **and** also elsewhere must be re-run with the environments matched
+before any difference is classified. The comparator does not suppress those
+findings — they are real and they still fail — it marks each one
+`requires_rerun` and says so in the summary. What is withheld is the confident
+attribution, not the finding.
+
+`environment.platform`, `.filesystem`, and `.umask` do not participate in this
+cascade. They are harness-supplied host facts (see Classification above), so a
+disagreement there is a `harness_error` in its own right rather than a signal
+that clouds every other finding — and unlike a tzdb or locale difference, no
+re-run could ever resolve it: it would require two different implementations,
+run on the same machine, to disagree about which machine they are on, forever.
+Stamping every other finding `requires_rerun` because of it would be an
+unsatisfiable instruction, not attribution.
 
 ---
 

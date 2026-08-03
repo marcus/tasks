@@ -460,12 +460,12 @@
           "minLength": 1
         },
         "platform": {
-          "description": "Operating system and architecture the observation was taken on. Locking, atomic replacement, and signal numbers are platform-shaped, so a cross-platform comparison must be labelled as one.",
+          "description": "Operating system and architecture the observation was taken on. Locking, atomic replacement, and signal numbers are platform-shaped, so a cross-platform comparison must be labelled as one. A HARNESS-SUPPLIED HOST FACT, like `filesystem` and `umask`: the harness computes this itself, once per side, on the same machine, rather than asking the implementation (an implementation's own platform string — e.g. Ruby's `RUBY_PLATFORM` vs. Go's `runtime.GOOS`/`GOARCH` — describes the runtime, not the host, and the two can never agree even on identical hardware). Both sides of a comparison MUST therefore report the same value; porting/compare classifies a disagreement here as `harness_error`, not as an implementation difference.",
           "type": "string",
           "minLength": 1
         },
         "filesystem": {
-          "description": "Filesystem type of the fixture copy, when the harness can determine it. Diagnostic: rename atomicity, mode bits, and directory fsync behave differently on some mounts.",
+          "description": "Filesystem type of the fixture copy, when the harness can determine it. A harness-supplied host fact, like `platform` and `umask`: diagnostic, but rename atomicity, mode bits, and directory fsync behave differently on some mounts.",
           "type": ["string", "null"]
         },
         "locale": {

@@ -867,7 +867,7 @@ module PortingRunner
         "http" => [],
         "environment" => {
           "tzdb_version" => after_probe.dig("environment", "tzdb_version"),
-          "platform" => after_probe.dig("environment", "platform"),
+          "platform" => host_platform,
           "filesystem" => filesystem_of(copy_root),
           "locale" => after_probe.dig("environment", "locale"),
           "umask" => format("%04o", File.umask)
@@ -1042,6 +1042,20 @@ module PortingRunner
       out.empty? ? nil : out
     rescue StandardError
       nil
+    end
+
+    # A host fact, like `filesystem_of` and `UMASK`: the machine this run is on,
+    # not what either implementation self-reports. Sourced from the harness's
+    # own interpreter rather than from `after_probe`, because the probe answer
+    # names the IMPLEMENTATION's runtime (Ruby's `RUBY_PLATFORM`, e.g.
+    # "arm64-darwin23", versus Go's `runtime.GOOS`/`GOARCH`, e.g. "arm64-darwin")
+    # and those two strings can never agree — they describe different things
+    # correctly. One harness process drives both targets, so asking it for the
+    # host once and stamping that value on every observation is what makes the
+    # two sides comparable. See porting/runners/README.md
+    # § "environment.platform is a host fact, not a probe answer".
+    def host_platform
+      RUBY_PLATFORM
     end
 
     def notes_for(kase, probe)

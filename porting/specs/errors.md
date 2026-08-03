@@ -221,10 +221,17 @@ normalized one exists.
 - `observation_id`, `fixture.copy_root`, `implementation.*` — harness and
   provenance metadata.
 - `environment.*` — recorded so a difference elsewhere can be attributed to a
-  tzdb release or a platform, never itself an assertion. A conformance run whose
-  two sides disagree in `environment` and agree everywhere else is fine; one that
-  disagrees in `environment` and *also* elsewhere must be re-run with the
-  environments matched before the difference is classified.
+  tzdb release, never itself an assertion. This applies to the fields the
+  IMPLEMENTATION genuinely answers (`tzdb_version`, `locale`): a conformance run
+  whose two sides disagree only there, and agree everywhere else, is fine; one
+  that disagrees there *and* also elsewhere must be re-run with the environments
+  matched before the difference is classified. `platform`, `filesystem`, and
+  `umask` are different in kind — they are HARNESS-SUPPLIED HOST FACTS
+  (porting/runners/README.md § "environment.platform is a host fact, not a
+  probe answer"), computed once by the harness and stamped on both sides, so a
+  disagreement in one of them is never a legitimate environment difference to
+  re-run around. It means the harness or the run itself is broken, and is
+  classified `harness_error` — see `porting/compare/README.md` § Classification.
 
 ## Classifying a mismatch
 
@@ -240,5 +247,10 @@ which layer differs:
   defect by default. It becomes an intentional difference only if Marcus decides
   the Ruby wording was wrong, and that decision is recorded in
   `porting/intentional-differences.md` before the expectation changes.
-- **only `environment` differs** → nondeterminism to pin, not a defect. Add the
-  pin, do not normalize the output.
+- **only `environment.tzdb_version` or `environment.locale` differs** →
+  nondeterminism to pin, not a defect. Add the pin, do not normalize the
+  output.
+- **`environment.platform`, `.filesystem`, or `.umask` differs, at all** →
+  `harness_error`. These are harness-supplied host facts, identical by
+  construction on a working run; a disagreement means the harness or the run
+  environment is broken, not something about the port.

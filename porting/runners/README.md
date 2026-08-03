@@ -420,6 +420,37 @@ symmetrically — a genuine regression that widens the journal index to 0644 is
 indistinguishable from a different image. Keep recording `environment.umask`:
 after pinning it is the proof the pin took, not an excuse for a mismatch.
 
+### `environment.platform` is a host fact, not a probe answer
+
+`environment.platform` used to be read from each target's own probe: the Ruby
+probe reported `RUBY_PLATFORM` ("arm64-darwin23"), the Go probe reported
+`runtime.GOOS`/`GOARCH` ("arm64-darwin"). Both are correct descriptions of the
+runtime that produced them, and they can therefore never agree — not because
+either implementation is wrong, but because the field was answering "what
+runtime is this" when the schema's intent (`observations.schema.json` §
+`environment.platform`) is "what machine is this". A comparator that treats
+`environment.*` as an environment-attribution signal (see below) read that
+permanent, unfixable disagreement as an environment mismatch on every single
+case, and stamped the unsatisfiable "re-run with environments matched" note
+(`porting/specs/errors.md` § "What is not compared at all") on every other
+finding in every case.
+
+The fix follows the pattern `filesystem` and `umask` already use: the harness
+computes the value itself — once per side, on the same machine — instead of
+asking the implementation. `host_platform` in `lib/harness.rb` returns the
+harness process's own `RUBY_PLATFORM`, which both the `ruby/run` and `go/run`
+invocations share, so both sides of a comparison report the same string by
+construction. `porting/compare` now classifies a disagreement here as
+`harness_error` (something is wrong with the harness or the run), not as an
+implementation difference — and, being a `harness_error` rather than the
+general `environment` mismatch, it does not trigger the blanket
+`requires_rerun` cascade the way `tzdb_version`/`locale` still legitimately do.
+
+Rejected alternative: making Go synthesise a Darwin release number (the
+`23` in `arm64-darwin23`) to match Ruby's string. That fakes agreement about a
+question ("what OS release is this") the harness can answer directly and
+correctly for both sides — it does not need either target's help.
+
 Standard input is always attached — to the case payload, or to an empty file
 when the case supplies none. A runner never lets the implementation inherit a
 terminal. `invocation.stdin.provided` distinguishes "the case supplied a
@@ -493,6 +524,11 @@ $ porting/runners/<impl>/probe <copy-root>     # run under the same pinned env
   "environment": { "tzdb_version": "…", "platform": "…", "locale": "…", "runtime": "…" }
 }
 ```
+
+The probe's own `environment.platform` is read but **not** copied into the
+observation: the harness overwrites it with a value it computes itself, so both
+targets end up reporting the same host. See
+[environment.platform is a host fact, not a probe answer](#environmentplatform-is-a-host-fact-not-a-probe-answer).
 
 The probe is read-only with respect to store bytes, but it is **not side-effect
 free**: taking a snapshot acquires the store lock, which creates
@@ -569,7 +605,7 @@ case, which is how an invariant stops being believed.
 | `journal.*` | The index parsed structurally (`version`, `cursor`, `states[]` with labels, restored digests, coalesce key/scope, repair flag) *and* the index file's bytes; blob count and sorted blob digests. When no journal exists, `present:false` with the path where one *would* have been. |
 | `revisions.store` / `resources` | The after-probe. |
 | `revisions.touched_ids` | The implementation's own `--json` mutation payload (`{"touched":[{"id":…}]}`), when the case asked for one. Read from stdout, never inferred from the store diff. |
-| `environment.*` | `tzdb_version`, `platform`, `locale`, `runtime` from the probe; `filesystem` from the runner's host, and `umask` as the value the runner pinned. Recorded, never compared — but `umask` is now a tautology by design, and one that reads anything but `0022` means the pin did not take. |
+| `environment.*` | `tzdb_version`, `locale`, `runtime` from the probe; `platform` and `filesystem` from the runner's host (harness-computed host facts — see [environment.platform is a host fact, not a probe answer](#environmentplatform-is-a-host-fact-not-a-probe-answer)), and `umask` as the value the runner pinned. Recorded, never compared as an implementation difference — but `platform` and `umask` are now tautologies by design, and either one disagreeing between the two sides is a `harness_error`, not a port defect. |
 | `metrics.wall_ms` | Harness-measured. Advisory; never part of conformance equality. `--pin-identity` fixes it to 0. |
 | `metrics.bytes_written` | Total size of the changed files. Deterministic, so it stays in the byte-identical output. |
 
