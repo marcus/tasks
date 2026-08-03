@@ -1,0 +1,457 @@
+{
+  "schema_version": 2,
+  "observation_id": "obs_cli-done-ambiguous-ref",
+  "case_id": "cli-done-ambiguous-ref",
+  "implementation": {
+    "name": "go",
+    "version": "854d4a51ae59143848406835fcd3e367b68136d4",
+    "runtime": "go go1.26.5"
+  },
+  "fixture": {
+    "id": "malformed/duplicate-open-titles",
+    "class": "malformed",
+    "root_sha256": "db096903d8cd9a719a15a8c389982114b0050078bba95ccf817af330ed311bee",
+    "copy_root": "/tmp/tasks-conformance/cli-done-ambiguous-ref"
+  },
+  "invocation": {
+    "surface": "cli",
+    "argv": [
+      "done",
+      "Replace the bathroom bulb"
+    ],
+    "stdin": {
+      "provided": false,
+      "bytes_base64": ""
+    },
+    "cwd": ".",
+    "env": [
+      {
+        "name": "COLORTERM",
+        "value": null
+      },
+      {
+        "name": "COLUMNS",
+        "value": "100"
+      },
+      {
+        "name": "HOME",
+        "value": "/tmp/tasks-conformance/cli-done-ambiguous-ref"
+      },
+      {
+        "name": "LANG",
+        "value": "en_US.UTF-8"
+      },
+      {
+        "name": "LC_ALL",
+        "value": "en_US.UTF-8"
+      },
+      {
+        "name": "LINES",
+        "value": "40"
+      },
+      {
+        "name": "NO_COLOR",
+        "value": null
+      },
+      {
+        "name": "PATH",
+        "value": "/usr/bin:/bin:/usr/sbin:/sbin"
+      },
+      {
+        "name": "TASKS_ARCHIVE",
+        "value": null
+      },
+      {
+        "name": "TASKS_DEVICE",
+        "value": "fixture"
+      },
+      {
+        "name": "TASKS_DIR",
+        "value": "/tmp/tasks-conformance/cli-done-ambiguous-ref"
+      },
+      {
+        "name": "TASKS_FILE",
+        "value": null
+      },
+      {
+        "name": "TASKS_MEMORY",
+        "value": null
+      },
+      {
+        "name": "TASKS_PIN_COALESCE_SCOPE",
+        "value": "pinned-scope"
+      },
+      {
+        "name": "TASKS_PIN_DELEGATION_KEYS",
+        "value": "cccc000000000001"
+      },
+      {
+        "name": "TASKS_PIN_HOSTNAME",
+        "value": "fixture-host"
+      },
+      {
+        "name": "TASKS_PIN_IDS",
+        "value": "bbbb0001"
+      },
+      {
+        "name": "TASKS_PIN_NOW",
+        "value": "2026-03-14T15:09:26Z"
+      },
+      {
+        "name": "TASKS_TEST_TODAY_SEQUENCE",
+        "value": null
+      },
+      {
+        "name": "TASKS_THEME",
+        "value": null
+      },
+      {
+        "name": "TASKS_TIMEZONE",
+        "value": "UTC"
+      },
+      {
+        "name": "TERM",
+        "value": null
+      },
+      {
+        "name": "TZ",
+        "value": "UTC"
+      },
+      {
+        "name": "XDG_CONFIG_HOME",
+        "value": "/tmp/tasks-conformance/cli-done-ambiguous-ref/.config"
+      },
+      {
+        "name": "XDG_STATE_HOME",
+        "value": "/tmp/tasks-conformance/cli-done-ambiguous-ref/.state"
+      }
+    ],
+    "pins": [
+      {
+        "name": "COLORTERM",
+        "applied": false,
+        "value": null
+      },
+      {
+        "name": "COLUMNS",
+        "applied": true,
+        "value": "100"
+      },
+      {
+        "name": "LANG",
+        "applied": true,
+        "value": "UTF-8"
+      },
+      {
+        "name": "LC_ALL",
+        "applied": true,
+        "value": "UTF-8"
+      },
+      {
+        "name": "LINES",
+        "applied": true,
+        "value": "40"
+      },
+      {
+        "name": "NO_COLOR",
+        "applied": false,
+        "value": null
+      },
+      {
+        "name": "TASKS_DEVICE",
+        "applied": true,
+        "value": "fixture"
+      },
+      {
+        "name": "TASKS_PIN_COALESCE_SCOPE",
+        "applied": true,
+        "value": "pinned-scope"
+      },
+      {
+        "name": "TASKS_PIN_DELEGATION_KEYS",
+        "applied": true,
+        "value": "cccc000000000001"
+      },
+      {
+        "name": "TASKS_PIN_HOSTNAME",
+        "applied": true,
+        "value": "fixture-host"
+      },
+      {
+        "name": "TASKS_PIN_IDS",
+        "applied": true,
+        "value": "bbbb0001"
+      },
+      {
+        "name": "TASKS_PIN_NOW",
+        "applied": true,
+        "value": "2026-03-14T15:09:26Z"
+      },
+      {
+        "name": "TASKS_TEST_TODAY_SEQUENCE",
+        "applied": false,
+        "value": null
+      },
+      {
+        "name": "TASKS_THEME",
+        "applied": false,
+        "value": null
+      },
+      {
+        "name": "TASKS_TIMEZONE",
+        "applied": true,
+        "value": "UTC"
+      },
+      {
+        "name": "TERM",
+        "applied": false,
+        "value": null
+      },
+      {
+        "name": "TZ",
+        "applied": true,
+        "value": "UTC"
+      }
+    ],
+    "tty": {
+      "stdin": false,
+      "stdout": false,
+      "stderr": false
+    },
+    "timeout_ms": 60000
+  },
+  "process": {
+    "exit_status": 2,
+    "signal": null,
+    "timed_out": false,
+    "stdout": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sha256_normalized": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "valid_utf8": true,
+      "bytes_base64": "",
+      "truncated_at_bytes": null,
+      "text": ""
+    },
+    "stderr": {
+      "sha256": "4d3ae7054768981139a71e2a9ba8964fb1c9d1b89a3733e68e647830708a3dbe",
+      "sha256_normalized": "4d3ae7054768981139a71e2a9ba8964fb1c9d1b89a3733e68e647830708a3dbe",
+      "size_bytes": 140,
+      "valid_utf8": true,
+      "bytes_base64": "YW1iaWd1b3VzOiBSZXBsYWNlIHRoZSBiYXRocm9vbSBidWxiIOKAlCBtYXRjaGVzIDIgdGFza3M6CiAgTDM6IE5FWFQgUmVwbGFjZSB0aGUgYmF0aHJvb20gYnVsYiA6QGhvbWU6CiAgTDg6IFRPRE8gUmVwbGFjZSB0aGUgYmF0aHJvb20gYnVsYgo=",
+      "truncated_at_bytes": null,
+      "text": "ambiguous: Replace the bathroom bulb — matches 2 tasks:\n  L3: NEXT Replace the bathroom bulb :@home:\n  L8: TODO Replace the bathroom bulb\n"
+    }
+  },
+  "files": {
+    "mutated": false,
+    "before": [
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".config",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".config/tasks",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".state",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "store",
+        "kind": "file",
+        "path": "tasks.jsonl",
+        "present": true,
+        "sha256": "a8c5f37678a69f1af82c7944613b68f9dbacb57e2590a86dffb1883181863a0b",
+        "size_bytes": 685,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImMwMDAwMDAxIiwidGl0bGUiOiJOZXh0IEFjdGlvbnMifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMDAwMDAwMiIsInBhcmVudCI6ImMwMDAwMDAxIiwic3RhdGUiOiJORVhUIiwidGl0bGUiOiJSZXBsYWNlIHRoZSBiYXRocm9vbSBidWxiIiwidGFncyI6WyJAaG9tZSJdfQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMDAwMDAwMyIsInBhcmVudCI6ImMwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJSZXR1cm4gdGhlIGxpYnJhcnkgYm9va3MiLCJkZWFkbGluZSI6IjIwMjYtMDYtMTQiLCJib2R5IjoiVHdvIG92ZXJkdWUuIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiYzAwMDAwMDQiLCJ0aXRsZSI6IlByb2plY3RzIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiYzAwMDAwMDUiLCJwYXJlbnQiOiJjMDAwMDAwNCIsInRpdGxlIjoiR2FyYWdlIHRpZHktdXAifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMDAwMDAwNiIsInBhcmVudCI6ImMwMDAwMDA1Iiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJTb3J0IHRoZSB0b29sYm94In0KeyJ0eXBlIjoidGFzayIsImlkIjoiYzAwMDAzMDEiLCJwYXJlbnQiOiJjMDAwMDAwNSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiUmVwbGFjZSB0aGUgYmF0aHJvb20gYnVsYiJ9Cg==",
+        "line_count": 8,
+        "symlink_target": null
+      }
+    ],
+    "after": [
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".config",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".config/tasks",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".state",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "lock",
+        "kind": "file",
+        "path": ".tasks.jsonl.lock",
+        "present": true,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": 0,
+        "mode": "0644",
+        "content_base64": "",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "store",
+        "kind": "file",
+        "path": "tasks.jsonl",
+        "present": true,
+        "sha256": "a8c5f37678a69f1af82c7944613b68f9dbacb57e2590a86dffb1883181863a0b",
+        "size_bytes": 685,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImMwMDAwMDAxIiwidGl0bGUiOiJOZXh0IEFjdGlvbnMifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMDAwMDAwMiIsInBhcmVudCI6ImMwMDAwMDAxIiwic3RhdGUiOiJORVhUIiwidGl0bGUiOiJSZXBsYWNlIHRoZSBiYXRocm9vbSBidWxiIiwidGFncyI6WyJAaG9tZSJdfQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMDAwMDAwMyIsInBhcmVudCI6ImMwMDAwMDAxIiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJSZXR1cm4gdGhlIGxpYnJhcnkgYm9va3MiLCJkZWFkbGluZSI6IjIwMjYtMDYtMTQiLCJib2R5IjoiVHdvIG92ZXJkdWUuIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiYzAwMDAwMDQiLCJ0aXRsZSI6IlByb2plY3RzIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiYzAwMDAwMDUiLCJwYXJlbnQiOiJjMDAwMDAwNCIsInRpdGxlIjoiR2FyYWdlIHRpZHktdXAifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJjMDAwMDAwNiIsInBhcmVudCI6ImMwMDAwMDA1Iiwic3RhdGUiOiJUT0RPIiwidGl0bGUiOiJTb3J0IHRoZSB0b29sYm94In0KeyJ0eXBlIjoidGFzayIsImlkIjoiYzAwMDAzMDEiLCJwYXJlbnQiOiJjMDAwMDAwNSIsInN0YXRlIjoiVE9ETyIsInRpdGxlIjoiUmVwbGFjZSB0aGUgYmF0aHJvb20gYnVsYiJ9Cg==",
+        "line_count": 8,
+        "symlink_target": null
+      }
+    ],
+    "deltas": [
+      {
+        "path": ".tasks.jsonl.lock",
+        "kind": "created",
+        "before_sha256": null,
+        "after_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    ],
+    "rolled_back": null
+  },
+  "journal": {
+    "present": false,
+    "version": null,
+    "cursor": null,
+    "states": [],
+    "index": {
+      "role": "journal_index",
+      "kind": null,
+      "path": ".state/tasks/journal/6dc7fb67dd72fb44/index.json",
+      "present": false,
+      "sha256": null,
+      "size_bytes": null,
+      "mode": null,
+      "content_base64": null,
+      "line_count": null,
+      "symlink_target": null
+    },
+    "blob_count": null,
+    "blob_sha256": []
+  },
+  "revisions": {
+    "store": "s1.c696d7dbb17ef69fe43b43d06f860d0c067356774b5996f6ae025dec5e55af1b",
+    "resources": [
+      {
+        "id": "c0000002",
+        "kind": "task",
+        "revision": "v1.2838be900a222746ec28526cafeb0372c3f3e1f51bba3f865a928b6bbf78361e.e86b532e12f08728efbea786d325cf96ffa475c1f86e493f231740b059ea7580.2ae60504806d64565a4e3f706636b7275a766369cca22773a6b4e31618b822b1"
+      },
+      {
+        "id": "c0000003",
+        "kind": "task",
+        "revision": "v1.9ed5c6423c496a78c83d4a624a7cf19c54f3e36f20e15f0ac3dd24e361a4cffc.ddf062f55f5fb6e1413af585232610027bcca4082abde4a7c43fdd620a085822.a905e072175f22d1f6c85234a11dcbc7df4252145b8748359b1fd342958688d4"
+      },
+      {
+        "id": "c0000006",
+        "kind": "task",
+        "revision": "v1.f1fa6778c6034c38adbc0b97541a8b2a9be21d28e517dc747b4be860d8dd4302.85feb20ffd5b497068bc60fef00e97fa37c347ba49ff6d20b980746f90190e85.c29e21cc640b094cbff2394e0a8d616efc4a6960973b54b90b7e96595d3ab631"
+      },
+      {
+        "id": "c0000301",
+        "kind": "task",
+        "revision": "v1.e2c54333c64deb21bba4795338bb7392722a60116f13209538ece6e0c3a9005a.f6b7cd4ecefb4dbd29d9ddb3524a546f2ed46ed0003f439ed571ebfe128b65eb.e0b2f1b95b687422f31a3c76d047f4a43974bdea931f405753bc2cd364409542"
+      }
+    ],
+    "touched_ids": [],
+    "http_etag": null
+  },
+  "http": [],
+  "environment": {
+    "tzdb_version": "Zoneinfo DataSource: /usr/share/zoneinfo",
+    "platform": "arm64-darwin",
+    "filesystem": "/",
+    "locale": "UTF-8",
+    "umask": "0022"
+  },
+  "metrics": {
+    "wall_ms": 0,
+    "user_cpu_ms": null,
+    "sys_cpu_ms": null,
+    "peak_rss_bytes": null,
+    "bytes_written": 0
+  },
+  "notes": "exit 2: an ambiguous title ref, and the candidate list errors.md compares byte for byte"
+}

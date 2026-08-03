@@ -1,0 +1,1559 @@
+conformance comparison
+  baseline:  porting/evidence/phase1/ruby (ruby 87d8cc201410669e5b4ed1987eb44a01946ae92f-dirty, 33 paired cases)
+  candidate: porting/evidence/phase1/go (go 854d4a51ae59143848406835fcd3e367b68136d4)
+
+MISMATCH  cli-capture-readonly-rollback
+  [nondeterminism/advisory] cli: environment.platform
+      baseline:  arm64-darwin23
+      candidate: arm64-darwin
+      rule: errors.md § What is not compared at all — environment is recorded so a difference elsewhere can
+            be attributed to a tzdb release or a platform, never itself an assertion. determinism.md § Not
+            pinnable: recorded instead.
+  [go_defect/gate] cli: process.stdout.format
+      baseline:  json
+      candidate: text
+      rule: errors.md § Structured errors are compared as data — one side emitted parseable JSON and the
+            other did not
+      re-run required: environment differs
+  [go_defect/gate] cli: process.stdout (bytes)
+      baseline:  {"rolled_back":true,"error":"unavailable","action":"capture","message":"could not capture (no \"Inbox\" section found?)\…
+      candidate: 
+      rule: errors.md § Diagnostic text is contract until proved otherwise — compared byte for byte, with
+            only the copy-root rewrite applied. Wording, whitespace, punctuation and line order are all part
+            of the error UX an agent reads back to a user.
+      re-run required: environment differs
+      · first differing byte 0 (215 vs 0 bytes)
+        - {\"rolled_back\":true,\"error\":\"unavailable\",\"action\":\"capture\",\"message\":\"could no
+        + 
+  [go_defect/gate] cli: process.stderr (bytes)
+      baseline:  could not capture (no "Inbox" section found?)\ncould not write the task file — the previous contents were restored (noth…
+      candidate: capture: not implemented in the Go port — the store passed every preflight, so the next step would be a write, and this …
+      rule: errors.md § Diagnostic text is contract until proved otherwise — compared byte for byte, with
+            only the copy-root rewrite applied. Wording, whitespace, punctuation and line order are all part
+            of the error UX an agent reads back to a user.
+      re-run required: environment differs
+      · first differing byte 1 (138 vs 146 bytes)
+        - could not capture (no \"Inbox\" section found?)\ncould not write the task file — 
+        + capture: not implemented in the Go port — the store passed every preflight, so
+  [go_defect/gate] files: files.rolled_back
+      baseline:  true
+      candidate: null
+      rule: errors.md § Failure shapes the corpus must distinguish — wrote-and-reverted vs never-wrote
+            differ in this field and in nothing else on the filesystem
+      re-run required: environment differs
+
+MISMATCH  cli-capture-restricted-mode
+  [nondeterminism/advisory] cli: environment.platform
+      baseline:  arm64-darwin23
+      candidate: arm64-darwin
+      rule: errors.md § What is not compared at all — environment is recorded so a difference elsewhere can
+            be attributed to a tzdb release or a platform, never itself an assertion. determinism.md § Not
+            pinnable: recorded instead.
+  [go_defect/gate] cli: process.exit_status
+      baseline:  0
+      candidate: 1
+      rule: errors.md § Exit status is the smallest and strongest contract — compared exactly on every case;
+            'both nonzero' is never a match, because 1 vs 2 is a product feature agents branch on
+      re-run required: environment differs
+  [go_defect/gate] cli: process.stdout.format
+      baseline:  json
+      candidate: text
+      rule: errors.md § Structured errors are compared as data — one side emitted parseable JSON and the
+            other did not
+      re-run required: environment differs
+  [go_defect/gate] cli: process.stdout (bytes)
+      baseline:  {"touched":[{"id":"bbbb0001","state":"INBOX","priority":null,"title":"widen me","tags":[],"contexts":[],"deferred":false…
+      candidate: 
+      rule: errors.md § Diagnostic text is contract until proved otherwise — compared byte for byte, with
+            only the copy-root rewrite applied. Wording, whitespace, punctuation and line order are all part
+            of the error UX an agent reads back to a user.
+      re-run required: environment differs
+      · first differing byte 0 (492 vs 0 bytes)
+        - {\"touched\":[{\"id\":\"bbbb0001\",\"state\":\"INBOX\",\"priority\":null,\"title\":\"widen me\",
+        + 
+  [go_defect/gate] cli: process.stderr (bytes)
+      baseline:  
+      candidate: capture: not implemented in the Go port — the store passed every preflight, so the next step would be a write, and this …
+      rule: errors.md § Diagnostic text is contract until proved otherwise — compared byte for byte, with
+            only the copy-root rewrite applied. Wording, whitespace, punctuation and line order are all part
+            of the error UX an agent reads back to a user.
+      re-run required: environment differs
+      · first differing byte 0 (0 vs 146 bytes)
+        - 
+        + capture: not implemented in the Go port — the store passed every preflight, so
+  [go_defect/gate] files: files.after[.state/tasks]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>/blobs]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>/blobs/b48122f442bdd0f461e9c903ceb92503dce8c88fe57cea99abbcf8af1c807082]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>/blobs/fc2691576ef4fbd6ef4a3d4d6c2fb4e4e5ee7c8ad98806f25afcc1291142a8a0]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>/index.json]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[tasks.jsonl].size_bytes
+      baseline:  443
+      candidate: 283
+      rule: playbook § 6 — for mutations, compare final file bytes
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[tasks.jsonl].line_count
+      baseline:  5
+      candidate: 4
+      rule: playbook § 6 — for mutations, compare final file bytes
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[tasks.jsonl].sha256
+      baseline:  b48122f442bdd0f461e9c903ceb92503dce8c88fe57cea99abbcf8af1c807082
+      candidate: fc2691576ef4fbd6ef4a3d4d6c2fb4e4e5ee7c8ad98806f25afcc1291142a8a0
+      rule: errors.md § Structured errors — JSONL store bytes are compared byte for byte, INCLUDING key
+            order and omitted defaults. The store is a durable format two implementations must round-trip,
+            so a reordered key is a real difference here even though it is not on stdout.
+      re-run required: environment differs
+      · line 3
+        - {"type":"task","id":"bbbb0001","parent":"26000001","state":"INBOX","title":"widen me","body":"Captured [2026-03-14].","u…
+        + {"type":"section","id":"26000002","title":"Next Actions"}
+      · line 4
+        - {"type":"section","id":"26000002","title":"Next Actions"}
+        + {"type":"task","id":"26000003","parent":"26000002","state":"NEXT","title":"Confirm the 0600 bit survives an atomic repla…
+      · line 5
+        - {"type":"task","id":"26000003","parent":"26000002","state":"NEXT","title":"Confirm the 0600 bit survives an atomic repla…
+        + null
+  [go_defect/gate] files: files.deltas[.state/tasks]
+      baseline:  {"path":".state/tasks","kind":"created","before_sha256":null,"after_sha256":null}
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal]
+      baseline:  {"path":".state/tasks/journal","kind":"created","before_sha256":null,"after_sha256":null}
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>]
+      baseline:  {"path":".state/tasks/journal/<journal-key>","kind":"created","before_sha256":null,"after_sha256":null}
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>/blobs]
+      baseline:  {"path":".state/tasks/journal/<journal-key>/blobs","kind":"created","before_sha256":null,"after_sha256":null}
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>/blobs/b48122f442bdd0f461e9c903ceb92503dce8c88fe57cea99abbcf8af1c807082]
+      baseline:  {"path":".state/tasks/journal/<journal-key>/blobs/b48122f442bdd0f461e9c903ceb92503dce8c88fe57cea99abbcf8af1c807082","kin…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>/blobs/fc2691576ef4fbd6ef4a3d4d6c2fb4e4e5ee7c8ad98806f25afcc1291142a8a0]
+      baseline:  {"path":".state/tasks/journal/<journal-key>/blobs/fc2691576ef4fbd6ef4a3d4d6c2fb4e4e5ee7c8ad98806f25afcc1291142a8a0","kin…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>/index.json]
+      baseline:  {"path":".state/tasks/journal/<journal-key>/index.json","kind":"created","before_sha256":null,"after_sha256":"dab8ef9517…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[tasks.jsonl]
+      baseline:  {"path":"tasks.jsonl","kind":"modified","before_sha256":"fc2691576ef4fbd6ef4a3d4d6c2fb4e4e5ee7c8ad98806f25afcc1291142a8a…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.mutated
+      baseline:  true
+      candidate: false
+      rule: runners/README.md § Invariants — files.mutated comes from the implementation's own revision
+            token, measured independently of the harness's digests
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.present
+      baseline:  true
+      candidate: false
+      rule: observations.schema.json — journal.present; 'no journal exists' is a state, not a gap
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.version
+      baseline:  1
+      candidate: null
+      rule: playbook § 6 — for mutations, compare journal bytes
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.cursor
+      baseline:  1
+      candidate: null
+      rule: playbook § 6 — for mutations, compare journal bytes
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.blob_count
+      baseline:  2
+      candidate: null
+      rule: playbook § 6 — for mutations, compare journal bytes
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.states.length
+      baseline:  2
+      candidate: 0
+      rule: observations.schema.json — journal.states is ordered history
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.blob_sha256
+      baseline:  ["b48122f442bdd0f461e9c903ceb92503dce8c88fe57cea99abbcf8af1c807082","fc2691576ef4fbd6ef4a3d4d6c2fb4e4e5ee7c8ad98806f25af…
+      candidate: []
+      rule: observations.schema.json — journal.blob_sha256; a blob is a whole store snapshot, so a differing
+            digest is a differing store the port would restore
+      re-run required: environment differs
+      · $  array_length  2 -> 0
+  [go_defect/gate] journal: journal.index.kind
+      baseline:  file
+      candidate: null
+      rule: observations.schema.json — journal.index: 'these bytes are the proof'
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.index.present
+      baseline:  true
+      candidate: false
+      rule: observations.schema.json — journal.index: 'these bytes are the proof'
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.index.size_bytes
+      baseline:  418
+      candidate: null
+      rule: observations.schema.json — journal.index: 'these bytes are the proof'
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.index.mode
+      baseline:  0644
+      candidate: null
+      rule: determinism.md § Tempting but not normalized — carrying an existing file's permission bits
+            across an atomic replacement is a documented safety property; a chmod-600 store must not widen
+            to 644
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.index.sha256
+      baseline:  dab8ef95179a51adac4ec07813860040d780f883b777a5fe0307239bc65cee81
+      candidate: null
+      rule: observations.schema.json — journal.index: 'these bytes are the proof'
+      re-run required: environment differs
+  [go_defect/gate] revisions: revisions.store
+      baseline:  s1.3d1f300a6c7e5c01a6e6d48276d9828b67e945290d22a8aba85421e8ee0c1bb4
+      candidate: s1.f15a72edf3f138641c724a4eebeb58c6102ed081abbbacd03fdd20d55ae3c34d
+      rule: runners/README.md § Why revision tokens come from a probe — each side reports the token ITS OWN
+            code computes, so a divergence in the revision algorithm is a mismatch
+      re-run required: environment differs
+  [go_defect/gate] revisions: revisions.resources[bbbb0001/task]
+      baseline:  {"id":"bbbb0001","kind":"task","revision":"v1.2f3960a207e34bc29b209ff65e1d0790f739ca9930acba65e0f8c5ae1de29aee.ae508fa7b…
+      candidate: null
+      rule: runners/README.md § Why revision tokens come from a probe; a resource revision is the token a
+            conditional write is validated against, so one differing character is a lost-update bug for
+            every HTTP client
+      re-run required: environment differs
+  [go_defect/gate] revisions: revisions.touched_ids
+      baseline:  ["bbbb0001"]
+      candidate: []
+      rule: runners/README.md § What the runner fills in — touched_ids comes from the implementation's own
+            payload, never inferred from the store diff
+      re-run required: environment differs
+      · $  array_length  1 -> 0
+
+MISMATCH  cli-capture-small-gtd
+  [nondeterminism/advisory] cli: environment.platform
+      baseline:  arm64-darwin23
+      candidate: arm64-darwin
+      rule: errors.md § What is not compared at all — environment is recorded so a difference elsewhere can
+            be attributed to a tzdb release or a platform, never itself an assertion. determinism.md § Not
+            pinnable: recorded instead.
+  [go_defect/gate] cli: process.exit_status
+      baseline:  0
+      candidate: 1
+      rule: errors.md § Exit status is the smallest and strongest contract — compared exactly on every case;
+            'both nonzero' is never a match, because 1 vs 2 is a product feature agents branch on
+      re-run required: environment differs
+  [go_defect/gate] cli: process.stdout.format
+      baseline:  json
+      candidate: text
+      rule: errors.md § Structured errors are compared as data — one side emitted parseable JSON and the
+            other did not
+      re-run required: environment differs
+  [go_defect/gate] cli: process.stdout (bytes)
+      baseline:  {"touched":[{"id":"bbbb0001","state":"INBOX","priority":"A","title":"port the runner","tags":["port"],"contexts":[],"def…
+      candidate: 
+      rule: errors.md § Diagnostic text is contract until proved otherwise — compared byte for byte, with
+            only the copy-root rewrite applied. Wording, whitespace, punctuation and line order are all part
+            of the error UX an agent reads back to a user.
+      re-run required: environment differs
+      · first differing byte 0 (523 vs 0 bytes)
+        - {\"touched\":[{\"id\":\"bbbb0001\",\"state\":\"INBOX\",\"priority\":\"A\",\"title\":\"port the ru
+        + 
+  [go_defect/gate] cli: process.stderr (bytes)
+      baseline:  
+      candidate: capture: not implemented in the Go port — the store passed every preflight, so the next step would be a write, and this …
+      rule: errors.md § Diagnostic text is contract until proved otherwise — compared byte for byte, with
+            only the copy-root rewrite applied. Wording, whitespace, punctuation and line order are all part
+            of the error UX an agent reads back to a user.
+      re-run required: environment differs
+      · first differing byte 0 (0 vs 146 bytes)
+        - 
+        + capture: not implemented in the Go port — the store passed every preflight, so
+  [go_defect/gate] files: files.after[.state/tasks]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>/blobs]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>/blobs/cc5aa2fb170f7b5e667eaeee47c954d929ee868d0306c451bbcc3e289ec3e40a]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>/blobs/e0ade36b8374dc044b3c0b277e60edb9c2051591785be8b8340d265d0688eabe]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>/index.json]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[tasks.jsonl].size_bytes
+      baseline:  1975
+      candidate: 1777
+      rule: playbook § 6 — for mutations, compare final file bytes
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[tasks.jsonl].line_count
+      baseline:  15
+      candidate: 14
+      rule: playbook § 6 — for mutations, compare final file bytes
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[tasks.jsonl].sha256
+      baseline:  cc5aa2fb170f7b5e667eaeee47c954d929ee868d0306c451bbcc3e289ec3e40a
+      candidate: e0ade36b8374dc044b3c0b277e60edb9c2051591785be8b8340d265d0688eabe
+      rule: errors.md § Structured errors — JSONL store bytes are compared byte for byte, INCLUDING key
+            order and omitted defaults. The store is a durable format two implementations must round-trip,
+            so a reordered key is a real difference here even though it is not on stdout.
+      re-run required: environment differs
+      · line 4
+        - {"type":"task","id":"bbbb0001","parent":"1a2b3c01","state":"INBOX","priority":"A","title":"port the runner","tags":["por…
+        + {"type":"section","id":"1a2b3c03","title":"Next Actions"}
+      · line 5
+        - {"type":"section","id":"1a2b3c03","title":"Next Actions"}
+        + {"type":"task","id":"1a2b3c04","parent":"1a2b3c03","state":"NEXT","priority":"A","title":"Draft the quarterly planning o…
+      · line 6
+        - {"type":"task","id":"1a2b3c04","parent":"1a2b3c03","state":"NEXT","priority":"A","title":"Draft the quarterly planning o…
+        + {"type":"task","id":"1a2b3c05","parent":"1a2b3c03","state":"TODO","priority":"B","title":"Reply to the supplier about th…
+      · line 7
+        - {"type":"task","id":"1a2b3c05","parent":"1a2b3c03","state":"TODO","priority":"B","title":"Reply to the supplier about th…
+        + {"type":"task","id":"1a2b3c06","parent":"1a2b3c03","state":"WAITING","title":"Sign-off on the budget from the finance te…
+  [go_defect/gate] files: files.deltas[.state/tasks]
+      baseline:  {"path":".state/tasks","kind":"created","before_sha256":null,"after_sha256":null}
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal]
+      baseline:  {"path":".state/tasks/journal","kind":"created","before_sha256":null,"after_sha256":null}
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>]
+      baseline:  {"path":".state/tasks/journal/<journal-key>","kind":"created","before_sha256":null,"after_sha256":null}
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>/blobs]
+      baseline:  {"path":".state/tasks/journal/<journal-key>/blobs","kind":"created","before_sha256":null,"after_sha256":null}
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>/blobs/cc5aa2fb170f7b5e667eaeee47c954d929ee868d0306c451bbcc3e289ec3e40a]
+      baseline:  {"path":".state/tasks/journal/<journal-key>/blobs/cc5aa2fb170f7b5e667eaeee47c954d929ee868d0306c451bbcc3e289ec3e40a","kin…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>/blobs/e0ade36b8374dc044b3c0b277e60edb9c2051591785be8b8340d265d0688eabe]
+      baseline:  {"path":".state/tasks/journal/<journal-key>/blobs/e0ade36b8374dc044b3c0b277e60edb9c2051591785be8b8340d265d0688eabe","kin…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>/index.json]
+      baseline:  {"path":".state/tasks/journal/<journal-key>/index.json","kind":"created","before_sha256":null,"after_sha256":"f20e5073ff…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[tasks.jsonl]
+      baseline:  {"path":"tasks.jsonl","kind":"modified","before_sha256":"e0ade36b8374dc044b3c0b277e60edb9c2051591785be8b8340d265d0688eab…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.mutated
+      baseline:  true
+      candidate: false
+      rule: runners/README.md § Invariants — files.mutated comes from the implementation's own revision
+            token, measured independently of the harness's digests
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.present
+      baseline:  true
+      candidate: false
+      rule: observations.schema.json — journal.present; 'no journal exists' is a state, not a gap
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.version
+      baseline:  1
+      candidate: null
+      rule: playbook § 6 — for mutations, compare journal bytes
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.cursor
+      baseline:  1
+      candidate: null
+      rule: playbook § 6 — for mutations, compare journal bytes
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.blob_count
+      baseline:  2
+      candidate: null
+      rule: playbook § 6 — for mutations, compare journal bytes
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.states.length
+      baseline:  2
+      candidate: 0
+      rule: observations.schema.json — journal.states is ordered history
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.blob_sha256
+      baseline:  ["cc5aa2fb170f7b5e667eaeee47c954d929ee868d0306c451bbcc3e289ec3e40a","e0ade36b8374dc044b3c0b277e60edb9c2051591785be8b8340…
+      candidate: []
+      rule: observations.schema.json — journal.blob_sha256; a blob is a whole store snapshot, so a differing
+            digest is a differing store the port would restore
+      re-run required: environment differs
+      · $  array_length  2 -> 0
+  [go_defect/gate] journal: journal.index.kind
+      baseline:  file
+      candidate: null
+      rule: observations.schema.json — journal.index: 'these bytes are the proof'
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.index.present
+      baseline:  true
+      candidate: false
+      rule: observations.schema.json — journal.index: 'these bytes are the proof'
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.index.size_bytes
+      baseline:  419
+      candidate: null
+      rule: observations.schema.json — journal.index: 'these bytes are the proof'
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.index.mode
+      baseline:  0644
+      candidate: null
+      rule: determinism.md § Tempting but not normalized — carrying an existing file's permission bits
+            across an atomic replacement is a documented safety property; a chmod-600 store must not widen
+            to 644
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.index.sha256
+      baseline:  f20e5073ff08c3cf77e2e0fc360eea260de83c86c127b20f10c3c63ae07a43ed
+      candidate: null
+      rule: observations.schema.json — journal.index: 'these bytes are the proof'
+      re-run required: environment differs
+  [go_defect/gate] revisions: revisions.store
+      baseline:  s1.cff378355abf2a0113c376c130f3c0621bab0f0695fc180cd197bb9043e1b48a
+      candidate: s1.cf905edd321680a3366b47073c2cd887e25a5bd04814e305685e05231befad29
+      rule: runners/README.md § Why revision tokens come from a probe — each side reports the token ITS OWN
+            code computes, so a divergence in the revision algorithm is a mismatch
+      re-run required: environment differs
+  [go_defect/gate] revisions: revisions.resources[1a2b3c02/task]
+      baseline:  {"id":"1a2b3c02","kind":"task","revision":"v1.ff5a6603a8f6b1733f4c9b01a4bee4b80885ea129230bb58c7d7105c9da8bf12.6eb9b0be7…
+      candidate: {"id":"1a2b3c02","kind":"task","revision":"v1.ff5a6603a8f6b1733f4c9b01a4bee4b80885ea129230bb58c7d7105c9da8bf12.5ced6511a…
+      rule: runners/README.md § Why revision tokens come from a probe; a resource revision is the token a
+            conditional write is validated against, so one differing character is a lost-update bug for
+            every HTTP client
+      re-run required: environment differs
+      · $.revision  value  v1.ff5a6603a8f6b1733f4c9b01a4bee4b80885ea129230bb58c7d7105c9da8bf12.6eb9b0be7b4f071384685e6e6d29cf2528bf38348d1a86117114… -> v1.ff5a6603a8f6b1733f4c9b01a4bee4b80885ea129230bb58c7d7105c9da8bf12.5ced6511afc2746dd6df3844adeec5586b8d400bb1397c6a7bd5…
+  [go_defect/gate] revisions: revisions.resources[bbbb0001/task]
+      baseline:  {"id":"bbbb0001","kind":"task","revision":"v1.7daa66db02c20f48e0e6e9a8f96269ee80b0a4f1c7702a80350f756ecb2d52d6.4a4fc5141…
+      candidate: null
+      rule: runners/README.md § Why revision tokens come from a probe; a resource revision is the token a
+            conditional write is validated against, so one differing character is a lost-update bug for
+            every HTTP client
+      re-run required: environment differs
+  [go_defect/gate] revisions: revisions.touched_ids
+      baseline:  ["bbbb0001"]
+      candidate: []
+      rule: runners/README.md § What the runner fills in — touched_ids comes from the implementation's own
+            payload, never inferred from the store diff
+      re-run required: environment differs
+      · $  array_length  1 -> 0
+
+MISMATCH  cli-capture-symlinked-store
+  [nondeterminism/advisory] cli: environment.platform
+      baseline:  arm64-darwin23
+      candidate: arm64-darwin
+      rule: errors.md § What is not compared at all — environment is recorded so a difference elsewhere can
+            be attributed to a tzdb release or a platform, never itself an assertion. determinism.md § Not
+            pinnable: recorded instead.
+  [go_defect/gate] cli: process.exit_status
+      baseline:  0
+      candidate: 1
+      rule: errors.md § Exit status is the smallest and strongest contract — compared exactly on every case;
+            'both nonzero' is never a match, because 1 vs 2 is a product feature agents branch on
+      re-run required: environment differs
+  [go_defect/gate] cli: process.stdout.format
+      baseline:  json
+      candidate: text
+      rule: errors.md § Structured errors are compared as data — one side emitted parseable JSON and the
+            other did not
+      re-run required: environment differs
+  [go_defect/gate] cli: process.stdout (bytes)
+      baseline:  {"touched":[{"id":"bbbb0001","state":"INBOX","priority":null,"title":"through the link","tags":[],"contexts":[],"deferre…
+      candidate: 
+      rule: errors.md § Diagnostic text is contract until proved otherwise — compared byte for byte, with
+            only the copy-root rewrite applied. Wording, whitespace, punctuation and line order are all part
+            of the error UX an agent reads back to a user.
+      re-run required: environment differs
+      · first differing byte 0 (508 vs 0 bytes)
+        - {\"touched\":[{\"id\":\"bbbb0001\",\"state\":\"INBOX\",\"priority\":null,\"title\":\"through th
+        + 
+  [go_defect/gate] cli: process.stderr (bytes)
+      baseline:  
+      candidate: capture: not implemented in the Go port — the store passed every preflight, so the next step would be a write, and this …
+      rule: errors.md § Diagnostic text is contract until proved otherwise — compared byte for byte, with
+            only the copy-root rewrite applied. Wording, whitespace, punctuation and line order are all part
+            of the error UX an agent reads back to a user.
+      re-run required: environment differs
+      · first differing byte 0 (0 vs 146 bytes)
+        - 
+        + capture: not implemented in the Go port — the store passed every preflight, so
+  [go_defect/gate] files: files.after[.state/tasks]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>/blobs]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>/blobs/41d6e6002ebd41959dc31c34814f1bb2003c2edaced6993ba09bdaa581372ea6]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>/blobs/e8225f7f0d5a0ca7f8420309e918e74d4a4d6246cf9482a70c13b80435a466bd]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>/index.json]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[tasks.real.jsonl].size_bytes
+      baseline:  443
+      candidate: 275
+      rule: playbook § 6 — for mutations, compare final file bytes
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[tasks.real.jsonl].line_count
+      baseline:  5
+      candidate: 4
+      rule: playbook § 6 — for mutations, compare final file bytes
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[tasks.real.jsonl].sha256
+      baseline:  e8225f7f0d5a0ca7f8420309e918e74d4a4d6246cf9482a70c13b80435a466bd
+      candidate: 41d6e6002ebd41959dc31c34814f1bb2003c2edaced6993ba09bdaa581372ea6
+      rule: errors.md § Structured errors — JSONL store bytes are compared byte for byte, INCLUDING key
+            order and omitted defaults. The store is a durable format two implementations must round-trip,
+            so a reordered key is a real difference here even though it is not on stdout.
+      re-run required: environment differs
+      · line 3
+        - {"type":"task","id":"bbbb0001","parent":"25000001","state":"INBOX","title":"through the link","body":"Captured [2026-03-…
+        + {"type":"section","id":"25000002","title":"Next Actions"}
+      · line 4
+        - {"type":"section","id":"25000002","title":"Next Actions"}
+        + {"type":"task","id":"25000003","parent":"25000002","state":"NEXT","title":"Confirm the symlinked store is followed","tag…
+      · line 5
+        - {"type":"task","id":"25000003","parent":"25000002","state":"NEXT","title":"Confirm the symlinked store is followed","tag…
+        + null
+  [go_defect/gate] files: files.deltas[.state/tasks]
+      baseline:  {"path":".state/tasks","kind":"created","before_sha256":null,"after_sha256":null}
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal]
+      baseline:  {"path":".state/tasks/journal","kind":"created","before_sha256":null,"after_sha256":null}
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>]
+      baseline:  {"path":".state/tasks/journal/<journal-key>","kind":"created","before_sha256":null,"after_sha256":null}
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>/blobs]
+      baseline:  {"path":".state/tasks/journal/<journal-key>/blobs","kind":"created","before_sha256":null,"after_sha256":null}
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>/blobs/41d6e6002ebd41959dc31c34814f1bb2003c2edaced6993ba09bdaa581372ea6]
+      baseline:  {"path":".state/tasks/journal/<journal-key>/blobs/41d6e6002ebd41959dc31c34814f1bb2003c2edaced6993ba09bdaa581372ea6","kin…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>/blobs/e8225f7f0d5a0ca7f8420309e918e74d4a4d6246cf9482a70c13b80435a466bd]
+      baseline:  {"path":".state/tasks/journal/<journal-key>/blobs/e8225f7f0d5a0ca7f8420309e918e74d4a4d6246cf9482a70c13b80435a466bd","kin…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>/index.json]
+      baseline:  {"path":".state/tasks/journal/<journal-key>/index.json","kind":"created","before_sha256":null,"after_sha256":"639e7c6ea4…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[tasks.real.jsonl]
+      baseline:  {"path":"tasks.real.jsonl","kind":"modified","before_sha256":"41d6e6002ebd41959dc31c34814f1bb2003c2edaced6993ba09bdaa581…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.mutated
+      baseline:  true
+      candidate: false
+      rule: runners/README.md § Invariants — files.mutated comes from the implementation's own revision
+            token, measured independently of the harness's digests
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.present
+      baseline:  true
+      candidate: false
+      rule: observations.schema.json — journal.present; 'no journal exists' is a state, not a gap
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.version
+      baseline:  1
+      candidate: null
+      rule: playbook § 6 — for mutations, compare journal bytes
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.cursor
+      baseline:  1
+      candidate: null
+      rule: playbook § 6 — for mutations, compare journal bytes
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.blob_count
+      baseline:  2
+      candidate: null
+      rule: playbook § 6 — for mutations, compare journal bytes
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.states.length
+      baseline:  2
+      candidate: 0
+      rule: observations.schema.json — journal.states is ordered history
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.blob_sha256
+      baseline:  ["41d6e6002ebd41959dc31c34814f1bb2003c2edaced6993ba09bdaa581372ea6","e8225f7f0d5a0ca7f8420309e918e74d4a4d6246cf9482a70c1…
+      candidate: []
+      rule: observations.schema.json — journal.blob_sha256; a blob is a whole store snapshot, so a differing
+            digest is a differing store the port would restore
+      re-run required: environment differs
+      · $  array_length  2 -> 0
+  [go_defect/gate] journal: journal.index.kind
+      baseline:  file
+      candidate: null
+      rule: observations.schema.json — journal.index: 'these bytes are the proof'
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.index.present
+      baseline:  true
+      candidate: false
+      rule: observations.schema.json — journal.index: 'these bytes are the proof'
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.index.size_bytes
+      baseline:  431
+      candidate: null
+      rule: observations.schema.json — journal.index: 'these bytes are the proof'
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.index.mode
+      baseline:  0644
+      candidate: null
+      rule: determinism.md § Tempting but not normalized — carrying an existing file's permission bits
+            across an atomic replacement is a documented safety property; a chmod-600 store must not widen
+            to 644
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.index.sha256
+      baseline:  639e7c6ea48056842f25b52eca46aee22bb477edb02a360d7839e9ea6a5bf876
+      candidate: null
+      rule: observations.schema.json — journal.index: 'these bytes are the proof'
+      re-run required: environment differs
+  [go_defect/gate] revisions: revisions.store
+      baseline:  s1.533efc991a20d17e4a6b9c260610683aae575d10f03b15e93e2aa839a56abd88
+      candidate: s1.50e74f3a9631e73be27e0d98d272d10df1d2395e26710fae3a82cacda785f00e
+      rule: runners/README.md § Why revision tokens come from a probe — each side reports the token ITS OWN
+            code computes, so a divergence in the revision algorithm is a mismatch
+      re-run required: environment differs
+  [go_defect/gate] revisions: revisions.resources[bbbb0001/task]
+      baseline:  {"id":"bbbb0001","kind":"task","revision":"v1.bbd3678ddc1b6204bc5ac202a83deec888e710e6cf92b7d43148fcfa95c27e0c.91699d5ac…
+      candidate: null
+      rule: runners/README.md § Why revision tokens come from a probe; a resource revision is the token a
+            conditional write is validated against, so one differing character is a lost-update bug for
+            every HTTP client
+      re-run required: environment differs
+  [go_defect/gate] revisions: revisions.touched_ids
+      baseline:  ["bbbb0001"]
+      candidate: []
+      rule: runners/README.md § What the runner fills in — touched_ids comes from the implementation's own
+            payload, never inferred from the store diff
+      re-run required: environment differs
+      · $  array_length  1 -> 0
+
+MISMATCH  cli-claim-same-owner-retry
+  [nondeterminism/advisory] cli: environment.platform
+      baseline:  arm64-darwin23
+      candidate: arm64-darwin
+      rule: errors.md § What is not compared at all — environment is recorded so a difference elsewhere can
+            be attributed to a tzdb release or a platform, never itself an assertion. determinism.md § Not
+            pinnable: recorded instead.
+  [go_defect/gate] cli: process.stdout.format
+      baseline:  json
+      candidate: text
+      rule: errors.md § Structured errors are compared as data — one side emitted parseable JSON and the
+            other did not
+      re-run required: environment differs
+  [go_defect/gate] cli: process.stdout (bytes)
+      baseline:  {"error":"conflict","action":"claim","id":"dc3f5f4b","holder":"harness/model/worker-alpha","at":"2026-08-01T18:11:01Z","…
+      candidate: 
+      rule: errors.md § Diagnostic text is contract until proved otherwise — compared byte for byte, with
+            only the copy-root rewrite applied. Wording, whitespace, punctuation and line order are all part
+            of the error UX an agent reads back to a user.
+      re-run required: environment differs
+      · first differing byte 0 (212 vs 0 bytes)
+        - {\"error\":\"conflict\",\"action\":\"claim\",\"id\":\"dc3f5f4b\",\"holder\":\"harness/model/wor
+        + 
+  [go_defect/gate] cli: process.stderr (bytes)
+      baseline:  conflict: already claimed by harness/model/worker-alpha at 2026-08-01T18:11:01Z\n
+      candidate: claim: not implemented in the Go port — this build has no write path, and refusing is the only answer that cannot leave …
+      rule: errors.md § Diagnostic text is contract until proved otherwise — compared byte for byte, with
+            only the copy-root rewrite applied. Wording, whitespace, punctuation and line order are all part
+            of the error UX an agent reads back to a user.
+      re-run required: environment differs
+      · first differing byte 1 (80 vs 143 bytes)
+        - conflict: already claimed by harness/model/worker-alpha at 2026-08-01T18:11:01Z\n
+        + claim: not implemented in the Go port — this build has no write path, and refu
+  [go_defect/gate] files: files.after[.tasks.jsonl.lock]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.tasks.jsonl.lock]
+      baseline:  {"path":".tasks.jsonl.lock","kind":"created","before_sha256":null,"after_sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+
+MISMATCH  cli-delegate-agent-ready
+  [nondeterminism/advisory] cli: environment.platform
+      baseline:  arm64-darwin23
+      candidate: arm64-darwin
+      rule: errors.md § What is not compared at all — environment is recorded so a difference elsewhere can
+            be attributed to a tzdb release or a platform, never itself an assertion. determinism.md § Not
+            pinnable: recorded instead.
+  [go_defect/gate] cli: process.exit_status
+      baseline:  0
+      candidate: 1
+      rule: errors.md § Exit status is the smallest and strongest contract — compared exactly on every case;
+            'both nonzero' is never a match, because 1 vs 2 is a product feature agents branch on
+      re-run required: environment differs
+  [go_defect/gate] cli: process.stdout.format
+      baseline:  json
+      candidate: text
+      rule: errors.md § Structured errors are compared as data — one side emitted parseable JSON and the
+            other did not
+      re-run required: environment differs
+  [go_defect/gate] cli: process.stdout (bytes)
+      baseline:  {"touched":[{"id":"1a2b3c02","state":"INBOX","priority":"B","title":"Skim the release notes for the parser library","tag…
+      candidate: 
+      rule: errors.md § Diagnostic text is contract until proved otherwise — compared byte for byte, with
+            only the copy-root rewrite applied. Wording, whitespace, punctuation and line order are all part
+            of the error UX an agent reads back to a user.
+      re-run required: environment differs
+      · first differing byte 0 (669 vs 0 bytes)
+        - {\"touched\":[{\"id\":\"1a2b3c02\",\"state\":\"INBOX\",\"priority\":\"B\",\"title\":\"Skim the re
+        + 
+  [go_defect/gate] cli: process.stderr (bytes)
+      baseline:  
+      candidate: delegate: not implemented in the Go port — this build has no write path, and refusing is the only answer that cannot lea…
+      rule: errors.md § Diagnostic text is contract until proved otherwise — compared byte for byte, with
+            only the copy-root rewrite applied. Wording, whitespace, punctuation and line order are all part
+            of the error UX an agent reads back to a user.
+      re-run required: environment differs
+      · first differing byte 0 (0 vs 146 bytes)
+        - 
+        + delegate: not implemented in the Go port — this build has no write path, and r
+  [go_defect/gate] files: files.after[.state/tasks]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>/blobs]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>/blobs/2bfd93b235e573a17a5d0314cf7c897039aaea6db54e653984124ad412043fb2]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>/blobs/e0ade36b8374dc044b3c0b277e60edb9c2051591785be8b8340d265d0688eabe]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>/index.json]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.tasks.jsonl.lock]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[tasks.jsonl].size_bytes
+      baseline:  1912
+      candidate: 1777
+      rule: playbook § 6 — for mutations, compare final file bytes
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[tasks.jsonl].sha256
+      baseline:  2bfd93b235e573a17a5d0314cf7c897039aaea6db54e653984124ad412043fb2
+      candidate: e0ade36b8374dc044b3c0b277e60edb9c2051591785be8b8340d265d0688eabe
+      rule: errors.md § Structured errors — JSONL store bytes are compared byte for byte, INCLUDING key
+            order and omitted defaults. The store is a durable format two implementations must round-trip,
+            so a reordered key is a real difference here even though it is not on stdout.
+      re-run required: environment differs
+      · line 3
+        - {"type":"task","id":"1a2b3c02","parent":"1a2b3c01","state":"INBOX","priority":"B","title":"Skim the release notes for th…
+        + {"type":"task","id":"1a2b3c02","parent":"1a2b3c01","state":"INBOX","priority":"B","title":"Skim the release notes for th…
+  [go_defect/gate] files: files.deltas[.state/tasks]
+      baseline:  {"path":".state/tasks","kind":"created","before_sha256":null,"after_sha256":null}
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal]
+      baseline:  {"path":".state/tasks/journal","kind":"created","before_sha256":null,"after_sha256":null}
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>]
+      baseline:  {"path":".state/tasks/journal/<journal-key>","kind":"created","before_sha256":null,"after_sha256":null}
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>/blobs]
+      baseline:  {"path":".state/tasks/journal/<journal-key>/blobs","kind":"created","before_sha256":null,"after_sha256":null}
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>/blobs/2bfd93b235e573a17a5d0314cf7c897039aaea6db54e653984124ad412043fb2]
+      baseline:  {"path":".state/tasks/journal/<journal-key>/blobs/2bfd93b235e573a17a5d0314cf7c897039aaea6db54e653984124ad412043fb2","kin…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>/blobs/e0ade36b8374dc044b3c0b277e60edb9c2051591785be8b8340d265d0688eabe]
+      baseline:  {"path":".state/tasks/journal/<journal-key>/blobs/e0ade36b8374dc044b3c0b277e60edb9c2051591785be8b8340d265d0688eabe","kin…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>/index.json]
+      baseline:  {"path":".state/tasks/journal/<journal-key>/index.json","kind":"created","before_sha256":null,"after_sha256":"4d10f363c5…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.tasks.jsonl.lock]
+      baseline:  {"path":".tasks.jsonl.lock","kind":"created","before_sha256":null,"after_sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[tasks.jsonl]
+      baseline:  {"path":"tasks.jsonl","kind":"modified","before_sha256":"e0ade36b8374dc044b3c0b277e60edb9c2051591785be8b8340d265d0688eab…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.mutated
+      baseline:  true
+      candidate: false
+      rule: runners/README.md § Invariants — files.mutated comes from the implementation's own revision
+            token, measured independently of the harness's digests
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.present
+      baseline:  true
+      candidate: false
+      rule: observations.schema.json — journal.present; 'no journal exists' is a state, not a gap
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.version
+      baseline:  1
+      candidate: null
+      rule: playbook § 6 — for mutations, compare journal bytes
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.cursor
+      baseline:  1
+      candidate: null
+      rule: playbook § 6 — for mutations, compare journal bytes
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.blob_count
+      baseline:  2
+      candidate: null
+      rule: playbook § 6 — for mutations, compare journal bytes
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.states.length
+      baseline:  2
+      candidate: 0
+      rule: observations.schema.json — journal.states is ordered history
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.blob_sha256
+      baseline:  ["2bfd93b235e573a17a5d0314cf7c897039aaea6db54e653984124ad412043fb2","e0ade36b8374dc044b3c0b277e60edb9c2051591785be8b8340…
+      candidate: []
+      rule: observations.schema.json — journal.blob_sha256; a blob is a whole store snapshot, so a differing
+            digest is a differing store the port would restore
+      re-run required: environment differs
+      · $  array_length  2 -> 0
+  [go_defect/gate] journal: journal.index.kind
+      baseline:  file
+      candidate: null
+      rule: observations.schema.json — journal.index: 'these bytes are the proof'
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.index.present
+      baseline:  true
+      candidate: false
+      rule: observations.schema.json — journal.index: 'these bytes are the proof'
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.index.size_bytes
+      baseline:  565
+      candidate: null
+      rule: observations.schema.json — journal.index: 'these bytes are the proof'
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.index.mode
+      baseline:  0644
+      candidate: null
+      rule: determinism.md § Tempting but not normalized — carrying an existing file's permission bits
+            across an atomic replacement is a documented safety property; a chmod-600 store must not widen
+            to 644
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.index.sha256
+      baseline:  4d10f363c54b7fe80ac0b1b7f0315a136b92bdb1e6dbd8a45c703acf62b66923
+      candidate: null
+      rule: observations.schema.json — journal.index: 'these bytes are the proof'
+      re-run required: environment differs
+  [go_defect/gate] revisions: revisions.store
+      baseline:  s1.921193584b1c81c81ab52171aefe1d18456a329cdcc6e9a583ba020af3940429
+      candidate: s1.cf905edd321680a3366b47073c2cd887e25a5bd04814e305685e05231befad29
+      rule: runners/README.md § Why revision tokens come from a probe — each side reports the token ITS OWN
+            code computes, so a divergence in the revision algorithm is a mismatch
+      re-run required: environment differs
+  [go_defect/gate] revisions: revisions.resources[1a2b3c02/task]
+      baseline:  {"id":"1a2b3c02","kind":"task","revision":"v1.b21b66612cac928f37ec5c9a7a5c112442f216f7710d36e85e306debab582028.5ced6511a…
+      candidate: {"id":"1a2b3c02","kind":"task","revision":"v1.ff5a6603a8f6b1733f4c9b01a4bee4b80885ea129230bb58c7d7105c9da8bf12.5ced6511a…
+      rule: runners/README.md § Why revision tokens come from a probe; a resource revision is the token a
+            conditional write is validated against, so one differing character is a lost-update bug for
+            every HTTP client
+      re-run required: environment differs
+      · $.revision  value  v1.b21b66612cac928f37ec5c9a7a5c112442f216f7710d36e85e306debab582028.5ced6511afc2746dd6df3844adeec5586b8d400bb1397c6a7bd5… -> v1.ff5a6603a8f6b1733f4c9b01a4bee4b80885ea129230bb58c7d7105c9da8bf12.5ced6511afc2746dd6df3844adeec5586b8d400bb1397c6a7bd5…
+  [go_defect/gate] revisions: revisions.touched_ids
+      baseline:  ["1a2b3c02"]
+      candidate: []
+      rule: runners/README.md § What the runner fills in — touched_ids comes from the implementation's own
+            payload, never inferred from the store diff
+      re-run required: environment differs
+      · $  array_length  1 -> 0
+
+MISMATCH  cli-done-small-gtd
+  [nondeterminism/advisory] cli: environment.platform
+      baseline:  arm64-darwin23
+      candidate: arm64-darwin
+      rule: errors.md § What is not compared at all — environment is recorded so a difference elsewhere can
+            be attributed to a tzdb release or a platform, never itself an assertion. determinism.md § Not
+            pinnable: recorded instead.
+  [go_defect/gate] cli: process.exit_status
+      baseline:  0
+      candidate: 1
+      rule: errors.md § Exit status is the smallest and strongest contract — compared exactly on every case;
+            'both nonzero' is never a match, because 1 vs 2 is a product feature agents branch on
+      re-run required: environment differs
+  [go_defect/gate] cli: process.stdout.format
+      baseline:  json
+      candidate: text
+      rule: errors.md § Structured errors are compared as data — one side emitted parseable JSON and the
+            other did not
+      re-run required: environment differs
+  [go_defect/gate] cli: process.stdout (bytes)
+      baseline:  {"touched":[{"id":"1a2b3c02","state":"DONE","priority":"B","title":"Skim the release notes for the parser library","tags…
+      candidate: 
+      rule: errors.md § Diagnostic text is contract until proved otherwise — compared byte for byte, with
+            only the copy-root rewrite applied. Wording, whitespace, punctuation and line order are all part
+            of the error UX an agent reads back to a user.
+      re-run required: environment differs
+      · first differing byte 0 (589 vs 0 bytes)
+        - {\"touched\":[{\"id\":\"1a2b3c02\",\"state\":\"DONE\",\"priority\":\"B\",\"title\":\"Skim the rel
+        + 
+  [go_defect/gate] cli: process.stderr (bytes)
+      baseline:  
+      candidate: done: not implemented in the Go port — "Skim the release notes" resolved to "INBOX [#B] Skim the release notes for the p…
+      rule: errors.md § Diagnostic text is contract until proved otherwise — compared byte for byte, with
+            only the copy-root rewrite applied. Wording, whitespace, punctuation and line order are all part
+            of the error UX an agent reads back to a user.
+      re-run required: environment differs
+      · first differing byte 0 (0 vs 230 bytes)
+        - 
+        + done: not implemented in the Go port — \"Skim the release notes\" resolved to \"I
+  [go_defect/gate] files: files.after[.state/tasks]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>/blobs]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>/blobs/2c39fb7da326f6efe93177ec844ab944efa62b02f6eaa5cf52ed88dc66db7df8]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>/blobs/e0ade36b8374dc044b3c0b277e60edb9c2051591785be8b8340d265d0688eabe]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>/index.json]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[tasks.jsonl].size_bytes
+      baseline:  1839
+      candidate: 1777
+      rule: playbook § 6 — for mutations, compare final file bytes
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[tasks.jsonl].sha256
+      baseline:  2c39fb7da326f6efe93177ec844ab944efa62b02f6eaa5cf52ed88dc66db7df8
+      candidate: e0ade36b8374dc044b3c0b277e60edb9c2051591785be8b8340d265d0688eabe
+      rule: errors.md § Structured errors — JSONL store bytes are compared byte for byte, INCLUDING key
+            order and omitted defaults. The store is a durable format two implementations must round-trip,
+            so a reordered key is a real difference here even though it is not on stdout.
+      re-run required: environment differs
+      · line 3
+        - {"type":"task","id":"1a2b3c02","parent":"1a2b3c01","state":"DONE","priority":"B","title":"Skim the release notes for the…
+        + {"type":"task","id":"1a2b3c02","parent":"1a2b3c01","state":"INBOX","priority":"B","title":"Skim the release notes for th…
+  [go_defect/gate] files: files.deltas[.state/tasks]
+      baseline:  {"path":".state/tasks","kind":"created","before_sha256":null,"after_sha256":null}
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal]
+      baseline:  {"path":".state/tasks/journal","kind":"created","before_sha256":null,"after_sha256":null}
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>]
+      baseline:  {"path":".state/tasks/journal/<journal-key>","kind":"created","before_sha256":null,"after_sha256":null}
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>/blobs]
+      baseline:  {"path":".state/tasks/journal/<journal-key>/blobs","kind":"created","before_sha256":null,"after_sha256":null}
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>/blobs/2c39fb7da326f6efe93177ec844ab944efa62b02f6eaa5cf52ed88dc66db7df8]
+      baseline:  {"path":".state/tasks/journal/<journal-key>/blobs/2c39fb7da326f6efe93177ec844ab944efa62b02f6eaa5cf52ed88dc66db7df8","kin…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>/blobs/e0ade36b8374dc044b3c0b277e60edb9c2051591785be8b8340d265d0688eabe]
+      baseline:  {"path":".state/tasks/journal/<journal-key>/blobs/e0ade36b8374dc044b3c0b277e60edb9c2051591785be8b8340d265d0688eabe","kin…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>/index.json]
+      baseline:  {"path":".state/tasks/journal/<journal-key>/index.json","kind":"created","before_sha256":null,"after_sha256":"a9bf0bf6b9…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[tasks.jsonl]
+      baseline:  {"path":"tasks.jsonl","kind":"modified","before_sha256":"e0ade36b8374dc044b3c0b277e60edb9c2051591785be8b8340d265d0688eab…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.mutated
+      baseline:  true
+      candidate: false
+      rule: runners/README.md § Invariants — files.mutated comes from the implementation's own revision
+            token, measured independently of the harness's digests
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.present
+      baseline:  true
+      candidate: false
+      rule: observations.schema.json — journal.present; 'no journal exists' is a state, not a gap
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.version
+      baseline:  1
+      candidate: null
+      rule: playbook § 6 — for mutations, compare journal bytes
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.cursor
+      baseline:  1
+      candidate: null
+      rule: playbook § 6 — for mutations, compare journal bytes
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.blob_count
+      baseline:  2
+      candidate: null
+      rule: playbook § 6 — for mutations, compare journal bytes
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.states.length
+      baseline:  2
+      candidate: 0
+      rule: observations.schema.json — journal.states is ordered history
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.blob_sha256
+      baseline:  ["2c39fb7da326f6efe93177ec844ab944efa62b02f6eaa5cf52ed88dc66db7df8","e0ade36b8374dc044b3c0b277e60edb9c2051591785be8b8340…
+      candidate: []
+      rule: observations.schema.json — journal.blob_sha256; a blob is a whole store snapshot, so a differing
+            digest is a differing store the port would restore
+      re-run required: environment differs
+      · $  array_length  2 -> 0
+  [go_defect/gate] journal: journal.index.kind
+      baseline:  file
+      candidate: null
+      rule: observations.schema.json — journal.index: 'these bytes are the proof'
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.index.present
+      baseline:  true
+      candidate: false
+      rule: observations.schema.json — journal.index: 'these bytes are the proof'
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.index.size_bytes
+      baseline:  453
+      candidate: null
+      rule: observations.schema.json — journal.index: 'these bytes are the proof'
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.index.mode
+      baseline:  0644
+      candidate: null
+      rule: determinism.md § Tempting but not normalized — carrying an existing file's permission bits
+            across an atomic replacement is a documented safety property; a chmod-600 store must not widen
+            to 644
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.index.sha256
+      baseline:  a9bf0bf6b97ad6b5e4ba52ebf4255e9ff878f330f3d024d2912c92e0aed9b36a
+      candidate: null
+      rule: observations.schema.json — journal.index: 'these bytes are the proof'
+      re-run required: environment differs
+  [go_defect/gate] revisions: revisions.store
+      baseline:  s1.cba0d1631fb19eb65ff740bed9aac19f5ee92a691d1c8dcfec0e5227caf7d472
+      candidate: s1.cf905edd321680a3366b47073c2cd887e25a5bd04814e305685e05231befad29
+      rule: runners/README.md § Why revision tokens come from a probe — each side reports the token ITS OWN
+            code computes, so a divergence in the revision algorithm is a mismatch
+      re-run required: environment differs
+  [go_defect/gate] revisions: revisions.resources[1a2b3c02/task]
+      baseline:  {"id":"1a2b3c02","kind":"task","revision":"v1.5b5505d5a11b6b6d75f84418ff4fa6551f4b84eec786e2ca7c1ece15638ef84f.5ced6511a…
+      candidate: {"id":"1a2b3c02","kind":"task","revision":"v1.ff5a6603a8f6b1733f4c9b01a4bee4b80885ea129230bb58c7d7105c9da8bf12.5ced6511a…
+      rule: runners/README.md § Why revision tokens come from a probe; a resource revision is the token a
+            conditional write is validated against, so one differing character is a lost-update bug for
+            every HTTP client
+      re-run required: environment differs
+      · $.revision  value  v1.5b5505d5a11b6b6d75f84418ff4fa6551f4b84eec786e2ca7c1ece15638ef84f.5ced6511afc2746dd6df3844adeec5586b8d400bb1397c6a7bd5… -> v1.ff5a6603a8f6b1733f4c9b01a4bee4b80885ea129230bb58c7d7105c9da8bf12.5ced6511afc2746dd6df3844adeec5586b8d400bb1397c6a7bd5…
+  [go_defect/gate] revisions: revisions.touched_ids
+      baseline:  ["1a2b3c02"]
+      candidate: []
+      rule: runners/README.md § What the runner fills in — touched_ids comes from the implementation's own
+            payload, never inferred from the store diff
+      re-run required: environment differs
+      · $  array_length  1 -> 0
+
+MISMATCH  cli-priority-forward-compat
+  [nondeterminism/advisory] cli: environment.platform
+      baseline:  arm64-darwin23
+      candidate: arm64-darwin
+      rule: errors.md § What is not compared at all — environment is recorded so a difference elsewhere can
+            be attributed to a tzdb release or a platform, never itself an assertion. determinism.md § Not
+            pinnable: recorded instead.
+  [go_defect/gate] cli: process.exit_status
+      baseline:  0
+      candidate: 1
+      rule: errors.md § Exit status is the smallest and strongest contract — compared exactly on every case;
+            'both nonzero' is never a match, because 1 vs 2 is a product feature agents branch on
+      re-run required: environment differs
+  [go_defect/gate] cli: process.stdout.format
+      baseline:  json
+      candidate: text
+      rule: errors.md § Structured errors are compared as data — one side emitted parseable JSON and the
+            other did not
+      re-run required: environment differs
+  [go_defect/gate] cli: process.stdout (bytes)
+      baseline:  {"touched":[{"id":"b0000402","state":"NEXT","priority":"A","title":"Confirm the venue booking","tags":[],"contexts":["@c…
+      candidate: 
+      rule: errors.md § Diagnostic text is contract until proved otherwise — compared byte for byte, with
+            only the copy-root rewrite applied. Wording, whitespace, punctuation and line order are all part
+            of the error UX an agent reads back to a user.
+      re-run required: environment differs
+      · first differing byte 0 (659 vs 0 bytes)
+        - {\"touched\":[{\"id\":\"b0000402\",\"state\":\"NEXT\",\"priority\":\"A\",\"title\":\"Confirm the 
+        + 
+  [go_defect/gate] cli: process.stderr (bytes)
+      baseline:  
+      candidate: priority: not implemented in the Go port — this build has no write path, and refusing is the only answer that cannot lea…
+      rule: errors.md § Diagnostic text is contract until proved otherwise — compared byte for byte, with
+            only the copy-root rewrite applied. Wording, whitespace, punctuation and line order are all part
+            of the error UX an agent reads back to a user.
+      re-run required: environment differs
+      · first differing byte 0 (0 vs 146 bytes)
+        - 
+        + priority: not implemented in the Go port — this build has no write path, and r
+  [go_defect/gate] files: files.after[.state/tasks]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>/blobs]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>/blobs/92db49c74378e03ed55304fb73098d280a3552ced9e4f43fc1addb3fda1e6e77]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>/blobs/94c359a5d1c4a72bea771277eb73cc33c79f19ae3176e41b3584868af4bb1592]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.state/tasks/journal/<journal-key>/index.json]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[.tasks.jsonl.lock]
+      baseline:  present
+      candidate: absent
+      rule: playbook § 6 — for mutations, compare final file bytes; determinism.md § Tempting but not
+            normalized — nothing is filtered from the tree
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[tasks.jsonl].size_bytes
+      baseline:  546
+      candidate: 490
+      rule: playbook § 6 — for mutations, compare final file bytes
+      re-run required: environment differs
+  [go_defect/gate] files: files.after[tasks.jsonl].sha256
+      baseline:  94c359a5d1c4a72bea771277eb73cc33c79f19ae3176e41b3584868af4bb1592
+      candidate: 92db49c74378e03ed55304fb73098d280a3552ced9e4f43fc1addb3fda1e6e77
+      rule: errors.md § Structured errors — JSONL store bytes are compared byte for byte, INCLUDING key
+            order and omitted defaults. The store is a durable format two implementations must round-trip,
+            so a reordered key is a real difference here even though it is not on stdout.
+      re-run required: environment differs
+      · line 3
+        - {"type":"task","id":"b0000402","parent":"b0000401","state":"NEXT","priority":"A","title":"Confirm the venue booking","ta…
+        + {"type":"task","id":"b0000402","parent":"b0000401","state":"NEXT","title":"Confirm the venue booking","tags":["@calls"],…
+  [go_defect/gate] files: files.deltas[.state/tasks]
+      baseline:  {"path":".state/tasks","kind":"created","before_sha256":null,"after_sha256":null}
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal]
+      baseline:  {"path":".state/tasks/journal","kind":"created","before_sha256":null,"after_sha256":null}
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>]
+      baseline:  {"path":".state/tasks/journal/<journal-key>","kind":"created","before_sha256":null,"after_sha256":null}
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>/blobs]
+      baseline:  {"path":".state/tasks/journal/<journal-key>/blobs","kind":"created","before_sha256":null,"after_sha256":null}
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>/blobs/92db49c74378e03ed55304fb73098d280a3552ced9e4f43fc1addb3fda1e6e77]
+      baseline:  {"path":".state/tasks/journal/<journal-key>/blobs/92db49c74378e03ed55304fb73098d280a3552ced9e4f43fc1addb3fda1e6e77","kin…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>/blobs/94c359a5d1c4a72bea771277eb73cc33c79f19ae3176e41b3584868af4bb1592]
+      baseline:  {"path":".state/tasks/journal/<journal-key>/blobs/94c359a5d1c4a72bea771277eb73cc33c79f19ae3176e41b3584868af4bb1592","kin…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.state/tasks/journal/<journal-key>/index.json]
+      baseline:  {"path":".state/tasks/journal/<journal-key>/index.json","kind":"created","before_sha256":null,"after_sha256":"1a20ce4c41…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[.tasks.jsonl.lock]
+      baseline:  {"path":".tasks.jsonl.lock","kind":"created","before_sha256":null,"after_sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.deltas[tasks.jsonl]
+      baseline:  {"path":"tasks.jsonl","kind":"modified","before_sha256":"92db49c74378e03ed55304fb73098d280a3552ced9e4f43fc1addb3fda1e6e7…
+      candidate: null
+      rule: observations.schema.json — files.deltas; an empty delta set is a meaningful assertion, not an
+            omission
+      re-run required: environment differs
+  [go_defect/gate] files: files.mutated
+      baseline:  true
+      candidate: false
+      rule: runners/README.md § Invariants — files.mutated comes from the implementation's own revision
+            token, measured independently of the harness's digests
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.present
+      baseline:  true
+      candidate: false
+      rule: observations.schema.json — journal.present; 'no journal exists' is a state, not a gap
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.version
+      baseline:  1
+      candidate: null
+      rule: playbook § 6 — for mutations, compare journal bytes
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.cursor
+      baseline:  1
+      candidate: null
+      rule: playbook § 6 — for mutations, compare journal bytes
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.blob_count
+      baseline:  2
+      candidate: null
+      rule: playbook § 6 — for mutations, compare journal bytes
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.states.length
+      baseline:  2
+      candidate: 0
+      rule: observations.schema.json — journal.states is ordered history
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.blob_sha256
+      baseline:  ["92db49c74378e03ed55304fb73098d280a3552ced9e4f43fc1addb3fda1e6e77","94c359a5d1c4a72bea771277eb73cc33c79f19ae3176e41b358…
+      candidate: []
+      rule: observations.schema.json — journal.blob_sha256; a blob is a whole store snapshot, so a differing
+            digest is a differing store the port would restore
+      re-run required: environment differs
+      · $  array_length  2 -> 0
+  [go_defect/gate] journal: journal.index.kind
+      baseline:  file
+      candidate: null
+      rule: observations.schema.json — journal.index: 'these bytes are the proof'
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.index.present
+      baseline:  true
+      candidate: false
+      rule: observations.schema.json — journal.index: 'these bytes are the proof'
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.index.size_bytes
+      baseline:  441
+      candidate: null
+      rule: observations.schema.json — journal.index: 'these bytes are the proof'
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.index.mode
+      baseline:  0644
+      candidate: null
+      rule: determinism.md § Tempting but not normalized — carrying an existing file's permission bits
+            across an atomic replacement is a documented safety property; a chmod-600 store must not widen
+            to 644
+      re-run required: environment differs
+  [go_defect/gate] journal: journal.index.sha256
+      baseline:  1a20ce4c41fc53edb385b0dc5f838d39438d37e27af86636b27d1fb4fc918cc3
+      candidate: null
+      rule: observations.schema.json — journal.index: 'these bytes are the proof'
+      re-run required: environment differs
+  [go_defect/gate] revisions: revisions.store
+      baseline:  s1.b725c97b921afc354905f6deedfcd8ace26536137eb4be3d679bf54ea484a787
+      candidate: s1.192df3decbed7eff90b3f54052da674b8e5e03cdc8900f951a1ac65c2cea7bd4
+      rule: runners/README.md § Why revision tokens come from a probe — each side reports the token ITS OWN
+            code computes, so a divergence in the revision algorithm is a mismatch
+      re-run required: environment differs
+  [go_defect/gate] revisions: revisions.resources[b0000402/task]
+      baseline:  {"id":"b0000402","kind":"task","revision":"v1.027182919ddeea2a2882eccf5d4ed9f62b9888f1b7734349e73b0a7c2334d3a2.13015d261…
+      candidate: {"id":"b0000402","kind":"task","revision":"v1.f7bbfd08e9e39bf3f7d77ae7da984d615fd88e9607ff3182d2e20aa04b706a31.13015d261…
+      rule: runners/README.md § Why revision tokens come from a probe; a resource revision is the token a
+            conditional write is validated against, so one differing character is a lost-update bug for
+            every HTTP client
+      re-run required: environment differs
+      · $.revision  value  v1.027182919ddeea2a2882eccf5d4ed9f62b9888f1b7734349e73b0a7c2334d3a2.13015d261c0eb0feb242dccbfdd3133cb7c9889b5228c0ff7cbd… -> v1.f7bbfd08e9e39bf3f7d77ae7da984d615fd88e9607ff3182d2e20aa04b706a31.13015d261c0eb0feb242dccbfdd3133cb7c9889b5228c0ff7cbd…
+  [go_defect/gate] revisions: revisions.touched_ids
+      baseline:  ["b0000402"]
+      candidate: []
+      rule: runners/README.md § What the runner fills in — touched_ids comes from the implementation's own
+            payload, never inferred from the store diff
+      re-run required: environment differs
+      · $  array_length  1 -> 0
+
+summary
+  cases       33  (25 match, 8 mismatch, 0 unpaired)
+  findings    266  (233 gate-failing)
+    go_defect                233
+    nondeterminism           33
+  by dimension
+    cli                      30
+    files                    118
+    journal                  66
+    revisions                19
+  NOTE  the two sides disagree in `environment`. errors.md requires a re-run with the
+        environments matched before any other difference is classified.
+  NOTE  files.rolled_back is null on both sides in 32 of 33 case(s):
+        those invocations made no machine-readable rollback report, so in them a
+        wrote-and-reverted would be detectable only as a stderr byte difference.
+        See porting/compare/README.md § The rollback gap.
+
+GATE FAIL

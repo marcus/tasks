@@ -62,6 +62,31 @@ it was extracted: re-run the Ruby corpus and diff against the committed
 baseline. It is byte-identical apart from `implementation.version`, which is
 provenance and is never compared.
 
+### Running the corpus against both implementations
+
+```console
+$ porting/runners/ruby/run --out /tmp/conf-ruby --pin-identity porting/runners/cases/phase1.jsonl
+$ porting/runners/go/run   --out /tmp/conf-go   --pin-identity porting/runners/cases/phase1.jsonl
+$ porting/compare/validate /tmp/conf-go
+$ porting/compare/compare  /tmp/conf-ruby /tmp/conf-go
+```
+
+Sequentially, and with the same `--work` — see § "The same-absolute-path
+requirement". The Go runner builds `go/bin/tasks` and `go/bin/tasks-probe`
+first, in the operator's environment, because the pinned `PATH` an invocation
+gets has no toolchain on it.
+
+A narrower gate covers the layer underneath the CLI, and is worth running first
+when something is wrong, because it isolates the store from the renderer:
+
+```console
+$ bash go/testdata/probe-parity.sh              # the 33 phase1 fixtures
+$ bash go/testdata/probe-parity.sh --fixtures   # all 61 fixtures, pristine
+```
+
+The standing result of both, and the classification of every difference, is
+[`porting/evidence/phase1/go/README.md`](../evidence/phase1/go/README.md).
+
 Exit status: `0` every case observed and every runner invariant held; `1` a case
 violated a runner invariant (see [Invariants](#invariants)); `2` usage or
 configuration error. **A non-zero exit status from the implementation under test

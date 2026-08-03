@@ -1,0 +1,804 @@
+{
+  "schema_version": 2,
+  "observation_id": "obs_cli-undo-foreign-org",
+  "case_id": "cli-undo-foreign-org",
+  "implementation": {
+    "name": "go",
+    "version": "854d4a51ae59143848406835fcd3e367b68136d4",
+    "runtime": "go go1.26.5"
+  },
+  "fixture": {
+    "id": "adversarial/journal-foreign-org",
+    "class": "adversarial",
+    "root_sha256": "248f77398dec0f899fe49a2b58f22fbc47295c0071b6bd6e6b0fedda56d54ed1",
+    "copy_root": "/tmp/tasks-conformance/cli-undo-foreign-org"
+  },
+  "invocation": {
+    "surface": "cli",
+    "argv": [
+      "undo"
+    ],
+    "stdin": {
+      "provided": false,
+      "bytes_base64": ""
+    },
+    "cwd": ".",
+    "env": [
+      {
+        "name": "COLORTERM",
+        "value": null
+      },
+      {
+        "name": "COLUMNS",
+        "value": "100"
+      },
+      {
+        "name": "HOME",
+        "value": "/tmp/tasks-conformance/cli-undo-foreign-org"
+      },
+      {
+        "name": "LANG",
+        "value": "en_US.UTF-8"
+      },
+      {
+        "name": "LC_ALL",
+        "value": "en_US.UTF-8"
+      },
+      {
+        "name": "LINES",
+        "value": "40"
+      },
+      {
+        "name": "NO_COLOR",
+        "value": null
+      },
+      {
+        "name": "PATH",
+        "value": "/usr/bin:/bin:/usr/sbin:/sbin"
+      },
+      {
+        "name": "TASKS_ARCHIVE",
+        "value": null
+      },
+      {
+        "name": "TASKS_DEVICE",
+        "value": "fixture"
+      },
+      {
+        "name": "TASKS_DIR",
+        "value": "/tmp/tasks-conformance/cli-undo-foreign-org"
+      },
+      {
+        "name": "TASKS_FILE",
+        "value": null
+      },
+      {
+        "name": "TASKS_MEMORY",
+        "value": null
+      },
+      {
+        "name": "TASKS_PIN_COALESCE_SCOPE",
+        "value": "pinned-scope"
+      },
+      {
+        "name": "TASKS_PIN_DELEGATION_KEYS",
+        "value": "cccc000000000001"
+      },
+      {
+        "name": "TASKS_PIN_HOSTNAME",
+        "value": "fixture-host"
+      },
+      {
+        "name": "TASKS_PIN_IDS",
+        "value": "bbbb0001"
+      },
+      {
+        "name": "TASKS_PIN_NOW",
+        "value": "2026-03-14T15:09:26Z"
+      },
+      {
+        "name": "TASKS_TEST_TODAY_SEQUENCE",
+        "value": null
+      },
+      {
+        "name": "TASKS_THEME",
+        "value": null
+      },
+      {
+        "name": "TASKS_TIMEZONE",
+        "value": "UTC"
+      },
+      {
+        "name": "TERM",
+        "value": null
+      },
+      {
+        "name": "TZ",
+        "value": "UTC"
+      },
+      {
+        "name": "XDG_CONFIG_HOME",
+        "value": "/tmp/tasks-conformance/cli-undo-foreign-org/.config"
+      },
+      {
+        "name": "XDG_STATE_HOME",
+        "value": "/tmp/tasks-conformance/cli-undo-foreign-org/.state"
+      }
+    ],
+    "pins": [
+      {
+        "name": "COLORTERM",
+        "applied": false,
+        "value": null
+      },
+      {
+        "name": "COLUMNS",
+        "applied": true,
+        "value": "100"
+      },
+      {
+        "name": "LANG",
+        "applied": true,
+        "value": "UTF-8"
+      },
+      {
+        "name": "LC_ALL",
+        "applied": true,
+        "value": "UTF-8"
+      },
+      {
+        "name": "LINES",
+        "applied": true,
+        "value": "40"
+      },
+      {
+        "name": "NO_COLOR",
+        "applied": false,
+        "value": null
+      },
+      {
+        "name": "TASKS_DEVICE",
+        "applied": true,
+        "value": "fixture"
+      },
+      {
+        "name": "TASKS_PIN_COALESCE_SCOPE",
+        "applied": true,
+        "value": "pinned-scope"
+      },
+      {
+        "name": "TASKS_PIN_DELEGATION_KEYS",
+        "applied": true,
+        "value": "cccc000000000001"
+      },
+      {
+        "name": "TASKS_PIN_HOSTNAME",
+        "applied": true,
+        "value": "fixture-host"
+      },
+      {
+        "name": "TASKS_PIN_IDS",
+        "applied": true,
+        "value": "bbbb0001"
+      },
+      {
+        "name": "TASKS_PIN_NOW",
+        "applied": true,
+        "value": "2026-03-14T15:09:26Z"
+      },
+      {
+        "name": "TASKS_TEST_TODAY_SEQUENCE",
+        "applied": false,
+        "value": null
+      },
+      {
+        "name": "TASKS_THEME",
+        "applied": false,
+        "value": null
+      },
+      {
+        "name": "TASKS_TIMEZONE",
+        "applied": true,
+        "value": "UTC"
+      },
+      {
+        "name": "TERM",
+        "applied": false,
+        "value": null
+      },
+      {
+        "name": "TZ",
+        "applied": true,
+        "value": "UTC"
+      }
+    ],
+    "tty": {
+      "stdin": false,
+      "stdout": false,
+      "stderr": false
+    },
+    "timeout_ms": 60000
+  },
+  "process": {
+    "exit_status": 1,
+    "signal": null,
+    "timed_out": false,
+    "stdout": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sha256_normalized": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "valid_utf8": true,
+      "bytes_base64": "",
+      "truncated_at_bytes": null,
+      "text": ""
+    },
+    "stderr": {
+      "sha256": "dfbbca1ef3bc31d5705216a8df03b7eb997ba2da0b62e22f71de1d32e720378e",
+      "sha256_normalized": "dfbbca1ef3bc31d5705216a8df03b7eb997ba2da0b62e22f71de1d32e720378e",
+      "size_bytes": 16,
+      "valid_utf8": true,
+      "bytes_base64": "bm90aGluZyB0byB1bmRvCg==",
+      "truncated_at_bytes": null,
+      "text": "nothing to undo\n"
+    }
+  },
+  "files": {
+    "mutated": false,
+    "before": [
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".config",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".config/tasks",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".state",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".state/tasks",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".state/tasks/journal",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".state/tasks/journal/617a26548083ec0a",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".state/tasks/journal/617a26548083ec0a/blobs",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "journal_blob",
+        "kind": "file",
+        "path": ".state/tasks/journal/617a26548083ec0a/blobs/7d9e2911b161db2a80f2f495e73bb83b553a7cc373c5abf0a80ec00b09655c99",
+        "present": true,
+        "sha256": "7d9e2911b161db2a80f2f495e73bb83b553a7cc373c5abf0a80ec00b09655c99",
+        "size_bytes": 805,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImUwMDAwMDAxIiwidGl0bGUiOiJJbmJveCJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImM5MWQyM2ZlIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6Ik5FWFQiLCJ0aXRsZSI6IkJvb2sgdGhlIGJvaWxlciBzZXJ2aWNlIiwidGFncyI6WyJAY2FsbHMiXSwiYm9keSI6IkNhcHR1cmVkIFsyMDI2LTA4LTAxXS4iLCJ1cGRhdGVkIjoiMjAyNi0wOC0wMVQxODoxMTowNlojZml4dHVyZSJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImY4MjA5MGYzIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IkRyYWZ0IHRoZSBuZWlnaGJvdXJob29kIG5ld3NsZXR0ZXIiLCJ0YWdzIjpbIkBjb21wdXRlciJdLCJkZWFkbGluZSI6IjIwMjYtMDYtMzAiLCJib2R5IjoiQ2FwdHVyZWQgWzIwMjYtMDgtMDFdLiIsInVwZGF0ZWQiOiIyMDI2LTA4LTAxVDE4OjExOjA2WiNmaXh0dXJlIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiYjIwYWEwYmQiLCJwYXJlbnQiOiJlMDAwMDAwMSIsInN0YXRlIjoiSU5CT1giLCJ0aXRsZSI6IlJlcGxhY2UgdGhlIGRvb3IgaGFuZGxlIiwidGFncyI6WyJAaG9tZSJdLCJib2R5IjoiQ2FwdHVyZWQgWzIwMjYtMDgtMDFdLiIsInVwZGF0ZWQiOiIyMDI2LTA4LTAxVDE4OjExOjA2WiNmaXh0dXJlIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiZTAwMDAwMDIiLCJ0aXRsZSI6Ik5leHQgQWN0aW9ucyJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImUwMDAwMDAzIiwidGl0bGUiOiJQcm9qZWN0cyJ9Cg==",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "journal_blob",
+        "kind": "file",
+        "path": ".state/tasks/journal/617a26548083ec0a/blobs/8bb74b1c7e1024762d0a41ad99e94da85dbe9e3737b0a57c30ce74f71d86987b",
+        "present": true,
+        "sha256": "8bb74b1c7e1024762d0a41ad99e94da85dbe9e3737b0a57c30ce74f71d86987b",
+        "size_bytes": 804,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImUwMDAwMDAxIiwidGl0bGUiOiJJbmJveCJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImM5MWQyM2ZlIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6Ik5FWFQiLCJ0aXRsZSI6IkJvb2sgdGhlIGJvaWxlciBzZXJ2aWNlIiwidGFncyI6WyJAY2FsbHMiXSwiYm9keSI6IkNhcHR1cmVkIFsyMDI2LTA4LTAxXS4iLCJ1cGRhdGVkIjoiMjAyNi0wOC0wMVQxODoxMTowNlojZml4dHVyZSJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImY4MjA5MGYzIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IkRyYWZ0IHRoZSBuZWlnaGJvdXJob29kIG5ld3NsZXR0ZXIiLCJ0YWdzIjpbIkBjb21wdXRlciJdLCJkZWFkbGluZSI6IjIwMjYtMDYtMzAiLCJib2R5IjoiQ2FwdHVyZWQgWzIwMjYtMDgtMDFdLiIsInVwZGF0ZWQiOiIyMDI2LTA4LTAxVDE4OjExOjA2WiNmaXh0dXJlIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiYjIwYWEwYmQiLCJwYXJlbnQiOiJlMDAwMDAwMSIsInN0YXRlIjoiTkVYVCIsInRpdGxlIjoiUmVwbGFjZSB0aGUgZG9vciBoYW5kbGUiLCJ0YWdzIjpbIkBob21lIl0sImJvZHkiOiJDYXB0dXJlZCBbMjAyNi0wOC0wMV0uIiwidXBkYXRlZCI6IjIwMjYtMDgtMDFUMTg6MTE6MDZaI2ZpeHR1cmUifQp7InR5cGUiOiJzZWN0aW9uIiwiaWQiOiJlMDAwMDAwMiIsInRpdGxlIjoiTmV4dCBBY3Rpb25zIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiZTAwMDAwMDMiLCJ0aXRsZSI6IlByb2plY3RzIn0K",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "journal_blob",
+        "kind": "file",
+        "path": ".state/tasks/journal/617a26548083ec0a/blobs/acbfbe3317d66bc9078c2730f02eedf05472115b8523d4f836a82a25e4d3b5ea",
+        "present": true,
+        "sha256": "acbfbe3317d66bc9078c2730f02eedf05472115b8523d4f836a82a25e4d3b5ea",
+        "size_bytes": 783,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImUwMDAwMDAxIiwidGl0bGUiOiJJbmJveCJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImM5MWQyM2ZlIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6IklOQk9YIiwidGl0bGUiOiJCb29rIHRoZSBib2lsZXIgc2VydmljZSIsInRhZ3MiOlsiQGNhbGxzIl0sImJvZHkiOiJDYXB0dXJlZCBbMjAyNi0wOC0wMV0uIiwidXBkYXRlZCI6IjIwMjYtMDgtMDFUMTg6MTE6MDZaI2ZpeHR1cmUifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmODIwOTBmMyIsInBhcmVudCI6ImUwMDAwMDAxIiwic3RhdGUiOiJJTkJPWCIsInRpdGxlIjoiRHJhZnQgdGhlIG5laWdoYm91cmhvb2QgbmV3c2xldHRlciIsInRhZ3MiOlsiQGNvbXB1dGVyIl0sImJvZHkiOiJDYXB0dXJlZCBbMjAyNi0wOC0wMV0uIiwidXBkYXRlZCI6IjIwMjYtMDgtMDFUMTg6MTE6MDZaI2ZpeHR1cmUifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJiMjBhYTBiZCIsInBhcmVudCI6ImUwMDAwMDAxIiwic3RhdGUiOiJJTkJPWCIsInRpdGxlIjoiUmVwbGFjZSB0aGUgZG9vciBoYW5kbGUiLCJ0YWdzIjpbIkBob21lIl0sImJvZHkiOiJDYXB0dXJlZCBbMjAyNi0wOC0wMV0uIiwidXBkYXRlZCI6IjIwMjYtMDgtMDFUMTg6MTE6MDZaI2ZpeHR1cmUifQp7InR5cGUiOiJzZWN0aW9uIiwiaWQiOiJlMDAwMDAwMiIsInRpdGxlIjoiTmV4dCBBY3Rpb25zIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiZTAwMDAwMDMiLCJ0aXRsZSI6IlByb2plY3RzIn0K",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "journal_blob",
+        "kind": "file",
+        "path": ".state/tasks/journal/617a26548083ec0a/blobs/af203728152de793f87317d32ab792c3b2dc6743e792743eddd9e1a8a6b610c9",
+        "present": true,
+        "sha256": "af203728152de793f87317d32ab792c3b2dc6743e792743eddd9e1a8a6b610c9",
+        "size_bytes": 191,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImUwMDAwMDAxIiwidGl0bGUiOiJJbmJveCJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImUwMDAwMDAyIiwidGl0bGUiOiJOZXh0IEFjdGlvbnMifQp7InR5cGUiOiJzZWN0aW9uIiwiaWQiOiJlMDAwMDAwMyIsInRpdGxlIjoiUHJvamVjdHMifQo=",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "journal_blob",
+        "kind": "file",
+        "path": ".state/tasks/journal/617a26548083ec0a/blobs/b2101ef4829e2a599bd808b1ab13cd63154ae32ca2a5429428fceb5dfcae946d",
+        "present": true,
+        "sha256": "b2101ef4829e2a599bd808b1ab13cd63154ae32ca2a5429428fceb5dfcae946d",
+        "size_bytes": 591,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImUwMDAwMDAxIiwidGl0bGUiOiJJbmJveCJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImM5MWQyM2ZlIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6IklOQk9YIiwidGl0bGUiOiJCb29rIHRoZSBib2lsZXIgc2VydmljZSIsInRhZ3MiOlsiQGNhbGxzIl0sImJvZHkiOiJDYXB0dXJlZCBbMjAyNi0wOC0wMV0uIiwidXBkYXRlZCI6IjIwMjYtMDgtMDFUMTg6MTE6MDZaI2ZpeHR1cmUifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmODIwOTBmMyIsInBhcmVudCI6ImUwMDAwMDAxIiwic3RhdGUiOiJJTkJPWCIsInRpdGxlIjoiRHJhZnQgdGhlIG5laWdoYm91cmhvb2QgbmV3c2xldHRlciIsInRhZ3MiOlsiQGNvbXB1dGVyIl0sImJvZHkiOiJDYXB0dXJlZCBbMjAyNi0wOC0wMV0uIiwidXBkYXRlZCI6IjIwMjYtMDgtMDFUMTg6MTE6MDZaI2ZpeHR1cmUifQp7InR5cGUiOiJzZWN0aW9uIiwiaWQiOiJlMDAwMDAwMiIsInRpdGxlIjoiTmV4dCBBY3Rpb25zIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiZTAwMDAwMDMiLCJ0aXRsZSI6IlByb2plY3RzIn0K",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "journal_blob",
+        "kind": "file",
+        "path": ".state/tasks/journal/617a26548083ec0a/blobs/e20b5ba465c783826f636296f61c31a4711ed3730fc58bacb46cd79c3c68cae3",
+        "present": true,
+        "sha256": "e20b5ba465c783826f636296f61c31a4711ed3730fc58bacb46cd79c3c68cae3",
+        "size_bytes": 782,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImUwMDAwMDAxIiwidGl0bGUiOiJJbmJveCJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImM5MWQyM2ZlIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6Ik5FWFQiLCJ0aXRsZSI6IkJvb2sgdGhlIGJvaWxlciBzZXJ2aWNlIiwidGFncyI6WyJAY2FsbHMiXSwiYm9keSI6IkNhcHR1cmVkIFsyMDI2LTA4LTAxXS4iLCJ1cGRhdGVkIjoiMjAyNi0wOC0wMVQxODoxMTowNlojZml4dHVyZSJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImY4MjA5MGYzIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6IklOQk9YIiwidGl0bGUiOiJEcmFmdCB0aGUgbmVpZ2hib3VyaG9vZCBuZXdzbGV0dGVyIiwidGFncyI6WyJAY29tcHV0ZXIiXSwiYm9keSI6IkNhcHR1cmVkIFsyMDI2LTA4LTAxXS4iLCJ1cGRhdGVkIjoiMjAyNi0wOC0wMVQxODoxMTowNlojZml4dHVyZSJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImIyMGFhMGJkIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6IklOQk9YIiwidGl0bGUiOiJSZXBsYWNlIHRoZSBkb29yIGhhbmRsZSIsInRhZ3MiOlsiQGhvbWUiXSwiYm9keSI6IkNhcHR1cmVkIFsyMDI2LTA4LTAxXS4iLCJ1cGRhdGVkIjoiMjAyNi0wOC0wMVQxODoxMTowNlojZml4dHVyZSJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImUwMDAwMDAyIiwidGl0bGUiOiJOZXh0IEFjdGlvbnMifQp7InR5cGUiOiJzZWN0aW9uIiwiaWQiOiJlMDAwMDAwMyIsInRpdGxlIjoiUHJvamVjdHMifQo=",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "journal_blob",
+        "kind": "file",
+        "path": ".state/tasks/journal/617a26548083ec0a/blobs/ee412e5819b83ee709e6219103f3166e8ea5fe97bf11c51a8695af759148fd86",
+        "present": true,
+        "sha256": "ee412e5819b83ee709e6219103f3166e8ea5fe97bf11c51a8695af759148fd86",
+        "size_bytes": 384,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImUwMDAwMDAxIiwidGl0bGUiOiJJbmJveCJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImM5MWQyM2ZlIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6IklOQk9YIiwidGl0bGUiOiJCb29rIHRoZSBib2lsZXIgc2VydmljZSIsInRhZ3MiOlsiQGNhbGxzIl0sImJvZHkiOiJDYXB0dXJlZCBbMjAyNi0wOC0wMV0uIiwidXBkYXRlZCI6IjIwMjYtMDgtMDFUMTg6MTE6MDZaI2ZpeHR1cmUifQp7InR5cGUiOiJzZWN0aW9uIiwiaWQiOiJlMDAwMDAwMiIsInRpdGxlIjoiTmV4dCBBY3Rpb25zIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiZTAwMDAwMDMiLCJ0aXRsZSI6IlByb2plY3RzIn0K",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "journal_index",
+        "kind": "file",
+        "path": ".state/tasks/journal/617a26548083ec0a/index.json",
+        "present": true,
+        "sha256": "225b2c1c811dd77c1c241455abc7e53d8f613c169f6457f8835352c07790408a",
+        "size_bytes": 1327,
+        "mode": "0644",
+        "content_base64": "ewogICJ2ZXJzaW9uIjogMSwKICAib3JnIjogIi9ob21lL3NvbWVvbmUtZWxzZS90YXNrcy90YXNrcy5qc29ubCIsCiAgImN1cnNvciI6IDYsCiAgInN0YXRlcyI6IFsKICAgIHsKICAgICAgIm9yZ19zaGEiOiAiYWYyMDM3MjgxNTJkZTc5M2Y4NzMxN2QzMmFiNzkyYzNiMmRjNjc0M2U3OTI3NDNlZGRkOWUxYThhNmI2MTBjOSIsCiAgICAgICJhcmNoaXZlX3NoYSI6IG51bGwKICAgIH0sCiAgICB7CiAgICAgICJvcmdfc2hhIjogImVlNDEyZTU4MTliODNlZTcwOWU2MjE5MTAzZjMxNjZlOGVhNWZlOTdiZjExYzUxYTg2OTVhZjc1OTE0OGZkODYiLAogICAgICAiYXJjaGl2ZV9zaGEiOiBudWxsLAogICAgICAibGFiZWwiOiAiY2FwdHVyZTogQm9vayB0aGUgYm9pbGVyIHNlcnZpY2UiCiAgICB9LAogICAgewogICAgICAib3JnX3NoYSI6ICJiMjEwMWVmNDgyOWUyYTU5OWJkODA4YjFhYjEzY2Q2MzE1NGFlMzJjYTJhNTQyOTQyOGZjZWI1ZGZjYWU5NDZkIiwKICAgICAgImFyY2hpdmVfc2hhIjogbnVsbCwKICAgICAgImxhYmVsIjogImNhcHR1cmU6IERyYWZ0IHRoZSBuZWlnaGJvdXJob29kIG5ld3NsZXR0ZXIiCiAgICB9LAogICAgewogICAgICAib3JnX3NoYSI6ICJhY2JmYmUzMzE3ZDY2YmM5MDc4YzI3MzBmMDJlZWRmMDU0NzIxMTViODUyM2Q0ZjgzNmE4MmEyNWU0ZDNiNWVhIiwKICAgICAgImFyY2hpdmVfc2hhIjogbnVsbCwKICAgICAgImxhYmVsIjogImNhcHR1cmU6IFJlcGxhY2UgdGhlIGRvb3IgaGFuZGxlIgogICAgfSwKICAgIHsKICAgICAgIm9yZ19zaGEiOiAiZTIwYjViYTQ2NWM3ODM4MjZmNjM2Mjk2ZjYxYzMxYTQ3MTFlZDM3MzBmYzU4YmFjYjQ2Y2Q3OWMzYzY4Y2FlMyIsCiAgICAgICJhcmNoaXZlX3NoYSI6IG51bGwsCiAgICAgICJsYWJlbCI6ICJzdGF0ZSDihpIgTkVYVDogQm9vayB0aGUgYm9pbGVyIHNlcnZpY2UiCiAgICB9LAogICAgewogICAgICAib3JnX3NoYSI6ICI3ZDllMjkxMWIxNjFkYjJhODBmMmY0OTVlNzNiYjgzYjU1M2E3Y2MzNzNjNWFiZjBhODBlYzAwYjA5NjU1Yzk5IiwKICAgICAgImFyY2hpdmVfc2hhIjogbnVsbCwKICAgICAgImxhYmVsIjogImRlYWRsaW5lIOKGkiAyMDI2LTA2LTMwOiBEcmFmdCB0aGUgbmVpZ2hib3VyaG9vZCBuZXdzbGV0dGVyIgogICAgfSwKICAgIHsKICAgICAgIm9yZ19zaGEiOiAiOGJiNzRiMWM3ZTEwMjQ3NjJkMGE0MWFkOTllOTRkYTg1ZGJlOWUzNzM3YjBhNTdjMzBjZTc0ZjcxZDg2OTg3YiIsCiAgICAgICJhcmNoaXZlX3NoYSI6IG51bGwsCiAgICAgICJsYWJlbCI6ICJzdGF0ZSDihpIgTkVYVDogUmVwbGFjZSB0aGUgZG9vciBoYW5kbGUiCiAgICB9CiAgXQp9Cg==",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "store",
+        "kind": "file",
+        "path": "tasks.jsonl",
+        "present": true,
+        "sha256": "8bb74b1c7e1024762d0a41ad99e94da85dbe9e3737b0a57c30ce74f71d86987b",
+        "size_bytes": 804,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImUwMDAwMDAxIiwidGl0bGUiOiJJbmJveCJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImM5MWQyM2ZlIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6Ik5FWFQiLCJ0aXRsZSI6IkJvb2sgdGhlIGJvaWxlciBzZXJ2aWNlIiwidGFncyI6WyJAY2FsbHMiXSwiYm9keSI6IkNhcHR1cmVkIFsyMDI2LTA4LTAxXS4iLCJ1cGRhdGVkIjoiMjAyNi0wOC0wMVQxODoxMTowNlojZml4dHVyZSJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImY4MjA5MGYzIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IkRyYWZ0IHRoZSBuZWlnaGJvdXJob29kIG5ld3NsZXR0ZXIiLCJ0YWdzIjpbIkBjb21wdXRlciJdLCJkZWFkbGluZSI6IjIwMjYtMDYtMzAiLCJib2R5IjoiQ2FwdHVyZWQgWzIwMjYtMDgtMDFdLiIsInVwZGF0ZWQiOiIyMDI2LTA4LTAxVDE4OjExOjA2WiNmaXh0dXJlIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiYjIwYWEwYmQiLCJwYXJlbnQiOiJlMDAwMDAwMSIsInN0YXRlIjoiTkVYVCIsInRpdGxlIjoiUmVwbGFjZSB0aGUgZG9vciBoYW5kbGUiLCJ0YWdzIjpbIkBob21lIl0sImJvZHkiOiJDYXB0dXJlZCBbMjAyNi0wOC0wMV0uIiwidXBkYXRlZCI6IjIwMjYtMDgtMDFUMTg6MTE6MDZaI2ZpeHR1cmUifQp7InR5cGUiOiJzZWN0aW9uIiwiaWQiOiJlMDAwMDAwMiIsInRpdGxlIjoiTmV4dCBBY3Rpb25zIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiZTAwMDAwMDMiLCJ0aXRsZSI6IlByb2plY3RzIn0K",
+        "line_count": 7,
+        "symlink_target": null
+      }
+    ],
+    "after": [
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".config",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".config/tasks",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".state",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".state/tasks",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".state/tasks/journal",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".state/tasks/journal/617a26548083ec0a",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "other",
+        "kind": "directory",
+        "path": ".state/tasks/journal/617a26548083ec0a/blobs",
+        "present": true,
+        "sha256": null,
+        "size_bytes": null,
+        "mode": "0755",
+        "content_base64": null,
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "journal_blob",
+        "kind": "file",
+        "path": ".state/tasks/journal/617a26548083ec0a/blobs/7d9e2911b161db2a80f2f495e73bb83b553a7cc373c5abf0a80ec00b09655c99",
+        "present": true,
+        "sha256": "7d9e2911b161db2a80f2f495e73bb83b553a7cc373c5abf0a80ec00b09655c99",
+        "size_bytes": 805,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImUwMDAwMDAxIiwidGl0bGUiOiJJbmJveCJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImM5MWQyM2ZlIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6Ik5FWFQiLCJ0aXRsZSI6IkJvb2sgdGhlIGJvaWxlciBzZXJ2aWNlIiwidGFncyI6WyJAY2FsbHMiXSwiYm9keSI6IkNhcHR1cmVkIFsyMDI2LTA4LTAxXS4iLCJ1cGRhdGVkIjoiMjAyNi0wOC0wMVQxODoxMTowNlojZml4dHVyZSJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImY4MjA5MGYzIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IkRyYWZ0IHRoZSBuZWlnaGJvdXJob29kIG5ld3NsZXR0ZXIiLCJ0YWdzIjpbIkBjb21wdXRlciJdLCJkZWFkbGluZSI6IjIwMjYtMDYtMzAiLCJib2R5IjoiQ2FwdHVyZWQgWzIwMjYtMDgtMDFdLiIsInVwZGF0ZWQiOiIyMDI2LTA4LTAxVDE4OjExOjA2WiNmaXh0dXJlIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiYjIwYWEwYmQiLCJwYXJlbnQiOiJlMDAwMDAwMSIsInN0YXRlIjoiSU5CT1giLCJ0aXRsZSI6IlJlcGxhY2UgdGhlIGRvb3IgaGFuZGxlIiwidGFncyI6WyJAaG9tZSJdLCJib2R5IjoiQ2FwdHVyZWQgWzIwMjYtMDgtMDFdLiIsInVwZGF0ZWQiOiIyMDI2LTA4LTAxVDE4OjExOjA2WiNmaXh0dXJlIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiZTAwMDAwMDIiLCJ0aXRsZSI6Ik5leHQgQWN0aW9ucyJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImUwMDAwMDAzIiwidGl0bGUiOiJQcm9qZWN0cyJ9Cg==",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "journal_blob",
+        "kind": "file",
+        "path": ".state/tasks/journal/617a26548083ec0a/blobs/8bb74b1c7e1024762d0a41ad99e94da85dbe9e3737b0a57c30ce74f71d86987b",
+        "present": true,
+        "sha256": "8bb74b1c7e1024762d0a41ad99e94da85dbe9e3737b0a57c30ce74f71d86987b",
+        "size_bytes": 804,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImUwMDAwMDAxIiwidGl0bGUiOiJJbmJveCJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImM5MWQyM2ZlIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6Ik5FWFQiLCJ0aXRsZSI6IkJvb2sgdGhlIGJvaWxlciBzZXJ2aWNlIiwidGFncyI6WyJAY2FsbHMiXSwiYm9keSI6IkNhcHR1cmVkIFsyMDI2LTA4LTAxXS4iLCJ1cGRhdGVkIjoiMjAyNi0wOC0wMVQxODoxMTowNlojZml4dHVyZSJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImY4MjA5MGYzIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IkRyYWZ0IHRoZSBuZWlnaGJvdXJob29kIG5ld3NsZXR0ZXIiLCJ0YWdzIjpbIkBjb21wdXRlciJdLCJkZWFkbGluZSI6IjIwMjYtMDYtMzAiLCJib2R5IjoiQ2FwdHVyZWQgWzIwMjYtMDgtMDFdLiIsInVwZGF0ZWQiOiIyMDI2LTA4LTAxVDE4OjExOjA2WiNmaXh0dXJlIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiYjIwYWEwYmQiLCJwYXJlbnQiOiJlMDAwMDAwMSIsInN0YXRlIjoiTkVYVCIsInRpdGxlIjoiUmVwbGFjZSB0aGUgZG9vciBoYW5kbGUiLCJ0YWdzIjpbIkBob21lIl0sImJvZHkiOiJDYXB0dXJlZCBbMjAyNi0wOC0wMV0uIiwidXBkYXRlZCI6IjIwMjYtMDgtMDFUMTg6MTE6MDZaI2ZpeHR1cmUifQp7InR5cGUiOiJzZWN0aW9uIiwiaWQiOiJlMDAwMDAwMiIsInRpdGxlIjoiTmV4dCBBY3Rpb25zIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiZTAwMDAwMDMiLCJ0aXRsZSI6IlByb2plY3RzIn0K",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "journal_blob",
+        "kind": "file",
+        "path": ".state/tasks/journal/617a26548083ec0a/blobs/acbfbe3317d66bc9078c2730f02eedf05472115b8523d4f836a82a25e4d3b5ea",
+        "present": true,
+        "sha256": "acbfbe3317d66bc9078c2730f02eedf05472115b8523d4f836a82a25e4d3b5ea",
+        "size_bytes": 783,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImUwMDAwMDAxIiwidGl0bGUiOiJJbmJveCJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImM5MWQyM2ZlIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6IklOQk9YIiwidGl0bGUiOiJCb29rIHRoZSBib2lsZXIgc2VydmljZSIsInRhZ3MiOlsiQGNhbGxzIl0sImJvZHkiOiJDYXB0dXJlZCBbMjAyNi0wOC0wMV0uIiwidXBkYXRlZCI6IjIwMjYtMDgtMDFUMTg6MTE6MDZaI2ZpeHR1cmUifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmODIwOTBmMyIsInBhcmVudCI6ImUwMDAwMDAxIiwic3RhdGUiOiJJTkJPWCIsInRpdGxlIjoiRHJhZnQgdGhlIG5laWdoYm91cmhvb2QgbmV3c2xldHRlciIsInRhZ3MiOlsiQGNvbXB1dGVyIl0sImJvZHkiOiJDYXB0dXJlZCBbMjAyNi0wOC0wMV0uIiwidXBkYXRlZCI6IjIwMjYtMDgtMDFUMTg6MTE6MDZaI2ZpeHR1cmUifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJiMjBhYTBiZCIsInBhcmVudCI6ImUwMDAwMDAxIiwic3RhdGUiOiJJTkJPWCIsInRpdGxlIjoiUmVwbGFjZSB0aGUgZG9vciBoYW5kbGUiLCJ0YWdzIjpbIkBob21lIl0sImJvZHkiOiJDYXB0dXJlZCBbMjAyNi0wOC0wMV0uIiwidXBkYXRlZCI6IjIwMjYtMDgtMDFUMTg6MTE6MDZaI2ZpeHR1cmUifQp7InR5cGUiOiJzZWN0aW9uIiwiaWQiOiJlMDAwMDAwMiIsInRpdGxlIjoiTmV4dCBBY3Rpb25zIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiZTAwMDAwMDMiLCJ0aXRsZSI6IlByb2plY3RzIn0K",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "journal_blob",
+        "kind": "file",
+        "path": ".state/tasks/journal/617a26548083ec0a/blobs/af203728152de793f87317d32ab792c3b2dc6743e792743eddd9e1a8a6b610c9",
+        "present": true,
+        "sha256": "af203728152de793f87317d32ab792c3b2dc6743e792743eddd9e1a8a6b610c9",
+        "size_bytes": 191,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImUwMDAwMDAxIiwidGl0bGUiOiJJbmJveCJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImUwMDAwMDAyIiwidGl0bGUiOiJOZXh0IEFjdGlvbnMifQp7InR5cGUiOiJzZWN0aW9uIiwiaWQiOiJlMDAwMDAwMyIsInRpdGxlIjoiUHJvamVjdHMifQo=",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "journal_blob",
+        "kind": "file",
+        "path": ".state/tasks/journal/617a26548083ec0a/blobs/b2101ef4829e2a599bd808b1ab13cd63154ae32ca2a5429428fceb5dfcae946d",
+        "present": true,
+        "sha256": "b2101ef4829e2a599bd808b1ab13cd63154ae32ca2a5429428fceb5dfcae946d",
+        "size_bytes": 591,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImUwMDAwMDAxIiwidGl0bGUiOiJJbmJveCJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImM5MWQyM2ZlIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6IklOQk9YIiwidGl0bGUiOiJCb29rIHRoZSBib2lsZXIgc2VydmljZSIsInRhZ3MiOlsiQGNhbGxzIl0sImJvZHkiOiJDYXB0dXJlZCBbMjAyNi0wOC0wMV0uIiwidXBkYXRlZCI6IjIwMjYtMDgtMDFUMTg6MTE6MDZaI2ZpeHR1cmUifQp7InR5cGUiOiJ0YXNrIiwiaWQiOiJmODIwOTBmMyIsInBhcmVudCI6ImUwMDAwMDAxIiwic3RhdGUiOiJJTkJPWCIsInRpdGxlIjoiRHJhZnQgdGhlIG5laWdoYm91cmhvb2QgbmV3c2xldHRlciIsInRhZ3MiOlsiQGNvbXB1dGVyIl0sImJvZHkiOiJDYXB0dXJlZCBbMjAyNi0wOC0wMV0uIiwidXBkYXRlZCI6IjIwMjYtMDgtMDFUMTg6MTE6MDZaI2ZpeHR1cmUifQp7InR5cGUiOiJzZWN0aW9uIiwiaWQiOiJlMDAwMDAwMiIsInRpdGxlIjoiTmV4dCBBY3Rpb25zIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiZTAwMDAwMDMiLCJ0aXRsZSI6IlByb2plY3RzIn0K",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "journal_blob",
+        "kind": "file",
+        "path": ".state/tasks/journal/617a26548083ec0a/blobs/e20b5ba465c783826f636296f61c31a4711ed3730fc58bacb46cd79c3c68cae3",
+        "present": true,
+        "sha256": "e20b5ba465c783826f636296f61c31a4711ed3730fc58bacb46cd79c3c68cae3",
+        "size_bytes": 782,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImUwMDAwMDAxIiwidGl0bGUiOiJJbmJveCJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImM5MWQyM2ZlIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6Ik5FWFQiLCJ0aXRsZSI6IkJvb2sgdGhlIGJvaWxlciBzZXJ2aWNlIiwidGFncyI6WyJAY2FsbHMiXSwiYm9keSI6IkNhcHR1cmVkIFsyMDI2LTA4LTAxXS4iLCJ1cGRhdGVkIjoiMjAyNi0wOC0wMVQxODoxMTowNlojZml4dHVyZSJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImY4MjA5MGYzIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6IklOQk9YIiwidGl0bGUiOiJEcmFmdCB0aGUgbmVpZ2hib3VyaG9vZCBuZXdzbGV0dGVyIiwidGFncyI6WyJAY29tcHV0ZXIiXSwiYm9keSI6IkNhcHR1cmVkIFsyMDI2LTA4LTAxXS4iLCJ1cGRhdGVkIjoiMjAyNi0wOC0wMVQxODoxMTowNlojZml4dHVyZSJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImIyMGFhMGJkIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6IklOQk9YIiwidGl0bGUiOiJSZXBsYWNlIHRoZSBkb29yIGhhbmRsZSIsInRhZ3MiOlsiQGhvbWUiXSwiYm9keSI6IkNhcHR1cmVkIFsyMDI2LTA4LTAxXS4iLCJ1cGRhdGVkIjoiMjAyNi0wOC0wMVQxODoxMTowNlojZml4dHVyZSJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImUwMDAwMDAyIiwidGl0bGUiOiJOZXh0IEFjdGlvbnMifQp7InR5cGUiOiJzZWN0aW9uIiwiaWQiOiJlMDAwMDAwMyIsInRpdGxlIjoiUHJvamVjdHMifQo=",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "journal_blob",
+        "kind": "file",
+        "path": ".state/tasks/journal/617a26548083ec0a/blobs/ee412e5819b83ee709e6219103f3166e8ea5fe97bf11c51a8695af759148fd86",
+        "present": true,
+        "sha256": "ee412e5819b83ee709e6219103f3166e8ea5fe97bf11c51a8695af759148fd86",
+        "size_bytes": 384,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImUwMDAwMDAxIiwidGl0bGUiOiJJbmJveCJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImM5MWQyM2ZlIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6IklOQk9YIiwidGl0bGUiOiJCb29rIHRoZSBib2lsZXIgc2VydmljZSIsInRhZ3MiOlsiQGNhbGxzIl0sImJvZHkiOiJDYXB0dXJlZCBbMjAyNi0wOC0wMV0uIiwidXBkYXRlZCI6IjIwMjYtMDgtMDFUMTg6MTE6MDZaI2ZpeHR1cmUifQp7InR5cGUiOiJzZWN0aW9uIiwiaWQiOiJlMDAwMDAwMiIsInRpdGxlIjoiTmV4dCBBY3Rpb25zIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiZTAwMDAwMDMiLCJ0aXRsZSI6IlByb2plY3RzIn0K",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "journal_index",
+        "kind": "file",
+        "path": ".state/tasks/journal/617a26548083ec0a/index.json",
+        "present": true,
+        "sha256": "225b2c1c811dd77c1c241455abc7e53d8f613c169f6457f8835352c07790408a",
+        "size_bytes": 1327,
+        "mode": "0644",
+        "content_base64": "ewogICJ2ZXJzaW9uIjogMSwKICAib3JnIjogIi9ob21lL3NvbWVvbmUtZWxzZS90YXNrcy90YXNrcy5qc29ubCIsCiAgImN1cnNvciI6IDYsCiAgInN0YXRlcyI6IFsKICAgIHsKICAgICAgIm9yZ19zaGEiOiAiYWYyMDM3MjgxNTJkZTc5M2Y4NzMxN2QzMmFiNzkyYzNiMmRjNjc0M2U3OTI3NDNlZGRkOWUxYThhNmI2MTBjOSIsCiAgICAgICJhcmNoaXZlX3NoYSI6IG51bGwKICAgIH0sCiAgICB7CiAgICAgICJvcmdfc2hhIjogImVlNDEyZTU4MTliODNlZTcwOWU2MjE5MTAzZjMxNjZlOGVhNWZlOTdiZjExYzUxYTg2OTVhZjc1OTE0OGZkODYiLAogICAgICAiYXJjaGl2ZV9zaGEiOiBudWxsLAogICAgICAibGFiZWwiOiAiY2FwdHVyZTogQm9vayB0aGUgYm9pbGVyIHNlcnZpY2UiCiAgICB9LAogICAgewogICAgICAib3JnX3NoYSI6ICJiMjEwMWVmNDgyOWUyYTU5OWJkODA4YjFhYjEzY2Q2MzE1NGFlMzJjYTJhNTQyOTQyOGZjZWI1ZGZjYWU5NDZkIiwKICAgICAgImFyY2hpdmVfc2hhIjogbnVsbCwKICAgICAgImxhYmVsIjogImNhcHR1cmU6IERyYWZ0IHRoZSBuZWlnaGJvdXJob29kIG5ld3NsZXR0ZXIiCiAgICB9LAogICAgewogICAgICAib3JnX3NoYSI6ICJhY2JmYmUzMzE3ZDY2YmM5MDc4YzI3MzBmMDJlZWRmMDU0NzIxMTViODUyM2Q0ZjgzNmE4MmEyNWU0ZDNiNWVhIiwKICAgICAgImFyY2hpdmVfc2hhIjogbnVsbCwKICAgICAgImxhYmVsIjogImNhcHR1cmU6IFJlcGxhY2UgdGhlIGRvb3IgaGFuZGxlIgogICAgfSwKICAgIHsKICAgICAgIm9yZ19zaGEiOiAiZTIwYjViYTQ2NWM3ODM4MjZmNjM2Mjk2ZjYxYzMxYTQ3MTFlZDM3MzBmYzU4YmFjYjQ2Y2Q3OWMzYzY4Y2FlMyIsCiAgICAgICJhcmNoaXZlX3NoYSI6IG51bGwsCiAgICAgICJsYWJlbCI6ICJzdGF0ZSDihpIgTkVYVDogQm9vayB0aGUgYm9pbGVyIHNlcnZpY2UiCiAgICB9LAogICAgewogICAgICAib3JnX3NoYSI6ICI3ZDllMjkxMWIxNjFkYjJhODBmMmY0OTVlNzNiYjgzYjU1M2E3Y2MzNzNjNWFiZjBhODBlYzAwYjA5NjU1Yzk5IiwKICAgICAgImFyY2hpdmVfc2hhIjogbnVsbCwKICAgICAgImxhYmVsIjogImRlYWRsaW5lIOKGkiAyMDI2LTA2LTMwOiBEcmFmdCB0aGUgbmVpZ2hib3VyaG9vZCBuZXdzbGV0dGVyIgogICAgfSwKICAgIHsKICAgICAgIm9yZ19zaGEiOiAiOGJiNzRiMWM3ZTEwMjQ3NjJkMGE0MWFkOTllOTRkYTg1ZGJlOWUzNzM3YjBhNTdjMzBjZTc0ZjcxZDg2OTg3YiIsCiAgICAgICJhcmNoaXZlX3NoYSI6IG51bGwsCiAgICAgICJsYWJlbCI6ICJzdGF0ZSDihpIgTkVYVDogUmVwbGFjZSB0aGUgZG9vciBoYW5kbGUiCiAgICB9CiAgXQp9Cg==",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "lock",
+        "kind": "file",
+        "path": ".tasks.jsonl.lock",
+        "present": true,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": 0,
+        "mode": "0644",
+        "content_base64": "",
+        "line_count": null,
+        "symlink_target": null
+      },
+      {
+        "role": "store",
+        "kind": "file",
+        "path": "tasks.jsonl",
+        "present": true,
+        "sha256": "8bb74b1c7e1024762d0a41ad99e94da85dbe9e3737b0a57c30ce74f71d86987b",
+        "size_bytes": 804,
+        "mode": "0644",
+        "content_base64": "eyJ0eXBlIjoibWV0YSIsInZlcnNpb24iOjJ9CnsidHlwZSI6InNlY3Rpb24iLCJpZCI6ImUwMDAwMDAxIiwidGl0bGUiOiJJbmJveCJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImM5MWQyM2ZlIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6Ik5FWFQiLCJ0aXRsZSI6IkJvb2sgdGhlIGJvaWxlciBzZXJ2aWNlIiwidGFncyI6WyJAY2FsbHMiXSwiYm9keSI6IkNhcHR1cmVkIFsyMDI2LTA4LTAxXS4iLCJ1cGRhdGVkIjoiMjAyNi0wOC0wMVQxODoxMTowNlojZml4dHVyZSJ9CnsidHlwZSI6InRhc2siLCJpZCI6ImY4MjA5MGYzIiwicGFyZW50IjoiZTAwMDAwMDEiLCJzdGF0ZSI6IlRPRE8iLCJ0aXRsZSI6IkRyYWZ0IHRoZSBuZWlnaGJvdXJob29kIG5ld3NsZXR0ZXIiLCJ0YWdzIjpbIkBjb21wdXRlciJdLCJkZWFkbGluZSI6IjIwMjYtMDYtMzAiLCJib2R5IjoiQ2FwdHVyZWQgWzIwMjYtMDgtMDFdLiIsInVwZGF0ZWQiOiIyMDI2LTA4LTAxVDE4OjExOjA2WiNmaXh0dXJlIn0KeyJ0eXBlIjoidGFzayIsImlkIjoiYjIwYWEwYmQiLCJwYXJlbnQiOiJlMDAwMDAwMSIsInN0YXRlIjoiTkVYVCIsInRpdGxlIjoiUmVwbGFjZSB0aGUgZG9vciBoYW5kbGUiLCJ0YWdzIjpbIkBob21lIl0sImJvZHkiOiJDYXB0dXJlZCBbMjAyNi0wOC0wMV0uIiwidXBkYXRlZCI6IjIwMjYtMDgtMDFUMTg6MTE6MDZaI2ZpeHR1cmUifQp7InR5cGUiOiJzZWN0aW9uIiwiaWQiOiJlMDAwMDAwMiIsInRpdGxlIjoiTmV4dCBBY3Rpb25zIn0KeyJ0eXBlIjoic2VjdGlvbiIsImlkIjoiZTAwMDAwMDMiLCJ0aXRsZSI6IlByb2plY3RzIn0K",
+        "line_count": 7,
+        "symlink_target": null
+      }
+    ],
+    "deltas": [
+      {
+        "path": ".tasks.jsonl.lock",
+        "kind": "created",
+        "before_sha256": null,
+        "after_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    ],
+    "rolled_back": null
+  },
+  "journal": {
+    "present": true,
+    "version": 1,
+    "cursor": 6,
+    "states": [
+      {
+        "label": null,
+        "store_sha256": "af203728152de793f87317d32ab792c3b2dc6743e792743eddd9e1a8a6b610c9",
+        "archive_sha256": null,
+        "coalesce_key": null,
+        "coalesce_scope": null,
+        "repair": null
+      },
+      {
+        "label": "capture: Book the boiler service",
+        "store_sha256": "ee412e5819b83ee709e6219103f3166e8ea5fe97bf11c51a8695af759148fd86",
+        "archive_sha256": null,
+        "coalesce_key": null,
+        "coalesce_scope": null,
+        "repair": null
+      },
+      {
+        "label": "capture: Draft the neighbourhood newsletter",
+        "store_sha256": "b2101ef4829e2a599bd808b1ab13cd63154ae32ca2a5429428fceb5dfcae946d",
+        "archive_sha256": null,
+        "coalesce_key": null,
+        "coalesce_scope": null,
+        "repair": null
+      },
+      {
+        "label": "capture: Replace the door handle",
+        "store_sha256": "acbfbe3317d66bc9078c2730f02eedf05472115b8523d4f836a82a25e4d3b5ea",
+        "archive_sha256": null,
+        "coalesce_key": null,
+        "coalesce_scope": null,
+        "repair": null
+      },
+      {
+        "label": "state → NEXT: Book the boiler service",
+        "store_sha256": "e20b5ba465c783826f636296f61c31a4711ed3730fc58bacb46cd79c3c68cae3",
+        "archive_sha256": null,
+        "coalesce_key": null,
+        "coalesce_scope": null,
+        "repair": null
+      },
+      {
+        "label": "deadline → 2026-06-30: Draft the neighbourhood newsletter",
+        "store_sha256": "7d9e2911b161db2a80f2f495e73bb83b553a7cc373c5abf0a80ec00b09655c99",
+        "archive_sha256": null,
+        "coalesce_key": null,
+        "coalesce_scope": null,
+        "repair": null
+      },
+      {
+        "label": "state → NEXT: Replace the door handle",
+        "store_sha256": "8bb74b1c7e1024762d0a41ad99e94da85dbe9e3737b0a57c30ce74f71d86987b",
+        "archive_sha256": null,
+        "coalesce_key": null,
+        "coalesce_scope": null,
+        "repair": null
+      }
+    ],
+    "index": {
+      "role": "journal_index",
+      "kind": "file",
+      "path": ".state/tasks/journal/617a26548083ec0a/index.json",
+      "present": true,
+      "sha256": "225b2c1c811dd77c1c241455abc7e53d8f613c169f6457f8835352c07790408a",
+      "size_bytes": 1327,
+      "mode": "0644",
+      "content_base64": "ewogICJ2ZXJzaW9uIjogMSwKICAib3JnIjogIi9ob21lL3NvbWVvbmUtZWxzZS90YXNrcy90YXNrcy5qc29ubCIsCiAgImN1cnNvciI6IDYsCiAgInN0YXRlcyI6IFsKICAgIHsKICAgICAgIm9yZ19zaGEiOiAiYWYyMDM3MjgxNTJkZTc5M2Y4NzMxN2QzMmFiNzkyYzNiMmRjNjc0M2U3OTI3NDNlZGRkOWUxYThhNmI2MTBjOSIsCiAgICAgICJhcmNoaXZlX3NoYSI6IG51bGwKICAgIH0sCiAgICB7CiAgICAgICJvcmdfc2hhIjogImVlNDEyZTU4MTliODNlZTcwOWU2MjE5MTAzZjMxNjZlOGVhNWZlOTdiZjExYzUxYTg2OTVhZjc1OTE0OGZkODYiLAogICAgICAiYXJjaGl2ZV9zaGEiOiBudWxsLAogICAgICAibGFiZWwiOiAiY2FwdHVyZTogQm9vayB0aGUgYm9pbGVyIHNlcnZpY2UiCiAgICB9LAogICAgewogICAgICAib3JnX3NoYSI6ICJiMjEwMWVmNDgyOWUyYTU5OWJkODA4YjFhYjEzY2Q2MzE1NGFlMzJjYTJhNTQyOTQyOGZjZWI1ZGZjYWU5NDZkIiwKICAgICAgImFyY2hpdmVfc2hhIjogbnVsbCwKICAgICAgImxhYmVsIjogImNhcHR1cmU6IERyYWZ0IHRoZSBuZWlnaGJvdXJob29kIG5ld3NsZXR0ZXIiCiAgICB9LAogICAgewogICAgICAib3JnX3NoYSI6ICJhY2JmYmUzMzE3ZDY2YmM5MDc4YzI3MzBmMDJlZWRmMDU0NzIxMTViODUyM2Q0ZjgzNmE4MmEyNWU0ZDNiNWVhIiwKICAgICAgImFyY2hpdmVfc2hhIjogbnVsbCwKICAgICAgImxhYmVsIjogImNhcHR1cmU6IFJlcGxhY2UgdGhlIGRvb3IgaGFuZGxlIgogICAgfSwKICAgIHsKICAgICAgIm9yZ19zaGEiOiAiZTIwYjViYTQ2NWM3ODM4MjZmNjM2Mjk2ZjYxYzMxYTQ3MTFlZDM3MzBmYzU4YmFjYjQ2Y2Q3OWMzYzY4Y2FlMyIsCiAgICAgICJhcmNoaXZlX3NoYSI6IG51bGwsCiAgICAgICJsYWJlbCI6ICJzdGF0ZSDihpIgTkVYVDogQm9vayB0aGUgYm9pbGVyIHNlcnZpY2UiCiAgICB9LAogICAgewogICAgICAib3JnX3NoYSI6ICI3ZDllMjkxMWIxNjFkYjJhODBmMmY0OTVlNzNiYjgzYjU1M2E3Y2MzNzNjNWFiZjBhODBlYzAwYjA5NjU1Yzk5IiwKICAgICAgImFyY2hpdmVfc2hhIjogbnVsbCwKICAgICAgImxhYmVsIjogImRlYWRsaW5lIOKGkiAyMDI2LTA2LTMwOiBEcmFmdCB0aGUgbmVpZ2hib3VyaG9vZCBuZXdzbGV0dGVyIgogICAgfSwKICAgIHsKICAgICAgIm9yZ19zaGEiOiAiOGJiNzRiMWM3ZTEwMjQ3NjJkMGE0MWFkOTllOTRkYTg1ZGJlOWUzNzM3YjBhNTdjMzBjZTc0ZjcxZDg2OTg3YiIsCiAgICAgICJhcmNoaXZlX3NoYSI6IG51bGwsCiAgICAgICJsYWJlbCI6ICJzdGF0ZSDihpIgTkVYVDogUmVwbGFjZSB0aGUgZG9vciBoYW5kbGUiCiAgICB9CiAgXQp9Cg==",
+      "line_count": null,
+      "symlink_target": null
+    },
+    "blob_count": 7,
+    "blob_sha256": [
+      "7d9e2911b161db2a80f2f495e73bb83b553a7cc373c5abf0a80ec00b09655c99",
+      "8bb74b1c7e1024762d0a41ad99e94da85dbe9e3737b0a57c30ce74f71d86987b",
+      "acbfbe3317d66bc9078c2730f02eedf05472115b8523d4f836a82a25e4d3b5ea",
+      "af203728152de793f87317d32ab792c3b2dc6743e792743eddd9e1a8a6b610c9",
+      "b2101ef4829e2a599bd808b1ab13cd63154ae32ca2a5429428fceb5dfcae946d",
+      "e20b5ba465c783826f636296f61c31a4711ed3730fc58bacb46cd79c3c68cae3",
+      "ee412e5819b83ee709e6219103f3166e8ea5fe97bf11c51a8695af759148fd86"
+    ]
+  },
+  "revisions": {
+    "store": "s1.256469144194f4eff11d46248438ee7c984e2d3e43ca70b650251ab424c5f037",
+    "resources": [
+      {
+        "id": "b20aa0bd",
+        "kind": "task",
+        "revision": "v1.ae3d7380dc4ba55cde9a7b5ca2aab6508f06e5ca72fad0977f34091a8526c14d.e077cfb8fca4bc4ea6ef535046fad091a2b5a66b5c893ab6c5bf94c65a8ba9be.602af74a14f95fb57e48fee25f5c3e9ab2b45ca404b7dba47ba75bd207c4ec7d"
+      },
+      {
+        "id": "c91d23fe",
+        "kind": "task",
+        "revision": "v1.c7604a7996815c05a1ba100d379503d0fbc534acc270ea297babbe9b962e55a4.c7550a2d644f5aa26829bf36be990316928e009d447d39e5f27efbca97f1309e.74e78bbd3f5ec193c36219f11b71ecb586239266c7f2ae6b32eb3d390de6e288"
+      },
+      {
+        "id": "f82090f3",
+        "kind": "task",
+        "revision": "v1.01e231ce29daf1ea3a7b43c4f4ff2d39c6042b99a84c414e50d47131a63b1526.ffec75db3e7386680d621c42c66f866055fd05eead52b331f0472a7399b8e77b.b92d2a8d14ca7842f54b04ebf160c84fb6e10f83a81325267a72abbd30974249"
+      }
+    ],
+    "touched_ids": [],
+    "http_etag": null
+  },
+  "http": [],
+  "environment": {
+    "tzdb_version": "Zoneinfo DataSource: /usr/share/zoneinfo",
+    "platform": "arm64-darwin",
+    "filesystem": "/",
+    "locale": "UTF-8",
+    "umask": "0022"
+  },
+  "metrics": {
+    "wall_ms": 0,
+    "user_cpu_ms": null,
+    "sys_cpu_ms": null,
+    "peak_rss_bytes": null,
+    "bytes_written": 0
+  },
+  "notes": "a journal keyed to someone else's store is discarded, not applied"
+}
