@@ -13,9 +13,9 @@ import (
 // answer here does not fail loudly, it reads and writes the wrong store.
 //
 // Salvaged in intent from port/config-resolution, whose own tests targeted an
-// older Resolve(Options) signature this package no longer has. The remaining
-// test_config.rb surface — urgent days, max depth, timezone, date order, theme,
-// host contexts — belongs to the Wave 1 config packet.
+// older Resolve(Options) signature this package no longer has. The rest of
+// test_config.rb — urgent days, max depth, timezone, date order, theme and
+// colors, mouse, time format, prompt facts, host contexts — follows below.
 
 // testEnv is a fully-pinned environment: HOME and XDG_CONFIG_HOME point into
 // the sandbox so no test can read the developer's real config file.

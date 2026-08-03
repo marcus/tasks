@@ -11,6 +11,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -66,6 +67,13 @@ type Paths struct {
 	PromptFacts             map[string]bool
 	Sources                 map[string]string
 	ConfigFile              string
+	// Warnings are the resolution notes a surface should show the user, in the
+	// order resolution produced them — today, one per time zone that was
+	// configured and could not be loaded. Ruby writes these straight to stderr
+	// from inside Config.resolve; a library that printed would be untestable and
+	// would decide for every surface, so they are returned instead and the
+	// adapter chooses where they go.
+	Warnings []string
 }
 
 // Resolve answers where the task files live for this process. `hostname` may be
@@ -95,7 +103,7 @@ func Resolve(defaultDir string, env determinism.Env, hostname func() string) Pat
 	maxDepth, maxDepthSource := pickMaxDepth(conf, env)
 	theme, themeSource := pickTheme(conf, env)
 	mouse, mouseSource := pickMouse(conf, env)
-	timezone, timezoneSource, timezoneWarning := pickTimezone(conf, env)
+	timezone, timezoneSource, timezoneWarning, warnings := pickTimezone(conf, env)
 	timeFormat, timeFormatSource := pickTimeFormat(conf, env)
 	dateOrder, dateOrderSource := pickDateOrder(conf, env)
 	detectedHostname, hostContext, hostContextSource := pickHostContext(conf.hostContexts, hostname)
@@ -109,7 +117,8 @@ func Resolve(defaultDir string, env determinism.Env, hostname func() string) Pat
 		Links:     conf.links, LinkSystems: conf.linkSystems,
 		Hostname: detectedHostname, HostContext: hostContext,
 		HostContextSource: hostContextSource, HostContexts: conf.hostContexts,
-		PromptFacts: conf.promptFacts,
+		PromptFacts: ResolvePromptFacts(conf.promptFacts),
+		Warnings:    warnings,
 		Sources: map[string]string{
 			"org": orgSource, "archive": archiveSource, "memory": memorySource,
 			"urgent_days": urgentSource, "max_depth": maxDepthSource, "theme": themeSource,
@@ -117,6 +126,56 @@ func Resolve(defaultDir string, env determinism.Env, hostname func() string) Pat
 			"date_order": dateOrderSource,
 		},
 		ConfigFile: file,
+	}
+}
+
+// PromptFactDefaults is the registry lib/tasks/prompt_facts.rb owns: the facts
+// an agent's "Current environment" block can carry, and whether each is on when
+// nothing says otherwise. Rendering the block belongs to the agent surface;
+// what config owns is the effective on/off map, because `tasks config` reports
+// it and a `prompt.<name>` line is what changes it.
+var PromptFactDefaults = map[string]bool{"datetime": true, "hostname": true}
+
+// ResolvePromptFacts is PromptFacts.resolve: every REGISTERED fact, with the
+// config file's override where there is one. A name the registry does not know
+// is dropped rather than reported — parseFile keeps it for forward
+// compatibility, but only a fact this binary can render may claim to be on.
+func ResolvePromptFacts(overrides map[string]bool) map[string]bool {
+	resolved := make(map[string]bool, len(PromptFactDefaults))
+	for name, fallback := range PromptFactDefaults {
+		if override, ok := overrides[name]; ok {
+			resolved[name] = override
+			continue
+		}
+		resolved[name] = fallback
+	}
+	return resolved
+}
+
+// ForDir pins every path to one directory, ignoring the environment and the
+// config file. It is what a sandbox uses so a test can never reach the user's
+// real task files — the settings are the built-in defaults, and the hostname
+// provider is never called, so nothing about the host leaks into the answer.
+func ForDir(dir string, env determinism.Env) Paths {
+	return Paths{
+		Org:        filepath.Join(dir, "tasks.jsonl"),
+		Archive:    filepath.Join(dir, "archive.jsonl"),
+		Memory:     filepath.Join(dir, "agent-memory.md"),
+		UrgentDays: DefaultUrgentDays, MaxDepth: DefaultMaxDepth,
+		Theme: DefaultTheme, Colors: map[string]string{}, Mouse: true,
+		Timezone: timezones.Fallback, TimeFormat: DefaultTimeFormat,
+		TimezoneFallbackWarning: false, DateOrder: DefaultDateOrder,
+		Links: map[string]string{}, LinkSystems: map[string]string{},
+		HostContexts: map[string]string{},
+		PromptFacts:  ResolvePromptFacts(nil),
+		Warnings:     []string{},
+		Sources: map[string]string{
+			"org": "pinned", "archive": "pinned", "memory": "pinned",
+			"urgent_days": "default", "max_depth": "default", "theme": "default",
+			"mouse": "default", "timezone": "pinned", "time_format": "default",
+			"date_order": "default",
+		},
+		ConfigFile: ConfigFile(env),
 	}
 }
 
@@ -226,21 +285,28 @@ func parseOnOff(value string) (bool, bool) {
 }
 
 // pickTimezone falls through independently on an invalid zone: a typo'd
-// TASKS_TIMEZONE must not silently skip past a valid config-file zone.
-func pickTimezone(conf parsedConfig, env determinism.Env) (string, string, bool) {
+// TASKS_TIMEZONE must not silently skip past a valid config-file zone. Each
+// source that is set and unusable earns a warning, because a zone that was
+// configured and ignored changes every rendered time — silence would leave the
+// user reading yesterday's agenda in the wrong offset with nothing to go on.
+func pickTimezone(conf parsedConfig, env determinism.Env) (string, string, bool, []string) {
 	candidates := []struct{ value, source string }{
 		{env.Get("TASKS_TIMEZONE"), "TASKS_TIMEZONE env"},
 		{conf.strings["timezone"], "config file"},
 	}
+	warnings := []string{}
 	for _, candidate := range candidates {
 		if candidate.value == "" {
 			continue
 		}
 		if id, err := timezones.Get(candidate.value); err == nil {
-			return id, candidate.source, false
+			return id, candidate.source, false, warnings
 		}
+		warnings = append(warnings,
+			fmt.Sprintf("tasks: ignoring invalid time zone %q from %s", candidate.value, candidate.source))
 	}
-	return timezones.Detect(env.Get(determinism.NameTZ), "/etc/localtime")
+	zone, source, fallback := timezones.Detect(env.Get(determinism.NameTZ), "/etc/localtime")
+	return zone, source, fallback, warnings
 }
 
 func pickTimeFormat(conf parsedConfig, env determinism.Env) (int, string) {
