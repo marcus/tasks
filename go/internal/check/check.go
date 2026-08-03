@@ -49,7 +49,14 @@ func Check(path string) Result {
 
 // CheckText validates parsed metadata and IDs while retaining parser errors.
 func CheckText(input []byte) Result {
-	parsed := record.Parse(input)
+	return CheckParsed(record.Parse(input))
+}
+
+// CheckParsed validates bytes a caller has already parsed. It is the seam the
+// store's API-grade read uses: validation and the canonical resources have to
+// derive from ONE read taken under the store lock, rather than from a path
+// checked and then reopened.
+func CheckParsed(parsed record.Result) Result {
 	errors := make([]Entry, 0, len(parsed.Errors)+1)
 	for _, parseErr := range parsed.Errors {
 		errors = append(errors, Entry{Line: parseErr.Line, Message: parseErr.Message})
@@ -93,6 +100,32 @@ func CheckStore(livePath, archivePath string) Result {
 	errors = append(errors, crossFileDuplicates(livePath, archivePath)...)
 	sortEntries(errors)
 	return Result{Errors: errors, Warnings: append(annotate(live.Warnings, "tasks.jsonl"), annotate(archive.Warnings, "archive.jsonl")...)}
+}
+
+// UnsupportedVersion reports the version a store DECLARES when it is one this
+// binary cannot read. The gate is deliberately narrow in two ways Ruby is
+// narrow: it consults the FIRST record rather than the record on line 1, and a
+// non-Integer version is not "unsupported" — it is malformed, and checkMeta
+// reports it as such.
+func UnsupportedVersion(records []record.Record) (json.RawMessage, bool) {
+	if len(records) == 0 {
+		return nil, false
+	}
+	first := records[0]
+	if stringField(first, "type") != "meta" {
+		return nil, false
+	}
+	version, ok := integerField(first, "version")
+	if !ok || version == Version {
+		return nil, false
+	}
+	return rawField(first, "version"), true
+}
+
+// UnsupportedVersionMessage is the one wording for that condition, shared by
+// `check`, by every refusal, and by the store's read path.
+func UnsupportedVersionMessage(declared json.RawMessage) string {
+	return fmt.Sprintf("unsupported meta version %s (expected %d)", rubyInspect(declared), Version)
 }
 
 func checkMeta(records []record.Record, errors *[]Entry) {
