@@ -19,16 +19,20 @@ import (
 )
 
 type spec struct {
-	Org      string     `json:"org"`
-	Archive  string     `json:"archive"`
-	Journal  string     `json:"journal"`
-	Device   string     `json:"device"`
-	Now      string     `json:"now"`
-	Today    string     `json:"today"`
-	ID       string     `json:"id"`
-	Field    string     `json:"field"`
-	Label    string     `json:"label"`
-	Value    valueSpec  `json:"value"`
+	Org     string    `json:"org"`
+	Archive string    `json:"archive"`
+	Journal string    `json:"journal"`
+	Device  string    `json:"device"`
+	Now     string    `json:"now"`
+	Today   string    `json:"today"`
+	ID      string    `json:"id"`
+	Field   string    `json:"field"`
+	Label   string    `json:"label"`
+	Value   valueSpec `json:"value"`
+	Changes []struct {
+		Field string    `json:"field"`
+		Value valueSpec `json:"value"`
+	} `json:"changes"`
 	Verb     string     `json:"verb"`
 	Worker   string     `json:"worker"`
 	Force    bool       `json:"force"`
@@ -108,6 +112,24 @@ func main() {
 		CoalesceScope: "pinned-scope", MaxDepth: 5,
 	})
 	var result store.MutationResult
+	if len(request.Changes) > 0 {
+		changes := make([]store.Change, 0, len(request.Changes))
+		for _, change := range request.Changes {
+			value, err := change.Value.patchValue()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(2)
+			}
+			changes = append(changes, store.Change{Field: store.PatchField(change.Field), Value: value})
+		}
+		revision, _ := writer.TaskRevision(request.ID)
+		result = writer.ApplyChangeset(store.Changeset{
+			ID: request.ID, Changes: changes, ExpectedRevision: revision,
+			HistoryLabel: request.Label, Today: request.Today,
+		})
+		report(result)
+		return
+	}
 	switch request.Verb {
 	case "undelegate":
 		result = writer.Undelegate(request.ID, "")
@@ -123,6 +145,10 @@ func main() {
 			Label: request.Label, Today: request.Today,
 		})
 	}
+	report(result)
+}
+
+func report(result store.MutationResult) {
 	errors := result.Errors
 	if errors == nil {
 		errors = []string{}
