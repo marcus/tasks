@@ -5,13 +5,11 @@ import (
 	"fmt"
 	"math/big"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
-var (
-	cookie    = regexp.MustCompile(`^(\.\+|\+\+|\+)([1-9][0-9]*)([dwmy])$`)
-	countUnit = regexp.MustCompile(`^([0-9]+)([a-z]+)$`)
-)
+var cookie = regexp.MustCompile(`^(\.\+|\+\+|\+)([1-9][0-9]*)([dwmy])$`)
 
 var words = map[string]interval{
 	"daily":       {count: big.NewInt(1), unit: "d"},
@@ -51,9 +49,18 @@ type Result struct {
 	Error     string
 }
 
-// Parse normalizes an interval cookie or friendly interval spelling. A bare
-// interval uses defaultPrefix, which is normally ".+". Calendar schedules are
-// deliberately not accepted here: that grammar belongs to the next slice.
+// Parse normalizes any accepted spelling into the one canonical stored value,
+// "off" to clear recurrence, or a refusal naming the reason.
+//
+//	".+1w" "+2d" "++1m"          passthrough (validated)
+//	"weekly" "2w" "every 3 days" ".+…" — a bare interval takes defaultPrefix
+//	"w:mon" "every monday"       "w:mon"
+//	"off" / "none" / "never"     off
+//
+// defaultPrefix picks the semantics for a bare INTERVAL: ".+" (from completion)
+// normally, "+" when the caller wants the date-anchored form. Calendar
+// schedules carry their own prefix and ignore it — bare calendar input is
+// catch-up.
 func Parse(input, defaultPrefix string) Result {
 	raw := rubyStrip(input)
 	if raw == "" {
@@ -63,14 +70,23 @@ func Parse(input, defaultPrefix string) Result {
 	if isOff(s) {
 		return Result{Canonical: "off"}
 	}
+	// A cookie's own prefix wins over defaultPrefix.
 	if match := cookie.FindStringSubmatch(s); match != nil {
 		return Result{Canonical: match[1] + match[2] + match[3]}
 	}
-
-	if prefix, value, ok := parseFriendlyInterval(s); ok {
-		return Result{Canonical: prefixOrDefault(prefix, defaultPrefix) + value.count.String() + value.unit}
+	// Anything SHAPED like a calendar schedule reports its own reason rather
+	// than falling through to natural-phrase parsing, which would explain the
+	// wrong mistake. A natural phrase never contains a colon.
+	if calendarShape.MatchString(s) {
+		parsed, err := canonicalCalendar(s, raw)
+		if err != nil {
+			return Result{Error: err.Error()}
+		}
+		return built(parsed)
 	}
-	return Result{Error: "unrecognized schedule: " + rubyInspect(raw)}
+	// Parsing reads the downcased form; rejections quote `raw`, so what the
+	// caller sees echoed back is exactly what they typed.
+	return parseNatural(s, defaultPrefix, raw)
 }
 
 // Cookie reports whether value is already a STORED recurrence value: an
@@ -117,29 +133,147 @@ func Humanize(value string) *string {
 	}
 }
 
-// NextDate projects an interval cookie from its stored date and today's date.
-// A catch-up cookie intentionally may land on today, matching Ruby's date-only
-// projection (the temporal completion path decides whether a timed stamp has
-// already passed today).
+// NextDate projects a STORED value — an interval cookie or a calendar schedule
+// — from its stamp's current date and today's date.
+//
+// A catch-up projection intentionally may land on today rather than past it:
+// that is exactly where the completion path's own fast-forward stops, and a
+// candidate landing on today can still be in the future by its end-of-day
+// boundary. A date-only projection has no time to compare, so it must name the
+// same day the write would produce.
 func NextDate(value string, from, today CivilDate) (CivilDate, error) {
-	match := cookie.FindStringSubmatch(rubyStrip(value))
-	if match == nil {
+	s := rubyStrip(value)
+	if match := cookie.FindStringSubmatch(s); match != nil {
+		n, _ := new(big.Int).SetString(match[2], 10)
+		switch match[1] {
+		case ".+":
+			return Step(today, n, match[3]), nil
+		case "+":
+			return Step(from, n, match[3]), nil
+		default:
+			d := Step(from, n, match[3])
+			for d.Before(today) {
+				d = Step(d, n, match[3])
+			}
+			return d, nil
+		}
+	}
+
+	parsed, ok := parseSchedule(s)
+	if !ok {
 		return CivilDate{}, fmt.Errorf("not a repeater cookie: %s", rubyInspect(value))
 	}
-	n, _ := new(big.Int).SetString(match[2], 10)
-	switch match[1] {
-	case ".+":
-		return Step(today, n, match[3]), nil
-	case "+":
-		return Step(from, n, match[3]), nil
-	default:
-		d := Step(from, n, match[3])
-		for d.Before(today) {
-			d = Step(d, n, match[3])
-		}
-		return d, nil
+	after := from
+	if parsed.prefix != "+" && after.Before(today) {
+		after = today
 	}
+	return occurrenceAfter(parsed, from, after)
 }
+
+// Occurrences is the next `count` dates a stored value fires on. Each landing
+// becomes the anchor for the next, so an every-Nth series keeps its parity and
+// a from-completion cookie keeps stepping.
+func Occurrences(value string, from, today CivilDate, count int) ([]CivilDate, error) {
+	dates := make([]CivilDate, 0, max(count, 0))
+	cursorFrom, cursorToday := from, today
+	for index := 0; index < count; index++ {
+		date, err := NextDate(value, cursorFrom, cursorToday)
+		if err != nil {
+			return nil, err
+		}
+		dates = append(dates, date)
+		cursorFrom, cursorToday = date, date
+	}
+	return dates, nil
+}
+
+// Explanation is the discoverability payload every surface renders: what was
+// typed, what it stores as, how it reads, and when it next fires.
+//
+// Three shapes, and the middle one is why this is a struct rather than a pair:
+//
+//	understood and projected   Canonical, Human, Next
+//	understood, never fires    Canonical, Human, empty Next, Error
+//	not understood             Input and Error only
+//
+// Whether a schedule ever fires depends on the ANCHOR, not on the schedule
+// alone, so a projection failure must still identify what was typed rather than
+// masquerading as a parse error.
+type Explanation struct {
+	Input        string
+	Canonical    string
+	HasCanonical bool
+	Human        string
+	Next         []CivilDate
+	HasNext      bool
+	Error        string
+}
+
+// explainLimit is the largest projection Explain will produce.
+const explainLimit = 50
+
+// Explain parses, normalizes, and projects without touching the store. `from`
+// is the stamp the projection is anchored on, in the stored spelling; empty
+// means today.
+func Explain(input string, today CivilDate, count int, from string) Explanation {
+	if count < 0 {
+		count = 0
+	}
+	if count > explainLimit {
+		count = explainLimit
+	}
+	result := Parse(input, ".+")
+	if result.Error != "" {
+		return Explanation{Input: input, Error: result.Error}
+	}
+	if result.Canonical == "off" {
+		return Explanation{Input: input, Human: "no recurrence", HasCanonical: true, HasNext: true,
+			Next: []CivilDate{}}
+	}
+
+	anchor := today
+	if from != "" {
+		parsed, ok := parseStoredDate(from)
+		if !ok {
+			return Explanation{Input: input,
+				Error: "stamp must be a real YYYY-MM-DD date: " + rubyInspect(from)}
+		}
+		anchor = parsed
+	}
+
+	human := ""
+	if rendered := Humanize(result.Canonical); rendered != nil {
+		human = *rendered
+	}
+	payload := Explanation{Input: input, Canonical: result.Canonical, HasCanonical: true, Human: human}
+	dates, err := Occurrences(result.Canonical, anchor, today, count)
+	if err != nil {
+		payload.Next = []CivilDate{}
+		payload.HasNext = true
+		payload.Error = err.Error()
+		return payload
+	}
+	payload.Next = dates
+	payload.HasNext = true
+	return payload
+}
+
+// parseStoredDate reads the stored YYYY-MM-DD spelling and only real dates.
+func parseStoredDate(value string) (CivilDate, bool) {
+	if !storedDate.MatchString(value) {
+		return CivilDate{}, false
+	}
+	year, _ := new(big.Int).SetString(value[0:4], 10)
+	month, _ := strconv.Atoi(value[5:7])
+	day, _ := strconv.Atoi(value[8:10])
+	date, err := NewCheckedCivilDate(year, month, day)
+	if err != nil {
+		return CivilDate{}, false
+	}
+	return date, true
+}
+
+var storedDate = regexp.MustCompile(`\A\d{4}-\d{2}-\d{2}\z`)
 
 // Step advances a civil date. Month and year units clamp overflowing days;
 // time.Time.AddDate cannot be used because it normalizes Jan 31 + one month
@@ -159,63 +293,6 @@ func Step(date CivilDate, count *big.Int, unit string) CivilDate {
 	}
 }
 
-func parseFriendlyInterval(value string) (string, interval, bool) {
-	parts := tokenize(value)
-	if len(parts) >= 2 && digits(parts[0]) {
-		if unit, ok := units[parts[1]]; ok {
-			n, parsed := new(big.Int).SetString(parts[0], 10)
-			if parsed && n.Sign() > 0 && len(parts) == 2 {
-				return "", interval{count: n, unit: unit}, true
-			}
-		}
-	}
-	if len(parts) >= 1 {
-		if word, ok := words[parts[0]]; ok && len(parts) == 1 {
-			return "", word, true
-		}
-	}
-	if len(parts) == 1 {
-		if unit, ok := bareUnits[parts[0]]; ok {
-			return "", interval{count: big.NewInt(1), unit: unit}, true
-		}
-	}
-	return "", interval{}, false
-}
-
-// tokenize is the interval-only counterpart of Ruby Recur.tokenize. It keeps
-// token boundaries intact: count/unit pairs are recognized only when adjacent
-// tokens say so, while filler and punctuation are discarded before the peel.
-func tokenize(value string) []string {
-	var text strings.Builder
-	for _, r := range value {
-		switch r {
-		case ',', '&', '/':
-			text.WriteByte(' ')
-		default:
-			text.WriteRune(r)
-		}
-	}
-	value = text.String()
-	var split strings.Builder
-	var previous rune
-	for index, r := range value {
-		if index > 0 && ((previous >= '0' && previous <= '9' && r >= 'a' && r <= 'z') ||
-			(previous >= 'a' && previous <= 'z' && r >= '0' && r <= '9')) {
-			split.WriteByte(' ')
-		}
-		split.WriteRune(r)
-		previous = r
-	}
-	parts := strings.FieldsFunc(split.String(), rubySpace)
-	tokens := make([]string, 0, len(parts))
-	for _, part := range parts {
-		if !filler[part] {
-			tokens = append(tokens, part)
-		}
-	}
-	return tokens
-}
-
 func rubySpace(r rune) bool {
 	switch r {
 	case ' ', '\t', '\r', '\n', '\f', '\v':
@@ -230,18 +307,6 @@ func rubySpace(r rune) bool {
 func rubyDowncase(value string) string {
 	value = strings.ReplaceAll(value, "\u0130", "i\u0307")
 	return strings.ToLower(value)
-}
-
-func digits(value string) bool {
-	if value == "" {
-		return false
-	}
-	for _, r := range value {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
 }
 
 func prefixOrDefault(prefix, defaultPrefix string) string {
