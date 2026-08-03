@@ -17,6 +17,11 @@ type Item struct {
 	State    string
 	Priority string
 	Title    string
+	// AllTags is the tag list exactly as the record stored it, contexts and
+	// ordinary tags interleaved. Tags and Contexts are the same list split for
+	// rendering; AllTags is what the headline and every tag filter read, because
+	// stored order is part of the headline's bytes.
+	AllTags  []string
 	Tags     []string
 	Contexts []string
 	// Scheduled, Deadline and Closed are normalized ISO dates, or "" when the
@@ -97,6 +102,9 @@ func buildItems(records []record.Record, source Source) []Item {
 
 func buildItem(parsed record.Record, source Source) Item {
 	tags := semanticTags(parsed)
+	if tags == nil {
+		tags = []string{}
+	}
 	contexts := []string{}
 	ordinary := []string{}
 	for _, tag := range tags {
@@ -115,6 +123,7 @@ func buildItem(parsed record.Record, source Source) Item {
 		State:         stringField(parsed, "state"),
 		Priority:      stringField(parsed, "priority"),
 		Title:         stringField(parsed, "title"),
+		AllTags:       tags,
 		Tags:          ordinary,
 		Contexts:      contexts,
 		Scheduled:     isoDate(fieldRaw(parsed, "scheduled")),
