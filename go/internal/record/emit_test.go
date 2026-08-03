@@ -71,6 +71,21 @@ func TestDumpRecordOrdersKnownKeysAndOmitsAbsentFields(t *testing.T) {
 	}
 }
 
+func TestDumpRecordCanonicalizesNestedObjects(t *testing.T) {
+	cases := []struct{ input, want string }{
+		{`{"type":"task","title":"T","scheduled_time":{"unknown":1,"fold":1,"timezone":"Europe/Berlin","local":"09:00"}}`, `{"type":"task","title":"T","scheduled_time":{"local":"09:00","timezone":"Europe/Berlin","fold":1}}`},
+		{`{"type":"task","title":"T","deadline_time":{"unknown":1}}`, `{"type":"task","title":"T"}`},
+		{`{"type":"task","title":"T","delegation":{"zeta":false,"at":"2026-07-27T18:04:11Z","kind":"agent","alpha":0,"status":"ready","mode":"research"}}`, `{"type":"task","title":"T","delegation":{"kind":"agent","mode":"research","status":"ready","at":"2026-07-27T18:04:11Z","zeta":false,"alpha":0}}`},
+		{`{"type":"task","title":"T","scheduled_time":"09:00","delegation":false}`, `{"type":"task","title":"T","scheduled_time":"09:00","delegation":false}`},
+	}
+	for _, testCase := range cases {
+		got, err := DumpRecord(parseOne(t, testCase.input))
+		if err != nil || got != testCase.want {
+			t.Fatalf("DumpRecord(%s) = %q, %v; want %q", testCase.input, got, err, testCase.want)
+		}
+	}
+}
+
 func TestDumpFileShape(t *testing.T) {
 	if got, err := Dump(nil); err != nil || got != "" {
 		t.Fatalf("Dump(nil) = %q, %v; want empty string", got, err)
