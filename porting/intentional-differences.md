@@ -386,6 +386,77 @@ One `##` section per accepted difference, in the order they were accepted:
   `apply_changeset!` instead, and the two agree on all 18 cases.
 - **Conformance disposition:** none needed; the CLI path is unchanged.
 
+## go-api-refuses-unbuilt-writes-with-501 — accepted 2026-08-03
+
+- **Slices:** none (Wave 3, HTTP API packet)
+- **Ruby behavior:** `bin/tasks-api` performs every route in
+  `docs/api/openapi.yaml`. `DELETE /tasks/{id}` answers 204,
+  `POST /tasks/{id}/approve|reject` answer 200, the five delegation routes
+  answer 200, the four project-mutation routes answer 200/201, a `placement` or
+  `parent_id` PATCH moves the subtree and answers 200, and a create carrying
+  `scheduled`, `deadline`, `recurrence` or `lead` persists them and answers 201.
+- **Go behavior:** each of those answers **501 `not_implemented`** with a
+  message naming the missing capability, and writes nothing. Everything else on
+  the route — Host, Origin, media type, body limit, query validation, the
+  If-Match precondition — is enforced FIRST, so a malformed request still gets
+  its own refusal.
+- **Who can see it:** every API client, immediately and unambiguously. The
+  cause in each case is the Go store, not the adapter: it has no `DeleteTask`,
+  no `DecideProposal`, no project lifecycle writer, `applyFieldPatch` refuses
+  `location` outright, `store.CreateCommand` carries no temporal or recurrence
+  fields, and `application.runDelegation` refuses a non-empty
+  `expected_revision` — which the HTTP contract makes mandatory on the
+  delegation routes. Wiring a delegation route that silently dropped the
+  client's If-Match would be the one outcome worse than refusing.
+- **Why accepted:** decided by the Wave 3 API packet agent, under the plan's
+  rule that an unfinished capability refuses rather than approximates. 501 is
+  chosen over 503 deliberately: 503 invites a retry, and no number of retries
+  will build the store operation. The refusals disappear one at a time as the
+  store grows each capability; nothing in `internal/api` has to change except
+  deleting a `notImplemented` call.
+- **Evidence:** `go/internal/api/write_test.go`,
+  `TestRoutesThisBuildRefusesSayWhy`,
+  `TestRefusedRoutesStillEnforceTheirPreconditions` and
+  `TestCreateRefusesFieldsThisBuildCannotPersist`; the live two-server
+  differential run agrees on every other route.
+- **Contract note:** `docs/api/openapi.yaml` documents no 501 and its
+  `ErrorCode` enum (line 3572) has no `not_implemented` member, so these
+  responses are deliberately OUTSIDE the written contract. That is the honest
+  place for them: the contract describes the finished product, and a build that
+  cannot yet perform a route should fail contract validation for that route
+  rather than pass it by answering something plausible. The spec is left
+  unchanged so the gap stays visible.
+- **Conformance disposition:** `porting/conform` does not drive the API, so no
+  comparator exception is needed. `porting/api-differential` lists these routes
+  in `EXPECTED_REFUSALS`; a route that stops diverging means the capability
+  landed and this entry should lose a line.
+
+## go-api-honours-the-determinism-pins — accepted 2026-08-03
+
+- **Slices:** none (Wave 3, HTTP API packet)
+- **Ruby behavior:** `bin/tasks-api` reads none of `TASKS_PIN_NOW`,
+  `TASKS_PIN_IDS`, `TASKS_PIN_COALESCE_SCOPE` or `TASKS_PIN_DELEGATION_KEYS`.
+  It serializes a fixed set of resolved paths into
+  `TASKS_API_RESOLVED_CONFIG`, and `config.ru` rebuilds `Config::Paths` from
+  that JSON and injects no clock and no id mint. So a pinned harness gets real
+  ids and the real clock from the Ruby server.
+- **Go behavior:** `cmd/tasks-api` reads the pins the same way `cmd/tasks`
+  does, so a pinned harness gets the pinned ids and clock.
+- **Who can see it:** only a harness that sets a pin. In ordinary use no pin is
+  set and the two behave identically — which the differential run confirms.
+- **Why accepted:** decided by the Wave 3 API packet agent.
+  `porting/specs/determinism.md` says the pins are an adapter-boundary concern
+  honoured by `bin/tasks`, `bin/tasks-api` and `bin/tasks-tui`; the Ruby server
+  simply does not implement what that document claims. Making the Go server
+  match the document rather than the omission is the cheaper of the two fixes,
+  and it is what lets an API conformance harness exist at all. If Ruby is to be
+  the oracle for a byte-level API comparison, `config.ru` should carry the pins
+  too — that is a one-line change nobody has needed yet.
+- **Evidence:** `porting/specs/determinism.md`; the write-sequence differential
+  run compares with normalization rather than with pins for exactly this reason.
+- **Conformance disposition:** none; `porting/conform` drives the CLI, which
+  honours the pins on both sides.
+
 ## Notes on the record
 
 The last field is the one that rots. A difference recorded here but not

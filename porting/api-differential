@@ -1,0 +1,445 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Differential harness for the HTTP API: `bin/tasks-api` and `go/cmd/tasks-api`
+# started against IDENTICAL copies of one fixture, driven with the same
+# requests, and compared byte for byte.
+#
+# This is the tool the Wave 3 API packet was judged by, and it exists because
+# every bug that mattered in Waves 1 and 2 was found by running the two
+# implementations against each other, never by reading code.
+#
+# Usage:
+#
+#   porting/api-differential            # all three phases
+#   porting/api-differential reads      # one phase
+#
+# Phases:
+#
+#   reads      every GET, against an untouched store. Compared with only the
+#              request id normalized, because nothing else may differ.
+#   transport  the refusals — media type, body limit, host, origin, precondition.
+#   writes     a stateful create/patch sequence, plus the resulting store bytes.
+#              Normalized for minted ids, revision digests and today's date,
+#              because two independent servers legitimately differ in all three
+#              (see porting/intentional-differences.md,
+#              `go-api-honours-the-determinism-pins`).
+#
+# Exit status is 0 when every comparison in the requested phases agrees EXCEPT
+# the routes recorded as intentionally refused; any other divergence is a defect.
+
+require "date"
+require "fileutils"
+require "json"
+require "net/http"
+require "socket"
+require "tempfile"
+require "timeout"
+require "tmpdir"
+
+ROOT = File.expand_path("..", __dir__)
+$LOAD_PATH.unshift File.join(ROOT, "lib")
+require "tasks/format"
+
+GO_BIN = ENV.fetch("TASKS_GO_API", File.join(ROOT, "go", "bin", "tasks-api"))
+RUBY_BIN = File.join(ROOT, "bin", "tasks-api")
+
+FIX = {
+  inbox: "aaaa0001", garden: "aaaa0002", work: "aaaa0003", flight: "aaaa0004",
+  pr: "aaaa0005", eval: "aaaa0006", travel: "aaaa0007", old: "aaaa0008",
+  home: "aaaa0009", plants: "aaaa000a"
+}.freeze
+KNOWN_IDS = (FIX.values + %w[bbbb0001 bbbb0002 cccc0001 dddd0001]).freeze
+
+FIXTURE_RECORDS = [
+  { "type" => "meta", "version" => 2 },
+  { "type" => "section", "id" => FIX[:inbox], "title" => "Inbox" },
+  { "type" => "task", "id" => FIX[:garden], "parent" => FIX[:inbox], "state" => "INBOX",
+    "title" => "random thought about the garden" },
+  { "type" => "section", "id" => FIX[:work], "title" => "Work" },
+  { "type" => "task", "id" => FIX[:flight], "parent" => FIX[:work], "state" => "NEXT",
+    "priority" => "A", "title" => "Book flight in Concur",
+    "tags" => %w[@computer important urgent], "deadline" => "2026-07-02", "recur" => ".+1w" },
+  { "type" => "task", "id" => FIX[:pr], "parent" => FIX[:work], "state" => "NEXT",
+    "priority" => "B", "title" => "Review PR backlog", "tags" => %w[@computer important] },
+  { "type" => "task", "id" => "bbbb0001", "parent" => FIX[:pr], "state" => "TODO", "title" => "Child" },
+  { "type" => "task", "id" => "bbbb0002", "parent" => "bbbb0001", "state" => "TODO", "title" => "Grandchild" },
+  { "type" => "task", "id" => FIX[:eval], "parent" => FIX[:work], "state" => "TODO",
+    "priority" => "A", "title" => "Midyear self-eval",
+    "tags" => %w[@computer important], "scheduled" => "2026-07-03" },
+  { "type" => "task", "id" => FIX[:travel], "parent" => FIX[:work], "state" => "WAITING",
+    "title" => "Travel desk reply", "tags" => %w[@email urgent], "body" => "Some note line.",
+    "delegation" => { "kind" => "human", "status" => "delegated",
+                      "assignee" => "desk@example.com", "at" => "2026-06-01T09:00:00Z" } },
+  { "type" => "task", "id" => FIX[:old], "parent" => FIX[:work], "state" => "DONE",
+    "priority" => "C", "title" => "Old finished thing", "tags" => %w[@computer],
+    "closed" => "2026-06-20" },
+  { "type" => "section", "id" => FIX[:home], "title" => "Home" },
+  { "type" => "task", "id" => FIX[:plants], "parent" => FIX[:home], "state" => "NEXT",
+    "title" => "Water the plants", "tags" => %w[@home defer],
+    "deadline" => "2026-08-01",
+    "deadline_time" => { "local" => "17:00", "timezone" => "Europe/London" }, "lead" => "3d" }
+].freeze
+
+ARCHIVE_RECORDS = [
+  { "type" => "meta", "version" => 2 },
+  { "type" => "section", "id" => "cccc0001", "title" => "Archive" },
+  { "type" => "task", "id" => FIX[:pr], "parent" => "cccc0001", "state" => "DONE",
+    "title" => "Archived duplicate", "closed" => "2026-07-01" },
+  { "type" => "task", "id" => "dddd0001", "parent" => "cccc0001", "state" => "DONE",
+    "title" => "Archived anchor", "closed" => "2026-07-02" }
+].freeze
+
+# The routes recorded in porting/intentional-differences.md as refused by the Go
+# build. A divergence on one of these is EXPECTED; a divergence anywhere else is
+# a defect, and a route here that stops diverging means the capability landed and
+# the entry should be retired.
+EXPECTED_REFUSALS = [
+  "create with recurrence", "create with deadline", "create with scheduled",
+  "placement move", "parent unnest", "delete", "approve", "delegate",
+  "project create", "project complete", "store bytes"
+].freeze
+
+class Server
+  attr_reader :dir, :port
+
+  def initialize(name, command, records: FIXTURE_RECORDS, archive: ARCHIVE_RECORDS)
+    @dir = Dir.mktmpdir("api-diff-#{name}")
+    File.write(File.join(@dir, "tasks.jsonl"), Tasks::Format.dump(records))
+    File.write(File.join(@dir, "archive.jsonl"), Tasks::Format.dump(archive)) if archive
+    @port = Server.free_port
+    @log = Tempfile.new("api-diff-log")
+    env = {
+      "TASKS_DEVICE" => "pinned",
+      "TASKS_FILE" => File.join(@dir, "tasks.jsonl"),
+      "TASKS_ARCHIVE" => File.join(@dir, "archive.jsonl"),
+      "XDG_STATE_HOME" => File.join(@dir, "state"),
+      "XDG_CONFIG_HOME" => File.join(@dir, "config")
+    }
+    @pid = Process.spawn(env, *command, "--port", @port.to_s, chdir: ROOT, out: @log, err: @log)
+    wait_for_ready
+  end
+
+  def self.free_port
+    server = TCPServer.new("127.0.0.1", 0)
+    port = server.addr[1]
+    server.close
+    port
+  end
+
+  def wait_for_ready
+    Timeout.timeout(20) do
+      loop do
+        begin
+          return if call("GET", "/healthz").fetch(:code) == "200"
+        rescue Errno::ECONNREFUSED, EOFError
+          raise "server exited during startup\n#{log_text}" unless alive?
+
+          sleep 0.05
+        end
+      end
+    end
+  end
+
+  def alive?
+    Process.kill(0, @pid)
+    true
+  rescue Errno::ESRCH
+    false
+  end
+
+  def call(method, path, body: nil, raw: nil, headers: {}, content_type: nil)
+    request = Net::HTTP.const_get(method.capitalize).new(path)
+    headers.each { |name, value| request[name] = value }
+    if raw || body
+      request["Content-Type"] = content_type || "application/json"
+      request.body = raw || JSON.generate(body)
+    end
+    response = Net::HTTP.start("127.0.0.1", @port) { |client| client.request(request) }
+    {
+      code: response.code, etag: response["etag"], location: response["location"],
+      content_type: response["content-type"], cache_control: response["cache-control"],
+      body: response.body
+    }
+  end
+
+  def bytes = File.binread(File.join(@dir, "tasks.jsonl"))
+  def log_text = File.read(@log.path)
+
+  def stop
+    Process.kill("TERM", @pid)
+    Timeout.timeout(5) { Process.wait(@pid) }
+  rescue Errno::ESRCH, Errno::ECHILD, Timeout::Error
+    nil
+  ensure
+    FileUtils.remove_entry(@dir) if File.directory?(@dir)
+  end
+end
+
+# Normalization. Request ids, revision digests, freshly minted task ids and
+# today's date are all legitimately different between two independent servers.
+# NOTHING else is.
+def scrub(value, seen)
+  return value unless value.is_a?(String)
+
+  out = value.dup
+  out.gsub!(/req_[0-9a-f]{16}/, "req_X")
+  out.gsub!(/v1\.[0-9a-f]{64}\.[0-9a-f]{64}\.[0-9a-f]{64}/, "REV")
+  out.gsub!(/s1\.[0-9a-f]{64}/, "SREV")
+  out.gsub!(/\b[0-9a-f]{8}\b/) do |id|
+    next id if KNOWN_IDS.include?(id)
+
+    seen[id] ||= "NEW#{seen.length + 1}"
+    seen[id]
+  end
+  out.gsub!(Date.today.iso8601, "TODAY")
+  out
+end
+
+class Comparison
+  attr_reader :matches, :mismatches, :unexpected
+
+  def initialize
+    @matches = 0
+    @mismatches = []
+    @unexpected = []
+  end
+
+  def compare(name, ruby, go, keys: %i[code etag location content_type cache_control body])
+    ruby_seen = {}
+    go_seen = {}
+    differing = keys.select { |key| scrub(ruby[key], ruby_seen) != scrub(go[key], go_seen) }
+    if differing.empty?
+      @matches += 1
+      puts "  ok       #{name}"
+      return
+    end
+    expected = EXPECTED_REFUSALS.include?(name)
+    @mismatches << name
+    @unexpected << name unless expected
+    puts "  #{expected ? "refused " : "DIFF    "} #{name} (#{differing.join(", ")})"
+    return if expected
+
+    differing.each do |key|
+      puts "      ruby #{key}: #{scrub(ruby[key], ruby_seen).to_s[0, 700]}"
+      puts "      go   #{key}: #{scrub(go[key], go_seen).to_s[0, 700]}"
+    end
+  end
+end
+
+READ_CASES = [
+  "/healthz", "/readyz", "/api/v1/meta", "/api/v1/sections",
+  "/api/v1/tasks", "/api/v1/tasks?scope=all", "/api/v1/tasks?scope=done",
+  "/api/v1/tasks?scope=archived", "/api/v1/tasks?scope=proposed",
+  "/api/v1/tasks?context=computer", "/api/v1/tasks?context=@computer",
+  "/api/v1/tasks?tag=important", "/api/v1/tasks?priority=B",
+  "/api/v1/tasks?scope=all&text=plants", "/api/v1/tasks?text=Some%20note&body=true",
+  "/api/v1/tasks?deferred=true", "/api/v1/tasks?available=false",
+  "/api/v1/tasks?available=true", "/api/v1/tasks?recurring=true",
+  "/api/v1/tasks?delegated=true&scope=all", "/api/v1/tasks?scope=delegated",
+  "/api/v1/tasks?scope=agent_ready", "/api/v1/tasks?scope=agent_ready&delegated=true",
+  "/api/v1/tasks?scope=delegated&delegated=false", "/api/v1/tasks?scope=delegated&state=DONE",
+  "/api/v1/tasks?scope=done&available=false", "/api/v1/tasks?unknown=true",
+  "/api/v1/tasks?body=1", "/api/v1/tasks?tag=%40desk", "/api/v1/tasks?tag=defer",
+  "/api/v1/tasks?context=@", "/api/v1/tasks?state=NOPE", "/api/v1/tasks?priority=Z",
+  "/api/v1/tasks?scope=nope", "/api/v1/tasks?scope=open&scope=all",
+  "/api/v1/tasks/#{FIX[:pr]}", "/api/v1/tasks/#{FIX[:pr]}?source=archive",
+  "/api/v1/tasks/#{FIX[:pr]}?source=both", "/api/v1/tasks/#{FIX[:plants]}",
+  "/api/v1/tasks/#{FIX[:travel]}", "/api/v1/tasks/#{FIX[:flight]}",
+  "/api/v1/tasks/bbbb0002", "/api/v1/tasks/deadbeef", "/api/v1/tasks/NOT-AN-ID",
+  "/api/v1/projects", "/api/v1/projects/#{FIX[:work]}", "/api/v1/projects/#{FIX[:inbox]}",
+  "/api/v1/projects/deadbeef",
+  "/api/v1/recurrence/explain?input=weekly",
+  "/api/v1/recurrence/explain?input=every%20monday&count=3",
+  "/api/v1/recurrence/explain?input=off",
+  "/api/v1/recurrence/explain?input=nonsense%20phrase",
+  "/api/v1/recurrence/explain?input=weekly&count=999",
+  "/api/v1/recurrence/explain?input=weekly&count=0",
+  "/api/v1/recurrence/explain?input=weekly&count=abc",
+  "/api/v1/recurrence/explain?input=%20", "/api/v1/recurrence/explain",
+  "/api/v1/history/undo", "/nope"
+].freeze
+
+def run_reads(comparison)
+  puts "reads"
+  ruby = Server.new("ruby-reads", [RUBY_BIN])
+  go = Server.new("go-reads", [GO_BIN])
+  READ_CASES.each do |path|
+    comparison.compare("GET #{path}", ruby.call("GET", path), go.call("GET", path))
+  end
+ensure
+  ruby&.stop
+  go&.stop
+end
+
+TRANSPORT_CASES = [
+  ["415 media type", "POST", "/api/v1/tasks", { raw: "{}", content_type: "text/plain" }],
+  ["400 malformed json", "POST", "/api/v1/tasks", { raw: "{" }],
+  ["400 non-object body", "POST", "/api/v1/tasks", { raw: "[]" }],
+  ["422 unknown create field", "POST", "/api/v1/tasks", { body: { title: "ok", unknown: true } }],
+  ["422 bad context", "POST", "/api/v1/tasks", { body: { title: "ok", contexts: ["desk"] } }],
+  ["422 missing title", "POST", "/api/v1/tasks", { body: { priority: "A" } }],
+  ["422 blank title", "POST", "/api/v1/tasks", { body: { title: "  " } }],
+  ["422 bad priority", "POST", "/api/v1/tasks", { body: { title: "x", priority: "Z" } }],
+  ["422 bad state", "POST", "/api/v1/tasks", { body: { title: "x", state: "NOPE" } }],
+  ["422 impossible date", "POST", "/api/v1/tasks", { body: { title: "x", scheduled: "2026-02-30" } }],
+  ["422 unparseable date", "POST", "/api/v1/tasks", { body: { title: "x", scheduled: "tomorrow" } }],
+  ["422 time without date", "POST", "/api/v1/tasks",
+   { body: { title: "x", deadline_time: { local: "09:00" } } }],
+  ["422 context in tags", "POST", "/api/v1/tasks", { body: { title: "x", tags: ["@nope"] } }],
+  ["422 defer in tags", "POST", "/api/v1/tasks", { body: { title: "x", tags: ["defer"] } }],
+  ["422 project and parent", "POST", "/api/v1/tasks",
+   { body: { title: "x", project: "Work", parent_id: FIX[:work] } }],
+  ["422 malformed parent id", "POST", "/api/v1/tasks", { body: { title: "x", parent_id: "nope" } }],
+  ["422 host context not boolean", "POST", "/api/v1/tasks",
+   { body: { title: "x", apply_host_context: "false" } }],
+  ["413 oversized create", "POST", "/api/v1/tasks", { raw: JSON.generate(title: "x" * 65_536) }],
+  ["403 forbidden origin", "POST", "/api/v1/tasks",
+   { body: { title: "blocked" }, headers: { "Origin" => "https://evil.example" } }],
+  ["400 disallowed host", "GET", "/healthz", { headers: { "Host" => "evil.example" } }],
+  ["400 forwarded header", "GET", "/healthz", { headers: { "X-Forwarded-Host" => "127.0.0.1" } }],
+  ["428 patch without if-match", "PATCH", "/api/v1/tasks/#{FIX[:pr]}", { body: { title: "x" } }],
+  ["422 malformed if-match", "PATCH", "/api/v1/tasks/#{FIX[:pr]}",
+   { body: { title: "x" }, headers: { "If-Match" => "notquoted" } }],
+  ["428 delete without if-match", "DELETE", "/api/v1/tasks/#{FIX[:pr]}", {}],
+  ["428 approve without if-match", "POST", "/api/v1/tasks/#{FIX[:pr]}/approve", {}],
+  ["400 delete with body", "DELETE", "/api/v1/tasks/#{FIX[:pr]}",
+   { raw: '{"a":1}', headers: { "If-Match" => '"v1.x.y.z"' } }],
+  ["415 delete with text body", "DELETE", "/api/v1/tasks/#{FIX[:pr]}",
+   { raw: "not json", content_type: "text/plain", headers: { "If-Match" => '"v1.x.y.z"' } }]
+].freeze
+
+def run_transport(comparison)
+  puts "transport"
+  ruby = Server.new("ruby-transport", [RUBY_BIN])
+  go = Server.new("go-transport", [GO_BIN])
+  TRANSPORT_CASES.each do |name, method, path, options|
+    comparison.compare(name, ruby.call(method, path, **options), go.call(method, path, **options))
+  end
+ensure
+  ruby&.stop
+  go&.stop
+end
+
+def run_writes(comparison)
+  puts "writes"
+  ruby = Server.new("ruby-writes", [RUBY_BIN], archive: nil)
+  go = Server.new("go-writes", [GO_BIN], archive: nil)
+
+  both = lambda do |name, method, path, **options|
+    comparison.compare(name, ruby.call(method, path, **options), go.call(method, path, **options))
+  end
+  # The precondition is read from RUBY and reused for both: the two servers
+  # agree on a task's revision over identical bytes, which is itself the
+  # assertion — a divergence here shows up as a 412 on the Go side.
+  tag = ->(id) { ruby.call("GET", "/api/v1/tasks/#{id}").fetch(:etag) }
+
+  both.call("create simple", "POST", "/api/v1/tasks", body: { title: "Fresh task" })
+  both.call("create rich", "POST", "/api/v1/tasks",
+            body: { title: "Rich task", priority: "B", tags: ["api"], contexts: ["@desk"],
+                    state: "NEXT", project: "Work", body: %w[one two] })
+  both.call("create under parent", "POST", "/api/v1/tasks",
+            body: { title: "Child task", parent_id: FIX[:work] })
+  both.call("create bad parent", "POST", "/api/v1/tasks",
+            body: { title: "Orphan", parent_id: "deadbeef" })
+  both.call("create with scheduled", "POST", "/api/v1/tasks",
+            body: { title: "Scheduled", scheduled: "2026-07-20" })
+  both.call("create with recurrence", "POST", "/api/v1/tasks",
+            body: { title: "Recurring", scheduled: "2026-07-20", recurrence: "weekly" })
+  both.call("create with deadline", "POST", "/api/v1/tasks",
+            body: { title: "Dated", deadline: "2026-07-20",
+                    deadline_time: { local: "17:00", timezone: "Europe/London", fold: 0 } })
+
+  pr = FIX[:pr]
+  baseline = tag.call(pr)
+  both.call("patch title and priority", "PATCH", "/api/v1/tasks/#{pr}",
+            body: { title: "Changed through HTTP", priority: "A" },
+            headers: { "If-Match" => baseline })
+  both.call("patch stale", "PATCH", "/api/v1/tasks/#{pr}",
+            body: { title: "Should lose" }, headers: { "If-Match" => baseline })
+  current = tag.call(pr)
+  both.call("patch no-op", "PATCH", "/api/v1/tasks/#{pr}",
+            body: { title: "Changed through HTTP" }, headers: { "If-Match" => current })
+  both.call("patch contexts tags body", "PATCH", "/api/v1/tasks/#{pr}",
+            body: { contexts: ["@home"], tags: ["changed"], body: ["line one", "line two"] },
+            headers: { "If-Match" => current })
+  [
+    ["patch deferred", { deferred: true }],
+    ["patch scheduled with time",
+     { scheduled: "2026-07-21",
+       scheduled_time: { local: "09:30", timezone: "America/New_York", fold: 0 } }],
+    ["patch date only keeps time", { scheduled: "2026-07-22" }],
+    ["patch clear time", { scheduled_time: nil }],
+    ["patch recurrence", { recurrence: "weekly" }],
+    ["patch lead", { lead: "3d" }],
+    ["patch lead off", { lead: nil }],
+    ["patch recurrence off", { recurrence: nil }],
+    ["patch clear scheduled", { scheduled: nil }],
+    ["patch state", { state: "TODO" }]
+  ].each do |name, body|
+    both.call(name, "PATCH", "/api/v1/tasks/#{pr}", body: body,
+                    headers: { "If-Match" => tag.call(pr) })
+  end
+
+  flight = tag.call(FIX[:flight])
+  [
+    ["patch bad recurrence", { recurrence: "every blorp" }],
+    ["patch bad lead", { lead: "3 blorps" }],
+    ["patch empty changeset", {}],
+    ["patch placement malformed", { placement: { parent_id: FIX[:work], after_id: FIX[:eval] } }],
+    ["patch placement and parent", { parent_id: FIX[:home], placement: { parent_id: FIX[:work] } }],
+    ["patch dst gap",
+     { deadline: "2026-03-08", deadline_time: { local: "02:30", timezone: "America/Los_Angeles" } }],
+    ["patch unknown zone", { deadline_time: { local: "09:00", timezone: "PST" } }],
+    ["patch derived field",
+     { deadline_time: { local: "09:00", instant: "2026-07-20T09:00:00Z" } }]
+  ].each do |name, body|
+    both.call(name, "PATCH", "/api/v1/tasks/#{FIX[:flight]}", body: body,
+                    headers: { "If-Match" => flight })
+  end
+  both.call("patch missing task", "PATCH", "/api/v1/tasks/deadbeef",
+            body: { title: "x" }, headers: { "If-Match" => flight })
+
+  both.call("placement move", "PATCH", "/api/v1/tasks/#{FIX[:plants]}",
+            body: { placement: { parent_id: FIX[:work] } },
+            headers: { "If-Match" => tag.call(FIX[:plants]) })
+  both.call("parent unnest", "PATCH", "/api/v1/tasks/bbbb0002",
+            body: { parent_id: nil }, headers: { "If-Match" => tag.call("bbbb0002") })
+  both.call("delete", "DELETE", "/api/v1/tasks/#{FIX[:garden]}",
+            headers: { "If-Match" => tag.call(FIX[:garden]) })
+  both.call("approve", "POST", "/api/v1/tasks/#{FIX[:garden]}/approve",
+            headers: { "If-Match" => tag.call(FIX[:garden]) })
+  both.call("delegate", "POST", "/api/v1/tasks/#{FIX[:garden]}/delegate",
+            body: { kind: "agent", mode: "refine" },
+            headers: { "If-Match" => tag.call(FIX[:garden]) })
+  both.call("project create", "POST", "/api/v1/projects", body: { title: "New project" })
+  both.call("project complete", "POST", "/api/v1/projects/#{FIX[:work]}/complete")
+
+  comparison.compare("store bytes", { body: ruby.bytes }, { body: go.bytes }, keys: [:body])
+ensure
+  ruby&.stop
+  go&.stop
+end
+
+unless File.executable?(GO_BIN)
+  abort "tasks-api (Go) not found at #{GO_BIN}\n" \
+        "build it with: (cd go && go build -o bin/tasks-api ./cmd/tasks-api)"
+end
+
+phases = ARGV.empty? ? %w[reads transport writes] : ARGV
+comparison = Comparison.new
+phases.each do |phase|
+  case phase
+  when "reads" then run_reads(comparison)
+  when "transport" then run_transport(comparison)
+  when "writes" then run_writes(comparison)
+  else abort "unknown phase: #{phase}"
+  end
+end
+
+total = comparison.matches + comparison.mismatches.length
+puts
+puts "#{comparison.matches}/#{total} identical; " \
+     "#{comparison.mismatches.length - comparison.unexpected.length} recorded refusal(s); " \
+     "#{comparison.unexpected.length} unexplained"
+exit(comparison.unexpected.empty? ? 0 : 1)
