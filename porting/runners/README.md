@@ -9,15 +9,16 @@ copy under a pinned environment, and emits one observation conforming to
 porting/runners/
   README.md            this file — the contract, language-neutral
   cases/               case lists (phase1.jsonl is the Phase 1 gate's input)
-  ruby/run             the Ruby oracle's runner
+  lib/harness.rb       the protocol, implemented once (see § One harness, two targets)
+  ruby/run             the Ruby oracle's runner   — a Target over the harness
   ruby/probe           the Ruby oracle's probe (see § The probe)
-  go/…                 the Go port's runner, later phase, same contract
+  go/run               the Go port's runner       — a Target over the harness
+  go/probe             the Go port's probe: a shim onto a compiled Go binary
+  go/build             builds go/bin/tasks and go/bin/tasks-probe
 ```
 
-This file is the specification. `ruby/run` is one implementation of it; the Go
-runner must be implementable from this document alone, without reading Ruby.
-Anything that cannot be stated here without naming a language does not belong in
-the protocol.
+This file is the specification. Anything that cannot be stated here without
+naming a language does not belong in the protocol.
 
 Quick start:
 
@@ -25,7 +26,41 @@ Quick start:
 $ porting/runners/ruby/run porting/runners/cases/phase1.jsonl        # JSONL on stdout
 $ porting/runners/ruby/run --out evidence/ruby porting/runners/cases/phase1.jsonl
 $ porting/runners/ruby/run --dry-run porting/runners/cases/phase1.jsonl
+$ porting/runners/go/run   --out /tmp/go porting/runners/cases/phase1.jsonl
 ```
+
+### One harness, two targets
+
+The two runners are the same program. `lib/harness.rb` implements this document
+— the case list, the copy protocol, the pinned environment, the tree walk, the
+observation builder — and each runner supplies a `Target`: a name, the argv
+prefix that runs the CLI, the argv prefix that runs the probe, and an optional
+build step that runs once in the *operator's* environment (the pinned `PATH` an
+invocation gets has no toolchain on it, by design).
+
+That is a deliberate reading of the protocol, not a shortcut, and the reason is
+in the comparator. Every runner-side value in an observation — the pinned
+environment map, `fixture.root_sha256`, the file rows, the deltas,
+`sha256_normalized` — is compared field-for-field and classified
+**`harness_error`** when it differs (`compare/lib/dimensions/cli.rb`
+§ `same_case?`, `files.rb` § `tree(… "before")`). A second, independently
+written harness therefore cannot produce a signal about the port until it has
+first reproduced the first harness byte for byte; every base64, sort-order or
+digest divergence it has on the way there arrives dressed as a port defect.
+Sharing the harness makes every remaining difference an implementation
+difference, which is the only kind the gate is about.
+
+What is **not** shared is everything the implementation itself answers. The
+probe is per-implementation by construction (§ "Why revision tokens come from a
+probe"), so `revisions.store`, `revisions.resources`, `invocation.pins` and the
+resolved `paths` behind `files[].role` all come from the port's own code, and a
+Go divergence in any of them is a real, gate-failing mismatch. The harness never
+derives them.
+
+If the harness itself is ever suspected, the check is the one that was run when
+it was extracted: re-run the Ruby corpus and diff against the committed
+baseline. It is byte-identical apart from `implementation.version`, which is
+provenance and is never compared.
 
 Exit status: `0` every case observed and every runner invariant held; `1` a case
 violated a runner invariant (see [Invariants](#invariants)); `2` usage or
