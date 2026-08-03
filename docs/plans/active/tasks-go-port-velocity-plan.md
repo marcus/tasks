@@ -1,7 +1,8 @@
 # Tasks Ruby-to-Go port: velocity plan
 
-- **Status:** accepted and controlling
+- **Status:** accepted and controlling — Wave 0 complete, Wave 1 ready to start
 - **Accepted:** 2026-08-03
+- **Last progress:** 2026-08-03 (Wave 0)
 - **Scope:** finish the macOS Go application, prove it against copied real data,
   and cut over safely
 - **Supersedes:**
@@ -111,25 +112,77 @@ Go boundaries. The implementer fixes the findings; the reviewer re-checks those
 findings. Do not create separate oracle-capture, source-fidelity, Go-idiom, and
 approval reviews for the same packet.
 
-## Wave 0: stabilize the base
-
-Before further fan-out:
-
-- independently review the current `origin/main..main` delta;
-- checkpoint and publish the eligible main branch;
-- salvage useful code and tests from `port/check-task-fields`;
-- salvage useful code and tests from `port/store-snapshot-items`, choosing
-  pragmatic modern-date behavior instead of spending more time on irrelevant
-  pre-1582 Ruby quirks;
-- compare `port/config-resolution` with current main and take only tests or
-  behavior that the newer implementation lacks;
-- retire obsolete recovery branches and redundant worktrees after inspection;
-  and
-- make the smallest dispatcher or package-boundary adjustment needed to let
-  agents work without editing the same integration files.
+## Wave 0: stabilize the base — COMPLETE 2026-08-03
 
 Do not merge stale branches wholesale. They were built against older versions
 of main and contain large evidence bundles mixed with useful Go work.
+
+What was done:
+
+- **Reviewed and published the delta.** 131 commits were unpublished. The
+  review checked for real store data, secrets, and out-of-tree paths and found
+  none — every `tasks.jsonl` in the delta is a synthetic porting fixture.
+  `main` is now level with `origin/main`.
+- **`port/check-task-fields`: superseded, invariants salvaged.** Its `task.go`
+  was overtaken by main's `validate.go`, which covers every rule it ported plus
+  lead, temporal, and delegation, and validates recur through the shared
+  `recur` package instead of a private copy. What main lacked was the
+  vocabularies characterized as ranges rather than as the few values the
+  fixture oracles hold, so four property tests came across against main's API
+  (`go/internal/check/validate_test.go`).
+- **`port/config-resolution`: retested, not merged.** Its tests targeted a
+  `Resolve(Options)` signature this package no longer has. The precedence
+  ladder is now tested against the current API
+  (`go/internal/config/config_test.go`), which took `config` from zero tests.
+- **`port/store-snapshot-items`: declined.** Its `isodate.go` reimplements
+  `Date.iso8601`'s full grammar including the Julian calendar before 1582 —
+  roughly 450 lines for dates no store can contain, and exactly the work this
+  plan says not to do. Main's strict `YYYY-MM-DD` is the pragmatic behavior.
+  Its read-model findings are carried to Wave 2 below.
+- **Retired the stale branches and worktrees.** All six branches were tagged
+  `retired/<name>` before deletion, so nothing is unrecoverable. The two
+  `tasks-port-slots*` worktrees and the merged `tasks-corpus` worktree are
+  gone; `/Users/marcus/code/tasks` on `main` is the only checkout.
+- **Removed the dispatcher collision point.** `go/cmd/tasks/registry.go`
+  replaces the switch in `main.go`: a command file registers its own canonical
+  name, aliases, and handler from an `init`, so adding a command no longer
+  edits an integration file. `canonicalCommands` is the full Ruby command set,
+  so registering a command removes it from the unported-refusal list by
+  construction rather than by care.
+
+Gates at the end of Wave 0: `go build`, `go vet`, `gofmt -l`, and
+`go test ./...` clean; `porting/conform` at 33/33 GATE PASS.
+
+### Findings carried forward
+
+Two things surfaced during salvage that later waves own.
+
+**A defect fixed in passing.** `config.parseFile` read
+`determinism.OSEnv()` instead of the caller's `env`, so a `~` or relative path
+in the config file expanded against the process environment and ignored any
+harness pin. Ruby expands these against `ENV`, so the two disagreed exactly
+when a sandbox set `HOME` — which is also why `config` could not be tested in
+isolation. Fixed by threading `env` through.
+
+**A decision for Marcus, not yet made.** Ruby's `Time.iso8601` accepts an
+`updated` stamp naming no real instant — `2026-02-30`, `24:00:00`, a leap
+second — where Go's `time.Parse` refuses all three. Neither implementation can
+write one, since both format from a real clock, so the difference is reachable
+only by hand edit. It is pinned in a named Go test
+(`TestUpdateStampRejectsInstantsRubyAccepts`) rather than accepted into
+`porting/intentional-differences.md`, because that document reserves accepting
+a difference to Marcus. **Decide before cutover:** the stamp also drives
+last-write-wins ordering, so if a divergent stamp ever did exist, the two
+implementations would order it differently.
+
+**Deferred to the Wave 2 store owner.** `store.Snapshot` documents itself as an
+immutable view but exposes `Items` and `ArchiveItems` as public slices, and the
+`Item` values it hands out share tag backing arrays with the snapshot — so a
+caller can corrupt a snapshot it only meant to read. `port/store-snapshot-items`
+solved this with unexported fields and copying accessors, which is the right
+shape. Fixing it touches 14 non-test call sites across `internal/store` and
+`cmd/tasks`, both reserved files, so it belongs to the store owner rather than
+to Wave 0.
 
 ## Wave 1: finish independent core seams
 
@@ -155,6 +208,12 @@ Ruby sources include `format.rb`, `check.rb`, `config.rb`, `determinism.rb`,
 `atomic.rb`, update stamps, and delegation record rules. Much of the Go code
 already exists; port missing tests, remove probe-only gaps, and make these
 packages dependable foundations for the write wave.
+
+Wave 0 left this packet a head start: `check` has its vocabulary properties and
+`config` has its path-precedence ladder. What `config` still needs from
+`test/test_config.rb` is urgent days, max depth, timezone resolution and the
+fallback warning, date order, theme and colors, mouse, time format, and host
+contexts. `determinism` and `updatestamp` remain untested.
 
 Integrate the three packets, run the full Go suite, and complete one independent
 review of the integrated wave.
