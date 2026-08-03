@@ -91,31 +91,26 @@ func (s *surfaceContext) writeStore() *store.Store {
 	if clock := determinism.Clock(env); clock != nil {
 		options.Now = clock
 	}
-	if sequence, err := determinism.IDSource(env); err == nil && sequence != nil {
+	// SharedIDSource, not IDSource: every writeStore in one invocation must draw
+	// from ONE sequence. A fresh mint per store restarts the pinned sequence at
+	// its first token, so a second store would re-mint an id the first already
+	// used and the collision loop would silently renumber it.
+	if sequence, err := determinism.SharedIDSource(env); err == nil && sequence != nil {
 		options.IDSource = sequence.Call
 	}
 	return store.NewWriter(s.paths.Org, s.paths.Archive, options)
 }
 
-// idSequence and delegationSequence are process-wide because ONE invocation can
-// perform several mutations and they must draw from one sequence rather than
-// each restarting it — the same reason Determinism memoizes them in Ruby.
-var delegationSequence *determinism.IDSequence
-var delegationSequenceReady bool
-
 // mintDelegationKey draws sixteen hex characters from the pinned mint when
 // there is one. The key is persisted into journal index.json, so it is
 // observable in the bytes a conformance run digests: two runs of the same
 // command agree only because this draw is reproducible.
+//
+// The memoization this adapter used to keep in its own package-level pair now
+// lives in determinism, where Ruby keeps it and where the id mint needs it too.
 func (s *surfaceContext) mintDelegationKey() string {
-	if !delegationSequenceReady {
-		delegationSequenceReady = true
-		if sequence, err := determinism.DelegationKeySource(env); err == nil {
-			delegationSequence = sequence
-		}
-	}
-	if delegationSequence != nil {
-		return delegationSequence.Call()
+	if sequence, err := determinism.SharedDelegationKeySource(env); err == nil && sequence != nil {
+		return sequence.Call()
 	}
 	return randomHex(8)
 }
