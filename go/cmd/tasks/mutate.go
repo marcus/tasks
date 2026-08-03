@@ -88,7 +88,18 @@ func mutationResultFailed(result store.MutationResult, args []string, action, su
 // re-reading the store, so the report describes the bytes that were written
 // and not whatever a concurrent writer left behind afterwards.
 func (s *surfaceContext) reportTouched(result store.MutationResult, ids []string, asJSON bool) int {
-	snapshot := result.ReadSnapshot
+	return s.reportTouchedSnapshot(result.ReadSnapshot, ids, asJSON, nil)
+}
+
+// reportTouchedSnapshot is the same report over an explicitly supplied read.
+//
+// Two callers need it. `recur` adds a `next` member to the structured payload —
+// the occurrence the schedule now names, which is the whole answer to "what did
+// that do" — and its no-op clearing path has no mutation result at all, because
+// it deliberately wrote nothing.
+func (s *surfaceContext) reportTouchedSnapshot(snapshot *store.Snapshot, ids []string, asJSON bool,
+	extra func(*jsonout.Writer)) int {
+
 	if snapshot == nil {
 		return abort("task store unavailable")
 	}
@@ -123,6 +134,9 @@ func (s *surfaceContext) reportTouched(result store.MutationResult, ids []string
 		writeItemJSON(w, queries, item)
 	}
 	w.EndArray()
+	if extra != nil {
+		extra(w)
+	}
 	w.EndObject()
 	if err := w.Err(); err != nil {
 		return abort(err.Error())

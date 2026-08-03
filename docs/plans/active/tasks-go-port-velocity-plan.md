@@ -1,9 +1,9 @@
 # Tasks Ruby-to-Go port: velocity plan
 
-- **Status:** accepted and controlling — Waves 0, 1 and 2 complete, Wave 3
-  ready to start
+- **Status:** accepted and controlling — Waves 0 through 3 complete, Wave 4
+  (TUI) and a small cleanup packet remain
 - **Accepted:** 2026-08-03
-- **Last progress:** 2026-08-03 (Wave 2)
+- **Last progress:** 2026-08-03 (Wave 3)
 - **Scope:** finish the macOS Go application, prove it against copied real data,
   and cut over safely
 - **Supersedes:**
@@ -367,36 +367,48 @@ The seven partially-matching commands are unchanged from the Wave 2 baseline:
 `claim` 4/6, `undo` 2/5 — still mostly `--dry-run`, which no ported command
 implements.
 
-### Wave 3 progress — store history and lifecycle packet
+### Corpus after Wave 3 — 393 of 482
 
-Real undo landed. `store.PlanHistoryStep` is now `store.HistoryStep`: it
-restores, gates the restored file against today's invariants, commits the
-cursor, and rolls both halves back when anything fails. `journal.Rollback` is
-the Go counterpart of Ruby's `plan[:rollback]` lambda.
+Wave 3 moved the number by **172**, from 221 to 393, and took fully-matching
+commands from 13 to **36 of 50**. This is the wave where the port became a
+usable CLI rather than a read-only one.
 
-Commands: `undo`, `redo`, `delete`, `archive` (`x`), `repair` (`fix`),
-`approve`, `reject`. Store operations: `DeleteTask`, `ArchiveSweep`,
-`ArchivePreviewFor`, `Repair`, `DecideProposal` — the last two of which the
-merged application layer picks up by type assertion with no edit there.
+The prediction in the Wave 2 section held exactly: the field-patch commands
+were cheap and worth doing first. The CLI mutation packet alone accounted for
+131 of the gain; history and lifecycle supplied the rest by making `undo`,
+`redo`, `delete`, `archive`, `repair`, `approve` and `reject` reachable.
 
-**Fault injection needed a seam.** `atomic.SetWriteHook` (and `store`'s
-`removeFile`) are the Go answer to `Tasks::Atomic.stub(:write, …)` and
-`File.stub(:delete, …)`. Without them the `with_atomic_write_denied` family —
-the whole rollback story — is untestable, because a real EACCES cannot be
-arranged for one path in a directory the test also has to write.
+**Fully matching (36):** `activate`, `agenda`, `approve`, `archive`, `cancel`,
+`check`, `config`, `defer`, `delete`, `done`, `due`, `help`, `inbox`, `lead`,
+`links`, `list`, `merge-driver`, `next`, `note`, `open`, `priority`,
+`projects`, `quadrants`, `recur`, `redo`, `reject`, `repair`, `retitle`,
+`schedule`, `show`, `someday`, `state`, `tag`, `undate`, `undo`.
 
-**One Ruby fix.** `archive_plan` stamped moved records with `Date.today`, which
-ignores both the harness clock pin and the configured time zone while every
-other date the store writes honours them. `archive_swept!` and
-`archive_preview` now take `today:` (defaulting to `Date.today`, so no other
-caller changes) and `cmd_archive` passes `today_local`.
+**Partial (4):** `capture` 8/12, `propose` 6/8 — every remaining case passes
+`--due`/`--scheduled`/`--recur`/`--lead`/`--under`, which `store.CreateCommand`
+cannot persist, so both the write and its preview refuse rather than half-work.
+`delegate` 5/7 and `claim` 4/6 — delegation output, not previews: neither
+command has a `--dry-run` in `bin/tasks` at all.
 
-**Known harness defect, not caused by this packet.** The 482-case corpus cannot
-complete: `porting/runners/lib/harness.rb:727` (`journal_key`) raises
-`TypeError` on a case whose fixture has no org path, so the Ruby runner aborts
-part-way and the comparator reports the remainder as unpaired. The curated
-`porting/conform` gate is unaffected and stays 33/33 GATE PASS. Whoever owns
-the corpus next should fix `journal_key` before quoting a corpus number.
+**Zero (11), and what each needs:**
+
+- `move` — `location`/`TaskPlacement`, the largest remaining store gap;
+- the five `project` subcommands — the project lifecycle store calls;
+- `undelegate`, `release`, `workref` — store verbs the application layer
+  already declares optional interfaces for;
+- `id` — trivial, unclaimed;
+- `-p` — the prompt surface and its provider adapters, deliberately deferred.
+
+**Two corrections to the Wave 3 framing**, both found by reading `bin/tasks`
+rather than assuming: `delegate` and `claim` accept no `--dry-run`, and
+previewing a dated create is not "the cheap half" of a command whose write
+refuses — it is the half-work this port forbids.
+
+**A harness claim that did not reproduce.** One Wave 3 packet reported the
+corpus runner aborting on `journal_key` and only 163 of 482 cases pairing. On
+`main` the corpus pairs all 482 with zero unpaired, before and after that
+packet merged. The note it added to this plan has been removed; no harness fix
+is needed.
 
 ## Wave 4: rebuild the TUI
 

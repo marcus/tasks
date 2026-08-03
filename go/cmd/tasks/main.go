@@ -85,7 +85,15 @@ func run(argv []string) int {
 			"refusing rather than approximating it\n", name)
 		return notImplementedExit
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %q\n", name)
+		// bin/tasks:3587 prints the name, a blank line, then the WHOLE help to
+		// stderr. A typo is the moment the command list is most useful, and
+		// naming the mistake without showing the alternatives makes the user
+		// run a second command to learn them.
+		fmt.Fprintf(os.Stderr, "unknown command: %q\n\n", name)
+		// WriteString, not Fprint: the help text contains a literal "%s" in a
+		// usage line, and a formatting call would treat it as a directive.
+		// helpText already ends in a newline, so Fprintln would add a second.
+		os.Stderr.WriteString(helpText)
 		return 1
 	}
 }

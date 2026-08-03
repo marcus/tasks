@@ -507,6 +507,27 @@ One `##` section per accepted difference, in the order they were accepted:
   run compares with normalization rather than with pins for exactly this reason.
 - **Conformance disposition:** none; `porting/conform` drives the CLI, which
   honours the pins on both sides.
+## recur-count-preview-clock-pinned — a Ruby TEST fixed, not a behavior difference — 2026-08-03
+
+- **Slices:** none (Wave 3, CLI mutation packet)
+- **Ruby behavior:** unchanged. `tasks recur <ref> --count N` projects a
+  calendar schedule forward from the stamp, and a calendar schedule catches up
+  to the next match after TODAY — so the projection legitimately depends on the
+  wall clock.
+- **What changed:** `test/test_cli_mutations.rb#test_cli_recur_preview_honors_count_and_json`
+  asserted `["2026-08-01", "2026-08-03"]` against the real clock. That is only
+  the right answer while today is on or before 2026-08-02; the test passed in
+  July and failed in August. Wave 1 recorded it as a known pre-existing failure
+  and left it to this packet. It now pins `TASKS_PIN_NOW=2026-08-01T12:00:00Z`
+  and `TZ=UTC`, which states the anchor the expectation was always written
+  against.
+- **Who can see it:** nobody. No product code changed; only the test's clock is
+  now stated rather than assumed.
+- **Why accepted:** a test that reports the date instead of the behavior is a
+  defect in the test. Decided by the Wave 3 CLI mutation packet agent, under the
+  velocity plan's explicit invitation to pin its clock.
+- **Evidence:** `ruby test/test_cli_mutations.rb` — 293 runs, 0 failures.
+- **Conformance disposition:** none needed; the corpus pins its own clock.
 
 ## Notes on the record
 
