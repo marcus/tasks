@@ -23,6 +23,7 @@ implementation is the thing being judged against it.
 | `fixtures/{valid,compat,malformed,adversarial}/` | sanitized store copies. Agents operate on copies here and never on a live store | td-a1d16a |
 | `runners/` | per-implementation drivers that execute an invocation and emit one observation | td-a23bad (ruby) |
 | `compare/` | the comparator: observation vs observation, plus the Ruby baseline | td-34d915 |
+| `conform` | the whole loop in one invocation: both runners, the comparator, the verdict. Its exit status *is* the comparator's, so it is a drop-in gate | the write-path slice |
 | `evidence/<slice-id>/` | oracle captures, conformance reports, review findings. td logs point *at* these; evidence never lives only inside td | every slice |
 | `logs/` | tick transcripts and `limit-<harness>.json` (gitignored) | `loop.sh` |
 | `STOP` | touch it to halt the fleet at the next tick boundary (gitignored) | you |
@@ -56,6 +57,8 @@ implementation is the thing being judged against it.
 ## Getting started
 
 ```sh
+porting/conform                      # the conformance verdict, phase1, both sides
+porting/conform --quick              # the eight-case smoke subset, ~4s
 porting/loop.sh --once --dry-run     # preflight only; touches no harness
 porting/test-loop-limits.sh          # the one unit-tested part of loop.sh
 porting/manifest-issues validate     # manifest is self-consistent and resolves
