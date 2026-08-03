@@ -1,0 +1,307 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# lifecycle-diff — the differential harness for Wave 3's store lifecycle packet:
+# undo, redo, delete, archive, repair, approve and reject.
+#
+# It runs the same argv against `bin/tasks` and against the built Go binary, in
+# two byte-identical sandboxes seeded from a fixture, and diffs everything an
+# observer can see: stdout, stderr, exit status, and the bytes of tasks.jsonl,
+# archive.jsonl and the journal's index.json.
+#
+# It also runs the two CROSS-LANGUAGE directions the cutover depends on, which
+# no single-implementation test can reach:
+#
+#   * Ruby writes, Go undoes — rollback from data the old binary produced;
+#   * Go writes, Ruby undoes — rollback from data the NEW binary produced,
+#     which is the rehearsal the cutover plan requires before Ruby is retired.
+#
+# Usage:  porting/compare/lifecycle-diff [--verbose]
+
+require "digest"
+require "fileutils"
+require "json"
+require "open3"
+require "tmpdir"
+
+ROOT = File.expand_path("../..", __dir__)
+RUBY_BIN = File.join(ROOT, "bin", "tasks")
+GO_BIN = File.join(ROOT, "go", "bin", "tasks")
+FIXTURES = File.join(ROOT, "porting", "fixtures")
+
+VERBOSE = ARGV.include?("--verbose")
+
+PINS = {
+  "TASKS_PIN_NOW" => "2026-03-14T15:09:26Z",
+  "TASKS_PIN_IDS" => "dddd0001,dddd0002,dddd0003,dddd0004,dddd0005,dddd0006",
+  "TASKS_PIN_COALESCE_SCOPE" => "pinned-scope",
+  "TASKS_PIN_DELEGATION_KEYS" => "eeee0001eeee0001,eeee0002eeee0002",
+  "TASKS_DEVICE" => "fixture",
+  "TASKS_TIMEZONE" => "Etc/UTC",
+}.freeze
+
+def sandbox(dir, org_text, archive_text = nil)
+  FileUtils.mkdir_p(dir)
+  File.write(File.join(dir, "tasks.jsonl"), org_text)
+  File.write(File.join(dir, "archive.jsonl"), archive_text) if archive_text
+  dir
+end
+
+def env_for(dir)
+  PINS.merge(
+    "TASKS_FILE" => File.join(dir, "tasks.jsonl"),
+    "TASKS_ARCHIVE" => File.join(dir, "archive.jsonl"),
+    "XDG_STATE_HOME" => File.join(dir, "state"),
+    "XDG_CONFIG_HOME" => File.join(dir, "config"),
+    "NO_COLOR" => "1"
+  )
+end
+
+def run(binary, dir, argv)
+  command = binary == :ruby ? ["ruby", RUBY_BIN] : [GO_BIN]
+  out, err, status = Open3.capture3(env_for(dir), *command, *argv)
+  { stdout: out.force_encoding("UTF-8"), stderr: err.force_encoding("UTF-8"),
+    status: status.exitstatus }
+end
+
+# Everything an observer can see afterwards. The journal index is included
+# because undo's whole correctness is "where does the cursor point now".
+def observe(dir)
+  state = {}
+  %w[tasks.jsonl archive.jsonl].each do |name|
+    path = File.join(dir, name)
+    state[name] = File.exist?(path) ? File.read(path, encoding: "UTF-8") : nil
+  end
+  index = Dir.glob(File.join(dir, "state", "tasks", "journal", "*", "index.json")).first
+  if index
+    data = JSON.parse(File.read(index))
+    # The journal key hashes the org path, which differs per sandbox by
+    # construction, so the identity is normalized away and the SHAPE is compared.
+    state["journal.cursor"] = data["cursor"]
+    state["journal.labels"] = data["states"].map { |s| s["label"] }
+    state["journal.repair"] = data["states"].map { |s| s["repair"] }
+  else
+    state["journal"] = nil
+  end
+  state
+end
+
+$cases = 0
+$failures = []
+
+# One scenario: a seed, then a sequence of argv runs against both binaries.
+# Every step is compared, not only the last, so a divergence is attributed to
+# the command that caused it.
+def scenario(name, org:, archive: nil, steps:)
+  $cases += 1
+  Dir.mktmpdir do |root|
+    ruby_dir = sandbox(File.join(root, "ruby"), org, archive)
+    go_dir = sandbox(File.join(root, "go"), org, archive)
+
+    steps.each_with_index do |argv, index|
+      ruby = run(:ruby, ruby_dir, argv)
+      go = run(:go, go_dir, argv)
+      label = "#{name} [#{index}] #{argv.join(" ")}"
+
+      %i[stdout stderr status].each do |field|
+        next if ruby[field] == go[field]
+
+        $failures << "#{label}\n  #{field}:\n    ruby: #{ruby[field].inspect}\n    go:   #{go[field].inspect}"
+      end
+      ruby_state = observe(ruby_dir)
+      go_state = observe(go_dir)
+      ruby_state.each_key do |key|
+        next if ruby_state[key] == go_state[key]
+
+        $failures << "#{label}\n  #{key}:\n    ruby: #{ruby_state[key].inspect}\n    go:   #{go_state[key].inspect}"
+      end
+      warn "  ok #{label}" if VERBOSE && $failures.empty?
+    end
+  end
+end
+
+# A cross-language scenario: one binary writes, the OTHER undoes, in ONE
+# sandbox. There is nothing to diff against — the assertion is that the second
+# binary can read and revert what the first wrote, and that the file comes back
+# to the bytes it started from.
+def cross(name, org:, write_with:, write_steps:, undo_with:, undo_steps:)
+  $cases += 1
+  Dir.mktmpdir do |root|
+    dir = sandbox(File.join(root, "shared"), org)
+    before = File.read(File.join(dir, "tasks.jsonl"), encoding: "UTF-8")
+
+    write_steps.each do |argv|
+      result = run(write_with, dir, argv)
+      unless result[:status].zero?
+        $failures << "#{name}: #{write_with} #{argv.join(" ")} failed: #{result[:stderr]}"
+        return
+      end
+    end
+    after_write = File.read(File.join(dir, "tasks.jsonl"), encoding: "UTF-8")
+    if after_write == before
+      $failures << "#{name}: #{write_with} wrote nothing, so there is nothing to undo"
+      return
+    end
+
+    undo_steps.each do |argv|
+      result = run(undo_with, dir, argv)
+      unless result[:status].zero?
+        $failures << "#{name}: #{undo_with} #{argv.join(" ")} refused: #{result[:stderr]}"
+        return
+      end
+    end
+    restored = File.read(File.join(dir, "tasks.jsonl"), encoding: "UTF-8")
+    if restored != before
+      $failures << "#{name}: #{undo_with} did not restore the original bytes\n" \
+                   "  before: #{before.inspect}\n  after:  #{restored.inspect}"
+    end
+    warn "  ok #{name}" if VERBOSE
+  end
+end
+
+SMALL = File.read(File.join(FIXTURES, "valid", "small-gtd", "store", "tasks.jsonl"), encoding: "UTF-8")
+
+MALFORMED_MANY = <<~JSONL
+  {"type":"meta","version":2}
+  {"type":"section","id":"1e000001","title":"Next Actions"}
+  {"type":"task","parent":"1e000001","state":"NEXT","title":"First hand-appended task with no id"}
+  {"type":"task","parent":"1e000001","state":"TODO","title":"Second hand-appended task with no id"}
+  {"type":"task","id":"1e000002","parent":"1e000001","state":"TODO","title":"Renew the domain registration"}
+  {"type":"task","parent":"1e000001","state":"TODO","title":"Third hand-appended task with no id"}
+JSONL
+
+TEMPORAL_KEYS = <<~JSONL
+  {"type":"meta","version":2}
+  {"type":"section","id":"1e000001","title":"Next Actions"}
+  {"type":"task","id":"a1000001","parent":"1e000001","state":"TODO","title":"Start time carrying an unknown nested key","scheduled":"2026-06-16","scheduled_time":{"local":"08:30","timezone":"Europe/London","precision":"minute"},"updated":"2026-01-02T03:04:05Z#fixture"}
+  {"type":"task","id":"a1000002","parent":"1e000001","state":"TODO","title":"Due time carrying an unknown nested key","deadline":"2026-06-18","deadline_time":{"local":"17:00","calendar_uid":"abc"},"updated":"2026-01-03T03:04:05Z#fixture"}
+JSONL
+
+BLOCKED_ARCHIVE = <<~JSONL
+  {"type":"meta","version":2}
+  {"type":"section","id":"accc0001","title":"Projects"}
+  {"type":"task","id":"accc0002","parent":"accc0001","state":"DONE","title":"Closed project","closed":"2026-07-01"}
+  {"type":"task","id":"accc0003","parent":"accc0002","state":"NEXT","title":"Still open under it"}
+JSONL
+
+PROPOSALS = <<~JSONL
+  {"type":"meta","version":2}
+  {"type":"section","id":"ccdd0001","title":"Inbox"}
+  {"type":"task","id":"ccdd0002","parent":"ccdd0001","state":"PROPOSED","title":"Parent proposal"}
+  {"type":"task","id":"ccdd0003","parent":"ccdd0002","state":"PROPOSED","title":"Child proposal"}
+  {"type":"task","id":"ccdd0004","parent":"ccdd0001","state":"TODO","title":"Accepted work"}
+JSONL
+
+V1_STORE = <<~JSONL
+  {"type":"meta","version":1}
+  {"type":"section","id":"1e000001","title":"Next Actions"}
+JSONL
+
+FUTURE_STORE = <<~JSONL
+  {"type":"meta","version":99}
+  {"type":"section","id":"1e000001","title":"Next Actions"}
+JSONL
+
+# -- undo / redo ----------------------------------------------------------------
+
+scenario "undo-empty-history", org: SMALL, steps: [%w[undo], %w[undo --json], %w[redo]]
+scenario "undo-after-an-edit", org: SMALL,
+         steps: [%w[done Draft], %w[undo], %w[redo], %w[undo --json], %w[redo --json]]
+scenario "undo-exhausts-then-refuses", org: SMALL,
+         steps: [%w[done Draft], %w[undo], %w[undo], %w[redo], %w[redo]]
+scenario "undo-usage-errors", org: SMALL,
+         steps: [%w[undo extra], %w[redo extra], %w[undo --nope]]
+scenario "undo-unsupported-schema", org: V1_STORE, steps: [%w[undo], %w[undo --json], %w[redo]]
+
+# -- delete ---------------------------------------------------------------------
+
+scenario "delete-usage", org: SMALL, steps: [%w[delete], ["delete", "   "]]
+scenario "delete-no-match", org: SMALL, steps: [%w[delete nothing-matches-this]]
+scenario "delete-a-leaf", org: SMALL,
+         steps: [["delete", "Draft"], %w[undo]]
+scenario "delete-dry-run", org: SMALL, steps: [["delete", "Draft", "--dry-run"]]
+scenario "delete-json", org: SMALL, steps: [["delete", "Draft", "--json"]]
+scenario "delete-invalid-store", org: MALFORMED_MANY,
+         steps: [["delete", "Renew the domain"]]
+
+# -- archive --------------------------------------------------------------------
+
+scenario "archive-sweep", org: SMALL, steps: [%w[archive], %w[archive], %w[undo], %w[redo]]
+scenario "archive-json", org: SMALL, steps: [%w[archive --json], %w[archive --json]]
+scenario "archive-usage", org: SMALL, steps: [%w[archive extra]]
+scenario "archive-blocked", org: BLOCKED_ARCHIVE, steps: [%w[archive], %w[archive --json]]
+scenario "archive-unsupported-schema", org: FUTURE_STORE, steps: [%w[archive], %w[archive --json]]
+
+# -- repair ---------------------------------------------------------------------
+
+scenario "repair-many-missing-ids", org: MALFORMED_MANY,
+         steps: [%w[repair --dry-run], %w[repair --dry-run --json], %w[repair], %w[check]]
+scenario "repair-temporal-keys", org: TEMPORAL_KEYS,
+         steps: [%w[repair --dry-run --json], %w[repair], %w[check], %w[undo]]
+scenario "repair-clean-store", org: SMALL, steps: [%w[repair], %w[repair --json]]
+scenario "repair-unparseable-line", org: "#{MALFORMED_MANY}not json at all\n",
+         steps: [%w[repair], %w[repair --json]]
+scenario "repair-unsupported-schema", org: FUTURE_STORE, steps: [%w[repair], %w[repair --json]]
+scenario "repair-usage", org: SMALL, steps: [%w[repair extra], %w[repair --nope]]
+
+# -- proposals -------------------------------------------------------------------
+
+scenario "approve-a-leaf-proposal", org: PROPOSALS,
+         steps: [["approve", "Child proposal"], %w[undo]]
+scenario "approve-refuses-undecided-descendants", org: PROPOSALS,
+         steps: [["approve", "Parent proposal"]]
+scenario "reject-with-notes", org: PROPOSALS,
+         steps: [["reject", "Child proposal", "--note", "out of scope", "--note", "revisit in Q3"],
+                 %w[undo]]
+scenario "decide-a-non-proposal", org: PROPOSALS, steps: [["approve", "Accepted work"]]
+scenario "decide-usage", org: PROPOSALS, steps: [%w[approve], %w[reject]]
+
+# -- cross-language rollback ------------------------------------------------------
+
+cross "ruby-writes-go-undoes-a-state-change", org: SMALL,
+      write_with: :ruby, write_steps: [%w[done Draft]],
+      undo_with: :go, undo_steps: [%w[undo]]
+cross "ruby-writes-go-undoes-a-capture", org: SMALL,
+      write_with: :ruby, write_steps: [["capture", "a task the go binary must revert"]],
+      undo_with: :go, undo_steps: [%w[undo]]
+cross "ruby-sweeps-go-undoes-the-archive", org: SMALL,
+      write_with: :ruby, write_steps: [%w[archive]],
+      undo_with: :go, undo_steps: [%w[undo]]
+cross "go-writes-ruby-undoes-a-state-change", org: SMALL,
+      write_with: :go, write_steps: [%w[done Draft]],
+      undo_with: :ruby, undo_steps: [%w[undo]]
+cross "go-writes-ruby-undoes-a-capture", org: SMALL,
+      write_with: :go, write_steps: [["capture", "a task the ruby binary must revert"]],
+      undo_with: :ruby, undo_steps: [%w[undo]]
+cross "go-sweeps-ruby-undoes-the-archive", org: SMALL,
+      write_with: :go, write_steps: [%w[archive]],
+      undo_with: :ruby, undo_steps: [%w[undo]]
+cross "go-deletes-ruby-undoes", org: SMALL,
+      write_with: :go, write_steps: [["delete", "Draft"]],
+      undo_with: :ruby, undo_steps: [%w[undo]]
+cross "ruby-deletes-go-undoes", org: SMALL,
+      write_with: :ruby, write_steps: [["delete", "Draft"]],
+      undo_with: :go, undo_steps: [%w[undo]]
+cross "go-repairs-ruby-undoes-the-malformed-bytes", org: MALFORMED_MANY,
+      write_with: :go, write_steps: [%w[repair]],
+      undo_with: :ruby, undo_steps: [%w[undo]]
+cross "ruby-repairs-go-undoes-the-malformed-bytes", org: MALFORMED_MANY,
+      write_with: :ruby, write_steps: [%w[repair]],
+      undo_with: :go, undo_steps: [%w[undo]]
+cross "go-rejects-ruby-undoes", org: PROPOSALS,
+      write_with: :go, write_steps: [["reject", "Child proposal", "--note", "no"]],
+      undo_with: :ruby, undo_steps: [%w[undo]]
+cross "ruby-approves-go-undoes", org: PROPOSALS,
+      write_with: :ruby, write_steps: [["approve", "Child proposal"]],
+      undo_with: :go, undo_steps: [%w[undo]]
+
+# -- verdict -----------------------------------------------------------------------
+
+if $failures.empty?
+  puts "lifecycle-diff: #{$cases} scenarios, no differences"
+  exit 0
+end
+
+puts "lifecycle-diff: #{$cases} scenarios, #{$failures.length} difference(s)"
+$failures.each { |failure| puts "\n#{failure}" }
+exit 1

@@ -138,6 +138,24 @@ func (j *Journal) Commit(to int) bool {
 	return j.persist(to, states, false)
 }
 
+// Rollback undoes a Commit that reported failure, restoring the cursor and the
+// state metadata Plan captured. It reports whether the journal is back at the
+// planned state.
+//
+// The guard is not an optimization. Atomic replacement ordinarily leaves the
+// old index untouched when it fails, so the common case is that nothing landed
+// and there is nothing to restore — rewriting anyway would burn a write, and
+// worse, would fail for the same reason the commit just did. Only when the
+// on-disk index has actually MOVED (a wrapper or filesystem that installed the
+// file and then reported failure) is it rewritten, and then exactly once.
+func (j *Journal) Rollback(step Step) bool {
+	captured := Index{Cursor: step.from, States: step.states}
+	if equalIndex(j.Load(), captured) {
+		return true
+	}
+	return j.persist(step.from, step.states, false)
+}
+
 // persist replaces index.json atomically. `gc` is asked for only when the state
 // set may have SHRUNK — a Record that capped the history or dropped a redo tail
 // — because an undo or redo commit leaves `states` untouched and scanning the

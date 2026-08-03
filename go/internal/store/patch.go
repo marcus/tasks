@@ -290,6 +290,13 @@ type patchContext struct {
 	// instant, and without one it falls back to comparing calendar days, which
 	// is the whole of the difference Ruby's `temporal_context:` default makes.
 	explicit bool
+	// allowProposedAncestor waives the "accepted work cannot remain under a
+	// proposed task" rule. ONLY an approval sets it, and only because a
+	// proposal tree is decided leaves-first: the child is approved while its
+	// parent is still PROPOSED, and the parent's own approval is next. Every
+	// other write keeps the rule, or a plain `state` patch would become a way
+	// around the proposal gate entirely.
+	allowProposedAncestor bool
 }
 
 func patchInvalid(message string) patchOutcome {

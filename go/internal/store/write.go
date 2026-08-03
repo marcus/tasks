@@ -396,7 +396,7 @@ func patchState(records []record.Record, index int, value PatchValue, context pa
 		return patchInvalid("approve the proposal before completing it")
 	}
 	if !contains(check.ClosedStates, state) && !contains(check.ProposedStates, state) &&
-		proposedTaskAncestor(records, target) {
+		!context.allowProposedAncestor && proposedTaskAncestor(records, target) {
 		return patchInvalid("accepted work cannot remain under a proposed task")
 	}
 	if state == "DONE" && recur.Cookie(target.String("recur")) {

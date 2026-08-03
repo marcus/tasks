@@ -4,8 +4,6 @@ import (
 	"os"
 
 	"tasks-go/internal/check"
-
-	"tasks-go/internal/determinism"
 	"tasks-go/internal/journal"
 )
 
@@ -34,17 +32,18 @@ const (
 	// HistoryEmpty means there is no step in that direction — no journal, an
 	// exhausted one, or one whose blobs no longer verify.
 	HistoryEmpty HistoryOutcome = "empty"
-	// HistoryConflict means the live files no longer match the state the step
-	// expects: an out-of-band edit landed after the journal's tip, and replaying
-	// across it would clobber that edit.
+	// HistoryConflict means the step could not be applied: the live files no
+	// longer match the state it expects — an out-of-band edit landed after the
+	// journal's tip and replaying across it would clobber that edit — or the
+	// application itself failed and the files were put back.
 	HistoryConflict HistoryOutcome = "conflict"
-	// HistoryReady means the step is applicable.
-	HistoryReady HistoryOutcome = "ready"
+	// HistoryOK means the step was applied and the cursor committed.
+	HistoryOK HistoryOutcome = "ok"
 )
 
-// PlanHistoryStep resolves an undo (delta -1) or redo (delta +1) as far as the
-// decision to apply it, under the store lock, and stops there. Everything up to
-// that point is a read; the application is the write this build does not have.
+// HistoryStep applies an undo (delta -1) or redo (delta +1) planned by the
+// journal, under the lock so the plan and its commit cannot race another
+// writer. It is Store#history_step, whole: restore, gate, commit, roll back.
 //
 // The ORDER of the three refusals is the contract. An unsupported schema is
 // refused before the journal is even consulted, because a history that would
@@ -52,7 +51,14 @@ const (
 // "nothing to undo", then the conflict — which is the only one that names a
 // label, because it is the only one where the caller could have been about to
 // undo something specific.
-func (s *Store) PlanHistoryStep(delta int, env determinism.Env) (HistoryOutcome, string) {
+//
+// Everything after the conflict check is the write half, and its shape is one
+// promise: an undo either lands completely or leaves the files as it found
+// them. The cursor commit is LAST, so a failed file restore never has a cursor
+// to undo; and the cursor is rolled back before the files are, so a rollback
+// that cannot finish leaves a stale cursor pointing at a step that still
+// exists rather than a committed cursor pointing at bytes that never landed.
+func (s *Store) HistoryStep(delta int) (HistoryOutcome, string) {
 	var outcome HistoryOutcome
 	var label string
 	err := s.withLock(func() error {
@@ -60,24 +66,87 @@ func (s *Store) PlanHistoryStep(delta int, env determinism.Env) (HistoryOutcome,
 			outcome = HistoryUnsupportedSchema
 			return nil
 		}
-		history := journal.Open(journal.DirFor(s.org, env), s.org)
+		history := s.journal()
 		step, ok := history.Plan(delta)
 		if !ok {
 			outcome = HistoryEmpty
 			return nil
 		}
 		label = step.Label
-		if !s.FileSnapshot().Equal(step.Expect) {
+		before := s.FileSnapshot()
+		if !before.Equal(step.Expect) {
 			outcome = HistoryConflict
 			return nil
 		}
-		outcome = HistoryReady
+
+		if err := s.restore(step.Target); err != nil {
+			// Nothing was committed, so only the files need putting back.
+			s.rollbackHistoryFiles(before)
+			outcome = HistoryConflict
+			return nil
+		}
+		// A journaled snapshot can pre-date a repair: restoring it would write a
+		// state that fails today's invariants. Gate the restored live file the
+		// same way a forward mutation is gated. A nil target org is the empty
+		// first-run state — no file to validate — so the gate is skipped there.
+		//
+		// A step marked `repair` is the exception: it recorded a deliberate
+		// repair whose before-state was the malformed record the user asked to
+		// fix, so undo must faithfully restore those invalid bytes rather than
+		// refuse. The automatic id repair is never so marked, so its undo stays
+		// gated.
+		if step.Target.Org != nil && !step.Repair && !check.Check(s.org).OK() {
+			s.rollbackHistoryFiles(before)
+			outcome = HistoryConflict
+			return nil
+		}
+		if !history.Commit(step.To) {
+			if s.rollbackHistoryCursor(history, step) {
+				s.rollbackHistoryFiles(before)
+			}
+			outcome = HistoryConflict
+			return nil
+		}
+		outcome = HistoryOK
 		return nil
 	})
 	if err != nil {
 		return HistoryEmpty, ""
 	}
 	return outcome, label
+}
+
+// rollbackHistoryCursor puts the journal cursor back after a failed commit.
+// The cursor commit is last, so a failed file restore never needs this path.
+// One retry: an atomic replace that failed transiently usually succeeds on the
+// second attempt, and a cursor left forward of the files is the one state that
+// makes the next undo silently wrong rather than merely refused.
+func (s *Store) rollbackHistoryCursor(history *journal.Journal, step journal.Step) bool {
+	for attempt := 0; attempt < 2; attempt++ {
+		if history.Rollback(step) {
+			return true
+		}
+	}
+	return false
+}
+
+// rollbackHistoryFiles puts both files back to a captured snapshot.
+//
+// Atomic replacement means a failed attempt leaves either the complete old file
+// or the complete new one, so retrying once is safe and covers a transient
+// failure. The exact snapshot comparison — including a nil half, which is a
+// file that must not exist — avoids rewriting a path that never changed and
+// keeps a persistent failure loss-safe rather than torn.
+func (s *Store) rollbackHistoryFiles(before journal.Snapshot) bool {
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := s.restore(before); err != nil {
+			continue
+		}
+		if s.FileSnapshot().Equal(before) {
+			return true
+		}
+	}
+	return false
 }
 
 // UnsupportedSchemaError is the diagnostic for a store this build cannot read,

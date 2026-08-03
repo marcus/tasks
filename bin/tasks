@@ -2571,8 +2571,9 @@ def cmd_archive(args = [])
   # between refuses rather than reporting a stale list. (The day stamp on a
   # moved record is part of that fingerprint, so a sweep prepared either side
   # of local midnight also refuses — retrying is always the right answer.)
-  preview = json ? store.archive_preview : nil
-  result = store.archive_swept!(expected_preview: preview)
+  today = today_local
+  preview = json ? store.archive_preview(today: today) : nil
+  result = store.archive_swept!(expected_preview: preview, today: today)
   archive_refused!(result, json: json) if result.is_a?(Tasks::Store::ArchiveRefusal)
   if result == false || store.last_rollback
     message = "archive failed; live tasks were preserved"
