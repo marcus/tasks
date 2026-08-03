@@ -386,6 +386,58 @@ One `##` section per accepted difference, in the order they were accepted:
   `apply_changeset!` instead, and the two agree on all 18 cases.
 - **Conformance disposition:** none needed; the CLI path is unchanged.
 
+## archive-interruption-is-a-typed-failure-not-a-crash — accepted 2026-08-03
+
+- **Slices:** none (Wave 3, store history and lifecycle)
+- **Ruby behavior:** `archive_swept_impl` writes the archive first, then
+  re-reads it to prove every moved id is durable, then deletes the live
+  records. Both the durability assertion and the live write can raise, and
+  nothing rescues them: `with_history` has no `rescue`, `cmd_archive` has none,
+  so `tasks archive` exits with a `RuntimeError`/`Errno` backtrace on stderr
+  and status 1. `test_archive_interruption_after_archive_write_is_retry_safe_and_idempotent`
+  asserts the raise directly.
+- **Go behavior:** the same two conditions return `ArchiveResult{Failed: true}`
+  with the reason recorded in `LastRollback`, and `tasks archive` prints
+  `archive failed; live tasks were preserved` and exits 1. Under `--json` it
+  emits the `conflict` / `write_failed` envelope the CLI already had for the
+  `result == false || store.last_rollback` branch — a branch Ruby's own adapter
+  wrote and cannot currently reach for this cause.
+- **Who can see it:** anyone whose disk fills or whose store goes read-only
+  mid-sweep. They see a sentence instead of a backtrace with absolute paths in
+  it. The FILES are identical in both implementations: neither rolls back, both
+  leave the durable archive copy alongside the live one, and both converge on
+  the next `tasks archive`.
+- **Why accepted:** the retry-safety guarantee is preserved exactly — that is
+  the part that protects data. What differs is only how the failure is
+  reported, and a backtrace is not a report. `cmd_archive` already contains the
+  message for this case, which is the strongest evidence that raising was an
+  oversight rather than a decision. Decided by the Wave 3 lifecycle packet
+  agent.
+- **Evidence:** `go/internal/store/lifecycle_test.go`
+  `TestArchiveInterruptionAfterArchiveWriteIsRetrySafeAndIdempotent` denies the
+  live write and asserts both copies survive and the retry converges;
+  `porting/compare/lifecycle-diff` agrees on every reachable `archive` case.
+- **Conformance disposition:** none needed. The corpus cannot arrange a failing
+  write mid-sweep, so no case observes it.
+
+## repair-reports-a-failed-write-instead-of-a-bare-refusal — accepted 2026-08-03
+
+- **Slices:** none (Wave 3, store history and lifecycle)
+- **Ruby behavior:** `repair!`'s write goes through `with_history`, whose only
+  failure path is post-write validation; a raising `Atomic.write` propagates out
+  of `cmd_repair`.
+- **Go behavior:** a failing write is caught, the files are restored, and the
+  pass reports `unrepairable` with the write error as its single blocker —
+  the same shape `with_history`'s validation rollback already produces.
+- **Who can see it:** the same population as the entry above, in the same way.
+  Nothing was written in either implementation.
+- **Why accepted:** identical reasoning; the failure classification Ruby
+  already has for the neighbouring cause is simply extended to this one.
+  Decided by the Wave 3 lifecycle packet agent.
+- **Evidence:** `go/internal/store/repair.go`; every reachable `repair` case in
+  `porting/compare/lifecycle-diff` matches byte for byte.
+- **Conformance disposition:** none needed.
+
 ## Notes on the record
 
 The last field is the one that rots. A difference recorded here but not

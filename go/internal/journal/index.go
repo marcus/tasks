@@ -63,6 +63,13 @@ type Step struct {
 	Expect Snapshot
 	Target Snapshot
 	To     int
+
+	// from and states are the index EXACTLY as Plan read it: the cursor the
+	// step moves away from, and the timeline that cursor indexes. Rollback
+	// restores them, and it can only do that from the values captured at plan
+	// time — re-reading would read back whatever the failed commit left.
+	from   int
+	states []State
 }
 
 // Journal is the durable undo history: the index, the blobs, the plan a caller
@@ -178,7 +185,38 @@ func (j *Journal) Plan(delta int) (Step, bool) {
 		Expect: expect,
 		Target: target,
 		To:     to,
+		from:   from,
+		states: index.States,
 	}, true
+}
+
+// equalIndex compares two loaded indexes by value, which is what Rollback's
+// "has anything actually landed?" question needs. States hold pointers, so a
+// shallow == would compare addresses and answer "changed" every time.
+func equalIndex(left, right Index) bool {
+	if left.Cursor != right.Cursor || len(left.States) != len(right.States) {
+		return false
+	}
+	for position := range left.States {
+		if !equalState(left.States[position], right.States[position]) {
+			return false
+		}
+	}
+	return true
+}
+
+func equalState(left, right State) bool {
+	if !equalOptional(left.OrgSHA, right.OrgSHA) ||
+		!equalOptional(left.ArchiveSHA, right.ArchiveSHA) ||
+		!equalOptional(left.Label, right.Label) ||
+		!equalOptional(left.CoalesceKey, right.CoalesceKey) ||
+		!equalOptional(left.CoalesceScope, right.CoalesceScope) {
+		return false
+	}
+	if (left.Repair == nil) != (right.Repair == nil) {
+		return false
+	}
+	return left.Repair == nil || *left.Repair == *right.Repair
 }
 
 func (j *Journal) content(state State) (Snapshot, bool) {

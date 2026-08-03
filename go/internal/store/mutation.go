@@ -78,6 +78,19 @@ type MutationSummary struct {
 	Holder string
 	At     string
 	TaskID string
+	// From and To are a state transition's endpoints, which a proposal decision
+	// reports and the CLI prints.
+	From string
+	To   string
+	// Removed, Descendants and OpenDescendants are the delete's counts. They
+	// are what the cascade refusal quotes back — "3 descendants (2 open)" — so
+	// the caller learns what --cascade would actually remove.
+	Removed         int
+	Descendants     int
+	OpenDescendants int
+	// ProposedDescendantIDs is the leaves-first refusal: the undecided
+	// proposals under this one that must be decided before it can be.
+	ProposedDescendantIDs []string
 	// Previous is the delegation marker this write REPLACED, as stored JSON,
 	// captured inside the transaction. A caller that read it before the write
 	// instead would be racing: whether an inherited WAITING is cleared depends
@@ -145,10 +158,17 @@ func (s *Store) restore(target journal.Snapshot) error {
 	return nil
 }
 
+// removeFile is os.Remove behind one name, so a fault-injection test can deny
+// the DELETE half of a restore the way test/test_journal.rb stubs File.delete.
+// Deleting the archive is what an undo of a sweep does, and a delete that fails
+// while the live write succeeded is exactly the split state the rollback exists
+// to prevent — it cannot be tested without a seam.
+var removeFile = os.Remove
+
 func restoreFile(path string, content *string) error {
 	if content == nil {
 		if _, err := os.Lstat(path); err == nil {
-			return os.Remove(path)
+			return removeFile(path)
 		}
 		return nil
 	}
@@ -193,6 +213,20 @@ func equalOptionalText(left, right *string) bool {
 // hand an older device the win.
 func (s *Store) writeRecords(path string, records []record.Record) error {
 	s.stampChangedTasks(freshRecords(path), records)
+	return s.writeRecordsUnstamped(path, records)
+}
+
+// writeRecordsUnstamped is Ruby's `write_records(..., stamp: false)`: the same
+// atomic replacement with no update stamp at all.
+//
+// Repair is its only caller, and the reason is the whole of the decision. A
+// repair asserts nothing about a task's CONTENT — it converges bytes the store
+// refuses to write over — so stamping would falsify "when this task last
+// changed" and, in the last-write-wins merge, hand the repairing device a win it
+// did not earn. For a just-minted id it is worse: stampChangedTasks indexes the
+// originals by id, a fresh id is in no index, and the repair would be stamped as
+// a brand-new task.
+func (s *Store) writeRecordsUnstamped(path string, records []record.Record) error {
 	text, err := record.Dump(records)
 	if err != nil {
 		return err

@@ -367,6 +367,37 @@ The seven partially-matching commands are unchanged from the Wave 2 baseline:
 `claim` 4/6, `undo` 2/5 — still mostly `--dry-run`, which no ported command
 implements.
 
+### Wave 3 progress — store history and lifecycle packet
+
+Real undo landed. `store.PlanHistoryStep` is now `store.HistoryStep`: it
+restores, gates the restored file against today's invariants, commits the
+cursor, and rolls both halves back when anything fails. `journal.Rollback` is
+the Go counterpart of Ruby's `plan[:rollback]` lambda.
+
+Commands: `undo`, `redo`, `delete`, `archive` (`x`), `repair` (`fix`),
+`approve`, `reject`. Store operations: `DeleteTask`, `ArchiveSweep`,
+`ArchivePreviewFor`, `Repair`, `DecideProposal` — the last two of which the
+merged application layer picks up by type assertion with no edit there.
+
+**Fault injection needed a seam.** `atomic.SetWriteHook` (and `store`'s
+`removeFile`) are the Go answer to `Tasks::Atomic.stub(:write, …)` and
+`File.stub(:delete, …)`. Without them the `with_atomic_write_denied` family —
+the whole rollback story — is untestable, because a real EACCES cannot be
+arranged for one path in a directory the test also has to write.
+
+**One Ruby fix.** `archive_plan` stamped moved records with `Date.today`, which
+ignores both the harness clock pin and the configured time zone while every
+other date the store writes honours them. `archive_swept!` and
+`archive_preview` now take `today:` (defaulting to `Date.today`, so no other
+caller changes) and `cmd_archive` passes `today_local`.
+
+**Known harness defect, not caused by this packet.** The 482-case corpus cannot
+complete: `porting/runners/lib/harness.rb:727` (`journal_key`) raises
+`TypeError` on a case whose fixture has no org path, so the Ruby runner aborts
+part-way and the comparator reports the remainder as unpaired. The curated
+`porting/conform` gate is unaffected and stays 33/33 GATE PASS. Whoever owns
+the corpus next should fix `journal_key` before quoting a corpus number.
+
 ## Wave 4: rebuild the TUI
 
 The TUI is a separate implementation wave because it is the largest remaining

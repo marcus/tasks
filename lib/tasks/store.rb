@@ -966,15 +966,19 @@ module Tasks
       end
     end
 
-    def archive_swept!(expected_preview: nil)
-      with_history("archive sweep") { archive_swept_impl(expected_preview) }
+    # `today` is the day a swept record is stamped with. It defaults to the
+    # process-local date, but the CLI passes the reader's resolved day so a
+    # pinned clock and a configured time zone reach the stamp the same way they
+    # reach every other date this store writes.
+    def archive_swept!(expected_preview: nil, today: Date.today)
+      with_history("archive sweep") { archive_swept_impl(expected_preview, today) }
     end
 
     # A read-only summary of what the next archive sweep would move. Roots are
     # the DONE/CANCELLED tasks selected by the sweep; descendants excludes those
     # roots. Blocks identify closed roots whose subtree still contains open work.
-    def archive_preview
-      with_lock { archive_plan(fresh_records(@org)).preview }
+    def archive_preview(today: Date.today)
+      with_lock { archive_plan(fresh_records(@org), today).preview }
     end
 
     # Create a new empty section in one checked transaction. With parent_id nil
@@ -3873,10 +3877,10 @@ module Tasks
     # task. A retry converges only when every stable ID has one canonically
     # equal archived copy; partial or mismatched overlap refuses safely. Returns
     # the count of roots swept, or ArchiveRefusal when a safety gate blocks it.
-    def archive_swept_impl(expected_preview)
+    def archive_swept_impl(expected_preview, today = Date.today)
       return ArchiveRefusal.new(reason: :unsupported_schema) if unsupported_schema?
 
-      plan = archive_plan(fresh_records(@org))
+      plan = archive_plan(fresh_records(@org), today)
       if expected_preview && (expected_preview.candidate_ids != plan.preview.candidate_ids ||
                               expected_preview.fingerprint != plan.preview.fingerprint)
         return ArchiveRefusal.new(reason: :preview_changed, preview: plan.preview)
@@ -3938,7 +3942,7 @@ module Tasks
       expected == actual
     end
 
-    def archive_plan(records)
+    def archive_plan(records, today = Date.today)
       kept = []
       moved = []
       roots = 0
@@ -3961,7 +3965,7 @@ module Tasks
             )
           end
           group[0].delete("parent")
-          group[0]["archived"] = Date.today.iso8601
+          group[0]["archived"] = today.iso8601
           moved.concat(group)
           roots += 1
           descendants += group.count { |record| record["type"] == "task" } - 1

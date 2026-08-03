@@ -22,6 +22,7 @@ func colorize(text string, code int) string {
 func bold(text string) string   { return colorize(text, 1) }
 func dim(text string) string    { return colorize(text, 90) }
 func red(text string) string    { return colorize(text, 31) }
+func green(text string) string  { return colorize(text, 32) }
 func yellow(text string) string { return colorize(text, 33) }
 func cyan(text string) string   { return colorize(text, 36) }
 

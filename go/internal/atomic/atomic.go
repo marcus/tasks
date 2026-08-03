@@ -37,6 +37,16 @@ import (
 // DIFFERENT files must not collide on the temp name, while writers to the same
 // file are already serialized by the store's lock.
 func Write(path, content string) error {
+	if replacement := writeHook(); replacement != nil {
+		return replacement(path, content)
+	}
+	return WriteDirect(path, content)
+}
+
+// WriteDirect is Write without the test seam — the real replacement, always.
+// A fault-injection hook calls it to pass a write through, the way Ruby's stub
+// calls `original.call`.
+func WriteDirect(path, content string) error {
 	target := Resolve(path)
 	dir := filepath.Dir(target)
 	tmp := filepath.Join(dir, fmt.Sprintf(".%s.%d.%d.tmp", filepath.Base(target), os.Getpid(), nextTempToken()))
