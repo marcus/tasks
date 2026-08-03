@@ -639,3 +639,22 @@ Verification after the repair:
 
 A fresh independent source-fidelity review is next, followed by the separate
 Go-idiom review and independent approval required for this medium-risk slice.
+
+## Source-fidelity review: Kelvin-sign case fold (2026-08-02)
+
+**Rejected — repair required before the Go-idiom review.** This independent
+mid-tier review made no implementation edits. `go/internal/recur/recur.go:220-223`
+implements the Ruby `String#downcase` seam with `strings.ToLower` (after the
+U+0130 expansion). That mapping is too broad for the Ruby oracle: Go's Unicode
+table explicitly maps U+212A KELVIN SIGN to `k`
+(`$GOROOT/src/unicode/letter_test.go:163-166`), while Ruby 4.0's
+`Tasks::Recur.parse_result("KEEKLY")` returns
+`{error: "unrecognized schedule: \\"KEEKLY\\""}` and `cookie?` is false.
+Therefore this Go path accepts and stores `.+1w` for an input Ruby rejects.
+
+Classification: **Go defect**. Preserve U+212A through the downcase adapter
+instead of delegating that compatibility-fold to `strings.ToLower`, and add a
+Ruby-oracle-backed regression to the direct corpus/probe. Re-run direct
+conformance, the Unicode adversarial probe, focused Ruby oracle, Go tests,
+race, vet, and diff check; then request a fresh source-fidelity review. The
+Go-idiom review and approval remain downstream of that review.
