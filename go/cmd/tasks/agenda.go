@@ -11,7 +11,7 @@ import (
 // coming" read, so unlike `list` it groups by nothing and leads with the stamp:
 // one flat chronological column.
 func (s *surfaceContext) agenda(args []string) int {
-	queries, status := s.readQueries()
+	queries, status := s.readQueries(args, "agenda")
 	if status != 0 {
 		return status
 	}

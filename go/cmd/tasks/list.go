@@ -24,7 +24,7 @@ func (s *surfaceContext) list(args []string) int {
 	if err != nil {
 		return abort(err.Error())
 	}
-	queries, status := s.readQueries()
+	queries, status := s.readQueries(args, "list")
 	if status != 0 {
 		return status
 	}
@@ -90,7 +90,16 @@ func (s *surfaceContext) list(args []string) int {
 
 // readQueries takes the coherent snapshot every read surface renders from, and
 // builds the reader's own view over it.
-func (s *surfaceContext) readQueries() (*taskquery.Queries, int) {
+//
+// The unsupported-schema gate lives HERE rather than in each command, for the
+// reason Ruby learned the hard way: wired per command it drifted, with three
+// call sites carrying it and thirty not, and nothing making the gap visible. A
+// read that cannot interpret the file must refuse, not answer — an empty list
+// and a list this build cannot read are indistinguishable to a caller.
+func (s *surfaceContext) readQueries(args []string, action string) (*taskquery.Queries, int) {
+	if status := s.refuseUnsupportedSchema(args, action); status != 0 {
+		return nil, status
+	}
 	instant, err := determinism.NowForAdapter(env)
 	if err != nil {
 		return nil, abort(err.Error())
@@ -103,7 +112,11 @@ func (s *surfaceContext) readQueries() (*taskquery.Queries, int) {
 	if err != nil {
 		return nil, abort("task store unavailable")
 	}
-	return taskquery.New(snapshot, context), 0
+	// The link configuration rides along because `show`, `links` and `open` all
+	// read it, and a read model built without it would silently answer "no
+	// links" for every task whose note uses a configured shorthand.
+	return taskquery.New(snapshot, context,
+		taskquery.WithLinkConfig(s.paths.Links, s.paths.LinkSystems)), 0
 }
 
 // format is one row's headline: the priority cookie, the title, and the

@@ -49,6 +49,41 @@ func (q *Queries) LeadOpens(item store.Item) (temporal.Date, bool) {
 	return value.Date, true
 }
 
+// LeadOpensValue is the window's explaining value: the date, plus the wall time
+// when a CLOCK lead put the opening at an instant no date can express. A
+// renderer needs the whole value, not only its date, or a clock lead would
+// print the day it opens and lose the hour.
+func (q *Queries) LeadOpensValue(item store.Item) (temporal.Value, bool) {
+	_, value, state := q.leadGate(item)
+	if state != gatePresent {
+		return temporal.Value{}, false
+	}
+	return value, true
+}
+
+// LeadWindowValue is where this task's lead window sits for its CURRENT anchor,
+// whether or not `activate` has already released it. That is the question
+// `show` asks: the record still carries the span, and a reader looking at the
+// record wants to see the date it produces. LeadOpensValue answers the other
+// question — "is a window still holding this task back" — and is what the
+// availability-shaped surfaces read.
+func (q *Queries) LeadWindowValue(item store.Item) (temporal.Value, bool) {
+	_, value, state := q.leadGateWith(item, "")
+	if state != gatePresent {
+		return temporal.Value{}, false
+	}
+	return value, true
+}
+
+// LeadAnchorValue is the stamp a lead is measured back from: the deadline when
+// there is one, otherwise the available-from date.
+func (q *Queries) LeadAnchorValue(item store.Item) (temporal.Value, bool) {
+	if deadline, ok := q.DeadlineValue(item); ok {
+		return deadline, true
+	}
+	return q.ScheduledValue(item)
+}
+
 // LeadOpensAt is the same window as an instant, which is the only shape a clock
 // lead can be expressed in.
 func (q *Queries) LeadOpensAt(item store.Item) (time.Time, bool) {
@@ -109,6 +144,10 @@ func (q *Queries) APITimeFor(value temporal.Value, present bool) (APITime, bool)
 // resolution addresses. The archive is deliberately absent: a ref names
 // something you can still act on.
 func (q *Queries) LiveItems() []store.Item { return q.snapshot.Items }
+
+// ArchiveItems is the swept file's tasks in file order. Only the surfaces that
+// deliberately widen to closed history read it.
+func (q *Queries) ArchiveItems() []store.Item { return q.snapshot.ArchiveItems }
 
 // OpenStates is the accepted-and-not-finished vocabulary, which is the default
 // scope for every ref.

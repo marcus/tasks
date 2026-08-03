@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"tasks-go/internal/lead"
+	"tasks-go/internal/links"
 	"tasks-go/internal/query"
 	"tasks-go/internal/record"
 	"tasks-go/internal/store"
@@ -49,6 +50,35 @@ type Queries struct {
 	tree     Tree
 	records  map[store.Source]map[int]record.Record
 	cache    map[availabilityKey]Availability
+
+	// Link extraction is config-driven: the shorthand templates and custom
+	// system hosts a user configured. They ride on the read model rather than on
+	// the store so a caller holding a snapshot can answer "what does this task
+	// point at" without a second configuration path.
+	linkShorthands map[string]string
+	linkSystems    map[string]string
+
+	// Project rollup caches. The section list and the Projects root are scanned
+	// once per reader: `projects` builds a view per section, and each view walks
+	// a subtree, so re-deriving these per view would be quadratic in file size.
+	sections           []record.Record
+	projectsRootRecord record.Record
+	projectsRootFound  bool
+	projectsRootReady  bool
+}
+
+// Option configures a read model at construction. The variadic form is
+// deliberate: a reader that does not care about link configuration should not
+// have to name it.
+type Option func(*Queries)
+
+// WithLinkConfig supplies the configured shorthand templates (`link.<name>`)
+// and self-hosted system hosts (`system.<name>`).
+func WithLinkConfig(shorthands, systems map[string]string) Option {
+	return func(q *Queries) {
+		q.linkShorthands = shorthands
+		q.linkSystems = systems
+	}
 }
 
 type availabilityKey struct {
@@ -61,7 +91,7 @@ type availabilityKey struct {
 // New builds the read model. The tree indexes the LIVE file only; archive items
 // have no structural context by construction, which is why an archived item's
 // availability is `closed` without a walk.
-func New(snapshot *store.Snapshot, context temporal.Context) *Queries {
+func New(snapshot *store.Snapshot, context temporal.Context, options ...Option) *Queries {
 	queries := &Queries{
 		snapshot: snapshot,
 		context:  context,
@@ -79,7 +109,18 @@ func New(snapshot *store.Snapshot, context temporal.Context) *Queries {
 		}
 		queries.records[group.source] = byLine
 	}
+	for _, option := range options {
+		option(queries)
+	}
 	return queries
+}
+
+// Links is every web link the task points at: its title first, then its own
+// body lines, extracted and classified once so `show`, `links` and `open` can
+// never disagree about which URL is the task's first.
+func (q *Queries) Links(item store.Item) []links.Link {
+	text := append([]string{item.Title}, q.Body(item)...)
+	return links.Extract(text, q.linkShorthands, q.linkSystems)
 }
 
 // Context is the reader this model answers for.
@@ -374,6 +415,16 @@ const (
 // to measure from, or no valid span. Absent means "fall back to the
 // available-from date"; skipped means "no own timed gate at all".
 func (q *Queries) leadGate(item store.Item) (time.Time, temporal.Value, gateState) {
+	return q.leadGateWith(item, item.LeadSkip)
+}
+
+// leadGateWith is the same derivation with the release stamp supplied, so a
+// caller can ask the second question the surfaces need: not "is this task
+// hidden right now" but "where does its window sit for this anchor at all".
+// `show` asks the second one — it prints the span beside the date it produces
+// even for an occurrence `activate` has already released, because the span is
+// what the record says and the reader is looking at the record.
+func (q *Queries) leadGateWith(item store.Item, released string) (time.Time, temporal.Value, gateState) {
 	scheduled, hasScheduled := q.ScheduledValue(item)
 	deadline, hasDeadline := q.DeadlineValue(item)
 
@@ -403,7 +454,7 @@ func (q *Queries) leadGate(item store.Item) (time.Time, temporal.Value, gateStat
 	if !lead.Span(item.Lead) {
 		return time.Time{}, temporal.Value{}, gateAbsent
 	}
-	if item.LeadSkip == anchor.ISO() {
+	if released == anchor.ISO() {
 		return time.Time{}, temporal.Value{}, gateSkipped
 	}
 
