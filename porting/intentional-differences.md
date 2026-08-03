@@ -529,6 +529,77 @@ One `##` section per accepted difference, in the order they were accepted:
 - **Evidence:** `ruby test/test_cli_mutations.rb` — 293 runs, 0 failures.
 - **Conformance disposition:** none needed; the corpus pins its own clock.
 
+## tui-tab-strip-degrades-labels-not-tabs — accepted 2026-08-03
+
+- **Slices:** none (Wave 4, TUI shell packet)
+- **Ruby behavior:** `Tui::Views.tab_presentation` fits the header strip by
+  DROPPING tabs. It shortens labels first (`1 Agenda` → `1 Ag` → `1`), and when
+  that is still too wide it keeps only the active tab plus Inbox-when-it-has-a
+  -count, then re-adds neighbours by distance from the active tab until the
+  budget runs out. In a genuinely narrow terminal the strip can show a single
+  cell.
+- **Go behavior:** `Model.TabStrip` degrades the labels through the same three
+  variants and then stops. Every tab is always present; at the minimum variant
+  the strip is `1 2 3 4 5 6` plus the Inbox badge.
+- **Who can see it:** anyone running the TUI in a pane narrower than roughly 40
+  columns. Under Ruby, tabs vanish from the strip; under Go they shrink to their
+  number. No stored value differs, and no key changes meaning — `1`..`6` jump to
+  their tab under both implementations whether or not the tab is painted.
+- **Why accepted:** a tab that disappears is a view the user cannot see exists,
+  and the number key that reaches it keeps working, so the strip was lying about
+  what the TUI could do. The number is also the label, which makes the minimum
+  variant self-documenting: `4` IS the key for Projects. The five-step drop
+  ladder existed to make room for full labels, and full labels are exactly what
+  a narrow pane cannot have. Decided by the Wave 4 shell packet agent.
+- **Evidence:** `go/internal/tui/render_test.go`,
+  `TestTabStripDegradesLabelsRatherThanDroppingTabs`, plus the fixed-size
+  fixture `go/internal/tui/testdata/next_narrow_44x16.txt`.
+- **Conformance disposition:** none needed. The TUI is not part of the
+  `porting/conform` corpus, which drives the CLI.
+
+## tui-selected-row-carries-a-gutter-glyph — accepted 2026-08-03
+
+- **Slices:** none (Wave 4, TUI shell packet)
+- **Ruby behavior:** `Tui::Frame` marks the selected row by painting its plain
+  text over the `:selection` theme slot — reverse video in the stock themes.
+  The row itself starts at the first list column; there is no cursor column.
+- **Go behavior:** the selected row still goes through the `selection` slot, and
+  in addition the list reserves one leading column for a cursor glyph (`›` on
+  the selected row, a space elsewhere). Every list row is therefore one cell
+  narrower than in Ruby.
+- **Who can see it:** every user, on every frame — an extra glyph in the left
+  gutter and one less column of title. Nothing stored differs.
+- **Why accepted:** reverse video survives `NO_COLOR`, but it does not survive a
+  theme or terminal that renders the slot as nothing, and this is a list where
+  the next keypress acts on whatever the cursor is on. "Which row am I on" must
+  not be answerable only by a styling the theme layer is allowed to erase. One
+  cell is a cheap insurance premium against completing the wrong task. Decided
+  by the Wave 4 shell packet agent.
+- **Evidence:** `go/internal/tui/render_test.go`,
+  `TestSelectedRowCarriesAGutterMarkerWithNoColorAtAll`, which renders through a
+  styler that paints nothing at all.
+- **Conformance disposition:** none needed; the TUI is not in the corpus.
+
+## tui-key-hint-degrades-on-a-word — accepted 2026-08-03
+
+- **Slices:** none (Wave 4, TUI shell packet)
+- **Ruby behavior:** `Tui::App#footer` builds one hint string and `ScreenLayout`
+  truncates it to the frame width, so a narrow terminal shows a hint cut
+  mid-word (`… · enter d`).
+- **Go behavior:** the hint has four written variants and the widest one that
+  fits is used, so it always ends on a complete word.
+- **Who can see it:** anyone in a pane under about 85 columns, which is most
+  split panes. Only the footer text differs.
+- **Why accepted:** a hint truncated mid-word teaches nothing and looks like a
+  rendering bug; a shorter hint that ends cleanly still teaches. This is the
+  kind of rendering decision the velocity plan explicitly does not require to be
+  pixel-identical, and it is recorded only because the footer TEXT differs
+  rather than its layout. Decided by the Wave 4 shell packet agent.
+- **Evidence:** `go/internal/tui/render_test.go`,
+  `TestKeyHintDegradesOnAWordRatherThanMidWord`, over every width from the
+  minimum frame to 120 columns.
+- **Conformance disposition:** none needed; the TUI is not in the corpus.
+
 ## Notes on the record
 
 The last field is the one that rots. A difference recorded here but not

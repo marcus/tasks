@@ -1,0 +1,24 @@
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 1 Agenda 2 Next 3 Quadrants 4 Projects 5 Outline 6 Inbox 1   6 open · ? help │
+├──────────────────────────────────────────────────────────────────────────────┤
+│  Inbox                                                                       │
+│      INBOX     random thought about the garden                               │
+│  Work                                                                        │
+│ ›    NEXT      [A] Book flight in Concur  @computer                          │
+│      NEXT      [B] Review PR backlog  @computer                              │
+│      TODO      [A] Midyear self-eval  @computer                              │
+│      WAITING   Travel desk reply  @email                                     │
+│      DONE      [C] Old finished thing  @computer                             │
+│  Home                                                                        │
+│      NEXT      Water the plants  @home                                       │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ j/k · 1-6 views · h/l fold · enter details · / search · q quit               │
+└──────────────────────────────────────────────────────────────────────────────┘
