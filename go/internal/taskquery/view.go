@@ -104,3 +104,12 @@ func (q *Queries) APITimeFor(value temporal.Value, present bool) (APITime, bool)
 		Instant:           instant.UTC().Format("2006-01-02T15:04:05Z"),
 	}, true
 }
+
+// LiveItems is the live file's tasks in file order — the population ref
+// resolution addresses. The archive is deliberately absent: a ref names
+// something you can still act on.
+func (q *Queries) LiveItems() []store.Item { return q.snapshot.Items }
+
+// OpenStates is the accepted-and-not-finished vocabulary, which is the default
+// scope for every ref.
+func OpenStates() []string { return append([]string{}, openStates...) }
