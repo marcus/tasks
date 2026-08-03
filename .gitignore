@@ -45,3 +45,4 @@ vendor/bundle/
 # Go-port build products. The sources are committed; the binaries are not.
 /go/bin/
 /porting/corpus/generated/
+/go/bin/tasks-api

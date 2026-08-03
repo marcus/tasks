@@ -13,7 +13,8 @@ paths = Tasks::Config::Paths.new(
   org: config.fetch("org"), archive: config.fetch("archive"),
   urgent_days: config.fetch("urgent_days"), max_depth: config.fetch("max_depth"),
   timezone: config.fetch("timezone"), time_format: config.fetch("time_format"),
-  links: config.fetch("links"), link_systems: config.fetch("link_systems")
+  links: config.fetch("links"), link_systems: config.fetch("link_systems"),
+  host_context: config["host_context"]
 )
 
 run Tasks::Api::App.build(paths: paths, port: config.fetch("port"))

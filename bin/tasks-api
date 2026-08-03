@@ -41,6 +41,11 @@ ENV["TASKS_API_RESOLVED_CONFIG"] = JSON.generate(
   time_format: paths.time_format,
   links: paths.links,
   link_systems: paths.link_systems,
+  # The machine's own @context. Without it a capture through HTTP silently
+  # loses the context the same capture through `bin/tasks` applies — a parity
+  # bug the API's own tests could not see, because they build Paths in-process
+  # and never cross this serialization.
+  host_context: paths.host_context,
   port: options[:port]
 )
 
