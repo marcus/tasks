@@ -132,6 +132,31 @@ One `##` section per accepted difference, in the order they were accepted:
   and `TestDateOrderDMYFlipsBareAndYearForms` covers the threading.
 - **Conformance disposition:** no exception needed; no observable differs.
 
+## calendar-interval-beyond-int64 — accepted 2026-08-03
+
+- **Slices:** none (Wave 1, temporal and recurrence packet)
+- **Ruby behavior:** `Recur.cookie?` accepts an unbounded interval count,
+  because Ruby integers are arbitrary precision. `"9999999999999999999w:mon"`
+  is a valid cookie and `tasks check` reports nothing for it.
+- **Go behavior:** the count is parsed into an `int`, so a value past int64
+  overflows and the cookie is refused: `check` reports
+  `invalid recur cookie "9999999999999999999w:mon" (expected e.g. .+1w, …)`.
+  The boundary is exactly int64 — `"99999999999w:mon"` is accepted by both.
+- **Who can see it:** nobody in practice. The cookie means "every ten
+  quintillion weeks", roughly 10^17 times the age of the universe, and it can
+  only reach a store by hand edit. Someone who hand-wrote one would get a
+  diagnostic from Go and silence from Ruby.
+- **Why accepted:** arbitrary-precision interval counts are not a feature, they
+  are a consequence of Ruby's numeric tower. A schedule that can never produce
+  a second occurrence is bad data, and the same argument that accepted
+  [update-stamp-real-instants](#update-stamp-real-instants--accepted-2026-08-03)
+  applies: a linter that says so beats one that stays quiet. Recorded by the
+  integrating reviewer rather than left as a known-but-unwritten difference.
+- **Evidence:** verified directly against both implementations; the accepted
+  and refused boundary values are named above.
+- **Conformance disposition:** no exception needed — no fixture contains such a
+  cookie, and none should be added.
+
 ## Notes on the record
 
 The last field is the one that rots. A difference recorded here but not
