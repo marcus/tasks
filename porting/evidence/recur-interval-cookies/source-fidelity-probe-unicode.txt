@@ -1,0 +1,72 @@
+recur-interval-cookies source-fidelity probe: Unicode whitespace and case folding
+Branch port/recur-interval-cookies @ e59e363. Ruby oracle = porting/runners/ruby/recur-probe.
+Cases: source-fidelity-probe-unicode-cases.jsonl (62 cases; 50 matched, 12 diverged).
+
+Repro:
+  porting/runners/ruby/recur-probe porting/evidence/recur-interval-cookies/source-fidelity-probe-unicode-cases.jsonl
+  (cd go && go run ./cmd/recur-probe ../porting/evidence/recur-interval-cookies/source-fidelity-probe-unicode-cases.jsonl)
+
+DIVERGENCES (input bytes are shown as escaped JSON):
+
+  case_id: nbsp-between
+    input : "2\u00a0weeks"
+    ruby  : {"cookie": false, "parse": {"canonical": null, "error": "unrecognized schedule: \"2\u00a0weeks\""}}
+    go    : {"cookie": false, "parse": {"canonical": ".+2w", "error": null}}
+
+  case_id: ideographic-space
+    input : "2\u3000weeks"
+    ruby  : {"cookie": false, "parse": {"canonical": null, "error": "unrecognized schedule: \"2\u3000weeks\""}}
+    go    : {"cookie": false, "parse": {"canonical": ".+2w", "error": null}}
+
+  case_id: nel-space
+    input : "2\u0085weeks"
+    ruby  : {"cookie": false, "parse": {"canonical": null, "error": "unrecognized schedule: \"2\\u0085weeks\""}}
+    go    : {"cookie": false, "parse": {"canonical": ".+2w", "error": null}}
+
+  case_id: nbsp-leading
+    input : "\u00a0weekly"
+    ruby  : {"cookie": false, "parse": {"canonical": null, "error": "unrecognized schedule: \"\u00a0weekly\""}}
+    go    : {"cookie": false, "parse": {"canonical": ".+1w", "error": null}}
+
+  case_id: nbsp-trailing
+    input : "weekly\u00a0"
+    ruby  : {"cookie": false, "parse": {"canonical": null, "error": "unrecognized schedule: \"weekly\u00a0\""}}
+    go    : {"cookie": false, "parse": {"canonical": ".+1w", "error": null}}
+
+  case_id: ogham-space
+    input : "2\u1680weeks"
+    ruby  : {"cookie": false, "parse": {"canonical": null, "error": "unrecognized schedule: \"2\u1680weeks\""}}
+    go    : {"cookie": false, "parse": {"canonical": ".+2w", "error": null}}
+
+  case_id: ordinal-2nd
+    input : "2nd"
+    ruby  : {"cookie": false, "parse": {"canonical": "m:2", "error": null}}
+    go    : {"cookie": false, "parse": {"canonical": null, "error": "unrecognized schedule: \"2nd\""}}
+
+  case_id: dotted-I
+    input : "DA\u0130LY"
+    ruby  : {"cookie": false, "parse": {"canonical": null, "error": "unrecognized schedule: \"DA\u0130LY\""}}
+    go    : {"cookie": false, "parse": {"canonical": ".+1d", "error": null}}
+
+  case_id: every-2-weeks-qual
+    input : "every 2 weeks a month"
+    ruby  : {"cookie": false, "parse": {"canonical": null, "error": "day-of-month rules need a monthly schedule, e.g. \"every 2 months on the 15th\""}}
+    go    : {"cookie": false, "parse": {"canonical": null, "error": "unrecognized schedule: \"every 2 weeks a month\""}}
+
+  case_id: cookie-pred-cal
+    input : "w:mon"
+    ruby  : {"cookie": true, "parse": {"canonical": "w:mon", "error": null}}
+    go    : {"cookie": false, "parse": {"canonical": null, "error": "unrecognized schedule: \"w:mon\""}}
+
+  case_id: not-cookie-next
+    input : "w:mon"
+    ruby  : {"cookie": true, "next": {"error": null, "value": "2026-01-05"}, "parse": {"canonical": "w:mon", "error": null}}
+    go    : {"cookie": false, "next": {"error": "not a repeater cookie: \"w:mon\"", "value": null}, "parse": {"canonical": null, "error": "unrecognized schedule: \"w:mon\""}}
+
+  case_id: fortnightly-extra
+    input : "fortnightly week"
+    ruby  : {"cookie": false, "parse": {"canonical": null, "error": "day-of-month rules need a monthly schedule, e.g. \"every 2 months on the 15th\""}}
+    go    : {"cookie": false, "parse": {"canonical": null, "error": "unrecognized schedule: \"fortnightly week\""}}
+
+MATCHED (no divergence), covering the areas e59e363 last touched:
+  turkish-I, kelvin, reform-plus-1d, reform-plus-1m, reform-back, julian-leap, julian-century, greg-leap-clamp, jan31-plus-1m, huge-days, huge-months, neg-year-step, year-zero, catchup-stale, catchup-lands-today, humanize-huge, humanize-one, humanize-blank, humanize-junk, humanize-nbsp, humanize-upper, tab-strip, zero-count, leading-zero, plus-plus-plus, upper-cookie, every-2-weeks, 2weeks-joined, weeks-2, comma-sep, slash-sep, amp-sep, the-week, every-alone, multi-filler, big-count-words, negative-input, unicode-digit, emoji, off-upper, off-pad, invalid-from, gap-from, default-prefix-plus, default-prefix-empty, default-prefix-junk, count-unit-spaces, day-bare, days-bare, quarterly
