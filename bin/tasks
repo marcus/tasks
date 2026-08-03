@@ -2802,7 +2802,13 @@ def cmd_list(args)
     list = by_state[st]
     next unless list
     puts bold(st)
-    list.sort_by { |i| i.priority || "Z" }.each do |i|
+    # Stable: MRI's sort_by is unstable, so a bare sort here let rows tying on
+    # priority land wherever introsort's partitioning left them — deterministic
+    # for one input, but permuted by an unrelated row elsewhere in the file.
+    # TaskQueries#stable_sort carries the source index for exactly this reason;
+    # this was the one place in the read path that never adopted it. Ties keep
+    # file order.
+    list.each_with_index.sort_by { |i, index| [i.priority || "Z", index] }.map(&:first).each do |i|
       due = short_due(i, today: today, context: context)
       arch = i.source == :archive ? dim("  (archived)") : ""
       task = result.task_for(i)
