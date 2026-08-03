@@ -264,6 +264,51 @@ One `##` section per accepted difference, in the order they were accepted:
   not invoke `workref` with an empty argument, and `workref … off` behaves
   identically on both sides. A fixture that added the empty spelling would
   belong to this section.
+## merge-conflict-marker-size-is-bounded — accepted 2026-08-03
+
+- **Slices:** none (Wave 2, JSONL merge packet)
+- **Ruby behavior:** `MergeDriverCommand.resolved_marker_size` accepts any
+  digits-only argument and passes it to `Integer#to_i`, which is unbounded, so
+  `tasks merge-driver … 99999999999999` asks Ruby to build a fourteen-digit run
+  of `<` characters.
+- **Go behavior:** the same argument clamps to 2^20. Every value Git can supply
+  — and every value below the clamp — resolves identically, including the
+  minimum-width rule that widens anything under 7.
+- **Who can see it:** nobody through Git. `%L` is Git's `conflict-marker-size`,
+  which Git itself validates as a small integer; reaching the clamp requires
+  invoking the plumbing command by hand with an absurd width. Such a caller gets
+  a one-megabyte marker line from Go and an out-of-memory attempt from Ruby.
+- **Why accepted:** allocating gigabytes because a hand invocation had a typo is
+  not behavior worth preserving, and the conflicted file is unreadable either
+  way. Decided by the Wave 2 merge packet agent.
+- **Evidence:** `go/internal/merge/driver_test.go`,
+  `TestMarkerSizeIsClampedAtBothEnds` tables the fallback, the minimum, an
+  honored width, and the clamp.
+- **Conformance disposition:** no comparator exception needed.
+
+## merge-driver-io-errors-carry-the-go-runtime-wording — accepted 2026-08-03
+
+- **Slices:** none (Wave 2, JSONL merge packet)
+- **Ruby behavior:** a merge-stage file the driver cannot read raises
+  `Errno::ENOENT`, whose message is
+  `No such file or directory @ rb_sysopen - /path/to/base.jsonl`. That string
+  reaches stderr as `tasks JSONL merge failed: …` and is appended to
+  `.tasks-merge.log`.
+- **Go behavior:** the same failure reports Go's wording,
+  `open /path/to/base.jsonl: no such file or directory`. Exit status (1), the
+  log line's shape, and the decision not to touch `%A` are identical.
+- **Who can see it:** only a hand invocation naming a path that does not exist,
+  or a merge stage the process cannot read. Git creates all three temp files
+  before it calls the driver, so the path is unreachable through a real merge.
+- **Why accepted:** reproducing `rb_sysopen` diagnostics would mean carrying a
+  table of Ruby's errno spellings into the Go port to describe failures Git
+  cannot produce. The path, the cause, and the exit status all still reach the
+  user. Decided by the Wave 2 merge packet agent.
+- **Evidence:** the wording is named above; the driver comparison
+  (`TestTheTwoDriversLeaveIdenticalBytes`) covers every reachable case, all of
+  which agree byte for byte.
+- **Conformance disposition:** no comparator exception needed — no fixture
+  invokes the driver with a missing stage file.
 
 ## Notes on the record
 

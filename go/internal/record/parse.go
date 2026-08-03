@@ -221,7 +221,10 @@ func rubyJSONError(line []byte, err error) string {
 	if diagnostic := malformedTokenDiagnostic(line); diagnostic != "" {
 		return diagnostic
 	}
-	if bytes.HasSuffix(line, []byte(",}")) {
+	// A trailing comma before the close: the key Ruby wanted is the `}` itself.
+	// An object that OPENS with the comma is a different diagnostic — Ruby
+	// quotes the whole `,}` run — so it is left to the structural walker.
+	if bytes.HasSuffix(line, []byte(",}")) && !bytes.HasPrefix(bytes.TrimSpace(line), []byte("{,")) {
 		return fmt.Sprintf("expected object key, got: '}' at line 1 column %d", len(line))
 	}
 	if escape, column := invalidEscape(line); escape != "" {
@@ -244,7 +247,241 @@ func rubyJSONError(line []byte, err error) string {
 		}
 		return fmt.Sprintf("expected object key, got%s EOF at line 1 column %d", separator, column)
 	}
+	if diagnostic := valuePositionDiagnostic(line); diagnostic != "" {
+		return diagnostic
+	}
+	if diagnostic := structuralDiagnostic(line); diagnostic != "" {
+		return diagnostic
+	}
 	return "unexpected token at end of stream"
+}
+
+// structuralDiagnostic walks the line the way the Ruby parser does and names the
+// first position that cannot begin what the grammar expects there. It is the
+// general form of the hand-written clauses above and deliberately runs LAST, so
+// a shape one of those already spells exactly keeps that spelling.
+//
+// The two contexts it distinguishes are the ones Ruby distinguishes: a token
+// where an object KEY belongs, and a token where a VALUE belongs. Ruby quotes
+// the run of bytes up to the next whitespace in both, which is why a garbage
+// line reports its first word rather than the whole line.
+func structuralDiagnostic(line []byte) string {
+	walker := &lineWalker{src: line}
+	walker.value()
+	if walker.failure == "" {
+		return ""
+	}
+	token := walker.token(walker.at)
+	column := walker.at + 1
+	switch walker.failure {
+	case failureKeyFirst:
+		return fmt.Sprintf("expected object key, got '%s' at line 1 column %d", token, column)
+	case failureKeyAfterComma:
+		return fmt.Sprintf("expected object key, got: '%s' at line 1 column %d", token, column)
+	}
+	switch line[walker.at] {
+	case 't', 'f', 'n':
+		return fmt.Sprintf("unexpected token '%s' at line 1 column %d", token, column)
+	}
+	return fmt.Sprintf("unexpected character: '%s' at line 1 column %d", token, column)
+}
+
+const (
+	failureKeyFirst      = "key-first"
+	failureKeyAfterComma = "key-after-comma"
+	failureValue         = "value"
+)
+
+// lineWalker is a minimal JSON recognizer. It stops at the first position that
+// cannot start the construct the grammar expects, and reports nothing at all for
+// a truncation or a separator problem — those already have exact clauses above.
+type lineWalker struct {
+	src     []byte
+	pos     int
+	failure string
+	at      int
+}
+
+func (w *lineWalker) token(start int) string {
+	end := start
+	for end < len(w.src) && !jsonWhitespace(w.src[end]) {
+		end++
+	}
+	return string(w.src[start:end])
+}
+
+func (w *lineWalker) skipSpace() {
+	for w.pos < len(w.src) && jsonWhitespace(w.src[w.pos]) {
+		w.pos++
+	}
+}
+
+func (w *lineWalker) fail(kind string) {
+	if w.failure == "" {
+		w.failure, w.at = kind, w.pos
+	}
+}
+
+func (w *lineWalker) value() {
+	if w.failure != "" {
+		return
+	}
+	w.skipSpace()
+	if w.pos >= len(w.src) {
+		return
+	}
+	switch char := w.src[w.pos]; {
+	case char == '{':
+		w.object()
+	case char == '[':
+		w.array()
+	case char == '"':
+		w.str()
+	case char == '-' || (char >= '0' && char <= '9'):
+		w.number()
+	case char == 't' && bytes.HasPrefix(w.src[w.pos:], []byte("true")):
+		w.pos += 4
+	case char == 'f' && bytes.HasPrefix(w.src[w.pos:], []byte("false")):
+		w.pos += 5
+	case char == 'n' && bytes.HasPrefix(w.src[w.pos:], []byte("null")):
+		w.pos += 4
+	default:
+		w.fail(failureValue)
+	}
+}
+
+func (w *lineWalker) object() {
+	w.pos++ // '{'
+	first := true
+	for {
+		if w.failure != "" {
+			return
+		}
+		w.skipSpace()
+		if w.pos >= len(w.src) {
+			return
+		}
+		if w.src[w.pos] == '}' {
+			w.pos++
+			return
+		}
+		if w.src[w.pos] != '"' {
+			if first {
+				w.fail(failureKeyFirst)
+			} else {
+				w.fail(failureKeyAfterComma)
+			}
+			return
+		}
+		w.str()
+		w.skipSpace()
+		if w.pos >= len(w.src) || w.src[w.pos] != ':' {
+			return
+		}
+		w.pos++
+		w.value()
+		if w.failure != "" {
+			return
+		}
+		w.skipSpace()
+		if w.pos >= len(w.src) {
+			return
+		}
+		if w.src[w.pos] != ',' {
+			return
+		}
+		w.pos++
+		first = false
+	}
+}
+
+func (w *lineWalker) array() {
+	w.pos++ // '['
+	for {
+		if w.failure != "" {
+			return
+		}
+		w.skipSpace()
+		if w.pos >= len(w.src) {
+			return
+		}
+		if w.src[w.pos] == ']' {
+			w.pos++
+			return
+		}
+		w.value()
+		if w.failure != "" {
+			return
+		}
+		w.skipSpace()
+		if w.pos >= len(w.src) || w.src[w.pos] != ',' {
+			return
+		}
+		w.pos++
+	}
+}
+
+func (w *lineWalker) str() {
+	w.pos++ // opening quote
+	for w.pos < len(w.src) {
+		switch w.src[w.pos] {
+		case '\\':
+			w.pos += 2
+			continue
+		case '"':
+			w.pos++
+			return
+		}
+		w.pos++
+	}
+}
+
+func (w *lineWalker) number() {
+	for w.pos < len(w.src) {
+		char := w.src[w.pos]
+		if (char >= '0' && char <= '9') || char == '-' || char == '+' ||
+			char == '.' || char == 'e' || char == 'E' {
+			w.pos++
+			continue
+		}
+		return
+	}
+}
+
+// valuePositionDiagnostic covers a line that never begins a JSON value at all —
+// the shape a hand edit or a stray shell line produces, and the one a merge
+// driver reports when Git hands it a side that is not JSONL.
+//
+// Ruby's parser lexes the run of non-whitespace bytes and names it two ways: a
+// run starting with t, f or n is a would-be literal and reads "unexpected
+// token", while anything else reads "unexpected character". Both quote the run
+// up to the first whitespace, not the rest of the line.
+func valuePositionDiagnostic(line []byte) string {
+	start := 0
+	for start < len(line) && jsonWhitespace(line[start]) {
+		start++
+	}
+	if start >= len(line) {
+		return ""
+	}
+	switch first := line[start]; {
+	case first == '{', first == '[', first == '"', first == '-', first >= '0' && first <= '9':
+		return ""
+	}
+	end := start
+	for end < len(line) && !jsonWhitespace(line[end]) {
+		end++
+	}
+	token := string(line[start:end])
+	switch line[start] {
+	case 't', 'f', 'n':
+		return fmt.Sprintf("unexpected token '%s' at line 1 column %d", token, start+1)
+	}
+	return fmt.Sprintf("unexpected character: '%s' at line 1 column %d", token, start+1)
+}
+
+func jsonWhitespace(char byte) bool {
+	return char == ' ' || char == '\t' || char == '\n' || char == '\r'
 }
 
 // malformedTokenDiagnostic covers the Ruby parser's non-EOF lexical cases.

@@ -49,6 +49,20 @@ func run(argv []string) int {
 	}
 	name, rest := argv[0], argv[1:]
 
+	handler, isCommand := dispatch(name)
+
+	// The early commands run BEFORE any store is resolved, which is what
+	// bin/tasks does at its top: "Dispatch before resolving a configured task
+	// store so the driver depends only on the three explicit files Git
+	// supplied." Git invokes merge-driver with temporary stage paths and no
+	// task store in sight, so resolving one first would make an unrelated
+	// misconfiguration — an invalid TASKS_TIMEZONE, say — add a stderr note to
+	// a plumbing command Git is parsing. They get no surfaceContext for the
+	// same reason: there is nothing resolved yet to put in one.
+	if handler != nil && earlyCommands[aliasTokens[name]] {
+		return handler(nil, rest)
+	}
+
 	paths := config.Resolve(repoRoot(), env, nil)
 	// Resolution notes go to stderr before the command runs, which is where
 	// Ruby's Config.resolve writes them. config returns them rather than
@@ -59,7 +73,6 @@ func run(argv []string) int {
 	}
 	surface := &surfaceContext{paths: paths, store: store.New(paths.Org, paths.Archive)}
 
-	handler, isCommand := dispatch(name)
 	switch {
 	case handler != nil:
 		return handler(surface, rest)

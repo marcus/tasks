@@ -40,6 +40,13 @@ func register(canonical string, handler commandFunc) {
 	handlers[canonical] = handler
 }
 
+// earlyCommands is Tasks::CliCommands::EARLY_NAMES: the commands that dispatch
+// before configuration is resolved. Their handler is called with a nil
+// surfaceContext, so a command only belongs here if it needs nothing resolved.
+var earlyCommands = map[string]bool{
+	"merge-driver": true,
+}
+
 // dispatch resolves a spelling to its handler. The second result distinguishes
 // a command this build has not ported from one that does not exist, which are
 // different answers to the user: one is "not yet", the other is "typo".
