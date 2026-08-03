@@ -545,3 +545,69 @@ a package unit test, its expectations transcribed from Ruby. No `internal/recur`
 the later CLI adapter slice, as recorded above. The next step is a **fresh
 independent mid-tier source-fidelity review**, then the Go-idiom review and
 independent approval.
+
+## Source-fidelity review: Unicode whitespace and case folding (2026-08-02)
+
+**Rejected — repair required before the Go-idiom review.** A fresh independent
+context (`ses_bce601`) read `e59e363` against `lib/tasks/recur.rb` and
+`porting/runners/ruby/recur-probe` and made no implementation edits. Everything
+the previous three repairs claimed holds: 62 adversarial probes were run through
+both probes and 50 matched, including every case that exercises `e59e363`'s
+`Date.iso8601`/`Date::ITALY` work — the 1582 reform crossing in both directions,
+a `>>` landing inside the ten omitted days (`1582-09-14 + 1m` → `1582-10-04` in
+both), Julian-rule leap days (`1500-02-29 + 1y`), the `Jan 31 + 1m` and
+leap-day-`+1y` clamps, negative and zero years, a rejected `from`, a `from`
+inside the reform gap, and 20- and 30-digit counts. Direct conformance is
+41/41.
+
+Two divergences remain, both **inside this slice's own domain** (bare-interval
+parsing), both in the direction that matters most — **Go accepts and stores a
+canonical cookie for input Ruby rejects**. Evidence:
+[`source-fidelity-probe-unicode.txt`](source-fidelity-probe-unicode.txt),
+cases in
+[`source-fidelity-probe-unicode-cases.jsonl`](source-fidelity-probe-unicode-cases.jsonl).
+
+**Blocking 1 — `tokenize` splits on Unicode space; Ruby splits on ASCII space.**
+`go/internal/recur/recur.go:199` ends `tokenize` with `strings.Fields`, which
+splits on `unicode.IsSpace`. Ruby's `Recur.tokenize` (`lib/tasks/recur.rb:509`)
+ends with `text.split(/\s+/)`, and Ruby's `\s` is `[ \t\r\n\f\v]` — ASCII only.
+So `"2 weeks"` is one unsplittable token in Ruby and rejected
+(`unrecognized schedule: "2 weeks"`), while Go tokenizes it to
+`["2","weeks"]` and stores `.+2w`. Same for U+3000, U+0085 and U+1680. Leading
+and trailing Unicode spaces diverge for the same reason plus `rubyStrip`
+(`:237-239`), which correctly strips only Ruby's `"\0\t\n\v\f\r "` — so
+`" weekly"` is rejected by Ruby and stored as `.+1w` by Go.
+Classification: **Go defect**. Correction: replace `strings.Fields` with a split
+on exactly `" \t\r\n\f\v"`, keeping the empty-token drop Ruby gets from
+`filter_map`. `test_case_and_whitespace_insensitive` (`test/test_recur.rb:48`)
+pins only ASCII padding, which is why the Ruby tests stay green either way.
+
+**Blocking 2 — `strings.ToLower` is simple case mapping; `String#downcase` is
+full case mapping.** `go/internal/recur/recur.go:62` lowercases the stripped
+input with `strings.ToLower`. Ruby's `String#downcase` (`lib/tasks/recur.rb:156`)
+applies full Unicode case mapping, under which U+0130 (`İ`) lowercases to the
+two codepoints `i` + U+0307, not to `i`. So `"DAİLY"` downcases to `"dai̇ly"` in
+Ruby and is rejected, while Go downcases it to `"daily"` and stores `.+1d`. The
+same applies wherever an `I` appears in a keyword or a filler word (`biweekly`,
+`fortnightly`, `in`). A full sweep of all codepoints comparing `String#downcase`
+against `strings.ToLower` found 56 disagreements, 55 of which are Unicode-table
+version skew on letters no keyword contains; U+0130 is the only one that changes
+an accept/reject outcome. Classification: **Go defect**. Correction: fold the
+one full-mapping case explicitly (map U+0130 to `i` + U+0307 before, or instead
+of, `strings.ToLower`) rather than adopting `strings.ToLower`'s simple mapping;
+do not "fix" Ruby's behavior here — Ruby's rejection is what is observable
+today.
+
+**Not divergences — the declared calendar boundary.** Four further probe rows
+disagree because the calendar grammar belongs to `recur-calendar-grammar`:
+`"w:mon"` (Ruby `cookie?` true, `parse` `w:mon`, `next_date` projects; Go
+rejects all three), `"2nd"` (Ruby `m:2`), and the two natural phrases with a
+trailing qualifier, `"every 2 weeks a month"` and `"fortnightly week"`, where
+both sides reject but Ruby's message is the monthly-schedule one. These are the
+boundary `Parse`'s doc comment declares, not defects, and the rejection
+vocabulary is already recorded as unobservable until `cli-recur-command` lands.
+They are listed here so the next reviewer does not re-derive them.
+
+Next step after repair: re-run the direct conformance and the Unicode probe
+above, then a fresh source-fidelity review, then the Go-idiom review and
+independent approval. Medium tier forbids self-approval.
