@@ -1,0 +1,28 @@
+{"case_id": "sfr2-priority-trailing-newline", "operation": "parse_cli", "argv": ["-A\n"]}
+{"case_id": "sfr2-priority-leading-newline", "operation": "parse_cli", "argv": ["\n-A"]}
+{"case_id": "sfr2-priority-two-letters", "operation": "parse_cli", "argv": ["-AB"]}
+{"case_id": "sfr2-priority-non-ascii", "operation": "parse_cli", "argv": ["-Á"]}
+{"case_id": "sfr2-priority-lowercase", "operation": "parse_cli", "argv": ["-c"]}
+{"case_id": "sfr2-empty-argument", "operation": "parse_cli", "argv": [""]}
+{"case_id": "sfr2-bare-dash", "operation": "parse_cli", "argv": ["-"]}
+{"case_id": "sfr2-bare-plus", "operation": "parse_cli", "argv": ["+"]}
+{"case_id": "sfr2-bare-slash", "operation": "parse_cli", "argv": ["/"]}
+{"case_id": "sfr2-bare-at", "operation": "parse_cli", "argv": ["@"]}
+{"case_id": "sfr2-at-embedded-newline", "operation": "parse_cli", "argv": ["@work\nhome"]}
+{"case_id": "sfr2-slash-embedded-newline", "operation": "parse_cli", "argv": ["/alpha\nbeta"]}
+{"case_id": "sfr2-repeated-same-scope", "operation": "parse_cli", "argv": ["-o", "--open", "-o"]}
+{"case_id": "sfr2-scope-repeat-then-conflict", "operation": "parse_cli", "argv": ["--all", "--all", "--done"]}
+{"case_id": "sfr2-unknown-flag-before-scope-conflict", "operation": "parse_cli", "argv": ["--done", "--archived", "--nope"]}
+{"case_id": "sfr2-double-dash", "operation": "parse_cli", "argv": ["--"]}
+{"case_id": "sfr2-text-and-slash-join", "operation": "parse_cli", "argv": ["/Alpha", "BETA", "+tag", "gamma"]}
+{"case_id": "sfr2-text-query-sharp-s", "operation": "parse_cli", "argv": ["STRASSE", "ẞ"]}
+{"case_id": "sfr2-text-query-turkish-dotless", "operation": "parse_cli", "argv": ["Iı"]}
+{"case_id": "sfr2-text-query-cyrillic-1c89", "operation": "parse_cli", "argv": ["Ᲊ"]}
+{"case_id": "sfr2-text-query-latin-a7cb", "operation": "parse_cli", "argv": ["Ɤ"]}
+{"case_id": "sfr2-text-query-garay-10d50", "operation": "parse_cli", "argv": ["𐵐"]}
+{"case_id": "sfr2-text-query-16ea0", "operation": "parse_cli", "argv": ["𖺠"]}
+{"case_id": "sfr2-text-query-mixed-new-unicode", "operation": "parse_cli", "argv": ["ABCᲉxyz"]}
+{"case_id": "sfr2-priority-upcase-sharp-s", "operation": "new", "kwargs": {"priority": "ß"}}
+{"case_id": "sfr2-state-upcase-ligature", "operation": "new", "kwargs": {"state": "ﬁnished"}}
+{"case_id": "sfr2-state-cyrillic-1c89", "operation": "new", "kwargs": {"state": "ᲊ"}}
+{"case_id": "sfr2-scope-symbol-roundtrip", "operation": "new", "kwargs": {"scope": "all"}}
