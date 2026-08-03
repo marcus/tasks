@@ -611,3 +611,31 @@ They are listed here so the next reviewer does not re-derive them.
 Next step after repair: re-run the direct conformance and the Unicode probe
 above, then a fresh source-fidelity review, then the Go-idiom review and
 independent approval. Medium tier forbids self-approval.
+
+## Repair: Ruby whitespace and full-case normalization (2026-08-02)
+
+The two blocking defects from the preceding independent review are repaired in
+`go/internal/recur/recur.go`. `tokenize` now splits only on Ruby regexp `\s`
+characters (`space`, tab, CR, LF, FF, VT), rather than Go's broader Unicode
+space set. Parse also expands U+0130 to `i` + U+0307 before applying Go's simple
+lowercase mapping, preserving the only Ruby full-case expansion that changes
+this interval grammar's accept/reject result.
+
+Regressions transcribed from
+`source-fidelity-probe-unicode-cases.jsonl` cover all six Unicode-space
+rejections and the dotted-I rejection. Positive controls retain ASCII-space
+acceptance and the Kelvin-sign lowercase behavior.
+
+Verification after the repair:
+
+- direct differential conformance: 41/41 cases matched;
+- the 62-case Unicode/calendar adversarial probe, compared as parsed JSON,
+  matched 57/62 and now differs only on the five documented
+  `recur-calendar-grammar` boundary rows (`ordinal-2nd`,
+  `every-2-weeks-qual`, `cookie-pred-cal`, `not-cookie-next`, and
+  `fortnightly-extra`); all interval-owned rows match;
+- `go test ./internal/recur`, `go test -race ./internal/recur`, and
+  `go vet ./...` passed.
+
+A fresh independent source-fidelity review is next, followed by the separate
+Go-idiom review and independent approval required for this medium-risk slice.

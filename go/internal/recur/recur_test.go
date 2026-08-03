@@ -45,6 +45,35 @@ func TestParseFriendlyIntervalUsesRubyTokenization(t *testing.T) {
 	}
 }
 
+func TestParseFriendlyIntervalUsesRubyASCIIWhitespace(t *testing.T) {
+	for _, input := range []string{
+		"2\u00a0weeks",
+		"2\u3000weeks",
+		"2\u0085weeks",
+		"\u00a0weekly",
+		"weekly\u00a0",
+		"2\u1680weeks",
+	} {
+		if got := Parse(input, ".+"); got.Error == "" {
+			t.Fatalf("Parse(%q) = %#v, want Ruby-compatible rejection", input, got)
+		}
+	}
+	for _, input := range []string{"2 weeks", "2\tweeks", "2\rweeks", "2\nweeks", "2\fweeks", "2\vweeks"} {
+		if got := Parse(input, ".+"); got.Error != "" || got.Canonical != ".+2w" {
+			t.Fatalf("Parse(%q) = %#v, want .+2w", input, got)
+		}
+	}
+}
+
+func TestParseUsesRubyFullUnicodeDowncase(t *testing.T) {
+	if got := Parse("DA\u0130LY", ".+"); got.Error == "" {
+		t.Fatalf("Parse(dotted I) = %#v, want Ruby-compatible rejection", got)
+	}
+	if got := Parse("wee\u212Aly", ".+"); got.Error != "" || got.Canonical != ".+1w" {
+		t.Fatalf("Parse(Kelvin sign) = %#v, want .+1w", got)
+	}
+}
+
 func TestParseOffAndRejectsZeroOrGarbage(t *testing.T) {
 	for _, input := range []string{"off", "none", "never", "clear", "no", "stop"} {
 		if got := Parse(input, ".+"); got.Canonical != "off" || got.Error != "" {

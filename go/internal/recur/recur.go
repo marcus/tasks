@@ -59,7 +59,7 @@ func Parse(input, defaultPrefix string) Result {
 	if raw == "" {
 		return Result{Error: "no schedule given"}
 	}
-	s := strings.ToLower(raw)
+	s := rubyDowncase(raw)
 	if isOff(s) {
 		return Result{Canonical: "off"}
 	}
@@ -196,7 +196,7 @@ func tokenize(value string) []string {
 		split.WriteRune(r)
 		previous = r
 	}
-	parts := strings.Fields(split.String())
+	parts := strings.FieldsFunc(split.String(), rubySpace)
 	tokens := make([]string, 0, len(parts))
 	for _, part := range parts {
 		if !filler[part] {
@@ -204,6 +204,22 @@ func tokenize(value string) []string {
 		}
 	}
 	return tokens
+}
+
+func rubySpace(r rune) bool {
+	switch r {
+	case ' ', '\t', '\r', '\n', '\f', '\v':
+		return true
+	default:
+		return false
+	}
+}
+
+// Ruby String#downcase uses full Unicode mappings. U+0130 is the only
+// expanding mapping that changes whether this package recognizes a keyword.
+func rubyDowncase(value string) string {
+	value = strings.ReplaceAll(value, "\u0130", "i\u0307")
+	return strings.ToLower(value)
 }
 
 func digits(value string) bool {
