@@ -50,6 +50,13 @@ func run(argv []string) int {
 	name, rest := argv[0], argv[1:]
 
 	paths := config.Resolve(repoRoot(), env, nil)
+	// Resolution notes go to stderr before the command runs, which is where
+	// Ruby's Config.resolve writes them. config returns them rather than
+	// printing so the TUI and API can place them differently; the CLI's choice
+	// is to keep Ruby's placement exactly.
+	for _, warning := range paths.Warnings {
+		fmt.Fprintln(os.Stderr, warning)
+	}
 	surface := &surfaceContext{paths: paths, store: store.New(paths.Org, paths.Archive)}
 
 	handler, isCommand := dispatch(name)

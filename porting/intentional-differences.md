@@ -73,36 +73,6 @@ One `##` section per accepted difference, in the order they were accepted:
   contains such a stamp, and none should be added. If a future case does, it
   belongs to this section rather than to a broadened comparison rule.
 
-## config-timezone-warning-is-returned-not-printed — accepted 2026-08-03
-
-- **Slices:** none (Wave 1, record/config/check packet)
-- **Ruby behavior:** `Config.pick_timezone` calls `warn` from inside
-  `Config.resolve`, so a `TASKS_TIMEZONE` that names no loadable zone writes
-  `tasks: ignoring invalid time zone "Bogus/NotAZone" from TASKS_TIMEZONE env`
-  to stderr on **every** command, before the command's own output.
-- **Go behavior:** `config.Resolve` returns the identical wording in
-  `Paths.Warnings` and prints nothing. The resolved zone, its source, and the
-  UTC-fallback flag are unchanged.
-- **Who can see it:** anyone who has set an invalid `TASKS_TIMEZONE` sees the
-  line under Ruby and, today, no line at all under Go — one stderr line per
-  invocation. Nothing on stdout, no file bytes, and no exit status differs.
-  The message is currently unwired: printing it needs `cmd/tasks/main.go`,
-  which this packet does not own.
-- **Why accepted:** the difference is the *seam*, not the behavior. A library
-  that prints decides for every surface at once — the TUI would paint the line
-  into its first frame and the API would put it in a log nobody reads — and a
-  function that writes to a global stream cannot be tested without capturing
-  one. Returning the warning keeps the wording identical and lets each adapter
-  place it. Decided by the Wave 1 packet agent.
-- **Evidence:** `go/internal/config/resolve_test.go`,
-  `TestInvalidTimezoneEnvFallsThroughToTheConfigZoneWithAWarning` pins the
-  exact wording and the fall-through it accompanies.
-- **Conformance disposition:** no exception needed today — no fixture sets an
-  invalid `TASKS_TIMEZONE`, so no paired case produces the line. **This entry
-  expires when the CLI wires it up:** once `main.go` prints
-  `Paths.Warnings` to stderr the two implementations agree byte for byte and
-  this section should be deleted rather than kept as a standing exception.
-
 ## Notes on the record
 
 The last field is the one that rots. A difference recorded here but not
