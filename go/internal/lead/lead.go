@@ -13,12 +13,13 @@
 // because a lead shares its unit letters with the recurrence grammar, and
 // overloading one would silently change what an existing stored value means.
 //
-// There is deliberately no parser here: parsing user input belongs to the write
-// path, which this build does not have. What a reader needs is the canonical
-// guard, the unit split, and the two gate derivations.
+// parse.go holds the input grammar; this file holds the canonical guard, the
+// unit split, the two gate derivations, and the renderings every surface shows
+// beside a span.
 package lead
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 	"time"
@@ -66,8 +67,10 @@ func Duration(value string) (time.Duration, bool) {
 }
 
 // GateDate is the date a calendar lead's window opens: the anchor stepped back
-// by the span. Months and years step the way recurrence intervals do, so 1m
-// before March 31 is February 28 in a common year.
+// by the span. Months and years step by Ruby Date#>>, whose day of month CLAMPS
+// to the target month's length rather than overflowing, so a 1m lead before
+// March 31 is February 28 in a common year — exactly the clamp a month-interval
+// recurrence uses.
 func GateDate(anchor temporal.Date, span string) (temporal.Date, bool) {
 	count, unit, ok := parts(span)
 	if !ok || unit == "h" {
@@ -79,40 +82,75 @@ func GateDate(anchor temporal.Date, span string) (temporal.Date, bool) {
 	case "w":
 		return anchor.AddDays(-7 * count), true
 	case "m":
-		return stepMonths(anchor, -count), true
+		return anchor.AddMonths(-count), true
 	case "y":
-		return stepMonths(anchor, -12*count), true
+		return anchor.AddMonths(-12 * count), true
 	}
 	return temporal.Date{}, false
 }
 
-// stepMonths is Ruby Date#>>: the day of month clamps to the target month's
-// length rather than overflowing into the next month.
-func stepMonths(date temporal.Date, months int) temporal.Date {
-	total := int(date.Month) - 1 + months
-	year := date.Year + floorDiv(total, 12)
-	month := time.Month(floorMod(total, 12) + 1)
-	day := date.Day
-	if length := daysIn(year, month); day > length {
-		day = length
+// DateBound is the earliest calendar date a span's window could open on, for
+// the storable-range guard. It is identical to GateDate for a calendar span;
+// for a CLOCK span it is the date the duration could reach at worst, which is
+// all a range check needs — and needs no zone, which the write path does not
+// have when it runs this check.
+func DateBound(anchor temporal.Date, span string) (temporal.Date, bool) {
+	duration, isClock := Duration(span)
+	if !isClock {
+		return GateDate(anchor, span)
 	}
-	shifted, _ := temporal.NewDate(year, month, day)
-	return shifted
-}
-
-func daysIn(year int, month time.Month) int {
-	return time.Date(year, month+1, 0, 0, 0, 0, 0, time.UTC).Day()
-}
-
-func floorDiv(value, divisor int) int {
-	quotient := value / divisor
-	if value%divisor != 0 && (value < 0) != (divisor < 0) {
-		quotient--
+	days := int(duration / (24 * time.Hour))
+	if duration%(24*time.Hour) != 0 {
+		days++
 	}
-	return quotient
+	return anchor.AddDays(-(days + 1)), true
 }
 
-func floorMod(value, divisor int) int { return value - floorDiv(value, divisor)*divisor }
+// Describe is Humanize with the relationship spelled out, for a sentence that
+// has to say what the span is measured against.
+func Describe(span string) (string, bool) {
+	human, ok := Humanize(span)
+	if !ok {
+		return "", false
+	}
+	return human + " before", true
+}
+
+// DisplayDate renders a CALENDAR span beside the date it derives: "3 weeks
+// before — opens 2026-10-11". Without a usable anchor it renders the span
+// alone rather than inventing a date.
+func DisplayDate(span string, anchor temporal.Date, hasAnchor bool) (string, bool) {
+	human, ok := Describe(span)
+	if !ok {
+		return "", false
+	}
+	if !hasAnchor || Clock(span) {
+		return human, true
+	}
+	gate, ok := GateDate(anchor, span)
+	if !ok {
+		return human, true
+	}
+	return human + " — opens " + gate.ISO(), true
+}
+
+// DisplayInstant renders a CLOCK span beside the wall time it opens at, in the
+// reader's own zone: "5 hours before — opens 2026-05-31 19:00". A clock gate is
+// an instant no date can express, so without a context to project it into there
+// is nothing to render but the span.
+func DisplayInstant(span string, anchor temporal.Value, context temporal.Context) (string, bool) {
+	human, ok := Describe(span)
+	if !ok {
+		return "", false
+	}
+	instant, ok := GateInstant(anchor, span, context)
+	if !ok {
+		return human, true
+	}
+	local := instant.In(context.Timezone)
+	return fmt.Sprintf("%s — opens %s %02d:%02d", human,
+		temporal.DateOf(local).ISO(), local.Hour(), local.Minute()), true
+}
 
 // GateInstant is the instant a clock lead's window opens: the anchor's own
 // instant minus the duration. RAW — deliberately not rebuilt into a temporal

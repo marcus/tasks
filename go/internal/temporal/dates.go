@@ -58,10 +58,10 @@ var monthNames = []string{"january", "february", "march", "april", "may", "june"
 	"july", "august", "september", "october", "november", "december"}
 
 var (
-	plusDays       = regexp.MustCompile(`\A\+(\d+)\z`)
-	inUnits        = regexp.MustCompile(`\Ain (\d+|an?) (day|week|month|year)s?\z`)
-	monthDayYear   = regexp.MustCompile(`\A([a-z]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s+(\d{4}))?\z`)
-	dayMonthYear   = regexp.MustCompile(`\A(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]+)\.?(?:\s+(\d{4}))?\z`)
+	plusDays      = regexp.MustCompile(`\A\+(\d+)\z`)
+	inUnits       = regexp.MustCompile(`\Ain (\d+|an?) (day|week|month|year)s?\z`)
+	monthDayYear  = regexp.MustCompile(`\A([a-z]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s+(\d{4}))?\z`)
+	dayMonthYear  = regexp.MustCompile(`\A(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]+)\.?(?:\s+(\d{4}))?\z`)
 	isoLike       = regexp.MustCompile(`\A(\d{4})[-/](\d{1,2})[-/](\d{1,2})\z`)
 	numericWithYr = regexp.MustCompile(`\A(\d{1,2})[-/](\d{1,2})[-/](\d{2}|\d{4})\z`)
 	bareMonthDay  = regexp.MustCompile(`\A(\d{1,2})[-/](\d{1,2})\z`)
