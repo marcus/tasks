@@ -55,8 +55,10 @@ func CheckText(input []byte) Result {
 		errors = append(errors, Entry{Line: parseErr.Line, Message: parseErr.Message})
 	}
 
+	warnings := make([]Entry, 0)
 	checkMeta(parsed.Records, &errors)
 	duplicates := map[string][]int{}
+	titles := newDuplicateOpenTitles()
 	for _, parsedRecord := range parsed.Records {
 		if stringField(parsedRecord, "type") == "meta" {
 			if parsedRecord.Line != 1 {
@@ -68,17 +70,29 @@ func CheckText(input []byte) Result {
 		// before validating their IDs. The shared report will eventually add
 		// the unknown-type diagnostic; this slice must not add an ID error
 		// that Ruby never emits alongside it.
-		if typeName := stringField(parsedRecord, "type"); typeName == "section" || typeName == "task" {
-			checkID(parsedRecord, &errors, duplicates)
+		typeName := stringField(parsedRecord, "type")
+		if typeName != "section" && typeName != "task" {
+			continue
 		}
+		checkID(parsedRecord, &errors, duplicates)
+		checkKeys(parsedRecord, &warnings)
+		// check_parent runs between the keys and the fields in Ruby; the tree
+		// rules are check-tree-structure's slice.
+		if typeName == "task" {
+			checkTask(parsedRecord, &errors)
+			titles.observe(parsedRecord)
+		}
+		// check_section is check-tree-structure's slice too.
 	}
 	for id, lines := range duplicates {
 		if len(lines) > 1 {
 			errors = append(errors, Entry{Line: lines[len(lines)-1], Message: fmt.Sprintf("duplicate id %q (lines %s) — id refs will be wrong", id, joinLines(lines))})
 		}
 	}
+	warnings = append(warnings, titles.warnings()...)
 	sortEntries(errors)
-	return Result{Errors: errors, Warnings: []Entry{}}
+	sortEntries(warnings)
+	return Result{Errors: errors, Warnings: warnings}
 }
 
 // CheckStore validates both stores and rejects an ID visible in each file.

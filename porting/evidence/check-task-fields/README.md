@@ -90,9 +90,63 @@ does, rather than claiming a neighbour's behavior:
 The focused Ruby suite passed at this revision: `ruby -Itest test/test_check.rb`
 — 38 runs, 193 assertions, 0 failures.
 
+## Translation and conformance
+
+`go/internal/check/task.go` carries the field rules and both warning channels;
+`recur_cookie.go` carries `Recur.cookie?` as *recognition only* — the grammar's
+diagnostics stay in campaign 5, exactly as `check` itself discards them.
+`UpdateStamp.valid?` is reimplemented at check fidelity for the same reason: it
+is a delegated rule inside this slice's drift closure, not a slice of its own
+that this one may claim.
+
+```console
+$ ruby porting/evidence/check-task-fields/compare.rb
+check-task-fields: 14 Ruby/Go diagnostic comparisons passed
+
+$ for seed in 1 7 99 4242 31337; do
+    ROUNDS=15 PER_ROUND=80 SEED=$seed ruby porting/evidence/check-task-fields/property.rb
+  done
+check-task-fields property: 15 generated stores, 1200 records, Ruby and Go agreed
+on every owned diagnostic (seed …)   # ×5 — 6,000 generated records
+
+$ cd go && gofmt -l . && go vet ./... && go test -race ./...
+ok  tasks-go/internal/check
+```
+
+`compare.rb` filters **both** sides through the same owned-message list: the
+Ruby capture still carries lead, temporal, delegation, and tree messages this
+slice does not port, and the Go package still carries check-meta-and-ids'
+messages. It also asserts the channel split directly — nothing Ruby reported as
+a warning may reach the Go error list, or the reverse. `property.rb` is a
+Ruby/Go differential over generated stores, adversarial around the pinned
+traps; Ruby's `Check` is the oracle in-process, and no expectation is derived
+from Go output.
+
+## One recorded deviation: tied entries on the same line
+
+`Check` ends with `sort_by(&:first)`, and **Ruby's `sort_by` is not stable**, so
+two diagnostics on the same line come back in an order set by quicksort pivots:
+
+```console
+$ ruby -e 'p ((1..80).map { [_1, "k#{_1}"] } + [[63,"dup"],[77,"dup"],[80,"dup"]])
+             .sort_by(&:first).select { |l,| [63,77,80].include?(l) }'
+[[63, "dup"], [63, "k63"], [77, "k77"], [77, "dup"], [80, "k80"], [80, "dup"]]
+```
+
+Line 63 is reordered while 77 and 80 are not. This is unspecified behavior of
+the sort, not a rule of the linter, so it is classified as **nondeterminism
+normalized**: Go sorts stably and keeps emission order, and both comparators
+order tied entries by message on each side. Order *across* lines is still
+compared exactly, and no fixture in this corpus ties — the captured Ruby output
+above is reproduced exactly as captured. Flagged for the reviewer: if this
+should instead be an intentional-difference record for Marcus, it is one line
+to move.
+
 ## Next step
 
-A mid-tier translation into `go/internal/check` against this capture, then
-property tests over the recur/date/state vocabularies, then split independent
-source-fidelity and Go-idiom reviews. Differential conformance runs once the Go
-side exists; this capture is its Ruby baseline and blesses nothing Go produces.
+Split independent reviews — source fidelity (top tier) against `lib/tasks/check.rb`
+and Go idiom (mid tier) — then independent approval. Two things worth a
+reviewer's attention: the deviation above, and the deliberate absence of
+`check_lead`, `check_temporal_time`, `check_parent`, `check_section`, and
+`check_delegation` from the ported loop, each marked in place with the slice
+that owns it.

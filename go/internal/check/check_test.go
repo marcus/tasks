@@ -25,11 +25,39 @@ func TestMetadataAndIDFixtureDiagnosticsMatchRubyOracle(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := Check(tc.path).Errors; !reflect.DeepEqual(got, tc.want) {
+			if got := metaAndIDErrors(Check(tc.path).Errors); !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("errors = %#v, want %#v", got, tc.want)
 			}
 		})
 	}
+}
+
+// metaAndIDErrors keeps only the diagnostics the check-meta-and-ids slice
+// owns. The package's report grows one slice at a time over the same
+// fixtures — task fields, then the tree — so these assertions filter the same
+// way that slice's comparator does rather than asserting a whole report no
+// single slice is responsible for.
+func metaAndIDErrors(entries []Entry) []Entry {
+	owned := []string{
+		"missing meta record on line 1",
+		"line 1 must be a meta record",
+		"unsupported meta version ",
+		"unexpected meta record (only valid on line 1)",
+		"record missing id",
+		"malformed id ",
+		"duplicate id ",
+		`appears in both tasks.jsonl line `,
+	}
+	kept := []Entry{}
+	for _, entry := range entries {
+		for _, prefix := range owned {
+			if strings.Contains(entry.Message, prefix) {
+				kept = append(kept, entry)
+				break
+			}
+		}
+	}
+	return kept
 }
 
 func TestStoreChecksCrossFileDuplicateAgainstRubyOracle(t *testing.T) {
@@ -80,7 +108,7 @@ func TestIDGrammarProperty(t *testing.T) {
 			id.WriteByte(alphabet[rand.IntN(len(alphabet))])
 		}
 		text := fmt.Sprintf("{\"type\":\"meta\",\"version\":2}\n{\"type\":\"task\",\"id\":%q}", id.String())
-		got := CheckText([]byte(text)).Errors
+		got := metaAndIDErrors(CheckText([]byte(text)).Errors)
 		valid := len(id.String()) == 8
 		for _, char := range id.String() {
 			valid = valid && (char >= '0' && char <= '9' || char >= 'a' && char <= 'f')
