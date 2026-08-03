@@ -658,3 +658,23 @@ Ruby-oracle-backed regression to the direct corpus/probe. Re-run direct
 conformance, the Unicode adversarial probe, focused Ruby oracle, Go tests,
 race, vet, and diff check; then request a fresh source-fidelity review. The
 Go-idiom review and approval remain downstream of that review.
+
+## Kelvin-sign review correction (2026-08-02)
+
+The requested U+212A repair was not applied: its stated oracle comparison was
+incorrect. Ruby 4.0 and the existing Go implementation both reject
+`"KEEKLY"` as `unrecognized schedule: "KEEKLY"`; Go's `strings.ToLower`
+produces `"keekly"`, not the `"weekly"` needed to recognize the keyword.
+Conversely, Ruby accepts `"weeKly"` as `.+1w`, as does the existing Go path.
+Preserving every Kelvin sign through Go lowercasing would create that latter
+divergence, so it is not a valid source-fidelity correction.
+
+`kelvin-leading-rejection` was added to the direct Ruby-owned corpus and the
+Go package regression suite. Verification: direct conformance matched 42/42
+cases; the 62-case Unicode adversarial probe matched all 57 interval-owned
+cases, with only the five declared calendar-grammar boundary rows differing;
+`ruby test/test_recur.rb` passed (20 runs, 66 assertions); and `go test ./...`,
+`go test -race ./internal/recur`, `go vet ./...`, and `git diff --check`
+passed. A new independent source-fidelity review is still required; it should
+validate this correction against the Ruby probe before proceeding to Go-idiom
+review or approval.

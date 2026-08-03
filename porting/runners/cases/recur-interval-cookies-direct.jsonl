@@ -2,6 +2,7 @@
 # half. Calendar schedules deliberately belong to recur-calendar-grammar.
 {"case_id":"canonical-preserves-own-prefix","input":" +2D ","default_prefix":".+","next":{"from":"2026-01-01","today":"2026-01-01"}}
 {"case_id":"friendly-weekly","input":"weekly","default_prefix":".+","next":{"from":"2026-01-01","today":"2026-01-01"}}
+{"case_id":"kelvin-leading-rejection","input":"KEEKLY","default_prefix":".+"}
 {"case_id":"filler-and-separators","input":"each 2/weeks","default_prefix":".+","next":{"from":"2026-01-01","today":"2026-01-15"}}
 {"case_id":"joined-words","input":"every3days","default_prefix":"+","next":{"from":"2026-01-01","today":"2026-01-01"}}
 {"case_id":"unrestricted-default-prefix","input":"month","default_prefix":"wat"}

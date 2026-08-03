@@ -72,6 +72,9 @@ func TestParseUsesRubyFullUnicodeDowncase(t *testing.T) {
 	if got := Parse("wee\u212Aly", ".+"); got.Error != "" || got.Canonical != ".+1w" {
 		t.Fatalf("Parse(Kelvin sign) = %#v, want .+1w", got)
 	}
+	if got := Parse("\u212AEEKLY", ".+"); got.Error == "" {
+		t.Fatalf("Parse(leading Kelvin sign) = %#v, want Ruby-compatible rejection", got)
+	}
 }
 
 func TestParseOffAndRejectsZeroOrGarbage(t *testing.T) {
