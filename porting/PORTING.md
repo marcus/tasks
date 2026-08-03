@@ -43,9 +43,12 @@ needs; do not re-read them front to back each iteration.
   touch a live store. Never dual-write. Ruby remains production throughout.
 - **Never bless Go output.** On a conformance mismatch, classify it — Go
   defect / legacy Ruby rule we preserve / nondeterminism to inject or
-  normalize / intentional difference (Marcus decides) / missing oracle
-  coverage — and act on the classification. Updating an expected result
-  because Go produced it is the one unforgivable move.
+  normalize / intentional difference / missing oracle coverage — and act on
+  the classification. Updating an expected result because Go produced it is
+  the one unforgivable move. Accepting an intentional difference is your call
+  as of 2026-08-03: decide from the user's perspective, record it in
+  `intentional-differences.md`, and escalate to Marcus only what is major or
+  expensive to reverse.
 - **Green means green.** A slice lands compiling, gofmt/vet/lint clean,
   race-clean, with its risk tier's full evidence recorded.
 
