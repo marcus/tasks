@@ -65,12 +65,21 @@ type Step struct {
 	To     int
 }
 
-// Journal is the read half of the durable undo history: the index, the blobs,
-// and the plan a caller would apply. There is deliberately no write path here —
-// no record, no cursor commit, no blob interning.
+// Journal is the durable undo history: the index, the blobs, the plan a caller
+// would apply, and — once Writable has supplied the two values a writer needs —
+// the record, commit and interning half in write.go.
+//
+// The journal is convenience state, not the source of truth: tasks.jsonl is.
+// Every method runs under the store's file lock and index.json is replaced
+// atomically, so concurrent processes never corrupt it. A crash in the narrow
+// window between rewriting the files and committing the cursor can leave the
+// cursor one step stale; that degrades to a refused undo, never to a mangled
+// task file.
 type Journal struct {
-	dir string
-	org string
+	dir           string
+	org           string
+	limit         int
+	coalesceScope string
 }
 
 // Open builds the read view over one store's history. `org` is canonicalized so

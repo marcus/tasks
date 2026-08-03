@@ -22,27 +22,34 @@ const refExit = 2
 
 var linePattern = regexp.MustCompile(`(?i)\AL(\d+)\z`)
 
-// done marks a matching open task DONE. Ref resolution runs FIRST and refuses
-// before any write is contemplated — which is the whole of what this build can
-// honestly do, since completing a task is a mutation.
-func (s *surfaceContext) done(args []string) int {
-	flags, rest, _ := takeFlags(args, "--dry-run", "--json", "--include-done")
-	if len(rest) == 0 || strings.TrimSpace(rest[0]) == "" {
-		return abort(`usage: tasks done "<ref>"`)
-	}
-	ref := rest[0]
+// refScope is which tasks a ref may name. The three flags are not
+// interchangeable: `done` resolves open tasks only, `priority` also sees
+// proposals, and every delegation verb resolves across closed tasks so an
+// ineligible target reports the state that refuses it instead of "no match".
+type refScope struct {
+	includeDone     bool
+	includeProposed bool
+}
 
-	queries, status := s.readQueries()
-	if status != 0 {
-		return status
+func (r refScope) admits(state string) bool {
+	if r.includeDone {
+		return true
 	}
-	item, code := resolveRef(queries, ref, flags["--include-done"])
-	if code != 0 {
-		return code
+	if contains(taskquery.OpenStates(), state) {
+		return true
 	}
-	return abort(fmt.Sprintf("done: not implemented in the Go port — %q resolved to %q, but "+
-		"completing it would rewrite the task file, and this build has no write path",
-		ref, taskquery.Headline(item)))
+	return r.includeProposed && state == "PROPOSED"
+}
+
+func (r refScope) description() string {
+	switch {
+	case r.includeDone:
+		return "a live task"
+	case r.includeProposed:
+		return "an open or proposed task"
+	default:
+		return "an open task"
+	}
 }
 
 // resolveRef resolves a ref to exactly one in-scope item, or refuses with exit
@@ -51,15 +58,12 @@ func (s *surfaceContext) done(args []string) int {
 // A ref that names a live task OUTSIDE the requested scope says so explicitly
 // rather than pretending the task does not exist — "no match" for a task you
 // can see in the file is the least actionable answer there is.
-func resolveRef(queries *taskquery.Queries, ref string, includeDone bool) (store.Item, int) {
+func resolveRef(queries *taskquery.Queries, ref string, scope refScope) (store.Item, int) {
 	all := queries.LiveItems()
-	items := all
-	if !includeDone {
-		items = []store.Item{}
-		for _, item := range all {
-			if contains(taskquery.OpenStates(), item.State) {
-				items = append(items, item)
-			}
+	items := []store.Item{}
+	for _, item := range all {
+		if scope.admits(item.State) {
+			items = append(items, item)
 		}
 	}
 
@@ -72,11 +76,11 @@ func resolveRef(queries *taskquery.Queries, ref string, includeDone bool) (store
 		}
 		for _, item := range all {
 			if item.Line == line {
-				return store.Item{}, refOutsideScope(ref, item, includeDone)
+				return store.Item{}, refOutsideScope(ref, item, scope)
 			}
 		}
 		qualifier := "open "
-		if includeDone {
+		if scope.includeDone {
 			qualifier = ""
 		}
 		return store.Item{}, refFailed(fmt.Sprintf("no %stask with a headline on line %s", qualifier, match[1]))
@@ -91,7 +95,7 @@ func resolveRef(queries *taskquery.Queries, ref string, includeDone bool) (store
 	}
 	for _, item := range all {
 		if item.HasID && query.Downcase(item.ID) == needle {
-			return store.Item{}, refOutsideScope(ref, item, includeDone)
+			return store.Item{}, refOutsideScope(ref, item, scope)
 		}
 	}
 
@@ -119,11 +123,11 @@ func resolveRef(queries *taskquery.Queries, ref string, includeDone bool) (store
 		}
 	}
 	if len(outside) == 1 {
-		return store.Item{}, refOutsideScope(ref, outside[0], includeDone)
+		return store.Item{}, refOutsideScope(ref, outside[0], scope)
 	}
 	if len(outside) > 1 {
 		lines := []string{fmt.Sprintf("ref outside scope: %s — %d title matches, none is %s:",
-			ref, len(outside), refScopeDescription(includeDone))}
+			ref, len(outside), scope.description())}
 		for _, item := range outside {
 			lines = append(lines, fmt.Sprintf("  L%d: %s", item.Line, taskquery.Headline(item)))
 		}
@@ -132,16 +136,9 @@ func resolveRef(queries *taskquery.Queries, ref string, includeDone bool) (store
 	return store.Item{}, refFailed("no match: " + ref)
 }
 
-func refOutsideScope(ref string, item store.Item, includeDone bool) int {
+func refOutsideScope(ref string, item store.Item, scope refScope) int {
 	return refFailed(fmt.Sprintf("ref outside scope: %s — task is %s; expected %s",
-		ref, item.State, refScopeDescription(includeDone)))
-}
-
-func refScopeDescription(includeDone bool) string {
-	if includeDone {
-		return "a live task"
-	}
-	return "an open task"
+		ref, item.State, scope.description()))
 }
 
 // refFailed prints the diagnostic and returns exit 2. The bytes are contract:

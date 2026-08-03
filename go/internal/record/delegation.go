@@ -270,3 +270,19 @@ func rubyQuote(text string) string {
 	out.WriteByte('"')
 	return out.String()
 }
+
+// The three predicates the store's plan functions need by name. They are
+// exported here rather than reimplemented there because a second spelling of
+// "is this an identifier" is a second answer waiting to diverge.
+
+// DelegationIdentifier is Delegation.identifier?: real UTF-8, non-empty,
+// bounded, no whitespace in any script, no control or escape characters.
+func DelegationIdentifier(value any) bool { return delegationIdentifier(value) }
+
+// DelegationEmail is Delegation.email? — an identifier that is also
+// address-SHAPED, so a stray `@work` cannot become a person a task waits on.
+func DelegationEmail(value any) bool { return delegationEmail(value) }
+
+// RubyInspect renders a value the way a Ruby diagnostic quotes it, which is
+// what every delegation refusal's wording depends on.
+func RubyInspect(value any) string { return rubyInspect(value) }

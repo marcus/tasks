@@ -6,38 +6,204 @@ import (
 	"slices"
 	"strings"
 
-	"tasks-go/internal/jsonout"
 	"tasks-go/internal/store"
 )
 
-// capture appends a new task — or, in this build, gets as far as the checks
-// that would refuse to and stops.
+// capture appends a new task to the store.
 //
-// Those checks are worth having on their own. Every one of them runs BEFORE a
-// byte is written, and each answers a question the write path cannot: is this
-// store a version this build understands, and is it valid enough to extend? A
-// store that fails either is refused with the file exactly as it was, which is
-// the same answer Ruby gives and the same answer a caller has to be able to
-// rely on.
-//
-// What is missing is only the last step. A capture that passes every gate ends
-// in an explicit refusal rather than a partial record.
+// Every gate runs BEFORE a byte is written, and each answers a question the
+// write path cannot: is this store a version this build understands, and is it
+// valid enough to extend? A store that fails either is refused with the file
+// exactly as it was — the same answer Ruby gives and the same answer a caller
+// has to be able to rely on.
 func (s *surfaceContext) capture(args []string, proposed bool) int {
-	if refusal := s.refuseUnsupportedSchema(args, actionName(proposed)); refusal != 0 {
+	action := actionName(proposed)
+	if refusal := s.refuseUnsupportedSchema(args, action); refusal != 0 {
 		return refusal
 	}
+
+	command, flags, status := parseCaptureArgs(args, proposed)
+	if status != 0 {
+		return status
+	}
+
 	// The preflight is the store's own, taken under the store lock, so the
 	// answer describes the bytes on disk at the moment of the attempt.
-	reason, ok := s.store.CreatePreflightFailure()
-	if !ok {
-		return s.refuseMutation(args, actionName(proposed), "store_invalid",
+	if _, ok := s.store.CreatePreflightFailure(); !ok {
+		return s.refuseMutation(args, action, "store_invalid",
 			captureSummary(args, proposed),
 			"task file is already invalid — run `tasks check` (nothing was written)")
 	}
-	_ = reason
-	return abort(fmt.Sprintf("%s: not implemented in the Go port — the store passed every "+
-		"preflight, so the next step would be a write, and this build has no write path",
-		actionName(proposed)))
+
+	today, status := s.today()
+	if status != 0 {
+		return status
+	}
+	result := s.writeStore().CreateTask(command, today)
+	if !result.OK() {
+		// A field refusal already says what to fix; the section guess is only
+		// right when nothing else explains the failure.
+		if result.Status == store.MutationInvalid && result.FirstError() != "" {
+			return abort(result.FirstError())
+		}
+		return mutationResultFailed(result, args, action, captureSummary(args, proposed))
+	}
+	if proposed && !flags.json {
+		out(fmt.Sprintf("proposed: %s [%s]", command.Title, firstID(result.TouchedIDs)))
+		return 0
+	}
+	return s.reportTouched(result, result.TouchedIDs, flags.json)
+}
+
+type captureFlags struct {
+	json bool
+}
+
+// parseCaptureArgs is cmd_capture's argument scan. The flags this build cannot
+// yet honor are recognized and REFUSED rather than ignored, so a caller never
+// gets a record that silently disagrees with what it asked for.
+func parseCaptureArgs(args []string, proposed bool) (store.CreateCommand, captureFlags, int) {
+	command := store.CreateCommand{}
+	flags := captureFlags{}
+	usage := captureUsage(proposed)
+	contexts := []string{}
+	positional := []string{}
+	state := ""
+	under := ""
+
+	// need fetches a flag's value or aborts — a forgotten value must never fail
+	// silently, because the next positional word would become the value.
+	index := 0
+	need := func(flag string) (string, bool) {
+		index++
+		if index >= len(args) {
+			return "", false
+		}
+		return args[index], true
+	}
+	for ; index < len(args); index++ {
+		arg := args[index]
+		switch arg {
+		case "--priority", "--pri":
+			value, ok := need(arg)
+			if !ok {
+				return command, flags, abort("missing value for " + arg)
+			}
+			command.Priority = value
+		case "--tag":
+			value, ok := need(arg)
+			if !ok {
+				return command, flags, abort("missing value for " + arg)
+			}
+			command.Tags = append(command.Tags, value)
+		case "--context", "--ctx":
+			value, ok := need(arg)
+			if !ok {
+				return command, flags, abort("missing value for " + arg)
+			}
+			contexts = append(contexts, value)
+		case "--state":
+			value, ok := need(arg)
+			if !ok {
+				return command, flags, abort("missing value for " + arg)
+			}
+			state = value
+		case "--project":
+			value, ok := need(arg)
+			if !ok {
+				return command, flags, abort("missing value for " + arg)
+			}
+			command.Project = value
+		case "--note":
+			value, ok := need(arg)
+			if !ok {
+				return command, flags, abort("missing value for " + arg)
+			}
+			command.Notes = append(command.Notes, value)
+		case "--under":
+			value, ok := need(arg)
+			if !ok {
+				return command, flags, abort("missing value for " + arg)
+			}
+			under = value
+		case "--no-host-context":
+			// Host context is not applied by this build at all, so opting out
+			// of it is already the behaviour.
+		case "--json":
+			flags.json = true
+		case "--due", "--deadline", "--scheduled", "--sched", "--due-timezone",
+			"--scheduled-timezone", "--due-floating", "--scheduled-floating",
+			"--due-fold", "--scheduled-fold", "--recur", "--repeat", "--lead":
+			return command, flags, notPorted(strings.TrimPrefix(arg, "--"))
+		case "--dry-run":
+			return command, flags, notPorted("capture --dry-run")
+		default:
+			if strings.HasPrefix(arg, "--") {
+				return command, flags, abort("unknown flag: " + arg)
+			}
+			positional = append(positional, arg)
+		}
+	}
+
+	command.Title = joinPositional(positional)
+	if command.Title == "" {
+		return command, flags, abort(usage)
+	}
+	// --under (nest under a task) and --project (file under a section) are two
+	// different destinations — pick one.
+	if under != "" && command.Project != "" {
+		return command, flags, abort("can't combine --under and --project\n" + usage)
+	}
+	if under != "" {
+		return command, flags, notPorted("capture --under")
+	}
+	if proposed && state != "" {
+		return command, flags, abort("propose owns state PROPOSED")
+	}
+
+	priority := strings.ToUpper(command.Priority)
+	if priority == "NONE" || priority == "CLEAR" || priority == "-" {
+		priority = ""
+	}
+	if priority != "" && priority != "A" && priority != "B" && priority != "C" {
+		return command, flags, abort("priority must be A, B, or C")
+	}
+	command.Priority = priority
+
+	if proposed {
+		command.State = "PROPOSED"
+	} else if state != "" {
+		command.State = strings.ToUpper(state)
+	} else {
+		command.State = "INBOX"
+	}
+	if !slices.Contains(allStates, command.State) {
+		return command, flags, abort(fmt.Sprintf("unknown state: %s (want one of %s)",
+			command.State, strings.Join(allStates, ", ")))
+	}
+
+	// Contexts are tags that start with "@"; list them before plain tags.
+	prefixed := make([]string, 0, len(contexts))
+	for _, value := range contexts {
+		if strings.HasPrefix(value, "@") {
+			prefixed = append(prefixed, value)
+			continue
+		}
+		prefixed = append(prefixed, "@"+value)
+	}
+	command.Tags = append(prefixed, command.Tags...)
+	return command, flags, 0
+}
+
+// allStates is Check::STATES in Ruby's own order, which the usage sentence
+// quotes back verbatim.
+var allStates = []string{"PROPOSED", "INBOX", "TODO", "NEXT", "WAITING", "DONE", "CANCELLED"}
+
+func captureUsage(proposed bool) string {
+	if proposed {
+		return proposeUsage
+	}
+	return captureUsageText
 }
 
 func actionName(proposed bool) string {
@@ -45,6 +211,13 @@ func actionName(proposed bool) string {
 		return "propose"
 	}
 	return "capture"
+}
+
+func firstID(ids []string) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	return ids[0]
 }
 
 // captureSummary is the first line of a capture refusal: what was attempted,
@@ -95,7 +268,7 @@ func (s *surfaceContext) refuseMutation(args []string, action, code, summary, de
 }
 
 func errorDocument(code, action, message string, rolledBack bool) string {
-	w := jsonout.New()
+	w := jsonWriter()
 	w.BeginObject()
 	w.KeyBool("rolled_back", rolledBack)
 	w.KeyStr("error", code)
@@ -127,4 +300,8 @@ func rubyInspectQuote(value string) string {
 	return quoted.String()
 }
 
-var _ = store.New
+// The two usage sentences, byte for byte as bin/tasks spells them: they are
+// stderr contract, and a caller reads them back to correct its own invocation.
+const captureUsageText = `usage: tasks capture "text" [--due d] [--scheduled d] [--priority A|B|C] [--tag t] [--context @x] [--no-host-context] [--state STATE] [--project "Heading" | --under <ref>] [--note "text"]`
+
+const proposeUsage = `usage: tasks propose "text" [--due d] [--scheduled d] [--lead span] [--priority A|B|C] [--tag t] [--context @x] [--no-host-context] [--project "Heading" | --under <ref>] [--note "rationale"]`

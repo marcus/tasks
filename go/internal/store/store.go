@@ -71,10 +71,13 @@ type CheckedRead struct {
 // OK reports whether the read produced a snapshot.
 func (c CheckedRead) OK() bool { return c.Status == StatusOK }
 
-// Store owns one live/archive pair.
+// Store owns one live/archive pair. A store built with New can only read; one
+// built with NewWriter carries the Options a mutation needs — the journal
+// directory, the clock, the device, and the id mint.
 type Store struct {
 	org     string
 	archive string
+	options Options
 }
 
 // New builds a store over the two resolved paths.
