@@ -367,6 +367,29 @@ The seven partially-matching commands are unchanged from the Wave 2 baseline:
 `claim` 4/6, `undo` 2/5 — still mostly `--dry-run`, which no ported command
 implements.
 
+### Corpus after the Wave 3 CLI mutation packet — 352 of 482
+
+The prediction above held: the thirteen field-patch commands were cheap, and
+they moved the number by **131**. Twenty-six commands and alias spellings now
+match every case the corpus has for them — `due`, `schedule`, `undate`, `state`,
+`cancel`, `retitle`, `tag`, `note`, `defer`, `someday`, `activate`, `lead`,
+`recur` and `help`, plus `priority`, `done` and the two capture verbs' previews.
+`--dry-run` is implemented everywhere Ruby has one.
+
+Two corrections to the packet's framing, found by reading `bin/tasks`:
+`delegate` and `claim` have **no** `--dry-run` at all — `take_flags(args,
+"--json", "--keep-state")` refuses it — so their residual gaps are delegation
+output, not previews. And `capture`/`propose`'s remaining preview cases all pass
+`--due`/`--scheduled`/`--recur`/`--lead`/`--under`, which the *create* path does
+not implement; previewing a write this build would refuse is the half-work the
+contract forbids, so those stay refused until `store.CreateCommand` grows the
+dated-create fields.
+
+**Still zero-matching, and whose they are:** the five `project` subcommands,
+`move` (placement), `delete`/`archive`/`repair`/`redo`/`id` (store history and
+lifecycle), `approve`/`reject`/`undelegate`/`workref`/`release` (proposals and
+delegation), and `-p`.
+
 ## Wave 4: rebuild the TUI
 
 The TUI is a separate implementation wave because it is the largest remaining

@@ -2993,9 +2993,18 @@ class TestCliMutations < Minitest::Test
     end
   end
 
+  # The clock is PINNED here, and that is the assertion working rather than a
+  # convenience. A calendar schedule catches up to the next match after TODAY,
+  # so "the stamp, then 2026-08-03" is only the right answer while today is on
+  # or before 2026-08-02 — against the real clock this test passed in July and
+  # failed in August, which is a test that reports the date rather than the
+  # behavior. Pinning `now` to the day the stamp names states the anchor the
+  # expectation was always written against.
   def test_cli_recur_preview_honors_count_and_json
     content = recur_content(pay_rent_recur: "w:mon")
-    run_cli("recur", "Pay rent", "--count", "2", "--json", content: content) do |_org, out, _err, st|
+    pinned = { "TASKS_PIN_NOW" => "2026-08-01T12:00:00Z", "TZ" => "UTC" }
+    run_cli("recur", "Pay rent", "--count", "2", "--json", content: content,
+                                                           env: pinned) do |_org, out, _err, st|
       assert st.success?
       row = JSON.parse(out)
       assert_equal "w:mon", row["recur"]

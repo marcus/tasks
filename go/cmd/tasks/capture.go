@@ -27,6 +27,15 @@ func (s *surfaceContext) capture(args []string, proposed bool) int {
 		return status
 	}
 
+	// The preview runs BEFORE the preflight, and writes nothing — not even the
+	// lock. It renders the same command the create would submit, so what it
+	// shows is what would land rather than a second description of it.
+	if flags.dryRun {
+		out(fmt.Sprintf("would %s under %s: %s", action, captureDestination(command),
+			captureHeadline(command)))
+		return 0
+	}
+
 	// The preflight is the store's own, taken under the store lock, so the
 	// answer describes the bytes on disk at the moment of the attempt.
 	if _, ok := s.store.CreatePreflightFailure(); !ok {
@@ -56,7 +65,8 @@ func (s *surfaceContext) capture(args []string, proposed bool) int {
 }
 
 type captureFlags struct {
-	json bool
+	json   bool
+	dryRun bool
 }
 
 // parseCaptureArgs is cmd_capture's argument scan. The flags this build cannot
@@ -136,7 +146,7 @@ func parseCaptureArgs(args []string, proposed bool) (store.CreateCommand, captur
 			"--due-fold", "--scheduled-fold", "--recur", "--repeat", "--lead":
 			return command, flags, notPorted(strings.TrimPrefix(arg, "--"))
 		case "--dry-run":
-			return command, flags, notPorted("capture --dry-run")
+			flags.dryRun = true
 		default:
 			if strings.HasPrefix(arg, "--") {
 				return command, flags, abort("unknown flag: " + arg)
@@ -193,6 +203,31 @@ func parseCaptureArgs(args []string, proposed bool) (store.CreateCommand, captur
 	}
 	command.Tags = append(prefixed, command.Tags...)
 	return command, flags, 0
+}
+
+// captureHeadline is the preview's rendering of a task that does not exist yet:
+// the same headline shape `list` and every mutation report print, built from the
+// command rather than from a record.
+func captureHeadline(command store.CreateCommand) string {
+	headline := command.State + " "
+	if command.Priority != "" {
+		headline += "[#" + command.Priority + "] "
+	}
+	headline += command.Title
+	if len(command.Tags) > 0 {
+		headline += " :" + strings.Join(command.Tags, ":") + ":"
+	}
+	return headline
+}
+
+// captureDestination is where the preview says the task would land. It is the
+// requested section NAME rather than a resolved one, because resolution happens
+// under the write lock and a preview does not take it.
+func captureDestination(command store.CreateCommand) string {
+	if command.Project != "" {
+		return command.Project
+	}
+	return "Inbox"
 }
 
 // allStates is Check::STATES in Ruby's own order, which the usage sentence

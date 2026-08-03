@@ -290,9 +290,46 @@ func (q *Queries) AvailabilityFor(item store.Item) Availability {
 	if cached, found := q.cache[key]; found {
 		return cached
 	}
-	computed := q.buildAvailability(item)
+	computed := q.buildAvailability(item, Override{})
 	q.cache[key] = computed
 	return computed
+}
+
+// Override is the own-field substitution a PREVIEW applies before asking for an
+// availability answer: "if this write landed, what would this task's
+// availability be?"
+//
+// It is Ruby's `availability_after(item, deferred:, scheduled:, lead:)`, and it
+// is deliberately own-field only. Ancestor precedence still comes from the read
+// model rather than being duplicated in the CLI, so a dry-run cannot disagree
+// with the write it previews about who blocks whom.
+//
+// Each field is a pointer because "not overridden" and "overridden to the
+// clearing value" are different questions. Scheduled is a pointer to a value:
+// nil with ScheduledSet true means "the write clears the available-from date".
+type Override struct {
+	// Deferred replaces the task's own indefinite-hold marker.
+	Deferred *bool
+	// Scheduled replaces the task's own available-from value when ScheduledSet.
+	Scheduled *temporal.Value
+	// ScheduledSet distinguishes "clear it" (nil) from "leave it alone".
+	ScheduledSet bool
+	// Lead replaces the task's own lead span; "" clears it.
+	Lead *string
+}
+
+func (o Override) any() bool {
+	return o.Deferred != nil || o.ScheduledSet || o.Lead != nil
+}
+
+// AvailabilityAfter is the availability an item WOULD have if the named own
+// fields took the given values. Never cached: it answers about a task that does
+// not exist yet.
+func (q *Queries) AvailabilityAfter(item store.Item, override Override) Availability {
+	if !override.any() {
+		return q.AvailabilityFor(item)
+	}
+	return q.buildAvailability(item, override)
 }
 
 type candidate struct {
@@ -300,7 +337,7 @@ type candidate struct {
 	distance int
 }
 
-func (q *Queries) buildAvailability(item store.Item) Availability {
+func (q *Queries) buildAvailability(item store.Item, override Override) Availability {
 	if item.Source == store.SourceArchive || isClosed(item.State) {
 		return Availability{Reason: ReasonClosed}
 	}
@@ -327,7 +364,11 @@ func (q *Queries) buildAvailability(item store.Item) Availability {
 	// it releases, so reporting the date one would have released on would be a
 	// promise nothing keeps.
 	for _, entry := range candidates {
-		if !q.Deferred(entry.item) {
+		held := q.Deferred(entry.item)
+		if entry.distance == 0 && override.Deferred != nil {
+			held = *override.Deferred
+		}
+		if !held {
 			continue
 		}
 		reason := ReasonOnHold
@@ -345,7 +386,18 @@ func (q *Queries) buildAvailability(item store.Item) Availability {
 	}
 	gates := []gate{}
 	for _, entry := range candidates {
-		instant, value, ok := q.effectiveGate(entry.item)
+		var instant time.Time
+		var value temporal.Value
+		var ok bool
+		if entry.distance == 0 && override.any() {
+			// A previewed lead is a lead the write is about to set, and any
+			// lead write clears the release stamp — so the preview must ignore
+			// a stamp the write would retire, or it would promise "available
+			// now" for a window that is about to re-arm.
+			instant, value, ok = q.effectiveGateWith(entry.item, override)
+		} else {
+			instant, value, ok = q.effectiveGate(entry.item)
+		}
 		if !ok {
 			continue
 		}
@@ -431,7 +483,57 @@ func (q *Queries) leadGate(item store.Item) (time.Time, temporal.Value, gateStat
 // even for an occurrence `activate` has already released, because the span is
 // what the record says and the reader is looking at the record.
 func (q *Queries) leadGateWith(item store.Item, released string) (time.Time, temporal.Value, gateState) {
+	return q.leadGateFrom(item, Override{}, released)
+}
+
+// effectiveGateWith is effectiveGate under a preview's own-field override. A
+// lead write clears the release stamp, so an override that names a lead also
+// retires the stamp — otherwise the preview would promise "available now" for a
+// window the write is about to re-arm.
+func (q *Queries) effectiveGateWith(item store.Item, override Override) (time.Time, temporal.Value, bool) {
+	released := item.LeadSkip
+	if override.Lead != nil {
+		released = ""
+	}
+	gateInstant, gateValue, state := q.leadGateFrom(item, override, released)
+	switch state {
+	case gateSkipped:
+		return time.Time{}, temporal.Value{}, false
+	case gatePresent:
+		return gateInstant, gateValue, true
+	}
+	scheduled, ok := q.ScheduledValue(item)
+	if override.ScheduledSet {
+		if override.Scheduled == nil {
+			return time.Time{}, temporal.Value{}, false
+		}
+		scheduled, ok = *override.Scheduled, true
+	}
+	if !ok {
+		return time.Time{}, temporal.Value{}, false
+	}
+	instant, err := scheduled.ReleaseInstant(q.context)
+	if err != nil {
+		return time.Time{}, temporal.Value{}, false
+	}
+	return instant, scheduled, true
+}
+
+// leadGateFrom is the one derivation, with the own available-from value and the
+// own span optionally substituted for a preview.
+func (q *Queries) leadGateFrom(item store.Item, override Override, released string) (time.Time, temporal.Value, gateState) {
 	scheduled, hasScheduled := q.ScheduledValue(item)
+	if override.ScheduledSet {
+		if override.Scheduled == nil {
+			scheduled, hasScheduled = temporal.Value{}, false
+		} else {
+			scheduled, hasScheduled = *override.Scheduled, true
+		}
+	}
+	span := item.Lead
+	if override.Lead != nil {
+		span = *override.Lead
+	}
 	deadline, hasDeadline := q.DeadlineValue(item)
 
 	anchorValue := temporal.Value{}
@@ -457,25 +559,25 @@ func (q *Queries) leadGateWith(item store.Item, released string) (time.Time, tem
 	// Both halves matter: a stamp only ever releases a LEAD window, so a stray
 	// `lead_skip` on a task with no lead can never erase that task's ordinary
 	// available-from gate.
-	if !lead.Span(item.Lead) {
+	if !lead.Span(span) {
 		return time.Time{}, temporal.Value{}, gateAbsent
 	}
 	if released == anchor.ISO() {
 		return time.Time{}, temporal.Value{}, gateSkipped
 	}
 
-	if lead.Clock(item.Lead) {
+	if lead.Clock(span) {
 		if !hasAnchorValue {
 			anchorValue = temporal.Value{Date: anchor}
 		}
-		instant, ok := lead.GateInstant(anchorValue, item.Lead, q.context)
+		instant, ok := lead.GateInstant(anchorValue, span, q.context)
 		if !ok {
 			return time.Time{}, temporal.Value{}, gateAbsent
 		}
 		return instant, q.clockGateDisplay(instant), gatePresent
 	}
 
-	date, ok := lead.GateDate(anchor, item.Lead)
+	date, ok := lead.GateDate(anchor, span)
 	if !ok {
 		return time.Time{}, temporal.Value{}, gateAbsent
 	}

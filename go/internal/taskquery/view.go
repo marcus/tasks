@@ -152,3 +152,8 @@ func (q *Queries) ArchiveItems() []store.Item { return q.snapshot.ArchiveItems }
 // OpenStates is the accepted-and-not-finished vocabulary, which is the default
 // scope for every ref.
 func OpenStates() []string { return append([]string{}, openStates...) }
+
+// ClosedStates is the finished vocabulary. `recur` reads it to refuse a live
+// repeater on a task `done` can never reach to roll — dead recurrence that
+// would sit in the file forever looking like a schedule.
+func ClosedStates() []string { return append([]string{}, closedStates...) }
