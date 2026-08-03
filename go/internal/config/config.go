@@ -76,7 +76,7 @@ func Resolve(defaultDir string, env determinism.Env, hostname func() string) Pat
 		hostname = determinism.Hostname(env)
 	}
 	file := ConfigFile(env)
-	conf := parseFile(file)
+	conf := parseFile(file, env)
 
 	dir, dirSource := defaultDir, "default"
 	if value := env.Get("TASKS_DIR"); value != "" {
@@ -365,13 +365,18 @@ func newParsedConfig() parsedConfig {
 
 // parseFile reads `key = value` lines. `#` comments and blanks are ignored and
 // unknown keys are dropped, so a newer binary's setting cannot break this one.
-func parseFile(path string) parsedConfig {
+// parseFile takes the caller's env rather than reading the process
+// environment. A `~` or relative path in the config file expands through the
+// same HOME the rest of resolution uses, which is what keeps a harness pin —
+// or a test sandbox — from being silently overridden by the real environment.
+// Ruby expands these with File.expand_path against ENV, so reading OSEnv here
+// made Go disagree with the oracle whenever the two differed.
+func parseFile(path string, env determinism.Env) parsedConfig {
 	conf := newParsedConfig()
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return conf
 	}
-	env := determinism.OSEnv()
 	for _, raw := range strings.Split(string(content), "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" || strings.HasPrefix(line, "#") {
