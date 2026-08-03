@@ -60,9 +60,19 @@ func (s *surfaceContext) list(args []string) int {
 			continue
 		}
 		out(bold(state))
-		// Priority orders the group; ties keep file order. Ruby's sort_by is
-		// unstable, so this has to be an explicitly stable sort or same-priority
-		// rows would shuffle between runs.
+		// Priority orders the group; ties keep FILE order.
+		//
+		// This is a deliberate divergence, not a translation. bin/tasks' cmd_list
+		// sorts with a bare `sort_by { |i| i.priority || "Z" }`, and MRI's sort_by
+		// is not stable, so rows that tie on priority come out wherever
+		// introsort's partitioning left them. That order is reproducible for a
+		// given array and meaningless as an order: capturing one unrelated task
+		// into the same state group reshuffles rows you did not touch.
+		//
+		// Ruby's own read model already rejects this — TaskQueries#stable_sort
+		// carries the source index precisely so the named views keep file order —
+		// and cmd_list is the one place in the read path that never adopted it.
+		// See porting/intentional-differences.md § list-priority-tie-order.
 		sorted := append([]store.Item{}, group...)
 		sort.SliceStable(sorted, func(left, right int) bool {
 			return priorityKey(sorted[left]) < priorityKey(sorted[right])
@@ -269,6 +279,11 @@ func temporalLabel(value *temporal.Value) string {
 // leadSpanSuffix is " · 3w before 11/1" on a row a lead is hiding, so an
 // unavailable review shows the intent beside the derived date rather than only
 // the date it produced.
+//
+// The span is the STORED cookie, not its rendering. A list row is already dense
+// — priority, title, contexts, date, recurrence, availability — and "3w" is
+// what the file says and what `tasks lead` would take back. `show` has room for
+// the sentence and spells it out there; this line does not.
 func leadSpanSuffix(queries *taskquery.Queries, item store.Item) string {
 	opens, hasOpens := queries.LeadOpens(item)
 	if !hasOpens {
@@ -286,9 +301,8 @@ func leadSpanSuffix(queries *taskquery.Queries, item store.Item) string {
 	if !ok {
 		return ""
 	}
-	// The SPAN, not its humanized form: this suffix sits at the end of an
-	// already long row, and Ruby prints "3w before 11/1" here while spelling
-	// "3 weeks before 2026-11-01" in the places that have room for it.
+	// An unparseable stored value prints nothing rather than echoing itself
+	// into the middle of a row.
 	if !lead.Span(item.Lead) {
 		return ""
 	}
