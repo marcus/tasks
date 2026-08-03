@@ -62,14 +62,21 @@ func CheckText(input []byte) Result {
 // store's API-grade read uses: validation and the canonical resources have to
 // derive from ONE read taken under the store lock, rather than from a path
 // checked and then reopened.
-func CheckParsed(parsed record.Result) Result {
+func CheckParsed(parsed record.Result) Result { return CheckParsedVersion(parsed, Version) }
+
+// CheckParsedVersion is CheckParsed against a stated schema version rather than
+// this build's. Only one caller needs it: the merge validates a common ancestor
+// against the version that ancestor DECLARES, because a v1 base under two v2
+// sides is the ordinary shape of a merge reaching back past a schema upgrade,
+// and a faithful v1 file must not fail the lint for being one.
+func CheckParsedVersion(parsed record.Result, version int) Result {
 	errors := make([]Entry, 0, len(parsed.Errors)+1)
 	for _, parseErr := range parsed.Errors {
 		errors = append(errors, Entry{Line: parseErr.Line, Message: parseErr.Message})
 	}
 	warnings := make([]Entry, 0)
 
-	checkMeta(parsed.Records, &errors)
+	checkMeta(parsed.Records, &errors, version)
 	duplicates := &duplicateIndex{lines: map[string][]int{}}
 	validate(parsed.Records, &errors, &warnings, duplicates)
 	for _, id := range duplicates.order {
@@ -159,7 +166,7 @@ func UnsupportedVersionMessage(declared json.RawMessage) string {
 	return fmt.Sprintf("unsupported meta version %s (expected %d)", rubyInspect(declared), Version)
 }
 
-func checkMeta(records []record.Record, errors *[]Entry) {
+func checkMeta(records []record.Record, errors *[]Entry, version int) {
 	var first *record.Record
 	for index := range records {
 		if records[index].Line == 1 {
@@ -177,12 +184,14 @@ func checkMeta(records []record.Record, errors *[]Entry) {
 		return
 	}
 	if stringField(*first, "type") != "meta" {
-		*errors = append(*errors, Entry{Line: 1, Message: `line 1 must be a meta record ({"type":"meta","version":2})`})
+		*errors = append(*errors, Entry{Line: 1,
+			Message: fmt.Sprintf(`line 1 must be a meta record ({"type":"meta","version":%d})`, version)})
 		return
 	}
-	version, ok := integerField(*first, "version")
-	if !ok || version != Version {
-		*errors = append(*errors, Entry{Line: 1, Message: fmt.Sprintf("unsupported meta version %s (expected 2)", rubyInspect(rawField(*first, "version")))})
+	declared, ok := integerField(*first, "version")
+	if !ok || declared != version {
+		*errors = append(*errors, Entry{Line: 1,
+			Message: fmt.Sprintf("unsupported meta version %s (expected %d)", rubyInspect(rawField(*first, "version")), version)})
 	}
 }
 

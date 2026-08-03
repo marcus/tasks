@@ -338,3 +338,20 @@ func EncodeString(out *bytes.Buffer, value string) { encodeString(out, value) }
 // Fields parses a JSON object's members, retaining source order and each
 // member's raw representation.
 func Fields(raw json.RawMessage) ([]Field, error) { return parseFields(raw) }
+
+// NestedCanonical renders one nested object — a delegation or a `*_time` value
+// — in its canonical key order, exactly as Format.nested_object followed by
+// JSON.generate does in Ruby. The merge needs those bytes as a total order over
+// two delegation markers, which is what makes "exactly one worker holds a
+// claim" survive a multi-device sync.
+func NestedCanonical(key string, raw json.RawMessage) (string, error) {
+	value, err := nestedObject(key, raw)
+	if err != nil {
+		return "", err
+	}
+	var out bytes.Buffer
+	if err := encodeValue(&out, key, value); err != nil {
+		return "", err
+	}
+	return out.String(), nil
+}
