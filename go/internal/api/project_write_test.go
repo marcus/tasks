@@ -200,10 +200,26 @@ func TestCreateProjectDuplicateTitleIs422(t *testing.T) {
 	before := string(h.storeBytes())
 	// Case-insensitively equal to the existing "Site launch" project: those
 	// titles are the project-ref candidate set, so a duplicate would make every
-	// later ref to it ambiguous.
-	assertError(t, h.json("POST", "/api/v1/projects", `{"title":"site launch"}`, nil), 422, "validation_failed")
-	// An AREA title collides too.
-	assertError(t, h.json("POST", "/api/v1/projects", `{"title":"TASKS"}`, nil), 422, "validation_failed")
+	// later ref to it ambiguous. An AREA title collides too.
+	for _, testCase := range []struct{ sent, quoted string }{
+		{"site launch", `"site launch"`},
+		{"TASKS", `"TASKS"`},
+	} {
+		answered := h.json("POST", "/api/v1/projects", `{"title":"`+testCase.sent+`"}`, nil)
+		assertError(t, answered, 422, "validation_failed")
+		// The reason arrives under `title`, not as an empty details object: it is
+		// the one refusal on this route a client can actually act on, and a bare
+		// "one or more fields are invalid" would hide which field and why.
+		fields, _ := answered.dig("error", "details", "fields").(map[string]any)
+		reasons := stringsOf(fields["title"])
+		if len(reasons) != 1 {
+			t.Fatalf("%q: details.fields.title = %v", testCase.sent, fields["title"])
+		}
+		want := "a project or area named " + testCase.quoted + " already exists"
+		if reasons[0] != want {
+			t.Errorf("%q: reason = %q, want %q", testCase.sent, reasons[0], want)
+		}
+	}
 	if string(h.storeBytes()) != before {
 		t.Error("a refused duplicate wrote to the store")
 	}

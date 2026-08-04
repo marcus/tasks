@@ -439,77 +439,65 @@ One `##` section per accepted difference, in the order they were accepted:
 - **Conformance disposition:** none needed.
 ## go-api-refuses-unbuilt-writes-with-501 — accepted 2026-08-03
 
-- **Slices:** none (Wave 3, HTTP API packet; narrowed 2026-08-03 by the project
-  packet, which retired most of it)
-- **Ruby behavior:** `bin/tasks-api` performs every route in
-  `docs/api/openapi.yaml`, including the five delegation routes and a create
-  carrying a `scheduled_time` or `deadline_time`.
-- **Go behavior:** **six** requests now answer **501 `not_implemented`** with a
-  message naming the missing capability, and write nothing:
-  `POST /tasks/{id}/delegate|undelegate|claim|release`, `PUT
-  /tasks/{id}/work_ref`, and a `POST /tasks` whose body carries a non-null
-  `scheduled_time` or `deadline_time`. Everything else on the route — Host,
-  Origin, media type, body limit, query validation, the If-Match precondition —
-  is enforced FIRST, so a malformed request still gets its own refusal.
-- **What was retired, and why it could be:** the original entry also covered
+Scope as of 2026-08-03: the five delegation routes, and nothing else. The slug is
+kept because `go/internal/api/errors.go` cites it.
+
+- **Slices:** none (Wave 3, HTTP API packet; narrowed to the delegation routes
+  2026-08-03 by the project-write packet, which fixed every other cause)
+- **Ruby behavior:** `bin/tasks-api` performs all five delegation routes —
+  `POST /tasks/{id}/delegate|undelegate|claim|release` and
+  `PUT /tasks/{id}/work_ref` — and answers 200.
+- **Go behavior:** those five answer **501 `not_implemented`** with a message
+  naming the missing capability, and write nothing. Everything else on the route
+  — Host, Origin, media type, body limit, query validation, the If-Match
+  precondition — is enforced FIRST, so a malformed request still gets its own
+  refusal, which is why the differential's delegation cases agree on both sides.
+- **Who can see it:** every API client, immediately and unambiguously.
+- **Why it cannot simply be wired:** `application.runDelegation` refuses a
+  non-empty `expected_revision` outright, because the store cannot check it
+  inside the write transaction and a guard with a race inside it reads as
+  protection it is not. The HTTP contract makes If-Match **mandatory** on these
+  routes. So the adapter's only two options are to refuse, or to accept the
+  request and silently drop a precondition the client believes it set — and a
+  dropped compare-and-set on a claim is how two workers end up holding one task.
+  Refusing is the smaller failure, and it is the one that says so out loud.
+- **Why accepted:** decided by the Wave 3 API packet agent, under the plan's rule
+  that an unfinished capability refuses rather than approximates. 501 is chosen
+  over 503 deliberately: 503 invites a retry, and no number of retries will make
+  the store check the revision. The fix is a real one — teach the store to honour
+  `expected_revision` inside the delegation transaction — after which the five
+  `notImplemented` calls delete themselves.
+- **What was retired, and why it could be:** this entry also used to cover
   `DELETE /tasks/{id}`, `approve`/`reject`, the four project-mutation routes, a
-  `placement`/`parent_id` PATCH, and every dated create. Those causes are gone:
-  `application.DeleteTask`, `application.DecideProposal` and the four
-  `application` project commands all exist and all honour the caller's
-  `expected_revision`, and the changeset seam persists dates. The adapter had
-  simply kept refusing after the capability landed — a **stale refusal**, which
-  is its own kind of wrong answer, and the differential is what exposed it: the
-  `delete` case only "matched" because a deleted task has no ETag to borrow, so
-  both servers were answering 428 about the precondition instead of performing
-  the route.
-- **Who can see it:** every API client, immediately and unambiguously. The two
-  remaining causes are both real and both outside `internal/api`:
-  `application.runDelegation` refuses a non-empty `expected_revision` outright,
-  because the store cannot check it inside the write and a guard with a race
-  inside it reads as protection it is not — and the HTTP contract makes If-Match
-  MANDATORY on the delegation routes, so wiring one would mean dropping a
-  precondition the client set. For the create, `application.CreateCommand`
-  carries `Scheduled` and `Deadline` as bare ISO strings and
-  `createTemporalValues` builds `temporal.Value{Date: date}`, so a local time,
-  zone and fold have nowhere to go.
-- **Why the create refuses rather than dropping the field:** it used to answer
-  **201 while silently discarding the time of day** — the client believed it had
-  stored a 17:00 deadline and the record held an all-day one. That is the exact
-  half-work the plan forbids, and it was invisible in the response only because
-  `deadline_time` came back null. The refusal names the seam and the remedy
-  (create, then PATCH the time, which does persist it).
-- **Why accepted:** decided by the Wave 3 API packet agent, under the plan's
-  rule that an unfinished capability refuses rather than approximates. 501 is
-  chosen over 503 deliberately: 503 invites a retry, and no number of retries
-  will build the missing seam. The refusals disappear one at a time; nothing in
-  `internal/api` has to change except deleting a `notImplemented` call.
+  `placement`/`parent_id` PATCH, and every dated create **including one carrying
+  a time of day**. Every one of those causes is now gone rather than accepted:
+  `application.DeleteTask` and `application.DecideProposal` exist and honour the
+  caller's `expected_revision`; the four `application` project commands exist;
+  and `application.CreateCommand` now carries a complete `temporal.Value`, so a
+  create with a 17:00 Europe/London deadline persists the local time, the zone
+  and the fold. Two of those refusals had outlived their causes entirely — a
+  **stale refusal**, which is its own kind of wrong answer — and the differential
+  is what exposed them: the `delete` case only "matched" because a deleted task
+  has no ETag to borrow, so both servers were answering 428 about the
+  precondition instead of performing the route.
 - **Evidence:** `go/internal/api/write_test.go`,
-  `TestRoutesThisBuildRefusesSayWhy`,
-  `TestRefusedRoutesStillEnforceTheirPreconditions` and
-  `TestCreateRefusesATimeOfDayItCannotPersist`; the live two-server differential
-  run agrees on every other route, and its `store bytes` comparison over the
-  whole shared write sequence is byte-identical.
+  `TestRoutesThisBuildRefusesSayWhy` and
+  `TestRefusedRoutesStillEnforceTheirPreconditions`;
+  `porting/api-differential` is **223/223 identical with an empty
+  `EXPECTED_REFUSALS`**, including both stores' bytes, so no route this build
+  dispatches diverges at all.
 - **Contract note:** `docs/api/openapi.yaml` documents no 501 and its
-  `ErrorCode` enum (line 3572) has no `not_implemented` member, so these
-  responses are deliberately OUTSIDE the written contract. That is the honest
-  place for them: the contract describes the finished product, and a build that
-  cannot yet perform a route should fail contract validation for that route
-  rather than pass it by answering something plausible. The spec is left
-  unchanged so the gap stays visible.
+  `ErrorCode` enum has no `not_implemented` member, so these responses are
+  deliberately OUTSIDE the written contract. That is the honest place for them:
+  the contract describes the finished product, and a build that cannot yet
+  perform a route should fail contract validation for that route rather than pass
+  it by answering something plausible. The spec is left unchanged so the gap
+  stays visible.
 - **Conformance disposition:** `porting/conform` does not drive the API, so no
-  comparator exception is needed. `porting/api-differential` lists the two
-  remaining causes in `EXPECTED_REFUSALS` — `create with deadline` and the
-  store-bytes comparison that follows it, plus the two duplicate-title cases
-  below; a route that stops diverging means the capability landed and this entry
-  should lose a line.
-- **Open gap, reported not fixed:** `application.CreateProject` refuses a
-  duplicate title through `invalid(message)`, which sets `Errors` but no
-  `FieldErrors`, so the 422 carries `details: {}` where Ruby's
-  `field_errors: { title: [message] }` names the field. The Go STORE already
-  sets it correctly (`store.CreateProject`); the application's own pre-check
-  shadows it with the thinner refusal. `go/internal/application` is reserved for
-  its owner, so this is left as two recorded refusals rather than edited across
-  the packet boundary.
+  comparator exception is needed. `porting/api-differential`'s
+  `EXPECTED_REFUSALS` is **empty**, and adding a name back to it means declaring
+  a divergence acceptable — which needs an entry here saying who accepted it and
+  why.
 
 ## go-api-honours-the-determinism-pins — accepted 2026-08-03
 

@@ -9,6 +9,7 @@ import (
 	"tasks-go/internal/jsonout"
 	"tasks-go/internal/store"
 	"tasks-go/internal/taskquery"
+	"tasks-go/internal/temporal"
 )
 
 // The write surface.
@@ -60,9 +61,6 @@ func (s *Server) createTask(request *http.Request, requestID string) (response, 
 	if err := validateCreateBody(body); err != nil {
 		return response{}, err
 	}
-	if err := createTimeMetadataRefusal(body); err != nil {
-		return response{}, err
-	}
 	if err := s.ensureStoreReady(); err != nil {
 		return response{}, err
 	}
@@ -98,34 +96,6 @@ func (s *Server) createTask(request *http.Request, requestID string) (response, 
 		},
 		body: w.Bytes(),
 	}, nil
-}
-
-// createTimeMetadataRefusal is the one thing a create cannot carry.
-//
-// `application.CreateCommand` holds `Scheduled` and `Deadline` as bare ISO
-// strings and `createTemporalValues` builds `temporal.Value{Date: date}` from
-// them, so a local time, a zone and a fold have nowhere to go — even though
-// `store.CreateCommand` takes a full `temporal.Value` and the PATCH path
-// persists all three through the changeset seam.
-//
-// Answering 201 and dropping them is the failure mode this port forbids: the
-// client believes it stored a 17:00 deadline, the record holds an all-day one,
-// and nothing in the exchange says so. A stated refusal that names the seam is
-// the only answer that cannot mislead, and the remedy — create, then PATCH the
-// time — is one round trip away.
-//
-// It runs AFTER every shape check, so a malformed time still gets its own 422.
-func createTimeMetadataRefusal(body *jsonObject) error {
-	for _, field := range []string{"scheduled_time", "deadline_time"} {
-		if !body.has(field) || body.isNull(field) {
-			continue
-		}
-		return notImplemented("persist a time of day on create",
-			"application.CreateCommand carries "+strings.TrimSuffix(field, "_time")+
-				" as a date with no time metadata; PATCH "+field+" after the create, "+
-				"which does persist it")
-	}
-	return nil
 }
 
 // createCommand maps a validated body onto the application's typed command.
@@ -166,11 +136,40 @@ func (s *Server) createCommand(body *jsonObject) (application.CreateCommand, err
 	if body.has("parent_id") && !body.isNull("parent_id") {
 		command.ParentID, _ = body.text("parent_id")
 	}
-	if body.has("scheduled") && !body.isNull("scheduled") {
-		command.Scheduled, _ = body.text("scheduled")
-	}
-	if body.has("deadline") && !body.isNull("deadline") {
-		command.Deadline, _ = body.text("deadline")
+	// The date, and then the COMPLETE value when the request named a time of day.
+	// Ruby's `temporal_input` does exactly this — build the value, and resolve a
+	// floating one against the reader's zone so an unresolvable wall time is a
+	// client error rather than a stored one.
+	for _, field := range []string{"scheduled", "deadline"} {
+		if !body.has(field) || body.isNull(field) {
+			continue
+		}
+		text, _ := body.text(field)
+		if field == "scheduled" {
+			command.Scheduled = text
+		} else {
+			command.Deadline = text
+		}
+		timeKey := field + "_time"
+		if !body.has(timeKey) || body.isNull(timeKey) {
+			continue
+		}
+		date, ok := temporal.ParseDate(text)
+		if !ok {
+			// validateCommonBody already refused an unparseable date, so this is
+			// unreachable; refusing again rather than silently dropping the time
+			// is the cheaper of the two ways to be wrong here.
+			return application.CreateCommand{}, validationError(reason(field, "must be a real calendar date"))
+		}
+		value, err := s.createTemporalValue(body, field, date)
+		if err != nil {
+			return application.CreateCommand{}, err
+		}
+		if field == "scheduled" {
+			command.ScheduledValue = &value
+		} else {
+			command.DeadlineValue = &value
+		}
 	}
 	if body.has("recurrence") && !body.isNull("recurrence") {
 		canonical, err := normalizeRecurrence(body, false)
@@ -195,6 +194,44 @@ func (s *Server) createCommand(body *jsonObject) (application.CreateCommand, err
 		}
 	}
 	return command, nil
+}
+
+// createTemporalValue builds the complete value behind a create's
+// `{ local, timezone, fold }`, and is App#temporal_input for the create half.
+//
+// It is the twin of validate.go's `temporalInput`, which serves PATCH. The two
+// are not one function because that one answers in `store.PatchValue`, whose
+// temporal half has no accessor — a create needs the `temporal.Value` itself, to
+// hand to the application command. `TestCreateAndPatchAgreeOnATimedValue` is
+// what keeps the pair from drifting apart, because a one-line disagreement here
+// would store a different instant depending on which verb a client used.
+func (s *Server) createTemporalValue(body *jsonObject, field string, date temporal.Date) (temporal.Value, error) {
+	timeKey := field + "_time"
+	object, ok := body.object(timeKey)
+	if !ok {
+		return temporal.Value{}, validationError(reason(timeKey, "must be an object or null"))
+	}
+	local, _ := object.text("local")
+	zone := ""
+	if object.has("timezone") && !object.isNull("timezone") {
+		zone, _ = object.text("timezone")
+	}
+	fold := 0
+	if object.has("fold") {
+		fold, _ = foldValue(object)
+	}
+	value, err := temporal.NewValue(date, local, zone, fold, true)
+	if err != nil {
+		return temporal.Value{}, validationError(reason(timeKey, err.Error()))
+	}
+	// A floating wall time names no zone of its own, so it is the READER's zone
+	// that decides whether it exists at all.
+	if value.Floating() {
+		if _, err := value.Instant(s.options.TemporalContext()); err != nil {
+			return temporal.Value{}, validationError(reason(timeKey, err.Error()))
+		}
+	}
+	return value, nil
 }
 
 // -- PATCH --------------------------------------------------------------------

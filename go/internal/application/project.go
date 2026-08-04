@@ -48,7 +48,17 @@ func (a *Application) CreateProject(title string, operation *OperationContext) O
 	}
 	for _, view := range existing {
 		if strings.EqualFold(strings.TrimSpace(view.Title), title) {
-			return invalid("a project or area named " + inspect(title) + " already exists")
+			// The reason goes under the FIELD that caused it, exactly as
+			// `store.CreateProject`'s own duplicate check and Ruby's
+			// `field_errors: { title: [message] }` do. This pre-check runs first
+			// and would otherwise SHADOW the store's richer refusal with a
+			// thinner one, so an HTTP 422 carried empty details for the one
+			// refusal a client can actually act on. It still writes nothing.
+			message := "a project or area named " + inspect(title) + " already exists"
+			return Outcome{MutationResult: store.MutationResult{
+				Status: store.MutationInvalid, Errors: []string{message},
+				FieldErrors: map[string][]string{"title": {message}},
+			}}
 		}
 	}
 	return Outcome{MutationResult: writer.CreateProject(title)}

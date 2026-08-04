@@ -169,8 +169,10 @@ func TestPreconditionsStaleCurrentAndFreshETag(t *testing.T) {
 
 func TestTemporalCreateAndPatchPairSemantics(t *testing.T) {
 	h := newHarness(t)
-	// The pair is set on an EXISTING task, because this build's store cannot
-	// persist a date on a create (see TestRoutesThisBuildRefusesSayWhy).
+	// The pair is set on an EXISTING task here because the interesting half of
+	// this test is what a LATER patch does to it — moving the date under a
+	// preserved time, and clearing the time back to all-day. A create carrying
+	// the same pair is TestCreatePersistsAFullTimedValue.
 	seeded := h.json("PATCH", "/api/v1/tasks/"+fixPR,
 		`{"deadline":"2026-07-20","deadline_time":{"local":"17:00","timezone":"Europe/London","fold":0}}`,
 		h.withIfMatch(h.etagOf(fixPR)))
@@ -674,51 +676,131 @@ func TestCreatePersistsTheDatedFields(t *testing.T) {
 	}
 }
 
-// A create that names a time of day REFUSES rather than storing an all-day date
-// and calling it a success. This is the only field pair the create path cannot
-// carry, and the refusal names the application seam that is missing and the
-// PATCH that does persist it.
-func TestCreateRefusesATimeOfDayItCannotPersist(t *testing.T) {
-	for _, testCase := range []struct{ name, body, expect string }{
-		{"deadline_time", `{"title":"x","deadline":"2026-07-20","deadline_time":{"local":"17:00"}}`, "deadline"},
-		{"scheduled_time", `{"title":"x","scheduled":"2026-07-20","scheduled_time":{"local":"09:30"}}`, "scheduled"},
+// A create carrying a time of day PERSISTS all of it — the local time, the zone
+// and the fold — rather than storing an all-day date and calling it a success.
+//
+// This route used to answer 201 while silently discarding the time, and then a
+// stated 501 once that was noticed. Both were symptoms of one gap:
+// `application.CreateCommand` had no way to carry a parsed value. It does now, so
+// the create is simply correct.
+func TestCreatePersistsAFullTimedValue(t *testing.T) {
+	for _, testCase := range []struct {
+		name, body, field, local, zone string
+		fold                           float64
+	}{
+		{
+			name:  "zoned deadline",
+			body:  `{"title":"zoned","deadline":"2026-07-20","deadline_time":{"local":"17:00","timezone":"Europe/London","fold":0}}`,
+			field: "deadline_time", local: "17:00", zone: "Europe/London",
+		},
+		{
+			name:  "floating scheduled",
+			body:  `{"title":"floating","scheduled":"2026-07-20","scheduled_time":{"local":"09:30"}}`,
+			field: "scheduled_time", local: "09:30", zone: "",
+		},
+		{
+			name:  "an ambiguous wall time keeps its fold",
+			body:  `{"title":"folded","deadline":"2026-11-01","deadline_time":{"local":"01:30","timezone":"America/Los_Angeles","fold":1}}`,
+			field: "deadline_time", local: "01:30", zone: "America/Los_Angeles", fold: 1,
+		},
 	} {
 		h := newHarness(t)
-		before := string(h.storeBytes())
 		answered := h.json("POST", "/api/v1/tasks", testCase.body, nil)
-		assertError(t, answered, 501, "not_implemented")
-		if !strings.Contains(answered.message(), testCase.expect) {
-			t.Errorf("%s: message %q does not name the field", testCase.name, answered.message())
+		assertStatus(t, answered, 201)
+		timed, _ := answered.data()[testCase.field].(map[string]any)
+		if timed == nil {
+			t.Fatalf("%s: %s is null: %s", testCase.name, testCase.field, answered.Body)
+		}
+		if timed["local"] != testCase.local {
+			t.Errorf("%s: local = %v, want %q", testCase.name, timed["local"], testCase.local)
+		}
+		if testCase.zone == "" {
+			if timed["timezone"] != nil {
+				t.Errorf("%s: timezone = %v, want null", testCase.name, timed["timezone"])
+			}
+		} else if timed["timezone"] != testCase.zone {
+			t.Errorf("%s: timezone = %v, want %q", testCase.name, timed["timezone"], testCase.zone)
+		}
+		if timed["fold"] != testCase.fold {
+			t.Errorf("%s: fold = %v, want %v", testCase.name, timed["fold"], testCase.fold)
+		}
+		if timed["instant"] == "" || timed["instant"] == nil {
+			t.Errorf("%s: no resolved instant: %v", testCase.name, timed)
+		}
+		// And it is on DISK, not just in the response.
+		stored := string(h.storeBytes())
+		if !strings.Contains(stored, `"local":"`+testCase.local+`"`) {
+			t.Errorf("%s: the store holds no local time: %s", testCase.name, stored)
+		}
+		if testCase.zone != "" && !strings.Contains(stored, `"timezone":"`+testCase.zone+`"`) {
+			t.Errorf("%s: the store holds no zone: %s", testCase.name, stored)
+		}
+	}
+}
+
+// The create and PATCH paths build their temporal values in two places —
+// write.go's createTemporalValue and validate.go's temporalInput — because the
+// PATCH one answers in a store.PatchValue whose temporal half has no accessor.
+// Duplicated geometry drifts, and a drift here would store a different instant
+// depending on which verb the client used, so the two are pinned to agree.
+func TestCreateAndPatchAgreeOnATimedValue(t *testing.T) {
+	const timed = `{"local":"17:00","timezone":"Europe/London","fold":0}`
+
+	direct := newHarness(t)
+	created := direct.json("POST", "/api/v1/tasks",
+		`{"title":"one step","deadline":"2026-07-20","deadline_time":`+timed+`}`, nil)
+	assertStatus(t, created, 201)
+
+	staged := newHarness(t)
+	first := staged.json("POST", "/api/v1/tasks", `{"title":"two steps","deadline":"2026-07-20"}`, nil)
+	assertStatus(t, first, 201)
+	id, _ := first.data()["id"].(string)
+	patched := staged.json("PATCH", "/api/v1/tasks/"+id,
+		`{"deadline_time":`+timed+`}`, staged.withIfMatch(first.etag()))
+	assertStatus(t, patched, 200)
+
+	want, _ := created.data()["deadline_time"].(map[string]any)
+	got, _ := patched.data()["deadline_time"].(map[string]any)
+	if want == nil || got == nil {
+		t.Fatalf("one path stored no time: create %v, patch %v", want, got)
+	}
+	for _, key := range []string{"local", "timezone", "fold", "effective_timezone", "instant"} {
+		if want[key] != got[key] {
+			t.Errorf("%s: create = %v, patch = %v", key, want[key], got[key])
+		}
+	}
+}
+
+// A time the CLIENT got wrong is still a 422 about the request, and the refusal
+// names the member that carried it — the same mapping the PATCH path uses.
+func TestCreateRefusesAnUnresolvableTime(t *testing.T) {
+	h := newHarness(t)
+	before := string(h.storeBytes())
+	for _, testCase := range []struct{ name, body string }{
+		{"a wall time in a DST gap",
+			`{"title":"x","deadline":"2026-03-08","deadline_time":{"local":"02:30","timezone":"America/Los_Angeles"}}`},
+		{"a zone that names no region",
+			`{"title":"x","deadline":"2026-07-20","deadline_time":{"local":"09:00","timezone":"PST"}}`},
+		{"a local time that is not HH:MM",
+			`{"title":"x","deadline":"2026-07-20","deadline_time":{"local":"5pm"}}`},
+		{"a derived field the client may not set",
+			`{"title":"x","deadline":"2026-07-20","deadline_time":{"local":"09:00","instant":"2026-07-20T09:00:00Z"}}`},
+		{"a time with no date to hang it on",
+			`{"title":"x","deadline_time":{"local":"17:00"}}`},
+	} {
+		answered := h.json("POST", "/api/v1/tasks", testCase.body, nil)
+		assertError(t, answered, 422, "validation_failed")
+		if !strings.Contains(answered.Body, "deadline") {
+			t.Errorf("%s: the refusal does not name the field: %s", testCase.name, answered.Body)
 		}
 		if string(h.storeBytes()) != before {
-			t.Errorf("%s: the refused create wrote to the store", testCase.name)
+			t.Fatalf("%s: a refused create wrote to the store", testCase.name)
 		}
 	}
 
 	// A null time is not a time: it is the all-day spelling, and it still creates.
-	h := newHarness(t)
 	assertStatus(t, h.json("POST", "/api/v1/tasks",
 		`{"title":"all day","deadline":"2026-07-20","deadline_time":null}`, nil), 201)
-
-	// The shape checks still run FIRST, so a malformed time is a 422 about the
-	// request rather than a 501 about the build.
-	assertError(t, h.json("POST", "/api/v1/tasks",
-		`{"title":"x","deadline":"2026-07-20","deadline_time":{"local":"5pm"}}`, nil),
-		422, "validation_failed")
-	assertError(t, h.json("POST", "/api/v1/tasks",
-		`{"title":"x","deadline_time":{"local":"17:00"}}`, nil), 422, "validation_failed")
-
-	// And the remedy in the refusal actually works.
-	created := h.json("POST", "/api/v1/tasks", `{"title":"timed later","deadline":"2026-07-20"}`, nil)
-	assertStatus(t, created, 201)
-	id, _ := created.data()["id"].(string)
-	patched := h.json("PATCH", "/api/v1/tasks/"+id,
-		`{"deadline_time":{"local":"17:00","timezone":"Europe/London"}}`, h.withIfMatch(created.etag()))
-	assertStatus(t, patched, 200)
-	timed, _ := patched.data()["deadline_time"].(map[string]any)
-	if timed == nil || timed["local"] != "17:00" {
-		t.Errorf("the PATCH remedy did not persist the time: %s", patched.Body)
-	}
 }
 
 // A placement over HTTP reaches the store as a placement, anchor included.

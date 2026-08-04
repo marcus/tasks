@@ -166,37 +166,26 @@ PROJECT_FIXTURE_RECORDS = [
 # a defect, and a route here that stops diverging means the capability landed and
 # the entry should be retired.
 #
-# Every name here traces to ONE of two gaps in go/internal/application, which the
-# API packet does not own. Nothing else on any route diverges.
+# Empty, and it should stay that way.
 #
-# `create with deadline` and the store-bytes comparison that follows it:
-# `application.CreateCommand` carries `Scheduled` and `Deadline` as bare ISO
-# strings and `createTemporalValues` builds `temporal.Value{Date: date}`, so a
-# local time, zone and fold have nowhere to go. `store.CreateCommand` already
-# takes a full `temporal.Value` and the PATCH path persists all three, so the gap
-# is one struct wide. Go answers a stated 501 rather than storing an all-day date
-# and reporting success, which is why the divergence is a status rather than a
-# silently different record.
+# Every route both servers dispatch now agrees byte for byte, including both
+# stores. The four names that used to live here traced to two gaps in
+# `go/internal/application` — `CreateCommand` could not carry a parsed temporal
+# value, and `CreateProject`'s duplicate-title refusal set no `FieldErrors` — and
+# both are fixed rather than accepted.
 #
-# The two duplicate-title refusals: `application.CreateProject` refuses a
-# duplicate through `invalid(message)`, which sets `Errors` but no `FieldErrors`,
-# so the 422 carries `details: {}` where Ruby's
-# `field_errors: { title: [message] }` names the field that caused it. The Go
-# STORE already sets it correctly; the application's own pre-check reports it
-# thinner and shadows the store's.
+# The five delegation routes are not exceptions either, and their 501 is not a
+# stale cause: `application.runDelegation` refuses a non-empty
+# `expected_revision` outright because the store cannot check it inside the write,
+# and the HTTP contract makes If-Match mandatory there — accepting would mean
+# dropping a precondition the client set. Every delegation case below therefore
+# lands on a shared 428/415/422 transport gate, which both servers answer
+# identically.
 #
-# The five delegation routes are NOT here, and their 501 is not a stale cause:
-# `application.runDelegation` refuses a non-empty `expected_revision` outright
-# because the store cannot check it inside the write, and the HTTP contract makes
-# If-Match mandatory on those routes. Accepting the request would mean dropping a
-# precondition the client set. They diverge only where the shared 428/415/422
-# transport gates answer first, which is why no delegation name appears below.
-EXPECTED_REFUSALS = [
-  "create with deadline",
-  "store bytes after the refused dated create",
-  "project create duplicate title",
-  "project create duplicate area title"
-].freeze
+# Adding a name here means declaring a divergence acceptable. Prefer fixing the
+# cause; if a name must go in, it needs an entry in
+# porting/intentional-differences.md saying who accepted it and why.
+EXPECTED_REFUSALS = [].freeze
 
 class Server
   attr_reader :dir, :port
@@ -616,14 +605,32 @@ def run_writes(comparison)
   # two servers given the same requests wrote different task data.
   comparison.compare("store bytes", { body: ruby.bytes }, { body: go.bytes }, keys: [:body])
 
-  # The one create this build refuses, kept LAST so it cannot contaminate the
-  # comparison above. Go answers a stated 501 rather than persisting an all-day
-  # date and calling it a success, so Ruby ends with one record Go does not have —
-  # and that single record is the whole of the divergence below.
+  # A create carrying a time of DAY, which is the one create shape that needed a
+  # new application seam to express: `CreateCommand` held its dates as bare ISO
+  # strings, so 17:00 Europe/London had nowhere to go. The record it writes is
+  # compared in full below, because the local time, the zone and the fold are
+  # exactly what a partial implementation drops.
   both.call("create with deadline", "POST", "/api/v1/tasks",
             body: { title: "Dated", deadline: "2026-07-20",
                     deadline_time: { local: "17:00", timezone: "Europe/London", fold: 0 } })
-  comparison.compare("store bytes after the refused dated create",
+  both.call("create with a floating scheduled time", "POST", "/api/v1/tasks",
+            body: { title: "Floating", scheduled: "2026-07-21",
+                    scheduled_time: { local: "09:30" } })
+  both.call("create with an ambiguous wall time", "POST", "/api/v1/tasks",
+            body: { title: "Folded", deadline: "2026-11-01",
+                    deadline_time: { local: "01:30", timezone: "America/Los_Angeles", fold: 1 } })
+  # And the refusals that shape carries, which must name the same member with the
+  # same sentence on both sides.
+  both.call("create with a dst-gap time", "POST", "/api/v1/tasks",
+            body: { title: "Gap", deadline: "2026-03-08",
+                    deadline_time: { local: "02:30", timezone: "America/Los_Angeles" } })
+  both.call("create with an unknown zone", "POST", "/api/v1/tasks",
+            body: { title: "Zoneless", deadline: "2026-07-20",
+                    deadline_time: { local: "09:00", timezone: "PST" } })
+  both.call("create with a derived time field", "POST", "/api/v1/tasks",
+            body: { title: "Derived", deadline: "2026-07-20",
+                    deadline_time: { local: "09:00", instant: "2026-07-20T09:00:00Z" } })
+  comparison.compare("store bytes after the dated creates",
                      { body: ruby.bytes }, { body: go.bytes }, keys: [:body])
 ensure
   ruby&.stop
