@@ -439,37 +439,56 @@ One `##` section per accepted difference, in the order they were accepted:
 - **Conformance disposition:** none needed.
 ## go-api-refuses-unbuilt-writes-with-501 — accepted 2026-08-03
 
-- **Slices:** none (Wave 3, HTTP API packet)
+- **Slices:** none (Wave 3, HTTP API packet; narrowed 2026-08-03 by the project
+  packet, which retired most of it)
 - **Ruby behavior:** `bin/tasks-api` performs every route in
-  `docs/api/openapi.yaml`. `DELETE /tasks/{id}` answers 204,
-  `POST /tasks/{id}/approve|reject` answer 200, the five delegation routes
-  answer 200, the four project-mutation routes answer 200/201, a `placement` or
-  `parent_id` PATCH moves the subtree and answers 200, and a create carrying
-  `scheduled`, `deadline`, `recurrence` or `lead` persists them and answers 201.
-- **Go behavior:** each of those answers **501 `not_implemented`** with a
-  message naming the missing capability, and writes nothing. Everything else on
-  the route — Host, Origin, media type, body limit, query validation, the
-  If-Match precondition — is enforced FIRST, so a malformed request still gets
-  its own refusal.
-- **Who can see it:** every API client, immediately and unambiguously. The
-  cause in each case is the Go store, not the adapter: it has no `DeleteTask`,
-  no `DecideProposal`, no project lifecycle writer, `applyFieldPatch` refuses
-  `location` outright, `store.CreateCommand` carries no temporal or recurrence
-  fields, and `application.runDelegation` refuses a non-empty
-  `expected_revision` — which the HTTP contract makes mandatory on the
-  delegation routes. Wiring a delegation route that silently dropped the
-  client's If-Match would be the one outcome worse than refusing.
+  `docs/api/openapi.yaml`, including the five delegation routes and a create
+  carrying a `scheduled_time` or `deadline_time`.
+- **Go behavior:** **six** requests now answer **501 `not_implemented`** with a
+  message naming the missing capability, and write nothing:
+  `POST /tasks/{id}/delegate|undelegate|claim|release`, `PUT
+  /tasks/{id}/work_ref`, and a `POST /tasks` whose body carries a non-null
+  `scheduled_time` or `deadline_time`. Everything else on the route — Host,
+  Origin, media type, body limit, query validation, the If-Match precondition —
+  is enforced FIRST, so a malformed request still gets its own refusal.
+- **What was retired, and why it could be:** the original entry also covered
+  `DELETE /tasks/{id}`, `approve`/`reject`, the four project-mutation routes, a
+  `placement`/`parent_id` PATCH, and every dated create. Those causes are gone:
+  `application.DeleteTask`, `application.DecideProposal` and the four
+  `application` project commands all exist and all honour the caller's
+  `expected_revision`, and the changeset seam persists dates. The adapter had
+  simply kept refusing after the capability landed — a **stale refusal**, which
+  is its own kind of wrong answer, and the differential is what exposed it: the
+  `delete` case only "matched" because a deleted task has no ETag to borrow, so
+  both servers were answering 428 about the precondition instead of performing
+  the route.
+- **Who can see it:** every API client, immediately and unambiguously. The two
+  remaining causes are both real and both outside `internal/api`:
+  `application.runDelegation` refuses a non-empty `expected_revision` outright,
+  because the store cannot check it inside the write and a guard with a race
+  inside it reads as protection it is not — and the HTTP contract makes If-Match
+  MANDATORY on the delegation routes, so wiring one would mean dropping a
+  precondition the client set. For the create, `application.CreateCommand`
+  carries `Scheduled` and `Deadline` as bare ISO strings and
+  `createTemporalValues` builds `temporal.Value{Date: date}`, so a local time,
+  zone and fold have nowhere to go.
+- **Why the create refuses rather than dropping the field:** it used to answer
+  **201 while silently discarding the time of day** — the client believed it had
+  stored a 17:00 deadline and the record held an all-day one. That is the exact
+  half-work the plan forbids, and it was invisible in the response only because
+  `deadline_time` came back null. The refusal names the seam and the remedy
+  (create, then PATCH the time, which does persist it).
 - **Why accepted:** decided by the Wave 3 API packet agent, under the plan's
   rule that an unfinished capability refuses rather than approximates. 501 is
   chosen over 503 deliberately: 503 invites a retry, and no number of retries
-  will build the store operation. The refusals disappear one at a time as the
-  store grows each capability; nothing in `internal/api` has to change except
-  deleting a `notImplemented` call.
+  will build the missing seam. The refusals disappear one at a time; nothing in
+  `internal/api` has to change except deleting a `notImplemented` call.
 - **Evidence:** `go/internal/api/write_test.go`,
   `TestRoutesThisBuildRefusesSayWhy`,
   `TestRefusedRoutesStillEnforceTheirPreconditions` and
-  `TestCreateRefusesFieldsThisBuildCannotPersist`; the live two-server
-  differential run agrees on every other route.
+  `TestCreateRefusesATimeOfDayItCannotPersist`; the live two-server differential
+  run agrees on every other route, and its `store bytes` comparison over the
+  whole shared write sequence is byte-identical.
 - **Contract note:** `docs/api/openapi.yaml` documents no 501 and its
   `ErrorCode` enum (line 3572) has no `not_implemented` member, so these
   responses are deliberately OUTSIDE the written contract. That is the honest
@@ -478,9 +497,19 @@ One `##` section per accepted difference, in the order they were accepted:
   rather than pass it by answering something plausible. The spec is left
   unchanged so the gap stays visible.
 - **Conformance disposition:** `porting/conform` does not drive the API, so no
-  comparator exception is needed. `porting/api-differential` lists these routes
-  in `EXPECTED_REFUSALS`; a route that stops diverging means the capability
-  landed and this entry should lose a line.
+  comparator exception is needed. `porting/api-differential` lists the two
+  remaining causes in `EXPECTED_REFUSALS` — `create with deadline` and the
+  store-bytes comparison that follows it, plus the two duplicate-title cases
+  below; a route that stops diverging means the capability landed and this entry
+  should lose a line.
+- **Open gap, reported not fixed:** `application.CreateProject` refuses a
+  duplicate title through `invalid(message)`, which sets `Errors` but no
+  `FieldErrors`, so the 422 carries `details: {}` where Ruby's
+  `field_errors: { title: [message] }` names the field. The Go STORE already
+  sets it correctly (`store.CreateProject`); the application's own pre-check
+  shadows it with the thinner refusal. `go/internal/application` is reserved for
+  its owner, so this is left as two recorded refusals rather than edited across
+  the packet boundary.
 
 ## go-api-honours-the-determinism-pins — accepted 2026-08-03
 
@@ -634,6 +663,40 @@ One `##` section per accepted difference, in the order they were accepted:
   `archive.jsonl` and the journal.
 - **Conformance disposition:** none. Both sides now produce the pinned date, so
   `gen.project-archive.*` matches without an exception.
+
+## project-rename-keeps-the-timed-rollups — a Ruby DEFECT fixed, not a behavior difference — 2026-08-03
+
+- **Slices:** none (HTTP API project-write packet)
+- **Ruby behavior, before:** `App#renamed_project_view` rebuilt the pre-read
+  `ProjectView` with its title replaced, passing `next_date` but **not**
+  `next_time` or `next_at`. Both default to `nil`, so the synthesized response
+  reported a project whose soonest task had silently lost its time of day. The
+  method's own comment said "the rollups are unchanged by a retitle", which is
+  exactly right and exactly what the code did not do.
+- **Who could see it:** any client renaming an area whose soonest open task
+  carries a timed date, when the new title moves that area out of the read model
+  (the case the synthesis exists for — e.g. retitled "Inbox"). A `GET
+  /api/v1/projects/{id}` a second earlier returned
+  `next_time: {local: "17:00", …}` and `next_at: "2026-07-28T16:00:00Z"`; the
+  `PATCH` response returned `null` for both, for a write that moved no task.
+- **What changed:** `renamed_project_view` now passes `next_time:` and
+  `next_at:` through. Two lines in `lib/tasks/api/app.rb`.
+- **Why fixed rather than ported:** reproducing it would have meant making the Go
+  adapter null two fields on purpose, in the one response shape that exists
+  precisely to report the pre-read rollups faithfully. It is also a live defect
+  for Ruby API clients regardless of the port. Decided by the project-write
+  packet agent, under the velocity plan's standing preference for fixing a Ruby
+  defect over reproducing it.
+- **Evidence:** found by `porting/api-differential`'s new `projects` phase
+  (`project rename area out of scope`), where Go carried the timed pair and Ruby
+  did not — the divergence was the Go side being right. Guarded by
+  `test/api/test_projects.rb#test_rename_area_out_of_scope_keeps_the_timed_rollups`,
+  which fails against the unfixed method with `next_time` `nil` instead of the
+  timed object, and by
+  `go/internal/api/project_write_test.go#TestRenameAreaOutOfScopeKeepsTheTimedRollups`.
+  `bundle exec ruby test/api/test_projects.rb` — 30 runs, 0 failures.
+- **Conformance disposition:** none. Both sides now carry the pair, and the
+  differential case matches with no exception.
 
 ## undelegate-and-workref-do-not-coalesce — 2026-08-03
 

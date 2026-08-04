@@ -11,7 +11,7 @@
 #
 # Usage:
 #
-#   porting/api-differential            # all three phases
+#   porting/api-differential            # all four phases
 #   porting/api-differential reads      # one phase
 #
 # Phases:
@@ -24,6 +24,13 @@
 #              because two independent servers legitimately differ in all three
 #              (see porting/intentional-differences.md,
 #              `go-api-honours-the-determinism-pins`).
+#   projects   the four project-write routes over a project-shaped fixture:
+#              create, rename, complete, archive, every documented refusal, and
+#              BOTH files' bytes afterwards. It runs its own server pair because
+#              a project fixture needs a "Projects" root, an area, a deferred-only
+#              project and an undecided proposal that the task fixture has no
+#              business carrying — and because a sweep must be the only thing
+#              that creates the archive file.
 #
 # Exit status is 0 when every comparison in the requested phases agrees EXCEPT
 # the routes recorded as intentionally refused; any other divergence is a defect.
@@ -49,7 +56,22 @@ FIX = {
   pr: "aaaa0005", eval: "aaaa0006", travel: "aaaa0007", old: "aaaa0008",
   home: "aaaa0009", plants: "aaaa000a"
 }.freeze
-KNOWN_IDS = (FIX.values + %w[bbbb0001 bbbb0002 cccc0001 dddd0001]).freeze
+
+# The project fixture's ids, mirroring test_helper.rb's PFIX so a case here and
+# the Ruby API test are talking about the same section.
+PFIX = {
+  inbox: "cccc0001", inbox_task: "cccc0002", projects: "cccc0003",
+  site: "cccc0004", site_next: "cccc0005", site_todo: "cccc0006",
+  site_sub: "cccc0007", site_sub_task: "cccc0008", site_deferred: "cccc0009",
+  reno: "cccc000a", reno_todo: "cccc000b", empty: "cccc000c",
+  tasks: "cccc000d", tasks_next: "cccc000e", tasks_todo: "cccc000f",
+  donepile: "cccc0010", done_task: "cccc0011",
+  parked: "cccc0012", parked_deferred: "cccc0013",
+  candidate: "cccc0014", candidate_proposal: "cccc0015",
+  errands: "cccc0016", errands_todo: "cccc0017"
+}.freeze
+
+KNOWN_IDS = (FIX.values + PFIX.values + %w[bbbb0001 bbbb0002 cccc0001 dddd0001]).freeze
 
 FIXTURE_RECORDS = [
   { "type" => "meta", "version" => 2 },
@@ -90,14 +112,90 @@ ARCHIVE_RECORDS = [
     "title" => "Archived anchor", "closed" => "2026-07-02" }
 ].freeze
 
+# The project read model needs shapes the task fixture has no business carrying:
+# a top-level "Projects" root whose section children are projects, an area, a
+# done-only section that is neither, a deferred-only project (open_count 0,
+# held_count 1) and an undecided proposal that blocks a sweep even under force.
+# It is test_helper.rb's PROJECTS_FIXTURE_RECORDS plus those last two, and plus a
+# TIMED deadline on the area's NEXT task — which is what makes `next_time` and
+# `next_at` observable in the response synthesized when a rename moves that area
+# out of the read model.
+PROJECT_FIXTURE_RECORDS = [
+  { "type" => "meta", "version" => 2 },
+  { "type" => "section", "id" => PFIX[:inbox], "title" => "Inbox" },
+  { "type" => "task", "id" => PFIX[:inbox_task], "parent" => PFIX[:inbox], "state" => "INBOX",
+    "title" => "unfiled capture" },
+  { "type" => "section", "id" => PFIX[:projects], "title" => "Projects" },
+  { "type" => "section", "id" => PFIX[:site], "parent" => PFIX[:projects], "title" => "Site launch",
+    "body" => "Goal: ship the personal site." },
+  { "type" => "task", "id" => PFIX[:site_next], "parent" => PFIX[:site], "state" => "NEXT",
+    "title" => "Pick a static-site generator", "recur" => "+1w" },
+  { "type" => "task", "id" => PFIX[:site_todo], "parent" => PFIX[:site], "state" => "TODO",
+    "title" => "Write the landing copy", "deadline" => "2026-07-25" },
+  { "type" => "section", "id" => PFIX[:site_sub], "parent" => PFIX[:site], "title" => "Copywriting" },
+  { "type" => "task", "id" => PFIX[:site_sub_task], "parent" => PFIX[:site_sub], "state" => "TODO",
+    "title" => "Draft the about page" },
+  { "type" => "task", "id" => PFIX[:site_deferred], "parent" => PFIX[:site], "state" => "TODO",
+    "title" => "Someday: custom domain", "tags" => %w[defer] },
+  { "type" => "section", "id" => PFIX[:reno], "parent" => PFIX[:projects], "title" => "Stuck reno" },
+  { "type" => "task", "id" => PFIX[:reno_todo], "parent" => PFIX[:reno], "state" => "TODO",
+    "title" => "Measure the kitchen" },
+  { "type" => "section", "id" => PFIX[:empty], "parent" => PFIX[:projects], "title" => "Empty project" },
+  { "type" => "section", "id" => PFIX[:parked], "parent" => PFIX[:projects], "title" => "Parked" },
+  { "type" => "task", "id" => PFIX[:parked_deferred], "parent" => PFIX[:parked], "state" => "TODO",
+    "title" => "Someday: revisit", "tags" => %w[defer] },
+  { "type" => "section", "id" => PFIX[:candidate], "parent" => PFIX[:projects], "title" => "Candidate" },
+  { "type" => "task", "id" => PFIX[:candidate_proposal], "parent" => PFIX[:candidate],
+    "state" => "PROPOSED", "title" => "Investigate the candidate" },
+  { "type" => "section", "id" => PFIX[:errands], "title" => "Errands" },
+  { "type" => "task", "id" => PFIX[:errands_todo], "parent" => PFIX[:errands], "state" => "TODO",
+    "title" => "Post the parcel" },
+  { "type" => "section", "id" => PFIX[:tasks], "title" => "Tasks" },
+  { "type" => "task", "id" => PFIX[:tasks_next], "parent" => PFIX[:tasks], "state" => "NEXT",
+    "title" => "Reply to the vendor", "deadline" => "2026-07-28",
+    "deadline_time" => { "local" => "17:00", "timezone" => "Europe/London" } },
+  { "type" => "task", "id" => PFIX[:tasks_todo], "parent" => PFIX[:tasks], "state" => "TODO",
+    "title" => "File expenses" },
+  { "type" => "section", "id" => PFIX[:donepile], "title" => "Done pile" },
+  { "type" => "task", "id" => PFIX[:done_task], "parent" => PFIX[:donepile], "state" => "DONE",
+    "title" => "Old finished chore", "closed" => "2026-07-01" }
+].freeze
+
 # The routes recorded in porting/intentional-differences.md as refused by the Go
 # build. A divergence on one of these is EXPECTED; a divergence anywhere else is
 # a defect, and a route here that stops diverging means the capability landed and
 # the entry should be retired.
+#
+# Every name here traces to ONE of two gaps in go/internal/application, which the
+# API packet does not own. Nothing else on any route diverges.
+#
+# `create with deadline` and the store-bytes comparison that follows it:
+# `application.CreateCommand` carries `Scheduled` and `Deadline` as bare ISO
+# strings and `createTemporalValues` builds `temporal.Value{Date: date}`, so a
+# local time, zone and fold have nowhere to go. `store.CreateCommand` already
+# takes a full `temporal.Value` and the PATCH path persists all three, so the gap
+# is one struct wide. Go answers a stated 501 rather than storing an all-day date
+# and reporting success, which is why the divergence is a status rather than a
+# silently different record.
+#
+# The two duplicate-title refusals: `application.CreateProject` refuses a
+# duplicate through `invalid(message)`, which sets `Errors` but no `FieldErrors`,
+# so the 422 carries `details: {}` where Ruby's
+# `field_errors: { title: [message] }` names the field that caused it. The Go
+# STORE already sets it correctly; the application's own pre-check reports it
+# thinner and shadows the store's.
+#
+# The five delegation routes are NOT here, and their 501 is not a stale cause:
+# `application.runDelegation` refuses a non-empty `expected_revision` outright
+# because the store cannot check it inside the write, and the HTTP contract makes
+# If-Match mandatory on those routes. Accepting the request would mean dropping a
+# precondition the client set. They diverge only where the shared 428/415/422
+# transport gates answer first, which is why no delegation name appears below.
 EXPECTED_REFUSALS = [
-  "create with recurrence", "create with deadline", "create with scheduled",
-  "placement move", "parent unnest", "delete", "approve", "delegate",
-  "project create", "project complete", "store bytes"
+  "create with deadline",
+  "store bytes after the refused dated create",
+  "project create duplicate title",
+  "project create duplicate area title"
 ].freeze
 
 class Server
@@ -164,6 +262,14 @@ class Server
   end
 
   def bytes = File.binread(File.join(@dir, "tasks.jsonl"))
+
+  # The archive file, or the sentinel that says it was never created. A sweep is
+  # the only thing that creates it, so "absent" is a real answer worth comparing.
+  def archive_bytes
+    path = File.join(@dir, "archive.jsonl")
+    File.exist?(path) ? File.binread(path) : "(no archive file)"
+  end
+
   def log_text = File.read(@log.path)
 
   def stop
@@ -346,9 +452,6 @@ def run_writes(comparison)
             body: { title: "Scheduled", scheduled: "2026-07-20" })
   both.call("create with recurrence", "POST", "/api/v1/tasks",
             body: { title: "Recurring", scheduled: "2026-07-20", recurrence: "weekly" })
-  both.call("create with deadline", "POST", "/api/v1/tasks",
-            body: { title: "Dated", deadline: "2026-07-20",
-                    deadline_time: { local: "17:00", timezone: "Europe/London", fold: 0 } })
 
   pr = FIX[:pr]
   baseline = tag.call(pr)
@@ -405,17 +508,262 @@ def run_writes(comparison)
             headers: { "If-Match" => tag.call(FIX[:plants]) })
   both.call("parent unnest", "PATCH", "/api/v1/tasks/bbbb0002",
             body: { parent_id: nil }, headers: { "If-Match" => tag.call("bbbb0002") })
-  both.call("delete", "DELETE", "/api/v1/tasks/#{FIX[:garden]}",
-            headers: { "If-Match" => tag.call(FIX[:garden]) })
-  both.call("approve", "POST", "/api/v1/tasks/#{FIX[:garden]}/approve",
+  # -- delete ----------------------------------------------------------------
+  #
+  # A delete compares ALL THREE revision components, and `location` includes the
+  # sibling id list, so two servers that have each minted their own id into a
+  # section hold legitimately DIFFERENT revisions for every task in it. Measured
+  # on both binaries: after one create in Inbox and one in Work, `own` and
+  # `lifecycle` still agree for the existing siblings and `location` differs.
+  #
+  # A borrowed precondition would therefore make the Go side 412 on a request
+  # Ruby performs, which reads as a defect and is not one. The patches above can
+  # borrow Ruby's tag because a changeset compares only the components its own
+  # fields touch; a delete cannot, so each server supplies its own current tag.
+  # The assertion is unchanged in kind: identical requests, each with its own
+  # current precondition, must produce identical responses and identical bytes.
+  own_tag = ->(server, id) { server.call("GET", "/api/v1/tasks/#{id}").fetch(:etag) }
+  delete_case = lambda do |name, path, id, ruby_tag: nil, go_tag: nil|
+    comparison.compare(
+      name,
+      ruby.call("DELETE", path, headers: { "If-Match" => ruby_tag || own_tag.call(ruby, id) }),
+      go.call("DELETE", path, headers: { "If-Match" => go_tag || own_tag.call(go, id) })
+    )
+  end
+
+  delete_case.call("delete", "/api/v1/tasks/#{FIX[:garden]}", FIX[:garden])
+  # bbbb0002 was unnested above, so the PR task has exactly one descendant left.
+  delete_case.call("delete refuses descendants", "/api/v1/tasks/#{pr}", pr)
+  # Each server's own pre-patch revision, so the staleness below is real on both.
+  stale_ruby = own_tag.call(ruby, FIX[:eval])
+  stale_go = own_tag.call(go, FIX[:eval])
+  both.call("patch before a stale delete", "PATCH", "/api/v1/tasks/#{FIX[:eval]}",
+            body: { title: "Renamed under the old revision" },
+            headers: { "If-Match" => stale_ruby })
+  delete_case.call("delete stale", "/api/v1/tasks/#{FIX[:eval]}", FIX[:eval],
+                   ruby_tag: stale_ruby, go_tag: stale_go)
+  delete_case.call("delete missing", "/api/v1/tasks/deadbeef", FIX[:flight])
+  delete_case.call("delete cascade", "/api/v1/tasks/#{pr}?cascade=true", pr)
+  # The garden task is gone by now, so these two are the missing-precondition
+  # path: a deleted task has no ETag to borrow, and both servers refuse on the
+  # header before they ever look for the task.
+  both.call("approve a deleted task", "POST", "/api/v1/tasks/#{FIX[:garden]}/approve",
             headers: { "If-Match" => tag.call(FIX[:garden]) })
   both.call("delegate", "POST", "/api/v1/tasks/#{FIX[:garden]}/delegate",
             body: { kind: "agent", mode: "refine" },
             headers: { "If-Match" => tag.call(FIX[:garden]) })
+
+  # -- proposals -------------------------------------------------------------
+  #
+  # A decision is an own-field write, so the per-server tags are unnecessary
+  # here: the `own` component agrees over identical semantic values even when the
+  # sibling lists do not. Each proposal is created through the API, so the id is
+  # minted independently on each side and the paths differ — hence a lambda that
+  # takes the per-server id rather than one shared path.
+  propose = lambda do |title, extra = {}|
+    ruby_created = ruby.call("POST", "/api/v1/tasks", body: { title: title, state: "PROPOSED" }.merge(extra))
+    go_created = go.call("POST", "/api/v1/tasks", body: { title: title, state: "PROPOSED" }.merge(extra))
+    comparison.compare("propose #{title}", ruby_created, go_created)
+    [ruby_created, go_created].map do |created|
+      payload = JSON.parse(created.fetch(:body))
+      [payload.dig("data", "id"), created.fetch(:etag)]
+    end
+  end
+  decide = lambda do |name, verb, pair, **options|
+    (ruby_id, ruby_tag), (go_id, go_tag) = pair
+    comparison.compare(
+      name,
+      ruby.call("POST", "/api/v1/tasks/#{ruby_id}/#{verb}",
+                **options.merge(headers: { "If-Match" => ruby_tag }.merge(options[:headers] || {}))),
+      go.call("POST", "/api/v1/tasks/#{go_id}/#{verb}",
+              **options.merge(headers: { "If-Match" => go_tag }.merge(options[:headers] || {})))
+    )
+  end
+
+  comparison.compare("proposed scope", ruby.call("GET", "/api/v1/tasks?scope=proposed"),
+                     go.call("GET", "/api/v1/tasks?scope=proposed"))
+  approvable = propose.call("Research backup providers")
+  decide.call("approve without if-match", "approve", approvable.map { |id, _| [id, nil] })
+  decide.call("approve", "approve", approvable)
+  decide.call("approve twice", "approve", approvable)
+  decide.call("approve rejects a body", "approve", approvable, body: { notes: "x" })
+
+  rejectable = propose.call("Review subscriptions")
+  decide.call("reject", "reject", rejectable)
+
+  noted = propose.call("Duplicate proposal", body: "Original rationale.")
+  decide.call("reject with notes", "reject", noted,
+              body: { notes: ["Duplicate — already rejected previously.", "Same renewal mail."] })
+
+  single = propose.call("Single note proposal")
+  decide.call("reject with one string note", "reject", single, body: { notes: "Just the one." })
+
+  bad = propose.call("Bad notes proposal")
+  decide.call("reject with non-text notes", "reject", bad, body: { notes: [1, 2] })
+  decide.call("reject with an unknown field", "reject", bad, body: { reason: "nope" })
+  decide.call("reject with an empty note list", "reject", bad, body: { notes: [] })
+
+  # A task that is not a proposal carries the domain's own sentence, which is the
+  # only useful thing to say about the refusal.
+  both.call("approve a non-proposal", "POST", "/api/v1/tasks/#{FIX[:flight]}/approve",
+            headers: { "If-Match" => tag.call(FIX[:flight]) })
   both.call("project create", "POST", "/api/v1/projects", body: { title: "New project" })
   both.call("project complete", "POST", "/api/v1/projects/#{FIX[:work]}/complete")
 
+  # Every write above is one both builds perform, so the two files must agree
+  # byte for byte under the documented normalization. No exception applies to
+  # this comparison, and none should ever be added to it: a divergence here means
+  # two servers given the same requests wrote different task data.
   comparison.compare("store bytes", { body: ruby.bytes }, { body: go.bytes }, keys: [:body])
+
+  # The one create this build refuses, kept LAST so it cannot contaminate the
+  # comparison above. Go answers a stated 501 rather than persisting an all-day
+  # date and calling it a success, so Ruby ends with one record Go does not have —
+  # and that single record is the whole of the divergence below.
+  both.call("create with deadline", "POST", "/api/v1/tasks",
+            body: { title: "Dated", deadline: "2026-07-20",
+                    deadline_time: { local: "17:00", timezone: "Europe/London", fold: 0 } })
+  comparison.compare("store bytes after the refused dated create",
+                     { body: ruby.bytes }, { body: go.bytes }, keys: [:body])
+ensure
+  ruby&.stop
+  go&.stop
+end
+
+# The reads the project writes are judged against. A divergence here would make
+# every comparison after it meaningless, so they run first.
+PROJECT_READ_CASES = [
+  "/api/v1/projects",
+  "/api/v1/projects/#{PFIX[:site]}",
+  "/api/v1/projects/#{PFIX[:tasks]}",
+  "/api/v1/projects/#{PFIX[:parked]}",
+  "/api/v1/projects/#{PFIX[:candidate]}",
+  "/api/v1/projects/#{PFIX[:donepile]}"
+].freeze
+
+def run_projects(comparison)
+  puts "projects"
+  ruby = Server.new("ruby-projects", [RUBY_BIN], records: PROJECT_FIXTURE_RECORDS, archive: nil)
+  go = Server.new("go-projects", [GO_BIN], records: PROJECT_FIXTURE_RECORDS, archive: nil)
+
+  both = lambda do |name, method, path, **options|
+    comparison.compare(name, ruby.call(method, path, **options), go.call(method, path, **options))
+  end
+  files = lambda do |name|
+    comparison.compare("#{name} (live)", { body: ruby.bytes }, { body: go.bytes }, keys: [:body])
+    comparison.compare("#{name} (archive)",
+                       { body: ruby.archive_bytes }, { body: go.archive_bytes }, keys: [:body])
+  end
+
+  PROJECT_READ_CASES.each { |path| both.call("GET #{path}", "GET", path) }
+
+  # -- create ----------------------------------------------------------------
+  both.call("project create", "POST", "/api/v1/projects", body: { title: "Mid-year Reviews" })
+  both.call("project create duplicate title", "POST", "/api/v1/projects", body: { title: "site launch" })
+  both.call("project create duplicate area title", "POST", "/api/v1/projects", body: { title: "TASKS" })
+  both.call("project create blank title", "POST", "/api/v1/projects", body: { title: "   " })
+  both.call("project create missing title", "POST", "/api/v1/projects", body: {})
+  both.call("project create non-string title", "POST", "/api/v1/projects", raw: '{"title":7}')
+  both.call("project create unknown field", "POST", "/api/v1/projects",
+            body: { title: "X", colour: "red" })
+  both.call("project create unknown query", "POST", "/api/v1/projects?bogus=1", body: { title: "X" })
+  both.call("project create non-object body", "POST", "/api/v1/projects", raw: "[]")
+  both.call("project create text body", "POST", "/api/v1/projects",
+            raw: '{"title":"X"}', content_type: "text/plain")
+  both.call("project create foreign origin", "POST", "/api/v1/projects",
+            body: { title: "X" }, headers: { "Origin" => "https://evil.example" })
+
+  # -- rename ----------------------------------------------------------------
+  both.call("project rename", "PATCH", "/api/v1/projects/#{PFIX[:reno]}",
+            body: { title: "  Kitchen reno  " })
+  both.call("project rename blank title", "PATCH", "/api/v1/projects/#{PFIX[:reno]}",
+            body: { title: "   " })
+  both.call("project rename missing title", "PATCH", "/api/v1/projects/#{PFIX[:reno]}", body: {})
+  both.call("project rename unknown field", "PATCH", "/api/v1/projects/#{PFIX[:reno]}",
+            body: { title: "X", colour: "red" })
+  both.call("project rename unknown query", "PATCH", "/api/v1/projects/#{PFIX[:reno]}?bogus=1",
+            body: { title: "X" })
+  both.call("project rename needs no if-match", "PATCH", "/api/v1/projects/#{PFIX[:reno]}",
+            body: { title: "Kitchen reno" })
+  both.call("project rename missing project", "PATCH", "/api/v1/projects/ffffffff",
+            body: { title: "Ghost" })
+  both.call("project rename malformed id", "PATCH", "/api/v1/projects/not-hex",
+            body: { title: "Ghost" })
+  # Four ids that are not projects or areas. Each must refuse BEFORE the store's
+  # mechanical section retitle runs — the live bytes below prove it.
+  both.call("project rename inbox", "PATCH", "/api/v1/projects/#{PFIX[:inbox]}",
+            body: { title: "Renamed" })
+  both.call("project rename projects root", "PATCH", "/api/v1/projects/#{PFIX[:projects]}",
+            body: { title: "Renamed" })
+  both.call("project rename done pile", "PATCH", "/api/v1/projects/#{PFIX[:donepile]}",
+            body: { title: "Renamed" })
+  both.call("project rename a nested sub-section", "PATCH", "/api/v1/projects/#{PFIX[:site_sub]}",
+            body: { title: "Renamed" })
+  both.call("project rename a task id", "PATCH", "/api/v1/projects/#{PFIX[:reno_todo]}",
+            body: { title: "Renamed" })
+  both.call("project rename foreign origin", "PATCH", "/api/v1/projects/#{PFIX[:reno]}",
+            body: { title: "X" }, headers: { "Origin" => "https://evil.example" })
+  files.call("bytes after the rename refusals")
+  # Retitling the "Tasks" area to "Inbox" moves it OUT of the read model, so the
+  # 200 is synthesized from the pre-read. That area's NEXT task carries a timed
+  # deadline, which is exactly what a synthesis that forgets `next_time`/`next_at`
+  # drops on the floor.
+  both.call("project rename area out of scope", "PATCH", "/api/v1/projects/#{PFIX[:tasks]}",
+            body: { title: "Inbox" })
+
+  # -- complete --------------------------------------------------------------
+  both.call("project complete", "POST", "/api/v1/projects/#{PFIX[:site]}/complete")
+  both.call("project complete again", "POST", "/api/v1/projects/#{PFIX[:site]}/complete")
+  both.call("project complete rejects a body", "POST", "/api/v1/projects/#{PFIX[:empty]}/complete",
+            body: { unexpected: true })
+  both.call("project complete rejects a text body", "POST", "/api/v1/projects/#{PFIX[:empty]}/complete",
+            raw: "nope", content_type: "text/plain")
+  both.call("project complete unknown query", "POST", "/api/v1/projects/#{PFIX[:empty]}/complete?force=true")
+  both.call("project complete empty project", "POST", "/api/v1/projects/#{PFIX[:empty]}/complete")
+  both.call("project complete missing project", "POST", "/api/v1/projects/ffffffff/complete")
+  both.call("project complete inbox", "POST", "/api/v1/projects/#{PFIX[:inbox]}/complete")
+  both.call("project complete projects root", "POST", "/api/v1/projects/#{PFIX[:projects]}/complete")
+  both.call("project complete a task id", "POST", "/api/v1/projects/#{PFIX[:reno_todo]}/complete")
+  both.call("project complete foreign origin", "POST", "/api/v1/projects/#{PFIX[:empty]}/complete",
+            headers: { "Origin" => "https://evil.example" })
+  # An area with no open work left drops out of the read model, so this 200 is
+  # synthesized too — zero rollups and stuck.
+  both.call("project complete area out of scope", "POST", "/api/v1/projects/#{PFIX[:errands]}/complete")
+  files.call("bytes after complete")
+
+  # -- archive ---------------------------------------------------------------
+  # The proposal refusal runs FIRST, while no archive file exists yet, so the
+  # comparison right after it proves a refused sweep creates nothing.
+  both.call("project archive never sweeps an undecided proposal", "POST",
+            "/api/v1/projects/#{PFIX[:candidate]}/archive?force=true")
+  files.call("bytes after the proposal refusal")
+  both.call("project archive refuses open work", "POST", "/api/v1/projects/#{PFIX[:reno]}/archive")
+  both.call("project archive refuses a deferred-only project", "POST",
+            "/api/v1/projects/#{PFIX[:parked]}/archive")
+  both.call("project archive unknown query", "POST", "/api/v1/projects/#{PFIX[:parked]}/archive?bogus=1")
+  both.call("project archive bad force value", "POST", "/api/v1/projects/#{PFIX[:parked]}/archive?force=yes")
+  both.call("project archive rejects a body", "POST", "/api/v1/projects/#{PFIX[:parked]}/archive",
+            body: { unexpected: true })
+  both.call("project archive missing project", "POST", "/api/v1/projects/ffffffff/archive")
+  both.call("project archive inbox", "POST", "/api/v1/projects/#{PFIX[:inbox]}/archive")
+  both.call("project archive foreign origin", "POST", "/api/v1/projects/#{PFIX[:parked]}/archive",
+            headers: { "Origin" => "https://evil.example" })
+  files.call("bytes after the archive refusals")
+  both.call("project archive force sweeps open work", "POST",
+            "/api/v1/projects/#{PFIX[:reno]}/archive?force=true")
+  both.call("project archive force sweeps a deferred-only project", "POST",
+            "/api/v1/projects/#{PFIX[:parked]}/archive?force=true")
+  both.call("project archive empty project needs no force", "POST",
+            "/api/v1/projects/#{PFIX[:empty]}/archive")
+  # The completed project sweeps without force, sub-section and all.
+  both.call("project archive a completed project", "POST", "/api/v1/projects/#{PFIX[:site]}/archive")
+  both.call("project archive twice", "POST", "/api/v1/projects/#{PFIX[:reno]}/archive")
+  files.call("bytes after the sweeps")
+
+  # The read model, after all of it, from a store both servers have rewritten.
+  both.call("GET /api/v1/projects after the writes", "GET", "/api/v1/projects")
+  both.call("GET /api/v1/tasks?scope=archived after the writes", "GET", "/api/v1/tasks?scope=archived")
+  both.call("GET /api/v1/meta after the writes", "GET", "/api/v1/meta")
 ensure
   ruby&.stop
   go&.stop
@@ -426,13 +774,14 @@ unless File.executable?(GO_BIN)
         "build it with: (cd go && go build -o bin/tasks-api ./cmd/tasks-api)"
 end
 
-phases = ARGV.empty? ? %w[reads transport writes] : ARGV
+phases = ARGV.empty? ? %w[reads transport writes projects] : ARGV
 comparison = Comparison.new
 phases.each do |phase|
   case phase
   when "reads" then run_reads(comparison)
   when "transport" then run_transport(comparison)
   when "writes" then run_writes(comparison)
+  when "projects" then run_projects(comparison)
   else abort "unknown phase: #{phase}"
   end
 end

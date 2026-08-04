@@ -870,12 +870,16 @@ module Tasks
       end
 
       # The pre-read project with only its title replaced — the rollups are
-      # unchanged by a retitle.
+      # unchanged by a retitle, and that has to include the TIMED pair. Both
+      # `next_time` and `next_at` default to nil, so omitting them here reported
+      # a project whose soonest task had lost its time-of-day, seconds after a
+      # GET of the same section had reported it.
       def renamed_project_view(view, title)
         ProjectView.new(
           id: view.id, title: title, parent_id: view.parent_id, kind: view.kind,
           line: view.line, open_count: view.open_count, next_count: view.next_count,
-          next_date: view.next_date, stuck: view.stuck, body: view.body,
+          next_date: view.next_date, next_time: view.next_time, next_at: view.next_at,
+          stuck: view.stuck, body: view.body,
           task_ids: view.task_ids, held_count: view.held_count
         )
       end
