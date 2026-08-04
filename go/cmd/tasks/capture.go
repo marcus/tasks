@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"tasks-go/internal/application"
 	"tasks-go/internal/lead"
 	"tasks-go/internal/recur"
 	"tasks-go/internal/store"
@@ -51,6 +52,15 @@ func (s *surfaceContext) capture(args []string, proposed bool) int {
 		parent = item
 		command.ParentID = item.ID
 	}
+	app, err := application.New(application.Options{
+		Factory:         func() application.Store { return s.writeStore() },
+		TemporalContext: func() temporal.Context { return context },
+		HostContext:     s.paths.HostContext,
+	})
+	if err != nil {
+		return abort(err.Error())
+	}
+	command = app.PrepareCreateTask(command)
 
 	// The preview runs BEFORE the preflight, and writes nothing — not even the
 	// lock. It renders the same command the create would submit, so what it
@@ -73,11 +83,7 @@ func (s *surfaceContext) capture(args []string, proposed bool) int {
 			"task file is already invalid — run `tasks check` (nothing was written)")
 	}
 
-	today, status := s.today()
-	if status != 0 {
-		return status
-	}
-	result := s.writeStore().CreateTask(command, today)
+	result := app.CreateTask(command, nil)
 	if !result.OK() {
 		if result.Status == store.MutationTooDeep {
 			return abort(fmt.Sprintf("would exceed max depth %d (max_depth config / TASKS_MAX_DEPTH)",
@@ -93,13 +99,13 @@ func (s *surfaceContext) capture(args []string, proposed bool) int {
 		if result.Status == store.MutationInvalid && result.FirstError() != "" {
 			return abort(result.FirstError())
 		}
-		return mutationResultFailed(result, args, action, captureSummary(args, proposed))
+		return mutationResultFailed(result.MutationResult, args, action, captureSummary(args, proposed))
 	}
 	if proposed && !flags.json {
 		out(fmt.Sprintf("proposed: %s [%s]", command.Title, firstID(result.TouchedIDs)))
 		return 0
 	}
-	return s.reportTouched(result, result.TouchedIDs, flags.json)
+	return s.reportTouched(result.MutationResult, result.TouchedIDs, flags.json)
 }
 
 type captureFlags struct {
@@ -110,9 +116,9 @@ type captureFlags struct {
 
 // parseCaptureArgs is cmd_capture's argument scan.
 func parseCaptureArgs(args []string, proposed bool, context temporal.Context,
-	order temporal.Order) (store.CreateCommand, captureFlags, int) {
+	order temporal.Order) (application.CreateCommand, captureFlags, int) {
 
-	command := store.CreateCommand{}
+	command := application.CreateCommand{}
 	flags := captureFlags{}
 	usage := captureUsage(proposed)
 	contexts := []string{}
@@ -180,8 +186,7 @@ func parseCaptureArgs(args []string, proposed bool, context temporal.Context,
 			}
 			under = value
 		case "--no-host-context":
-			// Host context is not applied by this build at all, so opting out
-			// of it is already the behaviour.
+			command.SkipHostContext = true
 		case "--json":
 			flags.json = true
 		case "--due", "--deadline":
@@ -323,14 +328,14 @@ func parseCaptureArgs(args []string, proposed bool, context temporal.Context,
 		if status != 0 {
 			return command, flags, status
 		}
-		command.Deadline, command.HasDeadline = value, true
+		command.DeadlineValue = &value
 	}
 	if scheduledGiven {
 		value, status := parseCaptureTemporal(scheduled, "--scheduled", context, scheduledOptions, order)
 		if status != 0 {
 			return command, flags, status
 		}
-		command.Scheduled, command.HasScheduled = value, true
+		command.ScheduledValue = &value
 	}
 
 	priority := strings.ToUpper(command.Priority)
@@ -345,7 +350,7 @@ func parseCaptureArgs(args []string, proposed bool, context temporal.Context,
 	// A recurring capture always ends up dated — either from a flag here or from
 	// the first occurrence the store seeds for a lead — so it lands processed as
 	// TODO either way, rather than as an INBOX item that is already scheduled.
-	dated := command.HasDeadline || command.HasScheduled || command.Recurrence != ""
+	dated := command.DeadlineValue != nil || command.ScheduledValue != nil || command.Recurrence != ""
 	switch {
 	case proposed:
 		command.State = "PROPOSED"
@@ -368,10 +373,10 @@ func parseCaptureArgs(args []string, proposed bool, context temporal.Context,
 	// CLI can name the exact FLAGS that caused them. The store refuses the same
 	// two shapes in its own words; naming `--due` is worth more to someone who
 	// just typed it.
-	if command.Lead != "" && !command.HasDeadline && !command.HasScheduled && command.Recurrence == "" {
+	if command.Lead != "" && command.DeadlineValue == nil && command.ScheduledValue == nil && command.Recurrence == "" {
 		return command, flags, abort("a lead time needs a date to hide before — add --due or --scheduled")
 	}
-	if command.Lead != "" && command.HasDeadline && command.HasScheduled {
+	if command.Lead != "" && command.DeadlineValue != nil && command.ScheduledValue != nil {
 		return command, flags, abort(leadGateConflictHint(command.Lead))
 	}
 
@@ -423,7 +428,7 @@ func parseCaptureTemporal(expression, field string, context temporal.Context,
 // captureHeadline is the preview's rendering of a task that does not exist yet:
 // the same headline shape `list` and every mutation report print, built from the
 // command rather than from a record.
-func captureHeadline(command store.CreateCommand) string {
+func captureHeadline(command application.CreateCommand) string {
 	headline := command.State + " "
 	if command.Priority != "" {
 		headline += "[#" + command.Priority + "] "
@@ -444,7 +449,7 @@ func captureHeadline(command store.CreateCommand) string {
 // captureDestination is where the preview says the task would land. It is the
 // requested section NAME rather than a resolved one, because resolution happens
 // under the write lock and a preview does not take it.
-func captureDestination(command store.CreateCommand) string {
+func captureDestination(command application.CreateCommand) string {
 	if command.Project != "" {
 		return command.Project
 	}

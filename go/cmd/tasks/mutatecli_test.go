@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"tasks-go/internal/determinism"
 )
 
 // The mutation verbs are exercised as BLACK BOXES, exactly like the read
@@ -76,6 +79,43 @@ func recordFor(t *testing.T, dir, id string) map[string]any {
 	}
 	t.Fatalf("no record with id %s", id)
 	return nil
+}
+
+func recordForTitle(t *testing.T, dir, title string) map[string]any {
+	t.Helper()
+	for _, line := range strings.Split(storeBytes(t, dir), "\n") {
+		if line == "" {
+			continue
+		}
+		row := map[string]any{}
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			t.Fatalf("parse %q: %v", line, err)
+		}
+		if row["title"] == title {
+			return row
+		}
+	}
+	t.Fatalf("no record with title %q", title)
+	return nil
+}
+
+func runCLIWithHostContext(t *testing.T, dir string, argv ...string) cliResult {
+	t.Helper()
+	seedConfig(t, dir, "host_context.fixture-host = @home\n")
+	previousEnv := env
+	env = determinism.Env{
+		"TASKS_FILE":         filepath.Join(dir, "tasks.jsonl"),
+		"TASKS_ARCHIVE":      filepath.Join(dir, "archive.jsonl"),
+		"XDG_STATE_HOME":     filepath.Join(dir, "state"),
+		"XDG_CONFIG_HOME":    filepath.Join(dir, "cfg"),
+		"TASKS_PIN_HOSTNAME": "fixture-host.local",
+		"TASKS_NOW":          "2026-07-20T12:00:00Z",
+		"TZ":                 "UTC",
+	}
+	defer func() { env = previousEnv }()
+
+	stdout, stderr := captureOutput(t, func() int { return run(argv) })
+	return cliResult{stdout: stdout.text, stderr: stderr.text, status: stdout.status}
 }
 
 // -- due / schedule ----------------------------------------------------------
@@ -1009,6 +1049,71 @@ func TestCLICaptureDryRunWritesNothing(t *testing.T) {
 	preview = runUnchanged(t, dir, "propose", "An idea", "--dry-run")
 	if preview.stdout != "would propose under Inbox: PROPOSED An idea\n" {
 		t.Errorf("stdout = %q", preview.stdout)
+	}
+}
+
+func TestCLICaptureAppliesConfiguredHostContextAndCanSuppressIt(t *testing.T) {
+	dir := seedStore(t, mutationFixture)
+	result := runCLIWithHostContext(t, dir, "capture", "Host default", "--context", "computer", "--tag", "later")
+	if result.status != 0 || result.stderr != "" {
+		t.Fatalf("default: exit %d, stderr %q", result.status, result.stderr)
+	}
+	if result.stdout != "INBOX Host default :@home:@computer:later:\n" {
+		t.Fatalf("default stdout = %q", result.stdout)
+	}
+	if got, want := recordForTitle(t, dir, "Host default")["tags"], []any{"@home", "@computer", "later"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("default tags = %#v, want %#v", got, want)
+	}
+
+	result = runCLIWithHostContext(t, dir, "capture", "Host suppressed", "--context", "work", "--no-host-context")
+	if result.status != 0 || result.stderr != "" {
+		t.Fatalf("suppressed: exit %d, stderr %q", result.status, result.stderr)
+	}
+	if got, want := recordForTitle(t, dir, "Host suppressed")["tags"], []any{"@work"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("suppressed tags = %#v, want %#v", got, want)
+	}
+}
+
+func TestCLICaptureDryRunUsesConfiguredHostContextWithoutWriting(t *testing.T) {
+	dir := seedStore(t, mutationFixture)
+	before := storeBytes(t, dir)
+	result := runCLIWithHostContext(t, dir, "capture", "Host preview", "--context", "computer",
+		"--tag", "later", "--dry-run")
+	if result.status != 0 || result.stderr != "" {
+		t.Fatalf("exit %d, stderr %q", result.status, result.stderr)
+	}
+	if result.stdout != "would capture under Inbox: INBOX Host preview :@home:@computer:later:\n" {
+		t.Fatalf("stdout = %q", result.stdout)
+	}
+	if after := storeBytes(t, dir); after != before {
+		t.Fatal("dry-run changed the task store")
+	}
+}
+
+func TestCLICaptureDeduplicatesHostContextBeforeExplicitContextsAndTags(t *testing.T) {
+	dir := seedStore(t, mutationFixture)
+	result := runCLIWithHostContext(t, dir, "capture", "Host ordered", "--tag", "first",
+		"--context", "computer", "--context", "home", "--tag", "last")
+	if result.status != 0 || result.stderr != "" {
+		t.Fatalf("exit %d, stderr %q", result.status, result.stderr)
+	}
+	if got, want := recordForTitle(t, dir, "Host ordered")["tags"],
+		[]any{"@home", "@computer", "first", "last"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("tags = %#v, want %#v", got, want)
+	}
+}
+
+func TestCLIProposeAppliesConfiguredHostContext(t *testing.T) {
+	dir := seedStore(t, mutationFixture)
+	result := runCLIWithHostContext(t, dir, "propose", "Host proposal", "--context", "computer", "--tag", "idea")
+	if result.status != 0 || result.stderr != "" {
+		t.Fatalf("exit %d, stderr %q", result.status, result.stderr)
+	}
+	if !strings.HasPrefix(result.stdout, "proposed: Host proposal [") || !strings.HasSuffix(result.stdout, "]\n") {
+		t.Fatalf("stdout = %q", result.stdout)
+	}
+	if got, want := recordForTitle(t, dir, "Host proposal")["tags"], []any{"@home", "@computer", "idea"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("tags = %#v, want %#v", got, want)
 	}
 }
 
