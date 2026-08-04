@@ -139,6 +139,10 @@ behavior is fixed asserts nothing.
   `890b05c` routes previews and writes through the shared application
   preparation seam; five configured-host scenarios expanded store completion
   from 49 to 54 and fail the old tree with six byte/state differences.
+- **Focused Go tests do not rebuild `go/bin/tasks`.** The differential scripts
+  execute that binary directly. After merging the host-context fix, a stale
+  binary reproduced the old six differences until the merged CLI was rebuilt;
+  build the harness target after every merge before judging its output.
 - **zsh does not word-split unquoted parameters.** A sweep loop over
   `"list --json"` passes one argument and every invocation errors, which reads
   as a catastrophic regression. Use `${=var}`.
