@@ -663,6 +663,46 @@ One `##` section per accepted difference, in the order they were accepted:
   invocation coalesces with nothing.
 - **Conformance disposition:** none needed; the two now agree.
 
+## unreadable-memory-sidecar-names-its-own-runtime — accepted 2026-08-03
+
+- **Slices:** none (the `-p` prompt-surface packet)
+- **Ruby behavior:** `Tasks::AgentContext.memory_section` rescues
+  `SystemCallError` and raises `cannot read task-set memory at #{path}:
+  #{e.message}`. On macOS `e.message` is Ruby's own errno rendering, so an
+  `agent-memory.md` at mode 000 aborts `tasks -p` with
+  `cannot read task-set memory at /tmp/…/agent-memory.md: Permission denied @
+  rb_sysopen - /tmp/…/agent-memory.md`, exit 1.
+- **Go behavior:** the same sentence with Go's errno rendering —
+  `cannot read task-set memory at /tmp/…/agent-memory.md: open
+  /tmp/…/agent-memory.md: permission denied`, exit 1. Everything the caller
+  branches on is identical: the refusal happens at the same point (before the
+  harness is spawned), names the same path, and exits 1.
+- **Who can see it:** a user whose sidecar is unreadable, on stderr, once. The
+  divergent half is the trailing errno phrase, which no caller can parse
+  usefully in either language — it is `strerror` text plus each runtime's own
+  syscall label. The leading half, which does carry the actionable content, is
+  byte-identical.
+- **Why accepted:** the alternative is transcribing MRI's `"%s @ rb_sysopen -
+  %s"` format into Go, which would pin the port to an implementation detail of a
+  runtime it is replacing, and would be wrong the moment the errno is not
+  EACCES. The project already refuses to put Ruby exception text into a
+  diagnostic when it can avoid it — see
+  `test_a_failed_write_diagnostic_carries_no_path_and_no_exception_text` in
+  `test/test_cli_mutations.rb`, which forbids exactly this string reaching a
+  user-facing message. Decided by the `-p` packet implementer.
+- **Evidence:** reproduced directly, both sides under `env -i` with the same
+  pinned environment and a mode-000 sidecar; transcript in the packet report.
+  `porting/compare/prompt-diff` covers every other memory-guardrail refusal
+  (oversize, reserved delimiter, a directory in place of the file) byte for
+  byte, and those all match — this is the only one that does not.
+- **Conformance disposition:** none needed. The generated corpus reaches
+  `-p` five times and none of those cases has a sidecar, let alone an unreadable
+  one; `prompt-diff` deliberately does not carry a chmod-000 scenario, because a
+  strict comparator with a permanent expected mismatch is a comparator nobody
+  trusts. The Go side is pinned instead by
+  `agentcontext.TestUnreadableMemoryRaises`, which asserts the path and the
+  `cannot read task-set memory` prefix and skips when it is running as root.
+
 ## Notes on the record
 
 The last field is the one that rots. A difference recorded here but not
