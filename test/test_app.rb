@@ -793,6 +793,33 @@ class TestApp < Minitest::Test
     end
   end
 
+  def test_paste_cannot_bypass_dirty_draft_quit_confirmation
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "e")
+      editor = ui(app).task_editor
+      editor.form.set_value(:title, "UNSAVED-PASTE-SAFE-DRAFT")
+
+      app.send(:handle_key, "\x03")
+      assert_equal :task_draft_quit_confirm, ui(app).modal.kind
+
+      app.send(:handle_paste, "q\nnext\tvalue")
+      assert_equal :prompt, ui(app).mode
+      assert editor.pending_quit_confirmation
+
+      app.send(:handle_key, "q")
+      refute app.instance_variable_get(:@quit)
+      assert editor.pending_quit_confirmation
+
+      app.send(:handle_key, "n")
+      refute app.instance_variable_get(:@quit)
+      assert_equal :task_edit, ui(app).mode
+      assert_same editor, ui(app).task_editor
+      assert_equal "UNSAVED-PASTE-SAFE-DRAFT", editor.edit_form.value(:title)
+      refute editor.pending_quit_confirmation
+    end
+  end
+
   def test_dirty_suspended_editor_q_requires_visible_cancelable_confirmation
     app_on(view: :agenda, select: "Book flight") do |app|
       app.send(:handle_key, "\r")

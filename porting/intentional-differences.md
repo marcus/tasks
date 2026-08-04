@@ -782,9 +782,10 @@ kept because `go/internal/api/errors.go` cites it.
   other byte identical. Ruby regression coverage:
   `TestAppModals#test_archive_stamps_the_session_date_not_the_wall_clock` and
   `#test_archive_preview_and_sweep_share_one_captured_date`, both of which fail
-  on the pre-fix source, plus `TestApp#test_project_archive_uses_the_session_date`
-  and the differential scenario `project-archive-uses-session-date` for the
-  project route.
+  on the pre-fix source, plus
+  `TestApp#test_archive_project_confirms_then_moves_subtree_to_archive_file` and
+  the differential scenario `project-archive-uses-session-date` for the project
+  route.
 - **Conformance disposition:** none needed; the two now agree byte for byte.
 
 ## tui-vanished-form-target-is-explained — a Ruby DEFECT fixed, not a behavior difference — 2026-08-03
@@ -807,6 +808,28 @@ kept because `go/internal/api/errors.go` cites it.
   selection, flash, and final bytes. The existing Ruby regression
   `TestApp#test_delegate_flashes_when_the_target_disappears_mid_prompt` pins the
   same diagnostic on the mutation-triggered reload path.
+- **Conformance disposition:** none; Ruby and Go now agree.
+
+## tui-paste-preserves-dirty-draft-quit-question — a Ruby DEFECT fixed, not a behavior difference — 2026-08-03
+
+- **Slices:** TUI editor and bracketed paste (Wave 4)
+- **The defect:** bracketed paste intentionally closes a modal and focuses the
+  prompt, while the editor's independent dirty-draft quit question remains
+  pending. Answering `n` then tried the illegal direct transition
+  `prompt -> task_edit`, raised `Tui::UiState::InvalidTransition`, and crashed
+  instead of returning the user to the retained draft.
+- **Fix:** cancellation restores a task editor through the legal `list` seam
+  when paste has moved the visible mode to `prompt`. The paste still lands in
+  the prompt, and `q` still cannot answer the pending destructive question.
+- **Why fixed rather than ported:** crashing on the safe answer to a still-live
+  confirmation is a Ruby defect, not a compatibility contract. The Go model
+  uses the same independent confirmation ownership without reproducing the
+  invalid transition.
+- **Evidence:** `TestApp#test_paste_cannot_bypass_dirty_draft_quit_confirmation`
+  reproduces the original exception and pins the retained editor and buffer.
+  Differential scenario `paste-cannot-bypass-draft-quit-confirmation` drives
+  paste, `q`, and `n` through both implementations and compares every step and
+  final store bytes.
 - **Conformance disposition:** none; Ruby and Go now agree.
 
 ## tui-help-filter-keeps-the-matching-shortcut-group — accepted 2026-08-03

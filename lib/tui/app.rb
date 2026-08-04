@@ -2319,7 +2319,14 @@ module Tui
 
       if restore
         @ui.modal = return_modal
-        @ui.mode = return_mode if return_mode && @ui.mode != return_mode
+        if return_mode && @ui.mode != return_mode
+          # Bracketed paste deliberately closes a modal and focuses the
+          # prompt, but the independent dirty-draft confirmation remains in
+          # force. Restoring its editor after n must cross the legal list seam
+          # instead of attempting the forbidden prompt -> task_edit jump.
+          @ui.mode = :list if return_mode == :task_edit && @ui.mode != :list
+          @ui.mode = return_mode
+        end
         @task_edit_message = return_message
       else
         @ui.modal = nil

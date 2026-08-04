@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,13 +49,15 @@ type diffScript struct {
 }
 
 type diffStep struct {
-	Key      string   `json:"key"`
-	Mode     string   `json:"mode"`
-	Selected string   `json:"selected"`
-	Flash    string   `json:"flash"`
-	Overlay  string   `json:"overlay"`
-	Quit     bool     `json:"quit"`
-	Queue    []string `json:"queue"`
+	Key            string   `json:"key"`
+	Mode           string   `json:"mode"`
+	Selected       string   `json:"selected"`
+	Flash          string   `json:"flash"`
+	Overlay        string   `json:"overlay"`
+	Panel          string   `json:"panel"`
+	Quit           bool     `json:"quit"`
+	Queue          []string `json:"queue"`
+	ResponseScroll int      `json:"response_scroll"`
 	// Response is the agent response pane's text, once a request has finished.
 	Response string `json:"response,omitempty"`
 }
@@ -109,10 +112,50 @@ func TestDifferentialDriver(t *testing.T) {
 			model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2026-08-09"), Paste: true})
 		} else if key == "<<refresh>>" {
 			model.Refresh()
+		} else if key == "<<edit-at-small>>" {
+			model.Update(tea.WindowSizeMsg{Width: 46, Height: 7})
+			model.Update(keyMessage("e"))
+		} else if key == "<<resize-small>>" {
+			model.Update(tea.WindowSizeMsg{Width: 46, Height: 7})
+		} else if key == "<<resize-wide>>" {
+			model.Update(tea.WindowSizeMsg{Width: 80, Height: 18})
 		} else if key == "<<external-delete-selected>>" {
 			externalDeleteSelected(t, filepath.Join(dir, "tasks.jsonl"), script.Select)
+		} else if key == "<<external-defer-selected>>" {
+			externalReplace(t, filepath.Join(dir, "tasks.jsonl"),
+				`"tags":["@computer","important","urgent"]`,
+				`"tags":["@computer","important","urgent","defer"]`)
+		} else if key == "<<external-done-selected>>" {
+			externalReplace(t, filepath.Join(dir, "tasks.jsonl"),
+				`"state":"NEXT","priority":"A","title":"Book flight`,
+				`"state":"DONE","priority":"A","title":"Book flight`)
 		} else if key == "<<external-proposal-change>>" {
 			externalRetitle(t, filepath.Join(dir, "tasks.jsonl"), "Book flight in Concur", "Changed outside")
+		} else if key == "<<mouse-keyhint-click>>" {
+			layout := model.Layout()
+			_, end := layout.FooterRows()
+			model.Update(tea.MouseMsg{Type: tea.MouseLeft, X: 4, Y: end - 1})
+		} else if key == "<<seed-response-chrome>>" {
+			model.resp = make([]string, 30)
+			for index := range model.resp {
+				model.resp[index] = fmt.Sprintf("response %d", index)
+			}
+			model.respOpen = true
+			model.respScroll = 0
+			model.Flash("visible flash")
+			model.filter = "needle"
+			model.contextFilters = []string{"@home"}
+			model.RefreshRows()
+		} else if key == "<<mouse-wheel-footer-chrome>>" {
+			model.Update(tea.WindowSizeMsg{Width: 100, Height: 60})
+			layout := model.Layout()
+			start, _ := layout.FooterRows()
+			for index, line := range layout.Footer {
+				if strings.Contains(line, "visible flash") || strings.Contains(line, "needle") ||
+					strings.Contains(line, "@home") {
+					model.Update(tea.MouseMsg{Type: tea.MouseWheelDown, X: 4, Y: start + index})
+				}
+			}
 		} else {
 			model.Update(keyMessage(key))
 		}
@@ -139,6 +182,7 @@ func diffObserve(model *Model, key string, hint ...bool) diffStep {
 		Key: key, Mode: string(model.Mode()), Flash: model.FlashMessage(), Quit: model.quitting,
 		Queue: []string{},
 	}
+	step.ResponseScroll = model.respScroll
 	if model.queue != nil {
 		for _, request := range model.queue.Requests() {
 			step.Queue = append(step.Queue, string(request.Status))
@@ -148,6 +192,12 @@ func diffObserve(model *Model, key string, hint ...bool) diffStep {
 		step.Selected = item.ID
 	} else if project := model.CurrentProject(); project != nil {
 		step.Selected = project.ID
+	}
+	if !model.quitting && model.Panel() != nil {
+		step.Panel = model.Panel().Kind
+	}
+	if !model.quitting && model.TaskEditor() != nil {
+		step.Panel = "task_edit"
 	}
 	if model.Mode() == ModeList && model.respOpen {
 		lines := []string{}
@@ -217,12 +267,19 @@ func externalDeleteSelected(t *testing.T, path, id string) {
 }
 
 func externalRetitle(t *testing.T, path, from, to string) {
+	externalReplace(t, path, `"title":"`+from+`"`, `"title":"`+to+`"`)
+}
+
+func externalReplace(t *testing.T, path, from, to string) {
 	t.Helper()
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	updated := strings.Replace(string(raw), `"title":"`+from+`"`, `"title":"`+to+`"`, 1)
+	updated := strings.Replace(string(raw), from, to, 1)
+	if updated == string(raw) {
+		t.Fatalf("external mutation target not found: %q", from)
+	}
 	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +339,7 @@ func diffModel(t *testing.T, dir string) (*Model, *time.Time) {
 		Paths: config.Paths{
 			Org: org, Archive: archive,
 			UrgentDays: config.DefaultUrgentDays, MaxDepth: config.DefaultMaxDepth,
-			Timezone: "Etc/UTC", TimeFormat: 24,
+			Timezone: "Etc/UTC", TimeFormat: 24, Mouse: true,
 		},
 		Env: determinism.Env{"XDG_STATE_HOME": filepath.Join(dir, "state"), "HOME": dir},
 		Now: func() time.Time { return now },

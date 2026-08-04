@@ -820,6 +820,21 @@ func (m *Model) StartTaskEdit(focus string) {
 		m.Flash("nothing selected")
 		return
 	}
+	editLayout := m.layoutForEditing(true)
+	if !editLayout.EditablePanel() {
+		m.Flash(fmt.Sprintf("task editing needs at least %d×%d terminal cells",
+			MinimumEditTerminalWidth(), MinimumEditTerminalHeight(len(editLayout.Footer))))
+		return
+	}
+	if m.suspendedTaskEditor != nil && m.suspendedTaskEditor.TargetID() != item.ID &&
+		m.suspendedTaskEditor.Dirty("") {
+		if m.suspendedTaskEditor.Missing() {
+			m.Flash("deleted task draft remains — y copies the field · esc discards it")
+		} else {
+			m.Flash("unsaved task draft belongs to another row — reselect it to resume")
+		}
+		return
+	}
 	if m.suspendedTaskEditor != nil && m.suspendedTaskEditor.TargetID() == item.ID {
 		outcome := m.suspendedTaskEditor.Refresh()
 		if outcome.Status == EditorMissing {
@@ -831,13 +846,19 @@ func (m *Model) StartTaskEdit(focus string) {
 		m.suspendedTaskEditor = nil
 		m.panel = m.suspendedTaskPanel
 		m.suspendedTaskPanel = nil
-		m.editorMessage = outcome.Message
+		message := m.editorMessage
+		if outcome.Message != "" {
+			message = outcome.Message
+		}
+		m.editorMessage = message
 		m.mode = ModeTaskEdit
-		if !m.layout().EditablePanel() {
-			m.reconcileEditorLayout()
+		if message != "" {
+			m.Flash(message)
 		}
 		return
 	}
+	m.suspendedTaskEditor = nil
+	m.suspendedTaskPanel = nil
 	session, err := NewTaskEditorSession(TaskEditorOptions{
 		App:       m.app,
 		Read:      func() *application.ReadModel { return m.read },
@@ -885,10 +906,8 @@ func (m *Model) CloseTaskEdit(message string) {
 // session survives intact and can be resumed with e when its target is visible
 // again; hidden destructive prompts are disarmed by Suspend.
 func (m *Model) reconcileEditorLayout() {
-	if m.taskEditor == nil || m.layout().EditablePanel() {
-		if m.suspendedTaskEditor != nil {
-			m.showSuspendedEditorPanel()
-		}
+	layout := m.layout()
+	if m.taskEditor == nil || layout.EditablePanel() {
 		return
 	}
 	editor := m.taskEditor
@@ -898,9 +917,9 @@ func (m *Model) reconcileEditorLayout() {
 	m.taskEditor = nil
 	m.mode = ModeList
 	m.editorMessage = outcome.Message
-	m.showSuspendedEditorPanel()
+	m.showDetail()
 	m.Flash(fmt.Sprintf("editing paused — resize to at least %d×%d; e resumes · %s",
-		MinimumEditTerminalWidth(), MinimumEditTerminalHeight(len(m.Footer())), outcome.Message))
+		MinimumEditTerminalWidth(), MinimumEditTerminalHeight(len(layout.Footer)), outcome.Message))
 }
 
 func (m *Model) showSuspendedEditorPanel() {
@@ -909,17 +928,82 @@ func (m *Model) showSuspendedEditorPanel() {
 		return
 	}
 	title := "task draft · target not visible"
-	explanation := "Task exists but is not currently editable."
+	explanation := "Task exists but is hidden from the canonical views."
+	canonicalView := m.suspendedTargetCanonicalView()
 	if editor.Missing() {
 		title = "task draft · target deleted"
 		explanation = "Task no longer exists; local field retained."
-	} else if m.selectedTarget(editor.TargetID()) {
-		title = "task draft · editing paused"
-		explanation = "Resize the terminal, then press e to resume."
+	} else if canonicalView != "" {
+		explanation = fmt.Sprintf("Task left %s; switch to %s to resume.", m.view, canonicalView)
 	}
-	lines := []string{explanation, "Draft: " + valueText(editor.CopyValue()),
-		"e resumes · y copies · esc discards"}
+	guidance := "y copies field · esc discards draft"
+	if canonicalView != "" {
+		guidance = "switch view + e resumes · y copies · esc discards"
+	}
+	if editor.Missing() {
+		guidance = "y copies field · esc discards draft"
+	}
+	lines := []string{explanation, "Draft: " + valueText(editor.CopyValue()), guidance}
 	m.panel = NewRightPanel(title, PanelSuspendedTaskEdit, editor.TargetID(), lines)
+	if canonicalView != "" {
+		m.Flash(fmt.Sprintf("paused task draft: switch to %s to resume · y copies · esc discards", canonicalView))
+	} else {
+		m.Flash("paused task draft: target is not selectable · y copies · esc discards")
+	}
+}
+
+func (m *Model) suspendedTargetCanonicalView() string {
+	if m.suspendedTaskEditor == nil || m.suspendedTaskEditor.Missing() || m.read == nil {
+		return ""
+	}
+	targetID := m.suspendedTaskEditor.TargetID()
+	queries := m.read.Queries()
+	for _, tab := range Tabs {
+		request := BuildRequest{
+			View:         tab.Key,
+			Styler:       m.styler,
+			Queries:      queries,
+			Items:        m.read.Items(),
+			Tree:         queries.Tree().Roots,
+			UseTree:      true,
+			Collapsed:    map[string]bool{},
+			ShowDeferred: m.showDeferred,
+			UrgentDays:   m.paths.UrgentDays,
+		}
+		if tab.Key == ViewProjects {
+			request.Projects = queries.Projects()
+		}
+		for _, row := range BuildRows(request) {
+			if row.Item != nil && row.Item.ID == targetID {
+				return tab.Key
+			}
+		}
+	}
+	return ""
+}
+
+func (m *Model) suspendedTargetVisible() bool {
+	if m.suspendedTaskEditor == nil {
+		return false
+	}
+	for _, row := range m.rows {
+		if row.Item != nil && row.Item.ID == m.suspendedTaskEditor.TargetID() {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Model) reconcileSuspendedAfterNavigation() {
+	if m.suspendedTaskEditor == nil {
+		return
+	}
+	if m.suspendedTargetVisible() && m.selectedTarget(m.suspendedTaskEditor.TargetID()) {
+		m.showDetail()
+		m.Flash("paused task draft selected — e resumes")
+		return
+	}
+	m.showSuspendedEditorPanel()
 }
 
 func (m *Model) tokensFromStore(pick func(store.Item) []string) []string {
@@ -990,6 +1074,7 @@ func (m *Model) requestQuit() {
 		return
 	}
 	if m.queueHasWork() {
+		m.agentQuitPending = true
 		m.quitReturnModal, m.quitReturnMode = m.modal, m.mode
 		m.quitReturnMessage = m.editorMessage
 		m.modal = NewModal(ModalOptions{Title: "Quit with agent work pending?", Lines: []string{

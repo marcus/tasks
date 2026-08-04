@@ -1,12 +1,6 @@
 package tui
 
-import (
-	"strings"
-
-	tea "github.com/charmbracelet/bubbletea"
-
-	"tasks-go/internal/tui/term/ansi"
-)
+import tea "github.com/charmbracelet/bubbletea"
 
 // Mouse handling in this packet is deliberately the COARSE half: click a row to
 // select it, click a fold marker to fold it, click a tab to switch, and scroll
@@ -114,28 +108,58 @@ func (m *Model) blurPrompt() {
 	}
 }
 
-// footerRole classifies the fitted footer by the same content Footer emitted.
-// The prompt block starts at its ❯ row and response rows precede it.
+// footerRole classifies the fitted footer from the same ordered blocks Footer
+// emitted. Content sniffing alone is unsafe: the key hint follows the prompt,
+// and flash/filter/context chrome can sit between a response and that prompt.
 func (m *Model) footerRole(layout ScreenLayout, row int) string {
 	start, end := layout.FooterRows()
 	if row < start || row >= end {
 		return ""
 	}
 	index := row - start
-	prompt := -1
-	for i, line := range layout.Footer {
-		if strings.Contains(ansi.Strip(line), "❯") {
-			prompt = i
-			break
+	roles := m.footerRoles()
+	if len(roles) > len(layout.Footer) {
+		roles = roles[len(roles)-len(layout.Footer):]
+	}
+	if index < 0 || index >= len(roles) {
+		return "chrome"
+	}
+	return roles[index]
+}
+
+func (m *Model) footerRoles() []string {
+	roles := []string{}
+	agentLines := m.agentFooter()
+	agentRole := "chrome"
+	if m.queue != nil && !m.queue.Active() && m.respOpen && len(m.resp) > 0 {
+		agentRole = "response"
+	}
+	for range agentLines {
+		roles = append(roles, agentRole)
+	}
+	if m.readErr != nil {
+		roles = append(roles, "chrome")
+	}
+	if m.flash != "" {
+		roles = append(roles, "chrome")
+	}
+	if m.mode == ModeFilter || (m.filter != "" && m.mode != ModeFilter) {
+		roles = append(roles, "chrome")
+	}
+	if len(m.contextFilters) > 0 && m.mode != ModeContextPalette {
+		roles = append(roles, "chrome")
+	}
+	switch m.mode {
+	case ModeFilter, ModeForm, ModePalette, ModeContextPalette, ModeTaskEdit:
+	default:
+		for range m.PromptLines(m.width - 2) {
+			roles = append(roles, "prompt")
 		}
 	}
-	if prompt >= 0 && index >= prompt {
-		return "prompt"
+	if m.mode != ModeTaskEdit {
+		roles = append(roles, "chrome")
 	}
-	if m.respOpen && (prompt < 0 || index < prompt) {
-		return "response"
-	}
-	return "chrome"
+	return roles
 }
 
 func (m *Model) clickTab(layout ScreenLayout, column int) bool {

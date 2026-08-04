@@ -19,19 +19,29 @@ import (
 
 // Layout is the current frame's geometry.
 func (m *Model) layout() ScreenLayout {
+	return m.layoutForEditing(m.taskEditor != nil)
+}
+
+// layoutForEditing lets the entry path test the exact geometry the editor
+// would receive before constructing or activating a session.
+func (m *Model) layoutForEditing(editing bool) ScreenLayout {
+	footer := m.Footer()
+	if editing {
+		footer = m.footerForMode(ModeTaskEdit)
+	}
 	return NewScreenLayout(m.styler, LayoutRequest{
 		Width:        m.width,
 		Height:       m.height,
-		Footer:       m.Footer(),
+		Footer:       footer,
 		Selected:     m.selected,
 		HasSelection: len(m.rows) > 0,
 		// An open editor occupies the panel column even when no detail panel
 		// is open, so the geometry the hit map and the renderer both read
 		// agrees about where the list ends.
-		Panel:       m.panel != nil || m.taskEditor != nil,
+		Panel:       m.panel != nil || editing,
 		PanelMode:   m.panelMode,
 		PanelOffset: m.panelOffset,
-		Editing:     m.taskEditor != nil,
+		Editing:     editing,
 	})
 }
 
@@ -231,6 +241,10 @@ func (m *Model) tabCell(tab Tab, variant int) string {
 // is SKIPPED in the modes that render their own input in an overlay, so a short
 // terminal never shows two carets.
 func (m *Model) Footer() []string {
+	return m.footerForMode(m.mode)
+}
+
+func (m *Model) footerForMode(mode Mode) []string {
 	lines := []string{}
 	lines = append(lines, m.agentFooter()...)
 	if m.readErr != nil {
@@ -239,21 +253,24 @@ func (m *Model) Footer() []string {
 	if message := m.flash; message != "" {
 		lines = append(lines, " "+message)
 	}
-	if m.mode == ModeFilter {
+	if mode == ModeFilter {
 		lines = append(lines, m.styler.Paint("accent", " /"+m.filterInput)+
 			m.styler.Paint("muted", "  enter applies · esc cancels"))
 	} else if m.filter != "" {
 		lines = append(lines, m.styler.Paint("muted", fmt.Sprintf(" filter /%s · esc clears", m.filter)))
 	}
-	if len(m.contextFilters) > 0 && m.mode != ModeContextPalette {
+	if len(m.contextFilters) > 0 && mode != ModeContextPalette {
 		lines = append(lines, m.styler.Paint("context", " "+strings.Join(m.contextFilters, " ")))
 	}
-	switch m.mode {
+	switch mode {
 	case ModeFilter, ModeForm, ModePalette, ModeContextPalette, ModeTaskEdit:
 	default:
 		lines = append(lines, m.PromptLines(m.width-2)...)
 	}
-	return append(lines, m.styler.Paint("muted", m.keyHint()))
+	if mode != ModeTaskEdit {
+		lines = append(lines, m.styler.Paint("muted", m.keyHint()))
+	}
+	return lines
 }
 
 // spinner is the running-request tick. It is the only animated thing in the

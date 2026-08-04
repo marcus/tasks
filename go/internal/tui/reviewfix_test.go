@@ -108,6 +108,49 @@ func TestBubbleTeaPasteRoutesByModeAndNeverRunsShortcuts(t *testing.T) {
 	}
 }
 
+func TestPasteCannotBypassPersistentQuitQuestions(t *testing.T) {
+	t.Run("agent work", func(t *testing.T) {
+		running := &fakeAdapter{available: true, chunks: 99, output: "working"}
+		h := newAgentHarness(t, running)
+		h.submit("one")
+		h.pressKeys("\x03")
+		h.model.Update(pasteMsg("q pasted"))
+		if h.model.Mode() != ModePrompt || !h.model.agentQuitPending || h.model.quitting {
+			t.Fatalf("paste mode=%s pending=%v quitting=%v",
+				h.model.Mode(), h.model.agentQuitPending, h.model.quitting)
+		}
+		h.pressKeys("q")
+		if h.model.quitting || !h.model.agentQuitPending {
+			t.Fatal("q after paste bypassed the agent quit question")
+		}
+		h.pressKeys("n")
+		if h.model.Mode() != ModeList || h.model.agentQuitPending || !h.model.Queue().Work() {
+			t.Fatal("n did not restore the active agent queue")
+		}
+	})
+
+	t.Run("dirty draft", func(t *testing.T) {
+		h := newModelHarness(t, harnessOptions{})
+		h.model.SwitchView(ViewNext)
+		h.selectRowByID(fixFlight)
+		h.pressKeys("\r", "e", "!", "\x03")
+		editor := h.model.TaskEditor()
+		h.model.Update(pasteMsg("q pasted"))
+		if h.model.Mode() != ModePrompt || editor == nil || !editor.PendingQuit() || h.model.quitting {
+			t.Fatalf("paste mode=%s pending=%v quitting=%v",
+				h.model.Mode(), editor != nil && editor.PendingQuit(), h.model.quitting)
+		}
+		h.pressKeys("q")
+		if h.model.quitting || !editor.PendingQuit() {
+			t.Fatal("q after paste bypassed the draft quit question")
+		}
+		h.pressKeys("n")
+		if h.model.Mode() != ModeTaskEdit || h.model.TaskEditor() != editor || !editor.Dirty("title") {
+			t.Fatal("n did not restore the dirty editor")
+		}
+	})
+}
+
 func TestAvailabilityRequiresADateAndAnExtractedLink(t *testing.T) {
 	h := newModelHarness(t, harnessOptions{})
 	h.model.SwitchView(ViewNext)
@@ -277,22 +320,111 @@ func TestMouseBlursPromptFocusesFooterAndScrollsResponse(t *testing.T) {
 	}
 }
 
-func TestResizeSuspendsAndEResumesTheSameDraft(t *testing.T) {
+func TestMouseFooterKeepsKeyHintAndResponseAdjacentChromeInert(t *testing.T) {
+	h := newAgentHarness(t)
+	h.model.paths.Mouse = true
+	h.model.height = 60
+	layout := h.model.Layout()
+	_, footerEnd := layout.FooterRows()
+	h.model.Update(tea.MouseMsg{Type: tea.MouseLeft, X: 4, Y: footerEnd - 1})
+	if h.model.Mode() != ModeList {
+		t.Fatal("clicking the key hint focused the prompt")
+	}
+
+	h.model.respOpen = true
+	h.model.resp = strings.Split(strings.Repeat("response line\n", 30), "\n")
+	h.model.Flash("visible flash")
+	h.model.filter = "needle"
+	h.model.contextFilters = []string{"@home"}
+	layout = h.model.Layout()
+	footerStart, _ := layout.FooterRows()
+	for index, line := range layout.Footer {
+		if !strings.Contains(line, "visible flash") &&
+			!strings.Contains(line, "filter /needle") &&
+			!strings.Contains(line, "@home") {
+			continue
+		}
+		row := footerStart + index
+		if got := h.model.footerRole(layout, row); got != "chrome" {
+			t.Fatalf("footer line %q classified as %q", line, got)
+		}
+		h.model.respScroll = 0
+		h.model.Update(tea.MouseMsg{Type: tea.MouseWheelDown, X: 4, Y: row})
+		if h.model.respScroll != 0 {
+			t.Fatalf("wheel over chrome %q scrolled the response", line)
+		}
+	}
+}
+
+func TestEnteringEditAtSmallSizeRefusesBeforeCreatingASession(t *testing.T) {
 	h := newModelHarness(t, harnessOptions{})
 	h.model.SwitchView(ViewNext)
 	h.selectRowByID(fixFlight)
-	h.pressKeys("\r", "e", "!")
+	h.pressKeys("\r")
+	detail := h.model.Panel()
+	h.model.Update(tea.WindowSizeMsg{Width: 46, Height: 7})
+	h.pressKeys("e")
+	if h.model.Mode() != ModeList || h.model.TaskEditor() != nil ||
+		h.model.suspendedTaskEditor != nil || h.model.Panel() != detail {
+		t.Fatalf("small entry mode=%s editor=%v suspended=%v panel_same=%v",
+			h.model.Mode(), h.model.TaskEditor(), h.model.suspendedTaskEditor, h.model.Panel() == detail)
+	}
+	if got := h.model.FlashMessage(); got != "task editing needs at least 46×8 terminal cells" {
+		t.Fatalf("small entry said %q", got)
+	}
+	exact := newModelHarness(t, harnessOptions{})
+	exact.model.SwitchView(ViewNext)
+	exact.selectRowByID(fixFlight)
+	exact.pressKeys("\r")
+	exact.model.Update(tea.WindowSizeMsg{Width: 46, Height: 8})
+	exact.pressKeys("e")
+	if exact.model.Mode() != ModeTaskEdit || exact.model.TaskEditor() == nil {
+		t.Fatal("46×8 did not admit the editor")
+	}
+}
+
+func TestVisibleResizeSuspensionPreservesPanelDraftAndEscapeOwnership(t *testing.T) {
+	h := newModelHarness(t, harnessOptions{})
+	h.model.SwitchView(ViewNext)
+	h.selectRowByID(fixFlight)
+	h.pressKeys("\r")
+	h.pressKeys("e", "!")
+	editingPanel := h.model.Panel()
+	editingPanel.Scroll = 3
 	h.model.Update(tea.WindowSizeMsg{Width: 20, Height: 8})
 	if h.model.Mode() != ModeList || h.model.suspendedTaskEditor == nil ||
-		h.model.panel == nil || h.model.panel.Kind != PanelSuspendedTaskEdit {
+		h.model.panel == editingPanel || h.model.panel.Kind != PanelDetail || editingPanel.Scroll != 3 {
 		t.Fatalf("resize left mode=%s suspended=%v panel=%v", h.model.Mode(),
 			h.model.suspendedTaskEditor, h.model.panel)
 	}
 	h.model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	h.pressKeys("e")
 	if h.model.Mode() != ModeTaskEdit || h.model.TaskEditor() == nil ||
-		!h.model.TaskEditor().Dirty("title") {
-		t.Fatal("e did not resume the retained draft")
+		!h.model.TaskEditor().Dirty("title") || h.model.Panel() != editingPanel || editingPanel.Scroll != 3 {
+		t.Fatalf("resume mode=%s editor=%v dirty=%v panel_same=%v scroll=%d flash=%q",
+			h.model.Mode(), h.model.TaskEditor(), h.model.TaskEditor() != nil && h.model.TaskEditor().Dirty("title"),
+			h.model.Panel() == editingPanel, editingPanel.Scroll, h.model.FlashMessage())
+	}
+}
+
+func TestVisibleSuspensionEscapeClosesDetailButPreservesDraft(t *testing.T) {
+	h := newModelHarness(t, harnessOptions{})
+	h.model.SwitchView(ViewNext)
+	h.selectRowByID(fixFlight)
+	h.pressKeys("\r", "e", "!")
+	h.model.Update(tea.WindowSizeMsg{Width: 20, Height: 8})
+	if h.model.Panel() == nil || h.model.Panel().Kind != PanelDetail {
+		t.Fatal("visible suspension replaced detail with destructive recovery")
+	}
+	h.pressTypeEsc()
+	if h.model.Panel() != nil || h.model.suspendedTaskEditor == nil ||
+		!h.model.suspendedTaskEditor.Dirty("title") {
+		t.Fatal("visible-panel Escape discarded the retained draft")
+	}
+	h.model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	h.pressKeys("\r", "e")
+	if h.model.TaskEditor() == nil || !h.model.TaskEditor().Dirty("title") {
+		t.Fatal("reopening detail did not resume the retained draft")
 	}
 }
 
@@ -313,6 +445,61 @@ func TestMissingSuspendedDraftCannotRetargetTheReplacementSelection(t *testing.T
 	}
 	if !strings.Contains(h.model.FlashMessage(), "Task no longer exists") {
 		t.Fatalf("missing draft said %q", h.model.FlashMessage())
+	}
+	h.pressTypeEsc()
+	if h.model.suspendedTaskEditor != nil || h.model.Panel() != nil {
+		t.Fatal("missing-target recovery Escape did not discard the draft")
+	}
+}
+
+func TestSuspendedTargetIsReselectedByViewSwitchAndDeferredReveal(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(string) string
+		nav    func(*Model)
+	}{
+		{
+			name: "canonical view",
+			mutate: func(raw string) string {
+				return strings.Replace(raw, `"state":"NEXT","priority":"A","title":"Book flight`,
+					`"state":"DONE","priority":"A","title":"Book flight`, 1)
+			},
+			nav: func(model *Model) { model.SwitchView(ViewOutline) },
+		},
+		{
+			name: "deferred reveal",
+			mutate: func(raw string) string {
+				return strings.Replace(raw, `"tags":["@computer","important","urgent"]`,
+					`"tags":["@computer","important","urgent","defer"]`, 1)
+			},
+			nav: func(model *Model) { model.ToggleDeferred() },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newModelHarness(t, harnessOptions{})
+			h.model.SwitchView(ViewNext)
+			h.selectRowByID(fixFlight)
+			h.pressKeys("\r", "e", "!")
+			h.model.Update(tea.WindowSizeMsg{Width: 20, Height: 8})
+			h.rewrite(tc.mutate(fixtureStore))
+			h.model.Refresh()
+			if h.model.Panel() == nil || h.model.Panel().Kind != PanelSuspendedTaskEdit {
+				t.Fatal("hidden target did not own a recovery panel")
+			}
+			tc.nav(h.model)
+			if h.model.SelectedID() != fixFlight || h.model.CurrentItem() == nil ||
+				h.model.CurrentItem().ID != fixFlight || h.model.Panel() == nil ||
+				h.model.Panel().Kind != PanelDetail {
+				t.Fatalf("navigation selected=%q item=%v panel=%v",
+					h.model.SelectedID(), h.model.CurrentItem(), h.model.Panel())
+			}
+			h.model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+			h.pressKeys("e")
+			if h.model.TaskEditor() == nil || h.model.TaskEditor().TargetID() != fixFlight ||
+				!h.model.TaskEditor().Dirty("title") {
+				t.Fatal("navigation did not resume the original draft")
+			}
+		})
 	}
 }
 

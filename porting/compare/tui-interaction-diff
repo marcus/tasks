@@ -11,8 +11,9 @@
 #   * the interaction mode after every key;
 #   * which task the cursor is on after every key;
 #   * the status-line message after every key;
-#   * what the overlay is (modal kind, form kind and buffer, palette query,
-#     the focused editor field and its dirty/confirmation/conflict state);
+#   * what the overlay and panel are (modal kind, form kind and buffer, palette
+#     query, the focused editor field and its dirty/confirmation/conflict state);
+#   * agent queue/response state, response scroll ownership, and quit state;
 #   * and the final bytes of tasks.jsonl.
 #
 # The last one is the point. A trace that agrees while the file diverges is the
@@ -490,6 +491,56 @@ SCENARIOS = [
     view: "projects", select: "aaaa0003",
     keys: ["x", "y"],
   },
+  {
+    name: "edit-entry-refuses-too-small-terminal",
+    why: "a new editor is never activated when its first frame cannot fit",
+    view: "next", select: "aaaa0004",
+    keys: ["\r", "<<edit-at-small>>"],
+  },
+  {
+    name: "visible-suspension-escape-preserves-draft",
+    why: "a visible target keeps ordinary detail ownership while its dirty editor is paused",
+    view: "next", select: "aaaa0004",
+    keys: ["\r", "e", "!", "<<resize-small>>", "\e", "\r", "<<resize-wide>>", "e"],
+  },
+  {
+    name: "deferred-suspended-target-reselects-on-reveal",
+    why: "Z reselects a newly revealed suspended target and resumes its original draft",
+    view: "next", select: "aaaa0004",
+    keys: ["\r", "e", "!", "<<resize-small>>", "<<external-defer-selected>>", "<<refresh>>",
+           "Z", "<<resize-wide>>", "e"],
+  },
+  {
+    name: "done-suspended-target-reselects-in-outline",
+    why: "switching to the canonical view reselects a suspended target that left Next",
+    view: "next", select: "aaaa0004",
+    keys: ["\r", "e", "!", "<<resize-small>>", "<<external-done-selected>>", "<<refresh>>",
+           "5", "<<resize-wide>>", "e"],
+  },
+  {
+    name: "paste-cannot-bypass-agent-quit-confirmation",
+    why: "paste may focus the prompt but the independent agent-work question owns q and n",
+    view: "next", select: "aaaa0004",
+    keys: ["\t", "o", "n", "e", "\r", "\x03", "<<paste-multiline>>", "q", "n"],
+  },
+  {
+    name: "paste-cannot-bypass-draft-quit-confirmation",
+    why: "paste may focus the prompt but the dirty editor's pending quit question survives it",
+    view: "next", select: "aaaa0004",
+    keys: ["\r", "e", "!", "\x03", "<<paste-multiline>>", "q", "n"],
+  },
+  {
+    name: "mouse-key-hint-chrome-is-inert",
+    why: "clicking Go's appended key-hint row has Ruby chrome semantics and cannot focus the prompt",
+    view: "next", select: "aaaa0004",
+    keys: ["<<mouse-keyhint-click>>"],
+  },
+  {
+    name: "mouse-response-adjacent-chrome-does-not-scroll-response",
+    why: "wheel events on flash/filter/context rows beneath a response never move the response pane",
+    view: "next", select: "aaaa0004",
+    keys: ["<<seed-response-chrome>>", "<<mouse-wheel-footer-chrome>>"],
+  },
 ].freeze
 
 # A closed root with open work still inside it — the state a sweep refuses.
@@ -590,8 +641,10 @@ RUBY_DRIVER = <<~'RUBY'
       "selected" => (item&.id || project&.id).to_s,
       "flash" => app.instance_variable_get(:@flash).to_s,
       "overlay" => "",
+      "panel" => app.instance_variable_get(:@quit) ? "" : ui.panel&.kind.to_s,
       "quit" => app.instance_variable_get(:@quit),
       "queue" => app.instance_variable_get(:@agent_queue).requests.map { |request| request.status.to_s },
+      "response_scroll" => app.instance_variable_get(:@resp_scroll),
     }
     case ui.mode
     when :modal, :modal_filter
@@ -648,14 +701,53 @@ RUBY_DRIVER = <<~'RUBY'
       app.send(:handle_paste, "2026-08-09")
     elsif key == "<<refresh>>"
       app.send(:reload_store)
+    elsif key == "<<edit-at-small>>"
+      app.define_singleton_method(:terminal_size) { [7, 46] }
+      app.send(:handle_key, "e")
+    elsif key == "<<resize-small>>"
+      app.send(:suspend_task_edit_for_layout,
+               app.send(:screen_layout, width: 46, height: 7, panel: true, editing: true))
+    elsif key == "<<resize-wide>>"
+      app.define_singleton_method(:terminal_size) { [18, 80] }
     elsif key == "<<external-delete-selected>>"
       path = File.join(dir, "tasks.jsonl")
       lines = File.readlines(path).reject { |line| line.include?(%Q{"id":"#{script["select"]}"}) }
       File.write(path, lines.join)
+    elsif key == "<<external-defer-selected>>"
+      path = File.join(dir, "tasks.jsonl")
+      File.write(path, File.read(path).sub('"tags":["@computer","important","urgent"]',
+                                          '"tags":["@computer","important","urgent","defer"]'))
+    elsif key == "<<external-done-selected>>"
+      path = File.join(dir, "tasks.jsonl")
+      File.write(path, File.read(path).sub('"state":"NEXT","priority":"A","title":"Book flight',
+                                          '"state":"DONE","priority":"A","title":"Book flight'))
     elsif key == "<<external-proposal-change>>"
       path = File.join(dir, "tasks.jsonl")
       File.write(path, File.read(path).sub('"title":"Book flight in Concur"',
                                           '"title":"Changed outside"'))
+    elsif key == "<<mouse-keyhint-click>>"
+      # Ruby has no appended key-hint footer row; its corresponding non-input
+      # chrome is inert. Go drives its actual extra row.
+      app.send(:apply_mouse_intent, :ignored)
+    elsif key == "<<seed-response-chrome>>"
+      app.instance_variable_set(:@resp, Array.new(30) { |i| "response #{i}" })
+      app.instance_variable_set(:@resp_open, true)
+      app.instance_variable_set(:@resp_scroll, 0)
+      app.instance_variable_set(:@flash, "visible flash")
+      ui.filter = "needle"
+      ui.context_filters = ["@home"]
+      app.send(:rows)
+    elsif key == "<<mouse-wheel-footer-chrome>>"
+      app.define_singleton_method(:terminal_size) { [60, 100] }
+      app.send(:paint)
+      layout = app.instance_variable_get(:@last_layout)
+      layout.footer.each_with_index do |line, index|
+        text = line.is_a?(String) ? Tui::Ansi.strip(line) : ""
+        next unless text.include?("visible flash") || text.include?("needle") || text.include?("@home")
+
+        row = layout.footer_rows.begin + index
+        app.send(:handle_mouse, "\e[<65;5;#{row + 1}M")
+      end
     else
       app.send(:handle_key, key)
     end
@@ -750,7 +842,7 @@ def diff_lines(left, right, label)
     # was a real hole: a step whose only difference was the agent's transcript
     # still failed the scenario (the hash comparison above catches it), but the
     # report named no field, so the failure read as an unexplained blank.
-    %w[mode selected flash overlay response quit queue].each do |field|
+    %w[mode selected flash overlay panel response response_scroll quit queue].each do |field|
       next if a && b && a[field] == b[field]
 
       out << "    #{field}: ruby=#{(a || {})[field].inspect} go=#{(b || {})[field].inspect}"

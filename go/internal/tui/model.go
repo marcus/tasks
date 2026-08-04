@@ -127,6 +127,7 @@ type Model struct {
 	quitReturnModal   *Modal
 	quitReturnMode    Mode
 	quitReturnMessage string
+	agentQuitPending  bool
 	// pendingProject is the project a confirmation modal is about. It is held
 	// separately from the selection because the selection can move underneath
 	// an open confirmation, and answering `y` must act on what was asked.
@@ -404,10 +405,12 @@ func (m *Model) reconcileOpenOverlays(prior Mode) {
 	}
 	if m.suspendedTaskEditor != nil {
 		outcome := m.suspendedTaskEditor.Refresh()
-		if outcome.Message != "" {
-			m.editorMessage = outcome.Message
+		m.editorMessage = outcome.Message
+		if outcome.Status == EditorMissing || !m.suspendedTargetVisible() {
+			m.showSuspendedEditorPanel()
+		} else if m.panel != nil && m.panel.Kind == PanelDetail {
+			m.refreshOpenPanel()
 		}
-		m.showSuspendedEditorPanel()
 	}
 }
 
@@ -622,9 +625,6 @@ func (m *Model) selectRow(index int) {
 	m.selected = index
 	m.selectedID = id
 	m.refreshOpenPanel()
-	if m.suspendedTaskEditor != nil {
-		m.showSuspendedEditorPanel()
-	}
 }
 
 func (m *Model) move(delta int) {
@@ -721,7 +721,11 @@ func (m *Model) SwitchView(view string) {
 	for _, key := range ViewKeys() {
 		if key == view {
 			m.view = view
+			if m.suspendedTaskEditor != nil && !m.suspendedTaskEditor.Missing() {
+				m.selectedID = m.suspendedTaskEditor.TargetID()
+			}
 			m.RefreshRows()
+			m.reconcileSuspendedAfterNavigation()
 			return
 		}
 	}
@@ -842,7 +846,11 @@ func (m *Model) reselect(id string) {
 // ToggleDeferred flips whether unavailable work is shown.
 func (m *Model) ToggleDeferred() {
 	m.showDeferred = !m.showDeferred
+	if m.suspendedTaskEditor != nil && !m.suspendedTaskEditor.Missing() {
+		m.selectedID = m.suspendedTaskEditor.TargetID()
+	}
 	m.RefreshRows()
+	m.reconcileSuspendedAfterNavigation()
 	if m.showDeferred {
 		m.Flash("showing unavailable tasks")
 	} else {

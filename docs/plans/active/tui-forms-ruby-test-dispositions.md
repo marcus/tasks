@@ -10,10 +10,11 @@ several Ruby cases collapse into one Go table test, and several Go tests cover
 a contract Ruby only exercises incidentally.
 
 The judgment gate for this packet is `porting/compare/tui-interaction-diff`,
-which drives 66 keystroke scenarios through **both** implementations and
-compares mode, selection, status message, overlay state, agent queue lifecycle,
-quit state, the resulting `tasks.jsonl` AND `archive.jsonl` bytes, and the undo
-journal's cursor and labels. It is at **66/66 GATE PASS**.
+which drives 74 keystroke scenarios through **both** implementations and
+compares mode, selection, status message, overlay and panel state, agent queue
+lifecycle, response text and scroll ownership, quit state, the resulting
+`tasks.jsonl` AND `archive.jsonl` bytes, and the undo journal's cursor and
+labels. It is at **74/74 GATE PASS**.
 
 Both sides run against scripted fakes for anything external: a fake agent
 adapter on each side, driven by a shared `<<tick>>` token that drains the queue
@@ -188,6 +189,8 @@ Bubble Tea paste messages; persistent dirty-draft and agent-work quit questions;
 active cancellation and failed-start queue advancement; stale proposal decisions,
 forms, editors, and action palettes; recurrence previews; mouse routing;
 responsive editor suspension; markdown export; and temporal pointer ownership.
-Those findings are pinned by focused Go tests and fourteen added differential
-scenarios, including both yes and no confirmation branches and a stale palette
-write attempt after its original target is deleted.
+Those findings are pinned by focused Go tests and twenty-two added differential
+scenarios, including both yes and no confirmation branches, a stale palette
+write attempt after its original target is deleted, responsive editor
+suspension and resumption, paste-safe quit ownership, and structural mouse
+hit-testing for response-adjacent footer chrome.

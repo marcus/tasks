@@ -33,10 +33,14 @@ func (m *Model) handleKey(message tea.KeyMsg) tea.Cmd {
 
 	// A dirty draft's quit confirmation outranks everything: it is a question
 	// the user has been asked and has not answered.
-	if m.modal != nil && m.modal.Kind() == ModalTaskDraftQuitConfirm {
+	editor := m.taskEditor
+	if editor == nil {
+		editor = m.suspendedTaskEditor
+	}
+	if editor != nil && editor.PendingQuit() {
 		return m.taskDraftQuitKey(sequence)
 	}
-	if m.modal != nil && m.modal.Kind() == ModalAgentQuitConfirm {
+	if m.agentQuitPending {
 		return m.agentQuitKey(sequence)
 	}
 	// Global bindings (ctrl-c) reach through every mode, so a wedged overlay
@@ -562,6 +566,10 @@ func (m *Model) processEditorOutcome(outcome EditorOutcome) {
 			if destination := m.CurrentItem(); destination != nil {
 				explanation += " \u00b7 selected " + destination.Title
 			}
+			// Ruby closes the panel when the edited target is no longer
+			// selectable. Leaving the replacement row's detail open makes it
+			// look as though the edit moved to a different task.
+			m.panel = nil
 			m.CloseTaskEdit(explanation)
 			return
 		}
@@ -664,6 +672,7 @@ func (m *Model) clearQuitConfirmation(restore bool) {
 	m.quitReturnModal = nil
 	m.quitReturnMode = ""
 	m.quitReturnMessage = ""
+	m.agentQuitPending = false
 	if restore {
 		m.modal = retainedModal
 		m.mode = retainedMode
