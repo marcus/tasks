@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -835,5 +836,73 @@ func TestDeferRefusesADateBesideALeadWindow(t *testing.T) {
 	}
 	if harness.content() != before {
 		t.Error("a refused defer wrote")
+	}
+}
+
+// A confirmation left open across local midnight must still archive.
+//
+// The store's pinned-preview fingerprint deliberately includes the day, so a
+// preview built on D and a sweep resolved on D+1 do not match and the sweep
+// refuses — even though not one byte of the task file moved. Ruby captures
+// current_date once at preview and hands the SAME date to the sweep; before
+// this was fixed, Go called m.operation() separately in each and every archive
+// prepared just before midnight was refused with "task list changed".
+func TestArchiveConfirmationSurvivesLocalMidnight(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.SwitchView(ViewNext)
+	previewDay := harness.model.currentDate()
+
+	harness.pressKeys("x")
+	if harness.model.Modal() == nil ||
+		harness.model.Modal().Kind() != ModalArchiveConfirm {
+		t.Fatalf("x produced %v (%q)", harness.model.Modal(), harness.model.FlashMessage())
+	}
+
+	// The user walks away. The clock crosses midnight; the FILES do not change.
+	before := harness.content()
+	harness.advanceClock(24 * time.Hour)
+	if harness.model.currentDate() == previewDay {
+		t.Fatal("the clock did not cross into a new day")
+	}
+	if harness.content() != before {
+		t.Fatal("the fixture moved; this scenario is about the clock alone")
+	}
+
+	harness.pressKeys("y")
+	if strings.Contains(harness.model.FlashMessage(), "task list changed") {
+		t.Fatalf("the sweep refused a preview only the CLOCK invalidated: %q",
+			harness.model.FlashMessage())
+	}
+	if !strings.Contains(harness.model.FlashMessage(), "archived 1 root") {
+		t.Fatalf("the sweep did not report an archive: %q", harness.model.FlashMessage())
+	}
+	if strings.Contains(harness.content(), `"id":"aaaa0008"`) {
+		t.Error("the closed task is still live")
+	}
+
+	archive, err := os.ReadFile(harness.model.paths.Archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The stamp is the PREVIEW's day, which is the day the user was shown.
+	if want := `"archived":"` + previewDay.ISO() + `"`; !strings.Contains(string(archive), want) {
+		t.Errorf("the archive stamp is not the preview day %s:\n%s", want, archive)
+	}
+}
+
+// Every TUI operation reads the session's own clock, not the application's
+// fallback. Two clocks would agree by luck in the shipping binary and diverge
+// anywhere either one is pinned.
+func TestTUIWritesStampTheSessionClock(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.SwitchView(ViewNext)
+	harness.advanceClock(72 * time.Hour)
+	day := harness.model.currentDate()
+
+	harness.selectRowByID(fixPR)
+	harness.pressKeys("c")
+	if got := taskLineIn(harness.content(), fixPR); !strings.Contains(got, `"closed":"`+day.ISO()+`"`) {
+		t.Errorf("the completion stamped a different day than the session clock (%s):\n%s",
+			day.ISO(), got)
 	}
 }

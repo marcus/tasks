@@ -163,6 +163,7 @@ func (m *Model) OpenModal(content ModalContent, kind ModalKind, filterable bool)
 func (m *Model) CloseModal() {
 	m.pendingProject = nil
 	m.archivePreview = nil
+	m.archiveContext = temporal.Context{}
 	m.modalFilterEditor().Clear()
 	m.SetModal(nil)
 	m.mode = ModeList
@@ -891,6 +892,9 @@ func (m *Model) startFilter() {
 	_ = m.SetMode(ModeFilter)
 }
 
+// temporalContext is the session clock: the model's injected `now` read in the
+// configured zone. It is the ONE place the TUI turns an instant into a context,
+// so every read, every write and every rendered date agree about the moment.
 func (m *Model) temporalContext() temporal.Context {
 	context, err := temporal.NewContext(m.now(), m.paths.Timezone, m.paths.TimeFormat)
 	if err != nil {

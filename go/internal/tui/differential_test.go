@@ -72,7 +72,7 @@ func TestDifferentialDriver(t *testing.T) {
 		t.Fatal("TUI_DIFF_DIR is required")
 	}
 
-	model := diffModel(t, dir)
+	model, clock := diffModel(t, dir)
 	if script.View != "" {
 		model.SwitchView(script.View)
 	}
@@ -93,6 +93,11 @@ func TestDifferentialDriver(t *testing.T) {
 		// wall-clock timing.
 		if key == "<<tick>>" {
 			model.PumpQueue()
+		} else if key == "<<advance-midnight>>" {
+			// Advance only the injected scenario clock. No update is sent and no
+			// file changes; the open archive preview is exactly the one the user
+			// saw on the previous day.
+			*clock = clock.Add(24 * time.Hour)
 		} else {
 			model.Update(keyMessage(key))
 		}
@@ -169,7 +174,7 @@ func diffObserve(model *Model, key string) diffStep {
 
 // diffModel builds the root model over a sandbox directory with every seam
 // pinned, so two runs over the same bytes produce the same trace.
-func diffModel(t *testing.T, dir string) *Model {
+func diffModel(t *testing.T, dir string) (*Model, *time.Time) {
 	t.Helper()
 	org := filepath.Join(dir, "tasks.jsonl")
 	archive := filepath.Join(dir, "archive.jsonl")
@@ -228,7 +233,7 @@ func diffModel(t *testing.T, dir string) *Model {
 	})
 	model.width, model.height = 100, 30
 	model.Refresh()
-	return model
+	return model, &now
 }
 
 // diffAdapter is the differential's scripted agent. It answers every prompt

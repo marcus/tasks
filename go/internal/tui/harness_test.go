@@ -51,6 +51,17 @@ type modelHarness struct {
 	org   string
 	root  string
 	env   determinism.Env
+	// clock is the session instant every part of the model reads — the rows,
+	// the flash, and every write's stamp. It is a POINTER so a test can advance
+	// it mid-scenario, which is the only way to exercise a confirmation left
+	// open across local midnight.
+	clock *time.Time
+}
+
+// advanceClock moves the session clock without touching a single file.
+func (h *modelHarness) advanceClock(delta time.Duration) {
+	h.t.Helper()
+	*h.clock = h.clock.Add(delta)
 }
 
 type harnessOptions struct {
@@ -101,14 +112,15 @@ func newModelHarness(t *testing.T, options harnessOptions) *modelHarness {
 		t.Fatal(err)
 	}
 
+	clock := options.now
 	context := func() temporal.Context {
-		return temporal.Context{Now: options.now.UTC(), Timezone: time.UTC, TimezoneID: "Etc/UTC"}
+		return temporal.Context{Now: clock.UTC(), Timezone: time.UTC, TimezoneID: "Etc/UTC"}
 	}
 	app, err := application.New(application.Options{
 		Factory: func() application.Store {
 			return store.NewWriter(org, archive, store.Options{
 				JournalDir: filepath.Join(root, "journal"),
-				Now:        func() time.Time { return options.now },
+				Now:        func() time.Time { return clock },
 				Device:     "fixture",
 				MaxDepth:   4,
 				UndoLimit:  50,
@@ -141,14 +153,14 @@ func newModelHarness(t *testing.T, options harnessOptions) *modelHarness {
 		App:     app,
 		Paths:   paths,
 		Env:     env,
-		Now:     func() time.Time { return options.now },
+		Now:     func() time.Time { return clock },
 		Opener:  options.opener,
 		Entries: options.entries,
 		Queue:   options.queue,
 	})
 	model.width, model.height = 100, 30
 	model.Refresh()
-	return &modelHarness{t: t, model: model, org: org, root: root, env: env}
+	return &modelHarness{t: t, model: model, org: org, root: root, env: env, clock: &clock}
 }
 
 // rewrite replaces the store's bytes, as an external writer would.

@@ -10,15 +10,17 @@ several Ruby cases collapse into one Go table test, and several Go tests cover
 a contract Ruby only exercises incidentally.
 
 The judgment gate for this packet is `porting/compare/tui-interaction-diff`,
-which drives 51 keystroke scenarios through **both** implementations and
+which drives 52 keystroke scenarios through **both** implementations and
 compares mode, selection, status message, overlay state, the resulting
 `tasks.jsonl` AND `archive.jsonl` bytes, and the undo journal's cursor and
-labels. It is at **51/51 GATE PASS**.
+labels. It is at **52/52 GATE PASS**.
 
 Both sides run against scripted fakes for anything external: a fake agent
 adapter on each side, driven by a shared `<<tick>>` token that drains the queue
 once so a FINISHED request can be compared without depending on wall-clock
-timing. No provider is invoked and no browser is opened.
+timing. A second synthetic token advances the mutable injected clock across
+midnight without touching either store file, so archive confirmation carries
+the date captured at preview. No provider is invoked and no browser is opened.
 
 Separately, `go/cmd/tasks-tui/main_test.go` tests the SHIPPING constructor —
 that `buildModel` returns a model with real ordered `llm.Entries`, a non-nil
@@ -108,9 +110,9 @@ previous revision of this document listed as a gap is now built:
    in-place refresh that keeps the reader's filter and scroll, queued-request
    cancellation behind a confirmation, and the response pane with scrolling.
 
-## Four defects found and fixed
+## Five defects found and fixed
 
-All three were found by running the two implementations against each other, not
+Four were found by running the two implementations against each other, not
 by reading code and not by unit tests.
 
 1. **`cmd/tasks-tui` never set the journal's coalescing scope.** The journal
@@ -162,6 +164,17 @@ by reading code and not by unit tests.
    pump via Done, cancellation, output, exit and signal status), and wiring
    `tui.SystemOpener`. `cmd/tasks-tui/main_test.go` now fails on the unwired
    constructor — verified by reverting the wiring.
+
+5. **The Go archive confirmation read the clock twice.** The preview and the
+   confirmed sweep each minted an operation from a fresh temporal context. Since
+   the preview fingerprint includes the local day, an unchanged task list was
+   refused as "task list changed" when its confirmation modal remained open
+   across midnight. The TUI now captures one temporal context at preview and
+   carries it into a distinct confirmation operation, while all ordinary TUI
+   operations use the model's injected session clock. The
+   `archive-preview-crosses-midnight` differential scenario advances only that
+   clock between `x` and `y`; Ruby and Go then agree on observable state and the
+   exact live/archive store bytes.
 
 A further divergence was found the same way and is behavior this build had
 simply not ported: after a save moves a task out of the current view (putting it

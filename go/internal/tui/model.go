@@ -124,6 +124,12 @@ type Model struct {
 	// BACK to the store on confirmation, so a list that changed while the modal
 	// was open refuses rather than archiving a set nobody saw.
 	archivePreview *store.ArchivePreview
+	// archiveContext is the clock the OPEN archive confirmation was built with.
+	// The store's pinned-preview fingerprint includes the day, so the preview
+	// the user read and the sweep they confirm have to agree about what day it
+	// is — otherwise a confirmation left open across local midnight refuses
+	// with "task list changed" although not one byte moved.
+	archiveContext temporal.Context
 	// opener launches a URL. It is injected so a test never opens a browser.
 	opener Opener
 
@@ -285,16 +291,35 @@ func (m *Model) View() string {
 // -- the read model ---------------------------------------------------------
 
 func (m *Model) currentDate() temporal.Date {
-	context, err := temporal.NewContext(m.now(), m.paths.Timezone, m.paths.TimeFormat)
-	if err != nil {
+	context := m.temporalContext()
+	if context.Timezone == nil {
 		return temporal.DateOf(m.now())
 	}
 	return context.LocalDate()
 }
 
-// operation mints a per-read operation context. The TUI is a first-class
-// source, so its reads carry `tui` rather than borrowing the CLI's identity.
+// operation mints a per-read operation context on the session's OWN clock. The
+// TUI is a first-class source, so its reads carry `tui` rather than borrowing
+// the CLI's identity.
+//
+// Pinning the clock here is what makes the model's injected `now` the single
+// clock the whole surface reads. Without it the application falls back to its
+// own factory, and the TUI ends up with TWO clocks — the one `currentDate`,
+// flash expiry and the spinner read, and the one every write stamps from. In
+// the shipping binary both are `time.Now()` so they agree by luck; a test or a
+// harness that pins one and not the other would be measuring nothing.
 func (m *Model) operation() *application.OperationContext {
+	return m.operationAt(m.temporalContext())
+}
+
+// operationAt mints an operation carrying a SPECIFIC clock.
+//
+// A fresh identity every call, a caller-chosen instant: the two are separate on
+// purpose. Archive is the case that needs it — the preview the user reads and
+// the sweep they confirm have to agree about what day it is, because the
+// store's pinned-preview fingerprint includes the day, but they are still two
+// distinct operations in the journal and the audit trail.
+func (m *Model) operationAt(context temporal.Context) *application.OperationContext {
 	buffer := make([]byte, 8)
 	if _, err := rand.Read(buffer); err != nil {
 		buffer = []byte(fmt.Sprintf("%016x", m.now().UnixNano()))[:8]
@@ -304,7 +329,13 @@ func (m *Model) operation() *application.OperationContext {
 	if err != nil {
 		return nil
 	}
-	return built
+	if context.Timezone == nil {
+		// An unresolvable zone leaves the operation unpinned rather than
+		// carrying a zero context, which has no location and would panic the
+		// moment anything asked it for a local date.
+		return built
+	}
+	return built.WithTemporalContext(context)
 }
 
 // Refresh rebuilds the read model and the rows from it. It is the ONLY path

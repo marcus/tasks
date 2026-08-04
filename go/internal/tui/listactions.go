@@ -28,7 +28,10 @@ func (m *Model) ArchiveSweep() {
 		m.ConfirmArchiveProject(project)
 		return
 	}
-	preview, supported := m.app.ArchivePreview(m.operation())
+	// Capture the session clock ONCE. Everything from here to the confirmation
+	// reads this instant, not a fresh one.
+	m.archiveContext = m.temporalContext()
+	preview, supported := m.app.ArchivePreview(m.operationAt(m.archiveContext))
 	if !supported {
 		m.Flash("this store cannot archive")
 		return
@@ -82,7 +85,9 @@ func (m *Model) archiveConfirmKey(key string) {
 	switch key {
 	case "y", "Y":
 		expected := m.archivePreview
-		outcome, supported := m.app.ArchiveSweep(expected, m.operation())
+		// The SAME day the preview was built with. A distinct operation
+		// identity, a shared instant — see Model.operationAt.
+		outcome, supported := m.app.ArchiveSweep(expected, m.operationAt(m.archiveContext))
 		m.CloseModal()
 		if !supported {
 			m.Flash("this store cannot archive")

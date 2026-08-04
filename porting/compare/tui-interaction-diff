@@ -169,6 +169,12 @@ SCENARIOS = [
     keys: ["x", "y"],
   },
   {
+    name: "archive-preview-crosses-midnight",
+    why: "a preview left open across local midnight carries its captured day into confirmation",
+    view: "next", select: "aaaa0004",
+    keys: ["x", "<<advance-midnight>>", "y"],
+  },
+  {
     name: "archive-preview-then-cancel",
     why: "n leaves both files untouched",
     view: "next", select: "aaaa0004",
@@ -536,6 +542,10 @@ RUBY_DRIVER = <<~'RUBY'
     # depending on wall-clock timing.
     if key == "<<tick>>"
       app.send(:pump_agent_queue)
+    elsif key == "<<advance-midnight>>"
+      # Move only the injected scenario clock. The archive modal and both store
+      # files stay untouched, reproducing a user who confirms the next day.
+      pinned += 24 * 60 * 60
     else
       app.send(:handle_key, key)
     end
