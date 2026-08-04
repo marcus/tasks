@@ -55,11 +55,7 @@ func (m *Model) handleKey(message tea.KeyMsg) tea.Cmd {
 	case ModeFilter:
 		m.filterKey(sequence)
 	case ModePrompt:
-		// The prompt belongs to the agent packet. Escape must still work, or a
-		// build that reached this mode could not leave it.
-		if sequence == "\x1b" {
-			m.mode = ModeList
-		}
+		m.promptKey(sequence)
 	default:
 		m.listKey(sequence)
 	}
@@ -270,6 +266,9 @@ func (m *Model) modalKey(sequence string) {
 		return
 	case ModalArchiveBlocked:
 		m.archiveBlockedKey(sequence)
+		return
+	case ModalAgentQueueCancel:
+		m.agentQueueCancelKey(sequence)
 		return
 	case ModalUnsupportedSchema:
 		// The notice has no action: nothing this build can do makes the store

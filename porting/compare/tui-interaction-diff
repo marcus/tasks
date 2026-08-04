@@ -320,6 +320,50 @@ SCENARIOS = [
            "\r", "\x1b[C", "\x1b[C", "\e", "\e", "\e", "\x0f"],
   },
 
+  # -- the agent prompt surface ---------------------------------------------------
+  {
+    name: "prompt-opens-and-closes-with-tab",
+    why: "tab enters the prompt and tab leaves it",
+    view: "next", select: "aaaa0004",
+    keys: ["\t", "h", "i", "\t"],
+  },
+  {
+    name: "prompt-escape-leaves-the-prompt",
+    why: "escape is the other way out",
+    view: "next", select: "aaaa0004",
+    keys: ["\t", "h", "i", "\e"],
+  },
+  {
+    name: "paste-ref-quotes-the-selection",
+    why: "p quotes the stable reference into the prompt and focuses it",
+    view: "next", select: "aaaa0004",
+    keys: ["p"],
+  },
+  {
+    name: "paste-ref-twice-separates-the-references",
+    why: "a second reference does not run into the first",
+    view: "next", select: "aaaa0004",
+    keys: ["p", "\t", "p"],
+  },
+  {
+    name: "prompt-empty-submit-is-a-no-op",
+    why: "an empty prompt does not enqueue anything",
+    view: "next", select: "aaaa0004",
+    keys: ["\t", "\r"],
+  },
+  {
+    name: "model-cycling-wraps",
+    why: "M names the entry new requests go to",
+    view: "next", select: "aaaa0004",
+    keys: ["M"],
+  },
+  {
+    name: "agent-activity-refused-with-no-requests",
+    why: "an unavailable key is consumed in silence",
+    view: "next", select: "aaaa0004",
+    keys: ["A"],
+  },
+
   {
     name: "ordering-refused-outside-outline",
     why: "the unfiltered Outline is the only place ordering applies",
@@ -371,9 +415,31 @@ RUBY_DRIVER = <<~'RUBY'
   # and the comparison would drift with the wall clock rather than with behavior.
   pinned = Time.parse(ENV.fetch("TASKS_PIN_NOW")).utc
 
+  # A SCRIPTED fake agent, never a provider. It answers every prompt with the
+  # same transcript, which is all the differential needs: what is compared is
+  # the TUI's own behaviour around a request, not the model's words.
+  fake_agent = Class.new do
+    attr_reader :started
+    def initialize = (@started = []; @output = +""; @exit_status = nil; @process_status = nil)
+    def available? = true
+    def io = nil
+    def success? = true
+    def start(prompt, model:) = (@started << [prompt, model]; self)
+    def output = @output
+    def exit_status = @exit_status
+    def process_status = @process_status
+    def cancel = :done
+    def pump
+      @output << "fake agent transcript"
+      @exit_status = 0
+      :done
+    end
+  end
+
   app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir),
                      llm_config: LLM::Config.new(provider: nil, model: nil, providers: {}),
-                     agent_probe: ->(_entry) { false },
+                     agent_factory: ->(_entry) { fake_agent.new },
+                     agent_probe: ->(_entry) { true },
                      date_provider: -> { pinned.to_date },
                      time_provider: -> { pinned })
   app.send(:rows)
@@ -415,6 +481,8 @@ RUBY_DRIVER = <<~'RUBY'
       step["overlay"] = "actions:#{ui.action_palette&.input}"
     when :context_palette
       step["overlay"] = "contexts:#{ui.context_palette&.input}"
+    when :prompt
+      step["overlay"] = "prompt:#{app.instance_variable_get(:@input)}"
     when :task_edit
       editor = ui.task_editor
       if editor

@@ -47,33 +47,40 @@ func (m *Model) handlers() map[string]func(key string) {
 		"quit":                 func(string) { m.requestQuit() },
 
 		// This packet's own.
-		"open_help":             func(string) { m.OpenHelp() },
-		"open_action_palette":   func(string) { m.OpenActionPalette() },
-		"open_context_palette":  func(string) { m.OpenContextPalette() },
-		"complete_selected":     func(string) { m.CompleteSelected() },
-		"approve_proposal":      func(string) { m.DecideProposal(application.ProposalApprove) },
-		"reject_proposal":       func(string) { m.DecideProposal(application.ProposalReject) },
-		"raise_priority":        func(string) { m.BumpPriority(-1) },
-		"lower_priority":        func(string) { m.BumpPriority(1) },
-		"open_date_popup":       func(string) { m.OpenDatePopup() },
-		"open_recur_popup":      func(string) { m.OpenRecurPopup() },
-		"rename_project":        func(string) { m.RenameProject() },
-		"capture_into_project":  func(string) { m.CaptureIntoProject() },
-		"archive_sweep":         func(string) { m.ArchiveSweep() },
-		"undo_last":             func(string) { m.UndoLast() },
-		"redo_last":             func(string) { m.RedoLast() },
-		"move_subtree_up":       func(string) { m.ReorderSelected("up") },
-		"move_subtree_down":     func(string) { m.ReorderSelected("down") },
-		"indent_subtree":        func(string) { m.ReorderSelected("indent") },
-		"outdent_subtree":       func(string) { m.ReorderSelected("outdent") },
-		"open_link":             func(string) { m.OpenLink() },
-		"defer_selected":        func(string) { m.DeferSelected() },
-		"delegate_selected":     func(string) { m.DelegateSelected() },
-		"set_work_ref_selected": func(string) { m.SetWorkRefSelected() },
-		"start_task_edit":       func(string) { m.StartTaskEdit("title") },
-		"start_task_edit_last":  func(string) { m.StartTaskEdit(editFields[len(editFields)-1]) },
-		"yank_ref":              func(string) { m.YankRef() },
-		"yank_markdown":         func(string) { m.YankMarkdown() },
+		"open_help":                    func(string) { m.OpenHelp() },
+		"open_action_palette":          func(string) { m.OpenActionPalette() },
+		"open_context_palette":         func(string) { m.OpenContextPalette() },
+		"complete_selected":            func(string) { m.CompleteSelected() },
+		"approve_proposal":             func(string) { m.DecideProposal(application.ProposalApprove) },
+		"reject_proposal":              func(string) { m.DecideProposal(application.ProposalReject) },
+		"raise_priority":               func(string) { m.BumpPriority(-1) },
+		"lower_priority":               func(string) { m.BumpPriority(1) },
+		"open_date_popup":              func(string) { m.OpenDatePopup() },
+		"open_recur_popup":             func(string) { m.OpenRecurPopup() },
+		"rename_project":               func(string) { m.RenameProject() },
+		"capture_into_project":         func(string) { m.CaptureIntoProject() },
+		"archive_sweep":                func(string) { m.ArchiveSweep() },
+		"undo_last":                    func(string) { m.UndoLast() },
+		"redo_last":                    func(string) { m.RedoLast() },
+		"move_subtree_up":              func(string) { m.ReorderSelected("up") },
+		"move_subtree_down":            func(string) { m.ReorderSelected("down") },
+		"indent_subtree":               func(string) { m.ReorderSelected("indent") },
+		"outdent_subtree":              func(string) { m.ReorderSelected("outdent") },
+		"open_link":                    func(string) { m.OpenLink() },
+		"defer_selected":               func(string) { m.DeferSelected() },
+		"delegate_selected":            func(string) { m.DelegateSelected() },
+		"set_work_ref_selected":        func(string) { m.SetWorkRefSelected() },
+		"focus_prompt":                 func(string) { m.FocusPrompt() },
+		"paste_ref":                    func(string) { m.PasteRef() },
+		"toggle_model":                 func(string) { m.ToggleModel() },
+		"open_agent_activity":          func(string) { m.OpenAgentActivity() },
+		"cancel_queued_agent_requests": func(string) { m.CancelQueuedAgentRequests() },
+		"resp_up":                      func(string) { m.ScrollResponse(-5) },
+		"resp_down":                    func(string) { m.ScrollResponse(5) },
+		"start_task_edit":              func(string) { m.StartTaskEdit("title") },
+		"start_task_edit_last":         func(string) { m.StartTaskEdit(editFields[len(editFields)-1]) },
+		"yank_ref":                     func(string) { m.YankRef() },
+		"yank_markdown":                func(string) { m.YankMarkdown() },
 
 		// Modal navigation.
 		"modal_up":           func(string) { m.modalMove(-1) },
@@ -93,15 +100,12 @@ func (m *Model) handlers() map[string]func(key string) {
 // unbuiltHandlers names every registry handler this build cannot perform, and
 // says WHY. A refusal that names the missing capability is a bug report the
 // user can act on; a key that does nothing is not.
-var unbuiltHandlers = map[string]string{
-	"focus_prompt":                 "the agent prompt is not implemented in this build (agent packet)",
-	"paste_ref":                    "the agent prompt is not implemented in this build (agent packet)",
-	"open_agent_activity":          "agent activity is not implemented in this build (agent packet)",
-	"cancel_queued_agent_requests": "the agent queue is not implemented in this build (agent packet)",
-	"toggle_model":                 "agent model switching is not implemented in this build (agent packet)",
-	"resp_up":                      "the agent response pane is not implemented in this build (agent packet)",
-	"resp_down":                    "the agent response pane is not implemented in this build (agent packet)",
-}
+// Every registry handler now has an implementation. The map is retained as an
+// empty, named seam: a later packet that lands a bound key ahead of its
+// capability has somewhere honest to say so, and
+// TestNoBoundKeyStillRefusesAsUnimplemented fails the moment anything is added
+// without also being listed as known.
+var unbuiltHandlers = map[string]string{}
 
 // availability resolves the registry's predicate names. A bound but unavailable
 // key is still CONSUMED, so dispatch can never leak into a lower-priority
@@ -132,8 +136,10 @@ func (m *Model) availability(name string) bool {
 	case "ordering_action_available?":
 		return m.view == ViewOutline && m.activeFilter() == "" &&
 			len(m.contextFilters) == 0 && m.CurrentItem() != nil
-	case "agent_activity_available?", "pending_agent_requests_available?":
-		return false
+	case "agent_activity_available?":
+		return m.queue != nil && len(m.queue.Requests()) > 0
+	case "pending_agent_requests_available?":
+		return m.pendingCount() > 0
 	}
 	return false
 }

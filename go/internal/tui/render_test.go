@@ -168,11 +168,9 @@ func TestNoBoundKeyStillRefusesAsUnimplemented(t *testing.T) {
 	// stillUnbuilt is the shrinking list. It must reach empty; a name that is
 	// implemented while still listed here also fails, so the list cannot rot in
 	// either direction.
-	stillUnbuilt := map[string]bool{
-		"focus_prompt": true, "paste_ref": true, "open_agent_activity": true,
-		"cancel_queued_agent_requests": true, "toggle_model": true,
-		"resp_up": true, "resp_down": true,
-	}
+	// EMPTY. Every bound key does its thing or refuses for a reason about the
+	// current selection.
+	stillUnbuilt := map[string]bool{}
 	for name := range unbuiltHandlers {
 		if !stillUnbuilt[name] {
 			t.Errorf("handler %q refuses as unimplemented but is not on the known list", name)

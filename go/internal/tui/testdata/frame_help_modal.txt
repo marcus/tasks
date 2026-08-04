@@ -16,9 +16,9 @@
 │     │ l             expand subtree                                                    │      │
 │     │ H             collapse all subtrees                                             │      │
 │     │ L             expand all subtrees                                               │      │
-│     │ return        open / close task details                                         │      │
-│     │ ── 15/101 · ↑↓ scroll ──                                                        │      │
+│     │ ── 14/101 · ↑↓ scroll ──                                                        │      │
 │     └─────────────────────────────────────────────────────────────────────────────────┘      │
 ├──────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ❯ tab to ask the agent — reschedule, capture, edit anything…                                 │
 │ j/k move · 1-6 views · h/l fold · enter details · v unavailable · / search · q quit          │
 └──────────────────────────────────────────────────────────────────────────────────────────────┘

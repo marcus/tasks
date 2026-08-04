@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"strings"
+
+	"tasks-go/internal/tui/term/ansi"
 )
 
 // Rendering is a REBUILD, not a port.
@@ -220,9 +222,16 @@ func (m *Model) tabCell(tab Tab, variant int) string {
 	return m.styler.Paint("tab", label)
 }
 
-// Footer is the status rows under the list.
+// Footer is the status rows under the list, in Ruby's order.
+//
+// The order is the contract, not an accident. A running agent's transcript
+// takes the top because it is the only thing on screen that is still changing;
+// the prompt takes the bottom because it is where the caret is. And the prompt
+// is SKIPPED in the modes that render their own input in an overlay, so a short
+// terminal never shows two carets.
 func (m *Model) Footer() []string {
 	lines := []string{}
+	lines = append(lines, m.agentFooter()...)
 	if m.readErr != nil {
 		lines = append(lines, m.styler.Paint("error", " ⚠ cannot read the task store: "+m.readErr.Error()))
 	}
@@ -235,10 +244,63 @@ func (m *Model) Footer() []string {
 	} else if m.filter != "" {
 		lines = append(lines, m.styler.Paint("muted", fmt.Sprintf(" filter /%s · esc clears", m.filter)))
 	}
-	if len(m.contextFilters) > 0 {
+	if len(m.contextFilters) > 0 && m.mode != ModeContextPalette {
 		lines = append(lines, m.styler.Paint("context", " "+strings.Join(m.contextFilters, " ")))
 	}
+	switch m.mode {
+	case ModeFilter, ModeForm, ModePalette, ModeContextPalette, ModeTaskEdit:
+	default:
+		lines = append(lines, m.PromptLines(m.width-2)...)
+	}
 	return append(lines, m.styler.Paint("muted", m.keyHint()))
+}
+
+// spinner is the running-request tick. It is the only animated thing in the
+// frame, and it exists so a long request cannot be mistaken for a hung one.
+var spinner = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+// agentFooter is the running request's live transcript, or the last result.
+func (m *Model) agentFooter() []string {
+	if m.queue == nil {
+		return nil
+	}
+	if active, running := m.queue.ActiveRequest(); running {
+		queued := ""
+		if pending := m.pendingCount(); pending > 0 {
+			queued = fmt.Sprintf(" · %d queued", pending)
+		}
+		lines := []string{m.styler.Paint("muted", fmt.Sprintf(
+			" %s #%d %s is working%s · A activity · esc cancels",
+			spinner[m.spinnerTick()%len(spinner)], active.ID, active.Entry.UILabel(), queued))}
+		// The last three transcript lines only: a streaming chunk can end
+		// mid-character, and the footer is a status row rather than a pager.
+		transcript := strings.Split(ansi.Strip(ansi.Normalize(active.Output)), "\n")
+		for _, line := range transcript[max(len(transcript)-3, 0):] {
+			lines = append(lines, m.styler.Paint("muted", "   "+line))
+		}
+		return lines
+	}
+	if !m.respOpen || len(m.resp) == 0 {
+		return nil
+	}
+	lines := []string{m.styler.Paint("muted", fmt.Sprintf(
+		" result #%d · A opens all agent activity", m.respRequestID))}
+	visible := m.ResponseLines()
+	for _, line := range visible {
+		lines = append(lines, "   "+line)
+	}
+	hint := "esc dismiss"
+	if len(m.resp) > respMax {
+		hint = fmt.Sprintf("%d/%d · pgup/pgdn scrolls · esc dismiss",
+			m.respScroll+len(visible), len(m.resp))
+	}
+	return append(lines, m.styler.Paint("muted", "   ── "+hint+" ──"))
+}
+
+// spinnerTick advances with the clock rather than with a frame counter, so the
+// animation is the same on two runs over the same pinned time.
+func (m *Model) spinnerTick() int {
+	return int(m.now().UnixNano() / int64(TickInterval))
 }
 
 // keyHint degrades with the terminal rather than being cut mid-word. A hint

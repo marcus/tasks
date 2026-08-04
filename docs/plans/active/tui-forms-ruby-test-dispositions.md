@@ -10,9 +10,13 @@ several Ruby cases collapse into one Go table test, and several Go tests cover
 a contract Ruby only exercises incidentally.
 
 The judgment gate for this packet is `porting/compare/tui-interaction-diff`,
-which drives 15 keystroke scenarios through **both** implementations and
-compares mode, selection, status message, overlay state and the resulting
-`tasks.jsonl` bytes. It is at **15/15 GATE PASS**.
+which drives 47 keystroke scenarios through **both** implementations and
+compares mode, selection, status message, overlay state, the resulting
+`tasks.jsonl` AND `archive.jsonl` bytes, and the undo journal's cursor and
+labels. It is at **47/47 GATE PASS**.
+
+Both sides run against scripted fakes for anything external: a fake agent
+adapter, a fake link opener. No provider is invoked and no browser is opened.
 
 ## Summary
 
@@ -20,7 +24,7 @@ compares mode, selection, status message, overlay state and the resulting
 | --- | ---: | --- |
 | `test_term_form.rb` | 30 | Covered — `termform/form_test.go` |
 | `test_term_form_text_fields.rb` | 18 | Covered — `termform/fields_test.go` |
-| `test_term_form_choice_date_fields.rb` | 17 | Covered except the temporal picker — see gaps |
+| `test_term_form_choice_date_fields.rb` | 17 | Covered — `termform/fields_test.go`, `temporalpicker_test.go` |
 | `test_term_form_require_boundary.rb` | 2 | Covered — `termform/fields_test.go` |
 | `test_form.rb` | 11 | Covered — `formrender_test.go` (quick form) |
 | `test_form_renderer.rb` | 19 | Covered — `formrender_test.go` |
@@ -30,8 +34,10 @@ compares mode, selection, status message, overlay state and the resulting
 | `test_action_palette.rb` | 8 | Covered — `palettes_test.go` |
 | `test_context_palette.rb` | 13 | Covered — `palettes_test.go` |
 | `test_ui_state.rb` | 13 | Covered — `uistate_test.go` |
-| `test_task_editor_session.rb` | 29 | Covered except the temporal picker — see gaps |
-| `test_app_modals.rb` | 83 | Partially covered — `appmodes_test.go`; see gaps |
+| `test_task_editor_session.rb` | 29 | Covered — `taskedit_test.go`, `temporalpicker_test.go` |
+| `test_app_modals.rb` | 85 | Covered — `appmodes_test.go` |
+| `test_app_agent_queue.rb` | 12 | Covered — `agentprompt_test.go` |
+| `test_links_feature.rb` | 19 | Link ACTION covered — `appmodes_test.go`; extraction is `internal/links` |
 | `test_text_input.rb` | 8 | Already covered by `term/input` (previous packet) |
 
 ## Notes per suite
@@ -52,52 +58,52 @@ property — a caller cannot mutate the form through a returned value — is
 bought by `copyValue` and asserted by
 `TestFormRefreshKeepsADirtyBufferAndMovesEveryBaseline`.
 
-**`test_app_modals.rb`** — 83 cases across the whole app surface. This packet
-answers the modal, popup, palette and editor-panel families. The remainder
-belong to surfaces this packet does not own and does not claim: the agent queue
-and its activity modal, the agent response pane, delegation, and subtree
-ordering. Each of those refuses out loud by name at the key (see
-`unbuiltHandlers`), and `TestUnimplementedKeysSayWhatIsMissing` pins that.
+**`test_app_modals.rb`** — 85 cases across the whole app surface, including the
+two archive-clock regressions this packet added. Every family is now answered:
+modals and popups, the palettes, the editor panel, archive, history, ordering,
+delegation, the agent queue and its activity modal, and the response pane.
 
-## Gaps, stated plainly
+**`test_app_agent_queue.rb`** — the queue's FIFO/serial/max-pending contract,
+full-queue prompt preservation, activity refresh and cancellation. Covered by
+`agentprompt_test.go` against a scripted fake adapter; no test in this packet
+invokes a provider or spawns a process.
 
-1. **The structured temporal picker is not ported.** Ruby's
-   `TaskEditForm::TemporalInput` opens a five-row control (date / time / mode /
-   zone / fold) with an IANA zone search over `TZInfo.all_identifiers`. Six
-   Ruby cases across `test_task_editor_session.rb` and
-   `test_term_form_choice_date_fields.rb` exercise it.
+## Gaps
 
-   What this build has instead: the date field parses the **same expression
-   grammar** — `2026-08-09 17:30 Europe/Berlin`, `tomorrow 9am`, `fri noon`,
-   with an optional `fold=later` — and opens the base calendar picker on
-   Return. Nothing is unreachable: every value the Ruby picker can produce can
-   be typed, and `TestATimedDateKeepsItsWallTimeAndZoneThroughTheSave` proves
-   the wall time and zone survive to the stored bytes. What is missing is the
-   arrow-driven *editing affordance*, and the DST-specific behaviors that only
-   the arrows reach (stepping onto the first valid local time after a spring-
-   forward gap; exposing the fold row only when the local time is ambiguous).
-   Recorded in `porting/intentional-differences.md`.
+**None.** `unbuiltHandlers` is empty, and
+`TestNoBoundKeyStillRefusesAsUnimplemented` fails on any handler that either
+refuses as unimplemented or has no implementation at all. Every capability the
+previous revision of this document listed as a gap is now built:
 
-2. **`x` — the list-wide archive sweep — refuses by name.** The application
-   facade publishes no archive capability (`store.ArchivePreviewFor` and
-   `ArchiveSweep` exist but are not on `application.Store`), and adding one is
-   outside this packet's extended ownership. `x` on a **project header** is
-   fully implemented, because `Application.ArchiveProject` does exist. The
-   refusal names the missing seam.
+1. **The structured temporal picker** — date / time / mode / zone / fold, with
+   arrow stepping, an IANA zone search restricted to storable identifiers, the
+   fold row appearing only for a genuinely ambiguous local time, and a forward
+   time step that jumps a spring-forward gap to the first valid local time
+   after it. The recorded difference
+   `tui-temporal-picker-is-typed-not-stepped` is retired, not accepted.
+2. **The list-wide archive sweep** — preview, confirmation, blocked modal,
+   stale-preview refusal, cancel, and the sweep itself, through a new
+   `ArchiveSweeper` capability on the application facade.
+3. **Undo and redo** — through a new `HistoryStepper` capability, with Ruby's
+   three distinct refusals kept distinct.
+4. **Delegation and work reference** — through the application's own delegation
+   commands, so the WAITING default and the blocker note stay composed in one
+   undo step.
+5. **Subtree ordering** — up, down, indent and outdent, through a new `Placer`
+   capability over the store's own changeset.
+6. **Open link** — through `internal/links`, with an injected `Opener`. No test
+   opens a browser.
+7. **The agent prompt surface** — prompt focus/edit/submit, quoted reference
+   paste, bracketed paste from the list and from a modal, cell-accurate
+   wrapping with a drawn caret, model cycling, FIFO/serial queueing with
+   max-pending, full-queue prompt preservation, the activity modal with live
+   in-place refresh that keeps the reader's filter and scroll, queued-request
+   cancellation behind a confirmation, and the response pane with scrolling.
 
-3. **`u` / ctrl-r — undo and redo — refuse by name.** Same shape:
-   `store.HistoryStep` exists, `application` does not expose it. The editor's
-   own undo contract — one editing session is one undo step — is nonetheless
-   implemented and asserted
-   (`TestOneSessionCoalescesItsSavesIntoOneHistoryStep`), because it is a
-   property of the *write*, not of the undo key.
+## Three defects found and fixed
 
-4. **The agent prompt stays deferred**, as scoped.
-
-## Two defects found and fixed
-
-Both were found by running the two implementations against each other, not by
-reading code or by unit tests.
+All three were found by running the two implementations against each other, not
+by reading code and not by unit tests.
 
 1. **`cmd/tasks-tui` never set the journal's coalescing scope.** The journal
    only extends a keyed tip when the scope matches too, and an empty scope is
@@ -112,8 +118,28 @@ reading code or by unit tests.
    is visible on the row. The first draft flashed for every one. Caught by the
    `unavailable-action-refuses-by-name` scenario and aligned.
 
-A third divergence was found the same way and is behavior this build had simply
-not ported: after a save moves a task out of the current view (putting it on
-hold removes it from Next), Ruby closes the editor and says where the selection
-went. Now ported, and pinned by the
+3. **The Ruby TUI stamped archives from the wall clock.**
+   `Tui::App#archive_sweep` called `@store.archive_preview` and
+   `@store.archive_swept!` with no `today:`, so both fell back to `Date.today`
+   — the process's LOCAL calendar day — while every other TUI write stamps
+   `current_date`, which honours the configured timezone and the injected
+   provider. A user whose configured zone had rolled over got an `archived` day
+   that disagreed with the `closed` days the same session had just written, and
+   a confirmation prepared either side of local midnight could stamp a
+   different day than its preview described.
+
+   FIXED AT ITS CAUSE rather than ported: `archive_sweep` now captures
+   `current_date` once into `@archive_today`, carries it to the sweep, and
+   `close_modal` clears it with the rest of the modal state. The identical
+   defect had already been fixed for `archive_plan` and `archive_project_impl`,
+   so porting it would have reintroduced a bug the project had decided against.
+   Ruby regression coverage:
+   `TestAppModals#test_archive_stamps_the_session_date_not_the_wall_clock` and
+   `#test_archive_preview_and_sweep_share_one_captured_date`, both verified to
+   fail on the pre-fix source.
+
+A further divergence was found the same way and is behavior this build had
+simply not ported: after a save moves a task out of the current view (putting it
+on hold removes it from Next), Ruby closes the editor and says where the
+selection went. Now ported, and pinned by the
 `edit-deferred-toggle-writes-the-marker` scenario.

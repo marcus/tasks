@@ -11,8 +11,10 @@ import (
 	"tasks-go/internal/application"
 	"tasks-go/internal/config"
 	"tasks-go/internal/determinism"
+	"tasks-go/internal/llm"
 	"tasks-go/internal/store"
 	"tasks-go/internal/temporal"
+	"tasks-go/internal/tui/term/agent"
 )
 
 // The Go half of the Ruby-vs-Go interaction differential.
@@ -128,6 +130,8 @@ func diffObserve(model *Model, key string) diffStep {
 		if model.ContextPalette() != nil {
 			step.Overlay = "contexts:" + model.ContextPalette().Picker().Input()
 		}
+	case ModePrompt:
+		step.Overlay = "prompt:" + model.PromptText()
 	case ModeTaskEdit:
 		if editor := model.TaskEditor(); editor != nil {
 			step.Overlay = "edit:" + editor.FocusedKey()
@@ -174,8 +178,28 @@ func diffModel(t *testing.T, dir string) *Model {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The SAME entry list Ruby derives from an empty config, built from the
+	// shared registry rather than hand-listed, plus a queue over a scripted
+	// adapter. No provider is ever invoked.
+	entries := []AgentEntry{}
+	for _, entry := range llm.Entries(llm.Config{}) {
+		entries = append(entries, AgentEntry{
+			ProviderName: entry.Provider, ModelName: entry.Model, Label: entry.UILabel(),
+		})
+	}
+	queue, err := agent.NewQueue(agent.Options{
+		Factory:      func(agent.Entry) (agent.Adapter, error) { return &diffAdapter{}, nil },
+		Availability: func(agent.Entry) bool { return true },
+		Clock:        func() float64 { return float64(now.UnixNano()) / float64(time.Second) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	model := New(Options{
-		App: app,
+		App:     app,
+		Entries: entries,
+		Queue:   queue,
 		Paths: config.Paths{
 			Org: org, Archive: archive,
 			UrgentDays: config.DefaultUrgentDays, MaxDepth: config.DefaultMaxDepth,
@@ -187,6 +211,23 @@ func diffModel(t *testing.T, dir string) *Model {
 	model.width, model.height = 100, 30
 	model.Refresh()
 	return model
+}
+
+// diffAdapter is the differential's scripted agent. It answers every prompt
+// with one fixed transcript, matching the Ruby driver's fake — what the
+// differential compares is the TUI's behaviour around a request, never a
+// model's words, and no provider is ever invoked.
+type diffAdapter struct{ pumped bool }
+
+func (a *diffAdapter) Available() bool            { return true }
+func (a *diffAdapter) Start(string, string) error { return nil }
+func (a *diffAdapter) Pump() (bool, error)        { a.pumped = true; return true, nil }
+func (a *diffAdapter) Cancel() error              { return nil }
+func (a *diffAdapter) Output() string             { return "fake agent transcript" }
+func (a *diffAdapter) Success() bool              { return true }
+func (a *diffAdapter) ExitStatus() (int, bool)    { return 0, true }
+func (a *diffAdapter) ProcessStatus() agent.ProcessStatus {
+	return agent.ProcessStatus{Present: true, Exited: true}
 }
 
 func diffPinnedNow(t *testing.T) time.Time {

@@ -22,6 +22,8 @@ const (
 	ModalProjectArchiveConfirm  ModalKind = "project_archive_confirm"
 	ModalUnsupportedSchema      ModalKind = "unsupported_schema"
 	ModalTaskDraftQuitConfirm   ModalKind = "task_draft_quit_confirm"
+	ModalAgentActivity          ModalKind = "agent_activity"
+	ModalAgentQueueCancel       ModalKind = "agent_queue_cancel_confirm"
 )
 
 // modalMinInner is the inner row count kept even in a degenerate body.

@@ -66,6 +66,12 @@ type Options struct {
 	// reaching for a platform launcher, which is what keeps a test suite from
 	// opening browser windows.
 	Opener Opener
+	// Entries are the provider/model pairs the prompt can be submitted to, and
+	// Queue is the coordinator that runs them. Both are injected: a test and
+	// the differential supply fakes, and a nil queue refuses the prompt out
+	// loud rather than reaching for a real provider.
+	Entries []AgentEntry
+	Queue   *agentQueue
 }
 
 // Model is the Bubble Tea root — the port of Tui::App's state, minus its event
@@ -121,6 +127,19 @@ type Model struct {
 	// opener launches a URL. It is injected so a test never opens a browser.
 	opener Opener
 
+	// The agent surface. entries are the provider/model pairs `M` cycles;
+	// queue is the serial request coordinator; the resp* fields are the
+	// response pane the last finished request opened.
+	entries            []AgentEntry
+	entryIndex         int
+	queue              *agentQueue
+	promptInput        *input.Editor
+	resp               []string
+	respOpen           bool
+	respScroll         int
+	respRequestID      int
+	agentActivityWidth int
+
 	// Frame state.
 	width  int
 	height int
@@ -167,6 +186,8 @@ func New(options Options) *Model {
 		width:          80,
 		height:         24,
 		opener:         options.Opener,
+		entries:        options.Entries,
+		queue:          options.Queue,
 	}
 	return model
 }
@@ -229,6 +250,10 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tickMsg:
 		m.clearExpiredFlash()
+		// Drain the running agent process FIRST, so a request that just
+		// finished writing is picked up by the same tick that noticed it
+		// finished rather than by the next one.
+		m.PumpQueue()
 		// External change: pick up an edit made by the CLI, an agent, or an
 		// editor in another window. Selection survives it — see syncSelection.
 		if m.read == nil || m.read.Stale() || m.today != m.currentDate() {

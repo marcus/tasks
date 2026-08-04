@@ -61,6 +61,10 @@ type harnessOptions struct {
 	// opener is the link launcher. Tests inject a fake; nothing here may ever
 	// reach a real browser.
 	opener Opener
+	// entries and queue are the agent surface. Tests inject scripted adapters;
+	// nothing here may ever reach a real provider.
+	entries []AgentEntry
+	queue   *agentQueue
 }
 
 // blockedArchiveFixture has a closed root with open work still inside it, which
@@ -134,11 +138,13 @@ func newModelHarness(t *testing.T, options harnessOptions) *modelHarness {
 	env := determinism.Env{"XDG_STATE_HOME": filepath.Join(root, "state"), "HOME": root}
 
 	model := New(Options{
-		App:    app,
-		Paths:  paths,
-		Env:    env,
-		Now:    func() time.Time { return options.now },
-		Opener: options.opener,
+		App:     app,
+		Paths:   paths,
+		Env:     env,
+		Now:     func() time.Time { return options.now },
+		Opener:  options.opener,
+		Entries: options.entries,
+		Queue:   options.queue,
 	})
 	model.width, model.height = 100, 30
 	model.Refresh()
