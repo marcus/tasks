@@ -1,9 +1,0 @@
-# Argv cases for the 2026-08-02 independent source-fidelity review at febbdf6.
-# They exercise the two `parse_cli` regexes whose Ruby semantics the Go switch
-# does not reproduce: `/\A\+(.+)/` (`.` excludes newline) and `text_query`'s
-# full-Unicode `String#downcase`.
-{"case_id":"sf-tag-embedded-newline","operation":"parse_cli","argv":["+alpha\nbeta"]}
-{"case_id":"sf-tag-leading-newline","operation":"parse_cli","argv":["+\nbeta"]}
-{"case_id":"sf-tag-trailing-newline","operation":"parse_cli","argv":["+alpha\n"]}
-{"case_id":"sf-text-query-dotted-capital-i","operation":"parse_cli","argv":["İ"]}
-{"case_id":"sf-text-query-final-sigma","operation":"parse_cli","argv":["ΑΣ"]}

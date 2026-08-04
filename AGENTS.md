@@ -1,70 +1,54 @@
-# AGENTS.md — tasks application (coding)
+# AGENTS.md — Tasks application development
 
-This checkout is the **tasks CLI/TUI/API application** (Ruby). Instructions here are
-for agents developing this repo — implementing features, fixing bugs, running
-tests, updating docs.
+This checkout is the Go implementation of the Tasks CLI, TUI, and loopback API.
+Application work belongs in this repository; task-list operations belong in the
+separate configured data directory and must go through the installed `tasks`
+CLI.
 
-Task *data* (`tasks.jsonl`, `archive.jsonl`, `agent-memory.md`) usually lives in
-a separate directory or private repo, resolved via `~/.config/tasks/config` /
-`TASKS_DIR`. Do not put an `AGENTS.md` in the data directory; list-agent
-instructions are not loaded from cwd.
+## Contracts
 
-## Two contracts — do not mix them
+- `AGENTS.md` is for coding agents working on the application.
+- `internal/agentcontext/TASK_AGENT.md` is embedded into `tasks -p` and the TUI
+  queue for agents managing personal GTD data. Change it only when the
+  list-agent contract changes, and keep the Tasks skills synchronized.
 
-| File | Audience | Who loads it |
-| --- | --- | --- |
-| [`AGENTS.md`](AGENTS.md) (this file) | Coding agents in this repo | Cursor / Claude Code workspace rules |
-| [`TASK_AGENT.md`](TASK_AGENT.md) | List agents managing GTD data | `tasks -p` and the TUI queue via `Tasks::AgentContext` |
+## Architecture
 
-When the user asks you to change the list-agent prompt, edit `TASK_AGENT.md`
-(and keep skills/docs in sync). When they ask you to implement application code,
-edit source/tests here — do **not** capture a todo instead of doing the work.
+- Shared behavior lives under `internal/`, with `internal/application` as the
+  command/query boundary and `internal/store` as the persistence boundary.
+- `cmd/tasks`, `cmd/tasks-tui`, and `cmd/tasks-api` are thin adapters over the
+  shared core. Do not put domain behavior only in a surface.
+- CLI and HTTP capabilities have semantic parity by default. CLI fuzzy refs and
+  friendly input may differ from HTTP stable IDs, JSON, status codes, and ETag
+  mechanics, but the shared outcome must agree.
+- Keep provider, renderer, transport, and persistence seams behind interfaces.
+- Preserve schema-v2 JSONL, canonical key ordering, DFS pre-order, atomic
+  replacement, rollback, and journal semantics unless a separately planned
+  migration explicitly changes them.
 
-## Developing this application
+## Development
 
-- Spec and architecture: [`docs/cli-spec.md`](docs/cli-spec.md),
-  [`docs/api/openapi.yaml`](docs/api/openapi.yaml),
-  [`docs/conventions.md`](docs/conventions.md), [`README.md`](README.md).
-- How to add or change CLI commands: skill `tasks-cli-dev`
-  (`.claude/skills/tasks-cli-dev/` or `.agents/skills/tasks-cli-dev/`).
-- How the list agent uses the CLI (reference only while coding): skill
-  `tasks-cli`, and the full contract in `TASK_AGENT.md`.
-- Tests: `ruby test/all.rb` (or a focused `ruby test/test_*.rb`). Prefer the
-  project’s existing patterns; never test against the user’s real task files.
-- The CLI supports Ruby 3.4 and Ruby 4.x and uses endless methods (`def foo(x) = bar(x)`) — valid
-  syntax, not a bug.
+- Interface contracts: `docs/cli-spec.md` and `docs/api/openapi.yaml`.
+- Storage contract: `docs/conventions.md`.
+- Tests: `go test ./...`; focused tests use the normal Go package path.
+- Additional gates: `go test -race ./...`, `go vet ./...`, `gofmt -l`, and
+  builds of all three commands.
+- Use `testdata/fixtures`; never point tests at configured or real task files.
+- Every code change requires independent review before completion.
 
-## CLI/API parity is the default
+When adding a CLI capability, update the command registry/help JSON, human help,
+CLI spec, relevant skill, and adapter tests together. When the capability is
+also HTTP-facing, update OpenAPI and API parity coverage.
 
-The CLI and loopback HTTP API are thin adapters over the same
-`Tasks::Application` commands and checked query views. When adding or changing
-user-visible task behavior, keep the CLI and API semantically equivalent by
-default:
+## Task data safety
 
-- Put shared reads, validation, mutations, locking, undo, revisions, and task
-  semantics in `lib/tasks/`, behind `Tasks::Application`; do not reimplement
-  domain behavior independently in `bin/tasks` or `lib/tasks/api/`.
-- Update both [`docs/cli-spec.md`](docs/cli-spec.md) and
-  [`docs/api/openapi.yaml`](docs/api/openapi.yaml) when a capability is exposed
-  by both adapters, and add parity tests at the application/adapter boundaries.
-- Surface-specific mechanics may differ: CLI fuzzy refs, friendly input and
-  terminal output; HTTP stable ids, JSON representations, status codes,
-  Host/Origin policy, and ETag preconditions. Preserve those adapter contracts
-  without changing the shared outcome.
-- An intentional CLI-only or API-only capability needs a specifically discussed
-  product or security reason. Record that decision in the relevant spec and,
-  when architectural, an ADR or plan; do not let parity drift silently.
-- Keep Rack/Puma/OpenAPI dependencies isolated to `bin/tasks-api`,
-  `lib/tasks/api/`, and `test/api/`. `bin/tasks`, `bin/tasks-tui`, and
-  `ruby test/all.rb` must remain free of web dependencies.
+Never hand-edit `tasks.jsonl` or `archive.jsonl`. They depend on stable IDs,
+fixed key order, DFS pre-order, and a schema header. Use `tasks` for real list
+changes and `tasks check --all-files` for diagnostics.
 
-For changes that affect the HTTP surface, run `bundle exec ruby test/api/all.rb`
-in addition to the core test suite.
+Task data must not be committed here. Location resolution is explicit through
+environment overrides or `~/.config/tasks/config`; an unconfigured binary
+refuses to read or write.
 
-## Task data while coding
-
-**Never hand-edit `tasks.jsonl` or `archive.jsonl`.** If development work also
-needs to change task data, use `bin/tasks` (or the absolute path from
-`bin/tasks config`). The JSONL store depends on stable ids, DFS pre-order, fixed
-key order, and a `meta` header — a hand-edit corrupts it. `bin/tasks check`
-audits structural breakage if something was edited out-of-band.
+The retired Ruby implementation is historical only and is preserved by the
+annotated tag `ruby-final-2026-08-04`.

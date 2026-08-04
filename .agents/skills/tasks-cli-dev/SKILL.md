@@ -1,158 +1,51 @@
 ---
 name: tasks-cli-dev
-description: How to add or change commands in the tasks CLI (bin/tasks + lib/tasks). Use when implementing a command from docs/cli-spec.md, adding flags, or changing mutation behavior. Covers the architecture, the mutation pattern, testing requirements, and file-integrity rules.
+description: Add or change Tasks Go CLI commands, shared application behavior, tests, and interface documentation.
 ---
 
-# Building tasks CLI commands
+# Developing Tasks CLI commands
 
-## Architecture
+## Boundaries
 
+- `cmd/tasks` owns argument parsing, human/JSON rendering, exit codes, aliases,
+  and executable plumbing.
+- `internal/application` owns shared commands and checked query results.
+- `internal/store` owns locking, mutations, atomic replacement, validation,
+  rollback, and journal integration.
+- `internal/check` and `internal/record` own schema-v2 validation and canonical
+  JSONL shape.
+- `internal/api` and `cmd/tasks-api` adapt the same application behavior to the
+  OpenAPI contract.
+
+Do not duplicate domain behavior in a command handler or HTTP route. Keep all
+tests on temporary stores or `testdata/fixtures`.
+
+## Adding a command
+
+1. Define behavior and structured output in `docs/cli-spec.md`.
+2. Add shared application/store behavior where required, including validation,
+   atomicity, history, and stale-read protection.
+3. Add the handler under `cmd/tasks` and register its canonical spelling and
+   aliases in the registry. Update human help and `help --json` metadata.
+4. Add focused unit tests plus command-adapter tests for success, invalid input,
+   ambiguous/missing refs, JSON output, and file integrity.
+5. Update the list-agent skill/contract. If HTTP owns the same capability,
+   update OpenAPI, the API adapter, and semantic parity tests.
+
+Every mutating command must prove the resulting record fields, structural
+integrity, write refusal on invalid input, and undo/redo behavior where it
+records history. Use stable IDs internally; line numbers are display/fuzzy-ref
+conveniences only.
+
+## Verification
+
+```sh
+go test ./path/to/focused/package
+go test ./...
+go test -race ./...
+go vet ./...
+test -z "$(gofmt -l cmd internal)"
 ```
-bin/tasks           thin dispatch + human output. No business logic.
-lib/tasks/format.rb Tasks::Format — SOLE owner of the on-disk schema: KEY_ORDER,
-                    VERSION, dump/parse. Shape only (no meaning); lenient parse.
-lib/tasks/store.rb  Tasks::Store — the model layer. ALL writes go through it.
-                    Loads records → locates by id → mutates hash fields → Format.dump.
-lib/tasks/check.rb  Tasks::Check.check — structural linter (ids, DFS pre-order,
-                    parents, states/dates/recur). The safety net.
-lib/tasks/tree.rb   Tasks::Tree — nodes built from `parent` pointers (not indentation).
-lib/tasks/config.rb Tasks::Config.resolve — where tasks.jsonl/archive.jsonl live
-                    (TASKS_FILE/TASKS_ARCHIVE > TASKS_DIR > ~/.config/tasks/config
-                    > repo root). CLI and TUI both resolve through it; tests
-                    pin sandboxes with Config.for_dir.
-lib/tasks/dates.rb  Tasks::Dates.parse_when — fuzzy date parsing.
-lib/tui/            the TUI; consumes the same Store via compat shims.
-lib/tasks/api/      thin Rack adapter over Tasks::Application; HTTP policy only.
-docs/cli-spec.md    the interface contract. SPEC FIRST — update it before code.
-docs/api/openapi.yaml the HTTP contract; keep shared behavior in parity.
-test/               minitest; run with: ruby test/all.rb
-test/api/           Bundler-backed route/OpenAPI/Puma proof.
-```
 
-`tasks.jsonl` is a JSONL store: one explicit JSON record per line, tree carried by
-`parent` ids in DFS pre-order (no block-boundary inference — the old org
-line-walker and its bug class are gone). Format owns the schema; Store owns
-meaning; Check owns validation. The whole design keeps the file unmangled:
-`Store#with_history` snapshots before/after every mutation, runs `Check.check`
-after the write, and **rolls back automatically** if it would break an invariant.
-Never bypass it with a raw `File.write` — write through `Format.dump`.
-
-## CLI/API parity is the default
-
-The CLI and local HTTP API are adapters over the same `Tasks::Application`
-boundary. A new or changed user-visible task capability should normally be
-available with equivalent semantics through both surfaces.
-
-- Put the shared query or command in `lib/tasks/` and route it through
-  `Tasks::Application`; keep argument parsing, rendering, HTTP validation, and
-  status/error mapping in their adapters.
-- Keep `docs/cli-spec.md` and `docs/api/openapi.yaml` synchronized when both
-  adapters expose the capability. Add application-level parity coverage plus
-  focused CLI and API adapter tests.
-- CLI fuzzy refs, friendly dates, terminal output, and exit codes may differ
-  from HTTP stable ids, strict JSON/ISO values, ETags, and status codes. Those
-  are transport differences, not permission for domain behavior to diverge.
-- A deliberate CLI-only or API-only capability requires a specifically
-  discussed product or security reason, documented in the relevant spec and
-  an ADR/plan when it changes architecture.
-- Do not pull Rack, Puma, or OpenAPI tooling into the core CLI/TUI boot paths.
-
-Run `bundle exec ruby test/api/all.rb` whenever shared behavior or the HTTP
-surface changes, in addition to `ruby test/all.rb`.
-
-## Adding a command — the pattern
-
-1. **Spec**: update the command's row in `docs/cli-spec.md` (flip 🚧→✅,
-   adjust flags/behavior). The spec defines ref resolution, exit codes
-   (0 ok / 1 error / 2 ref failure), `--json`, `--dry-run`, synonyms.
-2. **Model**: add/extend a method on `Tasks::Store`. Mutations:
-   - take an `Item` (from `store.items`) plus new values
-   - re-read fresh records under the lock (`fresh_records`), then
-     `locate(records, item)` — by id, falling back to line + title; `→ false` if
-     the record is gone (the staleness guard)
-   - mutate the record's hash fields, then `write_records` (`Format.dump`)
-   - wrap the whole thing in `with_history("label: #{item.title}")`
-   - `reload!` before returning
-3. **Reuse the shared CLI helpers** in bin/tasks — do not reinvent them:
-   - `resolve_ref(ref, include_done:)` — title-substring or `L<line>` → one
-     item, exit 2 on no-match/ambiguous
-   - `take_flags(args, "--dry-run", ...)` — flag extraction; unknown `--*`
-     flags abort (add new flags to the known list, never let them fall
-     through as positionals)
-   - `report_touched(item.line, json:)` — post-mutation output. Identify
-     tasks by **line**, never by title (duplicate titles are legal)
-   - `item_json(item)` — the standard JSON shape
-4. **Dispatch**: commands are registry-driven, not a `case` statement. Adding
-   one means four coordinated edits, and `bin/tasks` refuses to start if the
-   first two disagree:
-   - `lib/tasks/cli_commands.rb` — the entry: canonical name, full-spelling
-     aliases, and `json:` (`false` requires a stated `reason`). A `project
-     <verb>` goes in as `"project <verb>"` with aliases like `"project new"`.
-   - `bin/tasks` — a lambda in `HANDLERS` (or `PROJECT_HANDLERS`) keyed by the
-     canonical name, plus the usage banner and `HELP`.
-   - `docs/cli-spec.md` — a row in the command table AND a row in
-     **Structured output (`--json`) coverage**; the two must agree with the
-     registry.
-   - `test/test_cli_json_coverage.rb` — an entry in `RECIPES` showing an
-     invocation that reaches the success path. The suite runs it and requires
-     stdout to be exactly one JSON document.
-5. **Output**: print the resulting headline(s) of every touched task.
-   `--json` via `require "json"` at use site (keep startup fast).
-6. **Propagate the docs — a command isn't done until agents can find it:**
-   - `docs/cli-spec.md`: flip the row 🚧→✅, adjust flags/synonyms to match
-     what you actually built
-   - `.claude/skills/tasks-cli/SKILL.md`: add the command to the right
-     section (Read/Mutate) with a one-line example — future agents only use
-     what that skill teaches, and the CLI is their only writer
-   - `TASK_AGENT.md` (the `tasks -p` / TUI list-agent prompt): add the command
-     to the CLI bullet list
-   - usage comment block at the top of `bin/tasks`
-   - `lib/tasks/cli_commands.rb`, the `--json` coverage table in
-     `docs/cli-spec.md`, and `RECIPES` in `test/test_cli_json_coverage.rb` (see
-     step 4) — structured output is a contract, not a flag, and these three are
-     what keep it from drifting
-   - when the capability is or should be exposed over HTTP,
-     `docs/api/openapi.yaml`, the Rack adapter, and API parity tests
-
-## Testing requirements (non-negotiable)
-
-Tests live in `test/test_*.rb`, auto-loaded by `test/all.rb`. The shared fixture
-is `FIXTURE_RECORDS` in `test/test_helper.rb` (ids exposed via the `FIX` map);
-`FIXTURE` is its `Format.dump`. `with_store` yields a `Store` on a tempdir copy —
-never test against the real `tasks.jsonl`. Assert on fields with the
-`record_for(path, title:)` helper rather than matching file text with regexes.
-
-Every mutating command needs at minimum:
-
-- happy path (resulting record fields asserted, not just return value)
-- ref-not-found and ref-ambiguous → exit code 2 behavior
-- stale-line guard (see `test_complete_rejects_stale_line_numbers`)
-- undo round-trip if the mutation records history
-- **file integrity**: `assert Tasks::Check.check(org).ok?` after the mutation
-
-For CLI-level behavior (arg parsing, exit codes, output), shell out via the
-`run_cli` helper in `test/test_cli_mutations.rb`: it sandboxes with the
-`TASKS_FILE`/`TASKS_ARCHIVE` env overrides (which `bin/tasks` honors precisely
-for this), captures stdout/stderr/status with Open3, and takes a `content:`
-kwarg when the fixture needs a special shape (e.g. duplicate titles).
-
-Manual verification: `TASKS_FILE=/tmp/sandbox.jsonl bin/tasks <cmd> …`, then
-`TASKS_FILE=/tmp/sandbox.jsonl bin/tasks check`, and `diff` against the original.
-
-## Gotchas learned the hard way
-
-- `# frozen_string_literal: true` is on everywhere — use `+""` for buffers.
-- Records are UTF-8 with multibyte chars (·, ✨, —); Format writes non-ASCII
-  unescaped so diffs stay readable. Read/write with `encoding: "UTF-8"`.
-- A record's `id` is the durable handle; locate by id first. Line numbers from
-  `store.items` go stale the moment the file changes — they're only a fallback.
-- Subtrees are contiguous by the DFS pre-order invariant, so move/capture/sweep
-  splice a record range rather than walk — don't re-derive structure by scanning.
-- `archive.jsonl` may not exist yet — guard reads, and note that undoing an
-  archive sweep may need to delete it.
-- The TUI polls mtime every 250ms; CLI writes show up there automatically.
-  Don't add locking — last-writer-wins plus the check rollback is the model.
-- Don't leave scratch reasoning in comments ("use X? No — try Y…"). Comments
-  state what the code does and why, in final form.
-- If a mutation's logic overlaps an existing `_impl`, delegate rather than
-  copy (see reschedule_impl → set_date_impl).
+Build `./cmd/tasks`, `./cmd/tasks-api`, and `./cmd/tasks-tui` after any shared
+change. All code requires independent review before completion.

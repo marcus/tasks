@@ -5,16 +5,12 @@ info:
   summary: Loopback REST/JSON contract over the same tasks.jsonl the CLI and TUI use.
   description: |
     The v1 contract for the local-first Tasks HTTP API. It is another adapter
-    around `Tasks::Application`, not a second task implementation: every write
-    passes the same file lock, atomic writer, structural `Tasks::Check`,
+    around `internal/application`, not a second task implementation: every write
+    passes the same file lock, atomic writer, structural `internal/check`,
     rollback, and shared undo journal as the CLI and TUI.
 
-    Scope of this document is the accepted plan
-    (`docs/plans/implemented/http-api-and-web-foundation.md`) and its "HTTP contract",
-    "Task representation", "Status mapping", "Concurrency and revisions" (§5),
-    and "Delete semantics" (§4) sections. Design rationale lives in ADR-0005
-    through ADR-0009. Manual anchor-relative placement is specified by
-    `docs/plans/implemented/manual-task-ordering.md` and ADR-0009.
+    Design rationale lives in ADR-0005 through ADR-0009. Manual anchor-relative
+    placement is specified by ADR-0009.
 
     Conventions that hold for every operation:
 
@@ -186,7 +182,7 @@ paths:
       summary: Ordered task collection with composable filters.
       description: |
         Returns tasks in DFS display order. Filters compose and mirror
-        `Tasks::TaskFilter` / `tasks list`. The default scope is open live
+        `internal/query.Filter` / `tasks list`. The default scope is open live
         tasks; effectively unavailable tasks are hidden from the default scope.
         Collection order conveys display order only — `line` is never exposed
         and is not a stable sort key.
@@ -376,7 +372,7 @@ paths:
       summary: Atomically create one live task.
       description: |
         Creates one task in a single checked, journaled transaction (capture
-        plus any recurrence and initial notes). Mirrors `Tasks::CreateTask`. A
+        plus any recurrence and initial notes). Mirrors `application.CreateCommand`. A
         task created with a date lands processed as TODO unless `state`
         overrides it; a recurrence implies a date. On success returns `201`
         with a `Location` header, the created resource, and its `ETag`.
@@ -602,10 +598,10 @@ paths:
       operationId: updateTask
       summary: Atomically apply semantic partial changes.
       description: |
-        Applies a `Tasks::TaskChangeset` in one checked transaction. Merge
+        Applies a `store.Changeset` in one checked transaction. Merge
         semantics: an absent field is unchanged, an explicit `null` clears a
         clearable field, and unknown fields are rejected. Fields are applied in
-        the deterministic order defined by `Tasks::TaskChangeset::FIELD_ORDER`
+        the deterministic field order defined by the shared application layer
         (scalar content, then tags, then dates, then recurrence, then location,
         then lifecycle state); coupled cases are locked down by tests, and a
         combination that cannot be made clear and atomic is rejected rather than
@@ -2199,7 +2195,7 @@ paths:
         ordinary GETs. This is invalidation, not event sourcing.
 
         SSE is deferred behind conditional polling of `/meta` in v1: every open
-        SSE response pins one thread from Puma's small pool for its lifetime, so
+        SSE response holds one server goroutine for its lifetime, so
         the streaming path needs a sized thread budget before it ships. Polling
         `/meta` (comparing `store_revision`) is the v1 default.
       responses:
@@ -3318,7 +3314,7 @@ components:
     CreateTaskRequest:
       type: object
       description: |
-        Full create attribute set, mirroring `Tasks::CreateTask`. `parent_id`
+        Full create attribute set, mirroring `application.CreateCommand`. `parent_id`
         and `project` are mutually exclusive placement inputs.
       required: [title]
       additionalProperties: false
@@ -3337,7 +3333,7 @@ components:
           type: array
           description: |
             `@contexts`; each entry must start with `@`. The adapter merges
-            contexts and tags into the stored tag list (`Tasks::CreateTask`
+            contexts and tags into the stored tag list (`application.CreateCommand`
             takes one array); the split fields keep the request unambiguous.
           items: { type: string }
         apply_host_context:
@@ -3445,7 +3441,7 @@ components:
     PatchTaskRequest:
       type: object
       description: |
-        Merge-semantics partial update, mirroring the `Tasks::TaskChangeset`
+        Merge-semantics partial update, mirroring the application changeset
         editable field set. An absent field is unchanged; an explicit `null`
         clears a clearable field; unknown fields are rejected. `parent_id` is
         the location input (moving places the subtree as the last child of the

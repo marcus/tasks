@@ -1,106 +1,79 @@
-# Technical Architecture & System Design
+# Technical architecture
 
-This document details the architectural design, storage semantics, data integrity mechanisms, and concurrency contracts of the `tasks` system.
+Tasks is one Go core with three adapters: CLI, TUI, and loopback HTTP. The task
+files are the source of truth; no surface owns a private database or privileged
+business logic.
 
----
+## Layers
 
-## 1. Storage & Data Model
-
-### One File, One Line Per Task
-Your data is stored in `tasks.jsonl` (and `archive.jsonl`). Each line is a self-contained JSON object representing either a section or a task.
-
-- **Fixed Key Order & Omitted Defaults**: Keys are serialized in deterministic order with empty fields omitted. Every mutation results in an exact, reviewable one-line git diff.
-- **Explicit Parent Pointers**: Hierarchical relationships and project trees use explicit `parent` pointers (`id` -> `parent`) rather than file indentation.
-- **No Block Boundaries**: Eliminates outline-parsing ambiguities and whitespace balancing issues.
-- **Separation of Data & Logic**: Data files can live anywhere on disk, decoupled from application source code.
-
----
-
-## 2. Atomic Writes & Structural Auditing
-
-### Atomic Swap Guarantees
-All state mutations follow a strict atomic swap protocol:
-1. Write full content to a sibling temporary file on the target filesystem.
-2. Call `fsync` on the temporary file to flush data to physical disk.
-3. Perform an atomic rename (`rename(2)`) over the target file.
-4. Call `fsync` on the parent directory to commit the directory entry.
-
-**Guarantees**:
-- Concurrent readers and system crashes see either the entire previous file state or the entire new state—never a torn or partial write.
-- **Symlink Preservation**: The swap resolves and preserves symlinks (maintaining compatibility with Dropbox, iCloud, or dotfiles repositories).
-- **Permission Bit Retention**: The file mode and permission bits of the target file are carried over to the replacement file.
-
-### Post-Mutation Rollbacks & Integrity Auditing
-- After every write operation, `Tasks::Store` parses and validates the written file in memory. If structural constraints fail, the transaction rolls back to the prior state.
-- `bin/tasks check` performs out-of-band validation of file integrity, checking for missing parent references, broken IDs, or invalid field formats.
-
----
-
-## 3. Undo / Redo Journaling
-
-### Content-Addressed Persistence Journal
-Rather than maintaining an in-memory stack, mutations persist to a disk journal:
-- **Location**: `$XDG_STATE_HOME/tasks/journal/` (keyed by the canonical path of the task file).
-- **Shared History**: The CLI, TUI, and agent invocations share a unified, persistent linear history. Undoing from a cold shell reverts the last action performed in the TUI or by an autonomous agent.
-- **Branching Rules**: Executing a new mutation while pointed at an earlier journal position truncates the unreachable redo tail.
-
----
-
-## 4. Layered Application Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                     Adapters                            │
-│    bin/tasks (CLI)  │  bin/tasks-tui  │  bin/tasks-api  │
-└───────────────────┬─┴─────────────────┬─────────────────┘
-                    │                   │
-                    ▼                   ▼
-┌─────────────────────────────────────────────────────────┐
-│                 Tasks::Application                      │
-│        (Facade, Typed Views, Immutable Snapshots)      │
-└───────────────────────────┬─────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────┐
-│                     Tasks::Store                        │
-│         (Parsing, Change Detection, File Locking)       │
-└─────────────────────────────────────────────────────────┘
+```text
+cmd/tasks        cmd/tasks-tui        cmd/tasks-api
+       \              |              /
+                internal/application
+                         |
+                  internal/store
+       record · check · journal · merge · atomic
+                         |
+             tasks.jsonl / archive.jsonl
 ```
 
-- **`Tasks::Store`**: Manages low-level JSONL parsing, change detection, file locking, and atomic file swaps.
-- **`Tasks::Application`**: Serves as a persistence-neutral domain facade providing immutable read snapshots and checked query views.
-- **Adapters (`CLI`, `TUI`, `API`)**: Thin adapters consuming `Tasks::Application`.
-- **Snapshot Immutability**: Readers holding an application snapshot obtain a frozen, coherent view of the task tree without risk of reading torn or partially updated state during background writes.
+- `internal/application` exposes typed commands, checked reads, and immutable
+  snapshots shared by every surface.
+- `internal/store` owns file access, locking, semantic mutations, rollback, and
+  history integration.
+- `internal/record` parses and canonically emits ordered JSON records.
+- `internal/check` enforces schema-v2, stable IDs, parent integrity, field
+  vocabularies, and DFS pre-order.
+- `internal/api` translates the shared application contract to OpenAPI v1.
+- `internal/tui` is a Bubble Tea client of the same application boundary.
 
----
+## Persistence
 
-## 5. Multi-Device Git 3-Way Merge Driver
+Each line of `tasks.jsonl` or `archive.jsonl` is one complete record. Tree
+relationships use stable `parent` IDs; record order is strict DFS pre-order.
+Canonical writers preserve fixed key ordering and omit absent fields so a task
+usually produces one reviewable Git diff line.
 
-Every modified task record retains an `updated` timestamp formatted as `ISO8601#device_id` (e.g., `2026-07-16T14:03:11Z#home`).
+Mutations write a sibling temporary file, flush it, atomically rename it over
+the target, and flush the parent directory. Symlinks resolve to their target and
+target permissions are preserved. The installed bytes are parsed and checked;
+any failed invariant triggers rollback.
 
-### Field-Aware 3-Way Merge Strategy
-When installed via `bin/install-merge-driver`, Git uses custom 3-way domain logic for resolving concurrent changes across devices:
+The shared content-addressed journal lives under
+`$XDG_STATE_HOME/tasks/journal/`, keyed by canonical task-file path. CLI, TUI,
+API, and agent-driven changes participate in the same undo/redo history.
 
-1. **Stable ID Alignment**: Tasks are matched across base, ours, and theirs revisions by stable 8-hex `id`.
-2. **Tag Unioning**: Added tags from both branches are merged into a set union.
-3. **State Progression Preference**: Progressed task states (e.g., `TODO` -> `DONE`) are favored over stale states.
-4. **Timestamp Conflict Resolution**: The `updated` timestamp is used exclusively for resolving genuine same-field edits.
-5. **Order Preservation**: Ours-first sibling ordering is maintained.
-6. **Audit Logging**: Merge choices are logged to `.tasks-merge.log` in the data repository.
-7. **Failure Safety**: Malformed input files or validation failures exit with non-zero status and leave the path conflicted — both sides written verbatim inside ordinary `<<<<<<<` / `=======` / `>>>>>>>` fences, with the reason on the opening marker. Nothing is merged, nothing is summarized, and `tasks check` refuses the result, so a refused merge cannot be staged by reflex.
+## Concurrency
 
----
+Writers serialize through the store lock and re-read under that lock before
+applying a command. Application mutations carry expected values or revisions so
+stale decisions refuse rather than overwrite newer data. HTTP mutations expose
+the same rule through quoted ETags and `If-Match`.
 
-## 6. Local HTTP API Architecture & Security
+Snapshots deep-copy mutable data and remain coherent while background writes
+occur. Readers see a complete old or new file, never a torn intermediate state.
 
-`bin/tasks-api` exposes a loopback REST API backed by OpenAPI 3.1 specifications ([`docs/api/openapi.yaml`](file:///Users/marcus/code/tasks/docs/api/openapi.yaml)).
+## Multi-device merge
 
-### Security Boundary & Host Isolation
-- **Loopback Only**: Listens strictly on `127.0.0.1` (default port `4747`).
-- **Header Validation**: Validates `Host` and browser mutation `Origin` headers to prevent cross-site request forgery and DNS rebinding attacks. Rejects forwarded-host headers.
-- **No Remote/Auth Surface**: Intentionally built without authentication or remote network exposure.
+`tasks install-merge-driver` configures Git to call the internal
+`tasks merge-driver` plumbing command. It aligns records by stable ID, merges
+independent fields, unions tags, uses `updated` stamps for genuine same-field
+conflicts, and preserves valid tree order.
 
-### Optimistic Concurrency Control
-- `PATCH` and `DELETE` requests require an `If-Match` header containing the quoted `ETag` returned by a previous `GET` request.
-- Prevents lost updates when multiple web clients or scripts modify tasks concurrently.
-- Request payload sizes are capped at 64 KiB.
+Malformed, unsupported-schema, or structurally invalid inputs refuse. The
+driver leaves both sides inside ordinary conflict markers and records its
+decision in `.tasks-merge.log`, so Git cannot silently stage a partial result.
+
+## HTTP boundary
+
+`tasks-api` binds only to `127.0.0.1` and validates Host, Origin, content type,
+body size, and conditional-write headers. It deliberately has no remote/auth
+mode. The complete wire contract is [`api/openapi.yaml`](api/openapi.yaml).
+
+## Agent adapters
+
+`internal/llm` isolates harness/provider differences. CLI and TUI agent paths
+assemble the same embedded list-agent contract, current environment facts,
+absolute executable/data paths, and optional task-set memory. Agents perform
+task operations through the installed CLI; no provider receives a private data
+mutation path.

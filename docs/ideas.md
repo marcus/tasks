@@ -10,8 +10,7 @@ layer → CLI dispatch → docs → tests).
 
 The TUI now has a read-by-default task panel with an explicit editable view,
 responsive panel widths, and an embedded task-agnostic reactive form component.
-The implementation record and remaining independent-review gate live in
-[`docs/plans/active/editable-task-panel.md`](plans/active/editable-task-panel.md).
+The reusable form boundary is recorded in ADR-0001 through ADR-0004.
 
 ## 1. Weekly-review helper — `tasks review`
 
@@ -42,8 +41,7 @@ advance `scheduled` or `deadline` and keep the task open. This covers bills,
 reviews, standups, and other repeating work.
 Shipped with full parity across CLI (`recur` set/preview/`--explain`, `capture
 --recur`, `list --recurring`, `done` rolls forward), TUI (`r` popup with a live
-preview, `↻` badge), and API (`recurrence`, `GET /recurrence/explain`) — see
-`docs/plans/implemented/recurring-schedules.md`.
+preview, `↻` badge), and API (`recurrence`, `GET /recurrence/explain`).
 Follow-on parked here: a full per-occurrence completions log (the current
 `- Did [date]` line is a lightweight stand-in).
 
@@ -61,10 +59,10 @@ Shipped. Left here as a marker; see `docs/cli-spec.md`.
 
 ## 6. Full-text search including bodies/notes ✅ (done)
 
-Shipped as `list --body/-b`, backed by the structural index (`Tasks::Tree`,
-`Store#body`). Ref resolution stays title-only, as planned. The same layer
+Shipped as `list --body/-b`, backed by the structural index in `internal/store`.
+Ref resolution stays title-only, as planned. The same layer
 carries `tasks links` (link extraction + per-system classification via
-`Tasks::Links` — slack/jira/github/…, unknown hosts fall back to the host) and
+`internal/links` — slack/jira/github/…, unknown hosts fall back to the host) and
 `show`'s `project:`. This is the substrate for the review helper (#1) and the
 project view (#8). The link feature shipped on top of it: `link.<name>`
 shorthands (`jira:OPS-1234`) + `system.<name>` custom hosts in config, and

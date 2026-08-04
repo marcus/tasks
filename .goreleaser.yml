@@ -1,0 +1,63 @@
+version: 2
+
+project_name: tasks
+
+builds:
+  - id: tasks
+    main: ./cmd/tasks
+    binary: tasks
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/marcus/tasks/internal/buildinfo.Version=v{{ .Version }}
+        -X github.com/marcus/tasks/internal/buildinfo.Commit={{ .Commit }}
+  - id: tasks-api
+    main: ./cmd/tasks-api
+    binary: tasks-api
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/marcus/tasks/internal/buildinfo.Version=v{{ .Version }}
+        -X github.com/marcus/tasks/internal/buildinfo.Commit={{ .Commit }}
+  - id: tasks-tui
+    main: ./cmd/tasks-tui
+    binary: tasks-tui
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/marcus/tasks/internal/buildinfo.Version=v{{ .Version }}
+        -X github.com/marcus/tasks/internal/buildinfo.Commit={{ .Commit }}
+
+archives:
+  - id: release
+    ids: [tasks, tasks-api, tasks-tui]
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    wrap_in_directory: true
+    files:
+      - README.md
+      - LICENSE
+      - CHANGELOG.md
+      - internal/agentcontext/TASK_AGENT.md
+      - docs/api/openapi.yaml
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"

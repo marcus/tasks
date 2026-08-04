@@ -7,7 +7,7 @@ access to anyone else's data repository.
 
 This guide uses these paths:
 
-- `~/code/tasks` for the application checkout
+- the installed `tasks` binary on every machine
 - `~/tasks` for the private data repository
 
 Change them to match your machine.
@@ -57,8 +57,8 @@ Point the application at the data directory:
 ```sh
 mkdir -p ~/.config/tasks
 printf 'dir = ~/tasks\n' > ~/.config/tasks/config
-~/code/tasks/bin/tasks config
-~/code/tasks/bin/tasks check --all-files
+tasks config
+tasks check --all-files
 ```
 
 Commit the initial files, create an empty **private** repository with your Git
@@ -78,15 +78,14 @@ is private before the first push.
 ## Install the driver on each machine
 
 The attributes file is committed with the data, but Git's driver command is
-machine-local. Run the installer in every application checkout, including the
-first one:
+machine-local. Run the installer on every machine, including the first one:
 
 ```sh
-~/code/tasks/bin/install-merge-driver ~/tasks
+tasks install-merge-driver ~/tasks
 ```
 
-The installer stores an absolute path to `bin/tasks` in the data repository's
-local Git config. Run it again if you move the application checkout.
+The installer stores an absolute path to `tasks` in the data repository's
+local Git config. Run it again after changing how Tasks is installed.
 
 Give each machine a short, unique device name if their hostname-derived names
 would collide:
@@ -107,11 +106,11 @@ Verify the installation:
 ```sh
 git -C ~/tasks check-attr merge -- tasks.jsonl archive.jsonl
 git -C ~/tasks config --local --get merge.tasksjsonl.driver
-TASKS_DIR=~/tasks ~/code/tasks/bin/tasks check --all-files
+TASKS_DIR=~/tasks tasks check --all-files
 ```
 
 The first command should report `merge: tasksjsonl` for both files. The second
-should show the absolute path to this checkout's `bin/tasks` followed by
+should show the absolute path to this installed `tasks` followed by
 `merge-driver %O %A %B %P %L %X %Y`. An older installation shows the same line
 without `%L %X %Y`; it still merges correctly, and re-running the installer
 upgrades it so refusals label their conflict markers the way Git does.
@@ -140,12 +139,12 @@ remote changes, validate the merged pair, and push:
 (
   set -eu
   cd ~/tasks
-  TASKS_DIR="$PWD" ~/code/tasks/bin/tasks check --all-files
+  TASKS_DIR="$PWD" tasks check --all-files
   git add -A
   git diff --cached --quiet || git commit -m "Update tasks"
   git fetch origin
   git rebase origin/main
-  TASKS_DIR="$PWD" ~/code/tasks/bin/tasks check --all-files
+  TASKS_DIR="$PWD" tasks check --all-files
   git push origin main
 )
 ```
@@ -164,7 +163,7 @@ merge, these commands show the result and validate the full live/archive pair:
 
 ```sh
 git -C ~/tasks diff origin/main -- tasks.jsonl archive.jsonl
-TASKS_DIR=~/tasks ~/code/tasks/bin/tasks check --all-files
+TASKS_DIR=~/tasks tasks check --all-files
 tail -n 50 ~/tasks/.tasks-merge.log
 ```
 

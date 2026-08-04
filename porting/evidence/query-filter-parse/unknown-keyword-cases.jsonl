@@ -1,3 +1,0 @@
-{"case_id":"uk_single","operation":"new","kwargs":{"nope":1}}
-{"case_id":"uk_multiple","operation":"new","kwargs":{"nope":1,"also":2}}
-{"case_id":"uk_mixed_with_known","operation":"new","kwargs":{"scope":"done","nope":1}}

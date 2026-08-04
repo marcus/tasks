@@ -4,7 +4,7 @@ The `tasks` CLI is the API for `tasks.jsonl`. Humans use it too, but the primary
 audience is LLM agents. The CLI is the **only** writer: `tasks.jsonl` is a JSONL
 store with per-record ids, a strict DFS pre-order, fixed key order, and a `meta`
 line 1, so a hand-edit is error-prone by construction — every mutation has a
-command. Commands go through the shared model layer (`lib/tasks/store.rb`), which
+command. Commands go through the shared application and store layers, which
 enforces conventions (e.g. dating an INBOX item promotes it to TODO) and validates
 the file after every write.
 
@@ -14,8 +14,7 @@ out-of-band.
 
 ## Global conventions
 
-**Invocation.** `bin/tasks <command> [args] [flags]` from the repo root (or the
-`tasks` alias). Every command has a short alias. Synonyms are accepted where
+**Invocation.** `tasks <command> [args] [flags]`. Every task command has a short alias. Synonyms are accepted where
 an agent would plausibly reach for them (`done`/`complete`/`close` are the
 same command); the canonical name is listed first. Unknown `--flags` are an
 error (exit 1), never silently treated as positional args.
@@ -23,7 +22,7 @@ error (exit 1), never silently treated as positional args.
 **File locations.** The task files don't have to live in this repo — the code
 and your data are separable (so the project can be shared without the tasks).
 Both the CLI and the TUI resolve `tasks.jsonl`/`archive.jsonl` through
-`lib/tasks/config.rb`, highest precedence first:
+`internal/config`, highest precedence first:
 
 1. `TASKS_FILE` / `TASKS_ARCHIVE` env vars (per-file; used by the test suite
    and for safe manual experiments).
@@ -33,7 +32,12 @@ Both the CLI and the TUI resolve `tasks.jsonl`/`archive.jsonl` through
    `~` expands; `#` comments (full-line, or inline after whitespace) and blank
    lines ignored — so a value can't contain ` #`; a bare `#` inside a value
    (e.g. a URL anchor) is fine.
-4. Default: the repo root (current behavior).
+4. No implicit default. An unconfigured binary refuses to read or write and
+   prints the config path plus setup instructions.
+
+A directory setting is complete by itself. Per-file configuration is complete
+only when both the live and archive paths resolve explicitly; setting only one
+does not authorize the other to fall back to the current directory.
 
 The config file also carries non-path settings: `urgent_days = N` sets the
 quadrants urgency window (see `quadrants`), overridable by the `TASKS_URGENT_DAYS`
@@ -48,12 +52,11 @@ and RFC 3339. Full IANA identifiers are accepted for stored fixed values;
 abbreviations such as `PST` are rejected.
 
 A dotted `prompt.<name>` namespace toggles short facts injected into every agent
-system prompt under a **Current environment** heading (see
-[`prompt-context-injection.md`](plans/implemented/prompt-context-injection.md)):
+system prompt under a **Current environment** heading:
 
 ```
 prompt.datetime = on     # default: on — local `2026-07-15 Wed 08:41 PDT`
-prompt.hostname = on     # default: on — Socket.gethostname
+prompt.hostname = on     # default: on — the OS hostname
 # prompt.weather = on    # future providers default off until registered as default-on
 ```
 
@@ -62,7 +65,7 @@ An invalid value is ignored (falls through to the registry default). Unknown
 `prompt.*` names are ignored at resolve time (forward compatibility). A provider
 that errors or returns blank is omitted silently; the rest of the block still
 injects. Both `tasks -p` and the TUI queue assemble this through
-`Tasks::AgentContext`.
+`internal/agentcontext`.
 
 Host-specific creation contexts use another dotted namespace:
 
@@ -71,7 +74,7 @@ host_context.marcus-home.local = @home
 host_context.work-mbp = @work
 ```
 
-Matching against `Socket.gethostname` is case-insensitive and tries the full
+Matching against the OS hostname is case-insensitive and tries the full
 hostname before its first DNS label. Values without `@` are normalized. A
 matched context is added to every task created through the CLI, TUI, or API,
 alongside any explicit contexts. `capture --no-host-context` suppresses it for
@@ -94,7 +97,7 @@ this") can't false-positive. `system.<name>` classifies a custom host (and its
 subdomains) for self-hosted systems the built-in registry can't know; user
 rows win over built-ins.
 
-**TUI colors.** The TUI paints semantic *slots* (`lib/tui/theme.rb` lists them
+**TUI colors.** The TUI paints semantic *slots* (`internal/tui/term/theme` lists them
 all: `accent`, `selection`, per-view tabs like `tab_agenda` /
 `tab_agenda_active`, intake headers `approval_section` / `inbox_section`,
 task-row fields like `project`, `context`, `title`, the
@@ -103,11 +106,11 @@ detail-panel slots like `panel_title`, `detail_label`, `description`, `link`, `l
 `state_*`, …). Appearance keys in the same config file:
 
 - `theme = <name>` — a named base theme: `default`, `mono` (attribute-only),
-  or a generated popular scheme such as `dracula`, `nord`,
+  or a bundled popular scheme such as `dracula`, `nord`,
   `catppuccin-mocha`, `gruvbox-dark`, `tokyonight-night`, or
-  `solarized-dark`. The generated names come from
-  `scripts/generate-tui-themes`, which converts iTerm2-Color-Schemes
-  Window Terminal JSON into tasks semantic slots. Overridable by `TASKS_THEME`;
+  `solarized-dark`. These vendored palettes were derived from
+  iTerm2-Color-Schemes; a future palette refresh must add a Go generator before
+  replacing the table. Overridable by `TASKS_THEME`;
   a non-empty `NO_COLOR` env var selects `mono` when nothing explicit is set.
 - `mouse = on|off` — enable SGR mouse tracking in the TUI (default `on`).
   Overridable by `TASKS_MOUSE`. While tracking is on, unmodified terminal
@@ -149,14 +152,13 @@ stamp remain valid and are treated as oldest during a merge. `updated` is not
 part of task revision/ETag fingerprints, and undo/redo restores exact journal
 bytes without re-stamping.
 
-**Determinism pins (conformance harness only).** A small set of `TASKS_PIN_*`
+**Determinism pins (tests only).** A small set of `TASKS_PIN_*`
 environment variables fixes the values that are otherwise nondeterministic —
 the clock, minted ids, the journal's coalescing scope, and the hostname used for
 host-context selection — so two runs of one command produce byte-identical
-output. They exist for the Go-port conformance harness; with none of them set,
+output. They exist for hermetic regression tests; with none of them set,
 behavior is exactly as documented everywhere else in this spec. The complete
-list, defaults, and rules live in
-[`porting/specs/determinism.md`](../porting/specs/determinism.md).
+list and rules live in `internal/determinism`.
 
 `tasks merge-driver <base> <ours> <theirs> <pathname> [markers] [ours-label]
 [theirs-label]` is an internal, Git-invoked CLI-only adapter. It performs a
@@ -170,7 +172,7 @@ discarding the other side; the markers are what make a refused merge
 self-evident and make `tasks check` fail on it. The trailing three arguments are
 Git's `%L` marker size and `%X`/`%Y` conflict labels; they are optional, so an
 installation predating them still works with 7-wide markers labeled
-`ours`/`theirs`. `bin/install-merge-driver [data-repo]`
+`ours`/`theirs`. `tasks install-merge-driver [data-repo]`
 registers the absolute command in that repository's local Git config after
 verifying `.gitattributes` selects `merge=tasksjsonl`. This is intentionally
 not an HTTP capability: it is local Git transport plumbing, not user-visible
@@ -326,11 +328,9 @@ breaks the group. If a successful Location or State patch removes the task from
 the current view, the app immediately exits editing, selects a deterministic
 nearby row, returns to the read panel or list, and explains where the task went.
 
-The generated `?` help comes from `lib/tui/shortcuts.rb` and includes the
+The generated `?` help comes from `internal/tui/term/shortcuts` and includes the
 detail-panel entry keys, every editor-owned key, and the panel resize actions.
-The embedded `TermForm` boundary can be exercised independently with
-`ruby examples/term_form_demo.rb`; that plain renderer is extraction proof, not
-a stable public or gem API.
+The terminal form boundary is tested independently under `internal/tui/termform`.
 
 `x` previews the number of completed roots and descendants that would move to
 `archive.jsonl`; `y` confirms, while `n` or Escape cancels without writing.
@@ -418,7 +418,7 @@ wrong task. IDs must be unique — `check` reports a collision as an error.
 `aug 1, 2026`, `fri`/`friday`, `next fri`, `today`, `tomorrow`, `+3` (days from
 today), `in 3 days`/`in 2 weeks`/`in 6 months`/`in a year`, `next week`, `next
 month` (same day next month, clamped to the last day if the target month is
-shorter), `next year`. Same parser as the TUI (`lib/tasks/dates.rb`). Bare
+shorter), `next year`. The CLI and TUI share `internal/temporal`. Bare
 month-day (numeric or by name) in the past rolls forward a year; an explicit
 year is always respected as-is.
 
@@ -505,7 +505,7 @@ cycle will not.
 
 **Identity and reference validation.** `assignee`, the worker id, and
 `work_ref` all refuse C0 controls, `DEL`, the C1 block, and Unicode whitespace
-(NBSP, U+2028/U+2029, the ideographic space — Ruby's `\s` is ASCII-only, so a
+(NBSP, U+2028/U+2029, and the ideographic space are not separators, so a
 plain "no whitespace" rule let all of those through). These strings are
 rendered raw by `show`, `list --delegated`, the TUI detail panel, and the
 conflict line that names a holder, so a worker id carrying `\e[2K\e[1A` would
@@ -539,7 +539,7 @@ release can be overturned when the devices meet. Use `undelegate` when you mean
 "this is no longer theirs, whatever else happened".
 
 All five operations are revision-aware typed
-`Tasks::Application` commands (`delegate_task`, `undelegate_task`,
+shared application commands (`delegate`, `undelegate`,
 `claim_task`, `release_task`, `set_work_ref`), journaled and undoable; the two
 composed ones (the WAITING default, a release note) fold their second write
 into the same undo step. Heartbeat agents discover work through
@@ -839,7 +839,8 @@ one request is visible to the next and an out-of-band edit or `git pull` is
 picked up without a restart. An absent file simply means "no saved defaults";
 the CLI never creates it as a side effect of running an agent. Agents create or
 edit it only when a user explicitly asks to remember, change, or forget a
-default (the policy lives in [`TASK_AGENT.md`](../TASK_AGENT.md)).
+default (the policy lives in the embedded
+[`TASK_AGENT.md`](../internal/agentcontext/TASK_AGENT.md)).
 
 Resolution adds `memory` to the config paths, highest precedence first:
 
@@ -882,8 +883,8 @@ category: a command that accepted `--json` and printed human text would be
 indistinguishable, to a caller, from a command that produced no result.
 
 This table is the contract, and it is enforced rather than maintained by hand.
-`lib/tasks/cli_commands.rb` is the registry `bin/tasks` dispatches from;
-`tasks help --json` emits it; `test/test_cli_json_coverage.rb` runs every
+`cmd/tasks/registry.go` and `cmd/tasks/help.go` form the dispatch registry;
+`tasks help --json` emits it, and command tests exercise every
 command listed here and fails if its stdout is not exactly one JSON document, if
 this table and the registry disagree, or if a new command arrives without a
 decision recorded in both.
@@ -904,7 +905,7 @@ commands that emit the error object today:
 | `open` | `not_found`, `ambiguous`, `unavailable` |
 
 `unsupported_schema_version` is the first row because it is the one refusal
-every `--json` command answers structurally, and `test_cli_json_coverage.rb`
+every `--json` command answers structurally, and CLI coverage tests
 enumerates all of them against an unsupported store to prove it. It used to be
 three commands: the rest printed prose with empty stdout, so `tasks done
 --json` handed a caller an unparseable empty result on exactly the path it most
@@ -992,7 +993,7 @@ the command you reach for when you are already unsure.
 capability that can drift there — what can drift is which capabilities it routes
 at all. `GET /api/v1/meta` advertises that honestly (`capabilities.undo`,
 `.redo`, `.archive_sweep` are `false` until the manager endpoints exist), and
-`test/api/test_app.rb` holds those flags to what the adapter actually dispatches.
+API adapter tests hold those flags to what the adapter actually dispatches.
 The CLI gaining structured `undo`/`redo`/`archive` results does not change what
 the API routes, and must not silently flip those flags.
 
@@ -1096,11 +1097,12 @@ binary that matches it, not a rewrite by this one.
 
 On the CLI the gate runs once, at dispatch, before the command's handler:
 
-- **Every command is gated** except four, each of which states why in
-  `lib/tasks/cli_commands.rb`: `check` (it is the diagnostic every refusal
-  sends you to), `config` (it reports where the store *is*, never what it
-  holds), `help` (it reads the registry, not the store), and `merge-driver`
-  (Git hands it three explicit paths and never the configured store).
+- **Every store command is gated**. `check`, `config`, `help`, `version`,
+  `install-merge-driver`, and `merge-driver` are exempt because they either
+  diagnose configuration/build state or operate only on explicit Git paths.
+  `check` is the diagnostic every schema refusal
+  sends you to, while `config` reports where the store would resolve without
+  reading it.
 - The refusal is exit **1**, with one sentence on stderr leading with `check`'s
   own wording: `unsupported meta version 3 (expected 2) — this build cannot
   read this task file (nothing was written)`, prefixed `archive: ` when the
@@ -1207,7 +1209,7 @@ command changed its behavior or its diagnostics:
 
 The two sentences are how a port proves it kept "refused before writing" apart
 from "wrote and rolled back" — the files are byte-identical either way, so the
-wording and the exit status are the only evidence. `test/test_repair.rb` asserts
+wording and the exit status are the only evidence. Repair tests assert
 both, each against the store the porting corpus records it on, and asserts the
 absence of the other.
 
@@ -1262,10 +1264,12 @@ no fuzzy refs (a transport difference per design rule 7). See
 | `archive` | `x` | ✅ | Sweep each DONE/CANCELLED subtree to `archive.jsonl` (root drops `parent`, gains `archived`). Refuses with exit 1 when any candidate root has a non-closed descendant, including PROPOSED, and explains how to resolve it. Persistence is retry-safe across interruption: the archive is installed first, and live records are removed only when the archive contains exactly one canonical copy of every moved ID; partial or conflicting overlap refuses without deleting live data. In the TUI, `x` previews root and descendant counts and requires `y` confirmation; the Store validates that exact candidate-ID/content fingerprint under the sweep lock, while `n`/`esc` cancels without writing. `--json` emits `{roots, records, moved_ids}` (`roots` matches the human count; `records` is the whole swept subtree); because only a pre-sweep preview knows which records move, the JSON form pins the sweep to that preview and refuses if the store changed in between. Every refusal is an error object on stdout: `conflict` with `reason` = `open_descendants`, `archive_conflict`, `preview_changed`, or `write_failed`, or `unsupported_schema_version` on a store whose declared schema version this build does not implement. Stray positional arguments are now a usage error (exit 1). |
 | `delete <ref>` | | ✅ | Undoable **hard delete** of a task's subtree from the live file — not an alias for `CANCELLED`, and it never touches `archive.jsonl`. A leaf deletes directly; a task that still has descendants is refused (exit 1) unless `--cascade` removes the whole contiguous subtree as one journal entry. Deleting never hoists or reparents children. PROPOSED and accepted open tasks resolve directly; `--include-done` additionally widens to closed live tasks. Archived-only ids are not found (exit 2 via ref resolution / `not_found`); a section id is rejected (delete targets tasks). Reports every removed task's pre-delete headline (`--json` → `{deleted: [..]}`); `--dry-run` prints what would be deleted, including the descendant count when cascading, and writes nothing. Undoable via `tasks undo` (restores the exact prior bytes). Cancellation/archival is usually the right call — `delete` is for genuine mistakes. |
 | `repair [--dry-run] [--json]` | `fix` | ✅ | Converge a store `check` refuses, in **one pass, one write**. It is the only command that can: every mutation validates the whole file, so the per-record repairs the code already documents cannot land while a second instance of the same defect is present, and the store is readable but unwritable (see Converging a wedged store below). Repairs, across `tasks.jsonl` **and** `archive.jsonl`: a record with no `id` (one is minted, from a pool spanning both files); an unknown key inside `scheduled_time`/`deadline_time` (dropped, the repair `Format::NESTED_FORWARD_COMPAT` documents). Anything else is a **blocker**: the pass refuses with exit 1, reports every blocker with `check`'s own wording, and writes nothing — it never leaves a partially repaired file. A file with an unparseable line or invalid UTF-8 always refuses, since writing would delete the line this build could not read. `--dry-run` reports the same plan and writes nothing. Never touches `updated` (see below). Journaled as a **repair** step, so `undo` faithfully restores the malformed bytes. `--json`: `{action, ok, status, dry_run, written, fixes: [{file, line, kind, message, id?}], blockers: [{file, line, message}]}`; a refusal is the standard error envelope with `error` = `unrepairable` or `unsupported_schema_version`. |
-| `undo [--json]` | | ✅ | Revert the last mutation via the on-disk journal (`Tasks::Journal`, under `$XDG_STATE_HOME/tasks/journal/`), shared with the TUI and across CLI runs. Refuses (exit 1) if `tasks.jsonl` changed out-of-band since that edit — resolve with `git diff` / `git checkout -- tasks.jsonl`. `--json` emits `{action: "undo", label}` naming the mutation it reverted, or an `empty`/`conflict` error object. |
+| `undo [--json]` | | ✅ | Revert the last mutation via the on-disk journal (`internal/journal`, under `$XDG_STATE_HOME/tasks/journal/`), shared with the TUI and across CLI runs. Refuses (exit 1) if `tasks.jsonl` changed out-of-band since that edit — resolve with `git diff` / `git checkout -- tasks.jsonl`. `--json` emits `{action: "undo", label}` naming the mutation it reverted, or an `empty`/`conflict` error object. |
 | `redo [--json]` | | ✅ | Replay the last undone mutation; same shared journal and conflict guard as `undo`, including the `{action: "redo", label}` result and its `empty`/`conflict` error objects. |
 | `-p [--provider N] [--model N] "prompt"` | | ✅ | Natural-language request via a headless LLM agent (Claude CLI by default, or any configured harness). Leading `--provider`/`--model` override the config default for one run; see [LLM agent settings](#llm-agent-settings). Deliberately has no `--json` — see the opt-out in Structured output (`--json`) coverage. |
 | `config [--json]` | | ✅ | Print resolved file paths, `urgent_days`, `max_depth`, theme/colors, effective `timezone`, `time_format`, tzdb version, fallback warning, prompt facts, and each setting's source. |
+| `install-merge-driver [DATA_REPO] [--json]` | | ✅ | Verify both JSONL paths select `merge=tasksjsonl`, then idempotently configure Git with the absolute installed executable. Defaults to the configured task-data repository, else the current Git repository. |
+| `version [--json]` | `--version` | ✅ | Print the executable version and optional commit metadata without resolving task data. |
 | `help [--json]` | `-h`, `--help` | ✅ | Grouped command reference. Also printed (to stderr, exit 1) on an unknown/absent command. `--json` emits the dispatch registry instead — `{commands: [{name, aliases, json, json_reason}]}` — which is the machine-readable form of Structured output (`--json`) coverage above. |
 
 Ideas beyond this spec live in `docs/ideas.md`.
@@ -1273,17 +1277,17 @@ Ideas beyond this spec live in `docs/ideas.md`.
 ## Design rules for new commands
 
 1. **Spec first**: add/adjust the row here before implementing.
-2. Thin dispatch in `bin/tasks`; logic in `lib/tasks/` (usually a `Store` method).
-3. Mutations go through `Store#with_history` — never `File.write` directly.
-   That buys the file lock, the post-write `check` rollback, the persistent
-   undo journal, and crash-safe atomic writes (`Tasks::Atomic.write`).
+2. Keep `cmd/tasks` thin; put shared semantics in `internal/application` and
+   persistence in `internal/store`.
+3. Mutations use the store writer and history boundary, never direct file
+   writes. That buys locking, post-write validation and rollback, persistent
+   undo, and crash-safe atomic replacement.
 4. Accept synonyms liberally, print the canonical name in output.
 5. Every mutation's output includes the resulting headline(s).
 6. Tests required: happy path, ref-not-found, ref-ambiguous, and
-   `Tasks::Check.check` clean after every mutating test (the test helper's
-   fixture makes this a one-liner).
+   a clean structural check after every mutating test.
 7. **CLI/API parity by default**: user-visible task semantics belong behind
-   `Tasks::Application` and should be exposed consistently by `bin/tasks` and
+   `internal/application` and should be exposed consistently by `tasks` and
    the loopback HTTP API. Keep this spec and `docs/api/openapi.yaml` synchronized
    whenever both adapters expose the capability. CLI-only or API-only behavior
    requires an explicitly discussed product/security reason documented in the

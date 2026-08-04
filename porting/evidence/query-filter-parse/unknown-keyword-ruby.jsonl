@@ -1,3 +1,0 @@
-{"case_id":"uk_single","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :nope"}}
-{"case_id":"uk_multiple","ok":false,"error":{"class":"ArgumentError","message":"unknown keywords: :nope, :also"}}
-{"case_id":"uk_mixed_with_known","ok":false,"error":{"class":"ArgumentError","message":"unknown keyword: :nope"}}

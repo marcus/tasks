@@ -2,8 +2,9 @@
 
 This is a plain-text task system organized around **GTD** (Getting Things Done)
 and **Covey's** Important/Urgent matrix. The data is a JSONL file that diffs one
-task per line — greppable, git-committable, and parseable by the Ruby tooling in
-`bin/`. The CLI (`bin/tasks`) and the TUI (`bin/tasks-tui`) are the writers; the
+task per line — greppable, git-committable, and parsed by the Go core in
+`internal/`. The CLI (`tasks`), TUI (`tasks-tui`), and API (`tasks-api`) are thin
+adapters over the same checked writer; the
 file is **not meant for hand-editing** (see [The file](#the-file)).
 
 ## The file

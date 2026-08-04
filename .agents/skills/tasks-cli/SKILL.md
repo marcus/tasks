@@ -6,7 +6,7 @@ description: How to read and modify the user's GTD task list (tasks.jsonl) safel
 # Working with the task list
 
 The task list lives in `tasks.jsonl` — a JSONL store (one JSON record per line)
-that diffs one task per line. **Use `bin/tasks` for every read and write.** The
+that diffs one task per line. **Use `tasks` for every read and write.** The
 CLI is the only writer: it keeps the record format correct, enforces the
 conventions, validates the file after each write, and rolls back bad writes.
 Never hand-edit `tasks.jsonl` — per-record ids, strict DFS ordering, fixed key
@@ -16,19 +16,19 @@ marks each command ✅ implemented / 🚧 planned).
 ## Read first
 
 ```sh
-bin/tasks list -a          # everything incl. archive; filters: @ctx +tag /text -A
-bin/tasks list --proposed  # inert suggestions pending owner approval
-bin/tasks list --delegated # handed to a person/agents (--all incl. closed)
-bin/tasks list --agent-ready --json # the claimable queue for heartbeat pickup
-bin/tasks list --unavailable # timed, inherited, and indefinite unavailability
-bin/tasks list --someday   # tasks with their own indefinite On Hold marker
-bin/tasks agenda           # dated items, soonest first
-bin/tasks next             # NEXT actions grouped by context
-bin/tasks quadrants        # Covey 2×2 (see note below); --json adds "quadrant"
-bin/tasks inbox            # unprocessed captures
-bin/tasks show "<ref>"     # one task in full (fields + notes); --json
-bin/tasks check            # is the file structurally sound? (exit 1 = no)
-bin/tasks config           # where tasks.jsonl/archive.jsonl resolve + urgent_days; --json
+tasks list -a          # everything incl. archive; filters: @ctx +tag /text -A
+tasks list --proposed  # inert suggestions pending owner approval
+tasks list --delegated # handed to a person/agents (--all incl. closed)
+tasks list --agent-ready --json # the claimable queue for heartbeat pickup
+tasks list --unavailable # timed, inherited, and indefinite unavailability
+tasks list --someday   # tasks with their own indefinite On Hold marker
+tasks agenda           # dated items, soonest first
+tasks next             # NEXT actions grouped by context
+tasks quadrants        # Covey 2×2 (see note below); --json adds "quadrant"
+tasks inbox            # unprocessed captures
+tasks show "<ref>"     # one task in full (fields + notes); --json
+tasks check            # is the file structurally sound? (exit 1 = no)
+tasks config           # where tasks.jsonl/archive.jsonl resolve + urgent_days; --json
 ```
 
 Quadrants are computed, not stored: **important** = priority `A`/`B` or the
@@ -38,13 +38,13 @@ deadline (`priority`/`due`) — you don't need to add tags.
 
 The task files may live outside this repo (env vars or `~/.config/tasks/config`
 can relocate them). If you need the file's path — e.g. before a direct edit —
-get it from `bin/tasks config`, don't assume the repo root.
+get it from `tasks config`, don't assume the repo root.
 
 All read commands accept `--json` (flat array, same sort as the text view) —
 prefer it when you need to reason over tasks rather than display them.
 
 **Every command answers in JSON** except `-p` (its result is an LLM transcript)
-and the internal `merge-driver`. `bin/tasks help --json` prints that table
+and the internal `merge-driver`. `tasks help --json` prints that table
 itself — every command, its aliases, whether it takes `--json`, and the stated
 reason when it does not — so you never have to guess whether a command is
 scriptable.
@@ -58,43 +58,43 @@ refusals print prose to stderr only. Never read an empty stdout as success.
 ## Mutate
 
 ```sh
-bin/tasks capture "text"             # new INBOX item (see flags below)
-bin/tasks propose "text" --note "why" # inert PROPOSED item for owner review
-bin/tasks approve "<ref>"             # accept PROPOSED → INBOX
-bin/tasks reject "<ref>" [--note "why"] # decline PROPOSED → CANCELLED (+ rationale)
-bin/tasks delegate "<ref>" --to pat@example.com # hand to a person (→ WAITING)
+tasks capture "text"             # new INBOX item (see flags below)
+tasks propose "text" --note "why" # inert PROPOSED item for owner review
+tasks approve "<ref>"             # accept PROPOSED → INBOX
+tasks reject "<ref>" [--note "why"] # decline PROPOSED → CANCELLED (+ rationale)
+tasks delegate "<ref>" --to pat@example.com # hand to a person (→ WAITING)
 # the address must be real: local@domain.tld — "@work" is refused
-bin/tasks delegate "<ref>" research   # offer to agents: refine|research|implement
-bin/tasks undelegate "<ref>"         # clear the marker; revokes any live claim
-bin/tasks workref "<ref>" <url|off>  # where the work happened; off/none clears
-bin/tasks claim "<ref>" --worker <id> --json # atomic single-winner pickup
-bin/tasks release "<ref>" --worker <id> --note "blocked: why" # hand a claim back
-bin/tasks done "<ref>"               # mark DONE + closed date (cascades to open subtasks)
-bin/tasks cancel "<ref>" [--note "why"] # mark CANCELLED + closed date (+ rationale)
-bin/tasks due "<ref>" fri            # set/replace deadline (INBOX → TODO)
-bin/tasks due "<ref>" "tomorrow 5pm" --timezone Europe/London
-bin/tasks schedule "<ref>" +3        # set/replace available-from/start date
-bin/tasks undate "<ref>"             # remove dates; --kind deadline|scheduled
-bin/tasks state "<ref>" WAITING      # any state; DONE/CANCELLED manage closed
-bin/tasks priority "<ref>" A         # A|B|C|none
-bin/tasks retitle "<ref>" "new"      # replace the title; tags/state untouched
-bin/tasks tag "<ref>" +foo -bar @ctx # add/remove tags & contexts (-@ctx removes)
-bin/tasks note "<ref>" "text"        # append a body line under the task
-bin/tasks capture "sub" --under "<ref>" # nest a new task below an existing one
-bin/tasks move "<ref>" "Section"     # relocate the block under a top-level heading
-bin/tasks move "<ref>" --under "<ref>"  # nest the subtree below another task
-bin/tasks move "<ref>" --top         # unnest the subtree back to the section level
-bin/tasks move "<ref>" --before "<ref>" # reorder before a sibling (infers its parent)
-bin/tasks move "<ref>" --under "<parent>" --before "<sibling>" # reparent at an exact slot
-bin/tasks lead "<ref>" 3w             # hide until 3w before its date; "off" clears
-bin/tasks recur "<ref>" weekly       # repeat on done: weekly/2w/.+1m; "off" clears
-bin/tasks defer "<ref>" +4           # hide until available four days from today
-bin/tasks someday "<ref>"            # hold indefinitely (someday/maybe/on hold)
-bin/tasks activate "<ref>"           # make available now (undefer/resume)
-bin/tasks archive                    # sweep DONE/CANCELLED to archive.jsonl; --json → {roots, records, moved_ids}
-bin/tasks undo                       # revert the last mutation; --json → {action, label}
-bin/tasks redo                       # replay the last undone mutation; --json likewise
-bin/tasks delete "<ref>"             # hard-delete a task (--cascade for subtasks); undoable
+tasks delegate "<ref>" research   # offer to agents: refine|research|implement
+tasks undelegate "<ref>"         # clear the marker; revokes any live claim
+tasks workref "<ref>" <url|off>  # where the work happened; off/none clears
+tasks claim "<ref>" --worker <id> --json # atomic single-winner pickup
+tasks release "<ref>" --worker <id> --note "blocked: why" # hand a claim back
+tasks done "<ref>"               # mark DONE + closed date (cascades to open subtasks)
+tasks cancel "<ref>" [--note "why"] # mark CANCELLED + closed date (+ rationale)
+tasks due "<ref>" fri            # set/replace deadline (INBOX → TODO)
+tasks due "<ref>" "tomorrow 5pm" --timezone Europe/London
+tasks schedule "<ref>" +3        # set/replace available-from/start date
+tasks undate "<ref>"             # remove dates; --kind deadline|scheduled
+tasks state "<ref>" WAITING      # any state; DONE/CANCELLED manage closed
+tasks priority "<ref>" A         # A|B|C|none
+tasks retitle "<ref>" "new"      # replace the title; tags/state untouched
+tasks tag "<ref>" +foo -bar @ctx # add/remove tags & contexts (-@ctx removes)
+tasks note "<ref>" "text"        # append a body line under the task
+tasks capture "sub" --under "<ref>" # nest a new task below an existing one
+tasks move "<ref>" "Section"     # relocate the block under a top-level heading
+tasks move "<ref>" --under "<ref>"  # nest the subtree below another task
+tasks move "<ref>" --top         # unnest the subtree back to the section level
+tasks move "<ref>" --before "<ref>" # reorder before a sibling (infers its parent)
+tasks move "<ref>" --under "<parent>" --before "<sibling>" # reparent at an exact slot
+tasks lead "<ref>" 3w             # hide until 3w before its date; "off" clears
+tasks recur "<ref>" weekly       # repeat on done: weekly/2w/.+1m; "off" clears
+tasks defer "<ref>" +4           # hide until available four days from today
+tasks someday "<ref>"            # hold indefinitely (someday/maybe/on hold)
+tasks activate "<ref>"           # make available now (undefer/resume)
+tasks archive                    # sweep DONE/CANCELLED to archive.jsonl; --json → {roots, records, moved_ids}
+tasks undo                       # revert the last mutation; --json → {action, label}
+tasks redo                       # replay the last undone mutation; --json likewise
+tasks delete "<ref>"             # hard-delete a task (--cascade for subtasks); undoable
 ```
 
 `PROPOSED` is separate from accepted open work. It stays out of the default
@@ -138,7 +138,7 @@ finished cycle's work reference.
 `delete` hard-removes a task's subtree from the live file (it never touches the
 archive and is not the same as `cancel`). A task with subtasks needs `--cascade`.
 Prefer `cancel`/`archive` for normal "done with it" cases; `delete` is for a
-true mistake, and `bin/tasks undo` reverses it.
+true mistake, and `tasks undo` reverses it.
 
 `scheduled` is the task's available-from/start/defer-until value; `deadline` is
 its separate due value. A future available-from value hides the task from active
@@ -161,11 +161,11 @@ only tasks carrying their own On Hold marker with `list --someday`.
 keeps that window as a recurrence rolls:
 
 ```sh
-bin/tasks lead "<ref>" 3w         # hide until 3 weeks before its date
-bin/tasks lead "<ref>" "a week"   # phrases work: 3 weeks / a week / 10 days
-bin/tasks lead "<ref>" off        # clear the window
-bin/tasks lead "<ref>"            # read-only: the span + the date it opens
-bin/tasks capture "Renew passport" --due 2026-11-01 --lead 3w
+tasks lead "<ref>" 3w         # hide until 3 weeks before its date
+tasks lead "<ref>" "a week"   # phrases work: 3 weeks / a week / 10 days
+tasks lead "<ref>" off        # clear the window
+tasks lead "<ref>"            # read-only: the span + the date it opens
+tasks capture "Renew passport" --due 2026-11-01 --lead 3w
 ```
 
 The **anchor** is the task's `deadline` if it has one, else its available-from
@@ -249,7 +249,7 @@ stop and ask, listing the matches.
 
 When the user's prompt includes an exact task `id`, treat it as context for an
 existing task unless they explicitly ask to create a separate new task. Resolve
-it with `bin/tasks show "<id>"` first, then apply requested changes to that
+it with `tasks show "<id>"` first, then apply requested changes to that
 task; do not capture the prompt as a new task merely because it also contains
 task text.
 
@@ -264,7 +264,7 @@ edit easily corrupts the store. The CLI writes the exact shape and validates
 after every write; use it. Dating an INBOX item promotes it to TODO and marking
 DONE/CANCELLED sets the `closed` date automatically — you don't manage those.
 
-If the file was somehow edited out-of-band (not by you), run `bin/tasks check`
+If the file was somehow edited out-of-band (not by you), run `tasks check`
 and fix whatever it reports before finishing.
 
 ## Remembered defaults (`agent-memory.md`)
@@ -273,7 +273,7 @@ A task set may carry `agent-memory.md` — a Markdown sidecar of durable,
 user-approved defaults (e.g. "garden tasks use `@home`") beside `tasks.jsonl`.
 When present, its contents are already injected into your system context; apply
 those defaults only where a request clearly falls in scope, and always let the
-current request override them. Find its resolved path with `bin/tasks config`
+current request override them. Find its resolved path with `tasks config`
 (it can be relocated by the `TASKS_MEMORY` env var or the config `memory` key).
 
 Unlike `tasks.jsonl`, this sidecar is edited **directly** — it's plain Markdown,
@@ -281,7 +281,7 @@ not a CLI store. Create, change, or remove a rule only when the user explicitly
 asks to remember / forget / change a default, editing minimally in the right
 section (create the file from its template on the first such request). Never
 infer a default from task edits, and never store secrets or transient facts. The
-full policy is in `TASK_AGENT.md` (Task-set memory); report any change you make to
+full policy is in `internal/agentcontext/TASK_AGENT.md` (Task-set memory); report any change you make to
 the file alongside your task changes.
 
 ## Report

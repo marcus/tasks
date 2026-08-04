@@ -1,0 +1,279 @@
+package record
+
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"reflect"
+	"testing"
+	"unicode/utf8"
+)
+
+func TestParsePreservesPhysicalLinesAcrossErrors(t *testing.T) {
+	result := Parse([]byte("{\"type\":\"meta\"}\nnot json\n{\"type\":\"task\",\"title\":\"after\"}\n42\n"))
+
+	if got, want := recordLines(result), []int{1, 3}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("record lines = %v, want %v", got, want)
+	}
+	if got, want := errorLines(result), []int{2, 4}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("error lines = %v, want %v", got, want)
+	}
+	if got := result.Errors[1].Message; got != "expected a JSON object, got Integer" {
+		t.Fatalf("scalar error = %q", got)
+	}
+}
+
+func TestParseBoundaries(t *testing.T) {
+	cases := []struct {
+		name    string
+		input   []byte
+		records []int
+		errors  []ParseError
+	}{
+		{name: "empty", input: []byte{}, records: []int{}},
+		{name: "trailing newline", input: []byte("{\"type\":\"meta\"}\n"), records: []int{1}},
+		{name: "lone newline", input: []byte("\n"), records: []int{}, errors: []ParseError{{Line: 1, Message: "blank line"}}},
+		{name: "bom", input: append([]byte{0xef, 0xbb, 0xbf}, []byte("{\"type\":\"meta\"}\n")...), records: []int{1}},
+		{name: "nul blank", input: []byte{0}, records: []int{}, errors: []ParseError{{Line: 1, Message: "blank line"}}},
+		{name: "non-breaking space is not blank", input: []byte("\u00a0"), records: []int{}, errors: []ParseError{{Line: 1, Message: "invalid JSON: unexpected character: '' at line 1 column 1"}}},
+		{name: "second bom is invalid JSON", input: append([]byte("{}\n"), append([]byte{0xef, 0xbb, 0xbf}, []byte("{}")...)...), records: []int{1}, errors: []ParseError{{Line: 2, Message: "invalid JSON: unexpected character: '\ufeff{}' at line 1 column 1"}}},
+		{name: "bad utf8", input: []byte{0xff}, records: []int{}, errors: []ParseError{{Line: 0, Message: "file is not valid UTF-8"}}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Parse(tc.input)
+			if lines := recordLines(got); !reflect.DeepEqual(lines, tc.records) {
+				t.Fatalf("record lines = %v, want %v", lines, tc.records)
+			}
+			if !reflect.DeepEqual(got.Errors, tc.errors) {
+				t.Fatalf("errors = %#v, want %#v", got.Errors, tc.errors)
+			}
+		})
+	}
+}
+
+func TestParseFixtureInputsRemainLenient(t *testing.T) {
+	fixtures := []struct {
+		name        string
+		recordCount int
+		errorLines  []int
+	}{
+		{name: "invalid-json", recordCount: 6, errorLines: []int{4}},
+		{name: "non-record-lines", recordCount: 7, errorLines: []int{4, 6, 8}},
+		{name: "truncated-final-line", recordCount: 6, errorLines: []int{7}},
+		{name: "wrong-key-order", recordCount: 7, errorLines: []int{}},
+		{name: "bom-prefixed", recordCount: 2, errorLines: []int{}},
+		{name: "mid-write-torn-file", recordCount: 6, errorLines: []int{7}},
+	}
+
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			path := filepath.Join("..", "..", "testdata", "fixtures", fixtureClass(fixture.name), fixture.name, "store", "tasks.jsonl")
+			input, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := Parse(input)
+			if len(got.Records) != fixture.recordCount {
+				t.Fatalf("records = %d, want %d", len(got.Records), fixture.recordCount)
+			}
+			if lines := errorLines(got); !reflect.DeepEqual(lines, fixture.errorLines) {
+				t.Fatalf("error lines = %v, want %v", lines, fixture.errorLines)
+			}
+		})
+	}
+}
+
+func TestParseUsesRubyEOFDiagnostics(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+		want string
+	}{
+		{
+			name: "object key",
+			path: filepath.Join("..", "..", "testdata", "fixtures", "malformed", "invalid-json", "store", "tasks.jsonl"),
+			want: "invalid JSON: expected object key, got: EOF at line 1 column 148",
+		},
+		{
+			name: "closing quote",
+			path: filepath.Join("..", "..", "testdata", "fixtures", "malformed", "truncated-final-line", "store", "tasks.jsonl"),
+			want: "invalid JSON: unexpected end of input, expected closing \" at line 1 column 65",
+		},
+		{
+			name: "torn quote",
+			path: filepath.Join("..", "..", "testdata", "fixtures", "adversarial", "mid-write-torn-file", "store", "tasks.jsonl"),
+			want: "invalid JSON: unexpected end of input, expected closing \" at line 1 column 13",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			input, err := os.ReadFile(tc.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := Parse(input)
+			if len(got.Errors) != 1 {
+				t.Fatalf("errors = %#v, want one", got.Errors)
+			}
+			if got.Errors[0].Message != tc.want {
+				t.Fatalf("error = %q, want %q", got.Errors[0].Message, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseUsesRubyMalformedJSONDiagnostics(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "object key EOF", input: "{", want: "invalid JSON: expected object key, got EOF at line 1 column 2"},
+		{name: "closing quote", input: `{"a`, want: "invalid JSON: unexpected end of input, expected closing \" at line 1 column 4"},
+		{name: "value EOF", input: `{"a":`, want: "invalid JSON: unexpected end of input at line 1 column 6"},
+		{name: "object key after comma", input: `{"a":1,}`, want: "invalid JSON: expected object key, got: '}' at line 1 column 8"},
+		{name: "array separator", input: `{"a":[1`, want: "invalid JSON: expected ',' or ']' after array value at line 1 column 8"},
+		{name: "invalid escape", input: `{"a":"\q"}`, want: `invalid JSON: invalid escape character in string: '\q"}' at line 1 column 7`},
+		{name: "trailing token", input: `{"a":1} nope`, want: "invalid JSON: unexpected token at end of stream 'nope' at line 1 column 9"},
+		{name: "array EOF", input: `[`, want: "invalid JSON: unexpected end of input at line 1 column 2"},
+		{name: "truncated true", input: `{"a":tru}`, want: "invalid JSON: unexpected token 'tru}' at line 1 column 6"},
+		{name: "leading zero", input: `{"a":01}`, want: "invalid JSON: invalid number: '01}' at line 1 column 6"},
+		{name: "bad unicode escape", input: `{"a":"\u12G4"}`, want: `invalid JSON: incomplete unicode character escape sequence at '\u12G4"}' at line 1 column 7`},
+		{name: "missing object separator", input: `{"a" "b"}`, want: "invalid JSON: expected ':' after object key at line 1 column 6"},
+		{name: "missing value", input: `{"a":,}`, want: "invalid JSON: unexpected character: ',}' at line 1 column 6"},
+		{name: "trailing array comma", input: `{"a": [1,]}`, want: "invalid JSON: unexpected character: ']}' at line 1 column 10"},
+		{name: "missing object value separator", input: `{"a": true false}`, want: "invalid JSON: expected ',' or '}' after object value, got: 'false}' at line 1 column 12"},
+		{name: "adjacent objects", input: `{"a":1}{"b":2}`, want: "invalid JSON: unexpected token at end of stream '{\"b\":2}' at line 1 column 8"},
+		{name: "invalid escape x", input: `{"a": "\x"}`, want: `invalid JSON: invalid escape character in string: '\x"}' at line 1 column 8`},
+		{name: "invalid exponent", input: `{"a": 1e}`, want: "invalid JSON: invalid number: '1e}' at line 1 column 7"},
+		{name: "object null separator", input: `{"a": null null}`, want: "invalid JSON: expected ',' or '}' after object value, got: 'null}' at line 1 column 12"},
+		{name: "array missing separator", input: `{"a": [1 2]}`, want: "invalid JSON: expected ',' or ']' after array value at line 1 column 10"},
+		{name: "nested missing colon", input: `{"a": {"b" 1}}`, want: "invalid JSON: expected ':' after object key at line 1 column 12"},
+		{name: "adjacent missing colon", input: `{"a"1}`, want: "invalid JSON: expected ':' after object key at line 1 column 5"},
+		{name: "adjacent value separator", input: `{"a":"x"1}`, want: "invalid JSON: expected ',' or '}' after object value, got: '1}' at line 1 column 9"},
+		{name: "number trailing dot", input: `{"a": 1.}`, want: "invalid JSON: invalid number: '1.}' at line 1 column 7"},
+		{name: "trailing malformed object", input: `{"a":1} {bad}`, want: "invalid JSON: unexpected token at end of stream '{bad}' at line 1 column 9"},
+		{name: "tab-separated missing colon", input: "{\"a\"\t1}", want: "invalid JSON: expected ':' after object key at line 1 column 6"},
+		{name: "adjacent object literals", input: `{"a":truefalse}`, want: "invalid JSON: expected ',' or '}' after object value, got: 'false}' at line 1 column 10"},
+		{name: "adjacent array literals", input: `{"a":[truefalse]}`, want: "invalid JSON: expected ',' or ']' after array value at line 1 column 11"},
+		{name: "bare minus", input: `{"a":-}`, want: "invalid JSON: invalid number: '-}' at line 1 column 6"},
+		{name: "incomplete exponent sign", input: `{"a":1e+}`, want: "invalid JSON: invalid number: '1e+}' at line 1 column 6"},
+		{name: "leading decimal point", input: `{"a":.1}`, want: "invalid JSON: unexpected character: '.1}' at line 1 column 6"},
+		{name: "unpaired surrogate", input: `{"a":"\uD800"}`, want: `invalid JSON: incomplete surrogate pair at '\uD800"}' at line 1 column 7`},
+		{name: "high high surrogate pair", input: `{"a":"\uD800\uD800"}`, want: `invalid JSON: invalid surrogate pair at '\uD800\uD800"}' at line 1 column 7`},
+		{name: "incomplete negative exponent", input: `{"a": 1e-}`, want: "invalid JSON: invalid number: '1e-}' at line 1 column 7"},
+		{name: "incomplete decimal exponent", input: `{"a": 1.0e}`, want: "invalid JSON: invalid number: '1.0e}' at line 1 column 7"},
+		{name: "negative decimal trailing dot", input: `{"a": -0.}`, want: "invalid JSON: invalid number: '-0.}' at line 1 column 7"},
+		{name: "double zero", input: `{"a": 00}`, want: "invalid JSON: invalid number: '00}' at line 1 column 7"},
+		{name: "adjacent arrays in object value", input: `{"a": [1][2]}`, want: "invalid JSON: expected ',' or '}' after object value, got: '[2]}' at line 1 column 10"},
+		{name: "adjacent objects in object value", input: `{"a": {"b":1}{"c":2}}`, want: `invalid JSON: expected ',' or '}' after object value, got: '{"c":2}}' at line 1 column 14`},
+		{name: "tab before trailing JSON", input: "{\"a\":1}\t []", want: "invalid JSON: unexpected token at end of stream '[]' at line 1 column 10"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := Parse([]byte(tc.input))
+			if got := result.Errors; !reflect.DeepEqual(got, []ParseError{{Line: 1, Message: tc.want}}) {
+				t.Fatalf("errors = %#v, want %#v", got, []ParseError{{Line: 1, Message: tc.want}})
+			}
+		})
+	}
+}
+
+func TestParseRejectsTrailingValidJSONValue(t *testing.T) {
+	result := Parse([]byte(`{"a":1} []`))
+	want := []ParseError{{
+		Line:    1,
+		Message: "invalid JSON: unexpected token at end of stream '[]' at line 1 column 9",
+	}}
+	if !reflect.DeepEqual(result.Errors, want) {
+		t.Fatalf("errors = %#v, want %#v", result.Errors, want)
+	}
+	if len(result.Records) != 0 {
+		t.Fatalf("records = %#v, want none", result.Records)
+	}
+}
+
+func TestParsePreservesFieldOrderAndRubyDuplicateKeySemantics(t *testing.T) {
+	result := Parse([]byte(`{"type":"task","future_a":1,"title":"first","future_b":2,"title":"last"}`))
+	if len(result.Errors) != 0 || len(result.Records) != 1 {
+		t.Fatalf("result = %#v, want one valid record", result)
+	}
+	fields := result.Records[0].Fields
+	gotKeys := make([]string, len(fields))
+	for index, field := range fields {
+		gotKeys[index] = field.Key
+	}
+	if want := []string{"type", "future_a", "title", "future_b"}; !reflect.DeepEqual(gotKeys, want) {
+		t.Fatalf("field keys = %v, want %v", gotKeys, want)
+	}
+	if got, want := string(fields[2].Value), `"last"`; got != want {
+		t.Fatalf("duplicate title = %s, want %s", got, want)
+	}
+}
+
+func FuzzParseKeepsPhysicalLineBounds(f *testing.F) {
+	for _, seed := range [][]byte{
+		nil,
+		[]byte("\n"),
+		[]byte("{\"type\":\"meta\"}\nnot json\n42\n"),
+		{0xef, 0xbb, 0xbf, '{', '}'},
+		{0xff},
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, input []byte) {
+		result := Parse(input)
+		if !utf8.Valid(input) {
+			if !reflect.DeepEqual(result.Errors, []ParseError{{Line: 0, Message: "file is not valid UTF-8"}}) {
+				t.Fatalf("invalid UTF-8 result = %#v", result)
+			}
+			return
+		}
+
+		lineCount := bytes.Count(input, []byte{'\n'}) + 1
+		if len(input) == 0 {
+			lineCount = 0
+		}
+		for _, record := range result.Records {
+			if record.Line < 1 || record.Line > lineCount {
+				t.Fatalf("record line %d outside 1..%d", record.Line, lineCount)
+			}
+		}
+		for _, parseError := range result.Errors {
+			if parseError.Line < 1 || parseError.Line > lineCount {
+				t.Fatalf("error line %d outside 1..%d", parseError.Line, lineCount)
+			}
+		}
+	})
+}
+
+func fixtureClass(name string) string {
+	if name == "mid-write-torn-file" {
+		return "adversarial"
+	}
+	if name == "wrong-key-order" || name == "bom-prefixed" {
+		return "malformed"
+	}
+	return "malformed"
+}
+
+func recordLines(result Result) []int {
+	lines := make([]int, len(result.Records))
+	for index, record := range result.Records {
+		lines[index] = record.Line
+	}
+	return lines
+}
+
+func errorLines(result Result) []int {
+	lines := make([]int, len(result.Errors))
+	for index, parseError := range result.Errors {
+		lines[index] = parseError.Line
+	}
+	return lines
+}
