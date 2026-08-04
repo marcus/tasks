@@ -125,7 +125,7 @@ func validateChangeset(changeset Changeset, ordered []Change) []string {
 	}
 	unknown := []string{}
 	for _, change := range ordered {
-		if !patchableFields[change.Field] && change.Field != FieldLocation {
+		if !patchableFields[change.Field] {
 			unknown = append(unknown, "unknown editable field "+rubyInspectText(string(change.Field)))
 		}
 	}
@@ -140,7 +140,35 @@ func validateChangeset(changeset Changeset, ordered []Change) []string {
 	if seen[FieldActivate] && (seen[FieldDeferred] || seen[FieldScheduled]) {
 		errors = append(errors, "activate cannot be combined with deferred or scheduled")
 	}
+	for _, change := range ordered {
+		if change.Field == FieldLocation {
+			errors = append(errors, locationValueErrors(change.Value)...)
+		}
+	}
 	return errors
+}
+
+// locationValueErrors is `validate_changeset_location`: the shape check that
+// runs before the file is even read, so a caller that passed a line number or a
+// title where a stable id belongs learns it without a transaction.
+func locationValueErrors(value PatchValue) []string {
+	if value.kind == kindUnnest {
+		return nil
+	}
+	if placement, ok := value.Placement(); ok {
+		errors := []string{}
+		if !stableTaskID(placement.ParentID) {
+			errors = append(errors, "parent_id must be a stable id")
+		}
+		if placement.BeforeID != "" && !stableTaskID(placement.BeforeID) {
+			errors = append(errors, "before_id must be a stable id or nil")
+		}
+		return errors
+	}
+	if value.kind == kindText && stableTaskID(value.text) {
+		return nil
+	}
+	return []string{"location must be a stable parent id, UNNEST, or Tasks::TaskPlacement"}
 }
 
 // TaskRevision is the opaque token a caller carries into a changeset. It is
@@ -203,8 +231,15 @@ func changesetRevisionError(current, expected string, ordered []Change) Mutation
 	}
 	required := []int{0}
 	for _, change := range ordered {
+		// A PLACEMENT deliberately does not require the location component. An
+		// anchored move states its own precondition — the anchor must still be a
+		// child of the destination — and that is a sharper check than "no sibling
+		// anywhere has changed", which an unrelated capture elsewhere in the file
+		// would otherwise fail.
 		if change.Field == FieldLocation {
-			required = append(required, 1)
+			if _, anchored := change.Value.Placement(); !anchored {
+				required = append(required, 1)
+			}
 		}
 		if change.Field == FieldState {
 			required = append(required, 2)
@@ -260,6 +295,31 @@ func (s *Store) ApplyChangeset(changeset Changeset) MutationResult {
 			result = MutationResult{Status: MutationNotFound}
 			return nil
 		}
+		// The destination is resolved against the PRE-apply records, before any
+		// field runs. A missing parent or anchor is then a not_found naming the
+		// argument that was wrong, rather than a generic invalid raised halfway
+		// through a partially applied changeset.
+		var targets *placementTargets
+		for _, change := range ordered {
+			placement, anchored := change.Value.Placement()
+			if change.Field != FieldLocation || !anchored {
+				continue
+			}
+			resolved := resolvePlacementTargets(records, placement)
+			if resolved.status != MutationOK {
+				result = MutationResult{
+					Status: resolved.status, Errors: resolved.errors,
+					FieldErrors: resolved.fieldErrors,
+					Summary: MutationSummary{
+						From: records[index].String("parent"),
+						To:   placement.ParentID, Before: placement.BeforeID,
+					},
+				}
+				return nil
+			}
+			targets = &resolved
+		}
+
 		if changeset.ExpectedRevision != "" {
 			current, err := taskRevision(records, index, siblingIDsByParent(records))
 			if err != nil {
@@ -286,19 +346,36 @@ func (s *Store) ApplyChangeset(changeset Changeset) MutationResult {
 			result = MutationResult{Status: MutationInvalid, Errors: []string{err.Error()}}
 			return nil
 		}
+		context.placementTargets = targets
 
 		working := record.CloneAll(records)
 		touched := []string{}
 		var summary MutationSummary
 		datesTouched := false
 		for _, change := range ordered {
-			applied := applyFieldPatch(working, index, change.Field, change.Value, context)
+			// The index is re-resolved per field, not carried: a `location`
+			// change earlier in FIELD_ORDER physically relocates the record, so a
+			// cached position would apply the NEXT field to whatever row slid
+			// into the old slot.
+			position := locateStableIndex(working, changeset.ID)
+			if position < 0 {
+				result = MutationResult{Status: MutationNotFound}
+				return nil
+			}
+			applied := applyFieldPatch(working, position, change.Field, change.Value, context)
 			if applied.status != MutationOK {
-				result = MutationResult{Status: applied.status, Errors: applied.errors}
+				result = MutationResult{
+					Status: applied.status, Errors: applied.errors,
+					FieldErrors: applied.fieldErrors, Summary: applied.summary,
+				}
 				return nil
 			}
 			touched = appendUnique(touched, applied.touchedIDs...)
-			if applied.summary.Action != "" {
+			// Ruby reports the ONE field's summary for a single-field changeset
+			// and a by-field map otherwise. A typed summary cannot hold the map,
+			// so a multi-field changeset keeps the arm that names an action —
+			// the only member any adapter reads out of it.
+			if len(ordered) == 1 || applied.summary.Action != "" {
 				summary = applied.summary
 			}
 			if containsField(dateOwningFields, change.Field) {
@@ -311,7 +388,9 @@ func (s *Store) ApplyChangeset(changeset Changeset) MutationResult {
 		// momentary dateless state and would otherwise lose a window the user
 		// was relocating.
 		if datesTouched {
-			clearDatelessIntent(&working[index])
+			if position := locateStableIndex(working, changeset.ID); position >= 0 {
+				clearDatelessIntent(&working[position])
+			}
 		}
 
 		proposed, err := record.Dump(working)

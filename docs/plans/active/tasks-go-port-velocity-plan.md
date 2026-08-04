@@ -404,6 +404,49 @@ rather than assuming: `delegate` and `claim` accept no `--dry-run`, and
 previewing a dated create is not "the cheap half" of a command whose write
 refuses — it is the half-work this port forbids.
 
+### Corpus after the store-completion packet — 477 of 482
+
+The packet moved the number by **84**, from 393 to 477, and took fully-matching
+commands from 36 to **49 of 50**. The CLI is closed.
+
+**What landed:** `TaskPlacement` and the `location` field — the largest
+remaining store gap — with the cycle, depth, proposed-parent and anchor-parent
+rules and the UNNEST spelling; the project lifecycle (`create_section`,
+`create_project`, `rename_section`, `complete_project`, `archive_project`,
+`section_named`, `ensure_id`) behind `with_history`; the dated create
+(`scheduled`, `deadline`, `recur`, `lead`, `--under`), which retired the
+application layer's refusal; and the commands `move`, the five `project`
+sub-verbs, `undelegate`, `release`, `workref`, `id`. `delegate --to` and
+`claim --json` were finished in passing, since the composed-write pattern was
+already there.
+
+**Zero (1):** `-p` — the prompt surface and its provider adapters, still
+deliberately deferred. Every one of the five remaining mismatches is a `-p`
+case.
+
+**Three defects the differential harness found that unit tests did not**, all
+in code that had already been written and passed its own tests:
+
+- `ApplyChangeset` cached the record index across the field loop. A `location`
+  change sorts before `state` in FIELD_ORDER and physically relocates the row,
+  so the next field patched whatever slid into the old slot.
+- `Undelegate` and `SetWorkRef` honoured a coalesce key Ruby's store does not
+  take, so two consecutive work-ref writes collapsed into one undo step and the
+  first could not be restored.
+- `delegate` and `claim` printed the task headline where Ruby prints the
+  delegation line.
+
+**One Ruby defect fixed rather than ported:** `archive_project_impl` stamped
+`archived` from `Date.today`, the one date this store wrote that a harness pin
+could not reach. See `porting/intentional-differences.md`.
+
+**The Snapshot immutability defect is deferred a third time, and pinned.** It
+is now stated executably as `store.TestSnapshotIsNotYetImmutable` rather than
+only in prose. The reason is no longer Wave 2's: `taskquery` holds 11 of its 28
+call sites and is the package the TUI worktrees read from, and the change
+carries no differential evidence because none of it is visible from the CLI. It
+should land as its own packet between waves, not inside one.
+
 **A harness claim that did not reproduce.** One Wave 3 packet reported the
 corpus runner aborting on `journal_key` and only 163 of 482 cases pairing. On
 `main` the corpus pairs all 482 with zero unpaired, before and after that

@@ -54,8 +54,12 @@ var cliExitCodes = map[MutationStatus]int{
 
 // MutationResult is the immutable outcome every write path returns.
 type MutationResult struct {
-	Status        MutationStatus
-	Errors        []string
+	Status MutationStatus
+	Errors []string
+	// FieldErrors is the per-field breakdown of a refusal, when the refusal has
+	// one. A placement that names a missing anchor says so under `before_id`,
+	// which is what lets a caller correct the right argument.
+	FieldErrors   map[string][]string
 	TouchedIDs    []string
 	ReadSnapshot  *Snapshot
 	StoreRevision string
@@ -79,9 +83,28 @@ type MutationSummary struct {
 	At     string
 	TaskID string
 	// From and To are a state transition's endpoints, which a proposal decision
-	// reports and the CLI prints.
+	// reports and the CLI prints. A move reuses them for the old and the new
+	// parent id, which is the same question asked of a different axis.
 	From string
 	To   string
+	// Before is the anchor an anchored move placed the subtree in front of, and
+	// CurrentParentID is the anchor's ACTUAL parent when that anchor turned out
+	// not to be a child of the destination. The second is the whole content of a
+	// placement conflict: the caller decided against a sibling list that has
+	// since changed, and needs to know what it changed to.
+	Before          string
+	CurrentParentID string
+	// CreatedID, RootID and CreatedRoot are a project create's report. The
+	// bootstrapped root is called out separately because it is a SECOND section
+	// the caller never asked for, and a caller that renders "created X" without
+	// knowing a "Projects" heading also appeared has described half the write.
+	CreatedID   string
+	RootID      string
+	CreatedRoot bool
+	// MovedIDs is every task id the move relocated, root first. An empty (but
+	// non-nil) slice is a real answer: the task was already where it was asked
+	// to be, so nothing moved and no undo slot was burned.
+	MovedIDs []string
 	// Removed, Descendants and OpenDescendants are the delete's counts. They
 	// are what the cascade refusal quotes back — "3 descendants (2 open)" — so
 	// the caller learns what --cascade would actually remove.

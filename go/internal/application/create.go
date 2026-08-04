@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"tasks-go/internal/store"
+	"tasks-go/internal/temporal"
 )
 
 // PrepareCreateTask applies the creation defaults that belong to the
@@ -36,7 +37,8 @@ func (a *Application) PrepareCreateTask(command CreateCommand) CreateCommand {
 // CreateTask creates one live task in one checked store transaction.
 func (a *Application) CreateTask(command CreateCommand, operation *OperationContext) Outcome {
 	prepared := a.PrepareCreateTask(command)
-	if messages := unpersistableCreateFields(prepared); len(messages) > 0 {
+	dates, messages := createTemporalValues(prepared, a.today(operation))
+	if len(messages) > 0 {
 		return invalid(messages...)
 	}
 	if prepared.Body != "" && len(prepared.Notes) > 0 {
@@ -50,41 +52,62 @@ func (a *Application) CreateTask(command CreateCommand, operation *OperationCont
 		notes = strings.Split(prepared.Body, "\n")
 	}
 	return Outcome{MutationResult: a.store().CreateTask(store.CreateCommand{
-		Title:    prepared.Title,
-		Priority: prepared.Priority,
-		Tags:     copyOf(prepared.Tags),
-		State:    prepared.State,
-		Project:  prepared.Project,
-		ParentID: prepared.ParentID,
-		Notes:    copyOf(notes),
-		Deferred: prepared.Deferred,
+		Title:        prepared.Title,
+		Priority:     prepared.Priority,
+		Tags:         copyOf(prepared.Tags),
+		State:        prepared.State,
+		Project:      prepared.Project,
+		ParentID:     prepared.ParentID,
+		Notes:        copyOf(notes),
+		Deferred:     prepared.Deferred,
+		Scheduled:    dates.scheduled,
+		HasScheduled: dates.hasScheduled,
+		Deadline:     dates.deadline,
+		HasDeadline:  dates.hasDeadline,
+		Recurrence:   prepared.Recurrence,
+		Lead:         prepared.Lead,
 	}, a.today(operation))}
 }
 
-// unpersistableCreateFields names every field this build's store cannot write.
+// createDates is the two dates a create may carry, parsed once.
+type createDates struct {
+	scheduled    temporal.Value
+	hasScheduled bool
+	deadline     temporal.Value
+	hasDeadline  bool
+}
+
+// createTemporalValues is `normalize_create_temporal`: the command carries the
+// dates as ISO TEXT because a transport supplies text, and this is the seam that
+// turns them into values.
 //
-// Dropping them silently is the failure mode worth engineering against: a
-// caller that asked for a deadline and got a task without one has lost data it
-// believes it stored, and neither the result nor the file says so. Refusing is
-// recoverable; silence is not.
-//
-// This function disappears when store.CreateCommand grows the fields. Adding
-// them there and deleting the corresponding line here is the whole change.
-func unpersistableCreateFields(command CreateCommand) []string {
-	unsupported := []string{}
+// The store owns every RULE about the dates — the recurrence seed, the lead's
+// five gates, the dated state default. What is owned here is only "is this a
+// date at all", because refusing an unparseable one before the transaction is
+// the difference between a named argument error and a generic invalid.
+func createTemporalValues(command CreateCommand, today string) (createDates, []string) {
+	dates := createDates{}
+	messages := []string{}
 	for _, field := range []struct {
 		name  string
-		value string
+		text  string
+		value *temporal.Value
+		set   *bool
 	}{
-		{"scheduled", command.Scheduled},
-		{"deadline", command.Deadline},
-		{"recur", command.Recurrence},
-		{"lead", command.Lead},
+		{"scheduled", command.Scheduled, &dates.scheduled, &dates.hasScheduled},
+		{"deadline", command.Deadline, &dates.deadline, &dates.hasDeadline},
 	} {
-		if field.value != "" {
-			unsupported = append(unsupported, fmt.Sprintf(
-				"this build cannot persist %s on a new task", field.name))
+		if field.text == "" {
+			continue
 		}
+		date, ok := temporal.ParseDate(field.text)
+		if !ok {
+			messages = append(messages, fmt.Sprintf("%s must be an ISO date", field.name))
+			continue
+		}
+		*field.value = temporal.Value{Date: date}
+		*field.set = true
 	}
-	return unsupported
+	_ = today
+	return dates, messages
 }

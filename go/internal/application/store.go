@@ -92,7 +92,7 @@ type ProjectWriter interface {
 	CreateProject(title string) store.MutationResult
 	RenameSection(id, title string) (touched string, found bool)
 	CompleteProject(id, today string) (closed int, found bool)
-	ArchiveProject(id string) (moved []string, proposedDescendants bool, found bool)
+	ArchiveProject(id, today string) (moved []string, proposedDescendants bool, found bool)
 	LastRollback() (reason string, stage store.RollbackStage)
 }
 

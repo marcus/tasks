@@ -599,6 +599,69 @@ One `##` section per accepted difference, in the order they were accepted:
   `TestKeyHintDegradesOnAWordRatherThanMidWord`, over every width from the
   minimum frame to 120 columns.
 - **Conformance disposition:** none needed; the TUI is not in the corpus.
+## project-archive-stamp-honours-the-injected-clock — a Ruby DEFECT fixed, not a behavior difference — 2026-08-03
+
+- **Slices:** none (store-completion packet)
+- **Ruby behavior, before:** `Store#archive_project_impl` stamped the swept
+  section root with `Date.today.iso8601`. Every other date this store writes —
+  the sweep's own `archived`, a close's `closed`, a capture's
+  `Captured [...]` — comes from the injected `@now` clock, so a harness pin
+  reaches them. This one read the process wall clock and ignored the pin.
+- **Who could see it:** anyone pinning a clock — every conformance run and every
+  test — and anyone whose configured time zone is not the machine's. `tasks project archive X` under `TASKS_PIN_NOW=2026-03-14`
+  wrote `"archived":"2026-08-03"` into `archive.jsonl` — the real date. It was
+  the single nondeterministic byte a project archive produced, and it made the
+  Go port's only honest choices "reproduce the nondeterminism" or "diverge".
+- **What changed:** `archive_project!` now takes `today:` and stamps it, exactly
+  as `archive_swept!` already did, and `Application#archive_project` passes the
+  reader's resolved day. The default is still `Date.today`, so a programmatic
+  caller that supplies nothing behaves as before. The Go side threads the same
+  value through `ArchiveProject(id, today)`.
+- **Why not the store's own clock:** the first attempt read `@now.call.to_date`,
+  which IS pin-honouring but is a UTC instant — so a reader west of UTC got
+  tomorrow's date on a project archive after 17:00, while `closed` and the sweep
+  gave them today's. A stamp must come from the same day the rest of the
+  product means by "today", and that is the reader's, not the process's.
+- **Why fixed rather than ported:** porting it would have meant making the Go
+  binary deliberately ignore its own injected clock for one field, to preserve a
+  value carrying no information. It is also a latent bug for Ruby users of the
+  test suite regardless of the port. Decided by the store-completion packet
+  agent, under the velocity plan's standing preference for fixing a Ruby defect
+  over reproducing it.
+- **Evidence:** `ruby test/test_projects.rb` — 29 runs, 0 failures;
+  `porting/compare/store-completion-diff` — `project-archive` and
+  `project-archive-blocked` byte-identical across `tasks.jsonl`,
+  `archive.jsonl` and the journal.
+- **Conformance disposition:** none. Both sides now produce the pinned date, so
+  `gen.project-archive.*` matches without an exception.
+
+## undelegate-and-workref-do-not-coalesce — 2026-08-03
+
+- **Slices:** none (store-completion packet)
+- **Ruby behavior:** `Store#undelegate_task!` and `Store#set_work_ref!` accept
+  no `coalesce_key:` at all — only `delegate_task!` and `release_task!` do,
+  because only those two compose a SECOND write that has to share one undo step.
+  `Application#invoke_delegation` mints a key for every action and passes it to
+  the two that take one.
+- **Go behavior:** `Store.Undelegate` and `Store.SetWorkRef` accept the key —
+  the application layer's optional interfaces declare it — and deliberately
+  ignore it.
+- **Who can see it:** nobody, now. Before the fix, everyone: `tasks workref X url`
+  followed by `tasks workref X off` produced ONE journal step in Go and two in
+  Ruby, so one undo reverted both writes and the reference could not be restored
+  without editing the file. The pinned delegation-key sequence restarts per
+  process, so consecutive invocations drew the SAME key and coalesced into each
+  other.
+- **Why accepted:** the shape is a difference (a parameter that exists and is
+  ignored), the behavior is not — this is the port matching Ruby. The parameter
+  stays because `application.Undelegator` and `application.WorkRefWriter` declare
+  it, and dropping it would make the store stop satisfying interfaces it should
+  satisfy.
+- **Evidence:** found by `porting/compare/store-completion-diff`, scenario
+  `workref`, step 4 — `journal.labels` had three entries on the Ruby side and two
+  on the Go side. Unit tests did not find it, and could not have: a single
+  invocation coalesces with nothing.
+- **Conformance disposition:** none needed; the two now agree.
 
 ## Notes on the record
 

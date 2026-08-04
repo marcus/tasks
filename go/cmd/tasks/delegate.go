@@ -5,8 +5,8 @@ import (
 	"os"
 	"strings"
 
+	"tasks-go/internal/jsonout"
 	"tasks-go/internal/store"
-	"tasks-go/internal/taskquery"
 )
 
 const delegateUsage = "usage: tasks delegate <ref> <refine|research|implement>  |  " +
@@ -36,10 +36,6 @@ func (s *surfaceContext) delegate(args []string) int {
 	if to != "" && mode != "" {
 		return abort("delegate takes a mode or --to <email>, not both\n" + delegateUsage)
 	}
-	if flags["--keep-state"] {
-		return notPorted("delegate --keep-state")
-	}
-
 	queries, status := s.readQueries(args, "delegate")
 	if status != 0 {
 		return status
@@ -53,21 +49,98 @@ func (s *surfaceContext) delegate(args []string) int {
 	if to != "" {
 		kind, mode, assignee = "human", "", to
 	}
-	if kind == "human" {
-		// Handing a task to a person also moves it to WAITING, and that second
-		// write is a separate patch this build has not ported. Refusing keeps
-		// the composed operation all-or-nothing.
-		return notPorted("delegate --to")
-	}
 
-	result := s.writeStore().Delegate(item.ID, kind, mode, assignee, s.delegationCoalesceKey("delegate"))
+	// The marker this write will REPLACE, read before the write. Whether an
+	// inherited WAITING is cleared depends on what the marker was at the moment
+	// it changed, and the store does not report it.
+	previous := delegationFields(item.Delegation)
+
+	coalesceKey := s.delegationCoalesceKey("delegate")
+	writer := s.writeStore()
+	result := writer.Delegate(item.ID, kind, mode, assignee, coalesceKey)
 	if status := s.delegationFailed(result, args, "delegate"); status != 0 {
 		return status
 	}
-	if flags["--json"] {
-		return s.reportTouched(result, []string{item.ID}, true)
+
+	// The state follow-up, and its exact inverse. Handing a task to a person
+	// moves it to WAITING: the next action really is outside the owner's
+	// control. Replacing that person with the agent pool undoes exactly that —
+	// agent-ready work is actionable again. Only a WAITING INHERITED from the
+	// human delegation is cleared; a WAITING the owner set for their own reasons
+	// is theirs to keep. Both land in the SAME undo step as the delegation.
+	stateChanged := false
+	if !flags["--keep-state"] {
+		stateChanged = s.delegateStateFollowUp(writer, item, kind, mode, assignee,
+			previous, coalesceKey, &result)
 	}
-	return s.printDelegationHeadline(result, item.ID)
+
+	if flags["--json"] {
+		return s.reportTouchedSnapshot(s.delegationSnapshot(result), []string{item.ID}, true, nil)
+	}
+	return s.printDelegationHeadlineChanged(result, item.ID, stateChanged)
+}
+
+// delegationSnapshot is the read a delegation report renders from: the write's
+// own snapshot when it wrote, and a fresh read when it deliberately did not.
+//
+// An idempotent repeat is the case that matters. It carries no snapshot because
+// it changed nothing, and reporting "task store unavailable" for a call that
+// succeeded would be the wrong answer to the right question.
+func (s *surfaceContext) delegationSnapshot(result store.MutationResult) *store.Snapshot {
+	if result.ReadSnapshot != nil {
+		return result.ReadSnapshot
+	}
+	snapshot, err := s.store.ReadSnapshot(false)
+	if err != nil {
+		return nil
+	}
+	return snapshot
+}
+
+// delegateStateFollowUp performs the WAITING default, or its inverse, and
+// reports whether it wrote. A failed follow-up never turns a successful
+// delegation into a failure: the composed fact is simply false.
+func (s *surfaceContext) delegateStateFollowUp(writer *store.Store, item store.Item,
+	kind, mode, assignee string, previous map[string]string, coalesceKey string,
+	result *store.MutationResult) bool {
+
+	replacingHuman := previous != nil && previous["kind"] == "human"
+	if kind != "human" && !replacingHuman {
+		return false
+	}
+	current, found := s.delegationItem(*result, item.ID)
+	if !found {
+		return false
+	}
+
+	target, label := "", ""
+	if kind == "human" {
+		if current.State == "WAITING" {
+			return false
+		}
+		target = "WAITING"
+		label = "delegate → " + assignee + ": " + current.Title
+	} else {
+		if current.State != "WAITING" {
+			return false
+		}
+		target = "TODO"
+		label = "agent-ready (" + mode + "): " + current.Title
+	}
+
+	today, status := s.today()
+	if status != 0 {
+		return false
+	}
+	patched := writer.PatchTaskCoalesced(item.ID, store.FieldState, target,
+		patchBaseline(writer, item.ID, store.FieldState), label, today, coalesceKey)
+	if !patched.Changed() {
+		return false
+	}
+	if patched.ReadSnapshot != nil {
+		result.ReadSnapshot = patched.ReadSnapshot
+	}
+	return true
 }
 
 // claim takes an agent-pool task for one worker.
@@ -151,30 +224,76 @@ func (s *surfaceContext) delegationFailed(result store.MutationResult, args []st
 
 // claimResource prints the WHOLE canonical resource, not just the marker: a
 // worker claims the task and reads the authority it is working under in one
-// step.
+// step. That is why it carries the four members the standard row omits — the
+// closed date, the notes, the project and the links.
 func (s *surfaceContext) claimResource(result store.MutationResult, id string, asJSON bool) int {
 	if !asJSON {
 		return s.printDelegationHeadline(result, id)
 	}
-	// The extra members `claim --json` adds over the standard task document —
-	// closed, notes, project and links — are not ported yet, and emitting the
-	// standard document under a name that promises more would be a silent
-	// difference rather than a stated one.
-	return notPorted("claim --json success payload")
-}
-
-func (s *surfaceContext) printDelegationHeadline(result store.MutationResult, id string) int {
-	snapshot := result.ReadSnapshot
-	if snapshot == nil {
+	queries, status := s.readQueries(nil, "claim")
+	if status != 0 {
+		return status
+	}
+	item, found := s.delegationItem(result, id)
+	if !found {
 		return abort("task store unavailable")
 	}
-	for _, item := range snapshot.Items {
-		if item.ID != id {
-			continue
+	links := queries.Links(item)
+	notes := taskNotes(queries, item)
+
+	w := jsonWriter()
+	writeItemJSONWith(w, queries, item, func(w *jsonout.Writer) {
+		w.KeyStrOrNull("closed", item.Closed)
+		w.Key("notes")
+		w.Strings(notes)
+		// `project` is deliberately not written again: the standard row already
+		// carries it, and Ruby's merge overwrites in place rather than appending.
+		w.Key("links")
+		w.BeginArray()
+		for _, link := range links {
+			w.BeginObject()
+			writeLinkMembers(w, link)
+			w.EndObject()
 		}
-		out(taskquery.Headline(item))
-		return 0
+		w.EndArray()
+	})
+	if err := w.Err(); err != nil {
+		return abort(err.Error())
 	}
+	out(w.String())
+	return 0
+}
+
+// printDelegationHeadline prints the DELEGATION line, not the task headline:
+// who holds the task and in what capacity, which is the question the verb was
+// asked. `delegate`, `claim`, `release` and `list --delegated` all print through
+// the same function so the four surfaces cannot drift apart.
+func (s *surfaceContext) printDelegationHeadline(result store.MutationResult, id string) int {
+	return s.printDelegationHeadlineChanged(result, id, false)
+}
+
+// printDelegationHeadlineChanged is the same line with the state appended when
+// THIS write moved it. Replacing a person with the agent pool leaves WAITING
+// alone, and printing a state change that did not happen would surprise.
+func (s *surfaceContext) printDelegationHeadlineChanged(result store.MutationResult, id string,
+	stateChanged bool) int {
+
+	queries, status := s.readQueries(nil, "delegate")
+	if status != 0 {
+		return status
+	}
+	item, found := s.delegationItem(result, id)
+	if !found {
+		return abort("task store unavailable")
+	}
+	headline := delegationHeadline(queries, item)
+	if stateChanged {
+		marker := delegationFields(item.Delegation)
+		if marker != nil && marker["status"] == "ready" {
+			headline = "agent-ready (" + marker["mode"] + ") → " + item.State + ": " + item.Title
+		}
+	}
+	out(headline)
 	return 0
 }
 

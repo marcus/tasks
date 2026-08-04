@@ -67,14 +67,14 @@ func mustInvalid(t *testing.T, result MutationResult, want string) {
 // -- the vocabulary is closed --------------------------------------------------
 
 // test_store_exposes_only_the_stable_patch_protocol_for_existing_tasks: the
-// implemented set is exactly what PatchesField publishes, and `location` — a
-// real EditSnapshot field this build has not reached — refuses by NAME rather
-// than falling through to a write.
+// implemented set is exactly what PatchesField publishes, and a field outside it
+// is refused rather than falling through to a write.
 func TestPatchVocabularyIsClosedAndLocationRefuses(t *testing.T) {
 	store, _ := writerFixture(t, patchFixture)
 	editFields := []PatchField{
 		FieldTitle, FieldPriority, FieldDeferred, FieldScheduled, FieldDeadline,
 		FieldRecurrence, FieldLead, FieldContexts, FieldTags, FieldBody, FieldState,
+		FieldLocation,
 	}
 	for _, field := range editFields {
 		if !store.PatchesField(field) {
@@ -86,20 +86,17 @@ func TestPatchVocabularyIsClosedAndLocationRefuses(t *testing.T) {
 			t.Errorf("PatchesField(%q) = false, want true", field)
 		}
 	}
-	if store.PatchesField(FieldLocation) {
-		t.Error("PatchesField(location) = true, want false while moves are unported")
-	}
 	if store.PatchesField("nonsense") {
 		t.Error("PatchesField(nonsense) = true, want false")
 	}
 
 	before := readStore(t, store)
-	result := patch(t, store, "aa000010", FieldLocation, TextValue("aa000017"))
+	result := patch(t, store, "aa000010", "nonsense", TextValue("x"))
 	if result.Status != MutationInvalid {
-		t.Fatalf("location status = %q, want invalid", result.Status)
+		t.Fatalf("unknown-field status = %q, want invalid", result.Status)
 	}
-	if !strings.Contains(result.FirstError(), "moving a task is not implemented") {
-		t.Errorf("location error = %q", result.FirstError())
+	if !strings.Contains(result.FirstError(), "unknown editable field") {
+		t.Errorf("unknown-field error = %q", result.FirstError())
 	}
 	if got := readStore(t, store); got != before {
 		t.Error("a refused field wrote bytes")

@@ -1116,8 +1116,8 @@ module Tasks
     # `archived` stamp. Open tasks do not block — blocking is caller policy —
     # but an undecided proposal is never archival material. Returns the moved
     # stable ids, :proposed_descendants, or false when the id names no section.
-    def archive_project!(id:)
-      with_history("archive project: #{id}") { archive_project_impl(id) }
+    def archive_project!(id:, today: Date.today)
+      with_history("archive project: #{id}") { archive_project_impl(id, today) }
     end
 
     # Build the editor's exact values and semantic conflict baselines from the
@@ -3536,7 +3536,7 @@ module Tasks
     # Splice the section's subtree out of the live file and append it to the
     # archive, archive-first so an interruption can only leave retry-safe
     # duplicates, never a lost subtree (the sweep's ordering and safety gates).
-    def archive_project_impl(id)
+    def archive_project_impl(id, today = Date.today)
       records = fresh_records(@org)
       ri = section_index(records, id) or return false
       rj = subtree_end(records, ri)
@@ -3545,7 +3545,11 @@ module Tasks
         return :proposed_descendants
       end
       moved[0].delete("parent")
-      moved[0]["archived"] = Date.today.iso8601
+      # The CALLER's day, exactly as archive_swept! takes it. This used to read
+      # Date.today, which ignored both the reader's configured time zone and any
+      # harness pin — the one date this store wrote that a pinned clock could not
+      # reach, and the only nondeterministic byte a project archive produced.
+      moved[0]["archived"] = today.iso8601
       kept = records[0...ri] + records[rj..]
 
       arch = File.exist?(@archive) ? fresh_records(@archive) : []

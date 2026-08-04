@@ -9,9 +9,11 @@ import (
 
 	"tasks-go/internal/check"
 	"tasks-go/internal/journal"
+	"tasks-go/internal/lead"
 	"tasks-go/internal/query"
 	"tasks-go/internal/record"
 	"tasks-go/internal/recur"
+	"tasks-go/internal/temporal"
 )
 
 // DeferTag is the semantic tag that means someday/maybe. Closing a task drops
@@ -108,10 +110,7 @@ func (s *Store) mintID() string {
 
 // -- capture -----------------------------------------------------------------
 
-// CreateCommand is the typed create every capture goes through. Recurrence,
-// lead time and temporal modifiers are deliberately absent: this build's CLI
-// refuses those flags outright rather than accepting them and writing a record
-// whose semantics it has not yet ported.
+// CreateCommand is the typed create every capture goes through.
 type CreateCommand struct {
 	Title    string
 	Priority string
@@ -121,6 +120,20 @@ type CreateCommand struct {
 	ParentID string
 	Notes    []string
 	Deferred bool
+	// Scheduled and Deadline are the two dates a capture may name, each
+	// optionally carrying a wall time and a zone. HasScheduled / HasDeadline
+	// distinguish "not supplied" from the zero date, which a bare
+	// temporal.Value cannot.
+	Scheduled    temporal.Value
+	HasScheduled bool
+	Deadline     temporal.Value
+	HasDeadline  bool
+	// Recurrence is a canonical cookie and Lead a canonical span. Both are
+	// intents ABOUT a date, and both are validated here against the dates this
+	// very create is about to write — a create that would need an immediate
+	// repair is a create that should have been refused.
+	Recurrence string
+	Lead       string
 }
 
 // CreateTask creates one task from a complete typed command in one checked
@@ -141,7 +154,7 @@ func (s *Store) CreateTask(command CreateCommand, today string) MutationResult {
 			return nil
 		}
 
-		attributes, errors := normalizeCreate(command)
+		attributes, errors := normalizeCreate(command, today)
 		if len(errors) > 0 {
 			result = MutationResult{Status: MutationInvalid, Errors: errors}
 			return nil
@@ -171,18 +184,24 @@ func (s *Store) CreateTask(command CreateCommand, today string) MutationResult {
 }
 
 type createAttributes struct {
-	title    string
-	priority string
-	tags     []string
-	state    string
-	project  string
-	parentID string
-	notes    []string
+	title        string
+	priority     string
+	tags         []string
+	state        string
+	project      string
+	parentID     string
+	notes        []string
+	scheduled    temporal.Value
+	hasScheduled bool
+	deadline     temporal.Value
+	hasDeadline  bool
+	recurrence   string
+	lead         string
 }
 
-// normalizeCreate is Store#normalize_create_task for the fields this build
-// writes. Every refusal here is one the file never sees.
-func normalizeCreate(command CreateCommand) (createAttributes, []string) {
+// normalizeCreate is Store#normalize_create_task. Every refusal here is one the
+// file never sees.
+func normalizeCreate(command CreateCommand, today string) (createAttributes, []string) {
 	errors := []string{}
 	title := strings.TrimSpace(command.Title)
 	if title == "" {
@@ -202,15 +221,103 @@ func normalizeCreate(command CreateCommand) (createAttributes, []string) {
 	if command.Project != "" && command.ParentID != "" {
 		errors = append(errors, "project and parent_id cannot both be supplied")
 	}
-	if state == "" {
-		// No date can reach this build's create, so the dated branch is
-		// unreachable and INBOX is the whole of the default.
-		state = "INBOX"
+	recurrence := command.Recurrence
+	if recurrence != "" && !recur.Cookie(recurrence) {
+		errors = append(errors, "invalid recurrence cookie")
+		recurrence = ""
 	}
+	span := command.Lead
+	if span != "" && !lead.Span(span) {
+		errors = append(errors, "invalid lead time (expected a span like 3w, 2d, 1m, 1y)")
+		span = ""
+	}
+
+	scheduled, hasScheduled := command.Scheduled, command.HasScheduled
+	deadline, hasDeadline := command.Deadline, command.HasDeadline
+	day, dayOK := temporal.ParseDate(today)
+
+	// Capturing with a recurrence has always meant "start repeating now" when no
+	// date was given. With a LEAD that reading is wrong: today's anchor puts the
+	// window in the past, so the task appears immediately and the schedule's own
+	// first occurrence is never used. A lead therefore seeds the FIRST
+	// occurrence instead, which is what makes `--recur y:06-01 --lead 17d` mean
+	// "invisible until May 15" with no further arguments.
+	if recurrence != "" && !hasDeadline && !hasScheduled && dayOK {
+		seed := day
+		if span != "" {
+			if first, ok := firstOccurrence(recurrence, day); ok {
+				seed = first
+			}
+		}
+		scheduled, hasScheduled = temporal.Value{Date: seed}, true
+	}
+	if state == "" {
+		state = "INBOX"
+		if hasScheduled || hasDeadline {
+			state = "TODO"
+		}
+	}
+	if recurrence != "" &&
+		(contains(check.ClosedStates, state) || contains(check.ProposedStates, state)) {
+		errors = append(errors, "can't set recurrence on a "+state+" task")
+	}
+	if recurrence != "" && dayOK {
+		// Completion rolls the DEADLINE when both dates exist, so that is the
+		// stamp the schedule has to be reachable from.
+		anchor := scheduled.Date
+		if hasDeadline {
+			anchor = deadline.Date
+		}
+		if hasScheduled || hasDeadline {
+			if reason := unreachableRecurrence(recurrence, anchor, day); reason != "" {
+				errors = append(errors, reason)
+			}
+		}
+	}
+	if span != "" {
+		errors = append(errors, createLeadErrors(span, scheduled, hasScheduled, deadline, hasDeadline)...)
+	}
+
 	return createAttributes{
 		title: title, priority: command.Priority, tags: tags, state: state,
 		project: command.Project, parentID: command.ParentID, notes: command.Notes,
+		scheduled: scheduled, hasScheduled: hasScheduled,
+		deadline: deadline, hasDeadline: hasDeadline,
+		recurrence: recurrence, lead: span,
 	}, errors
+}
+
+// createLeadErrors is the same three lead rules patch_lead enforces, stated
+// against the values this create is about to write.
+func createLeadErrors(span string, scheduled temporal.Value, hasScheduled bool,
+	deadline temporal.Value, hasDeadline bool) []string {
+
+	anchor, hasAnchor := leadAnchor(deadline.Date, hasDeadline, scheduled.Date, hasScheduled)
+	if !hasAnchor {
+		return []string{"a lead time needs a date to hide before — " +
+			"add a deadline or an available-from date first"}
+	}
+	if hasDeadline && hasScheduled {
+		return []string{leadGateConflictMessage(span)}
+	}
+	gate, ok := lead.DateBound(anchor, span)
+	if !ok || !validISODate(gate.ISO()) {
+		return []string{"a lead of " + humanizeLead(span) + " would open before " +
+			anchor.ISO() + ", outside the four-digit years dates are stored with"}
+	}
+	return nil
+}
+
+// firstOccurrence is the date a schedule would first fire on, or a miss when it
+// cannot be projected. The caller then falls back to today and the ordinary
+// satisfiability guard reports the real problem.
+func firstOccurrence(cookie string, today temporal.Date) (temporal.Date, bool) {
+	from := recur.NewCivilDate(int64(today.Year), int(today.Month), today.Day)
+	next, err := recur.NextDate(cookie, from, from)
+	if err != nil {
+		return temporal.Date{}, false
+	}
+	return temporal.ParseDate(next.String())
 }
 
 type createPlan struct {
@@ -311,6 +418,18 @@ func (s *Store) planCreateTask(records []record.Record, attributes createAttribu
 	if len(attributes.tags) > 0 {
 		fresh.Set("tags", record.RawStrings(attributes.tags))
 	}
+	if attributes.hasScheduled {
+		writeTemporal(&fresh, "scheduled", attributes.scheduled)
+	}
+	if attributes.hasDeadline {
+		writeTemporal(&fresh, "deadline", attributes.deadline)
+	}
+	if attributes.recurrence != "" {
+		fresh.SetString("recur", attributes.recurrence)
+	}
+	if attributes.lead != "" {
+		fresh.SetString("lead", attributes.lead)
+	}
 	body := append([]string{"Captured [" + today + "]."}, attributes.notes...)
 	fresh.SetString("body", strings.Join(body, "\n"))
 
@@ -343,6 +462,10 @@ type patchOutcome struct {
 	errors     []string
 	touchedIDs []string
 	summary    MutationSummary
+	// fieldErrors is the per-field breakdown a placement refusal carries, so a
+	// caller learns WHICH of the two ids it supplied did not resolve rather than
+	// having to guess from one sentence.
+	fieldErrors map[string][]string
 }
 
 func patchPriority(records []record.Record, index int, value PatchValue) patchOutcome {

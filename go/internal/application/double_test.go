@@ -273,7 +273,7 @@ func (s *scriptedStore) CompleteProject(id, today string) (int, bool) {
 	return s.completeClosed, s.completeFound
 }
 
-func (s *scriptedStore) ArchiveProject(id string) ([]string, bool, bool) {
+func (s *scriptedStore) ArchiveProject(id, today string) ([]string, bool, bool) {
 	s.calls = append(s.calls, recordedCall{verb: "archive_project", id: id})
 	return s.archiveMoved, s.archiveProposed, s.archiveFound
 }

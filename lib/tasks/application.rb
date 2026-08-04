@@ -502,11 +502,11 @@ module Tasks
       MutationResult.new(status: :ok, summary: { closed: closed })
     end
 
-    def archive_project(id)
+    def archive_project(id, today: Date.today)
       store = store_factory.call
       refusal = unsupported_schema_mutation(store)
       return refusal if refusal
-      moved = store.archive_project!(id: id)
+      moved = store.archive_project!(id: id, today: today)
       if moved == :proposed_descendants
         return MutationResult.new(
           status: :conflict,
