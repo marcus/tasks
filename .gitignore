@@ -45,3 +45,9 @@ vendor/bundle/
 # Go-port build products. The sources are committed; the binaries are not.
 /go/bin/
 /porting/corpus/generated/
+
+# Lock sidecars are runtime artifacts. Running a fixture in place creates one,
+# and committing it changes the starting state every conformance read observes
+# — porting/fixtures/README.md says it belongs to the stale-lock fixture alone.
+/porting/fixtures/*/*/store/.tasks.jsonl.lock
+!/porting/fixtures/adversarial/stale-lock-sidecar/store/.tasks.jsonl.lock
