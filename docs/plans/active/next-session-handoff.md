@@ -1,34 +1,41 @@
 # Handoff: continuing the Go port
 
-Written 2026-08-03 for whoever orchestrates next. The controlling plan is
+Written 2026-08-03 and closed out 2026-08-04. The controlling plan is
 [tasks-go-port-velocity-plan.md](tasks-go-port-velocity-plan.md); this file is
 the working method and the state, which the plan does not carry.
 
 ## Where it stands
 
-- **CLI: 49 of 50 commands at full parity.** The generated corpus is at
-  **477 of 482**, 0 unpaired. The only command with any mismatch is `-p`.
-- **HTTP API:** `internal/api` + `cmd/tasks-api`, 119/124 on its own
-  differential harness, 5 recorded refusals (the project writes).
-- **TUI: half built.** Shell, root model, views, selection, panel and all
-  twelve terminal primitive packages are done and wired together. Editor,
-  forms and modals are not.
-- ~44,800 production Go lines, ~29,400 test lines, 20 internal packages.
-- `ruby test/all.rb` green: 2,275 runs, 0 failures.
-- 22 accepted entries in `porting/intentional-differences.md`, three of which
-  are Ruby defects or Ruby tests fixed rather than differences preserved.
+- **CLI: 50 of 50 commands at full parity.** The generated corpus is
+  **482 of 482**, 0 mismatches and 0 unpaired. `tasks -p`, prompt facts,
+  transcript diffing, and the Claude/Cursor/Hermes adapters are implemented.
+- **HTTP API:** `internal/api` + `cmd/tasks-api` are **223 of 223** on the
+  differential harness. The four project-write routes are implemented; there
+  are no recorded API refusals.
+- **TUI: complete.** Shell, views, selection, panels, editor, forms, modals,
+  agent queue, opener, mouse, clipboard, themes, and all twelve terminal
+  primitive packages are wired. The interaction differential is **77 of 77**
+  and the opener Shellwords differential is **39 of 39**.
+- **Snapshot immutability: complete.** All four snapshot collections are
+  private, accessors and tree results make deep detached copies, and the
+  original corruption proof plus a shallow-copy negative control were run.
+- Final suites on merged `main`: `ruby test/all.rb` is **2,278 runs / 34,429
+  assertions**, the API suite is **109 runs / 2,668 assertions**, and both are
+  green. Full Go tests, vet, formatting, and the persistence/API/TUI race set
+  are green. `porting/conform` remains **33 of 33 GATE PASS**.
 
 ## What remains
 
-1. **`tasks -p`** — prompt surface, `agent_context.rb`, `prompt_facts.rb`,
-   `agent_diff.rb`, provider adapters. The last five corpus cases.
-2. **TUI second half** — editor, forms, modals. Keys that would open them
-   currently refuse out loud, naming the capability.
-3. **API project writes** — four routes answer 501; the store now performs them.
-4. **`Snapshot` immutability** — deferred three times, now stated executably as
-   `store.TestSnapshotIsNotYetImmutable`. `taskquery` holds 11 of its 28 call
-   sites, so it wants a quiet moment between waves.
-5. **The actual-data and cutover gate** — the plan's ten-step section, unstarted.
+The implementation is complete. The only remaining work is the plan's
+**actual-data and cutover gate**: copied-real-data comparison, installation,
+bounded canary, and rollback proof against that copy. It was deliberately not
+run in this session because the session's non-negotiable instruction was never
+to access or copy the real task store.
+
+The safe synthetic rehearsal is complete: lifecycle covered 39 cross-language
+write/undo scenarios with no differences, store completion covered 49 scenarios
+diff-clean, and the CLI/API/TUI/prompt/opener differentials all passed against
+temporary fixture stores. No real task data was read or mutated.
 
 ## The working method
 
@@ -73,7 +80,7 @@ duplicating:
 ```sh
 porting/conform                                   # the curated gate, must stay 33/33
 porting/corpus/generate --seed 20260802 --out porting/corpus/generated/cases.jsonl
-porting/conform --cases porting/corpus/generated/cases.jsonl   # 477/482
+porting/conform --cases porting/corpus/generated/cases.jsonl   # 482/482
 porting/api-differential                          # both servers, byte for byte
 porting/compare/lifecycle-diff
 porting/compare/store-completion-diff
@@ -122,6 +129,9 @@ behavior is fixed asserts nothing.
 - **A harness claim that did not reproduce.** One packet reported the corpus
   runner aborting and only 163 of 482 cases pairing. It pairs all 482 on
   `main`. Verify before relaying.
+- **Concurrent corpus runs share harness state.** Two simultaneous generated
+  corpus runs in one worktree reproduced the `journal_key`/unpaired failure.
+  The isolated reruns were 482/482. Run one corpus comparison per worktree.
 - **zsh does not word-split unquoted parameters.** A sweep loop over
   `"list --json"` passes one argument and every invocation errors, which reads
   as a catastrophic regression. Use `${=var}`.

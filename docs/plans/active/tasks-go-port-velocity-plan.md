@@ -1,9 +1,9 @@
 # Tasks Ruby-to-Go port: velocity plan
 
-- **Status:** accepted and controlling — the CLI and API are complete at 49/50
-  commands; the TUI is half built; `-p` and the cutover gate remain
+- **Status:** implementation complete and independently reviewed — synthetic
+  cutover gates pass; copied-real-data verification and the bounded canary remain
 - **Accepted:** 2026-08-03
-- **Last progress:** 2026-08-03 (store completion and the TUI's first half)
+- **Last progress:** 2026-08-04 (all CLI/API/TUI code and Snapshot immutability)
 - **Scope:** finish the macOS Go application, prove it against copied real data,
   and cut over safely
 - **Supersedes:**
@@ -468,21 +468,28 @@ The API differential improved in step, 115/124 to 119/124, as the store grew
 the operations its 501s stood in for. The remaining refusals are the project
 writes, which the API can now be taught since the store performs them.
 
-### What remains before cutover
+### Implementation completion checkpoint — 2026-08-04
 
-1. **`tasks -p`** — the prompt surface, `agent_context.rb`, `prompt_facts.rb`,
-   and the provider adapters. The last five corpus cases.
-2. **The TUI's second half** — editor, forms and modals. The shell, views,
-   selection, panel and every terminal primitive are done and wired; the keys
-   that open an editor currently refuse out loud, naming the capability.
-3. **The API's project writes** — four routes still answering 501 with a stated
-   reason, now that the store implements them.
-4. **`Snapshot` immutability** — deferred three times, each with a better
-   reason than the last. It is now stated executably as
-   `store.TestSnapshotIsNotYetImmutable`, a specification that fails loudly if
-   the fix lands half-done. `taskquery` holds 11 of its 28 call sites, so it
-   wants a quiet moment between waves rather than a slot inside one.
-5. **The actual-data and cutover gate** — the ten-step section below, unstarted.
+All retained product surfaces are implemented and independently reviewed:
+
+- the CLI is 50/50 commands and the generated corpus is 482/482;
+- `tasks -p`, prompt facts, transcript diffing, and provider adapters are 18/18;
+- the HTTP API, including all four project writes, is 223/223;
+- the complete TUI is 77/77 on its interaction differential and 39/39 on the
+  opener Shellwords differential; and
+- `store.Snapshot` collections are private and deeply detached through copying
+  accessors and tree results. The old corruption proof, focused positive tests,
+  and a shallow-copy negative control all demonstrated the boundary.
+
+The final synthetic rehearsal used only repository fixtures and temporary
+stores. `lifecycle-diff` passed 39 cross-language write/undo scenarios,
+`store-completion-diff` passed 49 scenarios diff-clean, `porting/conform`
+remained 33/33, and the full Go, Ruby, race, API, and formatting gates passed.
+
+The sole remaining gate is the copied-real-data and bounded-canary procedure
+below. It was not run because this session explicitly prohibited accessing,
+copying, or mutating the real task store. That is a deliberate safety boundary,
+not an implementation gap.
 
 ## Wave 4: rebuild the TUI
 
