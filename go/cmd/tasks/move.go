@@ -410,7 +410,7 @@ func placementRecord(reader *store.Store, id string) (record.Record, bool) {
 	if err != nil {
 		return record.Record{}, false
 	}
-	for _, parsed := range snapshot.LiveRecords {
+	for _, parsed := range snapshot.LiveRecords() {
 		if parsed.String("id") != id {
 			continue
 		}
@@ -426,7 +426,7 @@ func placementRecord(reader *store.Store, id string) (record.Record, bool) {
 func nearestSectionID(queries *taskquery.Queries, id string) string {
 	snapshot := queries.Snapshot()
 	byID := map[string]record.Record{}
-	for _, parsed := range snapshot.LiveRecords {
+	for _, parsed := range snapshot.LiveRecords() {
 		if key := parsed.String("id"); key != "" {
 			byID[key] = parsed
 		}

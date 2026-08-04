@@ -188,7 +188,7 @@ func (c *capableStore) marker(id string) map[string]string {
 	if err != nil {
 		return nil
 	}
-	for _, item := range snapshot.Items {
+	for _, item := range snapshot.Items() {
 		if item.HasID && item.ID == id {
 			return decodeMarker(item.Delegation)
 		}

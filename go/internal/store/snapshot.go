@@ -44,25 +44,27 @@ type Item struct {
 // Snapshot is a coherent view of the task files. A caller can hold one while
 // rendering and safely ask for a task's revision or its place in the tree
 // without mixing fields from a later reload.
-//
-// It is NOT yet immutable, and the gap is documented rather than hidden: the
-// four slices below are public, and the Item values they hold share their tag
-// backing arrays with the snapshot, so a caller that only meant to read one can
-// corrupt it. The fix — unexported fields with copying accessors — is right in
-// shape and touches 28 non-test call sites across `store`, `taskquery`,
-// `application`, `api` and `cmd/tasks`. It is deliberately NOT bundled with a
-// behavior packet: it changes no behavior, offers no differential evidence, and
-// would collide with every worktree reading a snapshot at the same time.
-// TestSnapshotIsNotYetImmutable pins the defect so it cannot be closed silently.
 type Snapshot struct {
-	Items          []Item
-	ArchiveItems   []Item
-	LiveRecords    []record.Record
-	ArchiveRecords []record.Record
+	items          []Item
+	archiveItems   []Item
+	liveRecords    []record.Record
+	archiveRecords []record.Record
 
 	archiveLoaded bool
 	revisions     map[Source]map[string]string
 }
+
+// Items returns a detached copy of the live tasks in file order.
+func (s *Snapshot) Items() []Item { return cloneItems(s.items) }
+
+// ArchiveItems returns a detached copy of the archived tasks in file order.
+func (s *Snapshot) ArchiveItems() []Item { return cloneItems(s.archiveItems) }
+
+// LiveRecords returns a detached copy of the parsed live records.
+func (s *Snapshot) LiveRecords() []record.Record { return cloneRecords(s.liveRecords) }
+
+// ArchiveRecords returns a detached copy of the parsed archive records.
+func (s *Snapshot) ArchiveRecords() []record.Record { return cloneRecords(s.archiveRecords) }
 
 // ArchiveLoaded reports whether the archive half was captured.
 func (s *Snapshot) ArchiveLoaded() bool { return s.archiveLoaded }
@@ -80,13 +82,13 @@ func (s *Snapshot) RevisionFor(item Item) string {
 // record set. Values and baselines therefore come from one read; callers never
 // pair an old display value with a fresh expectation from another store read.
 func (s *Snapshot) FieldBaselines(id string, fields []PatchField) (map[PatchField]string, bool) {
-	index := locateStableIndex(s.LiveRecords, id)
+	index := locateStableIndex(s.liveRecords, id)
 	if index < 0 {
 		return nil, false
 	}
 	out := make(map[PatchField]string, len(fields))
 	for _, field := range fields {
-		value, err := fieldBaseline(s.LiveRecords, index, field)
+		value, err := fieldBaseline(s.liveRecords, index, field)
 		if err != nil {
 			return nil, false
 		}
@@ -99,9 +101,9 @@ func (s *Snapshot) FieldBaselines(id string, fields []PatchField) (map[PatchFiel
 // lives in the parent pointers, so no boundary is ever inferred by scanning.
 func (s *Snapshot) ChildrenOf(id string) []Item {
 	children := []Item{}
-	for _, item := range s.Items {
+	for _, item := range s.items {
 		if item.HasParent && item.Parent == id {
-			children = append(children, item)
+			children = append(children, cloneItem(item))
 		}
 	}
 	return children
@@ -110,12 +112,68 @@ func (s *Snapshot) ChildrenOf(id string) []Item {
 // Roots is the live items with no parent, in file order.
 func (s *Snapshot) Roots() []Item {
 	roots := []Item{}
-	for _, item := range s.Items {
+	for _, item := range s.items {
 		if !item.HasParent {
-			roots = append(roots, item)
+			roots = append(roots, cloneItem(item))
 		}
 	}
 	return roots
+}
+
+func cloneItems(items []Item) []Item {
+	if items == nil {
+		return nil
+	}
+	out := make([]Item, len(items))
+	for index, item := range items {
+		out[index] = cloneItem(item)
+	}
+	return out
+}
+
+func cloneItem(item Item) Item {
+	item.AllTags = cloneStrings(item.AllTags)
+	item.Tags = cloneStrings(item.Tags)
+	item.Contexts = cloneStrings(item.Contexts)
+	item.ScheduledTime = cloneRaw(item.ScheduledTime)
+	item.DeadlineTime = cloneRaw(item.DeadlineTime)
+	item.Delegation = cloneRaw(item.Delegation)
+	return item
+}
+
+func cloneStrings(values []string) []string {
+	if values == nil {
+		return nil
+	}
+	return append([]string{}, values...)
+}
+
+func cloneRaw(value json.RawMessage) json.RawMessage {
+	if value == nil {
+		return nil
+	}
+	return append(json.RawMessage{}, value...)
+}
+
+func cloneRecords(records []record.Record) []record.Record {
+	if records == nil {
+		return nil
+	}
+	out := make([]record.Record, len(records))
+	for recordIndex, parsed := range records {
+		out[recordIndex] = record.Record{Line: parsed.Line}
+		if parsed.Fields == nil {
+			continue
+		}
+		out[recordIndex].Fields = make([]record.Field, len(parsed.Fields))
+		for fieldIndex, field := range parsed.Fields {
+			out[recordIndex].Fields[fieldIndex] = record.Field{
+				Key:   field.Key,
+				Value: cloneRaw(field.Value),
+			}
+		}
+	}
+	return out
 }
 
 func buildItems(records []record.Record, source Source) []Item {

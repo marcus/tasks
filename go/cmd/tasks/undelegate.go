@@ -65,7 +65,7 @@ func (s *surfaceContext) delegationItem(result store.MutationResult, id string) 
 		}
 		snapshot = fresh
 	}
-	for _, item := range snapshot.Items {
+	for _, item := range snapshot.Items() {
 		if item.ID == id {
 			return item, true
 		}

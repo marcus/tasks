@@ -440,7 +440,7 @@ func openDescendantIDs(queries *taskquery.Queries, sectionID string) []string {
 	byParent := map[string][]string{}
 	state := map[string]string{}
 	kind := map[string]string{}
-	for _, parsed := range queries.Snapshot().LiveRecords {
+	for _, parsed := range queries.Snapshot().LiveRecords() {
 		id := parsed.String("id")
 		if id == "" {
 			continue

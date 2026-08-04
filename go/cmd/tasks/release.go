@@ -119,7 +119,7 @@ func (s *surfaceContext) reReadAfterNote(id string) (*store.Snapshot, bool) {
 	if err != nil {
 		return nil, false
 	}
-	for _, item := range snapshot.Items {
+	for _, item := range snapshot.Items() {
 		if item.ID == id {
 			return snapshot, true
 		}

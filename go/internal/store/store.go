@@ -323,10 +323,10 @@ func buildReadSnapshot(live, archive readSource, includeArchive bool) (*Snapshot
 		}
 	}
 	return &Snapshot{
-		LiveRecords:    live.records,
-		ArchiveRecords: archiveRecords,
-		Items:          buildItems(live.records, SourceLive),
-		ArchiveItems:   buildItems(archiveRecords, SourceArchive),
+		liveRecords:    live.records,
+		archiveRecords: archiveRecords,
+		items:          buildItems(live.records, SourceLive),
+		archiveItems:   buildItems(archiveRecords, SourceArchive),
 		archiveLoaded:  includeArchive,
 		revisions: map[Source]map[string]string{
 			SourceLive: liveRevisions, SourceArchive: archiveRevisions,
@@ -349,7 +349,7 @@ func (s *Snapshot) Resources() []Resource {
 	for _, group := range []struct {
 		items []Item
 		kind  string
-	}{{s.Items, "task"}, {s.ArchiveItems, "archived_task"}} {
+	}{{s.items, "task"}, {s.archiveItems, "archived_task"}} {
 		for _, item := range group.items {
 			if item.ID == "" {
 				continue

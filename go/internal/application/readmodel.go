@@ -57,7 +57,7 @@ func (a *Application) ReadTasks(operation *OperationContext) (*ReadModel, error)
 }
 
 // Items is the live tasks this model was built over, in file order.
-func (m *ReadModel) Items() []store.Item { return m.snapshot.Items }
+func (m *ReadModel) Items() []store.Item { return m.snapshot.Items() }
 
 // Queries is the read model over the same snapshot, for every derived answer —
 // availability, links, the tree, body lines.

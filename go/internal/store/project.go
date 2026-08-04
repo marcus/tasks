@@ -216,11 +216,12 @@ func (s *Store) SectionNamed(name string) (record.Record, bool) {
 	if err != nil {
 		return record.Record{}, false
 	}
-	index := findSection(snapshot.LiveRecords, name)
+	records := snapshot.LiveRecords()
+	index := findSection(records, name)
 	if index < 0 {
 		return record.Record{}, false
 	}
-	return snapshot.LiveRecords[index], true
+	return records[index], true
 }
 
 // RenameSection retitles a section in one checked transaction. It reports the

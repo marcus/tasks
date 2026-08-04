@@ -69,7 +69,7 @@ func Quadrant(item store.Item, today temporal.Date, urgentDays int) string {
 // grouping is the view, not a sort.
 func (q *Queries) QuadrantItems() []store.Item {
 	selected := []store.Item{}
-	for _, item := range q.snapshot.Items {
+	for _, item := range q.snapshot.Items() {
 		if !isOpen(item.State) || !q.AvailabilityFor(item).Available() {
 			continue
 		}
@@ -84,7 +84,7 @@ func (q *Queries) QuadrantItems() []store.Item {
 // the canonical order the API and the TUI share would be nondeterministic.
 func (q *Queries) NextItems() []store.Item {
 	selected := []store.Item{}
-	for _, item := range q.snapshot.Items {
+	for _, item := range q.snapshot.Items() {
 		if item.State != "NEXT" || !q.AvailabilityFor(item).Available() {
 			continue
 		}
@@ -101,7 +101,7 @@ func (q *Queries) NextItems() []store.Item {
 // to choose from.
 func (q *Queries) InboxItems() []store.Item {
 	selected := []store.Item{}
-	for _, item := range q.snapshot.Items {
+	for _, item := range q.snapshot.Items() {
 		if item.State != "INBOX" || !q.AvailabilityFor(item).Available() {
 			continue
 		}

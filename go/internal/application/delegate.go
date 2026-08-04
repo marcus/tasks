@@ -329,7 +329,7 @@ func (a *Application) taskAfter(result Outcome, id string) *store.Item {
 		}
 		snapshot = fresh
 	}
-	for _, item := range snapshot.Items {
+	for _, item := range snapshot.Items() {
 		if item.HasID && item.ID == id {
 			found := item
 			return &found
@@ -353,7 +353,7 @@ func (a *Application) itemOf(id string) (store.Item, bool) {
 	if err != nil {
 		return store.Item{}, false
 	}
-	for _, item := range snapshot.Items {
+	for _, item := range snapshot.Items() {
 		if item.HasID && item.ID == id {
 			return item, true
 		}
