@@ -99,7 +99,13 @@ func (t *TemporalInput) Row() temporalRow {
 }
 
 // Value is the control's working value.
-func (t *TemporalInput) Value() *temporal.Value { return t.value }
+func (t *TemporalInput) Value() *temporal.Value {
+	if t.value == nil {
+		return nil
+	}
+	copied := *t.value
+	return &copied
+}
 
 // ZoneSearch is the live zone query, or nil when the search is not open.
 func (t *TemporalInput) ZoneSearch() *string { return t.zoneSearch }

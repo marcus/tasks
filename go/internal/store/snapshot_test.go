@@ -67,3 +67,23 @@ func TestSnapshotIsNotYetImmutable(t *testing.T) {
 		t.Fatal("Items is no longer assignable — delete this test, the defect is fixed")
 	}
 }
+
+func TestSnapshotFieldBaselinesComeFromItsHeldRecords(t *testing.T) {
+	target, _ := writerFixture(t, patchFixture)
+	snapshot, err := target.ReadSnapshot(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := snapshot.Items[0]
+	fields := []PatchField{FieldTitle, FieldState, FieldDeadline, FieldTags}
+	baselines, found := snapshot.FieldBaselines(item.ID, fields)
+	if !found {
+		t.Fatalf("no baselines for %s", item.ID)
+	}
+	if baselines[FieldTitle] != item.Title {
+		t.Fatalf("title baseline = %q, want %q", baselines[FieldTitle], item.Title)
+	}
+	if _, found := snapshot.FieldBaselines("does-not-exist", fields); found {
+		t.Fatal("a missing id returned baselines")
+	}
+}

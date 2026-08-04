@@ -400,6 +400,96 @@ SCENARIOS = [
     view: "next", select: "aaaa0004",
     keys: ["\x1b[1;3B"],
   },
+
+  # -- independent-review closeout ----------------------------------------------
+  {
+    name: "bracketed-paste-from-list-is-data",
+    why: "Bubble Tea's paste event must open the prompt and sanitize controls without running q",
+    view: "next", select: "aaaa0004",
+    keys: ["<<paste-multiline>>"],
+  },
+  {
+    name: "bracketed-paste-into-form-is-data",
+    why: "a whole pasted date reaches the form as text rather than shortcut keys",
+    view: "next", select: "aaaa0004",
+    keys: ["d", "<<paste-date>>", "\r"],
+  },
+  {
+    name: "recurrence-live-preview",
+    why: "the popup projects three exact dates with weekdays from the held anchor",
+    view: "next", select: "aaaa0004", hint: true,
+    keys: ["r", "e", "v", "e", "r", "y", " ", "m", "o", "n", " ", "w", "e", "d"],
+  },
+  {
+    name: "escape-cancels-active-and-advances",
+    why: "Escape preserves the cancelled response and starts the queued request",
+    view: "next", select: "aaaa0004",
+    keys: ["\t", "o", "n", "e", "\r", "\t", "t", "w", "o", "\r", "\e"],
+  },
+  {
+    name: "agent-quit-confirmation-keeps-work",
+    why: "q cannot confirm the persistent prompt and n restores the queue",
+    view: "next", select: "aaaa0004",
+    keys: ["\t", "o", "n", "e", "\r", "\x03", "q", "n"],
+  },
+  {
+    name: "dirty-draft-quit-confirmation-keeps-edit",
+    why: "q cannot discard a dirty field and n restores the editor overlay",
+    view: "next", select: "aaaa0004",
+    keys: ["\r", "e", "!", "\x03", "q", "n"],
+  },
+  {
+    name: "queued-cancel-confirmation-keeps-active",
+    why: "the palette confirmation uses Ruby's exact title/body/keep flash",
+    view: "next", select: "aaaa0004",
+    keys: ["\t", "o", "n", "e", "\r", "\t", "t", "w", "o", "\r",
+           ":", "c", "a", "n", "c", "e", "l", " ", "q", "u", "e", "u", "e", "d", "\r", "n"],
+  },
+  {
+    name: "queued-cancel-confirmation-discards-waiting",
+    why: "confirmation cancels every waiting request without cancelling the active request",
+    view: "next", select: "aaaa0004",
+    keys: ["\t", "o", "n", "e", "\r", "\t", "t", "w", "o", "\r",
+           ":", "c", "a", "n", "c", "e", "l", " ", "q", "u", "e", "u", "e", "d", "\r", "y"],
+  },
+  {
+    name: "agent-quit-confirmation-shuts-down-work",
+    why: "explicit y cancels the active adapter before marking the TUI ready to exit",
+    view: "next", select: "aaaa0004",
+    keys: ["\t", "o", "n", "e", "\r", "\x03", "y"],
+  },
+  {
+    name: "dirty-draft-quit-shuts-down-work",
+    why: "discarding a dirty draft also shuts down the active agent before exit",
+    view: "next", select: "aaaa0004",
+    keys: ["\t", "o", "n", "e", "\r", "\r", "e", "!", "\x03", "y"],
+  },
+  {
+    name: "proposal-external-rewrite-conflicts",
+    why: "a decision uses the revision from the held paint and writes no stale bytes",
+    fixture: :proposed,
+    view: "inbox", select: "aaaa0004",
+    keys: ["<<external-proposal-change>>", "a"],
+  },
+  {
+    name: "form-target-deleted-on-refresh",
+    why: "an external delete detaches the target-bound form instead of retargeting it",
+    view: "next", select: "aaaa0004",
+    keys: ["d", "<<external-delete-selected>>", "<<refresh>>"],
+  },
+  {
+    name: "action-palette-target-deleted-before-write",
+    why: "a palette opened for A detaches after A disappears and Return cannot write to the replacement selection",
+    view: "next", select: "aaaa0004",
+    keys: [":", "c", "o", "m", "p", "l", "e", "t", "e",
+           "<<external-delete-selected>>", "<<refresh>>", "\r"],
+  },
+  {
+    name: "project-archive-uses-session-date",
+    why: "project archive stamps the injected TUI day in both implementations",
+    view: "projects", select: "aaaa0003",
+    keys: ["x", "y"],
+  },
 ].freeze
 
 # A closed root with open work still inside it — the state a sweep refuses.
@@ -412,11 +502,14 @@ JSONL
 
 # The shared fixture with its one closed task removed, so a sweep finds nothing.
 NO_CLOSED = FIXTURE.lines.reject { |line| line.include?('"id":"aaaa0008"') }.join
+PROPOSED = FIXTURE.sub('"state":"NEXT","priority":"A","title":"Book flight',
+                       '"state":"PROPOSED","priority":"A","title":"Book flight')
 
 FIXTURES = {
   nil => FIXTURE,
   blocked_archive: BLOCKED_ARCHIVE,
   no_closed: NO_CLOSED,
+  proposed: PROPOSED,
 }.freeze
 
 def sandbox(dir, fixture)
@@ -450,7 +543,7 @@ RUBY_DRIVER = <<~'RUBY'
   # the TUI's own behaviour around a request, not the model's words.
   fake_agent = Class.new do
     attr_reader :started
-    def initialize = (@started = []; @output = +""; @exit_status = nil; @process_status = nil)
+    def initialize = (@started = []; @output = +"partial agent transcript"; @exit_status = nil; @process_status = nil)
     def available? = true
     def io = nil
     def success? = true
@@ -460,7 +553,7 @@ RUBY_DRIVER = <<~'RUBY'
     def process_status = @process_status
     def cancel = :done
     def pump
-      @output << "fake agent transcript"
+      @output.replace("fake agent transcript")
       @exit_status = 0
       :done
     end
@@ -488,7 +581,7 @@ RUBY_DRIVER = <<~'RUBY'
     app.send(:select_row, index) if index
   end
 
-  def observe(app, ui, key)
+  def observe(app, ui, key, hint: false)
     item = app.send(:current_item)
     project = app.send(:current_project)
     step = {
@@ -497,6 +590,8 @@ RUBY_DRIVER = <<~'RUBY'
       "selected" => (item&.id || project&.id).to_s,
       "flash" => app.instance_variable_get(:@flash).to_s,
       "overlay" => "",
+      "quit" => app.instance_variable_get(:@quit),
+      "queue" => app.instance_variable_get(:@agent_queue).requests.map { |request| request.status.to_s },
     }
     case ui.mode
     when :modal, :modal_filter
@@ -505,6 +600,7 @@ RUBY_DRIVER = <<~'RUBY'
       form = ui.form
       if form
         step["overlay"] = "#{form.kind}:#{form.input}"
+        step["overlay"] += " |#{form.hint}" if hint
         step["overlay"] += " !#{form.error}" if form.error
       end
     when :palette
@@ -534,7 +630,7 @@ RUBY_DRIVER = <<~'RUBY'
     step
   end
 
-  steps = [observe(app, ui, "")]
+  steps = [observe(app, ui, "", hint: script["hint"])]
   Array(script["keys"]).each do |key|
     # A synthetic token, not a key: it drains the agent queue once, the way the
     # event loop's IO.select branch does. It is the only way to compare a
@@ -546,11 +642,25 @@ RUBY_DRIVER = <<~'RUBY'
       # Move only the injected scenario clock. The archive modal and both store
       # files stay untouched, reproducing a user who confirms the next day.
       pinned += 24 * 60 * 60
+    elsif key == "<<paste-multiline>>"
+      app.send(:handle_paste, "q\nnext\tvalue")
+    elsif key == "<<paste-date>>"
+      app.send(:handle_paste, "2026-08-09")
+    elsif key == "<<refresh>>"
+      app.send(:reload_store)
+    elsif key == "<<external-delete-selected>>"
+      path = File.join(dir, "tasks.jsonl")
+      lines = File.readlines(path).reject { |line| line.include?(%Q{"id":"#{script["select"]}"}) }
+      File.write(path, lines.join)
+    elsif key == "<<external-proposal-change>>"
+      path = File.join(dir, "tasks.jsonl")
+      File.write(path, File.read(path).sub('"title":"Book flight in Concur"',
+                                          '"title":"Changed outside"'))
     else
       app.send(:handle_key, key)
     end
     app.send(:rows)
-    steps << observe(app, ui, key)
+    steps << observe(app, ui, key, hint: script["hint"])
   end
 
   File.write(ENV.fetch("TUI_DIFF_OUT"), JSON.pretty_generate(steps) + "\n")
@@ -640,7 +750,7 @@ def diff_lines(left, right, label)
     # was a real hole: a step whose only difference was the agent's transcript
     # still failed the scenario (the hash comparison above catches it), but the
     # report named no field, so the failure read as an unexplained blank.
-    %w[mode selected flash overlay response].each do |field|
+    %w[mode selected flash overlay response quit queue].each do |field|
       next if a && b && a[field] == b[field]
 
       out << "    #{field}: ruby=#{(a || {})[field].inspect} go=#{(b || {})[field].inspect}"

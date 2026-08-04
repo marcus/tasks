@@ -15,11 +15,9 @@ import (
 // STRUCTURAL NOTE, and the one place this packet had to build rather than port.
 // Ruby has `Tasks::EditSnapshot`, produced by `application.edit_snapshot(id)`,
 // which carries every field, its baseline and the task's revision. The Go
-// application facade publishes the same information through two narrower calls
-// — the read model for the values, `Application.Baseline(id, field)` for the
-// expectations — and does not expose a snapshot type. So this assembles one
-// HERE, from those two public calls, rather than reaching past the facade or
-// asking for a new one.
+// application facade publishes the values and field expectations through one
+// held ReadModel. This assembles the editor shape without taking a second store
+// read, so every buffer and every expectation describes the same bytes.
 //
 // The important property is preserved: every baseline in a snapshot comes from
 // one moment, so a patch's conflict check compares against the value the user
@@ -101,11 +99,18 @@ func NewEditSnapshot(app *application.Application, read *application.ReadModel, 
 	if value, present := queries.DeadlineValue(item); present {
 		snapshot.Deadline = &value
 	}
+	fields := make([]store.PatchField, 0, len(editFields))
 	for _, field := range editFields {
-		if baseline, present := app.Baseline(id, patchFieldFor[field]); present {
-			snapshot.baselines[field] = baseline
-		}
+		fields = append(fields, patchFieldFor[field])
 	}
+	baselines, present := read.FieldBaselines(id, fields)
+	if !present {
+		return nil, false
+	}
+	for _, field := range editFields {
+		snapshot.baselines[field] = baselines[patchFieldFor[field]]
+	}
+	_ = app // retained in the public constructor shape used by existing callers
 	return snapshot, true
 }
 

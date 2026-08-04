@@ -31,6 +31,7 @@ func (m *Model) layout() ScreenLayout {
 		Panel:       m.panel != nil || m.taskEditor != nil,
 		PanelMode:   m.panelMode,
 		PanelOffset: m.panelOffset,
+		Editing:     m.taskEditor != nil,
 	})
 }
 

@@ -1,7 +1,11 @@
 package tui
 
 import (
+	"strings"
+
 	tea "github.com/charmbracelet/bubbletea"
+
+	"tasks-go/internal/tui/term/ansi"
 )
 
 // Mouse handling in this packet is deliberately the COARSE half: click a row to
@@ -47,16 +51,26 @@ func (m *Model) HandleMouse(event tea.MouseMsg) bool {
 func (m *Model) mouseEnabled() bool { return m.paths.Mouse }
 
 func (m *Model) wheel(layout ScreenLayout, event tea.MouseMsg, direction int) bool {
+	if m.footerRole(layout, event.Y) == "response" {
+		m.ScrollResponse(direction * 3)
+		return true
+	}
 	if m.panel != nil && m.inPanel(layout, event.X) {
 		m.panel.ScrollLine(direction*3, layout.BodyHeight)
 		return true
 	}
+	m.blurPrompt()
 	m.move(direction * 3)
 	return true
 }
 
 func (m *Model) click(layout ScreenLayout, event tea.MouseMsg) bool {
+	if m.footerRole(layout, event.Y) == "prompt" {
+		m.FocusPrompt()
+		return true
+	}
 	if event.Y == layout.HeaderRow() {
+		m.blurPrompt()
 		return m.clickTab(layout, event.X)
 	}
 	begin, end := layout.BodyRows()
@@ -80,6 +94,7 @@ func (m *Model) click(layout ScreenLayout, event tea.MouseMsg) bool {
 	markerOrigin := listBegin + 1
 	if row.HasMarker() && event.X >= markerOrigin+row.MarkerBegin &&
 		event.X < markerOrigin+row.MarkerEnd {
+		m.blurPrompt()
 		m.selectRow(index)
 		if row.Item != nil && m.collapsed[row.Item.ID] {
 			m.ExpandSelected()
@@ -88,8 +103,39 @@ func (m *Model) click(layout ScreenLayout, event tea.MouseMsg) bool {
 		}
 		return true
 	}
+	m.blurPrompt()
 	m.selectRow(index)
 	return true
+}
+
+func (m *Model) blurPrompt() {
+	if m.mode == ModePrompt {
+		m.mode = ModeList
+	}
+}
+
+// footerRole classifies the fitted footer by the same content Footer emitted.
+// The prompt block starts at its ❯ row and response rows precede it.
+func (m *Model) footerRole(layout ScreenLayout, row int) string {
+	start, end := layout.FooterRows()
+	if row < start || row >= end {
+		return ""
+	}
+	index := row - start
+	prompt := -1
+	for i, line := range layout.Footer {
+		if strings.Contains(ansi.Strip(line), "❯") {
+			prompt = i
+			break
+		}
+	}
+	if prompt >= 0 && index >= prompt {
+		return "prompt"
+	}
+	if m.respOpen && (prompt < 0 || index < prompt) {
+		return "response"
+	}
+	return "chrome"
 }
 
 func (m *Model) clickTab(layout ScreenLayout, column int) bool {

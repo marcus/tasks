@@ -1,18 +1,63 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 
 	"tasks-go/internal/agentcontext"
 	"tasks-go/internal/config"
 	"tasks-go/internal/determinism"
 	"tasks-go/internal/llm"
 	"tasks-go/internal/promptfacts"
+	"tasks-go/internal/tui"
 	"tasks-go/internal/tui/term/agent"
 )
+
+type errorRunner struct{ err error }
+
+func (r errorRunner) Run() (tea.Model, error) { return nil, r.err }
+
+type cleanupAdapter struct{ cancelled bool }
+
+func (*cleanupAdapter) Available() bool                    { return true }
+func (*cleanupAdapter) Start(string, string) error         { return nil }
+func (*cleanupAdapter) Pump() (bool, error)                { return false, nil }
+func (a *cleanupAdapter) Cancel() error                    { a.cancelled = true; return nil }
+func (*cleanupAdapter) Output() string                     { return "partial" }
+func (*cleanupAdapter) Success() bool                      { return false }
+func (*cleanupAdapter) ExitStatus() (int, bool)            { return 0, false }
+func (*cleanupAdapter) ProcessStatus() agent.ProcessStatus { return agent.ProcessStatus{} }
+
+func TestRunProgramShutsDownQueueWhenBubbleTeaReturnsAnError(t *testing.T) {
+	adapter := &cleanupAdapter{}
+	queue, err := agent.NewQueue(agent.Options{
+		Factory:      func(agent.Entry) (agent.Adapter, error) { return adapter, nil },
+		Availability: func(agent.Entry) bool { return true },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := tui.AgentEntry{ProviderName: "fake", ModelName: "model", Label: "fake:model"}
+	if submission := queue.Enqueue("work", entry); !submission.Accepted() {
+		t.Fatal(submission.Error)
+	}
+	if event := queue.StartNext(); event.Type != agent.Started {
+		t.Fatalf("start = %+v", event)
+	}
+	model := tui.New(tui.Options{Queue: queue})
+	want := errors.New("terminal failed")
+	if got := runProgram(model, errorRunner{err: want}); !errors.Is(got, want) {
+		t.Fatalf("runProgram error = %v", got)
+	}
+	if !adapter.cancelled || queue.Work() {
+		t.Fatalf("cleanup cancelled=%v work=%v", adapter.cancelled, queue.Work())
+	}
+}
 
 // These test the SHIPPING constructor.
 //

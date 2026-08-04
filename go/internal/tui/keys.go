@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -21,6 +22,10 @@ import (
 // this does is turn a decoded message back into that sequence so one registry
 // serves the help modal, the palette and live dispatch alike.
 func (m *Model) handleKey(message tea.KeyMsg) tea.Cmd {
+	if message.Paste {
+		m.handlePaste(string(message.Runes))
+		return nil
+	}
 	sequence := KeySequence(message)
 	if sequence == "" {
 		return nil
@@ -28,8 +33,11 @@ func (m *Model) handleKey(message tea.KeyMsg) tea.Cmd {
 
 	// A dirty draft's quit confirmation outranks everything: it is a question
 	// the user has been asked and has not answered.
-	if m.taskEditor != nil && m.taskEditor.PendingQuit() {
+	if m.modal != nil && m.modal.Kind() == ModalTaskDraftQuitConfirm {
 		return m.taskDraftQuitKey(sequence)
+	}
+	if m.modal != nil && m.modal.Kind() == ModalAgentQuitConfirm {
+		return m.agentQuitKey(sequence)
 	}
 	// Global bindings (ctrl-c) reach through every mode, so a wedged overlay
 	// can always be escaped.
@@ -39,6 +47,34 @@ func (m *Model) handleKey(message tea.KeyMsg) tea.Cmd {
 	if m.mode == ModeTaskEdit && m.taskEditor != nil {
 		m.taskEditKey(sequence)
 		return nil
+	}
+	if m.mode == ModeList && m.suspendedTaskEditor != nil &&
+		m.panel != nil && m.panel.Kind == PanelSuspendedTaskEdit {
+		switch sequence {
+		case "e":
+			if m.suspendedTaskEditor.Missing() {
+				m.showSuspendedEditorPanel()
+				m.Flash("Task no longer exists; local field retained for copy or discard")
+				return nil
+			}
+			if !m.selectedTarget(m.suspendedTaskEditor.TargetID()) {
+				m.showSuspendedEditorPanel()
+				m.Flash("paused task draft: switch to its task to resume · y copies · esc discards")
+				return nil
+			}
+			m.StartTaskEdit("")
+			return nil
+		case "y":
+			m.copyMissingEditorField()
+			return nil
+		case "\x1b":
+			m.suspendedTaskEditor = nil
+			m.suspendedTaskPanel = nil
+			m.panel = nil
+			m.editorMessage = ""
+			m.Flash("discarded local draft for paused task")
+			return nil
+		}
 	}
 
 	switch m.mode {
@@ -60,6 +96,45 @@ func (m *Model) handleKey(message tea.KeyMsg) tea.Cmd {
 		m.listKey(sequence)
 	}
 	return m.maybeQuit()
+}
+
+// handlePaste routes Bubble Tea's bracketed-paste event before shortcut
+// conversion. Pasted `q`, Escape-looking bytes, and newlines are data, never
+// commands; every destination uses its own editor sanitizer.
+func (m *Model) handlePaste(text string) {
+	switch m.mode {
+	case ModePrompt:
+		m.promptEditor().Insert(text)
+	case ModeForm:
+		if m.form != nil {
+			m.form.Paste(text)
+		}
+	case ModeTaskEdit:
+		if m.taskEditor != nil {
+			m.processEditorOutcome(m.taskEditor.Paste(text))
+		}
+	case ModePalette:
+		if m.actionPalette != nil {
+			m.resolvePaletteOutcome(m.actionPalette, m.actionPalette.Paste(text))
+		}
+	case ModeContextPalette:
+		if m.contextPalette != nil {
+			m.applyContextOutcome(m.contextPalette.Paste(text))
+		}
+	case ModeFilter:
+		editor := input.New(m.filterInput, input.Options{})
+		editor.SetCursor(len(input.Graphemes(m.filterInput)))
+		if editor.Insert(text) == input.Changed {
+			m.filterInput = editor.Text()
+			m.RefreshRows()
+		}
+	case ModeModalFilter:
+		if m.modalFilterEditor().Insert(text) == input.Changed {
+			m.modal.SetFilter(m.modalFilterEditor().Text())
+		}
+	default:
+		m.PromptPaste(text)
+	}
 }
 
 func (m *Model) maybeQuit() tea.Cmd {
@@ -357,6 +432,17 @@ func (m *Model) resolvePaletteOutcome(palette *ActionPalette, outcome PaletteOut
 			return
 		}
 		entry := outcome.Entry
+		if m.read != nil && m.read.Stale() {
+			m.Refresh()
+			if m.actionPalette != palette {
+				return
+			}
+		}
+		if target := palette.TargetID(); target != "" && !m.selectedTarget(target) {
+			m.actionPalette = nil
+			m.mode = ModeList
+			return
+		}
 		m.CloseActionPalette()
 		if handler, present := m.handlers()[entry.Handler]; present {
 			handler("")
@@ -497,8 +583,12 @@ func (m *Model) rowsContain(id string) bool {
 
 func (m *Model) copyMissingEditorField() {
 	value := ""
-	if m.taskEditor != nil {
-		value = valueText(m.taskEditor.CopyValue())
+	editor := m.taskEditor
+	if editor == nil {
+		editor = m.suspendedTaskEditor
+	}
+	if editor != nil {
+		value = valueText(editor.CopyValue())
 	}
 	if value == "" {
 		m.Flash("nothing to copy")
@@ -513,19 +603,75 @@ func (m *Model) copyMissingEditorField() {
 
 // taskDraftQuitKey answers the "discard your unsaved draft?" question.
 func (m *Model) taskDraftQuitKey(sequence string) tea.Cmd {
-	outcome := m.taskEditor.HandleQuitConfirmation(sequence)
+	editor := m.taskEditor
+	if editor == nil {
+		editor = m.suspendedTaskEditor
+	}
+	if editor == nil {
+		m.clearQuitConfirmation(true)
+		return nil
+	}
+	outcome := editor.HandleQuitConfirmation(sequence)
 	switch outcome.Status {
 	case EditorQuitConfirmed:
-		m.taskEditor = nil
-		m.mode = ModeList
+		m.clearQuitConfirmation(false)
+		if m.taskEditor == editor {
+			m.taskEditor = nil
+		}
+		if m.suspendedTaskEditor == editor {
+			m.suspendedTaskEditor = nil
+			m.suspendedTaskPanel = nil
+		}
+		if m.queueHasWork() {
+			m.queue.Shutdown()
+		}
 		m.Save()
 		m.quitting = true
-		m.Flash(outcome.Message)
 		return tea.Quit
 	case EditorQuitCancelled:
+		m.clearQuitConfirmation(true)
 		m.Flash(outcome.Message)
+	default:
+		if sequence == "q" || sequence == "\x03" {
+			m.Flash("confirmation still open — y/return discards and quits · n/esc keeps editing")
+		}
 	}
 	return nil
+}
+
+func (m *Model) agentQuitKey(sequence string) tea.Cmd {
+	switch sequence {
+	case "y", "Y", "\r", "\n":
+		m.clearQuitConfirmation(false)
+		if m.queue != nil {
+			m.queue.Shutdown()
+		}
+		m.Save()
+		m.quitting = true
+		return tea.Quit
+	case "n", "N", "\x1b":
+		m.clearQuitConfirmation(true)
+		m.Flash("quit cancelled — agent queue kept")
+	case "q", "\x03":
+		m.Flash("confirmation still open — y/return quits · n/esc keeps running")
+	}
+	return nil
+}
+
+func (m *Model) clearQuitConfirmation(restore bool) {
+	retainedModal, retainedMode := m.quitReturnModal, m.quitReturnMode
+	retainedMessage := m.quitReturnMessage
+	m.quitReturnModal = nil
+	m.quitReturnMode = ""
+	m.quitReturnMessage = ""
+	if restore {
+		m.modal = retainedModal
+		m.mode = retainedMode
+		m.editorMessage = retainedMessage
+		return
+	}
+	m.modal = nil
+	m.mode = ModeList
 }
 
 // -- selection helpers ---------------------------------------------------------------
@@ -564,6 +710,14 @@ func (m *Model) scrollPanel(direction int, half bool) {
 // the session with an editor open.
 func (m *Model) dismiss() {
 	switch {
+	case m.queue != nil && m.queue.Active():
+		event := m.queue.CancelActive()
+		m.recordAgentResult(event.Request)
+		m.Refresh()
+		m.advanceQueue()
+		m.Flash(fmt.Sprintf("cancelled agent request #%d", event.Request.ID))
+	case m.respOpen:
+		m.respOpen = false
 	case m.filter != "":
 		m.filter = ""
 		m.RefreshRows()

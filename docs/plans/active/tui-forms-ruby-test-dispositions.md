@@ -10,10 +10,10 @@ several Ruby cases collapse into one Go table test, and several Go tests cover
 a contract Ruby only exercises incidentally.
 
 The judgment gate for this packet is `porting/compare/tui-interaction-diff`,
-which drives 52 keystroke scenarios through **both** implementations and
-compares mode, selection, status message, overlay state, the resulting
-`tasks.jsonl` AND `archive.jsonl` bytes, and the undo journal's cursor and
-labels. It is at **52/52 GATE PASS**.
+which drives 66 keystroke scenarios through **both** implementations and
+compares mode, selection, status message, overlay state, agent queue lifecycle,
+quit state, the resulting `tasks.jsonl` AND `archive.jsonl` bytes, and the undo
+journal's cursor and labels. It is at **66/66 GATE PASS**.
 
 Both sides run against scripted fakes for anything external: a fake agent
 adapter on each side, driven by a shared `<<tick>>` token that drains the queue
@@ -64,9 +64,10 @@ traversal skipping hidden/disabled fields, validation scoped to reachable
 fields, the two-phase dirty departure, accept/reject/refresh reconciliation,
 pending single-flight, and the render model. Two Ruby cases pin
 `Support.frozen_copy` deep-freezing; Go has no freeze, and the equivalent
-property — a caller cannot mutate the form through a returned value — is
-bought by `copyValue` and asserted by
-`TestFormRefreshKeepsADirtyBufferAndMovesEveryBaseline`.
+property — a caller cannot mutate the form through a returned value or a
+committed transition — is bought by `copyValue` and asserted by
+`TestTemporalValuesNeverAliasThroughFormReadOrCommitSurfaces` and
+`TestTemporalInputValueReturnsADefensiveCopy`.
 
 **`test_app_modals.rb`** — 85 cases across the whole app surface, including the
 two archive-clock regressions this packet added. Every family is now answered:
@@ -110,10 +111,10 @@ previous revision of this document listed as a gap is now built:
    in-place refresh that keeps the reader's filter and scroll, queued-request
    cancellation behind a confirmation, and the response pane with scrolling.
 
-## Five defects found and fixed
+## Review defects found and fixed
 
-Four were found by running the two implementations against each other, not
-by reading code and not by unit tests.
+The initial five included four found by running the two implementations against
+each other, not by reading code and not by unit tests.
 
 1. **`cmd/tasks-tui` never set the journal's coalescing scope.** The journal
    only extends a keyed tip when the scope matches too, and an empty scope is
@@ -181,3 +182,12 @@ simply not ported: after a save moves a task out of the current view (putting it
 on hold removes it from Next), Ruby closes the editor and says where the
 selection went. Now ported, and pinned by the
 `edit-deferred-toggle-writes-the-marker` scenario.
+
+The independent closeout review then exercised the paths the first pass did not:
+Bubble Tea paste messages; persistent dirty-draft and agent-work quit questions;
+active cancellation and failed-start queue advancement; stale proposal decisions,
+forms, editors, and action palettes; recurrence previews; mouse routing;
+responsive editor suspension; markdown export; and temporal pointer ownership.
+Those findings are pinned by focused Go tests and fourteen added differential
+scenarios, including both yes and no confirmation branches and a stale palette
+write attempt after its original target is deleted.

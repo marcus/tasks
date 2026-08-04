@@ -382,7 +382,8 @@ func (m *Model) YankRef() {
 // YankMarkdown is `Y`: copy the task as a markdown checkbox line with its notes.
 func (m *Model) YankMarkdown() {
 	m.yank(func(item store.Item) string {
-		return ExportMarkdown(item, m.read.Queries().Body(item))
+		queries := m.read.Queries()
+		return exportMarkdown(item, queries.Body(item), queries)
 	})
 }
 
@@ -400,8 +401,14 @@ func (m *Model) yank(render func(store.Item) string) {
 		m.Flash("task no longer exists")
 		return
 	}
-	command := clipboard.Command()
-	if command == nil || !clipboard.Copy(render(*item), command) {
+	text := render(*item)
+	copied := false
+	if m.copyToClipboard != nil {
+		copied = m.copyToClipboard(text)
+	} else if command := clipboard.Command(); command != nil {
+		copied = clipboard.Copy(text, command)
+	}
+	if !copied {
 		m.Flash("no clipboard tool found (pbcopy/wl-copy/xclip/xsel)")
 		return
 	}

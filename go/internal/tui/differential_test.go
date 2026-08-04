@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"tasks-go/internal/application"
 	"tasks-go/internal/config"
 	"tasks-go/internal/determinism"
@@ -42,14 +44,17 @@ type diffScript struct {
 	Select string `json:"select"`
 	// Keys are raw byte sequences, exactly as a terminal sends them.
 	Keys []string `json:"keys"`
+	Hint bool     `json:"hint"`
 }
 
 type diffStep struct {
-	Key      string `json:"key"`
-	Mode     string `json:"mode"`
-	Selected string `json:"selected"`
-	Flash    string `json:"flash"`
-	Overlay  string `json:"overlay"`
+	Key      string   `json:"key"`
+	Mode     string   `json:"mode"`
+	Selected string   `json:"selected"`
+	Flash    string   `json:"flash"`
+	Overlay  string   `json:"overlay"`
+	Quit     bool     `json:"quit"`
+	Queue    []string `json:"queue"`
 	// Response is the agent response pane's text, once a request has finished.
 	Response string `json:"response,omitempty"`
 }
@@ -98,10 +103,20 @@ func TestDifferentialDriver(t *testing.T) {
 			// file changes; the open archive preview is exactly the one the user
 			// saw on the previous day.
 			*clock = clock.Add(24 * time.Hour)
+		} else if key == "<<paste-multiline>>" {
+			model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q\nnext\tvalue"), Paste: true})
+		} else if key == "<<paste-date>>" {
+			model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2026-08-09"), Paste: true})
+		} else if key == "<<refresh>>" {
+			model.Refresh()
+		} else if key == "<<external-delete-selected>>" {
+			externalDeleteSelected(t, filepath.Join(dir, "tasks.jsonl"), script.Select)
+		} else if key == "<<external-proposal-change>>" {
+			externalRetitle(t, filepath.Join(dir, "tasks.jsonl"), "Book flight in Concur", "Changed outside")
 		} else {
 			model.Update(keyMessage(key))
 		}
-		steps = append(steps, diffObserve(model, key))
+		steps = append(steps, diffObserve(model, key, script.Hint))
 	}
 
 	encoded, err := json.MarshalIndent(steps, "", "  ")
@@ -119,8 +134,16 @@ func TestDifferentialDriver(t *testing.T) {
 
 // diffObserve is the observable state after one key: nothing about internal
 // structure, only what a person looking at the screen could report.
-func diffObserve(model *Model, key string) diffStep {
-	step := diffStep{Key: key, Mode: string(model.Mode()), Flash: model.FlashMessage()}
+func diffObserve(model *Model, key string, hint ...bool) diffStep {
+	step := diffStep{
+		Key: key, Mode: string(model.Mode()), Flash: model.FlashMessage(), Quit: model.quitting,
+		Queue: []string{},
+	}
+	if model.queue != nil {
+		for _, request := range model.queue.Requests() {
+			step.Queue = append(step.Queue, string(request.Status))
+		}
+	}
 	if item := model.CurrentItem(); item != nil {
 		step.Selected = item.ID
 	} else if project := model.CurrentProject(); project != nil {
@@ -141,6 +164,9 @@ func diffObserve(model *Model, key string) diffStep {
 	case ModeForm:
 		if model.Form() != nil {
 			step.Overlay = string(model.Form().Kind) + ":" + model.Form().Text()
+			if len(hint) > 0 && hint[0] {
+				step.Overlay += " |" + model.Form().Hint(80)
+			}
 			if message := model.Form().Error(); message != "" {
 				step.Overlay += " !" + message
 			}
@@ -170,6 +196,36 @@ func diffObserve(model *Model, key string) diffStep {
 		}
 	}
 	return step
+}
+
+func externalDeleteSelected(t *testing.T, path, id string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	needle := `"id":"` + id + `"`
+	kept := []string{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if !strings.Contains(line, needle) {
+			kept = append(kept, line)
+		}
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(kept, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func externalRetitle(t *testing.T, path, from, to string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := strings.Replace(string(raw), `"title":"`+from+`"`, `"title":"`+to+`"`, 1)
+	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // diffModel builds the root model over a sandbox directory with every seam
@@ -246,9 +302,14 @@ func (a *diffAdapter) Available() bool            { return true }
 func (a *diffAdapter) Start(string, string) error { return nil }
 func (a *diffAdapter) Pump() (bool, error)        { a.pumped = true; return true, nil }
 func (a *diffAdapter) Cancel() error              { return nil }
-func (a *diffAdapter) Output() string             { return "fake agent transcript" }
-func (a *diffAdapter) Success() bool              { return true }
-func (a *diffAdapter) ExitStatus() (int, bool)    { return 0, true }
+func (a *diffAdapter) Output() string {
+	if a.pumped {
+		return "fake agent transcript"
+	}
+	return "partial agent transcript"
+}
+func (a *diffAdapter) Success() bool           { return true }
+func (a *diffAdapter) ExitStatus() (int, bool) { return 0, true }
 func (a *diffAdapter) ProcessStatus() agent.ProcessStatus {
 	return agent.ProcessStatus{Present: true, Exited: true}
 }

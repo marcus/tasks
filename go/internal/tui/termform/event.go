@@ -22,6 +22,7 @@ import (
 	"reflect"
 	"sort"
 
+	"tasks-go/internal/temporal"
 	"tasks-go/internal/tui/term/input"
 )
 
@@ -255,6 +256,12 @@ func copyValue(value any) any {
 			out[key] = copyValue(entry)
 		}
 		return out
+	case *temporal.Value:
+		if typed == nil {
+			return (*temporal.Value)(nil)
+		}
+		copied := *typed
+		return &copied
 	}
 	return value
 }

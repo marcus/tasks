@@ -66,6 +66,9 @@ type Options struct {
 	// reaching for a platform launcher, which is what keeps a test suite from
 	// opening browser windows.
 	Opener Opener
+	// CopyToClipboard is a test seam for yank actions. Nil uses the platform
+	// clipboard command; tests inject a recorder and never touch the real one.
+	CopyToClipboard func(string) bool
 	// Entries are the provider/model pairs the prompt can be submitted to, and
 	// Queue is the coordinator that runs them. Both are injected: a test and
 	// the differential supply fakes, and a nil queue refuses the prompt out
@@ -110,12 +113,20 @@ type Model struct {
 
 	// Overlay state. Each one is owned by exactly one mode, and SetMode
 	// refuses to enter that mode while its overlay is nil — see uistate.go.
-	modal            *Modal
-	modalFilterInput *input.Editor
-	form             *QuickForm
-	actionPalette    *ActionPalette
-	contextPalette   *ContextPalette
-	taskEditor       *TaskEditorSession
+	modal               *Modal
+	modalFilterInput    *input.Editor
+	form                *QuickForm
+	actionPalette       *ActionPalette
+	contextPalette      *ContextPalette
+	taskEditor          *TaskEditorSession
+	suspendedTaskEditor *TaskEditorSession
+	suspendedTaskPanel  *RightPanel
+
+	// Quit confirmations retain the overlay they interrupted. q and ctrl-c do
+	// not answer either question; only an explicit y/return or n/escape does.
+	quitReturnModal   *Modal
+	quitReturnMode    Mode
+	quitReturnMessage string
 	// pendingProject is the project a confirmation modal is about. It is held
 	// separately from the selection because the selection can move underneath
 	// an open confirmation, and answering `y` must act on what was asked.
@@ -131,7 +142,8 @@ type Model struct {
 	// with "task list changed" although not one byte moved.
 	archiveContext temporal.Context
 	// opener launches a URL. It is injected so a test never opens a browser.
-	opener Opener
+	opener          Opener
+	copyToClipboard func(string) bool
 
 	// The agent surface. entries are the provider/model pairs `M` cycles;
 	// queue is the serial request coordinator; the resp* fields are the
@@ -178,22 +190,23 @@ func New(options Options) *Model {
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	model := &Model{
-		app:            options.App,
-		paths:          options.Paths,
-		env:            options.Env,
-		styler:         styler,
-		now:            now,
-		view:           restoreView(options.Session.View),
-		collapsed:      restoreCollapsed(options.Session.Collapsed),
-		panelMode:      normalizePanelMode(options.Session.PanelMode),
-		panelOffset:    options.Session.PanelOffset,
-		contextFilters: restoreContextFilters(options.Session),
-		mode:           ModeList,
-		width:          80,
-		height:         24,
-		opener:         options.Opener,
-		entries:        options.Entries,
-		queue:          options.Queue,
+		app:             options.App,
+		paths:           options.Paths,
+		env:             options.Env,
+		styler:          styler,
+		now:             now,
+		view:            restoreView(options.Session.View),
+		collapsed:       restoreCollapsed(options.Session.Collapsed),
+		panelMode:       normalizePanelMode(options.Session.PanelMode),
+		panelOffset:     options.Session.PanelOffset,
+		contextFilters:  restoreContextFilters(options.Session),
+		mode:            ModeList,
+		width:           80,
+		height:          24,
+		opener:          options.Opener,
+		copyToClipboard: options.CopyToClipboard,
+		entries:         options.Entries,
+		queue:           options.Queue,
 	}
 	return model
 }
@@ -253,6 +266,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = max(typed.Width, MinWidth)
 		m.height = max(typed.Height, MinHeight)
+		m.reconcileEditorLayout()
 		return m, nil
 	case tickMsg:
 		m.clearExpiredFlash()
@@ -342,6 +356,7 @@ func (m *Model) operationAt(context temporal.Context) *application.OperationCont
 // that changes what the list shows, so a refresh caused by an external write
 // and a refresh caused by a keypress cannot behave differently.
 func (m *Model) Refresh() {
+	priorMode := m.mode
 	read, err := m.app.ReadTasks(m.operation())
 	if err != nil {
 		m.readErr = err
@@ -351,7 +366,56 @@ func (m *Model) Refresh() {
 	m.read = read
 	m.today = read.Queries().Today()
 	m.RefreshRows()
+	m.reconcileOpenOverlays(priorMode)
 	m.reportFormatErrors()
+}
+
+// reconcileOpenOverlays keeps target-bound input attached to the exact task it
+// was opened for after an external reload. A vanished target closes the input;
+// it is never allowed to fall through onto the replacement selection.
+func (m *Model) reconcileOpenOverlays(prior Mode) {
+	switch prior {
+	case ModeForm:
+		if m.form != nil && m.form.TargetID != "" && !m.selectedTarget(m.form.TargetID) {
+			m.form = nil
+			m.mode = ModeList
+			m.Flash("task no longer exists")
+		}
+	case ModePalette:
+		if m.actionPalette != nil && m.actionPalette.TargetID() != "" &&
+			!m.selectedTarget(m.actionPalette.TargetID()) {
+			m.actionPalette = nil
+			m.mode = ModeList
+		}
+	case ModeContextPalette:
+		if m.contextPalette != nil {
+			m.contextPalette.RefreshOptions(m.tokensFromStore(func(item store.Item) []string {
+				return item.Contexts
+			}), m.contextFilters)
+		}
+	case ModeTaskEdit:
+		if m.taskEditor != nil {
+			outcome := m.taskEditor.Refresh()
+			m.editorMessage = outcome.Message
+			if outcome.Status == EditorMissing || outcome.Status == EditorConflicted {
+				m.Flash(outcome.Message)
+			}
+		}
+	}
+	if m.suspendedTaskEditor != nil {
+		outcome := m.suspendedTaskEditor.Refresh()
+		if outcome.Message != "" {
+			m.editorMessage = outcome.Message
+		}
+		m.showSuspendedEditorPanel()
+	}
+}
+
+func (m *Model) selectedTarget(id string) bool {
+	if item := m.CurrentItem(); item != nil && item.ID == id {
+		return true
+	}
+	return m.CurrentProject() != nil && m.CurrentProject().ID == id
 }
 
 // reportFormatErrors is Ruby's post-reload `Tasks::Check.check` flash.
@@ -558,6 +622,9 @@ func (m *Model) selectRow(index int) {
 	m.selected = index
 	m.selectedID = id
 	m.refreshOpenPanel()
+	if m.suspendedTaskEditor != nil {
+		m.showSuspendedEditorPanel()
+	}
 }
 
 func (m *Model) move(delta int) {

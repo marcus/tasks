@@ -5,8 +5,9 @@ import "fmt"
 // Panel kinds. A panel's kind decides which refresh path keeps it current and
 // which keys it answers.
 const (
-	PanelDetail        = "detail"
-	PanelProjectDetail = "project_detail"
+	PanelDetail            = "detail"
+	PanelProjectDetail     = "project_detail"
+	PanelSuspendedTaskEdit = "suspended_task_edit"
 )
 
 // RightPanel is the persistent panel on the right side — the port of

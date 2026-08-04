@@ -127,9 +127,11 @@ func (m *Model) availability(name string) bool {
 		return item != nil && isProposedState(item.State)
 	case "recurrence_action_available?":
 		item := m.CurrentItem()
-		return item != nil && !isProposedState(item.State)
+		return item != nil && !isProposedState(item.State) &&
+			(item.Scheduled != "" || item.Deadline != "")
 	case "link_action_available?":
-		return m.CurrentItem() != nil
+		item := m.CurrentItem()
+		return item != nil && m.read != nil && len(m.read.Queries().Links(*item)) > 0
 	case "delegation_action_available?":
 		item := m.CurrentItem()
 		return item != nil && isOpenState(item.State)
@@ -382,6 +384,7 @@ func (m *Model) DecideProposal(action application.ProposalAction) {
 	title := item.Title
 	result := m.app.DecideProposal(application.ProposalDecision{
 		ID: item.ID, Action: action,
+		ExpectedRevision: m.read.Snapshot().RevisionFor(*item),
 	}, m.operation())
 	if !result.OK() {
 		m.Refresh()
@@ -559,22 +562,12 @@ func (m *Model) OpenRecurPopup() {
 		Kind: QuickFormRecurrence, Title: "recur", Prompt: "repeat",
 		MinWidth: 76, ReturnMode: ReturnList, TargetID: id, Initial: item.Recur,
 		Suffix: "(" + current + ")",
-		HintFunc: func(text string, _ int) string {
-			raw := strings.TrimSpace(text)
-			if raw == "" {
-				return "weekly \u00b7 every mon \u00b7 m:15 \u00b7 off \u00b7 esc cancels"
+		HintFunc: func(text string, width int) string {
+			anchor := item.Deadline
+			if anchor == "" {
+				anchor = item.Scheduled
 			}
-			result := recur.Parse(raw, ".+")
-			if result.Error != "" {
-				return result.Error
-			}
-			if result.Canonical == "off" {
-				return "clears the recurrence"
-			}
-			if human := recur.Humanize(result.Canonical); human != nil {
-				return *human + " (" + result.Canonical + ")"
-			}
-			return result.Canonical
+			return m.recurPreview(text, anchor, width)
 		},
 		Submit: func(raw string) string {
 			result := recur.Parse(raw, ".+")
@@ -827,6 +820,24 @@ func (m *Model) StartTaskEdit(focus string) {
 		m.Flash("nothing selected")
 		return
 	}
+	if m.suspendedTaskEditor != nil && m.suspendedTaskEditor.TargetID() == item.ID {
+		outcome := m.suspendedTaskEditor.Refresh()
+		if outcome.Status == EditorMissing {
+			m.showSuspendedEditorPanel()
+			m.Flash("Task no longer exists; local field retained for copy or discard")
+			return
+		}
+		m.taskEditor = m.suspendedTaskEditor
+		m.suspendedTaskEditor = nil
+		m.panel = m.suspendedTaskPanel
+		m.suspendedTaskPanel = nil
+		m.editorMessage = outcome.Message
+		m.mode = ModeTaskEdit
+		if !m.layout().EditablePanel() {
+			m.reconcileEditorLayout()
+		}
+		return
+	}
 	session, err := NewTaskEditorSession(TaskEditorOptions{
 		App:       m.app,
 		Read:      func() *application.ReadModel { return m.read },
@@ -860,12 +871,55 @@ func (m *Model) StartTaskEdit(focus string) {
 // CloseTaskEdit leaves the editor.
 func (m *Model) CloseTaskEdit(message string) {
 	m.taskEditor = nil
+	m.suspendedTaskEditor = nil
+	m.suspendedTaskPanel = nil
 	m.editorMessage = ""
 	m.mode = ModeList
 	if message != "" {
 		m.Flash(message)
 	}
 	m.Refresh()
+}
+
+// reconcileEditorLayout suspends an editor that can no longer fit. The
+// session survives intact and can be resumed with e when its target is visible
+// again; hidden destructive prompts are disarmed by Suspend.
+func (m *Model) reconcileEditorLayout() {
+	if m.taskEditor == nil || m.layout().EditablePanel() {
+		if m.suspendedTaskEditor != nil {
+			m.showSuspendedEditorPanel()
+		}
+		return
+	}
+	editor := m.taskEditor
+	outcome := editor.Suspend()
+	m.suspendedTaskPanel = m.panel
+	m.suspendedTaskEditor = editor
+	m.taskEditor = nil
+	m.mode = ModeList
+	m.editorMessage = outcome.Message
+	m.showSuspendedEditorPanel()
+	m.Flash(fmt.Sprintf("editing paused — resize to at least %d×%d; e resumes · %s",
+		MinimumEditTerminalWidth(), MinimumEditTerminalHeight(len(m.Footer())), outcome.Message))
+}
+
+func (m *Model) showSuspendedEditorPanel() {
+	editor := m.suspendedTaskEditor
+	if editor == nil {
+		return
+	}
+	title := "task draft · target not visible"
+	explanation := "Task exists but is not currently editable."
+	if editor.Missing() {
+		title = "task draft · target deleted"
+		explanation = "Task no longer exists; local field retained."
+	} else if m.selectedTarget(editor.TargetID()) {
+		title = "task draft · editing paused"
+		explanation = "Resize the terminal, then press e to resume."
+	}
+	lines := []string{explanation, "Draft: " + valueText(editor.CopyValue()),
+		"e resumes · y copies · esc discards"}
+	m.panel = NewRightPanel(title, PanelSuspendedTaskEdit, editor.TargetID(), lines)
 }
 
 func (m *Model) tokensFromStore(pick func(store.Item) []string) []string {
@@ -913,11 +967,56 @@ func outcomeMessage(outcome application.Outcome, fallback string) string {
 }
 
 func (m *Model) requestQuit() {
-	if m.taskEditor != nil && m.taskEditor.Dirty("") {
-		outcome := m.taskEditor.RequestQuit()
-		m.Flash(outcome.Message + " — y discards · n keeps editing")
+	editor := m.taskEditor
+	if editor == nil {
+		editor = m.suspendedTaskEditor
+	}
+	if editor != nil && editor.Dirty("") {
+		outcome := editor.RequestQuit()
+		m.quitReturnModal, m.quitReturnMode = m.modal, m.mode
+		m.quitReturnMessage = m.editorMessage
+		lines := []string{outcome.Message}
+		if m.queueHasWork() {
+			lines = append(lines, "Quitting also cancels/discards "+m.agentWorkSummary()+".")
+		}
+		lines = append(lines,
+			"Press y or Return to discard the draft and quit.",
+			"Press n or Escape to keep the draft and continue.",
+			"Ctrl-C and q do not confirm this prompt.")
+		m.modal = NewModal(ModalOptions{Title: "Discard unsaved task draft?",
+			Lines: lines, Kind: ModalTaskDraftQuitConfirm})
+		m.mode = ModeModal
+		m.Flash("unsaved task draft — y/return discards and quits · n/esc keeps editing")
+		return
+	}
+	if m.queueHasWork() {
+		m.quitReturnModal, m.quitReturnMode = m.modal, m.mode
+		m.quitReturnMessage = m.editorMessage
+		m.modal = NewModal(ModalOptions{Title: "Quit with agent work pending?", Lines: []string{
+			"Quitting cancels/discards " + m.agentWorkSummary() + ".",
+			"Press y or Return to quit.",
+			"Press n or Escape to keep the queue running.",
+			"Ctrl-C and q do not confirm this prompt.",
+		}, Kind: ModalAgentQuitConfirm})
+		m.mode = ModeModal
+		m.Flash("agent work pending — y/return quits · n/esc keeps running")
 		return
 	}
 	m.Save()
 	m.quitting = true
+}
+
+func (m *Model) agentWorkSummary() string {
+	parts := []string{}
+	if m.queue != nil && m.queue.Active() {
+		parts = append(parts, "the active request")
+	}
+	if pending := m.pendingCount(); pending > 0 {
+		noun := "requests"
+		if pending == 1 {
+			noun = "request"
+		}
+		parts = append(parts, fmt.Sprintf("%d queued %s", pending, noun))
+	}
+	return strings.Join(parts, " and ")
 }

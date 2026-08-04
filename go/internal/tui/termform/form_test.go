@@ -3,6 +3,8 @@ package termform
 import (
 	"strings"
 	"testing"
+
+	"tasks-go/internal/temporal"
 )
 
 // buildForm is the fixture every lifecycle test drives: two groups, a required
@@ -213,5 +215,43 @@ func TestFormDuplicateKeysAreRefusedAtConstruction(t *testing.T) {
 	second := NewInput(NewBase("dup", "Two", ""))
 	if _, err := NewForm([]Group{NewGroup("g", "G", first, second)}, "", nil); err == nil {
 		t.Error("two fields sharing a key were accepted; one would shadow the other")
+	}
+}
+
+func TestTemporalValuesNeverAliasThroughFormReadOrCommitSurfaces(t *testing.T) {
+	value := &temporal.Value{Date: temporal.Date{Year: 2026, Month: 7, Day: 14}}
+	baseline := &temporal.Value{Date: temporal.Date{Year: 2026, Month: 7, Day: 13}}
+	base := NewBase("when", "When", value)
+	base.Baseline, base.BaselineSet = baseline, true
+	form, err := NewForm([]Group{NewGroup("g", "G", &base)}, "when", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Construction clones the host-owned pointers.
+	value.Date.Day, baseline.Date.Day = 1, 2
+	if form.Value("when").(*temporal.Value).Date.Day != 14 ||
+		form.Baseline("when").(*temporal.Value).Date.Day != 13 {
+		t.Fatal("constructor retained host temporal pointers")
+	}
+	// Every read accessor returns another clone.
+	form.Value("when").(*temporal.Value).Date.Day = 3
+	form.Baseline("when").(*temporal.Value).Date.Day = 4
+	form.Values()["when"].(*temporal.Value).Date.Day = 5
+	if form.Value("when").(*temporal.Value).Date.Day != 14 ||
+		form.Baseline("when").(*temporal.Value).Date.Day != 13 {
+		t.Fatal("Value/Baseline/Values exposed form-owned pointers")
+	}
+	proposed := &temporal.Value{Date: temporal.Date{Year: 2026, Month: 7, Day: 15}}
+	form.SetValue("when", proposed, Event{})
+	request := form.RequestCommit("", "", "when", Event{}).Request
+	if request == nil {
+		t.Fatal("dirty temporal field produced no commit request")
+	}
+	request.ProposedValue.(*temporal.Value).Date.Day = 6
+	request.ExpectedBaseline.(*temporal.Value).Date.Day = 7
+	request.Values["when"].(*temporal.Value).Date.Day = 8
+	if form.Value("when").(*temporal.Value).Date.Day != 15 ||
+		form.Baseline("when").(*temporal.Value).Date.Day != 13 {
+		t.Fatal("commit payload exposed form-owned temporal pointers")
 	}
 }

@@ -61,6 +61,17 @@ func TestControlRowsAppearOnlyWhenTheyApply(t *testing.T) {
 
 }
 
+func TestTemporalInputValueReturnsADefensiveCopy(t *testing.T) {
+	value := &temporal.Value{Date: temporal.Date{Year: 2026, Month: 7, Day: 14}}
+	field := temporalField(t, value, berlinContext(t))
+	openControl(t, field, value)
+	first := field.Value()
+	first.Date.Day = 1
+	if got := field.Value().Date.Day; got != 14 {
+		t.Fatalf("mutating Value() changed the field-owned date to %d", got)
+	}
+}
+
 func TestControlZoneRowAppearsOnlyForAFixedValue(t *testing.T) {
 	context := berlinContext(t)
 	field := temporalField(t, nil, context)

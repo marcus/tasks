@@ -76,6 +76,25 @@ func (s *Snapshot) RevisionFor(item Item) string {
 	return s.revisions[item.Source][string(jsonString(item.ID))]
 }
 
+// FieldBaselines returns conflict tokens computed from this snapshot's exact
+// record set. Values and baselines therefore come from one read; callers never
+// pair an old display value with a fresh expectation from another store read.
+func (s *Snapshot) FieldBaselines(id string, fields []PatchField) (map[PatchField]string, bool) {
+	index := locateStableIndex(s.LiveRecords, id)
+	if index < 0 {
+		return nil, false
+	}
+	out := make(map[PatchField]string, len(fields))
+	for _, field := range fields {
+		value, err := fieldBaseline(s.LiveRecords, index, field)
+		if err != nil {
+			return nil, false
+		}
+		out[field] = value
+	}
+	return out, true
+}
+
 // ChildrenOf is the live items whose parent is `id`, in file order. The tree
 // lives in the parent pointers, so no boundary is ever inferred by scanning.
 func (s *Snapshot) ChildrenOf(id string) []Item {

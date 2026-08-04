@@ -171,11 +171,17 @@ func (m *Model) pendingCount() int {
 
 // advanceQueue starts the next request and records a failure to start.
 func (m *Model) advanceQueue() agent.Event {
-	event := m.queue.StartNext()
-	if event.Occurred() && event.Type == agent.Finished {
-		m.recordAgentResult(event.Request)
+	if m.queue == nil {
+		return agent.Event{}
 	}
-	return event
+	for {
+		event := m.queue.StartNext()
+		if !event.Occurred() || event.Type == agent.Started {
+			return event
+		}
+		m.recordAgentResult(event.Request)
+		m.Refresh()
+	}
 }
 
 // PumpQueue is the per-tick drain: read whatever the running process produced,
@@ -308,6 +314,9 @@ func (m *Model) theme() *theme.Theme {
 // monotonic is the clock the activity view measures elapsed time with. It rides
 // the model's injected clock so a test and the differential see a fixed value.
 func (m *Model) monotonic() float64 {
+	if m.queue != nil {
+		return m.queue.Now()
+	}
 	return float64(m.now().UnixNano()) / float64(time.Second)
 }
 
@@ -339,11 +348,11 @@ func (m *Model) CancelQueuedAgentRequests() {
 		plural = ""
 	}
 	m.OpenModal(ModalContent{
-		Title: "Cancel queued requests",
+		Title: "Cancel queued agent requests?",
 		Lines: []string{
-			fmt.Sprintf("Cancel %d queued agent request%s?", count, plural),
-			"",
-			m.styler.Paint("muted", "The running request keeps going. y cancels · n / esc keeps them"),
+			fmt.Sprintf("Discard %d waiting request%s?", count, plural),
+			"The active request will keep running.",
+			"Press y to discard waiting work · n / esc cancels",
 		},
 	}, ModalAgentQueueCancel, false)
 }
@@ -357,10 +366,10 @@ func (m *Model) agentQueueCancelKey(key string) {
 		if len(cancelled) == 1 {
 			plural = ""
 		}
-		m.Flash(fmt.Sprintf("cancelled %d queued request%s", len(cancelled), plural))
+		m.Flash(fmt.Sprintf("cancelled %d queued agent request%s", len(cancelled), plural))
 	case "n", "N", "\x1b", "q":
 		m.CloseModal()
-		m.Flash("kept the queued requests")
+		m.Flash("queued requests kept")
 	}
 }
 

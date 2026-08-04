@@ -83,7 +83,7 @@ func run(argv []string) int {
 		options = append(options, tea.WithMouseCellMotion())
 	}
 	program := tea.NewProgram(model, options...)
-	if _, err := program.Run(); err != nil {
+	if err := runProgram(model, program); err != nil {
 		fmt.Fprintln(os.Stderr, "tasks-tui: "+err.Error())
 		return 1
 	}
@@ -92,6 +92,20 @@ func run(argv []string) int {
 	// twice costs one file write; not saving costs the session.
 	model.Save()
 	return 0
+}
+
+type programRunner interface {
+	Run() (tea.Model, error)
+}
+
+// runProgram is the ensure-style runtime boundary. A terminal failure, signal,
+// or non-key exit must not strand a provider process after the UI is gone.
+func runProgram(model *tui.Model, program programRunner) error {
+	if queue := model.Queue(); queue != nil {
+		defer queue.Shutdown()
+	}
+	_, err := program.Run()
+	return err
 }
 
 // coalesceScope is the journal's per-process coalescing scope: a random token

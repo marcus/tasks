@@ -3427,7 +3427,10 @@ class TestApp < Minitest::Test
 
       refute app.send(:external_change?), "project archive's own write is absorbed"
       assert_nil record_for(org_path(app), title: "Site launch"), "swept out of the live file"
-      assert record_for(archive_path(app), title: "Site launch"), "moved into archive.jsonl"
+      archived = record_for(archive_path(app), title: "Site launch")
+      assert archived, "moved into archive.jsonl"
+      assert_equal "2026-07-20", archived["archived"],
+                   "project archive uses the TUI's pinned session date"
       assert_match(/archived Site launch/, app.instance_variable_get(:@flash))
     end
   end

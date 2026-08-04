@@ -1300,6 +1300,7 @@ module Tui
       if target_missing || (@ui.form.return_mode == :modal && !@ui.modal)
         @ui.form = nil
         @ui.form_success = nil
+        flash("task no longer exists") if target_missing
       else
         @ui.mode = :form
       end
@@ -3314,7 +3315,7 @@ module Tui
         project = @pending_project
         @pending_project = nil
         close_modal
-        result = @application.archive_project(project.id)
+        result = @application.archive_project(project.id, today: current_date)
         unless result.ok?
           reload_store
           return flash("project no longer exists")

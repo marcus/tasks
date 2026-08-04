@@ -387,9 +387,23 @@ func TestCancellingQueuedRequestsConfirmsFirst(t *testing.T) {
 		harness.model.Modal().Kind() != ModalAgentQueueCancel {
 		t.Fatalf("cancellation produced %v", harness.model.Modal())
 	}
+	if got := harness.model.Modal().Title(); got != "Cancel queued agent requests?" {
+		t.Fatalf("confirmation title = %q", got)
+	}
+	wantLines := []string{
+		"Discard 1 waiting request?",
+		"The active request will keep running.",
+		"Press y to discard waiting work · n / esc cancels",
+	}
+	if got := harness.model.Modal().AllLines(); strings.Join(got, "\n") != strings.Join(wantLines, "\n") {
+		t.Fatalf("confirmation lines = %#v, want %#v", got, wantLines)
+	}
 	harness.pressKeys("n")
 	if harness.model.pendingCount() != 1 {
 		t.Error("declining cancelled the queue anyway")
+	}
+	if got := harness.model.FlashMessage(); got != "queued requests kept" {
+		t.Fatalf("declining said %q", got)
 	}
 
 	harness.model.CancelQueuedAgentRequests()
@@ -400,7 +414,7 @@ func TestCancellingQueuedRequestsConfirmsFirst(t *testing.T) {
 	if _, running := harness.model.Queue().ActiveRequest(); !running {
 		t.Error("cancelling the queue also stopped the running request")
 	}
-	if !strings.Contains(harness.model.FlashMessage(), "cancelled 1 queued request") {
+	if !strings.Contains(harness.model.FlashMessage(), "cancelled 1 queued agent request") {
 		t.Errorf("cancelling said %q", harness.model.FlashMessage())
 	}
 }
