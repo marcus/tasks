@@ -23,6 +23,23 @@ type Patch struct {
 	// CoalesceKey merges this write into a neighbouring journal entry — the
 	// editor-session behavior, where a burst of field saves is one undo step.
 	CoalesceKey string
+	// Typed carries the value's REAL shape for the fields a string cannot
+	// express: `deferred` (a bool) and `contexts`/`tags` (ordered lists).
+	//
+	// When it is set, Value is ignored. Both spellings exist because the CLI
+	// and the API only ever send text, and making them construct a typed value
+	// would be ceremony; the editor genuinely cannot.
+	Typed *store.PatchValue
+}
+
+// TypedPatch builds a patch carrying a value shape a string cannot express.
+func TypedPatch(id string, field store.PatchField, value store.PatchValue,
+	expected, label, coalesceKey string) Patch {
+
+	return Patch{
+		ID: id, Field: field, Expected: expected, HistoryLabel: label,
+		CoalesceKey: coalesceKey, Typed: &value,
+	}
 }
 
 // Baseline is the value a caller reads before proposing a patch, and false when
@@ -48,6 +65,17 @@ func (a *Application) PatchTask(patch Patch, operation *OperationContext) Outcom
 		return unsupported("patch the " + string(patch.Field) + " field")
 	}
 	today := a.today(operation)
+	if patch.Typed != nil {
+		patcher, ok := target.(TypedPatcher)
+		if !ok {
+			return unsupported("patch the " + string(patch.Field) + " field with a typed value")
+		}
+		return Outcome{MutationResult: patcher.Patch(store.PatchRequest{
+			ID: patch.ID, Field: patch.Field, Value: *patch.Typed,
+			Expected: patch.Expected, Label: patch.HistoryLabel, Today: today,
+			CoalesceKey: patch.CoalesceKey,
+		})}
+	}
 	if patch.CoalesceKey != "" {
 		if patcher, ok := target.(CoalescingPatcher); ok {
 			return Outcome{MutationResult: patcher.PatchTaskCoalesced(

@@ -90,6 +90,10 @@ func newModelHarness(t *testing.T, options harnessOptions) *modelHarness {
 				Now:        func() time.Time { return options.now },
 				Device:     "fixture",
 				MaxDepth:   4,
+				// Pinned like every other harness: the editor's one-undo-step
+				// contract depends on the scope matching across the fresh store
+				// each application operation builds.
+				CoalesceScope: "pinned-scope",
 			})
 		},
 		TemporalContext: context,

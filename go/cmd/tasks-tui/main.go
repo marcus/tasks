@@ -11,6 +11,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -88,6 +90,26 @@ func run(argv []string) int {
 	return 0
 }
 
+// coalesceScope is the journal's per-process coalescing scope: a random token
+// unless the determinism harness pinned one. It is persisted on a keyed tip,
+// which is what stops an unrelated process from extending this one's coalesced
+// step — and what makes a burst of editor field saves cost exactly one undo.
+func coalesceScope(env determinism.Env) string {
+	if pinned, ok := determinism.CoalesceScope(env); ok {
+		return pinned
+	}
+	if processScope == "" {
+		buffer := make([]byte, 16)
+		if _, err := rand.Read(buffer); err != nil {
+			return "tasks-tui"
+		}
+		processScope = hex.EncodeToString(buffer)
+	}
+	return processScope
+}
+
+var processScope string
+
 // buildModel wires the shared application facade onto the resolved store pair.
 // The TUI is a CLIENT of the same facade as the CLI and the API — it has no
 // privileged path into the store and holds no business logic of its own.
@@ -96,6 +118,12 @@ func buildModel(paths config.Paths, env determinism.Env) (*tui.Model, error) {
 		JournalDir: journal.DirFor(paths.Org, env),
 		Device:     updatestamp.Device(env),
 		MaxDepth:   paths.MaxDepth,
+		// The journal coalescing scope. Without it the editor's "one editing
+		// session is one undo step" contract silently does not hold: the
+		// journal only extends a keyed tip when the SCOPE matches too, and an
+		// empty scope is not persisted, so every field save opened its own undo
+		// step. The CLI derives the same token the same way.
+		CoalesceScope: coalesceScope(env),
 	}
 	if clock := determinism.Clock(env); clock != nil {
 		writeOptions.Now = clock

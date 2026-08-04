@@ -22,6 +22,13 @@ func (m *Model) HandleMouse(event tea.MouseMsg) bool {
 	if !m.mouseEnabled() {
 		return false
 	}
+	// An open overlay owns the pointer. Without this, a click meant for a
+	// palette row would fall through to the list underneath and move the
+	// selection the palette was opened for — which is how a palette action runs
+	// against the wrong task.
+	if box := m.Overlay(); box != nil {
+		return m.overlayMouse(box, event)
+	}
 	layout := m.layout()
 	switch event.Type {
 	case tea.MouseWheelUp:
@@ -111,4 +118,62 @@ func (m *Model) tabBudget(layout ScreenLayout) int {
 func (m *Model) inPanel(layout ScreenLayout, column int) bool {
 	begin, end := layout.PanelCols()
 	return begin < end && column >= begin-2 && column < end
+}
+
+// overlayMouse routes a click or a wheel tick that landed on an open overlay.
+//
+// The row offset is taken against the box's OWN top row, which is the same
+// number the picker recorded when it last painted. Both sides agree because the
+// layout the hit test reads is produced by the paint, not re-derived from the
+// option list — a palette that re-derived it would act on the wrong row the
+// moment the query narrowed the list between paint and click.
+func (m *Model) overlayMouse(box *OverlayBox, event tea.MouseMsg) bool {
+	inside := event.Y >= box.Row && event.Y < box.Row+len(box.Lines)
+	switch event.Type {
+	case tea.MouseWheelUp, tea.MouseWheelDown:
+		direction := -1
+		if event.Type == tea.MouseWheelDown {
+			direction = 1
+		}
+		switch m.mode {
+		case ModeModal, ModeModalFilter:
+			m.modalMove(direction * 3)
+		case ModePalette:
+			m.resolvePaletteOutcome(m.actionPalette, m.actionPalette.Move(direction))
+		case ModeContextPalette:
+			m.applyContextOutcome(m.contextPalette.Move(direction))
+		default:
+			return false
+		}
+		return true
+	case tea.MouseLeft:
+		if !inside {
+			return false
+		}
+		offset := event.Y - box.Row
+		switch m.mode {
+		case ModePalette:
+			m.resolvePaletteOutcome(m.actionPalette, m.actionPalette.Hit(offset))
+			return true
+		case ModeContextPalette:
+			m.applyContextOutcome(m.contextPalette.Hit(offset))
+			return true
+		}
+		return true
+	}
+	return false
+}
+
+// applyContextOutcome is the shared tail of a context-palette key and click.
+func (m *Model) applyContextOutcome(outcome ContextOutcome) {
+	switch outcome.Kind {
+	case PickerCancelled:
+		m.CloseContextPalette()
+	case PickerAccepted:
+		if !outcome.Apply {
+			return
+		}
+		m.ApplyContextFilter(outcome.Contexts)
+		m.CloseContextPalette()
+	}
 }

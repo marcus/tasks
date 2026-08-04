@@ -57,6 +57,25 @@ type CoalescingPatcher interface {
 	PatchTaskCoalesced(id string, field store.PatchField, value, expected, label, today, coalesceKey string) store.MutationResult
 }
 
+// TypedPatcher applies a patch whose value is not a string.
+//
+// The string spelling `Store.PatchTask` takes covers every field whose value IS
+// a string, with "" meaning nil for the clearable ones. It cannot express the
+// three shapes the task editor needs: `deferred` is a bool, and `contexts` and
+// `tags` are ordered lists. Sending those as text reaches the store's own
+// refusal ("contexts must be a list of tags") about a value the user never
+// typed — so the editor either has to refuse the field, which is half-work, or
+// the application layer has to carry the value's real shape.
+//
+// This is the narrow way to carry it: `store.PatchRequest` is the store's OWN
+// typed entry point and already exists, so no store file changes and no
+// existing string caller moves. A store that lacks the method produces a typed
+// refusal rather than a silently different behavior, exactly like every other
+// optional capability here.
+type TypedPatcher interface {
+	Patch(request store.PatchRequest) store.MutationResult
+}
+
 // Undelegator clears a delegation marker, revoking any live claim.
 type Undelegator interface {
 	Undelegate(id, coalesceKey string) store.MutationResult

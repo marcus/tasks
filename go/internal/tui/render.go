@@ -23,9 +23,12 @@ func (m *Model) layout() ScreenLayout {
 		Footer:       m.Footer(),
 		Selected:     m.selected,
 		HasSelection: len(m.rows) > 0,
-		Panel:        m.panel != nil,
-		PanelMode:    m.panelMode,
-		PanelOffset:  m.panelOffset,
+		// An open editor occupies the panel column even when no detail panel
+		// is open, so the geometry the hit map and the renderer both read
+		// agrees about where the list ends.
+		Panel:       m.panel != nil || m.taskEditor != nil,
+		PanelMode:   m.panelMode,
+		PanelOffset: m.panelOffset,
 	})
 }
 
@@ -47,7 +50,7 @@ func (m *Model) Render() string {
 		lines = append(lines, m.boxed(layout.Width, footer))
 	}
 	lines = append(lines, m.border(layout.Width, "└", "┘"))
-	return strings.Join(lines, "\n")
+	return strings.Join(m.composite(lines, m.Overlay()), "\n")
 }
 
 // bodyLines paints the list, and the panel beside it when one is open.
@@ -58,6 +61,11 @@ func (m *Model) bodyLines(layout ScreenLayout) []string {
 		panelView = m.panel.View(m.styler, layout.BodyHeight, layout.PanelContentWidth)
 	}
 	panelLines := m.panelColumn(layout, panelView)
+	hasPanel := m.panel != nil
+	if m.taskEditor != nil {
+		panelLines = m.editorColumn(layout)
+		hasPanel = true
+	}
 
 	out := make([]string, 0, layout.BodyHeight)
 	for row := 0; row < layout.BodyHeight; row++ {
@@ -77,7 +85,7 @@ func (m *Model) bodyLines(layout ScreenLayout) []string {
 			}
 		}
 		line := gutter + m.fit(text, max(layout.ListWidth-1, 0))
-		if m.panel != nil {
+		if hasPanel {
 			panelText := ""
 			if row < len(panelLines) {
 				panelText = panelLines[row]
@@ -100,6 +108,36 @@ func (m *Model) panelColumn(layout ScreenLayout, view PanelView) []string {
 		strings.Repeat("─", max(layout.PanelContentWidth, 0)),
 	}
 	return append(lines, view.Lines...)
+}
+
+// editorColumn paints the open task editor into the panel column.
+//
+// The editor lives in the panel rather than in a centered popup on purpose: it
+// is a long-lived surface, and the list beside it has to stay readable while a
+// field is being edited — that is what makes "save on blur, keep working" a
+// usable workflow rather than a modal interruption.
+func (m *Model) editorColumn(layout ScreenLayout) []string {
+	editor := m.taskEditor
+	title := "edit task"
+	hint := "tab saves and moves · ctrl-s saves · ctrl-o finishes · esc discards a field"
+	message := m.editorMessage
+	if editor.Missing() {
+		message = "Task no longer exists — y copies the field, esc discards"
+	}
+	if confirmation := editor.PendingConfirmation(); confirmation != nil {
+		message = confirmation.Message + " (y / n)"
+	}
+	if conflict := editor.Conflict(); conflict != nil {
+		message = "“" + normalizeEditField(conflict.Field) + "” changed externally — reload, revert, or keep for copy"
+	}
+	if pending := editor.PendingRevert(); pending != "" {
+		message = "Press Escape again to discard " + normalizeEditField(pending)
+	}
+	render := RenderForm(m.styler, FormRenderRequest{
+		Model: editor.RenderModel(), Width: max(layout.PanelContentWidth, 0),
+		Height: max(layout.BodyHeight, 0), Title: title, Hint: hint, Error: message,
+	})
+	return render.Lines
 }
 
 // headerCount is the right-hand side of the header: the open count, the

@@ -1,0 +1,401 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# tui-interaction-diff — the differential harness for Wave 4's editor, forms,
+# modals and palettes.
+#
+# It drives the SAME keystroke sequences through Ruby's `Tui::App` and through
+# the Go root model, in two byte-identical sandboxes seeded from one fixture,
+# and diffs everything a user can actually observe:
+#
+#   * the interaction mode after every key;
+#   * which task the cursor is on after every key;
+#   * the status-line message after every key;
+#   * what the overlay is (modal kind, form kind and buffer, palette query,
+#     the focused editor field and its dirty/confirmation/conflict state);
+#   * and the final bytes of tasks.jsonl.
+#
+# The last one is the point. A trace that agrees while the file diverges is the
+# exact failure a green unit suite does not catch, and the one that costs a user
+# a task.
+#
+# Neither implementation is driven through a terminal: Ruby's App exposes
+# `handle_key`, and the Go model is driven through its Bubble Tea Update from a
+# test-mode driver (go/internal/tui/differential_test.go). Rendering is not
+# compared — the plan explicitly does not ask for pixel identity — so what is
+# compared is behavior.
+#
+# Usage:  porting/compare/tui-interaction-diff [--verbose] [--only NAME]
+
+require "fileutils"
+require "json"
+require "open3"
+require "tmpdir"
+
+ROOT = File.expand_path("../..", __dir__)
+GO_DIR = File.join(ROOT, "go")
+
+VERBOSE = ARGV.include?("--verbose")
+ONLY = (index = ARGV.index("--only")) ? ARGV[index + 1] : nil
+
+# The pins every porting harness shares. A TUI trace reads a clock in two places
+# — "12d ago" in a row, and the day a completion stamps — so an unpinned clock
+# would diff against itself between two runs.
+PINS = {
+  "TASKS_PIN_NOW" => "2026-07-14T12:00:00Z",
+  "TASKS_PIN_COALESCE_SCOPE" => "pinned-scope",
+  "TASKS_DEVICE" => "fixture",
+  "TASKS_TIMEZONE" => "Etc/UTC",
+  "NO_COLOR" => "1",
+}.freeze
+
+# The fixture both sides read. It is the shared test fixture, id for id, so a
+# scenario written here reads the same as one in either unit suite.
+FIXTURE = <<~JSONL
+  {"type":"meta","version":2}
+  {"type":"section","id":"aaaa0001","title":"Inbox"}
+  {"type":"task","id":"aaaa0002","parent":"aaaa0001","state":"INBOX","title":"random thought about the garden"}
+  {"type":"section","id":"aaaa0003","title":"Work"}
+  {"type":"task","id":"aaaa0004","parent":"aaaa0003","state":"NEXT","priority":"A","title":"Book flight in Concur","tags":["@computer","important","urgent"],"deadline":"2026-07-02"}
+  {"type":"task","id":"aaaa0005","parent":"aaaa0003","state":"NEXT","priority":"B","title":"Review PR backlog","tags":["@computer","important"]}
+  {"type":"task","id":"aaaa0006","parent":"aaaa0003","state":"TODO","priority":"A","title":"Midyear self-eval","tags":["@computer","important"],"scheduled":"2026-07-03"}
+  {"type":"task","id":"aaaa0007","parent":"aaaa0003","state":"WAITING","title":"Travel desk reply","tags":["@email","urgent"],"body":"Some note line."}
+  {"type":"task","id":"aaaa0008","parent":"aaaa0003","state":"DONE","priority":"C","title":"Old finished thing","tags":["@computer"],"closed":"2026-06-20"}
+  {"type":"section","id":"aaaa0009","title":"Home"}
+  {"type":"task","id":"aaaa000a","parent":"aaaa0009","state":"NEXT","title":"Water the plants","tags":["@home"]}
+JSONL
+
+# Every scenario the packet promised to cover, plus the ones that turned out to
+# be where the two implementations could most easily diverge.
+SCENARIOS = [
+  {
+    name: "edit-save-on-blur",
+    why: "typing in the title and tabbing out must persist the field and move on",
+    view: "next", select: "aaaa0004",
+    keys: ["\r", "e", "!", "\t"],
+  },
+  {
+    name: "edit-escape-discards-only-that-field",
+    why: "escape asks twice, then reverts one buffer and writes nothing",
+    view: "next", select: "aaaa0004",
+    keys: ["\r", "e", "!", "\e", "\e", "\x0f"],
+  },
+  {
+    name: "edit-ctrl-o-finishes-after-saving",
+    view: "next", select: "aaaa0004",
+    why: "ctrl-o commits the focused buffer before it leaves",
+    keys: ["\r", "e", "X", "\x0f"],
+  },
+  {
+    name: "validated-form-mutation-date",
+    why: "a validated quick form writes, and a refused one keeps the form open",
+    view: "next", select: "aaaa0004",
+    keys: ["d", "2", "0", "2", "6", "-", "0", "8", "-", "0", "9", "\r"],
+  },
+  {
+    name: "validated-form-refusal-date",
+    why: "an unparseable date refuses and writes nothing",
+    view: "next", select: "aaaa0004",
+    keys: ["d", "n", "o", "p", "e", "\r"],
+  },
+  {
+    name: "modal-escape-and-focus",
+    why: "help opens, filters, and unwinds one layer per escape",
+    view: "next", select: "aaaa0004",
+    keys: ["?", "v", "\e", "\e"],
+  },
+  {
+    name: "context-palette-applies-a-filter",
+    why: "a searched Return applies exactly the context under the cursor",
+    view: "next", select: "aaaa0004",
+    keys: ["@", "h", "o", "m", "e", "\r"],
+  },
+  {
+    name: "action-that-writes-complete",
+    why: "c closes the selected task and says what happened",
+    view: "next", select: "aaaa0005",
+    keys: ["c"],
+  },
+  {
+    name: "action-that-writes-priority",
+    why: "J walks the priority ladder one step and writes",
+    view: "next", select: "aaaa0004",
+    keys: ["J"],
+  },
+  {
+    name: "edit-deferred-toggle-writes-the-marker",
+    why: "the On hold confirm field is a bool the string patch seam cannot carry",
+    view: "next", select: "aaaa0004",
+    keys: ["\r", "e", "\t", "\t", "y", "\x0f"],
+  },
+  {
+    name: "edit-contexts-add-writes-the-list",
+    why: "the Contexts field is an ordered list the string patch seam cannot carry",
+    view: "next", select: "aaaa0004",
+    keys: ["\r", "e", "\t", "\t", "\t", "\t", "\t", "\t", "\t",
+           "e", "r", "r", "a", "n", "d", "\r", "\x0f"],
+  },
+  {
+    name: "edit-state-confirmation-then-accept",
+    why: "a lifecycle change asks before it cascades, then writes what it promised",
+    view: "next", select: "aaaa0005",
+    keys: ["\r", "e", "\t", "\t", "\t", "\t", "\t", "\t", "\t", "\t", "\t", "\t",
+           "\r", "\x1b[B", "\x1b[B", "\x1b[B", "\r", "\x0f", "y"],
+  },
+  {
+    name: "modal-filter-narrows-then-clears",
+    why: "typing in a filterable modal filters live and escape unwinds one layer",
+    view: "next", select: "aaaa0004",
+    keys: ["?", "a", "r", "c", "h", "\r", "\e", "\e"],
+  },
+  {
+    name: "edit-empty-title-refuses-without-writing",
+    why: "a required field refuses before the store is asked",
+    view: "next", select: "aaaa0004",
+    keys: ["\r", "e", "\x15", "\x0f"],
+  },
+  {
+    name: "unavailable-action-refuses-by-name",
+    why: "a bound but unavailable key is consumed and explained",
+    view: "next", select: "aaaa0004",
+    keys: ["a"],
+  },
+].freeze
+
+def sandbox(dir)
+  FileUtils.mkdir_p(dir)
+  File.write(File.join(dir, "tasks.jsonl"), FIXTURE)
+  dir
+end
+
+# -- the Ruby side --------------------------------------------------------------
+#
+# App is driven headlessly through `handle_key`, which is exactly what
+# test/test_app_modals.rb does — no terminal, no paint loop.
+
+RUBY_DRIVER = <<~'RUBY'
+  $LOAD_PATH.unshift(File.join(ENV.fetch("TUI_DIFF_ROOT"), "lib"))
+  require "json"
+  require "time"
+  require "tui/app"
+  require "llm/config"
+
+  script = JSON.parse(File.read(ENV.fetch("TUI_DIFF_SCRIPT")))
+  dir = ENV.fetch("TUI_DIFF_DIR")
+
+  # Pin BOTH clocks. Ruby's App builds its own read model and store operations
+  # from these providers; without them a completion stamps the real calendar day
+  # and the comparison would drift with the wall clock rather than with behavior.
+  pinned = Time.parse(ENV.fetch("TASKS_PIN_NOW")).utc
+  app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir),
+                     llm_config: LLM::Config.new(provider: nil, model: nil, providers: {}),
+                     agent_probe: ->(_entry) { false },
+                     date_provider: -> { pinned.to_date },
+                     time_provider: -> { pinned })
+  app.send(:rows)
+  app.send(:clamp_selection)
+
+  ui = app.instance_variable_get(:@ui)
+
+  if (view = script["view"]) && !view.empty?
+    ui.view = view.to_sym
+    app.send(:rows)
+    app.send(:clamp_selection)
+  end
+  if (wanted = script["select"]) && !wanted.empty?
+    rows = app.instance_variable_get(:@rows)
+    index = rows.each_index.find { |i| rows[i].item&.id == wanted || rows[i].project&.id == wanted }
+    app.send(:select_row, index) if index
+  end
+
+  def observe(app, ui, key)
+    item = app.send(:current_item)
+    project = app.send(:current_project)
+    step = {
+      "key" => key,
+      "mode" => ui.mode.to_s,
+      "selected" => (item&.id || project&.id).to_s,
+      "flash" => app.instance_variable_get(:@flash).to_s,
+      "overlay" => "",
+    }
+    case ui.mode
+    when :modal, :modal_filter
+      step["overlay"] = ui.modal ? ui.modal.kind.to_s : ""
+    when :form
+      form = ui.form
+      if form
+        step["overlay"] = "#{form.kind}:#{form.input}"
+        step["overlay"] += " !#{form.error}" if form.error
+      end
+    when :palette
+      step["overlay"] = "actions:#{ui.action_palette&.input}"
+    when :context_palette
+      step["overlay"] = "contexts:#{ui.context_palette&.input}"
+    when :task_edit
+      editor = ui.task_editor
+      if editor
+        focused = editor.focused_key.to_s
+        step["overlay"] = "edit:#{focused}"
+        step["overlay"] += "*" if editor.dirty?(focused)
+        if (confirmation = editor.pending_confirmation)
+          step["overlay"] += " ?#{confirmation.message}"
+        end
+        if (conflict = editor.conflict)
+          step["overlay"] += " conflict:#{conflict.field}"
+        end
+      end
+    end
+    step
+  end
+
+  steps = [observe(app, ui, "")]
+  Array(script["keys"]).each do |key|
+    app.send(:handle_key, key)
+    app.send(:rows)
+    steps << observe(app, ui, key)
+  end
+
+  File.write(ENV.fetch("TUI_DIFF_OUT"), JSON.pretty_generate(steps) + "\n")
+RUBY
+
+def run_ruby(dir, script_path, out_path)
+  environment = PINS.merge(
+    "TUI_DIFF_ROOT" => ROOT,
+    "TUI_DIFF_SCRIPT" => script_path,
+    "TUI_DIFF_DIR" => dir,
+    "TUI_DIFF_OUT" => out_path,
+    "TASKS_FILE" => File.join(dir, "tasks.jsonl"),
+    "TASKS_ARCHIVE" => File.join(dir, "archive.jsonl"),
+    "XDG_STATE_HOME" => File.join(dir, "state"),
+    "XDG_CONFIG_HOME" => File.join(dir, "config")
+  )
+  Open3.capture3(environment, "ruby", "-e", RUBY_DRIVER, chdir: ROOT)
+end
+
+def run_go(dir, script_path, out_path)
+  environment = PINS.merge(
+    "TUI_DIFF_SCRIPT" => script_path,
+    "TUI_DIFF_DIR" => dir,
+    "TUI_DIFF_OUT" => out_path
+  )
+  Open3.capture3(environment, "go", "test", "./internal/tui/",
+                 "-run", "TestDifferentialDriver", "-count=1", chdir: GO_DIR)
+end
+
+# -- comparison -------------------------------------------------------------------
+
+# The Go build reports its refusals in its own words for the capabilities a
+# later packet owns; those sentences are not a behavioral difference and are
+# normalized to one token so a scenario that reaches one still compares the
+# mode, the selection and the bytes.
+DEFERRED = /not implemented in this build|does not expose/.freeze
+
+def normalize(steps)
+  steps.map do |step|
+    copy = step.dup
+    copy["flash"] = "«deferred»" if copy["flash"].to_s.match?(DEFERRED)
+    copy
+  end
+end
+
+# The `updated` stamp is a wall-clock value neither TUI pins — Ruby's App builds
+# its store without a clock override, and the Go driver deliberately matches
+# that — so the instant is normalized away and the DEVICE suffix, which is a
+# real behavioral field, is kept.
+UPDATED = /"updated":"[^"#]*(#[^"]*)?"/.freeze
+
+def store_bytes(dir)
+  path = File.join(dir, "tasks.jsonl")
+  return nil unless File.exist?(path)
+
+  File.read(path, encoding: "UTF-8").gsub(UPDATED) { %("updated":"«stamp»#{Regexp.last_match(1)}") }
+end
+
+def diff_lines(left, right, label)
+  out = []
+  [left.size, right.size].max.times do |index|
+    a = left[index]
+    b = right[index]
+    next if a == b
+
+    out << "  #{label} step #{index} (key #{(a || b)['key'].inspect}):"
+    %w[mode selected flash overlay].each do |field|
+      next if a && b && a[field] == b[field]
+
+      out << "    #{field}: ruby=#{(a || {})[field].inspect} go=#{(b || {})[field].inspect}"
+    end
+  end
+  out
+end
+
+failures = []
+count = 0
+
+Dir.mktmpdir("tui-diff") do |work|
+  SCENARIOS.each do |scenario|
+    next if ONLY && scenario[:name] != ONLY
+
+    count += 1
+    ruby_dir = sandbox(File.join(work, "#{scenario[:name]}-ruby"))
+    go_dir = sandbox(File.join(work, "#{scenario[:name]}-go"))
+
+    script_path = File.join(work, "#{scenario[:name]}.json")
+    File.write(script_path, JSON.generate(scenario))
+
+    ruby_out = File.join(work, "#{scenario[:name]}-ruby.json")
+    go_out = File.join(work, "#{scenario[:name]}-go.json")
+
+    _, ruby_err, ruby_status = run_ruby(ruby_dir, script_path, ruby_out)
+    go_stdout, go_err, go_status = run_go(go_dir, script_path, go_out)
+
+    problems = []
+    unless ruby_status.success?
+      problems << "  the Ruby driver failed:\n#{ruby_err.lines.last(12).join}"
+    end
+    unless go_status.success?
+      problems << "  the Go driver failed:\n#{(go_err + go_stdout).lines.last(12).join}"
+    end
+
+    if problems.empty?
+      ruby_steps = normalize(JSON.parse(File.read(ruby_out)))
+      go_steps = normalize(JSON.parse(File.read(go_out)))
+      trace = diff_lines(ruby_steps, go_steps, scenario[:name])
+      problems.concat(trace) unless trace.empty?
+
+      ruby_bytes = store_bytes(ruby_dir)
+      go_bytes = store_bytes(go_dir)
+      if ruby_bytes != go_bytes
+        problems << "  the stored bytes diverged:"
+        ruby_lines = ruby_bytes.to_s.lines
+        go_lines = go_bytes.to_s.lines
+        [ruby_lines.size, go_lines.size].max.times do |index|
+          next if ruby_lines[index] == go_lines[index]
+
+          problems << "    line #{index + 1}"
+          problems << "      ruby: #{ruby_lines[index].to_s.chomp}"
+          problems << "      go:   #{go_lines[index].to_s.chomp}"
+        end
+      end
+    end
+
+    if problems.empty?
+      puts "PASS #{scenario[:name]}" if VERBOSE
+    else
+      failures << ([scenario[:name], scenario[:why]].compact.join(" — ")) + "\n" + problems.join("\n")
+      puts "FAIL #{scenario[:name]}"
+    end
+  end
+end
+
+puts
+if failures.empty?
+  puts "tui-interaction-diff: #{count}/#{count} GATE PASS"
+  exit 0
+end
+
+failures.each do |failure|
+  puts failure
+  puts
+end
+puts "tui-interaction-diff: #{count - failures.size}/#{count} GATE FAIL"
+exit 1

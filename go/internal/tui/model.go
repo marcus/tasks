@@ -18,6 +18,7 @@ import (
 	"tasks-go/internal/store"
 	"tasks-go/internal/taskquery"
 	"tasks-go/internal/temporal"
+	"tasks-go/internal/tui/term/input"
 )
 
 // Mode is the interaction mode. The shell implements list and filter; the
@@ -97,6 +98,19 @@ type Model struct {
 	selectedID   string
 	panel        *RightPanel
 
+	// Overlay state. Each one is owned by exactly one mode, and SetMode
+	// refuses to enter that mode while its overlay is nil — see uistate.go.
+	modal            *Modal
+	modalFilterInput *input.Editor
+	form             *QuickForm
+	actionPalette    *ActionPalette
+	contextPalette   *ContextPalette
+	taskEditor       *TaskEditorSession
+	// pendingProject is the project a confirmation modal is about. It is held
+	// separately from the selection because the selection can move underneath
+	// an open confirmation, and answering `y` must act on what was asked.
+	pendingProject *taskquery.ProjectView
+
 	// Frame state.
 	width  int
 	height int
@@ -106,6 +120,10 @@ type Model struct {
 
 	flash      string
 	flashUntil time.Time
+	// editorMessage is the editor panel's own status line. It is separate from
+	// the flash because it is not transient: "press escape again to discard"
+	// has to stay visible until the user answers it.
+	editorMessage string
 
 	// readErr is the last read failure. A TUI that cannot read its store must
 	// SAY so rather than paint an empty list that looks like an empty store.

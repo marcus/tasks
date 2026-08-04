@@ -160,21 +160,52 @@ func TestFooterShowsActiveContextFilters(t *testing.T) {
 }
 
 func TestUnimplementedKeysSayWhatIsMissing(t *testing.T) {
-	// A half-built view is worse than an absent one. Every key another packet
-	// owns has to refuse OUT LOUD, naming the capability.
+	// A half-built view is worse than an absent one. Every key a LATER packet
+	// owns still has to refuse OUT LOUD, naming the capability. This list
+	// shrank when the editor/forms/modals half landed; what remains is the
+	// agent surface, delegation, and reordering.
 	cases := map[rune]string{
-		'e': "task editor",
-		'x': "completing a task",
 		'D': "delegation",
 		'p': "agent prompt",
-		'?': "help modal",
+		'W': "work reference",
+		'M': "agent model",
+		'u': "undo",
 	}
 	for key, want := range cases {
 		harness := newModelHarness(t, harnessOptions{})
+		harness.selectRowByID(fixFlight)
 		harness.press(key)
 		got := harness.model.FlashMessage()
-		if !strings.Contains(got, want) || !strings.Contains(got, "not implemented") {
-			t.Errorf("key %q flashed %q, which does not say %q is missing", key, got, want)
+		if !strings.Contains(got, want) {
+			t.Errorf("key %q flashed %q, which does not name %q as missing", key, got, want)
+		}
+		if !strings.Contains(got, "not implemented") && !strings.Contains(got, "does not expose") {
+			t.Errorf("key %q flashed %q, which does not read as a refusal", key, got)
+		}
+	}
+}
+
+// The keys this packet built must now DO something. A test that only pins the
+// refusals would stay green if the whole half were reverted.
+func TestEditorOwnedKeysAreLiveNow(t *testing.T) {
+	cases := []struct {
+		key   rune
+		check func(*Model) bool
+		what  string
+	}{
+		{'?', func(m *Model) bool { return m.Mode() == ModeModal && m.Modal().Kind() == ModalHelp }, "help modal"},
+		{':', func(m *Model) bool { return m.Mode() == ModePalette }, "action palette"},
+		{'@', func(m *Model) bool { return m.Mode() == ModeContextPalette }, "context palette"},
+		{'d', func(m *Model) bool { return m.Mode() == ModeForm && m.Form().Kind == QuickFormDate }, "date popup"},
+		{'r', func(m *Model) bool { return m.Mode() == ModeForm && m.Form().Kind == QuickFormRecurrence }, "recurrence popup"},
+	}
+	for _, testCase := range cases {
+		harness := newModelHarness(t, harnessOptions{})
+		harness.selectRowByID(fixFlight)
+		harness.press(testCase.key)
+		if !testCase.check(harness.model) {
+			t.Errorf("key %q did not open the %s; mode is %q, flash %q",
+				testCase.key, testCase.what, harness.model.Mode(), harness.model.FlashMessage())
 		}
 	}
 }

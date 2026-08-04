@@ -663,6 +663,38 @@ One `##` section per accepted difference, in the order they were accepted:
   invocation coalesces with nothing.
 - **Conformance disposition:** none needed; the two now agree.
 
+## tui-temporal-picker-is-typed-not-stepped — accepted 2026-08-04
+
+- **Slices:** TUI editor (Wave 4, editor/forms/modals packet)
+- **Ruby behavior:** the task editor's two date fields open a five-row
+  structured control on Return — date, time, mode (all-day / floating / fixed),
+  zone, and fold — with arrow keys adjusting each row and a live IANA zone
+  search over `TZInfo.all_identifiers`. The fold row appears only when the
+  chosen local time is ambiguous in the chosen zone, and stepping the time
+  across a spring-forward gap lands on the first valid local time after it.
+- **Go behavior:** the same two fields parse the SAME expression grammar as
+  text — `2026-08-09 17:30 Europe/Berlin`, `tomorrow 9am`, `fri noon`, with an
+  optional trailing `floating` / `UTC` / `Area/Location` and `fold=later` — and
+  Return opens the base calendar picker (arrows by day and week, page keys by
+  month, `t` for today).
+- **Who can see it:** anyone editing a timed date in the TUI. No value is
+  unreachable — every combination the Ruby picker can assemble can be typed,
+  and the wall time and zone survive to the stored bytes — but the arrow-driven
+  affordance, and the two DST behaviors only the arrows reach, are absent.
+- **Why accepted:** the plan explicitly does not ask for pixel identity in the
+  TUI, and the picker is presentation over a value the shared parser already
+  owns. The DST rules it embodies are enforced where they matter regardless:
+  `temporal.NewValue` refuses a nonexistent local time at parse, so a value the
+  Ruby picker would have prevented is REFUSED here rather than stored. What is
+  lost is convenience, not correctness, and it is separable work.
+- **Evidence:** `porting/compare/tui-interaction-diff` covers the typed path
+  end to end (scenarios `validated-form-mutation-date` and
+  `validated-form-refusal-date`, both byte-identical);
+  `TestATimedDateKeepsItsWallTimeAndZoneThroughTheSave` pins the wall time and
+  zone reaching the record.
+- **Conformance disposition:** none needed; the harness drives keystrokes the
+  two implementations share.
+
 ## Notes on the record
 
 The last field is the one that rots. A difference recorded here but not
