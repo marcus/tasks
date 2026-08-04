@@ -144,10 +144,12 @@ func TestSnapshotItemsAndArchiveHalf(t *testing.T) {
 		t.Fatalf("status = %q (%v)", result.Status, result.Errors)
 	}
 	snapshot := result.Snapshot
-	if len(snapshot.Items) != 1 || len(snapshot.ArchiveItems) != 1 {
-		t.Fatalf("items = %d live / %d archive", len(snapshot.Items), len(snapshot.ArchiveItems))
+	items := snapshot.Items()
+	archiveItems := snapshot.ArchiveItems()
+	if len(items) != 1 || len(archiveItems) != 1 {
+		t.Fatalf("items = %d live / %d archive", len(items), len(archiveItems))
 	}
-	item := snapshot.Items[0]
+	item := items[0]
 	if item.ID != "aaaa0001" || item.State != "TODO" || item.Title != "live" || item.Line != 3 {
 		t.Fatalf("item = %+v", item)
 	}
@@ -160,7 +162,7 @@ func TestSnapshotItemsAndArchiveHalf(t *testing.T) {
 	if len(snapshot.ChildrenOf("5ec70001")) != 1 || len(snapshot.Roots()) != 0 {
 		t.Fatal("parent pointers must place the task under its section")
 	}
-	if snapshot.ArchiveItems[0].Source != SourceArchive {
+	if archiveItems[0].Source != SourceArchive {
 		t.Fatal("archive items carry the archive source")
 	}
 

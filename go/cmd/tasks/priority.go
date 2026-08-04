@@ -279,7 +279,7 @@ func recurrenceRollLine(item store.Item, result store.MutationResult) string {
 	if result.ReadSnapshot == nil {
 		return line
 	}
-	for _, fresh := range result.ReadSnapshot.Items {
+	for _, fresh := range result.ReadSnapshot.Items() {
 		if fresh.ID != item.ID {
 			continue
 		}

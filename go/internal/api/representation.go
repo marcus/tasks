@@ -175,8 +175,8 @@ func newResourceContext(queries *taskquery.Queries) *resourceContext {
 	snapshot := queries.Snapshot()
 	return &resourceContext{
 		queries: queries,
-		live:    newTreeIndex(snapshot.LiveRecords),
-		archive: newTreeIndex(snapshot.ArchiveRecords),
+		live:    newTreeIndex(snapshot.LiveRecords()),
+		archive: newTreeIndex(snapshot.ArchiveRecords()),
 	}
 }
 

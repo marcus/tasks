@@ -132,7 +132,7 @@ func (s *Server) sections(request *http.Request) (response, error) {
 	w := jsonout.New()
 	writeSuccess(w, func(w *jsonout.Writer) {
 		w.BeginArray()
-		for _, parsed := range read.Queries.Snapshot().LiveRecords {
+		for _, parsed := range read.Queries.Snapshot().LiveRecords() {
 			if parsed.String("type") == "section" {
 				writeSection(w, parsed)
 			}

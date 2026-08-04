@@ -54,9 +54,9 @@ func (s *surfaceContext) check(args []string) int {
 		// many records this build could actually interpret.
 		count := 0
 		if snapshot, err := s.store.ReadSnapshot(allFiles); err == nil {
-			count = len(snapshot.Items)
+			count = len(snapshot.Items())
 			if allFiles {
-				count += len(snapshot.ArchiveItems)
+				count += len(snapshot.ArchiveItems())
 			}
 		}
 		noun := "task"

@@ -185,7 +185,7 @@ func (s *surfaceContext) recurCommand(args []string) int {
 		// a roll.
 		next := ""
 		if !off {
-			for _, fresh := range result.ReadSnapshot.Items {
+			for _, fresh := range result.ReadSnapshot.Items() {
 				if fresh.ID != item.ID {
 					continue
 				}

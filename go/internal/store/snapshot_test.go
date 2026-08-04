@@ -1,70 +1,132 @@
 package store
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
 
-// TestSnapshotIsNotYetImmutable pins a KNOWN DEFECT, deliberately.
-//
-// `Snapshot` documents itself as a coherent view a caller can hold while
-// rendering, but `Items`, `ArchiveItems`, `LiveRecords` and `ArchiveRecords` are
-// public slices, and each Item's tag slices share their backing array with the
-// snapshot's own copy. A caller that only meant to READ one can therefore
-// corrupt it — and every reader of a snapshot is a caller.
-//
-// The fix is unexported fields with copying accessors, which is what
-// `port/store-snapshot-items` proposed and what Wave 0 recorded. It is a
-// mechanical change across 28 non-test call sites in five packages. It has been
-// deferred twice, both times for a good reason and a different one:
-//
-//   - Wave 2 judged that mixing an API-shape change into the write wave would
-//     make that wave's differential evidence harder to trust;
-//   - this packet judged that `taskquery` — 11 of the 28 sites — is the package
-//     two TUI worktrees are reading from right now, and that `api` and
-//     `application` were reserved to it by name. An API-shape change across
-//     three packages, in the same commit as placement and the project
-//     lifecycle, would collide with live work by construction and would carry no
-//     differential evidence of its own, because none of it is visible from the
-//     CLI.
-//
-// So this test exists instead: it states the defect executably, so the next
-// owner has a specification rather than a paragraph, and so the fix cannot land
-// half-done without a failing test saying so. WHEN IT FAILS, THE DEFECT IS
-// FIXED — delete it, do not repair it.
-func TestSnapshotIsNotYetImmutable(t *testing.T) {
-	target, _ := writerFixture(t, patchFixture)
-	snapshot, err := target.ReadSnapshot(false)
-	if err != nil {
-		t.Fatal(err)
+	"tasks-go/internal/record"
+)
+
+func TestSnapshotAccessorsReturnDeepCopies(t *testing.T) {
+	item := Item{
+		ID:            "live",
+		Title:         "original",
+		AllTags:       []string{"all"},
+		Tags:          []string{"tag"},
+		Contexts:      []string{"@context"},
+		ScheduledTime: json.RawMessage(`{"local":"09:00"}`),
+		DeadlineTime:  json.RawMessage(`{"local":"17:00"}`),
+		Delegation:    json.RawMessage(`{"to":"Sam"}`),
+	}
+	parsed := record.Record{Line: 2, Fields: []record.Field{{Key: "title", Value: json.RawMessage(`"original"`)}}}
+	snapshot := &Snapshot{
+		items:          []Item{item},
+		archiveItems:   []Item{item},
+		liveRecords:    []record.Record{parsed},
+		archiveRecords: []record.Record{parsed},
 	}
 
-	var tagged Item
-	for _, item := range snapshot.Items {
-		if len(item.AllTags) > 0 {
-			tagged = item
-			break
+	assertItemsDetached := func(t *testing.T, first, second func() []Item) {
+		t.Helper()
+		got := first()
+		got[0].Title = "changed"
+		got[0].AllTags[0] = "changed"
+		got[0].Tags[0] = "changed"
+		got[0].Contexts[0] = "changed"
+		got[0].ScheduledTime[0] = '!'
+		got[0].DeadlineTime[0] = '!'
+		got[0].Delegation[0] = '!'
+		got[0] = Item{}
+
+		fresh := second()
+		if fresh[0].Title != "original" || fresh[0].AllTags[0] != "all" || fresh[0].Tags[0] != "tag" || fresh[0].Contexts[0] != "@context" {
+			t.Fatalf("item accessor leaked mutation: %+v", fresh[0])
+		}
+		if fresh[0].ScheduledTime[0] != '{' || fresh[0].DeadlineTime[0] != '{' || fresh[0].Delegation[0] != '{' {
+			t.Fatalf("item raw value leaked mutation: %+v", fresh[0])
 		}
 	}
-	if tagged.ID == "" {
-		t.Fatal("the fixture has no tagged task")
+	assertItemsDetached(t, snapshot.Items, snapshot.Items)
+	assertItemsDetached(t, snapshot.ArchiveItems, snapshot.ArchiveItems)
+
+	assertRecordsDetached := func(t *testing.T, first, second func() []record.Record) {
+		t.Helper()
+		got := first()
+		got[0].Line = 99
+		got[0].Fields[0].Key = "changed"
+		got[0].Fields[0].Value[0] = '!'
+		got[0].Fields = nil
+
+		fresh := second()
+		if fresh[0].Line != 2 || fresh[0].Fields[0].Key != "title" || fresh[0].Fields[0].Value[0] != '"' {
+			t.Fatalf("record accessor leaked mutation: %+v", fresh[0])
+		}
+	}
+	assertRecordsDetached(t, snapshot.LiveRecords, snapshot.LiveRecords)
+	assertRecordsDetached(t, snapshot.ArchiveRecords, snapshot.ArchiveRecords)
+}
+
+func TestSnapshotTreeResultsAreDeepCopies(t *testing.T) {
+	root := Item{ID: "root", AllTags: []string{"root-tag"}, Delegation: json.RawMessage(`{"to":"Root"}`)}
+	child := Item{ID: "child", Parent: "root", HasParent: true, Contexts: []string{"@child"}, DeadlineTime: json.RawMessage(`{"local":"12:00"}`)}
+	snapshot := &Snapshot{items: []Item{root, child}}
+
+	roots := snapshot.Roots()
+	roots[0].AllTags[0] = "changed"
+	roots[0].Delegation[0] = '!'
+	children := snapshot.ChildrenOf("root")
+	children[0].Contexts[0] = "changed"
+	children[0].DeadlineTime[0] = '!'
+
+	freshRoots := snapshot.Roots()
+	freshChildren := snapshot.ChildrenOf("root")
+	if freshRoots[0].AllTags[0] != "root-tag" || freshRoots[0].Delegation[0] != '{' {
+		t.Fatalf("Roots leaked mutation: %+v", freshRoots[0])
+	}
+	if freshChildren[0].Contexts[0] != "@child" || freshChildren[0].DeadlineTime[0] != '{' {
+		t.Fatalf("ChildrenOf leaked mutation: %+v", freshChildren[0])
+	}
+	if got := snapshot.Items(); got[0].AllTags[0] != "root-tag" || got[1].Contexts[0] != "@child" {
+		t.Fatalf("tree result mutated snapshot items: %+v", got)
+	}
+}
+
+func TestSnapshotCopiesPreserveNilAndEmpty(t *testing.T) {
+	zero := &Snapshot{}
+	if zero.Items() != nil || zero.ArchiveItems() != nil || zero.LiveRecords() != nil || zero.ArchiveRecords() != nil {
+		t.Fatal("nil snapshot slices must stay nil")
 	}
 
-	// A caller holding an Item mutates the snapshot's copy through the shared
-	// backing array. Nothing about the value it was handed says it may not.
-	original := tagged.AllTags[0]
-	tagged.AllTags[0] = "corrupted-by-a-reader"
-	for _, item := range snapshot.Items {
-		if item.ID != tagged.ID {
-			continue
-		}
-		if item.AllTags[0] == original {
-			t.Fatal("the snapshot is now immutable — delete this test, the defect is fixed")
-		}
+	snapshot := &Snapshot{
+		items: []Item{{
+			AllTags:       nil,
+			Tags:          []string{},
+			Contexts:      nil,
+			ScheduledTime: nil,
+			DeadlineTime:  json.RawMessage{},
+			Delegation:    json.RawMessage{},
+		}},
+		archiveItems: []Item{},
+		liveRecords: []record.Record{
+			{Fields: nil},
+			{Fields: []record.Field{}},
+			{Fields: []record.Field{{Key: "nil", Value: nil}, {Key: "empty", Value: json.RawMessage{}}}},
+		},
+		archiveRecords: []record.Record{},
 	}
-
-	// And the slice itself is assignable, so a caller can empty a snapshot
-	// another goroutine is rendering from.
-	snapshot.Items = nil
-	if snapshot.Items != nil {
-		t.Fatal("Items is no longer assignable — delete this test, the defect is fixed")
+	items := snapshot.Items()
+	if items == nil || items[0].AllTags != nil || items[0].Tags == nil || items[0].Contexts != nil {
+		t.Fatalf("item slice nil/empty changed: %+v", items[0])
+	}
+	if items[0].ScheduledTime != nil || items[0].DeadlineTime == nil || items[0].Delegation == nil {
+		t.Fatalf("item raw nil/empty changed: %+v", items[0])
+	}
+	if snapshot.ArchiveItems() == nil || snapshot.ArchiveRecords() == nil {
+		t.Fatal("non-nil empty outer slices must stay non-nil")
+	}
+	records := snapshot.LiveRecords()
+	if records[0].Fields != nil || records[1].Fields == nil || records[2].Fields[0].Value != nil || records[2].Fields[1].Value == nil {
+		t.Fatalf("record nil/empty changed: %+v", records)
 	}
 }
 
@@ -74,7 +136,7 @@ func TestSnapshotFieldBaselinesComeFromItsHeldRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	item := snapshot.Items[0]
+	item := snapshot.Items()[0]
 	fields := []PatchField{FieldTitle, FieldState, FieldDeadline, FieldTags}
 	baselines, found := snapshot.FieldBaselines(item.ID, fields)
 	if !found {

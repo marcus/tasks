@@ -92,17 +92,20 @@ type availabilityKey struct {
 // have no structural context by construction, which is why an archived item's
 // availability is `closed` without a walk.
 func New(snapshot *store.Snapshot, context temporal.Context, options ...Option) *Queries {
+	liveRecords := snapshot.LiveRecords()
+	archiveRecords := snapshot.ArchiveRecords()
+	items := snapshot.Items()
 	queries := &Queries{
 		snapshot: snapshot,
 		context:  context,
-		tree:     BuildTree(snapshot.LiveRecords, snapshot.Items),
+		tree:     BuildTree(liveRecords, items),
 		records:  map[store.Source]map[int]record.Record{},
 		cache:    map[availabilityKey]Availability{},
 	}
 	for _, group := range []struct {
 		source  store.Source
 		records []record.Record
-	}{{store.SourceLive, snapshot.LiveRecords}, {store.SourceArchive, snapshot.ArchiveRecords}} {
+	}{{store.SourceLive, liveRecords}, {store.SourceArchive, archiveRecords}} {
 		byLine := map[int]record.Record{}
 		for _, parsed := range group.records {
 			byLine[parsed.Line] = parsed
@@ -626,11 +629,11 @@ func (q *Queries) List(filter query.Filter) []store.Item {
 func (q *Queries) sourceItems(filter query.Filter) []store.Item {
 	switch filter.Scope() {
 	case query.ScopeArchived:
-		return q.snapshot.ArchiveItems
+		return q.snapshot.ArchiveItems()
 	case query.ScopeAll:
-		return append(append([]store.Item{}, q.snapshot.Items...), q.snapshot.ArchiveItems...)
+		return append(q.snapshot.Items(), q.snapshot.ArchiveItems()...)
 	default:
-		return q.snapshot.Items
+		return q.snapshot.Items()
 	}
 }
 
@@ -795,7 +798,7 @@ func (q *Queries) dueBoundary(value temporal.Value) (time.Time, error) {
 // soonest first, priority breaking ties, file order breaking those.
 func (q *Queries) AgendaItems() []store.Item {
 	selected := []store.Item{}
-	for _, item := range q.snapshot.Items {
+	for _, item := range q.snapshot.Items() {
 		if !isOpen(item.State) {
 			continue
 		}

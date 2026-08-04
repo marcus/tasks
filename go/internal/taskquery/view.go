@@ -30,7 +30,7 @@ func (q *Queries) FindLive(id string) (store.Item, bool) {
 	if id == "" {
 		return store.Item{}, false
 	}
-	for _, item := range q.snapshot.Items {
+	for _, item := range q.snapshot.Items() {
 		if item.HasID && item.ID == id {
 			return item, true
 		}
@@ -143,11 +143,11 @@ func (q *Queries) APITimeFor(value temporal.Value, present bool) (APITime, bool)
 // LiveItems is the live file's tasks in file order — the population ref
 // resolution addresses. The archive is deliberately absent: a ref names
 // something you can still act on.
-func (q *Queries) LiveItems() []store.Item { return q.snapshot.Items }
+func (q *Queries) LiveItems() []store.Item { return q.snapshot.Items() }
 
 // ArchiveItems is the swept file's tasks in file order. Only the surfaces that
 // deliberately widen to closed history read it.
-func (q *Queries) ArchiveItems() []store.Item { return q.snapshot.ArchiveItems }
+func (q *Queries) ArchiveItems() []store.Item { return q.snapshot.ArchiveItems() }
 
 // OpenStates is the accepted-and-not-finished vocabulary, which is the default
 // scope for every ref.

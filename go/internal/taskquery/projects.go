@@ -109,7 +109,7 @@ func (q *Queries) liveSections() []record.Record {
 		return q.sections
 	}
 	sections := []record.Record{}
-	for _, parsed := range q.snapshot.LiveRecords {
+	for _, parsed := range q.snapshot.LiveRecords() {
 		if stringOf(parsed, "type") == "section" {
 			sections = append(sections, parsed)
 		}

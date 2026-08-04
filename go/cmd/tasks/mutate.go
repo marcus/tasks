@@ -110,8 +110,9 @@ func (s *surfaceContext) reportTouchedSnapshot(snapshot *store.Snapshot, ids []s
 	queries := taskquery.New(snapshot, context)
 
 	items := []store.Item{}
+	snapshotItems := snapshot.Items()
 	for _, id := range ids {
-		for _, item := range snapshot.Items {
+		for _, item := range snapshotItems {
 			if item.ID == id {
 				items = append(items, item)
 				break

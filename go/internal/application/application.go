@@ -241,7 +241,7 @@ func (a *Application) ListSections(operation *OperationContext) ([]record.Record
 
 func sectionsOf(queries *taskquery.Queries) []record.Record {
 	sections := []record.Record{}
-	for _, parsed := range queries.Snapshot().LiveRecords {
+	for _, parsed := range queries.Snapshot().LiveRecords() {
 		if parsed.String("type") == "section" {
 			sections = append(sections, parsed)
 		}
