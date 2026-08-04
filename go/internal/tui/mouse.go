@@ -1,8 +1,6 @@
 package tui
 
-import (
-	tea "github.com/charmbracelet/bubbletea"
-)
+import tea "github.com/charmbracelet/bubbletea"
 
 // Mouse handling in this packet is deliberately the COARSE half: click a row to
 // select it, click a fold marker to fold it, click a tab to switch, and scroll
@@ -22,6 +20,13 @@ func (m *Model) HandleMouse(event tea.MouseMsg) bool {
 	if !m.mouseEnabled() {
 		return false
 	}
+	// An open overlay owns the pointer. Without this, a click meant for a
+	// palette row would fall through to the list underneath and move the
+	// selection the palette was opened for — which is how a palette action runs
+	// against the wrong task.
+	if box := m.Overlay(); box != nil {
+		return m.overlayMouse(box, event)
+	}
 	layout := m.layout()
 	switch event.Type {
 	case tea.MouseWheelUp:
@@ -40,16 +45,30 @@ func (m *Model) HandleMouse(event tea.MouseMsg) bool {
 func (m *Model) mouseEnabled() bool { return m.paths.Mouse }
 
 func (m *Model) wheel(layout ScreenLayout, event tea.MouseMsg, direction int) bool {
+	footerRole := m.footerRole(layout, event.Y)
+	if footerRole == "response" {
+		m.ScrollResponse(direction * 3)
+		return true
+	}
+	if footerRole != "" {
+		return true
+	}
 	if m.panel != nil && m.inPanel(layout, event.X) {
 		m.panel.ScrollLine(direction*3, layout.BodyHeight)
 		return true
 	}
+	m.blurPrompt()
 	m.move(direction * 3)
 	return true
 }
 
 func (m *Model) click(layout ScreenLayout, event tea.MouseMsg) bool {
+	if m.footerRole(layout, event.Y) == "prompt" {
+		m.FocusPrompt()
+		return true
+	}
 	if event.Y == layout.HeaderRow() {
+		m.blurPrompt()
 		return m.clickTab(layout, event.X)
 	}
 	begin, end := layout.BodyRows()
@@ -73,6 +92,7 @@ func (m *Model) click(layout ScreenLayout, event tea.MouseMsg) bool {
 	markerOrigin := listBegin + 1
 	if row.HasMarker() && event.X >= markerOrigin+row.MarkerBegin &&
 		event.X < markerOrigin+row.MarkerEnd {
+		m.blurPrompt()
 		m.selectRow(index)
 		if row.Item != nil && m.collapsed[row.Item.ID] {
 			m.ExpandSelected()
@@ -81,8 +101,69 @@ func (m *Model) click(layout ScreenLayout, event tea.MouseMsg) bool {
 		}
 		return true
 	}
+	m.blurPrompt()
 	m.selectRow(index)
 	return true
+}
+
+func (m *Model) blurPrompt() {
+	if m.mode == ModePrompt {
+		m.mode = ModeList
+	}
+}
+
+// footerRole classifies the fitted footer from the same ordered blocks Footer
+// emitted. Content sniffing alone is unsafe: the key hint follows the prompt,
+// and flash/filter/context chrome can sit between a response and that prompt.
+func (m *Model) footerRole(layout ScreenLayout, row int) string {
+	start, end := layout.FooterRows()
+	if row < start || row >= end {
+		return ""
+	}
+	index := row - start
+	roles := m.footerRoles()
+	if len(roles) > len(layout.Footer) {
+		roles = roles[len(roles)-len(layout.Footer):]
+	}
+	if index < 0 || index >= len(roles) {
+		return "chrome"
+	}
+	return roles[index]
+}
+
+func (m *Model) footerRoles() []string {
+	roles := []string{}
+	agentLines := m.agentFooter()
+	agentRole := "chrome"
+	if m.queue != nil && !m.queue.Active() && m.respOpen && len(m.resp) > 0 {
+		agentRole = "response"
+	}
+	for range agentLines {
+		roles = append(roles, agentRole)
+	}
+	if m.readErr != nil {
+		roles = append(roles, "chrome")
+	}
+	if m.flash != "" {
+		roles = append(roles, "chrome")
+	}
+	if m.mode == ModeFilter || (m.filter != "" && m.mode != ModeFilter) {
+		roles = append(roles, "chrome")
+	}
+	if len(m.contextFilters) > 0 && m.mode != ModeContextPalette {
+		roles = append(roles, "chrome")
+	}
+	switch m.mode {
+	case ModeFilter, ModeForm, ModePalette, ModeContextPalette, ModeTaskEdit:
+	default:
+		for range m.PromptLines(m.width - 2) {
+			roles = append(roles, "prompt")
+		}
+	}
+	if m.mode != ModeTaskEdit {
+		roles = append(roles, "chrome")
+	}
+	return roles
 }
 
 func (m *Model) clickTab(layout ScreenLayout, column int) bool {
@@ -111,4 +192,62 @@ func (m *Model) tabBudget(layout ScreenLayout) int {
 func (m *Model) inPanel(layout ScreenLayout, column int) bool {
 	begin, end := layout.PanelCols()
 	return begin < end && column >= begin-2 && column < end
+}
+
+// overlayMouse routes a click or a wheel tick that landed on an open overlay.
+//
+// The row offset is taken against the box's OWN top row, which is the same
+// number the picker recorded when it last painted. Both sides agree because the
+// layout the hit test reads is produced by the paint, not re-derived from the
+// option list — a palette that re-derived it would act on the wrong row the
+// moment the query narrowed the list between paint and click.
+func (m *Model) overlayMouse(box *OverlayBox, event tea.MouseMsg) bool {
+	inside := event.Y >= box.Row && event.Y < box.Row+len(box.Lines)
+	switch event.Type {
+	case tea.MouseWheelUp, tea.MouseWheelDown:
+		direction := -1
+		if event.Type == tea.MouseWheelDown {
+			direction = 1
+		}
+		switch m.mode {
+		case ModeModal, ModeModalFilter:
+			m.modalMove(direction * 3)
+		case ModePalette:
+			m.resolvePaletteOutcome(m.actionPalette, m.actionPalette.Move(direction))
+		case ModeContextPalette:
+			m.applyContextOutcome(m.contextPalette.Move(direction))
+		default:
+			return false
+		}
+		return true
+	case tea.MouseLeft:
+		if !inside {
+			return false
+		}
+		offset := event.Y - box.Row
+		switch m.mode {
+		case ModePalette:
+			m.resolvePaletteOutcome(m.actionPalette, m.actionPalette.Hit(offset))
+			return true
+		case ModeContextPalette:
+			m.applyContextOutcome(m.contextPalette.Hit(offset))
+			return true
+		}
+		return true
+	}
+	return false
+}
+
+// applyContextOutcome is the shared tail of a context-palette key and click.
+func (m *Model) applyContextOutcome(outcome ContextOutcome) {
+	switch outcome.Kind {
+	case PickerCancelled:
+		m.CloseContextPalette()
+	case PickerAccepted:
+		if !outcome.Apply {
+			return
+		}
+		m.ApplyContextFilter(outcome.Contexts)
+		m.CloseContextPalette()
+	}
 }

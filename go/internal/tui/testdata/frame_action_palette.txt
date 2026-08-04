@@ -1,0 +1,24 @@
+┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+│ 1 Agenda 2 Next 3 Quadrants 4 Projects 5 Outline 6 Inbox 1                   6 open · ? help │
+├──────────────────────────────────────────────────────────────────────────────────────────────┤
+│  @computer                                                                                   │
+│ ›    [A] Book flight in Concur  7/2                                                          │
+│      [B┌─ actions ──────────────────────────────────────────────────────────────────┐        │
+│        │  search:                                                                   │        │
+│  @home │                                                                            │        │
+│      Wa│  ❯   collapse subtree (again: to parent)  h                                │        │
+│        │      expand subtree  l                                                     │        │
+│        │      collapse all subtrees  H                                              │        │
+│        │      expand all subtrees  L                                                │        │
+│        │      open / close task details  return                                     │        │
+│        │      complete selected task  c                                             │        │
+│        │      edit Deadline / Available from date or time  d                        │        │
+│        │      recur — weekly · every mon · m:15 · off  r                            │        │
+│        │  ↑↓ choose · enter run · esc cancel                                        │        │
+│        └────────────────────────────────────────────────────────────────────────────┘        │
+│                                                                                              │
+│                                                                                              │
+│                                                                                              │
+├──────────────────────────────────────────────────────────────────────────────────────────────┤
+│ j/k move · 1-6 views · h/l fold · enter details · v unavailable · / search · q quit          │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘

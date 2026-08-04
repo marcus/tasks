@@ -409,6 +409,14 @@ func (q *Queue) Work() bool {
 	return q.active != nil || len(q.pending) > 0
 }
 
+// Now samples the queue's own monotonic clock. Activity rendering must use the
+// same clock domain as queuedAt/startedAt.
+func (q *Queue) Now() float64 {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.clock()
+}
+
 // ActiveOutput is the live transcript of the running request.
 func (q *Queue) ActiveOutput() string {
 	q.mu.Lock()

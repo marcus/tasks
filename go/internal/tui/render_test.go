@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"tasks-go/internal/tui/term/shortcuts"
 	"testing"
 )
 
@@ -159,22 +160,68 @@ func TestFooterShowsActiveContextFilters(t *testing.T) {
 	}
 }
 
-func TestUnimplementedKeysSayWhatIsMissing(t *testing.T) {
-	// A half-built view is worse than an absent one. Every key another packet
-	// owns has to refuse OUT LOUD, naming the capability.
-	cases := map[rune]string{
-		'e': "task editor",
-		'x': "completing a task",
-		'D': "delegation",
-		'p': "agent prompt",
-		'?': "help modal",
+func TestNoBoundKeyStillRefusesAsUnimplemented(t *testing.T) {
+	// The registry is the contract. At completion every bound handler must
+	// either DO its thing or refuse for a reason about the CURRENT SELECTION —
+	// never "this build cannot".
+	//
+	// stillUnbuilt is the shrinking list. It must reach empty; a name that is
+	// implemented while still listed here also fails, so the list cannot rot in
+	// either direction.
+	// EMPTY. Every bound key does its thing or refuses for a reason about the
+	// current selection.
+	stillUnbuilt := map[string]bool{}
+	for name := range unbuiltHandlers {
+		if !stillUnbuilt[name] {
+			t.Errorf("handler %q refuses as unimplemented but is not on the known list", name)
+		}
 	}
-	for key, want := range cases {
+	for name := range stillUnbuilt {
+		if _, refuses := unbuiltHandlers[name]; !refuses {
+			t.Errorf("handler %q is implemented; remove it from stillUnbuilt", name)
+		}
+	}
+	for _, context := range shortcuts.Contexts {
+		entries, err := shortcuts.Entries(context, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			if entry.DocOnly || entry.Handler == "" {
+				continue
+			}
+			if stillUnbuilt[entry.Handler] {
+				continue
+			}
+			harness := newModelHarness(t, harnessOptions{})
+			if _, present := harness.model.handlers()[entry.Handler]; !present {
+				t.Errorf("registry handler %q has no implementation", entry.Handler)
+			}
+		}
+	}
+}
+
+// The keys this packet built must now DO something. A test that only pins the
+// refusals would stay green if the whole half were reverted.
+func TestEditorOwnedKeysAreLiveNow(t *testing.T) {
+	cases := []struct {
+		key   rune
+		check func(*Model) bool
+		what  string
+	}{
+		{'?', func(m *Model) bool { return m.Mode() == ModeModal && m.Modal().Kind() == ModalHelp }, "help modal"},
+		{':', func(m *Model) bool { return m.Mode() == ModePalette }, "action palette"},
+		{'@', func(m *Model) bool { return m.Mode() == ModeContextPalette }, "context palette"},
+		{'d', func(m *Model) bool { return m.Mode() == ModeForm && m.Form().Kind == QuickFormDate }, "date popup"},
+		{'r', func(m *Model) bool { return m.Mode() == ModeForm && m.Form().Kind == QuickFormRecurrence }, "recurrence popup"},
+	}
+	for _, testCase := range cases {
 		harness := newModelHarness(t, harnessOptions{})
-		harness.press(key)
-		got := harness.model.FlashMessage()
-		if !strings.Contains(got, want) || !strings.Contains(got, "not implemented") {
-			t.Errorf("key %q flashed %q, which does not say %q is missing", key, got, want)
+		harness.selectRowByID(fixFlight)
+		harness.press(testCase.key)
+		if !testCase.check(harness.model) {
+			t.Errorf("key %q did not open the %s; mode is %q, flash %q",
+				testCase.key, testCase.what, harness.model.Mode(), harness.model.FlashMessage())
 		}
 	}
 }

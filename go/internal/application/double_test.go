@@ -65,7 +65,17 @@ func capableFactory() (func(*store.Store) Store, *capableStore) {
 // -- capabilities -------------------------------------------------------------
 
 func (c *capableStore) PatchesField(field store.PatchField) bool {
-	return field == store.FieldPriority || field == store.FieldState || field == FieldBody
+	return field == store.FieldPriority || field == store.FieldState || field == FieldBody ||
+		field == store.FieldDeferred || field == store.FieldContexts || field == store.FieldTags
+}
+
+// Patch is the typed capability. It records the call and then delegates to the
+// real store's own typed entry point, so a test asserting on the log is
+// asserting about a write that actually happened.
+func (c *capableStore) Patch(request store.PatchRequest) store.MutationResult {
+	c.record(recordedCall{verb: "typed_patch:" + string(request.Field), id: request.ID,
+		coalesceKey: request.CoalesceKey})
+	return c.Store.Patch(request)
 }
 
 func (c *capableStore) PatchTaskCoalesced(id string, field store.PatchField, value, expected, label, today, coalesceKey string) store.MutationResult {

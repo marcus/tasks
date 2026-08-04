@@ -754,6 +754,131 @@ kept because `go/internal/api/errors.go` cites it.
   `agentcontext.TestUnreadableMemoryRaises`, which asserts the path and the
   `cannot read task-set memory` prefix and skips when it is running as root.
 
+## tui-archive-sweep-stamp-honours-the-session-date — a Ruby DEFECT fixed, not a behavior difference — 2026-08-03
+
+- **Slices:** TUI archive (Wave 4)
+- **The defect:** `Tui::App#archive_sweep` called `@store.archive_preview` and
+  `@store.archive_swept!` with no `today:`. Both default to `Date.today`, so the
+  archive stamp came from the process's LOCAL calendar day while every other TUI
+  write stamps `current_date` — which honours the configured `TASKS_TIMEZONE`
+  and the injected date provider. A user whose configured zone had already
+  rolled over got an `archived` day that disagreed with the `closed` days the
+  same session had just written, and a confirmation prepared either side of
+  local midnight could stamp a different day than its preview described.
+- **Fix:** `archive_sweep` captures `current_date` ONCE into `@archive_today`,
+  passes it to the preview, and `archive_confirm_key` carries the same value
+  into the sweep. `close_modal` clears it with the rest of the modal state.
+  The same review found the direct project-archive confirmation still called
+  `archive_project` without `today:`; `project_archive_confirm_key` now passes
+  `current_date` too.
+- **Why fixed rather than ported:** the identical defect was already fixed for
+  `archive_plan` and `archive_project_impl` (see
+  `project-archive-stamp-honours-the-injected-clock`), so porting this one would
+  have reintroduced a bug the project had already decided against — and would
+  have required making the Go build wrong on purpose.
+- **Evidence:** found by `porting/compare/tui-interaction-diff`, scenario
+  `archive-preview-then-sweep`: `archive.jsonl` carried `"archived":"2026-08-03"`
+  on the Ruby side against `"archived":"2026-07-14"` on the Go side, with every
+  other byte identical. Ruby regression coverage:
+  `TestAppModals#test_archive_stamps_the_session_date_not_the_wall_clock` and
+  `#test_archive_preview_and_sweep_share_one_captured_date`, both of which fail
+  on the pre-fix source, plus
+  `TestApp#test_archive_project_confirms_then_moves_subtree_to_archive_file` and
+  the differential scenario `project-archive-uses-session-date` for the project
+  route.
+- **Conformance disposition:** none needed; the two now agree byte for byte.
+
+## tui-vanished-form-target-is-explained — a Ruby DEFECT fixed, not a behavior difference — 2026-08-03
+
+- **Slices:** TUI forms (Wave 4)
+- **The defect:** an external refresh already detached a form whose target task
+  disappeared, preventing it from writing to the replacement selection, but
+  Ruby closed the prompt silently. The user lost both the input and the only
+  visible clue about why it vanished. Mutation-triggered reloads already
+  promised the diagnostic `task no longer exists`; a passive reload did not.
+- **Fix:** `Tui::App#restore_form` now flashes `task no longer exists` whenever
+  target disappearance causes the safe detach. The Go reconciliation path uses
+  the same message.
+- **Why fixed rather than ported:** silence here is not a compatibility
+  contract. The form cannot remain attached safely, and explaining that forced
+  close is the minimum useful behavior.
+- **Evidence:** `porting/compare/tui-interaction-diff`, scenario
+  `form-target-deleted-on-refresh`, opens a date form for task A, deletes A from
+  the isolated fixture, refreshes, and compares the closed overlay, fallback
+  selection, flash, and final bytes. The existing Ruby regression
+  `TestApp#test_delegate_flashes_when_the_target_disappears_mid_prompt` pins the
+  same diagnostic on the mutation-triggered reload path.
+- **Conformance disposition:** none; Ruby and Go now agree.
+
+## tui-paste-preserves-dirty-draft-quit-question — a Ruby DEFECT fixed, not a behavior difference — 2026-08-03
+
+- **Slices:** TUI editor and bracketed paste (Wave 4)
+- **The defect:** bracketed paste intentionally closes a modal and focuses the
+  prompt, while the editor's independent dirty-draft quit question remains
+  pending. Answering `n` then tried the illegal direct transition
+  `prompt -> task_edit`, raised `Tui::UiState::InvalidTransition`, and crashed
+  instead of returning the user to the retained draft.
+- **Fix:** cancellation restores a task editor through the legal `list` seam
+  when paste has moved the visible mode to `prompt`. The paste still lands in
+  the prompt, and `q` still cannot answer the pending destructive question.
+- **Why fixed rather than ported:** crashing on the safe answer to a still-live
+  confirmation is a Ruby defect, not a compatibility contract. The Go model
+  uses the same independent confirmation ownership without reproducing the
+  invalid transition.
+- **Evidence:** `TestApp#test_paste_cannot_bypass_dirty_draft_quit_confirmation`
+  reproduces the original exception and pins the retained editor and buffer.
+  Differential scenario `paste-cannot-bypass-draft-quit-confirmation` drives
+  paste, `q`, and `n` through both implementations and compares every step and
+  final store bytes.
+- **Conformance disposition:** none; Ruby and Go now agree.
+
+## tui-editor-close-preserves-the-detail-reader-place — accepted 2026-08-04
+
+- **Slices:** TUI editor and right panel (Wave 4)
+- **Ruby behavior:** entering task edit replaces the detail panel with a
+  distinct `:task_edit` `RightPanel`. Closing the editor creates a new
+  `:detail` panel, so a prior detail scroll position is not retained.
+- **Go behavior:** the editor renders over the existing same-task detail panel.
+  Closing it refreshes that same `PanelDetail` object with `Replace`, preserving
+  its identity and scroll position. A missing or moved target still closes the
+  panel rather than retargeting it to the replacement selection.
+- **Why accepted:** preserving the reader's place is the explicit right-panel
+  contract and is more useful than resetting a long task note to the top. Making
+  Ruby match would require retaining a separate prior detail panel throughout
+  its editor session solely to reproduce Go's simpler overlay structure; no
+  task data, command, key ownership, or editor save behavior differs.
+- **Evidence:**
+  `TestClosingEditorReusesSameTargetDetailPanelAndPreservesScroll` pins the Go
+  pointer, target identity, and `Scroll == 3` across Ctrl-O. Differential
+  scenario `same-identity-detail-refresh-preserves-scroll` expands the shared
+  comparator with `panel_identity` and `panel_scroll` and proves both builds
+  preserve scroll on an ordinary same-identity detail refresh; it deliberately
+  does not treat Ruby's separate editor-panel allocation as the oracle for this
+  accepted cross-editor difference.
+- **Who can see it:** a person who scrolls a long task detail, edits that same
+  task, and returns to detail view.
+- **Conformance disposition:** none; CLI, API, and store bytes are unchanged.
+
+## tui-help-filter-keeps-the-matching-shortcut-group — accepted 2026-08-03
+
+- **Slices:** TUI modals (Wave 4)
+- **Ruby behavior:** help filtering retains only the individual rendered lines
+  containing the query. A shortcut may therefore appear without the section
+  heading that explains its context.
+- **Go behavior:** help lines carry group identities. A match retains the whole
+  shortcut group, including its heading and the other bindings in that group.
+- **Why accepted:** the modal is a human reading aid, not structured or
+  scriptable output. Keeping the heading prevents a filtered binding from losing
+  the context that gives it meaning; no command availability or dispatch changes.
+  Recreating Ruby's line-only filtering would make the replacement less usable
+  for no compatibility benefit.
+- **Evidence:** `go/internal/tui/modal_test.go#TestModalGroupedFilterKeepsTheWholeMatchingBlock`
+  pins the grouped result. The interaction differential continues to compare the
+  filter lifecycle and modal identity; it deliberately does not normalize or
+  assert rendered help lines.
+- **Who can see it:** only a person typing `/` inside the help overlay.
+- **Conformance disposition:** none; the CLI/API/store surfaces are unchanged.
+
 ## Notes on the record
 
 The last field is the one that rots. A difference recorded here but not

@@ -18,6 +18,7 @@ import (
 	"tasks-go/internal/store"
 	"tasks-go/internal/taskquery"
 	"tasks-go/internal/temporal"
+	"tasks-go/internal/tui/term/input"
 )
 
 // Mode is the interaction mode. The shell implements list and filter; the
@@ -61,6 +62,19 @@ type Options struct {
 	Styler  Styler
 	Now     func() time.Time
 	Session SessionState
+	// Opener launches a task's link. A nil one refuses out loud rather than
+	// reaching for a platform launcher, which is what keeps a test suite from
+	// opening browser windows.
+	Opener Opener
+	// CopyToClipboard is a test seam for yank actions. Nil uses the platform
+	// clipboard command; tests inject a recorder and never touch the real one.
+	CopyToClipboard func(string) bool
+	// Entries are the provider/model pairs the prompt can be submitted to, and
+	// Queue is the coordinator that runs them. Both are injected: a test and
+	// the differential supply fakes, and a nil queue refuses the prompt out
+	// loud rather than reaching for a real provider.
+	Entries []AgentEntry
+	Queue   *agentQueue
 }
 
 // Model is the Bubble Tea root — the port of Tui::App's state, minus its event
@@ -97,6 +111,54 @@ type Model struct {
 	selectedID   string
 	panel        *RightPanel
 
+	// Overlay state. Each one is owned by exactly one mode, and SetMode
+	// refuses to enter that mode while its overlay is nil — see uistate.go.
+	modal               *Modal
+	modalFilterInput    *input.Editor
+	form                *QuickForm
+	actionPalette       *ActionPalette
+	contextPalette      *ContextPalette
+	taskEditor          *TaskEditorSession
+	suspendedTaskEditor *TaskEditorSession
+	suspendedTaskPanel  *RightPanel
+
+	// Quit confirmations retain the overlay they interrupted. q and ctrl-c do
+	// not answer either question; only an explicit y/return or n/escape does.
+	quitReturnModal   *Modal
+	quitReturnMode    Mode
+	quitReturnMessage string
+	agentQuitPending  bool
+	// pendingProject is the project a confirmation modal is about. It is held
+	// separately from the selection because the selection can move underneath
+	// an open confirmation, and answering `y` must act on what was asked.
+	pendingProject *taskquery.ProjectView
+	// archivePreview is the sweep the open confirmation described. It is handed
+	// BACK to the store on confirmation, so a list that changed while the modal
+	// was open refuses rather than archiving a set nobody saw.
+	archivePreview *store.ArchivePreview
+	// archiveContext is the clock the OPEN archive confirmation was built with.
+	// The store's pinned-preview fingerprint includes the day, so the preview
+	// the user read and the sweep they confirm have to agree about what day it
+	// is — otherwise a confirmation left open across local midnight refuses
+	// with "task list changed" although not one byte moved.
+	archiveContext temporal.Context
+	// opener launches a URL. It is injected so a test never opens a browser.
+	opener          Opener
+	copyToClipboard func(string) bool
+
+	// The agent surface. entries are the provider/model pairs `M` cycles;
+	// queue is the serial request coordinator; the resp* fields are the
+	// response pane the last finished request opened.
+	entries            []AgentEntry
+	entryIndex         int
+	queue              *agentQueue
+	promptInput        *input.Editor
+	resp               []string
+	respOpen           bool
+	respScroll         int
+	respRequestID      int
+	agentActivityWidth int
+
 	// Frame state.
 	width  int
 	height int
@@ -106,6 +168,10 @@ type Model struct {
 
 	flash      string
 	flashUntil time.Time
+	// editorMessage is the editor panel's own status line. It is separate from
+	// the flash because it is not transient: "press escape again to discard"
+	// has to stay visible until the user answers it.
+	editorMessage string
 
 	// readErr is the last read failure. A TUI that cannot read its store must
 	// SAY so rather than paint an empty list that looks like an empty store.
@@ -125,19 +191,23 @@ func New(options Options) *Model {
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	model := &Model{
-		app:            options.App,
-		paths:          options.Paths,
-		env:            options.Env,
-		styler:         styler,
-		now:            now,
-		view:           restoreView(options.Session.View),
-		collapsed:      restoreCollapsed(options.Session.Collapsed),
-		panelMode:      normalizePanelMode(options.Session.PanelMode),
-		panelOffset:    options.Session.PanelOffset,
-		contextFilters: restoreContextFilters(options.Session),
-		mode:           ModeList,
-		width:          80,
-		height:         24,
+		app:             options.App,
+		paths:           options.Paths,
+		env:             options.Env,
+		styler:          styler,
+		now:             now,
+		view:            restoreView(options.Session.View),
+		collapsed:       restoreCollapsed(options.Session.Collapsed),
+		panelMode:       normalizePanelMode(options.Session.PanelMode),
+		panelOffset:     options.Session.PanelOffset,
+		contextFilters:  restoreContextFilters(options.Session),
+		mode:            ModeList,
+		width:           80,
+		height:          24,
+		opener:          options.Opener,
+		copyToClipboard: options.CopyToClipboard,
+		entries:         options.Entries,
+		queue:           options.Queue,
 	}
 	return model
 }
@@ -197,9 +267,14 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = max(typed.Width, MinWidth)
 		m.height = max(typed.Height, MinHeight)
+		m.reconcileEditorLayout()
 		return m, nil
 	case tickMsg:
 		m.clearExpiredFlash()
+		// Drain the running agent process FIRST, so a request that just
+		// finished writing is picked up by the same tick that noticed it
+		// finished rather than by the next one.
+		m.PumpQueue()
 		// External change: pick up an edit made by the CLI, an agent, or an
 		// editor in another window. Selection survives it — see syncSelection.
 		if m.read == nil || m.read.Stale() || m.today != m.currentDate() {
@@ -231,16 +306,35 @@ func (m *Model) View() string {
 // -- the read model ---------------------------------------------------------
 
 func (m *Model) currentDate() temporal.Date {
-	context, err := temporal.NewContext(m.now(), m.paths.Timezone, m.paths.TimeFormat)
-	if err != nil {
+	context := m.temporalContext()
+	if context.Timezone == nil {
 		return temporal.DateOf(m.now())
 	}
 	return context.LocalDate()
 }
 
-// operation mints a per-read operation context. The TUI is a first-class
-// source, so its reads carry `tui` rather than borrowing the CLI's identity.
+// operation mints a per-read operation context on the session's OWN clock. The
+// TUI is a first-class source, so its reads carry `tui` rather than borrowing
+// the CLI's identity.
+//
+// Pinning the clock here is what makes the model's injected `now` the single
+// clock the whole surface reads. Without it the application falls back to its
+// own factory, and the TUI ends up with TWO clocks — the one `currentDate`,
+// flash expiry and the spinner read, and the one every write stamps from. In
+// the shipping binary both are `time.Now()` so they agree by luck; a test or a
+// harness that pins one and not the other would be measuring nothing.
 func (m *Model) operation() *application.OperationContext {
+	return m.operationAt(m.temporalContext())
+}
+
+// operationAt mints an operation carrying a SPECIFIC clock.
+//
+// A fresh identity every call, a caller-chosen instant: the two are separate on
+// purpose. Archive is the case that needs it — the preview the user reads and
+// the sweep they confirm have to agree about what day it is, because the
+// store's pinned-preview fingerprint includes the day, but they are still two
+// distinct operations in the journal and the audit trail.
+func (m *Model) operationAt(context temporal.Context) *application.OperationContext {
 	buffer := make([]byte, 8)
 	if _, err := rand.Read(buffer); err != nil {
 		buffer = []byte(fmt.Sprintf("%016x", m.now().UnixNano()))[:8]
@@ -250,13 +344,20 @@ func (m *Model) operation() *application.OperationContext {
 	if err != nil {
 		return nil
 	}
-	return built
+	if context.Timezone == nil {
+		// An unresolvable zone leaves the operation unpinned rather than
+		// carrying a zero context, which has no location and would panic the
+		// moment anything asked it for a local date.
+		return built
+	}
+	return built.WithTemporalContext(context)
 }
 
 // Refresh rebuilds the read model and the rows from it. It is the ONLY path
 // that changes what the list shows, so a refresh caused by an external write
 // and a refresh caused by a keypress cannot behave differently.
 func (m *Model) Refresh() {
+	priorMode := m.mode
 	read, err := m.app.ReadTasks(m.operation())
 	if err != nil {
 		m.readErr = err
@@ -266,7 +367,62 @@ func (m *Model) Refresh() {
 	m.read = read
 	m.today = read.Queries().Today()
 	m.RefreshRows()
+	m.reconcileOpenOverlays(priorMode)
 	m.reportFormatErrors()
+}
+
+// reconcileOpenOverlays keeps target-bound input attached to the exact task it
+// was opened for after an external reload. A vanished target closes the input;
+// it is never allowed to fall through onto the replacement selection.
+func (m *Model) reconcileOpenOverlays(prior Mode) {
+	switch prior {
+	case ModeForm:
+		if m.form != nil && m.form.TargetID != "" && !m.selectedTarget(m.form.TargetID) {
+			m.form = nil
+			m.mode = ModeList
+			m.Flash("task no longer exists")
+		}
+	case ModePalette:
+		if m.actionPalette != nil && m.actionPalette.TargetID() != "" &&
+			!m.selectedTarget(m.actionPalette.TargetID()) {
+			m.actionPalette = nil
+			m.mode = ModeList
+		}
+	case ModeContextPalette:
+		if m.contextPalette != nil {
+			m.contextPalette.RefreshOptions(m.tokensFromStore(func(item store.Item) []string {
+				return item.Contexts
+			}), m.contextFilters)
+		}
+	case ModeTaskEdit:
+		if m.taskEditor != nil {
+			outcome := m.taskEditor.Refresh()
+			m.editorMessage = outcome.Message
+			if outcome.Status == EditorMissing {
+				m.editorMessage = "Task no longer exists; local field retained for copy or discard" +
+					" · y copies field · esc discards editor"
+				m.Flash(m.editorMessage)
+			} else if outcome.Status == EditorConflicted {
+				m.Flash(outcome.Message)
+			}
+		}
+	}
+	if m.suspendedTaskEditor != nil {
+		outcome := m.suspendedTaskEditor.Refresh()
+		m.editorMessage = outcome.Message
+		if outcome.Status == EditorMissing || !m.suspendedTargetVisible() {
+			m.showSuspendedEditorPanel()
+		} else if m.panel != nil && m.panel.Kind == PanelDetail {
+			m.refreshOpenPanel()
+		}
+	}
+}
+
+func (m *Model) selectedTarget(id string) bool {
+	if item := m.CurrentItem(); item != nil && item.ID == id {
+		return true
+	}
+	return m.CurrentProject() != nil && m.CurrentProject().ID == id
 }
 
 // reportFormatErrors is Ruby's post-reload `Tasks::Check.check` flash.
@@ -472,7 +628,9 @@ func (m *Model) selectRow(index int) {
 	}
 	m.selected = index
 	m.selectedID = id
-	m.refreshOpenPanel()
+	if m.mode != ModeTaskEdit {
+		m.refreshOpenPanel()
+	}
 }
 
 func (m *Model) move(delta int) {
@@ -507,7 +665,7 @@ func (m *Model) syncSelection() {
 	if len(selectable) == 0 {
 		m.selected = 0
 		m.selectedID = ""
-		if m.panel != nil && m.panel.Kind == PanelDetail {
+		if m.mode != ModeTaskEdit && m.panel != nil && m.panel.Kind == PanelDetail {
 			m.panel = nil
 		}
 		return
@@ -569,7 +727,11 @@ func (m *Model) SwitchView(view string) {
 	for _, key := range ViewKeys() {
 		if key == view {
 			m.view = view
+			if m.suspendedTaskEditor != nil && !m.suspendedTaskEditor.Missing() {
+				m.selectedID = m.suspendedTaskEditor.TargetID()
+			}
 			m.RefreshRows()
+			m.reconcileSuspendedAfterNavigation()
 			return
 		}
 	}
@@ -690,7 +852,11 @@ func (m *Model) reselect(id string) {
 // ToggleDeferred flips whether unavailable work is shown.
 func (m *Model) ToggleDeferred() {
 	m.showDeferred = !m.showDeferred
+	if m.suspendedTaskEditor != nil && !m.suspendedTaskEditor.Missing() {
+		m.selectedID = m.suspendedTaskEditor.TargetID()
+	}
 	m.RefreshRows()
+	m.reconcileSuspendedAfterNavigation()
 	if m.showDeferred {
 		m.Flash("showing unavailable tasks")
 	} else {

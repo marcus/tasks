@@ -23,6 +23,23 @@ type Patch struct {
 	// CoalesceKey merges this write into a neighbouring journal entry — the
 	// editor-session behavior, where a burst of field saves is one undo step.
 	CoalesceKey string
+	// Typed carries the value's REAL shape for the fields a string cannot
+	// express: `deferred` (a bool) and `contexts`/`tags` (ordered lists).
+	//
+	// When it is set, Value is ignored. Both spellings exist because the CLI
+	// and the API only ever send text, and making them construct a typed value
+	// would be ceremony; the editor genuinely cannot.
+	Typed *store.PatchValue
+}
+
+// TypedPatch builds a patch carrying a value shape a string cannot express.
+func TypedPatch(id string, field store.PatchField, value store.PatchValue,
+	expected, label, coalesceKey string) Patch {
+
+	return Patch{
+		ID: id, Field: field, Expected: expected, HistoryLabel: label,
+		CoalesceKey: coalesceKey, Typed: &value,
+	}
 }
 
 // Baseline is the value a caller reads before proposing a patch, and false when
@@ -48,6 +65,17 @@ func (a *Application) PatchTask(patch Patch, operation *OperationContext) Outcom
 		return unsupported("patch the " + string(patch.Field) + " field")
 	}
 	today := a.today(operation)
+	if patch.Typed != nil {
+		patcher, ok := target.(TypedPatcher)
+		if !ok {
+			return unsupported("patch the " + string(patch.Field) + " field with a typed value")
+		}
+		return Outcome{MutationResult: patcher.Patch(store.PatchRequest{
+			ID: patch.ID, Field: patch.Field, Value: *patch.Typed,
+			Expected: patch.Expected, Label: patch.HistoryLabel, Today: today,
+			CoalesceKey: patch.CoalesceKey,
+		})}
+	}
 	if patch.CoalesceKey != "" {
 		if patcher, ok := target.(CoalescingPatcher); ok {
 			return Outcome{MutationResult: patcher.PatchTaskCoalesced(
@@ -109,4 +137,96 @@ func (a *Application) DecideProposal(decision ProposalDecision, operation *Opera
 	return Outcome{MutationResult: writer.DecideProposal(
 		decision.ID, string(decision.Action), copyOf(decision.Notes),
 		decision.ExpectedRevision, a.today(operation))}
+}
+
+// -- the list-wide operations the TUI drives ------------------------------------
+//
+// Each is a thin pass-through to an optional store capability, in the same
+// shape as every other application operation: a typed refusal when the store
+// cannot do it, never a silently different behavior.
+
+// ArchivePreview is what a sweep would move right now.
+func (a *Application) ArchivePreview(operation *OperationContext) (store.ArchivePreview, bool) {
+	sweeper, ok := a.store().(ArchiveSweeper)
+	if !ok {
+		return store.ArchivePreview{}, false
+	}
+	return sweeper.ArchivePreviewFor(a.today(operation)), true
+}
+
+// ArchiveSweep moves every fully closed subtree to the archive file, pinned to
+// the preview the caller showed the user.
+func (a *Application) ArchiveSweep(expected *store.ArchivePreview,
+	operation *OperationContext) (ArchiveOutcome, bool) {
+
+	target := a.store()
+	sweeper, ok := target.(ArchiveSweeper)
+	if !ok {
+		return ArchiveOutcome{}, false
+	}
+	outcome := ArchiveOutcome{ArchiveResult: sweeper.ArchiveSweep(a.today(operation), expected)}
+	// A sweep that wrote and rolled back reports only `Failed`; the REASON is
+	// recorded on the store, and it is the only evidence the write happened at
+	// all — the files look identical either way.
+	if outcome.Failed {
+		if writer, hasRollback := target.(ProjectWriter); hasRollback {
+			outcome.RollbackReason, outcome.RollbackStage = writer.LastRollback()
+		}
+	}
+	return outcome, true
+}
+
+// ArchiveOutcome is a sweep plus the rollback record a failed one leaves.
+type ArchiveOutcome struct {
+	store.ArchiveResult
+	RollbackReason string
+	RollbackStage  store.RollbackStage
+}
+
+// HistoryStep applies one undo (-1) or redo (+1).
+func (a *Application) HistoryStep(delta int) (store.HistoryOutcome, string, bool) {
+	stepper, ok := a.store().(HistoryStepper)
+	if !ok {
+		return "", "", false
+	}
+	outcome, label := stepper.HistoryStep(delta)
+	return outcome, label, true
+}
+
+// UpdateTask applies several field changes to one task ATOMICALLY, guarded by
+// the revision the caller read.
+//
+// Atomicity is the point, not a convenience. `z now` clears the hold AND the
+// available-from date; landing those as two patches would leave an observable
+// intermediate state where the task is released but still dated, and would cost
+// the user two undos for one keystroke.
+func (a *Application) UpdateTask(id string, changes []store.Change, label string,
+	operation *OperationContext) (Outcome, bool) {
+
+	placer, ok := a.store().(Placer)
+	if !ok {
+		return Outcome{}, false
+	}
+	revision, _ := placer.TaskRevision(id)
+	return Outcome{MutationResult: placer.ApplyChangeset(store.Changeset{
+		ID: id, Changes: changes, ExpectedRevision: revision, HistoryLabel: label,
+		Today: a.today(operation), Context: a.contextFor(operation),
+	})}, true
+}
+
+// MoveTask relocates one subtree, guarded by the revision the caller read.
+func (a *Application) MoveTask(id string, placement store.Placement, label string,
+	operation *OperationContext) (Outcome, bool) {
+
+	placer, ok := a.store().(Placer)
+	if !ok {
+		return Outcome{}, false
+	}
+	revision, _ := placer.TaskRevision(id)
+	return Outcome{MutationResult: placer.ApplyChangeset(store.Changeset{
+		ID:               id,
+		Changes:          []store.Change{{Field: store.FieldLocation, Value: store.PlacementValue(placement.ParentID, placement.BeforeID)}},
+		ExpectedRevision: revision, HistoryLabel: label,
+		Today: a.today(operation), Context: a.contextFor(operation),
+	})}, true
 }

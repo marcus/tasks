@@ -51,6 +51,17 @@ type modelHarness struct {
 	org   string
 	root  string
 	env   determinism.Env
+	// clock is the session instant every part of the model reads — the rows,
+	// the flash, and every write's stamp. It is a POINTER so a test can advance
+	// it mid-scenario, which is the only way to exercise a confirmation left
+	// open across local midnight.
+	clock *time.Time
+}
+
+// advanceClock moves the session clock without touching a single file.
+func (h *modelHarness) advanceClock(delta time.Duration) {
+	h.t.Helper()
+	*h.clock = h.clock.Add(delta)
 }
 
 type harnessOptions struct {
@@ -58,7 +69,28 @@ type harnessOptions struct {
 	now  time.Time
 	// paths overrides the resolved configuration for this model.
 	paths func(*config.Paths)
+	// opener is the link launcher. Tests inject a fake; nothing here may ever
+	// reach a real browser.
+	opener Opener
+	// entries and queue are the agent surface. Tests inject scripted adapters;
+	// nothing here may ever reach a real provider.
+	entries []AgentEntry
+	queue   *agentQueue
 }
+
+// blockedArchiveFixture has a closed root with open work still inside it, which
+// is the state a sweep must refuse rather than confirm.
+const blockedArchiveFixture = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0003","title":"Work"}
+{"type":"task","id":"aaaa0004","parent":"aaaa0003","state":"DONE","title":"Closed parent","closed":"2026-06-20"}
+{"type":"task","id":"aaaa0005","parent":"aaaa0004","state":"NEXT","title":"Still open inside"}
+`
+
+// linkedFixture carries a URL in a task body, for the link action.
+const linkedFixture = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0003","title":"Work"}
+{"type":"task","id":"aaaa0004","parent":"aaaa0003","state":"NEXT","title":"Book flight in Concur","body":"See https://example.com/itinerary for details."}
+`
 
 // newModelHarness builds one temp store and a model over it.
 //
@@ -80,16 +112,22 @@ func newModelHarness(t *testing.T, options harnessOptions) *modelHarness {
 		t.Fatal(err)
 	}
 
+	clock := options.now
 	context := func() temporal.Context {
-		return temporal.Context{Now: options.now.UTC(), Timezone: time.UTC, TimezoneID: "Etc/UTC"}
+		return temporal.Context{Now: clock.UTC(), Timezone: time.UTC, TimezoneID: "Etc/UTC"}
 	}
 	app, err := application.New(application.Options{
 		Factory: func() application.Store {
 			return store.NewWriter(org, archive, store.Options{
 				JournalDir: filepath.Join(root, "journal"),
-				Now:        func() time.Time { return options.now },
+				Now:        func() time.Time { return clock },
 				Device:     "fixture",
 				MaxDepth:   4,
+				UndoLimit:  50,
+				// Pinned like every other harness: the editor's one-undo-step
+				// contract depends on the scope matching across the fresh store
+				// each application operation builds.
+				CoalesceScope: "pinned-scope",
 			})
 		},
 		TemporalContext: context,
@@ -112,14 +150,17 @@ func newModelHarness(t *testing.T, options harnessOptions) *modelHarness {
 	env := determinism.Env{"XDG_STATE_HOME": filepath.Join(root, "state"), "HOME": root}
 
 	model := New(Options{
-		App:   app,
-		Paths: paths,
-		Env:   env,
-		Now:   func() time.Time { return options.now },
+		App:     app,
+		Paths:   paths,
+		Env:     env,
+		Now:     func() time.Time { return clock },
+		Opener:  options.opener,
+		Entries: options.entries,
+		Queue:   options.queue,
 	})
 	model.width, model.height = 100, 30
 	model.Refresh()
-	return &modelHarness{t: t, model: model, org: org, root: root, env: env}
+	return &modelHarness{t: t, model: model, org: org, root: root, env: env, clock: &clock}
 }
 
 // rewrite replaces the store's bytes, as an external writer would.

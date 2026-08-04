@@ -57,6 +57,25 @@ type CoalescingPatcher interface {
 	PatchTaskCoalesced(id string, field store.PatchField, value, expected, label, today, coalesceKey string) store.MutationResult
 }
 
+// TypedPatcher applies a patch whose value is not a string.
+//
+// The string spelling `Store.PatchTask` takes covers every field whose value IS
+// a string, with "" meaning nil for the clearable ones. It cannot express the
+// three shapes the task editor needs: `deferred` is a bool, and `contexts` and
+// `tags` are ordered lists. Sending those as text reaches the store's own
+// refusal ("contexts must be a list of tags") about a value the user never
+// typed — so the editor either has to refuse the field, which is half-work, or
+// the application layer has to carry the value's real shape.
+//
+// This is the narrow way to carry it: `store.PatchRequest` is the store's OWN
+// typed entry point and already exists, so no store file changes and no
+// existing string caller moves. A store that lacks the method produces a typed
+// refusal rather than a silently different behavior, exactly like every other
+// optional capability here.
+type TypedPatcher interface {
+	Patch(request store.PatchRequest) store.MutationResult
+}
+
 // Undelegator clears a delegation marker, revoking any live claim.
 type Undelegator interface {
 	Undelegate(id, coalesceKey string) store.MutationResult
@@ -70,6 +89,33 @@ type Releaser interface {
 // WorkRefWriter records (or, with an empty ref, clears) where the work lives.
 type WorkRefWriter interface {
 	SetWorkRef(id, workRef, worker, coalesceKey string) store.MutationResult
+}
+
+// ArchiveSweeper is the list-wide archive: preview what a sweep would move,
+// then move it, pinned to the preview the user was shown.
+//
+// The pin is the whole safety property. A user reads "would move 3 roots and 7
+// descendants", walks away, comes back, and presses y — and by then the list
+// may have changed. Passing the preview back means the store refuses rather
+// than archiving a set the user never saw.
+type ArchiveSweeper interface {
+	ArchivePreviewFor(today string) store.ArchivePreview
+	ArchiveSweep(today string, expected *store.ArchivePreview) store.ArchiveResult
+}
+
+// HistoryStepper is undo and redo over the journal.
+type HistoryStepper interface {
+	HistoryStep(delta int) (store.HistoryOutcome, string)
+}
+
+// Placer is a whole-task atomic changeset plus the revision that guards it.
+//
+// Ordering needs both: a move is a `location` change guarded by the revision
+// the caller read, so a task that changed underneath refuses instead of landing
+// somewhere the user did not choose.
+type Placer interface {
+	ApplyChangeset(changeset store.Changeset) store.MutationResult
+	TaskRevision(id string) (string, bool)
 }
 
 // Deleter is the undoable hard delete of one live task.

@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"strings"
+
+	"tasks-go/internal/tui/term/ansi"
 )
 
 // Rendering is a REBUILD, not a port.
@@ -17,15 +19,29 @@ import (
 
 // Layout is the current frame's geometry.
 func (m *Model) layout() ScreenLayout {
+	return m.layoutForEditing(m.taskEditor != nil)
+}
+
+// layoutForEditing lets the entry path test the exact geometry the editor
+// would receive before constructing or activating a session.
+func (m *Model) layoutForEditing(editing bool) ScreenLayout {
+	footer := m.Footer()
+	if editing {
+		footer = m.footerForMode(ModeTaskEdit)
+	}
 	return NewScreenLayout(m.styler, LayoutRequest{
 		Width:        m.width,
 		Height:       m.height,
-		Footer:       m.Footer(),
+		Footer:       footer,
 		Selected:     m.selected,
 		HasSelection: len(m.rows) > 0,
-		Panel:        m.panel != nil,
-		PanelMode:    m.panelMode,
-		PanelOffset:  m.panelOffset,
+		// An open editor occupies the panel column even when no detail panel
+		// is open, so the geometry the hit map and the renderer both read
+		// agrees about where the list ends.
+		Panel:       m.panel != nil || editing,
+		PanelMode:   m.panelMode,
+		PanelOffset: m.panelOffset,
+		Editing:     editing,
 	})
 }
 
@@ -47,7 +63,7 @@ func (m *Model) Render() string {
 		lines = append(lines, m.boxed(layout.Width, footer))
 	}
 	lines = append(lines, m.border(layout.Width, "└", "┘"))
-	return strings.Join(lines, "\n")
+	return strings.Join(m.composite(lines, m.Overlay()), "\n")
 }
 
 // bodyLines paints the list, and the panel beside it when one is open.
@@ -58,6 +74,11 @@ func (m *Model) bodyLines(layout ScreenLayout) []string {
 		panelView = m.panel.View(m.styler, layout.BodyHeight, layout.PanelContentWidth)
 	}
 	panelLines := m.panelColumn(layout, panelView)
+	hasPanel := m.panel != nil
+	if m.taskEditor != nil {
+		panelLines = m.editorColumn(layout)
+		hasPanel = true
+	}
 
 	out := make([]string, 0, layout.BodyHeight)
 	for row := 0; row < layout.BodyHeight; row++ {
@@ -77,7 +98,7 @@ func (m *Model) bodyLines(layout ScreenLayout) []string {
 			}
 		}
 		line := gutter + m.fit(text, max(layout.ListWidth-1, 0))
-		if m.panel != nil {
+		if hasPanel {
 			panelText := ""
 			if row < len(panelLines) {
 				panelText = panelLines[row]
@@ -100,6 +121,36 @@ func (m *Model) panelColumn(layout ScreenLayout, view PanelView) []string {
 		strings.Repeat("─", max(layout.PanelContentWidth, 0)),
 	}
 	return append(lines, view.Lines...)
+}
+
+// editorColumn paints the open task editor into the panel column.
+//
+// The editor lives in the panel rather than in a centered popup on purpose: it
+// is a long-lived surface, and the list beside it has to stay readable while a
+// field is being edited — that is what makes "save on blur, keep working" a
+// usable workflow rather than a modal interruption.
+func (m *Model) editorColumn(layout ScreenLayout) []string {
+	editor := m.taskEditor
+	title := "edit task"
+	hint := "tab saves and moves · ctrl-s saves · ctrl-o finishes · esc discards a field"
+	message := m.editorMessage
+	if editor.Missing() {
+		message = "Task no longer exists — y copies the field, esc discards"
+	}
+	if confirmation := editor.PendingConfirmation(); confirmation != nil {
+		message = confirmation.Message + " (y / n)"
+	}
+	if conflict := editor.Conflict(); conflict != nil {
+		message = "“" + normalizeEditField(conflict.Field) + "” changed externally — reload, revert, or keep for copy"
+	}
+	if pending := editor.PendingRevert(); pending != "" {
+		message = "Press Escape again to discard " + normalizeEditField(pending)
+	}
+	render := RenderForm(m.styler, FormRenderRequest{
+		Model: editor.RenderModel(), Width: max(layout.PanelContentWidth, 0),
+		Height: max(layout.BodyHeight, 0), Title: title, Hint: hint, Error: message,
+	})
+	return render.Lines
 }
 
 // headerCount is the right-hand side of the header: the open count, the
@@ -182,25 +233,92 @@ func (m *Model) tabCell(tab Tab, variant int) string {
 	return m.styler.Paint("tab", label)
 }
 
-// Footer is the status rows under the list.
+// Footer is the status rows under the list, in Ruby's order.
+//
+// The order is the contract, not an accident. A running agent's transcript
+// takes the top because it is the only thing on screen that is still changing;
+// the prompt takes the bottom because it is where the caret is. And the prompt
+// is SKIPPED in the modes that render their own input in an overlay, so a short
+// terminal never shows two carets.
 func (m *Model) Footer() []string {
+	return m.footerForMode(m.mode)
+}
+
+func (m *Model) footerForMode(mode Mode) []string {
 	lines := []string{}
+	lines = append(lines, m.agentFooter()...)
 	if m.readErr != nil {
 		lines = append(lines, m.styler.Paint("error", " ⚠ cannot read the task store: "+m.readErr.Error()))
 	}
 	if message := m.flash; message != "" {
 		lines = append(lines, " "+message)
 	}
-	if m.mode == ModeFilter {
+	if mode == ModeFilter {
 		lines = append(lines, m.styler.Paint("accent", " /"+m.filterInput)+
 			m.styler.Paint("muted", "  enter applies · esc cancels"))
 	} else if m.filter != "" {
 		lines = append(lines, m.styler.Paint("muted", fmt.Sprintf(" filter /%s · esc clears", m.filter)))
 	}
-	if len(m.contextFilters) > 0 {
+	if len(m.contextFilters) > 0 && mode != ModeContextPalette {
 		lines = append(lines, m.styler.Paint("context", " "+strings.Join(m.contextFilters, " ")))
 	}
-	return append(lines, m.styler.Paint("muted", m.keyHint()))
+	switch mode {
+	case ModeFilter, ModeForm, ModePalette, ModeContextPalette, ModeTaskEdit:
+	default:
+		lines = append(lines, m.PromptLines(m.width-2)...)
+	}
+	if mode != ModeTaskEdit {
+		lines = append(lines, m.styler.Paint("muted", m.keyHint()))
+	}
+	return lines
+}
+
+// spinner is the running-request tick. It is the only animated thing in the
+// frame, and it exists so a long request cannot be mistaken for a hung one.
+var spinner = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+// agentFooter is the running request's live transcript, or the last result.
+func (m *Model) agentFooter() []string {
+	if m.queue == nil {
+		return nil
+	}
+	if active, running := m.queue.ActiveRequest(); running {
+		queued := ""
+		if pending := m.pendingCount(); pending > 0 {
+			queued = fmt.Sprintf(" · %d queued", pending)
+		}
+		lines := []string{m.styler.Paint("muted", fmt.Sprintf(
+			" %s #%d %s is working%s · A activity · esc cancels",
+			spinner[m.spinnerTick()%len(spinner)], active.ID, active.Entry.UILabel(), queued))}
+		// The last three transcript lines only: a streaming chunk can end
+		// mid-character, and the footer is a status row rather than a pager.
+		transcript := strings.Split(ansi.Strip(ansi.Normalize(active.Output)), "\n")
+		for _, line := range transcript[max(len(transcript)-3, 0):] {
+			lines = append(lines, m.styler.Paint("muted", "   "+line))
+		}
+		return lines
+	}
+	if !m.respOpen || len(m.resp) == 0 {
+		return nil
+	}
+	lines := []string{m.styler.Paint("muted", fmt.Sprintf(
+		" result #%d · A opens all agent activity", m.respRequestID))}
+	visible := m.ResponseLines()
+	for _, line := range visible {
+		lines = append(lines, "   "+line)
+	}
+	hint := "esc dismiss"
+	if len(m.resp) > respMax {
+		hint = fmt.Sprintf("%d/%d · pgup/pgdn scrolls · esc dismiss",
+			m.respScroll+len(visible), len(m.resp))
+	}
+	return append(lines, m.styler.Paint("muted", "   ── "+hint+" ──"))
+}
+
+// spinnerTick advances with the clock rather than with a frame counter, so the
+// animation is the same on two runs over the same pinned time.
+func (m *Model) spinnerTick() int {
+	return int(m.now().UnixNano() / int64(TickInterval))
 }
 
 // keyHint degrades with the terminal rather than being cut mid-word. A hint

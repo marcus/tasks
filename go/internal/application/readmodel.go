@@ -66,6 +66,12 @@ func (m *ReadModel) Queries() *taskquery.Queries { return m.queries }
 // Snapshot is the exact read behind every answer this model gives.
 func (m *ReadModel) Snapshot() *store.Snapshot { return m.snapshot }
 
+// FieldBaselines exposes field expectations from the same coherent snapshot
+// that supplied Items and Queries.
+func (m *ReadModel) FieldBaselines(id string, fields []store.PatchField) (map[store.PatchField]string, bool) {
+	return m.snapshot.FieldBaselines(id, fields)
+}
+
 // TaskFor is the canonical task for a stable id.
 func (m *ReadModel) TaskFor(id string) (store.Item, bool) {
 	return findInSource(m.queries, id, store.SourceLive)

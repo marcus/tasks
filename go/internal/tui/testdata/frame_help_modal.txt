@@ -1,0 +1,24 @@
+┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+│ 1 Agenda 2 Next 3 Quadrants 4 Projects 5 Outline 6 Inbox 1                   6 open · ? help │
+├──────────────────────────────────────────────────────────────────────────────────────────────┤
+│  @co┌─ keyboard shortcuts ────────────────────────────────────────────────────────────┐      │
+│ ›   │ in the task list                                                                │      │
+│     │ ↑ / k         select previous task                                              │      │
+│     │ ↓ / j         select next task                                                  │      │
+│  @ho│ ←             previous view                                                     │      │
+│     │ →             next view                                                         │      │
+│     │ 1-6           jump to view                                                      │      │
+│     │ alt-↑ / alt-k Move up                                                           │      │
+│     │ alt-↓ / alt-j Move down                                                         │      │
+│     │ >             Indent                                                            │      │
+│     │ <             Outdent                                                           │      │
+│     │ h             collapse subtree (again: to parent)                               │      │
+│     │ l             expand subtree                                                    │      │
+│     │ H             collapse all subtrees                                             │      │
+│     │ L             expand all subtrees                                               │      │
+│     │ ── 14/101 · ↑↓ scroll ──                                                        │      │
+│     └─────────────────────────────────────────────────────────────────────────────────┘      │
+├──────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ❯ tab to ask the agent — reschedule, capture, edit anything…                                 │
+│ j/k move · 1-6 views · h/l fold · enter details · v unavailable · / search · q quit          │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘

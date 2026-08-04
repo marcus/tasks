@@ -793,6 +793,33 @@ class TestApp < Minitest::Test
     end
   end
 
+  def test_paste_cannot_bypass_dirty_draft_quit_confirmation
+    app_on(view: :agenda, select: "Book flight") do |app|
+      app.send(:handle_key, "\r")
+      app.send(:handle_key, "e")
+      editor = ui(app).task_editor
+      editor.form.set_value(:title, "UNSAVED-PASTE-SAFE-DRAFT")
+
+      app.send(:handle_key, "\x03")
+      assert_equal :task_draft_quit_confirm, ui(app).modal.kind
+
+      app.send(:handle_paste, "q\nnext\tvalue")
+      assert_equal :prompt, ui(app).mode
+      assert editor.pending_quit_confirmation
+
+      app.send(:handle_key, "q")
+      refute app.instance_variable_get(:@quit)
+      assert editor.pending_quit_confirmation
+
+      app.send(:handle_key, "n")
+      refute app.instance_variable_get(:@quit)
+      assert_equal :task_edit, ui(app).mode
+      assert_same editor, ui(app).task_editor
+      assert_equal "UNSAVED-PASTE-SAFE-DRAFT", editor.edit_form.value(:title)
+      refute editor.pending_quit_confirmation
+    end
+  end
+
   def test_dirty_suspended_editor_q_requires_visible_cancelable_confirmation
     app_on(view: :agenda, select: "Book flight") do |app|
       app.send(:handle_key, "\r")
@@ -3427,7 +3454,10 @@ class TestApp < Minitest::Test
 
       refute app.send(:external_change?), "project archive's own write is absorbed"
       assert_nil record_for(org_path(app), title: "Site launch"), "swept out of the live file"
-      assert record_for(archive_path(app), title: "Site launch"), "moved into archive.jsonl"
+      archived = record_for(archive_path(app), title: "Site launch")
+      assert archived, "moved into archive.jsonl"
+      assert_equal "2026-07-20", archived["archived"],
+                   "project archive uses the TUI's pinned session date"
       assert_match(/archived Site launch/, app.instance_variable_get(:@flash))
     end
   end
