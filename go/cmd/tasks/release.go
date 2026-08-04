@@ -65,7 +65,7 @@ func (s *surfaceContext) release(args []string) int {
 	}
 
 	if flags["--json"] {
-		return s.reportTouched(result, []string{item.ID}, true)
+		return s.reportTouchedSnapshot(s.delegationSnapshot(result), []string{item.ID}, true, nil)
 	}
 	written, ok := s.delegationItem(result, item.ID)
 	if !ok {

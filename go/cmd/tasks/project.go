@@ -249,8 +249,12 @@ func (s *surfaceContext) projectArchive(args []string) int {
 		return 0
 	}
 
+	today, status := s.today()
+	if status != 0 {
+		return status
+	}
 	writer := s.writeStore()
-	moved, proposed, found := writer.ArchiveProject(view.ID)
+	moved, proposed, found := writer.ArchiveProject(view.ID, today)
 	if proposed {
 		return abort("decide proposed tasks before archiving the project")
 	}

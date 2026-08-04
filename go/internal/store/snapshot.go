@@ -41,9 +41,19 @@ type Item struct {
 	Source        Source
 }
 
-// Snapshot is a coherent, immutable view of the task files. A caller can hold
-// one while rendering and safely ask for a task's revision or its place in the
-// tree without mixing fields from a later reload.
+// Snapshot is a coherent view of the task files. A caller can hold one while
+// rendering and safely ask for a task's revision or its place in the tree
+// without mixing fields from a later reload.
+//
+// It is NOT yet immutable, and the gap is documented rather than hidden: the
+// four slices below are public, and the Item values they hold share their tag
+// backing arrays with the snapshot, so a caller that only meant to read one can
+// corrupt it. The fix — unexported fields with copying accessors — is right in
+// shape and touches 28 non-test call sites across `store`, `taskquery`,
+// `application`, `api` and `cmd/tasks`. It is deliberately NOT bundled with a
+// behavior packet: it changes no behavior, offers no differential evidence, and
+// would collide with every worktree reading a snapshot at the same time.
+// TestSnapshotIsNotYetImmutable pins the defect so it cannot be closed silently.
 type Snapshot struct {
 	Items          []Item
 	ArchiveItems   []Item

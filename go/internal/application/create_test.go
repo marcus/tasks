@@ -211,35 +211,52 @@ func TestCreateRefusesBodyAndNotesTogetherWithoutWriting(t *testing.T) {
 	}
 }
 
-// A field this build's store cannot persist is REFUSED rather than dropped.
-// Silently writing a task without the deadline the caller asked for loses data
-// the caller believes it stored, and nothing in the result or the file says so.
-func TestCreateRefusesFieldsThisBuildCannotPersist(t *testing.T) {
-	h := newHarness(t, harnessOptions{})
-	before := h.read()
-
+// The four dated fields now REACH the file. They used to be refused here
+// because the store could not write them — refusing was the honest answer while
+// that was true, and silently dropping a deadline the caller asked for was the
+// failure mode being engineered against.
+//
+// The rules about them stay in the store. What this layer owes is only that the
+// value arrives: a task created with a deadline has one.
+func TestCreateWritesTheDatedFields(t *testing.T) {
 	for _, testCase := range []struct {
 		name    string
 		command CreateCommand
 		want    string
 	}{
-		{"scheduled", CreateCommand{Title: "T", Scheduled: "2026-08-01"}, "scheduled"},
-		{"deadline", CreateCommand{Title: "T", Deadline: "2026-08-08"}, "deadline"},
-		{"recur", CreateCommand{Title: "T", Recurrence: ".+1w"}, "recur"},
-		{"lead", CreateCommand{Title: "T", Lead: "3d"}, "lead"},
+		{"scheduled", CreateCommand{Title: "T", Scheduled: "2026-08-01"}, `"scheduled":"2026-08-01"`},
+		{"deadline", CreateCommand{Title: "T", Deadline: "2026-08-08"}, `"deadline":"2026-08-08"`},
+		{"recur", CreateCommand{Title: "T", Recurrence: ".+1w"}, `"recur":".+1w"`},
+		{"lead", CreateCommand{Title: "T", Lead: "3d", Deadline: "2026-08-08"}, `"lead":"3d"`},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
+			h := newHarness(t, harnessOptions{})
 			result := h.app.CreateTask(testCase.command, nil)
-			if result.Status != store.MutationInvalid {
-				t.Fatalf("status = %q", result.Status)
+			if result.Status != store.MutationOK {
+				t.Fatalf("status = %q, errors = %v", result.Status, result.Errors)
 			}
-			if !strings.Contains(result.FirstError(), testCase.want) {
-				t.Fatalf("error = %q, want it to name %q", result.FirstError(), testCase.want)
-			}
-			if h.read() != before {
-				t.Fatal("a refused create must not touch the file")
+			if !strings.Contains(h.read(), testCase.want) {
+				t.Fatalf("the store does not contain %s", testCase.want)
 			}
 		})
+	}
+}
+
+// A date that is not a date is refused BEFORE the transaction, naming the
+// argument rather than reaching the store as a generic invalid.
+func TestCreateRefusesAnUnparseableDate(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	before := h.read()
+
+	result := h.app.CreateTask(CreateCommand{Title: "T", Deadline: "next tuesday"}, nil)
+	if result.Status != store.MutationInvalid {
+		t.Fatalf("status = %q", result.Status)
+	}
+	if !strings.Contains(result.FirstError(), "deadline") {
+		t.Fatalf("error = %q, want it to name the field", result.FirstError())
+	}
+	if h.read() != before {
+		t.Fatal("a refused create must not touch the file")
 	}
 }
 

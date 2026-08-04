@@ -115,7 +115,7 @@ func (a *Application) CompleteProject(id string, operation *OperationContext) Ou
 // ArchiveProject sweeps a project's subtree into the archive and reports the
 // moved stable ids. Undecided proposals block the sweep: a proposal archived
 // without a decision is a decision nobody made.
-func (a *Application) ArchiveProject(id string, _ *OperationContext) Outcome {
+func (a *Application) ArchiveProject(id string, operation *OperationContext) Outcome {
 	target := a.store()
 	if refusal := unsupportedSchemaRefusal(target); refusal != nil {
 		return *refusal
@@ -124,7 +124,7 @@ func (a *Application) ArchiveProject(id string, _ *OperationContext) Outcome {
 	if !ok {
 		return unsupported("archive a project")
 	}
-	moved, proposedDescendants, found := writer.ArchiveProject(id)
+	moved, proposedDescendants, found := writer.ArchiveProject(id, a.today(operation))
 	if proposedDescendants {
 		return Outcome{MutationResult: store.MutationResult{
 			Status: store.MutationConflict,

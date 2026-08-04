@@ -292,12 +292,12 @@ func (s *Store) CompleteProject(id, today string) (int, bool) {
 //
 // The archive is written FIRST. An interruption between the two writes can then
 // only leave retry-safe duplicates across the files, never a lost subtree.
-// The `archived` stamp comes from the store's own clock rather than from a
-// caller-supplied day. Ruby read `Date.today` here — the one date this store
-// wrote that a harness pin could not reach — and that was fixed in
-// lib/tasks/store.rb rather than reproduced.
-func (s *Store) ArchiveProject(id string) ([]string, bool, bool) {
-	today := s.now().Format("2006-01-02")
+// `today` is the day the swept root is stamped with, exactly as the sweep takes
+// it: the READER's day, resolved through their configured time zone. Ruby read
+// `Date.today` here — the one date this store wrote that neither a configured
+// zone nor a harness pin could reach — and that was fixed in lib/tasks/store.rb
+// rather than reproduced.
+func (s *Store) ArchiveProject(id, today string) ([]string, bool, bool) {
 	var moved []string
 	proposed := false
 	ok := s.withHistory("archive project: "+id, func() bool {

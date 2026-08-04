@@ -57,7 +57,7 @@ func (s *surfaceContext) workref(args []string) int {
 		return status
 	}
 	if flags["--json"] {
-		return s.reportTouched(result, []string{item.ID}, true)
+		return s.reportTouchedSnapshot(s.delegationSnapshot(result), []string{item.ID}, true, nil)
 	}
 	title := s.delegationTitle(result, item)
 	// The stored reference is read back rather than echoed: a store that

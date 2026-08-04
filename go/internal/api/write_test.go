@@ -450,25 +450,39 @@ func TestRefusedRoutesStillEnforceTheirPreconditions(t *testing.T) {
 		h.withIfMatch(h.etagOf(fixPR))), 422, "validation_failed")
 }
 
-// Refusing a create whose fields the store cannot persist is the whole point:
-// a caller that asked for a deadline and got a task without one has lost data
-// it believes it stored.
-func TestCreateRefusesFieldsThisBuildCannotPersist(t *testing.T) {
-	h := newHarness(t)
-	before := string(h.storeBytes())
-	for _, body := range []string{
-		`{"title":"x","scheduled":"2026-07-20"}`,
-		`{"title":"x","deadline":"2026-07-20"}`,
-		`{"title":"x","recurrence":"weekly"}`,
-		`{"title":"x","lead":"3d"}`,
+// The dated create now PERSISTS over HTTP. These four used to be a stated 501
+// because the store could not write them; the refusal was the honest answer
+// while that was true, and dropping a deadline a caller asked for would have
+// lost data it believed it had stored.
+func TestCreatePersistsTheDatedFields(t *testing.T) {
+	for _, testCase := range []struct{ body, field, want string }{
+		{`{"title":"x","scheduled":"2026-07-20"}`, "scheduled", "2026-07-20"},
+		{`{"title":"x","deadline":"2026-07-20"}`, "deadline", "2026-07-20"},
+		{`{"title":"x","recurrence":"weekly"}`, "recurrence", ".+1w"},
+		{`{"title":"x","deadline":"2026-07-20","lead":"3d"}`, "lead", "3d"},
 	} {
-		answered := h.json("POST", "/api/v1/tasks", body, nil)
-		assertError(t, answered, 501, "not_implemented")
-		if !strings.Contains(answered.message(), "this build cannot persist") {
-			t.Errorf("%s: message = %q", body, answered.message())
+		h := newHarness(t)
+		answered := h.json("POST", "/api/v1/tasks", testCase.body, nil)
+		assertStatus(t, answered, 201)
+		if got := answered.data()[testCase.field]; got != testCase.want {
+			t.Errorf("%s: %s = %v, want %q", testCase.body, testCase.field, got, testCase.want)
 		}
 	}
-	if string(h.storeBytes()) != before {
-		t.Error("a refused create wrote to the store")
+}
+
+// A placement over HTTP reaches the store as a placement, anchor included.
+// Flattening the anchor away would be exactly the silent half-work a stated
+// refusal exists to prevent.
+func TestPlacementOverHTTPCarriesItsAnchor(t *testing.T) {
+	h := newHarness(t)
+	answered := h.json("PATCH", "/api/v1/tasks/"+fixChild,
+		`{"placement":{"parent_id":"aaaa0001"}}`, h.withIfMatch(h.etagOf(fixChild)))
+	assertStatus(t, answered, 200)
+	if got := answered.data()["parent_id"]; got != nil {
+		t.Errorf("parent_id = %v, want null after a move to a section", got)
 	}
+
+	unnest := h.json("PATCH", "/api/v1/tasks/"+fixPR, `{"parent_id":null}`,
+		h.withIfMatch(h.etagOf(fixPR)))
+	assertStatus(t, unnest, 200)
 }

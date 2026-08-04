@@ -258,6 +258,22 @@ scenario "workref", org: MATRIX,
                  %w[workref],
                  ["workref", "Claimed by a worker", "https://example.test/work/1",
                   "--corpus-unknown"]]
+scenario "delegate-to-a-person", org: SMALL,
+         steps: [["delegate", "Draft", "--to", "agent@example.test"], %w[undo],
+                 ["delegate", "Draft", "--to", "agent@example.test", "--json"],
+                 ["delegate", "Draft", "--to", "agent@example.test", "--keep-state", "--json"],
+                 ["delegate", "Draft", "research"],
+                 ["delegate", "Draft", "--to", "not-an-email"]]
+scenario "delegate-replaces-a-person-with-the-pool", org: SMALL,
+         steps: [["delegate", "Draft", "--to", "agent@example.test"],
+                 ["delegate", "Draft", "research"], %w[undo],
+                 ["delegate", "Sign-off", "--to", "agent@example.test"],
+                 ["delegate", "Sign-off", "research"]]
+scenario "claim-json-resource", org: MATRIX,
+         steps: [["claim", "Offered to the agent pool", "--worker", "generated/worker", "--json"],
+                 %w[undo],
+                 ["claim", "Offered to the agent pool", "--worker", "generated/worker"],
+                 ["claim", "Offered to the agent pool", "--worker", "someone/else", "--json"]]
 scenario "workref-on-an-undelegated-task", org: SMALL,
          steps: [["workref", "Draft", "https://example.test/work/1"]]
 scenario "delegation-unsupported-schema", org: FUTURE_STORE,

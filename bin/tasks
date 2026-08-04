@@ -3297,7 +3297,7 @@ def project_archive(args)
     puts %(would archive "#{view.title}" and its subtree to archive.jsonl)
     return
   end
-  result = application.archive_project(view.id)
+  result = application.archive_project(view.id, today: today)
   mutation_failed(result.errors.first) if result.conflict? && !result.errors.empty?
   mutation_result_failed(result, "failed to archive project")
   archived = (result.summary && result.summary[:archived]) || result.touched_ids.length

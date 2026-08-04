@@ -34,7 +34,7 @@ func (s *surfaceContext) undelegate(args []string) int {
 		return status
 	}
 	if flags["--json"] {
-		return s.reportTouched(result, []string{item.ID}, true)
+		return s.reportTouchedSnapshot(s.delegationSnapshot(result), []string{item.ID}, true, nil)
 	}
 	// An already-undelegated task is a no_change, and saying "undelegated" for
 	// it would claim a write that did not happen.
