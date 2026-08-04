@@ -25,18 +25,19 @@ the working method and the state, which the plan does not carry.
   green. Full Go tests, vet, formatting, and the persistence/API/TUI race set
   are green. `porting/conform` remains **33 of 33 GATE PASS**.
 
-## What remains
+## Cutover complete
 
-The implementation is complete. The only remaining work is the plan's
-**actual-data and cutover gate**: copied-real-data comparison, installation,
-bounded canary, and rollback proof against that copy. It was deliberately not
-run in this session because the session's non-negotiable instruction was never
-to access or copy the real task store.
+The implementation and the plan's actual-data gate are complete. On 2026-08-04,
+copied real data passed read and mutation differentials, cross-language journal
+and rollback checks, and Go API/TUI smoke tests. The installed Go CLI then made
+a temporary live capture; Ruby read it identically, and Go undo restored the
+live stores byte-for-byte.
 
-The safe synthetic rehearsal is complete: lifecycle covered 39 cross-language
-write/undo scenarios with no differences, store completion covered 54 scenarios
-diff-clean, and the CLI/API/TUI/prompt/opener differentials all passed against
-temporary fixture stores. No real task data was read or mutated.
+The machine now resolves the CLI, TUI, API, merge driver, Reminders importer,
+Recall, Clara, and task autocommit through `~/go/bin`. Ruby remains available in
+the checkout only for the compatibility/rollback window. Durable pre-cutover
+backups, including the shared journal, live under
+`~/.local/state/tasks/cutover-backups/`.
 
 ## The working method
 

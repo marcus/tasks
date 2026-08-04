@@ -1,7 +1,7 @@
 # Tasks Ruby-to-Go port: velocity plan
 
-- **Status:** implementation complete and independently reviewed — synthetic
-  cutover gates pass; copied-real-data verification and the bounded canary remain
+- **Status:** cut over on Marcus's Mac — implementation, copied-real-data,
+  rollback, and bounded-canary gates pass; Ruby remains available for rollback
 - **Accepted:** 2026-08-03
 - **Last progress:** 2026-08-04 (all CLI/API/TUI code and Snapshot immutability)
 - **Scope:** finish the macOS Go application, prove it against copied real data,
@@ -495,10 +495,27 @@ coverage, and expanded the store differential with five configured-host
 scenarios. The old tree fails those scenarios with six byte/state differences;
 the final tree is 54/54 and received independent approval.
 
-The sole remaining gate is the copied-real-data and bounded-canary procedure
-below. It was not run because this session explicitly prohibited accessing,
-copying, or mutating the real task store. That is a deliberate safety boundary,
-not an implementation gap.
+### Actual-data and cutover checkpoint — 2026-08-04
+
+The copied-real-data and bounded-canary gate passed on Marcus's Mac:
+
+- checksummed backups of both stores and the shared journal were captured under
+  `~/.local/state/tasks/cutover-backups/` before testing and immediately before
+  the live canary;
+- nine read views matched byte-for-byte on a real-data copy;
+- a ten-step create/update/undo/redo/archive sequence produced identical CLI
+  output, task bytes, archive bytes, and journal bytes in Ruby and Go;
+- each implementation read, validated, and rolled back the other's writes;
+- the Go API returned 200 for health and the task collection, and the Go TUI
+  rendered the copied store and exited cleanly;
+- the installed Go CLI made one temporary live capture, Ruby rendered the
+  Go-written record identically, and Go undo restored both live files to their
+  exact pre-canary hashes; and
+- `tasks`, `tasks-tui`, `tasks-api`, shell aliases, the merge driver, Reminders,
+  Recall, Clara, and task autocommit now resolve to binaries in `~/go/bin`.
+
+Ruby remains in the checkout during the compatibility window, but Go is the
+machine default and the port's cutover gates are complete.
 
 ## Wave 4: rebuild the TUI
 
