@@ -34,7 +34,7 @@ run in this session because the session's non-negotiable instruction was never
 to access or copy the real task store.
 
 The safe synthetic rehearsal is complete: lifecycle covered 39 cross-language
-write/undo scenarios with no differences, store completion covered 49 scenarios
+write/undo scenarios with no differences, store completion covered 54 scenarios
 diff-clean, and the CLI/API/TUI/prompt/opener differentials all passed against
 temporary fixture stores. No real task data was read or mutated.
 
@@ -133,6 +133,12 @@ behavior is fixed asserts nothing.
 - **Concurrent corpus runs share harness state.** Two simultaneous generated
   corpus runs in one worktree reproduced the `journal_key`/unpaired failure.
   The isolated reruns were 482/482. Run one corpus comparison per worktree.
+- **A full corpus can still miss configuration behavior.** The final safety
+  review found that Go `capture`/`propose` ignored configured `host_context`
+  because every generated create case opted out with `--no-host-context`.
+  `890b05c` routes previews and writes through the shared application
+  preparation seam; five configured-host scenarios expanded store completion
+  from 49 to 54 and fail the old tree with six byte/state differences.
 - **zsh does not word-split unquoted parameters.** A sweep loop over
   `"list --json"` passes one argument and every invocation errors, which reads
   as a catastrophic regression. Use `${=var}`.

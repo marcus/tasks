@@ -484,8 +484,16 @@ All retained product surfaces are implemented and independently reviewed:
 
 The final synthetic rehearsal used only repository fixtures and temporary
 stores. `lifecycle-diff` passed 39 cross-language write/undo scenarios,
-`store-completion-diff` passed 49 scenarios diff-clean, `porting/conform`
+`store-completion-diff` passed 54 scenarios diff-clean, `porting/conform`
 remained 33/33, and the full Go, Ruby, race, API, and formatting gates passed.
+
+The final data-safety review initially blocked on one corpus blind spot:
+configured `host_context` was omitted by CLI `capture`/`propose`, while every
+generated create case happened to pass `--no-host-context`. Commit `890b05c`
+fixed the shared preparation path for mutation and dry-run, added black-box Go
+coverage, and expanded the store differential with five configured-host
+scenarios. The old tree fails those scenarios with six byte/state differences;
+the final tree is 54/54 and received independent approval.
 
 The sole remaining gate is the copied-real-data and bounded-canary procedure
 below. It was not run because this session explicitly prohibited accessing,
