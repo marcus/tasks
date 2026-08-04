@@ -1,9 +1,9 @@
 # Tasks Ruby-to-Go port: velocity plan
 
-- **Status:** accepted and controlling — Waves 0 through 3 complete, Wave 4
-  (TUI) and a small cleanup packet remain
+- **Status:** accepted and controlling — the CLI and API are complete at 49/50
+  commands; the TUI is half built; `-p` and the cutover gate remain
 - **Accepted:** 2026-08-03
-- **Last progress:** 2026-08-03 (Wave 3)
+- **Last progress:** 2026-08-03 (store completion and the TUI's first half)
 - **Scope:** finish the macOS Go application, prove it against copied real data,
   and cut over safely
 - **Supersedes:**
@@ -452,6 +452,37 @@ corpus runner aborting on `journal_key` and only 163 of 482 cases pairing. On
 `main` the corpus pairs all 482 with zero unpaired, before and after that
 packet merged. The note it added to this plan has been removed; no harness fix
 is needed.
+
+### Corpus after store completion — 477 of 482
+
+**49 of 50 commands reach full parity.** The only command with any mismatch is
+`-p`, whose five cases wait on the prompt surface and its provider adapters —
+deliberately deferred.
+
+Landed to get here: `TaskPlacement` and the `location` field with its cycle,
+depth, proposed-parent and anchor-conflict rules; the project lifecycle and its
+five subcommands; dated creates; and the commands `move`, `project`,
+`undelegate`, `release`, `workref`, `id`.
+
+The API differential improved in step, 115/124 to 119/124, as the store grew
+the operations its 501s stood in for. The remaining refusals are the project
+writes, which the API can now be taught since the store performs them.
+
+### What remains before cutover
+
+1. **`tasks -p`** — the prompt surface, `agent_context.rb`, `prompt_facts.rb`,
+   and the provider adapters. The last five corpus cases.
+2. **The TUI's second half** — editor, forms and modals. The shell, views,
+   selection, panel and every terminal primitive are done and wired; the keys
+   that open an editor currently refuse out loud, naming the capability.
+3. **The API's project writes** — four routes still answering 501 with a stated
+   reason, now that the store implements them.
+4. **`Snapshot` immutability** — deferred three times, each with a better
+   reason than the last. It is now stated executably as
+   `store.TestSnapshotIsNotYetImmutable`, a specification that fails loudly if
+   the fix lands half-done. `taskquery` holds 11 of its 28 call sites, so it
+   wants a quiet moment between waves rather than a slot inside one.
+5. **The actual-data and cutover gate** — the ten-step section below, unstarted.
 
 ## Wave 4: rebuild the TUI
 
