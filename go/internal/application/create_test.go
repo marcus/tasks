@@ -242,6 +242,158 @@ func TestCreateWritesTheDatedFields(t *testing.T) {
 	}
 }
 
+// A caller that has already parsed a COMPLETE temporal value hands it over
+// whole, and every part of it reaches the file: the local time, the zone, and the
+// fold that disambiguates a repeated wall clock hour.
+//
+// The string fields cannot express any of that, so before this seam existed an
+// HTTP client asking for a 17:00 deadline could only be given an all-day one or a
+// refusal.
+func TestCreateWritesACompleteTemporalValue(t *testing.T) {
+	london, err := temporal.NewValue(mustDate(t, "2026-08-08"), "17:00", "Europe/London", 0, true)
+	if err != nil {
+		t.Fatalf("build value: %v", err)
+	}
+	ambiguous, err := temporal.NewValue(mustDate(t, "2026-11-01"), "01:30", "America/Los_Angeles", 1, true)
+	if err != nil {
+		t.Fatalf("build value: %v", err)
+	}
+
+	for _, testCase := range []struct {
+		name    string
+		command CreateCommand
+		want    []string
+	}{
+		{
+			name:    "a zoned deadline",
+			command: CreateCommand{Title: "T", Deadline: "2026-08-08", DeadlineValue: &london},
+			want:    []string{`"deadline":"2026-08-08"`, `"local":"17:00"`, `"timezone":"Europe/London"`},
+		},
+		{
+			name:    "a zoned schedule",
+			command: CreateCommand{Title: "T", Scheduled: "2026-08-08", ScheduledValue: &london},
+			want:    []string{`"scheduled":"2026-08-08"`, `"local":"17:00"`, `"timezone":"Europe/London"`},
+		},
+		{
+			name:    "an ambiguous wall time keeps its fold",
+			command: CreateCommand{Title: "T", Deadline: "2026-11-01", DeadlineValue: &ambiguous},
+			want:    []string{`"local":"01:30"`, `"timezone":"America/Los_Angeles"`, `"fold":1`},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			h := newHarness(t, harnessOptions{})
+			result := h.app.CreateTask(testCase.command, nil)
+			if result.Status != store.MutationOK {
+				t.Fatalf("status = %q, errors = %v", result.Status, result.Errors)
+			}
+			for _, want := range testCase.want {
+				if !strings.Contains(h.read(), want) {
+					t.Fatalf("the store does not contain %s:\n%s", want, h.read())
+				}
+			}
+		})
+	}
+}
+
+// The value WINS over the string for its own field, because it is strictly more
+// information about the same thing. The string stays the primary spelling for
+// every caller that has only text.
+func TestCreateValuePrecedenceAndStringCallersAreUnchanged(t *testing.T) {
+	value, err := temporal.NewValue(mustDate(t, "2026-09-09"), "08:15", "Europe/London", 0, true)
+	if err != nil {
+		t.Fatalf("build value: %v", err)
+	}
+	h := newHarness(t, harnessOptions{})
+	// The two disagree on the date on purpose: the complete value decides.
+	result := h.app.CreateTask(CreateCommand{
+		Title: "Precedence", Deadline: "2026-08-08", DeadlineValue: &value,
+	}, nil)
+	if result.Status != store.MutationOK {
+		t.Fatalf("status = %q, errors = %v", result.Status, result.Errors)
+	}
+	if !strings.Contains(h.read(), `"deadline":"2026-09-09"`) {
+		t.Fatalf("the value did not win over the string:\n%s", h.read())
+	}
+
+	// And a text-only caller is untouched: no time metadata appears at all.
+	plain := newHarness(t, harnessOptions{})
+	if result := plain.app.CreateTask(CreateCommand{Title: "Plain", Deadline: "2026-08-08"}, nil); !result.OK() {
+		t.Fatalf("status = %q, errors = %v", result.Status, result.Errors)
+	}
+	if strings.Contains(plain.read(), "deadline_time") {
+		t.Fatalf("a text-only create invented time metadata:\n%s", plain.read())
+	}
+}
+
+// The pointee is COPIED when the command is accepted, so a caller that reuses
+// its value cannot change what was submitted — the same guarantee Tags and Notes
+// already carry, and the reason clone() exists at all.
+func TestCreateCommandCopiesAnAcceptedTemporalValue(t *testing.T) {
+	value, err := temporal.NewValue(mustDate(t, "2026-08-08"), "17:00", "Europe/London", 0, true)
+	if err != nil {
+		t.Fatalf("build value: %v", err)
+	}
+	h := newHarness(t, harnessOptions{})
+	command := CreateCommand{Title: "Copied", Deadline: "2026-08-08", DeadlineValue: &value}
+
+	result := h.app.CreateTask(command, nil)
+	if !result.OK() {
+		t.Fatalf("status = %q errors = %v", result.Status, result.Errors)
+	}
+	// Reach back into the value the command still points at.
+	value.LocalTime = "23:59"
+	value.Timezone = "America/New_York"
+
+	if !strings.Contains(h.read(), `"local":"17:00"`) ||
+		strings.Contains(h.read(), "23:59") || strings.Contains(h.read(), "New_York") {
+		t.Fatalf("the accepted command saw a caller's later mutation:\n%s", h.read())
+	}
+}
+
+// An invalid value is refused at this boundary rather than persisted, exactly as
+// Ruby's TemporalValue validates on construction. A zone with no local time
+// cannot be stored, and neither can a wall time that names no instant.
+func TestCreateRefusesAnInvalidTemporalValueWithoutWriting(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		value temporal.Value
+	}{
+		{"a zone with no local time", temporal.Value{Date: mustDate(t, "2026-08-08"), Timezone: "Europe/London"}},
+		{"a local time that is not HH:MM", temporal.Value{Date: mustDate(t, "2026-08-08"), LocalTime: "5pm"}},
+		{"a zone that names no region",
+			temporal.Value{Date: mustDate(t, "2026-08-08"), LocalTime: "09:00", Timezone: "PST"}},
+		{"a wall time inside a DST gap",
+			temporal.Value{Date: mustDate(t, "2026-03-08"), LocalTime: "02:30", Timezone: "America/Los_Angeles"}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			h := newHarness(t, harnessOptions{})
+			before := h.read()
+			value := testCase.value
+			result := h.app.CreateTask(CreateCommand{
+				Title: "T", Deadline: "2026-08-08", DeadlineValue: &value,
+			}, nil)
+			if result.Status != store.MutationInvalid {
+				t.Fatalf("status = %q, errors = %v", result.Status, result.Errors)
+			}
+			if !strings.Contains(result.FirstError(), "deadline_time") {
+				t.Fatalf("error = %q, want it to name the field", result.FirstError())
+			}
+			if h.read() != before {
+				t.Fatal("a refused create must not touch the file")
+			}
+		})
+	}
+}
+
+func mustDate(t *testing.T, iso string) temporal.Date {
+	t.Helper()
+	date, ok := temporal.ParseDate(iso)
+	if !ok {
+		t.Fatalf("parse date %q", iso)
+	}
+	return date
+}
+
 // A date that is not a date is refused BEFORE the transaction, naming the
 // argument rather than reaching the store as a generic invalid.
 func TestCreateRefusesAnUnparseableDate(t *testing.T) {

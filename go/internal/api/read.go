@@ -382,7 +382,7 @@ func (s *Server) listProjects(request *http.Request) (response, error) {
 	writeSuccess(w, func(w *jsonout.Writer) {
 		w.BeginArray()
 		for _, view := range read.Queries.Projects() {
-			writeProject(w, read.Queries, view)
+			writeProject(w, view)
 		}
 		w.EndArray()
 	}, read.Revision)
@@ -404,7 +404,7 @@ func (s *Server) getProject(request *http.Request, id string) (response, error) 
 		return response{}, errorOf(404, "not_found")
 	}
 	w := jsonout.New()
-	writeSuccess(w, func(w *jsonout.Writer) { writeProject(w, read.Queries, view) }, read.Revision)
+	writeSuccess(w, func(w *jsonout.Writer) { writeProject(w, view) }, read.Revision)
 	return response{
 		status: 200, headers: map[string]string{"etag": etag(read.Revision)}, body: w.Bytes(),
 	}, nil

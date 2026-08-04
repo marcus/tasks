@@ -53,6 +53,14 @@ func TestCreateProjectRefusesADuplicateProjectOrAreaName(t *testing.T) {
 	if !strings.Contains(result.FirstError(), `"site LAUNCH"`) {
 		t.Fatalf("error = %q", result.FirstError())
 	}
+	// The reason also goes under the FIELD that caused it. This pre-check runs
+	// before store.CreateProject's own duplicate check and would otherwise shadow
+	// its richer refusal, which is how an HTTP 422 came to carry empty details for
+	// the one refusal a client can act on.
+	reasons := result.FieldErrors["title"]
+	if len(reasons) != 1 || reasons[0] != result.FirstError() {
+		t.Fatalf("field_errors = %v, want title => [%q]", result.FieldErrors, result.FirstError())
+	}
 	if len(script.calls) != 0 {
 		t.Fatalf("a duplicate must not reach the store: %+v", script.calls)
 	}

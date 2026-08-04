@@ -425,7 +425,7 @@ func writeSection(w *jsonout.Writer, parsed record.Record) {
 
 // writeProject is Representation.project: every field present with an explicit
 // null so the schema can be strict, and the physical line never exposed.
-func writeProject(w *jsonout.Writer, queries *taskquery.Queries, view taskquery.ProjectView) {
+func writeProject(w *jsonout.Writer, view taskquery.ProjectView) {
 	w.BeginObject()
 	w.KeyStr("id", view.ID)
 	w.KeyStr("title", view.Title)
@@ -466,7 +466,6 @@ func writeProject(w *jsonout.Writer, queries *taskquery.Queries, view taskquery.
 	w.Key("task_ids")
 	w.Strings(view.TaskIDs)
 	w.EndObject()
-	_ = queries
 }
 
 // writeSuccess is Representation.success: `{ data:, meta: { store_revision: } }`.

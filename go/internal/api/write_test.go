@@ -169,8 +169,10 @@ func TestPreconditionsStaleCurrentAndFreshETag(t *testing.T) {
 
 func TestTemporalCreateAndPatchPairSemantics(t *testing.T) {
 	h := newHarness(t)
-	// The pair is set on an EXISTING task, because this build's store cannot
-	// persist a date on a create (see TestRoutesThisBuildRefusesSayWhy).
+	// The pair is set on an EXISTING task here because the interesting half of
+	// this test is what a LATER patch does to it — moving the date under a
+	// preserved time, and clearing the time back to all-day. A create carrying
+	// the same pair is TestCreatePersistsAFullTimedValue.
 	seeded := h.json("PATCH", "/api/v1/tasks/"+fixPR,
 		`{"deadline":"2026-07-20","deadline_time":{"local":"17:00","timezone":"Europe/London","fold":0}}`,
 		h.withIfMatch(h.etagOf(fixPR)))
@@ -402,9 +404,6 @@ func TestRoutesThisBuildRefusesSayWhy(t *testing.T) {
 		body   string
 		expect string
 	}{
-		{"delete", "DELETE", "/api/v1/tasks/" + fixPR, "", "delete a task"},
-		{"approve", "POST", "/api/v1/tasks/" + fixPR + "/approve", "", "approve a proposal"},
-		{"reject", "POST", "/api/v1/tasks/" + fixPR + "/reject", "", "reject a proposal"},
 		{"delegate", "POST", "/api/v1/tasks/" + fixPR + "/delegate", `{"kind":"agent","mode":"refine"}`, "delegate over HTTP"},
 		{"undelegate", "POST", "/api/v1/tasks/" + fixPR + "/undelegate", "", "undelegate over HTTP"},
 		{"claim", "POST", "/api/v1/tasks/" + fixPR + "/claim", `{"worker":"w1"}`, "claim over HTTP"},
@@ -420,26 +419,233 @@ func TestRoutesThisBuildRefusesSayWhy(t *testing.T) {
 		}
 	}
 
-	for _, testCase := range []struct{ name, method, path, body string }{
-		{"project create", "POST", "/api/v1/projects", `{"title":"New"}`},
-		{"project rename", "PATCH", "/api/v1/projects/" + fixWork, `{"title":"New"}`},
-		{"project complete", "POST", "/api/v1/projects/" + fixWork + "/complete", ""},
-		{"project archive", "POST", "/api/v1/projects/" + fixWork + "/archive", ""},
-	} {
-		answered := h.json(testCase.method, testCase.path, testCase.body, nil)
-		assertError(t, answered, 501, "not_implemented")
-		if !strings.Contains(answered.message(), "project lifecycle write") {
-			t.Errorf("%s: message = %q", testCase.name, answered.message())
-		}
-	}
-
 	if string(h.storeBytes()) != before {
 		t.Error("a refused route wrote to the store")
 	}
 }
 
+// The undoable hard delete, mirroring test_app.rb's
+// `test_create_update_noop_and_delete_round_trip` and
+// `test_preconditions_stale_current_and_delete_cascade_conflict`.
+//
+// This route used to be a stated 501 because `internal/api` had no application
+// seam for it. `application.DeleteTask` performs it, and the If-Match this route
+// makes mandatory is the precondition the store's own delete already guards the
+// subtree with — so unlike the delegation routes there is no precondition the
+// adapter would have to drop, and refusing became the dishonest answer.
+func TestDeleteRemovesTheTaskAndAnswers204(t *testing.T) {
+	h := newHarness(t)
+	answered := h.json("DELETE", "/api/v1/tasks/"+fixGarden, "", h.withIfMatch(h.etagOf(fixGarden)))
+	assertStatus(t, answered, 204)
+	if answered.Body != "" {
+		t.Errorf("204 carried a body: %q", answered.Body)
+	}
+	if got := answered.Header.Get("content-type"); got != "" {
+		t.Errorf("204 carried a content-type: %q", got)
+	}
+	if got := answered.Header.Get("content-length"); got != "0" {
+		t.Errorf("content-length = %q, want 0", got)
+	}
+	if strings.Contains(string(h.storeBytes()), fixGarden) {
+		t.Error("the task survived the delete")
+	}
+	assertError(t, h.get("/api/v1/tasks/"+fixGarden), 404, "not_found")
+}
+
+// A task with descendants refuses without cascade, and the refusal carries the
+// counts — they are what tell the caller what cascade=true would remove.
+func TestDeleteRefusesDescendantsUntilCascade(t *testing.T) {
+	h := newHarness(t)
+	before := string(h.storeBytes())
+	tag := h.etagOf(fixPR)
+	conflict := h.json("DELETE", "/api/v1/tasks/"+fixPR, "", h.withIfMatch(tag))
+	assertError(t, conflict, 409, "conflict")
+	details, _ := conflict.dig("error", "details").(map[string]any)
+	if details["descendants"] != float64(2) {
+		t.Errorf("descendants = %v, want 2", details["descendants"])
+	}
+	if details["open_descendants"] != float64(2) {
+		t.Errorf("open_descendants = %v, want 2", details["open_descendants"])
+	}
+	if !strings.Contains(conflict.message(), "cascade=true") {
+		t.Errorf("the refusal does not name the remedy: %q", conflict.message())
+	}
+	if string(h.storeBytes()) != before {
+		t.Error("a refused delete wrote to the store")
+	}
+
+	cascaded := h.json("DELETE", "/api/v1/tasks/"+fixPR+"?cascade=true", "", h.withIfMatch(tag))
+	assertStatus(t, cascaded, 204)
+	for _, id := range []string{fixPR, fixChild, fixGrand} {
+		if strings.Contains(string(h.storeBytes()), id) {
+			t.Errorf("%s survived the cascade", id)
+		}
+	}
+	// The archived task sharing the PR id is untouched: the archive is a
+	// different source, and a delete never reaches it.
+	if !strings.Contains(string(h.archiveBytes()), fixPR) {
+		t.Error("the cascade reached the archive")
+	}
+}
+
+func TestDeleteRefusesAStaleOrMissingPrecondition(t *testing.T) {
+	h := newHarness(t)
+	stale := h.etagOf(fixEval)
+	assertStatus(t, h.json("PATCH", "/api/v1/tasks/"+fixEval, `{"title":"moved on"}`,
+		h.withIfMatch(stale)), 200)
+
+	refused := h.json("DELETE", "/api/v1/tasks/"+fixEval, "", h.withIfMatch(stale))
+	assertError(t, refused, 412, "stale_revision")
+	// The 412 carries the CURRENT resource and its ETag, which is what lets a
+	// client decide again without a second round trip.
+	if refused.dig("error", "details", "current", "title") != "moved on" {
+		t.Errorf("details.current = %v", refused.dig("error", "details", "current"))
+	}
+	if refused.etag() == "" || refused.etag() == stale {
+		t.Errorf("stale etag = %q", refused.etag())
+	}
+	if !strings.Contains(string(h.storeBytes()), fixEval) {
+		t.Error("a stale delete removed the task")
+	}
+
+	assertError(t, h.json("DELETE", "/api/v1/tasks/"+fixEval, "", nil), 428, "missing_precondition")
+	assertError(t, h.json("DELETE", "/api/v1/tasks/deadbeef", "",
+		h.withIfMatch(stale)), 404, "not_found")
+	assertError(t, h.json("DELETE", "/api/v1/tasks/"+fixEval+"?cascade=yes", "",
+		h.withIfMatch(h.etagOf(fixEval))), 422, "validation_failed")
+}
+
+// Approve and reject, mirroring test_app.rb's
+// `test_proposal_scope_and_approve_reject_actions`.
+//
+// These were a stated 501 for the same stale reason DELETE was:
+// `application.DecideProposal` performs both and passes the caller's
+// expected_revision straight to the store, which honours it — so nothing here
+// drops a precondition a client set.
+func TestApproveMovesAProposalIntoTheList(t *testing.T) {
+	h := newHarness(t)
+	created := h.json("POST", "/api/v1/tasks", `{"title":"Research backup providers","state":"PROPOSED"}`, nil)
+	assertStatus(t, created, 201)
+	id, _ := created.data()["id"].(string)
+	if created.data()["state"] != "PROPOSED" || created.data()["available"] != false {
+		t.Fatalf("fixture precondition: %s", created.Body)
+	}
+
+	// A proposal is outside the default scope and inside scope=proposed.
+	if containsString(h.get("/api/v1/tasks").ids(), id) {
+		t.Error("a proposal appeared in the default scope")
+	}
+	assertStrings(t, h.get("/api/v1/tasks?scope=proposed").ids(), []string{id}, "proposed ids")
+
+	assertError(t, h.json("POST", "/api/v1/tasks/"+id+"/approve", "", nil), 428, "missing_precondition")
+
+	approved := h.json("POST", "/api/v1/tasks/"+id+"/approve", "", h.withIfMatch(created.etag()))
+	assertStatus(t, approved, 200)
+	if approved.data()["state"] != "INBOX" {
+		t.Errorf("state = %v, want INBOX", approved.data()["state"])
+	}
+	// The ETag is the revision this write produced, which is what lets the client
+	// keep editing without a refetch.
+	revision, _ := approved.data()["revision"].(string)
+	if approved.etag() != `"`+revision+`"` {
+		t.Errorf("etag %q does not match the resource revision %q", approved.etag(), revision)
+	}
+	if record := h.recordFor("Research backup providers"); record["state"] != "INBOX" {
+		t.Errorf("the store still holds %v", record["state"])
+	}
+	// A body is refused rather than ignored, and an approve is not repeatable.
+	assertError(t, h.json("POST", "/api/v1/tasks/"+id+"/approve", `{"notes":"x"}`,
+		h.withIfMatch(approved.etag())), 400, "malformed_request")
+	again := h.json("POST", "/api/v1/tasks/"+id+"/approve", "", h.withIfMatch(approved.etag()))
+	assertError(t, again, 422, "validation_failed")
+	if !strings.Contains(again.message(), "not PROPOSED") {
+		t.Errorf("the refusal does not name the state: %q", again.message())
+	}
+}
+
+func TestRejectCancelsAProposalAndAppendsItsNotes(t *testing.T) {
+	h := newHarness(t)
+	created := h.json("POST", "/api/v1/tasks",
+		`{"title":"Duplicate proposal","state":"PROPOSED","body":"Original rationale."}`, nil)
+	assertStatus(t, created, 201)
+	id, _ := created.data()["id"].(string)
+
+	rejected := h.json("POST", "/api/v1/tasks/"+id+"/reject",
+		`{"notes":["Duplicate — already rejected previously.","Same renewal mail."]}`,
+		h.withIfMatch(created.etag()))
+	assertStatus(t, rejected, 200)
+	if rejected.data()["state"] != "CANCELLED" {
+		t.Errorf("state = %v, want CANCELLED", rejected.data()["state"])
+	}
+	// Today's closed date comes from the pinned clock, not the wall clock.
+	if rejected.data()["closed"] != "2026-07-15" {
+		t.Errorf("closed = %v", rejected.data()["closed"])
+	}
+	// The notes are appended to the body in the SAME write, after the original.
+	body := stringsOf(rejected.data()["body"])
+	for _, want := range []string{
+		"Original rationale.", "Duplicate — already rejected previously.", "Same renewal mail.",
+	} {
+		if !containsString(body, want) {
+			t.Errorf("body %v is missing %q", body, want)
+		}
+	}
+}
+
+// The reject body is optional, and what it may carry is exactly `notes` — as one
+// string or an ordered list.
+func TestRejectValidatesItsOptionalNotes(t *testing.T) {
+	proposal := func(h *harness, title string) (string, string) {
+		created := h.json("POST", "/api/v1/tasks", `{"title":"`+title+`","state":"PROPOSED"}`, nil)
+		assertStatus(t, created, 201)
+		id, _ := created.data()["id"].(string)
+		return id, created.etag()
+	}
+
+	// No body at all keeps the historical contract.
+	h := newHarness(t)
+	id, tag := proposal(h, "no body")
+	assertStatus(t, h.json("POST", "/api/v1/tasks/"+id+"/reject", "", h.withIfMatch(tag)), 200)
+
+	// One string is one note.
+	id, tag = proposal(h, "single note")
+	single := h.json("POST", "/api/v1/tasks/"+id+"/reject", `{"notes":"Just the one."}`, h.withIfMatch(tag))
+	assertStatus(t, single, 200)
+	if !containsString(stringsOf(single.data()["body"]), "Just the one.") {
+		t.Errorf("the single note was not appended: %s", single.Body)
+	}
+
+	// An empty list is the same as none, and still cancels.
+	id, tag = proposal(h, "empty notes")
+	assertStatus(t, h.json("POST", "/api/v1/tasks/"+id+"/reject", `{"notes":[]}`, h.withIfMatch(tag)), 200)
+
+	id, tag = proposal(h, "bad notes")
+	assertError(t, h.json("POST", "/api/v1/tasks/"+id+"/reject", `{"notes":[1,2]}`,
+		h.withIfMatch(tag)), 422, "validation_failed")
+	assertError(t, h.json("POST", "/api/v1/tasks/"+id+"/reject", `{"reason":"nope"}`,
+		h.withIfMatch(tag)), 422, "validation_failed")
+	assertError(t, h.do(request{
+		method: "POST", path: "/api/v1/tasks/" + id + "/reject",
+		body: "notes", contentType: "text/plain", headers: h.withIfMatch(tag),
+	}), 415, "unsupported_media_type")
+	// The precondition is still mandatory, and still checked. A well-formed
+	// If-Match that names no revision this store could have produced is a
+	// malformed VALUE (422), while a real revision the task has moved past is a
+	// stale one (412) — a client has to be able to tell those apart.
+	assertError(t, h.json("POST", "/api/v1/tasks/"+id+"/reject", "", nil), 428, "missing_precondition")
+	malformed := h.json("POST", "/api/v1/tasks/"+id+"/reject", "", h.withIfMatch(`"v1.dead.beef.cafe"`))
+	assertError(t, malformed, 422, "validation_failed")
+	if !strings.Contains(malformed.message(), "malformed expected_revision") {
+		t.Errorf("message = %q", malformed.message())
+	}
+	assertStatus(t, h.json("PATCH", "/api/v1/tasks/"+id, `{"title":"moved on"}`, h.withIfMatch(tag)), 200)
+	assertError(t, h.json("POST", "/api/v1/tasks/"+id+"/reject", "", h.withIfMatch(tag)),
+		412, "stale_revision")
+}
+
 // A refusal must still run the transport gates first, so a client learns about
-// its malformed request before it learns the route is unbuilt.
+// its malformed request before it learns the route is unbuilt — and, for the
+// routes that ARE built, before the write runs.
 func TestRefusedRoutesStillEnforceTheirPreconditions(t *testing.T) {
 	h := newHarness(t)
 	assertError(t, h.json("DELETE", "/api/v1/tasks/"+fixPR, "", nil), 428, "missing_precondition")
@@ -468,6 +674,133 @@ func TestCreatePersistsTheDatedFields(t *testing.T) {
 			t.Errorf("%s: %s = %v, want %q", testCase.body, testCase.field, got, testCase.want)
 		}
 	}
+}
+
+// A create carrying a time of day PERSISTS all of it — the local time, the zone
+// and the fold — rather than storing an all-day date and calling it a success.
+//
+// This route used to answer 201 while silently discarding the time, and then a
+// stated 501 once that was noticed. Both were symptoms of one gap:
+// `application.CreateCommand` had no way to carry a parsed value. It does now, so
+// the create is simply correct.
+func TestCreatePersistsAFullTimedValue(t *testing.T) {
+	for _, testCase := range []struct {
+		name, body, field, local, zone string
+		fold                           float64
+	}{
+		{
+			name:  "zoned deadline",
+			body:  `{"title":"zoned","deadline":"2026-07-20","deadline_time":{"local":"17:00","timezone":"Europe/London","fold":0}}`,
+			field: "deadline_time", local: "17:00", zone: "Europe/London",
+		},
+		{
+			name:  "floating scheduled",
+			body:  `{"title":"floating","scheduled":"2026-07-20","scheduled_time":{"local":"09:30"}}`,
+			field: "scheduled_time", local: "09:30", zone: "",
+		},
+		{
+			name:  "an ambiguous wall time keeps its fold",
+			body:  `{"title":"folded","deadline":"2026-11-01","deadline_time":{"local":"01:30","timezone":"America/Los_Angeles","fold":1}}`,
+			field: "deadline_time", local: "01:30", zone: "America/Los_Angeles", fold: 1,
+		},
+	} {
+		h := newHarness(t)
+		answered := h.json("POST", "/api/v1/tasks", testCase.body, nil)
+		assertStatus(t, answered, 201)
+		timed, _ := answered.data()[testCase.field].(map[string]any)
+		if timed == nil {
+			t.Fatalf("%s: %s is null: %s", testCase.name, testCase.field, answered.Body)
+		}
+		if timed["local"] != testCase.local {
+			t.Errorf("%s: local = %v, want %q", testCase.name, timed["local"], testCase.local)
+		}
+		if testCase.zone == "" {
+			if timed["timezone"] != nil {
+				t.Errorf("%s: timezone = %v, want null", testCase.name, timed["timezone"])
+			}
+		} else if timed["timezone"] != testCase.zone {
+			t.Errorf("%s: timezone = %v, want %q", testCase.name, timed["timezone"], testCase.zone)
+		}
+		if timed["fold"] != testCase.fold {
+			t.Errorf("%s: fold = %v, want %v", testCase.name, timed["fold"], testCase.fold)
+		}
+		if timed["instant"] == "" || timed["instant"] == nil {
+			t.Errorf("%s: no resolved instant: %v", testCase.name, timed)
+		}
+		// And it is on DISK, not just in the response.
+		stored := string(h.storeBytes())
+		if !strings.Contains(stored, `"local":"`+testCase.local+`"`) {
+			t.Errorf("%s: the store holds no local time: %s", testCase.name, stored)
+		}
+		if testCase.zone != "" && !strings.Contains(stored, `"timezone":"`+testCase.zone+`"`) {
+			t.Errorf("%s: the store holds no zone: %s", testCase.name, stored)
+		}
+	}
+}
+
+// The create and PATCH paths build their temporal values in two places —
+// write.go's createTemporalValue and validate.go's temporalInput — because the
+// PATCH one answers in a store.PatchValue whose temporal half has no accessor.
+// Duplicated geometry drifts, and a drift here would store a different instant
+// depending on which verb the client used, so the two are pinned to agree.
+func TestCreateAndPatchAgreeOnATimedValue(t *testing.T) {
+	const timed = `{"local":"17:00","timezone":"Europe/London","fold":0}`
+
+	direct := newHarness(t)
+	created := direct.json("POST", "/api/v1/tasks",
+		`{"title":"one step","deadline":"2026-07-20","deadline_time":`+timed+`}`, nil)
+	assertStatus(t, created, 201)
+
+	staged := newHarness(t)
+	first := staged.json("POST", "/api/v1/tasks", `{"title":"two steps","deadline":"2026-07-20"}`, nil)
+	assertStatus(t, first, 201)
+	id, _ := first.data()["id"].(string)
+	patched := staged.json("PATCH", "/api/v1/tasks/"+id,
+		`{"deadline_time":`+timed+`}`, staged.withIfMatch(first.etag()))
+	assertStatus(t, patched, 200)
+
+	want, _ := created.data()["deadline_time"].(map[string]any)
+	got, _ := patched.data()["deadline_time"].(map[string]any)
+	if want == nil || got == nil {
+		t.Fatalf("one path stored no time: create %v, patch %v", want, got)
+	}
+	for _, key := range []string{"local", "timezone", "fold", "effective_timezone", "instant"} {
+		if want[key] != got[key] {
+			t.Errorf("%s: create = %v, patch = %v", key, want[key], got[key])
+		}
+	}
+}
+
+// A time the CLIENT got wrong is still a 422 about the request, and the refusal
+// names the member that carried it — the same mapping the PATCH path uses.
+func TestCreateRefusesAnUnresolvableTime(t *testing.T) {
+	h := newHarness(t)
+	before := string(h.storeBytes())
+	for _, testCase := range []struct{ name, body string }{
+		{"a wall time in a DST gap",
+			`{"title":"x","deadline":"2026-03-08","deadline_time":{"local":"02:30","timezone":"America/Los_Angeles"}}`},
+		{"a zone that names no region",
+			`{"title":"x","deadline":"2026-07-20","deadline_time":{"local":"09:00","timezone":"PST"}}`},
+		{"a local time that is not HH:MM",
+			`{"title":"x","deadline":"2026-07-20","deadline_time":{"local":"5pm"}}`},
+		{"a derived field the client may not set",
+			`{"title":"x","deadline":"2026-07-20","deadline_time":{"local":"09:00","instant":"2026-07-20T09:00:00Z"}}`},
+		{"a time with no date to hang it on",
+			`{"title":"x","deadline_time":{"local":"17:00"}}`},
+	} {
+		answered := h.json("POST", "/api/v1/tasks", testCase.body, nil)
+		assertError(t, answered, 422, "validation_failed")
+		if !strings.Contains(answered.Body, "deadline") {
+			t.Errorf("%s: the refusal does not name the field: %s", testCase.name, answered.Body)
+		}
+		if string(h.storeBytes()) != before {
+			t.Fatalf("%s: a refused create wrote to the store", testCase.name)
+		}
+	}
+
+	// A null time is not a time: it is the all-day spelling, and it still creates.
+	assertStatus(t, h.json("POST", "/api/v1/tasks",
+		`{"title":"all day","deadline":"2026-07-20","deadline_time":null}`, nil), 201)
 }
 
 // A placement over HTTP reaches the store as a placement, anchor included.
