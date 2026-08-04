@@ -34,26 +34,33 @@ PINS = {
   "TASKS_TIMEZONE" => "Etc/UTC",
 }.freeze
 
-def sandbox(dir, org_text, archive_text = nil)
+def sandbox(dir, org_text, archive_text = nil, config: nil)
   FileUtils.mkdir_p(dir)
   File.write(File.join(dir, "tasks.jsonl"), org_text)
   File.write(File.join(dir, "archive.jsonl"), archive_text) if archive_text
+  if config
+    config_dir = File.join(dir, "config", "tasks")
+    FileUtils.mkdir_p(config_dir)
+    File.write(File.join(config_dir, "config"), config)
+  end
   dir
 end
 
-def env_for(dir)
-  PINS.merge(
+def env_for(dir, hostname: nil)
+  environment = PINS.merge(
     "TASKS_FILE" => File.join(dir, "tasks.jsonl"),
     "TASKS_ARCHIVE" => File.join(dir, "archive.jsonl"),
     "XDG_STATE_HOME" => File.join(dir, "state"),
     "XDG_CONFIG_HOME" => File.join(dir, "config"),
     "NO_COLOR" => "1"
   )
+  environment["TASKS_PIN_HOSTNAME"] = hostname if hostname
+  environment
 end
 
-def run(binary, dir, argv)
+def run(binary, dir, argv, hostname: nil)
   command = binary == :ruby ? ["ruby", RUBY_BIN] : [GO_BIN]
-  out, err, status = Open3.capture3(env_for(dir), *command, *argv)
+  out, err, status = Open3.capture3(env_for(dir, hostname: hostname), *command, *argv)
   { stdout: out.force_encoding("UTF-8"), stderr: err.force_encoding("UTF-8"),
     status: status.exitstatus }
 end
@@ -81,15 +88,15 @@ end
 $cases = 0
 $failures = []
 
-def scenario(name, org:, archive: nil, steps:)
+def scenario(name, org:, archive: nil, config: nil, hostname: nil, steps:)
   $cases += 1
   Dir.mktmpdir do |root|
-    ruby_dir = sandbox(File.join(root, "ruby"), org, archive)
-    go_dir = sandbox(File.join(root, "go"), org, archive)
+    ruby_dir = sandbox(File.join(root, "ruby"), org, archive, config: config)
+    go_dir = sandbox(File.join(root, "go"), org, archive, config: config)
 
     steps.each_with_index do |argv, index|
-      ruby = run(:ruby, ruby_dir, argv)
-      go = run(:go, go_dir, argv)
+      ruby = run(:ruby, ruby_dir, argv, hostname: hostname)
+      go = run(:go, go_dir, argv, hostname: hostname)
       label = "#{name} [#{index}] #{argv.join(" ")}"
 
       %i[stdout stderr status].each do |field|
@@ -329,6 +336,22 @@ scenario "capture-full", org: SMALL,
                   "--tag", "generated", "--context", "@computer", "--no-host-context",
                   "--state", "TODO", "--project", "Next Actions", "--recur", "weekly",
                   "--lead", "2d", "--note", "generated note", "--dry-run", "--json"]]
+HOST_CONTEXT_CONFIG = "host_context.fixture-host = @home\n"
+scenario "capture-host-context-mutation", org: SMALL, config: HOST_CONTEXT_CONFIG,
+         hostname: "fixture-host.local", steps: [["capture", "Host default"]]
+scenario "capture-host-context-dry-run", org: SMALL, config: HOST_CONTEXT_CONFIG,
+         hostname: "fixture-host.local",
+         steps: [["capture", "Host preview", "--context", "computer", "--tag", "later", "--dry-run"]]
+scenario "capture-host-context-suppression", org: SMALL, config: HOST_CONTEXT_CONFIG,
+         hostname: "fixture-host.local",
+         steps: [["capture", "Host suppressed", "--context", "work", "--no-host-context"]]
+scenario "capture-host-context-dedupe-order", org: SMALL, config: HOST_CONTEXT_CONFIG,
+         hostname: "fixture-host.local",
+         steps: [["capture", "Host ordered", "--tag", "first", "--context", "computer",
+                  "--context", "home", "--tag", "last"]]
+scenario "propose-host-context", org: SMALL, config: HOST_CONTEXT_CONFIG,
+         hostname: "fixture-host.local",
+         steps: [["propose", "Host proposal", "--context", "computer", "--tag", "idea"]]
 scenario "propose-dated", org: SMALL,
          steps: [["propose", "Generated proposal", "--due", "2026-09-09", "--lead", "2d",
                   "--priority", "B", "--tag", "generated", "--context", "@computer",
