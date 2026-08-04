@@ -34,9 +34,10 @@ type SystemOpener struct {
 // which is the one outcome an override exists to prevent.
 //
 // This is exactly what Ruby does, by a different route: `Shellwords.split`
-// raises on an unmatched quote and `Opener.open_url` rescues ArgumentError into
-// false; a whitespace-only or quoted-empty override splits to no usable
-// launcher and the spawn fails. Both arrive at "no open, and say so".
+// raises on an unmatched quote or NUL and `Opener.open_url` rescues
+// ArgumentError into false; a whitespace-only or quoted-empty override splits
+// to no usable launcher and the spawn fails. Both arrive at "no open, and say
+// so".
 func (o SystemOpener) Command() ([]string, bool) {
 	raw := o.lookup("TASKS_OPENER")
 	if raw != "" {
@@ -86,9 +87,9 @@ func (o SystemOpener) lookup(name string) string {
 }
 
 // shellSplit is Shellwords.split for the shapes an opener override takes: words
-// separated by whitespace, with single or double quotes grouping and a
-// backslash escaping the next character. The second return is false for input
-// Ruby REFUSES, which is an unmatched quote and nothing else.
+// separated by ASCII whitespace, with single or double quotes grouping and
+// Ruby's context-sensitive backslash rules. The second return is false for
+// input Ruby refuses: an unmatched quote or a NUL byte.
 //
 // A dangling trailing backslash is deliberately NOT an error: Ruby keeps it as
 // a literal backslash (`Shellwords.split("open \\")` is `["open", "\\"]`),
@@ -103,25 +104,54 @@ func shellSplit(value string) ([]string, bool) {
 	fields := []string{}
 	var current strings.Builder
 	quote := rune(0)
-	escaped := false
+	unquotedEscape := false
+	doubleQuotedEscape := false
 	started := false
 	for _, char := range value {
+		if char == '\x00' {
+			return nil, false
+		}
 		switch {
-		case escaped:
+		case unquotedEscape:
+			// Shellwords' unquoted escape removes the backslash before every
+			// non-NUL character except LF. Its regexp consumes backslash+LF as
+			// one token, but the subsequent substitution deliberately leaves
+			// that pair intact.
+			if char == '\n' {
+				current.WriteByte('\\')
+			}
 			current.WriteRune(char)
-			escaped = false
-		case char == '\\' && quote != '\'':
-			escaped = true
-		case quote != 0:
-			if char == quote {
+			unquotedEscape = false
+		case quote == '\'':
+			if char == '\'' {
 				quote = 0
 			} else {
 				current.WriteRune(char)
 			}
+		case quote == '"' && doubleQuotedEscape:
+			// In double quotes, backslash is special only before $, `, ",
+			// backslash, or LF. Before every other character both bytes remain.
+			if !isDoubleQuotedEscape(char) {
+				current.WriteByte('\\')
+			}
+			current.WriteRune(char)
+			doubleQuotedEscape = false
+		case quote == '"':
+			switch char {
+			case '"':
+				quote = 0
+			case '\\':
+				doubleQuotedEscape = true
+			default:
+				current.WriteRune(char)
+			}
+		case char == '\\':
+			unquotedEscape = true
+			started = true
 		case char == '\'' || char == '"':
 			quote = char
 			started = true
-		case char == ' ' || char == '\t' || char == '\n':
+		case isShellWhitespace(char):
 			if started || current.Len() > 0 {
 				fields = append(fields, current.String())
 				current.Reset()
@@ -131,7 +161,7 @@ func shellSplit(value string) ([]string, bool) {
 			current.WriteRune(char)
 		}
 	}
-	if escaped {
+	if unquotedEscape {
 		// Ruby keeps a dangling escape as a literal backslash rather than
 		// refusing.
 		current.WriteByte('\\')
@@ -145,6 +175,24 @@ func shellSplit(value string) ([]string, bool) {
 		fields = append(fields, current.String())
 	}
 	return fields, true
+}
+
+func isShellWhitespace(char rune) bool {
+	switch char {
+	case ' ', '\t', '\n', '\r', '\f', '\v':
+		return true
+	default:
+		return false
+	}
+}
+
+func isDoubleQuotedEscape(char rune) bool {
+	switch char {
+	case '$', '`', '"', '\\', '\n':
+		return true
+	default:
+		return false
+	}
 }
 
 var _ Opener = SystemOpener{}
