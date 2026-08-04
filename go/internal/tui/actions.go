@@ -891,6 +891,10 @@ func (m *Model) StartTaskEdit(focus string) {
 
 // CloseTaskEdit leaves the editor.
 func (m *Model) CloseTaskEdit(message string) {
+	targetID := ""
+	if m.taskEditor != nil {
+		targetID = m.taskEditor.TargetID()
+	}
 	m.taskEditor = nil
 	m.suspendedTaskEditor = nil
 	m.suspendedTaskPanel = nil
@@ -900,6 +904,11 @@ func (m *Model) CloseTaskEdit(message string) {
 		m.Flash(message)
 	}
 	m.Refresh()
+	if targetID != "" && m.selectedTarget(targetID) {
+		m.showDetail()
+	} else {
+		m.panel = nil
+	}
 }
 
 // reconcileEditorLayout suspends an editor that can no longer fit. The

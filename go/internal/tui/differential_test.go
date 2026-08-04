@@ -146,6 +146,14 @@ func TestDifferentialDriver(t *testing.T) {
 			model.filter = "needle"
 			model.contextFilters = []string{"@home"}
 			model.RefreshRows()
+		} else if key == "<<seed-response-flash-only>>" {
+			model.resp = make([]string, 30)
+			for index := range model.resp {
+				model.resp[index] = fmt.Sprintf("response %d", index)
+			}
+			model.respOpen = true
+			model.respScroll = 0
+			model.Flash("visible flash")
 		} else if key == "<<mouse-wheel-footer-chrome>>" {
 			model.Update(tea.WindowSizeMsg{Width: 100, Height: 60})
 			layout := model.Layout()
@@ -154,6 +162,16 @@ func TestDifferentialDriver(t *testing.T) {
 				if strings.Contains(line, "visible flash") || strings.Contains(line, "needle") ||
 					strings.Contains(line, "@home") {
 					model.Update(tea.MouseMsg{Type: tea.MouseWheelDown, X: 4, Y: start + index})
+				}
+			}
+		} else if key == "<<mouse-wheel-flash-chrome>>" {
+			model.Update(tea.WindowSizeMsg{Width: 100, Height: 60})
+			layout := model.Layout()
+			start, _ := layout.FooterRows()
+			for index, line := range layout.Footer {
+				if strings.Contains(line, "visible flash") {
+					model.Update(tea.MouseMsg{Type: tea.MouseWheelDown, X: 4, Y: start + index})
+					break
 				}
 			}
 		} else {

@@ -324,6 +324,8 @@ func TestMouseFooterKeepsKeyHintAndResponseAdjacentChromeInert(t *testing.T) {
 	h := newAgentHarness(t)
 	h.model.paths.Mouse = true
 	h.model.height = 60
+	h.model.SwitchView(ViewNext)
+	h.selectRowByID(fixFlight)
 	layout := h.model.Layout()
 	_, footerEnd := layout.FooterRows()
 	h.model.Update(tea.MouseMsg{Type: tea.MouseLeft, X: 4, Y: footerEnd - 1})
@@ -334,10 +336,31 @@ func TestMouseFooterKeepsKeyHintAndResponseAdjacentChromeInert(t *testing.T) {
 	h.model.respOpen = true
 	h.model.resp = strings.Split(strings.Repeat("response line\n", 30), "\n")
 	h.model.Flash("visible flash")
+	layout = h.model.Layout()
+	footerStart, _ := layout.FooterRows()
+	selected := h.model.CurrentItem().ID
+	for index, line := range layout.Footer {
+		if !strings.Contains(line, "visible flash") {
+			continue
+		}
+		row := footerStart + index
+		if got := h.model.footerRole(layout, row); got != "chrome" {
+			t.Fatalf("flash line %q classified as %q", line, got)
+		}
+		h.model.Update(tea.MouseMsg{Type: tea.MouseWheelDown, X: 4, Y: row})
+		if h.model.CurrentItem() == nil || h.model.CurrentItem().ID != selected {
+			t.Fatalf("wheel over footer chrome moved selection from %s to %#v",
+				selected, h.model.CurrentItem())
+		}
+		if h.model.respScroll != 0 {
+			t.Fatal("wheel over flash chrome scrolled the response")
+		}
+	}
+
 	h.model.filter = "needle"
 	h.model.contextFilters = []string{"@home"}
 	layout = h.model.Layout()
-	footerStart, _ := layout.FooterRows()
+	footerStart, _ = layout.FooterRows()
 	for index, line := range layout.Footer {
 		if !strings.Contains(line, "visible flash") &&
 			!strings.Contains(line, "filter /needle") &&
@@ -353,6 +376,31 @@ func TestMouseFooterKeepsKeyHintAndResponseAdjacentChromeInert(t *testing.T) {
 		if h.model.respScroll != 0 {
 			t.Fatalf("wheel over chrome %q scrolled the response", line)
 		}
+	}
+}
+
+func TestActiveEditorDeletionKeepsRescueGuidanceAndClosesReplacementPanel(t *testing.T) {
+	h := newModelHarness(t, harnessOptions{})
+	h.model.SwitchView(ViewNext)
+	h.selectRowByID(fixFlight)
+	h.pressKeys("\r", "e", "!")
+
+	kept := []string{}
+	for _, line := range strings.Split(fixtureStore, "\n") {
+		if !strings.Contains(line, `"id":"`+fixFlight+`"`) {
+			kept = append(kept, line)
+		}
+	}
+	h.rewrite(strings.Join(kept, "\n"))
+	h.model.Refresh()
+	const rescue = "Task no longer exists; local field retained for copy or discard · y copies field · esc discards editor"
+	if got := h.model.FlashMessage(); got != rescue {
+		t.Fatalf("missing editor refresh flash=%q want=%q", got, rescue)
+	}
+
+	h.pressKeys("\x1b")
+	if h.model.Mode() != ModeList || h.model.Panel() != nil {
+		t.Fatalf("escape after deletion mode=%s panel=%#v", h.model.Mode(), h.model.Panel())
 	}
 }
 

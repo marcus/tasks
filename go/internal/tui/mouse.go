@@ -45,8 +45,12 @@ func (m *Model) HandleMouse(event tea.MouseMsg) bool {
 func (m *Model) mouseEnabled() bool { return m.paths.Mouse }
 
 func (m *Model) wheel(layout ScreenLayout, event tea.MouseMsg, direction int) bool {
-	if m.footerRole(layout, event.Y) == "response" {
+	footerRole := m.footerRole(layout, event.Y)
+	if footerRole == "response" {
 		m.ScrollResponse(direction * 3)
+		return true
+	}
+	if footerRole != "" {
 		return true
 	}
 	if m.panel != nil && m.inPanel(layout, event.X) {

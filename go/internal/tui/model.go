@@ -398,7 +398,11 @@ func (m *Model) reconcileOpenOverlays(prior Mode) {
 		if m.taskEditor != nil {
 			outcome := m.taskEditor.Refresh()
 			m.editorMessage = outcome.Message
-			if outcome.Status == EditorMissing || outcome.Status == EditorConflicted {
+			if outcome.Status == EditorMissing {
+				m.editorMessage = "Task no longer exists; local field retained for copy or discard" +
+					" · y copies field · esc discards editor"
+				m.Flash(m.editorMessage)
+			} else if outcome.Status == EditorConflicted {
 				m.Flash(outcome.Message)
 			}
 		}

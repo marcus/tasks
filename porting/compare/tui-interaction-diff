@@ -486,6 +486,12 @@ SCENARIOS = [
            "<<external-delete-selected>>", "<<refresh>>", "\r"],
   },
   {
+    name: "active-editor-target-deleted-on-refresh",
+    why: "a vanished edit target keeps rescue guidance, then Escape closes instead of retargeting detail",
+    view: "next", select: "aaaa0004",
+    keys: ["\r", "e", "!", "<<external-delete-selected>>", "<<refresh>>", "\e"],
+  },
+  {
     name: "project-archive-uses-session-date",
     why: "project archive stamps the injected TUI day in both implementations",
     view: "projects", select: "aaaa0003",
@@ -540,6 +546,12 @@ SCENARIOS = [
     why: "wheel events on flash/filter/context rows beneath a response never move the response pane",
     view: "next", select: "aaaa0004",
     keys: ["<<seed-response-chrome>>", "<<mouse-wheel-footer-chrome>>"],
+  },
+  {
+    name: "mouse-footer-chrome-does-not-move-list",
+    why: "wheel events on footer chrome are inert even when the unfiltered list can move",
+    view: "next", select: "aaaa0004",
+    keys: ["<<seed-response-flash-only>>", "<<mouse-wheel-flash-chrome>>"],
   },
 ].freeze
 
@@ -737,6 +749,11 @@ RUBY_DRIVER = <<~'RUBY'
       ui.filter = "needle"
       ui.context_filters = ["@home"]
       app.send(:rows)
+    elsif key == "<<seed-response-flash-only>>"
+      app.instance_variable_set(:@resp, Array.new(30) { |i| "response #{i}" })
+      app.instance_variable_set(:@resp_open, true)
+      app.instance_variable_set(:@resp_scroll, 0)
+      app.instance_variable_set(:@flash, "visible flash")
     elsif key == "<<mouse-wheel-footer-chrome>>"
       app.define_singleton_method(:terminal_size) { [60, 100] }
       app.send(:paint)
@@ -747,6 +764,18 @@ RUBY_DRIVER = <<~'RUBY'
 
         row = layout.footer_rows.begin + index
         app.send(:handle_mouse, "\e[<65;5;#{row + 1}M")
+      end
+    elsif key == "<<mouse-wheel-flash-chrome>>"
+      app.define_singleton_method(:terminal_size) { [60, 100] }
+      app.send(:paint)
+      layout = app.instance_variable_get(:@last_layout)
+      layout.footer.each_with_index do |line, index|
+        text = line.is_a?(String) ? Tui::Ansi.strip(line) : ""
+        next unless text.include?("visible flash")
+
+        row = layout.footer_rows.begin + index
+        app.send(:handle_mouse, "\e[<65;5;#{row + 1}M")
+        break
       end
     else
       app.send(:handle_key, key)
