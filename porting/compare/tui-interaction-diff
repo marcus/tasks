@@ -626,7 +626,11 @@ def diff_lines(left, right, label)
     next if a == b
 
     out << "  #{label} step #{index} (key #{(a || b)['key'].inspect}):"
-    %w[mode selected flash overlay].each do |field|
+    # Every observable field, response INCLUDED. Leaving it out of this list
+    # was a real hole: a step whose only difference was the agent's transcript
+    # still failed the scenario (the hash comparison above catches it), but the
+    # report named no field, so the failure read as an unexplained blank.
+    %w[mode selected flash overlay response].each do |field|
       next if a && b && a[field] == b[field]
 
       out << "    #{field}: ruby=#{(a || {})[field].inspect} go=#{(b || {})[field].inspect}"
@@ -701,7 +705,7 @@ Dir.mktmpdir("tui-diff") do |work|
     if problems.empty?
       if VERBOSE
         traced = JSON.parse(File.read(ruby_out)).map { |st| st["response"].to_s }.reject(&:empty?)
-        note = traced.empty? ? "" : " · response=#{traced.last.inspect}"
+        note = traced.empty? ? "" : " · response=#{traced.last.inspect} (compared)"
         puts "PASS #{scenario[:name]}#{note}"
       end
     else

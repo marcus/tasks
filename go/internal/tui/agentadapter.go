@@ -57,11 +57,21 @@ func (a *AgentAdapter) Output() string { return a.agent.Output() }
 func (a *AgentAdapter) Success() bool { return a.agent.Success() }
 
 // ExitStatus is the process exit code once it is known.
+//
+// The second return is the whole contract: the queue turns `false` into an
+// ABSENT exit status on the request snapshot, and llm.Agent reports -1 for both
+// "has not exited" and "died on a signal". Reporting (-1, true) would put an
+// exit code no process ever returns onto a cancelled request — which is exactly
+// the path the TUI reaches every time a user presses escape on a running agent.
 func (a *AgentAdapter) ExitStatus() (int, bool) {
 	if a.agent.Running() {
 		return 0, false
 	}
-	return a.agent.ExitStatus(), true
+	code := a.agent.ExitStatus()
+	if code < 0 {
+		return 0, false
+	}
+	return code, true
 }
 
 // ProcessStatus is how the process ended, including the signal a cancellation
@@ -72,13 +82,17 @@ func (a *AgentAdapter) ProcessStatus() agent.ProcessStatus {
 		return agent.ProcessStatus{}
 	}
 	signaled, signal := a.agent.Signaled()
-	return agent.ProcessStatus{
-		Present:    true,
-		Exited:     !signaled,
-		ExitStatus: a.agent.ExitStatus(),
-		Signaled:   signaled,
-		Signal:     int(signal),
+	if signaled {
+		return agent.ProcessStatus{Present: true, Signaled: true, Signal: int(signal)}
 	}
+	code := a.agent.ExitStatus()
+	if code < 0 {
+		// No wait status at all — the process never ran. Claiming Present here
+		// would make the queue report "agent exited -1" for a request that
+		// failed before it started.
+		return agent.ProcessStatus{}
+	}
+	return agent.ProcessStatus{Present: true, Exited: true, ExitStatus: code}
 }
 
 var _ agent.Adapter = (*AgentAdapter)(nil)
