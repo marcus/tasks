@@ -10,13 +10,21 @@ several Ruby cases collapse into one Go table test, and several Go tests cover
 a contract Ruby only exercises incidentally.
 
 The judgment gate for this packet is `porting/compare/tui-interaction-diff`,
-which drives 47 keystroke scenarios through **both** implementations and
+which drives 51 keystroke scenarios through **both** implementations and
 compares mode, selection, status message, overlay state, the resulting
 `tasks.jsonl` AND `archive.jsonl` bytes, and the undo journal's cursor and
-labels. It is at **47/47 GATE PASS**.
+labels. It is at **51/51 GATE PASS**.
 
 Both sides run against scripted fakes for anything external: a fake agent
-adapter, a fake link opener. No provider is invoked and no browser is opened.
+adapter on each side, driven by a shared `<<tick>>` token that drains the queue
+once so a FINISHED request can be compared without depending on wall-clock
+timing. No provider is invoked and no browser is opened.
+
+Separately, `go/cmd/tasks-tui/main_test.go` tests the SHIPPING constructor —
+that `buildModel` returns a model with real ordered `llm.Entries`, a non-nil
+queue and a wired opener, that the availability probe does not read
+`agent-memory.md`, and that the factory does. Those tests exist because a model
+built with injected fakes proves nothing about the real binary.
 
 ## Summary
 
@@ -100,7 +108,7 @@ previous revision of this document listed as a gap is now built:
    in-place refresh that keeps the reader's filter and scroll, queued-request
    cancellation behind a confirmation, and the response pane with scrolling.
 
-## Three defects found and fixed
+## Four defects found and fixed
 
 All three were found by running the two implementations against each other, not
 by reading code and not by unit tests.
@@ -137,6 +145,23 @@ by reading code and not by unit tests.
    `TestAppModals#test_archive_stamps_the_session_date_not_the_wall_clock` and
    `#test_archive_preview_and_sweep_share_one_captured_date`, both verified to
    fail on the pre-fix source.
+
+4. **The shipping entry point never wired the agent seams or the opener.**
+   `cmd/tasks-tui` constructed `tui.New` without `Entries`, `Queue` or
+   `Opener`, so the real binary answered "no agent is configured" to every
+   prompt key and "no browser launcher found" to every valid link — while the
+   fake-injected model tests stayed green, because they injected exactly the
+   seams the binary did not.
+
+   Found by integration review of the shipping path, not by the differential:
+   the harness drives `internal/tui` directly and so shared the same blind
+   spot. Fixed by resolving `llm.LoadConfig`/`llm.Entries` from the same env,
+   constructing the `term/agent` queue in `cmd/tasks-tui` with a context-free
+   availability probe and a factory that builds `agentcontext` fresh at request
+   START, adding `tui.AgentAdapter` (async start with streaming, non-blocking
+   pump via Done, cancellation, output, exit and signal status), and wiring
+   `tui.SystemOpener`. `cmd/tasks-tui/main_test.go` now fails on the unwired
+   constructor — verified by reverting the wiring.
 
 A further divergence was found the same way and is behavior this build had
 simply not ported: after a save moves a task out of the current view (putting it

@@ -23,15 +23,19 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-isatty"
 
+	"tasks-go/internal/agentcontext"
 	"tasks-go/internal/application"
 	"tasks-go/internal/config"
 	"tasks-go/internal/determinism"
 	"tasks-go/internal/journal"
+	"tasks-go/internal/llm"
+	"tasks-go/internal/promptfacts"
 	"tasks-go/internal/store"
 	"tasks-go/internal/taskquery"
 	"tasks-go/internal/temporal"
 	"tasks-go/internal/tui"
 	"tasks-go/internal/tui/term"
+	"tasks-go/internal/tui/term/agent"
 	"tasks-go/internal/updatestamp"
 )
 
@@ -162,13 +166,96 @@ func buildModel(paths config.Paths, env determinism.Env) (*tui.Model, error) {
 	// PlainStyler measures a rune as one cell, so a CJK title or an emoji would
 	// misalign every column beside it. Every width decision in internal/tui
 	// goes through Styler.Width.
+	entries, queue, err := buildAgentQueue(paths, env)
+	if err != nil {
+		return nil, err
+	}
+
 	return tui.New(tui.Options{
 		App:     app,
 		Paths:   paths,
 		Env:     env,
 		Session: tui.LoadSession(env),
 		Styler:  term.NewStyler(paths.Theme, paths.Colors),
+		Entries: entries,
+		Queue:   queue,
+		// The production link launcher: TASKS_OPENER, then the platform
+		// default. Injected rather than reached for, so a test can watch an
+		// open happen without a browser appearing.
+		Opener: tui.SystemOpener{Env: env},
 	}), nil
+}
+
+// buildAgentQueue resolves the provider/model list and the request coordinator
+// the prompt submits to — the Go shape of Tui::App's `build_agent` and
+// `agent_available?`.
+//
+// The two seams differ in ONE important way, and it is the whole reason they
+// are separate:
+//
+//   - availability is a LIGHTWEIGHT probe run at submit time, and it is
+//     deliberately context-free. It never reads agent-memory.md, so a submit
+//     cannot fail on a memory error;
+//   - the factory builds the system context FRESH when the request actually
+//     STARTS. That is what lets an external edit to agent-memory.md — or a
+//     default the previous request saved — reach the next queued request
+//     without restarting the TUI, and it is what turns an oversize or
+//     unreadable sidecar into a failed request rather than a crashed loop.
+func buildAgentQueue(paths config.Paths, env determinism.Env) ([]tui.AgentEntry, *agent.Queue, error) {
+	conf := llm.LoadConfig(env, "")
+	entries := []tui.AgentEntry{}
+	for _, entry := range llm.Entries(conf) {
+		entries = append(entries, tui.AgentEntry{
+			ProviderName: entry.Provider, ModelName: entry.Model, Label: entry.UILabel(),
+		})
+	}
+
+	// The harness runs in the TASK DATA directory, not in the checkout: that is
+	// where the files it is being asked about live.
+	dataDir := filepath.Dir(paths.Org)
+	cliRoot := repoRoot()
+
+	queue, err := agent.NewQueue(agent.Options{
+		Factory:      agentFactory(paths, env, conf, dataDir, cliRoot),
+		Availability: agentAvailability(env, conf, dataDir),
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return entries, queue, nil
+}
+
+// agentFactory builds the adapter for one request, WITH the system context, at
+// the moment the request starts.
+func agentFactory(paths config.Paths, env determinism.Env, conf llm.Config,
+	dataDir, cliRoot string) func(agent.Entry) (agent.Adapter, error) {
+
+	return func(entry agent.Entry) (agent.Adapter, error) {
+		system, err := agentcontext.Build(paths, cliRoot, promptfacts.Sources{})
+		if err != nil {
+			return nil, err
+		}
+		built, err := llm.Build(
+			llm.Entry{Provider: entry.Provider(), Model: entry.Model()},
+			llm.BuildOptions{Root: dataDir, System: system, Path: llm.PathFrom(env)},
+			conf)
+		if err != nil {
+			return nil, err
+		}
+		return tui.NewAgentAdapter(built), nil
+	}
+}
+
+// agentAvailability is the submit-time probe. It builds the agent WITHOUT a
+// system context on purpose — see buildAgentQueue.
+func agentAvailability(env determinism.Env, conf llm.Config, dataDir string) func(agent.Entry) bool {
+	return func(entry agent.Entry) bool {
+		built, err := llm.Build(
+			llm.Entry{Provider: entry.Provider(), Model: entry.Model()},
+			llm.BuildOptions{Root: dataDir, Path: llm.PathFrom(env)},
+			conf)
+		return err == nil && built.Available()
+	}
 }
 
 // repoRoot is bin/tasks-tui's ROOT: the repository the binary was built into,

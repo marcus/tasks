@@ -15,6 +15,7 @@ import (
 	"tasks-go/internal/store"
 	"tasks-go/internal/temporal"
 	"tasks-go/internal/tui/term/agent"
+	"tasks-go/internal/tui/term/ansi"
 )
 
 // The Go half of the Ruby-vs-Go interaction differential.
@@ -49,6 +50,8 @@ type diffStep struct {
 	Selected string `json:"selected"`
 	Flash    string `json:"flash"`
 	Overlay  string `json:"overlay"`
+	// Response is the agent response pane's text, once a request has finished.
+	Response string `json:"response,omitempty"`
 }
 
 func TestDifferentialDriver(t *testing.T) {
@@ -84,7 +87,15 @@ func TestDifferentialDriver(t *testing.T) {
 
 	steps := []diffStep{diffObserve(model, "")}
 	for _, key := range script.Keys {
-		model.Update(keyMessage(key))
+		// A synthetic token, not a key: it drains the agent queue once, the way
+		// the tick does. It is the only way to compare a FINISHED request
+		// across the two implementations without either depending on
+		// wall-clock timing.
+		if key == "<<tick>>" {
+			model.PumpQueue()
+		} else {
+			model.Update(keyMessage(key))
+		}
 		steps = append(steps, diffObserve(model, key))
 	}
 
@@ -109,6 +120,13 @@ func diffObserve(model *Model, key string) diffStep {
 		step.Selected = item.ID
 	} else if project := model.CurrentProject(); project != nil {
 		step.Selected = project.ID
+	}
+	if model.Mode() == ModeList && model.respOpen {
+		lines := []string{}
+		for _, line := range model.resp {
+			lines = append(lines, ansi.Strip(line))
+		}
+		step.Response = strings.TrimSpace(strings.Join(lines, "\n"))
 	}
 	switch model.Mode() {
 	case ModeModal, ModeModalFilter:

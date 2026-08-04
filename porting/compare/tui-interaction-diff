@@ -358,6 +358,30 @@ SCENARIOS = [
     keys: ["M"],
   },
   {
+    name: "prompt-submit-starts-a-request",
+    why: "a non-empty submit enqueues, starts, clears the buffer and says so",
+    view: "next", select: "aaaa0004",
+    keys: ["\t", "d", "o", " ", "i", "t", "\r"],
+  },
+  {
+    name: "prompt-submit-then-tick-shows-the-response",
+    why: "the finished request opens the response pane with the transcript",
+    view: "next", select: "aaaa0004",
+    keys: ["\t", "d", "o", " ", "i", "t", "\r", "<<tick>>"],
+  },
+  {
+    name: "prompt-submit-with-a-pasted-reference",
+    why: "p then a sentence submits as one prompt",
+    view: "next", select: "aaaa0004",
+    keys: ["p", "d", "e", "f", "e", "r", "\r"],
+  },
+  {
+    name: "agent-activity-after-a-request",
+    why: "A lists the finished request",
+    view: "next", select: "aaaa0004",
+    keys: ["\t", "h", "i", "\r", "<<tick>>", "A"],
+  },
+  {
     name: "agent-activity-refused-with-no-requests",
     why: "an unavailable key is consumed in silence",
     view: "next", select: "aaaa0004",
@@ -497,12 +521,24 @@ RUBY_DRIVER = <<~'RUBY'
         end
       end
     end
+    if ui.mode == :list && app.instance_variable_get(:@resp_open)
+      step["response"] = Array(app.instance_variable_get(:@resp))
+                         .map { |line| Tui::Ansi.strip(line) }.join("\n").strip
+    end
     step
   end
 
   steps = [observe(app, ui, "")]
   Array(script["keys"]).each do |key|
-    app.send(:handle_key, key)
+    # A synthetic token, not a key: it drains the agent queue once, the way the
+    # event loop's IO.select branch does. It is the only way to compare a
+    # FINISHED request across the two implementations without either of them
+    # depending on wall-clock timing.
+    if key == "<<tick>>"
+      app.send(:pump_agent_queue)
+    else
+      app.send(:handle_key, key)
+    end
     app.send(:rows)
     steps << observe(app, ui, key)
   end
@@ -663,7 +699,11 @@ Dir.mktmpdir("tui-diff") do |work|
     end
 
     if problems.empty?
-      puts "PASS #{scenario[:name]}" if VERBOSE
+      if VERBOSE
+        traced = JSON.parse(File.read(ruby_out)).map { |st| st["response"].to_s }.reject(&:empty?)
+        note = traced.empty? ? "" : " · response=#{traced.last.inspect}"
+        puts "PASS #{scenario[:name]}#{note}"
+      end
     else
       failures << ([scenario[:name], scenario[:why]].compact.join(" — ")) + "\n" + problems.join("\n")
       puts "FAIL #{scenario[:name]}"

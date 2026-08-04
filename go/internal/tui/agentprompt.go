@@ -54,6 +54,15 @@ func (m *Model) CurrentEntry() AgentEntry {
 // Queue is the request queue, or nil when the model was built without one.
 func (m *Model) Queue() *agent.Queue { return m.queue }
 
+// LinkOpener is the injected launcher, or nil. It is exported so the entry
+// point's own test can prove the shipping constructor wired one — the defect
+// that made every valid link refuse in the real binary while the fake-injected
+// model tests stayed green.
+func (m *Model) LinkOpener() Opener { return m.opener }
+
+// AgentEntries is the ordered provider/model list, for the same reason.
+func (m *Model) AgentEntries() []AgentEntry { return append([]AgentEntry{}, m.entries...) }
+
 // FocusPrompt is `tab`.
 func (m *Model) FocusPrompt() { _ = m.SetMode(ModePrompt) }
 
