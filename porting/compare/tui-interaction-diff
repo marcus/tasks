@@ -304,6 +304,22 @@ SCENARIOS = [
     keys: ["z", "n", "o", "p", "e", "\r"],
   },
 
+  # -- the structured temporal control -------------------------------------------
+  {
+    name: "temporal-control-steps-date-and-mode",
+    why: "the control's arrow steps reach the stored record, not just the buffer",
+    view: "next", select: "aaaa0004",
+    keys: ["\r", "e", "\t", "\t", "\t", "\t",
+           "\r", "\x1b[C", "\x1b[B", "\x1b[B", "\x1b[C", "\e", "\x0f"],
+  },
+  {
+    name: "temporal-control-escape-keeps-the-adjustment",
+    why: "escape closes the overlay; the field keeps what the arrows already changed",
+    view: "next", select: "aaaa0004",
+    keys: ["\r", "e", "\t", "\t", "\t", "\t",
+           "\r", "\x1b[C", "\x1b[C", "\e", "\e", "\e", "\x0f"],
+  },
+
   {
     name: "ordering-refused-outside-outline",
     why: "the unfiltered Outline is the only place ordering applies",

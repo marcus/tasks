@@ -715,6 +715,8 @@ func (s *TaskEditorSession) pickerOpen() bool {
 		return false
 	}
 	switch field := form.Field(form.FocusKey()).(type) {
+	case *TemporalInput:
+		return field.PickerOpen()
 	case *termform.DateInput:
 		return field.PickerOpen()
 	case *termform.Select:

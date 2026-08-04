@@ -410,7 +410,7 @@ func (t *TaskEditForm) temporalField(key, label string, value any) termform.Fiel
 			return &temporal.Value{Date: date}
 		},
 	}
-	return termform.NewDateInput(base, hooks, t.today, dateSuggestions, true)
+	return NewTemporalInput(base, hooks, t.today, dateSuggestions, t.context)
 }
 
 // ParseTemporal reads the editor's date grammar: a date expression with an

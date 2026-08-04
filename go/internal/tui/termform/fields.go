@@ -1179,3 +1179,8 @@ func Graphemes(text string) []string { return input.Graphemes(text) }
 
 // ClusterWidth is one grapheme cluster's width in terminal cells.
 func ClusterWidth(cluster string) int { return charwidth.Cluster(cluster) }
+
+// SetText rewrites the buffer from a host that owns a richer control over the
+// same value — the structured temporal picker writes the canonical spelling
+// back after every arrow step, so the text and the control never disagree.
+func (d *DateInput) SetText(text string) { d.editor.Replace(text) }

@@ -435,7 +435,7 @@ func TestEscapeOnACleanFieldFinishesEditing(t *testing.T) {
 func TestEscapeClosesAnOpenPickerBeforeItArmsADiscard(t *testing.T) {
 	harness := newEditorHarness(t, fixFlight, "deadline")
 	harness.editor.HandleKey("\r") // opens the calendar
-	field := harness.editor.Form().Field("deadline").(*termform.DateInput)
+	field := harness.editor.Form().Field("deadline").(*TemporalInput)
 	if !field.PickerOpen() {
 		t.Fatal("return did not open the calendar")
 	}
