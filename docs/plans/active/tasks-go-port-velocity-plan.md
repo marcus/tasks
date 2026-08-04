@@ -474,7 +474,8 @@ All retained product surfaces are implemented and independently reviewed:
 
 - the CLI is 50/50 commands and the generated corpus is 482/482;
 - `tasks -p`, prompt facts, transcript diffing, and provider adapters are 18/18;
-- the HTTP API, including all four project writes, is 223/223;
+- the HTTP API, including all four project writes, is 223/223; its five
+  delegation-route 501s remain the accepted precondition-safety difference;
 - the complete TUI is 77/77 on its interaction differential and 39/39 on the
   opener Shellwords differential; and
 - `store.Snapshot` collections are private and deeply detached through copying

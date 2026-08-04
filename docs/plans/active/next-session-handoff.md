@@ -10,8 +10,9 @@ the working method and the state, which the plan does not carry.
   **482 of 482**, 0 mismatches and 0 unpaired. `tasks -p`, prompt facts,
   transcript diffing, and the Claude/Cursor/Hermes adapters are implemented.
 - **HTTP API:** `internal/api` + `cmd/tasks-api` are **223 of 223** on the
-  differential harness. The four project-write routes are implemented; there
-  are no recorded API refusals.
+  differential harness. The four project-write routes are implemented. The
+  five delegation routes remain the accepted, documented 501 difference until
+  the store can enforce their mandatory `If-Match` inside the transaction.
 - **TUI: complete.** Shell, views, selection, panels, editor, forms, modals,
   agent queue, opener, mouse, clipboard, themes, and all twelve terminal
   primitive packages are wired. The interaction differential is **77 of 77**
