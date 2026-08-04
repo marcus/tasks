@@ -10,11 +10,12 @@ several Ruby cases collapse into one Go table test, and several Go tests cover
 a contract Ruby only exercises incidentally.
 
 The judgment gate for this packet is `porting/compare/tui-interaction-diff`,
-which drives 76 keystroke scenarios through **both** implementations and
-compares mode, selection, status message, overlay and panel state, agent queue
+which drives 77 keystroke scenarios through **both** implementations and
+compares mode, selection, status message, overlay state, panel kind, identity
+and scroll position, agent queue
 lifecycle, response text and scroll ownership, quit state, the resulting
 `tasks.jsonl` AND `archive.jsonl` bytes, and the undo journal's cursor and
-labels. It is at **76/76 GATE PASS**.
+labels. It is at **77/77 GATE PASS**.
 
 Both sides run against scripted fakes for anything external: a fake agent
 adapter on each side, driven by a shared `<<tick>>` token that drains the queue
@@ -189,9 +190,11 @@ Bubble Tea paste messages; persistent dirty-draft and agent-work quit questions;
 active cancellation and failed-start queue advancement; stale proposal decisions,
 forms, editors, and action palettes; recurrence previews; mouse routing;
 responsive editor suspension; markdown export; and temporal pointer ownership.
-Those findings are pinned by focused Go tests and twenty-four added differential
+Those findings are pinned by focused Go tests and twenty-five added differential
 scenarios, including both yes and no confirmation branches, a stale palette
 write attempt after its original target is deleted, responsive editor
 suspension and resumption, active-editor target deletion, paste-safe quit
 ownership, and structural mouse hit-testing that proves response-adjacent
-footer chrome cannot scroll either the response or the list.
+footer chrome cannot scroll either the response or the list. The final scenario
+also makes same-identity panel scroll preservation part of the shared observed
+state; the accepted cross-editor panel difference is recorded separately.

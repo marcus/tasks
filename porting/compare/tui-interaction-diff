@@ -492,6 +492,12 @@ SCENARIOS = [
     keys: ["\r", "e", "!", "<<external-delete-selected>>", "<<refresh>>", "\e"],
   },
   {
+    name: "same-identity-detail-refresh-preserves-scroll",
+    why: "a detail refresh for the same selected task preserves its identity and the reader's place",
+    view: "next", select: "aaaa0004",
+    keys: ["\r", "<<set-panel-scroll-3>>", "<<refresh>>"],
+  },
+  {
     name: "project-archive-uses-session-date",
     why: "project archive stamps the injected TUI day in both implementations",
     view: "projects", select: "aaaa0003",
@@ -654,6 +660,8 @@ RUBY_DRIVER = <<~'RUBY'
       "flash" => app.instance_variable_get(:@flash).to_s,
       "overlay" => "",
       "panel" => app.instance_variable_get(:@quit) ? "" : ui.panel&.kind.to_s,
+      "panel_identity" => app.instance_variable_get(:@quit) ? "" : ui.panel&.identity.to_s,
+      "panel_scroll" => app.instance_variable_get(:@quit) ? 0 : (ui.panel&.scroll || 0),
       "quit" => app.instance_variable_get(:@quit),
       "queue" => app.instance_variable_get(:@agent_queue).requests.map { |request| request.status.to_s },
       "response_scroll" => app.instance_variable_get(:@resp_scroll),
@@ -713,6 +721,8 @@ RUBY_DRIVER = <<~'RUBY'
       app.send(:handle_paste, "2026-08-09")
     elsif key == "<<refresh>>"
       app.send(:reload_store)
+    elsif key == "<<set-panel-scroll-3>>"
+      ui.panel&.instance_variable_set(:@scroll, 3)
     elsif key == "<<edit-at-small>>"
       app.define_singleton_method(:terminal_size) { [7, 46] }
       app.send(:handle_key, "e")
@@ -871,7 +881,7 @@ def diff_lines(left, right, label)
     # was a real hole: a step whose only difference was the agent's transcript
     # still failed the scenario (the hash comparison above catches it), but the
     # report named no field, so the failure read as an unexplained blank.
-    %w[mode selected flash overlay panel response response_scroll quit queue].each do |field|
+    %w[mode selected flash overlay panel panel_identity panel_scroll response response_scroll quit queue].each do |field|
       next if a && b && a[field] == b[field]
 
       out << "    #{field}: ruby=#{(a || {})[field].inspect} go=#{(b || {})[field].inspect}"

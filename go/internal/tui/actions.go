@@ -905,7 +905,11 @@ func (m *Model) CloseTaskEdit(message string) {
 	}
 	m.Refresh()
 	if targetID != "" && m.selectedTarget(targetID) {
-		m.showDetail()
+		if m.panel != nil && m.panel.Kind == PanelDetail && m.panel.Identity == targetID {
+			m.refreshOpenPanel()
+		} else {
+			m.showDetail()
+		}
 	} else {
 		m.panel = nil
 	}

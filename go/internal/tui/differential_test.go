@@ -55,6 +55,8 @@ type diffStep struct {
 	Flash          string   `json:"flash"`
 	Overlay        string   `json:"overlay"`
 	Panel          string   `json:"panel"`
+	PanelIdentity  string   `json:"panel_identity"`
+	PanelScroll    int      `json:"panel_scroll"`
 	Quit           bool     `json:"quit"`
 	Queue          []string `json:"queue"`
 	ResponseScroll int      `json:"response_scroll"`
@@ -112,6 +114,10 @@ func TestDifferentialDriver(t *testing.T) {
 			model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2026-08-09"), Paste: true})
 		} else if key == "<<refresh>>" {
 			model.Refresh()
+		} else if key == "<<set-panel-scroll-3>>" {
+			if model.Panel() != nil {
+				model.Panel().Scroll = 3
+			}
 		} else if key == "<<edit-at-small>>" {
 			model.Update(tea.WindowSizeMsg{Width: 46, Height: 7})
 			model.Update(keyMessage("e"))
@@ -213,6 +219,8 @@ func diffObserve(model *Model, key string, hint ...bool) diffStep {
 	}
 	if !model.quitting && model.Panel() != nil {
 		step.Panel = model.Panel().Kind
+		step.PanelIdentity = model.Panel().Identity
+		step.PanelScroll = model.Panel().Scroll
 	}
 	if !model.quitting && model.TaskEditor() != nil {
 		step.Panel = "task_edit"

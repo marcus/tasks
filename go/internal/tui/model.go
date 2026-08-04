@@ -628,7 +628,9 @@ func (m *Model) selectRow(index int) {
 	}
 	m.selected = index
 	m.selectedID = id
-	m.refreshOpenPanel()
+	if m.mode != ModeTaskEdit {
+		m.refreshOpenPanel()
+	}
 }
 
 func (m *Model) move(delta int) {
@@ -663,7 +665,7 @@ func (m *Model) syncSelection() {
 	if len(selectable) == 0 {
 		m.selected = 0
 		m.selectedID = ""
-		if m.panel != nil && m.panel.Kind == PanelDetail {
+		if m.mode != ModeTaskEdit && m.panel != nil && m.panel.Kind == PanelDetail {
 			m.panel = nil
 		}
 		return

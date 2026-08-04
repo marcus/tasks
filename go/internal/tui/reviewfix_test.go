@@ -397,10 +397,34 @@ func TestActiveEditorDeletionKeepsRescueGuidanceAndClosesReplacementPanel(t *tes
 	if got := h.model.FlashMessage(); got != rescue {
 		t.Fatalf("missing editor refresh flash=%q want=%q", got, rescue)
 	}
+	if panel := h.model.Panel(); panel == nil || panel.Identity != fixFlight {
+		t.Fatalf("missing editor panel retargeted to %#v", panel)
+	}
 
 	h.pressKeys("\x1b")
 	if h.model.Mode() != ModeList || h.model.Panel() != nil {
 		t.Fatalf("escape after deletion mode=%s panel=%#v", h.model.Mode(), h.model.Panel())
+	}
+}
+
+func TestClosingEditorReusesSameTargetDetailPanelAndPreservesScroll(t *testing.T) {
+	h := newModelHarness(t, harnessOptions{})
+	h.model.SwitchView(ViewNext)
+	h.selectRowByID(fixFlight)
+	h.pressKeys("\r")
+	panel := h.model.Panel()
+	panel.Scroll = 3
+
+	h.pressKeys("e", "\x0f")
+	if h.model.Mode() != ModeList {
+		t.Fatalf("ctrl-o left mode=%s", h.model.Mode())
+	}
+	if h.model.Panel() != panel {
+		t.Fatal("ctrl-o replaced the same-target detail panel")
+	}
+	if panel.Kind != PanelDetail || panel.Identity != fixFlight || panel.Scroll != 3 {
+		t.Fatalf("panel after ctrl-o kind=%q identity=%q scroll=%d",
+			panel.Kind, panel.Identity, panel.Scroll)
 	}
 }
 

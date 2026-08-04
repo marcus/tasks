@@ -832,6 +832,33 @@ kept because `go/internal/api/errors.go` cites it.
   final store bytes.
 - **Conformance disposition:** none; Ruby and Go now agree.
 
+## tui-editor-close-preserves-the-detail-reader-place — accepted 2026-08-04
+
+- **Slices:** TUI editor and right panel (Wave 4)
+- **Ruby behavior:** entering task edit replaces the detail panel with a
+  distinct `:task_edit` `RightPanel`. Closing the editor creates a new
+  `:detail` panel, so a prior detail scroll position is not retained.
+- **Go behavior:** the editor renders over the existing same-task detail panel.
+  Closing it refreshes that same `PanelDetail` object with `Replace`, preserving
+  its identity and scroll position. A missing or moved target still closes the
+  panel rather than retargeting it to the replacement selection.
+- **Why accepted:** preserving the reader's place is the explicit right-panel
+  contract and is more useful than resetting a long task note to the top. Making
+  Ruby match would require retaining a separate prior detail panel throughout
+  its editor session solely to reproduce Go's simpler overlay structure; no
+  task data, command, key ownership, or editor save behavior differs.
+- **Evidence:**
+  `TestClosingEditorReusesSameTargetDetailPanelAndPreservesScroll` pins the Go
+  pointer, target identity, and `Scroll == 3` across Ctrl-O. Differential
+  scenario `same-identity-detail-refresh-preserves-scroll` expands the shared
+  comparator with `panel_identity` and `panel_scroll` and proves both builds
+  preserve scroll on an ordinary same-identity detail refresh; it deliberately
+  does not treat Ruby's separate editor-panel allocation as the oracle for this
+  accepted cross-editor difference.
+- **Who can see it:** a person who scrolls a long task detail, edits that same
+  task, and returns to detail view.
+- **Conformance disposition:** none; CLI, API, and store bytes are unchanged.
+
 ## tui-help-filter-keeps-the-matching-shortcut-group — accepted 2026-08-03
 
 - **Slices:** TUI modals (Wave 4)
