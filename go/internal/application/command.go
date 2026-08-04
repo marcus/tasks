@@ -50,6 +50,26 @@ type CreateCommand struct {
 	Body       string
 	Notes      []string
 
+	// ScheduledValue and DeadlineValue carry a COMPLETE temporal value — the
+	// date, the local time, its zone and its fold — for a caller that has
+	// already parsed one.
+	//
+	// `Scheduled` and `Deadline` above stay the primary spelling, because a
+	// transport supplies text and turning text into a value is this layer's job.
+	// What they cannot express is a time of DAY: `createTemporalValues` builds
+	// `temporal.Value{Date: date}` from them and there is nowhere to put 17:00,
+	// Europe/London, or a fold. So an HTTP client asking for a 17:00 deadline
+	// used to get an all-day one, and the API had to refuse the request outright
+	// rather than store a value the client did not ask for.
+	//
+	// These are optional and pointer-typed so absent stays distinguishable from
+	// "the zero value", and when one is set it WINS over the string for its
+	// field: it is strictly more information about the same thing. The pointee is
+	// copied when the command is accepted, so a caller that reuses its value
+	// cannot change what was submitted.
+	ScheduledValue *temporal.Value
+	DeadlineValue  *temporal.Value
+
 	// SkipHostContext opts out of the configured host context. Ruby spells this
 	// `apply_host_context: true`, whose default is the interesting value; the
 	// polarity is flipped here so the ZERO VALUE is the default behavior and a
@@ -59,11 +79,24 @@ type CreateCommand struct {
 }
 
 // clone is the copy the application takes when it accepts a command, so a
-// caller that reuses and mutates its slice cannot change what was submitted.
+// caller that reuses and mutates its slice — or the value behind one of its
+// pointers — cannot change what was submitted.
 func (c CreateCommand) clone() CreateCommand {
 	c.Tags = copyOf(c.Tags)
 	c.Notes = copyOf(c.Notes)
+	c.ScheduledValue = copyValue(c.ScheduledValue)
+	c.DeadlineValue = copyValue(c.DeadlineValue)
 	return c
+}
+
+// copyValue is the pointer half of clone. A temporal.Value holds no reference
+// types, so copying the pointee is the whole of the defence.
+func copyValue(value *temporal.Value) *temporal.Value {
+	if value == nil {
+		return nil
+	}
+	copied := *value
+	return &copied
 }
 
 // Contexts and ordinary tags, partitioned in stored order.

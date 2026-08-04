@@ -30,6 +30,16 @@ class TestApiProjects < Minitest::Test
     { "type" => "task", "id" => "dddd0003", "parent" => "dddd0002", "state" => "TODO",
       "title" => "Someday: revisit", "tags" => %w[defer] },
   ])
+  # An area whose soonest open task carries a TIMED deadline. Retitling it
+  # "Inbox" moves it out of the read model, so the response is synthesized.
+  TIMED_AREA_FIXTURE = Tasks::Format.dump([
+    { "type" => "meta", "version" => 2 },
+    { "type" => "section", "id" => "ffff0001", "title" => "Projects" },
+    { "type" => "section", "id" => "ffff0002", "title" => "Vendors" },
+    { "type" => "task", "id" => "ffff0003", "parent" => "ffff0002", "state" => "NEXT",
+      "title" => "Reply to the vendor", "deadline" => "2026-07-28",
+      "deadline_time" => { "local" => "17:00", "timezone" => "Europe/London" } },
+  ])
   PROPOSED_PROJECT_FIXTURE = Tasks::Format.dump([
     { "type" => "meta", "version" => 2 },
     { "type" => "section", "id" => "eeee0001", "title" => "Projects" },
@@ -176,6 +186,27 @@ class TestApiProjects < Minitest::Test
     assert_equal "Inbox", JSON.parse(response.body).dig("data", "title")
     assert_nil record("Tasks"), "the section was retitled out of scope"
     assert Tasks::Check.check(@org).ok?
+    assert_contract_response(response)
+  end
+
+  # A retitle moves no task, so the synthesized out-of-scope response must carry
+  # the SAME rollups the read model reported a moment earlier — including the
+  # timed pair. `next_time`/`next_at` default to nil in ProjectView, so a
+  # synthesis that forgets to pass them reports a soonest task that has silently
+  # lost its time of day.
+  def test_rename_area_out_of_scope_keeps_the_timed_rollups
+    rebuild_app(TIMED_AREA_FIXTURE)
+    before = JSON.parse(get("/api/v1/projects/ffff0002").body).dig("data")
+    assert_equal "17:00", before.dig("next_time", "local"), "fixture precondition"
+    assert_equal "2026-07-28T16:00:00Z", before["next_at"]
+
+    response = json("PATCH", "/api/v1/projects/ffff0002", { "title" => "Inbox" })
+    assert_equal 200, response.status
+    after = JSON.parse(response.body).dig("data")
+    assert_equal "Inbox", after["title"]
+    assert_equal before["next_date"], after["next_date"]
+    assert_equal before["next_time"], after["next_time"]
+    assert_equal before["next_at"], after["next_at"]
     assert_contract_response(response)
   end
 

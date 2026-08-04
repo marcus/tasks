@@ -81,22 +81,43 @@ type createDates struct {
 // dates as ISO TEXT because a transport supplies text, and this is the seam that
 // turns them into values.
 //
+// A caller that has already parsed a complete value — an HTTP client's
+// `deadline_time: { local, timezone, fold }` — supplies it directly instead, and
+// it wins over the text for its own field: the whole point is that the text
+// cannot carry a time of day. It is re-validated here rather than trusted,
+// because this is the boundary and Ruby's `TemporalValue#initialize` validates
+// on construction too; a zone that names no region or a wall time that falls in
+// a DST gap must be refused before the transaction, not persisted.
+//
 // The store owns every RULE about the dates — the recurrence seed, the lead's
 // five gates, the dated state default. What is owned here is only "is this a
-// date at all", because refusing an unparseable one before the transaction is
-// the difference between a named argument error and a generic invalid.
+// date, and is this a resolvable time", because refusing an unparseable one
+// before the transaction is the difference between a named argument error and a
+// generic invalid.
 func createTemporalValues(command CreateCommand, today string) (createDates, []string) {
 	dates := createDates{}
 	messages := []string{}
 	for _, field := range []struct {
 		name  string
 		text  string
+		full  *temporal.Value
 		value *temporal.Value
 		set   *bool
 	}{
-		{"scheduled", command.Scheduled, &dates.scheduled, &dates.hasScheduled},
-		{"deadline", command.Deadline, &dates.deadline, &dates.hasDeadline},
+		{"scheduled", command.Scheduled, command.ScheduledValue, &dates.scheduled, &dates.hasScheduled},
+		{"deadline", command.Deadline, command.DeadlineValue, &dates.deadline, &dates.hasDeadline},
 	} {
+		if field.full != nil {
+			validated, err := temporal.NewValue(
+				field.full.Date, field.full.LocalTime, field.full.Timezone, field.full.Fold, true)
+			if err != nil {
+				messages = append(messages, fmt.Sprintf("%s_time %s", field.name, err))
+				continue
+			}
+			*field.value = validated
+			*field.set = true
+			continue
+		}
 		if field.text == "" {
 			continue
 		}
