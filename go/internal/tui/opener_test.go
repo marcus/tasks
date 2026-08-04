@@ -1,8 +1,12 @@
 package tui
 
 import (
+	"encoding/hex"
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -60,41 +64,122 @@ func TestOpenerShellSplitsTheOverride(t *testing.T) {
 	}
 }
 
-// Every expectation here was checked against `Shellwords.split` itself, which
-// is the oracle this has to match.
+type shellSplitCase struct {
+	name  string
+	input string
+	want  []string
+	ok    bool
+}
+
+// This corpus is intentionally byte-oriented: it includes every ASCII
+// whitespace byte and the places where a backslash has different meaning
+// inside and outside double quotes. Ruby's Shellwords.split is the oracle.
+var shellSplitCases = []shellSplitCase{
+	{name: "empty input", input: "", want: []string{}, ok: true},
+	{name: "plain words", input: `open -a Safari`, want: []string{"open", "-a", "Safari"}, ok: true},
+	{name: "space tab newline separators", input: " open\t-a\nSafari ", want: []string{"open", "-a", "Safari"}, ok: true},
+	{name: "carriage return form feed vertical tab separators", input: "\ropen\r-a\fBrowser\v", want: []string{"open", "-a", "Browser"}, ok: true},
+	{name: "only ASCII whitespace", input: " \t\n\r\f\v", want: []string{}, ok: true},
+	{name: "single quoted word", input: `open -a 'My Browser'`, want: []string{"open", "-a", "My Browser"}, ok: true},
+	{name: "single quotes preserve backslash", input: `'a\q'`, want: []string{`a\q`}, ok: true},
+	{name: "double quoted word", input: `open -a "Google Chrome"`, want: []string{"open", "-a", "Google Chrome"}, ok: true},
+	{name: "empty double quoted word", input: `""`, want: []string{""}, ok: true},
+	{name: "empty single quoted word", input: `''`, want: []string{""}, ok: true},
+	{name: "empty quotes concatenate", input: `a""''b`, want: []string{"ab"}, ok: true},
+	{name: "mixed quote adjacency", input: `pre"two words"' and more'post`, want: []string{"pretwo words and morepost"}, ok: true},
+	{name: "unquoted backslash escapes ordinary byte", input: `a\q`, want: []string{"aq"}, ok: true},
+	{name: "unquoted backslash escapes space", input: `a\ b`, want: []string{"a b"}, ok: true},
+	{name: "unquoted backslash escapes tab", input: "a\\\tb", want: []string{"a\tb"}, ok: true},
+	{name: "unquoted backslash escapes carriage return", input: "a\\\rb", want: []string{"a\rb"}, ok: true},
+	{name: "unquoted backslash preserves newline pair", input: "a\\\nb", want: []string{"a\\\nb"}, ok: true},
+	{name: "unquoted backslash escapes quote", input: `a\"b`, want: []string{`a"b`}, ok: true},
+	{name: "unquoted backslash escapes backslash", input: `a\\b`, want: []string{`a\b`}, ok: true},
+	{name: "dangling unquoted backslash", input: `open \`, want: []string{"open", `\`}, ok: true},
+	{name: "lone backslash", input: `\`, want: []string{`\`}, ok: true},
+	{name: "double quotes preserve backslash before q", input: `"a\q"`, want: []string{`a\q`}, ok: true},
+	{name: "double quotes preserve backslash before space", input: `"a\ b"`, want: []string{`a\ b`}, ok: true},
+	{name: "double quotes preserve backslash before n", input: `"a\nb"`, want: []string{`a\nb`}, ok: true},
+	{name: "double quotes preserve backslash before single quote", input: `"a\'b"`, want: []string{`a\'b`}, ok: true},
+	{name: "double quotes preserve backslash before carriage return", input: "\"a\\\rb\"", want: []string{"a\\\rb"}, ok: true},
+	{name: "double quotes escape dollar", input: `"a\$b"`, want: []string{"a$b"}, ok: true},
+	{name: "double quotes escape backtick", input: "\"a\\`b\"", want: []string{"a`b"}, ok: true},
+	{name: "double quotes escape quote", input: `"a\"b"`, want: []string{`a"b`}, ok: true},
+	{name: "double quotes escape backslash", input: `"a\\b"`, want: []string{`a\b`}, ok: true},
+	{name: "double quotes escape newline", input: "\"a\\\nb\"", want: []string{"a\nb"}, ok: true},
+	{name: "shell metacharacters are ordinary", input: `ruby app.rb | less $HOME *.txt`, want: []string{"ruby", "app.rb", "|", "less", "$HOME", "*.txt"}, ok: true},
+	{name: "non ASCII whitespace is ordinary", input: "a\u00a0b", want: []string{"a\u00a0b"}, ok: true},
+	{name: "unmatched double quote", input: `open -a "Chrome`, ok: false},
+	{name: "unmatched single quote", input: `open 'x`, ok: false},
+	{name: "escaped closing double quote remains unmatched", input: `"a\"`, ok: false},
+	{name: "NUL outside quotes", input: "a\x00b", ok: false},
+	{name: "NUL in single quotes", input: "'a\x00b'", ok: false},
+	{name: "NUL in double quotes", input: "\"a\x00b\"", ok: false},
+}
+
+// Every expectation here is also checked against Ruby live by
+// porting/compare/opener-shellwords-diff.
 func TestOpenerShellSplitMatchesShellwords(t *testing.T) {
-	cases := map[string][]string{
-		`open`:                    {"open"},
-		`open -a "Google Chrome"`: {"open", "-a", "Google Chrome"},
-		`open -a 'My Browser'`:    {"open", "-a", "My Browser"},
-		`my\ browser --new`:       {"my browser", "--new"},
-		`  spaced   out  `:        {"spaced", "out"},
-		`""`:                      {""},
-		` `:                       {},
-		// A dangling escape is NOT a refusal in Ruby: the backslash survives as
-		// a literal. `Shellwords.split("open \\")` is `["open", "\\"]`.
-		`open \`: {"open", `\`},
-		`\`:      {`\`},
-	}
-	for override, want := range cases {
-		got, ok := shellSplit(override)
-		if !ok {
-			t.Errorf("%q was refused; Shellwords accepts it", override)
-			continue
-		}
-		if strings.Join(got, "|") != strings.Join(want, "|") {
-			t.Errorf("%q split into %v, want %v", override, got, want)
-		}
+	for _, tc := range shellSplitCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := shellSplit(tc.input)
+			if ok != tc.ok || !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("shellSplit(%q) = (%q, %v), want (%q, %v)", tc.input, got, ok, tc.want, tc.ok)
+			}
+		})
 	}
 }
 
-// An unmatched quote is the ONE thing Shellwords.split raises on, and Ruby's
-// open_url rescues that into false.
-func TestOpenerShellSplitRefusesAnUnmatchedQuote(t *testing.T) {
-	for _, override := range []string{`open -a "Chrome`, `open 'x`, `"`, `'`} {
-		if got, ok := shellSplit(override); ok {
-			t.Errorf("%q was accepted as %v; Shellwords raises on it", override, got)
+type rubyShellSplitResult struct {
+	OK        bool     `json:"ok"`
+	FieldsHex []string `json:"fields_hex"`
+}
+
+// This test is opt-in so ordinary Go development does not acquire a Ruby
+// runtime dependency. The differential harness enables it and compares exact
+// output bytes, not Go expectations copied from Ruby documentation.
+func TestOpenerShellSplitDifferentialAgainstRuby(t *testing.T) {
+	if os.Getenv("TASKS_OPENER_SHELLWORDS_DIFF") != "1" {
+		t.Skip("run via porting/compare/opener-shellwords-diff")
+	}
+
+	inputs := make([]string, len(shellSplitCases))
+	for i, tc := range shellSplitCases {
+		inputs[i] = tc.input
+	}
+	encoded, err := json.Marshal(inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ruby := `inputs = JSON.parse(STDIN.read); puts JSON.generate(inputs.map { |input| begin; {ok: true, fields_hex: Shellwords.split(input).map { |field| field.b.unpack1("H*") }}; rescue ArgumentError; {ok: false, fields_hex: nil}; end })`
+	command := exec.Command("ruby", "-rjson", "-rshellwords", "-e", ruby)
+	command.Stdin = strings.NewReader(string(encoded))
+	raw, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Ruby Shellwords oracle failed: %v\n%s", err, raw)
+	}
+	var oracle []rubyShellSplitResult
+	if err := json.Unmarshal(raw, &oracle); err != nil {
+		t.Fatalf("decode Ruby Shellwords oracle: %v\n%s", err, raw)
+	}
+	if len(oracle) != len(shellSplitCases) {
+		t.Fatalf("Ruby returned %d results for %d cases", len(oracle), len(shellSplitCases))
+	}
+
+	mismatches := 0
+	for i, tc := range shellSplitCases {
+		fields, ok := shellSplit(tc.input)
+		fieldsHex := make([]string, len(fields))
+		for j, field := range fields {
+			fieldsHex[j] = hex.EncodeToString([]byte(field))
 		}
+		if ok != oracle[i].OK || (ok && !reflect.DeepEqual(fieldsHex, oracle[i].FieldsHex)) {
+			mismatches++
+			t.Errorf("%s input_hex=%s: Ruby=(%v, %v), Go=(%v, %v)",
+				tc.name, hex.EncodeToString([]byte(tc.input)), oracle[i].FieldsHex, oracle[i].OK, fieldsHex, ok)
+		}
+	}
+	if mismatches == 0 {
+		t.Logf("opener Shellwords differential: %d/%d byte cases matched", len(shellSplitCases), len(shellSplitCases))
 	}
 }
 
@@ -111,7 +196,9 @@ func TestOpenerRefusesAMalformedOverrideWithoutFallingBack(t *testing.T) {
 		"unmatched single quote": `open 'x`,
 		"whitespace only":        "   ",
 		"a single tab":           "\t",
+		"all other ASCII space":  "\r\f\v",
 		"two quotes":             `""`,
+		"NUL byte":               "open\x00bad",
 	}
 	for name, override := range cases {
 		opener := SystemOpener{Env: determinism.Env{"TASKS_OPENER": override}}
@@ -145,13 +232,20 @@ func TestOpenerReturnsFalseWhenTheLauncherCannotBeSpawned(t *testing.T) {
 }
 
 func TestOpenerFallsBackToThePlatformLauncher(t *testing.T) {
-	opener := SystemOpener{Env: determinism.Env{}}
 	want := "xdg-open"
 	if runtime.GOOS == "darwin" {
 		want = "open"
 	}
-	if got, ok := opener.Command(); !ok || len(got) != 1 || got[0] != want {
-		t.Errorf("the platform default is %v (ok=%v), want %q", got, ok, want)
+	for name, env := range map[string]determinism.Env{
+		"unset": {},
+		"empty": {"TASKS_OPENER": ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			opener := SystemOpener{Env: env}
+			if got, ok := opener.Command(); !ok || len(got) != 1 || got[0] != want {
+				t.Errorf("the platform default is %v (ok=%v), want %q", got, ok, want)
+			}
+		})
 	}
 }
 

@@ -1,0 +1,21 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# opener-shellwords-diff — compare the TUI opener's argv parser byte-for-byte
+# with the Ruby Shellwords implementation used by Tasks::Opener.
+#
+# It never calls SystemOpener.Open, so no launcher or browser is started.
+# The Go test sends the fixed corpus to one Ruby process and compares each
+# accepted field as hexadecimal bytes plus the refusal decision.
+#
+# Usage: porting/compare/opener-shellwords-diff
+
+ROOT = File.expand_path("../..", __dir__)
+GO_DIR = File.join(ROOT, "go")
+
+Dir.chdir(GO_DIR) do
+  env = { "TASKS_OPENER_SHELLWORDS_DIFF" => "1" }
+  ok = system(env, "go", "test", "-count=1", "./internal/tui",
+              "-run", "^TestOpenerShellSplitDifferentialAgainstRuby$", "-v")
+  exit(ok ? 0 : 1)
+end
