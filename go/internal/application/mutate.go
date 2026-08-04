@@ -138,3 +138,95 @@ func (a *Application) DecideProposal(decision ProposalDecision, operation *Opera
 		decision.ID, string(decision.Action), copyOf(decision.Notes),
 		decision.ExpectedRevision, a.today(operation))}
 }
+
+// -- the list-wide operations the TUI drives ------------------------------------
+//
+// Each is a thin pass-through to an optional store capability, in the same
+// shape as every other application operation: a typed refusal when the store
+// cannot do it, never a silently different behavior.
+
+// ArchivePreview is what a sweep would move right now.
+func (a *Application) ArchivePreview(operation *OperationContext) (store.ArchivePreview, bool) {
+	sweeper, ok := a.store().(ArchiveSweeper)
+	if !ok {
+		return store.ArchivePreview{}, false
+	}
+	return sweeper.ArchivePreviewFor(a.today(operation)), true
+}
+
+// ArchiveSweep moves every fully closed subtree to the archive file, pinned to
+// the preview the caller showed the user.
+func (a *Application) ArchiveSweep(expected *store.ArchivePreview,
+	operation *OperationContext) (ArchiveOutcome, bool) {
+
+	target := a.store()
+	sweeper, ok := target.(ArchiveSweeper)
+	if !ok {
+		return ArchiveOutcome{}, false
+	}
+	outcome := ArchiveOutcome{ArchiveResult: sweeper.ArchiveSweep(a.today(operation), expected)}
+	// A sweep that wrote and rolled back reports only `Failed`; the REASON is
+	// recorded on the store, and it is the only evidence the write happened at
+	// all — the files look identical either way.
+	if outcome.Failed {
+		if writer, hasRollback := target.(ProjectWriter); hasRollback {
+			outcome.RollbackReason, outcome.RollbackStage = writer.LastRollback()
+		}
+	}
+	return outcome, true
+}
+
+// ArchiveOutcome is a sweep plus the rollback record a failed one leaves.
+type ArchiveOutcome struct {
+	store.ArchiveResult
+	RollbackReason string
+	RollbackStage  store.RollbackStage
+}
+
+// HistoryStep applies one undo (-1) or redo (+1).
+func (a *Application) HistoryStep(delta int) (store.HistoryOutcome, string, bool) {
+	stepper, ok := a.store().(HistoryStepper)
+	if !ok {
+		return "", "", false
+	}
+	outcome, label := stepper.HistoryStep(delta)
+	return outcome, label, true
+}
+
+// UpdateTask applies several field changes to one task ATOMICALLY, guarded by
+// the revision the caller read.
+//
+// Atomicity is the point, not a convenience. `z now` clears the hold AND the
+// available-from date; landing those as two patches would leave an observable
+// intermediate state where the task is released but still dated, and would cost
+// the user two undos for one keystroke.
+func (a *Application) UpdateTask(id string, changes []store.Change, label string,
+	operation *OperationContext) (Outcome, bool) {
+
+	placer, ok := a.store().(Placer)
+	if !ok {
+		return Outcome{}, false
+	}
+	revision, _ := placer.TaskRevision(id)
+	return Outcome{MutationResult: placer.ApplyChangeset(store.Changeset{
+		ID: id, Changes: changes, ExpectedRevision: revision, HistoryLabel: label,
+		Today: a.today(operation), Context: a.contextFor(operation),
+	})}, true
+}
+
+// MoveTask relocates one subtree, guarded by the revision the caller read.
+func (a *Application) MoveTask(id string, placement store.Placement, label string,
+	operation *OperationContext) (Outcome, bool) {
+
+	placer, ok := a.store().(Placer)
+	if !ok {
+		return Outcome{}, false
+	}
+	revision, _ := placer.TaskRevision(id)
+	return Outcome{MutationResult: placer.ApplyChangeset(store.Changeset{
+		ID:               id,
+		Changes:          []store.Change{{Field: store.FieldLocation, Value: store.PlacementValue(placement.ParentID, placement.BeforeID)}},
+		ExpectedRevision: revision, HistoryLabel: label,
+		Today: a.today(operation), Context: a.contextFor(operation),
+	})}, true
+}

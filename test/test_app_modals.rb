@@ -21,11 +21,13 @@ class TestAppModals < Minitest::Test
     def io = nil
   end
 
-  def with_app(content: FIXTURE_ORG, agent_factory: nil, llm_config: default_llm_config)
+  def with_app(content: FIXTURE_ORG, agent_factory: nil, llm_config: default_llm_config,
+               date_provider: nil)
     Dir.mktmpdir do |dir|
       File.write(File.join(dir, "tasks.jsonl"), content)
       app = Tui::App.new(root: dir, paths: Tasks::Config.for_dir(dir),
                          llm_config: llm_config, agent_factory: agent_factory,
+                         date_provider: date_provider,
                          agent_probe: ->(_entry) { true })
       app.send(:rows) # populate @rows like the paint loop does
       app.send(:clamp_selection)
@@ -280,6 +282,51 @@ class TestAppModals < Minitest::Test
       assert_includes modal_text(app), "Press y to archive"
       assert_equal before, File.read(store.org)
       refute File.exist?(store.archive)
+    end
+  end
+
+  # The archive stamp must come from the SESSION's date, not from the process's
+  # local calendar day.
+  #
+  # Every other TUI write stamps `current_date`, which honours the configured
+  # timezone and the injected provider. Before this was fixed, `archive_sweep`
+  # called `@store.archive_preview` and `@store.archive_swept!` with no `today:`
+  # at all, so both fell back to `Date.today` — and a user whose configured zone
+  # had already rolled over got an `archived` day that disagreed with the
+  # `closed` days the same session had just written.
+  def test_archive_stamps_the_session_date_not_the_wall_clock
+    pinned = Date.today - 400
+    with_app(date_provider: -> { pinned }) do |app|
+      store = app.instance_variable_get(:@store)
+      app.send(:handle_key, "x")
+      app.send(:handle_key, "y")
+
+      moved = record_for(store.archive, title: "Old finished thing")
+      assert moved, "the closed task did not reach the archive"
+      assert_equal pinned.iso8601, moved["archived"],
+                   "archive stamped the wall-clock day instead of the session date"
+    end
+  end
+
+  # The preview and the sweep must agree about which day it is. Capturing the
+  # date once is what makes a confirmation prepared just before local midnight
+  # write the day the user was shown.
+  def test_archive_preview_and_sweep_share_one_captured_date
+    pinned = Date.today - 400
+    with_app(date_provider: -> { pinned }) do |app|
+      app.send(:handle_key, "x")
+      captured = app.instance_variable_get(:@archive_today)
+      assert_equal pinned, captured, "the preview did not capture the session date"
+
+      # The session rolls over between the preview and the confirmation; the
+      # sweep still writes the day the preview described.
+      app.instance_variable_set(:@date_provider, -> { pinned + 1 })
+      app.send(:handle_key, "y")
+
+      store = app.instance_variable_get(:@store)
+      moved = record_for(store.archive, title: "Old finished thing")
+      assert_equal pinned.iso8601, moved["archived"],
+                   "the sweep drifted off the date its preview was built with"
     end
   end
 

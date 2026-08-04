@@ -5,6 +5,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"tasks-go/internal/tui/term/clipboard"
 	"tasks-go/internal/tui/term/input"
 	"tasks-go/internal/tui/term/shortcuts"
 )
@@ -264,6 +265,12 @@ func (m *Model) modalKey(sequence string) {
 	case ModalProjectArchiveConfirm:
 		m.projectArchiveConfirmKey(sequence)
 		return
+	case ModalArchiveConfirm:
+		m.archiveConfirmKey(sequence)
+		return
+	case ModalArchiveBlocked:
+		m.archiveBlockedKey(sequence)
+		return
 	case ModalUnsupportedSchema:
 		// The notice has no action: nothing this build can do makes the store
 		// readable, so the only key it honors is the one that dismisses it.
@@ -498,7 +505,11 @@ func (m *Model) copyMissingEditorField() {
 		m.Flash("nothing to copy")
 		return
 	}
-	m.copyToClipboard(value, "copied the unsaved value")
+	if command := clipboard.Command(); command == nil || !clipboard.Copy(value, command) {
+		m.Flash("no clipboard tool found (pbcopy/wl-copy/xclip/xsel)")
+		return
+	}
+	m.Flash("copied the unsaved value")
 }
 
 // taskDraftQuitKey answers the "discard your unsaved draft?" question.

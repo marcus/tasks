@@ -2478,6 +2478,7 @@ module Tui
       @ui.mode = :list
       @ui.modal = nil
       @ui.archive_preview = nil
+      @archive_today = nil
       @ui.modal_filter_input.clear
     end
 
@@ -3173,7 +3174,15 @@ module Tui
       return show_unsupported_schema_notice if unsupported_schema?
       return confirm_archive_project(current_project) if current_project
 
-      preview = @store.archive_preview
+      # The session's date, not Date.today. Every other TUI write stamps
+      # current_date — which honours the configured timezone and the injected
+      # provider — so an archive that fell back to the process's local calendar
+      # day would stamp `archived` inconsistently with the `closed` dates the
+      # same session just wrote. The day is captured ONCE and carried to the
+      # sweep, so the preview the user reads and the write they confirm cannot
+      # straddle local midnight and disagree about which day it is.
+      @archive_today = current_date
+      preview = @store.archive_preview(today: @archive_today)
       if preview.roots.zero?
         return flash("archive preview: 0 roots · 0 descendants — nothing to archive")
       end
@@ -3205,7 +3214,8 @@ module Tui
       case k
       when "y", "Y"
         expected = @ui.archive_preview
-        result = @store.archive_swept!(expected_preview: expected)
+        result = @store.archive_swept!(expected_preview: expected,
+                                       today: @archive_today || current_date)
         close_modal
         if result.is_a?(Tasks::Store::ArchiveRefusal)
           case result.reason

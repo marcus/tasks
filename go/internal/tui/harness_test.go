@@ -58,7 +58,24 @@ type harnessOptions struct {
 	now  time.Time
 	// paths overrides the resolved configuration for this model.
 	paths func(*config.Paths)
+	// opener is the link launcher. Tests inject a fake; nothing here may ever
+	// reach a real browser.
+	opener Opener
 }
+
+// blockedArchiveFixture has a closed root with open work still inside it, which
+// is the state a sweep must refuse rather than confirm.
+const blockedArchiveFixture = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0003","title":"Work"}
+{"type":"task","id":"aaaa0004","parent":"aaaa0003","state":"DONE","title":"Closed parent","closed":"2026-06-20"}
+{"type":"task","id":"aaaa0005","parent":"aaaa0004","state":"NEXT","title":"Still open inside"}
+`
+
+// linkedFixture carries a URL in a task body, for the link action.
+const linkedFixture = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0003","title":"Work"}
+{"type":"task","id":"aaaa0004","parent":"aaaa0003","state":"NEXT","title":"Book flight in Concur","body":"See https://example.com/itinerary for details."}
+`
 
 // newModelHarness builds one temp store and a model over it.
 //
@@ -90,6 +107,7 @@ func newModelHarness(t *testing.T, options harnessOptions) *modelHarness {
 				Now:        func() time.Time { return options.now },
 				Device:     "fixture",
 				MaxDepth:   4,
+				UndoLimit:  50,
 				// Pinned like every other harness: the editor's one-undo-step
 				// contract depends on the scope matching across the fresh store
 				// each application operation builds.
@@ -116,10 +134,11 @@ func newModelHarness(t *testing.T, options harnessOptions) *modelHarness {
 	env := determinism.Env{"XDG_STATE_HOME": filepath.Join(root, "state"), "HOME": root}
 
 	model := New(Options{
-		App:   app,
-		Paths: paths,
-		Env:   env,
-		Now:   func() time.Time { return options.now },
+		App:    app,
+		Paths:  paths,
+		Env:    env,
+		Now:    func() time.Time { return options.now },
+		Opener: options.opener,
 	})
 	model.width, model.height = 100, 30
 	model.Refresh()

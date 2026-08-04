@@ -754,6 +754,34 @@ kept because `go/internal/api/errors.go` cites it.
   `agentcontext.TestUnreadableMemoryRaises`, which asserts the path and the
     `cannot read task-set memory` prefix and skips when it is running as root.
 
+## tui-archive-sweep-stamp-honours-the-session-date — a Ruby DEFECT fixed, not a behavior difference — 2026-08-04
+
+- **Slices:** TUI archive (Wave 4)
+- **The defect:** `Tui::App#archive_sweep` called `@store.archive_preview` and
+  `@store.archive_swept!` with no `today:`. Both default to `Date.today`, so the
+  archive stamp came from the process's LOCAL calendar day while every other TUI
+  write stamps `current_date` — which honours the configured `TASKS_TIMEZONE`
+  and the injected date provider. A user whose configured zone had already
+  rolled over got an `archived` day that disagreed with the `closed` days the
+  same session had just written, and a confirmation prepared either side of
+  local midnight could stamp a different day than its preview described.
+- **Fix:** `archive_sweep` captures `current_date` ONCE into `@archive_today`,
+  passes it to the preview, and `archive_confirm_key` carries the same value
+  into the sweep. `close_modal` clears it with the rest of the modal state.
+- **Why fixed rather than ported:** the identical defect was already fixed for
+  `archive_plan` and `archive_project_impl` (see
+  `project-archive-stamp-honours-the-injected-clock`), so porting this one would
+  have reintroduced a bug the project had already decided against — and would
+  have required making the Go build wrong on purpose.
+- **Evidence:** found by `porting/compare/tui-interaction-diff`, scenario
+  `archive-preview-then-sweep`: `archive.jsonl` carried `"archived":"2026-08-03"`
+  on the Ruby side against `"archived":"2026-07-14"` on the Go side, with every
+  other byte identical. Ruby regression coverage:
+  `TestAppModals#test_archive_stamps_the_session_date_not_the_wall_clock` and
+  `#test_archive_preview_and_sweep_share_one_captured_date`, both of which fail
+  on the pre-fix source.
+- **Conformance disposition:** none needed; the two now agree byte for byte.
+
 ## Notes on the record
 
 The last field is the one that rots. A difference recorded here but not

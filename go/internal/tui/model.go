@@ -62,6 +62,10 @@ type Options struct {
 	Styler  Styler
 	Now     func() time.Time
 	Session SessionState
+	// Opener launches a task's link. A nil one refuses out loud rather than
+	// reaching for a platform launcher, which is what keeps a test suite from
+	// opening browser windows.
+	Opener Opener
 }
 
 // Model is the Bubble Tea root — the port of Tui::App's state, minus its event
@@ -110,6 +114,12 @@ type Model struct {
 	// separately from the selection because the selection can move underneath
 	// an open confirmation, and answering `y` must act on what was asked.
 	pendingProject *taskquery.ProjectView
+	// archivePreview is the sweep the open confirmation described. It is handed
+	// BACK to the store on confirmation, so a list that changed while the modal
+	// was open refuses rather than archiving a set nobody saw.
+	archivePreview *store.ArchivePreview
+	// opener launches a URL. It is injected so a test never opens a browser.
+	opener Opener
 
 	// Frame state.
 	width  int
@@ -156,6 +166,7 @@ func New(options Options) *Model {
 		mode:           ModeList,
 		width:          80,
 		height:         24,
+		opener:         options.Opener,
 	}
 	return model
 }

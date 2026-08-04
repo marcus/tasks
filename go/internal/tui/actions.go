@@ -9,7 +9,6 @@ import (
 	"tasks-go/internal/store"
 	"tasks-go/internal/taskquery"
 	"tasks-go/internal/temporal"
-	"tasks-go/internal/tui/term/clipboard"
 	"tasks-go/internal/tui/term/shortcuts"
 )
 
@@ -48,23 +47,33 @@ func (m *Model) handlers() map[string]func(key string) {
 		"quit":                 func(string) { m.requestQuit() },
 
 		// This packet's own.
-		"open_help":            func(string) { m.OpenHelp() },
-		"open_action_palette":  func(string) { m.OpenActionPalette() },
-		"open_context_palette": func(string) { m.OpenContextPalette() },
-		"complete_selected":    func(string) { m.CompleteSelected() },
-		"approve_proposal":     func(string) { m.DecideProposal(application.ProposalApprove) },
-		"reject_proposal":      func(string) { m.DecideProposal(application.ProposalReject) },
-		"raise_priority":       func(string) { m.BumpPriority(-1) },
-		"lower_priority":       func(string) { m.BumpPriority(1) },
-		"open_date_popup":      func(string) { m.OpenDatePopup() },
-		"open_recur_popup":     func(string) { m.OpenRecurPopup() },
-		"rename_project":       func(string) { m.RenameProject() },
-		"capture_into_project": func(string) { m.CaptureIntoProject() },
-		"archive_sweep":        func(string) { m.ArchiveSweep() },
-		"start_task_edit":      func(string) { m.StartTaskEdit("title") },
-		"start_task_edit_last": func(string) { m.StartTaskEdit(editFields[len(editFields)-1]) },
-		"yank_ref":             func(string) { m.YankRef() },
-		"yank_markdown":        func(string) { m.YankMarkdown() },
+		"open_help":             func(string) { m.OpenHelp() },
+		"open_action_palette":   func(string) { m.OpenActionPalette() },
+		"open_context_palette":  func(string) { m.OpenContextPalette() },
+		"complete_selected":     func(string) { m.CompleteSelected() },
+		"approve_proposal":      func(string) { m.DecideProposal(application.ProposalApprove) },
+		"reject_proposal":       func(string) { m.DecideProposal(application.ProposalReject) },
+		"raise_priority":        func(string) { m.BumpPriority(-1) },
+		"lower_priority":        func(string) { m.BumpPriority(1) },
+		"open_date_popup":       func(string) { m.OpenDatePopup() },
+		"open_recur_popup":      func(string) { m.OpenRecurPopup() },
+		"rename_project":        func(string) { m.RenameProject() },
+		"capture_into_project":  func(string) { m.CaptureIntoProject() },
+		"archive_sweep":         func(string) { m.ArchiveSweep() },
+		"undo_last":             func(string) { m.UndoLast() },
+		"redo_last":             func(string) { m.RedoLast() },
+		"move_subtree_up":       func(string) { m.ReorderSelected("up") },
+		"move_subtree_down":     func(string) { m.ReorderSelected("down") },
+		"indent_subtree":        func(string) { m.ReorderSelected("indent") },
+		"outdent_subtree":       func(string) { m.ReorderSelected("outdent") },
+		"open_link":             func(string) { m.OpenLink() },
+		"defer_selected":        func(string) { m.DeferSelected() },
+		"delegate_selected":     func(string) { m.DelegateSelected() },
+		"set_work_ref_selected": func(string) { m.SetWorkRefSelected() },
+		"start_task_edit":       func(string) { m.StartTaskEdit("title") },
+		"start_task_edit_last":  func(string) { m.StartTaskEdit(editFields[len(editFields)-1]) },
+		"yank_ref":              func(string) { m.YankRef() },
+		"yank_markdown":         func(string) { m.YankMarkdown() },
 
 		// Modal navigation.
 		"modal_up":           func(string) { m.modalMove(-1) },
@@ -92,15 +101,6 @@ var unbuiltHandlers = map[string]string{
 	"toggle_model":                 "agent model switching is not implemented in this build (agent packet)",
 	"resp_up":                      "the agent response pane is not implemented in this build (agent packet)",
 	"resp_down":                    "the agent response pane is not implemented in this build (agent packet)",
-	"delegate_selected":            "delegation is not implemented in this build (delegation packet)",
-	"set_work_ref_selected":        "setting a work reference is not implemented in this build (delegation packet)",
-	"move_subtree_up":              "reordering is not implemented in this build (ordering packet)",
-	"move_subtree_down":            "reordering is not implemented in this build (ordering packet)",
-	"indent_subtree":               "reordering is not implemented in this build (ordering packet)",
-	"outdent_subtree":              "reordering is not implemented in this build (ordering packet)",
-	"open_link":                    "opening a task link is not implemented in this build",
-	"undo_last":                    "undo needs an application history seam this build does not expose",
-	"redo_last":                    "redo needs an application history seam this build does not expose",
 }
 
 // availability resolves the registry's predicate names. A bound but unavailable
@@ -156,6 +156,7 @@ func (m *Model) OpenModal(content ModalContent, kind ModalKind, filterable bool)
 // CloseModal dismisses the overlay.
 func (m *Model) CloseModal() {
 	m.pendingProject = nil
+	m.archivePreview = nil
 	m.modalFilterEditor().Clear()
 	m.SetModal(nil)
 	m.mode = ModeList
@@ -809,18 +810,6 @@ func (m *Model) projectArchiveConfirmKey(key string) {
 	}
 }
 
-// ArchiveSweep is `x`. On a project header it confirms archiving that project,
-// which the application facade CAN perform. The list-wide sweep cannot be
-// performed through the facade this build has, so it refuses by name rather
-// than pretending.
-func (m *Model) ArchiveSweep() {
-	if project := m.CurrentProject(); project != nil {
-		m.ConfirmArchiveProject(project)
-		return
-	}
-	m.Flash("archiving completed items needs an application archive seam this build does not expose")
-}
-
 // -- the task editor ------------------------------------------------------------------
 
 // StartTaskEdit is `e` in the detail panel: open the durable editor on the
@@ -881,41 +870,6 @@ func (m *Model) tokensFromStore(pick func(store.Item) []string) []string {
 		out = append(out, pick(item)...)
 	}
 	return out
-}
-
-// -- clipboard -------------------------------------------------------------------------
-
-// YankRef is `y`: copy the stable id.
-func (m *Model) YankRef() {
-	item := m.CurrentItem()
-	if item == nil {
-		m.Flash("nothing selected")
-		return
-	}
-	m.copyToClipboard(item.ID, "id copied: "+item.ID)
-}
-
-// YankMarkdown is `Y`: copy the task as a markdown checkbox line.
-func (m *Model) YankMarkdown() {
-	item := m.CurrentItem()
-	if item == nil {
-		m.Flash("nothing selected")
-		return
-	}
-	box := "[ ]"
-	if !isOpenState(item.State) {
-		box = "[x]"
-	}
-	m.copyToClipboard("- "+box+" "+item.Title, "markdown copied")
-}
-
-func (m *Model) copyToClipboard(text, success string) {
-	command := clipboard.Command()
-	if command == nil || !clipboard.Copy(text, command) {
-		m.Flash("no clipboard command available")
-		return
-	}
-	m.Flash(success)
 }
 
 // -- shared helpers ----------------------------------------------------------------------

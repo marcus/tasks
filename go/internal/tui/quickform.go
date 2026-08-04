@@ -16,6 +16,8 @@ const (
 	QuickFormDeferUntil     QuickFormKind = "defer_until"
 	QuickFormProjectRename  QuickFormKind = "project_rename"
 	QuickFormProjectCapture QuickFormKind = "project_capture"
+	QuickFormDelegate       QuickFormKind = "delegate"
+	QuickFormWorkRef        QuickFormKind = "work_ref"
 )
 
 // QuickFormResult is what one key did to a quick form.

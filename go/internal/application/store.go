@@ -91,6 +91,33 @@ type WorkRefWriter interface {
 	SetWorkRef(id, workRef, worker, coalesceKey string) store.MutationResult
 }
 
+// ArchiveSweeper is the list-wide archive: preview what a sweep would move,
+// then move it, pinned to the preview the user was shown.
+//
+// The pin is the whole safety property. A user reads "would move 3 roots and 7
+// descendants", walks away, comes back, and presses y — and by then the list
+// may have changed. Passing the preview back means the store refuses rather
+// than archiving a set the user never saw.
+type ArchiveSweeper interface {
+	ArchivePreviewFor(today string) store.ArchivePreview
+	ArchiveSweep(today string, expected *store.ArchivePreview) store.ArchiveResult
+}
+
+// HistoryStepper is undo and redo over the journal.
+type HistoryStepper interface {
+	HistoryStep(delta int) (store.HistoryOutcome, string)
+}
+
+// Placer is a whole-task atomic changeset plus the revision that guards it.
+//
+// Ordering needs both: a move is a `location` change guarded by the revision
+// the caller read, so a task that changed underneath refuses instead of landing
+// somewhere the user did not choose.
+type Placer interface {
+	ApplyChangeset(changeset store.Changeset) store.MutationResult
+	TaskRevision(id string) (string, bool)
+}
+
 // Deleter is the undoable hard delete of one live task.
 type Deleter interface {
 	DeleteTask(id string, cascade bool, expectedRevision, historyLabel string) store.MutationResult

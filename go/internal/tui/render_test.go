@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"tasks-go/internal/tui/term/shortcuts"
 	"testing"
 )
 
@@ -159,28 +160,45 @@ func TestFooterShowsActiveContextFilters(t *testing.T) {
 	}
 }
 
-func TestUnimplementedKeysSayWhatIsMissing(t *testing.T) {
-	// A half-built view is worse than an absent one. Every key a LATER packet
-	// owns still has to refuse OUT LOUD, naming the capability. This list
-	// shrank when the editor/forms/modals half landed; what remains is the
-	// agent surface, delegation, and reordering.
-	cases := map[rune]string{
-		'D': "delegation",
-		'p': "agent prompt",
-		'W': "work reference",
-		'M': "agent model",
-		'u': "undo",
+func TestNoBoundKeyStillRefusesAsUnimplemented(t *testing.T) {
+	// The registry is the contract. At completion every bound handler must
+	// either DO its thing or refuse for a reason about the CURRENT SELECTION —
+	// never "this build cannot".
+	//
+	// stillUnbuilt is the shrinking list. It must reach empty; a name that is
+	// implemented while still listed here also fails, so the list cannot rot in
+	// either direction.
+	stillUnbuilt := map[string]bool{
+		"focus_prompt": true, "paste_ref": true, "open_agent_activity": true,
+		"cancel_queued_agent_requests": true, "toggle_model": true,
+		"resp_up": true, "resp_down": true,
 	}
-	for key, want := range cases {
-		harness := newModelHarness(t, harnessOptions{})
-		harness.selectRowByID(fixFlight)
-		harness.press(key)
-		got := harness.model.FlashMessage()
-		if !strings.Contains(got, want) {
-			t.Errorf("key %q flashed %q, which does not name %q as missing", key, got, want)
+	for name := range unbuiltHandlers {
+		if !stillUnbuilt[name] {
+			t.Errorf("handler %q refuses as unimplemented but is not on the known list", name)
 		}
-		if !strings.Contains(got, "not implemented") && !strings.Contains(got, "does not expose") {
-			t.Errorf("key %q flashed %q, which does not read as a refusal", key, got)
+	}
+	for name := range stillUnbuilt {
+		if _, refuses := unbuiltHandlers[name]; !refuses {
+			t.Errorf("handler %q is implemented; remove it from stillUnbuilt", name)
+		}
+	}
+	for _, context := range shortcuts.Contexts {
+		entries, err := shortcuts.Entries(context, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			if entry.DocOnly || entry.Handler == "" {
+				continue
+			}
+			if stillUnbuilt[entry.Handler] {
+				continue
+			}
+			harness := newModelHarness(t, harnessOptions{})
+			if _, present := harness.model.handlers()[entry.Handler]; !present {
+				t.Errorf("registry handler %q has no implementation", entry.Handler)
+			}
 		}
 	}
 }
