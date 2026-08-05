@@ -174,32 +174,44 @@ func KeySequence(message tea.KeyPressMsg) string {
 		return ctrlSequence(message.Code)
 	}
 
-	// Shift+Tab is the only shifted special the registry binds.
-	if message.Code == tea.KeyTab && message.Mod&tea.ModShift != 0 {
+	// Shift+Tab is the only shifted special the registry binds. Require the
+	// exact modifier set: Shift+Alt+Tab and friends were unmapped in v1.
+	if message.Code == tea.KeyTab && message.Mod == tea.ModShift {
 		return "\x1b[Z"
 	}
 
 	if named, found := keyCodeSequences[message.Code]; found {
-		if message.Mod&tea.ModAlt != 0 && (named == "\x1b[A" || named == "\x1b[B") {
-			// alt-↑ / alt-↓ are the reorder bindings, and the registry spells
-			// them as the xterm modified-arrow sequence.
-			return strings.Replace(named, "\x1b[", "\x1b[1;3", 1)
-		}
-		// Other alt+special combos are unmapped (same as v1).
-		if message.Mod&tea.ModAlt != 0 {
+		// v1 gave each modified special its own KeyType (KeyShiftUp, …) and
+		// only mapped the bare keys plus alt-↑/alt-↓. Dropping unsupported
+		// modifiers here would turn Shift+Up into plain Up and move selection.
+		switch message.Mod {
+		case 0:
+			return named
+		case tea.ModAlt:
+			if named == "\x1b[A" || named == "\x1b[B" {
+				// alt-↑ / alt-↓ are the reorder bindings; registry spells them
+				// as the xterm modified-arrow sequence.
+				return strings.Replace(named, "\x1b[", "\x1b[1;3", 1)
+			}
+			return ""
+		default:
 			return ""
 		}
-		return named
 	}
 
 	// Fallback: a lone printable Code with empty Text (e.g. space via KeySpace
-	// when the host did not populate Text).
+	// when the host did not populate Text). Only bare and Alt-only forms are
+	// accepted — same modifier discipline as the specials path.
 	if message.Code > 0 && message.Code < unicode.MaxASCII && unicode.IsPrint(message.Code) {
 		text := string(message.Code)
-		if message.Mod&tea.ModAlt != 0 {
+		switch message.Mod {
+		case 0:
+			return text
+		case tea.ModAlt:
 			return "\x1b" + text
+		default:
+			return ""
 		}
-		return text
 	}
 	return ""
 }

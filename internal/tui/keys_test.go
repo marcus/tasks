@@ -60,8 +60,26 @@ func TestKeySequence(t *testing.T) {
 		{name: "alt-down", msg: tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModAlt}, want: "\x1b[1;3B"},
 		{name: "alt-left unbound", msg: tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModAlt}, want: ""},
 
+		// Shifted specials must stay unbound (v1 KeyShiftUp etc. were ignored)
+		{name: "shift-up unbound", msg: tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModShift}, want: ""},
+		{name: "shift-down unbound", msg: tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift}, want: ""},
+		{name: "shift-left unbound", msg: tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift}, want: ""},
+		{name: "shift-right unbound", msg: tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift}, want: ""},
+		{name: "shift-delete unbound", msg: tea.KeyPressMsg{Code: tea.KeyDelete, Mod: tea.ModShift}, want: ""},
+		{name: "shift-enter unbound", msg: tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift}, want: ""},
+		{name: "shift-space unbound", msg: tea.KeyPressMsg{Code: tea.KeySpace, Mod: tea.ModShift}, want: ""},
+		{name: "shift-home unbound", msg: tea.KeyPressMsg{Code: tea.KeyHome, Mod: tea.ModShift}, want: ""},
+		{name: "shift-pgup unbound", msg: tea.KeyPressMsg{Code: tea.KeyPgUp, Mod: tea.ModShift}, want: ""},
+
+		// Mixed modifiers on specials must not collapse to a simpler binding
+		{name: "shift-alt-up unbound", msg: tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModShift | tea.ModAlt}, want: ""},
+		{name: "shift-alt-down unbound", msg: tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift | tea.ModAlt}, want: ""},
+		{name: "shift-alt-tab unbound", msg: tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift | tea.ModAlt}, want: ""},
+		{name: "meta-up unbound", msg: tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModMeta}, want: ""},
+
 		// Code-only printable fallback
 		{name: "code-only letter", msg: tea.KeyPressMsg{Code: 'm'}, want: "m"},
+		{name: "code-only shift+letter unbound", msg: tea.KeyPressMsg{Code: 'm', Mod: tea.ModShift}, want: ""},
 	}
 
 	for _, tc := range cases {
