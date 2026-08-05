@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // Selection stability is the contract most easily lost in a rewrite, so it gets
@@ -171,7 +171,7 @@ func TestSelectionSurvivesAViewSwitchAndReturn(t *testing.T) {
 
 func TestEscapeNeverQuits(t *testing.T) {
 	harness := newModelHarness(t, harnessOptions{})
-	_, cmd := harness.model.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	_, cmd := harness.model.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if cmd != nil {
 		t.Fatal("escape produced a command; a reflex press must not end the session")
 	}

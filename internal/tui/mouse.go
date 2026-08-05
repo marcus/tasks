@@ -1,6 +1,6 @@
 package tui
 
-import tea "github.com/charmbracelet/bubbletea"
+import tea "charm.land/bubbletea/v2"
 
 // Mouse handling in this packet is deliberately the COARSE half: click a row to
 // select it, click a fold marker to fold it, click a tab to switch, and scroll
@@ -12,6 +12,9 @@ import tea "github.com/charmbracelet/bubbletea"
 // dispatch at integration. Until then this is a small, correct subset rather
 // than a stub: enabling mouse reporting and then ignoring every click is the
 // exact "silently wrong" failure this packet is not allowed to ship.
+//
+// Bubble Tea v2 delivers mouse as an interface (MouseClickMsg, MouseWheelMsg,
+// MouseReleaseMsg, MouseMotionMsg). Only click and wheel are acted on.
 
 // HandleMouse routes one mouse event. It reports whether the event was
 // consumed, so the integration owner can layer a hit map above it without
@@ -28,13 +31,20 @@ func (m *Model) HandleMouse(event tea.MouseMsg) bool {
 		return m.overlayMouse(box, event)
 	}
 	layout := m.layout()
-	switch event.Type {
-	case tea.MouseWheelUp:
-		return m.wheel(layout, event, -1)
-	case tea.MouseWheelDown:
-		return m.wheel(layout, event, 1)
-	case tea.MouseLeft:
-		return m.click(layout, event)
+	switch e := event.(type) {
+	case tea.MouseWheelMsg:
+		mouse := e.Mouse()
+		switch mouse.Button {
+		case tea.MouseWheelUp:
+			return m.wheel(layout, mouse, -1)
+		case tea.MouseWheelDown:
+			return m.wheel(layout, mouse, 1)
+		}
+	case tea.MouseClickMsg:
+		mouse := e.Mouse()
+		if mouse.Button == tea.MouseLeft {
+			return m.click(layout, mouse)
+		}
 	}
 	return false
 }
@@ -44,7 +54,7 @@ func (m *Model) HandleMouse(event tea.MouseMsg) bool {
 // selection back, and the Go build must not quietly take it away again.
 func (m *Model) mouseEnabled() bool { return m.paths.Mouse }
 
-func (m *Model) wheel(layout ScreenLayout, event tea.MouseMsg, direction int) bool {
+func (m *Model) wheel(layout ScreenLayout, event tea.Mouse, direction int) bool {
 	footerRole := m.footerRole(layout, event.Y)
 	if footerRole == "response" {
 		m.ScrollResponse(direction * 3)
@@ -62,7 +72,7 @@ func (m *Model) wheel(layout ScreenLayout, event tea.MouseMsg, direction int) bo
 	return true
 }
 
-func (m *Model) click(layout ScreenLayout, event tea.MouseMsg) bool {
+func (m *Model) click(layout ScreenLayout, event tea.Mouse) bool {
 	if m.footerRole(layout, event.Y) == "prompt" {
 		m.FocusPrompt()
 		return true
@@ -202,12 +212,15 @@ func (m *Model) inPanel(layout ScreenLayout, column int) bool {
 // option list — a palette that re-derived it would act on the wrong row the
 // moment the query narrowed the list between paint and click.
 func (m *Model) overlayMouse(box *OverlayBox, event tea.MouseMsg) bool {
-	inside := event.Y >= box.Row && event.Y < box.Row+len(box.Lines)
-	switch event.Type {
-	case tea.MouseWheelUp, tea.MouseWheelDown:
+	mouse := event.Mouse()
+	inside := mouse.Y >= box.Row && mouse.Y < box.Row+len(box.Lines)
+	switch e := event.(type) {
+	case tea.MouseWheelMsg:
 		direction := -1
-		if event.Type == tea.MouseWheelDown {
+		if e.Button == tea.MouseWheelDown {
 			direction = 1
+		} else if e.Button != tea.MouseWheelUp {
+			return false
 		}
 		switch m.mode {
 		case ModeModal, ModeModalFilter:
@@ -220,11 +233,11 @@ func (m *Model) overlayMouse(box *OverlayBox, event tea.MouseMsg) bool {
 			return false
 		}
 		return true
-	case tea.MouseLeft:
-		if !inside {
+	case tea.MouseClickMsg:
+		if e.Button != tea.MouseLeft || !inside {
 			return false
 		}
-		offset := event.Y - box.Row
+		offset := mouse.Y - box.Row
 		switch m.mode {
 		case ModePalette:
 			m.resolvePaletteOutcome(m.actionPalette, m.actionPalette.Hit(offset))

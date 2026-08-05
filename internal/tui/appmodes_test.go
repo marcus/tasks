@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 // These drive the ROOT MODEL with keys, the way a user does, so they check the
@@ -20,17 +18,6 @@ func (h *modelHarness) pressKeys(sequences ...string) {
 	for _, sequence := range sequences {
 		h.model.Update(keyMessage(sequence))
 	}
-}
-
-// keyMessage is the inverse of KeySequence: it turns a byte sequence back into
-// the decoded message Bubble Tea would deliver.
-func keyMessage(sequence string) tea.KeyMsg {
-	for keyType, bytes := range keyTypeSequences {
-		if bytes == sequence {
-			return tea.KeyMsg{Type: keyType}
-		}
-	}
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(sequence)}
 }
 
 func (h *modelHarness) content() string {

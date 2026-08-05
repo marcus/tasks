@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/marcus/tasks/internal/application"
 	"github.com/marcus/tasks/internal/check"
@@ -281,8 +281,11 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.Refresh()
 		}
 		return m, tick()
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m, m.handleKey(typed)
+	case tea.PasteMsg:
+		m.handlePaste(typed.Content)
+		return m, nil
 	case tea.MouseMsg:
 		m.HandleMouse(typed)
 		return m, nil
@@ -291,16 +294,26 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // MouseEnabled reports whether the resolved config asks for mouse reporting.
-// The entry point reads it BEFORE starting the program, because turning mouse
+// The entry point reads it so View can set MouseMode each frame; turning mouse
 // tracking on takes the terminal's own text selection away from the user.
 func (m *Model) MouseEnabled() bool { return m.mouseEnabled() }
 
-// View renders one frame.
-func (m *Model) View() string {
-	if m.quitting {
-		return ""
+// View renders one frame as a Bubble Tea v2 View. Alt screen and mouse mode
+// live on the View (not program options), matching Sidecar so an external v2
+// host can host this model without translating tea.Msg values.
+func (m *Model) View() tea.View {
+	content := ""
+	if !m.quitting {
+		content = m.Render()
 	}
-	return m.Render()
+	v := tea.NewView(content)
+	v.AltScreen = true
+	if m.mouseEnabled() {
+		v.MouseMode = tea.MouseModeCellMotion
+	} else {
+		v.MouseMode = tea.MouseModeNone
+	}
+	return v
 }
 
 // -- the read model ---------------------------------------------------------
