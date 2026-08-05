@@ -166,10 +166,12 @@ func KeySequence(message tea.KeyPressMsg) string {
 	}
 
 	// Ctrl+letter → C0 control byte (ctrl-a = 0x01 … ctrl-z = 0x1a).
+	// Unbound ctrl chords must return "" immediately: falling through to the
+	// printable/special paths would turn ctrl-z into "z" (defer), ctrl-x into
+	// "x" (archive), ctrl-q into "q" (quit). v1 only mapped explicit KeyCtrl*
+	// entries and ignored the rest.
 	if message.Mod&tea.ModCtrl != 0 {
-		if seq := ctrlSequence(message.Code); seq != "" {
-			return seq
-		}
+		return ctrlSequence(message.Code)
 	}
 
 	// Shift+Tab is the only shifted special the registry binds.
