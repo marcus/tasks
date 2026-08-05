@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/marcus/tasks/internal/application"
 	"github.com/marcus/tasks/internal/config"
@@ -180,13 +180,13 @@ func (h *modelHarness) rewrite(content string) {
 // press drives one rune key through Update, as a user would.
 func (h *modelHarness) press(key rune) {
 	h.t.Helper()
-	h.model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+	h.model.Update(tea.KeyPressMsg{Code: key, Text: string(key)})
 }
 
-// pressType drives one non-rune key.
-func (h *modelHarness) pressType(keyType tea.KeyType) {
+// pressType drives one non-printable key by Code (enter, esc, arrows, …).
+func (h *modelHarness) pressType(code rune) {
 	h.t.Helper()
-	h.model.Update(tea.KeyMsg{Type: keyType})
+	h.model.Update(tea.KeyPressMsg{Code: code})
 }
 
 // pressTypeEnter is the enter key.

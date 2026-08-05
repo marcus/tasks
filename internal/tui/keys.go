@@ -3,8 +3,10 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/marcus/tasks/internal/tui/term/clipboard"
 	"github.com/marcus/tasks/internal/tui/term/input"
@@ -15,17 +17,15 @@ import (
 //
 // Ruby decodes raw bytes itself — CSI parsing, an escape-versus-alt timing
 // heuristic, bracketed paste framing, a UTF-8 continuation buffer. None of that
-// is ported: Bubble Tea delivers a decoded KeyMsg, and re-deriving it would be
-// re-solving a solved problem in a place where a bug shows up as a corrupted
+// is ported: Bubble Tea delivers a decoded KeyPressMsg, and re-deriving it would
+// be re-solving a solved problem in a place where a bug shows up as a corrupted
 // screen. What IS ported is which key does what — and, because the shortcut
 // registry is keyed by the byte sequences a terminal sends, the FIRST thing
 // this does is turn a decoded message back into that sequence so one registry
 // serves the help modal, the palette and live dispatch alike.
-func (m *Model) handleKey(message tea.KeyMsg) tea.Cmd {
-	if message.Paste {
-		m.handlePaste(string(message.Runes))
-		return nil
-	}
+//
+// Bracketed paste arrives separately as tea.PasteMsg (see Model.Update).
+func (m *Model) handleKey(message tea.KeyPressMsg) tea.Cmd {
 	sequence := KeySequence(message)
 	if sequence == "" {
 		return nil
@@ -148,39 +148,107 @@ func (m *Model) maybeQuit() tea.Cmd {
 	return nil
 }
 
-// KeySequence turns a decoded Bubble Tea key into the raw byte sequence the
-// shortcut registry and the text editor are both keyed by.
+// KeySequence turns a decoded Bubble Tea v2 key press into the raw byte
+// sequence the shortcut registry and the text editor are both keyed by.
 //
 // It is exported because the differential harness drives the model with the
 // SAME sequences it feeds Ruby's key handler, which is the only way the two
-// interaction traces are comparable.
-func KeySequence(message tea.KeyMsg) string {
-	if message.Type == tea.KeyRunes {
-		text := string(message.Runes)
-		if message.Alt {
-			return "\x1b" + text
+// interaction traces are comparable. An external Bubble Tea v2 host can pass
+// tea.KeyPressMsg values straight into Update without translation.
+func KeySequence(message tea.KeyPressMsg) string {
+	// Printable characters: Text is set for shifted/unshifted glyphs ("a",
+	// "A", "!", …). Ctrl/Alt combos leave Text empty.
+	if message.Text != "" {
+		if message.Mod&tea.ModAlt != 0 {
+			return "\x1b" + message.Text
 		}
-		return text
+		return message.Text
 	}
-	if named, found := keyTypeSequences[message.Type]; found {
-		if message.Alt && (named == "\x1b[A" || named == "\x1b[B") {
+
+	// Ctrl+letter → C0 control byte (ctrl-a = 0x01 … ctrl-z = 0x1a).
+	if message.Mod&tea.ModCtrl != 0 {
+		if seq := ctrlSequence(message.Code); seq != "" {
+			return seq
+		}
+	}
+
+	// Shift+Tab is the only shifted special the registry binds.
+	if message.Code == tea.KeyTab && message.Mod&tea.ModShift != 0 {
+		return "\x1b[Z"
+	}
+
+	if named, found := keyCodeSequences[message.Code]; found {
+		if message.Mod&tea.ModAlt != 0 && (named == "\x1b[A" || named == "\x1b[B") {
 			// alt-↑ / alt-↓ are the reorder bindings, and the registry spells
 			// them as the xterm modified-arrow sequence.
 			return strings.Replace(named, "\x1b[", "\x1b[1;3", 1)
 		}
+		// Other alt+special combos are unmapped (same as v1).
+		if message.Mod&tea.ModAlt != 0 {
+			return ""
+		}
 		return named
+	}
+
+	// Fallback: a lone printable Code with empty Text (e.g. space via KeySpace
+	// when the host did not populate Text).
+	if message.Code > 0 && message.Code < unicode.MaxASCII && unicode.IsPrint(message.Code) {
+		text := string(message.Code)
+		if message.Mod&tea.ModAlt != 0 {
+			return "\x1b" + text
+		}
+		return text
 	}
 	return ""
 }
 
-// keyTypeSequences maps Bubble Tea's key vocabulary onto terminal bytes. Only
-// the keys the registry or the editor actually bind are listed; anything else
-// is deliberately unmapped and therefore ignored rather than guessed at.
-var keyTypeSequences = map[tea.KeyType]string{
+// ctrlSequence maps a key Code under ModCtrl to the C0 byte the registry uses.
+// Only the letters the registry (or editor) actually binds are produced.
+func ctrlSequence(code rune) string {
+	letter := code
+	if letter >= 'A' && letter <= 'Z' {
+		letter = letter - 'A' + 'a'
+	}
+	if letter < 'a' || letter > 'z' {
+		return ""
+	}
+	ctrl := byte(letter - 'a' + 1)
+	if _, bound := ctrlBound[ctrl]; !bound {
+		return ""
+	}
+	return string([]byte{ctrl})
+}
+
+// ctrlBound is the set of ctrl letters the v1 keyTypeSequences table exposed.
+// Unlisted ctrl combos stay ignored rather than inventing new bindings.
+var ctrlBound = map[byte]struct{}{
+	0x01: {}, // ctrl-a
+	0x02: {}, // ctrl-b
+	0x03: {}, // ctrl-c
+	0x04: {}, // ctrl-d
+	0x05: {}, // ctrl-e
+	0x06: {}, // ctrl-f
+	0x08: {}, // ctrl-h
+	0x0b: {}, // ctrl-k
+	0x0c: {}, // ctrl-l
+	0x0e: {}, // ctrl-n
+	0x0f: {}, // ctrl-o
+	0x10: {}, // ctrl-p
+	0x12: {}, // ctrl-r
+	0x13: {}, // ctrl-s
+	0x15: {}, // ctrl-u
+	0x17: {}, // ctrl-w
+}
+
+// keyCodeSequences maps Bubble Tea v2 key Codes onto terminal bytes. Only the
+// keys the registry or the editor actually bind are listed; anything else is
+// deliberately unmapped and therefore ignored rather than guessed at.
+//
+// Shift+Tab and Ctrl+letter are handled in KeySequence via modifiers, not here.
+var keyCodeSequences = map[rune]string{
 	tea.KeyEnter:     "\r",
 	tea.KeyEsc:       "\x1b",
 	tea.KeyTab:       "\t",
-	tea.KeyShiftTab:  "\x1b[Z",
 	tea.KeySpace:     " ",
 	tea.KeyBackspace: "\x7f",
 	tea.KeyDelete:    "\x1b[3~",
@@ -192,22 +260,45 @@ var keyTypeSequences = map[tea.KeyType]string{
 	tea.KeyEnd:       "\x1b[F",
 	tea.KeyPgUp:      "\x1b[5~",
 	tea.KeyPgDown:    "\x1b[6~",
-	tea.KeyCtrlA:     "\x01",
-	tea.KeyCtrlB:     "\x02",
-	tea.KeyCtrlC:     "\x03",
-	tea.KeyCtrlD:     "\x04",
-	tea.KeyCtrlE:     "\x05",
-	tea.KeyCtrlF:     "\x06",
-	tea.KeyCtrlH:     "\x08",
-	tea.KeyCtrlK:     "\x0b",
-	tea.KeyCtrlL:     "\x0c",
-	tea.KeyCtrlN:     "\x0e",
-	tea.KeyCtrlO:     "\x0f",
-	tea.KeyCtrlP:     "\x10",
-	tea.KeyCtrlR:     "\x12",
-	tea.KeyCtrlS:     "\x13",
-	tea.KeyCtrlU:     "\x15",
-	tea.KeyCtrlW:     "\x17",
+}
+
+// keyMessage is the inverse of KeySequence: it turns a registry byte sequence
+// back into the KeyPressMsg Bubble Tea v2 would deliver. Shared by tests.
+func keyMessage(sequence string) tea.KeyPressMsg {
+	switch sequence {
+	case "\x1b[Z":
+		return tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
+	case "\x1b[1;3A":
+		return tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModAlt}
+	case "\x1b[1;3B":
+		return tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModAlt}
+	}
+	for code, bytes := range keyCodeSequences {
+		if bytes == sequence {
+			return tea.KeyPressMsg{Code: code}
+		}
+	}
+	if len(sequence) == 1 {
+		b := sequence[0]
+		if _, bound := ctrlBound[b]; bound {
+			return tea.KeyPressMsg{Code: rune('a' + b - 1), Mod: tea.ModCtrl}
+		}
+	}
+	if strings.HasPrefix(sequence, "\x1b") && len(sequence) > 1 {
+		rest := sequence[1:]
+		// CSI / SS3 sequences are not alt+printable.
+		if rest != "" && rest[0] != '[' && rest[0] != 'O' {
+			r, _ := utf8.DecodeRuneInString(rest)
+			if r != utf8.RuneError {
+				return tea.KeyPressMsg{Code: r, Text: rest, Mod: tea.ModAlt}
+			}
+		}
+	}
+	if sequence == "" {
+		return tea.KeyPressMsg{}
+	}
+	r, _ := utf8.DecodeRuneInString(sequence)
+	return tea.KeyPressMsg{Code: r, Text: sequence}
 }
 
 // dispatchAction looks one sequence up in a context and runs it.

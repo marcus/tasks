@@ -3,7 +3,7 @@ package tui
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/marcus/tasks/internal/config"
 )
@@ -23,7 +23,7 @@ func TestMouseIsOffUnlessTheConfigAsksForIt(t *testing.T) {
 	if harness.model.MouseEnabled() {
 		t.Fatal("mouse is on with mouse: false")
 	}
-	if harness.model.HandleMouse(tea.MouseMsg{Type: tea.MouseLeft, X: 3, Y: 4}) {
+	if harness.model.HandleMouse(tea.MouseClickMsg{X: 3, Y: 4, Button: tea.MouseLeft}) {
 		t.Fatal("a click was consumed with the mouse disabled")
 	}
 }
@@ -35,7 +35,7 @@ func TestClickingARowSelectsIt(t *testing.T) {
 	bodyBegin, _ := layout.BodyRows()
 
 	// Row index 1 is the first selectable row under the @computer header.
-	consumed := harness.model.HandleMouse(tea.MouseMsg{Type: tea.MouseLeft, X: 6, Y: bodyBegin + 1})
+	consumed := harness.model.HandleMouse(tea.MouseClickMsg{X: 6, Y: bodyBegin + 1, Button: tea.MouseLeft})
 	if !consumed {
 		t.Fatal("the click was not consumed")
 	}
@@ -51,7 +51,7 @@ func TestClickingAHeaderRowSelectsNothing(t *testing.T) {
 	layout := harness.model.Layout()
 	bodyBegin, _ := layout.BodyRows()
 
-	if harness.model.HandleMouse(tea.MouseMsg{Type: tea.MouseLeft, X: 6, Y: bodyBegin}) {
+	if harness.model.HandleMouse(tea.MouseClickMsg{X: 6, Y: bodyBegin, Button: tea.MouseLeft}) {
 		t.Fatal("a click on a context header was consumed")
 	}
 	if harness.model.Selected() != before {
@@ -64,7 +64,7 @@ func TestClickingBelowTheLastRowDoesNothing(t *testing.T) {
 	harness.model.SwitchView(ViewNext)
 	before := harness.model.Selected()
 	_, bodyEnd := harness.model.Layout().BodyRows()
-	harness.model.HandleMouse(tea.MouseMsg{Type: tea.MouseLeft, X: 6, Y: bodyEnd - 1})
+	harness.model.HandleMouse(tea.MouseClickMsg{X: 6, Y: bodyEnd - 1, Button: tea.MouseLeft})
 	if harness.model.Selected() != before {
 		t.Fatal("a click on empty body space moved the cursor")
 	}
@@ -89,11 +89,11 @@ func TestClickingTheFoldMarkerTogglesTheSubtree(t *testing.T) {
 	listBegin, _ := layout.ListCols()
 	column := listBegin + 1 + row.MarkerBegin
 
-	harness.model.HandleMouse(tea.MouseMsg{Type: tea.MouseLeft, X: column, Y: bodyBegin + index})
+	harness.model.HandleMouse(tea.MouseClickMsg{X: column, Y: bodyBegin + index, Button: tea.MouseLeft})
 	if !harness.model.collapsed[row.Item.ID] {
 		t.Fatal("clicking the marker did not fold the subtree")
 	}
-	harness.model.HandleMouse(tea.MouseMsg{Type: tea.MouseLeft, X: column, Y: bodyBegin + index})
+	harness.model.HandleMouse(tea.MouseClickMsg{X: column, Y: bodyBegin + index, Button: tea.MouseLeft})
 	if harness.model.collapsed[row.Item.ID] {
 		t.Fatal("clicking the marker again did not unfold the subtree")
 	}
@@ -106,8 +106,8 @@ func TestClickingATabSwitchesToIt(t *testing.T) {
 	column := 2
 	for _, tab := range Tabs {
 		width := harness.model.styler.Width(harness.model.tabCell(tab, variant))
-		harness.model.HandleMouse(tea.MouseMsg{
-			Type: tea.MouseLeft, X: column, Y: layout.HeaderRow(),
+		harness.model.HandleMouse(tea.MouseClickMsg{
+			X: column, Y: layout.HeaderRow(), Button: tea.MouseLeft,
 		})
 		if harness.model.view != tab.Key {
 			t.Fatalf("clicking column %d selected %q, want %q", column, harness.model.view, tab.Key)
@@ -120,7 +120,7 @@ func TestWheelMovesTheSelectionOverTheList(t *testing.T) {
 	harness := mouseHarness(t, "")
 	harness.model.SwitchView(ViewQuadrants)
 	before := harness.model.Selected()
-	harness.model.HandleMouse(tea.MouseMsg{Type: tea.MouseWheelDown, X: 6, Y: 5})
+	harness.model.HandleMouse(tea.MouseWheelMsg{X: 6, Y: 5, Button: tea.MouseWheelDown})
 	if harness.model.Selected() == before {
 		t.Fatal("the wheel did not move the selection")
 	}
@@ -136,7 +136,7 @@ func TestWheelScrollsThePanelWhenThePointerIsOverIt(t *testing.T) {
 
 	layout := harness.model.Layout()
 	panelBegin, _ := layout.PanelCols()
-	harness.model.HandleMouse(tea.MouseMsg{Type: tea.MouseWheelDown, X: panelBegin + 1, Y: 5})
+	harness.model.HandleMouse(tea.MouseWheelMsg{X: panelBegin + 1, Y: 5, Button: tea.MouseWheelDown})
 
 	if harness.model.Panel().Scroll == 0 {
 		t.Fatal("the wheel over the panel did not scroll it")

@@ -18,7 +18,7 @@ import (
 	"path/filepath"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/mattn/go-isatty"
 
 	"github.com/marcus/tasks/internal/agentcontext"
@@ -84,14 +84,9 @@ func run(argv []string) int {
 		return 1
 	}
 
-	options := []tea.ProgramOption{tea.WithAltScreen()}
-	if model.MouseEnabled() {
-		// Only when the config asks for it. Enabling mouse reporting takes the
-		// terminal's own text selection away from the user, and a user who
-		// turned the mouse off did so to get it back.
-		options = append(options, tea.WithMouseCellMotion())
-	}
-	program := tea.NewProgram(model, options...)
+	// Alt screen and mouse mode are set on View each frame (Bubble Tea v2),
+	// not as program options. MouseEnabled still gates View.MouseMode.
+	program := tea.NewProgram(model)
 	if err := runProgram(model, program); err != nil {
 		fmt.Fprintln(os.Stderr, "tasks-tui: "+err.Error())
 		return 1

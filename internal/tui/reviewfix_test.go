@@ -5,13 +5,13 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/marcus/tasks/internal/tui/term/agent"
 )
 
-func pasteMsg(text string) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text), Paste: true}
+func pasteMsg(text string) tea.PasteMsg {
+	return tea.PasteMsg{Content: text}
 }
 
 func TestEscapeCancelsActiveRecordsPartialAndAdvancesQueue(t *testing.T) {
@@ -289,7 +289,7 @@ func TestMouseBlursPromptFocusesFooterAndScrollsResponse(t *testing.T) {
 	h.model.Update(pasteMsg("draft"))
 	layout := h.model.Layout()
 	begin, _ := layout.BodyRows()
-	h.model.Update(tea.MouseMsg{Type: tea.MouseLeft, X: 4, Y: begin})
+	h.model.Update(tea.MouseClickMsg{X: 4, Y: begin, Button: tea.MouseLeft})
 	if h.model.Mode() != ModeList || h.model.PromptText() != "draft" {
 		t.Fatal("list click did not blur while retaining the prompt draft")
 	}
@@ -301,7 +301,7 @@ func TestMouseBlursPromptFocusesFooterAndScrollsResponse(t *testing.T) {
 			promptRow = footerStart + i
 		}
 	}
-	h.model.Update(tea.MouseMsg{Type: tea.MouseLeft, X: 4, Y: promptRow})
+	h.model.Update(tea.MouseClickMsg{X: 4, Y: promptRow, Button: tea.MouseLeft})
 	if h.model.Mode() != ModePrompt {
 		t.Fatal("footer click did not focus the prompt")
 	}
@@ -314,7 +314,7 @@ func TestMouseBlursPromptFocusesFooterAndScrollsResponse(t *testing.T) {
 	if role := h.model.footerRole(layout, footerStart); role != "response" {
 		t.Fatalf("first footer row classified as %q: %v", role, layout.Footer)
 	}
-	h.model.Update(tea.MouseMsg{Type: tea.MouseWheelDown, X: 4, Y: footerStart})
+	h.model.Update(tea.MouseWheelMsg{X: 4, Y: footerStart, Button: tea.MouseWheelDown})
 	if h.model.respScroll == 0 {
 		t.Fatal("wheel over response moved the list instead of the response")
 	}
@@ -328,7 +328,7 @@ func TestMouseFooterKeepsKeyHintAndResponseAdjacentChromeInert(t *testing.T) {
 	h.selectRowByID(fixFlight)
 	layout := h.model.Layout()
 	_, footerEnd := layout.FooterRows()
-	h.model.Update(tea.MouseMsg{Type: tea.MouseLeft, X: 4, Y: footerEnd - 1})
+	h.model.Update(tea.MouseClickMsg{X: 4, Y: footerEnd - 1, Button: tea.MouseLeft})
 	if h.model.Mode() != ModeList {
 		t.Fatal("clicking the key hint focused the prompt")
 	}
@@ -347,7 +347,7 @@ func TestMouseFooterKeepsKeyHintAndResponseAdjacentChromeInert(t *testing.T) {
 		if got := h.model.footerRole(layout, row); got != "chrome" {
 			t.Fatalf("flash line %q classified as %q", line, got)
 		}
-		h.model.Update(tea.MouseMsg{Type: tea.MouseWheelDown, X: 4, Y: row})
+		h.model.Update(tea.MouseWheelMsg{X: 4, Y: row, Button: tea.MouseWheelDown})
 		if h.model.CurrentItem() == nil || h.model.CurrentItem().ID != selected {
 			t.Fatalf("wheel over footer chrome moved selection from %s to %#v",
 				selected, h.model.CurrentItem())
@@ -372,7 +372,7 @@ func TestMouseFooterKeepsKeyHintAndResponseAdjacentChromeInert(t *testing.T) {
 			t.Fatalf("footer line %q classified as %q", line, got)
 		}
 		h.model.respScroll = 0
-		h.model.Update(tea.MouseMsg{Type: tea.MouseWheelDown, X: 4, Y: row})
+		h.model.Update(tea.MouseWheelMsg{X: 4, Y: row, Button: tea.MouseWheelDown})
 		if h.model.respScroll != 0 {
 			t.Fatalf("wheel over chrome %q scrolled the response", line)
 		}
