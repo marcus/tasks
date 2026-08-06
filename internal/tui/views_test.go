@@ -290,6 +290,226 @@ func TestProjectsListsSelectableHeaderRowsWithRolledUpCounts(t *testing.T) {
 	}
 }
 
+// projectsNestedStore mirrors the Ruby PROJ_NESTED fixture: an open parent with
+// an open child, plus a leaf sibling, under one area section.
+const projectsNestedStore = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0003","title":"Work"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0003","state":"NEXT","priority":"A","title":"parent task","deadline":"2026-07-03"}
+{"type":"task","id":"bbbb0002","parent":"bbbb0001","state":"TODO","title":"child task"}
+{"type":"task","id":"bbbb0003","parent":"aaaa0003","state":"TODO","title":"leaf sibling"}
+`
+
+// projectsDoubleNestedStore: Projects → child section → task (canonical nested
+// project heading; topLevelTaskNodes must not drop the task).
+const projectsDoubleNestedStore = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Projects"}
+{"type":"section","id":"aaaa0002","parent":"aaaa0001","title":"Launch the site"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0002","state":"NEXT","title":"pick a generator","deadline":"2026-07-03"}
+`
+
+// projectsDoneParentStore: open task under a DONE ancestor — hoisted under the
+// enclosing section, never under a "done middle" header.
+const projectsDoneParentStore = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0003","title":"Work"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0003","state":"DONE","title":"done middle","closed":"2026-06-01"}
+{"type":"task","id":"bbbb0002","parent":"bbbb0001","state":"NEXT","title":"hoisted child"}
+`
+
+func TestProjectsTreeRendersChildDirectlyBelowParent(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: projectsNestedStore})
+	harness.model.SwitchView(ViewProjects)
+	rows := harness.model.Rows()
+	parentIdx, childIdx := -1, -1
+	for i, row := range rows {
+		if row.Item != nil && row.Item.Title == "parent task" {
+			parentIdx = i
+		}
+		if row.Item != nil && row.Item.Title == "child task" {
+			childIdx = i
+		}
+	}
+	if parentIdx < 0 || childIdx < 0 {
+		t.Fatalf("missing parent or child row:\n%s", rowTexts(harness))
+	}
+	if childIdx != parentIdx+1 {
+		t.Fatalf("child is not immediately below parent (parent=%d child=%d):\n%s",
+			parentIdx, childIdx, rowTexts(harness))
+	}
+	if rows[childIdx].Node == nil || rows[parentIdx].Node == nil {
+		t.Fatal("tree-mode project task rows must carry Node")
+	}
+	if rows[childIdx].Node.Level <= rows[parentIdx].Node.Level {
+		t.Fatalf("child level %d is not deeper than parent level %d",
+			rows[childIdx].Node.Level, rows[parentIdx].Node.Level)
+	}
+	if !strings.Contains(rows[childIdx].Text, "│") {
+		t.Fatalf("nested child row lacks the thread glyph: %q", rows[childIdx].Text)
+	}
+}
+
+func TestProjectsTreeBoldsContainersNotLeaves(t *testing.T) {
+	// PlainStyler is a no-op painter, so assert the structural stand-in for
+	// outline_container: containers get ▾/▸ markers, leaves get the blank leaf
+	// marker column.
+	harness := newModelHarness(t, harnessOptions{live: projectsNestedStore})
+	harness.model.SwitchView(ViewProjects)
+	var parent, child, leaf Row
+	var foundParent, foundChild, foundLeaf bool
+	for _, row := range harness.model.Rows() {
+		if row.Item == nil {
+			continue
+		}
+		switch row.Item.Title {
+		case "parent task":
+			parent, foundParent = row, true
+		case "child task":
+			child, foundChild = row, true
+		case "leaf sibling":
+			leaf, foundLeaf = row, true
+		}
+	}
+	if !foundParent || !foundChild || !foundLeaf {
+		t.Fatalf("missing a row:\n%s", rowTexts(harness))
+	}
+	if !strings.Contains(parent.Text, MarkExpanded) {
+		t.Fatalf("container parent has no expanded marker: %q", parent.Text)
+	}
+	if strings.Contains(child.Text, MarkExpanded) || strings.Contains(child.Text, MarkCollapsed) {
+		t.Fatalf("leaf child should not carry a collapse marker: %q", child.Text)
+	}
+	if strings.Contains(leaf.Text, MarkExpanded) || strings.Contains(leaf.Text, MarkCollapsed) {
+		t.Fatalf("leaf sibling should not carry a collapse marker: %q", leaf.Text)
+	}
+}
+
+func TestProjectsTreeNoSpuriousHeaderForIntermediateTask(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: projectsNestedStore})
+	harness.model.SwitchView(ViewProjects)
+	headers := []string{}
+	for _, row := range harness.model.Rows() {
+		if row.Project != nil {
+			headers = append(headers, row.Project.Title)
+		}
+	}
+	if len(headers) != 1 || headers[0] != "Work" {
+		t.Fatalf("expected only the Work section header, got %v:\n%s",
+			headers, rowTexts(harness))
+	}
+	for _, row := range harness.model.Rows() {
+		if row.Project != nil && row.Project.Title == "parent task" {
+			t.Fatal("open parent task must not become a pseudo-project header")
+		}
+	}
+}
+
+func TestProjectsFlatFallbackMatchesLegacyShape(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: projectsNestedStore})
+	harness.model.SwitchView(ViewProjects)
+	// `/` forces the flat path; Projects then uses projectsFlat (no nodes, no
+	// thread glyphs, fixed indent).
+	harness.model.filter = "task"
+	harness.model.RefreshRows()
+	if harness.model.useTree() {
+		t.Fatal("a search must render flat")
+	}
+	for _, row := range harness.model.Rows() {
+		if row.Node != nil {
+			t.Fatalf("flat projects row carries a node: %q", row.Text)
+		}
+		if strings.Contains(row.Text, "│") {
+			t.Fatalf("flat projects has a thread glyph: %q", row.Text)
+		}
+		if strings.Contains(row.Text, MarkExpanded) || strings.Contains(row.Text, MarkCollapsed) {
+			t.Fatalf("flat projects has a collapse marker: %q", row.Text)
+		}
+	}
+	text := rowTexts(harness)
+	if !strings.Contains(text, "Work") {
+		t.Fatalf("flat projects dropped the project header:\n%s", text)
+	}
+	if !strings.Contains(text, "parent task") || !strings.Contains(text, "child task") {
+		t.Fatalf("flat projects dropped a task:\n%s", text)
+	}
+}
+
+func TestTaskUnderNestedProjectHeadingIsNotDropped(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: projectsDoubleNestedStore})
+	for _, view := range []string{ViewAgenda, ViewNext, ViewQuadrants} {
+		harness.model.SwitchView(view)
+		if !strings.Contains(rowTexts(harness), "pick a generator") {
+			t.Errorf("%s tree view dropped a task under a nested project heading:\n%s",
+				view, rowTexts(harness))
+		}
+	}
+	harness.model.SwitchView(ViewProjects)
+	text := rowTexts(harness)
+	if !strings.Contains(text, "Launch the site") {
+		t.Fatalf("nested project header missing:\n%s", text)
+	}
+	if !strings.Contains(text, "pick a generator") {
+		t.Fatalf("task under nested project heading dropped from Projects:\n%s", text)
+	}
+	// Body row must nest under the ProjectView header, with Node for collapse.
+	found := false
+	for _, row := range harness.model.Rows() {
+		if row.Item != nil && row.Item.Title == "pick a generator" {
+			found = true
+			if row.Node == nil {
+				t.Fatal("nested project task row must carry Node in tree mode")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no task row for pick a generator:\n%s", text)
+	}
+}
+
+func TestProjectsHoistsOpenTaskUnderDoneParent(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: projectsDoneParentStore})
+	harness.model.SwitchView(ViewProjects)
+	text := rowTexts(harness)
+	for _, row := range harness.model.Rows() {
+		if row.Project != nil && row.Project.Title == "done middle" {
+			t.Fatal("a DONE parent must not head an active project group")
+		}
+		if row.Item != nil && row.Item.Title == "done middle" {
+			t.Fatal("a DONE parent must not render a body row")
+		}
+	}
+	if !strings.Contains(text, "Work") {
+		t.Fatalf("Work section header missing:\n%s", text)
+	}
+	if !strings.Contains(text, "hoisted child") {
+		t.Fatalf("hoisted child missing under Work:\n%s", text)
+	}
+}
+
+func TestProjectsCollapseHidesDescendants(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: projectsNestedStore})
+	harness.model.SwitchView(ViewProjects)
+	harness.selectRowByID("bbbb0001")
+	harness.press('h')
+
+	text := rowTexts(harness)
+	if strings.Contains(text, "child task") {
+		t.Fatalf("collapsing did not hide the child:\n%s", text)
+	}
+	if !strings.Contains(text, "(1)") {
+		t.Fatalf("the folded row does not say how many it hides:\n%s", text)
+	}
+	if !strings.Contains(text, MarkCollapsed) {
+		t.Fatalf("the folded row has no collapsed marker:\n%s", text)
+	}
+	if harness.model.SelectedID() != "bbbb0001" {
+		t.Fatalf("collapsing moved the cursor to %q", harness.model.SelectedID())
+	}
+	// Expand restores the child.
+	harness.press('l')
+	if !strings.Contains(rowTexts(harness), "child task") {
+		t.Fatalf("expanding did not restore the child:\n%s", rowTexts(harness))
+	}
+}
+
 func TestSearchFilterNarrowsRowsAndFallsBackToFlat(t *testing.T) {
 	harness := newModelHarness(t, harnessOptions{})
 	harness.model.SwitchView(ViewNext)

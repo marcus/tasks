@@ -361,12 +361,10 @@ func buildProjects(request BuildRequest) []Row {
 		}
 		return []Row{headerRow(styler.Paint("muted", message))}
 	}
-	byID := map[string]store.Item{}
-	for _, item := range request.Items {
-		if item.ID != "" {
-			byID[item.ID] = item
-		}
-	}
+	// Tree mode: Phase-1 ProjectView headers, outliner body under each. Empty
+	// projects still list (header only) — header rollups come from ProjectView,
+	// not from body-row counting, so deferred-only projects stay visible.
+	query := request.query(ViewProjects)
 	rows := []Row{}
 	for _, group := range [][2]any{
 		{"Projects", "project"},
@@ -386,18 +384,49 @@ func buildProjects(request BuildRequest) []Row {
 		for _, project := range members {
 			project := project
 			rows = append(rows, Row{Text: projectRow(request, project), Project: &project})
-			for _, id := range project.TaskIDs {
-				found, ok := byID[id]
-				if !ok {
-					continue
-				}
-				item := found
-				rows = append(rows, Row{Text: "  " + nextBody(request, item), Item: &item})
+			anchors := query.SortNodes(anchorsForProject(request, project))
+			for _, anchor := range anchors {
+				rows = appendSubtree(request, rows, anchor, "  ", func(item store.Item) string {
+					return nextBody(request, item)
+				})
 			}
 		}
 		rows = append(rows, headerRow(""))
 	}
 	return dropTrailingBlank(rows)
+}
+
+// anchorsForProject keeps anchor roots that belong under a ProjectView section.
+// Ownership is by section identity (ProjectView.Line → tree node), not title:
+// titles can collide. Nested sub-sections under a project roll up into that
+// project the same way ProjectView.TaskIDs do — so body membership matches the
+// header rollup. Intermediate open tasks never head a group; only real
+// project/area sections do.
+func anchorsForProject(request BuildRequest, project taskquery.ProjectView) []*taskquery.Node {
+	if request.Queries == nil {
+		return nil
+	}
+	root := request.Queries.Tree().NodesByLine[project.Line]
+	if root == nil {
+		return nil
+	}
+	out := []*taskquery.Node{}
+	for _, anchor := range anchorRoots(request) {
+		if nodeUnder(anchor, root) {
+			out = append(out, anchor)
+		}
+	}
+	return out
+}
+
+// nodeUnder reports whether node sits at or under ancestor in the tree.
+func nodeUnder(node, ancestor *taskquery.Node) bool {
+	for current := node; current != nil; current = current.Parent {
+		if current == ancestor {
+			return true
+		}
+	}
+	return false
 }
 
 // projectsFlat is the pre-outliner Projects body, kept for the `/` and `@`
