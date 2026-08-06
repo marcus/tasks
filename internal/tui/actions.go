@@ -51,6 +51,7 @@ func (m *Model) handlers() map[string]func(key string) {
 		"open_action_palette":          func(string) { m.OpenActionPalette() },
 		"open_context_palette":         func(string) { m.OpenContextPalette() },
 		"complete_selected":            func(string) { m.CompleteSelected() },
+		"delete_selected":              func(string) { m.DeleteSelected() },
 		"approve_proposal":             func(string) { m.DecideProposal(application.ProposalApprove) },
 		"reject_proposal":              func(string) { m.DecideProposal(application.ProposalReject) },
 		"raise_priority":               func(string) { m.BumpPriority(-1) },
@@ -164,6 +165,7 @@ func (m *Model) OpenModal(content ModalContent, kind ModalKind, filterable bool)
 // CloseModal dismisses the overlay.
 func (m *Model) CloseModal() {
 	m.pendingProject = nil
+	m.pendingDelete = nil
 	m.archivePreview = nil
 	m.archiveContext = temporal.Context{}
 	m.modalFilterEditor().Clear()

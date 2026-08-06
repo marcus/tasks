@@ -62,6 +62,15 @@ func TestContextLookupKeepsTaskActionsInListAndDetailOnly(t *testing.T) {
 	if got := handlerFor(t, "c", Detail); got != "complete_selected" {
 		t.Fatalf("c in detail = %s", got)
 	}
+	if got := handlerFor(t, "#", List); got != "delete_selected" {
+		t.Fatalf("# in list = %s", got)
+	}
+	if got := handlerFor(t, "#", Detail); got != "delete_selected" {
+		t.Fatalf("# in detail = %s", got)
+	}
+	if got := handlerFor(t, "\x1b[3~", List); got != "delete_selected" {
+		t.Fatalf("Delete key in list = %s", got)
+	}
 	assertUnbound(t, "c", Modal)
 	assertUnbound(t, "x", Detail) // list-only archive must not leak into details
 	assertUnbound(t, "\x1b[C", Detail)
@@ -365,6 +374,9 @@ func TestPaletteEntriesAreContextualAndAvailable(t *testing.T) {
 	}
 	if !handlers["complete_selected"] {
 		t.Fatal("complete_selected must be offered")
+	}
+	if !handlers["delete_selected"] {
+		t.Fatal("delete_selected must be offered")
 	}
 	for _, unwanted := range []string{
 		"open_recur_popup", "open_link", "delegate_selected",

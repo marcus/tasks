@@ -12,8 +12,8 @@
 │        │      expand all subtrees  L                                                │        │
 │        │      open / close task details  return                                     │        │
 │        │      complete selected task  c                                             │        │
+│        │      delete selected task (hard delete; undoable)  # / del                 │        │
 │        │      edit Deadline / Available from date or time  d                        │        │
-│        │      recur — weekly · every mon · m:15 · off  r                            │        │
 │        │  ↑↓ choose · enter run · esc cancel                                        │        │
 │        └────────────────────────────────────────────────────────────────────────────┘        │
 │                                                                                              │

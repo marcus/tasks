@@ -139,6 +139,177 @@ func (m *Model) ShowUnsupportedSchemaNotice() {
 	}, ModalUnsupportedSchema, false)
 }
 
+// -- hard delete -------------------------------------------------------------------
+
+// pendingDelete is the hard-delete confirmation the open modal is about.
+// Answering `y` acts on these fields, not on whatever is selected now.
+type pendingDelete struct {
+	ID               string
+	Title            string
+	Cascade          bool
+	ExpectedRevision string
+	Removed          int
+	Descendants      int
+	OpenDescendants  int
+	Recurring        bool
+}
+
+// DeleteSelected is `#` / Delete: preview a hard delete, then confirm.
+//
+// It never writes on the first keystroke. A leaf gets a simple confirm; a task
+// with descendants gets a cascade confirm that names counts. Both refuse
+// projects/sections (store rule: delete targets tasks) and both land in one
+// journal step that `u` / ctrl-r already undo/redo.
+func (m *Model) DeleteSelected() {
+	if m.CurrentProject() != nil {
+		m.needsTask()
+		return
+	}
+	item := m.CurrentItem()
+	if item == nil {
+		m.Flash("nothing selected")
+		return
+	}
+	if m.read == nil {
+		m.Flash("task no longer exists — refresh and try again")
+		return
+	}
+	task, found := m.read.TaskFor(item.ID)
+	if !found {
+		m.Flash("task no longer exists — refresh and try again")
+		return
+	}
+
+	ids := subtreeIDs(m.read.Queries(), task)
+	descendants := len(ids) - 1
+	if descendants < 0 {
+		descendants = 0
+	}
+	openDescendants := 0
+	for _, id := range ids {
+		if id == task.ID {
+			continue
+		}
+		if child, ok := m.read.TaskFor(id); ok && isOpenState(child.State) {
+			openDescendants++
+		}
+	}
+
+	pending := &pendingDelete{
+		ID:               task.ID,
+		Title:            task.Title,
+		Cascade:          descendants > 0,
+		ExpectedRevision: m.read.Snapshot().RevisionFor(task),
+		Removed:          len(ids),
+		Descendants:      descendants,
+		OpenDescendants:  openDescendants,
+		Recurring:        task.Recur != "",
+	}
+	m.pendingDelete = pending
+
+	if descendants > 0 {
+		noun := "descendants"
+		if descendants == 1 {
+			noun = "descendant"
+		}
+		openNote := ""
+		if openDescendants > 0 {
+			openNote = fmt.Sprintf(" (%d open)", openDescendants)
+		}
+		m.OpenModal(ModalContent{
+			Title: "Confirm cascade delete",
+			Lines: []string{
+				fmt.Sprintf("Delete permanently: %s and %d %s%s?",
+					pending.Title, descendants, noun, openNote),
+				"Children are removed, not reparented.",
+				"",
+				m.styler.Paint("muted", "Press y to cascade delete · n / esc cancels · u undoes after"),
+			},
+		}, ModalDeleteCascadeConfirm, false)
+		return
+	}
+
+	lines := []string{fmt.Sprintf("Delete permanently: %s?", pending.Title)}
+	if pending.Recurring {
+		lines = append(lines, "Recurring tasks are removed entirely (not rolled).")
+	}
+	lines = append(lines, "",
+		m.styler.Paint("muted", "Press y to delete · n / esc cancels · u undoes after"))
+	m.OpenModal(ModalContent{
+		Title: "Confirm delete",
+		Lines: lines,
+	}, ModalDeleteConfirm, false)
+}
+
+func (m *Model) deleteConfirmKey(key string) {
+	switch key {
+	case "y", "Y":
+		pending := m.pendingDelete
+		m.CloseModal()
+		if pending == nil {
+			return
+		}
+		outcome := m.app.DeleteTask(application.DeleteCommand{
+			ID:               pending.ID,
+			Cascade:          pending.Cascade,
+			ExpectedRevision: pending.ExpectedRevision,
+		}, m.operation())
+		if outcome.Status == store.MutationUnsupportedSchema {
+			m.ShowUnsupportedSchemaNotice()
+			return
+		}
+		if outcome.NotFound() {
+			m.Refresh()
+			m.Flash("task no longer exists")
+			return
+		}
+		if outcome.Stale() {
+			m.Refresh()
+			m.Flash("file changed underneath — try again")
+			return
+		}
+		if outcome.Conflict() {
+			m.Refresh()
+			m.Flash(fmt.Sprintf(
+				"refusing to delete: %s has %s (%d open) — press # again to cascade",
+				pending.Title,
+				pluralizeCount(outcome.Summary.Descendants, "descendant"),
+				outcome.Summary.OpenDescendants))
+			return
+		}
+		if !outcome.OK() {
+			m.Refresh()
+			message := "failed to delete"
+			if len(outcome.Errors) > 0 {
+				message = outcome.Errors[0]
+			}
+			m.Flash(message)
+			return
+		}
+		removed := len(outcome.TouchedIDs)
+		if removed == 0 {
+			removed = pending.Removed
+		}
+		m.Refresh()
+		if removed > 1 {
+			m.Flash(fmt.Sprintf("deleted %d tasks: %s — u to undo", removed, pending.Title))
+		} else {
+			m.Flash("deleted: " + pending.Title + " — u to undo")
+		}
+	case "n", "N", "\x1b", "q":
+		m.CloseModal()
+		m.Flash("delete cancelled")
+	}
+}
+
+// pluralizeCount is "1 descendant" / "2 descendants" for flash text.
+func pluralizeCount(count int, noun string) string {
+	if count == 1 {
+		return fmt.Sprintf("1 %s", noun)
+	}
+	return fmt.Sprintf("%d %ss", count, noun)
+}
+
 // -- history -----------------------------------------------------------------------
 
 // UndoLast and RedoLast are `u` and ctrl-r.

@@ -26,12 +26,14 @@ interactive `--fix`) would surface:
 
 This is the single most on-philosophy addition. Highest value.
 
-## 2. Hard delete
+## 2. Hard delete ✅ (done)
 
-`undo` and `redo` are implemented through the file-backed journal shared by the
-CLI and TUI. The remaining idea is `delete <ref> --force`: hard-remove a subtree
-without archiving it. It should refuse without `--force` and suggest `cancel`
-for the normal case.
+Shipped as `tasks delete <ref> [--cascade]` (CLI), `DELETE /tasks/{id}?cascade=`
+(API), and TUI `#` / Delete with confirm (cascade confirm when the selection has
+descendants). Undoable via the shared journal (`tasks undo` / TUI `u`). Not an
+alias for CANCELLED and never touches `archive.jsonl`. Prefer cancel/archive for
+normal lifecycle; hard delete is for genuine mistakes and for erasing recurring
+series that `done` cannot remove.
 
 ## 3. Recurring tasks ✅ (done)
 

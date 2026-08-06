@@ -451,6 +451,9 @@ func (m *Model) modalKey(sequence string) {
 	case ModalArchiveBlocked:
 		m.archiveBlockedKey(sequence)
 		return
+	case ModalDeleteConfirm, ModalDeleteCascadeConfirm:
+		m.deleteConfirmKey(sequence)
+		return
 	case ModalAgentQueueCancel:
 		m.agentQueueCancelKey(sequence)
 		return

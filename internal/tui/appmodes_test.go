@@ -461,6 +461,187 @@ func TestArchiveSweepBlocksOnOpenDescendants(t *testing.T) {
 	}
 }
 
+// -- hard delete (# / del) ---------------------------------------------------------
+
+func TestDeleteSelectedConfirmsThenRemovesALeaf(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.SwitchView(ViewNext)
+	harness.selectRowByID(fixPR)
+	before := harness.content()
+
+	harness.pressKeys("#")
+	if harness.model.Mode() != ModeModal ||
+		harness.model.Modal().Kind() != ModalDeleteConfirm {
+		t.Fatalf("# produced mode %s (%q)", harness.model.Mode(), harness.model.FlashMessage())
+	}
+	if harness.content() != before {
+		t.Fatal("the preview wrote")
+	}
+	joined := strings.Join(harness.model.Modal().AllLines(), " ")
+	if !strings.Contains(joined, "Review PR backlog") {
+		t.Errorf("confirm modal does not name the task: %q", joined)
+	}
+
+	harness.pressKeys("y")
+	if harness.model.Mode() != ModeList {
+		t.Fatalf("confirming left the mode at %s", harness.model.Mode())
+	}
+	if strings.Contains(harness.content(), `"id":"`+fixPR+`"`) {
+		t.Error("the deleted task is still live")
+	}
+	if !strings.Contains(harness.model.FlashMessage(), "deleted:") ||
+		!strings.Contains(harness.model.FlashMessage(), "u to undo") {
+		t.Errorf("delete was not reported: %q", harness.model.FlashMessage())
+	}
+}
+
+func TestDeleteSelectedCancelWritesNothing(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.SwitchView(ViewNext)
+	harness.selectRowByID(fixPR)
+	before := harness.content()
+	harness.pressKeys("#", "n")
+	if harness.content() != before {
+		t.Error("cancelling still deleted")
+	}
+	if !strings.Contains(harness.model.FlashMessage(), "delete cancelled") {
+		t.Errorf("cancelling said %q", harness.model.FlashMessage())
+	}
+}
+
+func TestDeleteSelectedRefusesAProjectRow(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	// Projects view carries selectable section headers with Project set.
+	harness.model.SwitchView(ViewProjects)
+	harness.selectRowByID(fixWork)
+	before := harness.content()
+	harness.pressKeys("#")
+	if harness.content() != before {
+		t.Error("delete on a project wrote")
+	}
+	if harness.model.Mode() == ModeModal {
+		t.Fatal("delete on a project opened a confirm modal")
+	}
+	if !strings.Contains(harness.model.FlashMessage(), "select a task") {
+		t.Errorf("project delete said %q", harness.model.FlashMessage())
+	}
+}
+
+func TestDeleteSelectedCascadeConfirmsAndRemovesSubtree(t *testing.T) {
+	const nested = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0003","title":"Work"}
+{"type":"task","id":"aaaa0004","parent":"aaaa0003","state":"NEXT","title":"Parent with kids"}
+{"type":"task","id":"aaaa0005","parent":"aaaa0004","state":"NEXT","title":"Child one"}
+{"type":"task","id":"aaaa0006","parent":"aaaa0004","state":"TODO","title":"Child two"}
+`
+	harness := newModelHarness(t, harnessOptions{live: nested})
+	harness.model.SwitchView(ViewOutline)
+	harness.selectRowByID(fixFlight)
+	harness.pressKeys("#")
+	if harness.model.Modal() == nil || harness.model.Modal().Kind() != ModalDeleteCascadeConfirm {
+		t.Fatalf("# on a parent produced %v", harness.model.Modal())
+	}
+	joined := strings.Join(harness.model.Modal().AllLines(), " ")
+	if !strings.Contains(joined, "2 descendants") || !strings.Contains(joined, "2 open") {
+		t.Errorf("cascade modal missing counts: %q", joined)
+	}
+	harness.pressKeys("y")
+	for _, id := range []string{fixFlight, fixPR, fixEval} {
+		if strings.Contains(harness.content(), `"id":"`+id+`"`) {
+			t.Errorf("cascade left %s live", id)
+		}
+	}
+	if !strings.Contains(harness.model.FlashMessage(), "deleted 3 tasks") {
+		t.Errorf("cascade flash = %q", harness.model.FlashMessage())
+	}
+}
+
+func TestDeleteSelectedRemovesARecurringTask(t *testing.T) {
+	const recurring = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0003","title":"Work"}
+{"type":"task","id":"aaaa0004","parent":"aaaa0003","state":"NEXT","title":"Weekly standup","deadline":"2026-07-14","recur":".+1w"}
+`
+	harness := newModelHarness(t, harnessOptions{live: recurring})
+	harness.model.SwitchView(ViewNext)
+	harness.selectRowByID(fixFlight)
+	harness.pressKeys("#")
+	joined := strings.Join(harness.model.Modal().AllLines(), " ")
+	if !strings.Contains(joined, "Recurring tasks are removed entirely") {
+		t.Errorf("recurring note missing: %q", joined)
+	}
+	harness.pressKeys("y")
+	if strings.Contains(harness.content(), `"id":"`+fixFlight+`"`) {
+		t.Error("recurring task survived delete (would still roll on complete)")
+	}
+	if !strings.Contains(harness.content(), `"recur"`) {
+		// file may still have meta only — just ensure task line is gone
+	}
+	if strings.Contains(harness.content(), "Weekly standup") {
+		t.Error("recurring title still present after delete")
+	}
+}
+
+func TestDeleteSelectedUndoAndRedoRestoreAndRemove(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.SwitchView(ViewNext)
+	harness.selectRowByID(fixPR)
+	before := harness.content()
+	harness.pressKeys("#", "y")
+	if strings.Contains(harness.content(), `"id":"`+fixPR+`"`) {
+		t.Fatal("delete did not remove the task")
+	}
+
+	harness.pressKeys("u")
+	if !strings.Contains(harness.model.FlashMessage(), "undid: delete") {
+		t.Errorf("undo said %q", harness.model.FlashMessage())
+	}
+	if !strings.Contains(harness.content(), `"id":"`+fixPR+`"`) {
+		t.Error("undo did not restore the deleted task")
+	}
+	if harness.content() != before {
+		// exact bytes may differ only if refresh rewrites; require the task line back
+		if !strings.Contains(taskLineIn(harness.content(), fixPR), "Review PR backlog") {
+			t.Error("undo restored wrong content")
+		}
+	}
+
+	harness.pressKeys("\x12") // ctrl-r
+	if !strings.Contains(harness.model.FlashMessage(), "redid: delete") {
+		t.Errorf("redo said %q", harness.model.FlashMessage())
+	}
+	if strings.Contains(harness.content(), `"id":"`+fixPR+`"`) {
+		t.Error("redo did not re-delete the task")
+	}
+}
+
+func TestDeleteSelectedRefusesAStaleRevision(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.SwitchView(ViewNext)
+	harness.selectRowByID(fixPR)
+	harness.pressKeys("#")
+	// External rewrite of the selected task invalidates the revision pin.
+	harness.rewrite(strings.Replace(fixtureStore,
+		`"title":"Review PR backlog"`,
+		`"title":"Review PR backlog elsewhere"`, 1))
+	harness.pressKeys("y")
+	if !strings.Contains(harness.model.FlashMessage(), "file changed underneath") {
+		t.Errorf("stale delete said %q", harness.model.FlashMessage())
+	}
+	if !strings.Contains(harness.content(), "Review PR backlog elsewhere") {
+		t.Error("stale refuse must not delete the rewritten task")
+	}
+}
+
+func TestDeleteKeySequenceAlsoOpensConfirm(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.SwitchView(ViewNext)
+	harness.selectRowByID(fixPR)
+	harness.pressKeys("\x1b[3~")
+	if harness.model.Modal() == nil || harness.model.Modal().Kind() != ModalDeleteConfirm {
+		t.Fatalf("Delete key produced %v (%q)", harness.model.Modal(), harness.model.FlashMessage())
+	}
+}
+
 func TestUndoAndRedoWalkTheJournalAndSayTheLabel(t *testing.T) {
 	harness := newModelHarness(t, harnessOptions{})
 	harness.model.SwitchView(ViewNext)

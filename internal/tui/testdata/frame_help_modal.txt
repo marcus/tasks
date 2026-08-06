@@ -16,7 +16,7 @@
 │     │ l             expand subtree                                                    │      │
 │     │ H             collapse all subtrees                                             │      │
 │     │ L             expand all subtrees                                               │      │
-│     │ ── 14/101 · ↑↓ scroll ──                                                        │      │
+│     │ ── 14/103 · ↑↓ scroll ──                                                        │      │
 │     └─────────────────────────────────────────────────────────────────────────────────┘      │
 ├──────────────────────────────────────────────────────────────────────────────────────────────┤
 │ ❯ tab to ask the agent — reschedule, capture, edit anything…                                 │

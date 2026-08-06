@@ -132,6 +132,10 @@ type Model struct {
 	// separately from the selection because the selection can move underneath
 	// an open confirmation, and answering `y` must act on what was asked.
 	pendingProject *taskquery.ProjectView
+	// pendingDelete is the hard-delete confirmation: id, title, cascade flag,
+	// expected revision, and how many tasks would leave. Held separately so
+	// answering `y` acts on what was asked, not whatever is selected now.
+	pendingDelete *pendingDelete
 	// archivePreview is the sweep the open confirmation described. It is handed
 	// BACK to the store on confirmation, so a list that changed while the modal
 	// was open refuses rather than archiving a set nobody saw.

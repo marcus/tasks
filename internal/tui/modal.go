@@ -18,6 +18,8 @@ const (
 	ModalHelp                   ModalKind = "help"
 	ModalArchiveConfirm         ModalKind = "archive_confirm"
 	ModalArchiveBlocked         ModalKind = "archive_blocked"
+	ModalDeleteConfirm          ModalKind = "delete_confirm"
+	ModalDeleteCascadeConfirm   ModalKind = "delete_cascade_confirm"
 	ModalProjectCompleteConfirm ModalKind = "project_complete_confirm"
 	ModalProjectArchiveConfirm  ModalKind = "project_archive_confirm"
 	ModalUnsupportedSchema      ModalKind = "unsupported_schema"

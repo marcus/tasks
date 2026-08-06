@@ -8,7 +8,8 @@ Date: 2026-07-15; updated 2026-08-04
 requires an explicit target, refuses a parent with descendants unless cascade
 was requested, runs through `application.DeleteCommand`, and records one undo
 entry. API deletion has the same domain outcome and requires an ETag
-precondition.
+precondition. The TUI surfaces the same mutation via `#` / Delete with an
+always-on confirm modal (cascade confirm when the selection has descendants).
 
 The store checks structure before and after mutation. A failure writes nothing;
 no adapter may implement deletion by editing JSONL itself.
