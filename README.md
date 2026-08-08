@@ -32,6 +32,30 @@ make build
 make install PREFIX="$HOME/.local"
 ```
 
+For rapid development on this Mac, the repository can switch the commands in
+Homebrew's bin directory between a local build and the installed formula. The
+formula remains installed in its Cellar, so switching back does not rebuild or
+download anything:
+
+```sh
+make install-local       # canonical main checkout only: build and activate
+make install-status      # show source, path, version, and commit
+make use-homebrew        # reactivate the released formula
+```
+
+From a Git worktree or non-main branch, activation must be deliberate:
+
+```sh
+make install-worktree
+```
+
+All three commands (`tasks`, `tasks-tui`, and `tasks-api`) switch together.
+Local builds are retained under `~/.local/state/tasks/dev-installs`; the active
+links live in the Homebrew prefix as the stable machine selector; task-specific
+interactive shell aliases point there too, without reordering the rest of PATH.
+Each local `--version` includes its branch, commit, and `-dirty`
+when built from uncommitted changes.
+
 ## Configure task data
 
 Task data belongs outside this source repository. Create a directory containing
@@ -125,6 +149,11 @@ make vet
 make fmt-check
 make build
 ```
+
+After changing code in the canonical `main` checkout, run `make install-local`
+so normal shell and automation consumers exercise the new build. In a worktree,
+use `make install-worktree` only when that branch should become machine-wide.
+Use `make install-status` before debugging an apparent version mismatch.
 
 All code changes require independent review. Changes affecting the HTTP surface
 must keep the CLI/application/API contracts aligned and update OpenAPI where the

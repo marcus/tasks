@@ -11,7 +11,7 @@ $(error set RELEASE_VERSION in the environment, for example: RELEASE_VERSION=v1.
 endif
 endif
 
-.PHONY: build install test test-race vet fmt fmt-check clean release-snapshot check-release-state release release-tap
+.PHONY: build install install-local install-worktree use-homebrew install-status test test-race vet fmt fmt-check clean release-snapshot check-release-state release release-tap
 
 build:
 	mkdir -p bin
@@ -24,6 +24,18 @@ install:
 	go build -ldflags '$(LDFLAGS)' -o '$(BINDIR)/tasks' ./cmd/tasks
 	go build -ldflags '$(LDFLAGS)' -o '$(BINDIR)/tasks-api' ./cmd/tasks-api
 	go build -ldflags '$(LDFLAGS)' -o '$(BINDIR)/tasks-tui' ./cmd/tasks-tui
+
+install-local:
+	./scripts/dev-install.sh install-local
+
+install-worktree:
+	./scripts/dev-install.sh install-worktree
+
+use-homebrew:
+	./scripts/dev-install.sh use-homebrew
+
+install-status:
+	./scripts/dev-install.sh status
 
 test:
 	go test ./...

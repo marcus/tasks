@@ -35,6 +35,11 @@ CLI.
   builds of all three commands.
 - Use `testdata/fixtures`; never point tests at configured or real task files.
 - Every code change requires independent review before completion.
+- After changing code in the canonical `main` checkout, run `make install-local`
+  so the machine-wide commands exercise the new build. From a worktree, do not
+  replace the active installation implicitly; use `make install-worktree` only
+  when that worktree should become active. Use `make install-status` to prove
+  what is active and `make use-homebrew` to return to the released formula.
 
 When adding a CLI capability, update the command registry/help JSON, human help,
 CLI spec, relevant skill, and adapter tests together. When the capability is
