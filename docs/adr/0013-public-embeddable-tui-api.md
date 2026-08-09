@@ -83,4 +83,3 @@ surface; new implementation details stay behind the package.
   `Close`; omission of `Close` is a lifecycle bug.
 - The package is intentionally a Go/Bubble Tea component, not a general remote
   API. A service boundary should be added only for a journey that requires one.
-
