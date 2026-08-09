@@ -13,6 +13,15 @@ import (
 )
 
 func main() {
+	bindings, commands, contexts := taskstui.ExportBindings(), taskstui.ExportCommands(), taskstui.ExportContexts()
+	if len(bindings) == 0 || len(commands) == 0 || len(contexts) < 10 {
+		fail(fmt.Errorf("incomplete exported metadata: %d bindings, %d commands, %d contexts",
+			len(bindings), len(commands), len(contexts)))
+	}
+	if commands[0].ID == "" || commands[0].FooterLabel == "" ||
+		len(commands[0].DefaultBindings) == 0 {
+		fail(fmt.Errorf("incomplete first command: %#v", commands[0]))
+	}
 	model, err := taskstui.NewEmbedded(taskstui.EmbeddedOptions{
 		SessionNamespace: "external-proof",
 		InitialView:      taskstui.ViewNext,

@@ -12,6 +12,9 @@ package shortcuts
 import (
 	"errors"
 	"fmt"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Context is where a binding is active.
@@ -75,7 +78,14 @@ type Entry struct {
 	DisplayKey string
 	// Description is the help text; it doubles as the palette label.
 	Description string
-	Contexts    []Context
+	// CommandID is the stable host-facing action identifier. Empty entries
+	// derive it from Handler, keeping the registry as the only command table.
+	CommandID string
+	// FooterLabel and FooterPriority are host projection metadata. Priority
+	// 1 is most important; 4+ is normally palette-only.
+	FooterLabel    string
+	FooterPriority int
+	Contexts       []Context
 	// Handler names the application method that performs the action. Empty
 	// only for DocOnly entries.
 	Handler string
@@ -94,7 +104,29 @@ func entry(e Entry) Entry {
 	if e.Availability == "" {
 		e.Availability = DefaultAvailability
 	}
+	if e.CommandID == "" && e.Handler != "" {
+		e.CommandID = strings.ReplaceAll(e.Handler, "_", "-")
+	}
+	if e.FooterLabel == "" {
+		e.FooterLabel = defaultFooterLabel(e.Description)
+	}
+	if e.FooterPriority == 0 {
+		e.FooterPriority = 4
+	}
 	return e
+}
+
+func defaultFooterLabel(description string) string {
+	word := strings.Fields(description)
+	if len(word) == 0 {
+		return "Action"
+	}
+	label := strings.Trim(word[0], "—…/()")
+	if label == "" {
+		return "Action"
+	}
+	first, size := utf8.DecodeRuneInString(label)
+	return string(unicode.ToUpper(first)) + label[size:]
 }
 
 // Registry is the complete key table, in dispatch/help order.
@@ -112,8 +144,8 @@ var Registry = []Entry{
 	entry(Entry{Sequences: []string{"l"}, DisplayKey: "l", Description: "expand subtree", Contexts: []Context{List}, Handler: "expand_selected", Palette: PaletteWhen("selected_action_available?")}),
 	entry(Entry{Sequences: []string{"H"}, DisplayKey: "H", Description: "collapse all subtrees", Contexts: []Context{List}, Handler: "collapse_all", Palette: PaletteAlways}),
 	entry(Entry{Sequences: []string{"L"}, DisplayKey: "L", Description: "expand all subtrees", Contexts: []Context{List}, Handler: "expand_all", Palette: PaletteAlways}),
-	entry(Entry{Sequences: []string{"\r", "\n"}, DisplayKey: "return", Description: "open / close task details", Contexts: []Context{List}, Handler: "open_detail", Palette: PaletteWhen("selected_action_available?")}),
-	entry(Entry{Sequences: []string{"c"}, DisplayKey: "c", Description: "complete selected task", Contexts: []Context{List, Detail}, Handler: "complete_selected", Palette: PaletteWhen("selected_action_available?")}),
+	entry(Entry{Sequences: []string{"\r", "\n"}, DisplayKey: "return", Description: "open / close task details", FooterLabel: "Details", FooterPriority: 1, Contexts: []Context{List}, Handler: "open_detail", Palette: PaletteWhen("selected_action_available?")}),
+	entry(Entry{Sequences: []string{"c"}, DisplayKey: "c", Description: "complete selected task", FooterLabel: "Complete", FooterPriority: 1, Contexts: []Context{List, Detail}, Handler: "complete_selected", Palette: PaletteWhen("selected_action_available?")}),
 	entry(Entry{Sequences: []string{"#", "\x1b[3~"}, DisplayKey: "# / del", Description: "delete selected task (hard delete; undoable)", Contexts: []Context{List, Detail}, Handler: "delete_selected", Palette: PaletteWhen("selected_action_available?"), Confirmation: "delete_preview"}),
 	entry(Entry{Sequences: []string{"d"}, DisplayKey: "d", Description: "edit Deadline / Available from date or time", Contexts: []Context{List, Detail}, Handler: "open_date_popup", Palette: PaletteWhen("selected_action_available?"), Form: "date"}),
 	entry(Entry{Sequences: []string{"r"}, DisplayKey: "r", Description: "Reject proposal", Contexts: []Context{List, Detail}, Handler: "reject_proposal", Availability: "proposal_action_available?", Palette: PaletteWhen("proposal_action_available?")}),
@@ -132,13 +164,13 @@ var Registry = []Entry{
 	entry(Entry{Sequences: []string{"y"}, DisplayKey: "y", Description: "yank stable task id", Contexts: []Context{List, Detail}, Handler: "yank_ref", Palette: PaletteWhen("selected_action_available?")}),
 	entry(Entry{Sequences: []string{"Y"}, DisplayKey: "Y", Description: "yank task as markdown", Contexts: []Context{List, Detail}, Handler: "yank_markdown", Palette: PaletteWhen("selected_action_available?")}),
 	entry(Entry{Sequences: []string{"p"}, DisplayKey: "p", Description: "paste task id into the prompt", Contexts: []Context{List, Detail}, Handler: "paste_ref", Palette: PaletteWhen("selected_action_available?")}),
-	entry(Entry{Sequences: []string{"e"}, DisplayKey: "e", Description: "edit task", Contexts: []Context{Detail}, Handler: "start_task_edit", Palette: PaletteWhen("selected_action_available?"), Form: "task_edit"}),
-	entry(Entry{Sequences: []string{"\t"}, DisplayKey: "tab", Description: "ask the agent — CRUD anything", Contexts: []Context{Detail}, Handler: "focus_prompt"}),
+	entry(Entry{Sequences: []string{"e"}, DisplayKey: "e", Description: "edit task", FooterLabel: "Edit", FooterPriority: 1, Contexts: []Context{Detail}, Handler: "start_task_edit", Palette: PaletteWhen("selected_action_available?"), Form: "task_edit"}),
+	entry(Entry{Sequences: []string{"\t"}, DisplayKey: "tab", Description: "ask the agent — CRUD anything", FooterLabel: "Ask", FooterPriority: 1, Contexts: []Context{Detail}, Handler: "focus_prompt"}),
 	entry(Entry{Sequences: []string{"\x1b[Z"}, DisplayKey: "shift-tab", Description: "edit task from its last field", Contexts: []Context{Detail}, Handler: "start_task_edit_last"}),
 	entry(Entry{Sequences: []string{"\x0b"}, DisplayKey: "ctrl-k", Description: "grow task panel", Contexts: []Context{Detail}, Handler: "grow_task_panel", Palette: PaletteAlways}),
 	entry(Entry{Sequences: []string{"\x0c"}, DisplayKey: "ctrl-l", Description: "shrink task panel", Contexts: []Context{Detail}, Handler: "shrink_task_panel", Palette: PaletteAlways}),
-	entry(Entry{Sequences: []string{"/"}, DisplayKey: "/", Description: "filter tasks by text", Contexts: []Context{List}, Handler: "start_filter", Palette: PaletteAlways, Form: "filter"}),
-	entry(Entry{Sequences: []string{"@"}, DisplayKey: "@", Description: "filter tasks by @contexts", Contexts: []Context{List}, Handler: "open_context_palette", Palette: PaletteAlways, Form: "context_filter"}),
+	entry(Entry{Sequences: []string{"/"}, DisplayKey: "/", Description: "filter tasks by text", FooterLabel: "Filter", FooterPriority: 2, Contexts: []Context{List}, Handler: "start_filter", Palette: PaletteAlways, Form: "filter"}),
+	entry(Entry{Sequences: []string{"@"}, DisplayKey: "@", Description: "filter tasks by @contexts", FooterLabel: "Contexts", FooterPriority: 2, Contexts: []Context{List}, Handler: "open_context_palette", Palette: PaletteAlways, Form: "context_filter"}),
 	entry(Entry{Sequences: []string{"M"}, DisplayKey: "M", Description: "cycle agent/model", Contexts: []Context{List}, Handler: "toggle_model", Palette: PaletteAlways}),
 	entry(Entry{Sequences: []string{"A"}, DisplayKey: "A", Description: "open agent activity", Contexts: []Context{List}, Handler: "open_agent_activity", Availability: "agent_activity_available?", Palette: PaletteAlways}),
 	entry(Entry{Sequences: nil, DisplayKey: "palette", Description: "cancel queued agent requests", Contexts: []Context{List}, Handler: "cancel_queued_agent_requests", Availability: "pending_agent_requests_available?", Palette: PaletteAlways, Confirmation: "agent_queue"}),
@@ -148,23 +180,23 @@ var Registry = []Entry{
 	entry(Entry{Sequences: []string{"\x04"}, DisplayKey: "ctrl-d", Description: "scroll task details down", Contexts: []Context{List}, Handler: "panel_half_down", Availability: "panel_scroll_available?"}),
 	entry(Entry{Sequences: []string{"\x02"}, DisplayKey: "ctrl-b", Description: "scroll task details one page up", Contexts: []Context{List}, Handler: "panel_page_up", Availability: "panel_scroll_available?"}),
 	entry(Entry{Sequences: []string{"\x06"}, DisplayKey: "ctrl-f", Description: "scroll task details one page down", Contexts: []Context{List}, Handler: "panel_page_down", Availability: "panel_scroll_available?"}),
-	entry(Entry{Sequences: []string{"\t"}, DisplayKey: "tab", Description: "ask the agent — CRUD anything", Contexts: []Context{List}, Handler: "focus_prompt", Palette: PaletteAlways, Form: "agent_prompt"}),
-	entry(Entry{Sequences: []string{":"}, DisplayKey: ":", Description: "search available actions", Contexts: []Context{List, Detail}, Handler: "open_action_palette"}),
+	entry(Entry{Sequences: []string{"\t"}, DisplayKey: "tab", Description: "ask the agent — CRUD anything", FooterLabel: "Ask", FooterPriority: 1, Contexts: []Context{List}, Handler: "focus_prompt", Palette: PaletteAlways, Form: "agent_prompt"}),
+	entry(Entry{Sequences: []string{":"}, DisplayKey: ":", Description: "search available actions", FooterLabel: "Actions", FooterPriority: 1, Contexts: []Context{List, Detail}, Handler: "open_action_palette"}),
 	entry(Entry{Sequences: []string{"\x1b[5~"}, DisplayKey: "pgup", Description: "scroll agent response up", Contexts: []Context{List}, Handler: "resp_up"}),
 	entry(Entry{Sequences: []string{"\x1b[6~"}, DisplayKey: "pgdn", Description: "scroll agent response down", Contexts: []Context{List}, Handler: "resp_down"}),
 	entry(Entry{Sequences: []string{"\x1b"}, DisplayKey: "esc", Description: "dismiss response / close task details", Contexts: []Context{List}, Handler: "dismiss_or_cancel"}),
-	entry(Entry{Sequences: []string{"?"}, DisplayKey: "?", Description: "keyboard shortcuts", Contexts: []Context{List}, Handler: "open_help", Palette: PaletteAlways}),
+	entry(Entry{Sequences: []string{"?"}, DisplayKey: "?", Description: "keyboard shortcuts", FooterLabel: "Help", FooterPriority: 3, Contexts: []Context{List}, Handler: "open_help", Palette: PaletteAlways}),
 	entry(Entry{Sequences: nil, DisplayKey: "click", Description: "select task · click again for details · click tab to switch view", Contexts: []Context{List}, DocOnly: true}),
 	entry(Entry{Sequences: nil, DisplayKey: "wheel", Description: "scroll list / panel / modal / agent response under the pointer", Contexts: []Context{List}, DocOnly: true}),
-	entry(Entry{Sequences: []string{"q"}, DisplayKey: "q", Description: "quit (confirms unsaved draft)", Contexts: []Context{List}, Handler: "quit", Palette: PaletteAlways}),
+	entry(Entry{Sequences: []string{"q"}, DisplayKey: "q", Description: "quit (confirms unsaved draft)", FooterLabel: "Quit", FooterPriority: 3, Contexts: []Context{List}, Handler: "quit", Palette: PaletteAlways}),
 
-	entry(Entry{Sequences: []string{"\t"}, DisplayKey: "tab", Description: "save field and edit next", Contexts: []Context{TaskEdit}, Handler: "task_edit_input"}),
-	entry(Entry{Sequences: []string{"\x1b[Z"}, DisplayKey: "shift-tab", Description: "save field and edit previous", Contexts: []Context{TaskEdit}, Handler: "task_edit_input"}),
-	entry(Entry{Sequences: []string{"\x13"}, DisplayKey: "ctrl-s", Description: "save focused task field", Contexts: []Context{TaskEdit}, Handler: "task_edit_input"}),
-	entry(Entry{Sequences: []string{"\x0f"}, DisplayKey: "ctrl-o", Description: "finish editing task", Contexts: []Context{TaskEdit}, Handler: "task_edit_input"}),
+	entry(Entry{Sequences: []string{"\t"}, DisplayKey: "tab", Description: "save field and edit next", CommandID: "task-edit-next", FooterLabel: "Next Field", FooterPriority: 2, Contexts: []Context{TaskEdit}, Handler: "task_edit_input"}),
+	entry(Entry{Sequences: []string{"\x1b[Z"}, DisplayKey: "shift-tab", Description: "save field and edit previous", CommandID: "task-edit-previous", FooterLabel: "Previous Field", FooterPriority: 3, Contexts: []Context{TaskEdit}, Handler: "task_edit_input"}),
+	entry(Entry{Sequences: []string{"\x13"}, DisplayKey: "ctrl-s", Description: "save focused task field", CommandID: "task-edit-save", FooterLabel: "Save", FooterPriority: 1, Contexts: []Context{TaskEdit}, Handler: "task_edit_input"}),
+	entry(Entry{Sequences: []string{"\x0f"}, DisplayKey: "ctrl-o", Description: "finish editing task", CommandID: "task-edit-finish", FooterLabel: "Finish", FooterPriority: 1, Contexts: []Context{TaskEdit}, Handler: "task_edit_input"}),
 	entry(Entry{Sequences: []string{"\x0b"}, DisplayKey: "ctrl-k", Description: "grow task panel without saving", Contexts: []Context{TaskEdit}, Handler: "grow_task_panel"}),
 	entry(Entry{Sequences: []string{"\x0c"}, DisplayKey: "ctrl-l", Description: "shrink task panel without saving", Contexts: []Context{TaskEdit}, Handler: "shrink_task_panel"}),
-	entry(Entry{Sequences: []string{"\x1b"}, DisplayKey: "esc", Description: "close picker / confirm field revert / finish editing", Contexts: []Context{TaskEdit}, Handler: "task_edit_input"}),
+	entry(Entry{Sequences: []string{"\x1b"}, DisplayKey: "esc", Description: "close picker / confirm field revert / finish editing", CommandID: "task-edit-cancel", FooterLabel: "Cancel", FooterPriority: 2, Contexts: []Context{TaskEdit}, Handler: "task_edit_input"}),
 
 	// Modal navigation is kept as an explicit context for blocking overlays.
 	// Detail actions are palette metadata while the panel stays in list mode.
@@ -174,10 +206,10 @@ var Registry = []Entry{
 	entry(Entry{Sequences: []string{"\x04"}, DisplayKey: "ctrl-d", Description: "scroll half page down", Contexts: []Context{Modal}, Handler: "modal_half_down"}),
 	entry(Entry{Sequences: []string{"\x02", "\x1b[5~"}, DisplayKey: "ctrl-b / pgup", Description: "scroll page up", Contexts: []Context{Modal}, Handler: "modal_page_up"}),
 	entry(Entry{Sequences: []string{"\x06", "\x1b[6~"}, DisplayKey: "ctrl-f / pgdn", Description: "scroll page down", Contexts: []Context{Modal}, Handler: "modal_page_down"}),
-	entry(Entry{Sequences: []string{"/"}, DisplayKey: "/", Description: "filter lines (shortcuts modal)", Contexts: []Context{Modal}, Handler: "modal_start_filter", Availability: "modal_filter_available?", Form: "modal_filter"}),
-	entry(Entry{Sequences: []string{"\x1b", "q", "\r", "\n", "?"}, DisplayKey: "esc / q", Description: "close modal", Contexts: []Context{Modal}, Handler: "close_modal"}),
+	entry(Entry{Sequences: []string{"/"}, DisplayKey: "/", Description: "filter lines (shortcuts modal)", FooterLabel: "Filter", FooterPriority: 2, Contexts: []Context{Modal}, Handler: "modal_start_filter", Availability: "modal_filter_available?", Form: "modal_filter"}),
+	entry(Entry{Sequences: []string{"\x1b", "q", "\r", "\n", "?"}, DisplayKey: "esc / q", Description: "close modal", FooterLabel: "Close", FooterPriority: 1, Contexts: []Context{Modal}, Handler: "close_modal"}),
 
-	entry(Entry{Sequences: []string{"\x03"}, DisplayKey: "ctrl-c", Description: "quit (confirms unsaved draft)", Contexts: []Context{Global}, Handler: "quit"}),
+	entry(Entry{Sequences: []string{"\x03"}, DisplayKey: "ctrl-c", Description: "quit (confirms unsaved draft)", FooterLabel: "Quit", FooterPriority: 4, Contexts: []Context{Global}, Handler: "quit"}),
 }
 
 // ErrUnknownContext is returned for a lookup in a context that does not exist.
@@ -317,6 +349,12 @@ func validateEntry(e Entry, opts ValidateOptions) error {
 	}
 	if e.DisplayKey == "" {
 		return errors.New("shortcut display key must be a non-empty string")
+	}
+	if !e.DocOnly && e.CommandID == "" {
+		return errors.New("shortcut command id must be a non-empty string")
+	}
+	if e.FooterLabel == "" || e.FooterPriority <= 0 {
+		return errors.New("shortcut footer metadata must include a label and positive priority")
 	}
 	if e.Description == "" {
 		return errors.New("shortcut description must be a non-empty string")

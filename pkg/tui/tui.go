@@ -6,6 +6,7 @@ package tui
 import (
 	"fmt"
 	"regexp"
+	"strings"
 	"sync"
 
 	tea "charm.land/bubbletea/v2"
@@ -14,6 +15,7 @@ import (
 	"github.com/marcus/tasks/internal/determinism"
 	internal "github.com/marcus/tasks/internal/tui"
 	"github.com/marcus/tasks/internal/tui/term"
+	"github.com/marcus/tasks/internal/tui/term/shortcuts"
 )
 
 // View is a stable Tasks view key used for initial presentation only.
@@ -32,20 +34,89 @@ const (
 type FocusContext string
 
 const (
-	FocusList                FocusContext = "list"
-	FocusDetail              FocusContext = "detail"
-	FocusTaskEdit            FocusContext = "task_edit"
-	FocusModal               FocusContext = "modal"
-	FocusModalFilter         FocusContext = "modal_filter"
-	FocusForm                FocusContext = "form"
-	FocusPicker              FocusContext = "picker"
-	FocusContextPicker       FocusContext = "context_picker"
-	FocusFilter              FocusContext = "filter"
-	FocusPrompt              FocusContext = "prompt"
-	FocusResponse            FocusContext = "response"
-	FocusAgentActivity       FocusContext = "agent_activity"
-	FocusAgentActivityFilter FocusContext = "agent_activity_filter"
+	FocusList                FocusContext = "tasks-list"
+	FocusDetail              FocusContext = "tasks-detail"
+	FocusTaskEdit            FocusContext = "tasks-task-edit"
+	FocusModal               FocusContext = "tasks-modal"
+	FocusModalFilter         FocusContext = "tasks-modal-filter"
+	FocusForm                FocusContext = "tasks-form"
+	FocusPicker              FocusContext = "tasks-picker"
+	FocusContextPicker       FocusContext = "tasks-context-picker"
+	FocusFilter              FocusContext = "tasks-filter"
+	FocusPrompt              FocusContext = "tasks-prompt"
+	FocusResponse            FocusContext = "tasks-response"
+	FocusAgentActivity       FocusContext = "tasks-agent-activity"
+	FocusAgentActivityFilter FocusContext = "tasks-agent-activity-filter"
 )
+
+// Binding is a default Bubble Tea key name mapped to a Tasks command.
+type Binding struct {
+	Key       string
+	CommandID string
+	Context   FocusContext
+}
+
+// Command is Tasks-owned command metadata for host palettes and footers.
+type Command struct {
+	ID              string
+	FooterLabel     string
+	Description     string
+	Context         FocusContext
+	FooterPriority  int
+	DefaultBindings []string
+}
+
+// ContextMetadata describes a host key-routing context. Contexts backed by an
+// input widget may contain only the global shortcut bindings.
+type ContextMetadata struct {
+	Name              FocusContext
+	ConsumesTextInput bool
+}
+
+// ExportBindings projects the single Tasks shortcut registry for host keymaps.
+func ExportBindings() []Binding {
+	exported := shortcuts.ExportBindings()
+	out := make([]Binding, 0, len(exported))
+	for _, binding := range exported {
+		out = append(out, Binding{
+			Key: binding.Key, CommandID: binding.CommandID,
+			Context: hostFocusContext(binding.Context),
+		})
+	}
+	return out
+}
+
+// ExportCommands projects the same registry for host palettes and footers.
+func ExportCommands() []Command {
+	exported := shortcuts.ExportCommands()
+	out := make([]Command, 0, len(exported))
+	for _, command := range exported {
+		out = append(out, Command{
+			ID: command.ID, FooterLabel: command.FooterLabel,
+			Description: command.Description, Context: hostFocusContext(command.Context),
+			FooterPriority:  command.FooterPriority,
+			DefaultBindings: append([]string{}, command.DefaultBindings...),
+		})
+	}
+	return out
+}
+
+// ExportContexts lists every stable Tasks host context, including input-only
+// layers whose keystrokes are interpreted by their owning editor widget.
+func ExportContexts() []ContextMetadata {
+	exported := shortcuts.ExportContexts()
+	out := make([]ContextMetadata, 0, len(exported))
+	for _, context := range exported {
+		out = append(out, ContextMetadata{
+			Name: hostFocusContext(context.Name), ConsumesTextInput: context.ConsumesTextInput,
+		})
+	}
+	return out
+}
+
+func hostFocusContext(internalName string) FocusContext {
+	return FocusContext("tasks-" + strings.ReplaceAll(internalName, "_", "-"))
+}
 
 // ThemeOptions are Tasks semantic theme values, independent of any host UI.
 type ThemeOptions struct {
@@ -183,7 +254,7 @@ func (m *Model) Close() error {
 }
 
 // FocusContext is the stable Tasks interaction context for host key routing.
-func (m *Model) FocusContext() FocusContext { return FocusContext(m.inner.FocusContext()) }
+func (m *Model) FocusContext() FocusContext { return hostFocusContext(m.inner.FocusContext()) }
 
 // ConsumesTextInput reports whether printable keys belong to Tasks input.
 func (m *Model) ConsumesTextInput() bool { return m.inner.ConsumesTextInput() }

@@ -49,6 +49,12 @@ func TestEveryEntryDeclaresContextHandlerAvailabilityAndMetadata(t *testing.T) {
 		if e.DisplayKey == "" || e.Description == "" || len(e.Contexts) == 0 {
 			t.Fatalf("entry %#v is missing display metadata", e)
 		}
+		if e.FooterLabel == "" || e.FooterPriority <= 0 {
+			t.Fatalf("entry %#v is missing footer metadata", e)
+		}
+		if !e.DocOnly && e.CommandID == "" {
+			t.Fatalf("entry %#v is missing a command id", e)
+		}
 		if !e.DocOnly && e.Availability == "" {
 			t.Fatalf("entry %q declares no availability", e.Description)
 		}

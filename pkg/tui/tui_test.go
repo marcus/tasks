@@ -112,3 +112,28 @@ func TestEmbeddedRejectsUnsafeNamespaceAndUnconfiguredStore(t *testing.T) {
 		t.Fatalf("unconfigured error=%v", err)
 	}
 }
+
+func TestPublicMetadataUsesTasksContextsAndCompleteCommands(t *testing.T) {
+	contexts := map[FocusContext]bool{}
+	for _, context := range ExportContexts() {
+		contexts[context.Name] = true
+	}
+	for _, wanted := range []FocusContext{
+		FocusList, FocusDetail, FocusTaskEdit, FocusModal, FocusModalFilter,
+		FocusForm, FocusPicker, FocusContextPicker, FocusPrompt, FocusResponse,
+		FocusAgentActivity, FocusAgentActivityFilter,
+	} {
+		if !contexts[wanted] {
+			t.Errorf("missing context %q", wanted)
+		}
+	}
+	for _, command := range ExportCommands() {
+		if !strings.HasPrefix(string(command.Context), "tasks-") || command.ID == "" ||
+			command.FooterLabel == "" || command.Description == "" || command.FooterPriority <= 0 {
+			t.Fatalf("invalid public command: %#v", command)
+		}
+	}
+	if len(ExportBindings()) == 0 {
+		t.Fatal("no public bindings")
+	}
+}
