@@ -1136,9 +1136,12 @@ func (m *Model) FocusContext() string {
 		return "task_edit"
 	default:
 		if m.respOpen {
+			if m.panel != nil && m.panel.Kind == PanelDetail {
+				return "response_detail"
+			}
 			return "response"
 		}
-		if m.panel != nil {
+		if m.panel != nil && m.panel.Kind == PanelDetail {
 			return "detail"
 		}
 		return "list"

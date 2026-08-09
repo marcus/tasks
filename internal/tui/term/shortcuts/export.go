@@ -50,6 +50,7 @@ var hostContextProjections = []contextProjection{
 	{name: "filter", textInput: true, sources: []Context{Filter, Global}},
 	{name: "prompt", textInput: true, sources: []Context{Prompt, Global}},
 	{name: "response", sources: []Context{List, Global}},
+	{name: "response_detail", sources: []Context{Detail, List, Global}},
 	{name: "agent_activity", sources: []Context{Modal, Global}},
 	{name: "agent_activity_filter", textInput: true, sources: []Context{ModalFilter, Global}},
 }

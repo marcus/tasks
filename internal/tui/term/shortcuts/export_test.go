@@ -6,7 +6,7 @@ func TestExportCoversEveryStableHostContext(t *testing.T) {
 	want := map[string]bool{
 		"list": true, "detail": true, "task_edit": true, "modal": true,
 		"modal_filter": true, "form": true, "picker": true, "context_picker": true,
-		"filter": true, "prompt": true, "response": true,
+		"filter": true, "prompt": true, "response": true, "response_detail": true,
 		"agent_activity": true, "agent_activity_filter": true,
 	}
 	for _, context := range ExportContexts() {
@@ -64,6 +64,7 @@ func TestExportedCommandsCarryCompleteRegistryMetadata(t *testing.T) {
 	assertCommand("picker", "picker-next", "Next", 4, "down")
 	assertCommand("context_picker", "context-picker-toggle", "Toggle", 2, "space")
 	assertCommand("response", "resp-up", "Scroll", 4, "pgup")
+	assertCommand("response_detail", "start-task-edit", "Edit", 1, "e")
 	assertCommand("agent_activity", "modal-down", "Scroll", 4, "down")
 	assertCommand("agent_activity_filter", "modal-filter-apply", "Apply", 1, "enter")
 }

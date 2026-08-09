@@ -38,10 +38,10 @@ func (m *Model) handleKey(message tea.KeyPressMsg) tea.Cmd {
 		editor = m.suspendedTaskEditor
 	}
 	if editor != nil && editor.PendingQuit() {
-		return m.taskDraftQuitKey(sequence)
+		return m.modalConfirmationKey(sequence)
 	}
 	if m.agentQuitPending {
-		return m.agentQuitKey(sequence)
+		return m.modalConfirmationKey(sequence)
 	}
 	// Global bindings (ctrl-c) reach through every mode, so a wedged overlay
 	// can always be escaped.
@@ -466,23 +466,8 @@ func (m *Model) modalKey(sequence string) {
 		return
 	}
 	switch m.modal.Kind() {
-	case ModalProjectCompleteConfirm:
-		m.projectCompleteConfirmKey(sequence)
-		return
-	case ModalProjectArchiveConfirm:
-		m.projectArchiveConfirmKey(sequence)
-		return
-	case ModalArchiveConfirm:
-		m.archiveConfirmKey(sequence)
-		return
 	case ModalArchiveBlocked:
 		m.archiveBlockedKey(sequence)
-		return
-	case ModalDeleteConfirm, ModalDeleteCascadeConfirm:
-		m.deleteConfirmKey(sequence)
-		return
-	case ModalAgentQueueCancel:
-		m.agentQueueCancelKey(sequence)
 		return
 	case ModalUnsupportedSchema:
 		// The notice has no action: nothing this build can do makes the store
@@ -492,12 +477,78 @@ func (m *Model) modalKey(sequence string) {
 		}
 		return
 	}
+	confirmationKey := sequence == "y" || sequence == "Y" || sequence == "n" || sequence == "N"
+	if (!confirmationKey || m.modalConfirmationAvailable()) && m.dispatchAction(sequence, shortcuts.Modal) {
+		return
+	}
 	if m.modalKeyStartsTyping(sequence) {
 		m.ModalStartFilter()
 		m.modalFilterKey(sequence)
 		return
 	}
-	m.dispatchAction(sequence, shortcuts.Modal)
+}
+
+func (m *Model) modalConfirmationAvailable() bool {
+	if m.modal == nil {
+		return false
+	}
+	switch m.modal.Kind() {
+	case ModalProjectCompleteConfirm, ModalProjectArchiveConfirm,
+		ModalArchiveConfirm, ModalDeleteConfirm, ModalDeleteCascadeConfirm,
+		ModalAgentQueueCancel, ModalTaskDraftQuitConfirm, ModalAgentQuitConfirm:
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *Model) modalConfirmationAcceptsEnter() bool {
+	if m.modal == nil {
+		return false
+	}
+	switch m.modal.Kind() {
+	case ModalProjectCompleteConfirm, ModalProjectArchiveConfirm,
+		ModalAgentQueueCancel, ModalTaskDraftQuitConfirm, ModalAgentQuitConfirm:
+		return true
+	default:
+		return false
+	}
+}
+
+// modalConfirmationKey is the one semantic path used by terminal keys and
+// host command invocation. Individual modal kinds retain their established
+// confirmation behavior, including which of them accept Return.
+func (m *Model) modalConfirmationKey(sequence string) tea.Cmd {
+	editor := m.taskEditor
+	if editor == nil {
+		editor = m.suspendedTaskEditor
+	}
+	if editor != nil && editor.PendingQuit() {
+		return m.taskDraftQuitKey(sequence)
+	}
+	if m.agentQuitPending {
+		return m.agentQuitKey(sequence)
+	}
+	if m.modal == nil {
+		return nil
+	}
+	switch m.modal.Kind() {
+	case ModalProjectCompleteConfirm:
+		m.projectCompleteConfirmKey(sequence)
+	case ModalProjectArchiveConfirm:
+		m.projectArchiveConfirmKey(sequence)
+	case ModalArchiveConfirm:
+		m.archiveConfirmKey(sequence)
+	case ModalDeleteConfirm, ModalDeleteCascadeConfirm:
+		m.deleteConfirmKey(sequence)
+	case ModalAgentQueueCancel:
+		m.agentQueueCancelKey(sequence)
+	case ModalTaskDraftQuitConfirm:
+		return m.taskDraftQuitKey(sequence)
+	case ModalAgentQuitConfirm:
+		return m.agentQuitKey(sequence)
+	}
+	return nil
 }
 
 // modalKeyStartsTyping: typing a character with no modal binding of its own

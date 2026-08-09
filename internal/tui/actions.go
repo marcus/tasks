@@ -91,6 +91,7 @@ func (m *Model) handlers() map[string]func(key string) {
 		"modal_page_up":        func(string) { m.modalScroll(-1, "page") },
 		"modal_page_down":      func(string) { m.modalScroll(1, "page") },
 		"modal_start_filter":   func(string) { m.ModalStartFilter() },
+		"modal_confirmation":   func(key string) { _ = m.modalConfirmationKey(key) },
 		"close_modal":          func(string) { m.CloseModal() },
 		"filter_input":         m.filterKey,
 		"modal_filter_input":   m.modalFilterKey,
@@ -127,6 +128,12 @@ func (m *Model) availability(name string) bool {
 		return m.CurrentProject() != nil
 	case "modal_filter_available?":
 		return m.modal != nil && m.modal.Filterable()
+	case "modal_confirmation_available?":
+		return m.modalConfirmationAvailable()
+	case "modal_confirmation_accepts_enter?":
+		return m.modalConfirmationAcceptsEnter()
+	case "modal_close_available?":
+		return m.modal != nil && !m.modalConfirmationAvailable()
 	case "panel_scroll_available?":
 		return m.panel != nil && m.panel.Kind == PanelDetail
 	case "proposal_action_available?":

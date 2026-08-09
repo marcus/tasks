@@ -90,8 +90,8 @@ func TestModalNavigationResolvesIndependently(t *testing.T) {
 		"\x1b[6~": "modal_page_down",
 		"\x02":    "modal_page_up",
 		"/":       "modal_start_filter",
-		"\x1b":    "close_modal",
-		"q":       "close_modal",
+		"\x1b":    "modal_confirmation",
+		"q":       "modal_confirmation",
 	}
 	for sequence, want := range cases {
 		if got := handlerFor(t, sequence, Modal); got != want {

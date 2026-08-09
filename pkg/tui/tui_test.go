@@ -121,6 +121,7 @@ func TestPublicMetadataUsesTasksContextsAndCompleteCommands(t *testing.T) {
 	for _, wanted := range []FocusContext{
 		FocusList, FocusDetail, FocusTaskEdit, FocusModal, FocusModalFilter,
 		FocusForm, FocusPicker, FocusContextPicker, FocusPrompt, FocusResponse,
+		FocusResponseDetail,
 		FocusAgentActivity, FocusAgentActivityFilter,
 	} {
 		if !contexts[wanted] {

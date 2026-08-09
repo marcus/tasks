@@ -22,6 +22,22 @@ func main() {
 		len(commands[0].DefaultBindings) == 0 {
 		fail(fmt.Errorf("incomplete first command: %#v", commands[0]))
 	}
+	contextSeen := map[taskstui.FocusContext]bool{}
+	for _, context := range contexts {
+		contextSeen[context.Name] = true
+	}
+	if !contextSeen[taskstui.FocusResponse] || !contextSeen[taskstui.FocusResponseDetail] {
+		fail(fmt.Errorf("response contexts missing from metadata: %#v", contextSeen))
+	}
+	commandSeen := map[string]bool{}
+	for _, command := range commands {
+		if command.Context == taskstui.FocusModal {
+			commandSeen[command.ID] = true
+		}
+	}
+	if !commandSeen["modal-confirm"] || !commandSeen["modal-cancel"] || !commandSeen["close-modal"] {
+		fail(fmt.Errorf("semantic modal commands missing: %#v", commandSeen))
+	}
 	model, err := taskstui.NewEmbedded(taskstui.EmbeddedOptions{
 		SessionNamespace: "external-proof",
 		InitialView:      taskstui.ViewNext,

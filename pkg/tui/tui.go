@@ -45,6 +45,7 @@ const (
 	FocusFilter              FocusContext = "tasks-filter"
 	FocusPrompt              FocusContext = "tasks-prompt"
 	FocusResponse            FocusContext = "tasks-response"
+	FocusResponseDetail      FocusContext = "tasks-response-detail"
 	FocusAgentActivity       FocusContext = "tasks-agent-activity"
 	FocusAgentActivityFilter FocusContext = "tasks-agent-activity-filter"
 )
