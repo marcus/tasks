@@ -148,6 +148,19 @@ func (m *Model) maybeQuit() tea.Cmd {
 	return nil
 }
 
+func (m *Model) finishQuit() {
+	m.Save()
+	if !m.embedded {
+		m.quitting = true
+		return
+	}
+	if m.suppressQuit {
+		m.Flash("quit is managed by the host")
+		return
+	}
+	m.quitRequested = true
+}
+
 // KeySequence turns a decoded Bubble Tea v2 key press into the raw byte
 // sequence the shortcut registry and the text editor are both keyed by.
 //
@@ -741,9 +754,8 @@ func (m *Model) taskDraftQuitKey(sequence string) tea.Cmd {
 		if m.queueHasWork() {
 			m.queue.Shutdown()
 		}
-		m.Save()
-		m.quitting = true
-		return tea.Quit
+		m.finishQuit()
+		return m.maybeQuit()
 	case EditorQuitCancelled:
 		m.clearQuitConfirmation(true)
 		m.Flash(outcome.Message)
@@ -762,9 +774,8 @@ func (m *Model) agentQuitKey(sequence string) tea.Cmd {
 		if m.queue != nil {
 			m.queue.Shutdown()
 		}
-		m.Save()
-		m.quitting = true
-		return tea.Quit
+		m.finishQuit()
+		return m.maybeQuit()
 	case "n", "N", "\x1b":
 		m.clearQuitConfirmation(true)
 		m.Flash("quit cancelled — agent queue kept")

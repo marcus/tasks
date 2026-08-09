@@ -75,6 +75,14 @@ type Options struct {
 	// loud rather than reaching for a real provider.
 	Entries []AgentEntry
 	Queue   *agentQueue
+	// Embedded keeps nested quit commands inside the model. SuppressQuit turns
+	// the quit key into a refusal; otherwise QuitRequested surfaces it to the
+	// host. SuppressFooter lets the host own the shared footer row.
+	Embedded       bool
+	SuppressFooter bool
+	SuppressQuit   bool
+	// SaveSession overrides standalone persistence for a host namespace.
+	SaveSession func(SessionState) error
 }
 
 // Model is the Bubble Tea root — the port of Tui::App's state, minus its event
@@ -181,7 +189,12 @@ type Model struct {
 	// SAY so rather than paint an empty list that looks like an empty store.
 	readErr error
 
-	quitting bool
+	quitting       bool
+	embedded       bool
+	suppressFooter bool
+	suppressQuit   bool
+	quitRequested  bool
+	saveSession    func(SessionState) error
 }
 
 // New builds the model from saved session state and one application facade.
@@ -212,6 +225,10 @@ func New(options Options) *Model {
 		copyToClipboard: options.CopyToClipboard,
 		entries:         options.Entries,
 		queue:           options.Queue,
+		embedded:        options.Embedded,
+		suppressFooter:  options.SuppressFooter,
+		suppressQuit:    options.SuppressQuit,
+		saveSession:     options.SaveSession,
 	}
 	return model
 }
@@ -319,6 +336,12 @@ func (m *Model) View() tea.View {
 	}
 	return v
 }
+
+// QuitRequested reports an embedded quit request without terminating its host.
+func (m *Model) QuitRequested() bool { return m.quitRequested }
+
+// ClearQuitRequest acknowledges an embedded quit request.
+func (m *Model) ClearQuitRequest() { m.quitRequested = false }
 
 // -- the read model ---------------------------------------------------------
 
@@ -1068,4 +1091,56 @@ func (m *Model) SessionState() SessionState {
 
 // Save persists the session. Best effort — a read-only state directory must not
 // keep the TUI from exiting.
-func (m *Model) Save() { _ = SaveSession(m.SessionState(), m.env) }
+func (m *Model) Save() {
+	if m.saveSession != nil {
+		_ = m.saveSession(m.SessionState())
+		return
+	}
+	_ = SaveSession(m.SessionState(), m.env)
+}
+
+// CurrentView is the stable active view key.
+func (m *Model) CurrentView() string { return m.view }
+
+// ConsumesTextInput reports whether printable keys belong to an input buffer.
+func (m *Model) ConsumesTextInput() bool {
+	return m.mode == ModePrompt || m.mode == ModeFilter || m.mode == ModeModalFilter ||
+		m.mode == ModeForm || m.mode == ModePalette || m.mode == ModeContextPalette ||
+		m.mode == ModeTaskEdit
+}
+
+// FocusContext is a stable host-facing name for the active interaction layer.
+func (m *Model) FocusContext() string {
+	switch m.mode {
+	case ModePrompt:
+		return "prompt"
+	case ModeFilter:
+		return "filter"
+	case ModeModalFilter:
+		if m.modal != nil && m.modal.Kind() == ModalAgentActivity {
+			return "agent_activity_filter"
+		}
+		return "modal_filter"
+	case ModeModal:
+		if m.modal != nil && m.modal.Kind() == ModalAgentActivity {
+			return "agent_activity"
+		}
+		return "modal"
+	case ModeForm:
+		return "form"
+	case ModePalette:
+		return "picker"
+	case ModeContextPalette:
+		return "context_picker"
+	case ModeTaskEdit:
+		return "task_edit"
+	default:
+		if m.respOpen {
+			return "response"
+		}
+		if m.panel != nil {
+			return "detail"
+		}
+		return "list"
+	}
+}

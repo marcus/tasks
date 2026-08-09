@@ -44,10 +44,26 @@ func SessionPath(env determinism.Env) string {
 	return filepath.Join(config.XDGBase(env, "XDG_STATE_HOME", ".local", "state"), "tasks", "tui.json")
 }
 
+// EmbeddedSessionPath keeps a host's presentation state separate from the
+// standalone TUI. The public adapter validates namespace before calling it.
+func EmbeddedSessionPath(env determinism.Env, namespace string) string {
+	return filepath.Join(config.XDGBase(env, "XDG_STATE_HOME", ".local", "state"),
+		"tasks", "hosts", namespace, "tui.json")
+}
+
 // LoadSession reads the saved state, or the zero value when there is none to
 // be had.
 func LoadSession(env determinism.Env) SessionState {
-	raw, err := os.ReadFile(SessionPath(env))
+	return loadSessionPath(SessionPath(env))
+}
+
+// LoadEmbeddedSession reads a host-specific embedded session.
+func LoadEmbeddedSession(env determinism.Env, namespace string) SessionState {
+	return loadSessionPath(EmbeddedSessionPath(env, namespace))
+}
+
+func loadSessionPath(path string) SessionState {
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return SessionState{}
 	}
@@ -64,7 +80,15 @@ func LoadSession(env determinism.Env) SessionState {
 // SaveSession overwrites the saved state. Best-effort: a read-only state
 // directory must not crash TUI exit, so the error is reported and ignorable.
 func SaveSession(state SessionState, env determinism.Env) error {
-	path := SessionPath(env)
+	return saveSessionPath(state, SessionPath(env))
+}
+
+// SaveEmbeddedSession writes a host-specific embedded session.
+func SaveEmbeddedSession(state SessionState, env determinism.Env, namespace string) error {
+	return saveSessionPath(state, EmbeddedSessionPath(env, namespace))
+}
+
+func saveSessionPath(state SessionState, path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}

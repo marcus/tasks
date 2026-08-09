@@ -1066,6 +1066,10 @@ func outcomeMessage(outcome application.Outcome, fallback string) string {
 }
 
 func (m *Model) requestQuit() {
+	if m.embedded && m.suppressQuit {
+		m.Flash("quit is managed by the host")
+		return
+	}
 	editor := m.taskEditor
 	if editor == nil {
 		editor = m.suspendedTaskEditor
@@ -1102,8 +1106,7 @@ func (m *Model) requestQuit() {
 		m.Flash("agent work pending — y/return quits · n/esc keeps running")
 		return
 	}
-	m.Save()
-	m.quitting = true
+	m.finishQuit()
 }
 
 func (m *Model) agentWorkSummary() string {
