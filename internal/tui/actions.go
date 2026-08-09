@@ -122,6 +122,18 @@ func (m *Model) availability(name string) bool {
 	switch name {
 	case shortcuts.DefaultAvailability, "":
 		return true
+	case "quit_available?":
+		editor := m.taskEditor
+		if editor == nil {
+			editor = m.suspendedTaskEditor
+		}
+		return (editor == nil || !editor.PendingQuit()) && !m.agentQuitPending
+	case "quit_confirmation_available?":
+		editor := m.taskEditor
+		if editor == nil {
+			editor = m.suspendedTaskEditor
+		}
+		return (editor != nil && editor.PendingQuit()) || m.agentQuitPending
 	case "selected_action_available?":
 		return m.CurrentItem() != nil
 	case "project_selected?":

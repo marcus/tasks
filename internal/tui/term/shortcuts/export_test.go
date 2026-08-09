@@ -87,6 +87,18 @@ func TestModalBindingsKeepDistinctSemanticCommandIDs(t *testing.T) {
 	}
 }
 
+func TestModalProjectionIncludesBothConditionalCtrlCCommands(t *testing.T) {
+	want := map[string]bool{"quit": true, "quit-confirmation-reminder": true}
+	for _, binding := range ExportBindings() {
+		if binding.Context == "modal" && binding.Key == "ctrl+c" {
+			delete(want, binding.CommandID)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing projected ctrl-c commands: %v", want)
+	}
+}
+
 func TestExportReadsRegistryRatherThanADuplicateKeyTable(t *testing.T) {
 	original := Registry
 	Registry = append(append([]Entry{}, Registry...), entry(Entry{

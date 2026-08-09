@@ -99,47 +99,82 @@ func TestExportedModalBindingsMatchDirectDispatchAcrossModalFamilies(t *testing.
 		{name: "agent queue cancel", open: agentQueue},
 	}
 
-	var entries []shortcuts.Entry
-	for _, entry := range shortcuts.Registry {
-		for _, context := range entry.Contexts {
-			if context == shortcuts.Modal && !entry.DocOnly {
-				entries = append(entries, entry)
-				break
-			}
-		}
-	}
+	exportedBindings := shortcuts.ExportBindings()
+	exportedCommands := shortcuts.ExportCommands()
 
 	for _, modal := range scenarios {
-		for _, entry := range entries {
-			for _, sequence := range entry.Sequences {
-				name := fmt.Sprintf("%s/%s/%q", modal.name, entry.CommandID, sequence)
-				t.Run(name, func(t *testing.T) {
-					direct, invoked := modal.open(t), modal.open(t)
-					available, err := invoked.model.CommandAvailable(entry.CommandID)
-					wantAvailable := invoked.model.availability(entry.Availability)
-					if available != wantAvailable || err != nil {
-						t.Fatalf("availability=%v err=%v want=%v predicate=%q", available, err, wantAvailable, entry.Availability)
-					}
-					if !available {
-						if _, err := invoked.model.InvokeCommand(entry.CommandID); err == nil {
-							t.Fatal("unavailable binding invoked")
-						}
-						return
-					}
-					matched, ok := shortcuts.Match(sequence, shortcuts.Modal, invoked.model.availability)
-					if !ok || !invoked.model.availability(matched.Availability) || matched.CommandID != entry.CommandID {
-						t.Fatalf("binding resolved to %q availability=%q", matched.CommandID, matched.Availability)
-					}
-					direct.pressKeys(sequence)
-					if _, err := invoked.model.InvokeCommand(entry.CommandID); err != nil {
-						t.Fatal(err)
-					}
-					if got, want := modalParityState(invoked), modalParityState(direct); got != want {
-						t.Fatalf("Invoke differs from Update\ninvoke: %s\ndirect: %s", got, want)
-					}
-				})
+		probe := modal.open(t)
+		focus := probe.model.FocusContext()
+		commands := map[string]bool{}
+		for _, command := range exportedCommands {
+			if command.Context == focus {
+				commands[command.ID] = true
 			}
 		}
+		for _, binding := range exportedBindings {
+			if binding.Context != focus {
+				continue
+			}
+			name := fmt.Sprintf("%s/%s/%s", modal.name, binding.CommandID, binding.Key)
+			t.Run(name, func(t *testing.T) {
+				if !commands[binding.CommandID] {
+					t.Fatal("binding has no exported command metadata")
+				}
+				sequence := exportedKeySequence(t, binding.Key)
+				direct, invoked := modal.open(t), modal.open(t)
+				available, err := invoked.model.CommandAvailable(binding.CommandID)
+				if err != nil {
+					t.Fatalf("availability error: %v", err)
+				}
+				if !available {
+					if _, err := invoked.model.InvokeCommand(binding.CommandID); err == nil {
+						t.Fatal("unavailable projected binding invoked")
+					}
+					return
+				}
+				direct.pressKeys(sequence)
+				if _, err := invoked.model.InvokeCommand(binding.CommandID); err != nil {
+					t.Fatal(err)
+				}
+				if got, want := modalParityState(invoked), modalParityState(direct); got != want {
+					t.Fatalf("Invoke differs from Update\ninvoke: %s\ndirect: %s", got, want)
+				}
+			})
+		}
+	}
+}
+
+func exportedKeySequence(t *testing.T, key string) string {
+	t.Helper()
+	switch key {
+	case "enter":
+		return "\r"
+	case "esc":
+		return "\x1b"
+	case "up":
+		return "\x1b[A"
+	case "down":
+		return "\x1b[B"
+	case "pgup":
+		return "\x1b[5~"
+	case "pgdown":
+		return "\x1b[6~"
+	case "ctrl+b":
+		return "\x02"
+	case "ctrl+c":
+		return "\x03"
+	case "ctrl+d":
+		return "\x04"
+	case "ctrl+f":
+		return "\x06"
+	case "ctrl+u":
+		return "\x15"
+	default:
+		if len([]rune(key)) == 1 {
+			return key
+		}
+		t.Fatalf("unhandled exported modal key %q", key)
+		return ""
 	}
 }
 
@@ -158,9 +193,82 @@ func modalParityState(h *modelHarness) string {
 	if h.model.TaskEditor() != nil {
 		editorPending = h.model.TaskEditor().PendingQuit()
 	}
-	return fmt.Sprintf("mode=%s kind=%s scroll=%d flash=%q quitting=%v work=%v pending=%d editor-pending=%v content=%s",
+	returnKind := ModalKind("")
+	if h.model.quitReturnModal != nil {
+		returnKind = h.model.quitReturnModal.Kind()
+	}
+	return fmt.Sprintf("mode=%s kind=%s scroll=%d flash=%q quitting=%v work=%v pending=%d editor-pending=%v return-mode=%s return-kind=%s content=%s",
 		h.model.Mode(), kind, scroll, h.model.FlashMessage(), h.model.quitting,
-		work, pending, editorPending, strings.TrimSpace(h.content()))
+		work, pending, editorPending, h.model.quitReturnMode, returnKind,
+		strings.TrimSpace(h.content()))
+}
+
+func TestInheritedQuitBindingCannotCorruptPersistentConfirmationReturnState(t *testing.T) {
+	t.Run("task draft", func(t *testing.T) {
+		h := newModelHarness(t, harnessOptions{})
+		h.model.SwitchView(ViewNext)
+		h.selectRowByID(fixFlight)
+		h.pressKeys("\r", "e", "!", "\x03")
+		returnMode, returnModal := h.model.quitReturnMode, h.model.quitReturnModal
+		if available, err := h.model.CommandAvailable("quit"); err != nil || available {
+			t.Fatalf("quit availability=%v err=%v", available, err)
+		}
+		h.pressKeys("\x03")
+		if h.model.quitReturnMode != returnMode || h.model.quitReturnModal != returnModal {
+			t.Fatal("direct ctrl-c overwrote the retained editor return state")
+		}
+		if _, err := h.model.InvokeCommand("quit"); err == nil {
+			t.Fatal("inherited quit invoked during draft confirmation")
+		}
+		if available, err := h.model.CommandAvailable("quit-confirmation-reminder"); err != nil || !available {
+			t.Fatalf("reminder availability=%v err=%v", available, err)
+		}
+		if _, err := h.model.InvokeCommand("quit-confirmation-reminder"); err != nil {
+			t.Fatal(err)
+		}
+		if h.model.quitReturnMode != returnMode || h.model.quitReturnModal != returnModal {
+			t.Fatal("invoked ctrl-c reminder overwrote retained editor state")
+		}
+		h.pressKeys("n")
+		if h.model.Mode() != ModeTaskEdit || h.model.TaskEditor() == nil || !h.model.TaskEditor().Dirty("title") {
+			t.Fatal("cancelling did not restore the dirty task editor")
+		}
+	})
+
+	t.Run("agent activity", func(t *testing.T) {
+		h := newAgentHarness(t, &fakeAdapter{available: true, chunks: 99, output: "running"})
+		h.submit("one")
+		h.pressKeys("A")
+		activity := h.model.Modal()
+		h.pressKeys("\x03")
+		returnMode, returnModal := h.model.quitReturnMode, h.model.quitReturnModal
+		if returnModal != activity {
+			t.Fatal("agent confirmation did not retain activity modal")
+		}
+		if available, err := h.model.CommandAvailable("quit"); err != nil || available {
+			t.Fatalf("quit availability=%v err=%v", available, err)
+		}
+		h.pressKeys("\x03")
+		if h.model.quitReturnMode != returnMode || h.model.quitReturnModal != returnModal {
+			t.Fatal("direct ctrl-c overwrote retained activity state")
+		}
+		if _, err := h.model.InvokeCommand("quit"); err == nil {
+			t.Fatal("inherited quit invoked during agent confirmation")
+		}
+		if available, err := h.model.CommandAvailable("quit-confirmation-reminder"); err != nil || !available {
+			t.Fatalf("reminder availability=%v err=%v", available, err)
+		}
+		if _, err := h.model.InvokeCommand("quit-confirmation-reminder"); err != nil {
+			t.Fatal(err)
+		}
+		if h.model.quitReturnMode != returnMode || h.model.quitReturnModal != returnModal {
+			t.Fatal("invoked ctrl-c reminder overwrote retained activity state")
+		}
+		h.pressKeys("n")
+		if h.model.Mode() != ModeModal || h.model.Modal() != activity || !h.model.Queue().Work() {
+			t.Fatal("cancelling did not restore active agent activity")
+		}
+	})
 }
 
 func TestSpecialNoticeQuestionMarkBindingsRemainInactive(t *testing.T) {

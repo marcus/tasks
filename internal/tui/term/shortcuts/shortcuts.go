@@ -202,7 +202,7 @@ var Registry = []Entry{
 	entry(Entry{Sequences: []string{"?"}, DisplayKey: "?", Description: "keyboard shortcuts", FooterLabel: "Help", FooterPriority: 3, Contexts: []Context{List}, Handler: "open_help", Palette: PaletteAlways}),
 	entry(Entry{Sequences: nil, DisplayKey: "click", Description: "select task · click again for details · click tab to switch view", Contexts: []Context{List}, DocOnly: true}),
 	entry(Entry{Sequences: nil, DisplayKey: "wheel", Description: "scroll list / panel / modal / agent response under the pointer", Contexts: []Context{List}, DocOnly: true}),
-	entry(Entry{Sequences: []string{"q"}, DisplayKey: "q", Description: "quit (confirms unsaved draft)", FooterLabel: "Quit", FooterPriority: 3, Contexts: []Context{List}, Handler: "quit", Palette: PaletteAlways}),
+	entry(Entry{Sequences: []string{"q"}, DisplayKey: "q", Description: "quit (confirms unsaved draft)", FooterLabel: "Quit", FooterPriority: 3, Contexts: []Context{List}, Handler: "quit", Availability: "quit_available?", Palette: PaletteAlways}),
 
 	entry(Entry{Sequences: []string{"\t"}, DisplayKey: "tab", Description: "save field and edit next", CommandID: "task-edit-next", FooterLabel: "Next Field", FooterPriority: 2, Contexts: []Context{TaskEdit}, Handler: "task_edit_input"}),
 	entry(Entry{Sequences: []string{"\x1b[Z"}, DisplayKey: "shift-tab", Description: "save field and edit previous", CommandID: "task-edit-previous", FooterLabel: "Previous Field", FooterPriority: 3, Contexts: []Context{TaskEdit}, Handler: "task_edit_input"}),
@@ -247,7 +247,8 @@ var Registry = []Entry{
 	entry(Entry{Sequences: []string{"\x1b", "\t"}, DisplayKey: "esc / tab", Description: "leave agent prompt", CommandID: "prompt-close", FooterLabel: "Close", FooterPriority: 1, Contexts: []Context{Prompt}, Handler: "prompt_input"}),
 	entry(Entry{Sequences: []string{"\r", "\n"}, DisplayKey: "return", Description: "submit agent prompt", CommandID: "prompt-submit", FooterLabel: "Submit", FooterPriority: 1, Contexts: []Context{Prompt}, Handler: "prompt_input"}),
 
-	entry(Entry{Sequences: []string{"\x03"}, DisplayKey: "ctrl-c", Description: "quit (confirms unsaved draft)", FooterLabel: "Quit", FooterPriority: 4, Contexts: []Context{Global}, Handler: "quit"}),
+	entry(Entry{Sequences: []string{"\x03"}, DisplayKey: "ctrl-c", Description: "quit (confirms unsaved draft)", FooterLabel: "Quit", FooterPriority: 4, Contexts: []Context{Global}, Handler: "quit", Availability: "quit_available?"}),
+	entry(Entry{Sequences: []string{"\x03"}, DisplayKey: "ctrl-c", Description: "keep the quit confirmation open", CommandID: "quit-confirmation-reminder", Contexts: []Context{Global}, Handler: "modal_confirmation", Availability: "quit_confirmation_available?", HideInHelp: true}),
 }
 
 // ErrUnknownContext is returned for a lookup in a context that does not exist.

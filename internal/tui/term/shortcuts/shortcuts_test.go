@@ -431,7 +431,13 @@ func TestEntriesCanExcludeGlobals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(withGlobal) != len(withoutGlobal)+1 {
+	globalCount := 0
+	for _, entry := range Registry {
+		if entry.hasContext(Global) {
+			globalCount++
+		}
+	}
+	if len(withGlobal) != len(withoutGlobal)+globalCount {
 		t.Fatalf("global inclusion changed nothing: %d vs %d", len(withGlobal), len(withoutGlobal))
 	}
 }
