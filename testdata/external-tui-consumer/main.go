@@ -32,6 +32,15 @@ func main() {
 		fail(err)
 	}
 	model.Init()
+	if available, err := model.CommandAvailable("view-agenda"); err != nil || !available {
+		fail(fmt.Errorf("view-agenda availability=%v err=%v", available, err))
+	}
+	if _, err := model.Invoke("view-agenda"); err != nil || model.CurrentView() != taskstui.ViewAgenda {
+		fail(fmt.Errorf("invoke view-agenda: view=%s err=%v", model.CurrentView(), err))
+	}
+	if _, err := model.Invoke("view-next"); err != nil {
+		fail(fmt.Errorf("invoke view-next: %v", err))
+	}
 	model.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	frame := model.View(72, 20)
 	if !strings.Contains(frame, "Measure the existing slab") || len(strings.Split(frame, "\n")) != 20 {

@@ -21,15 +21,21 @@ import (
 type Context string
 
 const (
-	List     Context = "list"
-	Detail   Context = "detail"
-	TaskEdit Context = "task_edit"
-	Modal    Context = "modal"
-	Global   Context = "global"
+	List          Context = "list"
+	Detail        Context = "detail"
+	TaskEdit      Context = "task_edit"
+	Modal         Context = "modal"
+	Filter        Context = "filter"
+	ModalFilter   Context = "modal_filter"
+	Form          Context = "form"
+	Picker        Context = "picker"
+	ContextPicker Context = "context_picker"
+	Prompt        Context = "prompt"
+	Global        Context = "global"
 )
 
 // Contexts is the closed set of lookup contexts.
-var Contexts = []Context{List, Detail, TaskEdit, Modal, Global}
+var Contexts = []Context{List, Detail, TaskEdit, Modal, Filter, ModalFilter, Form, Picker, ContextPicker, Prompt, Global}
 
 // PaletteRule says whether an entry appears in the command palette.
 type PaletteRule struct {
@@ -75,7 +81,10 @@ const DefaultAvailability = "action_available?"
 type Entry struct {
 	Sequences []string
 	// DisplayKey is what the help modal shows.
-	DisplayKey string
+	DisplayKey      string
+	HelpDisplayKey  string
+	HelpDescription string
+	HideInHelp      bool
 	// Description is the help text; it doubles as the palette label.
 	Description string
 	// CommandID is the stable host-facing action identifier. Empty entries
@@ -135,7 +144,12 @@ var Registry = []Entry{
 	entry(Entry{Sequences: []string{"\x1b[B", "j"}, DisplayKey: "↓ / j", Description: "select next task", Contexts: []Context{List}, Handler: "select_next"}),
 	entry(Entry{Sequences: []string{"\x1b[D"}, DisplayKey: "←", Description: "previous view", Contexts: []Context{List}, Handler: "prev_view"}),
 	entry(Entry{Sequences: []string{"\x1b[C"}, DisplayKey: "→", Description: "next view", Contexts: []Context{List}, Handler: "next_view"}),
-	entry(Entry{Sequences: []string{"1", "2", "3", "4", "5", "6"}, DisplayKey: "1-6", Description: "jump to view", Contexts: []Context{List}, Handler: "jump_view"}),
+	entry(Entry{Sequences: []string{"1"}, DisplayKey: "1", HelpDisplayKey: "1-6", HelpDescription: "jump to view", Description: "jump to Agenda view", CommandID: "view-agenda", Contexts: []Context{List}, Handler: "jump_view"}),
+	entry(Entry{Sequences: []string{"2"}, DisplayKey: "2", HideInHelp: true, Description: "jump to Next view", CommandID: "view-next", Contexts: []Context{List}, Handler: "jump_view"}),
+	entry(Entry{Sequences: []string{"3"}, DisplayKey: "3", HideInHelp: true, Description: "jump to Quadrants view", CommandID: "view-quadrants", Contexts: []Context{List}, Handler: "jump_view"}),
+	entry(Entry{Sequences: []string{"4"}, DisplayKey: "4", HideInHelp: true, Description: "jump to Projects view", CommandID: "view-projects", Contexts: []Context{List}, Handler: "jump_view"}),
+	entry(Entry{Sequences: []string{"5"}, DisplayKey: "5", HideInHelp: true, Description: "jump to Outline view", CommandID: "view-outline", Contexts: []Context{List}, Handler: "jump_view"}),
+	entry(Entry{Sequences: []string{"6"}, DisplayKey: "6", HideInHelp: true, Description: "jump to Inbox view", CommandID: "view-inbox", Contexts: []Context{List}, Handler: "jump_view"}),
 	entry(Entry{Sequences: []string{"\x1b[1;3A", "\x1b\x1b[A", "\x1bk"}, DisplayKey: "alt-↑ / alt-k", Description: "Move up", Contexts: []Context{List}, Handler: "move_subtree_up", Availability: "ordering_action_available?", Palette: PaletteAlways}),
 	entry(Entry{Sequences: []string{"\x1b[1;3B", "\x1b\x1b[B", "\x1bj"}, DisplayKey: "alt-↓ / alt-j", Description: "Move down", Contexts: []Context{List}, Handler: "move_subtree_down", Availability: "ordering_action_available?", Palette: PaletteAlways}),
 	entry(Entry{Sequences: []string{">"}, DisplayKey: ">", Description: "Indent", Contexts: []Context{List}, Handler: "indent_subtree", Availability: "ordering_action_available?", Palette: PaletteAlways}),
@@ -208,6 +222,24 @@ var Registry = []Entry{
 	entry(Entry{Sequences: []string{"\x06", "\x1b[6~"}, DisplayKey: "ctrl-f / pgdn", Description: "scroll page down", Contexts: []Context{Modal}, Handler: "modal_page_down"}),
 	entry(Entry{Sequences: []string{"/"}, DisplayKey: "/", Description: "filter lines (shortcuts modal)", FooterLabel: "Filter", FooterPriority: 2, Contexts: []Context{Modal}, Handler: "modal_start_filter", Availability: "modal_filter_available?", Form: "modal_filter"}),
 	entry(Entry{Sequences: []string{"\x1b", "q", "\r", "\n", "?"}, DisplayKey: "esc / q", Description: "close modal", FooterLabel: "Close", FooterPriority: 1, Contexts: []Context{Modal}, Handler: "close_modal"}),
+
+	entry(Entry{Sequences: []string{"\x1b"}, DisplayKey: "esc", Description: "cancel text filter", CommandID: "filter-cancel", FooterLabel: "Cancel", FooterPriority: 1, Contexts: []Context{Filter}, Handler: "filter_input"}),
+	entry(Entry{Sequences: []string{"\r", "\n"}, DisplayKey: "return", Description: "apply text filter", CommandID: "filter-apply", FooterLabel: "Apply", FooterPriority: 1, Contexts: []Context{Filter}, Handler: "filter_input"}),
+	entry(Entry{Sequences: []string{"\x1b"}, DisplayKey: "esc", Description: "clear modal filter", CommandID: "modal-filter-clear", FooterLabel: "Clear", FooterPriority: 1, Contexts: []Context{ModalFilter}, Handler: "modal_filter_input"}),
+	entry(Entry{Sequences: []string{"\r", "\n"}, DisplayKey: "return", Description: "apply modal filter", CommandID: "modal-filter-apply", FooterLabel: "Apply", FooterPriority: 1, Contexts: []Context{ModalFilter}, Handler: "modal_filter_input"}),
+	entry(Entry{Sequences: []string{"\x1b"}, DisplayKey: "esc", Description: "cancel form", CommandID: "form-cancel", FooterLabel: "Cancel", FooterPriority: 1, Contexts: []Context{Form}, Handler: "form_input"}),
+	entry(Entry{Sequences: []string{"\r", "\n"}, DisplayKey: "return", Description: "submit form", CommandID: "form-submit", FooterLabel: "Submit", FooterPriority: 1, Contexts: []Context{Form}, Handler: "form_input"}),
+	entry(Entry{Sequences: []string{"\x1b"}, DisplayKey: "esc", Description: "close picker", CommandID: "picker-cancel", FooterLabel: "Close", FooterPriority: 1, Contexts: []Context{Picker}, Handler: "picker_input"}),
+	entry(Entry{Sequences: []string{"\r", "\n"}, DisplayKey: "return", Description: "choose picker action", CommandID: "picker-accept", FooterLabel: "Choose", FooterPriority: 1, Contexts: []Context{Picker}, Handler: "picker_input"}),
+	entry(Entry{Sequences: []string{"\x1b[A", "\x10"}, DisplayKey: "↑ / ctrl-p", Description: "select previous picker row", CommandID: "picker-previous", FooterLabel: "Previous", Contexts: []Context{Picker}, Handler: "picker_input"}),
+	entry(Entry{Sequences: []string{"\x1b[B", "\x0e"}, DisplayKey: "↓ / ctrl-n", Description: "select next picker row", CommandID: "picker-next", FooterLabel: "Next", Contexts: []Context{Picker}, Handler: "picker_input"}),
+	entry(Entry{Sequences: []string{"\x1b"}, DisplayKey: "esc", Description: "close context picker", CommandID: "context-picker-cancel", FooterLabel: "Close", FooterPriority: 1, Contexts: []Context{ContextPicker}, Handler: "context_picker_input"}),
+	entry(Entry{Sequences: []string{"\r", "\n"}, DisplayKey: "return", Description: "apply context selection", CommandID: "context-picker-apply", FooterLabel: "Apply", FooterPriority: 1, Contexts: []Context{ContextPicker}, Handler: "context_picker_input"}),
+	entry(Entry{Sequences: []string{"\x1b[A", "\x10"}, DisplayKey: "↑ / ctrl-p", Description: "select previous context", CommandID: "context-picker-previous", FooterLabel: "Previous", Contexts: []Context{ContextPicker}, Handler: "context_picker_input"}),
+	entry(Entry{Sequences: []string{"\x1b[B", "\x0e"}, DisplayKey: "↓ / ctrl-n", Description: "select next context", CommandID: "context-picker-next", FooterLabel: "Next", Contexts: []Context{ContextPicker}, Handler: "context_picker_input"}),
+	entry(Entry{Sequences: []string{" "}, DisplayKey: "space", Description: "toggle selected context", CommandID: "context-picker-toggle", FooterLabel: "Toggle", FooterPriority: 2, Contexts: []Context{ContextPicker}, Handler: "context_picker_input"}),
+	entry(Entry{Sequences: []string{"\x1b", "\t"}, DisplayKey: "esc / tab", Description: "leave agent prompt", CommandID: "prompt-close", FooterLabel: "Close", FooterPriority: 1, Contexts: []Context{Prompt}, Handler: "prompt_input"}),
+	entry(Entry{Sequences: []string{"\r", "\n"}, DisplayKey: "return", Description: "submit agent prompt", CommandID: "prompt-submit", FooterLabel: "Submit", FooterPriority: 1, Contexts: []Context{Prompt}, Handler: "prompt_input"}),
 
 	entry(Entry{Sequences: []string{"\x03"}, DisplayKey: "ctrl-c", Description: "quit (confirms unsaved draft)", FooterLabel: "Quit", FooterPriority: 4, Contexts: []Context{Global}, Handler: "quit"}),
 }

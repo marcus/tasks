@@ -49,7 +49,9 @@ func (m *Model) handleKey(message tea.KeyPressMsg) tea.Cmd {
 		return m.maybeQuit()
 	}
 	if m.mode == ModeTaskEdit && m.taskEditor != nil {
-		m.taskEditKey(sequence)
+		if !m.dispatchAction(sequence, shortcuts.TaskEdit) {
+			m.taskEditInputKey(sequence)
+		}
 		return nil
 	}
 	if m.mode == ModeList && m.suspendedTaskEditor != nil &&
@@ -83,19 +85,31 @@ func (m *Model) handleKey(message tea.KeyPressMsg) tea.Cmd {
 
 	switch m.mode {
 	case ModeForm:
-		m.formKey(sequence)
+		if !m.dispatchAction(sequence, shortcuts.Form) {
+			m.formKey(sequence)
+		}
 	case ModePalette:
-		m.paletteKey(sequence)
+		if !m.dispatchAction(sequence, shortcuts.Picker) {
+			m.paletteKey(sequence)
+		}
 	case ModeContextPalette:
-		m.contextPaletteKey(sequence)
+		if !m.dispatchAction(sequence, shortcuts.ContextPicker) {
+			m.contextPaletteKey(sequence)
+		}
 	case ModeModal:
 		m.modalKey(sequence)
 	case ModeModalFilter:
-		m.modalFilterKey(sequence)
+		if !m.dispatchAction(sequence, shortcuts.ModalFilter) {
+			m.modalFilterKey(sequence)
+		}
 	case ModeFilter:
-		m.filterKey(sequence)
+		if !m.dispatchAction(sequence, shortcuts.Filter) {
+			m.filterKey(sequence)
+		}
 	case ModePrompt:
-		m.promptKey(sequence)
+		if !m.dispatchAction(sequence, shortcuts.Prompt) {
+			m.promptKey(sequence)
+		}
 	default:
 		m.listKey(sequence)
 	}
@@ -626,7 +640,7 @@ func (m *Model) contextPaletteKey(sequence string) {
 // taskEditKey routes one key into the durable editor. Two keys are deliberately
 // NOT the editor's: ctrl-k and ctrl-l resize the panel without saving, so a
 // user can make room to read while a field is mid-edit.
-func (m *Model) taskEditKey(sequence string) {
+func (m *Model) taskEditInputKey(sequence string) {
 	editor := m.taskEditor
 	if editor == nil {
 		m.mode = ModeList

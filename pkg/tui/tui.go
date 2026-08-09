@@ -234,6 +234,19 @@ func (m *Model) Update(message tea.Msg) (*Model, tea.Cmd) {
 	return m, cmd
 }
 
+// CommandAvailable evaluates one exported command against the model's current
+// focus and live selection. It distinguishes conditional commands that share a
+// default key.
+func (m *Model) CommandAvailable(commandID string) (bool, error) {
+	return m.inner.CommandAvailable(commandID)
+}
+
+// Invoke executes one available exported command by stable ID, without
+// replaying a possibly ambiguous default key.
+func (m *Model) Invoke(commandID string) (tea.Cmd, error) {
+	return m.inner.InvokeCommand(commandID)
+}
+
 // View renders Tasks at the host's allotted size without alternate-screen or
 // mouse-mode ownership leaking into the host.
 func (m *Model) View(width, height int) string {

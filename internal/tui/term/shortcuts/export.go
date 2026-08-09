@@ -43,15 +43,15 @@ var hostContextProjections = []contextProjection{
 	{name: "detail", sources: []Context{Detail, List, Global}},
 	{name: "task_edit", textInput: true, sources: []Context{TaskEdit, Global}},
 	{name: "modal", sources: []Context{Modal, Global}},
-	{name: "modal_filter", textInput: true, sources: []Context{Global}},
-	{name: "form", textInput: true, sources: []Context{Global}},
-	{name: "picker", textInput: true, sources: []Context{Global}},
-	{name: "context_picker", textInput: true, sources: []Context{Global}},
-	{name: "filter", textInput: true, sources: []Context{Global}},
-	{name: "prompt", textInput: true, sources: []Context{Global}},
+	{name: "modal_filter", textInput: true, sources: []Context{ModalFilter, Global}},
+	{name: "form", textInput: true, sources: []Context{Form, Global}},
+	{name: "picker", textInput: true, sources: []Context{Picker, Global}},
+	{name: "context_picker", textInput: true, sources: []Context{ContextPicker, Global}},
+	{name: "filter", textInput: true, sources: []Context{Filter, Global}},
+	{name: "prompt", textInput: true, sources: []Context{Prompt, Global}},
 	{name: "response", sources: []Context{List, Global}},
 	{name: "agent_activity", sources: []Context{Modal, Global}},
-	{name: "agent_activity_filter", textInput: true, sources: []Context{Global}},
+	{name: "agent_activity_filter", textInput: true, sources: []Context{ModalFilter, Global}},
 }
 
 // ExportContexts returns every stable host focus context.
@@ -133,6 +133,16 @@ func projectedEntries(projection contextProjection) []Entry {
 		}
 	}
 	return out
+}
+
+// EntriesForHostContext returns registry entries in runtime dispatch order.
+func EntriesForHostContext(name string) []Entry {
+	for _, projection := range hostContextProjections {
+		if projection.name == name {
+			return append([]Entry{}, projectedEntries(projection)...)
+		}
+	}
+	return nil
 }
 
 func appendUnique(values []string, value string) []string {

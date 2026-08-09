@@ -39,7 +39,14 @@ var helpGroups = []struct {
 func HelpContent(styler Styler) ModalContent {
 	keyWidth := 0
 	for _, entry := range shortcuts.Registry {
-		if width := len([]rune(entry.DisplayKey)); width > keyWidth {
+		if entry.HideInHelp {
+			continue
+		}
+		key := entry.DisplayKey
+		if entry.HelpDisplayKey != "" {
+			key = entry.HelpDisplayKey
+		}
+		if width := len([]rune(key)); width > keyWidth {
 			keyWidth = width
 		}
 	}
@@ -59,7 +66,17 @@ func HelpContent(styler Styler) ModalContent {
 		}
 		add(group.Title, styler.Paint("section", group.Title))
 		for _, entry := range entries {
-			add(group.Title, styler.Paint("accent", padRunes(entry.DisplayKey, keyWidth))+" "+entry.Description)
+			if entry.HideInHelp {
+				continue
+			}
+			key, description := entry.DisplayKey, entry.Description
+			if entry.HelpDisplayKey != "" {
+				key = entry.HelpDisplayKey
+			}
+			if entry.HelpDescription != "" {
+				description = entry.HelpDescription
+			}
+			add(group.Title, styler.Paint("accent", padRunes(key, keyWidth))+" "+description)
 		}
 	}
 	add("everywhere", "")

@@ -84,17 +84,23 @@ func (m *Model) handlers() map[string]func(key string) {
 		"yank_markdown":                func(string) { m.YankMarkdown() },
 
 		// Modal navigation.
-		"modal_up":           func(string) { m.modalMove(-1) },
-		"modal_down":         func(string) { m.modalMove(1) },
-		"modal_half_up":      func(string) { m.modalScroll(-1, "half") },
-		"modal_half_down":    func(string) { m.modalScroll(1, "half") },
-		"modal_page_up":      func(string) { m.modalScroll(-1, "page") },
-		"modal_page_down":    func(string) { m.modalScroll(1, "page") },
-		"modal_start_filter": func(string) { m.ModalStartFilter() },
-		"close_modal":        func(string) { m.CloseModal() },
+		"modal_up":             func(string) { m.modalMove(-1) },
+		"modal_down":           func(string) { m.modalMove(1) },
+		"modal_half_up":        func(string) { m.modalScroll(-1, "half") },
+		"modal_half_down":      func(string) { m.modalScroll(1, "half") },
+		"modal_page_up":        func(string) { m.modalScroll(-1, "page") },
+		"modal_page_down":      func(string) { m.modalScroll(1, "page") },
+		"modal_start_filter":   func(string) { m.ModalStartFilter() },
+		"close_modal":          func(string) { m.CloseModal() },
+		"filter_input":         m.filterKey,
+		"modal_filter_input":   m.modalFilterKey,
+		"form_input":           m.formKey,
+		"picker_input":         m.paletteKey,
+		"context_picker_input": m.contextPaletteKey,
+		"prompt_input":         m.promptKey,
 
 		// The editor owns its own bytes; the registry routes them back to it.
-		"task_edit_input": m.taskEditKey,
+		"task_edit_input": m.taskEditInputKey,
 	}
 }
 

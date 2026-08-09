@@ -57,6 +57,15 @@ func TestExportedCommandsCarryCompleteRegistryMetadata(t *testing.T) {
 	assertCommand("detail", "start-task-edit", "Edit", 1, "e")
 	assertCommand("task_edit", "task-edit-save", "Save", 1, "ctrl+s")
 	assertCommand("modal", "close-modal", "Close", 1, "esc")
+	assertCommand("prompt", "prompt-submit", "Submit", 1, "enter")
+	assertCommand("filter", "filter-apply", "Apply", 1, "enter")
+	assertCommand("modal_filter", "modal-filter-clear", "Clear", 1, "esc")
+	assertCommand("form", "form-submit", "Submit", 1, "enter")
+	assertCommand("picker", "picker-next", "Next", 4, "down")
+	assertCommand("context_picker", "context-picker-toggle", "Toggle", 2, "space")
+	assertCommand("response", "resp-up", "Scroll", 4, "pgup")
+	assertCommand("agent_activity", "modal-down", "Scroll", 4, "down")
+	assertCommand("agent_activity_filter", "modal-filter-apply", "Apply", 1, "enter")
 }
 
 func TestExportReadsRegistryRatherThanADuplicateKeyTable(t *testing.T) {

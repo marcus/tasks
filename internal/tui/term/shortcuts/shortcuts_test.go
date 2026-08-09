@@ -128,9 +128,12 @@ func TestOrderingBindingsCoverCSIAndEscapePrefixedAltVariants(t *testing.T) {
 }
 
 func TestSixViewsHaveDirectJumpKeysAndSevenIsUnbound(t *testing.T) {
-	e, ok := Match("6", List, nil)
-	if !ok || e.Handler != "jump_view" || e.DisplayKey != "1-6" {
-		t.Fatalf("6 = %#v", e)
+	for index, id := range []string{"view-agenda", "view-next", "view-quadrants", "view-projects", "view-outline", "view-inbox"} {
+		key := string(rune('1' + index))
+		e, ok := Match(key, List, nil)
+		if !ok || e.Handler != "jump_view" || e.CommandID != id {
+			t.Fatalf("%s = %#v", key, e)
+		}
 	}
 	assertUnbound(t, "7", List)
 }
