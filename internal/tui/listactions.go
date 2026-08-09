@@ -119,13 +119,6 @@ func (m *Model) archiveConfirmKey(key string) {
 	}
 }
 
-func (m *Model) archiveBlockedKey(key string) {
-	switch key {
-	case "n", "N", "\x1b", "q", "\r", "\n":
-		m.CloseModal()
-	}
-}
-
 // ShowUnsupportedSchemaNotice opens the one modal that has no action: nothing
 // this build can do makes a future schema readable.
 func (m *Model) ShowUnsupportedSchemaNotice() {

@@ -38,10 +38,10 @@ func (m *Model) handleKey(message tea.KeyPressMsg) tea.Cmd {
 		editor = m.suspendedTaskEditor
 	}
 	if editor != nil && editor.PendingQuit() {
-		return m.taskDraftQuitKey(sequence)
+		return m.modalConfirmationKey(sequence)
 	}
 	if m.agentQuitPending {
-		return m.agentQuitKey(sequence)
+		return m.modalConfirmationKey(sequence)
 	}
 	// Global bindings (ctrl-c) reach through every mode, so a wedged overlay
 	// can always be escaped.
@@ -49,7 +49,9 @@ func (m *Model) handleKey(message tea.KeyPressMsg) tea.Cmd {
 		return m.maybeQuit()
 	}
 	if m.mode == ModeTaskEdit && m.taskEditor != nil {
-		m.taskEditKey(sequence)
+		if !m.dispatchAction(sequence, shortcuts.TaskEdit) {
+			m.taskEditInputKey(sequence)
+		}
 		return nil
 	}
 	if m.mode == ModeList && m.suspendedTaskEditor != nil &&
@@ -83,19 +85,31 @@ func (m *Model) handleKey(message tea.KeyPressMsg) tea.Cmd {
 
 	switch m.mode {
 	case ModeForm:
-		m.formKey(sequence)
+		if !m.dispatchAction(sequence, shortcuts.Form) {
+			m.formKey(sequence)
+		}
 	case ModePalette:
-		m.paletteKey(sequence)
+		if !m.dispatchAction(sequence, shortcuts.Picker) {
+			m.paletteKey(sequence)
+		}
 	case ModeContextPalette:
-		m.contextPaletteKey(sequence)
+		if !m.dispatchAction(sequence, shortcuts.ContextPicker) {
+			m.contextPaletteKey(sequence)
+		}
 	case ModeModal:
 		m.modalKey(sequence)
 	case ModeModalFilter:
-		m.modalFilterKey(sequence)
+		if !m.dispatchAction(sequence, shortcuts.ModalFilter) {
+			m.modalFilterKey(sequence)
+		}
 	case ModeFilter:
-		m.filterKey(sequence)
+		if !m.dispatchAction(sequence, shortcuts.Filter) {
+			m.filterKey(sequence)
+		}
 	case ModePrompt:
-		m.promptKey(sequence)
+		if !m.dispatchAction(sequence, shortcuts.Prompt) {
+			m.promptKey(sequence)
+		}
 	default:
 		m.listKey(sequence)
 	}
@@ -146,6 +160,19 @@ func (m *Model) maybeQuit() tea.Cmd {
 		return tea.Quit
 	}
 	return nil
+}
+
+func (m *Model) finishQuit() {
+	m.Save()
+	if !m.embedded {
+		m.quitting = true
+		return
+	}
+	if m.suppressQuit {
+		m.Flash("quit is managed by the host")
+		return
+	}
+	m.quitRequested = true
 }
 
 // KeySequence turns a decoded Bubble Tea v2 key press into the raw byte
@@ -438,31 +465,8 @@ func (m *Model) modalKey(sequence string) {
 		m.mode = ModeList
 		return
 	}
-	switch m.modal.Kind() {
-	case ModalProjectCompleteConfirm:
-		m.projectCompleteConfirmKey(sequence)
-		return
-	case ModalProjectArchiveConfirm:
-		m.projectArchiveConfirmKey(sequence)
-		return
-	case ModalArchiveConfirm:
-		m.archiveConfirmKey(sequence)
-		return
-	case ModalArchiveBlocked:
-		m.archiveBlockedKey(sequence)
-		return
-	case ModalDeleteConfirm, ModalDeleteCascadeConfirm:
-		m.deleteConfirmKey(sequence)
-		return
-	case ModalAgentQueueCancel:
-		m.agentQueueCancelKey(sequence)
-		return
-	case ModalUnsupportedSchema:
-		// The notice has no action: nothing this build can do makes the store
-		// readable, so the only key it honors is the one that dismisses it.
-		if sequence == "\x1b" || sequence == "q" || sequence == "\r" || sequence == "\n" {
-			m.CloseModal()
-		}
+	entry, bound := shortcuts.Match(sequence, shortcuts.Modal, m.availability)
+	if bound && m.availability(entry.Availability) && m.dispatchAction(sequence, shortcuts.Modal) {
 		return
 	}
 	if m.modalKeyStartsTyping(sequence) {
@@ -470,7 +474,69 @@ func (m *Model) modalKey(sequence string) {
 		m.modalFilterKey(sequence)
 		return
 	}
-	m.dispatchAction(sequence, shortcuts.Modal)
+}
+
+func (m *Model) modalConfirmationAvailable() bool {
+	if m.modal == nil {
+		return false
+	}
+	switch m.modal.Kind() {
+	case ModalProjectCompleteConfirm, ModalProjectArchiveConfirm,
+		ModalArchiveConfirm, ModalDeleteConfirm, ModalDeleteCascadeConfirm,
+		ModalAgentQueueCancel, ModalTaskDraftQuitConfirm, ModalAgentQuitConfirm:
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *Model) modalConfirmationAcceptsEnter() bool {
+	if m.modal == nil {
+		return false
+	}
+	switch m.modal.Kind() {
+	case ModalProjectCompleteConfirm, ModalProjectArchiveConfirm,
+		ModalAgentQueueCancel, ModalTaskDraftQuitConfirm, ModalAgentQuitConfirm:
+		return true
+	default:
+		return false
+	}
+}
+
+// modalConfirmationKey is the one semantic path used by terminal keys and
+// host command invocation. Individual modal kinds retain their established
+// confirmation behavior, including which of them accept Return.
+func (m *Model) modalConfirmationKey(sequence string) tea.Cmd {
+	editor := m.taskEditor
+	if editor == nil {
+		editor = m.suspendedTaskEditor
+	}
+	if editor != nil && editor.PendingQuit() {
+		return m.taskDraftQuitKey(sequence)
+	}
+	if m.agentQuitPending {
+		return m.agentQuitKey(sequence)
+	}
+	if m.modal == nil {
+		return nil
+	}
+	switch m.modal.Kind() {
+	case ModalProjectCompleteConfirm:
+		m.projectCompleteConfirmKey(sequence)
+	case ModalProjectArchiveConfirm:
+		m.projectArchiveConfirmKey(sequence)
+	case ModalArchiveConfirm:
+		m.archiveConfirmKey(sequence)
+	case ModalDeleteConfirm, ModalDeleteCascadeConfirm:
+		m.deleteConfirmKey(sequence)
+	case ModalAgentQueueCancel:
+		m.agentQueueCancelKey(sequence)
+	case ModalTaskDraftQuitConfirm:
+		return m.taskDraftQuitKey(sequence)
+	case ModalAgentQuitConfirm:
+		return m.agentQuitKey(sequence)
+	}
+	return nil
 }
 
 // modalKeyStartsTyping: typing a character with no modal binding of its own
@@ -480,7 +546,7 @@ func (m *Model) modalKeyStartsTyping(sequence string) bool {
 	if m.modal == nil || !m.modal.Filterable() {
 		return false
 	}
-	if _, bound := shortcuts.Match(sequence, shortcuts.Modal, m.availability); bound {
+	if entry, bound := shortcuts.Match(sequence, shortcuts.Modal, m.availability); bound && m.availability(entry.Availability) {
 		return false
 	}
 	return input.Printable(sequence)
@@ -613,7 +679,7 @@ func (m *Model) contextPaletteKey(sequence string) {
 // taskEditKey routes one key into the durable editor. Two keys are deliberately
 // NOT the editor's: ctrl-k and ctrl-l resize the panel without saving, so a
 // user can make room to read while a field is mid-edit.
-func (m *Model) taskEditKey(sequence string) {
+func (m *Model) taskEditInputKey(sequence string) {
 	editor := m.taskEditor
 	if editor == nil {
 		m.mode = ModeList
@@ -741,9 +807,8 @@ func (m *Model) taskDraftQuitKey(sequence string) tea.Cmd {
 		if m.queueHasWork() {
 			m.queue.Shutdown()
 		}
-		m.Save()
-		m.quitting = true
-		return tea.Quit
+		m.finishQuit()
+		return m.maybeQuit()
 	case EditorQuitCancelled:
 		m.clearQuitConfirmation(true)
 		m.Flash(outcome.Message)
@@ -762,9 +827,8 @@ func (m *Model) agentQuitKey(sequence string) tea.Cmd {
 		if m.queue != nil {
 			m.queue.Shutdown()
 		}
-		m.Save()
-		m.quitting = true
-		return tea.Quit
+		m.finishQuit()
+		return m.maybeQuit()
 	case "n", "N", "\x1b":
 		m.clearQuitConfirmation(true)
 		m.Flash("quit cancelled — agent queue kept")

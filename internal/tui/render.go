@@ -241,6 +241,9 @@ func (m *Model) tabCell(tab Tab, variant int) string {
 // is SKIPPED in the modes that render their own input in an overlay, so a short
 // terminal never shows two carets.
 func (m *Model) Footer() []string {
+	if m.suppressFooter {
+		return nil
+	}
 	return m.footerForMode(m.mode)
 }
 

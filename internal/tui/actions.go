@@ -84,17 +84,24 @@ func (m *Model) handlers() map[string]func(key string) {
 		"yank_markdown":                func(string) { m.YankMarkdown() },
 
 		// Modal navigation.
-		"modal_up":           func(string) { m.modalMove(-1) },
-		"modal_down":         func(string) { m.modalMove(1) },
-		"modal_half_up":      func(string) { m.modalScroll(-1, "half") },
-		"modal_half_down":    func(string) { m.modalScroll(1, "half") },
-		"modal_page_up":      func(string) { m.modalScroll(-1, "page") },
-		"modal_page_down":    func(string) { m.modalScroll(1, "page") },
-		"modal_start_filter": func(string) { m.ModalStartFilter() },
-		"close_modal":        func(string) { m.CloseModal() },
+		"modal_up":             func(string) { m.modalMove(-1) },
+		"modal_down":           func(string) { m.modalMove(1) },
+		"modal_half_up":        func(string) { m.modalScroll(-1, "half") },
+		"modal_half_down":      func(string) { m.modalScroll(1, "half") },
+		"modal_page_up":        func(string) { m.modalScroll(-1, "page") },
+		"modal_page_down":      func(string) { m.modalScroll(1, "page") },
+		"modal_start_filter":   func(string) { m.ModalStartFilter() },
+		"modal_confirmation":   func(key string) { _ = m.modalConfirmationKey(key) },
+		"close_modal":          func(string) { m.CloseModal() },
+		"filter_input":         m.filterKey,
+		"modal_filter_input":   m.modalFilterKey,
+		"form_input":           m.formKey,
+		"picker_input":         m.paletteKey,
+		"context_picker_input": m.contextPaletteKey,
+		"prompt_input":         m.promptKey,
 
 		// The editor owns its own bytes; the registry routes them back to it.
-		"task_edit_input": m.taskEditKey,
+		"task_edit_input": m.taskEditInputKey,
 	}
 }
 
@@ -115,12 +122,40 @@ func (m *Model) availability(name string) bool {
 	switch name {
 	case shortcuts.DefaultAvailability, "":
 		return true
+	case "quit_available?":
+		editor := m.taskEditor
+		if editor == nil {
+			editor = m.suspendedTaskEditor
+		}
+		return (editor == nil || !editor.PendingQuit()) && !m.agentQuitPending
+	case "quit_confirmation_available?":
+		editor := m.taskEditor
+		if editor == nil {
+			editor = m.suspendedTaskEditor
+		}
+		return (editor != nil && editor.PendingQuit()) || m.agentQuitPending
 	case "selected_action_available?":
 		return m.CurrentItem() != nil
 	case "project_selected?":
 		return m.CurrentProject() != nil
 	case "modal_filter_available?":
 		return m.modal != nil && m.modal.Filterable()
+	case "modal_navigation_available?":
+		return m.modal != nil && (m.modal.Kind() == ModalHelp || m.modal.Kind() == ModalAgentActivity)
+	case "modal_confirmation_available?":
+		return m.modalConfirmationAvailable()
+	case "modal_confirmation_accepts_enter?":
+		return m.modalConfirmationAcceptsEnter()
+	case "modal_confirmation_accepts_q?":
+		return m.modalConfirmationAvailable() && m.modal.Kind() != ModalTaskDraftQuitConfirm &&
+			m.modal.Kind() != ModalAgentQuitConfirm
+	case "modal_close_available?":
+		return m.modal != nil && !m.modalConfirmationAvailable()
+	case "modal_question_close_available?":
+		return m.modal != nil && !m.modalConfirmationAvailable() &&
+			m.modal.Kind() != ModalArchiveBlocked && m.modal.Kind() != ModalUnsupportedSchema
+	case "archive_blocked_close_available?":
+		return m.modal != nil && m.modal.Kind() == ModalArchiveBlocked
 	case "panel_scroll_available?":
 		return m.panel != nil && m.panel.Kind == PanelDetail
 	case "proposal_action_available?":
@@ -1066,6 +1101,10 @@ func outcomeMessage(outcome application.Outcome, fallback string) string {
 }
 
 func (m *Model) requestQuit() {
+	if m.embedded && m.suppressQuit {
+		m.Flash("quit is managed by the host")
+		return
+	}
 	editor := m.taskEditor
 	if editor == nil {
 		editor = m.suspendedTaskEditor
@@ -1102,8 +1141,7 @@ func (m *Model) requestQuit() {
 		m.Flash("agent work pending — y/return quits · n/esc keeps running")
 		return
 	}
-	m.Save()
-	m.quitting = true
+	m.finishQuit()
 }
 
 func (m *Model) agentWorkSummary() string {

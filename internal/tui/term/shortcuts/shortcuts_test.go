@@ -49,6 +49,12 @@ func TestEveryEntryDeclaresContextHandlerAvailabilityAndMetadata(t *testing.T) {
 		if e.DisplayKey == "" || e.Description == "" || len(e.Contexts) == 0 {
 			t.Fatalf("entry %#v is missing display metadata", e)
 		}
+		if e.FooterLabel == "" || e.FooterPriority <= 0 {
+			t.Fatalf("entry %#v is missing footer metadata", e)
+		}
+		if !e.DocOnly && e.CommandID == "" {
+			t.Fatalf("entry %#v is missing a command id", e)
+		}
 		if !e.DocOnly && e.Availability == "" {
 			t.Fatalf("entry %q declares no availability", e.Description)
 		}
@@ -84,8 +90,8 @@ func TestModalNavigationResolvesIndependently(t *testing.T) {
 		"\x1b[6~": "modal_page_down",
 		"\x02":    "modal_page_up",
 		"/":       "modal_start_filter",
-		"\x1b":    "close_modal",
-		"q":       "close_modal",
+		"\x1b":    "modal_confirmation",
+		"q":       "modal_confirmation",
 	}
 	for sequence, want := range cases {
 		if got := handlerFor(t, sequence, Modal); got != want {
@@ -122,9 +128,12 @@ func TestOrderingBindingsCoverCSIAndEscapePrefixedAltVariants(t *testing.T) {
 }
 
 func TestSixViewsHaveDirectJumpKeysAndSevenIsUnbound(t *testing.T) {
-	e, ok := Match("6", List, nil)
-	if !ok || e.Handler != "jump_view" || e.DisplayKey != "1-6" {
-		t.Fatalf("6 = %#v", e)
+	for index, id := range []string{"view-agenda", "view-next", "view-quadrants", "view-projects", "view-outline", "view-inbox"} {
+		key := string(rune('1' + index))
+		e, ok := Match(key, List, nil)
+		if !ok || e.Handler != "jump_view" || e.CommandID != id {
+			t.Fatalf("%s = %#v", key, e)
+		}
 	}
 	assertUnbound(t, "7", List)
 }
@@ -422,7 +431,13 @@ func TestEntriesCanExcludeGlobals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(withGlobal) != len(withoutGlobal)+1 {
+	globalCount := 0
+	for _, entry := range Registry {
+		if entry.hasContext(Global) {
+			globalCount++
+		}
+	}
+	if len(withGlobal) != len(withoutGlobal)+globalCount {
 		t.Fatalf("global inclusion changed nothing: %d vs %d", len(withGlobal), len(withoutGlobal))
 	}
 }
