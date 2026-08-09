@@ -69,6 +69,24 @@ func TestExportedCommandsCarryCompleteRegistryMetadata(t *testing.T) {
 	assertCommand("agent_activity_filter", "modal-filter-apply", "Apply", 1, "enter")
 }
 
+func TestModalBindingsKeepDistinctSemanticCommandIDs(t *testing.T) {
+	want := map[string]string{
+		"y": "modal-confirm", "enter": "modal-confirm-default",
+		"?": "close-modal-question",
+	}
+	for _, binding := range ExportBindings() {
+		if binding.Context != "modal" || want[binding.Key] == "" {
+			continue
+		}
+		if binding.CommandID == want[binding.Key] {
+			delete(want, binding.Key)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing exact modal bindings: %v", want)
+	}
+}
+
 func TestExportReadsRegistryRatherThanADuplicateKeyTable(t *testing.T) {
 	original := Registry
 	Registry = append(append([]Entry{}, Registry...), entry(Entry{

@@ -128,12 +128,22 @@ func (m *Model) availability(name string) bool {
 		return m.CurrentProject() != nil
 	case "modal_filter_available?":
 		return m.modal != nil && m.modal.Filterable()
+	case "modal_navigation_available?":
+		return m.modal != nil && (m.modal.Kind() == ModalHelp || m.modal.Kind() == ModalAgentActivity)
 	case "modal_confirmation_available?":
 		return m.modalConfirmationAvailable()
 	case "modal_confirmation_accepts_enter?":
 		return m.modalConfirmationAcceptsEnter()
+	case "modal_confirmation_accepts_q?":
+		return m.modalConfirmationAvailable() && m.modal.Kind() != ModalTaskDraftQuitConfirm &&
+			m.modal.Kind() != ModalAgentQuitConfirm
 	case "modal_close_available?":
 		return m.modal != nil && !m.modalConfirmationAvailable()
+	case "modal_question_close_available?":
+		return m.modal != nil && !m.modalConfirmationAvailable() &&
+			m.modal.Kind() != ModalArchiveBlocked && m.modal.Kind() != ModalUnsupportedSchema
+	case "archive_blocked_close_available?":
+		return m.modal != nil && m.modal.Kind() == ModalArchiveBlocked
 	case "panel_scroll_available?":
 		return m.panel != nil && m.panel.Kind == PanelDetail
 	case "proposal_action_available?":

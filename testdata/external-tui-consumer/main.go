@@ -35,7 +35,8 @@ func main() {
 			commandSeen[command.ID] = true
 		}
 	}
-	if !commandSeen["modal-confirm"] || !commandSeen["modal-cancel"] || !commandSeen["close-modal"] {
+	if !commandSeen["modal-confirm"] || !commandSeen["modal-confirm-default"] ||
+		!commandSeen["modal-cancel"] || !commandSeen["close-modal"] {
 		fail(fmt.Errorf("semantic modal commands missing: %#v", commandSeen))
 	}
 	model, err := taskstui.NewEmbedded(taskstui.EmbeddedOptions{

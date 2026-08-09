@@ -465,20 +465,8 @@ func (m *Model) modalKey(sequence string) {
 		m.mode = ModeList
 		return
 	}
-	switch m.modal.Kind() {
-	case ModalArchiveBlocked:
-		m.archiveBlockedKey(sequence)
-		return
-	case ModalUnsupportedSchema:
-		// The notice has no action: nothing this build can do makes the store
-		// readable, so the only key it honors is the one that dismisses it.
-		if sequence == "\x1b" || sequence == "q" || sequence == "\r" || sequence == "\n" {
-			m.CloseModal()
-		}
-		return
-	}
-	confirmationKey := sequence == "y" || sequence == "Y" || sequence == "n" || sequence == "N"
-	if (!confirmationKey || m.modalConfirmationAvailable()) && m.dispatchAction(sequence, shortcuts.Modal) {
+	entry, bound := shortcuts.Match(sequence, shortcuts.Modal, m.availability)
+	if bound && m.availability(entry.Availability) && m.dispatchAction(sequence, shortcuts.Modal) {
 		return
 	}
 	if m.modalKeyStartsTyping(sequence) {
@@ -558,7 +546,7 @@ func (m *Model) modalKeyStartsTyping(sequence string) bool {
 	if m.modal == nil || !m.modal.Filterable() {
 		return false
 	}
-	if _, bound := shortcuts.Match(sequence, shortcuts.Modal, m.availability); bound {
+	if entry, bound := shortcuts.Match(sequence, shortcuts.Modal, m.availability); bound && m.availability(entry.Availability) {
 		return false
 	}
 	return input.Printable(sequence)

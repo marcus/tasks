@@ -126,14 +126,18 @@ func TestModalConfirmationCommandsMatchDirectDispatch(t *testing.T) {
 			invoked := newModelHarness(t, harnessOptions{})
 			test.open(direct)
 			test.open(invoked)
-			if available, err := invoked.model.CommandAvailable("modal-confirm"); err != nil || !available {
+			commandID := "modal-confirm"
+			if test.directKey == "\r" {
+				commandID = "modal-confirm-default"
+			}
+			if available, err := invoked.model.CommandAvailable(commandID); err != nil || !available {
 				t.Fatalf("confirm availability=%v err=%v", available, err)
 			}
 			if available, _ := invoked.model.CommandAvailable("close-modal"); available {
 				t.Fatal("ordinary close was available on a confirmation")
 			}
 			direct.pressKeys(test.directKey)
-			if _, err := invoked.model.InvokeCommand("modal-confirm"); err != nil {
+			if _, err := invoked.model.InvokeCommand(commandID); err != nil {
 				t.Fatal(err)
 			}
 			if direct.content() != invoked.content() || direct.model.Mode() != invoked.model.Mode() ||
@@ -211,6 +215,9 @@ func TestReturnDoesNotCloseConfirmationsThatRequireExplicitYes(t *testing.T) {
 			if available, _ := h.model.CommandAvailable("close-modal"); available {
 				t.Fatal("close-modal available on explicit-yes confirmation")
 			}
+			if available, _ := h.model.CommandAvailable("modal-confirm-default"); available {
+				t.Fatal("Return confirmation available on explicit-yes confirmation")
+			}
 			if _, err := h.model.InvokeCommand("close-modal"); err == nil {
 				t.Fatal("close-modal invoked on explicit-yes confirmation")
 			}
@@ -230,10 +237,10 @@ func TestQueuedAgentConfirmationCommandMatchesDirectDispatch(t *testing.T) {
 	}
 	direct, invoked := newQueued(), newQueued()
 	direct.pressKeys("\r")
-	if available, err := invoked.model.CommandAvailable("modal-confirm"); err != nil || !available {
+	if available, err := invoked.model.CommandAvailable("modal-confirm-default"); err != nil || !available {
 		t.Fatalf("confirm availability=%v err=%v", available, err)
 	}
-	if _, err := invoked.model.InvokeCommand("modal-confirm"); err != nil {
+	if _, err := invoked.model.InvokeCommand("modal-confirm-default"); err != nil {
 		t.Fatal(err)
 	}
 	if direct.model.pendingCount() != invoked.model.pendingCount() ||
