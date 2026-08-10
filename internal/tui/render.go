@@ -240,6 +240,9 @@ func (m *Model) tabCell(tab Tab, variant int) string {
 // the prompt takes the bottom because it is where the caret is. And the prompt
 // is SKIPPED in the modes that render their own input in an overlay, so a short
 // terminal never shows two carets.
+//
+// suppressFooter drops the whole stack; suppressKeyHints drops only the last
+// row of it. See footerForMode.
 func (m *Model) Footer() []string {
 	if m.suppressFooter {
 		return nil
@@ -270,7 +273,11 @@ func (m *Model) footerForMode(mode Mode) []string {
 	default:
 		lines = append(lines, m.PromptLines(m.width-2)...)
 	}
-	if mode != ModeTaskEdit {
+	// The key hint is the one footer element a host can plausibly re-paint in its
+	// own chrome, so it is the one element SuppressKeyHints removes. Everything
+	// above it — transcript, banner, flash, filters, prompt — is Tasks state the
+	// host cannot render on Tasks' behalf, and it stays.
+	if mode != ModeTaskEdit && !m.suppressKeyHints {
 		lines = append(lines, m.styler.Paint("muted", m.keyHint()))
 	}
 	return lines

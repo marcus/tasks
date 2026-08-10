@@ -83,10 +83,15 @@ type Options struct {
 	// SuppressQuit says the HOST owns the quit affordance, so Tasks drops quit
 	// from its own key hint; the request still latches, because a host that
 	// suppresses quit is precisely the host that needs to observe it.
-	// SuppressFooter lets the host own the shared footer row.
-	Embedded       bool
-	SuppressFooter bool
-	SuppressQuit   bool
+	// SuppressFooter drops the ENTIRE footer stack — agent transcript, store-read
+	// banner, flash, filter lines, prompt, and key hints — for a host that paints
+	// its own. SuppressKeyHints drops ONLY Tasks' ordinary key-hint row, on the
+	// same "the host owns the affordance" reading as SuppressQuit; everything
+	// else in the stack, the prompt above all, keeps rendering.
+	Embedded         bool
+	SuppressFooter   bool
+	SuppressKeyHints bool
+	SuppressQuit     bool
 	// SaveSession overrides standalone persistence for a host namespace.
 	SaveSession func(SessionState) error
 }
@@ -197,12 +202,13 @@ type Model struct {
 	// the readers coerced past — see storeReadError.
 	readErr error
 
-	quitting       bool
-	embedded       bool
-	suppressFooter bool
-	suppressQuit   bool
-	quitRequested  bool
-	saveSession    func(SessionState) error
+	quitting         bool
+	embedded         bool
+	suppressFooter   bool
+	suppressKeyHints bool
+	suppressQuit     bool
+	quitRequested    bool
+	saveSession      func(SessionState) error
 }
 
 // New builds the model from saved session state and one application facade.
@@ -216,27 +222,28 @@ func New(options Options) *Model {
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	model := &Model{
-		app:             options.App,
-		paths:           options.Paths,
-		env:             options.Env,
-		styler:          styler,
-		now:             now,
-		view:            restoreView(options.Session.View),
-		collapsed:       restoreCollapsed(options.Session.Collapsed),
-		panelMode:       normalizePanelMode(options.Session.PanelMode),
-		panelOffset:     options.Session.PanelOffset,
-		contextFilters:  restoreContextFilters(options.Session),
-		mode:            ModeList,
-		width:           80,
-		height:          24,
-		opener:          options.Opener,
-		copyToClipboard: options.CopyToClipboard,
-		entries:         options.Entries,
-		queue:           options.Queue,
-		embedded:        options.Embedded,
-		suppressFooter:  options.SuppressFooter,
-		suppressQuit:    options.SuppressQuit,
-		saveSession:     options.SaveSession,
+		app:              options.App,
+		paths:            options.Paths,
+		env:              options.Env,
+		styler:           styler,
+		now:              now,
+		view:             restoreView(options.Session.View),
+		collapsed:        restoreCollapsed(options.Session.Collapsed),
+		panelMode:        normalizePanelMode(options.Session.PanelMode),
+		panelOffset:      options.Session.PanelOffset,
+		contextFilters:   restoreContextFilters(options.Session),
+		mode:             ModeList,
+		width:            80,
+		height:           24,
+		opener:           options.Opener,
+		copyToClipboard:  options.CopyToClipboard,
+		entries:          options.Entries,
+		queue:            options.Queue,
+		embedded:         options.Embedded,
+		suppressFooter:   options.SuppressFooter,
+		suppressKeyHints: options.SuppressKeyHints,
+		suppressQuit:     options.SuppressQuit,
+		saveSession:      options.SaveSession,
 	}
 	return model
 }

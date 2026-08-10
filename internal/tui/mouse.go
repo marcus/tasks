@@ -142,6 +142,11 @@ func (m *Model) footerRole(layout ScreenLayout, row int) string {
 }
 
 func (m *Model) footerRoles() []string {
+	// Mirror Footer exactly: a suppressed footer has no rows to classify, and a
+	// suppressed key hint means the last row is the prompt, not chrome.
+	if m.suppressFooter {
+		return nil
+	}
 	roles := []string{}
 	agentLines := m.agentFooter()
 	agentRole := "chrome"
@@ -170,7 +175,7 @@ func (m *Model) footerRoles() []string {
 			roles = append(roles, "prompt")
 		}
 	}
-	if m.mode != ModeTaskEdit {
+	if m.mode != ModeTaskEdit && !m.suppressKeyHints {
 		roles = append(roles, "chrome")
 	}
 	return roles

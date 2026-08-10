@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 // hostFixture is the external-host shape of embeddedFixture: a host that
@@ -256,6 +259,117 @@ func TestHostReportsAMissingTasksDirectory(t *testing.T) {
 	model.Init()
 	if model.LoadError() == nil {
 		t.Fatal("a missing tasks directory reported no read error")
+	}
+}
+
+// -- G5: a host that owns the key hints must not lose the rest of the footer --
+
+// fakeProviderConfig points Tasks at a provider script that starts and stays
+// running, so a host can observe live agent activity without a real provider.
+func fakeProviderConfig(t *testing.T, dir string) string {
+	t.Helper()
+	provider := filepath.Join(dir, "fake-provider")
+	script := "#!/bin/sh\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n"
+	if err := os.WriteFile(provider, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return "llm_provider = claude-cli\nclaude-cli_command = " + provider + "\n"
+}
+
+// The first host built a unified key-hint bar and set SuppressFooter to avoid
+// painting hints twice. That also erased the prompt, the agent transcript, and
+// the store-read banner: focus moved to tasks-prompt and the user typed into an
+// invisible caret. SuppressKeyHints removes the hint row and nothing else.
+func TestHostSuppressesOnlyTheKeyHintRow(t *testing.T) {
+	dir := t.TempDir()
+	fixture := newHostFixture(t, validStore(t), fakeProviderConfig(t, dir), EmbeddedOptions{
+		SessionNamespace: "hint-host", SuppressKeyHints: true,
+	})
+	defer fixture.model.Discard()
+	fixture.model.Init()
+
+	frame := fixture.model.View(100, 24)
+	if strings.Contains(frame, "j/k") {
+		t.Fatalf("the ordinary key hint row survived SuppressKeyHints:\n%s", frame)
+	}
+	if !strings.Contains(frame, "tab to ask the agent") {
+		t.Fatalf("suppressing key hints removed the prompt row:\n%s", frame)
+	}
+
+	// The reported failure: focus the prompt and it must be visible.
+	fixture.model.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	if fixture.model.FocusContext() != FocusPrompt {
+		t.Fatalf("focus=%q", fixture.model.FocusContext())
+	}
+	fixture.model.Update(tea.KeyPressMsg{Code: 'x', Text: "unified footer"})
+	frame = fixture.model.View(100, 24)
+	if !strings.Contains(frame, "unified footer") || !strings.Contains(frame, "❯") {
+		t.Fatalf("the focused prompt is invisible with key hints suppressed:\n%s", frame)
+	}
+	if strings.Contains(frame, "j/k") {
+		t.Fatalf("the key hint row came back:\n%s", frame)
+	}
+
+	// Agent activity keeps rendering: the host owns hints, not the transcript.
+	fixture.model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(fixture.model.View(100, 24), "is working") {
+		if time.Now().After(deadline) {
+			t.Fatalf("agent activity never appeared with key hints suppressed:\n%s",
+				fixture.model.View(100, 24))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// The ADR-0015 store-read banner is a diagnostic; a host that owns the hint row
+// has not taken responsibility for it.
+func TestHostKeepsTheStoreReadBannerWhenOnlyKeyHintsAreSuppressed(t *testing.T) {
+	broken := func(dir string) {
+		if err := os.WriteFile(filepath.Join(dir, "tasks.jsonl"), []byte("{{{not json\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fixture := newHostFixture(t, broken, "", EmbeddedOptions{
+		SessionNamespace: "hint-banner-host", SuppressKeyHints: true,
+	})
+	defer fixture.model.Discard()
+	fixture.model.Init()
+	frame := fixture.model.View(100, 24)
+	if !strings.Contains(frame, "cannot read the task store") {
+		t.Fatalf("suppressing key hints hid the store-read banner:\n%s", frame)
+	}
+	if strings.Contains(frame, "j/k") {
+		t.Fatalf("the key hint row survived:\n%s", frame)
+	}
+}
+
+// SuppressFooter keeps its old, blunt meaning for the callers that already set
+// it: the whole stack goes, prompt and banner included.
+func TestHostSuppressFooterStillRemovesTheWholeFooterStack(t *testing.T) {
+	broken := func(dir string) {
+		if err := os.WriteFile(filepath.Join(dir, "tasks.jsonl"), []byte("{{{not json\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, options := range map[string]EmbeddedOptions{
+		"footer only":      {SessionNamespace: "blunt-host", SuppressFooter: true},
+		"footer and hints": {SessionNamespace: "blunt-both", SuppressFooter: true, SuppressKeyHints: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fixture := newHostFixture(t, broken, "", options)
+			defer fixture.model.Discard()
+			fixture.model.Init()
+			frame := fixture.model.View(100, 24)
+			for _, gone := range []string{"j/k", "tab to ask the agent", "cannot read the task store"} {
+				if strings.Contains(frame, gone) {
+					t.Fatalf("SuppressFooter still painted %q:\n%s", gone, frame)
+				}
+			}
+			if fixture.model.LoadError() == nil {
+				t.Fatal("the host lost its programmatic read-error signal too")
+			}
+		})
 	}
 }
 

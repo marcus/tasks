@@ -31,10 +31,11 @@ type RuntimeOptions struct {
 	Session SessionState
 	Styler  Styler
 
-	Embedded       bool
-	SuppressFooter bool
-	SuppressQuit   bool
-	SaveSession    func(SessionState) error
+	Embedded         bool
+	SuppressFooter   bool
+	SuppressKeyHints bool
+	SuppressQuit     bool
+	SaveSession      func(SessionState) error
 }
 
 // NewRuntime wires the application, store, renderer, opener, provider list,
@@ -85,11 +86,12 @@ func NewRuntime(options RuntimeOptions) (*Model, error) {
 	return New(Options{
 		App: app, Paths: paths, Env: env, Session: options.Session,
 		Styler: styler, Entries: entries, Queue: queue,
-		Opener:         SystemOpener{Env: env},
-		Embedded:       options.Embedded,
-		SuppressFooter: options.SuppressFooter,
-		SuppressQuit:   options.SuppressQuit,
-		SaveSession:    options.SaveSession,
+		Opener:           SystemOpener{Env: env},
+		Embedded:         options.Embedded,
+		SuppressFooter:   options.SuppressFooter,
+		SuppressKeyHints: options.SuppressKeyHints,
+		SuppressQuit:     options.SuppressQuit,
+		SaveSession:      options.SaveSession,
 	}), nil
 }
 

@@ -144,7 +144,21 @@ type EmbeddedOptions struct {
 	SessionNamespace string
 	InitialView      View
 	InitialContexts  []string
+	// SuppressFooter is the blunt switch: Tasks paints NO footer at all. That
+	// stack is not only the key hints — it is also the agent transcript, the
+	// store-read banner, the flash, the filter and context-filter lines, and the
+	// prompt input itself. A host that suppresses it owns rendering all of that,
+	// and the prompt becomes an invisible caret unless the host draws one. Use it
+	// only for a host that genuinely re-implements the whole footer.
+	//
+	// SuppressKeyHints is the fine switch, and is what a host building a unified
+	// key-hint bar wants: Tasks drops ONLY its ordinary key-hint row, on the same
+	// reading as SuppressQuit — the HOST owns that affordance — and keeps the
+	// prompt, agent transcript, store-read banner, flash, and filter lines.
+	//
+	// SuppressFooter wins where both are set; there is nothing left to hint.
 	SuppressFooter   bool
+	SuppressKeyHints bool
 	SuppressQuit     bool
 	Theme            ThemeOptions
 	Environment      map[string]string
@@ -207,11 +221,12 @@ func NewEmbedded(options EmbeddedOptions) (*Model, error) {
 	}
 	inner, err := internal.NewRuntime(internal.RuntimeOptions{
 		Paths: paths, Env: env, Session: session,
-		Styler:         term.NewStyler(paths.Theme, paths.Colors),
-		Embedded:       true,
-		SuppressFooter: options.SuppressFooter,
-		SuppressQuit:   options.SuppressQuit,
-		SaveSession:    save,
+		Styler:           term.NewStyler(paths.Theme, paths.Colors),
+		Embedded:         true,
+		SuppressFooter:   options.SuppressFooter,
+		SuppressKeyHints: options.SuppressKeyHints,
+		SuppressQuit:     options.SuppressQuit,
+		SaveSession:      save,
 	})
 	if err != nil {
 		return nil, err
