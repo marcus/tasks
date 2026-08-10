@@ -334,6 +334,16 @@ func (m *Model) keyHint() string {
 		" j/k · 1-6 · h/l · enter · / · q",
 		" ?",
 	}
+	// A host that owns quit advertises it in its own chrome. Tasks still acts
+	// on the key — it latches a request — but it stops claiming the affordance.
+	if m.suppressQuit {
+		candidates = []string{
+			" j/k move · 1-6 views · h/l fold · enter details · v unavailable · / search",
+			" j/k · 1-6 views · h/l fold · enter details · / search",
+			" j/k · 1-6 · h/l · enter · /",
+			" ?",
+		}
+	}
 	for _, hint := range candidates {
 		if m.styler.Width(hint) <= m.width-2 {
 			return hint

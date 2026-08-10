@@ -54,7 +54,7 @@ func TestEmbeddedInitialPresentationAndHostSizedView(t *testing.T) {
 	}
 }
 
-func TestEmbeddedQuitIsSurfacedOrSuppressedWithoutTeaQuit(t *testing.T) {
+func TestEmbeddedQuitLatchesForTheHostWithoutTeaQuit(t *testing.T) {
 	model, _ := embeddedFixture(t, EmbeddedOptions{})
 	model.Init()
 	_, cmd := model.Update(key("q"))
@@ -72,12 +72,27 @@ func TestEmbeddedQuitIsSurfacedOrSuppressedWithoutTeaQuit(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// SuppressQuit means the HOST owns the affordance, not that Tasks refuses:
+	// the request must still latch, or QuitRequested is unreachable API.
 	suppressed, _ := embeddedFixture(t, EmbeddedOptions{SuppressQuit: true})
 	defer suppressed.Close()
 	suppressed.Init()
 	_, cmd = suppressed.Update(key("q"))
-	if cmd != nil || suppressed.QuitRequested() {
+	if cmd != nil || !suppressed.QuitRequested() {
 		t.Fatalf("suppressed quit cmd=%v requested=%v", cmd, suppressed.QuitRequested())
+	}
+	if frame := suppressed.View(80, 14); strings.Contains(frame, "managed by the host") {
+		t.Fatalf("suppressed quit still flashes a refusal:\n%s", frame)
+	}
+	if frame := suppressed.View(80, 14); strings.Contains(frame, "q quit") {
+		t.Fatalf("suppressed quit still advertises Tasks' own affordance:\n%s", frame)
+	}
+	suppressed.ClearQuitRequest()
+	if suppressed.QuitRequested() {
+		t.Fatal("suppressed quit acknowledgement was ignored")
+	}
+	if _, cmd = suppressed.Update(key("q")); !suppressed.QuitRequested() {
+		t.Fatal("a second suppressed quit did not re-latch")
 	}
 }
 

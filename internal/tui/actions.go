@@ -1101,10 +1101,6 @@ func outcomeMessage(outcome application.Outcome, fallback string) string {
 }
 
 func (m *Model) requestQuit() {
-	if m.embedded && m.suppressQuit {
-		m.Flash("quit is managed by the host")
-		return
-	}
 	editor := m.taskEditor
 	if editor == nil {
 		editor = m.suspendedTaskEditor

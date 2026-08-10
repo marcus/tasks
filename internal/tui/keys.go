@@ -168,10 +168,10 @@ func (m *Model) finishQuit() {
 		m.quitting = true
 		return
 	}
-	if m.suppressQuit {
-		m.Flash("quit is managed by the host")
-		return
-	}
+	// Embedded quit LATCHES rather than terminating, whether or not the host
+	// suppressed Tasks' own quit chrome. Refusing the action outright made
+	// QuitRequested/ClearQuitRequest unreachable under SuppressQuit, which is
+	// exactly the configuration a host that owns quit runs in.
 	m.quitRequested = true
 }
 

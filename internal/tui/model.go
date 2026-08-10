@@ -3,7 +3,10 @@ package tui
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -75,9 +78,12 @@ type Options struct {
 	// loud rather than reaching for a real provider.
 	Entries []AgentEntry
 	Queue   *agentQueue
-	// Embedded keeps nested quit commands inside the model. SuppressQuit turns
-	// the quit key into a refusal; otherwise QuitRequested surfaces it to the
-	// host. SuppressFooter lets the host own the shared footer row.
+	// Embedded keeps nested quit commands inside the model: quit latches a
+	// request the host reads through QuitRequested rather than terminating.
+	// SuppressQuit says the HOST owns the quit affordance, so Tasks drops quit
+	// from its own key hint; the request still latches, because a host that
+	// suppresses quit is precisely the host that needs to observe it.
+	// SuppressFooter lets the host own the shared footer row.
 	Embedded       bool
 	SuppressFooter bool
 	SuppressQuit   bool
@@ -187,6 +193,8 @@ type Model struct {
 
 	// readErr is the last read failure. A TUI that cannot read its store must
 	// SAY so rather than paint an empty list that looks like an empty store.
+	// It covers both an I/O failure of the read itself and a store whose bytes
+	// the readers coerced past — see storeReadError.
 	readErr error
 
 	quitting       bool
@@ -403,7 +411,6 @@ func (m *Model) Refresh() {
 		m.readErr = err
 		return
 	}
-	m.readErr = nil
 	m.read = read
 	m.today = read.Queries().Today()
 	m.RefreshRows()
@@ -472,16 +479,60 @@ func (m *Model) selectedTarget(id string) bool {
 // a store with FEWER TASKS IN IT rather than as an error. Without this the TUI
 // would paint a half-empty list that is indistinguishable from a half-empty
 // store — the single most dangerous thing a task list can do.
+// It also has to be STICKY. A flash expires; the condition does not. So the
+// same assessment sets readErr, which the footer keeps painting until the
+// store is readable again, and which an embedded host reads through
+// pkg/tui.Model.LoadError to render its own diagnostic.
+//
+// What counts as a failure, deliberately:
+//
+//   - the tasks directory does not exist — a misconfiguration, not a store;
+//   - the store path is a directory, or cannot be opened (permissions);
+//   - the store has bytes that are not valid UTF-8 or not valid Tasks JSONL.
+//
+// What does NOT count is the first-run state: no store file yet inside an
+// existing tasks directory, or a zero-length file. Tasks writes the store on
+// the first mutation, so a brand-new install legitimately has nothing to read,
+// and calling that an error would greet every new user with a broken banner. A
+// store that exists and holds only its meta record is likewise healthy and
+// empty. The distinction the caller actually needs — "no tasks" versus "no
+// read" — survives, because every genuinely unreadable case above reports.
 func (m *Model) reportFormatErrors() {
-	if m.paths.Org == "" {
+	m.readErr = nil
+	path := m.paths.Org
+	if path == "" {
 		return
 	}
-	if result := check.Check(m.paths.Org); !result.OK() {
-		m.Flash(m.styler.Paint("error", fmt.Sprintf(
-			"⚠ %s: %d format error(s) — run `tasks check`",
-			filepath.Base(m.paths.Org), len(result.Errors))))
+	info, err := os.Stat(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		directory := filepath.Dir(path)
+		if _, dirErr := os.Stat(directory); dirErr != nil {
+			m.readErr = fmt.Errorf("task directory is missing: %s", directory)
+		}
+		return
+	case err != nil:
+		m.readErr = err
+		return
+	case info.IsDir():
+		m.readErr = fmt.Errorf("%s is a directory, not a task file", path)
+		return
+	case info.Size() == 0:
+		return
 	}
+	result := check.Check(path)
+	if result.OK() {
+		return
+	}
+	m.readErr = fmt.Errorf("%s: %s", filepath.Base(path), result.Errors[0].Message)
+	m.Flash(m.styler.Paint("error", fmt.Sprintf(
+		"⚠ %s: %d format error(s) — run `tasks check`",
+		filepath.Base(path), len(result.Errors))))
 }
+
+// ReadError is the sticky store-read failure, or nil when the last read was
+// healthy. An empty store is healthy; see reportFormatErrors.
+func (m *Model) ReadError() error { return m.readErr }
 
 // ReadModel is the model's current read, for tests and for the packets that
 // need the same snapshot the list was built from.
