@@ -124,7 +124,7 @@ type Model struct {
 	// Interaction state.
 	mode         Mode
 	filter       string
-	filterInput  string
+	filterInput  *input.Editor
 	showDeferred bool
 	selected     int
 	selectedID   string
@@ -598,7 +598,7 @@ func (m *Model) useTree() bool {
 func (m *Model) activeFilter() string {
 	text := m.filter
 	if m.mode == ModeFilter {
-		text = m.filterInput
+		text = m.filterEditor().Text()
 	}
 	if strings.TrimSpace(text) == "" {
 		return ""

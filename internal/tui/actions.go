@@ -1076,7 +1076,7 @@ func (m *Model) jumpView(key string) {
 }
 
 func (m *Model) startFilter() {
-	m.filterInput = m.filter
+	m.filterEditor().Replace(m.filter)
 	_ = m.SetMode(ModeFilter)
 }
 

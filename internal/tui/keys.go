@@ -140,10 +140,7 @@ func (m *Model) handlePaste(text string) {
 			m.applyContextOutcome(m.contextPalette.Paste(text))
 		}
 	case ModeFilter:
-		editor := input.New(m.filterInput, input.Options{})
-		editor.SetCursor(len(input.Graphemes(m.filterInput)))
-		if editor.Insert(text) == input.Changed {
-			m.filterInput = editor.Text()
+		if m.filterEditor().Insert(text) == input.Changed {
 			m.RefreshRows()
 		}
 	case ModeModalFilter:
@@ -215,12 +212,19 @@ func KeySequence(message tea.KeyPressMsg) string {
 		case 0:
 			return named
 		case tea.ModAlt:
-			if named == "\x1b[A" || named == "\x1b[B" {
-				// alt-↑ / alt-↓ are the reorder bindings; registry spells them
-				// as the xterm modified-arrow sequence.
+			switch named {
+			case "\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D":
+				// xterm's Alt modifier is 3. Up/down remain list reorder
+				// bindings; left/right are standard word navigation in editors.
 				return strings.Replace(named, "\x1b[", "\x1b[1;3", 1)
+			case "\x7f":
+				// macOS terminals encode Option-Backspace as Meta-DEL.
+				return "\x1b\x7f"
+			case "\x1b[3~":
+				return "\x1b[3;3~"
+			default:
+				return ""
 			}
-			return ""
 		default:
 			return ""
 		}
@@ -440,19 +444,16 @@ func (m *Model) filterKey(sequence string) {
 		// Escape clears the filter ENTIRELY rather than reverting the edit: a
 		// user pressing escape in a search box wants the search gone.
 		m.filter = ""
-		m.filterInput = ""
+		m.filterEditor().Clear()
 		m.mode = ModeList
 		m.RefreshRows()
 	case "\r", "\n":
-		m.filter = strings.TrimSpace(m.filterInput)
-		m.filterInput = ""
+		m.filter = strings.TrimSpace(m.filterEditor().Text())
+		m.filterEditor().Clear()
 		m.mode = ModeList
 		m.RefreshRows()
 	default:
-		editor := input.New(m.filterInput, input.Options{})
-		editor.SetCursor(len(input.Graphemes(m.filterInput)))
-		if editor.HandleKey(sequence) == input.Changed {
-			m.filterInput = editor.Text()
+		if m.filterEditor().HandleKey(sequence) == input.Changed {
 			m.RefreshRows()
 		}
 	}

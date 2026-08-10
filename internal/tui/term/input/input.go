@@ -183,10 +183,12 @@ func (e *Editor) HandleKey(key string) Result {
 		return e.moveLeft()
 	case CtrlF, "\x1b[C":
 		return e.moveRight()
-	case "\x1b[1;5D", "\x1b[1;3D", "\x1b[5D", "\x1b[3D":
+	case "\x1bb", "\x1b[1;5D", "\x1b[1;3D", "\x1b[5D", "\x1b[3D":
 		return e.wordLeft()
-	case "\x1b[1;5C", "\x1b[1;3C", "\x1b[5C", "\x1b[3C":
+	case "\x1bf", "\x1b[1;5C", "\x1b[1;3C", "\x1b[5C", "\x1b[3C":
 		return e.wordRight()
+	case "\x1bd", "\x1b[3;3~":
+		return e.killWordForward()
 	case CtrlD, "\x1b[3~":
 		return e.deleteForward()
 	case CtrlH, "\x7f": // ctrl-h and DEL are the two backspace encodings
@@ -198,7 +200,7 @@ func (e *Editor) HandleKey(key string) Result {
 		return None
 	case CtrlU:
 		return e.killToStart()
-	case CtrlW:
+	case CtrlW, "\x1b\x7f", "\x1b\x08":
 		return e.killWordBack()
 	case "\r", "\n":
 		if e.multiline {
@@ -329,21 +331,34 @@ func (e *Editor) killWordBack() Result {
 	return Changed
 }
 
+func (e *Editor) killWordForward() Result {
+	if e.cursor >= len(e.units) {
+		return Handled
+	}
+	end := e.wordEndAfter(e.cursor)
+	e.units = append(e.units[:e.cursor], e.units[end:]...)
+	return Changed
+}
+
 func (e *Editor) wordLeft() Result {
 	e.cursor = e.wordStartBefore(e.cursor)
 	return Handled
 }
 
 func (e *Editor) wordRight() Result {
-	index := e.cursor
+	e.cursor = e.wordEndAfter(e.cursor)
+	return Handled
+}
+
+func (e *Editor) wordEndAfter(from int) int {
+	index := from
 	for index < len(e.units) && !isSpace(e.units[index]) {
 		index++
 	}
 	for index < len(e.units) && isSpace(e.units[index]) {
 		index++
 	}
-	e.cursor = index
-	return Handled
+	return index
 }
 
 func (e *Editor) wordStartBefore(from int) int {

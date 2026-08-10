@@ -58,7 +58,10 @@ func TestKeySequence(t *testing.T) {
 		{name: "pgdown", msg: tea.KeyPressMsg{Code: tea.KeyPgDown}, want: "\x1b[6~"},
 		{name: "alt-up", msg: tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModAlt}, want: "\x1b[1;3A"},
 		{name: "alt-down", msg: tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModAlt}, want: "\x1b[1;3B"},
-		{name: "alt-left unbound", msg: tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModAlt}, want: ""},
+		{name: "alt-left", msg: tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModAlt}, want: "\x1b[1;3D"},
+		{name: "alt-right", msg: tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModAlt}, want: "\x1b[1;3C"},
+		{name: "alt-backspace", msg: tea.KeyPressMsg{Code: tea.KeyBackspace, Mod: tea.ModAlt}, want: "\x1b\x7f"},
+		{name: "alt-delete", msg: tea.KeyPressMsg{Code: tea.KeyDelete, Mod: tea.ModAlt}, want: "\x1b[3;3~"},
 
 		// Shifted specials must stay unbound (v1 KeyShiftUp etc. were ignored)
 		{name: "shift-up unbound", msg: tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModShift}, want: ""},

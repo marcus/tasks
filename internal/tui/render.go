@@ -260,7 +260,7 @@ func (m *Model) footerForMode(mode Mode) []string {
 		lines = append(lines, " "+message)
 	}
 	if mode == ModeFilter {
-		lines = append(lines, m.styler.Paint("accent", " /"+m.filterInput)+
+		lines = append(lines, m.styler.Paint("accent", " /"+m.filterEditor().Text())+
 			m.styler.Paint("muted", "  enter applies · esc cancels"))
 	} else if m.filter != "" {
 		lines = append(lines, m.styler.Paint("muted", fmt.Sprintf(" filter /%s · esc clears", m.filter)))

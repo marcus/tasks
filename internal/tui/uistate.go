@@ -189,5 +189,15 @@ func (m *Model) modalFilterEditor() *input.Editor {
 // ModalFilterInput is the text in the modal's filter line.
 func (m *Model) ModalFilterInput() string { return m.modalFilterEditor().Text() }
 
+// filterEditor is the persistent buffer behind the list's `/` filter. Keeping
+// the editor (rather than rebuilding one from its text for every key) preserves
+// cursor movement across Bubble Tea Update calls.
+func (m *Model) filterEditor() *input.Editor {
+	if m.filterInput == nil {
+		m.filterInput = input.New("", input.Options{})
+	}
+	return m.filterInput
+}
+
 // ContextFilters is the active `@` filter set.
 func (m *Model) ContextFilters() []string { return append([]string{}, m.contextFilters...) }

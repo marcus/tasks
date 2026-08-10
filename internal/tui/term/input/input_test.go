@@ -80,6 +80,35 @@ func TestModifiedArrowsMoveByWord(t *testing.T) {
 	}
 }
 
+func TestCommonMetaWordMovementAndDeletion(t *testing.T) {
+	e := editor("alpha beta gamma")
+	e.HandleKey("\x1bb")
+	e.HandleKey("\x1b\x7f")
+	if got := e.Text(); got != "alpha gamma" {
+		t.Fatalf("after meta-b then option-backspace = %q", got)
+	}
+	e = editor("alpha beta gamma")
+	e.HandleKey(CtrlA)
+	e.HandleKey("\x1bd")
+	if got := e.Text(); got != "beta gamma" {
+		t.Fatalf("after meta-d = %q", got)
+	}
+	e.HandleKey("\x1bf")
+	e.HandleKey("!")
+	if got := e.Text(); got != "beta !gamma" {
+		t.Fatalf("after meta-f insertion = %q", got)
+	}
+}
+
+func TestOptionDeleteSequenceDeletesTheNextWord(t *testing.T) {
+	e := editor("alpha beta")
+	e.HandleKey(CtrlA)
+	e.HandleKey("\x1b[3;3~")
+	if got := e.Text(); got != "beta" {
+		t.Fatalf("after option-delete = %q", got)
+	}
+}
+
 func TestHandleKeyDistinguishesChangedFromHandled(t *testing.T) {
 	e := editor("a")
 	if got := e.HandleKey(CtrlB); got != Handled {
