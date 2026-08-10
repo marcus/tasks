@@ -722,6 +722,13 @@ func (m *Model) selectRow(index int) {
 		id = m.rows[index].ID()
 	}
 	if m.selected == index && m.selectedID == id {
+		// A row rebuild can preserve both coordinates while replacing the
+		// underlying read model. Keep an open detail panel synchronized even
+		// when selection itself has nothing to change (for example, deciding a
+		// proposal preselects the next id before Refresh rebuilds the Inbox).
+		if m.mode != ModeTaskEdit {
+			m.refreshOpenPanel()
+		}
 		return
 	}
 	m.selected = index

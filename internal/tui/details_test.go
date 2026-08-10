@@ -167,6 +167,68 @@ func TestMovingToAnotherTaskResetsPanelScroll(t *testing.T) {
 	}
 }
 
+func TestProposalDecisionReconcilesOpenDetailWithSelection(t *testing.T) {
+	const proposals = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Inbox"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0001","state":"PROPOSED","title":"First proposal"}
+{"type":"task","id":"bbbb0002","parent":"aaaa0001","state":"PROPOSED","title":"Second proposal"}
+`
+	tests := []struct {
+		name    string
+		direct  string
+		command string
+	}{
+		{name: "direct approve", direct: "a"},
+		{name: "direct reject", direct: "r"},
+		{name: "invoked approve", command: "approve-proposal"},
+		{name: "invoked reject", command: "reject-proposal"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			harness := newModelHarness(t, harnessOptions{live: proposals})
+			harness.model.SwitchView(ViewInbox)
+			harness.selectRowByID("bbbb0001")
+			harness.model.OpenDetail()
+
+			if test.direct != "" {
+				harness.pressKeys(test.direct)
+			} else if _, err := harness.model.InvokeCommand(test.command); err != nil {
+				t.Fatal(err)
+			}
+
+			if got := harness.model.SelectedID(); got != "bbbb0002" {
+				t.Fatalf("selection = %q, want second proposal", got)
+			}
+			panel := harness.model.Panel()
+			if panel == nil || panel.Identity != "bbbb0002" {
+				t.Fatalf("detail panel did not follow selection: %#v", panel)
+			}
+			if !strings.Contains(strings.Join(panel.Lines, "\n"), "Second proposal") {
+				t.Fatalf("detail content did not show second proposal: %v", panel.Lines)
+			}
+		})
+	}
+}
+
+func TestRejectingLastProposalClosesDetailWhenInboxHasNoSelectableRows(t *testing.T) {
+	const proposal = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Inbox"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0001","state":"PROPOSED","title":"Only proposal"}
+`
+	harness := newModelHarness(t, harnessOptions{live: proposal})
+	harness.model.SwitchView(ViewInbox)
+	harness.selectRowByID("bbbb0001")
+	harness.model.OpenDetail()
+	harness.pressKeys("r")
+
+	if got := harness.model.SelectedID(); got != "" {
+		t.Fatalf("selection = %q, want none", got)
+	}
+	if panel := harness.model.Panel(); panel != nil {
+		t.Fatalf("detail remained open with no selectable row: %#v", panel)
+	}
+}
+
 func TestEnterTogglesTheDetailPanel(t *testing.T) {
 	harness := newModelHarness(t, harnessOptions{})
 	harness.model.SwitchView(ViewNext)
