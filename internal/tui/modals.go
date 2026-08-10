@@ -8,9 +8,10 @@ import (
 
 // ModalContent is a built overlay body: what a Modal is constructed from.
 type ModalContent struct {
-	Title        string
-	Lines        []string
-	FilterGroups []string
+	Title              string
+	Lines              []string
+	FilterGroups       []string
+	FilterContextLines []bool
 }
 
 // helpGroups is the order the help modal shows the contexts in — the task list
@@ -52,9 +53,11 @@ func HelpContent(styler Styler) ModalContent {
 	}
 	lines := []string{}
 	groups := []string{}
-	add := func(group, line string) {
+	contextLines := []bool{}
+	add := func(group, line string, contextLine bool) {
 		lines = append(lines, line)
 		groups = append(groups, group)
+		contextLines = append(contextLines, contextLine)
 	}
 	for index, group := range helpGroups {
 		entries, err := shortcuts.Entries(group.Context, false)
@@ -62,9 +65,9 @@ func HelpContent(styler Styler) ModalContent {
 			continue
 		}
 		if index > 0 {
-			add(group.Title, "")
+			add(group.Title, "", true)
 		}
-		add(group.Title, styler.Paint("section", group.Title))
+		add(group.Title, styler.Paint("section", group.Title), true)
 		for _, entry := range entries {
 			if entry.HideInHelp {
 				continue
@@ -76,13 +79,16 @@ func HelpContent(styler Styler) ModalContent {
 			if entry.HelpDescription != "" {
 				description = entry.HelpDescription
 			}
-			add(group.Title, styler.Paint("accent", padRunes(key, keyWidth))+" "+description)
+			add(group.Title, styler.Paint("accent", padRunes(key, keyWidth))+" "+description, false)
 		}
 	}
-	add("everywhere", "")
+	add("everywhere", "", true)
 	add("everywhere", styler.Paint("muted",
-		"prompt/quick-form input: return submits · esc cancels · ctrl-a/e/b/f move"))
-	return ModalContent{Title: "keyboard shortcuts", Lines: lines, FilterGroups: groups}
+		"prompt/quick-form input: return submits · esc cancels · ctrl-a/e/b/f move"), false)
+	return ModalContent{
+		Title: "keyboard shortcuts", Lines: lines, FilterGroups: groups,
+		FilterContextLines: contextLines,
+	}
 }
 
 // padRunes is String#ljust in cells. Display keys are ASCII in the registry, so

@@ -50,40 +50,47 @@ type Modal struct {
 	all        []string
 	kind       ModalKind
 	filterable bool
-	// filterGroups ties each line to a group id. A match on any line in a group
-	// keeps the WHOLE group, which is what makes filtering a shortcut list show
-	// the section heading a matched binding lives under.
-	filterGroups []string
-	scroll       int
-	filter       string
-	filtered     []string
-	haystack     []string
-	width        int
+	// filterGroups ties each line to a group id. By default a match keeps the
+	// whole group (used by agent activity). When filterContextLines is present,
+	// only direct matches plus context rows from their groups are retained.
+	filterGroups       []string
+	filterContextLines []bool
+	scroll             int
+	filter             string
+	filtered           []string
+	haystack           []string
+	width              int
 }
 
 // ModalOptions builds a Modal.
 type ModalOptions struct {
-	Title        string
-	Lines        []string
-	Kind         ModalKind
-	Filterable   bool
-	FilterGroups []string
+	Title              string
+	Lines              []string
+	Kind               ModalKind
+	Filterable         bool
+	FilterGroups       []string
+	FilterContextLines []bool
 }
 
-// NewModal builds one. A filter-group slice that does not align with the lines
-// is dropped rather than honoured, because a misaligned group map would hide
-// the wrong lines — silently.
+// NewModal builds one. Filter metadata that does not align with the lines is
+// dropped rather than honoured, because a misaligned map would hide the wrong
+// lines — silently.
 func NewModal(options ModalOptions) *Modal {
 	groups := options.FilterGroups
 	if groups != nil && len(groups) != len(options.Lines) {
 		groups = nil
 	}
+	contextLines := options.FilterContextLines
+	if groups == nil || len(contextLines) != len(options.Lines) {
+		contextLines = nil
+	}
 	return &Modal{
-		title:        options.Title,
-		all:          append([]string{}, options.Lines...),
-		kind:         options.Kind,
-		filterable:   options.Filterable,
-		filterGroups: groups,
+		title:              options.Title,
+		all:                append([]string{}, options.Lines...),
+		kind:               options.Kind,
+		filterable:         options.Filterable,
+		filterGroups:       groups,
+		filterContextLines: contextLines,
 	}
 }
 
@@ -101,13 +108,17 @@ func (m *Modal) AllLines() []string { return append([]string{}, m.all...) }
 
 // Replace swaps live content without discarding the user's filter or scroll
 // intent. The next View clamps scroll against the refreshed match set.
-func (m *Modal) Replace(title string, lines []string, filterGroups []string) {
+func (m *Modal) Replace(title string, lines []string, filterGroups []string, filterContextLines []bool) {
 	m.title = title
 	m.all = append([]string{}, lines...)
 	if filterGroups != nil && len(filterGroups) != len(lines) {
 		filterGroups = nil
 	}
 	m.filterGroups = filterGroups
+	m.filterContextLines = nil
+	if filterGroups != nil && len(filterContextLines) == len(lines) {
+		m.filterContextLines = filterContextLines
+	}
 	m.filtered = nil
 	m.haystack = nil
 	m.width = 0
@@ -145,12 +156,18 @@ func (m *Modal) Lines() []string {
 	}
 	if m.filterGroups != nil {
 		groups := map[string]bool{}
+		directMatches := map[int]bool{}
 		for _, index := range matches {
 			groups[m.filterGroups[index]] = true
+			directMatches[index] = true
 		}
 		kept := []string{}
 		for index, line := range m.all {
-			if groups[m.filterGroups[index]] {
+			keep := groups[m.filterGroups[index]]
+			if m.filterContextLines != nil {
+				keep = directMatches[index] || (keep && m.filterContextLines[index])
+			}
+			if keep {
 				kept = append(kept, line)
 			}
 		}

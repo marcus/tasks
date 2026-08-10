@@ -192,6 +192,7 @@ func (m *Model) OpenModal(content ModalContent, kind ModalKind, filterable bool)
 	m.SetModal(NewModal(ModalOptions{
 		Title: content.Title, Lines: content.Lines, Kind: kind,
 		Filterable: filterable, FilterGroups: content.FilterGroups,
+		FilterContextLines: content.FilterContextLines,
 	}))
 	m.modalFilterEditor().Clear()
 	_ = m.SetMode(ModeModal)

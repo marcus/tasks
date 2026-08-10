@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/marcus/tasks/internal/tui/term/ansi"
 )
 
 // These drive the ROOT MODEL with keys, the way a user does, so they check the
@@ -67,6 +69,48 @@ func TestHelpOpensFiltersAndCloses(t *testing.T) {
 	harness.pressKeys("\x1b")
 	if harness.model.Mode() != ModeList {
 		t.Errorf("escape did not close the modal: %s", harness.model.Mode())
+	}
+}
+
+func TestHelpFilterRendersOnlyMatchingShortcutRowsAndHeadings(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.pressKeys("?", "/", "D", "e", "l", "e")
+
+	rendered := ansi.Strip(harness.model.Render())
+	for _, want := range []string{"in the task list", "Delegate", "delete selected task"} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("filtered help does not render %q:\n%s", want, rendered)
+		}
+	}
+	for _, unwanted := range []string{"select next task", "complete selected task", "open keyboard shortcuts"} {
+		if strings.Contains(rendered, unwanted) {
+			t.Errorf("filtered help still renders unrelated shortcut %q:\n%s", unwanted, rendered)
+		}
+	}
+}
+
+func TestHelpFilterPasteClearAndNoMatchJourney(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.pressKeys("?", "/")
+	harness.model.Update(pasteMsg("Dele"))
+	if got := harness.model.ModalFilterInput(); got != "Dele" {
+		t.Fatalf("pasted modal filter = %q, want Dele", got)
+	}
+	if rendered := ansi.Strip(harness.model.Render()); !strings.Contains(rendered, "Delegate") || strings.Contains(rendered, "select next task") {
+		t.Fatalf("pasted filter did not narrow rendered help:\n%s", rendered)
+	}
+
+	harness.pressKeys("\x1b")
+	if got, want := len(harness.model.Modal().Lines()), len(harness.model.Modal().AllLines()); got != want {
+		t.Fatalf("clearing pasted filter restored %d rows, want %d", got, want)
+	}
+	if rendered := ansi.Strip(harness.model.Render()); !strings.Contains(rendered, "select next task") {
+		t.Fatalf("clearing the filter did not restore rendered shortcuts:\n%s", rendered)
+	}
+
+	harness.pressKeys("/", "z", "z", "z")
+	if rendered := ansi.Strip(harness.model.Render()); !strings.Contains(rendered, "no lines match “zzz”") {
+		t.Fatalf("no-match filter did not render its explanation:\n%s", rendered)
 	}
 }
 

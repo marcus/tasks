@@ -333,7 +333,7 @@ func (m *Model) refreshAgentActivity() {
 		width = m.width
 	}
 	content := m.agentActivityContent(width)
-	m.modal.Replace(content.Title, content.Lines, content.FilterGroups)
+	m.modal.Replace(content.Title, content.Lines, content.FilterGroups, content.FilterContextLines)
 }
 
 // CancelQueuedAgentRequests is the palette action behind the confirmation.

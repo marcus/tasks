@@ -191,7 +191,7 @@ func TestModalReplacePreservesFilterAndScrollIntent(t *testing.T) {
 	modal := newTestModal(nil, "")
 	modal.SetFilter("line 1")
 	modal.ScrollLine(1, modalBodyH)
-	modal.Replace("t", numberedLines(40), nil)
+	modal.Replace("t", numberedLines(40), nil, nil)
 	if modal.Filter() != "line 1" {
 		t.Errorf("replacing content dropped the filter")
 	}
@@ -213,6 +213,23 @@ func TestModalGroupedFilterKeepsTheWholeMatchingBlock(t *testing.T) {
 	got := modal.Lines()
 	if len(got) != 2 || got[0] != "heading one" {
 		t.Errorf("a grouped match lost its heading: %v", got)
+	}
+}
+
+func TestModalContextFilterKeepsOnlyMatchesAndTheirContextRows(t *testing.T) {
+	modal := NewModal(ModalOptions{
+		Title: "t", Kind: ModalHelp, Filterable: true,
+		Lines:              []string{"heading one", "alpha", "also one", "", "heading two", "beta"},
+		FilterGroups:       []string{"one", "one", "one", "two", "two", "two"},
+		FilterContextLines: []bool{true, false, false, true, true, false},
+	})
+	modal.SetFilter("alpha")
+	if got := modal.Lines(); strings.Join(got, "|") != "heading one|alpha" {
+		t.Errorf("context filtering retained unrelated rows: %v", got)
+	}
+	modal.SetFilter("beta")
+	if got := modal.Lines(); strings.Join(got, "|") != "|heading two|beta" {
+		t.Errorf("context filtering lost the section separator or heading: %v", got)
 	}
 }
 
