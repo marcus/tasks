@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.5.0] - 2026-08-10
+
+- Let embedded hosts suppress numeric view-jump advertisements while retaining
+  view names, selection state, mouse targets, and command availability.
+- Add standard word-navigation and word-deletion keys across Tasks text inputs.
+- Keep approval details synchronized when accepting or rejecting a proposal
+  advances the selected item.
+- Make shortcut-help search render only matching bindings and section rows.
+- Add a comprehensive Sidecar embedding guide covering the public TUI contract,
+  key routing, release ordering, and end-to-end verification.
+
 ## [1.4.0] - 2026-08-10
 
 - Add the embeddable Tasks TUI package used by Sidecar, including host-owned
