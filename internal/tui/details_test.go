@@ -210,22 +210,58 @@ func TestProposalDecisionReconcilesOpenDetailWithSelection(t *testing.T) {
 	}
 }
 
-func TestRejectingLastProposalClosesDetailWhenInboxHasNoSelectableRows(t *testing.T) {
+func TestLastProposalDecisionReconcilesSelectionAndDetail(t *testing.T) {
 	const proposal = `{"type":"meta","version":2}
 {"type":"section","id":"aaaa0001","title":"Inbox"}
 {"type":"task","id":"bbbb0001","parent":"aaaa0001","state":"PROPOSED","title":"Only proposal"}
 `
-	harness := newModelHarness(t, harnessOptions{live: proposal})
-	harness.model.SwitchView(ViewInbox)
-	harness.selectRowByID("bbbb0001")
-	harness.model.OpenDetail()
-	harness.pressKeys("r")
-
-	if got := harness.model.SelectedID(); got != "" {
-		t.Fatalf("selection = %q, want none", got)
+	tests := []struct {
+		name     string
+		direct   string
+		command  string
+		approved bool
+	}{
+		{name: "direct approve keeps Inbox detail", direct: "a", approved: true},
+		{name: "invoked approve keeps Inbox detail", command: "approve-proposal", approved: true},
+		{name: "direct reject closes detail", direct: "r"},
+		{name: "invoked reject closes detail", command: "reject-proposal"},
 	}
-	if panel := harness.model.Panel(); panel != nil {
-		t.Fatalf("detail remained open with no selectable row: %#v", panel)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			harness := newModelHarness(t, harnessOptions{live: proposal})
+			harness.model.SwitchView(ViewInbox)
+			harness.selectRowByID("bbbb0001")
+			harness.model.OpenDetail()
+
+			if test.direct != "" {
+				harness.pressKeys(test.direct)
+			} else if _, err := harness.model.InvokeCommand(test.command); err != nil {
+				t.Fatal(err)
+			}
+
+			if test.approved {
+				if got := harness.model.SelectedID(); got != "bbbb0001" {
+					t.Fatalf("selection = %q, want approved Inbox task", got)
+				}
+				item := harness.model.CurrentItem()
+				if item == nil || item.State != "INBOX" {
+					t.Fatalf("selected item after approve = %#v, want INBOX", item)
+				}
+				panel := harness.model.Panel()
+				if panel == nil || panel.Identity != "bbbb0001" ||
+					!strings.Contains(strings.Join(panel.Lines, "\n"), "INBOX") {
+					t.Fatalf("detail did not refresh to approved Inbox task: %#v", panel)
+				}
+				return
+			}
+
+			if got := harness.model.SelectedID(); got != "" {
+				t.Fatalf("selection = %q, want none", got)
+			}
+			if panel := harness.model.Panel(); panel != nil {
+				t.Fatalf("detail remained open with no selectable row: %#v", panel)
+			}
+		})
 	}
 }
 
