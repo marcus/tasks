@@ -88,10 +88,14 @@ type Options struct {
 	// its own. SuppressKeyHints drops ONLY Tasks' ordinary key-hint row, on the
 	// same "the host owns the affordance" reading as SuppressQuit; everything
 	// else in the stack, the prompt above all, keeps rendering.
-	Embedded         bool
-	SuppressFooter   bool
-	SuppressKeyHints bool
-	SuppressQuit     bool
+	// SuppressViewKeyHints is the same reading applied to the header: Tasks drops
+	// the numeric prefixes from its view tab strip, keeping the view names and the
+	// active-tab highlight, and keeps acting on 1-6.
+	Embedded             bool
+	SuppressFooter       bool
+	SuppressKeyHints     bool
+	SuppressViewKeyHints bool
+	SuppressQuit         bool
 	// SaveSession overrides standalone persistence for a host namespace.
 	SaveSession func(SessionState) error
 }
@@ -202,13 +206,14 @@ type Model struct {
 	// the readers coerced past — see storeReadError.
 	readErr error
 
-	quitting         bool
-	embedded         bool
-	suppressFooter   bool
-	suppressKeyHints bool
-	suppressQuit     bool
-	quitRequested    bool
-	saveSession      func(SessionState) error
+	quitting             bool
+	embedded             bool
+	suppressFooter       bool
+	suppressKeyHints     bool
+	suppressViewKeyHints bool
+	suppressQuit         bool
+	quitRequested        bool
+	saveSession          func(SessionState) error
 }
 
 // New builds the model from saved session state and one application facade.
@@ -242,8 +247,10 @@ func New(options Options) *Model {
 		embedded:         options.Embedded,
 		suppressFooter:   options.SuppressFooter,
 		suppressKeyHints: options.SuppressKeyHints,
-		suppressQuit:     options.SuppressQuit,
-		saveSession:      options.SaveSession,
+
+		suppressViewKeyHints: options.SuppressViewKeyHints,
+		suppressQuit:         options.SuppressQuit,
+		saveSession:          options.SaveSession,
 	}
 	return model
 }

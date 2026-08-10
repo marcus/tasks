@@ -330,14 +330,24 @@ Initial conflict decisions:
 |---|---|---|---|
 | `?` | Tasks shortcuts | command palette/help | Open Sidecar's merged contextual help |
 | `@` | Tasks context picker | project switcher | Tasks context picker wins; project switch remains in help/palette and user-overridable |
-| `1`-`6` | Tasks views | Sidecar tabs | Tasks views win; backtick/click/palette still switch Sidecar tabs |
+| `1`-`6` | Tasks views | Sidecar tabs | **Revised after live use: Sidecar tabs win.** Tasks views keep `←`/`→` and stay in the palette and merged help |
+| `[` / `]` | unbound | unbound globally | Previous / next Sidecar tab, bound in the Tasks root contexts only; a bracket typed into a Tasks prompt, filter, or form is still a bracket |
 | `q` | quit Tasks | quit Sidecar | Sidecar quit flow wins; embedded Tasks never exits the app |
 | `tab` | Tasks prompt/edit traversal | no root Sidecar action | Tasks wins |
 | `M` / `A` | model/activity | unbound globally | Tasks wins |
 
-If live use shows that local numeric view keys are less valuable than tab
-switching, change the mapping through Sidecar's keymap override rather than
-forking the Tasks registry.
+The numeric row is the revision this section anticipated: "If live use shows
+that local numeric view keys are less valuable than tab switching, change the
+mapping." Live use showed exactly that — switching tabs by number is muscle
+memory across every other Sidecar tab, and one tab where `3` means something
+else is a key you have to think about.
+
+It was changed in the host's claim set (Sidecar's `shadowableGlobals`, which is
+now `@` alone) rather than through a user keymap override. The override is the
+right tool for one user's preference; this is the default every user gets, and
+defaults belong in the shipped table. The Tasks registry was not forked either —
+Tasks still binds `1`-`6` to its views, and Sidecar simply declines to let those
+bindings shadow its own.
 
 ### Packet 1 acceptance
 

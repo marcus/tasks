@@ -423,3 +423,86 @@ func TestOverlayStringsLayersHostSlotsOverConfiguredSlots(t *testing.T) {
 		t.Fatalf("overlay mutated the resolved configuration: %#v", base)
 	}
 }
+
+// -- G5: the host owns the number row ----------------------------------------
+
+// Sidecar switches its own tabs with the number row, so inside its Tasks pane
+// 1-6 never reach Tasks. Tasks' view bar was still the most visible line in the
+// pane and it still read "1 Agenda  2 Next  ...". SuppressViewKeyHints drops the
+// numbers and keeps everything else, and — like SuppressQuit — Tasks keeps
+// ACTING on the keys, because a host may have taken only some of them.
+func TestHostSuppressesOnlyTheViewJumpKeyAdvertisement(t *testing.T) {
+	names := []string{"Agenda", "Next", "Quadrants", "Projects", "Outline", "Inbox"}
+	numbered := []string{"1 Agenda", "2 Next", "3 Quadrants", "4 Projects", "5 Outline", "6 Inbox"}
+
+	plain := newHostFixture(t, validStore(t), "", EmbeddedOptions{
+		SessionNamespace: "viewkeys-host", SuppressViewKeyHints: true,
+	})
+	defer plain.model.Discard()
+	plain.model.Init()
+
+	frame := plain.model.View(120, 24)
+	for index, name := range names {
+		if !strings.Contains(frame, name) {
+			t.Fatalf("view %q lost its name from the view bar:\n%s", name, frame)
+		}
+		if strings.Contains(frame, numbered[index]) {
+			t.Fatalf("Tasks still advertises %q the host has taken:\n%s", numbered[index], frame)
+		}
+	}
+
+	// The current view is still indicated, and the numbers still jump.
+	for index, view := range []View{ViewNext, ViewQuadrants, ViewProjects, ViewOutline, ViewInbox, ViewAgenda} {
+		key := rune('1' + ((index + 1) % 6))
+		plain.model.Update(tea.KeyPressMsg{Code: key, Text: string(key)})
+		if plain.model.CurrentView() != view {
+			t.Fatalf("key %c stopped jumping under SuppressViewKeyHints: view=%q",
+				key, plain.model.CurrentView())
+		}
+	}
+	plain.model.Update(tea.KeyPressMsg{Code: '5', Text: "5"})
+	if !strings.Contains(plain.model.View(120, 24), "Outline") {
+		t.Fatalf("the current view vanished from the bar:\n%s", plain.model.View(120, 24))
+	}
+
+	// Standalone-shaped default is untouched: the numbers are still advertised.
+	advertised := newHostFixture(t, validStore(t), "", EmbeddedOptions{
+		SessionNamespace: "viewkeys-default",
+	})
+	defer advertised.model.Discard()
+	advertised.model.Init()
+	for _, label := range numbered {
+		if !strings.Contains(advertised.model.View(120, 24), label) {
+			t.Fatalf("default view bar lost %q:\n%s", label, advertised.model.View(120, 24))
+		}
+	}
+}
+
+// The three suppression switches are independent: one names the view bar's
+// numbers, one names the footer's hint row, one names the whole footer.
+func TestHostSuppressionSwitchesAreIndependent(t *testing.T) {
+	fixture := newHostFixture(t, validStore(t), "", EmbeddedOptions{
+		SessionNamespace:     "viewkeys-combined",
+		SuppressViewKeyHints: true, SuppressKeyHints: true, SuppressFooter: true,
+	})
+	defer fixture.model.Discard()
+	fixture.model.Init()
+	frame := fixture.model.View(120, 24)
+	if !strings.Contains(frame, "Agenda") || strings.Contains(frame, "1 Agenda") {
+		t.Fatalf("all three set produced an incoherent view bar:\n%s", frame)
+	}
+	if strings.Contains(frame, "j/k") || strings.Contains(frame, "tab to ask the agent") {
+		t.Fatalf("SuppressFooter left footer rows behind:\n%s", frame)
+	}
+
+	// View key hints alone leave the footer entirely alone.
+	hintsOnly := newHostFixture(t, validStore(t), "", EmbeddedOptions{
+		SessionNamespace: "viewkeys-only", SuppressViewKeyHints: true,
+	})
+	defer hintsOnly.model.Discard()
+	hintsOnly.model.Init()
+	frame = hintsOnly.model.View(120, 24)
+	if !strings.Contains(frame, "j/k") || !strings.Contains(frame, "tab to ask the agent") {
+		t.Fatalf("SuppressViewKeyHints reached into the footer:\n%s", frame)
+	}
+}

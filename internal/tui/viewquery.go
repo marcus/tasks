@@ -20,22 +20,33 @@ const (
 )
 
 // Tab is one entry of the header strip.
+//
+// Label/Compact/Minimum carry the numeric jump key, because standalone Tasks
+// owns the number row and the label is where that key is advertised. Plain* are
+// the same three sizes with the number removed, for a host that has taken the
+// number row for itself (EmbeddedOptions.SuppressViewKeyHints). The keys keep
+// working in both cases; only the advertisement differs.
 type Tab struct {
 	Label   string
 	Compact string
 	Minimum string
-	Key     string
+
+	PlainLabel   string
+	PlainCompact string
+	PlainMinimum string
+
+	Key string
 }
 
 // Tabs is the canonical tab order. Views, the jump keys and the session's
 // saved view all read this one list.
 var Tabs = []Tab{
-	{"1 Agenda", "1 Ag", "1", ViewAgenda},
-	{"2 Next", "2 Nx", "2", ViewNext},
-	{"3 Quadrants", "3 Q", "3", ViewQuadrants},
-	{"4 Projects", "4 Pr", "4", ViewProjects},
-	{"5 Outline", "5 Out", "5", ViewOutline},
-	{"6 Inbox", "6 In", "6", ViewInbox},
+	{"1 Agenda", "1 Ag", "1", "Agenda", "Ag", "Ag", ViewAgenda},
+	{"2 Next", "2 Nx", "2", "Next", "Nx", "Nx", ViewNext},
+	{"3 Quadrants", "3 Q", "3", "Quadrants", "Q", "Q", ViewQuadrants},
+	{"4 Projects", "4 Pr", "4", "Projects", "Pr", "Pr", ViewProjects},
+	{"5 Outline", "5 Out", "5", "Outline", "Out", "Out", ViewOutline},
+	{"6 Inbox", "6 In", "6", "Inbox", "In", "In", ViewInbox},
 }
 
 // ViewKeys is the tab keys alone.

@@ -157,11 +157,20 @@ type EmbeddedOptions struct {
 	// prompt, agent transcript, store-read banner, flash, and filter lines.
 	//
 	// SuppressFooter wins where both are set; there is nothing left to hint.
-	SuppressFooter   bool
-	SuppressKeyHints bool
-	SuppressQuit     bool
-	Theme            ThemeOptions
-	Environment      map[string]string
+	//
+	// SuppressViewKeyHints is the header counterpart, for a host that has taken
+	// the number row (Sidecar switches tabs with 1-9). Tasks drops the "1 ".."6 "
+	// prefixes from its view tab strip and keeps the view names, the Inbox badge,
+	// and the current-view highlight. It is an ADVERTISEMENT switch only: 1-6
+	// still jump views, exactly as SuppressQuit still acts on the quit key. It is
+	// independent of the two footer switches. Hosts should surface the views in
+	// their own chrome — prev_view/next_view stay bound to left/right arrows.
+	SuppressFooter       bool
+	SuppressKeyHints     bool
+	SuppressViewKeyHints bool
+	SuppressQuit         bool
+	Theme                ThemeOptions
+	Environment          map[string]string
 }
 
 // Model is an embeddable Tasks TUI. It intentionally does not expose the
@@ -221,12 +230,13 @@ func NewEmbedded(options EmbeddedOptions) (*Model, error) {
 	}
 	inner, err := internal.NewRuntime(internal.RuntimeOptions{
 		Paths: paths, Env: env, Session: session,
-		Styler:           term.NewStyler(paths.Theme, paths.Colors),
-		Embedded:         true,
-		SuppressFooter:   options.SuppressFooter,
-		SuppressKeyHints: options.SuppressKeyHints,
-		SuppressQuit:     options.SuppressQuit,
-		SaveSession:      save,
+		Styler:               term.NewStyler(paths.Theme, paths.Colors),
+		Embedded:             true,
+		SuppressFooter:       options.SuppressFooter,
+		SuppressKeyHints:     options.SuppressKeyHints,
+		SuppressViewKeyHints: options.SuppressViewKeyHints,
+		SuppressQuit:         options.SuppressQuit,
+		SaveSession:          save,
 	})
 	if err != nil {
 		return nil, err

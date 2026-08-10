@@ -211,13 +211,20 @@ func (m *Model) tabVariant(budget int) int {
 	return 2
 }
 
+// tabCell paints one tab. Under suppressViewKeyHints the numeric prefix is
+// dropped from every label size — the HOST owns the number row — while the tab
+// name, the Inbox badge, and the active-tab highlight are untouched, and the
+// number keys keep jumping views.
 func (m *Model) tabCell(tab Tab, variant int) string {
-	label := tab.Label
+	label, compact, minimum := tab.Label, tab.Compact, tab.Minimum
+	if m.suppressViewKeyHints {
+		label, compact, minimum = tab.PlainLabel, tab.PlainCompact, tab.PlainMinimum
+	}
 	switch variant {
 	case 1:
-		label = tab.Compact
+		label = compact
 	case 2:
-		label = tab.Minimum
+		label = minimum
 	}
 	if tab.Key == ViewInbox && m.read != nil {
 		counts := m.intakeCounts(m.filteredItems())
