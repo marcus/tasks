@@ -33,6 +33,46 @@ if [[ -e $sentinel ]]; then
   exit 1
 fi
 
+# Public release notes come from exactly the requested changelog section even
+# when intermediate tags exist, and an empty section cannot be published.
+notes_fixture="$temporary/CHANGELOG.md"
+cat > "$notes_fixture" <<'EOF'
+# Changelog
+
+## [8.2.0] - 2030-02-03
+
+- New release.
+
+## [8.1.0] - 2030-01-02
+
+- Older release.
+
+## [8.0.0] - 2030-01-01
+
+EOF
+notes=$(cd "$repo_root" && CHANGELOG_FILE="$notes_fixture" \
+  ./scripts/release-notes.sh v8.2.0)
+[[ $notes == "- New release." ]] || {
+  echo "release notes did not isolate the requested changelog section" >&2
+  exit 1
+}
+notes=$(cd "$repo_root" && CHANGELOG_FILE="$notes_fixture" \
+  ./scripts/release-notes.sh v8.1.0)
+[[ $notes == "- Older release." ]] || {
+  echo "release notes did not select an older changelog section" >&2
+  exit 1
+}
+if (cd "$repo_root" && CHANGELOG_FILE="$notes_fixture" \
+  ./scripts/release-notes.sh v8.0.0 >/dev/null 2>&1); then
+  echo "release notes accepted an empty changelog section" >&2
+  exit 1
+fi
+if (cd "$repo_root" && CHANGELOG_FILE="$notes_fixture" \
+  ./scripts/release-notes.sh v9.9.9 >/dev/null 2>&1); then
+  echo "release notes accepted a missing changelog version" >&2
+  exit 1
+fi
+
 # Exercise both modes against a local bare remote: the annotated tag is valid
 # only while it resolves to the live main commit.
 guard_repo="$temporary/guard-repo"

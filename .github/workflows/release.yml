@@ -47,10 +47,12 @@ jobs:
         env:
           RELEASE_VERSION: ${{ github.ref_name }}
         run: ./scripts/check-release-state.sh tagged
+      - name: Prepare release notes from changelog
+        run: ./scripts/release-notes.sh "${{ github.ref_name }}" > "$RUNNER_TEMP/release-notes.md"
       - uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: v2.16.0
-          args: release --clean
+          args: release --clean --release-notes ${{ runner.temp }}/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
