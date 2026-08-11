@@ -89,7 +89,7 @@ func TestClickingTheFoldMarkerTogglesTheSubtree(t *testing.T) {
 	layout := harness.model.Layout()
 	bodyBegin, _ := layout.BodyRows()
 	listBegin, _ := layout.ListCols()
-	column := listBegin + 1 + row.MarkerBegin
+	column := listBegin + CursorField + row.MarkerBegin
 
 	harness.model.HandleMouse(tea.MouseClickMsg{X: column, Y: bodyBegin + index, Button: tea.MouseLeft})
 	if !harness.model.collapsed[row.Item.ID] {

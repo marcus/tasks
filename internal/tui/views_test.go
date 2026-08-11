@@ -63,11 +63,11 @@ func TestAgendaLeavesAnUndatedRidersDateColumnEmpty(t *testing.T) {
 	harness.model.SwitchView(ViewAgenda)
 	for _, row := range harness.model.Rows() {
 		if row.Item != nil && row.Item.Title == "Child action" {
-			if !strings.HasPrefix(row.Text, strings.Repeat(" ", AgendaGutterWidth)) {
+			if !strings.HasPrefix(row.Text, strings.Repeat(" ", PriorityField)) {
 				t.Fatalf("undated rider lost the priority column: %q", row.Text)
 			}
 			if trimmed := strings.TrimRight(row.Text, " "); strings.HasSuffix(trimmed, "ago") ||
-				strings.Contains(trimmed[max(len(trimmed)-AgendaDateWidth, 0):], "-") {
+				strings.Contains(trimmed[max(len(trimmed)-MetaColumn, 0):], "-") {
 				t.Fatalf("undated rider inherited a date: %q", row.Text)
 			}
 			return
@@ -116,10 +116,16 @@ func TestInboxPairsApprovalsWithTheCaptureQueue(t *testing.T) {
 	harness := newModelHarness(t, harnessOptions{})
 	harness.model.SwitchView(ViewInbox)
 	text := rowTexts(harness)
-	if !strings.Contains(text, "APPROVALS 0") || !strings.Contains(text, "INBOX 1") {
+	// Both counts sit on the shared right edge rather than beside their labels.
+	if !strings.Contains(text, "APPROVALS ") || !strings.Contains(text, "INBOX ") {
 		t.Fatalf("inbox headers are wrong:\n%s", text)
 	}
-	if !strings.Contains(text, "No tasks pending approval") {
+	for _, want := range []string{"0", "1"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("an inbox section lost its count %q:\n%s", want, text)
+		}
+	}
+	if !strings.Contains(text, "Nothing pending approval") {
 		t.Fatalf("the empty approvals section lost its message:\n%s", text)
 	}
 }
@@ -285,7 +291,8 @@ func TestProjectsListsSelectableHeaderRowsWithRolledUpCounts(t *testing.T) {
 			if !row.Selectable() {
 				t.Fatal("a project header row is not selectable")
 			}
-			if !strings.Contains(row.Text, "open") || !strings.Contains(row.Text, "next") {
+			// The rollup moved to the shared meta column as `next/open`.
+			if !strings.HasSuffix(strings.TrimRight(row.Text, " "), "2/4") {
 				t.Fatalf("the project header lost its rollup: %q", row.Text)
 			}
 		}

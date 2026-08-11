@@ -1,10 +1,10 @@
   agenda   next   quadrants   projects   outline   inbox 1                 tue 14 jul · 6 open  
                                                                                                 
-   @co┌─ keyboard shortcuts ────────────────────────────────────────────────────────────┐       
-  ›   │ in the task list                                                                │       
-      │ ↑ / k         select previous task                                              │       
+  @com┌─ keyboard shortcuts ────────────────────────────────────────────────────────────┐    2  
+  ❯ A │ in the task list                                                                │d ago  
+    B │ ↑ / k         select previous task                                              │       
       │ ↓ / j         select next task                                                  │       
-   @ho│ ←             previous view                                                     │       
+  @hom│ ←             previous view                                                     │    1  
       │ →             next view                                                         │       
       │ 1-6           jump to view                                                      │       
       │ alt-↑ / alt-k Move up                                                           │       
@@ -21,4 +21,4 @@
       └─────────────────────────────────────────────────────────────────────────────────┘       
                                                                                                 
   ❯ tab to ask the agent — reschedule, capture, edit anything…                                  
-  j/k move   1-6 views   h/l fold   enter details   v unavailable   / search   ? help   q quit  
+  j/k move   1-6 views   h/l fold   enter details   / search   q quit   ? all keys              

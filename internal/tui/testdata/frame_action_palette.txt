@@ -1,11 +1,11 @@
   agenda   next   quadrants   projects   outline   inbox 1                 tue 14 jul · 6 open  
                                                                                                 
-   @computer                                                                                    
-  ›    [A] Book flight in Concur  7/2                                                           
-       [B] Review PR backlog                                                                    
+  @computer ───────────────────────────────────────────────────────────────────────          2  
+  ❯ A    Book flight in Concur                                                         12d ago  
+    B    Review PR backlog                                                                      
          ┌─ actions ──────────────────────────────────────────────────────────────────┐         
-   @home │  search:                                                                   │         
-       Wa│                                                                            │         
+  @home ─│  search:                                                                   │      1  
+         │                                                                            │         
          │  ❯   collapse subtree (again: to parent)  h                                │         
          │      expand subtree  l                                                     │         
          │      collapse all subtrees  H                                              │         
@@ -21,4 +21,4 @@
                                                                                                 
                                                                                                 
                                                                                                 
-  j/k move   1-6 views   h/l fold   enter details   v unavailable   / search   ? help   q quit  
+  j/k move   1-6 views   h/l fold   enter details   / search   q quit   ? all keys              

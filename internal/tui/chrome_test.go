@@ -70,13 +70,14 @@ func TestKeyHintsDropWholePairsAndKeepTheWaysOutLongest(t *testing.T) {
 		if got := len([]rune(hint)); got > width-2 {
 			t.Fatalf("width %d: hint is %d cells: %q", width, got, hint)
 		}
-		// Never cut mid-pair: every key still has its word.
-		for _, pair := range strings.Split(strings.TrimSpace(hint), "   ") {
-			if len(strings.Fields(pair)) != 2 {
+		// Never cut mid-pair: every key still has its whole label.
+		pairs := strings.Split(strings.TrimSpace(hint), "   ")
+		for _, pair := range pairs {
+			if len(strings.Fields(pair)) < 2 {
 				t.Fatalf("width %d: hint was truncated mid-pair: %q", width, hint)
 			}
 		}
-		count := len(strings.Fields(hint)) / 2
+		count := len(pairs)
 		if count > previous {
 			t.Fatalf("width %d: a narrower terminal grew the hint: %q", width, hint)
 		}
@@ -103,7 +104,7 @@ func TestTheTabStripIsNamesAndTheSelectedRowIsLitEndToEnd(t *testing.T) {
 	harness.selectRowByID(fixFlight)
 	line := ""
 	for _, painted := range strings.Split(harness.model.Render(), "\n") {
-		if strings.Contains(ansi.Strip(painted), "› ") {
+		if strings.Contains(ansi.Strip(painted), Cursor) {
 			line = painted
 			break
 		}

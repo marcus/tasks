@@ -66,8 +66,14 @@ func TestAgendaDatesAndHeadingCountsShareOneRightEdge(t *testing.T) {
 		if strings.TrimSpace(row.Text) == "" {
 			continue
 		}
-		if got := len([]rune(row.Text)); got != width {
-			t.Fatalf("row is %d cells wide, want the full %d: %q", got, width, row.Text)
+		// A rule is painted flush to the pane edge and so is CursorField wider
+		// than a row; both end on the same column, which is the point.
+		want := width
+		if row.Chrome {
+			want += CursorField
+		}
+		if got := len([]rune(row.Text)); got != want {
+			t.Fatalf("row is %d cells wide, want %d: %q", got, want, row.Text)
 		}
 	}
 }
@@ -155,7 +161,8 @@ func TestADetailPanelSpendsNoRowsOnATitleBar(t *testing.T) {
 	layout := harness.model.Layout()
 	lines := harness.model.panelColumn(layout,
 		harness.model.panel.View(PlainStyler{}, layout.BodyHeight, layout.PanelContentWidth))
-	if len(lines) == 0 || !strings.HasPrefix(lines[0], "TASK ") {
+	// The rail opens on its own rule, whose label is the task's state.
+	if len(lines) == 0 || !strings.HasPrefix(lines[0], "NEXT ") {
 		t.Fatalf("the detail panel did not open on its own section rule: %q", lines)
 	}
 }

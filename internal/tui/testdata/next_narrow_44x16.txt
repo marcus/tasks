@@ -1,11 +1,11 @@
   ag   nx   q   pr   out   in 1 tue 14 jul  
                                             
-   @computer                                
-  ›    [A] Book flight in Concur  7/2       
-       [B] Review PR backlog                
+  @computer ───────────────────          2  
+  ❯ A    Book flight in Concur     12d ago  
+    B    Review PR backlog                  
                                             
-   @home                                    
-       Water the plants                     
+  @home ───────────────────────          1  
+         Water the plants                   
                                             
                                             
                                             
@@ -13,4 +13,4 @@
                                             
                                             
   ❯ tab to ask the agent — reschedule, capt 
-  / search   ? help   q quit                
+  / search   q quit   ? all keys            

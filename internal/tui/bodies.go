@@ -42,21 +42,24 @@ func dueSlot(days int) string {
 	}
 }
 
-func decoratedTitle(request BuildRequest, item store.Item) string {
-	styler := request.styler()
-	return priorityPrefix(request, item) + styler.Paint("title", item.Title) + contextTags(request, item)
-}
-
 // contextTags is the trailing `@` context run, shared so every view that shows
 // contexts inline spells them the same way.
-func contextTags(request BuildRequest, item store.Item) string {
-	if len(item.Contexts) == 0 {
-		return ""
-	}
+//
+// `except` is the context the surrounding section is already named after. The
+// Next view groups BY context, so repeating the group's own name on every row
+// under it says nothing — while the row's OTHER contexts are exactly what that
+// grouping hides, and they stay.
+func contextTags(request BuildRequest, item store.Item, except string) string {
 	styler := request.styler()
 	painted := make([]string, 0, len(item.Contexts))
 	for _, context := range item.Contexts {
+		if context == except {
+			continue
+		}
 		painted = append(painted, styler.Paint("context", context))
+	}
+	if len(painted) == 0 {
+		return ""
 	}
 	return "  " + strings.Join(painted, " ")
 }
@@ -79,40 +82,23 @@ func relativeDays(days int) string {
 	}
 }
 
-func nextBody(request BuildRequest, item store.Item) string {
-	due := shortDue(request, item)
-	if due != "" {
-		due = "  " + due
-	}
-	return priorityPrefix(request, item) + request.styler().Paint("title", item.Title) + due +
-		badge(request, item)
-}
-
-func quadBody(request BuildRequest, item store.Item) string {
-	return priorityPrefix(request, item) + request.styler().Paint("title", item.Title) +
-		badge(request, item)
-}
-
-// inboxBody carries the item's `@` contexts for the same reason agenda and
-// outline rows do: processing an item is deciding where it belongs, and a
-// capture that already says @work has answered half of that. They sit between
-// the title and the badge so the trailing markers keep their column.
-func inboxBody(request BuildRequest, item store.Item) string {
-	return request.styler().Paint("title", item.Title) + contextTags(request, item) +
-		badge(request, item)
-}
-
+// outlineBody is the outline's row: the state word, then the shared task body.
+// The outline is the one view whose question is "what state is everything in",
+// so the state word earns a column of its own here and nowhere else.
 func outlineBody(request BuildRequest, item store.Item) string {
 	slot := "muted"
 	switch {
-	case isOpenState(item.State):
-		slot = "accent"
 	case isProposedState(item.State):
 		slot = "warning"
+	case item.State == "NEXT":
+		slot = "state_next"
+	case item.State == "WAITING":
+		slot = "state_waiting"
+	case !isOpenState(item.State):
+		slot = "state_done"
 	}
 	styler := request.styler()
-	return styler.Paint(slot, padRight(item.State, 9)) + " " + decoratedTitle(request, item) +
-		badge(request, item)
+	return styler.Paint(slot, padRight(item.State, 9)) + " " + taskBody(request, item)
 }
 
 func shortDue(request BuildRequest, item store.Item) string {

@@ -30,6 +30,13 @@ type Row struct {
 	// mouse hit testing. Zero-width when the row carries no marker.
 	MarkerBegin int
 	MarkerEnd   int
+
+	// Chrome marks a row that is structure rather than content: a section rule
+	// or the blank between two blocks. Chrome is painted FLUSH to the pane's
+	// left edge, where a content row's cursor field sits, so a rule's label
+	// starts on the same column the cursor does. An empty-state placeholder is
+	// NOT chrome — it occupies a row's place and wears a row's indent.
+	Chrome bool
 }
 
 // Selectable reports whether the cursor may land on this row.
@@ -50,8 +57,12 @@ func (r Row) ID() string {
 	return ""
 }
 
-// headerRow builds a non-selectable row.
+// headerRow builds a non-selectable content row: a placeholder, a message.
 func headerRow(text string) Row { return Row{Text: text} }
+
+// chromeRow builds a structural row — a section rule, or the blank between two
+// blocks. See Row.Chrome.
+func chromeRow(text string) Row { return Row{Text: text, Chrome: true} }
 
 // The collapse markers, each exactly two terminal cells. Every tree-mode task
 // row carries one so titles align regardless of whether a node has children.

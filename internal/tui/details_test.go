@@ -23,14 +23,16 @@ func TestTaskDetailsShowsTheFieldsThatArePresent(t *testing.T) {
 	text := detailFor(t, harness, fixFlight)
 	for _, want := range []string{
 		"Book flight in Concur",
-		// The section rule carries the state and the priority as a badge, and
-		// the meta line under the title carries when / where / which project.
-		"TASK ",
-		"[A] NEXT",
-		"07-02",
+		// The rule's label is the state and its badge is the id; the meta line
+		// under the title carries priority, when, and how far away; the Labels
+		// line carries where it lives.
+		"NEXT ",
+		"aaaa0004",
+		"due thu 07-02",
+		"12d ago",
+		"Labels: ",
 		"Work",
 		"@computer",
-		"id         aaaa0004",
 		"ACTIONS ",
 	} {
 		if !strings.Contains(text, want) {
@@ -52,7 +54,7 @@ func TestTaskDetailsOmitsFieldsThatAreAbsent(t *testing.T) {
 func TestTaskDetailsShowsTheBodyAsADescription(t *testing.T) {
 	harness := newModelHarness(t, harnessOptions{})
 	text := detailFor(t, harness, fixTravel)
-	if !strings.Contains(text, "NOTE ") || !strings.Contains(text, "Some note line.") {
+	if !strings.Contains(text, "DESCRIPTION ") || !strings.Contains(text, "Some note line.") {
 		t.Fatalf("the task body did not reach the panel:\n%s", text)
 	}
 }

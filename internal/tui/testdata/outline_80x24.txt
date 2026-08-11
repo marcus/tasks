@@ -1,17 +1,17 @@
   agenda   next   quadrants   projects   outline   inbox 1 tue 14 jul · 6 open  
                                                                                 
-   Inbox                                                                        
-       INBOX     random thought about the garden                                
-   Work                                                                         
-  ›    NEXT      [A] Book flight in Concur  @computer                           
-       NEXT      [B] Review PR backlog  @computer                               
-       TODO      [A] Midyear self-eval  @computer                               
-       WAITING   Travel desk reply  @email                                      
-       DONE      [C] Old finished thing  @computer                              
-   Home                                                                         
-       NEXT      Water the plants  @home                                        
+  Inbox ───────────────────────────────────────────────────────────          1  
+           INBOX     random thought about the garden                            
                                                                                 
+  Work ────────────────────────────────────────────────────────────          5  
+  ❯ A      NEXT      Book flight in Concur  @computer                  12d ago  
+    B      NEXT      Review PR backlog  @computer                               
+    A      TODO      Midyear self-eval  @computer                       ~07-03  
+           WAITING   Travel desk reply  @email                                  
+    C      DONE      Old finished thing  @computer                              
                                                                                 
+  Home ────────────────────────────────────────────────────────────          1  
+           NEXT      Water the plants  @home                                    
                                                                                 
                                                                                 
                                                                                 
@@ -21,4 +21,4 @@
                                                                                 
                                                                                 
   ❯ tab to ask the agent — reschedule, capture, edit anything…                  
-  j/k move   1-6 views   h/l fold   enter details   / search   ? help   q quit  
+  1-6 views   h/l fold   enter details   / search   q quit   ? all keys         

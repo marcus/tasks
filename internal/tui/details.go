@@ -38,7 +38,13 @@ type DetailContent struct {
 
 // detailSection is a labelled rule with an optional right-aligned badge.
 func detailSection(styler Styler, label, badge string, width int) string {
-	head := styler.Paint("detail_label", label)
+	return detailSectionIn(styler, label, "detail_label", badge, width)
+}
+
+// detailSectionIn is detailSection with the label's slot chosen by the caller —
+// for the one rule whose label is a task's state rather than a block name.
+func detailSectionIn(styler Styler, label, slot, badge string, width int) string {
+	head := styler.Paint(slot, label)
 	used := styler.Width(label) + 1
 	if badge != "" {
 		used += styler.Width(badge) + 1
@@ -63,20 +69,19 @@ func BuildTaskDetails(styler Styler, queries *taskquery.Queries, item store.Item
 	usable := max(width, 1)
 	today := queries.Today()
 
-	state := item.State
-	if slot, found := stateSlot[item.State]; found {
-		state = styler.Paint(slot, item.State)
-	}
-	badge := state
-	if item.Priority != "" {
-		badge = styler.Paint(prioritySlot(item.Priority), "["+item.Priority+"]") + " " + state
-	}
-	lines := []string{detailSection(styler, "TASK", badge, usable), ""}
+	// The rule's LABEL is the state and its badge is the id. A detail rail opens
+	// on the one word that says what you are looking at — TODO, NEXT, WAITING —
+	// and the id is the thing you would otherwise have to hunt for to quote it
+	// to an agent or a command line.
+	lines := []string{detailSectionIn(styler, item.State, stateSlotOf(item),
+		styler.Paint("muted", item.ID), usable), ""}
 	for _, line := range styler.Wrap(item.Title, usable) {
 		lines = append(lines, styler.Paint("section", line))
 	}
-	if meta := taskMetaLine(styler, queries, item, projectName); meta != "" {
-		lines = append(lines, styler.Wrap(meta, usable)...)
+	// Truncated, never wrapped: this is a fielded line whose columns are made of
+	// space runs, and a wrapper that reflows on whitespace would eat them.
+	for _, meta := range taskMetaLine(styler, queries, item, projectName) {
+		lines = append(lines, styler.Truncate(meta, usable))
 	}
 
 	// What the meta line could not say. A date row appears only when the stored
@@ -105,12 +110,6 @@ func BuildTaskDetails(styler Styler, queries *taskquery.Queries, item store.Item
 	if item.Closed != "" {
 		extra = append(extra, detailRow(styler, "closed", item.Closed))
 	}
-	if len(item.Tags) > 0 {
-		extra = append(extra, detailRow(styler, "tags", strings.Join(item.Tags, "  ")))
-	}
-	if item.ID != "" {
-		extra = append(extra, detailRow(styler, "id", styler.Paint("muted", item.ID)))
-	}
 	if len(extra) > 0 {
 		lines = append(lines, "")
 		lines = append(lines, extra...)
@@ -123,8 +122,10 @@ func BuildTaskDetails(styler Styler, queries *taskquery.Queries, item store.Item
 		lines = append(lines, delegationLines(styler, item)...)
 	}
 
+	lines = append(lines, subtaskLines(styler, queries, item, usable)...)
+
 	if notes := trimmedLines(queries.Body(item)); len(notes) > 0 {
-		lines = append(lines, "", detailSection(styler, "NOTE", "", usable), "")
+		lines = append(lines, "", detailSection(styler, "DESCRIPTION", "", usable), "")
 		for _, note := range notes {
 			for _, wrapped := range styler.Wrap(note, usable) {
 				lines = append(lines, styler.Paint("description", wrapped))
@@ -151,13 +152,88 @@ func BuildTaskDetails(styler Styler, queries *taskquery.Queries, item store.Item
 	return DetailContent{Title: "task", Lines: lines}
 }
 
-// taskMetaLine is the one line a person actually scans: when, how far away,
-// which project, which contexts. Absent facts drop out rather than printing a
-// placeholder — an em dash where a date is not is a fact nobody needs.
+// stateSlotOf is the theme slot a task's state word takes.
+func stateSlotOf(item store.Item) string {
+	if slot, found := stateSlot[item.State]; found {
+		return slot
+	}
+	if isProposedState(item.State) {
+		return "warning"
+	}
+	return "section"
+}
+
+// subtaskLines is the SUBTASKS block: the task's own children, each as a status
+// glyph and a title, with `done/total` on the rule.
+//
+// It is the one thing the rail can say that the list beside it cannot. The list
+// shows a subtree only when the parent is expanded and only in the views whose
+// query the children satisfy; "what is left on this task" is a question about
+// the task, and it belongs to the task's own panel.
+func subtaskLines(styler Styler, queries *taskquery.Queries, item store.Item, width int) []string {
+	node := queries.NodeFor(item)
+	if node == nil {
+		return nil
+	}
+	children := []store.Item{}
+	for _, child := range node.Children {
+		if child.Task() && !isProposedState(child.Item.State) {
+			children = append(children, *child.Item)
+		}
+	}
+	if len(children) == 0 {
+		return nil
+	}
+	done := 0
+	for _, child := range children {
+		if !isOpenState(child.State) {
+			done++
+		}
+	}
+	lines := []string{"", detailSection(styler, "SUBTASKS",
+		styler.Paint("muted", fmt.Sprintf("%d/%d", done, len(children))), width), ""}
+	for _, child := range children {
+		lines = append(lines, styler.Truncate(
+			detailDot(styler, child)+styler.Paint(childSlot(child), child.Title), width))
+	}
+	return lines
+}
+
+// detailDot is the status glyph in front of a subtask.
+func detailDot(styler Styler, item store.Item) string {
+	switch {
+	case !isOpenState(item.State):
+		return styler.Paint("state_done", DotClosed) + " "
+	case item.State == "NEXT":
+		return styler.Paint("state_next", DotProgress) + " "
+	default:
+		return styler.Paint("muted", DotOpen) + " "
+	}
+}
+
+func childSlot(item store.Item) string {
+	if isOpenState(item.State) {
+		return "title"
+	}
+	return "muted"
+}
+
+// taskMetaLine is the fielded line under the title: priority, when, and how far
+// away — then a Labels line for where it lives and what it is tagged with.
+//
+// Absent facts drop out rather than printing a placeholder. An em dash where a
+// date is not is a fact nobody needs.
 func taskMetaLine(styler Styler, queries *taskquery.Queries, item store.Item,
-	projectName string) string {
-	parts := []string{}
+	projectName string) []string {
+	fields := []string{}
+	if item.Priority != "" {
+		fields = append(fields, styler.Paint(prioritySlot(item.Priority), item.Priority))
+	}
 	if date, kind, value, ok := primaryDate(queries, item); ok {
+		lead := "due "
+		if kind != "deadline" {
+			lead = "from "
+		}
 		stamp := fmt.Sprintf("%s %02d-%02d",
 			strings.ToLower(date.Weekday().String()[:3]), int(date.Month), date.Day)
 		if value.LocalTime != "" {
@@ -168,23 +244,30 @@ func taskMetaLine(styler Styler, queries *taskquery.Queries, item store.Item,
 					int(date.Month), date.Day, projected.Local)
 			}
 		}
-		if kind != "deadline" {
-			stamp = "from " + stamp
-		}
 		days := date.Sub(queries.Today())
-		parts = append(parts,
-			styler.Paint(dueSlot(days), stamp), styler.Paint(dueSlot(days), relativeDays(days)))
+		fields = append(fields,
+			styler.Paint("description", lead+stamp), styler.Paint(dueSlot(days), relativeDays(days)))
 	}
+
+	labels := []string{}
 	if projectName != "" {
-		parts = append(parts, styler.Paint("project", projectName))
+		labels = append(labels, styler.Paint("project", projectName))
 	}
 	for _, context := range item.Contexts {
-		parts = append(parts, styler.Paint("context", context))
+		labels = append(labels, styler.Paint("context", context))
 	}
-	if len(parts) == 0 {
-		return ""
+	for _, tag := range item.Tags {
+		labels = append(labels, styler.Paint("description", tag))
 	}
-	return strings.Join(parts, styler.Paint("muted", " · "))
+
+	lines := []string{}
+	if len(fields) > 0 {
+		lines = append(lines, strings.Join(fields, "   "))
+	}
+	if len(labels) > 0 {
+		lines = append(lines, styler.Paint("muted", "Labels: ")+strings.Join(labels, ", "))
+	}
+	return lines
 }
 
 // detailActions is the keys that act on the task under the cursor. They are the

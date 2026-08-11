@@ -91,7 +91,7 @@ func agendaFlat(request BuildRequest) []Row {
 		item := item
 		bucket := itemBucket(request, item)
 		byBucket[bucket] = append(byBucket[bucket], Row{
-			Text: agendaPriority(request, item) + agendaBody(request, item),
+			Text: priorityField(request, item) + taskBody(request, item),
 			Item: &item,
 		})
 	}
@@ -100,16 +100,19 @@ func agendaFlat(request BuildRequest) []Row {
 
 func nextFlat(request BuildRequest) []Row {
 	query := request.query(ViewNext)
-	rows := []Row{}
+	sections := []Section{}
 	for _, group := range query.SortedGroups(groupItems(query, request.Items)) {
-		rows = append(rows, headerRow(request.styler().Paint("context", group.Key)))
+		rows := []Row{}
 		for _, node := range group.Nodes {
 			item := *node.Item
-			rows = append(rows, Row{Text: "  " + nextBody(request, item), Item: &item})
+			rows = append(rows, Row{
+				Text: priorityField(request, item) + taskBodyExcept(request, item, group.Key),
+				Item: &item,
+			})
 		}
-		rows = append(rows, headerRow(""))
+		sections = append(sections, Section{Label: group.Key, Slot: "context", Rows: rows})
 	}
-	return dropTrailingBlank(rows)
+	return renderSections(request, sections, dateMeta(request))
 }
 
 func quadrantsFlat(request BuildRequest) []Row {
@@ -117,20 +120,16 @@ func quadrantsFlat(request BuildRequest) []Row {
 	groups := groupItems(query, request.Items)
 	return quadrantRows(request, groups, func(node *taskquery.Node) []Row {
 		item := *node.Item
-		return []Row{{Text: "  " + quadBody(request, item), Item: &item}}
+		return []Row{{Text: priorityField(request, item) + taskBody(request, item), Item: &item}}
 	})
 }
 
 func inboxFlatSection(request BuildRequest) []Row {
 	query := request.query(ViewInbox)
-	matched := query.Sort(query.Select(request.Items))
-	if len(matched) == 0 {
-		return []Row{headerRow(request.styler().Paint("muted", "Inbox empty. ✨"))}
-	}
 	rows := []Row{}
-	for _, item := range matched {
+	for _, item := range query.Sort(query.Select(request.Items)) {
 		item := item
-		rows = append(rows, Row{Text: "  " + inboxBody(request, item), Item: &item})
+		rows = append(rows, Row{Text: priorityField(request, item) + taskBody(request, item), Item: &item})
 	}
 	return rows
 }
@@ -163,8 +162,8 @@ func agendaTree(request BuildRequest) []Row {
 	for _, anchor := range anchors {
 		bucket := itemBucket(request, anchorDateItem(request, query, anchor))
 		byBucket[bucket] = appendSubtree(request, byBucket[bucket], anchor, "",
-			func(item store.Item) string { return agendaPriority(request, item) },
-			func(item store.Item) string { return agendaBody(request, item) })
+			func(item store.Item) string { return priorityField(request, item) },
+			func(item store.Item) string { return taskBody(request, item) })
 	}
 	return agendaGrouped(request, byBucket)
 }
@@ -172,17 +171,17 @@ func agendaTree(request BuildRequest) []Row {
 func nextTree(request BuildRequest) []Row {
 	query := request.query(ViewNext)
 	anchors := maximalAnchors(request, query)
-	rows := []Row{}
+	sections := []Section{}
 	for _, group := range query.SortedGroups(query.GroupedNodes(anchors)) {
-		rows = append(rows, headerRow(request.styler().Paint("context", group.Key)))
+		rows := []Row{}
 		for _, anchor := range group.Nodes {
-			rows = appendSubtree(request, rows, anchor, "  ", nil, func(item store.Item) string {
-				return nextBody(request, item)
-			})
+			rows = appendSubtree(request, rows, anchor, "",
+				func(item store.Item) string { return priorityField(request, item) },
+				func(item store.Item) string { return taskBodyExcept(request, item, group.Key) })
 		}
-		rows = append(rows, headerRow(""))
+		sections = append(sections, Section{Label: group.Key, Slot: "context", Rows: rows})
 	}
-	return dropTrailingBlank(rows)
+	return renderSections(request, sections, dateMeta(request))
 }
 
 func quadrantsTree(request BuildRequest) []Row {
@@ -190,23 +189,19 @@ func quadrantsTree(request BuildRequest) []Row {
 	anchors := query.SelectNodes(anchorRoots(request))
 	groups := query.GroupedNodes(anchors)
 	return quadrantRows(request, groups, func(node *taskquery.Node) []Row {
-		return appendSubtree(request, nil, node, "  ", nil, func(item store.Item) string {
-			return quadBody(request, item)
-		})
+		return appendSubtree(request, nil, node, "",
+			func(item store.Item) string { return priorityField(request, item) },
+			func(item store.Item) string { return taskBody(request, item) })
 	})
 }
 
 func inboxTreeSection(request BuildRequest) []Row {
 	query := request.query(ViewInbox)
-	anchors := query.SortNodes(maximalAnchors(request, query))
-	if len(anchors) == 0 {
-		return []Row{headerRow(request.styler().Paint("muted", "Inbox empty. ✨"))}
-	}
 	rows := []Row{}
-	for _, anchor := range anchors {
-		rows = appendSubtree(request, rows, anchor, "  ", nil, func(item store.Item) string {
-			return inboxBody(request, item)
-		})
+	for _, anchor := range query.SortNodes(maximalAnchors(request, query)) {
+		rows = appendSubtree(request, rows, anchor, "",
+			func(item store.Item) string { return priorityField(request, item) },
+			func(item store.Item) string { return taskBody(request, item) })
 	}
 	return rows
 }
@@ -249,26 +244,33 @@ func combinedInbox(request BuildRequest, inboxRows []Row) []Row {
 			proposals = append(proposals, item)
 		}
 	}
-	title := styler.Paint("approval_section", fmt.Sprintf("APPROVALS %d", request.IntakeCounts.Approvals))
+	// APPROVALS carries its two keys in the rule's badge rather than as a
+	// sentence after the label: the badge is where a section says its one fact,
+	// and "there are 3 of these and a/r act on them" is one fact.
+	approvals := fmt.Sprintf("%d", request.IntakeCounts.Approvals)
 	if request.IntakeCounts.Approvals > 0 {
-		title += styler.Paint("muted", "  a approve · r reject")
+		approvals = "a·r  " + approvals
 	}
-	rows := []Row{headerRow(title)}
-	rows = append(rows, approvalRows(request, proposals)...)
-	rows = append(rows, headerRow(""))
-	rows = append(rows, headerRow(styler.Paint("inbox_section",
-		fmt.Sprintf("INBOX %d", request.IntakeCounts.Inbox))))
-	return append(rows, inboxRows...)
+	empty := headerRow(styler.Paint("muted", placeholderIndent+"Nothing pending approval"))
+	inboxEmpty := headerRow(styler.Paint("muted", placeholderIndent+"Inbox empty. ✨"))
+	return renderSections(request, []Section{
+		{
+			Label: "APPROVALS", Slot: "approval_section", Right: approvals,
+			RightSlot: "approval_section", Rows: approvalRows(request, proposals), Empty: &empty,
+		},
+		{
+			Label: "INBOX", Slot: "inbox_section",
+			Right:     fmt.Sprintf("%d", request.IntakeCounts.Inbox),
+			RightSlot: "inbox_section", Rows: inboxRows, Empty: &inboxEmpty,
+		},
+	}, dateMeta(request))
 }
 
 func approvalRows(request BuildRequest, proposals []store.Item) []Row {
-	if len(proposals) == 0 {
-		return []Row{headerRow(request.styler().Paint("muted", "No tasks pending approval"))}
-	}
 	rows := []Row{}
 	for _, item := range proposals {
 		item := item
-		rows = append(rows, Row{Text: "  " + outlineBody(request, item), Item: &item})
+		rows = append(rows, Row{Text: priorityField(request, item) + taskBody(request, item), Item: &item})
 	}
 	return rows
 }
@@ -283,25 +285,33 @@ func buildOutline(request BuildRequest) []Row {
 				continue
 			}
 			item := item
-			rows = append(rows, Row{Text: "  " + outlineBody(request, item), Item: &item})
+			rows = append(rows, Row{Text: outlineBody(request, item), Item: &item})
 		}
-		return rows
+		return withMetaRows(request, rows)
 	}
 	rows := []Row{}
 	for _, root := range request.Tree {
 		rows = appendOutlineNode(request, rows, root, 0)
 	}
-	return rows
+	return withMetaRows(request, dropTrailingBlank(rows))
 }
 
+// appendOutlineNode walks one node. A SECTION becomes a section rule carrying
+// the count of task rows beneath it — which is why its children are built
+// first: the rule cannot state a count it has not finished computing.
 func appendOutlineNode(request BuildRequest, rows []Row, node *taskquery.Node, depth int) []Row {
 	indent := strings.Repeat("  ", depth)
 	if node.Section() {
-		rows = append(rows, headerRow(indent+request.styler().Paint("section", node.Title)))
+		body := []Row{}
 		for _, child := range node.Children {
-			rows = appendOutlineNode(request, rows, child, depth+1)
+			body = appendOutlineNode(request, body, child, depth+1)
 		}
-		return rows
+		if len(rows) > 0 {
+			rows = append(rows, chromeRow(""))
+		}
+		rows = append(rows, sectionRow(request, indent+node.Title, "section",
+			fmt.Sprintf("%d", countSelectable(body)), "muted"))
+		return append(rows, body...)
 	}
 	if isProposedState(node.Item.State) {
 		for _, child := range node.Children {
@@ -322,13 +332,14 @@ func appendOutlineNode(request BuildRequest, rows []Row, node *taskquery.Node, d
 	if len(node.Children) > 0 {
 		body = request.styler().Paint("outline_container", body)
 	}
-	text := indent + marker + body
+	head := priorityField(request, *node.Item)
+	text := head + indent + marker + body
 	if folded {
-		text += request.styler().Paint("muted", fmt.Sprintf(" (%d)", outlineDescendantCount(node)))
+		text += foldedCount(request, outlineDescendantCount(node))
 	}
 	row := Row{Text: text, Item: node.Item, Node: node}
 	if len(node.Children) > 0 {
-		row.MarkerBegin = request.styler().Width(indent)
+		row.MarkerBegin = request.styler().Width(head) + request.styler().Width(indent)
 		row.MarkerEnd = row.MarkerBegin + 2
 	}
 	rows = append(rows, row)
@@ -373,10 +384,10 @@ func buildProjects(request BuildRequest) []Row {
 	// projects still list (header only) — header rollups come from ProjectView,
 	// not from body-row counting, so deferred-only projects stay visible.
 	query := request.query(ViewProjects)
-	rows := []Row{}
+	sections := []Section{}
 	for _, group := range [][2]any{
-		{"Projects", "project"},
-		{"Areas", "area"},
+		{"PROJECTS", "project"},
+		{"AREAS", "area"},
 	} {
 		label, kind := group[0].(string), group[1].(string)
 		members := []taskquery.ProjectView{}
@@ -388,20 +399,36 @@ func buildProjects(request BuildRequest) []Row {
 		if len(members) == 0 {
 			continue
 		}
-		rows = append(rows, headerRow(styler.Paint("section", label)))
+		rows := []Row{}
 		for _, project := range members {
 			project := project
-			rows = append(rows, Row{Text: projectRow(request, project), Project: &project})
-			anchors := query.SortNodes(anchorsForProject(request, project))
-			for _, anchor := range anchors {
-				rows = appendSubtree(request, rows, anchor, "  ", nil, func(item store.Item) string {
-					return nextBody(request, item)
-				})
+			text, slot := projectMeta(request, project)
+			rows = append(rows, withMeta(request,
+				Row{Text: projectRow(request, project), Project: &project}, text, slot))
+			for _, anchor := range query.SortNodes(anchorsForProject(request, project)) {
+				rows = appendSubtree(request, rows, anchor, "  ",
+					func(item store.Item) string { return priorityField(request, item) },
+					func(item store.Item) string { return taskBody(request, item) })
 			}
 		}
-		rows = append(rows, headerRow(""))
+		// The badge counts PROJECTS, not the task rows under them — a section of
+		// projects is a list of projects.
+		sections = append(sections, Section{
+			Label: label, Slot: "section", Right: fmt.Sprintf("%d", len(members)), Rows: rows,
+		})
 	}
-	return dropTrailingBlank(rows)
+	return renderSections(request, sections, dateMeta(request))
+}
+
+// projectMeta is a project row's value in the shared column: how much of it is
+// actionable, as `next/open`. A project is the one row whose "when" is not the
+// question — "is anything moving here" is.
+func projectMeta(request BuildRequest, project taskquery.ProjectView) (string, string) {
+	slot := "muted"
+	if project.NextCount == 0 {
+		slot = "warning"
+	}
+	return fmt.Sprintf("%d/%d", project.NextCount, project.OpenCount), slot
 }
 
 // anchorsForProject keeps anchor roots that belong under a ProjectView section.
@@ -455,32 +482,24 @@ func projectsFlat(request BuildRequest) []Row {
 		rows = append(rows, headerRow(projectHeader(request, group.Key, items)))
 		for _, item := range items {
 			item := item
-			rows = append(rows, Row{Text: "  " + nextBody(request, item), Item: &item})
+			rows = append(rows, Row{
+				Text: priorityField(request, item) + taskBody(request, item), Item: &item,
+			})
 		}
 		rows = append(rows, headerRow(""))
 	}
-	return dropTrailingBlank(rows)
+	return withMetaRows(request, dropTrailingBlank(rows))
 }
 
+// projectRow is a project's own row: its name, and a warning when nothing in it
+// is actionable. The counts live in the shared meta column as `next/open` — see
+// projectMeta — so the row itself carries the one thing the column cannot: that
+// this project has stalled.
 func projectRow(request BuildRequest, project taskquery.ProjectView) string {
 	styler := request.styler()
-	head := styler.Paint("project", project.Title) + "  " +
-		styler.Paint("muted", fmt.Sprintf("%d open", project.OpenCount))
-	nextSlot := "muted"
-	if project.NextCount == 0 {
-		nextSlot = "warning"
-	}
-	head += styler.Paint(nextSlot, fmt.Sprintf(" · %d next", project.NextCount))
-	if project.HasNextDate {
-		label := fmt.Sprintf("%02d-%02d", int(project.NextDate.Month), project.NextDate.Day)
-		if project.HasNextTime && project.NextTime.Local != "" {
-			label = project.NextTime.Local
-		}
-		days := project.NextDate.Sub(request.Queries.Today())
-		head += styler.Paint(dueSlot(days), " · next "+label)
-	}
+	head := styler.Paint("project", project.Title)
 	if project.Stuck {
-		head += styler.Paint("warning", " ⚠ stuck")
+		head += styler.Paint("warning", "  ⚠ stuck")
 	}
 	return head
 }
@@ -507,21 +526,36 @@ func projectHeader(request BuildRequest, name string, items []store.Item) string
 
 func quadrantRows(request BuildRequest, groups map[string][]*taskquery.Node,
 	body func(*taskquery.Node) []Row) []Row {
-	styler := request.styler()
-	rows := []Row{}
+	// The four quadrants always paint, empty or not: the grid IS the view, and a
+	// quadrant with nothing in it is the most useful thing the view can say.
+	empty := headerRow(request.styler().Paint("muted", placeholderIndent+"—"))
+	sections := make([]Section, 0, len(taskquery.QuadrantLabels))
 	for _, pair := range taskquery.QuadrantLabels {
-		rows = append(rows, headerRow(styler.Paint("section", pair[1])))
-		matched := groups[pair[0]]
-		if len(matched) == 0 {
-			rows = append(rows, headerRow(styler.Paint("muted", "  —")))
-		} else {
-			for _, node := range matched {
-				rows = append(rows, body(node)...)
-			}
+		rows := []Row{}
+		for _, node := range groups[pair[0]] {
+			rows = append(rows, body(node)...)
 		}
-		rows = append(rows, headerRow(""))
+		label, slot := quadrantLabel(pair)
+		sections = append(sections, Section{Label: label, Slot: slot, Rows: rows, Empty: &empty})
 	}
-	return dropTrailingBlank(rows)
+	return renderSections(request, sections, dateMeta(request))
+}
+
+// quadrantLabel splits the canonical heading into the rule's label and the tone
+// it carries. The shared label keeps the CLI and the TUI from drifting; the
+// section rule wants the short form, and the urgency ladder gives the colour.
+func quadrantLabel(pair [2]string) (string, string) {
+	label, _, _ := strings.Cut(pair[1], "  (")
+	switch pair[0] {
+	case "Q1":
+		return label, "due_overdue"
+	case "Q2":
+		return label, "due_week"
+	case "Q3":
+		return label, "due_soon"
+	default:
+		return label, "muted"
+	}
 }
 
 // -- the subtree walker ----------------------------------------------------

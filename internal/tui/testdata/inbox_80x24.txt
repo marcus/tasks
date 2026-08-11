@@ -1,10 +1,10 @@
   agenda   next   quadrants   projects   outline   inbox 1 tue 14 jul · 6 open  
                                                                                 
-   APPROVALS 0                                                                  
-   No tasks pending approval                                                    
+  APPROVALS ───────────────────────────────────────────────────────          0  
+         Nothing pending approval                                               
                                                                                 
-   INBOX 1                                                                      
-  ›    random thought about the garden                                          
+  INBOX ───────────────────────────────────────────────────────────          1  
+  ❯      random thought about the garden                                        
                                                                                 
                                                                                 
                                                                                 
@@ -21,4 +21,4 @@
                                                                                 
                                                                                 
   ❯ tab to ask the agent — reschedule, capture, edit anything…                  
-  j/k move   1-6 views   h/l fold   enter details   / search   ? help   q quit  
+  1-6 views   h/l fold   enter details   / search   q quit   ? all keys         

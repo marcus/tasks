@@ -1,17 +1,17 @@
   agenda   next   quadrants   projects   outline   inbox 1                     tue 14 jul · 6 open  
                                                                                                     
-   @computer                                                 ┆ TASK ────────────────────── [A] NEXT 
-  ›    [A] Book flight in Concur  7/2                        ┆                                      
-       [B] Review PR backlog                                 ┆ Book flight in Concur                
-                                                             ┆ thu 07-02 · 12d ago · Work ·         
-   @home                                                     ┆ @computer                            
-       Water the plants                                      ┆                                      
-                                                             ┆ tags       important  urgent         
-                                                             ┃ id         aaaa0004                  
+  @computer ─────────────────────────────────────          2 ┆ NEXT ────────────────────── aaaa0004 
+  ❯ A    Book flight in Concur                       12d ago ┆                                      
+    B    Review PR backlog                                   ┆ Book flight in Concur                
+                                                             ┆ A   due thu 07-02   12d ago          
+  @home ─────────────────────────────────────────          1 ┆ Labels: Work, @computer, important,  
+         Water the plants                                    ┆                                      
+                                                             ┆ ACTIONS ──────────────────────────── 
                                                              ┃                                      
-                                                             ┃ ACTIONS ──────────────────────────── 
+                                                             ┃ c done   d date   r recur   z defer  
                                                              ┃                                      
-                                                             ┆ c done   d date   r recur   z defer  
+                                                             ┃                                      
+                                                             ┆                                      
                                                              ┆                                      
                                                              ┆                                      
                                                              ┆                                      
@@ -21,4 +21,4 @@
                                                              ┆                                      
                                                                                                     
   ❯ tab to ask the agent — reschedule, capture, edit anything…                                      
-  j/k move   1-6 views   h/l fold   enter details   v unavailable   / search   ? help   q quit      
+  j/k move   1-6 views   h/l fold   enter details   v unavailable   / search   q quit   ? all keys  

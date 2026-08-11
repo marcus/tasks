@@ -113,9 +113,14 @@ func TestSelectedRowCarriesAGutterMarkerWithNoColorAtAll(t *testing.T) {
 	harness := newModelHarness(t, harnessOptions{})
 	harness.model.SwitchView(ViewNext)
 	harness.selectRowByID(fixPlants)
-	frame := renderAt(t, harness, 80, 24)
-	if strings.Count(frame, "›") != 1 {
-		t.Fatalf("expected exactly one cursor marker in the frame:\n%s", frame)
+	// Counted over the BODY only: the prompt line opens with the same glyph,
+	// deliberately — both mean "you are here".
+	frame := strings.Split(renderAt(t, harness, 80, 24), "\n")
+	// The body is everything between the header's blank and the footer's.
+	body := frame[2 : len(frame)-3]
+	if got := strings.Count(strings.Join(body, "\n"), Cursor); got != 1 {
+		t.Fatalf("expected exactly one cursor marker in the body, got %d:\n%s",
+			got, strings.Join(body, "\n"))
 	}
 }
 

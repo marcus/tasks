@@ -1,10 +1,10 @@
   agenda   next   quadrants   projects   outline   inbox 1 tue 14 jul · 6 open  
                                                                                 
-   OVERDUE ─────────────────────────────────────────────────────────         1  
-  › A   Book flight in Concur  @computer                               12d ago  
+  OVERDUE ─────────────────────────────────────────────────────────          1  
+  ❯ A    Book flight in Concur  @computer                              12d ago  
                                                                                 
-   TODAY ───────────────────────────────────────────────────────────         1  
-    A   Midyear self-eval  @computer                                    ~07-03  
+  TODAY ───────────────────────────────────────────────────────────          1  
+    A    Midyear self-eval  @computer                                   ~07-03  
                                                                                 
                                                                                 
                                                                                 
@@ -21,4 +21,4 @@
                                                                                 
                                                                                 
   ❯ tab to ask the agent — reschedule, capture, edit anything…                  
-  j/k move   1-6 views   h/l fold   enter details   / search   ? help   q quit  
+  1-6 views   h/l fold   enter details   / search   q quit   ? all keys         

@@ -78,9 +78,17 @@ func (m *Model) bodyLines(layout ScreenLayout) []string {
 
 	out := make([]string, 0, layout.BodyHeight)
 	for row := 0; row < layout.BodyHeight; row++ {
-		text, gutter, selected := "", " ", false
+		text, gutter, selected := "", strings.Repeat(" ", CursorField), false
+		width := max(layout.ListWidth-CursorField, 0)
 		if row < len(visible) {
 			text = visible[row].Text
+			// A section rule is chrome, not a row: it is painted flush to the
+			// pane edge, where a row's cursor field sits, so its label starts on
+			// the same column the cursor does. Its right edge still lands on the
+			// shared meta column — see metaColumns.
+			if visible[row].Chrome {
+				gutter, width = "", max(layout.ListWidth, 0)
+			}
 			// A gutter glyph AND the selection slot. Ruby marks the cursor with
 			// reverse video alone; that survives NO_COLOR but not a terminal or
 			// theme that renders the slot as nothing, and a cursor you cannot
@@ -88,10 +96,10 @@ func (m *Model) bodyLines(layout ScreenLayout) []string {
 			// completed task. The glyph is one cell of insurance that no styler
 			// can take away.
 			if row+layout.ViewportOffset == layout.Selected && layout.HasSelection {
-				gutter, selected = "›", true
+				gutter, selected = Cursor, true
 			}
 		}
-		line := gutter + m.fit(text, max(layout.ListWidth-1, 0))
+		line := gutter + m.fit(text, width)
 		if selected {
 			// Fit FIRST, composite second. The highlight has to cover the row's
 			// own field colours and the padding out to the edge of the list, and
@@ -163,7 +171,7 @@ func (m *Model) railGlyph(layout ScreenLayout, row int) string {
 // opening, a drag on the rail. Reconciling here rather than at each of those
 // call sites means there is one place that can be wrong, not a dozen.
 func (m *Model) reconcileRowWidth(layout ScreenLayout) {
-	if width := max(layout.ListWidth-1, 0); width != m.rowWidth {
+	if width := max(layout.ListWidth-CursorField, 0); width != m.rowWidth {
 		m.RefreshRows()
 	}
 }
@@ -424,8 +432,8 @@ var keyHints = []struct {
 	{"enter", "details", 3},
 	{"v", "unavailable", 7},
 	{"/", "search", 2},
-	{"?", "help", 1},
 	{"q", "quit", 0},
+	{"?", "all keys", 1},
 }
 
 func (m *Model) keyHint() string {

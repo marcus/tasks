@@ -104,10 +104,10 @@ func (m *Model) click(layout ScreenLayout, event tea.Mouse) bool {
 	if !row.Selectable() {
 		return true
 	}
-	// The list reserves one gutter column for the cursor glyph, so a marker's
-	// screen column is its row-relative span shifted by the list origin plus one.
+	// The list reserves the cursor field at its left edge, so a marker's screen
+	// column is its row-relative span shifted by the list origin past that field.
 	listBegin, _ := layout.ListCols()
-	markerOrigin := listBegin + 1
+	markerOrigin := listBegin + CursorField
 	if row.HasMarker() && event.X >= markerOrigin+row.MarkerBegin &&
 		event.X < markerOrigin+row.MarkerEnd {
 		m.blurPrompt()

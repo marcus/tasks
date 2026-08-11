@@ -567,7 +567,7 @@ func (m *Model) RefreshRows() {
 	}
 	queries := m.read.Queries()
 	items := m.filteredItems()
-	m.rowWidth = max(m.layout().ListWidth-1, 0)
+	m.rowWidth = max(m.layout().ListWidth-CursorField, 0)
 	request := BuildRequest{
 		Width:          m.rowWidth,
 		View:           m.view,
