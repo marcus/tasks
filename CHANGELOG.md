@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.6.0] - 2026-08-11
+
+- Refresh the TUI around a shared visual vocabulary: section rules and counts,
+  aligned priority and metadata columns, and consistent selection across every
+  list view.
+- Rework Agenda as calendar groups with distinct start/deadline treatment, and
+  expand the detail rail with state, labels, links, actions, and subtask
+  progress.
+- Simplify the outer frame, improve palette-aware chrome contrast, and add
+  pointer resizing for the detail rail while preserving embedded-host routing
+  and layout contracts.
+
 ## [1.5.0] - 2026-08-10
 
 - Let embedded hosts suppress numeric view-jump advertisements while retaining
