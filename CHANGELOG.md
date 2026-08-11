@@ -1,11 +1,14 @@
 # Changelog
 
-## [1.6.0] - 2026-08-11
+## [1.7.0] - 2026-08-11
 
 - Add ordered, labelled formal task links; CLI `link add`/`link rm`/`link set`;
   API `formal_links` writes; and a shared formal/title/body openable union.
 - Let the TUI open one link directly or choose among several through a
   searchable keyboard/mouse picker with labels and bounded digit shortcuts.
+
+## [1.6.0] - 2026-08-11
+
 - Refresh the TUI around a shared visual vocabulary: section rules and counts,
   aligned priority and metadata columns, and consistent selection across every
   list view.
