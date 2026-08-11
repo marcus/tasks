@@ -31,6 +31,9 @@ func (m *Model) HandleMouse(event tea.MouseMsg) bool {
 		return m.overlayMouse(box, event)
 	}
 	layout := m.layout()
+	if m.railMouse(layout, event) {
+		return true
+	}
 	switch e := event.(type) {
 	case tea.MouseWheelMsg:
 		mouse := e.Mouse()
@@ -88,13 +91,18 @@ func (m *Model) click(layout ScreenLayout, event tea.Mouse) bool {
 	if m.panel != nil && m.inPanel(layout, event.X) {
 		return false
 	}
+	// A click anywhere in the list blurs the prompt, INCLUDING one that lands on
+	// a section heading or on empty space below the rows. The gesture means "I
+	// am working in the list now"; whether the cell under it happened to be a
+	// selectable row is not something the hand aimed at.
+	m.blurPrompt()
 	index := layout.ViewportOffset + (event.Y - begin)
 	if index < 0 || index >= len(m.rows) {
-		return false
+		return true
 	}
 	row := m.rows[index]
 	if !row.Selectable() {
-		return false
+		return true
 	}
 	// The list reserves one gutter column for the cursor glyph, so a marker's
 	// screen column is its row-relative span shifted by the list origin plus one.
@@ -114,6 +122,69 @@ func (m *Model) click(layout ScreenLayout, event tea.Mouse) bool {
 	m.blurPrompt()
 	m.selectRow(index)
 	return true
+}
+
+// railDrag is one in-flight drag of the split rule: where the pointer went
+// down, and what the panel offset was at that moment. The offset is recomputed
+// from the ORIGIN on every motion rather than accumulated per event, so a
+// dropped or coalesced motion event cannot make the panel drift away from the
+// pointer.
+type railDrag struct {
+	originX      int
+	originOffset int
+}
+
+// railMouse owns the pointer while it is on, or dragging, the split rule.
+//
+// It runs before every other mouse rule because a press on the rule is the one
+// gesture whose target is the chrome rather than the content: without this the
+// same press would fall through to the list and move the selection under the
+// hand that meant to resize a pane.
+func (m *Model) railMouse(layout ScreenLayout, event tea.MouseMsg) bool {
+	switch event.(type) {
+	case tea.MouseReleaseMsg:
+		if m.railDrag == nil {
+			return false
+		}
+		m.railDrag = nil
+		return true
+	case tea.MouseMotionMsg:
+		if m.railDrag == nil {
+			return false
+		}
+		m.resizeRail(m.railDrag.originOffset + (m.railDrag.originX - event.Mouse().X))
+		return true
+	case tea.MouseClickMsg:
+		mouse := event.Mouse()
+		if mouse.Button != tea.MouseLeft || !m.onRail(layout, mouse.X, mouse.Y) {
+			return false
+		}
+		m.railDrag = &railDrag{originX: mouse.X, originOffset: m.panelOffset}
+		return true
+	}
+	return false
+}
+
+// onRail reports whether a cell is the split rule itself. The rule is one
+// column wide but is granted its neighbours as slop: a one-cell drag target is
+// a target most people miss.
+func (m *Model) onRail(layout ScreenLayout, column, row int) bool {
+	divider := layout.PanelDividerCol()
+	if divider < 0 {
+		return false
+	}
+	begin, end := layout.BodyRows()
+	return row >= begin && row < end && column >= divider && column <= divider+2
+}
+
+// resizeRail applies an absolute panel offset from a drag, and rebuilds the
+// open panel's content at the new width.
+func (m *Model) resizeRail(offset int) {
+	if offset == m.panelOffset {
+		return
+	}
+	m.panelOffset = offset
+	m.refreshOpenPanel()
 }
 
 func (m *Model) blurPrompt() {

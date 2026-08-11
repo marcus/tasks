@@ -1,24 +1,24 @@
-┌──────────────────────────────────────────────────────────────────────────────────────────────┐
-│ 1 Agenda 2 Next 3 Quadrants 4 Projects 5 Outline 6 Inbox 1                   6 open · ? help │
-├──────────────────────────────────────────────────────────────────────────────────────────────┤
-│  @computer                                                                                   │
-│ ›    [A] Book flight in Concur  7/2                                                          │
-│      [B┌─ actions ──────────────────────────────────────────────────────────────────┐        │
-│        │  search:                                                                   │        │
-│  @home │                                                                            │        │
-│      Wa│  ❯   collapse subtree (again: to parent)  h                                │        │
-│        │      expand subtree  l                                                     │        │
-│        │      collapse all subtrees  H                                              │        │
-│        │      expand all subtrees  L                                                │        │
-│        │      open / close task details  return                                     │        │
-│        │      complete selected task  c                                             │        │
-│        │      delete selected task (hard delete; undoable)  # / del                 │        │
-│        │      edit Deadline / Available from date or time  d                        │        │
-│        │  ↑↓ choose · enter run · esc cancel                                        │        │
-│        └────────────────────────────────────────────────────────────────────────────┘        │
-│                                                                                              │
-│                                                                                              │
-│                                                                                              │
-├──────────────────────────────────────────────────────────────────────────────────────────────┤
-│ j/k move · 1-6 views · h/l fold · enter details · v unavailable · / search · q quit          │
-└──────────────────────────────────────────────────────────────────────────────────────────────┘
+  agenda   next   quadrants   projects   outline   inbox 1                 tue 14 jul · 6 open  
+                                                                                                
+   @computer                                                                                    
+  ›    [A] Book flight in Concur  7/2                                                           
+       [B] Review PR backlog                                                                    
+         ┌─ actions ──────────────────────────────────────────────────────────────────┐         
+   @home │  search:                                                                   │         
+       Wa│                                                                            │         
+         │  ❯   collapse subtree (again: to parent)  h                                │         
+         │      expand subtree  l                                                     │         
+         │      collapse all subtrees  H                                              │         
+         │      expand all subtrees  L                                                │         
+         │      open / close task details  return                                     │         
+         │      complete selected task  c                                             │         
+         │      delete selected task (hard delete; undoable)  # / del                 │         
+         │      edit Deadline / Available from date or time  d                        │         
+         │  ↑↓ choose · enter run · esc cancel                                        │         
+         └────────────────────────────────────────────────────────────────────────────┘         
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+  j/k move   1-6 views   h/l fold   enter details   v unavailable   / search   ? help   q quit  

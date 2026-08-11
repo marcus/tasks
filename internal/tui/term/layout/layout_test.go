@@ -21,13 +21,13 @@ func TestOwnsFooterBodyViewportAndSelectedCoordinates(t *testing.T) {
 	if l.FooterSize() != 3 {
 		t.Fatalf("footer size = %d", l.FooterSize())
 	}
-	if l.BodyHeight != 4 || l.BodyWidth != 38 {
+	if l.BodyHeight != 6 || l.BodyWidth != 38 {
 		t.Fatalf("body = %dx%d", l.BodyWidth, l.BodyHeight)
 	}
-	if l.ViewportOffset != 6 {
+	if l.ViewportOffset != 4 {
 		t.Fatalf("viewport offset = %d", l.ViewportOffset)
 	}
-	if l.SelectedScreenRow == nil || *l.SelectedScreenRow != 3 {
+	if l.SelectedScreenRow == nil || *l.SelectedScreenRow != 5 {
 		t.Fatalf("selected screen row = %v", l.SelectedScreenRow)
 	}
 	all := make([]int, 13)
@@ -35,7 +35,7 @@ func TestOwnsFooterBodyViewportAndSelectedCoordinates(t *testing.T) {
 		all[i] = i
 	}
 	visible := VisibleRows(l, all)
-	want := []int{6, 7, 8, 9}
+	want := []int{4, 5, 6, 7, 8, 9}
 	if len(visible) != len(want) {
 		t.Fatalf("visible = %v", visible)
 	}
@@ -47,7 +47,7 @@ func TestOwnsFooterBodyViewportAndSelectedCoordinates(t *testing.T) {
 }
 
 func TestShortTerminalPreservesActionableFooterTail(t *testing.T) {
-	l := New(Options{Width: 8, Height: 7, Footer: lines("old", "response", "flash", "prompt"), Selected: sel(0)})
+	l := New(Options{Width: 8, Height: 5, Footer: lines("old", "response", "flash", "prompt"), Selected: sel(0)})
 	if len(l.Footer) != 1 || l.Footer[0].Text != "prompt" {
 		t.Fatalf("footer = %#v", l.Footer)
 	}
@@ -67,7 +67,7 @@ func TestFooterIsASnapshotOfTheCallersSlice(t *testing.T) {
 	if len(l.Footer) != 1 || l.Footer[0].Text != "prompt" {
 		t.Fatalf("footer = %#v", l.Footer)
 	}
-	if l.BodyHeight != 2 {
+	if l.BodyHeight != 4 {
 		t.Fatalf("body height = %d", l.BodyHeight)
 	}
 }
@@ -79,9 +79,9 @@ func TestPopupPlacementUsesViewportSelectionAndClamps(t *testing.T) {
 	if below.Row != 2 || below.Col != 4 {
 		t.Fatalf("below = (%d,%d), want (2,4)", below.Row, below.Col)
 	}
-	above := New(Options{Width: 14, Height: 11, Selected: sel(5)}).PlacePopup(popup, 8)
-	if above.Row != 3 || above.Col != 4 {
-		t.Fatalf("above = (%d,%d), want (3,4)", above.Row, above.Col)
+	above := New(Options{Width: 14, Height: 11, Selected: sel(7)}).PlacePopup(popup, 8)
+	if above.Row != 5 || above.Col != 4 {
+		t.Fatalf("above = (%d,%d), want (5,4)", above.Row, above.Col)
 	}
 }
 
@@ -90,11 +90,11 @@ func TestModalPlacementIsFrozenToSampledFrame(t *testing.T) {
 	wide := New(Options{Width: 80, Height: 24, Footer: lines("prompt"), Selected: sel(0)})
 	narrow := New(Options{Width: 30, Height: 10, Footer: lines("prompt"), Selected: sel(0)})
 
-	if placed := wide.PlaceModal(modal); placed.Row != 7 || placed.Col != 28 {
-		t.Fatalf("wide = (%d,%d), want (7,28)", placed.Row, placed.Col)
+	if placed := wide.PlaceModal(modal); placed.Row != 8 || placed.Col != 28 {
+		t.Fatalf("wide = (%d,%d), want (8,28)", placed.Row, placed.Col)
 	}
-	if placed := narrow.PlaceModal(modal); placed.Row != 0 || placed.Col != 3 {
-		t.Fatalf("narrow = (%d,%d), want (0,3)", placed.Row, placed.Col)
+	if placed := narrow.PlaceModal(modal); placed.Row != 1 || placed.Col != 3 {
+		t.Fatalf("narrow = (%d,%d), want (1,3)", placed.Row, placed.Col)
 	}
 	if wide.Width != 80 || wide.Height != 24 {
 		t.Fatal("later placement must not mutate an existing frame")
@@ -225,13 +225,13 @@ func TestEditingAdmissionIsExactAtMinimumTerminalWidth(t *testing.T) {
 func TestEditingAdmissionIsExactAtNamedHeightAcrossWidthsAndModes(t *testing.T) {
 	for _, mode := range PanelModes {
 		for _, width := range []int{45, 46, 80, 120} {
-			for _, height := range []int{6, 7, 8, 9} {
+			for _, height := range []int{4, 5, 6, 7} {
 				l := New(Options{Width: width, Height: height, Panel: true, PanelMode: mode, Editing: true})
-				want := width >= 46 && height >= 8
+				want := width >= 46 && height >= 6
 				if l.EditablePanel() != want {
 					t.Fatalf("%s at %dx%d: editable = %v, want %v", mode, width, height, l.EditablePanel(), want)
 				}
-				wantHeight := height - 7
+				wantHeight := height - 5
 				if wantHeight < 0 {
 					wantHeight = 0
 				}
@@ -241,21 +241,21 @@ func TestEditingAdmissionIsExactAtNamedHeightAcrossWidthsAndModes(t *testing.T) 
 			}
 		}
 	}
-	if MinimumEditTerminalHeight(0) != 8 || MinimumEditTerminalWidth() != 46 {
+	if MinimumEditTerminalHeight(0) != 6 || MinimumEditTerminalWidth() != 46 {
 		t.Fatalf("minimum size = %dx%d", MinimumEditTerminalWidth(), MinimumEditTerminalHeight(0))
 	}
 }
 
 func TestEachFooterRowRaisesEditHeightMinimum(t *testing.T) {
-	below := New(Options{Width: 46, Height: 8, Footer: lines("message"), Panel: true, PanelMode: PanelFocus, Editing: true})
-	exact := New(Options{Width: 46, Height: 9, Footer: lines("message"), Panel: true, PanelMode: PanelFocus, Editing: true})
+	below := New(Options{Width: 46, Height: 6, Footer: lines("message"), Panel: true, PanelMode: PanelFocus, Editing: true})
+	exact := New(Options{Width: 46, Height: 7, Footer: lines("message"), Panel: true, PanelMode: PanelFocus, Editing: true})
 	if below.EditablePanel() {
 		t.Fatal("a footer row must consume an editor row")
 	}
 	if !exact.EditablePanel() {
 		t.Fatal("one more terminal row must restore the editor")
 	}
-	if MinimumEditTerminalHeight(1) != 9 {
+	if MinimumEditTerminalHeight(1) != 7 {
 		t.Fatalf("minimum height with one footer row = %d", MinimumEditTerminalHeight(1))
 	}
 }
@@ -263,13 +263,13 @@ func TestEachFooterRowRaisesEditHeightMinimum(t *testing.T) {
 func TestRectanglesAreHalfOpenAndAgreeWithTheBodyOrigin(t *testing.T) {
 	l := New(Options{Width: 80, Height: 24, Footer: lines("prompt"), Selected: sel(0), Panel: true})
 	row, col := l.BodyOrigin()
-	if row != 3 || col != 2 {
+	if row != 2 || col != 2 {
 		t.Fatalf("body origin = (%d,%d)", row, col)
 	}
-	if l.HeaderRow() != 1 {
+	if l.HeaderRow() != 0 {
 		t.Fatalf("header row = %d", l.HeaderRow())
 	}
-	if l.BodyRows().Begin != 3 || l.BodyRows().End != 3+l.BodyHeight {
+	if l.BodyRows().Begin != 2 || l.BodyRows().End != 2+l.BodyHeight {
 		t.Fatalf("body rows = %#v", l.BodyRows())
 	}
 	if l.ListCols().Begin != 2 || l.ListCols().End != 2+l.ListWidth {
@@ -281,10 +281,10 @@ func TestRectanglesAreHalfOpenAndAgreeWithTheBodyOrigin(t *testing.T) {
 	if l.PanelCols().Begin != 2+l.ListWidth+2 || l.PanelCols().End != 2+l.BodyWidth {
 		t.Fatalf("panel cols = %#v", l.PanelCols())
 	}
-	if l.FooterRows().Begin != l.BodyHeight+4 {
+	if l.FooterRows().Begin != l.BodyHeight+3 {
 		t.Fatalf("footer rows = %#v", l.FooterRows())
 	}
-	if l.BodyRows().Covers(2) || !l.BodyRows().Covers(3) || l.BodyRows().Covers(l.BodyRows().End) {
+	if l.BodyRows().Covers(1) || !l.BodyRows().Covers(2) || l.BodyRows().Covers(l.BodyRows().End) {
 		t.Fatal("body rows span must be half-open")
 	}
 	noPanel := New(Options{Width: 80, Height: 24, Selected: sel(0)})

@@ -23,6 +23,34 @@ type DetailContent struct {
 	Lines []string
 }
 
+// The detail panel ECHOES the list's own section idiom: a labelled rule that
+// runs to the right edge, with a badge sharing that edge. The panel and the
+// list are one surface read left to right, and giving the rail its own visual
+// language — indented label/value pairs under a title bar — made it read as a
+// second, unrelated application pinned to the side of the first.
+//
+// The rule label says what the block IS (TASK, NOTE, LINKS, ACTIONS); the badge
+// says the one fact you would otherwise have to read the block to learn — the
+// state and priority of the task, how many links there are. Everything the old
+// label/value list carried is still here; it now sits UNDER the section whose
+// question it answers, and the facts a person actually scans for (when, where,
+// which project) are promoted into one meta line directly beneath the title.
+
+// detailSection is a labelled rule with an optional right-aligned badge.
+func detailSection(styler Styler, label, badge string, width int) string {
+	head := styler.Paint("detail_label", label)
+	used := styler.Width(label) + 1
+	if badge != "" {
+		used += styler.Width(badge) + 1
+	}
+	rule := max(width-used, 0)
+	line := head + " " + styler.Paint("outline_thread", strings.Repeat("─", rule))
+	if badge != "" {
+		line += " " + badge
+	}
+	return line
+}
+
 // BuildTaskDetails is the pure task-detail content builder — the port of
 // lib/tui/task_details.rb. Its output is hosted by the right panel today and
 // could be hosted by any other surface tomorrow, because it depends on no
@@ -33,86 +61,155 @@ func BuildTaskDetails(styler Styler, queries *taskquery.Queries, item store.Item
 		styler = PlainStyler{}
 	}
 	usable := max(width, 1)
-	lines := []string{}
-	for _, line := range styler.Wrap(item.Title, usable) {
-		lines = append(lines, styler.Paint("section", line))
-	}
-	lines = append(lines, "")
+	today := queries.Today()
 
 	state := item.State
 	if slot, found := stateSlot[item.State]; found {
 		state = styler.Paint(slot, item.State)
 	}
-	lines = append(lines, detailRow(styler, "state", state))
-
-	priority := styler.Paint("muted", "—")
+	badge := state
 	if item.Priority != "" {
-		priority = "[#" + item.Priority + "]"
+		badge = styler.Paint(prioritySlot(item.Priority), "["+item.Priority+"]") + " " + state
 	}
-	lines = append(lines, detailRow(styler, "priority", priority))
+	lines := []string{detailSection(styler, "TASK", badge, usable), ""}
+	for _, line := range styler.Wrap(item.Title, usable) {
+		lines = append(lines, styler.Paint("section", line))
+	}
+	if meta := taskMetaLine(styler, queries, item, projectName); meta != "" {
+		lines = append(lines, styler.Wrap(meta, usable)...)
+	}
 
-	today := queries.Today()
-	if value, ok := queries.DeadlineValue(item); ok {
-		lines = append(lines, detailRow(styler, "deadline", temporalValue(styler, queries, value, "deadline", today)))
+	// What the meta line could not say. A date row appears only when the stored
+	// value carries more than the stamp already shown — a wall time, a fixed
+	// zone, a projection into the local one.
+	extra := []string{}
+	if value, ok := queries.DeadlineValue(item); ok && !value.AllDay() {
+		extra = append(extra, detailRow(styler, "deadline",
+			temporalValue(styler, queries, value, "deadline", today)))
 	}
-	if value, ok := queries.ScheduledValue(item); ok {
-		lines = append(lines, detailRow(styler, "available from",
+	if value, ok := queries.ScheduledValue(item); ok && item.Deadline != "" {
+		extra = append(extra, detailRow(styler, "available from",
 			temporalValue(styler, queries, value, "scheduled", today)))
 	}
 	availability := queries.AvailabilityFor(item)
 	if availability.Reason != taskquery.ReasonAvailable {
-		lines = append(lines, detailRow(styler, "availability",
+		extra = append(extra, detailRow(styler, "availability",
 			availabilityValue(styler, queries, item, availability, today)))
 	}
 	if taskquery.Recurring(item) {
-		lines = append(lines, detailRow(styler, "repeats", styler.Paint("muted", "↻")+" "+item.Recur))
+		extra = append(extra, detailRow(styler, "repeats", styler.Paint("muted", "↻")+" "+item.Recur))
 	}
 	if item.Lead != "" {
-		lines = append(lines, detailRow(styler, "lead time", leadValue(styler, queries, item)))
+		extra = append(extra, detailRow(styler, "lead time", leadValue(styler, queries, item)))
 	}
 	if item.Closed != "" {
-		lines = append(lines, detailRow(styler, "closed", item.Closed))
-	}
-	if projectName != "" {
-		lines = append(lines, detailRow(styler, "project", styler.Paint("project", projectName)))
-	}
-	if len(item.Contexts) > 0 {
-		painted := make([]string, 0, len(item.Contexts))
-		for _, context := range item.Contexts {
-			painted = append(painted, styler.Paint("context", context))
-		}
-		lines = append(lines, detailRow(styler, "contexts", strings.Join(painted, "  ")))
+		extra = append(extra, detailRow(styler, "closed", item.Closed))
 	}
 	if len(item.Tags) > 0 {
-		lines = append(lines, detailRow(styler, "tags", strings.Join(item.Tags, "  ")))
+		extra = append(extra, detailRow(styler, "tags", strings.Join(item.Tags, "  ")))
 	}
 	if item.ID != "" {
-		lines = append(lines, detailRow(styler, "id", styler.Paint("muted", item.ID)))
+		extra = append(extra, detailRow(styler, "id", styler.Paint("muted", item.ID)))
 	}
-	lines = append(lines, delegationLines(styler, item)...)
+	if len(extra) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, extra...)
+	}
 
-	notes := trimmedLines(queries.Body(item))
-	if len(notes) > 0 {
-		lines = append(lines, "", styler.Paint("detail_label", "description"))
+	if delegation := delegationOf(item); delegation != nil {
+		lines = append(lines, "", detailSection(styler, "DELEGATION",
+			styler.Paint("muted", delegationText(delegation["status"])), usable))
+		lines = append(lines, "")
+		lines = append(lines, delegationLines(styler, item)...)
+	}
+
+	if notes := trimmedLines(queries.Body(item)); len(notes) > 0 {
+		lines = append(lines, "", detailSection(styler, "NOTE", "", usable), "")
 		for _, note := range notes {
-			for _, wrapped := range styler.Wrap(note, max(usable-2, 1)) {
-				lines = append(lines, "  "+styler.Paint("description", wrapped))
+			for _, wrapped := range styler.Wrap(note, usable) {
+				lines = append(lines, styler.Paint("description", wrapped))
 			}
 		}
 	}
 	if found := queries.Links(item); len(found) > 0 {
-		lines = append(lines, "", styler.Paint("detail_label", "links")+
-			styler.Paint("muted", " (o opens the first)"))
-		systemWidth := 0
-		for _, link := range found {
-			systemWidth = max(systemWidth, len(link.System))
-		}
-		for _, link := range found {
-			lines = append(lines, "  "+styler.Paint("link_system", padRight(link.System, systemWidth))+
-				" "+styler.Paint("link", link.URL))
+		lines = append(lines, "", detailSection(styler, "LINKS",
+			styler.Paint("muted", fmt.Sprintf("%d", len(found))), usable), "")
+		// `o` opens the FIRST link, so the first link is the one that carries
+		// the key. The rest are indented under it rather than labelled, because
+		// a key you cannot press is not worth a column.
+		for index, link := range found {
+			marker := styler.Paint("muted", "   ")
+			if index == 0 {
+				marker = styler.Paint("accent", "o") + "  "
+			}
+			lines = append(lines, marker+styler.Paint("link_system", link.System+" ")+
+				styler.Paint("link", link.URL))
 		}
 	}
+	lines = append(lines, "", detailSection(styler, "ACTIONS", "", usable), "",
+		detailActions(styler, usable))
 	return DetailContent{Title: "task", Lines: lines}
+}
+
+// taskMetaLine is the one line a person actually scans: when, how far away,
+// which project, which contexts. Absent facts drop out rather than printing a
+// placeholder — an em dash where a date is not is a fact nobody needs.
+func taskMetaLine(styler Styler, queries *taskquery.Queries, item store.Item,
+	projectName string) string {
+	parts := []string{}
+	if date, kind, value, ok := primaryDate(queries, item); ok {
+		stamp := fmt.Sprintf("%s %02d-%02d",
+			strings.ToLower(date.Weekday().String()[:3]), int(date.Month), date.Day)
+		if value.LocalTime != "" {
+			if projected, err := value.Projected(queries.Context()); err == nil {
+				date = projected.Date
+				stamp = fmt.Sprintf("%s %02d-%02d %s",
+					strings.ToLower(date.Weekday().String()[:3]),
+					int(date.Month), date.Day, projected.Local)
+			}
+		}
+		if kind != "deadline" {
+			stamp = "from " + stamp
+		}
+		days := date.Sub(queries.Today())
+		parts = append(parts,
+			styler.Paint(dueSlot(days), stamp), styler.Paint(dueSlot(days), relativeDays(days)))
+	}
+	if projectName != "" {
+		parts = append(parts, styler.Paint("project", projectName))
+	}
+	for _, context := range item.Contexts {
+		parts = append(parts, styler.Paint("context", context))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, styler.Paint("muted", " · "))
+}
+
+// detailActions is the keys that act on the task under the cursor. They are the
+// REAL bindings from the shortcut registry, spelled here the way the footer
+// hint spells its own: a short, stable, hand-chosen row rather than everything
+// the registry would happily list.
+//
+// A narrow rail drops whole pairs from the end rather than truncating the row,
+// for the reason the footer hint gives: `… z defer   K` teaches nothing, and a
+// shorter list that ends on a word still does.
+func detailActions(styler Styler, width int) string {
+	pairs := [][2]string{
+		{"c", "done"}, {"d", "date"}, {"r", "recur"}, {"z", "defer"}, {"K", "priority"},
+	}
+	painted := make([]string, 0, len(pairs))
+	for _, pair := range pairs {
+		painted = append(painted, styler.Paint("accent", pair[0])+styler.Paint("muted", " "+pair[1]))
+	}
+	for keep := len(painted); keep > 1; keep-- {
+		line := strings.Join(painted[:keep], styler.Paint("muted", "   "))
+		if styler.Width(line) <= width {
+			return line
+		}
+	}
+	return styler.Truncate(painted[0], width)
 }
 
 // BuildProjectDetails is the ProjectView counterpart — the port of
@@ -124,12 +221,12 @@ func BuildProjectDetails(styler Styler, queries *taskquery.Queries, project task
 		styler = PlainStyler{}
 	}
 	usable := max(width, 1)
-	lines := []string{}
+	lines := []string{detailSection(styler, "PROJECT",
+		styler.Paint("muted", strings.ToUpper(project.Kind)), usable), ""}
 	for _, line := range styler.Wrap(project.Title, usable) {
 		lines = append(lines, styler.Paint("section", line))
 	}
 	lines = append(lines, "")
-	lines = append(lines, detailRow(styler, "kind", project.Kind))
 	lines = append(lines, detailRow(styler, "open", fmt.Sprintf("%d", project.OpenCount)))
 	lines = append(lines, detailRow(styler, "next", fmt.Sprintf("%d", project.NextCount)))
 	if project.Stuck {
@@ -146,17 +243,18 @@ func BuildProjectDetails(styler Styler, queries *taskquery.Queries, project task
 		lines = append(lines, detailRow(styler, "id", styler.Paint("muted", project.ID)))
 	}
 	if notes := trimmedLines(strings.Split(project.Body, "\n")); len(notes) > 0 {
-		lines = append(lines, "", styler.Paint("detail_label", "notes"))
+		lines = append(lines, "", detailSection(styler, "NOTE", "", usable), "")
 		for _, note := range notes {
-			for _, wrapped := range styler.Wrap(note, max(usable-2, 1)) {
-				lines = append(lines, "  "+styler.Paint("description", wrapped))
+			for _, wrapped := range styler.Wrap(note, usable) {
+				lines = append(lines, styler.Paint("description", wrapped))
 			}
 		}
 	}
 	if len(tasks) > 0 {
-		lines = append(lines, "", styler.Paint("detail_label", "open tasks"))
+		lines = append(lines, "", detailSection(styler, "TASKS",
+			styler.Paint("muted", fmt.Sprintf("%d", len(tasks))), usable), "")
 		for _, task := range tasks {
-			lines = append(lines, "  "+projectTaskLine(styler, queries, task))
+			lines = append(lines, projectTaskLine(styler, queries, task))
 		}
 	}
 	return DetailContent{Title: "project", Lines: lines}

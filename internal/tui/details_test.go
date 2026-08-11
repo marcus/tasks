@@ -23,12 +23,15 @@ func TestTaskDetailsShowsTheFieldsThatArePresent(t *testing.T) {
 	text := detailFor(t, harness, fixFlight)
 	for _, want := range []string{
 		"Book flight in Concur",
-		"state      NEXT",
-		"priority   [#A]",
-		"deadline   2026-07-02",
-		"project    Work",
-		"contexts   @computer",
+		// The section rule carries the state and the priority as a badge, and
+		// the meta line under the title carries when / where / which project.
+		"TASK ",
+		"[A] NEXT",
+		"07-02",
+		"Work",
+		"@computer",
 		"id         aaaa0004",
+		"ACTIONS ",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("detail panel is missing %q:\n%s", want, text)
@@ -49,7 +52,7 @@ func TestTaskDetailsOmitsFieldsThatAreAbsent(t *testing.T) {
 func TestTaskDetailsShowsTheBodyAsADescription(t *testing.T) {
 	harness := newModelHarness(t, harnessOptions{})
 	text := detailFor(t, harness, fixTravel)
-	if !strings.Contains(text, "description") || !strings.Contains(text, "Some note line.") {
+	if !strings.Contains(text, "NOTE ") || !strings.Contains(text, "Some note line.") {
 		t.Fatalf("the task body did not reach the panel:\n%s", text)
 	}
 }
@@ -127,7 +130,7 @@ func TestProjectDetailsRollsUpTheSection(t *testing.T) {
 	if text == "" {
 		t.Fatal("no Work project row")
 	}
-	for _, want := range []string{"Work", "kind", "open", "next", "open tasks", "Book flight in Concur"} {
+	for _, want := range []string{"PROJECT ", "Work", "open", "next", "TASKS ", "Book flight in Concur"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("project panel is missing %q:\n%s", want, text)
 		}

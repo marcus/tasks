@@ -7,7 +7,7 @@ package tui
 // reads. Bubble Tea removes that hazard (a WindowSizeMsg is one coherent
 // value), but the type earns its keep for the other reason: rendering, panel
 // placement, selection coordinates and mouse hit testing all have to agree
-// about where row 3 is, and the only way to guarantee that is to compute it
+// about where row 2 is, and the only way to guarantee that is to compute it
 // once.
 type ScreenLayout struct {
 	Width  int
@@ -35,7 +35,9 @@ type ScreenLayout struct {
 
 // The panel width ladder. Names and numbers are Ruby's.
 const (
-	FixedRows = 5 // borders, header, and the two rules outside the body/footer
+	// FixedRows is the header plus the two blank rows that separate it and the
+	// footer from the body. The frame itself is undrawn — see render.go.
+	FixedRows = 3
 
 	PanelRatio          = 0.40
 	WidePanelRatio      = 0.58
@@ -69,7 +71,9 @@ func NewScreenLayout(styler Styler, request LayoutRequest) ScreenLayout {
 		styler = PlainStyler{}
 	}
 	footer := request.Footer
-	if keep := request.Height - 6; keep < len(footer) {
+	// The footer may never crowd the body out of existence: the chrome rows
+	// plus one body row are reserved before a footer line is kept.
+	if keep := request.Height - FixedRows - 1; keep < len(footer) {
 		if keep < 0 {
 			keep = 0
 		}
@@ -140,13 +144,13 @@ func (l ScreenLayout) ContentBreakpoint() string {
 
 // Screen-coordinate rectangles shared by rendering and hit testing. All ranges
 // are half-open over 0-based terminal cells, so a click and a painted glyph
-// always agree that row 3 is the first body row.
+// always agree that row 2 is the first body row.
 
 // HeaderRow is the row the tab strip paints on.
-func (l ScreenLayout) HeaderRow() int { return 1 }
+func (l ScreenLayout) HeaderRow() int { return 0 }
 
 // BodyRows is [begin, end) of the list body.
-func (l ScreenLayout) BodyRows() (int, int) { return 3, 3 + l.BodyHeight }
+func (l ScreenLayout) BodyRows() (int, int) { return 2, 2 + l.BodyHeight }
 
 // ListCols is [begin, end) of the list columns.
 func (l ScreenLayout) ListCols() (int, int) { return 2, 2 + l.ListWidth }
@@ -169,7 +173,7 @@ func (l ScreenLayout) PanelCols() (int, int) {
 
 // FooterRows is [begin, end) of the footer.
 func (l ScreenLayout) FooterRows() (int, int) {
-	start := l.BodyHeight + 4
+	start := l.BodyHeight + 3
 	return start, start + len(l.Footer)
 }
 

@@ -101,56 +101,34 @@ func Build(opts Options) []string {
 		overlay(body, *opts.Popup, w-2)
 	}
 
-	// The whole frame chrome — outer ring plus the header/footer divider rules —
-	// shares one angled gradient swept over the full width x height, so it reads
-	// as lit from one corner. The border package owns the glyphs and the
-	// per-cell color; only chrome cells are painted, interior content passes
-	// through untouched.
-	c := border.Chars(border.CornersRound)
-	p := border.NewPainter(border.PainterOptions{
-		Width: width, Height: height,
-		Gradient: th.Gradient("border"), Solid: th.SGR("border"),
-		Truecolor: opts.Truecolor,
-	})
-	edge := func(y int) (string, string) {
-		return p.Cell(0, y, c.V), p.Cell(width-1, y, c.V)
-	}
-	hrule := func(y int, l, r string) string {
-		glyphs := make([]string, 0, w+2)
-		glyphs = append(glyphs, l)
-		for i := 0; i < w; i++ {
-			glyphs = append(glyphs, c.H)
-		}
-		glyphs = append(glyphs, r)
-		return p.Run(y, 0, glyphs)
-	}
+	// The outer ring is UNDRAWN, and so are the rules that used to sit above
+	// and below the body. Four rows and two columns went to saying "the
+	// application is here", which the alternate screen already says, and the
+	// rules cut the list and the detail rail beside it into stacked boxes.
+	// Blank rows separate them now. See internal/tui/render.go, whose output
+	// this must match cell for cell.
+	//
+	// The border painter and its gradient are NOT retired with the ring: every
+	// floating surface — modal, popup, the editor form — still draws a box, and
+	// a box there is doing real work, separating the surface from what is
+	// behind it. Only the frame that had nothing behind it is gone.
+	blank := strings.Repeat(" ", width)
+	pad := func(text string) string { return " " + ansi.VPad(ansi.VTrunc(text, w), w) + " " }
 
 	lines := make([]string, 0, height)
-	y := 0
-	lines = append(lines, hrule(y, c.TL, c.TR))
-	y++
-	lv, rv := edge(y)
-	lines = append(lines, lv+ansi.VPad(ansi.VTrunc(opts.Header, w), w)+rv)
-	y++
-	lines = append(lines, hrule(y, c.ML, c.MR))
-	y++
+	lines = append(lines, pad(opts.Header))
+	lines = append(lines, blank)
 	for _, b := range body {
-		lv, rv = edge(y)
-		lines = append(lines, lv+" "+ansi.VPad(b, w-2)+" "+rv)
-		y++
+		lines = append(lines, "  "+ansi.VPad(b, w-2)+"  ")
 	}
-	lines = append(lines, hrule(y, c.ML, c.MR))
-	y++
+	lines = append(lines, blank)
 	for _, f := range footer {
 		if f.Rule {
-			lines = append(lines, hrule(y, c.ML, c.MR))
-		} else {
-			lv, rv = edge(y)
-			lines = append(lines, lv+ansi.VPad(ansi.VTrunc(f.Text, w), w)+rv)
+			lines = append(lines, blank)
+			continue
 		}
-		y++
+		lines = append(lines, pad(f.Text))
 	}
-	lines = append(lines, hrule(y, c.BL, c.BR))
 	return lines
 }
 

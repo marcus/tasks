@@ -1,16 +1,16 @@
-┌──────────────────────────────────────────┐
-│ 1 2 3 4 5 6 1            6 open · ? help │
-├──────────────────────────────────────────┤
-│  @computer                               │
-│ ›    [A] Book flight in Concur  7/2      │
-│      [B] Review PR backlog               │
-│                                          │
-│  @home                                   │
-│      Water the plants                    │
-│                                          │
-│                                          │
-│                                          │
-├──────────────────────────────────────────┤
-│ ❯ tab to ask the agent — reschedule, capt│
-│ j/k · 1-6 · h/l · enter · / · q          │
-└──────────────────────────────────────────┘
+  ag   nx   q   pr   out   in 1 tue 14 jul  
+                                            
+   @computer                                
+  ›    [A] Book flight in Concur  7/2       
+       [B] Review PR backlog                
+                                            
+   @home                                    
+       Water the plants                     
+                                            
+                                            
+                                            
+                                            
+                                            
+                                            
+  ❯ tab to ask the agent — reschedule, capt 
+  / search   ? help   q quit                

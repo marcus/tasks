@@ -1,24 +1,24 @@
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ 1 Agenda 2 Next 3 Quadrants 4 Projects 5 Outline 6 Inbox 1   6 open · ? help │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ ›  07-02 DUE (12d ago) [A] Book flight in Concur  @computer                  │
-│    07-03 AVL (11d ago) [A] Midyear self-eval  @computer                      │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ ❯ tab to ask the agent — reschedule, capture, edit anything…                 │
-│ j/k · 1-6 views · h/l fold · enter details · / search · q quit               │
-└──────────────────────────────────────────────────────────────────────────────┘
+  agenda   next   quadrants   projects   outline   inbox 1 tue 14 jul · 6 open  
+                                                                                
+   OVERDUE ─────────────────────────────────────────────────────────         1  
+  › A   Book flight in Concur  @computer                               12d ago  
+                                                                                
+   TODAY ───────────────────────────────────────────────────────────         1  
+    A   Midyear self-eval  @computer                                    ~07-03  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+  ❯ tab to ask the agent — reschedule, capture, edit anything…                  
+  j/k move   1-6 views   h/l fold   enter details   / search   ? help   q quit  

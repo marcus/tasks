@@ -100,9 +100,12 @@ rows win over built-ins.
 **TUI colors.** The TUI paints semantic *slots* (`internal/tui/term/theme` lists them
 all: `accent`, `selection`, per-view tabs like `tab_agenda` /
 `tab_agenda_active`, intake headers `approval_section` / `inbox_section`,
-task-row fields like `project`, `context`, `title`, the
+task-row fields like `project`, `context`, `title`, the agenda's
+per-letter priority slots `priority_a` / `priority_b` / `priority_c`
+(any other letter falls back to `priority`), the
 `due_*` ladder plus selected-row variants such as `due_soon_selected`,
-detail-panel slots like `panel_title`, `detail_label`, `description`, `link`, `link_system`,
+detail-panel slots like `panel_title`, `detail_label`, `description`, `note`,
+`link`, `link_system`,
 `state_*`, …). Appearance keys in the same config file:
 
 - `theme = <name>` — a named base theme: `default`, `mono` (attribute-only),
@@ -125,15 +128,17 @@ detail-panel slots like `panel_title`, `detail_label`, `description`, `link`, `l
   `color.selection = black on-cyan`. Invalid values fall back to the theme
   default rather than erroring. Because a hex token follows a space, `color.*`
   lines are exempt from inline `#` comments.
-- `color.border = <spec>` — the container chrome (the window frame, modals, the
-  form box, and the palettes all share it). This is the solid fallback used when
-  the terminal lacks truecolor, `NO_COLOR` is set, or the gradient is disabled.
-  `none` (the stock default) leaves the border the terminal's own foreground.
+- `color.border = <spec>` — the container chrome. The TUI's outer frame is
+  undrawn (blank rows separate the header, body, and footer), so this paints the
+  FLOATING surfaces: modals, the form box, and the palettes. It is the solid
+  fallback used when the terminal lacks truecolor, `NO_COLOR` is set, or the
+  gradient is disabled. `none` (the stock default) leaves the border the
+  terminal's own foreground.
 - `color.border_gradient = <stop> <stop> [<stop>…] @<angle>` — an angled
-  truecolor gradient swept across the whole chrome, e.g.
+  truecolor gradient swept across those boxes, e.g.
   `color.border_gradient = #7aa2f7 #bb9af7 @60`. Two or more `#rrggbb` stops set
   the sweep; `@<angle>` is the direction in degrees (0 = left→right, 90 =
-  top→bottom). The outer corners are drawn rounded (`╭ ╮ ╰ ╯`). Set it to `none`
+  top→bottom). Box corners are drawn rounded (`╭ ╮ ╰ ╯`). Set it to `none`
   to disable the sweep and fall back to `color.border`. A malformed value
   degrades to the solid border rather than erroring. Only rendered on truecolor
   terminals; `mono`/`NO_COLOR` never sweep it.

@@ -33,6 +33,26 @@ func NewRightPanel(title, kind, identity string, lines []string) *RightPanel {
 	return &RightPanel{Title: title, Kind: kind, Identity: identity, Lines: lines}
 }
 
+// Bare reports whether this panel paints its own headings and therefore wants
+// no title bar above it.
+//
+// Detail content opens on a labelled `TASK ────` rule that already says what
+// the panel is, so a "task" title and a divider above it would be the same
+// sentence twice — and two rows of a short terminal is a real price for it. The
+// suspended-editor panel keeps its chrome: its content is a form, and the title
+// is the only thing that says what the form belongs to.
+func (p *RightPanel) Bare() bool {
+	return p.Kind == PanelDetail || p.Kind == PanelProjectDetail
+}
+
+// chromeRows is how many body rows the title and divider consume.
+func (p *RightPanel) chromeRows() int {
+	if p.Bare() {
+		return 0
+	}
+	return 2
+}
+
 // Replace swaps the content. Scroll resets only when the identity changes.
 func (p *RightPanel) Replace(title, identity string, lines []string) *RightPanel {
 	if identity != p.Identity {
@@ -66,7 +86,7 @@ func (p *RightPanel) View(styler Styler, height, width int) PanelView {
 	if styler == nil {
 		styler = PlainStyler{}
 	}
-	budget := max(height-2, 0)
+	budget := max(height-p.chromeRows(), 0)
 	viewport := p.contentViewport(budget)
 	if p.HasFocusedRow {
 		p.revealFocusedRow(viewport)
@@ -98,7 +118,7 @@ func (p *RightPanel) ScrollPage(direction, height int) {
 
 // Viewport is the number of content lines visible at this height.
 func (p *RightPanel) Viewport(height int) int {
-	return p.contentViewport(max(height-2, 0))
+	return p.contentViewport(max(height-p.chromeRows(), 0))
 }
 
 func (p *RightPanel) revealFocusedRow(viewport int) {

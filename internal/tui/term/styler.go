@@ -52,6 +52,18 @@ func (s *Styler) Paint(slot, text string) string {
 	return s.theme.Paint(resolveSlot(slot), text)
 }
 
+// Composite layers already-painted text over the named slot, re-opening the
+// slot after every reset the text carries so a field's own colour sits ON the
+// selection background instead of clearing it. A slot that resolves to nothing
+// returns the text untouched.
+func (s *Styler) Composite(slot, text string) string {
+	sgr := s.theme.SGR(resolveSlot(slot))
+	if sgr == "" {
+		return text
+	}
+	return ansi.Composite(sgr, text) + "\x1b[0m"
+}
+
 // Width is the display width of text in terminal cells: escape sequences count
 // zero and a wide character counts two.
 func (s *Styler) Width(text string) int { return ansi.VisLen(text) }

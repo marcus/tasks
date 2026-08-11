@@ -39,8 +39,16 @@ type Slot = string
 
 // Defaults is the stock look, keyed by slot.
 var Defaults = map[Slot]string{
-	"tab_active":            "bold reverse",
-	"tab_inactive":          "gray",
+	"tab_active": "bold reverse",
+	// Chrome text — the inactive tab names, and everything "muted" paints:
+	// header counts, footer hints, section counts, badges. These were "gray"
+	// (ANSI bright black), which in most palettes sits close enough to the
+	// background to make the header and footer hard to read. `dim` reduces the
+	// terminal's own foreground instead, so chrome stays quieter than content
+	// without disappearing into the background of any particular palette. The
+	// rules keep the old gray in outline_thread, so the hierarchy — content,
+	// chrome, rule — still has three steps.
+	"tab_inactive":          "dim",
 	"tab_agenda":            "cyan",
 	"tab_next":              "green",
 	"tab_quadrants":         "yellow",
@@ -71,40 +79,51 @@ var Defaults = map[Slot]string{
 	"title_selected":        "bold",
 	"priority":              "bold",
 	"priority_selected":     "bold",
-	"muted":                 "gray",
-	"muted_selected":        "gray",
-	"outline_thread":        "gray",
-	"outline_container":     "bold",
-	"note":                  "gray",
-	"description":           "gray",
-	"link":                  "underline cyan",
-	"detail_label":          "bold gray",
-	"link_system":           "cyan",
-	"error":                 "red",
-	"warning":               "yellow",
-	"form_group":            "bold",
-	"form_group_label":      "bold black on-cyan",
-	"form_label":            "bold",
-	"form_value":            "none",
-	"form_focus":            "bold cyan",
-	"form_cursor":           "reverse",
-	"form_error":            "bold red",
-	"form_unsaved":          "bold yellow",
-	"form_hint":             "gray",
-	"form_disabled":         "dim",
-	"form_choice_cursor":    "bold cyan",
-	"form_choice_selected":  "bold",
-	"due_overdue":           "red",
-	"due_soon":              "yellow",
-	"due_week":              "cyan",
-	"due_far":               "gray",
-	"due_overdue_selected":  "bold red",
-	"due_soon_selected":     "bold yellow",
-	"due_week_selected":     "bold cyan",
-	"due_far_selected":      "gray",
-	"state_next":            "cyan",
-	"state_waiting":         "yellow",
-	"state_done":            "gray",
+	// The agenda paints priority by LETTER, so the three that carry meaning get
+	// their own slots: A is the loudest thing on a row, B is calm, C is quiet.
+	// Any other letter falls back to "priority".
+	"priority_a":        "bold red",
+	"priority_b":        "bold green",
+	"priority_c":        "bold yellow",
+	"muted":             "dim",
+	"muted_selected":    "dim",
+	"outline_thread":    "gray",
+	"outline_container": "bold",
+	// Notes and descriptions are DIMMED FOREGROUND, not gray. "gray" is bright
+	// black, which in most terminal palettes sits close enough to the background
+	// that a wrapped note reads as absent. `dim` applies to whatever foreground
+	// the terminal actually uses, so a note stays a quieter version of the text
+	// beside it in a light terminal and a dark one alike.
+	"note":                 "dim",
+	"description":          "dim",
+	"link":                 "underline cyan",
+	"detail_label":         "bold",
+	"link_system":          "cyan",
+	"error":                "red",
+	"warning":              "yellow",
+	"form_group":           "bold",
+	"form_group_label":     "bold black on-cyan",
+	"form_label":           "bold",
+	"form_value":           "none",
+	"form_focus":           "bold cyan",
+	"form_cursor":          "reverse",
+	"form_error":           "bold red",
+	"form_unsaved":         "bold yellow",
+	"form_hint":            "dim",
+	"form_disabled":        "dim",
+	"form_choice_cursor":   "bold cyan",
+	"form_choice_selected": "bold",
+	"due_overdue":          "red",
+	"due_soon":             "yellow",
+	"due_week":             "cyan",
+	"due_far":              "gray",
+	"due_overdue_selected": "bold red",
+	"due_soon_selected":    "bold yellow",
+	"due_week_selected":    "bold cyan",
+	"due_far_selected":     "gray",
+	"state_next":           "cyan",
+	"state_waiting":        "yellow",
+	"state_done":           "gray",
 }
 
 // SlotBorderGradient is not an SGR slot (it is per-cell truecolor, not one code
@@ -147,6 +166,7 @@ var builtinThemes = map[string]map[Slot]string{
 		"due_week_selected": "bold", "due_far_selected": "dim",
 		"due_far": "dim", "state_next": "bold", "state_waiting": "none",
 		"state_done": "dim", "priority_selected": "bold",
+		"priority_a": "bold", "priority_b": "none", "priority_c": "none",
 	},
 }
 

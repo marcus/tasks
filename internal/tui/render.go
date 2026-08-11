@@ -52,17 +52,13 @@ func (m *Model) Layout() ScreenLayout { return m.layout() }
 // Render composes one frame at the model's current size.
 func (m *Model) Render() string {
 	layout := m.layout()
-	lines := []string{
-		m.border(layout.Width, "┌", "┐"),
-		m.boxed(layout.Width, m.Header(layout.Width-2)),
-		m.rule(layout.Width),
-	}
+	m.reconcileRowWidth(layout)
+	lines := []string{m.boxed(layout.Width, m.Header(layout.Width-2)), m.blank(layout.Width)}
 	lines = append(lines, m.bodyLines(layout)...)
-	lines = append(lines, m.rule(layout.Width))
+	lines = append(lines, m.blank(layout.Width))
 	for _, footer := range layout.Footer {
 		lines = append(lines, m.boxed(layout.Width, footer))
 	}
-	lines = append(lines, m.border(layout.Width, "└", "┘"))
 	return strings.Join(m.composite(lines, m.Overlay()), "\n")
 }
 
@@ -82,28 +78,34 @@ func (m *Model) bodyLines(layout ScreenLayout) []string {
 
 	out := make([]string, 0, layout.BodyHeight)
 	for row := 0; row < layout.BodyHeight; row++ {
-		text, gutter := "", " "
+		text, gutter, selected := "", " ", false
 		if row < len(visible) {
 			text = visible[row].Text
+			// A gutter glyph AND the selection slot. Ruby marks the cursor with
+			// reverse video alone; that survives NO_COLOR but not a terminal or
+			// theme that renders the slot as nothing, and a cursor you cannot
+			// find is the one bug in a task list that costs you the wrong
+			// completed task. The glyph is one cell of insurance that no styler
+			// can take away.
 			if row+layout.ViewportOffset == layout.Selected && layout.HasSelection {
-				// A gutter glyph AND the selection slot. Ruby marks the cursor
-				// with reverse video alone; that survives NO_COLOR but not a
-				// terminal or theme that renders the slot as nothing, and a
-				// cursor you cannot find is the one bug in a task list that
-				// costs you the wrong completed task. The glyph is one cell of
-				// insurance that no styler can take away.
-				gutter = "›"
-				text = m.styler.Paint("selection",
-					m.styler.Truncate(text, max(layout.ListWidth-1, 0)))
+				gutter, selected = "›", true
 			}
 		}
 		line := gutter + m.fit(text, max(layout.ListWidth-1, 0))
+		if selected {
+			// Fit FIRST, composite second. The highlight has to cover the row's
+			// own field colours and the padding out to the edge of the list, and
+			// both of those are things `fit` produces — highlighting before it
+			// leaves a half-lit row that stops at the first coloured field.
+			line = m.styler.Composite("selection", line)
+		}
 		if hasPanel {
 			panelText := ""
 			if row < len(panelLines) {
 				panelText = panelLines[row]
 			}
-			line += " │ " + m.fit(panelText, max(layout.PanelContentWidth, 0))
+			line += " " + m.railGlyph(layout, row) + " " +
+				m.fit(panelText, max(layout.PanelContentWidth, 0))
 		}
 		out = append(out, m.boxed(layout.Width, " "+line))
 	}
@@ -111,16 +113,59 @@ func (m *Model) bodyLines(layout ScreenLayout) []string {
 }
 
 // panelColumn is the panel's title, divider, and content — the two chrome rows
-// RightPanel budgets for.
+// RightPanel budgets for, or none at all for a panel that heads its own
+// sections. See RightPanel.Bare.
 func (m *Model) panelColumn(layout ScreenLayout, view PanelView) []string {
 	if m.panel == nil {
 		return nil
+	}
+	if m.panel.Bare() {
+		return view.Lines
 	}
 	lines := []string{
 		m.styler.Paint("detail_label", view.Title),
 		strings.Repeat("─", max(layout.PanelContentWidth, 0)),
 	}
 	return append(lines, view.Lines...)
+}
+
+// The split rule is a GRIP, not a border: a dotted rail with a solid handle at
+// its middle, which the pointer can drag to resize the panel. The keys that
+// resize it are still there and still authoritative; this is the affordance for
+// the hand that is already on the mouse, and it is drawn the way it behaves —
+// dotted where it is only a rule, solid where it is a handle.
+//
+// It lights up while a drag is in progress so the pointer's owner can see which
+// of the two panes is following it.
+const (
+	railRule = "┆"
+	railGrip = "┃"
+	// railGripRows is the height of the handle, in body rows.
+	railGripRows = 4
+)
+
+// railGlyph is the split rule's cell on one body row.
+func (m *Model) railGlyph(layout ScreenLayout, row int) string {
+	slot, glyph := "outline_thread", railRule
+	begin := max((layout.BodyHeight-railGripRows)/2, 0)
+	if row >= begin && row < begin+railGripRows {
+		slot, glyph = "muted", railGrip
+	}
+	if m.railDrag != nil {
+		slot = "accent"
+	}
+	return m.styler.Paint(slot, glyph)
+}
+
+// reconcileRowWidth rebuilds the rows when the list has changed width since
+// they were built. The agenda aligns a date column against the list width, and
+// the width changes for reasons the row builders never see — a resize, a panel
+// opening, a drag on the rail. Reconciling here rather than at each of those
+// call sites means there is one place that can be wrong, not a dozen.
+func (m *Model) reconcileRowWidth(layout ScreenLayout) {
+	if width := max(layout.ListWidth-1, 0); width != m.rowWidth {
+		m.RefreshRows()
+	}
 }
 
 // editorColumn paints the open task editor into the panel column.
@@ -161,8 +206,25 @@ func (m *Model) headerCount() string {
 	if m.showDeferred {
 		deferredNote = styler.Paint("warning", "unavailable shown") + styler.Paint("muted", " · ")
 	}
-	return styler.Paint("muted", fmt.Sprintf("%d open · ", m.OpenTaskCount())) + deferredNote +
-		styler.Paint("muted", "? help")
+	// The date leads the count because the agenda groups rows into OVERDUE and
+	// TODAY: "today" is the frame of reference for the whole list, and a TUI
+	// left open overnight must not quietly move that reference without saying
+	// which day it moved to.
+	// `? help` used to live here. It moved to the key-hint row, where every
+	// other key the TUI advertises already is — the header's right side is for
+	// what the list currently IS, not for what can be pressed.
+	return styler.Paint("muted", m.todayStamp()+" · ") + deferredNote +
+		styler.Paint("muted", fmt.Sprintf("%d open", m.OpenTaskCount()))
+}
+
+// todayStamp is the header's date: `mon 10 aug`.
+func (m *Model) todayStamp() string {
+	today := m.today
+	if today.Zero() {
+		return ""
+	}
+	return strings.ToLower(fmt.Sprintf("%s %02d %s",
+		today.Weekday().String()[:3], today.Day, today.Month.String()[:3]))
 }
 
 // Header is the tab strip plus the counts.
@@ -174,6 +236,11 @@ func (m *Model) Header(width int) string {
 	gap := max(width-styler.Width(tabs)-styler.Width(count)-2, 1)
 	return " " + tabs + strings.Repeat(" ", gap) + count + " "
 }
+
+// TabGap is the space between tab names. Three cells, not one: with the jump
+// numbers gone the strip is six bare words, and one space between them reads as
+// a sentence rather than as a set of tabs.
+const TabGap = "   "
 
 // TabStrip renders the tab cells, degrading labels when they do not fit.
 //
@@ -189,7 +256,7 @@ func (m *Model) TabStrip(width int) string {
 	for _, tab := range Tabs {
 		cells = append(cells, m.tabCell(tab, variant))
 	}
-	return strings.Join(cells, " ")
+	return strings.Join(cells, TabGap)
 }
 
 // tabVariant is which label size fits the given budget. Rendering and mouse hit
@@ -200,7 +267,7 @@ func (m *Model) tabVariant(budget int) int {
 		total := 0
 		for index, tab := range Tabs {
 			if index > 0 {
-				total++
+				total += len(TabGap)
 			}
 			total += m.styler.Width(m.tabCell(tab, variant))
 		}
@@ -216,16 +283,11 @@ func (m *Model) tabVariant(budget int) int {
 // name, the Inbox badge, and the active-tab highlight are untouched, and the
 // number keys keep jumping views.
 func (m *Model) tabCell(tab Tab, variant int) string {
-	label, compact, minimum := tab.Label, tab.Compact, tab.Minimum
-	if m.suppressViewKeyHints {
-		label, compact, minimum = tab.PlainLabel, tab.PlainCompact, tab.PlainMinimum
-	}
-	switch variant {
-	case 1:
-		label = compact
-	case 2:
-		label = minimum
-	}
+	// Names only. The jump keys are advertised once, in the footer's `1-6
+	// views` hint, rather than stamped onto every tab: six numbers in the strip
+	// is six pieces of the same one fact, and they made a row of six names read
+	// as twelve words.
+	label := [3]string{tab.Label, tab.Compact, tab.Minimum}[variant]
 	if tab.Key == ViewInbox && m.read != nil {
 		counts := m.intakeCounts(m.filteredItems())
 		if counts.Approvals > 0 {
@@ -285,7 +347,9 @@ func (m *Model) footerForMode(mode Mode) []string {
 	// above it — transcript, banner, flash, filters, prompt — is Tasks state the
 	// host cannot render on Tasks' behalf, and it stays.
 	if mode != ModeTaskEdit && !m.suppressKeyHints {
-		lines = append(lines, m.styler.Paint("muted", m.keyHint()))
+		// keyHint paints its own key/word pairs; wrapping the whole row in one
+		// more slot would just be an SGR the first pair immediately resets.
+		lines = append(lines, m.keyHint())
 	}
 	return lines
 }
@@ -341,29 +405,73 @@ func (m *Model) spinnerTick() int {
 // keyHint degrades with the terminal rather than being cut mid-word. A hint
 // truncated to "enter d" teaches nothing; a shorter hint that ends on a word
 // still does.
+// The hint row is key-then-word pairs in the same idiom the detail panel's
+// ACTIONS row uses: the key in the accent slot, what it does in the muted one.
+// The old row spelled the same thing as one muted sentence joined by `·`, which
+// made the keys — the only part you can act on — the hardest part to find.
+//
+// Rank is the order pairs are given up in as the terminal narrows, worst first.
+// It is not the display order: `q quit` and `? help` are the last to go because
+// they are the two ways out, and a hint row that has dropped everything else is
+// exactly when someone needs them.
+var keyHints = []struct {
+	Key, Does string
+	Rank      int
+}{
+	{"j/k", "move", 6},
+	{"1-6", "views", 4},
+	{"h/l", "fold", 5},
+	{"enter", "details", 3},
+	{"v", "unavailable", 7},
+	{"/", "search", 2},
+	{"?", "help", 1},
+	{"q", "quit", 0},
+}
+
 func (m *Model) keyHint() string {
-	candidates := []string{
-		" j/k move · 1-6 views · h/l fold · enter details · v unavailable · / search · q quit",
-		" j/k · 1-6 views · h/l fold · enter details · / search · q quit",
-		" j/k · 1-6 · h/l · enter · / · q",
-		" ?",
-	}
-	// A host that owns quit advertises it in its own chrome. Tasks still acts
-	// on the key — it latches a request — but it stops claiming the affordance.
-	if m.suppressQuit {
-		candidates = []string{
-			" j/k move · 1-6 views · h/l fold · enter details · v unavailable · / search",
-			" j/k · 1-6 views · h/l fold · enter details · / search",
-			" j/k · 1-6 · h/l · enter · /",
-			" ?",
+	pairs := make([]int, 0, len(keyHints))
+	for index, hint := range keyHints {
+		// A host that owns quit advertises it in its own chrome. Tasks still
+		// acts on the key — it latches a request — but it stops claiming the
+		// affordance.
+		if m.suppressQuit && hint.Key == "q" {
+			continue
 		}
-	}
-	for _, hint := range candidates {
-		if m.styler.Width(hint) <= m.width-2 {
-			return hint
+		// The view jump keys are advertised HERE and nowhere else, so this is
+		// the one line SuppressViewKeyHints removes. A host that owns the number
+		// row must not have Tasks teach its users a binding the host answers.
+		if m.suppressViewKeyHints && hint.Key == "1-6" {
+			continue
 		}
+		pairs = append(pairs, index)
+	}
+	for len(pairs) > 0 {
+		line := " "
+		for position, index := range pairs {
+			if position > 0 {
+				line += m.styler.Paint("muted", "   ")
+			}
+			line += m.styler.Paint("accent", keyHints[index].Key) +
+				m.styler.Paint("muted", " "+keyHints[index].Does)
+		}
+		if m.styler.Width(line) <= m.width-2 {
+			return line
+		}
+		pairs = dropWorstHint(pairs)
 	}
 	return ""
+}
+
+// dropWorstHint removes the highest-ranked (most expendable) pair, keeping the
+// rest in display order.
+func dropWorstHint(pairs []int) []int {
+	worst := 0
+	for position, index := range pairs {
+		if keyHints[index].Rank > keyHints[pairs[worst]].Rank {
+			worst = position
+		}
+	}
+	return append(append([]int{}, pairs[:worst]...), pairs[worst+1:]...)
 }
 
 // -- line composition -------------------------------------------------------
@@ -379,14 +487,28 @@ func (m *Model) fit(text string, width int) string {
 	return text
 }
 
+// The frame is UNDRAWN. Ruby's TUI, and this port until now, painted a box:
+// corners, side rails, and a horizontal rule above and below the body.
+//
+// Four of the terminal's rows and two of its columns went to saying "the
+// application is here", which the alternate screen already says. Worse, the
+// rules cut the one continuous thing on screen — the list and the detail rail
+// beside it — into three stacked boxes, so the eye crossed a border to get from
+// a task to its own details.
+//
+// What replaces them is space: a blank row under the header and another above
+// the footer. The body keeps the two columns of left padding the border and its
+// inner space used to occupy, so every screen coordinate in ScreenLayout is
+// unchanged — only the rows the chrome consumed are given back to the list.
+//
+// The one thing a border did carry is gone with it: the border and
+// border_gradient theme slots no longer paint anything here. They remain in the
+// theme vocabulary for term/frame, which still draws bordered surfaces.
+
 func (m *Model) boxed(width int, text string) string {
-	return "│" + m.fit(text, max(width-2, 0)) + "│"
+	return " " + m.fit(text, max(width-2, 0)) + " "
 }
 
-func (m *Model) border(width int, left, right string) string {
-	return left + strings.Repeat("─", max(width-2, 0)) + right
-}
-
-func (m *Model) rule(width int) string {
-	return "├" + strings.Repeat("─", max(width-2, 0)) + "┤"
+func (m *Model) blank(width int) string {
+	return strings.Repeat(" ", max(width, 0))
 }

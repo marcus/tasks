@@ -11,9 +11,10 @@ package layout
 import "github.com/marcus/tasks/internal/tui/term/ansi"
 
 const (
-	// FixedRows are the borders, header, and the two rules outside the body
-	// and footer.
-	FixedRows = 5
+	// FixedRows is the header plus the two blank rows that separate it and the
+	// footer from the body. The frame itself is undrawn — see internal/tui's
+	// render.go, whose geometry this port must agree with cell for cell.
+	FixedRows = 3
 
 	PanelRatio          = 0.40
 	WidePanelRatio      = 0.58
@@ -98,7 +99,7 @@ type Layout struct {
 func New(opts Options) *Layout {
 	l := &Layout{Width: opts.Width, Height: opts.Height}
 
-	keep := opts.Height - 6
+	keep := opts.Height - FixedRows - 1
 	if keep < 0 {
 		keep = 0
 	}
@@ -160,17 +161,17 @@ func (l *Layout) ContentBreakpoint() Breakpoint {
 }
 
 // Span is a half-open range [Begin, End) over 0-based terminal cells, so a
-// click and a painted glyph always agree on "row 3 is the first body row".
+// click and a painted glyph always agree on "row 2 is the first body row".
 type Span struct{ Begin, End int }
 
 func (s Span) Covers(v int) bool { return v >= s.Begin && v < s.End }
 
-func (l *Layout) HeaderRow() int { return 1 }
+func (l *Layout) HeaderRow() int { return 0 }
 
 // BodyOrigin is the (row, col) of the first body cell.
-func (l *Layout) BodyOrigin() (int, int) { return 3, 2 }
+func (l *Layout) BodyOrigin() (int, int) { return 2, 2 }
 
-func (l *Layout) BodyRows() Span { return Span{3, 3 + l.BodyHeight} }
+func (l *Layout) BodyRows() Span { return Span{2, 2 + l.BodyHeight} }
 func (l *Layout) ListCols() Span { return Span{2, 2 + l.ListWidth} }
 
 // PanelDividerCol is the column of the "│" between list and panel, or -1 when
@@ -190,7 +191,7 @@ func (l *Layout) PanelCols() Span {
 }
 
 func (l *Layout) FooterRows() Span {
-	start := l.BodyHeight + 4
+	start := l.BodyHeight + 3
 	return Span{start, start + len(l.Footer)}
 }
 

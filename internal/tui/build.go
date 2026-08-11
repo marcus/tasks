@@ -25,6 +25,12 @@ type BuildRequest struct {
 	ContextFilters []string
 	Projects       []taskquery.ProjectView
 	IntakeCounts   IntakeCounts
+
+	// Width is the list's content width in cells, excluding the renderer's
+	// cursor gutter. Only the agenda uses it, and only to align its date
+	// column; zero means "not measured" and every builder still produces
+	// correct rows. See agenda.go.
+	Width int
 }
 
 func (r BuildRequest) styler() Styler {
@@ -80,15 +86,16 @@ func BuildRows(request BuildRequest) []Row {
 
 func agendaFlat(request BuildRequest) []Row {
 	query := request.query(ViewAgenda)
-	rows := []Row{}
+	byBucket := map[string][]Row{}
 	for _, item := range query.Sort(query.Select(request.Items)) {
 		item := item
-		rows = append(rows, Row{
-			Text: agendaStamp(request, item) + " " + decoratedTitle(request, item) + badge(request, item),
+		bucket := itemBucket(request, item)
+		byBucket[bucket] = append(byBucket[bucket], Row{
+			Text: agendaPriority(request, item) + agendaBody(request, item),
 			Item: &item,
 		})
 	}
-	return rows
+	return agendaGrouped(request, byBucket)
 }
 
 func nextFlat(request BuildRequest) []Row {
@@ -152,13 +159,14 @@ func agendaTree(request BuildRequest) []Row {
 		}
 		return priorityKey(*left.Item) < priorityKey(*right.Item)
 	})
-	rows := []Row{}
+	byBucket := map[string][]Row{}
 	for _, anchor := range anchors {
-		rows = appendSubtree(request, rows, anchor, "", func(item store.Item) string {
-			return agendaStamp(request, item) + " " + decoratedTitle(request, item) + badge(request, item)
-		})
+		bucket := itemBucket(request, anchorDateItem(request, query, anchor))
+		byBucket[bucket] = appendSubtree(request, byBucket[bucket], anchor, "",
+			func(item store.Item) string { return agendaPriority(request, item) },
+			func(item store.Item) string { return agendaBody(request, item) })
 	}
-	return rows
+	return agendaGrouped(request, byBucket)
 }
 
 func nextTree(request BuildRequest) []Row {
@@ -168,7 +176,7 @@ func nextTree(request BuildRequest) []Row {
 	for _, group := range query.SortedGroups(query.GroupedNodes(anchors)) {
 		rows = append(rows, headerRow(request.styler().Paint("context", group.Key)))
 		for _, anchor := range group.Nodes {
-			rows = appendSubtree(request, rows, anchor, "  ", func(item store.Item) string {
+			rows = appendSubtree(request, rows, anchor, "  ", nil, func(item store.Item) string {
 				return nextBody(request, item)
 			})
 		}
@@ -182,7 +190,7 @@ func quadrantsTree(request BuildRequest) []Row {
 	anchors := query.SelectNodes(anchorRoots(request))
 	groups := query.GroupedNodes(anchors)
 	return quadrantRows(request, groups, func(node *taskquery.Node) []Row {
-		return appendSubtree(request, nil, node, "  ", func(item store.Item) string {
+		return appendSubtree(request, nil, node, "  ", nil, func(item store.Item) string {
 			return quadBody(request, item)
 		})
 	})
@@ -196,7 +204,7 @@ func inboxTreeSection(request BuildRequest) []Row {
 	}
 	rows := []Row{}
 	for _, anchor := range anchors {
-		rows = appendSubtree(request, rows, anchor, "  ", func(item store.Item) string {
+		rows = appendSubtree(request, rows, anchor, "  ", nil, func(item store.Item) string {
 			return inboxBody(request, item)
 		})
 	}
@@ -386,7 +394,7 @@ func buildProjects(request BuildRequest) []Row {
 			rows = append(rows, Row{Text: projectRow(request, project), Project: &project})
 			anchors := query.SortNodes(anchorsForProject(request, project))
 			for _, anchor := range anchors {
-				rows = appendSubtree(request, rows, anchor, "  ", func(item store.Item) string {
+				rows = appendSubtree(request, rows, anchor, "  ", nil, func(item store.Item) string {
 					return nextBody(request, item)
 				})
 			}
@@ -524,25 +532,33 @@ func quadrantRows(request BuildRequest, groups map[string][]*taskquery.Node,
 // parent, then the marker column, then the per-view body. A container row is
 // bolded so it reads like a heading. A collapsed node emits only its own row,
 // with a muted hidden count.
+//
+// `lead` is an optional per-item field painted BEFORE the indent and thread —
+// the agenda's priority column, which has to keep its screen column at every
+// depth or it is not a column. Views without one pass nil.
 func appendSubtree(request BuildRequest, rows []Row, anchor *taskquery.Node, base string,
-	body func(store.Item) string) []Row {
+	lead func(store.Item) string, body func(store.Item) string) []Row {
 	styler := request.styler()
 	walkSubtree(request, anchor, 0, func(node *taskquery.Node, depth int, marker string, folded bool) {
 		thread := ""
 		if depth > 0 {
 			thread = styler.Paint("outline_thread", strings.Repeat("│ ", depth))
 		}
+		head := ""
+		if lead != nil {
+			head = lead(*node.Item)
+		}
 		line := body(*node.Item)
 		if marker != MarkLeaf {
 			line = styler.Paint("outline_container", line)
 		}
-		text := base + thread + marker + line
+		text := head + base + thread + marker + line
 		if folded {
 			text += styler.Paint("muted", fmt.Sprintf(" (%d)", visibleDescendantCount(request, node)))
 		}
 		row := Row{Text: text, Item: node.Item, Node: node}
 		if marker != MarkLeaf {
-			row.MarkerBegin = styler.Width(base) + styler.Width(thread)
+			row.MarkerBegin = styler.Width(head) + styler.Width(base) + styler.Width(thread)
 			row.MarkerEnd = row.MarkerBegin + 2
 		}
 		rows = append(rows, row)

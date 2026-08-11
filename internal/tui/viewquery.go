@@ -19,21 +19,19 @@ const (
 	ViewInbox     = "inbox"
 )
 
-// Tab is one entry of the header strip.
+// Tab is one entry of the header strip, in the three sizes the strip degrades
+// through as the terminal narrows.
 //
-// Label/Compact/Minimum carry the numeric jump key, because standalone Tasks
-// owns the number row and the label is where that key is advertised. Plain* are
-// the same three sizes with the number removed, for a host that has taken the
-// number row for itself (EmbeddedOptions.SuppressViewKeyHints). The keys keep
-// working in both cases; only the advertisement differs.
+// The names carry no jump key. The keys 1-6 still work, and they are advertised
+// once — in the footer's `1-6 views` hint — rather than stamped onto all six
+// tabs. A host that has taken the number row for itself
+// (EmbeddedOptions.SuppressViewKeyHints) drops that one hint; the keys keep
+// working either way, and the strip is unaffected because there is nothing in
+// it to suppress.
 type Tab struct {
 	Label   string
 	Compact string
 	Minimum string
-
-	PlainLabel   string
-	PlainCompact string
-	PlainMinimum string
 
 	Key string
 }
@@ -41,12 +39,12 @@ type Tab struct {
 // Tabs is the canonical tab order. Views, the jump keys and the session's
 // saved view all read this one list.
 var Tabs = []Tab{
-	{"1 Agenda", "1 Ag", "1", "Agenda", "Ag", "Ag", ViewAgenda},
-	{"2 Next", "2 Nx", "2", "Next", "Nx", "Nx", ViewNext},
-	{"3 Quadrants", "3 Q", "3", "Quadrants", "Q", "Q", ViewQuadrants},
-	{"4 Projects", "4 Pr", "4", "Projects", "Pr", "Pr", ViewProjects},
-	{"5 Outline", "5 Out", "5", "Outline", "Out", "Out", ViewOutline},
-	{"6 Inbox", "6 In", "6", "Inbox", "In", "In", ViewInbox},
+	{"agenda", "ag", "ag", ViewAgenda},
+	{"next", "nx", "nx", ViewNext},
+	{"quadrants", "quad", "q", ViewQuadrants},
+	{"projects", "proj", "pr", ViewProjects},
+	{"outline", "out", "out", ViewOutline},
+	{"inbox", "in", "in", ViewInbox},
 }
 
 // ViewKeys is the tab keys alone.

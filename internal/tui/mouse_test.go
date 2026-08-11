@@ -51,8 +51,10 @@ func TestClickingAHeaderRowSelectsNothing(t *testing.T) {
 	layout := harness.model.Layout()
 	bodyBegin, _ := layout.BodyRows()
 
-	if harness.model.HandleMouse(tea.MouseClickMsg{X: 6, Y: bodyBegin, Button: tea.MouseLeft}) {
-		t.Fatal("a click on a context header was consumed")
+	// The click belongs to the list — it blurs the prompt, so it is consumed —
+	// but a heading is not a row and the cursor must not move to it.
+	if !harness.model.HandleMouse(tea.MouseClickMsg{X: 6, Y: bodyBegin, Button: tea.MouseLeft}) {
+		t.Fatal("a click in the list was not consumed")
 	}
 	if harness.model.Selected() != before {
 		t.Fatal("a click on a header moved the cursor")

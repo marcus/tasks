@@ -11,10 +11,6 @@ import (
 	"github.com/marcus/tasks/internal/temporal"
 )
 
-// AgendaStampWidth is the fixed width of the agenda date column, so an undated
-// rider's title lines up under its dated siblings.
-const AgendaStampWidth = 19
-
 // The delegation row markers. A single arrow means "handed off and idle" — a
 // person we are waiting on, or agent-ready work nobody has picked up. A doubled
 // arrow means a worker is actively holding the task, and it is the one
@@ -70,31 +66,6 @@ func priorityPrefix(request BuildRequest, item store.Item) string {
 		return ""
 	}
 	return request.styler().Paint("priority", "["+item.Priority+"] ")
-}
-
-// agendaStamp is the agenda date column: a right-aligned stamp, DUE or AVL, and
-// a relative phrase — or a blank column of the same width for an undated rider.
-func agendaStamp(request BuildRequest, item store.Item) string {
-	date, kind, value, ok := primaryDate(request.Queries, item)
-	if !ok {
-		return strings.Repeat(" ", AgendaStampWidth)
-	}
-	stamp := fmt.Sprintf("%02d-%02d", int(date.Month), date.Day)
-	if value.LocalTime != "" {
-		if projected, err := value.Projected(request.Queries.Context()); err == nil {
-			date = projected.Date
-			stamp = projected.Local
-		} else {
-			stamp = value.LocalTime
-		}
-	}
-	days := date.Sub(request.Queries.Today())
-	label := "DUE "
-	if kind != "deadline" {
-		label = "AVL "
-	}
-	text := fmt.Sprintf("%5s %s%-8s", stamp, label, "("+relativeDays(days)+")")
-	return request.styler().Paint(dueSlot(days), text)
 }
 
 func relativeDays(days int) string {

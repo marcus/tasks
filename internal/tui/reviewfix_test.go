@@ -434,24 +434,27 @@ func TestEnteringEditAtSmallSizeRefusesBeforeCreatingASession(t *testing.T) {
 	h.selectRowByID(fixFlight)
 	h.pressKeys("\r")
 	detail := h.model.Panel()
-	h.model.Update(tea.WindowSizeMsg{Width: 46, Height: 7})
+	// The undrawn frame gave two rows back, so the editor now fits at every
+	// height the TUI itself accepts (MinHeight). Width is what can still be too
+	// small, and one column under the minimum is the case that must refuse.
+	h.model.Update(tea.WindowSizeMsg{Width: 45, Height: 6})
 	h.pressKeys("e")
 	if h.model.Mode() != ModeList || h.model.TaskEditor() != nil ||
 		h.model.suspendedTaskEditor != nil || h.model.Panel() != detail {
 		t.Fatalf("small entry mode=%s editor=%v suspended=%v panel_same=%v",
 			h.model.Mode(), h.model.TaskEditor(), h.model.suspendedTaskEditor, h.model.Panel() == detail)
 	}
-	if got := h.model.FlashMessage(); got != "task editing needs at least 46×8 terminal cells" {
+	if got := h.model.FlashMessage(); got != "task editing needs at least 46×6 terminal cells" {
 		t.Fatalf("small entry said %q", got)
 	}
 	exact := newModelHarness(t, harnessOptions{})
 	exact.model.SwitchView(ViewNext)
 	exact.selectRowByID(fixFlight)
 	exact.pressKeys("\r")
-	exact.model.Update(tea.WindowSizeMsg{Width: 46, Height: 8})
+	exact.model.Update(tea.WindowSizeMsg{Width: 46, Height: 6})
 	exact.pressKeys("e")
 	if exact.model.Mode() != ModeTaskEdit || exact.model.TaskEditor() == nil {
-		t.Fatal("46×8 did not admit the editor")
+		t.Fatal("46×6 did not admit the editor")
 	}
 }
 

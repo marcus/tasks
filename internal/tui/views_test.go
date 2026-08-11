@@ -52,9 +52,10 @@ func TestAgendaShowsOnlyDatedOpenAvailableTasksSoonestFirst(t *testing.T) {
 	}
 }
 
-func TestAgendaPadsAnUndatedRiderToTheStampWidth(t *testing.T) {
-	// A dated parent rides its undated child along; the child's title must line
-	// up under the parent's, so the blank stamp is the same width as a real one.
+func TestAgendaLeavesAnUndatedRidersDateColumnEmpty(t *testing.T) {
+	// A dated parent rides its undated child along. The child has no date of
+	// its own, and the shared right-hand column must say so by being blank —
+	// inheriting the parent's stamp would claim a deadline nobody set.
 	live := strings.ReplaceAll(nestedStore,
 		`{"type":"task","id":"bbbb0001","parent":"aaaa0003","state":"NEXT","title":"Parent action","tags":["@computer"]}`,
 		`{"type":"task","id":"bbbb0001","parent":"aaaa0003","state":"NEXT","title":"Parent action","tags":["@computer"],"deadline":"2026-07-20"}`)
@@ -62,8 +63,12 @@ func TestAgendaPadsAnUndatedRiderToTheStampWidth(t *testing.T) {
 	harness.model.SwitchView(ViewAgenda)
 	for _, row := range harness.model.Rows() {
 		if row.Item != nil && row.Item.Title == "Child action" {
-			if !strings.HasPrefix(row.Text, "│ "+strings.Repeat(" ", AgendaStampWidth)) {
-				t.Fatalf("undated rider is not padded to the stamp width: %q", row.Text)
+			if !strings.HasPrefix(row.Text, strings.Repeat(" ", AgendaGutterWidth)) {
+				t.Fatalf("undated rider lost the priority column: %q", row.Text)
+			}
+			if trimmed := strings.TrimRight(row.Text, " "); strings.HasSuffix(trimmed, "ago") ||
+				strings.Contains(trimmed[max(len(trimmed)-AgendaDateWidth, 0):], "-") {
+				t.Fatalf("undated rider inherited a date: %q", row.Text)
 			}
 			return
 		}

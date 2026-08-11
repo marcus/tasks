@@ -134,6 +134,12 @@ type Model struct {
 	selectedID   string
 	panel        *RightPanel
 
+	// rowWidth is the list width the current rows were built at, so a frame
+	// that changed it can rebuild them — see reconcileRowWidth.
+	rowWidth int
+	// railDrag is the in-flight pointer drag on the split rule, or nil.
+	railDrag *railDrag
+
 	// Overlay state. Each one is owned by exactly one mode, and SetMode
 	// refuses to enter that mode while its overlay is nil — see uistate.go.
 	modal               *Modal
@@ -561,7 +567,9 @@ func (m *Model) RefreshRows() {
 	}
 	queries := m.read.Queries()
 	items := m.filteredItems()
+	m.rowWidth = max(m.layout().ListWidth-1, 0)
 	request := BuildRequest{
+		Width:          m.rowWidth,
 		View:           m.view,
 		Styler:         m.styler,
 		Queries:        queries,

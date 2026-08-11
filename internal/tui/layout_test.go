@@ -24,9 +24,10 @@ func TestBodyHeightNeverGoesBelowOneRow(t *testing.T) {
 }
 
 func TestFooterIsTrimmedToTheRowsTheFrameCanSpare(t *testing.T) {
-	// height - 6 rows are available; the LAST lines survive, because the newest
-	// status line is the one the user is waiting for.
-	layout := layoutOf(LayoutRequest{Width: 80, Height: 9, Footer: []string{"a", "b", "c", "d", "e"}})
+	// The chrome rows plus one body row are reserved first; the LAST footer
+	// lines survive, because the newest status line is the one the user is
+	// waiting for.
+	layout := layoutOf(LayoutRequest{Width: 80, Height: 7, Footer: []string{"a", "b", "c", "d", "e"}})
 	if len(layout.Footer) != 3 {
 		t.Fatalf("kept %d footer rows: %v", len(layout.Footer), layout.Footer)
 	}
@@ -144,10 +145,10 @@ func TestRectanglesAreContiguousAndAgreeWithEachOther(t *testing.T) {
 	bodyBegin, bodyEnd := layout.BodyRows()
 	footerBegin, _ := layout.FooterRows()
 	if bodyEnd+1 != footerBegin {
-		t.Fatalf("one rule row must sit between the body (ends %d) and the footer (starts %d)",
+		t.Fatalf("one blank row must sit between the body (ends %d) and the footer (starts %d)",
 			bodyEnd, footerBegin)
 	}
-	if bodyBegin != 3 {
+	if bodyBegin != 2 {
 		t.Fatalf("body starts at row %d", bodyBegin)
 	}
 	listBegin, listEnd := layout.ListCols()

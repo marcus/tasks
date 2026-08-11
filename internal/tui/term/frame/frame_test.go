@@ -44,14 +44,14 @@ func build(mutate func(*Options)) []string {
 	return Build(opts)
 }
 
-// bodyInner strips the (possibly styled) left/right border cell and its
-// one-space margin from a body row, leaving the inner content. The border cell
-// carries a solid SGR under themes like mono, so a plain "│ … │" slice will not
-// do.
+// bodyInner strips the two-cell margin from each side of a body row, leaving
+// the inner content. The frame is borderless, so the margin is plain spaces —
+// but the row's own styling may open before them, which is why this is a regexp
+// and not a slice.
 var (
 	sgrRun    = `(?:\x1b\[[0-9;]*m)*`
-	leftEdge  = regexp.MustCompile(`^` + sgrRun + `│` + sgrRun + ` `)
-	rightEdge = regexp.MustCompile(` ` + sgrRun + `│` + sgrRun + `$`)
+	leftEdge  = regexp.MustCompile(`^` + sgrRun + `  `)
+	rightEdge = regexp.MustCompile(`  ` + sgrRun + `$`)
 )
 
 func bodyInner(line string) string {
@@ -92,12 +92,12 @@ func TestShortFrameClipsFooterToPreserveExactHeight(t *testing.T) {
 
 func TestSelectedRowIsHighlighted(t *testing.T) {
 	lines := build(func(o *Options) { o.Selected = sel(2) })
-	// borders(1) + header(1) + rule(1) + 2 rows
-	if !strings.Contains(lines[5], "\x1b[7m") {
-		t.Fatalf("no reverse video: %q", lines[5])
+	// header(1) + blank(1) + 2 rows
+	if !strings.Contains(lines[4], "\x1b[7m") {
+		t.Fatalf("no reverse video: %q", lines[4])
 	}
-	if !strings.Contains(ansi.Strip(lines[5]), "❯ task number 3") {
-		t.Fatalf("wrong row selected: %q", ansi.Strip(lines[5]))
+	if !strings.Contains(ansi.Strip(lines[4]), "❯ task number 3") {
+		t.Fatalf("wrong row selected: %q", ansi.Strip(lines[4]))
 	}
 }
 
@@ -107,7 +107,7 @@ func TestSelectedRowCompositesSelectionUnderFieldColors(t *testing.T) {
 		o.Theme = th
 		o.Rows = []Row{{Text: "\x1b[35mProject\x1b[0m task"}}
 		o.Selected = sel(0)
-	})[3]
+	})[2]
 
 	if !strings.Contains(line, "\x1b[44m❯ ") {
 		t.Fatalf("line does not open with the selection SGR + cursor: %q", line)
@@ -132,7 +132,7 @@ func TestSelectedRowPadsToFullWidthUnderSelection(t *testing.T) {
 		o.Theme = th
 		o.Rows = []Row{{Text: "short"}}
 		o.Selected = sel(0)
-	})[3]
+	})[2]
 	inner := bodyInner(line)
 	if ansi.VisLen(inner) != 56 {
 		t.Fatalf("inner width = %d, want 60 - borders/margins", ansi.VisLen(inner))
@@ -148,7 +148,7 @@ func TestSelectedRowReverseVideoCoversPadding(t *testing.T) {
 		o.Theme = theme.Configure("mono", nil)
 		o.Rows = []Row{{Text: "plain row"}}
 		o.Selected = sel(0)
-	})[3]
+	})[2]
 	inner := bodyInner(line)
 	if !strings.HasPrefix(inner, "\x1b[7m") {
 		t.Fatalf("reverse video must open the row: %q", inner)
@@ -167,7 +167,7 @@ func TestSelectedRowTruncatesAndStaysWellFormed(t *testing.T) {
 		o.Theme = th
 		o.Rows = []Row{{Text: "\x1b[35m" + strings.Repeat("x", 200) + "\x1b[0m"}}
 		o.Selected = sel(0)
-	})[3]
+	})[2]
 	inner := bodyInner(line)
 	if ansi.VisLen(inner) != 56 {
 		t.Fatalf("truncated row width = %d", ansi.VisLen(inner))
@@ -189,7 +189,7 @@ func TestSelectedPlainRowGetsFullWidthSelection(t *testing.T) {
 		o.Theme = th
 		o.Rows = []Row{{Text: "no ansi here"}}
 		o.Selected = sel(0)
-	})[3]
+	})[2]
 	inner := bodyInner(line)
 	if !strings.HasPrefix(inner, "\x1b[44m❯ ") {
 		t.Fatalf("selection must open even with no field SGRs: %q", inner)
@@ -205,8 +205,10 @@ func TestFooterRuleSentinelDrawsDivider(t *testing.T) {
 			layout.Text("response line"), layout.Rule(), layout.Text("keybar"), layout.Text("prompt"),
 		}
 	})
-	rule := ansi.Strip(lines[len(lines)-4])
-	if !strings.HasPrefix(rule, "├") || !strings.HasSuffix(rule, "┤") {
+	// The divider sentinel now paints a blank separator rather than a ├──┤
+	// rule: the frame draws no chrome, so a footer break is space.
+	rule := ansi.Strip(lines[len(lines)-3])
+	if strings.TrimSpace(rule) != "" || len(rule) != 60 {
 		t.Fatalf("rule = %q", rule)
 	}
 }
@@ -218,8 +220,8 @@ func TestLongRowsTruncateNotOverflow(t *testing.T) {
 			t.Fatalf("width = %d", ansi.VisLen(l))
 		}
 	}
-	if !strings.Contains(ansi.Strip(lines[3]), "…") {
-		t.Fatalf("no ellipsis: %q", ansi.Strip(lines[3]))
+	if !strings.Contains(ansi.Strip(lines[2]), "…") {
+		t.Fatalf("no ellipsis: %q", ansi.Strip(lines[2]))
 	}
 }
 
@@ -247,11 +249,11 @@ func TestPopupOverlaysBody(t *testing.T) {
 	lines := build(func(o *Options) {
 		o.Popup = &layout.Popup{Lines: []string{"[POPUP]"}, Row: 1, Col: 4}
 	})
-	if !strings.Contains(ansi.Strip(lines[4]), "[POPUP]") {
-		t.Fatalf("row = %q", ansi.Strip(lines[4]))
+	if !strings.Contains(ansi.Strip(lines[3]), "[POPUP]") {
+		t.Fatalf("row = %q", ansi.Strip(lines[3]))
 	}
-	if ansi.VisLen(lines[4]) != 60 {
-		t.Fatalf("width = %d", ansi.VisLen(lines[4]))
+	if ansi.VisLen(lines[3]) != 60 {
+		t.Fatalf("width = %d", ansi.VisLen(lines[3]))
 	}
 }
 
@@ -266,12 +268,12 @@ func TestRightPanelSplitsBodyAtFixedLayoutWidth(t *testing.T) {
 		o.Panel = &Panel{Title: "task", Lines: []string{"details", "more"}}
 		o.Layout = lay
 	})
-	body := ansi.Strip(lines[3])
+	body := ansi.Strip(lines[2])
 	if !strings.Contains(body, "selected task") || !strings.Contains(body, "task") {
 		t.Fatalf("body = %q", body)
 	}
-	if !strings.Contains(ansi.Strip(lines[6]), "more") {
-		t.Fatalf("panel line = %q", ansi.Strip(lines[6]))
+	if !strings.Contains(ansi.Strip(lines[5]), "more") {
+		t.Fatalf("panel line = %q", ansi.Strip(lines[5]))
 	}
 	for _, l := range lines {
 		if ansi.VisLen(l) != 60 {
@@ -314,7 +316,7 @@ func TestPopupPreservesBaseContentOnBothSides(t *testing.T) {
 	row := ansi.Strip(build(func(o *Options) {
 		o.Rows = []Row{{Text: "left-side middle-part right-side-content"}}
 		o.Popup = &layout.Popup{Lines: []string{"[P]"}, Row: 0, Col: 12}
-	})[3])
+	})[2])
 	for _, want := range []string{"left-side", "[P]", "right-side-content"} {
 		if !strings.Contains(row, want) {
 			t.Fatalf("row %q missing %q", row, want)
@@ -331,7 +333,7 @@ func TestPopupSplicesAtTerminalCellBoundaries(t *testing.T) {
 		o.Rows = []Row{{Text: "a界bcdef"}}
 		o.Footer = nil
 		o.Popup = &layout.Popup{Lines: []string{"X"}, Row: 0, Col: 3}
-	})[3])
+	})[2])
 	if !strings.Contains(line, "aX bcdef") {
 		t.Fatalf("line = %q", line)
 	}
@@ -346,7 +348,7 @@ func TestPopupPreservesStylesAroundWideBaseContent(t *testing.T) {
 		o.Rows = []Row{{Text: ansi.Red("a界bcdef")}}
 		o.Footer = nil
 		o.Popup = &layout.Popup{Lines: []string{ansi.Bold("X")}, Row: 0, Col: 3}
-	})[3]
+	})[2]
 	if ansi.VisLen(line) != 20 {
 		t.Fatalf("width = %d", ansi.VisLen(line))
 	}
@@ -367,7 +369,7 @@ func TestWidePopupIsClippedWithoutOverflowAtRightEdge(t *testing.T) {
 		o.Rows = []Row{{Text: "underlay"}}
 		o.Footer = nil
 		o.Popup = &layout.Popup{Lines: []string{"界"}, Row: 0, Col: 15}
-	})[3]
+	})[2]
 	if ansi.VisLen(line) != 20 {
 		t.Fatalf("width = %d", ansi.VisLen(line))
 	}
@@ -382,7 +384,7 @@ func TestPopupClipsCleanlyAtNegativeLeftEdge(t *testing.T) {
 		o.Rows = []Row{{Text: "underlay"}}
 		o.Footer = nil
 		o.Popup = &layout.Popup{Lines: []string{"[ABC]"}, Row: 0, Col: -2}
-	})[3]
+	})[2]
 	if ansi.VisLen(line) != 20 {
 		t.Fatalf("width = %d", ansi.VisLen(line))
 	}
@@ -419,12 +421,13 @@ func TestModalDrawsCenteredBoxWithTitle(t *testing.T) {
 
 func TestModalUsesCompactUnboxedViewWhenBodyIsOneRow(t *testing.T) {
 	lines := build(func(o *Options) {
-		o.Width, o.Height = 8, 6
+		// FixedRows plus one: the shortest frame whose body is a single row.
+		o.Width, o.Height = 8, 4
 		o.Rows = nil
 		o.Footer = nil
 		o.Modal = &layout.Modal{Title: "task", Lines: []string{"details"}}
 	})
-	if len(lines) != 6 {
+	if len(lines) != 4 {
 		t.Fatalf("height = %d", len(lines))
 	}
 	for _, l := range lines {
@@ -432,7 +435,7 @@ func TestModalUsesCompactUnboxedViewWhenBodyIsOneRow(t *testing.T) {
 			t.Fatalf("width = %d", ansi.VisLen(l))
 		}
 	}
-	body := ansi.Strip(lines[3])
+	body := ansi.Strip(lines[2])
 	if !strings.Contains(body, "tas") {
 		t.Fatalf("compact modal unidentifiable: %q", body)
 	}
@@ -445,7 +448,7 @@ func TestPopupRendersOnTopOfModal(t *testing.T) {
 	row := ansi.Strip(build(func(o *Options) {
 		o.Modal = &layout.Modal{Title: "task", Lines: []string{"alpha", "beta", "gamma", "delta"}}
 		o.Popup = &layout.Popup{Lines: []string{strings.Repeat("X", 50)}, Row: 3, Col: 0}
-	})[3+3])
+	})[2+3])
 	if !strings.Contains(row, strings.Repeat("X", 50)) {
 		t.Fatalf("popup must overlay the modal: %q", row)
 	}
@@ -533,19 +536,31 @@ func TestEmptyRowsRenderBlankBody(t *testing.T) {
 	}
 }
 
-func TestFrameChromeCarriesGradientUnderTruecolor(t *testing.T) {
+// The outer ring is gone, but the gradient it used to carry is not: every
+// floating surface still draws a box, and that box is where the sweep now
+// lives. This asserts both halves — no ring, and a swept modal box.
+func TestFrameDrawsNoOuterRingButStillSweepsFloatingBoxes(t *testing.T) {
 	th := theme.Configure("default", map[string]string{"border_gradient": "#000000 #ffffff @45"})
+	modal := layout.Modal{Title: "confirm", Lines: []string{"really?", "second line"}}
 	lines := build(func(o *Options) {
 		o.Theme = th
 		o.Truecolor = true
+		o.Modal = &modal
 	})
-	first, last := lines[0], lines[len(lines)-1]
+	for index, line := range lines {
+		if strings.ContainsAny(ansi.Strip(line), "╭╰│├") && index == 0 {
+			t.Fatalf("the frame drew an outer ring on line %d: %q", index, ansi.Strip(line))
+		}
+	}
+	if first := ansi.Strip(lines[0]); strings.HasPrefix(first, "╭") || strings.HasPrefix(first, "│") {
+		t.Fatalf("the frame opened with a border: %q", first)
+	}
 	topRe := regexp.MustCompile(`\x1b\[38;2;(\d+;\d+;\d+)m╭`)
 	bottomRe := regexp.MustCompile(`\x1b\[38;2;(\d+;\d+;\d+)m╰`)
-	topMatch := topRe.FindStringSubmatch(first)
-	bottomMatch := bottomRe.FindStringSubmatch(last)
+	joined := strings.Join(lines, "\n")
+	topMatch, bottomMatch := topRe.FindStringSubmatch(joined), bottomRe.FindStringSubmatch(joined)
 	if topMatch == nil || bottomMatch == nil {
-		t.Fatalf("corners not gradient-painted:\n%q\n%q", first, last)
+		t.Fatalf("the modal box lost its gradient corners:\n%s", joined)
 	}
 	if topMatch[1] == bottomMatch[1] {
 		t.Fatalf("the sweep must color the two corners differently: %s", topMatch[1])

@@ -45,10 +45,12 @@ func TestPanelStatusRowAppearsOnlyOnOverflowAndCostsALine(t *testing.T) {
 		t.Fatalf("short content rendered %d lines", len(view.Lines))
 	}
 
+	// A detail panel heads its own sections, so it spends no rows on a title
+	// bar: all ten belong to the content, minus the one the status row costs.
 	long := NewRightPanel("task", PanelDetail, "a", linesOf(100))
 	view = long.View(PlainStyler{}, 10, 40)
-	if len(view.Lines) != 8 {
-		t.Fatalf("overflowing content rendered %d lines, want 7 content + 1 status", len(view.Lines))
+	if len(view.Lines) != 10 {
+		t.Fatalf("overflowing content rendered %d lines, want 9 content + 1 status", len(view.Lines))
 	}
 	if !strings.Contains(view.Lines[len(view.Lines)-1], "/100") {
 		t.Fatalf("last line is not the status row: %q", view.Lines[len(view.Lines)-1])

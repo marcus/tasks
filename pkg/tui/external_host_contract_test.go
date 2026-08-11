@@ -8,6 +8,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/marcus/tasks/internal/tui/term/ansi"
 )
 
 // hostFixture is the external-host shape of embeddedFixture: a host that
@@ -432,8 +434,7 @@ func TestOverlayStringsLayersHostSlotsOverConfiguredSlots(t *testing.T) {
 // numbers and keeps everything else, and — like SuppressQuit — Tasks keeps
 // ACTING on the keys, because a host may have taken only some of them.
 func TestHostSuppressesOnlyTheViewJumpKeyAdvertisement(t *testing.T) {
-	names := []string{"Agenda", "Next", "Quadrants", "Projects", "Outline", "Inbox"}
-	numbered := []string{"1 Agenda", "2 Next", "3 Quadrants", "4 Projects", "5 Outline", "6 Inbox"}
+	names := []string{"agenda", "next", "quadrants", "projects", "outline", "inbox"}
 
 	plain := newHostFixture(t, validStore(t), "", EmbeddedOptions{
 		SessionNamespace: "viewkeys-host", SuppressViewKeyHints: true,
@@ -441,14 +442,16 @@ func TestHostSuppressesOnlyTheViewJumpKeyAdvertisement(t *testing.T) {
 	defer plain.model.Discard()
 	plain.model.Init()
 
-	frame := plain.model.View(120, 24)
-	for index, name := range names {
+	frame := ansi.Strip(plain.model.View(120, 24))
+	for _, name := range names {
 		if !strings.Contains(frame, name) {
 			t.Fatalf("view %q lost its name from the view bar:\n%s", name, frame)
 		}
-		if strings.Contains(frame, numbered[index]) {
-			t.Fatalf("Tasks still advertises %q the host has taken:\n%s", numbered[index], frame)
-		}
+	}
+	// The jump keys are advertised in one place — the footer's "1-6 views" —
+	// and that is what the host has taken.
+	if strings.Contains(frame, "1-6") {
+		t.Fatalf("Tasks still advertises the number row the host has taken:\n%s", frame)
 	}
 
 	// The current view is still indicated, and the numbers still jump.
@@ -461,25 +464,23 @@ func TestHostSuppressesOnlyTheViewJumpKeyAdvertisement(t *testing.T) {
 		}
 	}
 	plain.model.Update(tea.KeyPressMsg{Code: '5', Text: "5"})
-	if !strings.Contains(plain.model.View(120, 24), "Outline") {
+	if !strings.Contains(ansi.Strip(plain.model.View(120, 24)), "outline") {
 		t.Fatalf("the current view vanished from the bar:\n%s", plain.model.View(120, 24))
 	}
 
-	// Standalone-shaped default is untouched: the numbers are still advertised.
+	// Standalone-shaped default is untouched: the jump keys are still advertised.
 	advertised := newHostFixture(t, validStore(t), "", EmbeddedOptions{
 		SessionNamespace: "viewkeys-default",
 	})
 	defer advertised.model.Discard()
 	advertised.model.Init()
-	for _, label := range numbered {
-		if !strings.Contains(advertised.model.View(120, 24), label) {
-			t.Fatalf("default view bar lost %q:\n%s", label, advertised.model.View(120, 24))
-		}
+	if !strings.Contains(ansi.Strip(advertised.model.View(120, 24)), "1-6 views") {
+		t.Fatalf("the default footer lost the jump-key hint:\n%s", advertised.model.View(120, 24))
 	}
 }
 
-// The three suppression switches are independent: one names the view bar's
-// numbers, one names the footer's hint row, one names the whole footer.
+// The three suppression switches are independent: one names the jump-key hint,
+// one names the footer's whole hint row, one names the whole footer.
 func TestHostSuppressionSwitchesAreIndependent(t *testing.T) {
 	fixture := newHostFixture(t, validStore(t), "", EmbeddedOptions{
 		SessionNamespace:     "viewkeys-combined",
@@ -488,14 +489,15 @@ func TestHostSuppressionSwitchesAreIndependent(t *testing.T) {
 	defer fixture.model.Discard()
 	fixture.model.Init()
 	frame := fixture.model.View(120, 24)
-	if !strings.Contains(frame, "Agenda") || strings.Contains(frame, "1 Agenda") {
+	if !strings.Contains(ansi.Strip(frame), "agenda") || strings.Contains(ansi.Strip(frame), "1-6") {
 		t.Fatalf("all three set produced an incoherent view bar:\n%s", frame)
 	}
 	if strings.Contains(frame, "j/k") || strings.Contains(frame, "tab to ask the agent") {
 		t.Fatalf("SuppressFooter left footer rows behind:\n%s", frame)
 	}
 
-	// View key hints alone leave the footer entirely alone.
+	// View key hints alone remove ONE pair from the hint row and nothing else:
+	// the row itself, the prompt, and the rest of the footer stay.
 	hintsOnly := newHostFixture(t, validStore(t), "", EmbeddedOptions{
 		SessionNamespace: "viewkeys-only", SuppressViewKeyHints: true,
 	})
@@ -503,6 +505,9 @@ func TestHostSuppressionSwitchesAreIndependent(t *testing.T) {
 	hintsOnly.model.Init()
 	frame = hintsOnly.model.View(120, 24)
 	if !strings.Contains(frame, "j/k") || !strings.Contains(frame, "tab to ask the agent") {
-		t.Fatalf("SuppressViewKeyHints reached into the footer:\n%s", frame)
+		t.Fatalf("SuppressViewKeyHints reached past its own hint pair:\n%s", frame)
+	}
+	if strings.Contains(ansi.Strip(frame), "1-6") {
+		t.Fatalf("SuppressViewKeyHints left the jump-key hint behind:\n%s", frame)
 	}
 }

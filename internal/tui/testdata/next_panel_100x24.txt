@@ -1,24 +1,24 @@
-┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ 1 Agenda 2 Next 3 Quadrants 4 Projects 5 Outline 6 Inbox 1                       6 open · ? help │
-├──────────────────────────────────────────────────────────────────────────────────────────────────┤
-│  @computer                                                 │ task                                │
-│ ›    [A] Book flight in Concur  7/2                        │ ────────────────────────────────────│
-│      [B] Review PR backlog                                 │ Book flight in Concur               │
-│                                                            │                                     │
-│  @home                                                     │ state      NEXT                     │
-│      Water the plants                                      │ priority   [#A]                     │
-│                                                            │ deadline   2026-07-02 Thu · 12d ago │
-│                                                            │ project    Work                     │
-│                                                            │ contexts   @computer                │
-│                                                            │ tags       important  urgent        │
-│                                                            │ id         aaaa0004                 │
-│                                                            │                                     │
-│                                                            │                                     │
-│                                                            │                                     │
-│                                                            │                                     │
-│                                                            │                                     │
-│                                                            │                                     │
-├──────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ ❯ tab to ask the agent — reschedule, capture, edit anything…                                     │
-│ j/k move · 1-6 views · h/l fold · enter details · v unavailable · / search · q quit              │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+  agenda   next   quadrants   projects   outline   inbox 1                     tue 14 jul · 6 open  
+                                                                                                    
+   @computer                                                 ┆ TASK ────────────────────── [A] NEXT 
+  ›    [A] Book flight in Concur  7/2                        ┆                                      
+       [B] Review PR backlog                                 ┆ Book flight in Concur                
+                                                             ┆ thu 07-02 · 12d ago · Work ·         
+   @home                                                     ┆ @computer                            
+       Water the plants                                      ┆                                      
+                                                             ┆ tags       important  urgent         
+                                                             ┃ id         aaaa0004                  
+                                                             ┃                                      
+                                                             ┃ ACTIONS ──────────────────────────── 
+                                                             ┃                                      
+                                                             ┆ c done   d date   r recur   z defer  
+                                                             ┆                                      
+                                                             ┆                                      
+                                                             ┆                                      
+                                                             ┆                                      
+                                                             ┆                                      
+                                                             ┆                                      
+                                                             ┆                                      
+                                                                                                    
+  ❯ tab to ask the agent — reschedule, capture, edit anything…                                      
+  j/k move   1-6 views   h/l fold   enter details   v unavailable   / search   ? help   q quit      

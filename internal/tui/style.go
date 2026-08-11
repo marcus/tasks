@@ -31,6 +31,17 @@ import "strings"
 type Styler interface {
 	// Paint renders text in the named slot.
 	Paint(slot, text string) string
+	// Composite renders ALREADY-PAINTED text underneath the named slot,
+	// re-opening the slot after every reset the text carries so the inner
+	// styling layers over it instead of clearing it.
+	//
+	// This is what a selected row needs and Paint cannot give it. Paint wraps:
+	// it opens the slot, and the first field inside the row that closes its own
+	// styling with a reset takes the selection down with it — so a row with a
+	// coloured priority letter highlights the one cell before that letter and
+	// nothing after. Composite is the same operation the frame renderer uses,
+	// promoted to the seam because the shell is where selection is decided.
+	Composite(slot, text string) string
 	// Width is the DISPLAY width of text in terminal cells: escape sequences
 	// count zero and a wide character counts two.
 	Width(text string) int
@@ -51,6 +62,10 @@ type PlainStyler struct{}
 
 // Paint returns the text unchanged.
 func (PlainStyler) Paint(_, text string) string { return text }
+
+// Composite returns the text unchanged: with nothing painted there is nothing
+// to layer under.
+func (PlainStyler) Composite(_, text string) string { return text }
 
 // Width counts runes. See the type comment for why this is a placeholder.
 func (PlainStyler) Width(text string) int { return len([]rune(text)) }

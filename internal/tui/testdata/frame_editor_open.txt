@@ -1,24 +1,24 @@
-┌──────────────────────────────────────────────────────────────────────────────────────────────┐
-│ 1 Agenda 2 Next 3 Quadrants 4 Projects 5 Outline 6 Inbox 1                   6 open · ? help │
-├──────────────────────────────────────────────────────────────────────────────────────────────┤
-│  @computer                                              │ ┌ edit task ──────────────────────┐│
-│ ›    [A] Book flight in Concur  7/2                     │ │ Basics                          ││
-│      [B] Review PR backlog                              │ │›  Title*: Book flight in Concur ││
-│                                                         │ │   Priority: A                   ││
-│  @home                                                  │ │  > [ ] None                     ││
-│      Water the plants                                   │ │    [x] A                        ││
-│                                                         │ │    [ ] B                        ││
-│                                                         │ │    [ ] C                        ││
-│                                                         │ │   On hold: false                ││
-│                                                         │ │    [x] No                       ││
-│                                                         │ │    [ ] Yes                      ││
-│                                                         │ │ Timing                          ││
-│                                                         │ │   Available from:               ││
-│                                                         │ │   Deadline: 2026-07-02          ││
-│                                                         │ │   Recurrence:                   ││
-│                                                         │ │   Lead time:                    ││
-│                                                         │ │ Organization                    ││
-│                                                         │ │   Contexts:                     ││
-│                                                         │ └─────────────────────────────────┘│
-├──────────────────────────────────────────────────────────────────────────────────────────────┤
-└──────────────────────────────────────────────────────────────────────────────────────────────┘
+  agenda   next   quadrants   projects   outline   inbox 1                 tue 14 jul · 6 open  
+                                                                                                
+   @computer                                              ┆ ┌ edit task ──────────────────────┐ 
+  ›    [A] Book flight in Concur  7/2                     ┆ │ Basics                          │ 
+       [B] Review PR backlog                              ┆ │›  Title*: Book flight in Concur │ 
+                                                          ┆ │   Priority: A                   │ 
+   @home                                                  ┆ │  > [ ] None                     │ 
+       Water the plants                                   ┆ │    [x] A                        │ 
+                                                          ┆ │    [ ] B                        │ 
+                                                          ┆ │    [ ] C                        │ 
+                                                          ┃ │   On hold: false                │ 
+                                                          ┃ │    [x] No                       │ 
+                                                          ┃ │    [ ] Yes                      │ 
+                                                          ┃ │ Timing                          │ 
+                                                          ┆ │   Available from:               │ 
+                                                          ┆ │   Deadline: 2026-07-02          │ 
+                                                          ┆ │   Recurrence:                   │ 
+                                                          ┆ │   Lead time:                    │ 
+                                                          ┆ │ Organization                    │ 
+                                                          ┆ │   Contexts:                     │ 
+                                                          ┆ │  > [x] @computer                │ 
+                                                          ┆ │    [ ] @email                   │ 
+                                                          ┆ └─────────────────────────────────┘ 
+                                                                                                
