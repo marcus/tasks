@@ -49,9 +49,10 @@ type ProjectView struct {
 // Projects are the section children of the top-level "Projects" heading, listed
 // even when empty — an empty project is a commitment you have not started, and
 // hiding it is how a project goes quietly missing. Areas are the other
-// top-level lists that currently hold open, non-deferred work, excluding Inbox,
-// the Projects heading itself, and everything inside its subtree (a nested
-// sub-section rolls up into its project rather than listing beside it).
+// top-level lists that currently hold open, non-deferred work, excluding the
+// reserved GTD lists (see reservedListTitles), the Projects heading itself, and
+// everything inside its subtree (a nested sub-section rolls up into its project
+// rather than listing beside it).
 //
 // Sorted projects before areas, then by soonest date (dateless last), then
 // title, then file order.
@@ -75,9 +76,29 @@ func (q *Queries) Projects() []ProjectView {
 	return sortProjects(views)
 }
 
-// ProjectView is a single project or area by section id, or ok=false when the
-// id is not such a section: a task, Inbox, the Projects heading, a nested
-// sub-section, or an area with no open work today.
+// ReservedLists is every addressable reserved GTD list — the top-level sections
+// the Projects listing deliberately omits, minus Inbox, which stays
+// unaddressable. Callers that resolve a section by ref use it to widen the
+// listing's candidate set without widening the listing itself.
+func (q *Queries) ReservedLists() []ProjectView {
+	root, hasRoot := q.projectsRoot()
+	views := []ProjectView{}
+	for _, section := range q.liveSections() {
+		title := stringOf(section, "title")
+		if stringOf(section, "parent") != "" || !reservedList(title) || isInboxTitle(title) {
+			continue
+		}
+		if hasRoot && stringOf(section, "id") == stringOf(root, "id") {
+			continue
+		}
+		views = append(views, q.buildProjectView(section, "list"))
+	}
+	return views
+}
+
+// ProjectView is a single project, area or reserved GTD list by section id, or
+// ok=false when the id is not such a section: a task, the Projects heading, a
+// nested sub-section, or an area with no open work today.
 func (q *Queries) ProjectView(id string) (ProjectView, bool) {
 	var section record.Record
 	found := false
@@ -93,6 +114,18 @@ func (q *Queries) ProjectView(id string) (ProjectView, bool) {
 	root, hasRoot := q.projectsRoot()
 	if hasRoot && stringOf(section, "parent") == stringOf(root, "id") {
 		return q.buildProjectView(section, "project"), true
+	}
+	// A reserved GTD list is excluded from the LISTING, not from resolution: it
+	// is still a real section a caller can name, rename, complete or archive,
+	// and dropping it here would leave a heading the TUI can still act on but
+	// no CLI or API caller can address. It resolves as kind "list".
+	// Inbox is the one exception: it is the capture bucket, and renaming,
+	// completing or archiving it would take the destination every unfiled task
+	// lands in. It has always been unresolvable and stays so.
+	if stringOf(section, "parent") == "" && reservedList(stringOf(section, "title")) &&
+		!isInboxTitle(stringOf(section, "title")) &&
+		!(hasRoot && stringOf(section, "id") == stringOf(root, "id")) {
+		return q.buildProjectView(section, "list"), true
 	}
 	if q.areaCandidate(section, root, hasRoot) {
 		view := q.buildProjectView(section, "area")
@@ -126,7 +159,7 @@ func (q *Queries) SectionView(id string) (ProjectView, bool) {
 		switch {
 		case hasRoot && stringOf(section, "parent") == stringOf(root, "id"):
 			kind = "project"
-		case stringOf(section, "parent") == "":
+		case stringOf(section, "parent") == "" && !reservedList(stringOf(section, "title")):
 			kind = "area"
 		}
 		return q.buildProjectView(section, kind), true
@@ -179,7 +212,34 @@ func (q *Queries) areaCandidate(section, root record.Record, hasRoot bool) bool 
 	if hasRoot && stringOf(section, "id") == stringOf(root, "id") {
 		return false
 	}
-	return strings.ToLower(strings.TrimSpace(stringOf(section, "title"))) != "inbox"
+	return !reservedList(stringOf(section, "title"))
+}
+
+// reservedListTitles are the top-level GTD lists that are NOT areas of
+// responsibility: they are saved queries that happen to be spelled as parents.
+//
+// Membership in each is already derivable from a task's own fields — Next
+// Actions is `state == NEXT`, Waiting For is `state == WAITING`, Someday /
+// Maybe is the own defer marker that `tasks someday` sets WITHOUT moving the
+// record. Listing them beside real projects says a task is committed work when
+// the data says the opposite, so they resolve to kind "list" and the Projects
+// listing skips them. They remain ordinary sections on disk, keep their tasks,
+// and still render in the outline.
+//
+// Matching is by title because sections carry no role of their own yet; a
+// `role` field on the section record is the durable fix.
+var reservedListTitles = map[string]bool{
+	"inbox": true, "next actions": true, "next": true,
+	"waiting for": true, "waiting": true,
+	"someday / maybe": true, "someday/maybe": true, "someday": true,
+}
+
+func reservedList(title string) bool {
+	return reservedListTitles[strings.ToLower(strings.TrimSpace(title))]
+}
+
+func isInboxTitle(title string) bool {
+	return strings.ToLower(strings.TrimSpace(title)) == "inbox"
 }
 
 // projectDescendants is the section's descendant TASKS at any depth, in DFS

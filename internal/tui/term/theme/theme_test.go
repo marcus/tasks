@@ -213,8 +213,12 @@ func TestGeneratedThemesAreCompleteAndParseable(t *testing.T) {
 
 func TestGeneratedThemeResolvesTruecolorSlots(t *testing.T) {
 	th := Configure("dracula", nil)
-	if !strings.HasPrefix(th.SGR("selection"), "\x1b[38;2;") {
-		t.Fatalf("dracula selection = %q, want a truecolor sequence", th.SGR("selection"))
+	// Selection is darkened out of the imported palette — see selectionBand —
+	// so it carries a truecolor foreground AND background rather than the
+	// scheme's own single colour.
+	selection := th.SGR("selection")
+	if !strings.Contains(selection, ";38;2;") || !strings.Contains(selection, ";48;2;") {
+		t.Fatalf("dracula selection = %q, want truecolor fg and bg", selection)
 	}
 	if th.Gradient("border") == nil {
 		t.Fatal("dracula should carry its own border gradient")

@@ -1,10 +1,10 @@
-  agenda   next   quadrants   projects   outline   inbox 1 tue 14 jul · 6 open  
+  ag   nx   quad   proj   out   in 1           tue 14 jul · 1 overdue · 6 open  
                                                                                 
-  APPROVALS ───────────────────────────────────────────────────────          0  
-         Nothing pending approval                                               
+  APPROVALS ──────────────────────────────────────────────────────────────── 0  
+           Nothing pending approval                                             
                                                                                 
-  INBOX ───────────────────────────────────────────────────────────          1  
-  ❯      random thought about the garden                                        
+  INBOX ──────────────────────────────────────────────────────────────────── 1  
+  ❯        random thought about the garden                                      
                                                                                 
                                                                                 
                                                                                 

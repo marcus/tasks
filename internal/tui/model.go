@@ -701,6 +701,30 @@ func (m *Model) OpenTaskCount() int {
 	return total
 }
 
+// OverdueTaskCount is the header's "N overdue": open, available tasks whose
+// primary date has already passed. It counts across the whole store, not the
+// current view — the header describes what is true, not what is on screen.
+func (m *Model) OverdueTaskCount() int {
+	if m.read == nil {
+		return 0
+	}
+	queries := m.read.Queries()
+	total := 0
+	for _, item := range m.read.Items() {
+		if !isOpenState(item.State) || !queries.AvailabilityFor(item).Available() {
+			continue
+		}
+		// The SAME definition the bands and the agenda's OVERDUE block use —
+		// see bandDays. Counting any past date here made the header claim two
+		// overdue while the block under it held one, because a scheduled date
+		// in the past means a task became available, not that it is late.
+		if days, ok := bandDays(BuildRequest{Queries: queries}, item); ok && days < 0 {
+			total++
+		}
+	}
+	return total
+}
+
 // -- selection --------------------------------------------------------------
 
 // Rows is the current row list.
@@ -901,7 +925,22 @@ func (m *Model) nodeFoldable(node *taskquery.Node) bool {
 	if m.view == ViewOutline {
 		return len(node.Children) > 0
 	}
+	// A Projects heading folds its whole subtree's worth of anchors, which is
+	// what the view renders under it — not just its direct children, since a
+	// sub-section under a project rolls its tasks up into that project.
+	if m.view == ViewProjects && node.Section() {
+		return len(anchorsUnder(m.treeRequest(), node)) > 0
+	}
 	return len(m.visibleChildrenOf(node)) > 0
+}
+
+// treeRequest is the minimum BuildRequest the tree helpers need to answer
+// visibility questions outside a render.
+func (m *Model) treeRequest() BuildRequest {
+	return BuildRequest{
+		Queries: m.read.Queries(), Tree: m.read.Queries().Tree().Roots,
+		ShowDeferred: m.showDeferred,
+	}
 }
 
 // ExpandSelected unfolds the selected node if it is folded.

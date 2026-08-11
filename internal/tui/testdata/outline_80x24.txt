@@ -1,20 +1,20 @@
-  agenda   next   quadrants   projects   outline   inbox 1 tue 14 jul · 6 open  
+  ag   nx   quad   proj   out   in 1           tue 14 jul · 1 overdue · 6 open  
                                                                                 
-       ▾ Inbox ────────────────────────────────────────────────────          1  
-           ○ random thought about the garden                                    
+    ▾ Inbox ──────────────────────────────────────────────────────────────── 1  
+          ○    random thought about the garden                                  
                                                                                 
-       ▾ Work ─────────────────────────────────────────────────────          5  
-  ❯ A      ■ Book flight in Concur  @computer                          12d ago  
-    B      ■ Review PR backlog  @computer                                       
-    A      ○ Midyear self-eval  @computer                               ~07-03  
-           ○ Travel desk reply  @email                                          
-    C      ● Old finished thing  @computer                                      
+    ▾ Work ───────────────────────────────────────────────────────────────── 5  
+    ▌ overdue ────────────────────────────────────────────────────────────── 1  
+  ❯ ▌     ■ A  Book flight in Concur                      @computer    12d ago  
                                                                                 
-       ▾ Home ─────────────────────────────────────────────────────          1  
-           ■ Water the plants  @home                                            
+    ▌ later ──────────────────────────────────────────────────────────────── 4  
+    ▌     ■ B  Review PR backlog                          @computer             
+    ▌     ○ A  Midyear self-eval                          @computer     ~07-03  
+    ▌     ○    Travel desk reply                             @email             
+    ▌     ● C  Old finished thing                         @computer             
                                                                                 
-                                                                                
-                                                                                
+    ▾ Home ───────────────────────────────────────────────────────────────── 1  
+          ■    Water the plants                               @home             
                                                                                 
                                                                                 
                                                                                 

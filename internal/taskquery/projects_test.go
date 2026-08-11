@@ -241,3 +241,47 @@ func TestWithoutAProjectsHeadingEveryOpenTopLevelListIsAnArea(t *testing.T) {
 		t.Fatalf("kind = %s", views[0].Kind)
 	}
 }
+
+// The reserved GTD lists are saved queries, not areas of responsibility:
+// membership in each is already derivable from a task's own state or defer
+// marker, so listing them beside real projects would double-count the work.
+func TestReservedGTDListsAreNotAreas(t *testing.T) {
+	fixture := `{"type":"meta","version":2}
+{"type":"section","id":"dddd0001","title":"Next Actions"}
+{"type":"task","id":"dddd0002","parent":"dddd0001","state":"NEXT","title":"call the bank"}
+{"type":"section","id":"dddd0003","title":"Waiting For"}
+{"type":"task","id":"dddd0004","parent":"dddd0003","state":"WAITING","title":"vendor quote"}
+{"type":"section","id":"dddd0005","title":"Someday / Maybe"}
+{"type":"task","id":"dddd0006","parent":"dddd0005","state":"TODO","title":"learn the cello"}
+{"type":"section","id":"dddd0007","title":"Home"}
+{"type":"task","id":"dddd0008","parent":"dddd0007","state":"NEXT","title":"water the plants"}
+`
+	queries := queriesFrom(t, fixture)
+	if got := viewIDs(queries.Projects()); !sameIDs(got, "dddd0007") {
+		t.Fatalf("only the real area lists; got %v", got)
+	}
+	// Excluded from the LISTING, but still addressable: a section a human can
+	// rename in the TUI has to stay nameable by an agent, or the two surfaces
+	// disagree about what exists. Both resolvers answer, with kind "list".
+	for _, id := range []string{"dddd0001", "dddd0003", "dddd0005"} {
+		for name, view := range map[string]func(string) (ProjectView, bool){
+			"ProjectView": queries.ProjectView, "SectionView": queries.SectionView,
+		} {
+			resolved, found := view(id)
+			if !found {
+				t.Errorf("%s(%s) lost a reserved list", name, id)
+			} else if resolved.Kind != "list" {
+				t.Errorf("%s(%s).Kind = %q, want \"list\"", name, id, resolved.Kind)
+			}
+		}
+	}
+}
+
+// Inbox is the capture bucket: renaming, completing or archiving it would take
+// the destination every unfiled task lands in.
+func TestInboxStaysUnresolvableEvenThoughItIsAReservedList(t *testing.T) {
+	queries := queriesFrom(t, projectsFixture)
+	if _, found := queries.ProjectView("cccc0001"); found {
+		t.Error("Inbox resolved as a project")
+	}
+}

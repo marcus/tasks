@@ -93,8 +93,14 @@ func TestShortFrameClipsFooterToPreserveExactHeight(t *testing.T) {
 func TestSelectedRowIsHighlighted(t *testing.T) {
 	lines := build(func(o *Options) { o.Selected = sel(2) })
 	// header(1) + blank(1) + 2 rows
-	if !strings.Contains(lines[4], "\x1b[7m") {
-		t.Fatalf("no reverse video: %q", lines[4])
+	//
+	// The selected row is styled — it used to be styled with reverse video
+	// specifically, but selection is now a dark band (see theme.Defaults), so
+	// the contract is that the row carries the selection slot's codes, not that
+	// it carries any one SGR attribute.
+	plain := build(func(o *Options) { o.Selected = sel(99) })
+	if lines[4] == plain[4] || !strings.Contains(lines[4], "\x1b[") {
+		t.Fatalf("selected row is not styled: %q", lines[4])
 	}
 	if !strings.Contains(ansi.Strip(lines[4]), "❯ task number 3") {
 		t.Fatalf("wrong row selected: %q", ansi.Strip(lines[4]))

@@ -319,7 +319,7 @@ func (s *surfaceContext) emitProject(args []string, id string, asJSON bool, huma
 	var view taskquery.ProjectView
 	found := false
 	if id != "" {
-		for _, candidate := range queries.Projects() {
+		for _, candidate := range projectCandidates(queries) {
 			if candidate.ID == id {
 				view, found = candidate, true
 				break
@@ -353,8 +353,31 @@ var projectLineRef = regexp.MustCompile(`(?i)\AL(\d+)\z`)
 //
 // The precedence is task-ref precedence one level up: an exact 8-hex section id
 // wins, then an L<line> section line, then a case-insensitive title substring
-// across projects and areas. The `projects` listing is the candidate set, so an
-// empty area is not addressable — which matches what `projects` shows.
+// across projects and areas. The `projects` listing plus the reserved GTD lists
+// is the candidate set — see projectCandidates — so an empty area is not
+// addressable, which matches what `projects` shows.
+// projectCandidates is what a `project` verb may address: the listing, plus the
+// reserved GTD lists it deliberately leaves out.
+//
+// The listing answers "what are my commitments", and Next Actions / Waiting For
+// / Someday-Maybe are saved queries rather than commitments, so they are not on
+// it. They are still real sections a human can rename or archive from the TUI,
+// and a capability reachable only through a UI is a feature agents cannot use —
+// so resolution admits them even though the listing does not.
+func projectCandidates(queries *taskquery.Queries) []taskquery.ProjectView {
+	views := queries.Projects()
+	seen := map[string]bool{}
+	for _, view := range views {
+		seen[view.ID] = true
+	}
+	for _, section := range queries.ReservedLists() {
+		if !seen[section.ID] {
+			views = append(views, section)
+		}
+	}
+	return views
+}
+
 func (s *surfaceContext) resolveProject(args []string, action, ref string) (taskquery.ProjectView, int) {
 	if strings.TrimSpace(ref) == "" {
 		return taskquery.ProjectView{}, abort("missing <ref>")
@@ -366,7 +389,7 @@ func (s *surfaceContext) resolveProject(args []string, action, ref string) (task
 	if checked, err := s.store.CheckedReadSnapshot(); err != nil || !checked.OK() {
 		return taskquery.ProjectView{}, abort("task file is invalid — run `tasks check`")
 	}
-	views := queries.Projects()
+	views := projectCandidates(queries)
 
 	if match := projectLineRef.FindStringSubmatch(strings.TrimSpace(ref)); match != nil {
 		line, _ := strconv.Atoi(match[1])

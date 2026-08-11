@@ -24,6 +24,7 @@
 package theme
 
 import (
+	"fmt"
 	"regexp"
 	"slices"
 	"strconv"
@@ -48,20 +49,26 @@ var Defaults = map[Slot]string{
 	// without disappearing into the background of any particular palette. The
 	// rules keep the old gray in outline_thread, so the hierarchy — content,
 	// chrome, rule — still has three steps.
-	"tab_inactive":          "dim",
-	"tab_agenda":            "cyan",
-	"tab_next":              "green",
-	"tab_quadrants":         "yellow",
-	"tab_inbox":             "magenta",
-	"tab_projects":          "blue",
-	"tab_approvals":         "yellow",
-	"tab_agenda_active":     "bold reverse cyan",
-	"tab_next_active":       "bold reverse green",
-	"tab_quadrants_active":  "bold reverse yellow",
-	"tab_inbox_active":      "bold reverse magenta",
-	"tab_projects_active":   "bold reverse blue",
-	"tab_approvals_active":  "bold reverse yellow",
-	"selection":             "reverse",
+	"tab_inactive":         "dim",
+	"tab_agenda":           "cyan",
+	"tab_next":             "green",
+	"tab_quadrants":        "yellow",
+	"tab_inbox":            "magenta",
+	"tab_projects":         "blue",
+	"tab_approvals":        "yellow",
+	"tab_agenda_active":    "bold reverse cyan",
+	"tab_next_active":      "bold reverse green",
+	"tab_quadrants_active": "bold reverse yellow",
+	"tab_inbox_active":     "bold reverse magenta",
+	"tab_projects_active":  "bold reverse blue",
+	"tab_approvals_active": "bold reverse yellow",
+	// A selected row is a DARKER band, not a brighter one. `reverse` swaps the
+	// terminal's own colours, which on a dark terminal paints a white bar
+	// across the list — the loudest thing on the screen, for the row you are
+	// merely standing on. The band is a near-black background with near-white
+	// text, so selection reads as depth rather than as an alarm, and the
+	// `*_selected` slots still carry the row's own colours over it.
+	"selection":             "bold 253 on-236",
 	"accent":                "cyan",
 	"prompt":                "bold cyan",
 	"section":               "bold",
@@ -148,7 +155,11 @@ var builtinThemes = map[string]map[Slot]string{
 		"tab_quadrants_active": "reverse", "tab_inbox_active": "reverse",
 		"tab_projects_active": "reverse", "tab_approvals_active": "reverse",
 		"border": "dim", "border_gradient": "none",
-		"prompt": "bold", "modal_title": "bold", "panel_title": "bold", "context": "bold",
+		// mono is the attribute-only theme and the NO_COLOR fallback, so its
+		// selection stays reverse: it is the only marker an attribute-only
+		// palette has left.
+		"selection": "reverse",
+		"prompt":    "bold", "modal_title": "bold", "panel_title": "bold", "context": "bold",
 		"approval_section": "bold", "inbox_section": "bold underline",
 		"context_selected": "bold", "context_filter_active": "bold",
 		"project": "none", "project_selected": "bold",
@@ -231,6 +242,9 @@ func Configure(name string, overrides map[string]string) *Theme {
 		if slot == SlotBorderGradient {
 			continue
 		}
+		if slot == "selection" {
+			spec = selectionBand(spec)
+		}
 		merged[slot] = spec
 	}
 
@@ -265,6 +279,43 @@ func Configure(name string, overrides map[string]string) *Theme {
 		codes:     codes,
 		gradients: map[string]*border.Gradient{"border": border.ParseGradient(gradSpec)},
 	}
+}
+
+// selectionBand darkens an imported theme's selection bar.
+//
+// The generated palettes come from terminal colour schemes, where "selection"
+// means a bright wash the terminal draws behind dragged text. A task list wants
+// the opposite: the cursor row should recede into the page, not leap off it. So
+// a colour-bearing selection is scaled down to a near-black band and given a
+// foreground that contrasts with the RESULT rather than with the original.
+//
+// A spec with no background colour — mono's `reverse`, or anything a user wrote
+// themselves — is returned untouched. There is nothing to darken, and guessing
+// would override a deliberate choice.
+func selectionBand(spec string) string {
+	fields := strings.Fields(strings.ToLower(strings.TrimSpace(spec)))
+	background := ""
+	for _, field := range fields {
+		if name := strings.TrimPrefix(field, "on-"); name != field && hexRe.MatchString(name) {
+			background = name
+		}
+	}
+	if background == "" {
+		return spec
+	}
+	red, _ := strconv.ParseInt(background[1:3], 16, 32)
+	green, _ := strconv.ParseInt(background[3:5], 16, 32)
+	blue, _ := strconv.ParseInt(background[5:7], 16, 32)
+	// 0.28 lands every scheme's selection in the same narrow near-black range,
+	// which is what makes the band read as one idea across twenty palettes
+	// while keeping each one's hue.
+	const scale = 0.28
+	red, green, blue = int64(float64(red)*scale), int64(float64(green)*scale), int64(float64(blue)*scale)
+	foreground := "#f0f2f4"
+	if (red*299+green*587+blue*114)/1000 > 128 {
+		foreground = "#101214"
+	}
+	return fmt.Sprintf("bold %s on-#%02x%02x%02x", foreground, red, green, blue)
 }
 
 // Default is the stock theme with no overrides.

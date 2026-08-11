@@ -273,3 +273,9 @@ func TestAReadFailureIsStatedRatherThanPaintedAsAnEmptyStore(t *testing.T) {
 		t.Fatalf("an unreadable store rendered as an empty list:\n%s", frame)
 	}
 }
+
+func TestProjectsFrameGolden(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: projectsDormantStore})
+	harness.model.SwitchView(ViewProjects)
+	assertGolden(t, "projects_100x20", renderAt(t, harness, 100, 20))
+}

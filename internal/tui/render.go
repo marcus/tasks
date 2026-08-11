@@ -221,7 +221,17 @@ func (m *Model) headerCount() string {
 	// `? help` used to live here. It moved to the key-hint row, where every
 	// other key the TUI advertises already is — the header's right side is for
 	// what the list currently IS, not for what can be pressed.
-	return styler.Paint("muted", m.todayStamp()+" · ") + deferredNote +
+	// Overdue leads the open count and is the only loud thing in the header,
+	// because it is the one number that is a claim on you rather than a
+	// description of the list. It is omitted at zero: a header that says
+	// "0 overdue" every day teaches the eye to skip the place the real number
+	// will appear.
+	overdue := ""
+	if count := m.OverdueTaskCount(); count > 0 {
+		overdue = styler.Paint("due_overdue", fmt.Sprintf("%d overdue", count)) +
+			styler.Paint("muted", " · ")
+	}
+	return styler.Paint("muted", m.todayStamp()+" · ") + deferredNote + overdue +
 		styler.Paint("muted", fmt.Sprintf("%d open", m.OpenTaskCount()))
 }
 

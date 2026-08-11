@@ -1,5 +1,22 @@
 # Changelog
 
+## [Unreleased]
+
+- Redesign the Projects view: live projects are foldable headings, every project
+  with nothing under it collapses into one row, and the section badge names the
+  live share.
+- Stop listing the reserved GTD lists (Next Actions, Waiting For, Someday /
+  Maybe) as areas — membership in each is already derivable from a task's state
+  or defer marker. They resolve to kind `list` and keep their outline rows.
+- Give every list row an urgency band, move the priority letter beside the title
+  it ranks, and right-align `@` contexts into their own shared column.
+- Band the outline's plain lists into overdue / today / later, tighten the
+  spacing around nested headings, and name the overdue count in the header.
+- Paint the selected row as a dark band rather than reverse video, and darken
+  every imported theme's selection to match.
+- Keep the reserved GTD lists addressable by `project show|rename|complete|
+  archive` and the API even though the `projects` listing omits them.
+
 ## [1.7.0] - 2026-08-11
 
 - Add ordered, labelled formal task links; CLI `link add`/`link rm`/`link set`;

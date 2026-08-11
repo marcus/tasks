@@ -667,3 +667,35 @@ func TestReadCommandsRefuseAnUnsupportedSchema(t *testing.T) {
 		t.Errorf("envelope = %v", payload)
 	}
 }
+
+// A reserved GTD list is left OFF the `projects` listing — it is a saved query,
+// not a commitment — but it stays addressable, because a section a human can
+// rename from the TUI has to be nameable by an agent too. Inbox is the one
+// exception: it is the capture bucket and has never been addressable.
+func TestReservedGTDListsAreAddressableButUnlisted(t *testing.T) {
+	dir := seedStore(t, `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Inbox"}
+{"type":"section","id":"aaaa0002","title":"Waiting For"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0002","state":"WAITING","title":"vendor quote"}
+{"type":"section","id":"aaaa0003","title":"Projects"}
+{"type":"section","id":"aaaa0004","parent":"aaaa0003","title":"Real project"}
+{"type":"task","id":"bbbb0002","parent":"aaaa0004","state":"NEXT","title":"do it"}
+`)
+	if listing := runCLI(t, dir, "projects"); strings.Contains(listing.stdout, "Waiting For") {
+		t.Errorf("the listing carries a reserved list:\n%s", listing.stdout)
+	}
+	for _, ref := range []string{"aaaa0002", "Waiting For"} {
+		result := runCLI(t, dir, "project", "show", ref)
+		if result.status != 0 {
+			t.Errorf("project show %q: exit %d, stderr %q", ref, result.status, result.stderr)
+			continue
+		}
+		if !strings.Contains(result.stdout, "Waiting For") ||
+			!strings.Contains(result.stdout, "[list]") {
+			t.Errorf("project show %q did not resolve as a list:\n%s", ref, result.stdout)
+		}
+	}
+	if result := runCLI(t, dir, "project", "show", "aaaa0001"); result.status == 0 {
+		t.Errorf("Inbox resolved as a project:\n%s", result.stdout)
+	}
+}

@@ -1,10 +1,10 @@
-  agenda   next   quadrants   projects   outline   inbox 1                 tue 14 jul · 6 open  
+  agenda   next   quadrants   projects   outline   inbox 1     tue 14 jul · 1 overdue · 6 open  
                                                                                                 
-  @computer ───────────────────────────────────────────────────────────────────────          2  
-  ❯ A    Book flight in Concur                                                         12d ago  
-    B    Review PR backlog                                                                      
+  @computer ──────────────────────────────────────────────────────────────────────────────── 2  
+  ❯ ▌   A  Book flight in Concur                                                       12d ago  
+        B  Review PR backlog                                                                    
          ┌─ actions ──────────────────────────────────────────────────────────────────┐         
-  @home ─│  search:                                                                   │      1  
+  @home ─│  search:                                                                   │───── 1  
          │                                                                            │         
          │  ❯   collapse subtree (again: to parent)  h                                │         
          │      expand subtree  l                                                     │         

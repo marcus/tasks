@@ -46,10 +46,8 @@ func dueSlot(days int) string {
 // contextTags is the trailing `@` context run, shared so every view that shows
 // contexts inline spells them the same way.
 //
-// `except` is the context the surrounding section is already named after. The
-// Next view groups BY context, so repeating the group's own name on every row
-// under it says nothing — while the row's OTHER contexts are exactly what that
-// grouping hides, and they stay.
+// `except` is the context the surrounding section is already named after — see
+// Row.ContextExcept.
 func contextTags(request BuildRequest, item store.Item, except string) string {
 	styler := request.styler()
 	painted := make([]string, 0, len(item.Contexts))
@@ -62,7 +60,7 @@ func contextTags(request BuildRequest, item store.Item, except string) string {
 	if len(painted) == 0 {
 		return ""
 	}
-	return "  " + strings.Join(painted, " ")
+	return strings.Join(painted, " ")
 }
 
 func priorityPrefix(request BuildRequest, item store.Item) string {
@@ -95,16 +93,17 @@ func relativeDays(days int) string {
 // a small trailing word.
 func outlineBody(request BuildRequest, item store.Item) string {
 	styler := request.styler()
+	rank := priorityField(request, item)
 	switch {
 	case isProposedState(item.State):
 		return styler.Paint("warning", DotOpen+" ") + taskBody(request, item)
 	case item.State == "CANCELLED":
-		return styler.Paint("muted", DotClosed+" "+item.Title) +
-			styler.Paint("muted", " · cancelled") +
-			contextTags(request, item, "") + badge(request, item)
+		return styler.Paint("muted", DotClosed+" ") + rank +
+			styler.Paint("muted", item.Title) +
+			styler.Paint("muted", " · cancelled") + badge(request, item)
 	case !isOpenState(item.State):
-		return styler.Paint("state_done", DotClosed+" ") + styler.Paint("muted", item.Title) +
-			contextTags(request, item, "") + badge(request, item)
+		return styler.Paint("state_done", DotClosed+" ") + rank +
+			styler.Paint("muted", item.Title) + badge(request, item)
 	default:
 		return stateDot(request, item) + taskBody(request, item)
 	}

@@ -63,8 +63,10 @@ func TestAgendaLeavesAnUndatedRidersDateColumnEmpty(t *testing.T) {
 	harness.model.SwitchView(ViewAgenda)
 	for _, row := range harness.model.Rows() {
 		if row.Item != nil && row.Item.Title == "Child action" {
-			if !strings.HasPrefix(row.Text, strings.Repeat(" ", PriorityField)) {
-				t.Fatalf("undated rider lost the priority column: %q", row.Text)
+			// An undated row bands blank, so the head is BandField spaces —
+			// the field is still there, it just has nothing to say.
+			if !strings.HasPrefix(row.Text, strings.Repeat(" ", BandField)) {
+				t.Fatalf("undated rider lost the band column: %q", row.Text)
 			}
 			if trimmed := strings.TrimRight(row.Text, " "); strings.HasSuffix(trimmed, "ago") ||
 				strings.Contains(trimmed[max(len(trimmed)-MetaColumn, 0):], "-") {
@@ -167,7 +169,9 @@ func TestOutlineShowsEveryLiveRecordIncludingClosedOnes(t *testing.T) {
 	text := rowTexts(harness)
 	// Closed tasks speak the shared dot vocabulary now, not a state word: the
 	// DONE row is the closed dot with its title kept on the row.
-	for _, want := range []string{"Inbox", "Work", "Home", DotClosed + " Old finished thing"} {
+	// The priority letter now sits between the dot and the title — see
+	// priorityField — so a closed C-priority row reads `● C  title`.
+	for _, want := range []string{"Inbox", "Work", "Home", DotClosed + " C  Old finished thing"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("outline is missing %q:\n%s", want, text)
 		}
@@ -783,5 +787,187 @@ func TestOutlineRefusesDatesOnAnOrdinarySection(t *testing.T) {
 	}
 	if !strings.Contains(harness.model.FlashMessage(), "calendar") {
 		t.Fatalf("the refusal did not say where dates live: %q", harness.model.FlashMessage())
+	}
+}
+
+// -- design 6b: the Projects view only shows what is live ------------------
+
+// projectsDormantStore: one project with work, three with none.
+const projectsDormantStore = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Projects"}
+{"type":"section","id":"aaaa0002","parent":"aaaa0001","title":"Launch the site"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0002","state":"NEXT","title":"pick a generator"}
+{"type":"section","id":"aaaa0003","parent":"aaaa0001","title":"Mid-year reviews"}
+{"type":"section","id":"aaaa0004","parent":"aaaa0001","title":"RaaS consolidation"}
+{"type":"section","id":"aaaa0005","parent":"aaaa0001","title":"Fix the deck"}
+`
+
+func TestProjectsFoldsEveryEmptyProjectIntoOneRow(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: projectsDormantStore})
+	harness.model.SwitchView(ViewProjects)
+	frame := rowTexts(harness)
+	for _, title := range []string{"Mid-year reviews", "RaaS consolidation", "Fix the deck"} {
+		if !strings.Contains(frame, title) {
+			t.Fatalf("dormant project %q went missing:\n%s", title, frame)
+		}
+	}
+	tail := ""
+	own := 0
+	for _, row := range harness.model.Rows() {
+		if strings.Contains(row.Text, " · ") {
+			tail = row.Text
+		}
+		if row.Project != nil {
+			own++
+		}
+	}
+	if tail == "" {
+		t.Fatalf("no rolled-up dormant row:\n%s", frame)
+	}
+	if !strings.Contains(tail, "no tasks") {
+		t.Fatalf("the dormant row does not say why it is rolled up: %q", tail)
+	}
+	// Only the live project keeps a row of its own; the other three share one.
+	if own != 1 {
+		t.Fatalf("expected 1 selectable project row, got %d:\n%s", own, frame)
+	}
+}
+
+func TestProjectsSectionBadgeNamesTheLiveShare(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: projectsDormantStore})
+	harness.model.SwitchView(ViewProjects)
+	if !strings.Contains(rowTexts(harness), "1/4 open") {
+		t.Fatalf("the PROJECTS badge does not name the live share:\n%s", rowTexts(harness))
+	}
+}
+
+func TestProjectHeadingFoldsItsTasks(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: projectsDormantStore})
+	harness.model.SwitchView(ViewProjects)
+	harness.selectRowByID("aaaa0002")
+	if !strings.Contains(rowTexts(harness), MarkExpanded+"Launch the site") {
+		t.Fatalf("a live project heading has no expanded marker:\n%s", rowTexts(harness))
+	}
+	harness.model.CollapseSelected()
+	frame := rowTexts(harness)
+	if strings.Contains(frame, "pick a generator") {
+		t.Fatalf("folding the project left its task on screen:\n%s", frame)
+	}
+	if !strings.Contains(frame, MarkCollapsed+"Launch the site") {
+		t.Fatalf("the folded project heading kept its expanded marker:\n%s", frame)
+	}
+	harness.model.ExpandSelected()
+	if !strings.Contains(rowTexts(harness), "pick a generator") {
+		t.Fatalf("unfolding did not bring the task back:\n%s", rowTexts(harness))
+	}
+}
+
+// -- design 6b: the outline bands its lists by urgency ---------------------
+
+// outlineBandStore: one plain GTD list holding overdue, due-today and undated
+// work, plus a list whose children are all in one band.
+const outlineBandStore = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Inbox"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0001","state":"TODO","title":"late thing","deadline":"2026-07-01"}
+{"type":"task","id":"bbbb0002","parent":"aaaa0001","state":"TODO","title":"due today","deadline":"2026-07-14"}
+{"type":"task","id":"bbbb0003","parent":"aaaa0001","state":"TODO","title":"someday thing"}
+{"type":"section","id":"aaaa0002","title":"Home"}
+{"type":"task","id":"bbbb0004","parent":"aaaa0002","state":"TODO","title":"no date at all"}
+{"type":"task","id":"bbbb0005","parent":"aaaa0002","state":"TODO","title":"also no date"}
+`
+
+func TestOutlineBandsAListIntoOverdueTodayAndLater(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: outlineBandStore})
+	harness.model.SwitchView(ViewOutline)
+	text := rowTexts(harness)
+	for _, band := range []string{"overdue", "today", "later"} {
+		if !strings.Contains(text, Band+" "+band) {
+			t.Fatalf("no %q band rule:\n%s", band, text)
+		}
+	}
+	// Order is the urgency ladder, not file order.
+	overdue := strings.Index(text, Band+" overdue")
+	today := strings.Index(text, Band+" today")
+	later := strings.Index(text, Band+" later")
+	if !(overdue < today && today < later) {
+		t.Fatalf("bands are out of order (%d, %d, %d):\n%s", overdue, today, later, text)
+	}
+}
+
+// A lone band rule says only that nothing is due, which the absence of any red
+// band already said.
+func TestOutlineDoesNotBandAListThatIsAllOneBand(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: outlineBandStore})
+	harness.model.SwitchView(ViewOutline)
+	rows := harness.model.Rows()
+	homeAt := -1
+	for index, row := range rows {
+		if strings.Contains(row.Text, "Home") {
+			homeAt = index
+		}
+	}
+	if homeAt < 0 {
+		t.Fatalf("no Home section:\n%s", rowTexts(harness))
+	}
+	for _, row := range rows[homeAt+1:] {
+		if strings.Contains(row.Text, Band+" later") {
+			t.Fatalf("Home was banded even though nothing in it is due:\n%s", rowTexts(harness))
+		}
+	}
+}
+
+// A section that contains sub-sections is already grouped by something its
+// author chose; a second grouping cut across it would fight the first.
+func TestOutlineDoesNotBandASectionOfSections(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: projectsDormantStore})
+	harness.model.SwitchView(ViewOutline)
+	if strings.Contains(rowTexts(harness), Band+" later") {
+		t.Fatalf("the Projects heading was banded:\n%s", rowTexts(harness))
+	}
+}
+
+// A parent bands with the most urgent thing anywhere under it, so folding it
+// never hides work in a calmer band than the work deserves.
+func TestAnOutlineBandTakesTheMostUrgentThingInTheSubtree(t *testing.T) {
+	live := `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Inbox"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0001","state":"TODO","title":"calm parent"}
+{"type":"task","id":"bbbb0002","parent":"bbbb0001","state":"TODO","title":"late child","deadline":"2026-07-01"}
+{"type":"task","id":"bbbb0003","parent":"aaaa0001","state":"TODO","title":"undated other"}
+{"type":"task","id":"bbbb0004","parent":"aaaa0001","state":"TODO","title":"due today","deadline":"2026-07-14"}
+`
+	harness := newModelHarness(t, harnessOptions{live: live})
+	harness.model.SwitchView(ViewOutline)
+	rows := harness.model.Rows()
+	overdueAt, parentAt, todayAt := -1, -1, -1
+	for index, row := range rows {
+		switch {
+		case strings.Contains(row.Text, Band+" overdue"):
+			overdueAt = index
+		case strings.Contains(row.Text, Band+" today"):
+			todayAt = index
+		case row.Item != nil && row.Item.Title == "calm parent":
+			parentAt = index
+		}
+	}
+	if overdueAt < 0 || parentAt < 0 || todayAt < 0 {
+		t.Fatalf("missing a landmark:\n%s", rowTexts(harness))
+	}
+	if !(overdueAt < parentAt && parentAt < todayAt) {
+		t.Fatalf("the parent did not band with its overdue child:\n%s", rowTexts(harness))
+	}
+}
+
+func TestHeaderNamesTheOverdueCountAndOmitsItAtZero(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: outlineBandStore})
+	if got := harness.model.OverdueTaskCount(); got != 1 {
+		t.Fatalf("OverdueTaskCount = %d, want 1", got)
+	}
+	if !strings.Contains(harness.model.Header(120), "1 overdue") {
+		t.Fatalf("the header hides the overdue count: %q", harness.model.Header(120))
+	}
+	clean := newModelHarness(t, harnessOptions{live: projectsDormantStore})
+	if strings.Contains(clean.model.Header(120), "overdue") {
+		t.Fatalf("the header says overdue with none: %q", clean.model.Header(120))
 	}
 }

@@ -112,19 +112,14 @@ func dateMeta(request BuildRequest) func(store.Item) (string, string) {
 	return func(item store.Item) (string, string) { return dateCell(request, item) }
 }
 
-// taskBody is the left half of a row in every list view: title, contexts,
-// badges. The cursor and priority fields lead it — see appendSubtree's `lead` —
-// so a nested rider's thread line cannot push its parent's priority letter out
-// of the column.
+// taskBody is the left half of a row in every list view: the priority letter,
+// the title, and any badge. The cursor and band fields lead it — see
+// appendSubtree's `lead`. Contexts are NOT here: they are right-aligned into
+// their own shared column by withMetaFor, so that every title ends where the
+// title column ends rather than wherever its tags happened to run out.
 func taskBody(request BuildRequest, item store.Item) string {
-	return taskBodyExcept(request, item, "")
-}
-
-// taskBodyExcept is taskBody with one context suppressed — see contextTags.
-func taskBodyExcept(request BuildRequest, item store.Item, except string) string {
 	styler := request.styler()
-	return styler.Paint("title", item.Title) + contextTags(request, item, except) +
-		badge(request, item)
+	return priorityField(request, item) + styler.Paint("title", item.Title) + badge(request, item)
 }
 
 // agendaGrouped assembles the day groups in painted order.

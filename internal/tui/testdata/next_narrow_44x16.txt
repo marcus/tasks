@@ -1,11 +1,11 @@
   ag   nx   q   pr   out   in 1 tue 14 jul  
                                             
-  @computer ───────────────────          2  
-  ❯ A    Book flight in Concur     12d ago  
-    B    Review PR backlog                  
+  @computer ──────────────────────────── 2  
+  ❯ ▌   A  Book flight in Concu    12d ago  
+        B  Review PR backlog                
                                             
-  @home ───────────────────────          1  
-         Water the plants                   
+  @home ──────────────────────────────── 1  
+           Water the plants                 
                                             
                                             
                                             

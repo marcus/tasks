@@ -91,7 +91,7 @@ func agendaFlat(request BuildRequest) []Row {
 		item := item
 		bucket := itemBucket(request, item)
 		byBucket[bucket] = append(byBucket[bucket], Row{
-			Text: priorityField(request, item) + taskBody(request, item),
+			Text: urgencyBand(request, item) + taskBody(request, item),
 			Item: &item,
 		})
 	}
@@ -106,8 +106,9 @@ func nextFlat(request BuildRequest) []Row {
 		for _, node := range group.Nodes {
 			item := *node.Item
 			rows = append(rows, Row{
-				Text: priorityField(request, item) + taskBodyExcept(request, item, group.Key),
-				Item: &item,
+				Text:          urgencyBand(request, item) + taskBody(request, item),
+				Item:          &item,
+				ContextExcept: group.Key,
 			})
 		}
 		sections = append(sections, Section{Label: group.Key, Slot: "context", Rows: rows})
@@ -120,7 +121,7 @@ func quadrantsFlat(request BuildRequest) []Row {
 	groups := groupItems(query, request.Items)
 	return quadrantRows(request, groups, func(node *taskquery.Node) []Row {
 		item := *node.Item
-		return []Row{{Text: priorityField(request, item) + taskBody(request, item), Item: &item}}
+		return []Row{{Text: urgencyBand(request, item) + taskBody(request, item), Item: &item}}
 	})
 }
 
@@ -129,7 +130,7 @@ func inboxFlatSection(request BuildRequest) []Row {
 	rows := []Row{}
 	for _, item := range query.Sort(query.Select(request.Items)) {
 		item := item
-		rows = append(rows, Row{Text: priorityField(request, item) + taskBody(request, item), Item: &item})
+		rows = append(rows, Row{Text: urgencyBand(request, item) + taskBody(request, item), Item: &item})
 	}
 	return rows
 }
@@ -162,7 +163,7 @@ func agendaTree(request BuildRequest) []Row {
 	for _, anchor := range anchors {
 		bucket := itemBucket(request, anchorDateItem(request, query, anchor))
 		byBucket[bucket] = appendSubtree(request, byBucket[bucket], anchor, "",
-			func(item store.Item) string { return priorityField(request, item) },
+			func(item store.Item) string { return urgencyBand(request, item) },
 			func(item store.Item) string { return taskBody(request, item) })
 	}
 	return agendaGrouped(request, byBucket)
@@ -175,9 +176,13 @@ func nextTree(request BuildRequest) []Row {
 	for _, group := range query.SortedGroups(query.GroupedNodes(anchors)) {
 		rows := []Row{}
 		for _, anchor := range group.Nodes {
+			from := len(rows)
 			rows = appendSubtree(request, rows, anchor, "",
-				func(item store.Item) string { return priorityField(request, item) },
-				func(item store.Item) string { return taskBodyExcept(request, item, group.Key) })
+				func(item store.Item) string { return urgencyBand(request, item) },
+				func(item store.Item) string { return taskBody(request, item) })
+			for index := from; index < len(rows); index++ {
+				rows[index].ContextExcept = group.Key
+			}
 		}
 		sections = append(sections, Section{Label: group.Key, Slot: "context", Rows: rows})
 	}
@@ -190,7 +195,7 @@ func quadrantsTree(request BuildRequest) []Row {
 	groups := query.GroupedNodes(anchors)
 	return quadrantRows(request, groups, func(node *taskquery.Node) []Row {
 		return appendSubtree(request, nil, node, "",
-			func(item store.Item) string { return priorityField(request, item) },
+			func(item store.Item) string { return urgencyBand(request, item) },
 			func(item store.Item) string { return taskBody(request, item) })
 	})
 }
@@ -200,7 +205,7 @@ func inboxTreeSection(request BuildRequest) []Row {
 	rows := []Row{}
 	for _, anchor := range query.SortNodes(maximalAnchors(request, query)) {
 		rows = appendSubtree(request, rows, anchor, "",
-			func(item store.Item) string { return priorityField(request, item) },
+			func(item store.Item) string { return urgencyBand(request, item) },
 			func(item store.Item) string { return taskBody(request, item) })
 	}
 	return rows
@@ -270,7 +275,7 @@ func approvalRows(request BuildRequest, proposals []store.Item) []Row {
 	rows := []Row{}
 	for _, item := range proposals {
 		item := item
-		rows = append(rows, Row{Text: priorityField(request, item) + taskBody(request, item), Item: &item})
+		rows = append(rows, Row{Text: urgencyBand(request, item) + taskBody(request, item), Item: &item})
 	}
 	return rows
 }
@@ -291,7 +296,7 @@ func buildOutline(request BuildRequest) []Row {
 	}
 	rows := []Row{}
 	for _, root := range request.Tree {
-		rows = appendOutlineNode(request, rows, root, 0)
+		rows = appendOutlineNode(request, rows, root, 0, "")
 	}
 	return withMetaRows(request, dropTrailingBlank(rows))
 }
@@ -306,24 +311,31 @@ func buildOutline(request BuildRequest) []Row {
 // the shared meta column where the section's task count sits, so the outline
 // keeps the design system's section vocabulary while gaining OmniFocus-style
 // direct manipulation of the sections themselves.
-func appendOutlineNode(request BuildRequest, rows []Row, node *taskquery.Node, depth int) []Row {
+func appendOutlineNode(request BuildRequest, rows []Row, node *taskquery.Node, depth int, band string) []Row {
 	indent := strings.Repeat("  ", depth)
 	if node.Section() {
-		if len(rows) > 0 {
+		// Only a TOP-LEVEL section opens with a blank line. A nested project
+		// heading is part of its parent's block, and spacing every one of them
+		// turned a list of four projects into a screenful of air — the reader
+		// scrolls past whitespace looking for the next word.
+		if len(rows) > 0 && depth == 0 {
 			rows = append(rows, chromeRow(""))
 		}
 		rows = append(rows, outlineSectionRow(request, node, depth))
 		if node.ID != "" && request.Collapsed[node.ID] && len(node.Children) > 0 {
 			return rows
 		}
+		if banded, ok := outlineUrgencyBands(request, node, depth); ok {
+			return append(rows, banded...)
+		}
 		for _, child := range node.Children {
-			rows = appendOutlineNode(request, rows, child, depth+1)
+			rows = appendOutlineNode(request, rows, child, depth+1, band)
 		}
 		return rows
 	}
 	if isProposedState(node.Item.State) {
 		for _, child := range node.Children {
-			rows = appendOutlineNode(request, rows, child, depth)
+			rows = appendOutlineNode(request, rows, child, depth, band)
 		}
 		return rows
 	}
@@ -340,7 +352,7 @@ func appendOutlineNode(request BuildRequest, rows []Row, node *taskquery.Node, d
 	if len(node.Children) > 0 {
 		body = request.styler().Paint("outline_container", body)
 	}
-	head := priorityField(request, *node.Item)
+	head := urgencyBandIn(request, *node.Item, band)
 	text := head + indent + marker + body
 	if folded {
 		text += foldedCount(request, outlineDescendantCount(node))
@@ -355,9 +367,125 @@ func appendOutlineNode(request BuildRequest, rows []Row, node *taskquery.Node, d
 		return rows
 	}
 	for _, child := range node.Children {
-		rows = appendOutlineNode(request, rows, child, depth+1)
+		rows = appendOutlineNode(request, rows, child, depth+1, band)
 	}
 	return rows
+}
+
+// urgencyBands are the outline's within-section groups, in painted order. They
+// are the SAME three-way split the band glyph paints — a sub-rule is the band's
+// legend, not a second grouping the reader has to learn.
+var urgencyBands = []struct{ Key, Label, Slot string }{
+	{"overdue", "overdue", "due_overdue"},
+	{"today", "today", "due_soon"},
+	{"later", "later", "outline_thread"},
+}
+
+// bandSlots is urgencyBands by key — the stripe colour every row in a band
+// wears, including the rows that carry no date of their own. A stripe with
+// holes in it is not a stripe; the band rule promises a run of rows, and each
+// row has to continue it or the promise reads as a rendering fault.
+var bandSlots = func() map[string]string {
+	out := map[string]string{}
+	for _, band := range urgencyBands {
+		out[band.Key] = band.Slot
+	}
+	return out
+}()
+
+// outlineUrgencyBands splits a section's tasks into overdue / today / later,
+// each under its own sub-rule.
+//
+// It applies only to a section whose children are ALL tasks — a plain GTD list
+// like Inbox or Next Actions. A section that contains sub-sections (the
+// Projects heading, the calendar) is already grouped by something the author
+// chose, and a second grouping cut across it would fight the first.
+//
+// It also declines when everything lands in one band: a lone `later` rule over
+// a list where nothing is due says only that nothing is due, which the absence
+// of any red band already said. ok=false means "render this section normally".
+func outlineUrgencyBands(request BuildRequest, node *taskquery.Node, depth int) ([]Row, bool) {
+	if len(node.Children) == 0 {
+		return nil, false
+	}
+	for _, child := range node.Children {
+		if !child.Task() {
+			return nil, false
+		}
+	}
+	byBand := map[string][]Row{}
+	for _, child := range node.Children {
+		band := outlineBandKey(request, child)
+		byBand[band] = appendOutlineNode(request, byBand[band], child, depth+1, bandSlots[band])
+	}
+	filled := 0
+	for _, band := range urgencyBands {
+		if len(byBand[band.Key]) > 0 {
+			filled++
+		}
+	}
+	if filled < 2 {
+		return nil, false
+	}
+	rows := []Row{}
+	for _, band := range urgencyBands {
+		body := byBand[band.Key]
+		if len(body) == 0 {
+			continue
+		}
+		if len(rows) > 0 {
+			rows = append(rows, chromeRow(""))
+		}
+		rows = append(rows, outlineBandRule(request, band.Label, band.Slot, countSelectable(body)))
+		rows = append(rows, body...)
+	}
+	return rows, true
+}
+
+// outlineBandKey is the band a subtree sits in: the most urgent thing anywhere
+// in it, so a parent never sorts calmer than a child it is hiding nothing from.
+func outlineBandKey(request BuildRequest, node *taskquery.Node) string {
+	best := "later"
+	var walk func(*taskquery.Node)
+	walk = func(current *taskquery.Node) {
+		if current.Item != nil {
+			// The same deadline-only rule the band glyph uses — see bandDays —
+			// so a row's band and the sub-rule it sits under can never disagree
+			// about how urgent it is.
+			if days, ok := bandDays(request, *current.Item); ok {
+				switch {
+				case days < 0:
+					best = "overdue"
+				case days == 0 && best != "overdue":
+					best = "today"
+				}
+			}
+		}
+		for _, child := range current.Children {
+			walk(child)
+		}
+	}
+	walk(node)
+	return best
+}
+
+// outlineBandRule is a band's sub-rule: the band glyph in the band's own colour,
+// the label, a dim fill, and the count on the shared meta column. It is quieter
+// than a section rule by design — a band divides a block, it does not open one.
+func outlineBandRule(request BuildRequest, label, slot string, count int) Row {
+	styler := request.styler()
+	// A band rule is chrome, so it is painted flush to the pane edge and buys
+	// back the cursor field itself. It takes NO depth indent: the band column is
+	// the same column on every row at every depth, and a rule whose glyph does
+	// not sit on that column is not the top of the stripe it claims to head.
+	indent := strings.Repeat(" ", CursorField)
+	head := indent + styler.Paint(slot, Band) + " " + styler.Paint("muted", label)
+	right := fmt.Sprintf("%d", count)
+	left, ok := metaColumns(request, CursorField)
+	if !ok {
+		return chromeRow(head + styler.Paint("muted", " "+right))
+	}
+	return chromeRow(ruledHead(request, head, right, "muted", left))
 }
 
 // outlineSectionRow builds one selectable section row: chevron, title, an
@@ -384,7 +512,11 @@ func outlineSectionRow(request BuildRequest, node *taskquery.Node, depth int) Ro
 	if depth > 0 {
 		slot = "project"
 	}
-	head := strings.Repeat(" ", PriorityField) + strings.Repeat("  ", depth)
+	// A section heading spends the BAND column on its own chevron. A section is
+	// not due; the cell that would carry its urgency is free, and putting the
+	// chevron there is what pulls the headings out to the left edge where the
+	// design has them, one step outside the rows they contain.
+	head := strings.Repeat("  ", depth)
 	text := head + marker + styler.Paint(slot, title)
 	if hasDates {
 		if human := humanDateRange(request, start, end); human != "" {
@@ -402,17 +534,17 @@ func outlineSectionRow(request BuildRequest, node *taskquery.Node, depth int) Ro
 		row.MarkerBegin = styler.Width(head)
 		row.MarkerEnd = row.MarkerBegin + 2
 	}
-	// The rule fill, stopping one cell short of the shared meta column. It is
-	// painted only when the frame is wide enough for that column at all —
-	// narrow frames degrade to the bare label, exactly as section rules do.
-	if left, ok := metaColumns(request, 0); ok {
-		if rule := left - styler.Width(row.Text) - 1; rule > 0 {
-			row.Text += " " + styler.Paint("outline_thread", strings.Repeat("─", rule))
-		}
-	}
 	badge := ""
 	if count := outlineTaskCount(node); count > 0 {
 		badge = fmt.Sprintf("%d", count)
+	}
+	// The rule fill runs to one cell before the count, the same way every other
+	// rule in the view does — see ruledHead. It is painted only when the frame
+	// is wide enough for the meta column at all; narrow frames degrade to the
+	// bare label, exactly as section rules do.
+	if left, ok := metaColumns(request, 0); ok && badge != "" {
+		row.Text = ruledHead(request, row.Text, badge, "muted", left)
+		return row
 	}
 	return withMeta(request, row, badge, "muted")
 }
@@ -459,9 +591,11 @@ func buildProjects(request BuildRequest) []Row {
 		}
 		return []Row{headerRow(styler.Paint("muted", message))}
 	}
-	// Tree mode: Phase-1 ProjectView headers, outliner body under each. Empty
-	// projects still list (header only) — header rollups come from ProjectView,
-	// not from body-row counting, so deferred-only projects stay visible.
+	// Tree mode (design 6b): the outline only shows what is LIVE. A project with
+	// work under it is a foldable heading with its outliner body beneath; every
+	// project with nothing to show folds together into ONE trailing row naming
+	// them, so a long tail of dormant projects costs a line rather than a
+	// screenful — and the section badge says how much of the list is moving.
 	query := request.query(ViewProjects)
 	sections := []Section{}
 	for _, group := range [][2]any{
@@ -479,24 +613,85 @@ func buildProjects(request BuildRequest) []Row {
 			continue
 		}
 		rows := []Row{}
+		dormant := []taskquery.ProjectView{}
 		for _, project := range members {
 			project := project
+			anchors := query.SortNodes(anchorsForProject(request, project))
+			if len(anchors) == 0 {
+				dormant = append(dormant, project)
+				continue
+			}
+			folded := project.ID != "" && request.Collapsed[project.ID]
+			marker := MarkExpanded
+			if folded {
+				marker = MarkCollapsed
+			}
 			text, slot := projectMeta(request, project)
-			rows = append(rows, withMeta(request,
-				Row{Text: projectRow(request, project), Project: &project}, text, slot))
-			for _, anchor := range query.SortNodes(anchorsForProject(request, project)) {
+			row := Row{
+				Text:    projectRow(request, project, marker),
+				Project: &project,
+				Node:    projectNode(request, project),
+			}
+			row.MarkerBegin = BandField
+			row.MarkerEnd = row.MarkerBegin + 2
+			rows = append(rows, withMeta(request, row, text, slot))
+			if folded {
+				continue
+			}
+			for _, anchor := range anchors {
+				// outlineBody, not taskBody: a task under a project heading is
+				// the same row the outline shows, state glyph included. Two
+				// views of one tree must not speak two vocabularies.
 				rows = appendSubtree(request, rows, anchor, "  ",
-					func(item store.Item) string { return priorityField(request, item) },
-					func(item store.Item) string { return taskBody(request, item) })
+					func(item store.Item) string { return urgencyBand(request, item) },
+					func(item store.Item) string { return outlineBody(request, item) })
 			}
 		}
+		if len(dormant) > 0 {
+			rows = append(rows, withMeta(request,
+				dormantProjectsRow(request, dormant), "no tasks", "muted"))
+		}
 		// The badge counts PROJECTS, not the task rows under them — a section of
-		// projects is a list of projects.
+		// projects is a list of projects — and names the live share when part of
+		// the list has gone quiet.
+		//
+		// Design 6b spells this "1 open of 4"; the shared meta column is ten
+		// cells, which that phrasing overruns and the frame then truncates. The
+		// ratio form says the same thing in eight, and matches the `next/open`
+		// ratio the project rows already carry one column below.
+		right := fmt.Sprintf("%d", len(members))
+		if len(dormant) > 0 {
+			right = fmt.Sprintf("%d/%d open", len(members)-len(dormant), len(members))
+		}
 		sections = append(sections, Section{
-			Label: label, Slot: "section", Right: fmt.Sprintf("%d", len(members)), Rows: rows,
+			Label: label, Slot: "section", Right: right, Rows: rows,
 		})
 	}
 	return renderSections(request, sections, dateMeta(request))
+}
+
+// dormantProjectsRow is design 6b's collapsed tail: every project with nothing
+// live under it, named on one line. It is deliberately NOT selectable — it
+// stands for several projects at once, so there is no single thing to act on;
+// it exists to prove those projects are still there.
+func dormantProjectsRow(request BuildRequest, projects []taskquery.ProjectView) Row {
+	styler := request.styler()
+	titles := make([]string, 0, len(projects))
+	for _, project := range projects {
+		titles = append(titles, project.Title)
+	}
+	head := strings.Repeat(" ", BandField) + styler.Paint("muted", MarkCollapsed)
+	return headerRow(head + styler.Paint("muted", strings.Join(titles, " · ")))
+}
+
+// projectNode is the tree node a project row folds. Selection and folding both
+// speak node identity, so a project heading carries the same node its tasks
+// hang off.
+func projectNode(request BuildRequest, project taskquery.ProjectView) *taskquery.Node {
+	if request.Queries == nil {
+		return nil
+	}
+	return request.Queries.Tree().NodesByLine[project.Line]
 }
 
 // projectMeta is a project row's value in the shared column: how much of it is
@@ -520,7 +715,11 @@ func anchorsForProject(request BuildRequest, project taskquery.ProjectView) []*t
 	if request.Queries == nil {
 		return nil
 	}
-	root := request.Queries.Tree().NodesByLine[project.Line]
+	return anchorsUnder(request, request.Queries.Tree().NodesByLine[project.Line])
+}
+
+// anchorsUnder is every anchor root sitting at or under a tree node.
+func anchorsUnder(request BuildRequest, root *taskquery.Node) []*taskquery.Node {
 	if root == nil {
 		return nil
 	}
@@ -562,7 +761,7 @@ func projectsFlat(request BuildRequest) []Row {
 		for _, item := range items {
 			item := item
 			rows = append(rows, Row{
-				Text: priorityField(request, item) + taskBody(request, item), Item: &item,
+				Text: urgencyBand(request, item) + taskBody(request, item), Item: &item,
 			})
 		}
 		rows = append(rows, headerRow(""))
@@ -570,13 +769,17 @@ func projectsFlat(request BuildRequest) []Row {
 	return withMetaRows(request, dropTrailingBlank(rows))
 }
 
-// projectRow is a project's own row: its name, and a warning when nothing in it
-// is actionable. The counts live in the shared meta column as `next/open` — see
-// projectMeta — so the row itself carries the one thing the column cannot: that
-// this project has stalled.
-func projectRow(request BuildRequest, project taskquery.ProjectView) string {
+// projectRow is a project's own row: a fold marker, its name, and a warning
+// when nothing in it is actionable. The counts live in the shared meta column
+// as `next/open` — see projectMeta — so the row itself carries the one thing
+// the column cannot: that this project has stalled.
+//
+// The row wears the blank priority head every task row wears, so the project's
+// chevron lands in the same screen column its children's markers do and the
+// section reads as one tree.
+func projectRow(request BuildRequest, project taskquery.ProjectView, marker string) string {
 	styler := request.styler()
-	head := styler.Paint("project", project.Title)
+	head := strings.Repeat(" ", BandField) + marker + styler.Paint("project", project.Title)
 	if project.Stuck {
 		head += styler.Paint("warning", "  ⚠ stuck")
 	}

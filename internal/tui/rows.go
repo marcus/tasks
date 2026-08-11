@@ -31,6 +31,13 @@ type Row struct {
 	MarkerBegin int
 	MarkerEnd   int
 
+	// ContextExcept is the one `@context` this row's context column suppresses:
+	// the name of the group the row already sits under. The Next view groups BY
+	// context, so repeating the group's own name on every row under it says
+	// nothing — while the row's OTHER contexts are exactly what that grouping
+	// hides, and they stay. Empty on every view that does not group by context.
+	ContextExcept string
+
 	// Chrome marks a row that is structure rather than content: a section rule
 	// or the blank between two blocks. Chrome is painted FLUSH to the pane's
 	// left edge, where a content row's cursor field sits, so a rule's label
