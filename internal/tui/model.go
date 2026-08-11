@@ -877,44 +877,56 @@ func (m *Model) CycleView(delta int) {
 	m.SwitchView(keys[((index+delta)%len(keys)+len(keys))%len(keys)])
 }
 
-// CollapseSelected folds the selected subtree. On an expandable, not-yet-folded
-// node it folds and keeps the cursor there; otherwise it climbs to the parent
-// task row, so a second press walks up the tree.
+// CollapseSelected folds the selected subtree — a task's or, in the outline, a
+// section's. On an expandable, not-yet-folded node it folds and keeps the
+// cursor there; otherwise it climbs to the parent row, so a second press walks
+// up the tree.
 func (m *Model) CollapseSelected() {
 	node := m.currentNode()
-	if node == nil || node.Item == nil {
+	if node == nil || node.ID == "" {
 		return
 	}
-	id := node.Item.ID
-	if id != "" && !m.collapsed[id] && len(m.visibleChildrenOf(node)) > 0 {
-		m.collapsed[id] = true
-		m.reselect(id)
+	if !m.collapsed[node.ID] && m.nodeFoldable(node) {
+		m.collapsed[node.ID] = true
+		m.reselect(node.ID)
 		return
 	}
 	m.jumpToParent(node)
 }
 
+// nodeFoldable reports whether folding the node would hide anything. The
+// outline renders EVERY child — sections included — so any child suffices
+// there; the other tree views render only visible task children.
+func (m *Model) nodeFoldable(node *taskquery.Node) bool {
+	if m.view == ViewOutline {
+		return len(node.Children) > 0
+	}
+	return len(m.visibleChildrenOf(node)) > 0
+}
+
 // ExpandSelected unfolds the selected node if it is folded.
 func (m *Model) ExpandSelected() {
 	node := m.currentNode()
-	if node == nil || node.Item == nil || !m.collapsed[node.Item.ID] {
+	if node == nil || node.ID == "" || !m.collapsed[node.ID] {
 		return
 	}
-	delete(m.collapsed, node.Item.ID)
-	m.reselect(node.Item.ID)
+	delete(m.collapsed, node.ID)
+	m.reselect(node.ID)
 }
 
-// CollapseAll folds every task node that has task children, across the whole
-// tree. The selection may have been on a now-hidden row, so rows are rebuilt
-// and the selection reconciled.
+// CollapseAll folds every foldable node, across the whole tree. In the outline
+// that includes sections, so H collapses the view down to its headings — the
+// overview an outliner's fold-all exists for. The selection may have been on a
+// now-hidden row, so rows are rebuilt and the selection reconciled.
 func (m *Model) CollapseAll() {
 	if m.read == nil {
 		return
 	}
+	outline := m.view == ViewOutline
 	var walk func(*taskquery.Node)
 	walk = func(node *taskquery.Node) {
-		if node.Task() && node.Item.ID != "" && hasTaskChildren(node, m.view == ViewOutline) {
-			m.collapsed[node.Item.ID] = true
+		if node.ID != "" && (node.Task() || outline) && hasTaskChildren(node, outline) {
+			m.collapsed[node.ID] = true
 		}
 		for _, child := range node.Children {
 			walk(child)
@@ -959,11 +971,15 @@ func (m *Model) visibleChildrenOf(node *taskquery.Node) []*taskquery.Node {
 
 func (m *Model) jumpToParent(node *taskquery.Node) {
 	parent := node.Parent
-	if parent == nil || !parent.Task() {
+	if parent == nil {
+		return
+	}
+	// Outside the outline a section has no row to land on.
+	if !parent.Task() && m.view != ViewOutline {
 		return
 	}
 	for index, row := range m.rows {
-		if row.Item != nil && row.Item.ID == parent.Item.ID {
+		if parent.ID != "" && row.ID() == parent.ID && row.Selectable() {
 			m.selectRow(index)
 			return
 		}
@@ -1151,6 +1167,20 @@ func (m *Model) SessionState() SessionState {
 			for _, context := range item.Contexts {
 				liveContexts[context] = true
 			}
+		}
+		// Sections fold too now, so their ids are as live as any task's — a
+		// collapsed project must stay collapsed across a restart.
+		var walk func(*taskquery.Node)
+		walk = func(node *taskquery.Node) {
+			if node.Section() && node.ID != "" {
+				live[node.ID] = true
+			}
+			for _, child := range node.Children {
+				walk(child)
+			}
+		}
+		for _, root := range m.read.Queries().Tree().Roots {
+			walk(root)
 		}
 	}
 	collapsed := []string{}

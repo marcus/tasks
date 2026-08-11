@@ -3,6 +3,7 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -82,23 +83,97 @@ func relativeDays(days int) string {
 	}
 }
 
-// outlineBody is the outline's row: the state word, then the shared task body.
-// The outline is the one view whose question is "what state is everything in",
-// so the state word earns a column of its own here and nowhere else.
+// outlineBody is the outline's row: the state dot, then the shared task body.
+//
+// The old outline spelled every state as a padded nine-cell word, which made
+// the view read as a state table rather than a list. The redesign speaks the
+// same one-cell dot vocabulary every other view uses — done, being done, not
+// started — and lets the row's PAINT carry the rest: a closed task's title is
+// muted, so a section full of history reads as quiet, the way OmniFocus and
+// Things grey out completed rows. The one state the dot cannot carry is
+// CANCELLED (it would be indistinguishable from DONE), so that row alone keeps
+// a small trailing word.
 func outlineBody(request BuildRequest, item store.Item) string {
-	slot := "muted"
+	styler := request.styler()
 	switch {
 	case isProposedState(item.State):
-		slot = "warning"
-	case item.State == "NEXT":
-		slot = "state_next"
-	case item.State == "WAITING":
-		slot = "state_waiting"
+		return styler.Paint("warning", DotOpen+" ") + taskBody(request, item)
+	case item.State == "CANCELLED":
+		return styler.Paint("muted", DotClosed+" "+item.Title) +
+			styler.Paint("muted", " · cancelled") +
+			contextTags(request, item, "") + badge(request, item)
 	case !isOpenState(item.State):
-		slot = "state_done"
+		return styler.Paint("state_done", DotClosed+" ") + styler.Paint("muted", item.Title) +
+			contextTags(request, item, "") + badge(request, item)
+	default:
+		return stateDot(request, item) + taskBody(request, item)
 	}
-	styler := request.styler()
-	return styler.Paint(slot, padRight(item.State, 9)) + " " + taskBody(request, item)
+}
+
+// -- calendar sections -------------------------------------------------------
+
+// sectionDatesPattern matches a hard-landscape date range embedded in a section
+// title: `Europe trip <2026-07-02>--<2026-07-14>`, with any run of padding
+// before the stamps and an optional second date.
+var sectionDatesPattern = regexp.MustCompile(
+	`^(.*?)\s*<(\d{4}-\d{2}-\d{2})>(?:\s*--\s*<(\d{4}-\d{2}-\d{2})>)?\s*$`)
+
+// sectionDateRange splits a section title into its clean text and the ISO
+// stamps it carries, reporting whether a range was present at all.
+func sectionDateRange(title string) (clean, start, end string, found bool) {
+	match := sectionDatesPattern.FindStringSubmatch(title)
+	if match == nil {
+		return title, "", "", false
+	}
+	return strings.TrimSpace(match[1]), match[2], match[3], true
+}
+
+// sectionDatesTitle is the inverse: a clean title plus stamps, spelled the one
+// canonical way, so an edited calendar entry loses the ad-hoc padding runs the
+// raw file accumulated.
+func sectionDatesTitle(clean, start, end string) string {
+	if start == "" {
+		return clean
+	}
+	out := clean + " <" + start + ">"
+	if end != "" {
+		out += "--<" + end + ">"
+	}
+	return out
+}
+
+// humanDateRange renders a stored range the way a person says it: `2–14 jul`,
+// `28 jun – 3 jul`, a bare `14 jul` for a single day, with the year appended
+// only when it is not this year.
+func humanDateRange(request BuildRequest, start, end string) string {
+	from, ok := temporal.ParseDate(start)
+	if !ok {
+		return ""
+	}
+	year := 0
+	if request.Queries != nil {
+		year = request.Queries.Today().Year
+	}
+	day := func(date temporal.Date) string {
+		return fmt.Sprintf("%d %s", date.Day, strings.ToLower(date.Month.String()[:3]))
+	}
+	suffix := ""
+	if from.Year != year {
+		suffix = fmt.Sprintf(" %d", from.Year)
+	}
+	to, hasEnd := temporal.ParseDate(end)
+	switch {
+	case !hasEnd || to == from:
+		return day(from) + suffix
+	case from.Year == to.Year && from.Month == to.Month:
+		return fmt.Sprintf("%d–%d %s", from.Day, to.Day,
+			strings.ToLower(from.Month.String()[:3])) + suffix
+	default:
+		if to.Year != from.Year {
+			suffix = fmt.Sprintf(" %d", to.Year)
+		}
+		return day(from) + " – " + day(to) + suffix
+	}
 }
 
 func shortDue(request BuildRequest, item store.Item) string {

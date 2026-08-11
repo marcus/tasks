@@ -16,6 +16,7 @@ const (
 	QuickFormDeferUntil     QuickFormKind = "defer_until"
 	QuickFormProjectRename  QuickFormKind = "project_rename"
 	QuickFormProjectCapture QuickFormKind = "project_capture"
+	QuickFormSectionDates   QuickFormKind = "section_dates"
 	QuickFormDelegate       QuickFormKind = "delegate"
 	QuickFormWorkRef        QuickFormKind = "work_ref"
 )

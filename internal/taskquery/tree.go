@@ -20,9 +20,13 @@ import (
 // `parent` pointer — no star counting, no block inference — so a whole class of
 // boundary bugs is structurally absent.
 type Node struct {
-	Title    string
-	Line     int
-	Level    int
+	Title string
+	Line  int
+	Level int
+	// ID is the record's stable 8-hex id — a task's or a section's. Sections
+	// carry no Item, so the id lives on the node itself; it is what the
+	// outliner's fold state and selection follow for section rows.
+	ID       string
 	Item     *store.Item // nil for a section
 	Body     []string
 	Children []*Node
@@ -88,6 +92,7 @@ func BuildTree(records []record.Record, items []store.Item) Tree {
 		}
 		node := &Node{Title: title, Line: parsed.Line, Level: 1, Item: item, Body: body, Children: []*Node{}}
 		if id := stringOf(parsed, "id"); id != "" {
+			node.ID = id
 			byID[id] = node
 		}
 		if parentID := stringOf(parsed, "parent"); parentID != "" {

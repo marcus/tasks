@@ -112,7 +112,7 @@ func (m *Model) click(layout ScreenLayout, event tea.Mouse) bool {
 		event.X < markerOrigin+row.MarkerEnd {
 		m.blurPrompt()
 		m.selectRow(index)
-		if row.Item != nil && m.collapsed[row.Item.ID] {
+		if m.collapsed[row.ID()] {
 			m.ExpandSelected()
 		} else {
 			m.CollapseSelected()
@@ -120,7 +120,14 @@ func (m *Model) click(layout ScreenLayout, event tea.Mouse) bool {
 		return true
 	}
 	m.blurPrompt()
+	// A click on the row that is ALREADY selected opens (or closes) its
+	// details — the second half of the "click again for details" contract the
+	// registry has advertised. One click aims the cursor; the next one asks.
+	already := m.selected == index && m.selectedID == row.ID()
 	m.selectRow(index)
+	if already {
+		m.OpenDetail()
+	}
 	return true
 }
 

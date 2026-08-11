@@ -150,11 +150,13 @@ func TestSavedStateDropsCollapsedIDsTheStoreNoLongerHolds(t *testing.T) {
 	state := harness.model.SessionState()
 	for _, id := range state.Collapsed {
 		if id == "deadbeef" {
-			t.Fatalf("a collapsed id for a task the store never had survived: %v", state.Collapsed)
+			t.Fatalf("a collapsed id for a record the store never had survived: %v", state.Collapsed)
 		}
 	}
-	if len(state.Collapsed) != 1 || state.Collapsed[0] != fixFlight {
-		t.Fatalf("collapsed set %v; only live TASK ids belong there", state.Collapsed)
+	// Sections fold too, so a live section id (fixWork) survives beside a live
+	// task id (fixFlight); only the id the store never held is dropped.
+	if len(state.Collapsed) != 2 || state.Collapsed[0] != fixWork || state.Collapsed[1] != fixFlight {
+		t.Fatalf("collapsed set %v; live task AND section ids belong there", state.Collapsed)
 	}
 }
 

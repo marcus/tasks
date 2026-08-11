@@ -1,24 +1,24 @@
   agenda   next   quadrants   projects   outline   inbox 1                 tue 14 jul · 6 open  
                                                                                                 
-  @com┌─ keyboard shortcuts ────────────────────────────────────────────────────────────┐    2  
-  ❯ A │ in the task list                                                                │d ago  
-    B │ ↑ / k         select previous task                                              │       
-      │ ↓ / j         select next task                                                  │       
-  @hom│ ←             previous view                                                     │    1  
-      │ →             next view                                                         │       
-      │ 1-6           jump to view                                                      │       
-      │ alt-↑ / alt-k Move up                                                           │       
-      │ alt-↓ / alt-j Move down                                                         │       
-      │ >             Indent                                                            │       
-      │ <             Outdent                                                           │       
-      │ h             collapse subtree (again: to parent)                               │       
-      │ l             expand subtree                                                    │       
-      │ H             collapse all subtrees                                             │       
-      │ L             expand all subtrees                                               │       
-      │ return        open / close task details                                         │       
-      │ c             complete selected task                                            │       
-      │ ── 16/103 · ↑↓ scroll ──                                                        │       
-      └─────────────────────────────────────────────────────────────────────────────────┘       
+  ┌─ keyboard shortcuts ─────────────────────────────────────────────────────────────────────┐  
+  │ in the task list                                                                         │  
+  │ ↑ / k         select previous task                                                       │  
+  │ ↓ / j         select next task                                                           │  
+  │ ←             previous view                                                              │  
+  │ →             next view                                                                  │  
+  │ 1-6           jump to view                                                               │  
+  │ alt-↑ / alt-k Move up                                                                    │  
+  │ alt-↓ / alt-j Move down                                                                  │  
+  │ >             Indent                                                                     │  
+  │ <             Outdent                                                                    │  
+  │ h             collapse subtree (again: to parent)                                        │  
+  │ l             expand subtree                                                             │  
+  │ H             collapse all subtrees                                                      │  
+  │ L             expand all subtrees                                                        │  
+  │ return        open / close task details                                                  │  
+  │ c             complete selected task                                                     │  
+  │ ── 16/103 · ↑↓ scroll ──                                                                 │  
+  └──────────────────────────────────────────────────────────────────────────────────────────┘  
                                                                                                 
   ❯ tab to ask the agent — reschedule, capture, edit anything…                                  
   j/k move   1-6 views   h/l fold   enter details   / search   q quit   ? all keys              

@@ -103,6 +103,37 @@ func (q *Queries) ProjectView(id string) (ProjectView, bool) {
 	return ProjectView{}, false
 }
 
+// SectionView is a rolled-up view of ANY live section by id — not just the
+// projects and areas the Projects listing admits. The outline renders every
+// section as a selectable row, and the row's actions (rename, capture,
+// complete, archive) all take a bare section id, so the view exists for
+// sections the listing would exclude: Inbox, the Projects heading, nested
+// sub-sections, and areas with no open work.
+//
+// Kind is resolved the same way the listing resolves it — "project" for a
+// child of the Projects root, "area" for any other top-level section — and
+// falls back to "list" for everything nested deeper.
+func (q *Queries) SectionView(id string) (ProjectView, bool) {
+	if id == "" {
+		return ProjectView{}, false
+	}
+	for _, section := range q.liveSections() {
+		if stringOf(section, "id") != id {
+			continue
+		}
+		root, hasRoot := q.projectsRoot()
+		kind := "list"
+		switch {
+		case hasRoot && stringOf(section, "parent") == stringOf(root, "id"):
+			kind = "project"
+		case stringOf(section, "parent") == "":
+			kind = "area"
+		}
+		return q.buildProjectView(section, kind), true
+	}
+	return ProjectView{}, false
+}
+
 // liveSections is the live file's section records in file order.
 func (q *Queries) liveSections() []record.Record {
 	if q.sections != nil {

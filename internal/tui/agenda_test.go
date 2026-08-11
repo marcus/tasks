@@ -177,10 +177,17 @@ func agendaDump(rows []Row) string {
 	return strings.Join(out, "\n")
 }
 
-// headingTally is the trailing number a heading row carries.
+// headingTally is the trailing number a heading row carries. Outline headings
+// are selectable rows that lead with a fold marker; the marker is not part of
+// the label.
 func headingTally(rows []Row, label string) string {
 	for _, row := range rows {
-		if row.Item == nil && strings.HasPrefix(strings.TrimSpace(row.Text), label+" ") {
+		if row.Item != nil {
+			continue
+		}
+		text := strings.TrimSpace(row.Text)
+		text = strings.TrimPrefix(strings.TrimPrefix(text, MarkExpanded), MarkCollapsed)
+		if strings.HasPrefix(text, label+" ") {
 			fields := strings.Fields(row.Text)
 			return fields[len(fields)-1]
 		}

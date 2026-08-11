@@ -165,3 +165,53 @@ func TestMouseClickAcceptsAVisibleLinkPickerRow(t *testing.T) {
 		t.Fatalf("consumed=%v opened=%v", consumed, opener.opened)
 	}
 }
+
+func TestClickingASectionChevronFoldsTheSectionInTheOutline(t *testing.T) {
+	harness := mouseHarness(t, "")
+	harness.model.SwitchView(ViewOutline)
+
+	index, row := -1, Row{}
+	for candidate, current := range harness.model.Rows() {
+		if current.Project != nil && current.Project.Title == "Work" && current.HasMarker() {
+			index, row = candidate, current
+			break
+		}
+	}
+	if index < 0 {
+		t.Fatalf("no Work section row carries a fold marker:\n%s", rowTexts(harness))
+	}
+	layout := harness.model.Layout()
+	bodyBegin, _ := layout.BodyRows()
+	listBegin, _ := layout.ListCols()
+	column := listBegin + CursorField + row.MarkerBegin
+
+	harness.model.HandleMouse(tea.MouseClickMsg{X: column, Y: bodyBegin + index, Button: tea.MouseLeft})
+	if !harness.model.collapsed[fixWork] {
+		t.Fatal("clicking the section chevron did not fold the section")
+	}
+	harness.model.HandleMouse(tea.MouseClickMsg{X: column, Y: bodyBegin + index, Button: tea.MouseLeft})
+	if harness.model.collapsed[fixWork] {
+		t.Fatal("clicking the section chevron again did not unfold the section")
+	}
+}
+
+func TestClickingTheSelectedRowOpensItsDetails(t *testing.T) {
+	harness := mouseHarness(t, "")
+	harness.model.SwitchView(ViewOutline)
+	harness.selectRowByID(fixFlight)
+
+	index := harness.model.Selected()
+	layout := harness.model.Layout()
+	bodyBegin, _ := layout.BodyRows()
+	// Aim past the fold marker so the click is a plain row click.
+	click := tea.MouseClickMsg{X: 20, Y: bodyBegin + index, Button: tea.MouseLeft}
+
+	harness.model.HandleMouse(click)
+	if harness.model.Panel() == nil {
+		t.Fatal("clicking the already-selected row did not open its details")
+	}
+	harness.model.HandleMouse(click)
+	if harness.model.Panel() != nil {
+		t.Fatal("clicking a third time did not close the details again")
+	}
+}

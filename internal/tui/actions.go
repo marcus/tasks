@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/marcus/tasks/internal/application"
@@ -515,10 +516,11 @@ func (m *Model) BumpPriority(delta int) {
 
 // OpenDatePopup is `d`: reschedule the task's own date — the deadline when it
 // has one, otherwise the available-from date, and a new deadline when it has
-// neither.
+// neither. On a section row it edits the section's hard-landscape date range
+// instead — see openSectionDatesPopup.
 func (m *Model) OpenDatePopup() {
-	if m.CurrentProject() != nil {
-		m.needsTask()
+	if project := m.CurrentProject(); project != nil {
+		m.openSectionDatesPopup(project)
 		return
 	}
 	item := m.CurrentItem()
@@ -642,6 +644,117 @@ func (m *Model) OpenRecurPopup() {
 	}))
 	_ = m.SetMode(ModeForm)
 }
+
+// openSectionDatesPopup is `d` on a section row: edit the `<start>--<end>`
+// hard-landscape range a calendar entry carries in its title.
+//
+// It opens for a section that already has a range, and for a child of a
+// section whose title mentions "calendar" (so a fresh entry can gain one). Any
+// other section refuses with a pointer rather than pretending sections have
+// deadlines. The write goes through RenameProject — the dates LIVE in the
+// title — and the rebuilt title is the canonical spelling, so an edit also
+// normalizes the ad-hoc padding the raw file may carry.
+func (m *Model) openSectionDatesPopup(project *taskquery.ProjectView) {
+	clean, start, end, hasDates := sectionDateRange(project.Title)
+	if !hasDates && !m.calendarSection(project) {
+		m.Flash("dates live on tasks and calendar entries — select one of those")
+		return
+	}
+	initial := ""
+	if hasDates {
+		initial = start
+		if end != "" {
+			initial += " -- " + end
+		}
+	}
+	id, title := project.ID, clean
+	m.SetForm(NewQuickForm(QuickFormOptions{
+		Kind: QuickFormSectionDates, Title: "edit dates · " + title, Prompt: "when",
+		Hint:     "jul 2 -- jul 14 · fri · 2026-07-02 · off clears · esc cancels",
+		MinWidth: 56, ReturnMode: ReturnList, TargetID: id, Initial: initial,
+		Submit: func(raw string) string {
+			from, to, fail := m.parseSectionDates(raw)
+			if fail != "" {
+				return fail
+			}
+			result := m.app.RenameProject(id, sectionDatesTitle(title, from, to), m.operation())
+			if result.Invalid() {
+				return "title cannot be blank"
+			}
+			if !(result.OK() || result.NoChange()) {
+				return "section no longer exists"
+			}
+			m.formSuccess(func() {
+				if from == "" {
+					m.Flash("dates cleared: " + title)
+				} else {
+					label := from
+					if to != "" {
+						label += " → " + to
+					}
+					m.Flash("→ " + title + ": " + label)
+				}
+				m.Refresh()
+				m.reselect(id)
+			})
+			return ""
+		},
+	}))
+	_ = m.SetMode(ModeForm)
+}
+
+// calendarSection reports a section that lives under a calendar heading, which
+// is where a date range belongs even before the entry has one.
+func (m *Model) calendarSection(project *taskquery.ProjectView) bool {
+	if !project.HasParentID || m.read == nil {
+		return false
+	}
+	parent, ok := m.read.Queries().SectionView(project.ParentID)
+	if !ok {
+		return false
+	}
+	return strings.Contains(strings.ToLower(parent.Title), "calendar")
+}
+
+// parseSectionDates reads the range form's grammar: one date expression, or two
+// separated by `--`, in the same vocabulary every other date field speaks.
+// Empty and `off` clear the range.
+func (m *Model) parseSectionDates(raw string) (start, end, fail string) {
+	text := strings.TrimSpace(raw)
+	if text == "" || strings.EqualFold(text, "off") {
+		return "", "", ""
+	}
+	parts := sectionDatesSplit.Split(text, -1)
+	if len(parts) > 2 {
+		return "", "", "one date, or two separated by --"
+	}
+	dates := []string{}
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		value, err := ParseTemporal(part, m.currentDate(), m.temporalContext())
+		if err != nil {
+			return "", "", "can't parse “" + part + "”"
+		}
+		dates = append(dates, value.(*temporal.Value).Date.ISO())
+	}
+	if len(dates) == 0 {
+		return "", "", ""
+	}
+	start = dates[0]
+	if len(dates) > 1 {
+		end = dates[1]
+		if end < start {
+			return "", "", "the range ends before it starts"
+		}
+	}
+	return start, end, ""
+}
+
+// sectionDatesSplit separates the two halves of a typed range.
+var sectionDatesSplit = regexp.MustCompile(`\s*(?:--|–|—)\s*`)
 
 // RenameProject is `e` on a project header.
 func (m *Model) RenameProject() {

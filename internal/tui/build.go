@@ -296,22 +296,30 @@ func buildOutline(request BuildRequest) []Row {
 	return withMetaRows(request, dropTrailingBlank(rows))
 }
 
-// appendOutlineNode walks one node. A SECTION becomes a section rule carrying
-// the count of task rows beneath it — which is why its children are built
-// first: the rule cannot state a count it has not finished computing.
+// appendOutlineNode walks one node.
+//
+// The redesign's central move: a SECTION is a selectable ROW, not a chrome
+// rule. Every section — Inbox, a project, a calendar entry — carries its own
+// fold marker, its rolled-up ProjectView (so rename, capture, complete and
+// archive all work from the outline), and a mouse-hittable chevron. The rule
+// line survives as decoration painted INSIDE the row, running from the label to
+// the shared meta column where the section's task count sits, so the outline
+// keeps the design system's section vocabulary while gaining OmniFocus-style
+// direct manipulation of the sections themselves.
 func appendOutlineNode(request BuildRequest, rows []Row, node *taskquery.Node, depth int) []Row {
 	indent := strings.Repeat("  ", depth)
 	if node.Section() {
-		body := []Row{}
-		for _, child := range node.Children {
-			body = appendOutlineNode(request, body, child, depth+1)
-		}
 		if len(rows) > 0 {
 			rows = append(rows, chromeRow(""))
 		}
-		rows = append(rows, sectionRow(request, indent+node.Title, "section",
-			fmt.Sprintf("%d", countSelectable(body)), "muted"))
-		return append(rows, body...)
+		rows = append(rows, outlineSectionRow(request, node, depth))
+		if node.ID != "" && request.Collapsed[node.ID] && len(node.Children) > 0 {
+			return rows
+		}
+		for _, child := range node.Children {
+			rows = appendOutlineNode(request, rows, child, depth+1)
+		}
+		return rows
 	}
 	if isProposedState(node.Item.State) {
 		for _, child := range node.Children {
@@ -319,7 +327,7 @@ func appendOutlineNode(request BuildRequest, rows []Row, node *taskquery.Node, d
 		}
 		return rows
 	}
-	folded := node.Item.ID != "" && request.Collapsed[node.Item.ID] && len(node.Children) > 0
+	folded := node.ID != "" && request.Collapsed[node.ID] && len(node.Children) > 0
 	marker := MarkLeaf
 	switch {
 	case len(node.Children) == 0:
@@ -350,6 +358,77 @@ func appendOutlineNode(request BuildRequest, rows []Row, node *taskquery.Node, d
 		rows = appendOutlineNode(request, rows, child, depth+1)
 	}
 	return rows
+}
+
+// outlineSectionRow builds one selectable section row: chevron, title, an
+// inline date range for a calendar entry, the rule fill, and the task count in
+// the shared meta column.
+//
+// The row wears the same three-cell head every task row wears (a section has
+// no priority letter, so its head is blank), which is what lines a section's
+// chevron up with its child rows' markers one indent deeper — the whole view
+// reads as ONE tree rather than as rules with lists between them.
+func outlineSectionRow(request BuildRequest, node *taskquery.Node, depth int) Row {
+	styler := request.styler()
+	folded := node.ID != "" && request.Collapsed[node.ID] && len(node.Children) > 0
+	marker := MarkLeaf
+	switch {
+	case len(node.Children) == 0:
+	case folded:
+		marker = MarkCollapsed
+	default:
+		marker = MarkExpanded
+	}
+	title, start, end, hasDates := sectionDateRange(node.Title)
+	slot := "section"
+	if depth > 0 {
+		slot = "project"
+	}
+	head := strings.Repeat(" ", PriorityField) + strings.Repeat("  ", depth)
+	text := head + marker + styler.Paint(slot, title)
+	if hasDates {
+		if human := humanDateRange(request, start, end); human != "" {
+			text += "  " + styler.Paint("muted", human)
+		}
+	}
+	row := Row{Text: text, Node: node}
+	if request.Queries != nil {
+		if view, ok := request.Queries.SectionView(node.ID); ok {
+			held := view
+			row.Project = &held
+		}
+	}
+	if len(node.Children) > 0 {
+		row.MarkerBegin = styler.Width(head)
+		row.MarkerEnd = row.MarkerBegin + 2
+	}
+	// The rule fill, stopping one cell short of the shared meta column. It is
+	// painted only when the frame is wide enough for that column at all —
+	// narrow frames degrade to the bare label, exactly as section rules do.
+	if left, ok := metaColumns(request, 0); ok {
+		if rule := left - styler.Width(row.Text) - 1; rule > 0 {
+			row.Text += " " + styler.Paint("outline_thread", strings.Repeat("─", rule))
+		}
+	}
+	badge := ""
+	if count := outlineTaskCount(node); count > 0 {
+		badge = fmt.Sprintf("%d", count)
+	}
+	return withMeta(request, row, badge, "muted")
+}
+
+// outlineTaskCount is the section badge: every non-proposed task anywhere
+// beneath, folded or not. It counts TASKS rather than rows so collapsing a
+// subtree cannot make a section look emptier than it is.
+func outlineTaskCount(node *taskquery.Node) int {
+	total := 0
+	for _, child := range node.Children {
+		if child.Task() && !isProposedState(child.Item.State) {
+			total++
+		}
+		total += outlineTaskCount(child)
+	}
+	return total
 }
 
 func outlineDescendantCount(node *taskquery.Node) int {

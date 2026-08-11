@@ -165,20 +165,66 @@ func TestOutlineShowsEveryLiveRecordIncludingClosedOnes(t *testing.T) {
 	harness := newModelHarness(t, harnessOptions{})
 	harness.model.SwitchView(ViewOutline)
 	text := rowTexts(harness)
-	for _, want := range []string{"Inbox", "Work", "Home", "Old finished thing", "DONE"} {
+	// Closed tasks speak the shared dot vocabulary now, not a state word: the
+	// DONE row is the closed dot with its title kept on the row.
+	for _, want := range []string{"Inbox", "Work", "Home", DotClosed + " Old finished thing"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("outline is missing %q:\n%s", want, text)
 		}
 	}
 }
 
-func TestOutlineSectionRowsAreNotSelectable(t *testing.T) {
+func TestOutlineSectionRowsAreSelectableAndFoldable(t *testing.T) {
 	harness := newModelHarness(t, harnessOptions{})
 	harness.model.SwitchView(ViewOutline)
+	found := false
 	for _, row := range harness.model.Rows() {
-		if strings.TrimSpace(row.Text) == "Work" && row.Selectable() {
-			t.Fatal("a section row is selectable in the outline")
+		if row.Project == nil || row.Project.Title != "Work" {
+			continue
 		}
+		found = true
+		if !row.Selectable() {
+			t.Fatal("the Work section row is not selectable in the outline")
+		}
+		if !row.HasMarker() {
+			t.Fatal("the Work section row carries no fold marker")
+		}
+		if row.Project.ID != fixWork {
+			t.Fatalf("the Work section row resolves to %q, want %q", row.Project.ID, fixWork)
+		}
+	}
+	if !found {
+		t.Fatalf("no selectable Work section row in the outline:\n%s", rowTexts(harness))
+	}
+}
+
+func TestOutlineFoldsASectionAndKeepsItsBadge(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.SwitchView(ViewOutline)
+	harness.model.collapsed[fixWork] = true
+	harness.model.RefreshRows()
+	text := rowTexts(harness)
+	if strings.Contains(text, "Book flight in Concur") {
+		t.Fatalf("a folded section still shows its tasks:\n%s", text)
+	}
+	if tally := headingTally(harness.model.Rows(), "Work"); tally != "5" {
+		t.Fatalf("folded Work badge %q, want the full task count 5:\n%s", tally, text)
+	}
+}
+
+func TestOutlineCalendarSectionShowsItsRangeInline(t *testing.T) {
+	live := `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Calendar / Hard Landscape"}
+{"type":"section","id":"aaaa0002","parent":"aaaa0001","title":"Europe trip                <2026-07-02>--<2026-07-14>"}
+`
+	harness := newModelHarness(t, harnessOptions{live: live})
+	harness.model.SwitchView(ViewOutline)
+	text := rowTexts(harness)
+	if strings.Contains(text, "<2026-07-02>") {
+		t.Fatalf("the raw date stamps leaked into the row:\n%s", text)
+	}
+	if !strings.Contains(text, "Europe trip") || !strings.Contains(text, "2–14 jul") {
+		t.Fatalf("the calendar entry lost its title or its human range:\n%s", text)
 	}
 }
 
@@ -640,5 +686,102 @@ func TestNumberKeysJumpToTheirTab(t *testing.T) {
 		if harness.model.view != tab.Key {
 			t.Fatalf("key %d selected %q, want %q", index+1, harness.model.view, tab.Key)
 		}
+	}
+}
+
+func TestOutlineFoldKeysWorkOnASectionRow(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.SwitchView(ViewOutline)
+	harness.selectRowByID(fixWork)
+
+	harness.press('h')
+	if !harness.model.collapsed[fixWork] {
+		t.Fatal("h did not fold the selected section")
+	}
+	if strings.Contains(rowTexts(harness), "Book flight in Concur") {
+		t.Fatalf("the folded section still shows its tasks:\n%s", rowTexts(harness))
+	}
+	harness.press('l')
+	if harness.model.collapsed[fixWork] {
+		t.Fatal("l did not unfold the selected section")
+	}
+}
+
+func TestOutlineSecondFoldPressClimbsToTheParentSection(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.SwitchView(ViewOutline)
+	harness.selectRowByID(fixFlight)
+
+	// The flight is a leaf, so h climbs — and in the outline the parent row it
+	// climbs to is the Work SECTION, which is now a row a cursor can land on.
+	harness.press('h')
+	if harness.model.SelectedID() != fixWork {
+		t.Fatalf("h on a leaf selected %q, want the parent section %q",
+			harness.model.SelectedID(), fixWork)
+	}
+}
+
+func TestOutlineArchivesASelectedSection(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.SwitchView(ViewOutline)
+	harness.selectRowByID(fixHome)
+
+	harness.press('x')
+	if harness.model.modal == nil || harness.model.modal.Kind() != ModalProjectArchiveConfirm {
+		t.Fatalf("x on a section row did not open the archive-project confirmation")
+	}
+	harness.press('y')
+	if strings.Contains(rowTexts(harness), "Water the plants") {
+		t.Fatalf("the archived section's tasks are still listed:\n%s", rowTexts(harness))
+	}
+}
+
+func TestOutlineRenamesASelectedSection(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.SwitchView(ViewOutline)
+	harness.selectRowByID(fixHome)
+
+	harness.press('e')
+	if harness.model.form == nil || harness.model.form.Kind != QuickFormProjectRename {
+		t.Fatal("e on a section row did not open the rename form")
+	}
+}
+
+func TestOutlineEditsACalendarSectionsDates(t *testing.T) {
+	live := `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Calendar / Hard Landscape"}
+{"type":"section","id":"aaaa0002","parent":"aaaa0001","title":"Europe trip                <2026-07-02>--<2026-07-14>"}
+`
+	harness := newModelHarness(t, harnessOptions{live: live})
+	harness.model.SwitchView(ViewOutline)
+	harness.selectRowByID("aaaa0002")
+
+	harness.press('d')
+	if harness.model.form == nil || harness.model.form.Kind != QuickFormSectionDates {
+		t.Fatal("d on a calendar section did not open the dates form")
+	}
+	// Submitting the pre-filled range unchanged rewrites the title in the ONE
+	// canonical spelling — the ad-hoc padding run the raw file carried is gone.
+	harness.pressTypeEnter()
+	view, ok := harness.model.read.Queries().SectionView("aaaa0002")
+	if !ok {
+		t.Fatal("the calendar section vanished")
+	}
+	if view.Title != "Europe trip <2026-07-02>--<2026-07-14>" {
+		t.Fatalf("normalized title %q", view.Title)
+	}
+}
+
+func TestOutlineRefusesDatesOnAnOrdinarySection(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.SwitchView(ViewOutline)
+	harness.selectRowByID(fixWork)
+
+	harness.press('d')
+	if harness.model.form != nil {
+		t.Fatal("d on an ordinary section opened a dates form")
+	}
+	if !strings.Contains(harness.model.FlashMessage(), "calendar") {
+		t.Fatalf("the refusal did not say where dates live: %q", harness.model.FlashMessage())
 	}
 }

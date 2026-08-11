@@ -1,17 +1,17 @@
   agenda   next   quadrants   projects   outline   inbox 1 tue 14 jul · 6 open  
                                                                                 
-  Inbox ───────────────────────────────────────────────────────────          1  
-           INBOX     random thought about the garden                            
+       ▾ Inbox ────────────────────────────────────────────────────          1  
+           ○ random thought about the garden                                    
                                                                                 
-  Work ────────────────────────────────────────────────────────────          5  
-  ❯ A      NEXT      Book flight in Concur  @computer                  12d ago  
-    B      NEXT      Review PR backlog  @computer                               
-    A      TODO      Midyear self-eval  @computer                       ~07-03  
-           WAITING   Travel desk reply  @email                                  
-    C      DONE      Old finished thing  @computer                              
+       ▾ Work ─────────────────────────────────────────────────────          5  
+  ❯ A      ■ Book flight in Concur  @computer                          12d ago  
+    B      ■ Review PR backlog  @computer                                       
+    A      ○ Midyear self-eval  @computer                               ~07-03  
+           ○ Travel desk reply  @email                                          
+    C      ● Old finished thing  @computer                                      
                                                                                 
-  Home ────────────────────────────────────────────────────────────          1  
-           NEXT      Water the plants  @home                                    
+       ▾ Home ─────────────────────────────────────────────────────          1  
+           ■ Water the plants  @home                                            
                                                                                 
                                                                                 
                                                                                 

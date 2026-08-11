@@ -71,12 +71,16 @@ func TestEveryViewOpensEachBlockWithARuleThatCountsIt(t *testing.T) {
 			}
 		}
 		for _, row := range rows {
+			// A rule is any non-task row carrying the rule glyph. In the outline
+			// the rule is a SELECTABLE section row that leads with a fold marker,
+			// so rule-ness is checked before selectability and the marker is
+			// skipped when reading the label.
 			switch {
+			case row.Item == nil && strings.Contains(row.Text, "─"):
+				check()
+				label, counted = ruleLabelWord(row.Text), 0
 			case row.Item != nil || row.Project != nil:
 				counted++
-			case strings.Contains(row.Text, "─"):
-				check()
-				label, counted = strings.Fields(row.Text)[0], 0
 			}
 		}
 		check()
@@ -84,6 +88,16 @@ func TestEveryViewOpensEachBlockWithARuleThatCountsIt(t *testing.T) {
 			t.Fatalf("%s emitted no section rule at all:\n%s", view, agendaDump(rows))
 		}
 	}
+}
+
+// ruleLabelWord is a rule's first label word, past any fold marker.
+func ruleLabelWord(text string) string {
+	for _, field := range strings.Fields(text) {
+		if field != strings.TrimSpace(MarkExpanded) && field != strings.TrimSpace(MarkCollapsed) {
+			return field
+		}
+	}
+	return ""
 }
 
 func TestEveryTaskRowStartsItsTitleOnTheSameColumn(t *testing.T) {

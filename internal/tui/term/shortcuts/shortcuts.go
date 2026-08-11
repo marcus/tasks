@@ -200,7 +200,7 @@ var Registry = []Entry{
 	entry(Entry{Sequences: []string{"\x1b[6~"}, DisplayKey: "pgdn", Description: "scroll agent response down", Contexts: []Context{List}, Handler: "resp_down"}),
 	entry(Entry{Sequences: []string{"\x1b"}, DisplayKey: "esc", Description: "dismiss response / close task details", Contexts: []Context{List}, Handler: "dismiss_or_cancel"}),
 	entry(Entry{Sequences: []string{"?"}, DisplayKey: "?", Description: "keyboard shortcuts", FooterLabel: "Help", FooterPriority: 3, Contexts: []Context{List}, Handler: "open_help", Palette: PaletteAlways}),
-	entry(Entry{Sequences: nil, DisplayKey: "click", Description: "select task · click again for details · click tab to switch view", Contexts: []Context{List}, DocOnly: true}),
+	entry(Entry{Sequences: nil, DisplayKey: "click", Description: "select row · click again for details · click ▸/▾ to fold · click tab to switch view", Contexts: []Context{List}, DocOnly: true}),
 	entry(Entry{Sequences: nil, DisplayKey: "wheel", Description: "scroll list / panel / modal / agent response under the pointer", Contexts: []Context{List}, DocOnly: true}),
 	entry(Entry{Sequences: []string{"q"}, DisplayKey: "q", Description: "quit (confirms unsaved draft)", FooterLabel: "Quit", FooterPriority: 3, Contexts: []Context{List}, Handler: "quit", Availability: "quit_available?", Palette: PaletteAlways}),
 
