@@ -147,3 +147,21 @@ func TestWheelScrollsThePanelWhenThePointerIsOverIt(t *testing.T) {
 		t.Fatal("the wheel over the panel also moved the list selection")
 	}
 }
+
+func TestMouseClickAcceptsAVisibleLinkPickerRow(t *testing.T) {
+	opener := &fakeOpener{}
+	harness := newModelHarness(t, harnessOptions{live: multiLinkedFixture, opener: opener,
+		paths: func(paths *config.Paths) { paths.Mouse = true }})
+	harness.model.SwitchView(ViewNext)
+	harness.selectRowByID(fixFlight)
+	harness.pressKeys("o")
+	box := harness.model.Overlay()
+	if box == nil {
+		t.Fatal("link picker has no overlay")
+	}
+	// ChoicePicker rows begin at offset 3; offset 4 is the second visible link.
+	consumed := harness.model.HandleMouse(tea.MouseClickMsg{X: box.Col + 3, Y: box.Row + 4, Button: tea.MouseLeft})
+	if !consumed || len(opener.opened) != 1 || opener.opened[0] != "https://example.com/body" {
+		t.Fatalf("consumed=%v opened=%v", consumed, opener.opened)
+	}
+}

@@ -342,7 +342,10 @@ func (p *ChoicePicker) Popup(styler Styler, maxWidth, maxHeight int, inlineInput
 		for _, line := range compact {
 			lines = append(lines, padTo(styler, styler.Truncate(line, width), width))
 		}
-		p.hitLayout = pickerHitLayout{kind: "compact", height: len(lines), optionRow: 0}
+		p.hitLayout = pickerHitLayout{
+			kind: "compact", height: len(lines), optionRow: 0,
+			resultSlots: 1, viewportStart: p.cursorIndex, matchCount: len(matches),
+		}
 		return lines
 	}
 
@@ -353,7 +356,10 @@ func (p *ChoicePicker) Popup(styler Styler, maxWidth, maxHeight int, inlineInput
 		}
 		inner := firstN([]string{selected, query, " " + hint}, max(height-2, 0))
 		lines := p.box(styler, inner, width)
-		p.hitLayout = pickerHitLayout{kind: "short", height: len(lines), optionRow: 1}
+		p.hitLayout = pickerHitLayout{
+			kind: "short", height: len(lines), optionRow: 1,
+			resultSlots: 1, viewportStart: p.cursorIndex, matchCount: len(matches),
+		}
 		return lines
 	}
 
@@ -381,6 +387,23 @@ func (p *ChoicePicker) Popup(styler Styler, maxWidth, maxHeight int, inlineInput
 		viewportStart: p.viewportStart, matchCount: len(matches),
 	}
 	return lines
+}
+
+// AcceptVisible accepts a 1-based row from the most recently rendered popup.
+// Before a render, or outside its actual result slots, it declines so callers
+// can preserve the key's ordinary input behavior.
+func (p *ChoicePicker) AcceptVisible(index int) (PickerResult, bool) {
+	layout := p.hitLayout
+	if layout.kind == "" || index < 1 || index > layout.resultSlots || layout.matchCount == 0 {
+		return PickerResult{}, false
+	}
+	absolute := layout.viewportStart + index - 1
+	results := p.Results()
+	if absolute < 0 || absolute >= layout.matchCount || absolute >= len(results) {
+		return PickerResult{}, false
+	}
+	p.cursorIndex = absolute
+	return p.acceptCurrent(), true
 }
 
 // Hit maps a popup-local row (0 = the top border) to a picker action, returning

@@ -184,6 +184,23 @@ func TestSnapshotItemsAndArchiveHalf(t *testing.T) {
 	}
 }
 
+func TestSnapshotSafelyCoercesFormalLinks(t *testing.T) {
+	store := writeStore(t, metaLine+"\n"+
+		`{"type":"task","id":"aaaa0001","state":"TODO","title":"live","links":[{"label":"A","url":"https://example.com/a"},null,{"url":7},{"url":"https://example.com/b"}]}`+"\n", nil)
+	snapshot, err := store.ReadSnapshot(false)
+	if err != nil {
+		t.Fatalf("ReadSnapshot: %v", err)
+	}
+	links := snapshot.Items()[0].FormalLinks
+	if len(links) != 2 || links[0].URL != "https://example.com/a" || links[0].Label != "A" || links[1].URL != "https://example.com/b" {
+		t.Fatalf("formal links = %#v", links)
+	}
+	links[0].URL = "changed"
+	if snapshot.Items()[0].FormalLinks[0].URL != "https://example.com/a" {
+		t.Fatal("snapshot exposed its formal-link slice")
+	}
+}
+
 // The three revision components are separate so a title-only edit can ignore a
 // sibling-list change while a move or a cascade still invalidates. These
 // assertions are what keep them separate.

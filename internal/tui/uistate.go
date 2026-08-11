@@ -20,7 +20,7 @@ const ModeModalFilter Mode = "modal_filter"
 // form is nil — which is what would produce a screen the keyboard does nothing
 // to.
 var modeTransitions = map[Mode][]Mode{
-	ModeList:           {ModeList, ModePrompt, ModeFilter, ModeModal, ModeForm, ModePalette, ModeContextPalette, ModeTaskEdit},
+	ModeList:           {ModeList, ModePrompt, ModeFilter, ModeModal, ModeForm, ModePalette, ModeContextPalette, ModeLinkPicker, ModeTaskEdit},
 	ModePrompt:         {ModePrompt, ModeList, ModeModal},
 	ModeFilter:         {ModeFilter, ModeList},
 	ModeModal:          {ModeModal, ModeList, ModeModalFilter, ModeForm, ModePalette, ModeContextPalette},
@@ -28,6 +28,7 @@ var modeTransitions = map[Mode][]Mode{
 	ModeForm:           {ModeForm, ModeList, ModeModal},
 	ModePalette:        {ModePalette, ModeList, ModeModal},
 	ModeContextPalette: {ModeContextPalette, ModeList, ModeModal},
+	ModeLinkPicker:     {ModeLinkPicker, ModeList},
 	ModeTaskEdit:       {ModeTaskEdit, ModeList},
 }
 
@@ -86,6 +87,10 @@ func (m *Model) SetMode(target Mode) error {
 	case ModeContextPalette:
 		if m.contextPalette == nil {
 			return fmt.Errorf("context_palette mode requires a context palette")
+		}
+	case ModeLinkPicker:
+		if m.linkPicker == nil {
+			return fmt.Errorf("link_picker mode requires a link picker")
 		}
 	case ModeTaskEdit:
 		if m.taskEditor == nil {
@@ -165,6 +170,17 @@ func (m *Model) SetContextPalette(palette *ContextPalette) {
 
 // ContextPalette is the open context palette, or nil.
 func (m *Model) ContextPalette() *ContextPalette { return m.contextPalette }
+
+// SetLinkPicker opens or clears the task-link picker.
+func (m *Model) SetLinkPicker(picker *LinkPicker) {
+	m.linkPicker = picker
+	if picker == nil && m.mode == ModeLinkPicker {
+		m.mode = ModeList
+	}
+}
+
+// LinkPicker is the open task-link picker, or nil.
+func (m *Model) LinkPicker() *LinkPicker { return m.linkPicker }
 
 // SetTaskEditor opens or clears the durable task editor.
 func (m *Model) SetTaskEditor(editor *TaskEditorSession) {

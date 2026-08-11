@@ -38,7 +38,7 @@ var createFields = []string{
 
 // patchFields is App::PATCH_FIELDS.
 var patchFields = []string{
-	"title", "priority", "body", "contexts", "tags", "deferred", "scheduled", "scheduled_time",
+	"title", "priority", "body", "formal_links", "contexts", "tags", "deferred", "scheduled", "scheduled_time",
 	"deadline", "deadline_time", "recurrence", "lead", "parent_id", "placement", "state",
 }
 

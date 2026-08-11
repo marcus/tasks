@@ -266,8 +266,14 @@ one, two claims resolve to the earlier `at`, and two non-claims to the later
 
 ## Links
 
+Tasks may store an ordered `links` array of formal `{url, label?}` objects.
+Use `tasks link add <ref> <url> [--label TEXT]` and `tasks link rm <ref> <n|url>`
+to edit it; the index is within the formal list only. Empty formal lists omit
+the field, URLs must be HTTP(S), duplicates are refused, and tasks may carry at
+most 50. Sections never carry links.
+
 Body notes routinely reference other systems — a Slack thread, a Jira ticket,
-a PR, a doc. Three forms, all recognized by the tooling (`tasks links`,
+a PR, a doc. Three derived forms, all recognized by the tooling (`tasks links`,
 `show`, `open`, the TUI's `o`):
 
 ```
@@ -285,6 +291,8 @@ Or, with link.jira configured: jira:OPS-1234
 
 Prefer a link over a prose description of where something lives — links are
 listable, openable (`tasks open <ref>`, `o` in the TUI), and survive rewording.
+The openable set is formal links first, then title and body links, deduplicated
+by URL; a later body label upgrades an unlabelled formal row without moving it.
 
 ## Projects
 

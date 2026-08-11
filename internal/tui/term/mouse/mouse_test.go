@@ -212,7 +212,7 @@ func TestOverlayModesIgnoreEverythingOutsideTheOverlay(t *testing.T) {
 		{Zone: hitmap.ZoneTab, Tab: "next"}, hit(hitmap.ZonePanel, 0),
 		footerHit(hitmap.RolePrompt), footerHit(hitmap.RoleResponse),
 	}
-	for _, mode := range []Mode{ModeModal, ModeModalFilter, ModePalette, ModeContextPalette, ModeForm} {
+	for _, mode := range []Mode{ModeModal, ModeModalFilter, ModePalette, ModeContextPalette, ModeLinkPicker, ModeForm} {
 		for _, h := range hits {
 			if got := route(click, h, RouteOptions{Mode: mode, Panel: true, Selected: sel(5)}); got.Kind != Ignored {
 				t.Fatalf("click on %s reached past a %s overlay: %#v", h.Zone, mode, got)
@@ -296,6 +296,9 @@ func TestCollapseMarkerAndPicker(t *testing.T) {
 	}
 	if got := route(ev, hit(hitmap.ZonePopupRow, 2), RouteOptions{Mode: ModePalette}); got.Kind != PickerHit || got.Index != 2 {
 		t.Fatalf("picker = %#v", got)
+	}
+	if got := route(ev, hit(hitmap.ZonePopupRow, 1), RouteOptions{Mode: ModeLinkPicker}); got.Kind != PickerHit || got.Index != 1 {
+		t.Fatalf("link picker = %#v", got)
 	}
 }
 

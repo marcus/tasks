@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/marcus/tasks/internal/tui/term/ansi"
 )
 
@@ -834,6 +836,113 @@ func TestOpenLinkLaunchesTheFirstLinkThroughTheInjectedOpener(t *testing.T) {
 	}
 	if !strings.Contains(harness.model.FlashMessage(), "opened") {
 		t.Errorf("opening said %q", harness.model.FlashMessage())
+	}
+}
+
+const multiLinkedFixture = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0003","title":"Work"}
+{"type":"task","id":"aaaa0004","parent":"aaaa0003","state":"NEXT","title":"Book flight in Concur","links":[{"url":"https://example.com/formal","label":"Itinerary"}],"body":"See https://example.com/body for details."}
+`
+
+func TestOpenLinkUsesSearchablePickerForSeveralLinks(t *testing.T) {
+	opener := &fakeOpener{}
+	harness := newModelHarness(t, harnessOptions{live: multiLinkedFixture, opener: opener})
+	harness.model.SwitchView(ViewNext)
+	harness.selectRowByID(fixFlight)
+	harness.pressKeys("o")
+	if harness.model.Mode() != ModeLinkPicker || harness.model.LinkPicker() == nil || len(opener.opened) != 0 {
+		t.Fatalf("mode=%s picker=%v opened=%v", harness.model.Mode(), harness.model.LinkPicker(), opener.opened)
+	}
+	if got := strings.Join(harness.model.LinkPicker().Picker().Results()[0].SearchText, " "); !strings.Contains(got, "Itinerary") {
+		t.Fatalf("picker search text = %q", got)
+	}
+	harness.pressKeys("body", "\r")
+	if len(opener.opened) != 1 || opener.opened[0] != "https://example.com/body" || harness.model.Mode() != ModeList {
+		t.Fatalf("opened=%v mode=%s", opener.opened, harness.model.Mode())
+	}
+}
+
+func TestOpenLinkPickerPasteFiltersBeforeEnterOpensMatchedLink(t *testing.T) {
+	opener := &fakeOpener{}
+	harness := newModelHarness(t, harnessOptions{live: multiLinkedFixture, opener: opener})
+	harness.model.SwitchView(ViewNext)
+	harness.selectRowByID(fixFlight)
+	harness.pressKeys("o")
+
+	harness.model.Update(tea.PasteMsg{Content: "body"})
+	if got := harness.model.LinkPicker().Picker().Input(); got != "body" {
+		t.Fatalf("pasted query = %q, want body", got)
+	}
+	if len(opener.opened) != 0 {
+		t.Fatalf("paste opened links before acceptance: %v", opener.opened)
+	}
+
+	harness.pressKeys("\r")
+	if len(opener.opened) != 1 || opener.opened[0] != "https://example.com/body" {
+		t.Fatalf("paste+enter opened %v", opener.opened)
+	}
+}
+
+func TestOpenLinkPickerDigitsQuickPickOnlyWithEmptyQuery(t *testing.T) {
+	opener := &fakeOpener{}
+	harness := newModelHarness(t, harnessOptions{live: multiLinkedFixture, opener: opener})
+	harness.model.SwitchView(ViewNext)
+	harness.selectRowByID(fixFlight)
+	harness.pressKeys("o")
+	_ = harness.model.Render()
+	harness.pressKeys("2")
+	if len(opener.opened) != 1 || opener.opened[0] != "https://example.com/body" {
+		t.Fatalf("empty-query digit opened %v", opener.opened)
+	}
+
+	harness.pressKeys("o")
+	_ = harness.model.Render()
+	harness.pressKeys("9")
+	if harness.model.Mode() != ModeLinkPicker || harness.model.LinkPicker().Picker().Input() != "9" || len(opener.opened) != 1 {
+		t.Fatalf("out-of-range digit mode=%s input=%q opened=%v", harness.model.Mode(), harness.model.LinkPicker().Picker().Input(), opener.opened)
+	}
+	harness.pressKeys("\x1b", "o")
+	_ = harness.model.Render()
+	harness.pressKeys("b", "2")
+	if harness.model.Mode() != ModeLinkPicker || harness.model.LinkPicker().Picker().Input() != "b2" || len(opener.opened) != 1 {
+		t.Fatalf("queried digit mode=%s input=%q opened=%v", harness.model.Mode(), harness.model.LinkPicker().Picker().Input(), opener.opened)
+	}
+}
+
+func TestLinkPickerDigitsDoNotReplaceListViewShortcuts(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: multiLinkedFixture, opener: &fakeOpener{}})
+	harness.pressKeys("2")
+	if harness.model.CurrentView() != ViewNext || harness.model.Mode() != ModeList {
+		t.Fatalf("list digit selected view=%s mode=%s", harness.model.CurrentView(), harness.model.Mode())
+	}
+}
+
+func TestOpenLinkPickerNavigatesAcceptsAndCancels(t *testing.T) {
+	opener := &fakeOpener{}
+	harness := newModelHarness(t, harnessOptions{live: multiLinkedFixture, opener: opener})
+	harness.model.SwitchView(ViewNext)
+	harness.selectRowByID(fixFlight)
+	harness.pressKeys("o", "\x1b[B", "\r")
+	if len(opener.opened) != 1 || opener.opened[0] != "https://example.com/body" {
+		t.Fatalf("down+enter opened %v", opener.opened)
+	}
+	harness.pressKeys("o", "\x1b")
+	if harness.model.Mode() != ModeList || harness.model.LinkPicker() != nil || len(opener.opened) != 1 {
+		t.Fatalf("cancel mode=%s picker=%v opened=%v", harness.model.Mode(), harness.model.LinkPicker(), opener.opened)
+	}
+}
+
+func TestOpenLinkPickerReportsMissingLauncherOnlyAfterAcceptance(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: multiLinkedFixture})
+	harness.model.SwitchView(ViewNext)
+	harness.selectRowByID(fixFlight)
+	harness.pressKeys("o")
+	if harness.model.FlashMessage() != "" {
+		t.Fatalf("opening picker flashed %q", harness.model.FlashMessage())
+	}
+	harness.pressKeys("\r")
+	if !strings.Contains(harness.model.FlashMessage(), "no browser launcher") || harness.model.Mode() != ModeList {
+		t.Fatalf("acceptance mode=%s flash=%q", harness.model.Mode(), harness.model.FlashMessage())
 	}
 }
 

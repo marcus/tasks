@@ -10,6 +10,7 @@ import (
 
 	"github.com/marcus/tasks/internal/check"
 	"github.com/marcus/tasks/internal/lead"
+	"github.com/marcus/tasks/internal/links"
 	"github.com/marcus/tasks/internal/record"
 	"github.com/marcus/tasks/internal/recur"
 	"github.com/marcus/tasks/internal/temporal"
@@ -38,6 +39,7 @@ type PatchValue struct {
 	// and "put this exactly here" are different operations with different
 	// refusals, and a single string cannot tell them apart.
 	placement Placement
+	links     []links.FormalLink
 }
 
 type valueKind int
@@ -51,6 +53,7 @@ const (
 	kindTemporal
 	kindPlacement
 	kindUnnest
+	kindLinks
 )
 
 // NoValue is Ruby's `nil`: clear this field.
@@ -65,6 +68,11 @@ func BoolValue(value bool) PatchValue { return PatchValue{kind: kindBool, boolea
 // ListValue is an Array-of-String value.
 func ListValue(values []string) PatchValue {
 	return PatchValue{kind: kindList, list: append([]string{}, values...)}
+}
+
+// LinksValue is an ordered full replacement of the stored formal-link list.
+func LinksValue(values []links.FormalLink) PatchValue {
+	return PatchValue{kind: kindLinks, links: append([]links.FormalLink(nil), values...)}
 }
 
 // TagDeltaValue is the `{add:, remove:}` Hash the CLI's `tag` verb sends.
@@ -126,6 +134,8 @@ const (
 	FieldTags PatchField = "tags"
 	// FieldBody replaces the note body.
 	FieldBody PatchField = "body"
+	// FieldLinks replaces the ordered formal-link list.
+	FieldLinks PatchField = "links"
 	// FieldLocation moves the task. Not implemented — see applyFieldPatch.
 	FieldLocation PatchField = "location"
 
@@ -174,6 +184,13 @@ func fieldBaseline(records []record.Record, index int, field PatchField) (string
 		return string(stringArray(ordinaryTags(semanticTags(parsed)))), nil
 	case FieldBody:
 		return parsed.String("body"), nil
+	case FieldLinks:
+		raw := fieldRaw(parsed, "links")
+		if len(raw) == 0 {
+			return "[]", nil
+		}
+		canonical, err := canonical(raw)
+		return string(canonical), err
 	case FieldLocation:
 		return locationFingerprint(records, index, siblingIDsByParent(records))
 	case FieldState:
@@ -345,6 +362,34 @@ func patchBody(records []record.Record, index int, value PatchValue) patchOutcom
 		return patchInvalid("body must be text")
 	}
 	records[index].SetOptional("body", record.RawString(value.text))
+	return patchOK(records[index])
+}
+
+func patchLinks(records []record.Record, index int, value PatchValue) patchOutcome {
+	if value.kind != kindLinks {
+		return patchInvalid("links must be a list of formal links")
+	}
+	if len(value.links) > links.MaxFormalLinks {
+		return patchInvalid("links may contain at most 50 entries")
+	}
+	seen := map[string]bool{}
+	for _, link := range value.links {
+		if !links.ValidFormalURL(link.URL) {
+			return patchInvalid("link URL must be an http or https URL with a host")
+		}
+		if link.Label != "" && !links.ValidFormalLabel(link.Label) {
+			return patchInvalid("link label must be non-empty, trimmed single-line text")
+		}
+		if seen[link.URL] {
+			return patchInvalid("duplicate formal link URL: " + link.URL)
+		}
+		seen[link.URL] = true
+	}
+	raw, err := json.Marshal(value.links)
+	if err != nil {
+		return patchInvalid("links could not be encoded")
+	}
+	records[index].SetOptional("links", raw)
 	return patchOK(records[index])
 }
 
@@ -891,6 +936,7 @@ var patchableFields = map[PatchField]bool{
 	FieldTitle: true, FieldPriority: true, FieldDeferred: true, FieldScheduled: true,
 	FieldDeadline: true, FieldRecurrence: true, FieldLead: true, FieldContexts: true,
 	FieldTags: true, FieldBody: true, FieldState: true, FieldLocation: true,
+	FieldLinks:    true,
 	FieldTagDelta: true, FieldActivate: true, FieldDateClear: true,
 }
 
@@ -1073,6 +1119,8 @@ func applyFieldPatch(records []record.Record, index int, field PatchField, value
 		return patchTagDelta(records, index, value)
 	case FieldBody:
 		return patchBody(records, index, value)
+	case FieldLinks:
+		return patchLinks(records, index, value)
 	case FieldState:
 		return patchState(records, index, value, context)
 	case FieldLocation:

@@ -174,7 +174,7 @@ var Registry = []Entry{
 	entry(Entry{Sequences: []string{"Z"}, DisplayKey: "Z", Description: "show / hide unavailable tasks", Contexts: []Context{List}, Handler: "toggle_deferred_view", Palette: PaletteAlways}),
 	entry(Entry{Sequences: []string{"K"}, DisplayKey: "K", Description: "raise priority (→ A)", Contexts: []Context{List, Detail}, Handler: "raise_priority", Palette: PaletteWhen("selected_action_available?")}),
 	entry(Entry{Sequences: []string{"J"}, DisplayKey: "J", Description: "lower priority (→ none)", Contexts: []Context{List, Detail}, Handler: "lower_priority", Palette: PaletteWhen("selected_action_available?")}),
-	entry(Entry{Sequences: []string{"o"}, DisplayKey: "o", Description: "open task link in browser", Contexts: []Context{List, Detail}, Handler: "open_link", Palette: PaletteWhen("link_action_available?")}),
+	entry(Entry{Sequences: []string{"o"}, DisplayKey: "o", Description: "open task link(s) in browser", Contexts: []Context{List, Detail}, Handler: "open_link", Palette: PaletteWhen("link_action_available?")}),
 	entry(Entry{Sequences: []string{"y"}, DisplayKey: "y", Description: "yank stable task id", Contexts: []Context{List, Detail}, Handler: "yank_ref", Palette: PaletteWhen("selected_action_available?")}),
 	entry(Entry{Sequences: []string{"Y"}, DisplayKey: "Y", Description: "yank task as markdown", Contexts: []Context{List, Detail}, Handler: "yank_markdown", Palette: PaletteWhen("selected_action_available?")}),
 	entry(Entry{Sequences: []string{"p"}, DisplayKey: "p", Description: "paste task id into the prompt", Contexts: []Context{List, Detail}, Handler: "paste_ref", Palette: PaletteWhen("selected_action_available?")}),

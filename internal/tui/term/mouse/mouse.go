@@ -161,6 +161,7 @@ const (
 	ModeModalFilter    Mode = "modal_filter"
 	ModePalette        Mode = "palette"
 	ModeContextPalette Mode = "context_palette"
+	ModeLinkPicker     Mode = "link_picker"
 	ModeForm           Mode = "form"
 	ModeTaskEdit       Mode = "task_edit"
 	ModePrompt         Mode = "prompt"
@@ -172,7 +173,7 @@ const (
 // open.
 var overlayModes = map[Mode]bool{
 	ModeModal: true, ModeModalFilter: true, ModePalette: true,
-	ModeContextPalette: true, ModeForm: true,
+	ModeContextPalette: true, ModeLinkPicker: true, ModeForm: true,
 }
 
 var overlayZones = map[hitmap.Zone]bool{

@@ -118,12 +118,40 @@ func New(snapshot *store.Snapshot, context temporal.Context, options ...Option) 
 	return queries
 }
 
-// Links is every web link the task points at: its title first, then its own
-// body lines, extracted and classified once so `show`, `links` and `open` can
-// never disagree about which URL is the task's first.
+// Links is every web link the task points at: stored formal links first, then
+// its title and body. URL dedupe keeps the first position while allowing a
+// later labelled spelling to upgrade an unlabelled one in place.
 func (q *Queries) Links(item store.Item) []links.Link {
-	text := append([]string{item.Title}, q.Body(item)...)
-	return links.Extract(text, q.linkShorthands, q.linkSystems)
+	result := make([]links.Link, 0, len(item.FormalLinks))
+	byURL := map[string]int{}
+	appendLink := func(link links.Link) {
+		if index, present := byURL[link.URL]; present {
+			if result[index].Label == nil && link.Label != nil {
+				result[index].Label = link.Label
+			}
+			return
+		}
+		byURL[link.URL] = len(result)
+		result = append(result, link)
+	}
+	for _, formal := range item.FormalLinks {
+		var label *string
+		if formal.Label != "" {
+			value := formal.Label
+			label = &value
+		}
+		appendLink(links.Link{URL: formal.URL, Label: label,
+			System: links.Classify(formal.URL, q.linkSystems), Source: links.SourceFormal})
+	}
+	for _, extracted := range links.Extract([]string{item.Title}, q.linkShorthands, q.linkSystems) {
+		extracted.Source = links.SourceTitle
+		appendLink(extracted)
+	}
+	for _, extracted := range links.Extract(q.Body(item), q.linkShorthands, q.linkSystems) {
+		extracted.Source = links.SourceBody
+		appendLink(extracted)
+	}
+	return result
 }
 
 // Context is the reader this model answers for.

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/marcus/tasks/internal/links"
 	"github.com/marcus/tasks/internal/store"
 )
 
@@ -159,5 +160,34 @@ func TestLinksReadBodyInFileOrder(t *testing.T) {
 	}
 	if found[1].Label != nil {
 		t.Fatalf("a bare URL has no label, got %q", *found[1].Label)
+	}
+}
+
+func TestLinksUnionFormalTitleAndBodyWithStableDedupe(t *testing.T) {
+	fixture := `{"type":"meta","version":2}
+{"type":"task","id":"aaaa0001","state":"TODO","title":"Review https://example.com/title and https://example.com/shared","links":[{"url":"https://example.com/formal","label":"Formal"},{"url":"https://example.com/shared"}],"body":"[[https://example.com/shared][Body label]] then https://example.com/body"}
+`
+	queries := queriesFrom(t, fixture)
+	found := queries.Links(itemByTitle(t, queries, "Review"))
+	if len(found) != 4 {
+		t.Fatalf("links = %+v", found)
+	}
+	wantURLs := []string{"https://example.com/formal", "https://example.com/shared", "https://example.com/title", "https://example.com/body"}
+	wantSources := []links.Source{links.SourceFormal, links.SourceFormal, links.SourceTitle, links.SourceBody}
+	for index := range wantURLs {
+		if found[index].URL != wantURLs[index] || found[index].Source != wantSources[index] {
+			t.Fatalf("links[%d] = %+v, want url=%q source=%q", index, found[index], wantURLs[index], wantSources[index])
+		}
+	}
+	if found[1].Label == nil || *found[1].Label != "Body label" || found[1].Source != links.SourceFormal {
+		t.Fatalf("formal duplicate was not upgraded in place: %+v", found[1])
+	}
+}
+
+func TestLinksBodyOnlyCompatibilityIncludesSource(t *testing.T) {
+	queries := queriesFrom(t, nestedFixture)
+	found := queries.Links(itemByTitle(t, queries, "billing"))
+	if len(found) != 2 || found[0].Source != links.SourceBody || found[1].Source != links.SourceBody {
+		t.Fatalf("body links = %+v", found)
 	}
 }

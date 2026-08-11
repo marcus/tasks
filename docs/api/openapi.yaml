@@ -354,10 +354,12 @@ paths:
                         child_count: 0
                         descendant_count: 0
                         delegation: null
+                        formal_links: []
                         links:
                           - system: "github"
                             url: "https://github.com/acme/app/issues/12"
                             label: "acme/app#12"
+                            source: "body"
                     meta:
                       store_revision: "s1.6f2a9c0b"
         "400":
@@ -466,6 +468,7 @@ paths:
                       child_count: 0
                       descendant_count: 0
                       delegation: null
+                      formal_links: []
                       links: []
                     meta:
                       store_revision: "s1.7a1b2c3d"
@@ -579,10 +582,12 @@ paths:
                       child_count: 0
                       descendant_count: 0
                       delegation: null
+                      formal_links: []
                       links:
                         - system: "github"
                           url: "https://github.com/acme/app/issues/12"
                           label: "acme/app#12"
+                          source: "body"
                     meta:
                       store_revision: "s1.6f2a9c0b"
         "404":
@@ -730,6 +735,7 @@ paths:
                       child_count: 0
                       descendant_count: 0
                       delegation: null
+                      formal_links: []
                       links: []
                     meta:
                       store_revision: "s1.8b2c3d4e"
@@ -1100,6 +1106,7 @@ paths:
                       project: "Work"
                       child_count: 0
                       descendant_count: 0
+                      formal_links: []
                       links: []
                       delegation:
                         kind: "agent"
@@ -1939,6 +1946,7 @@ paths:
                           child_count: 0
                           descendant_count: 0
                           delegation: null
+                          formal_links: []
                           links: []
                     meta:
                       store_revision: "s1.6f2a9c0b"
@@ -2432,6 +2440,7 @@ components:
                       child_count: 0
                       descendant_count: 0
                       delegation: null
+                      formal_links: []
                       links: []
                   request_id: "req_4d5e"
     ClaimConflict:
@@ -2591,10 +2600,12 @@ components:
         child_count: 0
         descendant_count: 0
         delegation: null
+        formal_links: []
         links:
           - system: "github"
             url: "https://github.com/acme/app/issues/12"
             label: "acme/app#12"
+            source: "body"
 
   schemas:
     TaskId:
@@ -2654,10 +2665,24 @@ components:
         effective_timezone: { type: string }
         instant: { type: string, format: date-time }
 
+    FormalLink:
+      type: object
+      required: [url]
+      additionalProperties: false
+      properties:
+        url:
+          type: string
+          maxLength: 2000
+          pattern: "^https?://"
+        label:
+          type: string
+          minLength: 1
+          maxLength: 200
+
     Link:
       type: object
-      description: A derived, read-only link found in the task title or body.
-      required: [system, url, label]
+      description: A derived, read-only member of the task's openable link union.
+      required: [system, url, label, source]
       additionalProperties: false
       properties:
         system:
@@ -2667,6 +2692,9 @@ components:
           type: string
         label:
           type: [string, "null"]
+        source:
+          type: string
+          enum: [formal, title, body]
 
     ResponseMeta:
       type: object
@@ -2954,6 +2982,7 @@ components:
         - project
         - child_count
         - descendant_count
+        - formal_links
         - links
         - delegation
       additionalProperties: false
@@ -3107,8 +3136,14 @@ components:
           type: integer
           minimum: 0
           description: Number of tasks in the subtree below this one.
+        formal_links:
+          type: array
+          description: Ordered stored links owned by the task and writable through PATCH.
+          items: { $ref: "#/components/schemas/FormalLink" }
         links:
           type: array
+          readOnly: true
+          description: Openable union of formal, title, and body links, deduplicated by URL.
           items: { $ref: "#/components/schemas/Link" }
         delegation:
           description: |
@@ -3193,8 +3228,8 @@ components:
           description: |
             One single-line reference to where the work lives (ticket, PR,
             brief, or agent session): at most 500 characters, no line breaks,
-            no control characters. Absent when unset. Additional links belong in
-            the task body.
+            no control characters. Absent when unset. Other task references belong
+            in `formal_links` or the task body.
 
     DelegateTaskRequest:
       type: object
@@ -3465,6 +3500,11 @@ components:
           oneOf:
             - { type: string }
             - { type: array, items: { type: string } }
+        formal_links:
+          type: array
+          description: Full replacement of the task's ordered stored formal-link list.
+          maxItems: 50
+          items: { $ref: "#/components/schemas/FormalLink" }
         contexts:
           type: array
           items: { type: string }

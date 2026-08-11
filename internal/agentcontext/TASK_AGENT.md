@@ -48,11 +48,12 @@ back a bad one.
   window (hide until a span before the task's date),
   optional `delegation` object (who holds the next action —
   see [Delegation](#delegation-handing-work-to-a-person-or-an-agent)),
-  `body` notes. `scheduled` is the available-from/start value;
+  ordered formal `links` and `body` notes. `scheduled` is the available-from/start value;
   `deadline` is the due value. Read it via the CLI's
   `--json`, never by parsing the file yourself.
-  Links in notes (Slack, Jira, PRs, docs) are first-class — `[[url][label]]`, bare
-  URLs, or configured shorthands like `jira:OPS-1234`. `tasks links` lists them by
+  Formal links and links in notes (Slack, Jira, PRs, docs) are first-class.
+  Notes recognize `[[url][label]]`, bare URLs, or configured shorthands like
+  `jira:OPS-1234`. `tasks links` lists the combined set by
   system and `list --body /text` searches note text.
 - `archive.jsonl` — completed/cancelled history (swept by `tasks archive`).
 - The files may live outside the CLI's repo. Absolute paths for this run
@@ -133,6 +134,9 @@ task merely because it also contains task text.
   - retitle a task:   `tasks retitle "<ref>" "<new title>"`
   - edit tags:        `tasks tag "<ref>" +tag -tag @ctx -@ctx`
   - add a note:       `tasks note "<ref>" "<text>"`
+  - add a formal link:`tasks link add "<ref>" <url> [--label "description"]`
+  - remove a link:    `tasks link rm "<ref>" <formal-index-or-url>`
+  - relabel a link:   `tasks link set "<ref>" <formal-index> --label "description"`
   - move a task:      `tasks move "<ref>" "<Section>"`  (top-level or nested project section)
   - nest a subtree:   `tasks move "<ref>" --under "<ref>"`  (below another task; ≤ max_depth)
   - unnest a subtree: `tasks move "<ref>" --top`  (back to the section level)

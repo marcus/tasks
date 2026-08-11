@@ -346,7 +346,7 @@ func (m *Model) footerForMode(mode Mode) []string {
 		lines = append(lines, m.styler.Paint("context", " "+strings.Join(m.contextFilters, " ")))
 	}
 	switch mode {
-	case ModeFilter, ModeForm, ModePalette, ModeContextPalette, ModeTaskEdit:
+	case ModeFilter, ModeForm, ModePalette, ModeContextPalette, ModeLinkPicker, ModeTaskEdit:
 	default:
 		lines = append(lines, m.PromptLines(m.width-2)...)
 	}

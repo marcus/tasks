@@ -1,11 +1,14 @@
 package api
 
 import (
+	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 
 	"github.com/marcus/tasks/internal/check"
 	"github.com/marcus/tasks/internal/lead"
+	"github.com/marcus/tasks/internal/links"
 	"github.com/marcus/tasks/internal/recur"
 	"github.com/marcus/tasks/internal/store"
 	"github.com/marcus/tasks/internal/taskquery"
@@ -146,6 +149,11 @@ func validateCommonBody(body *jsonObject, create bool) error {
 		}
 		if _, ok := body.stringList(field); !ok {
 			return validationError(reason(field, "must be a list of text values"))
+		}
+	}
+	if body.has("formal_links") {
+		if _, err := formalLinks(body.raw("formal_links")); err != nil {
+			return validationError(reason("formal_links", err.Error()))
 		}
 	}
 	if contexts, ok := body.stringList("contexts"); ok && body.has("contexts") {
@@ -338,6 +346,9 @@ func (s *Server) patchChanges(body *jsonObject, queries *taskquery.Queries,
 			changes = append(changes, store.Change{
 				Field: store.FieldBody, Value: store.TextValue(normalizeBody(body, key)),
 			})
+		case "formal_links":
+			values, _ := formalLinks(body.raw(key))
+			changes = append(changes, store.Change{Field: store.FieldLinks, Value: store.LinksValue(values)})
 		case "recurrence":
 			value := store.NoValue()
 			if !body.isNull(key) {
@@ -392,6 +403,47 @@ func (s *Server) patchChanges(body *jsonObject, queries *taskquery.Queries,
 		changes = append(changes, store.Change{Field: patchField, Value: value})
 	}
 	return changes, nil
+}
+
+func formalLinks(raw json.RawMessage) ([]links.FormalLink, error) {
+	var entries []json.RawMessage
+	if json.Unmarshal(raw, &entries) != nil {
+		return nil, fmt.Errorf("must be an array")
+	}
+	if len(entries) > links.MaxFormalLinks {
+		return nil, fmt.Errorf("must contain at most %d entries", links.MaxFormalLinks)
+	}
+	out := make([]links.FormalLink, 0, len(entries))
+	seen := map[string]bool{}
+	for index, entry := range entries {
+		object, err := parseJSONObject(entry)
+		if err != nil {
+			return nil, fmt.Errorf("entry %d must be an object", index+1)
+		}
+		if err := rejectUnknownFields(object, []string{"url", "label"}); err != nil {
+			return nil, fmt.Errorf("entry %d must contain only url and label", index+1)
+		}
+		linkURL, ok := object.text("url")
+		if !ok || !links.ValidFormalURL(linkURL) {
+			return nil, fmt.Errorf("entry %d url must be an http or https URL with a host", index+1)
+		}
+		label := ""
+		if object.has("label") {
+			if object.isNull("label") {
+				return nil, fmt.Errorf("entry %d label must be non-empty text or omitted", index+1)
+			}
+			label, ok = object.text("label")
+			if !ok || !links.ValidFormalLabel(label) {
+				return nil, fmt.Errorf("entry %d label must be non-empty trimmed single-line text", index+1)
+			}
+		}
+		if seen[linkURL] {
+			return nil, fmt.Errorf("entry %d duplicates an earlier URL", index+1)
+		}
+		seen[linkURL] = true
+		out = append(out, links.FormalLink{URL: linkURL, Label: label})
+	}
+	return out, nil
 }
 
 func textOrNone(body *jsonObject, key string) store.PatchValue {

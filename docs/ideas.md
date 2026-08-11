@@ -67,9 +67,11 @@ carries `tasks links` (link extraction + per-system classification via
 `internal/links` — slack/jira/github/…, unknown hosts fall back to the host) and
 `show`'s `project:`. This is the substrate for the review helper (#1) and the
 project view (#8). The link feature shipped on top of it: `link.<name>`
-shorthands (`jira:OPS-1234`) + `system.<name>` custom hosts in config, and
-`tasks open <ref>` / the TUI's `o`. Remaining follow-on: capture-with-link
-sugar (`capture --link URL`, auto-moving URLs out of capture titles).
+shorthands (`jira:OPS-1234`) + `system.<name>` custom hosts in config,
+ordered labelled formal links through CLI/API, the formal/title/body openable
+union, and searchable multi-link choice through `tasks open <ref>` / the TUI's
+`o`. Remaining follow-on: capture-with-link sugar (`capture --link URL`,
+auto-moving URLs out of capture titles).
 
 ## 7. `stats` command
 

@@ -133,6 +133,63 @@ func TestInvalidEncodingIsTheOnlyDiagnostic(t *testing.T) {
 	}
 }
 
+func TestFormalLinkValidation(t *testing.T) {
+	valid := []byte("{\"type\":\"meta\",\"version\":2}\n" +
+		`{"type":"task","id":"aaaa0001","state":"TODO","title":"linked","links":[{"url":"https://example.com/a","label":"A"},{"url":"http://example.org/b"}]}`)
+	if got := CheckText(valid).Errors; len(got) != 0 {
+		t.Fatalf("valid links errors = %#v", got)
+	}
+
+	cases := []struct{ name, links, want string }{
+		{"not array", `{}`, "links must be an array"},
+		{"entry not object", `["https://example.com"]`, "links[0] must be an object"},
+		{"missing url", `[{"label":"x"}]`, "links[0].url must be a string"},
+		{"wrong scheme", `[{"url":"file:///tmp/x"}]`, "links[0].url must be an http or https URL with a host"},
+		{"duplicate", `[{"url":"https://example.com"},{"url":"https://example.com"}]`, "links[1].url duplicates an earlier formal link"},
+		{"empty label", `[{"url":"https://example.com","label":""}]`, "links[0].label must be non-empty and trimmed"},
+		{"unknown member", `[{"url":"https://example.com","description":"x"}]`, `links[0] has unknown key "description"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			text := []byte("{\"type\":\"meta\",\"version\":2}\n" +
+				`{"type":"task","id":"aaaa0001","state":"TODO","title":"linked","links":` + tc.links + `}`)
+			got := CheckText(text).Errors
+			found := false
+			for _, entry := range got {
+				if entry.Message == tc.want {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("errors = %#v, want message %q", got, tc.want)
+			}
+		})
+	}
+
+	section := []byte("{\"type\":\"meta\",\"version\":2}\n" +
+		`{"type":"section","id":"aaaa0001","title":"S","links":[{"url":"https://example.com"}]}`)
+	if got := CheckText(section).Errors; !containsEntry(got, `section must not carry "links"`) {
+		t.Fatalf("section errors = %#v", got)
+	}
+
+	entry := `{"url":"https://example.com/unique"}`
+	tooMany := "[" + strings.TrimSuffix(strings.Repeat(entry+",", 51), ",") + "]"
+	countText := []byte("{\"type\":\"meta\",\"version\":2}\n" +
+		`{"type":"task","id":"aaaa0001","state":"TODO","title":"linked","links":` + tooMany + `}`)
+	if got := CheckText(countText).Errors; !containsEntry(got, "links has 51 entries (maximum 50)") {
+		t.Fatalf("count errors = %#v", got)
+	}
+}
+
+func containsEntry(entries []Entry, message string) bool {
+	for _, entry := range entries {
+		if entry.Message == message {
+			return true
+		}
+	}
+	return false
+}
+
 // Duplicate open titles are the hazard that makes a fuzzy ref ambiguous, which
 // is a warning rather than an error: the store is still coherent, the human
 // just cannot name one of them uniquely.

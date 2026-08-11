@@ -86,6 +86,19 @@ func TestDumpRecordCanonicalizesNestedObjects(t *testing.T) {
 	}
 }
 
+func TestDumpRecordCanonicalizesFormalLinkObjectsAndOmitsEmptyLinks(t *testing.T) {
+	input := `{"body":"notes","links":[{"label":"PR","future":1,"url":"https://example.com/pr"},{"url":"https://example.com/doc"}],"archived":"2026-08-11","type":"task","title":"T"}`
+	want := `{"type":"task","title":"T","archived":"2026-08-11","links":[{"url":"https://example.com/pr","label":"PR","future":1},{"url":"https://example.com/doc"}],"body":"notes"}`
+	got, err := DumpRecord(parseOne(t, input))
+	if err != nil || got != want {
+		t.Fatalf("DumpRecord = %q, %v; want %q", got, err, want)
+	}
+	empty, err := DumpRecord(parseOne(t, `{"type":"task","title":"T","links":[]}`))
+	if err != nil || empty != `{"type":"task","title":"T"}` {
+		t.Fatalf("empty links = %q, %v", empty, err)
+	}
+}
+
 // TestNestedCanonicalizationAcrossPermutations is the medium-tier property
 // check for the nested writer. It makes the two deliberately different
 // forward-compatibility rules falsifiable for every source ordering: temporal

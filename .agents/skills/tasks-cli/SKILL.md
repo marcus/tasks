@@ -80,6 +80,9 @@ tasks priority "<ref>" A         # A|B|C|none
 tasks retitle "<ref>" "new"      # replace the title; tags/state untouched
 tasks tag "<ref>" +foo -bar @ctx # add/remove tags & contexts (-@ctx removes)
 tasks note "<ref>" "text"        # append a body line under the task
+tasks link add "<ref>" <url> [--label "description"] # append a formal link
+tasks link rm "<ref>" <n-or-url>  # remove from formal links only
+tasks link set "<ref>" <n> --label "description" # relabel a formal link only
 tasks capture "sub" --under "<ref>" # nest a new task below an existing one
 tasks move "<ref>" "Section"     # relocate the block under a top-level heading
 tasks move "<ref>" --under "<ref>"  # nest the subtree below another task

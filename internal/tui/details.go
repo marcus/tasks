@@ -133,18 +133,23 @@ func BuildTaskDetails(styler Styler, queries *taskquery.Queries, item store.Item
 		}
 	}
 	if found := queries.Links(item); len(found) > 0 {
+		hint := "o opens"
+		if len(found) > 1 {
+			hint = "o to choose"
+		}
 		lines = append(lines, "", detailSection(styler, "LINKS",
-			styler.Paint("muted", fmt.Sprintf("%d", len(found))), usable), "")
-		// `o` opens the FIRST link, so the first link is the one that carries
-		// the key. The rest are indented under it rather than labelled, because
-		// a key you cannot press is not worth a column.
+			styler.Paint("muted", fmt.Sprintf("%d · %s", len(found), hint)), usable), "")
 		for index, link := range found {
 			marker := styler.Paint("muted", "   ")
 			if index == 0 {
 				marker = styler.Paint("accent", "o") + "  "
 			}
-			lines = append(lines, marker+styler.Paint("link_system", link.System+" ")+
-				styler.Paint("link", link.URL))
+			label := ""
+			if link.Label != nil && *link.Label != "" {
+				label = styler.Paint("description", *link.Label+" ")
+			}
+			lines = append(lines, styler.Truncate(marker+styler.Paint("link_system", link.System+" ")+
+				label+styler.Paint("link", link.URL), usable))
 		}
 	}
 	lines = append(lines, "", detailSection(styler, "ACTIONS", "", usable), "",

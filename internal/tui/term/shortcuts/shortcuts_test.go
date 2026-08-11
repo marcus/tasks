@@ -368,6 +368,18 @@ func TestRecurHintAdvertisesTheCalendarGrammar(t *testing.T) {
 	t.Fatal("no recur binding")
 }
 
+func TestOpenLinkShortcutAdvertisesSingleAndMultipleLinks(t *testing.T) {
+	for _, e := range Registry {
+		if e.Handler == "open_link" {
+			if e.Description != "open task link(s) in browser" {
+				t.Fatalf("description = %q", e.Description)
+			}
+			return
+		}
+	}
+	t.Fatal("no open-link binding")
+}
+
 func TestPaletteEntriesAreContextualAndAvailable(t *testing.T) {
 	resolve := func(name string) bool {
 		switch name {

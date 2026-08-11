@@ -40,6 +40,7 @@ const (
 	ModeForm           Mode = "form"
 	ModePalette        Mode = "palette"
 	ModeContextPalette Mode = "context_palette"
+	ModeLinkPicker     Mode = "link_picker"
 	ModeTaskEdit       Mode = "task_edit"
 )
 
@@ -147,6 +148,7 @@ type Model struct {
 	form                *QuickForm
 	actionPalette       *ActionPalette
 	contextPalette      *ContextPalette
+	linkPicker          *LinkPicker
 	taskEditor          *TaskEditorSession
 	suspendedTaskEditor *TaskEditorSession
 	suspendedTaskPanel  *RightPanel
@@ -460,6 +462,11 @@ func (m *Model) reconcileOpenOverlays(prior Mode) {
 			m.contextPalette.RefreshOptions(m.tokensFromStore(func(item store.Item) []string {
 				return item.Contexts
 			}), m.contextFilters)
+		}
+	case ModeLinkPicker:
+		if m.linkPicker != nil && !m.selectedTarget(m.linkPicker.TargetID()) {
+			m.linkPicker = nil
+			m.mode = ModeList
 		}
 	case ModeTaskEdit:
 		if m.taskEditor != nil {
@@ -1185,7 +1192,7 @@ func (m *Model) CurrentView() string { return m.view }
 // ConsumesTextInput reports whether printable keys belong to an input buffer.
 func (m *Model) ConsumesTextInput() bool {
 	return m.mode == ModePrompt || m.mode == ModeFilter || m.mode == ModeModalFilter ||
-		m.mode == ModeForm || m.mode == ModePalette || m.mode == ModeContextPalette ||
+		m.mode == ModeForm || m.mode == ModePalette || m.mode == ModeContextPalette || m.mode == ModeLinkPicker ||
 		m.mode == ModeTaskEdit
 }
 
@@ -1212,6 +1219,8 @@ func (m *Model) FocusContext() string {
 		return "picker"
 	case ModeContextPalette:
 		return "context_picker"
+	case ModeLinkPicker:
+		return "picker"
 	case ModeTaskEdit:
 		return "task_edit"
 	default:

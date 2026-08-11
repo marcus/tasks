@@ -1,4 +1,4 @@
-// Package links finds and classifies links in task text. It is the Go
+// Package links models formal task links and finds and classifies links in task text. It is the Go
 // counterpart of lib/tasks/links.rb.
 //
 // Bodies increasingly carry references into other systems (Slack threads, Jira
@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode"
 )
 
 // Link is one reference found in task text. Label is nil for a bare URL — an
@@ -30,6 +31,53 @@ type Link struct {
 	URL    string
 	Label  *string
 	System string
+	Source Source
+}
+
+// Source identifies which owned or derived task field contributed a link.
+type Source string
+
+const (
+	SourceFormal Source = "formal"
+	SourceTitle  Source = "title"
+	SourceBody   Source = "body"
+)
+
+// FormalLink is one ordered, stored task link before system classification.
+type FormalLink struct {
+	URL   string `json:"url"`
+	Label string `json:"label,omitempty"`
+}
+
+const (
+	MaxFormalLinks = 50
+	MaxURLLength   = 2000
+	MaxLabelLength = 200
+)
+
+// ValidFormalURL reports whether a stored link is safe to expose to openers.
+func ValidFormalURL(raw string) bool {
+	if raw == "" || raw != strings.TrimSpace(raw) || len(raw) > MaxURLLength || UnsafeFormalText(raw) {
+		return false
+	}
+	parsed, err := url.Parse(raw)
+	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Hostname() != ""
+}
+
+// ValidFormalLabel reports whether a present stored label is canonical.
+func ValidFormalLabel(label string) bool {
+	return label != "" && label == strings.TrimSpace(label) && len(label) <= MaxLabelLength && !UnsafeFormalText(label)
+}
+
+// UnsafeFormalText reports control or line-separator characters forbidden in
+// either member of a stored link.
+func UnsafeFormalText(value string) bool {
+	for _, r := range value {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return true
+		}
+	}
+	return false
 }
 
 // system is one classification row: a name plus a host pattern and an optional

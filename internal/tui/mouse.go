@@ -240,7 +240,7 @@ func (m *Model) footerRoles() []string {
 		roles = append(roles, "chrome")
 	}
 	switch m.mode {
-	case ModeFilter, ModeForm, ModePalette, ModeContextPalette, ModeTaskEdit:
+	case ModeFilter, ModeForm, ModePalette, ModeContextPalette, ModeLinkPicker, ModeTaskEdit:
 	default:
 		for range m.PromptLines(m.width - 2) {
 			roles = append(roles, "prompt")
@@ -305,6 +305,8 @@ func (m *Model) overlayMouse(box *OverlayBox, event tea.MouseMsg) bool {
 			m.resolvePaletteOutcome(m.actionPalette, m.actionPalette.Move(direction))
 		case ModeContextPalette:
 			m.applyContextOutcome(m.contextPalette.Move(direction))
+		case ModeLinkPicker:
+			m.resolveLinkPickerOutcome(m.linkPicker.Move(direction))
 		default:
 			return false
 		}
@@ -320,6 +322,9 @@ func (m *Model) overlayMouse(box *OverlayBox, event tea.MouseMsg) bool {
 			return true
 		case ModeContextPalette:
 			m.applyContextOutcome(m.contextPalette.Hit(offset))
+			return true
+		case ModeLinkPicker:
+			m.resolveLinkPickerOutcome(m.linkPicker.Hit(offset))
 			return true
 		}
 		return true

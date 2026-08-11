@@ -10,6 +10,22 @@ func urls(found []Link) []string {
 	return out
 }
 
+func TestFormalLinkValidation(t *testing.T) {
+	for _, raw := range []string{"https://example.com/path", "http://localhost:8080/x"} {
+		if !ValidFormalURL(raw) {
+			t.Fatalf("ValidFormalURL(%q) = false", raw)
+		}
+	}
+	for _, raw := range []string{"", " https://example.com", "file:///tmp/x", "https:///missing", "https://example.com/\nnext"} {
+		if ValidFormalURL(raw) {
+			t.Fatalf("ValidFormalURL(%q) = true", raw)
+		}
+	}
+	if !ValidFormalLabel("PR #412") || ValidFormalLabel("") || ValidFormalLabel("two\nlines") {
+		t.Fatal("formal label validation did not enforce present single-line text")
+	}
+}
+
 func labels(found []Link) []string {
 	out := make([]string, 0, len(found))
 	for _, link := range found {

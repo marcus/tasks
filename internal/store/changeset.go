@@ -52,7 +52,7 @@ type Changeset struct {
 // THIS sequence rather than in the caller's, and a field outside the list sorts
 // last by name so the order is still total.
 var fieldOrder = []PatchField{
-	FieldTitle, FieldPriority, FieldBody,
+	FieldTitle, FieldPriority, FieldLinks, FieldBody,
 	FieldContexts, FieldTags, FieldDeferred, FieldTagDelta,
 	FieldActivate,
 	FieldScheduled, FieldDeadline, FieldDateClear,

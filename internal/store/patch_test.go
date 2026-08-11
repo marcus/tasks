@@ -6,8 +6,63 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/marcus/tasks/internal/links"
 	"github.com/marcus/tasks/internal/temporal"
 )
+
+func TestFormalLinksReplaceWithBaselineAndUndoRedo(t *testing.T) {
+	target, _ := writerFixture(t, patchFixture)
+	baseline, found := target.ExpectedFor("aa000010", FieldLinks)
+	if !found || baseline != "[]" {
+		t.Fatalf("baseline = %q, found=%v", baseline, found)
+	}
+	value := LinksValue([]links.FormalLink{{URL: "https://example.com/pr", Label: "PR"}, {URL: "https://example.com/doc"}})
+	result := target.Patch(PatchRequest{ID: "aa000010", Field: FieldLinks, Value: value, Expected: baseline, Today: "2026-06-10"})
+	mustOK(t, result)
+	if got := line(t, target, "aa000010"); !strings.Contains(got, `"links":[{"url":"https://example.com/pr","label":"PR"},{"url":"https://example.com/doc"}],"body"`) {
+		t.Fatalf("stored line = %s", got)
+	}
+	stale := target.Patch(PatchRequest{ID: "aa000010", Field: FieldLinks, Value: LinksValue(nil), Expected: baseline, Today: "2026-06-10"})
+	if stale.Status != MutationConflict {
+		t.Fatalf("stale status = %q", stale.Status)
+	}
+	if status, _ := target.HistoryStep(-1); status != HistoryOK || strings.Contains(line(t, target, "aa000010"), `"links"`) {
+		t.Fatalf("undo status = %q, line = %s", status, line(t, target, "aa000010"))
+	}
+	if status, _ := target.HistoryStep(1); status != HistoryOK || !strings.Contains(line(t, target, "aa000010"), `"links"`) {
+		t.Fatalf("redo status = %q, line = %s", status, line(t, target, "aa000010"))
+	}
+}
+
+func TestFormalLinksRefuseInvalidAndDuplicateValues(t *testing.T) {
+	target, _ := writerFixture(t, patchFixture)
+	for _, tc := range []struct {
+		value []links.FormalLink
+		want  string
+	}{
+		{[]links.FormalLink{{URL: "file:///tmp/x"}}, "link URL must be an http or https URL with a host"},
+		{[]links.FormalLink{{URL: "https://example.com", Label: "two\nlines"}}, "link label must be non-empty, trimmed single-line text"},
+		{[]links.FormalLink{{URL: "https://example.com"}, {URL: "https://example.com"}}, "duplicate formal link URL: https://example.com"},
+	} {
+		mustInvalid(t, patch(t, target, "aa000010", FieldLinks, LinksValue(tc.value)), tc.want)
+	}
+}
+
+func TestFormalLinksFullReplaceCanRelabelWithoutChangingURLOrOrder(t *testing.T) {
+	target, _ := writerFixture(t, patchFixture)
+	initial := []links.FormalLink{
+		{URL: "https://example.com/one", Label: "One"},
+		{URL: "https://example.com/two", Label: "Two"},
+	}
+	mustOK(t, patch(t, target, "aa000010", FieldLinks, LinksValue(initial)))
+	replacement := append([]links.FormalLink(nil), initial...)
+	replacement[1].Label = "Runbook"
+	mustOK(t, patch(t, target, "aa000010", FieldLinks, LinksValue(replacement)))
+	got := line(t, target, "aa000010")
+	if !strings.Contains(got, `"links":[{"url":"https://example.com/one","label":"One"},{"url":"https://example.com/two","label":"Runbook"}]`) {
+		t.Fatalf("stored line = %s", got)
+	}
+}
 
 // patchFixture is the shape most of these tests need: one task per field
 // combination the vocabulary has an opinion about, in one section.

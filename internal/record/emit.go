@@ -16,7 +16,7 @@ import (
 var KeyOrder = []string{
 	"type", "id", "parent", "state", "priority", "title", "tags", "scheduled", "scheduled_time",
 	"deadline", "deadline_time", "recur", "lead", "lead_skip", "delegation",
-	"closed", "archived", "body", "updated",
+	"closed", "archived", "links", "body", "updated",
 }
 
 // LineKey is the physical line number the parser stamps onto a record. It is
@@ -90,6 +90,12 @@ func DumpRecord(record Record) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		if key == "links" {
+			value, err = nestedObjectArray(value, []string{"url", "label"})
+			if err != nil {
+				return "", err
+			}
+		}
 		if omit(value) {
 			continue
 		}
@@ -108,6 +114,81 @@ func DumpRecord(record Record) (string, error) {
 
 	out.WriteByte('}')
 	return out.String(), nil
+}
+
+// nestedObjectArray canonicalizes object members inside a known array while
+// retaining unknown members in source order. The general JSON encoder keeps
+// array elements opaque; links needs this explicit path so url/label order is
+// stable without changing forward-compatible values belonging to other keys.
+func nestedObjectArray(raw json.RawMessage, order []string) (json.RawMessage, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '[' {
+		return raw, nil
+	}
+	var elements []json.RawMessage
+	if err := json.Unmarshal(trimmed, &elements); err != nil {
+		return nil, err
+	}
+	var out bytes.Buffer
+	out.WriteByte('[')
+	for index, element := range elements {
+		if index > 0 {
+			out.WriteByte(',')
+		}
+		canonical, err := orderedObject(element, order)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := out.Write(canonical); err != nil {
+			return nil, err
+		}
+	}
+	out.WriteByte(']')
+	return out.Bytes(), nil
+}
+
+func orderedObject(raw json.RawMessage, order []string) (json.RawMessage, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return raw, nil
+	}
+	fields, err := parseFields(trimmed)
+	if err != nil {
+		return nil, err
+	}
+	first := make(map[string]int, len(fields))
+	for index, field := range fields {
+		if _, seen := first[field.Key]; !seen {
+			first[field.Key] = index
+		}
+	}
+	known := make(map[string]bool, len(order))
+	ordered := make([]Field, 0, len(fields))
+	for _, key := range order {
+		known[key] = true
+		if index, present := first[key]; present && !omit(fields[index].Value) {
+			ordered = append(ordered, fields[index])
+		}
+	}
+	for index, field := range fields {
+		if first[field.Key] == index && !known[field.Key] && !omit(field.Value) {
+			ordered = append(ordered, field)
+		}
+	}
+	var out bytes.Buffer
+	out.WriteByte('{')
+	for index, field := range ordered {
+		if index > 0 {
+			out.WriteByte(',')
+		}
+		encodeString(&out, field.Key)
+		out.WriteByte(':')
+		if err := encodeValue(&out, field.Key, field.Value); err != nil {
+			return nil, err
+		}
+	}
+	out.WriteByte('}')
+	return out.Bytes(), nil
 }
 
 var nestedKeyOrder = map[string][]string{

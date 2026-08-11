@@ -285,6 +285,17 @@ func (c *resourceContext) writeTask(w *jsonout.Writer, item store.Item) {
 	}
 	w.KeyInt("child_count", index.childCount(item.ID))
 	w.KeyInt("descendant_count", index.descendantCount(item.ID))
+	w.Key("formal_links")
+	w.BeginArray()
+	for _, link := range item.FormalLinks {
+		w.BeginObject()
+		w.KeyStr("url", link.URL)
+		if link.Label != "" {
+			w.KeyStr("label", link.Label)
+		}
+		w.EndObject()
+	}
+	w.EndArray()
 	w.Key("links")
 	w.BeginArray()
 	for _, link := range c.queries.Links(item) {
@@ -296,6 +307,7 @@ func (c *resourceContext) writeTask(w *jsonout.Writer, item store.Item) {
 		} else {
 			w.KeyNull("label")
 		}
+		w.KeyStr("source", string(link.Source))
 		w.EndObject()
 	}
 	w.EndArray()

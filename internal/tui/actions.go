@@ -96,7 +96,7 @@ func (m *Model) handlers() map[string]func(key string) {
 		"filter_input":         m.filterKey,
 		"modal_filter_input":   m.modalFilterKey,
 		"form_input":           m.formKey,
-		"picker_input":         m.paletteKey,
+		"picker_input":         m.pickerKey,
 		"context_picker_input": m.contextPaletteKey,
 		"prompt_input":         m.promptKey,
 

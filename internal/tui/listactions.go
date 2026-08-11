@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/marcus/tasks/internal/application"
+	"github.com/marcus/tasks/internal/links"
 	"github.com/marcus/tasks/internal/store"
 	"github.com/marcus/tasks/internal/tui/term/clipboard"
 )
@@ -508,7 +509,7 @@ type Opener interface {
 	Open(url string) bool
 }
 
-// OpenLink is `o`: open the selected task's first link.
+// OpenLink is `o`: open one link immediately or let the user choose among many.
 func (m *Model) OpenLink() {
 	if m.CurrentProject() != nil {
 		m.needsTask()
@@ -524,16 +525,36 @@ func (m *Model) OpenLink() {
 		m.Flash("no links on this task")
 		return
 	}
-	link := found[0]
+	if len(found) > 1 {
+		m.SetLinkPicker(NewLinkPicker(m.styler, item.ID, found))
+		_ = m.SetMode(ModeLinkPicker)
+		return
+	}
+	m.openSelectedLink(found[0])
+}
+
+func (m *Model) resolveLinkPickerOutcome(result PickerResult) {
+	if result.Kind == PickerCancelled {
+		m.SetLinkPicker(nil)
+		return
+	}
+	if result.Kind != PickerAccepted || m.linkPicker == nil {
+		return
+	}
+	link, ok := m.linkPicker.Link(result)
+	if !ok {
+		return
+	}
+	m.SetLinkPicker(nil)
+	m.openSelectedLink(link)
+}
+
+func (m *Model) openSelectedLink(link links.Link) {
 	if m.opener == nil || !m.opener.Open(link.URL) {
 		m.Flash("no browser launcher found (set TASKS_OPENER)")
 		return
 	}
-	extra := ""
-	if len(found) > 1 {
-		extra = fmt.Sprintf(" (1 of %d)", len(found))
-	}
-	m.Flash("opened " + link.System + ": " + link.URL + extra)
+	m.Flash("opened " + link.System + ": " + link.URL)
 }
 
 // -- clipboard -------------------------------------------------------------------------

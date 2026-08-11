@@ -59,6 +59,20 @@ func TestTaskDetailsShowsTheBodyAsADescription(t *testing.T) {
 	}
 }
 
+func TestTaskDetailsShowsLinkLabelsAndAccurateOpenHints(t *testing.T) {
+	multi := newModelHarness(t, harnessOptions{live: multiLinkedFixture})
+	text := detailFor(t, multi, fixFlight)
+	for _, want := range []string{"Itinerary", "2 · o to choose", "https://example.com/formal"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("multi-link details missing %q:\n%s", want, text)
+		}
+	}
+	single := newModelHarness(t, harnessOptions{live: linkedFixture})
+	if text := detailFor(t, single, fixFlight); !strings.Contains(text, "1 · o opens") {
+		t.Fatalf("single-link details have no accurate hint:\n%s", text)
+	}
+}
+
 func TestTaskDetailsSpellsOutAnAvailabilityBlock(t *testing.T) {
 	live := strings.ReplaceAll(fixtureStore,
 		`"title":"Water the plants","tags":["@home"]`,

@@ -36,6 +36,8 @@ func (m *Model) Overlay() *OverlayBox {
 		return m.paletteOverlay(layout, m.actionPalette.Picker())
 	case ModeContextPalette:
 		return m.paletteOverlay(layout, m.contextPalette.Picker())
+	case ModeLinkPicker:
+		return m.paletteOverlay(layout, m.linkPicker.Picker())
 	}
 	return nil
 }

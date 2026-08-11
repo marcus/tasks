@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 
+	"github.com/marcus/tasks/internal/links"
 	"github.com/marcus/tasks/internal/record"
 )
 
@@ -36,6 +37,7 @@ type Item struct {
 	Lead          string
 	LeadSkip      string
 	Delegation    json.RawMessage
+	FormalLinks   []links.FormalLink
 	Parent        string
 	HasParent     bool
 	Source        Source
@@ -135,6 +137,7 @@ func cloneItem(item Item) Item {
 	item.AllTags = cloneStrings(item.AllTags)
 	item.Tags = cloneStrings(item.Tags)
 	item.Contexts = cloneStrings(item.Contexts)
+	item.FormalLinks = append([]links.FormalLink(nil), item.FormalLinks...)
 	item.ScheduledTime = cloneRaw(item.ScheduledTime)
 	item.DeadlineTime = cloneRaw(item.DeadlineTime)
 	item.Delegation = cloneRaw(item.Delegation)
@@ -223,10 +226,40 @@ func buildItem(parsed record.Record, source Source) Item {
 		Lead:          stringField(parsed, "lead"),
 		LeadSkip:      stringField(parsed, "lead_skip"),
 		Delegation:    fieldRaw(parsed, record.DelegationField),
+		FormalLinks:   semanticLinks(parsed),
 		Parent:        parent,
 		HasParent:     hasParent,
 		Source:        source,
 	}
+}
+
+// semanticLinks is deliberately forgiving: CheckedReadSnapshot rejects a bad
+// field, while ordinary snapshots still need to remain inspectable and must
+// never panic because a hand edit used the wrong JSON shape.
+func semanticLinks(parsed record.Record) []links.FormalLink {
+	var values []json.RawMessage
+	if err := json.Unmarshal(fieldRaw(parsed, "links"), &values); err != nil {
+		return nil
+	}
+	out := make([]links.FormalLink, 0, len(values))
+	seen := map[string]bool{}
+	for _, raw := range values {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(raw, &fields) != nil {
+			continue
+		}
+		linkURL, ok := decodeString(fields["url"])
+		if !ok || !links.ValidFormalURL(linkURL) || seen[linkURL] {
+			continue
+		}
+		seen[linkURL] = true
+		label, labelOK := decodeString(fields["label"])
+		if fields["label"] != nil && (!labelOK || !links.ValidFormalLabel(label)) {
+			label = ""
+		}
+		out = append(out, links.FormalLink{URL: linkURL, Label: label})
+	}
+	return out
 }
 
 func isoDate(raw json.RawMessage) string {

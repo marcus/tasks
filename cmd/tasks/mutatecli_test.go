@@ -558,6 +558,117 @@ func TestCLITagDryRunWritesNothing(t *testing.T) {
 
 // -- note --------------------------------------------------------------------
 
+func TestCLILinkAddRemoveAndUndo(t *testing.T) {
+	dir := seedStore(t, mutationFixture)
+	added := runCLI(t, dir, "link", "add", "Ship the release", "https://example.com/pr", "--label", "PR", "--json")
+	if added.status != 0 {
+		t.Fatalf("add exit %d, stderr %q", added.status, added.stderr)
+	}
+	stored := recordFor(t, dir, "dddd0004")["links"].([]any)
+	if len(stored) != 1 || stored[0].(map[string]any)["label"] != "PR" {
+		t.Fatalf("links = %#v", stored)
+	}
+	if result := runCLI(t, dir, "undo"); result.status != 0 {
+		t.Fatalf("undo exit %d, stderr %q", result.status, result.stderr)
+	}
+	if _, present := recordFor(t, dir, "dddd0004")["links"]; present {
+		t.Fatal("undo retained links")
+	}
+	if result := runCLI(t, dir, "redo"); result.status != 0 {
+		t.Fatalf("redo exit %d, stderr %q", result.status, result.stderr)
+	}
+	if result := runCLI(t, dir, "link", "add", "Ship the release", "https://example.com/pr"); result.status != 1 || !strings.Contains(result.stderr, "already exists") {
+		t.Fatalf("duplicate result = %+v", result)
+	}
+	if result := runCLI(t, dir, "link", "rm", "Ship the release", "1"); result.status != 0 {
+		t.Fatalf("rm exit %d, stderr %q", result.status, result.stderr)
+	}
+	if _, present := recordFor(t, dir, "dddd0004")["links"]; present {
+		t.Fatal("remove did not omit empty links")
+	}
+}
+
+func TestCLILinkRefusesDerivedRemovalAndDuplicate(t *testing.T) {
+	dir := seedStore(t, mutationFixture)
+	before := storeBytes(t, dir)
+	result := runCLI(t, dir, "link", "rm", "Ship the release", "https://example.com/body-only")
+	if result.status != 1 || !strings.Contains(result.stderr, "formal link not found") || storeBytes(t, dir) != before {
+		t.Fatalf("result = %+v", result)
+	}
+	if result := runCLI(t, dir, "link", "add", "Ship the release", "file:///tmp/x"); result.status != 1 {
+		t.Fatalf("invalid URL exit = %d", result.status)
+	}
+}
+
+func TestCLILinkDryRunWritesNothing(t *testing.T) {
+	dir := seedStore(t, mutationFixture)
+	result := runUnchanged(t, dir, "link", "add", "Ship the release", "https://example.com", "--dry-run")
+	if !strings.Contains(result.stdout, "would update formal links on:") {
+		t.Fatalf("stdout = %q", result.stdout)
+	}
+}
+
+func TestCLILinkAddExpandsConfiguredShorthand(t *testing.T) {
+	dir := seedStore(t, mutationFixture)
+	seedConfig(t, dir, "link.jira = https://acme.atlassian.net/browse/%s\n")
+	result := runCLI(t, dir, "link", "add", "Ship the release", "jira:OPS-7")
+	if result.status != 0 {
+		t.Fatalf("exit %d, stderr %q", result.status, result.stderr)
+	}
+	formal := recordFor(t, dir, "dddd0004")["links"].([]any)[0].(map[string]any)
+	if formal["url"] != "https://acme.atlassian.net/browse/OPS-7" || formal["label"] != "jira:OPS-7" {
+		t.Fatalf("formal link = %#v", formal)
+	}
+}
+
+func TestCLILinkSetRelabelsFormalIndexAndUndoRestoresIt(t *testing.T) {
+	dir := seedStore(t, mutationFixture)
+	for _, args := range [][]string{
+		{"link", "add", "Ship the release", "https://example.com/one", "--label", "One"},
+		{"link", "add", "Ship the release", "https://example.com/two", "--label", "Two"},
+	} {
+		if result := runCLI(t, dir, args...); result.status != 0 {
+			t.Fatalf("add %v: exit %d, stderr %q", args, result.status, result.stderr)
+		}
+	}
+	if result := runCLI(t, dir, "link", "set", "Ship the release", "2", "--label", "Runbook"); result.status != 0 {
+		t.Fatalf("set exit %d, stderr %q", result.status, result.stderr)
+	}
+	stored := recordFor(t, dir, "dddd0004")["links"].([]any)
+	first := stored[0].(map[string]any)
+	second := stored[1].(map[string]any)
+	if first["label"] != "One" || second["label"] != "Runbook" || second["url"] != "https://example.com/two" {
+		t.Fatalf("links after set = %#v", stored)
+	}
+	if result := runCLI(t, dir, "undo"); result.status != 0 {
+		t.Fatalf("undo exit %d, stderr %q", result.status, result.stderr)
+	}
+	stored = recordFor(t, dir, "dddd0004")["links"].([]any)
+	if got := stored[1].(map[string]any)["label"]; got != "Two" {
+		t.Fatalf("label after undo = %#v", got)
+	}
+}
+
+func TestCLILinkSetValidatesFormalIndexAndLabelWithoutWriting(t *testing.T) {
+	dir := seedStore(t, mutationFixture)
+	if result := runCLI(t, dir, "link", "add", "Ship the release", "https://example.com/one", "--label", "One"); result.status != 0 {
+		t.Fatalf("add exit %d, stderr %q", result.status, result.stderr)
+	}
+	before := storeBytes(t, dir)
+	for _, args := range [][]string{
+		{"link", "set", "Ship the release", "2", "--label", "Two"},
+		{"link", "set", "Ship the release", "1"},
+		{"link", "set", "Ship the release", "1", "--label", " "},
+	} {
+		result := runCLI(t, dir, args...)
+		if result.status != 1 || storeBytes(t, dir) != before {
+			t.Fatalf("%v result=%+v wrote=%v", args, result, storeBytes(t, dir) != before)
+		}
+	}
+}
+
+// -- note --------------------------------------------------------------------
+
 func TestCLINoteAppendsLine(t *testing.T) {
 	dir := seedStore(t, mutationFixture)
 	if result := runCLI(t, dir, "note", "Ship the release", "second", "line"); result.status != 0 {
@@ -1171,7 +1282,7 @@ func TestCLIHelpJSONEmitsTheCommandRegistry(t *testing.T) {
 		}
 	}
 	for _, name := range []string{"due", "schedule", "undate", "state", "cancel", "retitle",
-		"tag", "note", "defer", "someday", "activate", "lead", "recur", "help"} {
+		"tag", "link add", "link rm", "link set", "note", "defer", "someday", "activate", "lead", "recur", "help"} {
 		if _, found := byName[name]; !found {
 			t.Errorf("registry is missing %q", name)
 		}

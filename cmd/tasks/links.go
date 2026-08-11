@@ -95,7 +95,15 @@ func (s *surfaceContext) linksCommand(args []string) int {
 		for _, entry := range kept {
 			for _, link := range entry.links {
 				w.BeginObject()
-				writeLinkMembers(w, link)
+				w.KeyStr("url", link.URL)
+				w.Key("label")
+				if link.Label == nil {
+					w.Null()
+				} else {
+					w.Str(*link.Label)
+				}
+				w.KeyStr("system", link.System)
+				w.KeyStr("link_source", string(link.Source))
 				w.KeyStr("task", entry.item.Title)
 				w.KeyStrOrNull("id", entry.item.ID)
 				w.KeyInt("line", entry.item.Line)
@@ -170,6 +178,7 @@ func writeLinkMembers(w *jsonout.Writer, link links.Link) {
 		w.Str(*link.Label)
 	}
 	w.KeyStr("system", link.System)
+	w.KeyStr("source", string(link.Source))
 }
 
 func init() {

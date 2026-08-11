@@ -1,7 +1,12 @@
 # Multi-link support: formal links + body parse + TUI picker
 
-**Status:** draft plan, ready for review  
+**Status:** implemented 2026-08-11  
 **Surfaces:** store schema, `internal/links` + `taskquery`, CLI (`links` / `open` / mutate), HTTP API, TUI (`o` + modal)
+
+Packets A-D shipped together: schema-v2 formal links and their derived union,
+CLI/API mutation parity including `link set`, and the searchable keyboard/mouse
+TUI picker with rendered-row digit shortcuts. Capture-with-link sugar and TUI
+formal-link editing remain intentionally deferred.
 
 ## Problem
 
@@ -116,7 +121,7 @@ Keep `tasks links` as the list verb; use singular `link` for mutations (mirrors 
 
 **HTTP**
 
-- Task PATCH (or existing field-patch path): accept `links` as the formal array only.
+- Task PATCH (through the existing changeset path): accept `formal_links` as the formal array only. Do not accept writable `links`; that name remains the derived union in responses.
 - Response `links` remains the **union** (derived view). If a client needs formal-only for edit forms, either:
   - add read-only `formal_links` on the resource, **or**
   - filter response links where `source == formal`.
@@ -177,7 +182,7 @@ Ship as reviewable slices so store contracts land before UI sugar.
 
 ### Packet A — Data model + union (core)
 
-1. `record.KeyOrder` + nested order for link objects; emit/omit empty.
+1. `record.KeyOrder` + explicit array-element canonicalization for link objects; emit/omit empty. The existing nested-object ordering helper does not recurse into arrays, so this needs focused `links` handling rather than only another `nestedKeyOrder` entry.
 2. `check` validation: array of objects, url/label rules, section forbidden, max count, duplicate formal URL policy.
 3. Store coerce on `Item` (or read formal array only via record when building Links — either is fine if one path).
 4. `Queries.Links` merge formal + extract; tests for order, dedupe, label upgrade, formal-only, body-only.
@@ -187,7 +192,7 @@ Ship as reviewable slices so store contracts land before UI sugar.
 ### Packet B — Mutate CLI + application + API write
 
 1. Application/store `FieldLinks` (replace) and CLI `link add` / `link rm`.
-2. OpenAPI: `formal_links` on task; PATCH; document `links` as union + optional `source`.
+2. OpenAPI: writable `formal_links` on task and PATCH request; document response `links` as the read-only union + optional `source`.
 3. `cli-spec.md`, conventions Links section, agent skill if link mutation is agent-facing.
 4. Adapter tests: patch, check, show/links/open numbering with formal+body.
 

@@ -66,6 +66,29 @@ func TestCreateUpdateAndNoopRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPatchFormalLinksProjectsStoredAndDerivedViews(t *testing.T) {
+	h := newHarness(t)
+	current := h.get("/api/v1/tasks/" + fixPR)
+	patched := h.json("PATCH", "/api/v1/tasks/"+fixPR,
+		`{"formal_links":[{"url":"https://example.com/formal","label":"Formal"},{"url":"https://github.com/acme/app/pull/7"}]}`,
+		h.withIfMatch(current.etag()))
+	assertStatus(t, patched, 200)
+	resource := patched.data()
+	formal := resource["formal_links"].([]any)
+	if len(formal) != 2 {
+		t.Fatalf("formal_links = %#v", formal)
+	}
+	union := resource["links"].([]any)
+	if len(union) < 2 || union[0].(map[string]any)["source"] != "formal" {
+		t.Fatalf("links = %#v", union)
+	}
+	refused := h.json("PATCH", "/api/v1/tasks/"+fixPR, `{"links":[]}`, h.withIfMatch(patched.etag()))
+	assertError(t, refused, 422, "validation_failed")
+	invalid := h.json("PATCH", "/api/v1/tasks/"+fixPR,
+		`{"formal_links":[{"url":"file:///tmp/x"}]}`, h.withIfMatch(patched.etag()))
+	assertError(t, invalid, 422, "validation_failed")
+}
+
 func TestCreateAddsConfiguredHostContextAndSupportsExplicitOptOut(t *testing.T) {
 	h := newHarnessWith(t, fixtureOrg, fixtureArchive, "@home")
 

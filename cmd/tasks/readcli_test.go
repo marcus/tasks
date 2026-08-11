@@ -380,8 +380,8 @@ func TestShowJSONIsTheTaskResource(t *testing.T) {
 		t.Errorf("project = %v", row["project"])
 	}
 	links, _ := json.Marshal(row["links"])
-	want := `[{"label":"the incident thread","system":"slack","url":"https://acme.slack.com/archives/C042/p171"},` +
-		`{"label":null,"system":"jira","url":"https://acme.atlassian.net/browse/OPS-1234"}]`
+	want := `[{"label":"the incident thread","source":"body","system":"slack","url":"https://acme.slack.com/archives/C042/p171"},` +
+		`{"label":null,"source":"body","system":"jira","url":"https://acme.atlassian.net/browse/OPS-1234"}]`
 	if string(links) != want {
 		t.Errorf("links = %s", links)
 	}
@@ -475,11 +475,12 @@ func TestLinksJSONAndSingleRef(t *testing.T) {
 	result := runCLI(t, dir, "links", "billing outage", "--json")
 	var document struct {
 		Links []struct {
-			System string `json:"system"`
-			Task   string `json:"task"`
-			ID     string `json:"id"`
-			Line   int    `json:"line"`
-			Source string `json:"source"`
+			System     string `json:"system"`
+			Task       string `json:"task"`
+			ID         string `json:"id"`
+			Line       int    `json:"line"`
+			Source     string `json:"source"`
+			LinkSource string `json:"link_source"`
 		} `json:"links"`
 	}
 	if err := json.Unmarshal([]byte(result.stdout), &document); err != nil {
@@ -492,7 +493,7 @@ func TestLinksJSONAndSingleRef(t *testing.T) {
 		if !strings.Contains(link.Task, "billing") {
 			t.Errorf("a ref scopes to one task, got %q", link.Task)
 		}
-		if link.Source != "live" || link.ID != "aaaa1111" {
+		if link.Source != "live" || link.LinkSource != "body" || link.ID != "aaaa1111" {
 			t.Errorf("row = %+v", link)
 		}
 	}

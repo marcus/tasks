@@ -96,6 +96,10 @@ func (m *Model) handleKey(message tea.KeyPressMsg) tea.Cmd {
 		if !m.dispatchAction(sequence, shortcuts.ContextPicker) {
 			m.contextPaletteKey(sequence)
 		}
+	case ModeLinkPicker:
+		if !m.dispatchAction(sequence, shortcuts.Picker) {
+			m.linkPickerKey(sequence)
+		}
 	case ModeModal:
 		m.modalKey(sequence)
 	case ModeModalFilter:
@@ -138,6 +142,10 @@ func (m *Model) handlePaste(text string) {
 	case ModeContextPalette:
 		if m.contextPalette != nil {
 			m.applyContextOutcome(m.contextPalette.Paste(text))
+		}
+	case ModeLinkPicker:
+		if m.linkPicker != nil {
+			m.resolveLinkPickerOutcome(m.linkPicker.Paste(text))
 		}
 	case ModeFilter:
 		if m.filterEditor().Insert(text) == input.Changed {
@@ -597,6 +605,22 @@ func (m *Model) paletteKey(sequence string) {
 		return
 	}
 	m.resolvePaletteOutcome(palette, palette.HandleKey(sequence))
+}
+
+func (m *Model) pickerKey(sequence string) {
+	if m.mode == ModeLinkPicker {
+		m.linkPickerKey(sequence)
+		return
+	}
+	m.paletteKey(sequence)
+}
+
+func (m *Model) linkPickerKey(sequence string) {
+	if m.linkPicker == nil {
+		m.mode = ModeList
+		return
+	}
+	m.resolveLinkPickerOutcome(m.linkPicker.HandleKey(sequence))
 }
 
 // resolvePaletteOutcome closes the palette BEFORE running the action, so an

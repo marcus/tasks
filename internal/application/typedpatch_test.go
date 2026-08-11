@@ -4,14 +4,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/marcus/tasks/internal/links"
 	"github.com/marcus/tasks/internal/store"
 )
 
-// The typed patch capability exists for exactly three fields whose value a
+// The typed patch capability exists for fields whose value a
 // string cannot carry. These tests are about that boundary, not about the
 // store's own field rules, which store_test already owns.
 
-func TestTypedPatchWritesTheThreeNonStringFieldShapes(t *testing.T) {
+func TestTypedPatchWritesNonStringFieldShapes(t *testing.T) {
 	cases := []struct {
 		name   string
 		field  store.PatchField
@@ -42,6 +43,14 @@ func TestTypedPatchWritesTheThreeNonStringFieldShapes(t *testing.T) {
 				return strings.Contains(line, `"billing"`)
 			},
 			want: "the new tag",
+		},
+		{
+			name: "formal links are ordered objects", field: store.FieldLinks,
+			value: store.LinksValue([]links.FormalLink{{URL: "https://example.com", Label: "Example"}}),
+			expect: func(line string) bool {
+				return strings.Contains(line, `"links":[{"url":"https://example.com","label":"Example"}]`)
+			},
+			want: "the formal link",
 		},
 	}
 	for _, testCase := range cases {

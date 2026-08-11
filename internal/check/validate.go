@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/marcus/tasks/internal/lead"
+	"github.com/marcus/tasks/internal/links"
 	"github.com/marcus/tasks/internal/query"
 	"github.com/marcus/tasks/internal/record"
 	"github.com/marcus/tasks/internal/recur"
@@ -29,6 +30,7 @@ var (
 var sectionForbidden = []string{
 	"state", "priority", "scheduled", "scheduled_time", "deadline", "deadline_time",
 	"recur", "lead", "lead_skip", "delegation", "closed", "tags",
+	"links",
 }
 
 // knownKeys is every key the schema knows, plus the two out-of-band ones: the
@@ -269,6 +271,73 @@ func checkTask(parsed record.Record, errors *[]Entry) {
 		}
 	}
 	checkDelegation(parsed, errors)
+	checkLinks(parsed, errors)
+}
+
+func checkLinks(parsed record.Record, errors *[]Entry) {
+	raw := rawField(parsed, "links")
+	if raw == nil || strings.TrimSpace(string(raw)) == "null" {
+		return
+	}
+	add := func(message string) { *errors = append(*errors, Entry{Line: parsed.Line, Message: message}) }
+	var entries []json.RawMessage
+	if json.Unmarshal(raw, &entries) != nil {
+		add("links must be an array")
+		return
+	}
+	if len(entries) > links.MaxFormalLinks {
+		add(fmt.Sprintf("links has %d entries (maximum %d)", len(entries), links.MaxFormalLinks))
+	}
+	seen := map[string]bool{}
+	for index, entry := range entries {
+		trimmed := strings.TrimSpace(string(entry))
+		fields, fieldsErr := record.Fields(entry)
+		if fieldsErr != nil || len(trimmed) == 0 || trimmed[0] != '{' {
+			add(fmt.Sprintf("links[%d] must be an object", index))
+			continue
+		}
+		object := make(map[string]json.RawMessage, len(fields))
+		for _, field := range fields {
+			if _, present := object[field.Key]; !present {
+				object[field.Key] = field.Value
+			}
+			if field.Key != "url" && field.Key != "label" {
+				add(fmt.Sprintf("links[%d] has unknown key %s", index, rubyInspectString(field.Key)))
+			}
+		}
+		rawURL, ok := decodeString(object["url"])
+		switch {
+		case !ok:
+			add(fmt.Sprintf("links[%d].url must be a string", index))
+		case rawURL == "" || rawURL != strings.TrimSpace(rawURL):
+			add(fmt.Sprintf("links[%d].url must be a non-empty canonical URL", index))
+		case len(rawURL) > links.MaxURLLength:
+			add(fmt.Sprintf("links[%d].url exceeds %d bytes", index, links.MaxURLLength))
+		case links.UnsafeFormalText(rawURL):
+			add(fmt.Sprintf("links[%d].url must be a single line without control characters", index))
+		default:
+			if !links.ValidFormalURL(rawURL) {
+				add(fmt.Sprintf("links[%d].url must be an http or https URL with a host", index))
+			} else if seen[rawURL] {
+				add(fmt.Sprintf("links[%d].url duplicates an earlier formal link", index))
+			} else {
+				seen[rawURL] = true
+			}
+		}
+		if labelRaw, present := object["label"]; present {
+			label, labelOK := decodeString(labelRaw)
+			switch {
+			case !labelOK:
+				add(fmt.Sprintf("links[%d].label must be a string", index))
+			case label == "" || label != strings.TrimSpace(label):
+				add(fmt.Sprintf("links[%d].label must be non-empty and trimmed", index))
+			case len(label) > links.MaxLabelLength:
+				add(fmt.Sprintf("links[%d].label exceeds %d bytes", index, links.MaxLabelLength))
+			case links.UnsafeFormalText(label):
+				add(fmt.Sprintf("links[%d].label must be a single line without control characters", index))
+			}
+		}
+	}
 }
 
 // checkLead validates the lead-time pair. `lead` is a canonical span;

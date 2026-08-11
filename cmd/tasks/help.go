@@ -71,6 +71,9 @@ const helpText = "tasks — a plain-text GTD CLI over tasks.jsonl. Every command
 	"  priority pri <ref> <A|B|C|none>  set/clear priority (incl. PROPOSED)" + "\n" +
 	"  retitle rename <ref> \"title\"     replace title (incl. PROPOSED)" + "\n" +
 	"  tag          <ref> +t -t @ctx -@ctx   edit tags/contexts (incl. PROPOSED)" + "\n" +
+	"  link add     <ref> <url> [--label TEXT] append a formal link" + "\n" +
+	"  link rm      <ref> <n|url>             remove a formal link (n is formal-only)" + "\n" +
+	"  link set     <ref> <n> --label TEXT     rename a formal link (n is formal-only)" + "\n" +
 	"  note         <ref> \"text\"        append a body line (incl. PROPOSED)" + "\n" +
 	"  move         <ref> \"Section\"     relocate the subtree under a heading" + "\n" +
 	"                                   (top-level or a nested project section)" + "\n" +
@@ -204,6 +207,9 @@ var helpCommands = []helpCommand{
 	{name: "priority", aliases: []string{"pri"}, json: true, gate: true},
 	{name: "retitle", aliases: []string{"rename"}, json: true, gate: true},
 	{name: "tag", json: true, gate: true},
+	{name: "link add", json: true, gate: true},
+	{name: "link rm", json: true, gate: true},
+	{name: "link set", json: true, gate: true},
 	{name: "note", json: true, gate: true},
 	{name: "move", json: true, gate: true},
 	{name: "delete", json: true, gate: true},

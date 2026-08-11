@@ -6,7 +6,7 @@ import "testing"
 // backing object is nil is a screen the keyboard does nothing to.
 
 func TestOverlayModesRequireTheirBackingObject(t *testing.T) {
-	cases := []Mode{ModeModal, ModeForm, ModePalette, ModeContextPalette, ModeTaskEdit}
+	cases := []Mode{ModeModal, ModeForm, ModePalette, ModeContextPalette, ModeLinkPicker, ModeTaskEdit}
 	for _, mode := range cases {
 		harness := newModelHarness(t, harnessOptions{})
 		if err := harness.model.SetMode(mode); err == nil {
