@@ -343,7 +343,7 @@ func (s *surfaceContext) printAvailabilityChange(snapshot *store.Snapshot, id, o
 func (s *surfaceContext) readSnapshotFor() (*store.Snapshot, int) {
 	snapshot, err := s.store.ReadSnapshot(false)
 	if err != nil {
-		return nil, abort("task store unavailable")
+		return nil, abort(store.UnavailableMessage(err))
 	}
 	return snapshot, 0
 }

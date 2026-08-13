@@ -1,6 +1,10 @@
 package application
 
-import "github.com/marcus/tasks/internal/store"
+import (
+	"errors"
+
+	"github.com/marcus/tasks/internal/store"
+)
 
 // Patch is one single-field command — the Go shape of lib/tasks/task_patch.rb.
 //
@@ -47,12 +51,21 @@ func TypedPatch(id string, field store.PatchField, value store.PatchValue,
 //
 // It is exported because the conflict check is only meaningful when the SAME
 // expression produces the value on both sides of the decision.
-func (a *Application) Baseline(id string, field store.PatchField) (string, bool) {
+func (a *Application) Baseline(id string, field store.PatchField) (string, bool, error) {
 	target := a.store()
 	if !PatchFieldSupported(target, field) {
-		return "", false
+		return "", false, nil
 	}
-	return target.ExpectedFor(id, field)
+	value, found := target.ExpectedFor(id, field)
+	if found {
+		return value, true, nil
+	}
+	if locker, ok := target.(interface{ LastLockError() string }); ok {
+		if message := locker.LastLockError(); message != "" {
+			return "", false, errors.New(message)
+		}
+	}
+	return "", false, nil
 }
 
 // PatchTask applies one field-owned semantic change.

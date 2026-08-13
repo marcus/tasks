@@ -180,7 +180,7 @@ func (s *Store) Repair(dryRun bool) RepairResult {
 	if err != nil {
 		return RepairResult{
 			Status: RepairUnrepairable, Fixes: []RepairFix{}, DryRun: dryRun,
-			Blockers: []RepairBlocker{{Line: 0, Message: "task store unavailable"}},
+			Blockers: []RepairBlocker{{Line: 0, Message: UnavailableMessage(err)}},
 		}
 	}
 	return result

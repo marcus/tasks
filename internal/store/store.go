@@ -6,7 +6,9 @@
 // replace, no mutation. What there IS, and what a read-only package would not
 // obviously need, is the lock: a read takes the same advisory sidecar lock a
 // mutation does, so `.tasks.jsonl.lock` is a real observable effect of reading
-// and the conformance corpus compares its presence and its mode.
+// and the conformance corpus compares its presence and its mode. Reads take a
+// shared lock; mutations take exclusive. Acquire waits briefly and then fails
+// with the holder's pid rather than blocking forever.
 package store
 
 import (
@@ -16,7 +18,6 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
-	"syscall"
 	"unicode/utf8"
 
 	"github.com/marcus/tasks/internal/check"
@@ -86,6 +87,7 @@ type Store struct {
 	rollbackMu        sync.Mutex
 	lastRollback      string
 	lastRollbackStage RollbackStage
+	lastLockError     string
 }
 
 // New builds a store over the two resolved paths.
@@ -112,7 +114,7 @@ func (s *Store) LockPath() string {
 // reload.
 func (s *Store) ReadSnapshot(includeArchive bool) (*Snapshot, error) {
 	var snapshot *Snapshot
-	err := s.withLock(func() error {
+	err := s.withSharedLock(func() error {
 		live, err := captureReadSource(s.org, false, false)
 		if err != nil {
 			return err
@@ -151,7 +153,7 @@ func (e *buildError) Unwrap() error { return e.err }
 // is a fact about the store, and a caller has to be able to report it.
 func (s *Store) CheckedReadSnapshot() (CheckedRead, error) {
 	var result CheckedRead
-	err := s.withLock(func() error {
+	err := s.withSharedLock(func() error {
 		live, err := captureReadSource(s.org, false, true)
 		if err != nil {
 			return err
@@ -208,7 +210,7 @@ func (s *Store) CheckedReadSnapshot() (CheckedRead, error) {
 	if err != nil {
 		return CheckedRead{
 			Status: StatusUnavailable,
-			Errors: []Entry{{Line: 0, Message: "task store unavailable"}},
+			Errors: []Entry{{Line: 0, Message: UnavailableMessage(err)}},
 		}, nil
 	}
 	return result, nil
@@ -285,26 +287,6 @@ func emptyReadSource(validate bool) readSource {
 		source.check = check.Result{Errors: []check.Entry{}, Warnings: []check.Entry{}}
 	}
 	return source
-}
-
-// withLock serializes the read-modify-write of a mutation, and the read of a
-// snapshot, across `tasks` processes. The lock is an advisory flock on a
-// sidecar beside the real file, so every process reaches the same inode
-// regardless of how the path was spelled.
-//
-// Creating that sidecar is a real, observed side effect of reading. It is not
-// tidied away.
-func (s *Store) withLock(body func() error) error {
-	file, err := os.OpenFile(s.LockPath(), os.O_RDWR|os.O_CREATE, 0o644)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
-		return err
-	}
-	defer func() { _ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN) }()
-	return body()
 }
 
 func buildReadSnapshot(live, archive readSource, includeArchive bool) (*Snapshot, error) {

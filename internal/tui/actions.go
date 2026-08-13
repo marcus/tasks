@@ -327,7 +327,12 @@ func (m *Model) modalBodyHeight() int { return max(m.layout().BodyHeight, 1) }
 // save-on-blur workflow; these keyboard actions keep their own confirmations,
 // messages and undo labels, and a shared abstraction would blur both.
 func (m *Model) patchSelected(id string, field store.PatchField, value, label string) (application.Outcome, bool) {
-	expected, present := m.app.Baseline(id, field)
+	expected, present, err := m.app.Baseline(id, field)
+	if err != nil {
+		return application.Outcome{MutationResult: store.MutationResult{
+			Status: store.MutationUnavailable, Errors: []string{err.Error()},
+		}}, true
+	}
 	if !present {
 		return application.Outcome{}, false
 	}
@@ -340,7 +345,12 @@ func (m *Model) patchSelected(id string, field store.PatchField, value, label st
 func (m *Model) patchSelectedTemporal(id string, field store.PatchField,
 	value temporal.Value, label string) (application.Outcome, bool) {
 
-	expected, present := m.app.Baseline(id, field)
+	expected, present, err := m.app.Baseline(id, field)
+	if err != nil {
+		return application.Outcome{MutationResult: store.MutationResult{
+			Status: store.MutationUnavailable, Errors: []string{err.Error()},
+		}}, true
+	}
 	if !present {
 		return application.Outcome{}, false
 	}
@@ -372,9 +382,7 @@ func (m *Model) CompleteSelected() {
 	title := item.Title
 	id := item.ID
 	result, found := m.patchSelected(id, store.FieldState, "DONE", "complete: "+title)
-	if !found || !(result.OK() || result.NoChange()) {
-		m.Refresh()
-		m.Flash("file changed underneath — try again")
+	if m.flashPatchRefusal(result, found) {
 		return
 	}
 	m.Refresh()
@@ -497,9 +505,7 @@ func (m *Model) BumpPriority(delta int) {
 		label = "priority [#" + next + "]: " + item.Title
 	}
 	result, found := m.patchSelected(item.ID, store.FieldPriority, next, label)
-	if !found || !(result.OK() || result.NoChange()) {
-		m.Refresh()
-		m.Flash("file changed underneath — try again")
+	if m.flashPatchRefusal(result, found) {
 		return
 	}
 	if next != "" {
@@ -1212,6 +1218,15 @@ func outcomeMessage(outcome application.Outcome, fallback string) string {
 		return outcome.Errors[0]
 	}
 	return fallback
+}
+
+func (m *Model) flashPatchRefusal(result application.Outcome, found bool) bool {
+	if found && (result.OK() || result.NoChange()) {
+		return false
+	}
+	m.Refresh()
+	m.Flash(outcomeMessage(result, "file changed underneath — try again"))
+	return true
 }
 
 func (m *Model) requestQuit() {

@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+- Fail store lock waits after 5s with the holding pid and acquire time,
+  instead of blocking forever with empty stdout. Snapshot reads take a
+  shared lock so they no longer serialize with each other.
+
 ## [1.8.0] - 2026-08-13
 
 - Redesign the Projects view: live projects are foldable headings, every project

@@ -1035,7 +1035,7 @@ func (s *Store) Patch(request PatchRequest) MutationResult {
 		return nil
 	})
 	if err != nil {
-		return MutationResult{Status: MutationUnavailable, Errors: []string{"task store unavailable"}}
+		return mutationUnavailable(err)
 	}
 	return result
 }
@@ -1068,7 +1068,7 @@ func (s *Store) patchContext(request PatchRequest) (patchContext, error) {
 func (s *Store) ExpectedFor(id string, field PatchField) (string, bool) {
 	var value string
 	found := false
-	_ = s.withLock(func() error {
+	_ = s.withSharedLock(func() error {
 		if !check.Check(s.org).OK() {
 			return nil
 		}

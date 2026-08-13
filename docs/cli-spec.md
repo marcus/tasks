@@ -157,6 +157,19 @@ stamp remain valid and are treated as oldest during a merge. `updated` is not
 part of task revision/ETag fingerprints, and undo/redo restores exact journal
 bytes without re-stamping.
 
+**Store lock.** Mutations take an exclusive advisory flock beside the live file
+(`.tasks.jsonl.lock`); snapshot reads take a shared lock so they do not
+serialize with each other. Acquire is non-blocking with a 5s timeout and
+exponential backoff. On acquire the holder writes its pid and UTC timestamp
+into the sidecar; on release those bytes are cleared. A waiter that cannot take
+the lock exits 1 and prints
+`lock timeout after 5s: held by pid <pid> since <RFC3339>` (or
+`holder unknown` when the sidecar has no live metadata). The leftover sidecar
+file is never treated as a lock: the OS drops flock when the holder exits, so a
+stale file after a crash does not block the next command. `--json` mutations
+`undo`/`redo`, and `archive` keep the `unavailable` error code and put the same
+sentence in `message`.
+
 **Determinism pins (tests only).** A small set of `TASKS_PIN_*`
 environment variables fixes the values that are otherwise nondeterministic —
 the clock, minted ids, the journal's coalescing scope, and the hostname used for

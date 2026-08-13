@@ -177,7 +177,7 @@ func locationValueErrors(value PatchValue) []string {
 func (s *Store) TaskRevision(id string) (string, bool) {
 	var revision string
 	found := false
-	_ = s.withLock(func() error {
+	_ = s.withSharedLock(func() error {
 		records := freshRecords(s.org)
 		index := locateStableIndex(records, id)
 		if index < 0 {
@@ -419,7 +419,7 @@ func (s *Store) ApplyChangeset(changeset Changeset) MutationResult {
 		return nil
 	})
 	if err != nil {
-		return MutationResult{Status: MutationUnavailable, Errors: []string{"task store unavailable"}}
+		return mutationUnavailable(err)
 	}
 	return result
 }

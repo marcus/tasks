@@ -510,7 +510,7 @@ func integerText(value string) bool {
 // readFailure is App#read_failure!: the read vocabulary mapped onto HTTP.
 func readFailure(read CheckedRead, err error) error {
 	if err != nil {
-		return errorOf(503, "unavailable")
+		return unavailableError(store.UnavailableMessage(err))
 	}
 	switch read.Status {
 	case store.StatusUnsupportedSchema:
@@ -518,6 +518,17 @@ func readFailure(read CheckedRead, err error) error {
 			withDetails(pairDetails(detailPair{Key: "supported_version", Value: check.Version}))
 	case store.StatusStoreInvalid:
 		return errorOf(503, "store_invalid")
+	}
+	if read.Status == store.StatusUnavailable && len(read.Errors) > 0 &&
+		store.IsLockTimeoutMessage(read.Errors[0].Message) {
+		return unavailableError(read.Errors[0].Message)
+	}
+	return errorOf(503, "unavailable")
+}
+
+func unavailableError(text string) error {
+	if store.IsLockTimeoutMessage(text) {
+		return errorWith(503, "unavailable", text)
 	}
 	return errorOf(503, "unavailable")
 }

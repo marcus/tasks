@@ -140,6 +140,7 @@ type ProjectWriter interface {
 	CompleteProject(id, today string) (closed int, found bool)
 	ArchiveProject(id, today string) (moved []string, proposedDescendants bool, found bool)
 	LastRollback() (reason string, stage store.RollbackStage)
+	LastLockError() string
 }
 
 // -- capability probes --------------------------------------------------------

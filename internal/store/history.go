@@ -39,13 +39,17 @@ const (
 	HistoryConflict HistoryOutcome = "conflict"
 	// HistoryOK means the step was applied and the cursor committed.
 	HistoryOK HistoryOutcome = "ok"
+	// HistoryUnavailable means the store lock could not be taken in time.
+	// It is not HistoryEmpty: there may well be a step, and claiming otherwise
+	// would send the caller looking for a missing journal.
+	HistoryUnavailable HistoryOutcome = "unavailable"
 )
 
 // HistoryStep applies an undo (delta -1) or redo (delta +1) planned by the
 // journal, under the lock so the plan and its commit cannot race another
 // writer. It is Store#history_step, whole: restore, gate, commit, roll back.
 //
-// The ORDER of the three refusals is the contract. An unsupported schema is
+// The ORDER of the refusals is the contract. An unsupported schema is
 // refused before the journal is even consulted, because a history that would
 // restore bytes this build cannot read is not a history it may act on. Then
 // "nothing to undo", then the conflict — which is the only one that names a
@@ -111,7 +115,7 @@ func (s *Store) HistoryStep(delta int) (HistoryOutcome, string) {
 		return nil
 	})
 	if err != nil {
-		return HistoryEmpty, ""
+		return HistoryUnavailable, UnavailableMessage(err)
 	}
 	return outcome, label
 }

@@ -120,7 +120,7 @@ func (s *surfaceContext) readQueries(args []string, action string) (*taskquery.Q
 	}
 	snapshot, err := s.store.ReadSnapshot(true)
 	if err != nil {
-		return nil, abort("task store unavailable")
+		return nil, abort(store.UnavailableMessage(err))
 	}
 	// The link configuration rides along because `show`, `links` and `open` all
 	// read it, and a read model built without it would silently answer "no

@@ -56,7 +56,7 @@ func TestTypedPatchWritesNonStringFieldShapes(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			h := newHarness(t, harnessOptions{})
-			expected, present := h.app.Baseline(fixFlight, testCase.field)
+			expected, present, _ := h.app.Baseline(fixFlight, testCase.field)
 			if !present {
 				t.Fatalf("no baseline published for %s", testCase.field)
 			}
@@ -78,7 +78,7 @@ func TestTypedPatchWritesNonStringFieldShapes(t *testing.T) {
 // edit rather than refusing it.
 func TestTypedPatchStillHonoursTheFieldOwnedBaseline(t *testing.T) {
 	h := newHarness(t, harnessOptions{})
-	stale, _ := h.app.Baseline(fixFlight, store.FieldContexts)
+	stale, _, _ := h.app.Baseline(fixFlight, store.FieldContexts)
 
 	first := h.app.PatchTask(TypedPatch(fixFlight, store.FieldContexts,
 		store.ListValue([]string{"@office"}), stale, "edit contexts", ""), nil)
@@ -101,7 +101,7 @@ func TestTypedPatchStillHonoursTheFieldOwnedBaseline(t *testing.T) {
 func TestTypedPatchCarriesTheCoalesceKeyToTheStore(t *testing.T) {
 	wrap, double := capableFactory()
 	h := newHarness(t, harnessOptions{wrap: wrap})
-	expected, _ := h.app.Baseline(fixFlight, store.FieldTags)
+	expected, _, _ := h.app.Baseline(fixFlight, store.FieldTags)
 	outcome := h.app.PatchTask(TypedPatch(fixFlight, store.FieldTags,
 		store.ListValue([]string{"important", "urgent", "billing"}),
 		expected, "edit tags", "session-key"), nil)

@@ -555,7 +555,7 @@ func (s *Server) createProject(request *http.Request, requestID string) (respons
 	}
 	read := s.options.App.ProjectResult(id, operation)
 	if !read.OK() {
-		return response{}, projectReadFailure(read.Status)
+		return response{}, projectReadFailure(read.Status, firstReadMessage(read.Errors))
 	}
 	w := jsonout.New()
 	writeSuccess(w, func(w *jsonout.Writer) { writeProject(w, read.Data) }, read.StoreRevision)
@@ -591,7 +591,7 @@ func (s *Server) renameProject(request *http.Request, id, requestID string) (res
 	}
 	before := s.options.App.ProjectResult(id, operation)
 	if !before.OK() {
-		return response{}, projectReadFailure(before.Status)
+		return response{}, projectReadFailure(before.Status, firstReadMessage(before.Errors))
 	}
 	outcome := s.options.App.RenameProject(id, title, operation)
 	if err := s.projectMutationFailure(outcome, id); err != nil {
@@ -623,7 +623,7 @@ func (s *Server) completeProject(request *http.Request, id, requestID string) (r
 	}
 	before := s.options.App.ProjectResult(id, operation)
 	if !before.OK() {
-		return response{}, projectReadFailure(before.Status)
+		return response{}, projectReadFailure(before.Status, firstReadMessage(before.Errors))
 	}
 	outcome := s.options.App.CompleteProject(id, operation)
 	if err := s.projectMutationFailure(outcome, id); err != nil {
@@ -663,7 +663,7 @@ func (s *Server) archiveProject(request *http.Request, id, requestID string) (re
 	}
 	view := s.options.App.ProjectResult(id, operation)
 	if !view.OK() {
-		return response{}, projectReadFailure(view.Status)
+		return response{}, projectReadFailure(view.Status, firstReadMessage(view.Errors))
 	}
 	openCount, heldCount := view.Data.OpenCount, view.Data.HeldCount
 	if openCount+heldCount > 0 && !*force {
@@ -735,7 +735,7 @@ func (s *Server) projectAfterMutation(id string, operation *application.Operatio
 	}
 	status := s.options.App.ReadStatusResult(operation)
 	if !status.OK() {
-		return response{}, projectReadFailure(status.Status)
+		return response{}, projectReadFailure(status.Status, firstReadMessage(status.Errors))
 	}
 	return projectResponse(synthesize(), status.StoreRevision), nil
 }
@@ -814,7 +814,7 @@ func (s *Server) projectMutationFailure(outcome application.Outcome, id string) 
 	case store.MutationStoreInvalid:
 		return errorOf(503, "store_invalid")
 	}
-	return errorOf(503, "unavailable")
+	return unavailableError(outcome.FirstError())
 }
 
 // sortedFieldErrors orders a refusal's per-field reasons by field name.
@@ -842,7 +842,7 @@ func sortedFieldErrors(fields map[string][]string) []fieldError {
 // through the api.Reader seam, so they need the same mapping over the other
 // status type — including the 404 that says "task", because a pre-read refusal
 // is a READ refusal and Ruby answers it with the shared not_found sentence.
-func projectReadFailure(status application.ReadStatus) error {
+func projectReadFailure(status application.ReadStatus, message string) error {
 	switch status {
 	case application.ReadNotFound:
 		return errorOf(404, "not_found")
@@ -852,7 +852,14 @@ func projectReadFailure(status application.ReadStatus) error {
 	case application.ReadStoreInvalid:
 		return errorOf(503, "store_invalid")
 	}
-	return errorOf(503, "unavailable")
+	return unavailableError(message)
+}
+
+func firstReadMessage(errors []store.Entry) string {
+	if len(errors) == 0 {
+		return ""
+	}
+	return errors[0].Message
 }
 
 // -- shared write plumbing ----------------------------------------------------
@@ -971,7 +978,7 @@ func (s *Server) mutationFailure(outcome application.Outcome, refusal mutationRe
 	case store.MutationStoreInvalid:
 		return errorOf(503, "store_invalid")
 	}
-	return errorOf(503, "unavailable")
+	return unavailableError(outcome.FirstError())
 }
 
 // staleRefusal is the 412 with the CURRENT resource attached, which is what

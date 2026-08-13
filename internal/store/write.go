@@ -178,7 +178,7 @@ func (s *Store) CreateTask(command CreateCommand, today string) MutationResult {
 		return nil
 	})
 	if err != nil {
-		return MutationResult{Status: MutationUnavailable, Errors: []string{"task store unavailable"}}
+		return mutationUnavailable(err)
 	}
 	return result
 }

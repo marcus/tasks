@@ -120,7 +120,7 @@ func (s *Store) delegationMutation(id, coalesceKey string, plan func(*record.Rec
 		return nil
 	})
 	if err != nil {
-		return MutationResult{Status: MutationUnavailable, Errors: []string{"task store unavailable"}}
+		return mutationUnavailable(err)
 	}
 	return result
 }

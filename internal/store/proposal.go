@@ -162,7 +162,7 @@ func (s *Store) DecideProposal(id, action string, notes []string, expectedRevisi
 		return nil
 	})
 	if err != nil {
-		return MutationResult{Status: MutationUnavailable, Errors: []string{"task store unavailable"}}
+		return mutationUnavailable(err)
 	}
 	return result
 }

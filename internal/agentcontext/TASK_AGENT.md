@@ -34,7 +34,9 @@ every record carries a stable id, records sit in a strict DFS pre-order, keys us
 a fixed order, and line 1 is a `meta` record — a hand-edit gets one of those
 wrong and corrupts the file. Every change you need has a `tasks` command;
 use it. The CLI writes the exact format, validates after every write, and rolls
-back a bad one.
+back a bad one. If a command exits 1 with `lock timeout after … held by pid …`,
+another `tasks` process holds the file — retry, and do not treat the leftover
+`.tasks.jsonl.lock` sidecar as something to delete or edit.
 
 ## Files
 - `tasks.jsonl` — the live list. One JSON record per line: a `meta` header, then

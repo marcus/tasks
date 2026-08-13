@@ -45,10 +45,13 @@ API, and agent-driven changes participate in the same undo/redo history.
 
 ## Concurrency
 
-Writers serialize through the store lock and re-read under that lock before
-applying a command. Application mutations carry expected values or revisions so
-stale decisions refuse rather than overwrite newer data. HTTP mutations expose
-the same rule through quoted ETags and `If-Match`.
+Writers serialize through an exclusive store lock and re-read under that lock
+before applying a command. Snapshot reads take a shared lock. Acquire waits
+at most 5s, then refuses with the live holder's pid and timestamp rather than
+blocking. The sidecar file is diagnostic only; flock is the lock. Application
+mutations carry expected values or revisions so stale decisions refuse rather
+than overwrite newer data. HTTP mutations expose the same rule through quoted
+ETags and `If-Match`.
 
 Snapshots deep-copy mutable data and remain coherent while background writes
 occur. Readers see a complete old or new file, never a torn intermediate state.

@@ -2537,7 +2537,9 @@ components:
         version this build does not implement (`unsupported_schema_version` —
         refused on read and on write, with nothing written and no conversion
         offered), or a write failed for an environmental reason and was rolled
-        back (`unavailable`).
+        back (`unavailable`). A live store lock that cannot be acquired within
+        5s is also `unavailable`; the message then names the holding pid
+        and when it took the lock.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }

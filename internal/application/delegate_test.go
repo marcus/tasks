@@ -213,7 +213,7 @@ func TestAgentDelegationOnlyClearsAWaitingTheHumanDelegationSet(t *testing.T) {
 
 	// A WAITING the owner set themselves is theirs to keep: no human marker is
 	// being replaced, so the agent delegation must not touch the state.
-	expected, found := h.app.Baseline(fixPlants, store.FieldState)
+	expected, found, _ := h.app.Baseline(fixPlants, store.FieldState)
 	if !found {
 		t.Fatal("the state baseline must be readable")
 	}

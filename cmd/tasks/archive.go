@@ -38,6 +38,9 @@ func (s *surfaceContext) archive(args []string) int {
 	var pinned *store.ArchivePreview
 	if asJSON {
 		preview := writer.ArchivePreviewFor(today)
+		if preview.Unavailable != "" {
+			return archiveUnavailable(preview.Unavailable, asJSON)
+		}
 		pinned = &preview
 	}
 	result := writer.ArchiveSweep(today, pinned)
@@ -108,6 +111,13 @@ func archiveRefused(result store.ArchiveResult, asJSON bool) int {
 		}
 		return abort(message)
 
+	case store.ArchiveUnavailable:
+		message := "task store unavailable"
+		if len(result.Details) > 0 && result.Details[0] != "" {
+			message = result.Details[0]
+		}
+		return archiveUnavailable(message, asJSON)
+
 	case store.ArchiveOpenDescendants:
 		blocked := []string{}
 		for _, block := range preview.Blocks {
@@ -158,6 +168,19 @@ func archiveRefused(result store.ArchiveResult, asJSON bool) int {
 // archiveErrorDocument is the CLI's error envelope with the sweep's `reason`.
 // Extra payload is written FIRST, so a payload key can never shadow one of the
 // envelope's own discriminators.
+func archiveUnavailable(message string, asJSON bool) int {
+	if asJSON {
+		w := jsonWriter()
+		w.BeginObject()
+		w.KeyStr("error", "unavailable")
+		w.KeyStr("action", "archive")
+		w.KeyStr("message", message)
+		w.EndObject()
+		out(w.String())
+	}
+	return abort(message)
+}
+
 func archiveErrorDocument(reason, message string, extra func(*jsonout.Writer)) string {
 	w := jsonWriter()
 	w.BeginObject()

@@ -12,9 +12,10 @@ import (
 // this reaches back past the current invocation — a `done` from one process is
 // undoable from another, and from a cold start.
 //
-// The three refusals are the safety story, and their ORDER is contract. An
+// The refusals are the safety story, and their ORDER is contract. An
 // unsupported schema is refused before the journal is consulted; an exhausted,
-// missing, foreign or corrupt history is "nothing to undo"; and a store edited
+// missing, foreign or corrupt history is "nothing to undo"; a store lock that
+// cannot be taken is unavailable rather than empty; and a store edited
 // out of band since the journal's tip is a conflict that NAMES the label it
 // declined to revert, so the operator knows exactly what was not undone. A
 // conflict is also what an application that could not complete reports: an undo
@@ -51,6 +52,12 @@ func (s *surfaceContext) history(args []string, delta int, verb, past string) in
 	case store.HistoryConflict:
 		return s.historyFailed(asJSON, "conflict", verb, label,
 			fmt.Sprintf("tasks.jsonl changed since that edit — refusing to %s “%s”", verb, label))
+	case store.HistoryUnavailable:
+		message := label
+		if message == "" {
+			message = "task store unavailable"
+		}
+		return s.historyFailed(asJSON, "unavailable", verb, "", message)
 	}
 
 	if asJSON {

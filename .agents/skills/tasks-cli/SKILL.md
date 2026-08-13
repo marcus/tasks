@@ -54,6 +54,8 @@ A nonzero exit means the command refused, and stdout is often empty. `claim`,
 `release`, `delegate`, `archive`, `undo`, `redo`, and `open` additionally print
 an error object (`{"error", "action", "message"}`) you can branch on; most other
 refusals print prose to stderr only. Never read an empty stdout as success.
+A `lock timeout after … held by pid …` refusal means another `tasks` process
+holds the store; retry. The leftover `.tasks.jsonl.lock` sidecar is not a lock.
 
 ## Mutate
 

@@ -43,7 +43,7 @@ func (a *Application) CreateProject(title string, operation *OperationContext) O
 	existing, err := a.ListProjects(operation)
 	if err != nil {
 		return Outcome{MutationResult: store.MutationResult{
-			Status: store.MutationUnavailable, Errors: []string{"task store unavailable"},
+			Status: store.MutationUnavailable, Errors: []string{store.UnavailableMessage(err)},
 		}}
 	}
 	for _, view := range existing {
@@ -85,6 +85,9 @@ func (a *Application) RenameProject(id, title string, _ *OperationContext) Outco
 			Status: store.MutationOK, TouchedIDs: []string{touched},
 		}}
 	}
+	if refusal := lockUnavailable(writer); refusal != nil {
+		return *refusal
+	}
 	if rollback := rollbackOutcome(target); rollback != nil {
 		return *rollback
 	}
@@ -109,6 +112,9 @@ func (a *Application) CompleteProject(id string, operation *OperationContext) Ou
 	}
 	closed, found := writer.CompleteProject(id, a.today(operation))
 	if !found {
+		if refusal := lockUnavailable(writer); refusal != nil {
+			return *refusal
+		}
 		return Outcome{MutationResult: store.MutationResult{Status: store.MutationNotFound}}
 	}
 	if closed == 0 {
@@ -142,6 +148,9 @@ func (a *Application) ArchiveProject(id string, operation *OperationContext) Out
 		}}
 	}
 	if !found {
+		if refusal := lockUnavailable(writer); refusal != nil {
+			return *refusal
+		}
 		if rollback := rollbackOutcome(target); rollback != nil {
 			return *rollback
 		}
@@ -155,6 +164,15 @@ func (a *Application) ArchiveProject(id string, operation *OperationContext) Out
 
 // inspect is Ruby's String#inspect for the one use this package has: quoting a
 // title back to the user inside a refusal.
+func lockUnavailable(writer ProjectWriter) *Outcome {
+	if message := writer.LastLockError(); message != "" {
+		return &Outcome{MutationResult: store.MutationResult{
+			Status: store.MutationUnavailable, Errors: []string{message},
+		}}
+	}
+	return nil
+}
+
 func inspect(value string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(value) + `"`
 }

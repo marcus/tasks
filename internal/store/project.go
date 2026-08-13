@@ -33,7 +33,7 @@ import (
 // failure. `failed` is the value the caller reports when a rollback happened.
 func (s *Store) withHistory(label string, body func() (changed bool)) bool {
 	ok := true
-	_ = s.withLock(func() error {
+	if err := s.withLock(func() error {
 		s.clearRollback()
 		before := s.fileSnapshot()
 		if !body() {
@@ -52,7 +52,9 @@ func (s *Store) withHistory(label string, body func() (changed bool)) bool {
 		}
 		s.journal().Record(label, before, after, "", false)
 		return nil
-	})
+	}); err != nil {
+		return false
+	}
 	return ok
 }
 
@@ -201,7 +203,7 @@ func (s *Store) CreateProject(title string) MutationResult {
 		return nil
 	})
 	if err != nil {
-		return MutationResult{Status: MutationUnavailable, Errors: []string{"task store unavailable"}}
+		return mutationUnavailable(err)
 	}
 	return result
 }

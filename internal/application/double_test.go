@@ -262,6 +262,7 @@ type scriptedStore struct {
 	archiveFound    bool
 	rollbackReason  string
 	rollbackStage   store.RollbackStage
+	lockError       string
 	deleteResult    store.MutationResult
 	proposalResult  store.MutationResult
 
@@ -291,6 +292,8 @@ func (s *scriptedStore) ArchiveProject(id, today string) ([]string, bool, bool) 
 func (s *scriptedStore) LastRollback() (string, store.RollbackStage) {
 	return s.rollbackReason, s.rollbackStage
 }
+
+func (s *scriptedStore) LastLockError() string { return s.lockError }
 
 func (s *scriptedStore) DeleteTask(id string, cascade bool, expectedRevision, historyLabel string) store.MutationResult {
 	detail := "cascade=false"

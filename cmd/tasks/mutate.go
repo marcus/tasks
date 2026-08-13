@@ -72,6 +72,8 @@ func mutationResultFailed(result store.MutationResult, args []string, action, su
 		message += "\n" + detail + " — this build cannot read this task file (nothing was written)"
 	case result.Status == store.MutationStoreInvalid:
 		message += "\ntask file is already invalid — run `tasks check` (nothing was written)"
+	case result.Status == store.MutationUnavailable && store.IsLockTimeoutMessage(result.FirstError()):
+		message += "\n" + result.FirstError()
 	}
 
 	if slices.Contains(args, "--json") {

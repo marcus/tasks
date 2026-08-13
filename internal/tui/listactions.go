@@ -37,6 +37,10 @@ func (m *Model) ArchiveSweep() {
 		m.Flash("this store cannot archive")
 		return
 	}
+	if preview.Unavailable != "" {
+		m.Flash(preview.Unavailable)
+		return
+	}
 	if preview.Roots == 0 {
 		m.Flash("archive preview: 0 roots · 0 descendants — nothing to archive")
 		return
@@ -97,6 +101,13 @@ func (m *Model) archiveConfirmKey(key string) {
 		switch outcome.Refusal {
 		case store.ArchiveUnsupportedSchema:
 			m.ShowUnsupportedSchemaNotice()
+			return
+		case store.ArchiveUnavailable:
+			message := "task store unavailable"
+			if len(outcome.Details) > 0 && outcome.Details[0] != "" {
+				message = outcome.Details[0]
+			}
+			m.Flash(message)
 			return
 		case store.ArchivePreviewChanged:
 			m.Flash("task list changed — press x to review the updated archive preview")
@@ -312,10 +323,11 @@ func (m *Model) RedoLast() { m.historyStep(1, "redid", "redo") }
 
 // historyStep applies one journal step and reports it in Ruby's words.
 //
-// The three refusals are distinct on purpose and are NOT collapsed into "could
+// The refusals are distinct on purpose and are NOT collapsed into "could
 // not undo": an unsupported schema means this build must not touch the file, an
-// empty history means there is nothing to undo, and a conflict names the label
-// the user was about to lose — which is the only one where they could act.
+// empty history means there is nothing to undo, a lock timeout is unavailable,
+// and a conflict names the label the user was about to lose — which is the
+// only one where they could act.
 func (m *Model) historyStep(delta int, verb, noun string) {
 	outcome, label, supported := m.app.HistoryStep(delta)
 	if !supported {
@@ -329,6 +341,11 @@ func (m *Model) historyStep(delta int, verb, noun string) {
 		m.Flash("nothing to " + noun)
 	case store.HistoryConflict:
 		m.Flash("file changed externally — can't " + noun + " “" + label + "”")
+	case store.HistoryUnavailable:
+		if label == "" {
+			label = "task store unavailable"
+		}
+		m.Flash(label)
 	default:
 		m.Refresh()
 		m.Flash(verb + ": " + label)

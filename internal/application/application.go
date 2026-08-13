@@ -285,7 +285,7 @@ func checkedQuery[T any](a *Application, operation *OperationContext, body func(
 	if err != nil {
 		return ReadResult[T]{
 			Status: ReadUnavailable, Data: zero,
-			Errors: []store.Entry{{Message: "task store unavailable"}},
+			Errors: []store.Entry{{Message: store.UnavailableMessage(err)}},
 		}
 	}
 	if !checked.OK() {
@@ -403,7 +403,19 @@ func unsupportedSchemaRefusal(target Store) *Outcome {
 	checked, err := target.CheckedReadSnapshot()
 	if err != nil {
 		return &Outcome{MutationResult: store.MutationResult{
-			Status: store.MutationUnavailable, Errors: []string{"task store unavailable"},
+			Status: store.MutationUnavailable, Errors: []string{store.UnavailableMessage(err)},
+		}}
+	}
+	if checked.Status == store.StatusUnavailable {
+		messages := []string{}
+		for _, entry := range checked.Errors {
+			messages = append(messages, entry.Message)
+		}
+		if len(messages) == 0 {
+			messages = []string{"task store unavailable"}
+		}
+		return &Outcome{MutationResult: store.MutationResult{
+			Status: store.MutationUnavailable, Errors: messages,
 		}}
 	}
 	if checked.Status != store.StatusUnsupportedSchema {

@@ -125,7 +125,7 @@ func (s *Store) DeleteTask(id string, cascade bool, expectedRevision, historyLab
 		return nil
 	})
 	if err != nil {
-		return MutationResult{Status: MutationUnavailable, Errors: []string{"task store unavailable"}}
+		return mutationUnavailable(err)
 	}
 	return result
 }

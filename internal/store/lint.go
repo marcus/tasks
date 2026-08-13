@@ -37,7 +37,7 @@ func (s *Store) CheckLive() check.Result {
 // location.
 func (s *Store) CheckFiles() check.Result {
 	var result check.Result
-	err := s.withLock(func() error {
+	err := s.withSharedLock(func() error {
 		live, err := captureReadSource(s.org, false, true)
 		if err != nil {
 			return err
@@ -55,7 +55,7 @@ func (s *Store) CheckFiles() check.Result {
 		return nil
 	})
 	if err != nil {
-		return check.Result{Errors: []check.Entry{{Line: 0, Message: "task store unavailable"}}, Warnings: []check.Entry{}}
+		return check.Result{Errors: []check.Entry{{Line: 0, Message: UnavailableMessage(err)}}, Warnings: []check.Entry{}}
 	}
 	return result
 }
@@ -185,11 +185,11 @@ func (s *Store) CreatePreflightFailure() (string, bool) {
 	// Under the store lock, exactly as the mutation that follows it would be:
 	// the preflight has to describe the bytes another writer cannot be changing
 	// underneath it, and taking the lock is itself an observable effect.
-	if err := s.withLock(func() error {
+	if err := s.withSharedLock(func() error {
 		message, ok = s.createPreflightFailure()
 		return nil
 	}); err != nil {
-		return "task store unavailable", false
+		return UnavailableMessage(err), false
 	}
 	return message, ok
 }

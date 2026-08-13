@@ -35,6 +35,9 @@ type ArchivePreview struct {
 	// file order.
 	CandidateIDs []string
 	Fingerprint  string
+	// Unavailable is set when the preview could not be taken. A zero Roots
+	// with this empty is a real empty sweep; with it set, nothing was read.
+	Unavailable string
 }
 
 // Total is every task the sweep would move.
@@ -75,6 +78,8 @@ const (
 	// copies of the candidate ids — an interrupted sweep that cannot be
 	// resumed safely.
 	ArchiveConflict ArchiveRefusal = "archive_conflict"
+	// ArchiveUnavailable means the store lock could not be taken in time.
+	ArchiveUnavailable ArchiveRefusal = "unavailable"
 )
 
 // ArchiveResult is the outcome of one sweep.
@@ -102,10 +107,12 @@ func (r ArchiveResult) OK() bool { return r.Refusal == ArchiveNotRefused && !r.F
 // caller must pass the same day to the sweep it pins with this preview.
 func (s *Store) ArchivePreviewFor(today string) ArchivePreview {
 	var preview ArchivePreview
-	_ = s.withLock(func() error {
+	if err := s.withSharedLock(func() error {
 		preview = archivePlanFor(freshRecords(s.org), today).preview
 		return nil
-	})
+	}); err != nil {
+		return ArchivePreview{Unavailable: UnavailableMessage(err)}
+	}
 	return preview
 }
 
@@ -214,7 +221,7 @@ func (s *Store) ArchiveSweep(today string, expected *ArchivePreview) ArchiveResu
 		return nil
 	})
 	if err != nil {
-		return ArchiveResult{Failed: true}
+		return ArchiveResult{Refusal: ArchiveUnavailable, Details: []string{UnavailableMessage(err)}}
 	}
 	return result
 }

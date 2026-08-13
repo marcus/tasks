@@ -65,6 +65,9 @@ func (s *surfaceContext) note(args []string) int {
 	// what to append to, and what the write must find unchanged.
 	body, found := writer.ExpectedFor(item.ID, store.FieldBody)
 	if !found {
+		if message := writer.LastLockError(); message != "" {
+			return abort(message)
+		}
 		return abort("cannot add note: task is missing or the file is invalid — run `tasks check`")
 	}
 	appended := text
