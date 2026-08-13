@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.8.0] - 2026-08-13
 
 - Redesign the Projects view: live projects are foldable headings, every project
   with nothing under it collapses into one row, and the section badge names the
