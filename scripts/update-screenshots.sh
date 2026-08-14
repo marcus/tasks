@@ -55,13 +55,17 @@ printf '%s\n' \
 # date order too — a leftover TASKS_TIME_FORMAT=24 would change the PNG.
 unset TASKS_FILE TASKS_ARCHIVE TASKS_MEMORY TASKS_DIR
 unset TASKS_THEME TASKS_TIMEZONE TASKS_URGENT_DAYS TASKS_MAX_DEPTH
-unset TASKS_MOUSE TASKS_WORKER_ID TASKS_DEVICE
+unset TASKS_MOUSE TASKS_WORKER_ID TASKS_DEVICE TASKS_PIN_IDS
+unset TASKS_PIN_COALESCE_SCOPE TASKS_PIN_DELEGATION_KEYS
 unset TASKS_TIME_FORMAT TASKS_DATE_ORDER
 export HOME=$home_dir
 export XDG_CONFIG_HOME=$xdg_config
 export XDG_STATE_HOME=$state_dir
 export TASKS_DIR=$store_dir
 export TASKS_PIN_NOW=$pin_now
+export TASKS_PIN_IDS=seq
+export TASKS_PIN_COALESCE_SCOPE=tasks-screenshots
+export TASKS_PIN_DELEGATION_KEYS=seq
 export TASKS_PIN_HOSTNAME=demo.tasks.local
 export TASKS_DEVICE=demo
 export TZ=America/Los_Angeles
@@ -81,12 +85,16 @@ write_capture_wrapper() {
 		printf '%s\n' \
 			'unset TASKS_FILE TASKS_ARCHIVE TASKS_MEMORY' \
 			'unset TASKS_THEME TASKS_TIMEZONE TASKS_URGENT_DAYS TASKS_MAX_DEPTH' \
-			'unset TASKS_MOUSE TASKS_WORKER_ID TASKS_TIME_FORMAT TASKS_DATE_ORDER'
+			'unset TASKS_MOUSE TASKS_WORKER_ID TASKS_TIME_FORMAT TASKS_DATE_ORDER' \
+			'unset TASKS_PIN_IDS TASKS_PIN_COALESCE_SCOPE TASKS_PIN_DELEGATION_KEYS'
 		printf 'export HOME=%q\n' "$home_dir"
 		printf 'export XDG_CONFIG_HOME=%q\n' "$xdg_config"
 		printf 'export XDG_STATE_HOME=%q\n' "$state_dir"
 		printf 'export TASKS_DIR=%q\n' "$store_dir"
 		printf 'export TASKS_PIN_NOW=%q\n' "$pin_now"
+		printf 'export TASKS_PIN_IDS=seq\n'
+		printf 'export TASKS_PIN_COALESCE_SCOPE=tasks-screenshots\n'
+		printf 'export TASKS_PIN_DELEGATION_KEYS=seq\n'
 		printf 'export TASKS_PIN_HOSTNAME=demo.tasks.local\n'
 		printf 'export TASKS_DEVICE=demo\n'
 		printf 'export TZ=America/Los_Angeles\n'

@@ -2,9 +2,13 @@
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-08-14
+
 - Fail store lock waits after 5s with the holding pid and acquire time,
   instead of blocking forever with empty stdout. Snapshot reads take a
   shared lock so they no longer serialize with each other.
+- Add a reproducible, isolated screenshot workflow and refresh the README's
+  CLI and TUI images, alongside a complete feature reference.
 
 ## [1.8.0] - 2026-08-13
 

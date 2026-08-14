@@ -43,6 +43,7 @@ type RuntimeOptions struct {
 // and agent queue used by every shipping TUI host.
 func NewRuntime(options RuntimeOptions) (*Model, error) {
 	paths, env := options.Paths, options.Env
+	now := func() time.Time { return time.Now().UTC() }
 	writeOptions := store.Options{
 		JournalDir:    journal.DirFor(paths.Org, env),
 		Device:        updatestamp.Device(env),
@@ -51,15 +52,16 @@ func NewRuntime(options RuntimeOptions) (*Model, error) {
 	}
 	if clock := determinism.Clock(env); clock != nil {
 		writeOptions.Now = clock
+		now = clock
 	}
 	if sequence, err := determinism.SharedIDSource(env); err == nil && sequence != nil {
 		writeOptions.IDSource = sequence.Call
 	}
 
 	temporalContext := func() temporal.Context {
-		built, err := temporal.NewContext(time.Now().UTC(), paths.Timezone, paths.TimeFormat)
+		built, err := temporal.NewContext(now(), paths.Timezone, paths.TimeFormat)
 		if err != nil {
-			return temporal.Context{Now: time.Now().UTC(), Timezone: time.UTC, TimezoneID: "Etc/UTC"}
+			return temporal.Context{Now: now(), Timezone: time.UTC, TimezoneID: "Etc/UTC"}
 		}
 		return built
 	}
@@ -86,6 +88,7 @@ func NewRuntime(options RuntimeOptions) (*Model, error) {
 	}
 	return New(Options{
 		App: app, Paths: paths, Env: env, Session: options.Session,
+		Now:    now,
 		Styler: styler, Entries: entries, Queue: queue,
 		Opener:               SystemOpener{Env: env},
 		Embedded:             options.Embedded,
