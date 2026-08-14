@@ -6,12 +6,16 @@
 
 <p align="center"><strong>A local-first GTD system built for human and AI co-working.</strong></p>
 
+<p align="center"><a href="FEATURES.md">Every feature</a> · <a href="docs/cli-spec.md">CLI spec</a> · <a href="docs/api/openapi.yaml">API</a></p>
+
 Tasks stores one inspectable JSON record per line and exposes the same domain
 behavior through a scriptable CLI, a Bubble Tea TUI, and a loopback HTTP API.
 All writes use checked atomic replacement and a shared content-addressed
-undo/redo journal.
+undo/redo journal. [FEATURES.md](FEATURES.md) is the full inventory.
 
-![tasks TUI Dashboard](docs/assets/screenshot-tui.png)
+![tasks TUI](docs/assets/screenshot-tui.png)
+
+![tasks CLI](docs/assets/screenshot-cli.png)
 
 ## Install
 
@@ -96,7 +100,8 @@ tasks help --json
 
 Every owned capability has a deterministic CLI or API path. Human CLI output is
 paired with structured JSON for scripting; `tasks help --json` is the command
-registry and structured-output contract.
+registry and structured-output contract. The longer catalog is
+[FEATURES.md](FEATURES.md).
 
 Run `tasks-tui` for the full-screen keyboard and mouse interface. Run
 `tasks-api` for the loopback-only API rooted at
@@ -148,7 +153,14 @@ make test-race
 make vet
 make fmt-check
 make build
+make screenshots
 ```
+
+`make screenshots` rebuilds the README images from a disposable demo store.
+It points `TASKS_DIR`, `HOME`, and `XDG_*` at a temp directory, seeds the
+list through the just-built CLI, and captures the TUI and CLI with Betamax.
+The configured task directory is not read or written. See
+[`docs/demo/README.md`](docs/demo/README.md).
 
 After changing code in the canonical `main` checkout, run `make install-local`
 so normal shell and automation consumers exercise the new build. In a worktree,

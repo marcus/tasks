@@ -1,0 +1,14 @@
+@set:cols:92
+@set:rows:32
+@set:delay:80
+@require:termshot
+@set:window_bar:colorful
+@set:shadow:true
+@set:border_radius:12
+@set:margin:28
+@set:padding:16
+@set:theme:tokyo-night
+
+@wait:tasks agenda
+@sleep:400
+@capture:screenshot-cli.png

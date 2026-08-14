@@ -1,0 +1,17 @@
+@set:cols:120
+@set:rows:26
+@set:delay:80
+@require:termshot
+@set:window_bar:colorful
+@set:shadow:true
+@set:border_radius:12
+@set:margin:28
+@set:padding:16
+@set:theme:tokyo-night
+
+@wait:tab to ask the agent
+@sleep:250
+Enter
+@sleep:400
+@capture:screenshot-tui.png
+q
