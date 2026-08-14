@@ -49,12 +49,21 @@ RELEASE_VERSION=v1.0.0 make release-tap
 ## Verify the public install
 
 ```sh
-brew update
-brew install marcus/tap/tasks
-brew test marcus/tap/tasks
-tasks --version
-tasks-api --version
-tasks-tui --version
+RELEASE_VERSION=vX.Y.Z
+export RELEASE_VERSION
+proof_bin=$(mktemp -d)
+GOBIN="$proof_bin" GOWORK=off go install "github.com/marcus/tasks/cmd/tasks@$RELEASE_VERSION"
+GOBIN="$proof_bin" GOWORK=off go install "github.com/marcus/tasks/cmd/tasks-api@$RELEASE_VERSION"
+GOBIN="$proof_bin" GOWORK=off go install "github.com/marcus/tasks/cmd/tasks-tui@$RELEASE_VERSION"
+test "$("$proof_bin/tasks" --version)" = "tasks $RELEASE_VERSION"
+test "$("$proof_bin/tasks-api" --version)" = "tasks-api $RELEASE_VERSION"
+test "$("$proof_bin/tasks-tui" --version)" = "tasks-tui $RELEASE_VERSION"
+
+make verify-homebrew
+
+# Restore this development machine to the canonical main build afterward.
+make install-local
+make install-status
 ```
 
 Release binaries do not guess a task-data directory. Configure each machine

@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.8.2] - 2026-08-14
+
+- Report the module's tagged version from `go install ...@version` builds so
+  public source installs have verifiable provenance.
+- Add a one-shot Homebrew verification target that activates, updates,
+  upgrades, tests, and reports all three released commands.
+
 ## [1.8.1] - 2026-08-14
 
 - Fail store lock waits after 5s with the holding pid and acquire time,

@@ -191,10 +191,19 @@ use_homebrew() {
   status
 }
 
+verify_homebrew() {
+  use_homebrew
+  brew update
+  brew upgrade --yes marcus/tap/tasks
+  brew test marcus/tap/tasks
+  status
+}
+
 case "$action" in
   install-local) install_local main ;;
   install-worktree) install_local worktree ;;
   use-homebrew) use_homebrew ;;
+  verify-homebrew) verify_homebrew ;;
   status) status ;;
-  *) die "usage: $0 {install-local|install-worktree|use-homebrew|status}" ;;
+  *) die "usage: $0 {install-local|install-worktree|use-homebrew|verify-homebrew|status}" ;;
 esac

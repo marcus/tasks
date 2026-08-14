@@ -11,7 +11,7 @@ $(error set RELEASE_VERSION in the environment, for example: RELEASE_VERSION=v1.
 endif
 endif
 
-.PHONY: build install install-local install-worktree use-homebrew install-status test test-race vet fmt fmt-check clean screenshots release-snapshot check-release-state release release-tap
+.PHONY: build install install-local install-worktree use-homebrew verify-homebrew install-status test test-race vet fmt fmt-check clean screenshots release-snapshot check-release-state release release-tap
 
 build:
 	mkdir -p bin
@@ -33,6 +33,9 @@ install-worktree:
 
 use-homebrew:
 	./scripts/dev-install.sh use-homebrew
+
+verify-homebrew:
+	./scripts/dev-install.sh verify-homebrew
 
 install-status:
 	./scripts/dev-install.sh status

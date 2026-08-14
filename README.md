@@ -45,6 +45,7 @@ download anything:
 make install-local       # canonical main checkout only: build and activate
 make install-status      # show source, path, version, and commit
 make use-homebrew        # reactivate the released formula
+make verify-homebrew     # update, upgrade, test, and report the formula
 ```
 
 From a Git worktree or non-main branch, activation must be deliberate:
