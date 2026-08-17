@@ -261,7 +261,8 @@ func (m *Model) footerRoles() []string {
 
 func (m *Model) clickTab(layout ScreenLayout, column int) bool {
 	// The strip starts one column in from the border, matching Header's leading
-	// space. Cells are separated by a single space.
+	// space. Advance by the exact gap Header paints so later hit areas cannot
+	// drift away from their labels.
 	cursor := 2
 	variant := m.tabVariant(m.tabBudget(layout))
 	for _, tab := range Tabs {
@@ -270,7 +271,7 @@ func (m *Model) clickTab(layout ScreenLayout, column int) bool {
 			m.SwitchView(tab.Key)
 			return true
 		}
-		cursor += width + 1
+		cursor += width + m.styler.Width(TabGap)
 	}
 	return false
 }

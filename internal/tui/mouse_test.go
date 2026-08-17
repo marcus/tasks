@@ -106,15 +106,31 @@ func TestClickingATabSwitchesToIt(t *testing.T) {
 	layout := harness.model.Layout()
 	variant := harness.model.tabVariant(harness.model.tabBudget(layout))
 	column := 2
-	for _, tab := range Tabs {
+	gapWidth := harness.model.styler.Width(TabGap)
+	for index, tab := range Tabs {
 		width := harness.model.styler.Width(harness.model.tabCell(tab, variant))
-		harness.model.HandleMouse(tea.MouseClickMsg{
-			X: column, Y: layout.HeaderRow(), Button: tea.MouseLeft,
-		})
-		if harness.model.view != tab.Key {
-			t.Fatalf("clicking column %d selected %q, want %q", column, harness.model.view, tab.Key)
+		for _, hitColumn := range []int{column, column + width - 1} {
+			harness.model.HandleMouse(tea.MouseClickMsg{
+				X: hitColumn, Y: layout.HeaderRow(), Button: tea.MouseLeft,
+			})
+			if harness.model.view != tab.Key {
+				t.Fatalf("clicking rendered %q column %d selected %q, want %q",
+					tab.Label, hitColumn, harness.model.view, tab.Key)
+			}
 		}
-		column += width + 1
+		if index < len(Tabs)-1 {
+			// The full rendered separator is inert. This catches both overlap and
+			// cumulative drift between the labels and their hit areas.
+			for gapColumn := column + width; gapColumn < column+width+gapWidth; gapColumn++ {
+				harness.model.HandleMouse(tea.MouseClickMsg{
+					X: gapColumn, Y: layout.HeaderRow(), Button: tea.MouseLeft,
+				})
+				if harness.model.view != tab.Key {
+					t.Fatalf("clicking separator column %d changed view to %q", gapColumn, harness.model.view)
+				}
+			}
+		}
+		column += width + gapWidth
 	}
 }
 
