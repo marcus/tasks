@@ -187,7 +187,7 @@ func buildFilter(params url.Values) (query.Filter, *bool, error) {
 	}
 	if !knownScope(scope) {
 		return query.Filter{}, nil, validationError(reason("scope",
-			"must be open, proposed, done, archived, all, delegated, or agent_ready"))
+			"must be open, proposed, done, archived, all, rejected, delegated, or agent_ready"))
 	}
 	agentReadyOnly := scope == "agent_ready"
 	delegated, err := booleanQuery(params, "delegated", nil)
@@ -308,7 +308,7 @@ func delegationScopeConflict(scope string, delegated *bool, state *string) error
 }
 
 func knownScope(scope string) bool {
-	for _, known := range []string{"open", "proposed", "done", "archived", "all"} {
+	for _, known := range []string{"open", "proposed", "done", "archived", "all", "rejected"} {
 		if scope == known {
 			return true
 		}

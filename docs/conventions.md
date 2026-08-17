@@ -43,7 +43,7 @@ One record per line. Records serialize with a fixed key order (nil/empty fields
 are omitted), so a single field change is a one-line diff:
 
 ```
-type id parent state priority title tags scheduled scheduled_time deadline deadline_time recur lead lead_skip delegation closed archived body
+type id parent state priority title tags scheduled scheduled_time deadline deadline_time recur lead lead_skip delegation closed rejected archived body
 ```
 
 ```json
@@ -85,6 +85,12 @@ type id parent state priority title tags scheduled scheduled_time deadline deadl
   `closed` is stamped
   when a task enters DONE/CANCELLED; `archived` is stamped on a subtree root
   when it's swept to `archive.jsonl`.
+- **`rejected`** — `"YYYY-MM-DD"`, the day a `PROPOSED` task was declined by
+  `tasks reject`. It is what separates a declined proposal from an ordinary
+  cancellation, which `CANCELLED` alone cannot express, and it is only ever
+  valid on a `CANCELLED` task: any write that leaves that state drops it. The
+  marker is what `tasks list --rejected` selects on and what `tasks unreject`
+  requires; see `docs/cli-spec.md`.
 - **`scheduled_time`** / **`deadline_time`** — optional time metadata owned by
   the matching date: `{ "local": "HH:MM", "timezone": "Area/Location", "fold": 1 }`.
   Omitting `timezone` makes the time floating in the configured evaluation zone.

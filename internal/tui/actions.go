@@ -55,6 +55,8 @@ func (m *Model) handlers() map[string]func(key string) {
 		"delete_selected":              func(string) { m.DeleteSelected() },
 		"approve_proposal":             func(string) { m.DecideProposal(application.ProposalApprove) },
 		"reject_proposal":              func(string) { m.DecideProposal(application.ProposalReject) },
+		"unreject_proposal":            func(string) { m.RestoreRejected() },
+		"toggle_rejected_view":         func(string) { m.ToggleRejected() },
 		"raise_priority":               func(string) { m.BumpPriority(-1) },
 		"lower_priority":               func(string) { m.BumpPriority(1) },
 		"open_date_popup":              func(string) { m.OpenDatePopup() },
@@ -162,6 +164,10 @@ func (m *Model) availability(name string) bool {
 	case "proposal_action_available?":
 		item := m.CurrentItem()
 		return item != nil && isProposedState(item.State)
+	case "reject_restore_available?":
+		item := m.CurrentItem()
+		return item != nil && item.State == "CANCELLED" && item.Rejected != "" &&
+			item.Source == store.SourceLive
 	case "recurrence_action_available?":
 		item := m.CurrentItem()
 		return item != nil && !isProposedState(item.State) &&
@@ -453,6 +459,31 @@ func (m *Model) DecideProposal(action application.ProposalAction) {
 		target, verb = "CANCELLED", "rejected"
 	}
 	m.Flash(verb + " → " + target + ": " + title)
+}
+
+// RestoreRejected is `a` on a revealed rejected row: the decline is undone in
+// place and the proposal is back in the queue above it, same id and same text.
+func (m *Model) RestoreRejected() {
+	item := m.CurrentItem()
+	if item == nil || item.State != "CANCELLED" || item.Rejected == "" ||
+		item.Source != store.SourceLive {
+		m.Flash("select a rejected proposal")
+		return
+	}
+	title := item.Title
+	result := m.app.UnrejectTask(item.ID, m.read.Snapshot().RevisionFor(*item), m.operation())
+	if !result.OK() {
+		m.Refresh()
+		message := "proposal changed underneath — try again"
+		if len(result.Errors) > 0 {
+			message = result.Errors[0]
+		}
+		m.Flash(message)
+		return
+	}
+	m.selectedID = item.ID
+	m.Refresh()
+	m.Flash("restored → PROPOSED: " + title)
 }
 
 func (m *Model) nextProposalID(current string) string {

@@ -133,6 +133,20 @@ func (a *Application) RejectTask(id, expectedRevision string, notes []string, op
 	}, operation)
 }
 
+// UnrejectTask restores a declined proposal to PROPOSED in place, keeping its id
+// and everything it was captured with. It is the undo of a decision rather than
+// a third decision, so it has its own seam rather than a third ProposalAction.
+func (a *Application) UnrejectTask(id, expectedRevision string, operation *OperationContext) Outcome {
+	if trimmed(id) == "" {
+		return invalid("task id is required")
+	}
+	writer, ok := a.store().(ProposalUnrejecter)
+	if !ok {
+		return unsupported("restore a rejected proposal")
+	}
+	return Outcome{MutationResult: writer.UnrejectProposal(id, expectedRevision, a.today(operation))}
+}
+
 // DecideProposal is the typed decision seam both verbs share.
 //
 // A malformed decision is a REFUSAL rather than a panic. Ruby raises

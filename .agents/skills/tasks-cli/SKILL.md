@@ -18,6 +18,7 @@ marks each command ✅ implemented / 🚧 planned).
 ```sh
 tasks list -a          # everything incl. archive; filters: @ctx +tag /text -A
 tasks list --proposed  # inert suggestions pending owner approval
+tasks list --rejected  # proposals declined in the last 30 days, newest first
 tasks list --delegated # handed to a person/agents (--all incl. closed)
 tasks list --agent-ready --json # the claimable queue for heartbeat pickup
 tasks list --unavailable # timed, inherited, and indefinite unavailability
@@ -64,6 +65,7 @@ tasks capture "text"             # new INBOX item (see flags below)
 tasks propose "text" --note "why" # inert PROPOSED item for owner review
 tasks approve "<ref>"             # accept PROPOSED → INBOX
 tasks reject "<ref>" [--note "why"] # decline PROPOSED → CANCELLED (+ rationale)
+tasks unreject "<ref>"            # restore a declined proposal → PROPOSED, same id
 tasks delegate "<ref>" --to pat@example.com # hand to a person (→ WAITING)
 # the address must be real: local@domain.tld — "@work" is refused
 tasks delegate "<ref>" research   # offer to agents: refine|research|implement
@@ -107,7 +109,15 @@ list, agenda, next, quadrants, inbox, and project rollups; review it with
 `list --proposed` or the TUI Approvals tab. A proposal cannot recur or be
 completed. Before the owner decides it, `priority`, `retitle`, `tag`, and
 `note` can correct its presentation without changing its PROPOSED state.
-Approval and rejection are undoable lifecycle decisions.
+Approval and rejection are undoable lifecycle decisions. A reject stamps
+`rejected` with the day it was declined, which is what separates a declined
+proposal from an ordinary cancellation: `list --rejected` lists declines from the
+last 30 days (live plus recently archived rows), newest first, and
+`unreject "<ref>"` puts one back to PROPOSED in place — same id, title, notes and
+links, undoable like any other write. It refuses anything that is not a live
+rejected proposal, and never creates a second task for work that already has an
+id. Declines stay hidden everywhere else; the TUI Inbox reveals the same window
+with `R` and restores the selected one with `a`.
 
 Use `capture` when the user explicitly asks to add, remember, or track a task.
 You may use `propose` without asking when agent-initiated follow-up is plausibly

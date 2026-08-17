@@ -392,10 +392,18 @@ func (s *Server) decideProposal(request *http.Request, id, action, requestID str
 	if err != nil {
 		return response{}, err
 	}
-	outcome := s.options.App.DecideProposal(application.ProposalDecision{
-		ID: id, Action: application.ProposalAction(action),
-		ExpectedRevision: expected, Notes: notes,
-	}, operation)
+	// `unreject` is the restore verb, not a third decision: it takes no notes and
+	// goes through its own application seam, which refuses anything that is not a
+	// live declined proposal.
+	outcome := application.Outcome{}
+	if action == "unreject" {
+		outcome = s.options.App.UnrejectTask(id, expected, operation)
+	} else {
+		outcome = s.options.App.DecideProposal(application.ProposalDecision{
+			ID: id, Action: application.ProposalAction(action),
+			ExpectedRevision: expected, Notes: notes,
+		}, operation)
+	}
 	if err := s.mutationFailure(outcome, mutationRefusal{ID: id, SemanticInvalid: true}); err != nil {
 		return response{}, err
 	}

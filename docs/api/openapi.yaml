@@ -192,8 +192,12 @@ paths:
           description: |
             Which slice to list. Default `open` (open live tasks).
 
-            `open`, `proposed`, `done`, `archived`, and `all` are lifecycle/source
-            slices. `delegated` and `agent_ready` are delegation refinements of
+            `open`, `proposed`, `done`, `archived`, `all`, and `rejected` are
+            lifecycle/source slices. `rejected` is the declined-proposal review
+            slice: CANCELLED tasks carrying the `rejected` marker, live plus
+            recently archived, declined within the last 30 days, newest decline
+            first — the HTTP mirror of `tasks list --rejected`.
+             `delegated` and `agent_ready` are delegation refinements of
             the default open-live slice, mirroring `tasks list --delegated`
             (under its default `--open`) and `tasks list --agent-ready`:
 
@@ -218,7 +222,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [open, proposed, done, archived, all, delegated, agent_ready]
+            enum: [open, proposed, done, archived, all, rejected, delegated, agent_ready]
             default: open
         - name: delegated
           in: query
@@ -291,7 +295,7 @@ paths:
           description: |
             Filter by effective, ancestor-aware availability. `available=false`
             is the timed/inherited/indefinite review for open live tasks and is
-            rejected with `scope=proposed|done|archived|all`; closed resources report
+            rejected with `scope=proposed|done|archived|all|rejected`; closed resources report
             `available: false` only when fetched directly. Omitted means the
             selected scope's default behavior.
           required: false
@@ -349,6 +353,7 @@ paths:
                         lead_opens_at: null
                         body: ["Captured 2026-07-14.", "Confirm the seat count first."]
                         closed: null
+                        rejected: null
                         archived: false
                         project: "Work"
                         child_count: 0
@@ -463,6 +468,7 @@ paths:
                       lead_opens_at: null
                       body: ["Captured 2026-07-14."]
                       closed: null
+                      rejected: null
                       archived: false
                       project: "Work"
                       child_count: 0
@@ -577,6 +583,7 @@ paths:
                       lead_opens_at: null
                       body: ["Captured 2026-07-14.", "Confirm the seat count first."]
                       closed: null
+                      rejected: null
                       archived: false
                       project: "Work"
                       child_count: 0
@@ -730,6 +737,7 @@ paths:
                       lead_opens_at: null
                       body: ["Captured 2026-07-14.", "Confirm the seat count first."]
                       closed: null
+                      rejected: null
                       archived: false
                       project: "Work"
                       child_count: 0
@@ -1007,6 +1015,47 @@ paths:
         "428": { $ref: "#/components/responses/MissingPrecondition" }
         "503": { $ref: "#/components/responses/StoreInvalid" }
 
+  /tasks/{id}/unreject:
+    post:
+      tags: [tasks]
+      operationId: unrejectTaskProposal
+      summary: Restore a declined proposal to PROPOSED.
+      description: |
+        Atomically returns a live CANCELLED task carrying the `rejected` marker
+        to PROPOSED, in place: same id, title, body — including the withdrawal
+        note the reject appended — tags and links. Nothing is created, so a
+        restore can never mint a second id for work that already has one. Clears
+        `closed` and the `rejected` marker. Refuses (`422`) anything that is not
+        a rejected proposal, including an ordinary cancellation, and inherits the
+        PROPOSED rules: no recurrence, no delegation, no accepted descendants.
+        Takes no request body. Requires the task's current ETag in `If-Match`.
+        The HTTP mirror of `tasks unreject`.
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: Restored task resource, now PROPOSED.
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Task" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+        "400": { $ref: "#/components/responses/MalformedRequest" }
+        "403": { $ref: "#/components/responses/ForbiddenOrigin" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "412": { $ref: "#/components/responses/StaleRevision" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "428": { $ref: "#/components/responses/MissingPrecondition" }
+        "503": { $ref: "#/components/responses/StoreInvalid" }
+
   /tasks/{id}/delegate:
     post:
       tags: [tasks]
@@ -1102,6 +1151,7 @@ paths:
                       lead_opens_at: null
                       body: []
                       closed: null
+                      rejected: null
                       archived: false
                       project: "Work"
                       child_count: 0
@@ -1941,6 +1991,7 @@ paths:
                           lead_opens_at: null
                           body: ["Captured 2026-07-14."]
                           closed: null
+                          rejected: null
                           archived: false
                           project: "Work"
                           child_count: 0
@@ -2317,7 +2368,7 @@ components:
       required: true
       description: |
         The opaque task `revision` (ETag) the client last saw. Required on
-        PATCH, DELETE, and every task action (approve, reject, delegate,
+        PATCH, DELETE, and every task action (approve, reject, unreject, delegate,
         undelegate, claim, release, work_ref). A missing header is `428`; a
         stale value is `412`.
       schema: { type: string }
@@ -2435,6 +2486,7 @@ components:
                       lead_opens_at: null
                       body: ["Captured 2026-07-14."]
                       closed: null
+                      rejected: null
                       archived: false
                       project: "Work"
                       child_count: 0
@@ -2597,6 +2649,7 @@ components:
         lead_opens_at: null
         body: ["Captured 2026-07-14.", "Confirm the seat count first."]
         closed: null
+        rejected: null
         archived: false
         project: "Work"
         child_count: 0
@@ -2980,6 +3033,7 @@ components:
         - lead_opens_at
         - body
         - closed
+        - rejected
         - archived
         - project
         - child_count
@@ -3124,6 +3178,15 @@ components:
           description: The task's own notes, split to lines. A child's body never leaks in.
           items: { type: string }
         closed: { $ref: "#/components/schemas/IsoDate" }
+        rejected:
+          allOf:
+            - $ref: "#/components/schemas/IsoDate"
+          description: |
+            The declined-proposal marker: the day a PROPOSED task was rejected.
+            Present only on a CANCELLED task that was declined at review, so a
+            client can tell a decline from an ordinary cancellation. Null
+            everywhere else. `POST /tasks/{id}/unreject` restores exactly the
+            tasks that carry it.
         archived:
           type: boolean
           description: True when this resource comes from the read-only archive.

@@ -50,6 +50,23 @@ func (s *surfaceContext) list(args []string) int {
 		return 0
 	}
 
+	// The decline scope is about WHEN a proposal was declined, not what state it
+	// is in — every row is CANCELLED — so it prints one flat newest-first list
+	// with the decline date and the restore verb, the same way the delegation
+	// scopes print who holds the task.
+	if filter.RejectedOnly() {
+		for _, item := range items {
+			archived := ""
+			if item.Source == store.SourceArchive {
+				archived = dim("  (archived)")
+			}
+			out("  " + dim(item.Rejected+"  ") + format(item) + archived)
+		}
+		out("")
+		out(dim("restore one with: tasks unreject \"<ref>\""))
+		return 0
+	}
+
 	byState := map[string][]store.Item{}
 	for _, item := range items {
 		byState[item.State] = append(byState[item.State], item)

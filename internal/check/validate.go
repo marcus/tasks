@@ -29,7 +29,7 @@ var (
 // `archived` is deliberately absent: a swept subtree root can be a section.
 var sectionForbidden = []string{
 	"state", "priority", "scheduled", "scheduled_time", "deadline", "deadline_time",
-	"recur", "lead", "lead_skip", "delegation", "closed", "tags",
+	"recur", "lead", "lead_skip", "delegation", "closed", "rejected", "tags",
 	"links",
 }
 
@@ -228,7 +228,7 @@ func checkTask(parsed record.Record, errors *[]Entry) {
 	case !titleIsString:
 		add("title must be a string")
 	}
-	for _, key := range []string{"scheduled", "deadline", "closed"} {
+	for _, key := range []string{"scheduled", "deadline", "closed", "rejected"} {
 		checkDate(parsed, key, errors)
 	}
 	checkTemporalTime(parsed, "scheduled", errors)
@@ -251,6 +251,14 @@ func checkTask(parsed record.Record, errors *[]Entry) {
 		} else if contains(ProposedStates, state) {
 			add(fmt.Sprintf("closed date on a proposed task (%s)", state))
 		}
+	}
+	// `rejected` is the declined-proposal marker: the day a PROPOSED task was
+	// declined, written in the same transaction as the CANCELLED state. It is
+	// what tells a decline apart from an ordinary cancellation, so it is only
+	// meaningful on a cancelled task — a marker left behind on any other state
+	// would make `list --rejected` claim a decline that did not happen.
+	if truthy(rawField(parsed, "rejected")) && state != "CANCELLED" {
+		add(fmt.Sprintf("rejected date on a task that is not CANCELLED (%s)", state))
 	}
 	if tagsRaw := rawField(parsed, "tags"); truthy(tagsRaw) {
 		var tags []json.RawMessage

@@ -491,6 +491,17 @@ accepted open work. `propose` creates an inert task, while `approve` transitions
 it to INBOX and `reject` transitions it to CANCELLED with a `closed` date.
 Repeatable `--note` on `reject` (and on `cancel`) records withdrawal rationale
 on the body, visible in `show` — the same join semantics as `propose --note`.
+A reject also stamps `rejected` with the day the decision was made, in the same
+write as the state change. That marker is the whole difference between a declined
+proposal and an ordinary cancellation — `CANCELLED` alone cannot say which — and
+it is what the `--rejected` scope and `unreject` both read. It is valid only on a
+`CANCELLED` task: any write that moves the task off that state drops it, `check`
+reports it as an error anywhere else, and the merge driver carries it with the
+winning state exactly as it carries `closed`. "Recent", for both `list
+--rejected` and the TUI's reveal, means declined within the last **30 days** of
+the reader's today (`taskquery.RejectedRecentDays`, one constant both surfaces
+read).
+
 Proposals appear only through the explicit `list --proposed` scope, direct
 `show`, and the approval section of the final TUI Inbox tab; they stay out of agenda, next, quadrants,
 inbox, project rollups, Outline, and the default open list. They cannot recur
@@ -498,10 +509,18 @@ or transition directly to DONE. Approval/rejection are checked atomic Store
 mutations with revision support in the application/API, undo history, and
 leaves-first handling for proposal trees. A proposal is retained live until it
 is approved or rejected; archive sweep treats it as a non-closed descendant,
-so it cannot disappear inside a closed ancestor. HTTP clients use
-`scope=proposed` and explicit `POST /api/v1/tasks/{id}/approve` or `/reject`
-intent routes with `If-Match`; both return the transitioned task plus its new
-ETag. Reject may optionally carry a `notes` body field.
+so it cannot disappear inside a closed ancestor.
+
+In the TUI's Inbox tab, `R` shows/hides the recent declines inside APPROVALS
+(hidden by default, and the reveal is per-session rather than durable), and `a`
+on a revealed live reject restores it — the same one-write restore as `tasks
+unreject`. An archived reject is shown for the record, labelled, and not
+restorable.
+
+HTTP clients use `scope=proposed` or `scope=rejected` and the explicit
+`POST /api/v1/tasks/{id}/approve`, `/reject`, or `/unreject` intent routes with
+`If-Match`; all three return the transitioned task plus its new ETag. Reject may
+optionally carry a `notes` body field; approve and unreject take no body.
 
 **Delegation and pickup.** An accepted live task can carry one optional
 `delegation` object naming who holds the next action: a person (`kind: human`,
@@ -971,6 +990,7 @@ than what would be nicer.
 | `propose` | ✅ | `{touched: [task]}` |
 | `approve` | ✅ | `{touched: [task]}` |
 | `reject` | ✅ | `{touched: [task]}` |
+| `unreject` | ✅ | `{touched: [task]}` |
 | `delegate` | ✅ | `{touched: [task]}`; conflict error object on a lost race |
 | `undelegate` | ✅ | `{touched: [task]}` |
 | `workref` | ✅ | `{touched: [task]}` |
@@ -1043,7 +1063,7 @@ The sweep's preview pinning matches the endpoint's documented `fingerprint` →
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `list [filters]` | `l` | ✅ | All tasks grouped by state. Filters compose: `@context`, `+tag`, `/text` or bare word, `-A/-B/-C`, lifecycle scope `--open/-o` (default), `--proposed`, `--done/-d`, `--archived/-x`, or `--all/-a` (mutually exclusive). Effectively unavailable tasks are hidden from the default open scope; `--unavailable` (compatibility alias `--deferred/-D`) lists timed, inherited, and indefinite blockers; `--someday/--on-hold` selects tasks carrying their own indefinite marker. Those two filters are mutually exclusive. With a closed/archive scope, legacy `--deferred` and `--someday` filter the own marker; explicit `--unavailable` is rejected because every closed task is unavailable for lifecycle reasons. `--recurring/-R` lists tasks with a schedule; every list row with one shows `↻ <humanized schedule>`. `--delegated` selects tasks carrying a delegation (human or agent, ready or claimed) in file order and composes with any lifecycle scope — but only *within* that scope, so it is not "every delegated task": under the default `--open` it still inherits the open scope's availability rule, and a delegated task with a future `scheduled` date or a blocked/on-hold ancestor is hidden until you ask for it (`--all --delegated`, which also reviews closed provenance, or `--unavailable --delegated`, which lists exactly the hidden ones). `--agent-ready` lists the claimable queue — agent kind, unclaimed, accepted live state, and available under the ordinary prerequisite/ancestor rules — ranked by priority, then soonest deadline-or-scheduled boundary, then file order; it is only valid with `--open` and is mutually exclusive with `--delegated`. Both print one flat line per task (`agent-ready (<mode>): …`, `delegated → <email> (<STATE>): …`, `claimed by <id>: …`) instead of the state-grouped view. `--body/-b` widens text matching into notes. `--json` |
+| `list [filters]` | `l` | ✅ | All tasks grouped by state. Filters compose: `@context`, `+tag`, `/text` or bare word, `-A/-B/-C`, lifecycle scope `--open/-o` (default), `--proposed`, `--done/-d`, `--archived/-x`, `--rejected`, or `--all/-a` (mutually exclusive). `--rejected` is the declined-proposal review scope: `CANCELLED` tasks carrying the `rejected` marker, live plus recently archived, declined within the last 30 days, printed as one flat newest-first list (`<rejected date>  <headline>`, archived rows labelled) with the `tasks unreject` hint instead of the state-grouped view; ties keep the live row ahead of the archived one and otherwise file order. Effectively unavailable tasks are hidden from the default open scope; `--unavailable` (compatibility alias `--deferred/-D`) lists timed, inherited, and indefinite blockers; `--someday/--on-hold` selects tasks carrying their own indefinite marker. Those two filters are mutually exclusive. With a closed/archive scope, legacy `--deferred` and `--someday` filter the own marker; explicit `--unavailable` is rejected because every closed task is unavailable for lifecycle reasons. `--recurring/-R` lists tasks with a schedule; every list row with one shows `↻ <humanized schedule>`. `--delegated` selects tasks carrying a delegation (human or agent, ready or claimed) in file order and composes with any lifecycle scope — but only *within* that scope, so it is not "every delegated task": under the default `--open` it still inherits the open scope's availability rule, and a delegated task with a future `scheduled` date or a blocked/on-hold ancestor is hidden until you ask for it (`--all --delegated`, which also reviews closed provenance, or `--unavailable --delegated`, which lists exactly the hidden ones). `--agent-ready` lists the claimable queue — agent kind, unclaimed, accepted live state, and available under the ordinary prerequisite/ancestor rules — ranked by priority, then soonest deadline-or-scheduled boundary, then file order; it is only valid with `--open` and is mutually exclusive with `--delegated`. Both print one flat line per task (`agent-ready (<mode>): …`, `delegated → <email> (<STATE>): …`, `claimed by <id>: …`) instead of the state-grouped view. `--body/-b` widens text matching into notes. `--json` |
 | `agenda` | `a` | ✅ | Available dated items, soonest first. `--json` |
 | `next` | `n` | ✅ | NEXT actions by context. `--json` |
 | `quadrants` | `q` | ✅ | Covey 2×2 from priority (A/B ⇒ important) + a `DEADLINE` within `urgent_days` (default 3, overdue counts) ⇒ urgent, with `important`/`urgent` tags as overrides. `--json` adds `quadrant`. |
@@ -1057,13 +1077,16 @@ The sweep's preview pinning matches the endpoint's documented `fingerprint` →
 
 JSON list shape (`--json` on list/agenda/next/quadrants/inbox) — a flat array,
 already sorted the way the text view sorts:
-`[{"state": "NEXT", "priority": "A", "title": "…", "tags": [..], "contexts": [..], "deferred": false, "scheduled": null, "scheduled_time": null, "deadline": "2026-07-02", "deadline_time": null, "available": true, "available_at": null, "availability_reason": "available", "availability_blocker_id": null, "recur": null, "recur_human": null, "lead": null, "lead_human": null, "lead_opens": null, "lead_opens_at": null, "line": 17, "source": "live", "headline": "NEXT [#A] …"}]`
+`[{"state": "NEXT", "rejected": null, "priority": "A", "title": "…", "tags": [..], "contexts": [..], "deferred": false, "scheduled": null, "scheduled_time": null, "deadline": "2026-07-02", "deadline_time": null, "available": true, "available_at": null, "availability_reason": "available", "availability_blocker_id": null, "recur": null, "recur_human": null, "lead": null, "lead_human": null, "lead_opens": null, "lead_opens_at": null, "line": 17, "source": "live", "headline": "NEXT [#A] …"}]`
 (`headline` is the star-less summary rendered from the record's fields; `source`
 is `"live"` or `"archive"`; `recur` is the stored canonical schedule, e.g.
 `".+1w"` or `"w:mon,wed"`, or `null`, and `recur_human` is that same value
 rendered once for display (`"every Mon, Wed"`, `null` when `recur` is) so no
 consumer re-implements the grammar; proposals report
-`availability_reason: "proposed"`.)
+`availability_reason: "proposed"`. `rejected` is the declined-proposal marker —
+the ISO day a PROPOSED task was rejected, `null` on everything else — so a reader
+can tell a decline from an ordinary cancellation without a second call; the HTTP
+task resource carries the same member beside `closed`.)
 Every row also carries `"project"` and `"delegation"` — the latter is the
 delegation object verbatim (`{kind, mode?, status, assignee?, at, work_ref?}`)
 or `null`. That is what makes `list --agent-ready --json` a complete heartbeat
@@ -1086,6 +1109,7 @@ display text to parse.
 | `cancel <ref> [--note "text"]` | `drop` | ✅ | Mark CANCELLED + `closed` date. Repeatable `--note` appends withdrawal rationale to the body (same join semantics as `propose --note`), visible in `show`. |
 | `approve <ref>` | | ✅ | Accept exactly one PROPOSED task into INBOX. A live non-proposal resolves normally and reports its current state as the semantic error; a proposal with proposed descendants refuses so decisions proceed leaves first. Undoable. |
 | `reject <ref> [--note "text"]` | | ✅ | Decline exactly one PROPOSED task into CANCELLED and stamp `closed`. Repeatable `--note` records withdrawal rationale on the body in the same write (mirrors `propose --note`). Uses the same broad live-ref/current-state/refusal/undo contract as `approve`. |
+| `unreject <ref>` | | ✅ | Restore one declined proposal to `PROPOSED` in place: same id, title, body (including the withdrawal note the reject appended), tags and links. Nothing is created, so a restore can never mint a second id for work that already has one. Refuses anything that is not a live task that is `CANCELLED` **and** carries the `rejected` marker — an ordinary cancellation was never a review decision — and refuses an archived reject, which cannot be restored in place. Clears `closed` and the `rejected` marker, and inherits the PROPOSED rules (no recurrence, no delegation, no accepted descendants). Undoable. `--json` reports the touched task. HTTP: `POST /api/v1/tasks/{id}/unreject` with `If-Match`, no body.
 | `state <ref> <STATE>` | `mv` | ✅ | Any state transition (PROPOSED/INBOX/TODO/NEXT/WAITING/DONE/CANCELLED). Enforces: entering DONE/CANCELLED sets `closed`; leaving them clears it. A proposal cannot transition directly to DONE or carry recurrence; use `approve`/`reject` for review intent. Entering DONE cascades to accepted open descendants (see Cascading completion); entering CANCELLED does not. Resolves refs across proposed, open, and closed live tasks so you can repair state explicitly. |
 | `due <ref> <date-or-date-time>` | `deadline`, `reschedule` | ✅ | Atomically replace `deadline`; accepts `--timezone ZONE` or `--floating`, plus `--fold earlier\|later`. Omitting time creates an all-day value and clears old time metadata. INBOX items promote to TODO. |
 | `schedule <ref> <date-or-date-time>` | | ✅ | Atomically replace `scheduled` with the same temporal flags. A future exact boundary hides the task, but this command does not clear an On Hold marker; callers that mean deferral use `defer`. Same INBOX promotion. |

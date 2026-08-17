@@ -20,6 +20,54 @@ func (s *surfaceContext) reject(args []string) int {
 	return s.decideProposal(args, store.ProposalReject)
 }
 
+// unreject returns a declined proposal to PROPOSED, in place.
+//
+// `approve` is the wrong verb after a reject — it would accept work nobody has
+// re-reviewed — and `undo` only rewinds the LAST write, so a reject from
+// yesterday needs a verb of its own. The row keeps its id, title, notes and
+// links: this restores a decision, it does not recapture the task.
+func (s *surfaceContext) unreject(args []string) int {
+	flags, positional, err := takeFlags(args, "--json")
+	if err != nil {
+		return abort(err.Error())
+	}
+	if len(positional) != 1 || strings.TrimSpace(positional[0]) == "" {
+		return abort("usage: tasks unreject <ref> [--json]")
+	}
+	queries, status := s.readQueries(args, store.ProposalUnreject)
+	if status != 0 {
+		return status
+	}
+	item, code := resolveRef(queries, positional[0], refScope{includeDone: true})
+	if code != 0 {
+		return code
+	}
+	// An archived reject is cold storage: restoring it would mean moving records
+	// between files, which this verb deliberately does not do. Say so, rather
+	// than reporting the id as missing.
+	if item.Source == store.SourceArchive {
+		return abort("that rejected proposal is archived; restore is only available while it is live")
+	}
+	today, status := s.today()
+	if status != 0 {
+		return status
+	}
+
+	result := s.writeStore().UnrejectProposal(item.ID, "", today)
+	if result.Status == store.MutationInvalid && result.FirstError() != "" {
+		return mutationFailed(result, result.FirstError())
+	}
+	if status := mutationResultFailed(result, args, store.ProposalUnreject,
+		"failed to restore rejected proposal"); status != 0 {
+		return status
+	}
+	if flags["--json"] {
+		return s.reportTouched(result, result.TouchedIDs, true)
+	}
+	out("restored → PROPOSED: " + item.Title)
+	return 0
+}
+
 func (s *surfaceContext) decideProposal(args []string, action string) int {
 	notes := []string{}
 	rest := args
@@ -112,4 +160,5 @@ func extractRepeatableFlag(args []string, name string) (values, rest []string, o
 func init() {
 	register("approve", (*surfaceContext).approve)
 	register("reject", (*surfaceContext).reject)
+	register("unreject", (*surfaceContext).unreject)
 }

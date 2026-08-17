@@ -274,6 +274,9 @@ func (c *resourceContext) writeTask(w *jsonout.Writer, item store.Item) {
 	w.Key("body")
 	w.Strings(c.queries.Body(item))
 	w.KeyStrOrNull("closed", item.Closed)
+	// The declined-proposal marker: present only on a CANCELLED task that was
+	// rejected at review, so a client can tell a decline from a cancellation.
+	w.KeyStrOrNull("rejected", item.Rejected)
 	w.KeyBool("archived", item.Source == store.SourceArchive)
 	w.Key("project")
 	if project, ok := c.queries.Project(item); ok {

@@ -14,6 +14,11 @@ const (
 	ProposalReject  = "reject"
 )
 
+// ProposalUnreject is the restore verb's action name. It is deliberately NOT a
+// third value of the approve/reject vocabulary: those two decide an undecided
+// proposal, while this one undoes a decision, with rules of its own.
+const ProposalUnreject = "unreject"
+
 // DecideProposal accepts or declines one proposal in a single checked
 // transaction.
 //
@@ -145,6 +150,14 @@ func (s *Store) DecideProposal(id, action string, notes []string, expectedRevisi
 				Summary: applied.summary}
 			return nil
 		}
+		// The decline marker lands in the SAME write as the state change, which is
+		// the whole reason it exists: CANCELLED alone cannot say whether a task was
+		// abandoned mid-flight or declined at review, and `list --rejected` /
+		// `unreject` both need that distinction to be a fact in the file rather
+		// than a guess from history.
+		if action == ProposalReject {
+			working[index].SetDefault("rejected", record.RawString(context.today.ISO()))
+		}
 		if noteText != "" {
 			working[index].SetOptional("body",
 				record.RawString(appendBody(working[index].String("body"), noteText)))
@@ -158,6 +171,110 @@ func (s *Store) DecideProposal(id, action string, notes []string, expectedRevisi
 		if result.Status == MutationOK {
 			result.TouchedIDs = []string{id}
 			result.Summary = MutationSummary{Action: action, From: "PROPOSED", To: target}
+		}
+		return nil
+	})
+	if err != nil {
+		return mutationUnavailable(err)
+	}
+	return result
+}
+
+// UnrejectProposal returns one declined proposal to PROPOSED, in place.
+//
+// This is the inverse of a reject, not a re-capture: the row keeps its id, its
+// title, its body — including the withdrawal note the reject appended, which is
+// history and not a mistake — and its links. Nothing is created, so nothing can
+// acquire a second id for work that already has one.
+//
+// It targets only a CANCELLED task carrying the `rejected` marker. An ordinary
+// cancellation was never a proposal decision, and putting it back into the
+// approval queue would be inventing review intent that never existed.
+func (s *Store) UnrejectProposal(id, expectedRevision, today string) MutationResult {
+	var result MutationResult
+	err := s.withLock(func() error {
+		s.clearRollback()
+		before := s.fileSnapshot()
+		if refusal := s.unsupportedSchemaRefusal(); refusal != nil {
+			result = *refusal
+			return nil
+		}
+		preflight := check.Check(s.org)
+		if !preflight.OK() {
+			messages := []string{}
+			for _, entry := range preflight.Errors {
+				messages = append(messages, entry.Message)
+			}
+			result = MutationResult{Status: MutationStoreInvalid, Errors: messages}
+			return nil
+		}
+		if id == "" {
+			result = MutationResult{Status: MutationInvalid, Errors: []string{"task id is required"}}
+			return nil
+		}
+		if expectedRevision != "" {
+			if _, ok := revisionParts(expectedRevision); !ok {
+				result = MutationResult{Status: MutationInvalid,
+					Errors: []string{"malformed expected_revision"}}
+				return nil
+			}
+		}
+
+		records := freshRecords(s.org)
+		index := locateStableIndex(records, id)
+		if index < 0 {
+			result = MutationResult{Status: MutationNotFound}
+			return nil
+		}
+		if expectedRevision != "" {
+			current, err := taskRevision(records, index, siblingIDsByParent(records))
+			if err != nil {
+				result = MutationResult{Status: MutationInvalid, Errors: []string{err.Error()}}
+				return nil
+			}
+			if status := changesetRevisionError(current, expectedRevision,
+				[]Change{{Field: FieldState}}); status != "" {
+				result = MutationResult{Status: status}
+				return nil
+			}
+		}
+
+		from := records[index].String("state")
+		if from != "CANCELLED" || records[index].String("rejected") == "" {
+			result = MutationResult{
+				Status:  MutationInvalid,
+				Errors:  []string{"task is " + from + ", not a rejected proposal"},
+				Summary: MutationSummary{Action: ProposalUnreject, From: from},
+			}
+			return nil
+		}
+
+		context, err := s.patchContext(PatchRequest{Today: today})
+		if err != nil {
+			result = MutationResult{Status: MutationInvalid, Errors: []string{err.Error()}}
+			return nil
+		}
+		title := records[index].String("title")
+		working := record.CloneAll(records)
+		// patchState carries the rest: it clears `closed`, drops the decline
+		// marker on the way out of CANCELLED, and enforces the PROPOSED rules —
+		// no recurrence, no delegation, no accepted descendants — so a restore
+		// cannot produce a file `check` would reject.
+		applied := patchState(working, index, TextValue("PROPOSED"), context)
+		if applied.status != MutationOK {
+			result = MutationResult{Status: applied.status, Errors: applied.errors,
+				Summary: applied.summary}
+			return nil
+		}
+		if _, err := record.Dump(working); err != nil {
+			result = MutationResult{Status: MutationInvalid, Errors: []string{err.Error()}}
+			return nil
+		}
+
+		result = s.commit(before, working, "unreject proposal: "+title, "")
+		if result.Status == MutationOK {
+			result.TouchedIDs = []string{id}
+			result.Summary = MutationSummary{Action: ProposalUnreject, From: "CANCELLED", To: "PROPOSED"}
 		}
 		return nil
 	})
