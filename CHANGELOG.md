@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [1.8.3] - 2026-08-17
+
+- Align the TUI's tab mouse hit areas with the tabs as drawn, so a click lands
+  on the tab under the pointer rather than a neighbour.
+- Force a truecolor profile for README screenshot captures. Agent and CI shells
+  often run as `TERM=dumb` with `NO_COLOR=1`, which made Bubble Tea render the
+  TUI attributes-only; `make screenshots` now stays in color.
+
 ## [1.8.2] - 2026-08-14
 
 - Report the module's tagged version from `go install ...@version` builds so
