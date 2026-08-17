@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.9.0] - 2026-08-17
 
 - Rank the proposed queue by priority then due date, so a two-minute scan of
   pending proposals hits the ones that matter first. `list --proposed` (text and
@@ -18,6 +18,14 @@
   can forget. `POST /api/v1/tasks` accepts the equivalent `links` array. A title
   whose last word is already an `http`/`https` URL lifts that URL into a formal
   link and keeps the remaining words as the title.
+- Make a declined proposal reviewable and reversible (#9). `reject` now stamps
+  the record with a `rejected` date; `tasks list --rejected` reviews proposals
+  declined in the last 30 days (newest first, recently archived rows labelled),
+  and `tasks unreject` restores one to `PROPOSED` in place — same id, title,
+  notes, and links, undoable. The TUI Inbox hides rejects by default and reveals
+  them with `R` for a one-key `a` restore; the API adds `scope=rejected` and
+  `POST /tasks/{id}/unreject`. `tasks check` and the merge driver understand the
+  marker, and default views stay clean.
 
 ## [1.8.3] - 2026-08-17
 
