@@ -168,6 +168,41 @@ func TestListSupportsEveryDocumentedFilterAndRejectsUnknownQueries(t *testing.T)
 	assertError(t, h.get("/api/v1/tasks?scope=nope"), 422, "validation_failed")
 }
 
+// -- the proposed queue's triage order (issue #8) ---------------------------
+
+// triageStore and triageOrder are the fixture and the expected order the CLI and
+// TUI triage tests use, restated here because the three packages cannot import
+// each other's tests. Keep the three copies identical: they are the assertion
+// that all three surfaces rank the proposed queue the same way.
+const triageStore = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Intake"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0001","state":"PROPOSED","title":"C tomorrow","priority":"C","deadline":"2026-07-21"}
+{"type":"task","id":"bbbb0002","parent":"aaaa0001","state":"PROPOSED","title":"undated A","priority":"A"}
+{"type":"task","id":"bbbb0003","parent":"aaaa0001","state":"PROPOSED","title":"unranked dated","deadline":"2026-07-26"}
+{"type":"task","id":"bbbb0004","parent":"aaaa0001","state":"PROPOSED","title":"B far","priority":"B","deadline":"2026-09-01"}
+{"type":"task","id":"bbbb0005","parent":"aaaa0001","state":"PROPOSED","title":"A overdue","priority":"A","deadline":"2026-07-01"}
+{"type":"task","id":"bbbb0006","parent":"aaaa0001","state":"PROPOSED","title":"B soon","priority":"B","deadline":"2026-07-22"}
+{"type":"task","id":"bbbb0007","parent":"aaaa0001","state":"PROPOSED","title":"unranked undated"}
+{"type":"task","id":"bbbb0008","parent":"aaaa0001","state":"NEXT","title":"accepted work"}
+`
+
+var triageOrder = []string{
+	"A overdue", "undated A", "B soon", "B far", "C tomorrow",
+	"unranked dated", "unranked undated",
+}
+
+func TestProposedScopeIsRankedByPriorityThenDue(t *testing.T) {
+	h := newHarnessWith(t, triageStore, "", "")
+	answered := h.get("/api/v1/tasks?scope=proposed")
+	assertStatus(t, answered, 200)
+	titles := []string{}
+	for _, row := range answered.rows() {
+		title, _ := row["title"].(string)
+		titles = append(titles, title)
+	}
+	assertStrings(t, titles, triageOrder, "scope=proposed order")
+}
+
 // A repeated query parameter is a malformed REQUEST, not a validation failure:
 // the server cannot know which of the two the client meant.
 func TestRepeatedQueryParameterIsMalformed(t *testing.T) {

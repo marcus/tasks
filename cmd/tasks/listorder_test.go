@@ -216,3 +216,61 @@ func TestListJSONIsFileOrderAndUnaffectedByTheTieBreak(t *testing.T) {
 		}
 	}
 }
+
+// -- the proposed queue's triage order (issue #8) ---------------------------
+
+// triageStore is the fixture the CLI, TUI and API triage-order tests all share,
+// deliberately shuffled in the file and carrying ABSOLUTE deadlines so the
+// expected order is the same whatever instant each surface's harness is pinned
+// to.
+const triageStore = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Intake"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0001","state":"PROPOSED","title":"C tomorrow","priority":"C","deadline":"2026-07-21"}
+{"type":"task","id":"bbbb0002","parent":"aaaa0001","state":"PROPOSED","title":"undated A","priority":"A"}
+{"type":"task","id":"bbbb0003","parent":"aaaa0001","state":"PROPOSED","title":"unranked dated","deadline":"2026-07-26"}
+{"type":"task","id":"bbbb0004","parent":"aaaa0001","state":"PROPOSED","title":"B far","priority":"B","deadline":"2026-09-01"}
+{"type":"task","id":"bbbb0005","parent":"aaaa0001","state":"PROPOSED","title":"A overdue","priority":"A","deadline":"2026-07-01"}
+{"type":"task","id":"bbbb0006","parent":"aaaa0001","state":"PROPOSED","title":"B soon","priority":"B","deadline":"2026-07-22"}
+{"type":"task","id":"bbbb0007","parent":"aaaa0001","state":"PROPOSED","title":"unranked undated"}
+{"type":"task","id":"bbbb0008","parent":"aaaa0001","state":"NEXT","title":"accepted work"}
+`
+
+// triageOrder is that fixture's one true order: priority bands first, soonest
+// deadline inside a band, undated last inside a band, file order for a tie.
+// Each surface's test compares against this same list — that is what "the three
+// surfaces agree" means here, and it is why the list is titles rather than ids:
+// the TUI renders titles.
+var triageOrder = []string{
+	"A overdue", "undated A", "B soon", "B far", "C tomorrow",
+	"unranked dated", "unranked undated",
+}
+
+func TestProposedListIsRankedByPriorityThenDueInBothForms(t *testing.T) {
+	dir := seedStore(t, triageStore)
+
+	titles := []string{}
+	for _, row := range listRows(t, dir, "--proposed") {
+		titles = append(titles, row.Title)
+	}
+	if strings.Join(titles, "|") != strings.Join(triageOrder, "|") {
+		t.Errorf("--proposed --json = %v\nwant                %v", titles, triageOrder)
+	}
+	// The human form groups by state, and PROPOSED is one group, so its rows
+	// print in exactly the ranked order too.
+	if got := humanTitles(t, dir, "--proposed"); strings.Join(got, "|") != strings.Join(triageOrder, "|") {
+		t.Errorf("--proposed = %v\nwant         %v", got, triageOrder)
+	}
+	// The acceptance case worth naming: priority beats imminence outright.
+	if indexOfTitle(titles, "undated A") > indexOfTitle(titles, "C tomorrow") {
+		t.Error("a C due tomorrow must not outrank an undated A")
+	}
+}
+
+func indexOfTitle(titles []string, wanted string) int {
+	for index, title := range titles {
+		if title == wanted {
+			return index
+		}
+	}
+	return -1
+}

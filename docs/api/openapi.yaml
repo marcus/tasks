@@ -193,7 +193,15 @@ paths:
             Which slice to list. Default `open` (open live tasks).
 
             `open`, `proposed`, `done`, `archived`, and `all` are lifecycle/source
-            slices. `delegated` and `agent_ready` are delegation refinements of
+            slices. `proposed` is the one lifecycle slice that is a decision
+            QUEUE rather than a browsable list, so it is returned in triage
+            order — priority `A` > `B` > `C` > none, then the soonest
+            deadline-or-scheduled boundary, undated last inside a band, then
+            canonical DFS order — matching `tasks list --proposed` and the TUI
+            Inbox Approvals section exactly. Priority dominates the date: a `C`
+            due tomorrow still follows an undated `A`.
+
+            `delegated` and `agent_ready` are delegation refinements of
             the default open-live slice, mirroring `tasks list --delegated`
             (under its default `--open`) and `tasks list --agent-ready`:
 

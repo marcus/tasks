@@ -249,6 +249,14 @@ func combinedInbox(request BuildRequest, inboxRows []Row) []Row {
 			proposals = append(proposals, item)
 		}
 	}
+	// Approvals is a decision QUEUE, so it is ranked by the core's shared triage
+	// order — the same call `list --proposed` and `scope=proposed` make — rather
+	// than left in file order. The row already carries the two facts that order
+	// reads by: the priority letter leads the body, and the shared date column
+	// spells the deadline, so a scan can see WHY row two follows row one.
+	if request.Queries != nil {
+		proposals = request.Queries.RankByPriorityThenDue(proposals)
+	}
 	// APPROVALS carries its two keys in the rule's badge rather than as a
 	// sentence after the label: the badge is where a section says its one fact,
 	// and "there are 3 of these and a/r act on them" is one fact.

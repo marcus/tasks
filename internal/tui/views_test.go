@@ -971,3 +971,62 @@ func TestHeaderNamesTheOverdueCountAndOmitsItAtZero(t *testing.T) {
 		t.Fatalf("the header says overdue with none: %q", clean.model.Header(120))
 	}
 }
+
+// -- the Approvals queue's triage order (issue #8) --------------------------
+
+// triageStore and triageOrder are the fixture and the expected order the CLI and
+// API triage tests use, restated here because the three packages cannot import
+// each other's tests. Keep the three copies identical: they are the assertion
+// that all three surfaces rank the proposed queue the same way.
+const triageStore = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Intake"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0001","state":"PROPOSED","title":"C tomorrow","priority":"C","deadline":"2026-07-21"}
+{"type":"task","id":"bbbb0002","parent":"aaaa0001","state":"PROPOSED","title":"undated A","priority":"A"}
+{"type":"task","id":"bbbb0003","parent":"aaaa0001","state":"PROPOSED","title":"unranked dated","deadline":"2026-07-26"}
+{"type":"task","id":"bbbb0004","parent":"aaaa0001","state":"PROPOSED","title":"B far","priority":"B","deadline":"2026-09-01"}
+{"type":"task","id":"bbbb0005","parent":"aaaa0001","state":"PROPOSED","title":"A overdue","priority":"A","deadline":"2026-07-01"}
+{"type":"task","id":"bbbb0006","parent":"aaaa0001","state":"PROPOSED","title":"B soon","priority":"B","deadline":"2026-07-22"}
+{"type":"task","id":"bbbb0007","parent":"aaaa0001","state":"PROPOSED","title":"unranked undated"}
+{"type":"task","id":"bbbb0008","parent":"aaaa0001","state":"NEXT","title":"accepted work"}
+`
+
+var triageOrder = []string{
+	"A overdue", "undated A", "B soon", "B far", "C tomorrow",
+	"unranked dated", "unranked undated",
+}
+
+func TestInboxApprovalsAreRankedByPriorityThenDue(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: triageStore})
+	harness.model.SwitchView(ViewInbox)
+
+	approvals := []string{}
+	for _, row := range harness.model.Rows() {
+		if row.Item != nil && row.Item.State == "PROPOSED" {
+			approvals = append(approvals, row.Item.Title)
+		}
+	}
+	if strings.Join(approvals, "|") != strings.Join(triageOrder, "|") {
+		t.Fatalf("approvals = %v\nwant        %v\n\n%s", approvals, triageOrder, rowTexts(harness))
+	}
+}
+
+// The ordering has to be READABLE from the rows, or it looks arbitrary: the
+// priority letter leads the body and the shared date column carries the
+// deadline, so a reader can see why row two follows row one.
+func TestApprovalRowsShowThePriorityAndDueTheOrderReadsBy(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: triageStore})
+	harness.model.SwitchView(ViewInbox)
+	for _, row := range harness.model.Rows() {
+		if row.Item == nil || row.Item.Title != "A overdue" {
+			continue
+		}
+		if !strings.Contains(row.Text, "A") || !strings.Contains(row.Text, "A overdue") {
+			t.Fatalf("the approval row dropped its priority letter: %q", row.Text)
+		}
+		if !strings.Contains(rowTexts(harness), "d ago") {
+			t.Fatalf("the approvals section shows no due information:\n%s", rowTexts(harness))
+		}
+		return
+	}
+	t.Fatalf("no approval row for the overdue A:\n%s", rowTexts(harness))
+}
