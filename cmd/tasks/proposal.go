@@ -3,7 +3,9 @@ package main
 import (
 	"strings"
 
+	"github.com/marcus/tasks/internal/query"
 	"github.com/marcus/tasks/internal/store"
+	"github.com/marcus/tasks/internal/taskquery"
 )
 
 // approve accepts a proposal into INBOX; reject declines it into CANCELLED.
@@ -18,6 +20,83 @@ func (s *surfaceContext) approve(args []string) int {
 
 func (s *surfaceContext) reject(args []string) int {
 	return s.decideProposal(args, store.ProposalReject)
+}
+
+// unreject returns a declined proposal to PROPOSED, in place.
+//
+// `approve` is the wrong verb after a reject — it would accept work nobody has
+// re-reviewed — and `undo` only rewinds the LAST write, so a reject from
+// yesterday needs a verb of its own. The row keeps its id, title, notes and
+// links: this restores a decision, it does not recapture the task.
+func (s *surfaceContext) unreject(args []string) int {
+	flags, positional, err := takeFlags(args, "--json")
+	if err != nil {
+		return abort(err.Error())
+	}
+	if len(positional) != 1 || strings.TrimSpace(positional[0]) == "" {
+		return abort("usage: tasks unreject <ref> [--json]")
+	}
+	queries, status := s.readQueries(args, store.ProposalUnreject)
+	if status != 0 {
+		return status
+	}
+	// An archived reject is cold storage: restoring it would mean moving records
+	// between files, which this verb deliberately does not do. `resolveRef` only
+	// ever sees live rows, so the archived case has to be recognised BEFORE it —
+	// otherwise a row `list --rejected` just printed comes back as "no match",
+	// which is the least actionable answer there is.
+	if namesArchivedReject(queries, positional[0]) {
+		return abort("that rejected proposal is archived; restore is only available while it is live")
+	}
+	item, code := resolveRef(queries, positional[0], refScope{includeDone: true})
+	if code != 0 {
+		return code
+	}
+	today, status := s.today()
+	if status != 0 {
+		return status
+	}
+
+	result := s.writeStore().UnrejectProposal(item.ID, "", today)
+	if result.Status == store.MutationInvalid && result.FirstError() != "" {
+		return mutationFailed(result, result.FirstError())
+	}
+	if status := mutationResultFailed(result, args, store.ProposalUnreject,
+		"failed to restore rejected proposal"); status != 0 {
+		return status
+	}
+	if flags["--json"] {
+		return s.reportTouched(result, result.TouchedIDs, true)
+	}
+	out("restored → PROPOSED: " + item.Title)
+	return 0
+}
+
+// namesArchivedReject reports whether a ref names an archived declined proposal
+// and nothing live. A live row always wins, so this only ever speaks up where
+// `resolveRef` would otherwise have said "no match" — it narrows a wrong answer
+// into the right refusal, and never shadows a task that can still be restored.
+func namesArchivedReject(queries *taskquery.Queries, ref string) bool {
+	needle := query.Downcase(strings.TrimSpace(ref))
+	if needle == "" {
+		return false
+	}
+	for _, item := range queries.LiveItems() {
+		if (item.HasID && query.Downcase(item.ID) == needle) ||
+			strings.Contains(query.Downcase(item.Title), needle) {
+			return false
+		}
+	}
+	for _, item := range queries.ArchiveItems() {
+		if item.State != "CANCELLED" || item.Rejected == "" {
+			continue
+		}
+		if (item.HasID && query.Downcase(item.ID) == needle) ||
+			strings.Contains(query.Downcase(item.Title), needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *surfaceContext) decideProposal(args []string, action string) int {
@@ -112,4 +191,5 @@ func extractRepeatableFlag(args []string, name string) (values, rest []string, o
 func init() {
 	register("approve", (*surfaceContext).approve)
 	register("reject", (*surfaceContext).reject)
+	register("unreject", (*surfaceContext).unreject)
 }

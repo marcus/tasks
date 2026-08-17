@@ -27,9 +27,13 @@ type Item struct {
 	Contexts []string
 	// Scheduled, Deadline and Closed are normalized ISO dates, or "" when the
 	// stored value is missing or unparseable.
-	Scheduled     string
-	Deadline      string
-	Closed        string
+	Scheduled string
+	Deadline  string
+	Closed    string
+	// Rejected is the declined-proposal marker: the ISO day a PROPOSED task was
+	// rejected. Only a CANCELLED task carries it, and it is what separates a
+	// declined proposal from an ordinary cancellation.
+	Rejected      string
 	Archived      string
 	ScheduledTime json.RawMessage
 	DeadlineTime  json.RawMessage
@@ -219,6 +223,7 @@ func buildItem(parsed record.Record, source Source) Item {
 		Scheduled:     isoDate(fieldRaw(parsed, "scheduled")),
 		Deadline:      isoDate(fieldRaw(parsed, "deadline")),
 		Closed:        isoDate(fieldRaw(parsed, "closed")),
+		Rejected:      isoDate(fieldRaw(parsed, "rejected")),
 		Archived:      isoDate(fieldRaw(parsed, "archived")),
 		ScheduledTime: fieldRaw(parsed, "scheduled_time"),
 		DeadlineTime:  fieldRaw(parsed, "deadline_time"),

@@ -16,7 +16,7 @@ import (
 var KeyOrder = []string{
 	"type", "id", "parent", "state", "priority", "title", "tags", "scheduled", "scheduled_time",
 	"deadline", "deadline_time", "recur", "lead", "lead_skip", "delegation",
-	"closed", "archived", "links", "body", "updated",
+	"closed", "rejected", "archived", "links", "body", "updated",
 }
 
 // LineKey is the physical line number the parser stamps onto a record. It is

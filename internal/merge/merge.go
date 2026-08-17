@@ -39,7 +39,7 @@ var temporalPairs = []struct{ date, time string }{
 // scalar rule, because each has a rule of its own.
 var specialFields = map[string]bool{
 	record.LineKey: true, "updated": true,
-	"state": true, "closed": true,
+	"state": true, "closed": true, "rejected": true,
 	"tags": true, "body": true, delegationField: true,
 	"scheduled": true, "scheduled_time": true,
 	"deadline": true, "deadline_time": true,
@@ -541,6 +541,25 @@ func mergeState(merged *entry, base, ours, theirs *entry, event *Event) {
 		closed = nil
 	}
 	merged.assign("closed", closed)
+
+	// The decline marker rides with the state for the same reason the closed date
+	// does, and one step further: it is only valid on CANCELLED, so a side whose
+	// state lost must not leave it behind on the winner. A restore on one device
+	// and a re-decision on another therefore converge on a file `check` accepts.
+	var rejected json.RawMessage
+	switch winner {
+	case sideOurs:
+		rejected = valueOf(ours, "rejected")
+	case sideTheirs:
+		rejected = valueOf(theirs, "rejected")
+	default:
+		rejected = mergeScalar("rejected", valueOf(base, "rejected"), valueOf(ours, "rejected"),
+			valueOf(theirs, "rejected"), ours, theirs, event)
+	}
+	if name != "CANCELLED" {
+		rejected = nil
+	}
+	merged.assign("rejected", rejected)
 }
 
 type side int

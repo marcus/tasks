@@ -131,6 +131,10 @@ type Model struct {
 	filter       string
 	filterInput  *input.Editor
 	showDeferred bool
+	// showRejected reveals recently declined proposals in Inbox/APPROVALS. Like
+	// showDeferred it is interaction state, not durable: a reveal is for the
+	// review pass you are in, and intake opens clean next time.
+	showRejected bool
 	selected     int
 	selectedID   string
 	panel        *RightPanel
@@ -585,6 +589,7 @@ func (m *Model) RefreshRows() {
 		UseTree:        m.useTree(),
 		Collapsed:      m.collapsed,
 		ShowDeferred:   m.showDeferred,
+		ShowRejected:   m.showRejected,
 		UrgentDays:     m.paths.UrgentDays,
 		ContextFilters: m.contextFilters,
 		IntakeCounts:   m.intakeCounts(items),
@@ -1029,6 +1034,20 @@ func (m *Model) jumpToParent(node *taskquery.Node) {
 func (m *Model) reselect(id string) {
 	m.selectedID = id
 	m.RefreshRows()
+}
+
+// ToggleRejected flips whether recently declined proposals are revealed in
+// intake. Hidden by default; the reveal is what makes a mistaken reject
+// recoverable without leaving the Inbox tab.
+func (m *Model) ToggleRejected() {
+	m.showRejected = !m.showRejected
+	m.RefreshRows()
+	if m.showRejected {
+		m.Flash(fmt.Sprintf("showing proposals rejected in the last %d days — a restores one",
+			taskquery.RejectedRecentDays))
+		return
+	}
+	m.Flash("hiding rejected proposals")
 }
 
 // ToggleDeferred flips whether unavailable work is shown.

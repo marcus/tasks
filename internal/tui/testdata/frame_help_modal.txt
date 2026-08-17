@@ -17,7 +17,7 @@
   │ L             expand all subtrees                                                        │  
   │ return        open / close task details                                                  │  
   │ c             complete selected task                                                     │  
-  │ ── 16/103 · ↑↓ scroll ──                                                                 │  
+  │ ── 16/106 · ↑↓ scroll ──                                                                 │  
   └──────────────────────────────────────────────────────────────────────────────────────────┘  
                                                                                                 
   ❯ tab to ask the agent — reschedule, capture, edit anything…                                  

@@ -13,14 +13,18 @@ import (
 // rows is a pure function of a read model plus the UI's own choices — which is
 // what makes every row test a table test rather than a screen scrape.
 type BuildRequest struct {
-	View           string
-	Styler         Styler
-	Queries        *taskquery.Queries
-	Items          []store.Item // already narrowed by the active `/` and `@` filters
-	Tree           []*taskquery.Node
-	UseTree        bool
-	Collapsed      map[string]bool
-	ShowDeferred   bool
+	View         string
+	Styler       Styler
+	Queries      *taskquery.Queries
+	Items        []store.Item // already narrowed by the active `/` and `@` filters
+	Tree         []*taskquery.Node
+	UseTree      bool
+	Collapsed    map[string]bool
+	ShowDeferred bool
+	// ShowRejected reveals recently declined proposals inside APPROVALS. It is
+	// off by default: intake is a queue of undecided work, and a decision already
+	// made is not part of it until the reviewer asks to see it.
+	ShowRejected   bool
 	UrgentDays     int
 	ContextFilters []string
 	Projects       []taskquery.ProjectView
@@ -264,12 +268,17 @@ func combinedInbox(request BuildRequest, inboxRows []Row) []Row {
 	if request.IntakeCounts.Approvals > 0 {
 		approvals = "a·r  " + approvals
 	}
+	rejects := rejectedRows(request)
 	empty := headerRow(styler.Paint("muted", placeholderIndent+"Nothing pending approval"))
+	if len(rejects) > 0 {
+		approvals += styler.Paint("muted", "  ·  "+fmt.Sprintf("%d rejected", len(rejects)))
+	}
 	inboxEmpty := headerRow(styler.Paint("muted", placeholderIndent+"Inbox empty. ✨"))
 	return renderSections(request, []Section{
 		{
 			Label: "APPROVALS", Slot: "approval_section", Right: approvals,
-			RightSlot: "approval_section", Rows: approvalRows(request, proposals), Empty: &empty,
+			RightSlot: "approval_section",
+			Rows:      append(approvalRows(request, proposals), rejects...), Empty: &empty,
 		},
 		{
 			Label: "INBOX", Slot: "inbox_section",
@@ -277,6 +286,38 @@ func combinedInbox(request BuildRequest, inboxRows []Row) []Row {
 			RightSlot: "inbox_section", Rows: inboxRows, Empty: &inboxEmpty,
 		},
 	}, dateMeta(request))
+}
+
+// rejectedRows is the revealed tail of APPROVALS: recently declined proposals,
+// newest first, dimmed and stamped with the day they were declined so they can
+// never be mistaken for work still awaiting a decision. They are ordinary
+// selectable rows, which is what makes restore one keystroke from intake.
+//
+// "Recent" is taskquery.RecentRejects — the same rule, from the same code, that
+// `tasks list --rejected` prints.
+func rejectedRows(request BuildRequest) []Row {
+	if !request.ShowRejected || request.Queries == nil {
+		return []Row{}
+	}
+	styler := request.styler()
+	rows := []Row{}
+	for _, item := range request.Queries.RecentRejects() {
+		if len(request.ContextFilters) > 0 && !request.query(ViewInbox).ContextMatch(item) {
+			continue
+		}
+		if item.Source != store.SourceLive {
+			// An archived decline is shown for the record but cannot be restored in
+			// place, and a row that looks actionable and is not would be a lie.
+			item := item
+			rows = append(rows, Row{Text: styler.Paint("muted",
+				placeholderIndent+item.Rejected+"  ✗ "+item.Title+"  (archived)"), Item: &item})
+			continue
+		}
+		item := item
+		rows = append(rows, Row{Text: styler.Paint("muted",
+			placeholderIndent+item.Rejected+"  ✗ "+item.Title+"  (a restores)"), Item: &item})
+	}
+	return rows
 }
 
 func approvalRows(request BuildRequest, proposals []store.Item) []Row {

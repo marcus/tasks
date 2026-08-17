@@ -25,7 +25,9 @@ const helpText = "tasks — a plain-text GTD CLI over tasks.jsonl. Every command
 	"                           (open/NEXT counts, soonest date, stuck flag)" + "\n" +
 	"  list      l [filters]    tasks by state. Filters: @context /text +tag -A|-B|-C" + "\n" +
 	"                           Scope: --open/-o (default) --proposed --done/-d" + "\n" +
-	"                           --archived/-x --all/-a (choose one)" + "\n" +
+	"                           --archived/-x --all/-a --rejected (choose one)" + "\n" +
+	"                           --rejected lists proposals declined in the last 30" + "\n" +
+	"                           days, newest first, live + archived (see unreject)" + "\n" +
 	"                           --deferred/-D all unavailable · --unavailable canonical spelling" + "\n" +
 	"                           --someday/--on-hold own indefinite holds · --recurring/-R repeating" + "\n" +
 	"                           --delegated any delegation · --agent-ready claimable" + "\n" +
@@ -64,6 +66,8 @@ const helpText = "tasks — a plain-text GTD CLI over tasks.jsonl. Every command
 	"  approve      <ref>        accept PROPOSED into INBOX" + "\n" +
 	"  reject       <ref> [--note] decline PROPOSED into CANCELLED; repeat --note" + "\n" +
 	"                           for withdrawal rationale (visible in `show`)" + "\n" +
+	"  unreject     <ref>       restore a rejected proposal to PROPOSED in place," + "\n" +
+	"                           same id, title, notes and links (see list --rejected)" + "\n" +
 	"  done      d <ref>        mark DONE (cascades to open subtasks) — or roll a" + "\n" +
 	"                           recurring task forward (aka complete, close)" + "\n" +
 	"  cancel      <ref> [--note] mark CANCELLED (aka drop); repeat --note for reason" + "\n" +
@@ -196,6 +200,7 @@ var helpCommands = []helpCommand{
 	{name: "propose", json: true, gate: true},
 	{name: "approve", json: true, gate: true},
 	{name: "reject", json: true, gate: true},
+	{name: "unreject", json: true, gate: true},
 	{name: "delegate", json: true, gate: true},
 	{name: "undelegate", json: true, gate: true},
 	{name: "workref", aliases: []string{"work-ref"}, json: true, gate: true},

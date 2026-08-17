@@ -46,6 +46,11 @@ func writeItemJSONWith(w *jsonout.Writer, queries *taskquery.Queries, item store
 	w.BeginObject()
 	w.KeyStrOrNull("id", item.ID)
 	w.KeyStr("state", item.State)
+	// `rejected` qualifies CANCELLED, which is why it sits beside the state
+	// rather than with the other dates: it is the difference between a task that
+	// was declined at review and one that was abandoned, and an agent reading a
+	// closed row needs that distinction without a second call.
+	w.KeyStrOrNull("rejected", item.Rejected)
 	w.KeyStrOrNull("priority", item.Priority)
 	w.KeyStr("title", item.Title)
 	w.Key("tags")

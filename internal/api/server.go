@@ -360,7 +360,7 @@ func (s *Server) dispatch(request *http.Request, requestID string) (response, er
 
 var (
 	taskPath       = regexp.MustCompile(`^/api/v1/tasks/([^/]+)$`)
-	decisionPath   = regexp.MustCompile(`^/api/v1/tasks/([^/]+)/(approve|reject)$`)
+	decisionPath   = regexp.MustCompile(`^/api/v1/tasks/([^/]+)/(approve|reject|unreject)$`)
 	delegationPath = regexp.MustCompile(`^/api/v1/tasks/([^/]+)/(delegate|undelegate|claim|release)$`)
 	workRefPath    = regexp.MustCompile(`^/api/v1/tasks/([^/]+)/work_ref$`)
 	projectPath    = regexp.MustCompile(`^/api/v1/projects/([^/]+?)(/complete|/archive)?$`)

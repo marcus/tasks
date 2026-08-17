@@ -19,6 +19,14 @@ import (
 // back.
 const DeferTag = "defer"
 
+// RejectedRecentDays is what "recent" means for a declined proposal, in both the
+// CLI's `list --rejected` and the TUI's show-rejected toggle: the decline
+// happened within this many days of the reader's today, counting today as day
+// zero. One number, in one place, so the two surfaces can never disagree about
+// which rejects are still reachable — and so a store that has been running for
+// years does not turn the restore list into an archive browser.
+const RejectedRecentDays = 30
+
 // The lifecycle vocabularies, spelled where lib/tasks/check.rb spells them.
 var (
 	proposedStates = []string{"PROPOSED"}
@@ -656,14 +664,67 @@ func (q *Queries) List(filter query.Filter) []store.Item {
 	if filter.AgentReadyOnly() || filter.Scope() == query.ScopeProposed {
 		items = q.RankByPriorityThenDue(items)
 	}
+	if filter.RejectedOnly() {
+		items = rankRejected(items)
+	}
 	return items
+}
+
+// RecentRejects is the shared answer to "which declines can still be restored":
+// every CANCELLED task carrying the decline marker, live first then recently
+// archived, newest decline first. The CLI's `--rejected` scope and the TUI's
+// toggle both read THIS, so "recent" is one rule with one implementation.
+func (q *Queries) RecentRejects() []store.Item {
+	filter, err := query.NewFilter(query.FilterOptions{Scope: rejectedScope()})
+	if err != nil {
+		return []store.Item{}
+	}
+	return q.List(filter)
+}
+
+func rejectedScope() *string {
+	scope := query.ScopeRejected
+	return &scope
+}
+
+// rankRejected orders declines newest first. A tie keeps the live row ahead of
+// an archived one and otherwise keeps file order, so the list is stable between
+// two reads of an unchanged store.
+func rankRejected(items []store.Item) []store.Item {
+	ordered := append([]store.Item{}, items...)
+	sort.SliceStable(ordered, func(left, right int) bool {
+		if ordered[left].Rejected != ordered[right].Rejected {
+			return ordered[left].Rejected > ordered[right].Rejected
+		}
+		return ordered[left].Source == store.SourceLive &&
+			ordered[right].Source != store.SourceLive
+	})
+	return ordered
+}
+
+// rejectedRecently is the recency window RejectedRecentDays names. An
+// unparseable stored stamp is not recent: a row nothing can date cannot be
+// placed in the window, and silently showing it would make the documented rule
+// untrue.
+func (q *Queries) rejectedRecently(item store.Item) bool {
+	stamp, ok := temporal.ParseDate(item.Rejected)
+	if !ok {
+		return false
+	}
+	today := q.context.LocalDate()
+	// A decline stamped in the future is a clock skew or a hand edit, not a
+	// reason to hide the row — the user still needs to be able to restore it.
+	if stamp.After(today) {
+		return true
+	}
+	return today.Sub(stamp) <= RejectedRecentDays
 }
 
 func (q *Queries) sourceItems(filter query.Filter) []store.Item {
 	switch filter.Scope() {
 	case query.ScopeArchived:
 		return q.snapshot.ArchiveItems()
-	case query.ScopeAll:
+	case query.ScopeAll, query.ScopeRejected:
 		return append(q.snapshot.Items(), q.snapshot.ArchiveItems()...)
 	default:
 		return q.snapshot.Items()
@@ -675,6 +736,12 @@ func (q *Queries) matches(item store.Item, filter query.Filter) bool {
 		return false
 	}
 	if filter.Scope() == query.ScopeDone && item.Source != store.SourceLive {
+		return false
+	}
+	// The decline scope is CANCELLED narrowed twice: it must carry the marker a
+	// reject writes, and the decline must be recent. Every other view — including
+	// `--done` and `--all` — keeps showing declines as the cancellations they are.
+	if filter.RejectedOnly() && (item.Rejected == "" || !q.rejectedRecently(item)) {
 		return false
 	}
 	if !q.deferredMatch(item, filter) {

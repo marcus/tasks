@@ -73,7 +73,7 @@ var canonicalCommands = map[string]bool{
 	"redo": true, "reject": true, "release": true, "repair": true,
 	"retitle": true, "schedule": true, "show": true, "someday": true,
 	"state": true, "tag": true, "undate": true, "undelegate": true,
-	"undo": true, "version": true, "workref": true,
+	"undo": true, "unreject": true, "version": true, "workref": true,
 }
 
 // aliasTokens is Tasks::CliCommands::TOKENS: every accepted spelling mapped to
@@ -104,6 +104,6 @@ var aliasTokens = map[string]string{
 	"schedule": "schedule", "show": "show", "snooze": "defer",
 	"someday": "someday", "state": "state", "tag": "tag",
 	"undate": "undate", "undefer": "activate", "undelegate": "undelegate",
-	"undo": "undo", "urls": "links", "version": "version", "work-ref": "workref",
+	"undo": "undo", "unreject": "unreject", "urls": "links", "version": "version", "work-ref": "workref",
 	"workref": "workref", "x": "archive",
 }

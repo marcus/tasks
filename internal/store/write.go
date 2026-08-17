@@ -552,6 +552,13 @@ func patchState(records []record.Record, index int, value PatchValue, context pa
 	}
 
 	records[index].SetString("state", state)
+	// The declined-proposal marker belongs to CANCELLED and to nothing else: a
+	// task moved anywhere off that state — restored, re-opened, completed — is no
+	// longer a standing decline, and a marker left behind would keep it listed
+	// under `list --rejected` forever.
+	if state != "CANCELLED" {
+		records[index].Delete("rejected")
+	}
 	touched := []string{records[index].String("id")}
 	if contains(check.ClosedStates, state) && !contains(check.ClosedStates, from) {
 		records[index].SetOptional("tags", record.RawStrings(withoutTag(semanticTags(records[index]), DeferTag)))

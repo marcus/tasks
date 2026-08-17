@@ -128,6 +128,11 @@ type ProposalDecider interface {
 	DecideProposal(id, action string, notes []string, expectedRevision, today string) store.MutationResult
 }
 
+// ProposalUnrejecter returns a declined proposal to PROPOSED in place.
+type ProposalUnrejecter interface {
+	UnrejectProposal(id, expectedRevision, today string) store.MutationResult
+}
+
 // ProjectWriter is the four project lifecycle operations.
 //
 // They are the only store calls in the whole application layer that report

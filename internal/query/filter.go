@@ -13,6 +13,12 @@ const (
 	ScopeDone     = "done"
 	ScopeArchived = "archived"
 	ScopeAll      = "all"
+	// ScopeRejected is the declined-proposal review scope: CANCELLED tasks
+	// carrying the `rejected` marker, live and recently archived, newest first.
+	// It is a lifecycle scope like the others, so it is mutually exclusive with
+	// them, and it is never the default — a decline stays out of every ordinary
+	// view until it is asked for by name.
+	ScopeRejected = "rejected"
 )
 
 var stateOrder = []string{"PROPOSED", "INBOX", "TODO", "NEXT", "WAITING", "DONE", "CANCELLED"}
@@ -128,6 +134,9 @@ func ParseCLI(args []string) (ParsedFilter, error) {
 		case "--archived", "-x":
 			options.Scope = stringPointer(ScopeArchived)
 			scopes[ScopeArchived] = struct{}{}
+		case "--rejected":
+			options.Scope = stringPointer(ScopeRejected)
+			scopes[ScopeRejected] = struct{}{}
 		case "--all", "-a":
 			options.Scope = stringPointer(ScopeAll)
 			scopes[ScopeAll] = struct{}{}
@@ -221,8 +230,13 @@ func (filter Filter) State() string { return filter.state }
 func (filter Filter) Text() []string { return copyStrings(filter.text) }
 
 func (filter Filter) IncludeArchive() bool {
-	return filter.scope == ScopeArchived || filter.scope == ScopeAll
+	return filter.scope == ScopeArchived || filter.scope == ScopeAll ||
+		filter.scope == ScopeRejected
 }
+
+// RejectedOnly reports the declined-proposal scope, which narrows CANCELLED to
+// the rows carrying the decline marker and orders them newest first.
+func (filter Filter) RejectedOnly() bool { return filter.scope == ScopeRejected }
 
 func (filter Filter) States() []string {
 	var scoped []string
@@ -233,6 +247,8 @@ func (filter Filter) States() []string {
 		scoped = []string{"PROPOSED"}
 	case ScopeDone:
 		scoped = []string{"DONE", "CANCELLED"}
+	case ScopeRejected:
+		scoped = []string{"CANCELLED"}
 	default:
 		scoped = stateOrder
 	}
@@ -338,7 +354,8 @@ func Downcase(value string) string {
 }
 
 func knownScope(scope string) bool {
-	return scope == ScopeOpen || scope == ScopeProposed || scope == ScopeDone || scope == ScopeArchived || scope == ScopeAll
+	return scope == ScopeOpen || scope == ScopeProposed || scope == ScopeDone ||
+		scope == ScopeArchived || scope == ScopeAll || scope == ScopeRejected
 }
 
 func knownState(state string) bool {
