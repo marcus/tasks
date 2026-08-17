@@ -31,9 +31,9 @@ type BuildRequest struct {
 	// (plain title substring). Items already arrives narrowed by it; builders
 	// that fetch rows from Queries directly (revealed rejects) must apply it
 	// themselves so a filtered view never shows rows the filter hides.
-	TextFilter string
-	Projects       []taskquery.ProjectView
-	IntakeCounts   IntakeCounts
+	TextFilter   string
+	Projects     []taskquery.ProjectView
+	IntakeCounts IntakeCounts
 
 	// Width is the list's content width in cells, excluding the renderer's
 	// cursor gutter. Only the agenda uses it, and only to align its date
