@@ -73,6 +73,13 @@ export LANG=C.UTF-8
 export LC_ALL=C.UTF-8
 export PATH=$repo_root/bin:$PATH
 export TASKS_BIN=$repo_root/bin/tasks
+# Agent and CI shells often have TERM=dumb and NO_COLOR=1. Bubble Tea then
+# downconverts the TUI to attributes-only, which is why a README capture
+# can come out monochrome even with theme=default. Force a colour profile
+# for this process and for the tmux child.
+unset NO_COLOR
+export TERM=xterm-256color
+export COLORTERM=truecolor
 
 # Betamax starts the command in tmux -L betamax. A leftover server on that
 # socket does not inherit this shell's env, so the capture wrappers re-apply
@@ -86,7 +93,8 @@ write_capture_wrapper() {
 			'unset TASKS_FILE TASKS_ARCHIVE TASKS_MEMORY' \
 			'unset TASKS_THEME TASKS_TIMEZONE TASKS_URGENT_DAYS TASKS_MAX_DEPTH' \
 			'unset TASKS_MOUSE TASKS_WORKER_ID TASKS_TIME_FORMAT TASKS_DATE_ORDER' \
-			'unset TASKS_PIN_IDS TASKS_PIN_COALESCE_SCOPE TASKS_PIN_DELEGATION_KEYS'
+			'unset TASKS_PIN_IDS TASKS_PIN_COALESCE_SCOPE TASKS_PIN_DELEGATION_KEYS' \
+			'unset NO_COLOR'
 		printf 'export HOME=%q\n' "$home_dir"
 		printf 'export XDG_CONFIG_HOME=%q\n' "$xdg_config"
 		printf 'export XDG_STATE_HOME=%q\n' "$state_dir"
@@ -100,6 +108,8 @@ write_capture_wrapper() {
 		printf 'export TZ=America/Los_Angeles\n'
 		printf 'export LANG=C.UTF-8\n'
 		printf 'export LC_ALL=C.UTF-8\n'
+		printf 'export TERM=xterm-256color\n'
+		printf 'export COLORTERM=truecolor\n'
 		printf 'export PATH=%q\n' "$repo_root/bin:$PATH"
 		printf 'export TASKS_BIN=%q\n' "$repo_root/bin/tasks"
 		printf 'exec'
@@ -263,6 +273,25 @@ for name in screenshot-tui.png screenshot-cli.png; do
 		printf 'update-screenshots: missing %s\n' "$name" >&2
 		exit 1
 	fi
+	python3 - "$capture_dir/$name" <<'PY'
+import sys
+from PIL import Image
+
+path = sys.argv[1]
+image = Image.open(path).convert("RGB")
+pixels = image.load()
+width, height = image.size
+chromatic = 0
+for y in range(0, height, 3):
+    for x in range(0, width, 3):
+        r, g, b = pixels[x, y]
+        if max(r, g, b) - min(r, g, b) > 20:
+            chromatic += 1
+            if chromatic > 40:
+                raise SystemExit(0)
+print("update-screenshots: %s looks grayscale (no chromatic pixels)" % path, file=sys.stderr)
+raise SystemExit(1)
+PY
 	cp "$capture_dir/$name" "$assets_dir/$name"
 done
 

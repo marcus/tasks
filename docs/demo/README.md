@@ -20,3 +20,8 @@ TASKS_SCREENSHOT_NOW=2026-11-03T12:00:00-08:00 make screenshots
 
 Betamax runs on its own tmux socket (`-L betamax`), not the machine’s
 default tmux server.
+
+The capture wrappers force `TERM=xterm-256color` and `COLORTERM=truecolor`
+and unset `NO_COLOR`. Agent and CI shells often run as `TERM=dumb` with
+`NO_COLOR=1`; without that profile the TUI downconverts to attributes
+only and the README image comes out monochrome.
