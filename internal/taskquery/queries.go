@@ -640,7 +640,9 @@ func (q *Queries) clockGateDisplay(instant time.Time) temporal.Value {
 	}
 }
 
-// List selects the items a filter names, in file order.
+// List selects the items a filter names, in file order — except for the two
+// QUEUE scopes (`--agent-ready` and `--proposed`), which come back in the
+// shared triage order below.
 func (q *Queries) List(filter query.Filter) []store.Item {
 	items := []store.Item{}
 	for _, item := range q.sourceItems(filter) {
