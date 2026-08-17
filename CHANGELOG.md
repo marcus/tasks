@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+- Make context URLs first-class at create time (#10). `tasks capture` and
+  `tasks propose` take a repeatable `--link URL`, each optionally followed by
+  `--label TEXT`, and store the links in the order given — validated exactly as
+  `link add` validates them, and written in the SAME transaction and undo step as
+  the task, so filing a Slack/Jira/doc URL is no longer a second command an agent
+  can forget. `POST /api/v1/tasks` accepts the equivalent `links` array. A title
+  whose last word is already an `http`/`https` URL lifts that URL into a formal
+  link and keeps the remaining words as the title.
+
 ## [1.8.3] - 2026-08-17
 
 - Align the TUI's tab mouse hit areas with the tabs as drawn, so a click lands

@@ -112,10 +112,15 @@ task merely because it also contains task text.
                       rolls its date forward and stays open, and does not cascade)
   - add a task:       `tasks capture "<text>"` (flags: --due/--scheduled/
                       --priority/--tag/--context/--no-host-context/--state/
-                      --project/--under/--recur/--lead/--note)
+                      --project/--under/--recur/--lead/--note/--link)
+  - file with context:`tasks capture "<text>" --link <url> [--label "what it is"]`
+                      (repeatable; the link lands with the task in ONE write and
+                      ONE undo step — do not follow a capture with `link add`)
   - propose a task:   `tasks propose "<text>"` (same filing/metadata flags
                       as capture except state/recurrence; repeat `--note` for
-                      concise rationale or evidence)
+                      concise rationale or evidence, and pass `--link <url>
+                      [--label "…"]` for the thread/ticket/doc the owner has to
+                      look at — a proposal without one is slow to approve)
   - accept proposal:  `tasks approve "<ref>"` (PROPOSED → INBOX)
   - decline proposal: `tasks reject "<ref>" [--note "why"]` (PROPOSED → CANCELLED)
   - nest a new task:  `tasks capture "<text>" --under "<ref>"`  (child of a task; ≤ max_depth)
@@ -137,6 +142,8 @@ task merely because it also contains task text.
   - edit tags:        `tasks tag "<ref>" +tag -tag @ctx -@ctx`
   - add a note:       `tasks note "<ref>" "<text>"`
   - add a formal link:`tasks link add "<ref>" <url> [--label "description"]`
+                      (for a task that ALREADY exists; at create time use
+                      `capture`/`propose --link` instead)
   - remove a link:    `tasks link rm "<ref>" <formal-index-or-url>`
   - relabel a link:   `tasks link set "<ref>" <formal-index> --label "description"`
   - move a task:      `tasks move "<ref>" "<Section>"`  (top-level or nested project section)

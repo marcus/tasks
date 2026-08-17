@@ -9,6 +9,7 @@ import (
 
 	"github.com/marcus/tasks/internal/application"
 	"github.com/marcus/tasks/internal/lead"
+	"github.com/marcus/tasks/internal/links"
 	"github.com/marcus/tasks/internal/recur"
 	"github.com/marcus/tasks/internal/store"
 	"github.com/marcus/tasks/internal/temporal"
@@ -31,7 +32,7 @@ func (s *surfaceContext) capture(args []string, proposed bool) int {
 	if status != 0 {
 		return status
 	}
-	command, flags, status := parseCaptureArgs(args, proposed, context, s.dateOrder())
+	command, flags, status := parseCaptureArgs(args, proposed, context, s.dateOrder(), s.expandFormalLink)
 	if status != 0 {
 		return status
 	}
@@ -116,7 +117,8 @@ type captureFlags struct {
 
 // parseCaptureArgs is cmd_capture's argument scan.
 func parseCaptureArgs(args []string, proposed bool, context temporal.Context,
-	order temporal.Order) (application.CreateCommand, captureFlags, int) {
+	order temporal.Order,
+	expandLink func(string) (string, string, bool)) (application.CreateCommand, captureFlags, int) {
 
 	command := application.CreateCommand{}
 	flags := captureFlags{}
@@ -126,6 +128,10 @@ func parseCaptureArgs(args []string, proposed bool, context temporal.Context,
 	state := ""
 	under := ""
 	due, scheduled, recurInput, leadInput := "", "", "", ""
+	// linkValueIndex is where the most recent --link's VALUE sat, which is the
+	// whole of the pairing rule: a --label labels the --link it follows and
+	// nothing else, so two --link/--label pairs cannot silently retarget.
+	linkValueIndex := -1
 	dueGiven, scheduledGiven := false, false
 	dueOptions, scheduledOptions := temporalOptions{}, temporalOptions{}
 	dueFold, scheduledFold := "", ""
@@ -185,6 +191,30 @@ func parseCaptureArgs(args []string, proposed bool, context temporal.Context,
 				return command, flags, abort("missing value for " + arg)
 			}
 			under = value
+		case "--link":
+			value, ok := need(arg)
+			if !ok {
+				return command, flags, abort("missing value for " + arg)
+			}
+			linkURL, defaultLabel, valid := expandLink(value)
+			if !valid {
+				return command, flags,
+					abort("link URL must be http://, https://, or a configured shorthand")
+			}
+			command.Links = append(command.Links, links.FormalLink{URL: linkURL, Label: defaultLabel})
+			linkValueIndex = index
+		case "--label":
+			if index != linkValueIndex+1 {
+				return command, flags, abort("--label must immediately follow a --link")
+			}
+			value, ok := need(arg)
+			if !ok {
+				return command, flags, abort("missing value for " + arg)
+			}
+			if !links.ValidFormalLabel(value) {
+				return command, flags, abort("link label must be non-empty trimmed single-line text")
+			}
+			command.Links[len(command.Links)-1].Label = value
 		case "--no-host-context":
 			command.SkipHostContext = true
 		case "--json":
@@ -255,6 +285,7 @@ func parseCaptureArgs(args []string, proposed bool, context temporal.Context,
 	if command.Title == "" {
 		return command, flags, abort(usage)
 	}
+	command.Title, command.Links = liftTitleLink(command.Title, command.Links)
 	// --under (nest under a task) and --project (file under a section) are two
 	// different destinations — pick one.
 	if under != "" && command.Project != "" {
@@ -391,6 +422,43 @@ func parseCaptureArgs(args []string, proposed bool, context temporal.Context,
 	}
 	command.Tags = append(prefixed, command.Tags...)
 	return command, flags, 0
+}
+
+// liftTitleLink is docs/ideas.md item 6: a title that ENDS in a bare URL keeps
+// the words and hands the URL to the formal link list, so
+// `capture "read the RFC https://example.com/rfc"` files a human title with a
+// real link instead of a row whose title is half address bar.
+//
+// Three deliberate limits keep it unambiguous, because a title rewrite the
+// caller did not ask for has to be predictable:
+//
+//   - only the LAST whitespace-separated word is considered, and only when it is
+//     already a valid formal URL — no punctuation stripping, no guessing at bare
+//     hosts, no shorthand expansion.
+//   - a title that is ONLY a URL keeps its title. There is no human remainder to
+//     keep and a blank title is not a thing the store accepts; the URL is still
+//     lifted into a link, so the row gains the formal link either way.
+//   - a URL the caller already passed with --link is not lifted twice, and every
+//     explicit --link keeps its position and its label.
+func liftTitleLink(title string, explicit []links.FormalLink) (string, []links.FormalLink) {
+	fields := strings.Fields(title)
+	if len(fields) == 0 {
+		return title, explicit
+	}
+	candidate := fields[len(fields)-1]
+	if !links.ValidFormalURL(candidate) {
+		return title, explicit
+	}
+	for _, link := range explicit {
+		if link.URL == candidate {
+			return title, explicit
+		}
+	}
+	lifted := append(explicit, links.FormalLink{URL: candidate})
+	if len(fields) == 1 {
+		return title, lifted
+	}
+	return strings.TrimSpace(strings.TrimSuffix(strings.TrimRight(title, " \t"), candidate)), lifted
 }
 
 // leadGateConflictHint is Rule 3's CLI-side wording, shared with `tasks lead`.
@@ -573,9 +641,9 @@ func rubyInspectQuote(value string) string {
 
 // The two usage sentences, byte for byte as tasks spells them: they are
 // stderr contract, and a caller reads them back to correct its own invocation.
-const captureUsageText = `usage: tasks capture "text" [--due d] [--scheduled d] [--priority A|B|C] [--tag t] [--context @x] [--no-host-context] [--state STATE] [--project "Heading" | --under <ref>] [--note "text"]`
+const captureUsageText = `usage: tasks capture "text" [--due d] [--scheduled d] [--priority A|B|C] [--tag t] [--context @x] [--no-host-context] [--state STATE] [--project "Heading" | --under <ref>] [--note "text"] [--link URL [--label TEXT]]`
 
-const proposeUsage = `usage: tasks propose "text" [--due d] [--scheduled d] [--lead span] [--priority A|B|C] [--tag t] [--context @x] [--no-host-context] [--project "Heading" | --under <ref>] [--note "rationale"]`
+const proposeUsage = `usage: tasks propose "text" [--due d] [--scheduled d] [--lead span] [--priority A|B|C] [--tag t] [--context @x] [--no-host-context] [--project "Heading" | --under <ref>] [--note "rationale"] [--link URL [--label TEXT]]`
 
 func init() {
 	register("capture", func(s *surfaceContext, args []string) int {

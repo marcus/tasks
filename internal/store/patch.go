@@ -365,25 +365,38 @@ func patchBody(records []record.Record, index int, value PatchValue) patchOutcom
 	return patchOK(records[index])
 }
 
+// validateFormalLinks is the ONE set of rules a stored link list has to satisfy,
+// wherever it enters the store: a full `links` patch, or the list a create
+// carries. It answers the refusal sentence, or "" when the list is storable.
+//
+// Sharing it is the point: `capture --link` must refuse exactly what `link add`
+// refuses, and a second copy of these four checks is how those two drift.
+func validateFormalLinks(values []links.FormalLink) string {
+	if len(values) > links.MaxFormalLinks {
+		return "links may contain at most 50 entries"
+	}
+	seen := map[string]bool{}
+	for _, link := range values {
+		if !links.ValidFormalURL(link.URL) {
+			return "link URL must be an http or https URL with a host"
+		}
+		if link.Label != "" && !links.ValidFormalLabel(link.Label) {
+			return "link label must be non-empty, trimmed single-line text"
+		}
+		if seen[link.URL] {
+			return "duplicate formal link URL: " + link.URL
+		}
+		seen[link.URL] = true
+	}
+	return ""
+}
+
 func patchLinks(records []record.Record, index int, value PatchValue) patchOutcome {
 	if value.kind != kindLinks {
 		return patchInvalid("links must be a list of formal links")
 	}
-	if len(value.links) > links.MaxFormalLinks {
-		return patchInvalid("links may contain at most 50 entries")
-	}
-	seen := map[string]bool{}
-	for _, link := range value.links {
-		if !links.ValidFormalURL(link.URL) {
-			return patchInvalid("link URL must be an http or https URL with a host")
-		}
-		if link.Label != "" && !links.ValidFormalLabel(link.Label) {
-			return patchInvalid("link label must be non-empty, trimmed single-line text")
-		}
-		if seen[link.URL] {
-			return patchInvalid("duplicate formal link URL: " + link.URL)
-		}
-		seen[link.URL] = true
+	if reason := validateFormalLinks(value.links); reason != "" {
+		return patchInvalid(reason)
 	}
 	raw, err := json.Marshal(value.links)
 	if err != nil {

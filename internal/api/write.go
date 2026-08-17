@@ -33,7 +33,7 @@ import (
 var createFields = []string{
 	"title", "priority", "tags", "contexts", "deferred", "scheduled", "scheduled_time",
 	"deadline", "deadline_time", "state", "project", "parent_id", "recurrence", "lead",
-	"body", "apply_host_context",
+	"body", "apply_host_context", "links",
 }
 
 // patchFields is App::PATCH_FIELDS.
@@ -184,6 +184,18 @@ func (s *Server) createCommand(body *jsonObject) (application.CreateCommand, err
 			return application.CreateCommand{}, err
 		}
 		command.Lead = canonical
+	}
+	// `links` is the create spelling of PATCH's `formal_links`, and it is the
+	// SAME parser and therefore the same refusals — an array of
+	// `{url, label?}`, in order, deduplicated, capped. The name follows the
+	// CLI's `--link` rather than the patch field because a create names what it
+	// is adding; the value shape is identical, which is what parity requires.
+	if body.has("links") && !body.isNull("links") {
+		values, err := formalLinks(body.raw("links"))
+		if err != nil {
+			return application.CreateCommand{}, validationError(reason("links", err.Error()))
+		}
+		command.Links = values
 	}
 	if body.has("body") && !body.isNull("body") {
 		if lines, ok := body.stringList("body"); ok {

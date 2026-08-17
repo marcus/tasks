@@ -151,9 +151,12 @@ func validateCommonBody(body *jsonObject, create bool) error {
 			return validationError(reason(field, "must be a list of text values"))
 		}
 	}
-	if body.has("formal_links") {
-		if _, err := formalLinks(body.raw("formal_links")); err != nil {
-			return validationError(reason("formal_links", err.Error()))
+	for _, field := range []string{"formal_links", "links"} {
+		if !body.has(field) {
+			continue
+		}
+		if _, err := formalLinks(body.raw(field)); err != nil {
+			return validationError(reason(field, err.Error()))
 		}
 	}
 	if contexts, ok := body.stringList("contexts"); ok && body.has("contexts") {

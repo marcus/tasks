@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/marcus/tasks/internal/links"
 	"github.com/marcus/tasks/internal/store"
 	"github.com/marcus/tasks/internal/temporal"
 )
@@ -66,6 +67,7 @@ func (a *Application) CreateTask(command CreateCommand, operation *OperationCont
 		HasDeadline:  dates.hasDeadline,
 		Recurrence:   prepared.Recurrence,
 		Lead:         prepared.Lead,
+		Links:        append([]links.FormalLink(nil), prepared.Links...),
 	}, a.today(operation))}
 }
 
