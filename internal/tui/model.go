@@ -592,6 +592,7 @@ func (m *Model) RefreshRows() {
 		ShowRejected:   m.showRejected,
 		UrgentDays:     m.paths.UrgentDays,
 		ContextFilters: m.contextFilters,
+		TextFilter:     m.activeFilter(),
 		IntakeCounts:   m.intakeCounts(items),
 	}
 	if m.view == ViewProjects && request.UseTree {

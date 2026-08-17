@@ -27,6 +27,11 @@ type BuildRequest struct {
 	ShowRejected   bool
 	UrgentDays     int
 	ContextFilters []string
+	// TextFilter is the active `/` search, lowercased by the caller's own rule
+	// (plain title substring). Items already arrives narrowed by it; builders
+	// that fetch rows from Queries directly (revealed rejects) must apply it
+	// themselves so a filtered view never shows rows the filter hides.
+	TextFilter string
 	Projects       []taskquery.ProjectView
 	IntakeCounts   IntakeCounts
 
@@ -278,7 +283,7 @@ func combinedInbox(request BuildRequest, inboxRows []Row) []Row {
 		{
 			Label: "APPROVALS", Slot: "approval_section", Right: approvals,
 			RightSlot: "approval_section",
-			Rows:      append(approvalRows(request, proposals), rejects...), Empty: &empty,
+			Rows:      approvalSectionRows(request, proposals, rejects, empty), Empty: &empty,
 		},
 		{
 			Label: "INBOX", Slot: "inbox_section",
@@ -286,6 +291,17 @@ func combinedInbox(request BuildRequest, inboxRows []Row) []Row {
 			RightSlot: "inbox_section", Rows: inboxRows, Empty: &inboxEmpty,
 		},
 	}, dateMeta(request))
+}
+
+// approvalSectionRows keeps the "Nothing pending approval" placeholder honest:
+// revealed rejects are decided work, so when they are the only rows, the queue
+// itself is still empty and the placeholder must say so above them.
+func approvalSectionRows(request BuildRequest, proposals []store.Item, rejects []Row, empty Row) []Row {
+	rows := approvalRows(request, proposals)
+	if len(rows) == 0 && len(rejects) > 0 {
+		rows = []Row{empty}
+	}
+	return append(rows, rejects...)
 }
 
 // rejectedRows is the revealed tail of APPROVALS: recently declined proposals,
@@ -301,8 +317,12 @@ func rejectedRows(request BuildRequest) []Row {
 	}
 	styler := request.styler()
 	rows := []Row{}
+	text := strings.ToLower(strings.TrimSpace(request.TextFilter))
 	for _, item := range request.Queries.RecentRejects() {
 		if len(request.ContextFilters) > 0 && !request.query(ViewInbox).ContextMatch(item) {
+			continue
+		}
+		if text != "" && !strings.Contains(strings.ToLower(item.Title), text) {
 			continue
 		}
 		if item.Source != store.SourceLive {

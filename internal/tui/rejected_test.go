@@ -104,3 +104,40 @@ func TestRestoreRefusesANonDecline(t *testing.T) {
 		t.Errorf("flash = %q", harness.model.FlashMessage())
 	}
 }
+
+// A `/` search narrows every row in the view, and a revealed decline is a row
+// in the view: filtering Inbox must not keep showing unrelated rejects.
+func TestRevealedRejectsHonorTheTextFilter(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: rejectedFixture})
+	harness.model.SwitchView(ViewInbox)
+	harness.press('R')
+	for _, key := range "/garden\r" {
+		harness.press(key)
+	}
+	text := rowsText(harness)
+	if strings.Contains(text, "Declined proposal") {
+		t.Fatalf("a /garden filter still showed an unrelated decline:\n%s", text)
+	}
+	if !strings.Contains(text, "garden") {
+		t.Fatalf("the filter lost its own match:\n%s", text)
+	}
+}
+
+// With the reveal on and nothing pending, the queue is still empty — the
+// placeholder says so above the decided rows instead of vanishing.
+func TestPlaceholderSurvivesWhenOnlyRejectsAreShown(t *testing.T) {
+	fixture := `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Inbox"}
+{"type":"task","id":"aaaa0011","parent":"aaaa0001","state":"CANCELLED","title":"Declined proposal","closed":"2026-07-13","rejected":"2026-07-13"}
+`
+	harness := newModelHarness(t, harnessOptions{live: fixture})
+	harness.model.SwitchView(ViewInbox)
+	harness.press('R')
+	text := rowsText(harness)
+	if !strings.Contains(text, "Nothing pending approval") {
+		t.Fatalf("the empty-queue placeholder vanished behind revealed rejects:\n%s", text)
+	}
+	if !strings.Contains(text, "Declined proposal") {
+		t.Fatalf("the revealed decline went missing:\n%s", text)
+	}
+}
