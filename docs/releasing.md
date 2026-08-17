@@ -25,13 +25,31 @@ scripts/test-release-publication.sh
 
 ## Publish
 
+The normal flow is: write the changelog, run one command.
+
 ```sh
-RELEASE_VERSION=v1.0.0 make release
+BUMP=minor make release      # or major / patch
 ```
 
-The command fails closed unless the version is strict SemVer, the working tree
-is clean, `HEAD` is the live `origin/main`, the changelog entry exists, the tag
-does not exist, and the operator can complete the Homebrew publication. It then:
+With bullets sitting under `## [Unreleased]`, the command derives the next
+version from the latest tag, stamps the heading to `## [X.Y.Z] - <today>`,
+commits `release: prepare vX.Y.Z`, pushes `main`, and publishes. The version is
+stated exactly once. Two equivalent spellings:
+
+```sh
+RELEASE_VERSION=v1.0.0 make release   # explicit version; stamps [Unreleased] if present
+make release                          # heading already stamped `## [X.Y.Z] - date` by hand
+```
+
+`make release-dry-run` (with the same variables) prints the full plan —
+derived version, stamp, commit, push — and exits before any mutation.
+
+The prep step refuses an empty `[Unreleased]` section, a working tree dirty
+beyond `CHANGELOG.md`, a version whose tag already exists, and a
+`RELEASE_VERSION` that contradicts an already-stamped heading. Publication then
+fails closed unless the version is strict SemVer, the working tree is clean,
+`HEAD` is the live `origin/main`, the changelog entry exists, the tag does not
+exist, and the operator can complete the Homebrew publication. It then:
 
 1. creates and pushes the annotated tag;
 2. waits for the exact tag workflow and GitHub release;

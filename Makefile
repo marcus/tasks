@@ -4,14 +4,14 @@ VERSION ?= dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 LDFLAGS = -s -w -X github.com/marcus/tasks/internal/buildinfo.Version=$(VERSION) -X github.com/marcus/tasks/internal/buildinfo.Commit=$(COMMIT)
 
-release_goals := $(filter check-release-state release release-tap,$(MAKECMDGOALS))
+release_goals := $(filter check-release-state release-tap,$(MAKECMDGOALS))
 ifneq ($(release_goals),)
 ifneq ($(origin RELEASE_VERSION),environment)
 $(error set RELEASE_VERSION in the environment, for example: RELEASE_VERSION=v1.0.0 make $(firstword $(release_goals)))
 endif
 endif
 
-.PHONY: build install install-local install-worktree use-homebrew verify-homebrew install-status test test-race vet fmt fmt-check clean screenshots release-snapshot check-release-state release release-tap
+.PHONY: build install install-local install-worktree use-homebrew verify-homebrew install-status test test-race vet fmt fmt-check clean screenshots release-snapshot check-release-state release release-dry-run release-tap
 
 build:
 	mkdir -p bin
@@ -69,8 +69,10 @@ check-release-state:
 	./scripts/check-release-state.sh pre-tag
 
 release:
-	@test -n "$${RELEASE_VERSION:-}" || { echo 'RELEASE_VERSION=vX.Y.Z is required' >&2; exit 2; }
-	./scripts/publish-release.sh
+	./scripts/release.sh
+
+release-dry-run:
+	./scripts/release.sh --dry-run
 
 release-tap:
 	@test -n "$${RELEASE_VERSION:-}" || { echo 'RELEASE_VERSION=vX.Y.Z is required' >&2; exit 2; }
