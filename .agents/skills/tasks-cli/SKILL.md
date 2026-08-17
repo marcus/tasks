@@ -61,7 +61,8 @@ holds the store; retry. The leftover `.tasks.jsonl.lock` sidecar is not a lock.
 
 ```sh
 tasks capture "text"             # new INBOX item (see flags below)
-tasks propose "text" --note "why" # inert PROPOSED item for owner review
+tasks capture "text" --link <url> --label "thread" # link filed in the same write
+tasks propose "text" --note "why" --link <url> # inert PROPOSED item + its context
 tasks approve "<ref>"             # accept PROPOSED → INBOX
 tasks reject "<ref>" [--note "why"] # decline PROPOSED → CANCELLED (+ rationale)
 tasks delegate "<ref>" --to pat@example.com # hand to a person (→ WAITING)
@@ -82,7 +83,7 @@ tasks priority "<ref>" A         # A|B|C|none
 tasks retitle "<ref>" "new"      # replace the title; tags/state untouched
 tasks tag "<ref>" +foo -bar @ctx # add/remove tags & contexts (-@ctx removes)
 tasks note "<ref>" "text"        # append a body line under the task
-tasks link add "<ref>" <url> [--label "description"] # append a formal link
+tasks link add "<ref>" <url> [--label "description"] # link an existing task
 tasks link rm "<ref>" <n-or-url>  # remove from formal links only
 tasks link set "<ref>" <n> --label "description" # relabel a formal link only
 tasks capture "sub" --under "<ref>" # nest a new task below an existing one
@@ -224,10 +225,22 @@ descendants.
 `--due-timezone`/`--scheduled-timezone`, floating and fold flags, `--priority A|B|C`,
 `--tag t` (repeatable), `--context @x` (repeatable), `--state STATE`,
 `--project "Heading"`, `--under <ref>`, `--no-host-context`, and repeatable
-`--note`. A date makes it land as TODO (override
+`--note` and `--link`. A date makes it land as TODO (override
 with `--state`); `--project` files it under that section (default Inbox);
 `--under <ref>` nests it below an existing task instead (mutually exclusive with
 `--project`).
+
+`--link <url>` is repeatable and may be followed immediately by `--label
+"description"` to label that one link; links are stored in the order given.
+The link is written in the SAME transaction as the task, so one `tasks undo`
+removes both — file context URLs this way rather than following a capture with
+`tasks link add`, which is a second write you can forget. `propose --link` works
+identically and is what makes a proposal quick to approve. A URL is validated
+exactly as `link add` validates it (http/https with a host, or a configured
+shorthand, which expands and becomes the default label); a bad or duplicate URL
+refuses the whole capture and writes nothing. If a title's last word is already
+a bare URL, capture lifts it into a formal link and keeps the remaining words as
+the title (trailing sentence punctuation stays on the title, not in the URL).
 
 When `tasks config` reports a `host_context`, every capture adds it alongside
 explicit contexts. Use `--no-host-context` only when the user explicitly wants

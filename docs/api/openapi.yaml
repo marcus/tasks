@@ -3392,6 +3392,16 @@ components:
           type: boolean
           description: Create with an own indefinite On Hold marker. Default false.
           default: false
+        links:
+          type: array
+          description: |
+            Ordered stored formal links the new task is born with — the create
+            spelling of PATCH's `formal_links`, with the same entry shape,
+            validation, deduplication, and 50-entry cap, and the CLI parity of
+            `tasks capture --link URL [--label TEXT]`. They are written in the
+            same transaction as the task, so one undo removes both.
+          maxItems: 50
+          items: { $ref: "#/components/schemas/FormalLink" }
         scheduled:
           allOf:
             - { $ref: "#/components/schemas/IsoDate" }

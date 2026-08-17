@@ -70,8 +70,10 @@ project view (#8). The link feature shipped on top of it: `link.<name>`
 shorthands (`jira:OPS-1234`) + `system.<name>` custom hosts in config,
 ordered labelled formal links through CLI/API, the formal/title/body openable
 union, and searchable multi-link choice through `tasks open <ref>` / the TUI's
-`o`. Remaining follow-on: capture-with-link sugar (`capture --link URL`,
-auto-moving URLs out of capture titles).
+`o`. Capture-with-link sugar shipped too (#10): repeatable
+`capture`/`propose --link URL [--label TEXT]`, an equivalent `links` array on the
+HTTP create, and a title whose last word is a bare URL lifted into a formal
+link — all in the create's own write and undo step.
 
 ## 7. `stats` command
 

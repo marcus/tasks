@@ -3,6 +3,7 @@ package store
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/marcus/tasks/internal/check"
 	"github.com/marcus/tasks/internal/journal"
 	"github.com/marcus/tasks/internal/lead"
+	"github.com/marcus/tasks/internal/links"
 	"github.com/marcus/tasks/internal/query"
 	"github.com/marcus/tasks/internal/record"
 	"github.com/marcus/tasks/internal/recur"
@@ -134,6 +136,11 @@ type CreateCommand struct {
 	// repair is a create that should have been refused.
 	Recurrence string
 	Lead       string
+	// Links are the formal links the new task is born with, in the order the
+	// caller supplied them. They are validated by the same rules a `links`
+	// patch goes through and written in the SAME transaction, so a context URL
+	// costs one write and one undo step rather than two.
+	Links []links.FormalLink
 }
 
 // CreateTask creates one task from a complete typed command in one checked
@@ -197,6 +204,7 @@ type createAttributes struct {
 	hasDeadline  bool
 	recurrence   string
 	lead         string
+	links        []links.FormalLink
 }
 
 // normalizeCreate is Store#normalize_create_task. Every refusal here is one the
@@ -274,6 +282,9 @@ func normalizeCreate(command CreateCommand, today string) (createAttributes, []s
 			}
 		}
 	}
+	if reason := validateFormalLinks(command.Links); reason != "" {
+		errors = append(errors, reason)
+	}
 	if span != "" {
 		errors = append(errors, createLeadErrors(span, scheduled, hasScheduled, deadline, hasDeadline)...)
 	}
@@ -284,6 +295,7 @@ func normalizeCreate(command CreateCommand, today string) (createAttributes, []s
 		scheduled: scheduled, hasScheduled: hasScheduled,
 		deadline: deadline, hasDeadline: hasDeadline,
 		recurrence: recurrence, lead: span,
+		links: append([]links.FormalLink(nil), command.Links...),
 	}, errors
 }
 
@@ -429,6 +441,15 @@ func (s *Store) planCreateTask(records []record.Record, attributes createAttribu
 	}
 	if attributes.lead != "" {
 		fresh.SetString("lead", attributes.lead)
+	}
+	if len(attributes.links) > 0 {
+		raw, err := json.Marshal(attributes.links)
+		if err != nil {
+			return createPlan{}, &MutationResult{
+				Status: MutationInvalid, Errors: []string{"links could not be encoded"},
+			}
+		}
+		fresh.Set("links", raw)
 	}
 	body := append([]string{"Captured [" + today + "]."}, attributes.notes...)
 	fresh.SetString("body", strings.Join(body, "\n"))

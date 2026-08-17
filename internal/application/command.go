@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/marcus/tasks/internal/links"
 	"github.com/marcus/tasks/internal/store"
 	"github.com/marcus/tasks/internal/temporal"
 )
@@ -50,6 +51,12 @@ type CreateCommand struct {
 	Body       string
 	Notes      []string
 
+	// Links are formal links the create installs in its own transaction, in
+	// caller order. They exist so a context URL is part of the create rather
+	// than a follow-up `link add` a caller can forget — and because they land in
+	// the same write, one undo removes the task and its links together.
+	Links []links.FormalLink
+
 	// ScheduledValue and DeadlineValue carry a COMPLETE temporal value — the
 	// date, the local time, its zone and its fold — for a caller that has
 	// already parsed one.
@@ -84,6 +91,7 @@ type CreateCommand struct {
 func (c CreateCommand) clone() CreateCommand {
 	c.Tags = copyOf(c.Tags)
 	c.Notes = copyOf(c.Notes)
+	c.Links = append([]links.FormalLink(nil), c.Links...)
 	c.ScheduledValue = copyValue(c.ScheduledValue)
 	c.DeadlineValue = copyValue(c.DeadlineValue)
 	return c

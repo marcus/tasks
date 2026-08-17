@@ -49,6 +49,9 @@ const helpText = "tasks — a plain-text GTD CLI over tasks.jsonl. Every command
 	"  capture   c \"text\"       new item. Flags: --due --scheduled --priority" + "\n" +
 	"                           --tag --context --no-host-context --state" + "\n" +
 	"                           --project --under --recur --lead --note" + "\n" +
+	"                           --link URL [--label TEXT] (repeatable; adds formal" + "\n" +
+	"                           links in the same write/undo step as the task, and" + "\n" +
+	"                           a title ending in a bare URL lifts it into one)" + "\n" +
 	"                           (--under <ref> nests it below a task; caps at max_depth)" + "\n" +
 	"                           --recur with no date starts repeating today; adding" + "\n" +
 	"                           --lead instead anchors on the schedule's FIRST" + "\n" +
