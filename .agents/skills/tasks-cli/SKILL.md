@@ -17,7 +17,7 @@ marks each command ✅ implemented / 🚧 planned).
 
 ```sh
 tasks list -a          # everything incl. archive; filters: @ctx +tag /text -A
-tasks list --proposed  # inert suggestions pending owner approval
+tasks list --proposed  # inert suggestions pending approval, ranked priority then due
 tasks list --delegated # handed to a person/agents (--all incl. closed)
 tasks list --agent-ready --json # the claimable queue for heartbeat pickup
 tasks list --unavailable # timed, inherited, and indefinite unavailability
@@ -104,7 +104,10 @@ tasks delete "<ref>"             # hard-delete a task (--cascade for subtasks); 
 
 `PROPOSED` is separate from accepted open work. It stays out of the default
 list, agenda, next, quadrants, inbox, and project rollups; review it with
-`list --proposed` or the TUI Approvals tab. A proposal cannot recur or be
+`list --proposed` or the TUI Approvals tab — both ranked in triage order
+(priority A>B>C>none, then soonest due, undated last in a band), so setting
+`--priority` and `--due` on a proposal changes where the owner sees it. A
+proposal cannot recur or be
 completed. Before the owner decides it, `priority`, `retitle`, `tag`, and
 `note` can correct its presentation without changing its PROPOSED state.
 Approval and rejection are undoable lifecycle decisions.

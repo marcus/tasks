@@ -640,7 +640,9 @@ func (q *Queries) clockGateDisplay(instant time.Time) temporal.Value {
 	}
 }
 
-// List selects the items a filter names, in file order.
+// List selects the items a filter names, in file order — except for the two
+// QUEUE scopes (`--agent-ready` and `--proposed`), which come back in the
+// shared triage order below.
 func (q *Queries) List(filter query.Filter) []store.Item {
 	items := []store.Item{}
 	for _, item := range q.sourceItems(filter) {
@@ -648,8 +650,11 @@ func (q *Queries) List(filter query.Filter) []store.Item {
 			items = append(items, item)
 		}
 	}
-	if filter.AgentReadyOnly() {
-		items = q.rankAgentReady(items)
+	// Two scopes are QUEUES rather than browsable lists — work an agent takes
+	// from the top, and proposals a person decides from the top — so both are
+	// handed over in the shared triage order. Every other scope keeps file order.
+	if filter.AgentReadyOnly() || filter.Scope() == query.ScopeProposed {
+		items = q.RankByPriorityThenDue(items)
 	}
 	return items
 }
@@ -768,22 +773,6 @@ func (q *Queries) textMatch(item store.Item, filter query.Filter) bool {
 		return false
 	}
 	return containsFold(joinLines(q.Body(item)), needle)
-}
-
-// rankAgentReady is the one list whose order is a contract: a heartbeat agent
-// takes the first row it is capable of, so the ranking cannot live in whichever
-// adapter happens to print it. Existing priority, then the soonest
-// deadline-or-scheduled boundary, then canonical file order.
-func (q *Queries) rankAgentReady(items []store.Item) []store.Item {
-	ranked := append([]store.Item{}, items...)
-	sort.SliceStable(ranked, func(left, right int) bool {
-		leftPriority, rightPriority := priorityKey(ranked[left]), priorityKey(ranked[right])
-		if leftPriority != rightPriority {
-			return leftPriority < rightPriority
-		}
-		return q.agendaSortKey(ranked[left]).Before(q.agendaSortKey(ranked[right]))
-	})
-	return ranked
 }
 
 // priorityKey is Ruby's `item.priority || "Z"`: unprioritized sorts after C.

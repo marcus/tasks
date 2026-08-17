@@ -65,7 +65,8 @@ another `tasks` process holds the file — retry, and do not treat the leftover
 
 ## Reading (always via the CLI, `--json` when you reason over results)
 - `tasks list -a` — everything, grouped by state (filters: `@ctx +tag /text -A`).
-- `tasks list --proposed` — only inert tasks pending owner approval.
+- `tasks list --proposed` — only inert tasks pending owner approval, ranked in
+  triage order: priority A>B>C>none, then soonest due, undated last in a band.
 - `tasks list --delegated` — tasks handed to a person or the agent pool,
   within the current scope. The default open scope hides unavailable work, so
   add `--all` to see closed provenance and deferred or blocked delegations.
@@ -212,7 +213,8 @@ task merely because it also contains task text.
 
 `PROPOSED` is a separate lifecycle state, not another spelling of INBOX.
 Proposals are inert: they appear in `list --proposed` and the approval section
-of the final TUI Inbox tab,
+of the final TUI Inbox tab — both in the same triage order, so a `--priority`
+and a `--due` on the proposal decide where the owner meets it —
 but stay out of agenda, next, quadrants, inbox, project rollups, and the default
 open list. They cannot recur or be completed, and archive operations leave them
 live until the owner decides them. If a proposal needs correction first, use

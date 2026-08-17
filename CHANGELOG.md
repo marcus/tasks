@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+- Rank the proposed queue by priority then due date, so a two-minute scan of
+  pending proposals hits the ones that matter first. `list --proposed` (text and
+  `--json`), the TUI Inbox Approvals section, and
+  `GET /api/v1/tasks?scope=proposed` share one core ranking —
+  `taskquery.Queries.RankByPriorityThenDue`, which also ranks `--agent-ready`:
+  priority A>B>C>none, then the soonest deadline-or-scheduled boundary, undated
+  last inside a band, file/DFS order breaking a tie. The default open list,
+  agenda, and Outline keep file/DFS order.
+
 ## [1.8.3] - 2026-08-17
 
 - Align the TUI's tab mouse hit areas with the tabs as drawn, so a click lands
