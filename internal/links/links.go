@@ -69,6 +69,13 @@ func ValidFormalLabel(label string) bool {
 	return label != "" && label == strings.TrimSpace(label) && len(label) <= MaxLabelLength && !UnsafeFormalText(label)
 }
 
+// TrimSentenceTail peels off what belongs to the sentence rather than to a bare
+// URL — trailing punctuation and unbalanced closers — exactly as Extract does
+// when it finds a URL in prose. A caller lifting a URL out of human text stores
+// what Extract would have found, so the two never disagree about where the URL
+// ends.
+func TrimSentenceTail(value string) string { return cleanBare(value, "") }
+
 // UnsafeFormalText reports control or line-separator characters forbidden in
 // either member of a stored link.
 func UnsafeFormalText(value string) bool {

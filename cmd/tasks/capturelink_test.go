@@ -261,3 +261,47 @@ func TestCLICaptureDryRunPreviewsTheLiftedTitleAndWritesNothing(t *testing.T) {
 		t.Errorf("stdout = %q", preview.stdout)
 	}
 }
+
+// A stray `--label` in the FIRST argument position is still a refusal, not a
+// crash: the pairing rule is "there is a --link and it was the previous flag",
+// and forgetting the first half of that read args[0] as if a link existed.
+func TestCLICaptureRefusesALabelBeforeAnyLink(t *testing.T) {
+	dir := seedStore(t, mutationFixture)
+	for _, argv := range [][]string{
+		{"capture", "--label", "stray", "Renew the lease"},
+		{"propose", "--label", "stray", "Renew the lease"},
+	} {
+		before := storeBytes(t, dir)
+		result := runCLI(t, dir, argv...)
+		if result.status == 0 ||
+			!strings.Contains(result.stderr, "--label must immediately follow a --link") {
+			t.Fatalf("%v: exit %d, stderr %q", argv, result.status, result.stderr)
+		}
+		if after := storeBytes(t, dir); after != before {
+			t.Fatalf("%v wrote to the store", argv)
+		}
+	}
+}
+
+// A lifted URL ends where links.Extract says it ends: the sentence's own period
+// stays on the title instead of becoming part of a link that 404s. Formal links
+// sort ahead of title links, so a punctuation-fattened URL here is the one
+// `tasks open` would open.
+func TestCLICaptureLiftedTitleURLDropsSentencePunctuation(t *testing.T) {
+	dir := seedStore(t, mutationFixture)
+	if result := runCLI(t, dir, "capture", "read the terms https://example.com/terms."); result.status != 0 {
+		t.Fatalf("exit %d, stderr %q", result.status, result.stderr)
+	}
+	want := [][2]string{{"https://example.com/terms", ""}}
+	if got := storedLinks(t, dir, "read the terms."); !reflect.DeepEqual(got, want) {
+		t.Fatalf("links = %#v, want %#v", got, want)
+	}
+	// A title that is only a punctuated URL keeps its title, not a lone ".".
+	if result := runCLI(t, dir, "capture", "https://example.com/only."); result.status != 0 {
+		t.Fatalf("exit %d, stderr %q", result.status, result.stderr)
+	}
+	if got := storedLinks(t, dir, "https://example.com/only."); !reflect.DeepEqual(got,
+		[][2]string{{"https://example.com/only", ""}}) {
+		t.Fatalf("links = %#v", got)
+	}
+}

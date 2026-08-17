@@ -237,7 +237,7 @@ exactly as `link add` validates it (http/https with a host, or a configured
 shorthand, which expands and becomes the default label); a bad or duplicate URL
 refuses the whole capture and writes nothing. If a title's last word is already
 a bare URL, capture lifts it into a formal link and keeps the remaining words as
-the title.
+the title (trailing sentence punctuation stays on the title, not in the URL).
 
 When `tasks config` reports a `host_context`, every capture adds it alongside
 explicit contexts. Use `--no-host-context` only when the user explicitly wants

@@ -204,7 +204,7 @@ func parseCaptureArgs(args []string, proposed bool, context temporal.Context,
 			command.Links = append(command.Links, links.FormalLink{URL: linkURL, Label: defaultLabel})
 			linkValueIndex = index
 		case "--label":
-			if index != linkValueIndex+1 {
+			if len(command.Links) == 0 || index != linkValueIndex+1 {
 				return command, flags, abort("--label must immediately follow a --link")
 			}
 			value, ok := need(arg)
@@ -433,8 +433,12 @@ func parseCaptureArgs(args []string, proposed bool, context temporal.Context,
 // caller did not ask for has to be predictable:
 //
 //   - only the LAST whitespace-separated word is considered, and only when it is
-//     already a valid formal URL — no punctuation stripping, no guessing at bare
-//     hosts, no shorthand expansion.
+//     already a valid formal URL — no guessing at bare hosts, no shorthand
+//     expansion. Sentence punctuation the URL picked up from the prose ("… see
+//     https://example.com/rfc.") is peeled off by the SAME rule links.Extract
+//     uses and handed back to the title, so the stored link is the one the
+//     title's own extraction would have produced rather than a 404 with a
+//     period on the end.
 //   - a title that is ONLY a URL keeps its title. There is no human remainder to
 //     keep and a blank title is not a thing the store accepts; the URL is still
 //     lifted into a link, so the row gains the formal link either way.
@@ -446,19 +450,24 @@ func liftTitleLink(title string, explicit []links.FormalLink) (string, []links.F
 		return title, explicit
 	}
 	candidate := fields[len(fields)-1]
-	if !links.ValidFormalURL(candidate) {
+	url := links.TrimSentenceTail(candidate)
+	if !links.ValidFormalURL(url) {
 		return title, explicit
 	}
 	for _, link := range explicit {
-		if link.URL == candidate {
+		if link.URL == url {
 			return title, explicit
 		}
 	}
-	lifted := append(explicit, links.FormalLink{URL: candidate})
-	if len(fields) == 1 {
+	lifted := append(explicit, links.FormalLink{URL: url})
+	remainder := strings.TrimSpace(strings.TrimSuffix(strings.TrimRight(title, " \t"), candidate))
+	if remainder == "" {
+		// Nothing human to keep — the title stays as the caller typed it and the
+		// row gains the link anyway. A title of just punctuation is not a title.
 		return title, lifted
 	}
-	return strings.TrimSpace(strings.TrimSuffix(strings.TrimRight(title, " \t"), candidate)), lifted
+	// The punctuation the URL shed belongs to the sentence, so it stays.
+	return remainder + strings.TrimPrefix(candidate, url), lifted
 }
 
 // leadGateConflictHint is Rule 3's CLI-side wording, shared with `tasks lead`.
