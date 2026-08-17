@@ -3,7 +3,9 @@ package main
 import (
 	"strings"
 
+	"github.com/marcus/tasks/internal/query"
 	"github.com/marcus/tasks/internal/store"
+	"github.com/marcus/tasks/internal/taskquery"
 )
 
 // approve accepts a proposal into INBOX; reject declines it into CANCELLED.
@@ -38,15 +40,17 @@ func (s *surfaceContext) unreject(args []string) int {
 	if status != 0 {
 		return status
 	}
+	// An archived reject is cold storage: restoring it would mean moving records
+	// between files, which this verb deliberately does not do. `resolveRef` only
+	// ever sees live rows, so the archived case has to be recognised BEFORE it —
+	// otherwise a row `list --rejected` just printed comes back as "no match",
+	// which is the least actionable answer there is.
+	if namesArchivedReject(queries, positional[0]) {
+		return abort("that rejected proposal is archived; restore is only available while it is live")
+	}
 	item, code := resolveRef(queries, positional[0], refScope{includeDone: true})
 	if code != 0 {
 		return code
-	}
-	// An archived reject is cold storage: restoring it would mean moving records
-	// between files, which this verb deliberately does not do. Say so, rather
-	// than reporting the id as missing.
-	if item.Source == store.SourceArchive {
-		return abort("that rejected proposal is archived; restore is only available while it is live")
 	}
 	today, status := s.today()
 	if status != 0 {
@@ -66,6 +70,33 @@ func (s *surfaceContext) unreject(args []string) int {
 	}
 	out("restored → PROPOSED: " + item.Title)
 	return 0
+}
+
+// namesArchivedReject reports whether a ref names an archived declined proposal
+// and nothing live. A live row always wins, so this only ever speaks up where
+// `resolveRef` would otherwise have said "no match" — it narrows a wrong answer
+// into the right refusal, and never shadows a task that can still be restored.
+func namesArchivedReject(queries *taskquery.Queries, ref string) bool {
+	needle := query.Downcase(strings.TrimSpace(ref))
+	if needle == "" {
+		return false
+	}
+	for _, item := range queries.LiveItems() {
+		if (item.HasID && query.Downcase(item.ID) == needle) ||
+			strings.Contains(query.Downcase(item.Title), needle) {
+			return false
+		}
+	}
+	for _, item := range queries.ArchiveItems() {
+		if item.State != "CANCELLED" || item.Rejected == "" {
+			continue
+		}
+		if (item.HasID && query.Downcase(item.ID) == needle) ||
+			strings.Contains(query.Downcase(item.Title), needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *surfaceContext) decideProposal(args []string, action string) int {

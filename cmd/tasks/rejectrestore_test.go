@@ -188,3 +188,36 @@ func TestUnrejectRefusesWhatIsNotADeclinedProposal(t *testing.T) {
 		t.Fatal("the cancel step did not write, so this test proves nothing")
 	}
 }
+
+// An archived decline is still printed by `list --rejected`, so the verb that
+// list points at must explain why it cannot restore it. `resolveRef` never
+// looks in the archive, so without a check ahead of it the answer is "no
+// match" — a row the user is looking at, reported as nonexistent.
+func TestUnrejectOfAnArchivedDeclineSaysItIsArchived(t *testing.T) {
+	dir := seedStore(t, mutationFixture)
+	if result := runPinned(t, dir, "reject", "A proposal"); result.status != 0 {
+		t.Fatalf("reject: exit %d, stderr %q", result.status, result.stderr)
+	}
+	if result := runPinned(t, dir, "archive"); result.status != 0 {
+		t.Fatalf("archive: exit %d, stderr %q", result.status, result.stderr)
+	}
+	listed := runPinned(t, dir, "list", "--rejected")
+	if !strings.Contains(listed.stdout, "A proposal") ||
+		!strings.Contains(listed.stdout, "(archived)") {
+		t.Fatalf("the archived decline is not listed: %q", listed.stdout)
+	}
+	for _, ref := range []string{"A proposal", "dddd0006"} {
+		result := runPinned(t, dir, "unreject", ref)
+		if result.status == 0 {
+			t.Errorf("unreject %q must refuse an archived decline", ref)
+		}
+		if !strings.Contains(result.stderr, "archived") {
+			t.Errorf("unreject %q said %q, want the archived refusal", ref, result.stderr)
+		}
+	}
+	// A ref that names nothing at all is still an ordinary no-match.
+	if missing := runPinned(t, dir, "unreject", "no such task"); !strings.Contains(
+		missing.stderr, "no match") {
+		t.Errorf("missing ref said %q", missing.stderr)
+	}
+}
