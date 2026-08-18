@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.10.0] - 2026-08-18
 
 - Accept the relative dates people actually type. Anywhere a date is taken —
   `capture`, `propose`, `due`, `schedule`, `defer`, the TUI edit form, and the
