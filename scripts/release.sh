@@ -85,14 +85,16 @@ $needs_stamp && echo "  - stamp CHANGELOG.md [Unreleased] -> [${release_version#
 echo "  - push origin main"
 echo "  - publish via scripts/publish-release.sh (tag, workflow, tap)"
 
+# Fail early, before mutating anything, if this operator cannot finish the
+# Homebrew publication. publish-release.sh repeats this check. It is read-only,
+# so the dry run does it too: a dry run that skipped it would report a workable
+# plan for a release this operator cannot actually publish.
+RELEASE_VERSION=$release_version ./scripts/publish-homebrew-tap.sh --check
+
 if $dry_run; then
   echo "dry run: stopping before any mutation"
   exit 0
 fi
-
-# Fail early, before mutating anything, if this operator cannot finish the
-# Homebrew publication. publish-release.sh repeats this check.
-./scripts/publish-homebrew-tap.sh --check
 
 if $needs_stamp; then
   today=$(date +%Y-%m-%d)
