@@ -18,8 +18,9 @@
   version from the latest tag, stamps `## [Unreleased]` with the version and
   date, commits `release: prepare vX.Y.Z`, pushes `main`, and publishes — the
   version is stated once. `RELEASE_VERSION=vX.Y.Z make release` and a hand-
-  stamped heading still work; `make release-dry-run` prints the plan and stops.
-  Every existing fail-closed publication check is unchanged.
+  stamped heading still work; `make release-dry-run` prints the plan, verifies
+  the Homebrew publication prerequisites, and stops before any mutation. Every
+  existing fail-closed publication check is unchanged.
 
 ## [1.9.0] - 2026-08-17
 
