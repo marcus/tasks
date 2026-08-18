@@ -34,7 +34,7 @@ func runPrompt(t *testing.T, dir string, extra map[string]string, argv ...string
 		"TASKS_ARCHIVE":   filepath.Join(dir, "archive.jsonl"),
 		"XDG_STATE_HOME":  filepath.Join(dir, "state"),
 		"XDG_CONFIG_HOME": filepath.Join(dir, "cfg"),
-		"TASKS_NOW":       "2026-07-20T12:00:00Z",
+		"TASKS_PIN_NOW":   "2026-07-20T12:00:00Z",
 		"TZ":              "UTC",
 	}
 	for name, value := range extra {

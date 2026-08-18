@@ -2,6 +2,7 @@ package temporal
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -105,6 +106,75 @@ func TestParserThreadsDateOrderAndNewDateGrammarWithATime(t *testing.T) {
 	}
 }
 
+func TestParserAcceptsClockRelativePhrasesAtMinutePrecision(t *testing.T) {
+	context := testContext(t, "Etc/UTC", time.Date(2026, 7, 20, 12, 0, 30, 0, time.UTC))
+	options := ParseOptions{Today: context.LocalDate(), Order: MDY, Context: &context}
+	cases := map[string]Value{
+		"two seconds":           {Date: mustDate(2026, 7, 20), LocalTime: "12:01"},
+		"in two minutes":        {Date: mustDate(2026, 7, 20), LocalTime: "12:03"},
+		"two hours from now":    {Date: mustDate(2026, 7, 20), LocalTime: "14:01"},
+		"in one thousand hours": {Date: mustDate(2026, 8, 31), LocalTime: "04:01"},
+	}
+	for input, want := range cases {
+		t.Run(input, func(t *testing.T) {
+			got := mustParse(t, input, options)
+			if !got.Equal(want) {
+				t.Fatalf("ParseExpression(%q) = %#v, want %#v", input, got, want)
+			}
+		})
+	}
+}
+
+func TestClockRelativePhraseUsesRequestedZone(t *testing.T) {
+	context := testContext(t, "Etc/UTC", time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC))
+	options := ParseOptions{Today: context.LocalDate(), Order: MDY, Context: &context, Timezone: "Europe/London"}
+	value := mustParse(t, "in two minutes", options)
+	if value.Date != mustDate(2026, 7, 20) || value.LocalTime != "13:02" || value.Timezone != "Europe/London" {
+		t.Fatalf("London relative value = %#v", value)
+	}
+}
+
+func TestClockRelativePhraseKeepsTheExactSideOfADSTFold(t *testing.T) {
+	context := testContext(t, "America/Los_Angeles", time.Date(2026, 11, 1, 8, 29, 0, 0, time.UTC))
+	options := ParseOptions{Today: context.LocalDate(), Order: MDY, Context: &context}
+	value := mustParse(t, "in sixty-two minutes", options)
+	if value.Date != mustDate(2026, 11, 1) || value.LocalTime != "01:31" || value.Fold != 1 {
+		t.Fatalf("fold-crossing relative value = %#v", value)
+	}
+	instant, err := value.Instant(context)
+	if err != nil || !instant.Equal(time.Date(2026, 11, 1, 9, 31, 0, 0, time.UTC)) {
+		t.Fatalf("fold-crossing instant = %s (%v)", instant, err)
+	}
+}
+
+func TestClockRelativePhraseRequiresNow(t *testing.T) {
+	if _, err := ParseExpression("in two minutes", parserOptions()); err == nil || !strings.Contains(err.Error(), "current time context") {
+		t.Fatalf("missing-context error = %v", err)
+	}
+}
+
+func TestClockRelativePhraseRejectsAFoldModifier(t *testing.T) {
+	context := testContext(t, "America/Los_Angeles", time.Date(2026, 11, 1, 8, 20, 0, 0, time.UTC))
+	options := ParseOptions{Today: context.LocalDate(), Order: MDY, Context: &context, Fold: 1, FoldSpecified: true}
+	if _, err := ParseExpression("in ten minutes", options); err == nil || !strings.Contains(err.Error(), "already selects an exact instant") {
+		t.Fatalf("clock-relative fold error = %v", err)
+	}
+}
+
+func TestClockRelativePhraseValidatesFoldAndStoredDateRange(t *testing.T) {
+	context := testContext(t, "Etc/UTC", time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC))
+	badFold := ParseOptions{Today: context.LocalDate(), Order: MDY, Context: &context, Fold: 2}
+	if _, err := ParseExpression("in ten minutes", badFold); err == nil || !strings.Contains(err.Error(), "fold must be 0 or 1") {
+		t.Fatalf("bad-fold error = %v", err)
+	}
+
+	endContext := testContext(t, "Etc/UTC", time.Date(9999, 12, 31, 23, 59, 0, 0, time.UTC))
+	outOfRange := ParseOptions{Today: endContext.LocalDate(), Order: MDY, Context: &endContext}
+	if _, err := ParseExpression("in two minutes", outOfRange); err == nil || !strings.Contains(err.Error(), "supported date range") {
+		t.Fatalf("out-of-range error = %v", err)
+	}
+}
+
 func TestParserRequiresATimeForFloatingFlag(t *testing.T) {
 	options := parserOptions()
 	options.Floating = true
@@ -119,7 +189,12 @@ func TestParserRequiresATimeForFloatingFlag(t *testing.T) {
 	folded := parserOptions()
 	folded.Fold = 1
 	if _, err := ParseExpression("2026-07-20", folded); err == nil {
-		t.Fatal("a folded value with no time must be refused")
+		t.Fatal("a folded value using the legacy Fold convention with no time must be refused")
+	}
+	earlier := parserOptions()
+	earlier.FoldSpecified = true
+	if _, err := ParseExpression("2026-07-20", earlier); err == nil {
+		t.Fatal("an explicitly earlier fold with no time must be refused")
 	}
 }
 

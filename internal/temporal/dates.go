@@ -3,7 +3,7 @@ package temporal
 // Friendly date input, the Go counterpart of lib/tasks/dates.rb. Accepts:
 //
 //	today · tomorrow · next week · next month · next year
-//	+3 · in 3 days · in 2 weeks · in 6 months · in a year
+//	+3 · two weeks · in two weeks · two weeks from now · 2d · 2w · 2m · 2y
 //	fri/friday · next fri
 //	07-15 · 7/15 · 7/15/2026 · 2026-07-15 · 2026/07/15
 //	aug 1 · august 1st · 1 aug 2026 · aug 1, 2026
@@ -59,7 +59,8 @@ var monthNames = []string{"january", "february", "march", "april", "may", "june"
 
 var (
 	plusDays      = regexp.MustCompile(`\A\+(\d+)\z`)
-	inUnits       = regexp.MustCompile(`\Ain (\d+|an?) (day|week|month|year)s?\z`)
+	shortRelative = regexp.MustCompile(`\A(?:in )?(\d+)([dwmy])(?: from now)?\z`)
+	wordRelative  = regexp.MustCompile(`\A(?:in )?(.+?) (second|minute|hour|day|week|month|year)s?(?: from now)?\z`)
 	monthDayYear  = regexp.MustCompile(`\A([a-z]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s+(\d{4}))?\z`)
 	dayMonthYear  = regexp.MustCompile(`\A(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]+)\.?(?:\s+(\d{4}))?\z`)
 	isoLike       = regexp.MustCompile(`\A(\d{4})[-/](\d{1,2})[-/](\d{1,2})\z`)
@@ -106,39 +107,185 @@ func parseKeyword(s string, today Date) (Date, bool) {
 	return Date{}, false
 }
 
-// parseRelative reads "+3" (days from today) and "in 3 days/weeks/months/years"
-// (also "a"/"an" for one). Months and years step by calendar, which clamps an
-// out-of-range day to the end of the target month.
+// parseRelative reads calendar-relative phrases and compact day/week/month/year
+// spellings. Clock-relative seconds/minutes/hours are recognized by the shared
+// expression parser, where a current instant is available.
 func parseRelative(s string, today Date) (Date, bool) {
 	if match := plusDays.FindStringSubmatch(s); match != nil {
 		days, err := strconv.Atoi(match[1])
 		if err != nil {
 			return Date{}, false
 		}
-		return today.AddDays(days), true
+		return addRelativeDays(today, days)
 	}
-	match := inUnits.FindStringSubmatch(s)
-	if match == nil {
+	span, ok := parseRelativeSpan(s)
+	if !ok || span.clock() {
 		return Date{}, false
 	}
-	count := 1
-	if match[1] != "a" && match[1] != "an" {
-		parsed, err := strconv.Atoi(match[1])
-		if err != nil {
+	switch span.unit {
+	case "day":
+		return addRelativeDays(today, span.count)
+	case "week":
+		if span.count > relativeDayLimit(today)/7 {
 			return Date{}, false
 		}
-		count = parsed
-	}
-	switch match[2] {
-	case "day":
-		return today.AddDays(count), true
-	case "week":
-		return today.AddDays(count * 7), true
+		return addRelativeDays(today, span.count*7)
 	case "month":
-		return today.AddMonths(count), true
+		return addRelativeMonths(today, span.count)
 	default:
-		return today.AddMonths(count * 12), true
+		if span.count > (9999 - today.Year) {
+			return Date{}, false
+		}
+		return addRelativeMonths(today, span.count*12)
 	}
+}
+
+func relativeDayLimit(today Date) int { return (10000 - today.Year) * 366 }
+
+func addRelativeDays(today Date, count int) (Date, bool) {
+	if count < 0 || count > relativeDayLimit(today) {
+		return Date{}, false
+	}
+	date := today.AddDays(count)
+	return date, date.Year >= 1 && date.Year <= 9999
+}
+
+func addRelativeMonths(today Date, count int) (Date, bool) {
+	limit := (9999-today.Year)*12 + (12 - int(today.Month))
+	if count < 0 || count > limit {
+		return Date{}, false
+	}
+	return today.AddMonths(count), true
+}
+
+type relativeSpan struct {
+	count int
+	unit  string
+}
+
+func (s relativeSpan) clock() bool {
+	return s.unit == "second" || s.unit == "minute" || s.unit == "hour"
+}
+
+// parseRelativeSpan is the one grammar used for both calendar and clock
+// relative input. A compact `m` deliberately means month; clock units have no
+// compact spelling, keeping `2m` aligned with the requested 2d/2w/2m/2y family.
+func parseRelativeSpan(s string) (relativeSpan, bool) {
+	if match := shortRelative.FindStringSubmatch(s); match != nil {
+		count, err := strconv.Atoi(match[1])
+		if err != nil {
+			return relativeSpan{}, false
+		}
+		units := map[string]string{"d": "day", "w": "week", "m": "month", "y": "year"}
+		return relativeSpan{count: count, unit: units[match[2]]}, true
+	}
+	match := wordRelative.FindStringSubmatch(s)
+	if match == nil {
+		return relativeSpan{}, false
+	}
+	count, ok := parseCount(match[1])
+	if !ok {
+		return relativeSpan{}, false
+	}
+	return relativeSpan{count: count, unit: match[2]}, true
+}
+
+var countWords = map[string]int{
+	"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+	"six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+	"eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+	"fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+	"nineteen": 19, "twenty": 20, "thirty": 30, "forty": 40,
+	"fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
+}
+
+// parseCount accepts digits plus well-formed English number words through
+// 999,999. Larger values remain available as digits; the word grammar stays
+// deliberately small and predictable rather than trying to be prose parsing.
+func parseCount(input string) (int, bool) {
+	if count, err := strconv.Atoi(input); err == nil && count >= 0 {
+		return count, true
+	}
+	words := strings.Fields(strings.ReplaceAll(input, "-", " "))
+	if len(words) == 0 {
+		return 0, false
+	}
+	if len(words) == 1 && (words[0] == "a" || words[0] == "an") {
+		return 1, true
+	}
+	thousand := -1
+	for index, word := range words {
+		if word == "thousand" {
+			if thousand >= 0 {
+				return 0, false
+			}
+			thousand = index
+		}
+	}
+	if thousand < 0 {
+		return parseCountGroup(words)
+	}
+	if thousand == 0 {
+		return 0, false
+	}
+	high, ok := parseCountGroup(words[:thousand])
+	if !ok || high == 0 {
+		return 0, false
+	}
+	if thousand == len(words)-1 {
+		return high * 1000, true
+	}
+	lowWords := words[thousand+1:]
+	if lowWords[0] == "and" {
+		lowWords = lowWords[1:]
+		if len(lowWords) == 0 {
+			return 0, false
+		}
+	}
+	low, ok := parseCountGroup(lowWords)
+	if !ok || low == 0 {
+		return 0, false
+	}
+	return high*1000 + low, true
+}
+
+func parseCountGroup(words []string) (int, bool) {
+	if len(words) == 0 {
+		return 0, false
+	}
+	total := 0
+	if len(words) >= 2 && words[1] == "hundred" {
+		leading, ok := countWords[words[0]]
+		if !ok || leading < 1 || leading > 9 {
+			return 0, false
+		}
+		total = leading * 100
+		words = words[2:]
+		if len(words) > 0 && words[0] == "and" {
+			words = words[1:]
+		}
+		if len(words) == 0 {
+			return total, true
+		}
+	}
+	under, ok := parseCountUnderHundred(words)
+	return total + under, ok
+}
+
+func parseCountUnderHundred(words []string) (int, bool) {
+	if len(words) == 1 {
+		value, ok := countWords[words[0]]
+		return value, ok
+	}
+	if len(words) != 2 {
+		return 0, false
+	}
+	tens, tensOK := countWords[words[0]]
+	ones, onesOK := countWords[words[1]]
+	if !tensOK || tens < 20 || tens%10 != 0 || !onesOK || ones < 1 || ones > 9 {
+		return 0, false
+	}
+	return tens + ones, true
 }
 
 // parseWeekday reads a bare weekday name ("fri", "friday") or "next <weekday>"

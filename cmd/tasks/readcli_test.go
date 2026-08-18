@@ -34,7 +34,7 @@ func runCLI(t *testing.T, dir string, argv ...string) cliResult {
 		"TASKS_ARCHIVE":   filepath.Join(dir, "archive.jsonl"),
 		"XDG_STATE_HOME":  filepath.Join(dir, "state"),
 		"XDG_CONFIG_HOME": filepath.Join(dir, "cfg"),
-		"TASKS_NOW":       "2026-07-20T12:00:00Z",
+		"TASKS_PIN_NOW":   "2026-07-20T12:00:00Z",
 		"TZ":              "UTC",
 	}
 	defer func() { env = previousEnv }()

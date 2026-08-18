@@ -154,8 +154,9 @@ the `TASKS_URGENT_DAYS` env var.
 - `scheduled` — when the task becomes available to *start* / work on.
 - `deadline` — the separate value for when it's due.
 - All dates are ISO `"YYYY-MM-DD"` strings. The CLI/TUI accept fuzzy input
-  (`fri`, `+3`, `07-15`, `tomorrow`, `aug 1`, `next month`, `next year`, `in 2
-  weeks`; see `docs/cli-spec.md` for the full grammar and the `date_order`
+  (`fri`, `+3`, `07-15`, `tomorrow`, `aug 1`, `next month`, `two weeks`, `in two
+  weeks`, `two weeks from now`, `2d`, `2w`, `2m`, `2y`; see `docs/cli-spec.md`
+  for clock-relative units, the full grammar, and the `date_order`
   config for month/day-first preference) and write the canonical form.
 
 Without a time, `scheduled` releases at the start of its local calendar date

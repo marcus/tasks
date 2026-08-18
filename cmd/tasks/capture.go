@@ -320,9 +320,11 @@ func parseCaptureArgs(args []string, proposed bool, context temporal.Context,
 	if dueFold == "later" {
 		dueOptions.fold = 1
 	}
+	dueOptions.foldGiven = dueFold != ""
 	if scheduledFold == "later" {
 		scheduledOptions.fold = 1
 	}
+	scheduledOptions.foldGiven = scheduledFold != ""
 
 	if recurInput != "" {
 		parsed := recur.Parse(recurInput, ".+")
@@ -491,7 +493,8 @@ func parseCaptureTemporal(expression, field string, context temporal.Context,
 	value, err := temporal.ParseExpression(expression, temporal.ParseOptions{
 		Today: context.LocalDate(), Order: order,
 		Timezone: options.timezone, Floating: options.floating, Fold: options.fold,
-		Context: &context,
+		FoldSpecified: options.foldGiven,
+		Context:       &context,
 	})
 	if err == nil {
 		return value, 0

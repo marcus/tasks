@@ -37,7 +37,7 @@ var (
 	// that wants to offer them; they are not validation.
 	recurrencePresets = []string{"daily", "weekly", "monthly", "yearly"}
 	leadPresets       = []string{"3d", "1w", "2w", "1m"}
-	dateSuggestions   = []string{"today", "tomorrow 9am", "fri noon", "+3 17:30"}
+	dateSuggestions   = []string{"today", "tomorrow 9am", "two weeks", "2w", "in two minutes", "fri noon", "+3 17:30"}
 )
 
 // TaskEditForm is the task-domain policy adapter around the neutral form
@@ -418,9 +418,11 @@ func (t *TaskEditForm) temporalField(key, label string, value any) termform.Fiel
 func ParseTemporal(text string, today temporal.Date, context temporal.Context) (any, error) {
 	tokens := strings.Fields(strings.TrimSpace(text))
 	fold := 0
+	foldSpecified := false
 	if len(tokens) > 0 {
 		last := tokens[len(tokens)-1]
 		if last == "fold=earlier" || last == "fold=later" {
+			foldSpecified = true
 			if last == "fold=later" {
 				fold = 1
 			}
@@ -435,7 +437,7 @@ func ParseTemporal(text string, today temporal.Date, context temporal.Context) (
 			tokens = tokens[:len(tokens)-1]
 		}
 	}
-	options := temporal.ParseOptions{Today: today, Fold: fold, Floating: mode == "floating"}
+	options := temporal.ParseOptions{Today: today, Fold: fold, FoldSpecified: foldSpecified, Floating: mode == "floating"}
 	if mode != "" && mode != "floating" {
 		options.Timezone = mode
 	}

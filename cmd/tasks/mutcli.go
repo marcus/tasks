@@ -60,10 +60,11 @@ func takeRepeatableValue(args []string, flag string) ([]string, []string, int) {
 // `defer` refuses the modifiers without a date, and "the user passed --floating"
 // is not recoverable from `floating == false`.
 type temporalOptions struct {
-	timezone string
-	floating bool
-	fold     int
-	modified bool
+	timezone  string
+	floating  bool
+	fold      int
+	foldGiven bool
+	modified  bool
 }
 
 // takeTemporalOptions is extract_temporal_options. It runs BEFORE takeFlags so
@@ -96,6 +97,7 @@ func takeTemporalOptions(args []string) (temporalOptions, []string, int) {
 	}
 	options.timezone = timezone
 	options.floating = floating
+	options.foldGiven = foldGiven
 	if foldName == "later" {
 		options.fold = 1
 	}
@@ -116,7 +118,8 @@ func parseTemporalArg(expression string, context temporal.Context, options tempo
 	value, err := temporal.ParseExpression(expression, temporal.ParseOptions{
 		Today: context.LocalDate(), Order: order,
 		Timezone: options.timezone, Floating: options.floating, Fold: options.fold,
-		Context: &context,
+		FoldSpecified: options.foldGiven,
+		Context:       &context,
 	})
 	if err == nil {
 		return value, 0

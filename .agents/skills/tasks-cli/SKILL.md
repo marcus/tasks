@@ -78,6 +78,8 @@ tasks done "<ref>"               # mark DONE + closed date (cascades to open sub
 tasks cancel "<ref>" [--note "why"] # mark CANCELLED + closed date (+ rationale)
 tasks due "<ref>" fri            # set/replace deadline (INBOX → TODO)
 tasks due "<ref>" "tomorrow 5pm" --timezone Europe/London
+tasks defer "<ref>" "two weeks from now" # also: in two weeks, 2w
+tasks due "<ref>" "in two minutes" # timed; second/minute/hour phrases use now
 tasks schedule "<ref>" +3        # set/replace available-from/start date
 tasks undate "<ref>"             # remove dates; --kind deadline|scheduled
 tasks state "<ref>" WAITING      # any state; DONE/CANCELLED manage closed
@@ -161,8 +163,11 @@ true mistake, and `tasks undo` reverses it.
 
 `scheduled` is the task's available-from/start/defer-until value; `deadline` is
 its separate due value. A future available-from value hides the task from active
-views until its exact boundary. A date without time is all-day; `tomorrow 9am`
-is floating in the configured zone; `--timezone Europe/London` makes a value
+views until its exact boundary. A date without time is all-day. `tomorrow 9am`
+and relative seconds/minutes/hours are timed; sub-minute results round up to
+stored minute precision. Natural calendar phrases accept plain, `in ...`, and
+`... from now` forms; `2d`/`2w`/`2m`/`2y` mean days/weeks/months/years. A timed
+value is floating in the configured zone; `--timezone Europe/London` makes it
 fixed. `--fold later` selects the later instant in a DST overlap. Times change
 task semantics but do not create reminders. Translate "defer TASK 4 days" to `defer "TASK" +4` and
 "defer TASK until Friday" to `defer "TASK" fri`: this atomically sets

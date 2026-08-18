@@ -19,6 +19,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/marcus/tasks/internal/timezones"
 )
 
 // timeToken is TemporalParser::TIME_TOKEN. Minutes may be omitted only when a
@@ -48,6 +51,10 @@ type ParseOptions struct {
 	Floating bool
 	// Fold picks the second instant of a DST fall-back overlap.
 	Fold int
+	// FoldSpecified distinguishes an explicit earlier choice from the default
+	// zero value. Clock-relative durations reject either fold modifier because
+	// their computed instant already selects the side of an overlap.
+	FoldSpecified bool
 	// Context, when supplied, resolves a timed value immediately so an
 	// impossible local time is refused at parse rather than at read.
 	Context *Context
@@ -66,6 +73,12 @@ func ParseExpression(expression string, options ParseOptions) (Value, error) {
 	if options.Timezone != "" && options.Floating {
 		return Value{}, errors.New("--timezone and --floating are mutually exclusive")
 	}
+	if options.Fold != 0 && options.Fold != 1 {
+		return Value{}, errors.New("fold must be 0 or 1")
+	}
+	if span, ok := parseRelativeSpan(strings.ToLower(input)); ok && span.clock() {
+		return parseClockRelative(span, options)
+	}
 
 	dateText, local, err := splitExpression(input)
 	if err != nil {
@@ -75,7 +88,7 @@ func ParseExpression(expression string, options ParseOptions) (Value, error) {
 	if !ok {
 		return Value{}, ErrNotADate
 	}
-	if local == "" && (options.Timezone != "" || options.Floating || options.Fold == 1) {
+	if local == "" && (options.Timezone != "" || options.Floating || options.FoldSpecified || options.Fold != 0) {
 		return Value{}, errors.New("a time is required with --timezone, --floating, or --fold")
 	}
 
@@ -91,6 +104,61 @@ func ParseExpression(expression string, options ParseOptions) (Value, error) {
 		if _, err := value.Instant(*options.Context); err != nil {
 			return Value{}, err
 		}
+	}
+	return value, nil
+}
+
+// parseClockRelative resolves seconds/minutes/hours from the caller's pinned
+// instant. Storage has minute precision, so a target between minute boundaries
+// is rounded up: the stored boundary is never earlier than the duration asked
+// for.
+func parseClockRelative(span relativeSpan, options ParseOptions) (Value, error) {
+	if options.Context == nil || options.Context.Timezone == nil {
+		return Value{}, errors.New("a current time context is required for relative seconds, minutes, or hours")
+	}
+	if options.FoldSpecified || options.Fold != 0 {
+		return Value{}, errors.New("--fold is not applicable to clock-relative input; the duration already selects an exact instant")
+	}
+	unit := time.Second
+	switch span.unit {
+	case "minute":
+		unit = time.Minute
+	case "hour":
+		unit = time.Hour
+	}
+	if int64(span.count) > int64((time.Duration(1<<63-1))/unit) {
+		return Value{}, errors.New("relative duration is too large")
+	}
+	target := options.Context.Now.Add(time.Duration(span.count) * unit).UTC()
+	if target.Second() != 0 || target.Nanosecond() != 0 {
+		target = target.Truncate(time.Minute).Add(time.Minute)
+	}
+
+	location := options.Context.Timezone
+	if options.Timezone != "" {
+		var err error
+		location, err = timezones.Load(options.Timezone)
+		if err != nil {
+			return Value{}, err
+		}
+	}
+	local := target.In(location)
+	fold := 0
+	instants := timezones.InstantsFor(local.Year(), local.Month(), local.Day(), local.Hour(), local.Minute(), location)
+	if len(instants) > 1 && instants[len(instants)-1].Equal(target) {
+		fold = 1
+	}
+	date := DateOf(local)
+	if date.Year < 1 || date.Year > 9999 {
+		return Value{}, errors.New("relative duration is outside the supported date range")
+	}
+	localTime := fmt.Sprintf("%02d:%02d", local.Hour(), local.Minute())
+	value, err := NewValue(date, localTime, options.Timezone, fold, true)
+	if err != nil {
+		return Value{}, err
+	}
+	if _, err := value.Instant(*options.Context); err != nil {
+		return Value{}, err
 	}
 	return value, nil
 }

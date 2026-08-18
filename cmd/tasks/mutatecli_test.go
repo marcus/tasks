@@ -109,7 +109,7 @@ func runCLIWithHostContext(t *testing.T, dir string, argv ...string) cliResult {
 		"XDG_STATE_HOME":     filepath.Join(dir, "state"),
 		"XDG_CONFIG_HOME":    filepath.Join(dir, "cfg"),
 		"TASKS_PIN_HOSTNAME": "fixture-host.local",
-		"TASKS_NOW":          "2026-07-20T12:00:00Z",
+		"TASKS_PIN_NOW":      "2026-07-20T12:00:00Z",
 		"TZ":                 "UTC",
 	}
 	defer func() { env = previousEnv }()
@@ -193,6 +193,33 @@ func TestCLIDueSupportsFloatingAndFixedTimeValues(t *testing.T) {
 	timed = recordFor(t, dir, "dddd0002")["deadline_time"].(map[string]any)
 	if timed["timezone"] != "Europe/London" {
 		t.Errorf("timezone = %v", timed)
+	}
+}
+
+func TestCLIDateFieldsAcceptNaturalAndCompactRelativeValues(t *testing.T) {
+	dir := seedStore(t, mutationFixture)
+	if result := runCLI(t, dir, "due", "Unfiled capture", "in two minutes"); result.status != 0 {
+		t.Fatalf("relative minutes: exit %d, stderr %q", result.status, result.stderr)
+	}
+	row := recordFor(t, dir, "dddd0002")
+	if row["deadline"] != "2026-07-20" || row["deadline_time"].(map[string]any)["local"] != "12:02" {
+		t.Fatalf("relative deadline = %v", row)
+	}
+
+	dir = seedStore(t, mutationFixture)
+	if result := runCLI(t, dir, "defer", "Unfiled capture", "two weeks from now"); result.status != 0 {
+		t.Fatalf("natural defer: exit %d, stderr %q", result.status, result.stderr)
+	}
+	if got := recordFor(t, dir, "dddd0002")["scheduled"]; got != "2026-08-03" {
+		t.Fatalf("scheduled = %v, want 2026-08-03", got)
+	}
+
+	dir = seedStore(t, mutationFixture)
+	if result := runCLI(t, dir, "due", "Unfiled capture", "2y"); result.status != 0 {
+		t.Fatalf("compact years: exit %d, stderr %q", result.status, result.stderr)
+	}
+	if got := recordFor(t, dir, "dddd0002")["deadline"]; got != "2028-07-20" {
+		t.Fatalf("deadline = %v, want 2028-07-20", got)
 	}
 }
 

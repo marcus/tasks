@@ -574,7 +574,7 @@ func (m *Model) OpenDatePopup() {
 	id, title, state := item.ID, item.Title, item.State
 	m.SetForm(NewQuickForm(QuickFormOptions{
 		Kind: QuickFormDate, Title: "edit date", Prompt: "new " + target,
-		Hint: "fri · tomorrow 9am · date time Zone · esc cancels", MinWidth: 50,
+		Hint: "fri · two weeks · 2w · in two minutes · date time Zone · esc cancels", MinWidth: 50,
 		ReturnMode: ReturnList, TargetID: id,
 		Submit: func(raw string) string {
 			value, err := ParseTemporal(raw, m.currentDate(), m.temporalContext())

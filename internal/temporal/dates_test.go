@@ -104,14 +104,27 @@ func TestNextYearClampsLeapDay(t *testing.T) {
 
 func TestInNUnits(t *testing.T) {
 	cases := map[string]Date{
-		"in 3 days":   mustDate(2026, 7, 4),
-		"in 1 day":    mustDate(2026, 7, 2),
-		"in 2 weeks":  mustDate(2026, 7, 15),
-		"in a week":   mustDate(2026, 7, 8),
-		"in 6 months": mustDate(2027, 1, 1),
-		"in 2 years":  mustDate(2028, 7, 1),
-		"in a month":  mustDate(2026, 8, 1),
-		"in an year":  mustDate(2027, 7, 1),
+		"in 3 days":                 mustDate(2026, 7, 4),
+		"in 1 day":                  mustDate(2026, 7, 2),
+		"in 2 weeks":                mustDate(2026, 7, 15),
+		"in a week":                 mustDate(2026, 7, 8),
+		"in 6 months":               mustDate(2027, 1, 1),
+		"in 2 years":                mustDate(2028, 7, 1),
+		"in a month":                mustDate(2026, 8, 1),
+		"in an year":                mustDate(2027, 7, 1),
+		"two weeks":                 mustDate(2026, 7, 15),
+		"in two weeks":              mustDate(2026, 7, 15),
+		"in two weeks from now":     mustDate(2026, 7, 15),
+		"two weeks from now":        mustDate(2026, 7, 15),
+		"two days":                  mustDate(2026, 7, 3),
+		"two months from now":       mustDate(2026, 9, 1),
+		"in two years":              mustDate(2028, 7, 1),
+		"twenty-one days":           mustDate(2026, 7, 22),
+		"one thousand and one days": mustDate(2029, 3, 28),
+		"2d":                        mustDate(2026, 7, 3),
+		"2w":                        mustDate(2026, 7, 15),
+		"2m":                        mustDate(2026, 9, 1),
+		"2y":                        mustDate(2028, 7, 1),
 	}
 	for input, want := range cases {
 		t.Run(input, func(t *testing.T) { assertParses(t, input, want) })
@@ -119,7 +132,7 @@ func TestInNUnits(t *testing.T) {
 }
 
 func TestInNUnitsRejectsGarbage(t *testing.T) {
-	for _, input := range []string{"in days", "in 3 fortnights", "in -1 days"} {
+	for _, input := range []string{"in days", "in 3 fortnights", "in -1 days", "two seconds", "2s", "ninety twenty days", "hundred days", "one thousand zero days", "9223372036854775807 weeks", "+9223372036854775807"} {
 		assertRejects(t, input)
 	}
 }

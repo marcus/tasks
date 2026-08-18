@@ -441,9 +441,12 @@ wrong task. IDs must be unique — `check` reports a collision as an error.
 **Dates and times.** Anywhere a date is accepted: `2026-07-15`, `2026/07/15`,
 `07-15`, `7/15`, `7/15/2026`, `7/15/26`, `aug 1`, `august 1st`, `1 aug 2026`,
 `aug 1, 2026`, `fri`/`friday`, `next fri`, `today`, `tomorrow`, `+3` (days from
-today), `in 3 days`/`in 2 weeks`/`in 6 months`/`in a year`, `next week`, `next
-month` (same day next month, clamped to the last day if the target month is
-shorter), `next year`. The CLI and TUI share `internal/temporal`. Bare
+today), `two weeks`/`in two weeks`/`two weeks from now`, and equivalent phrases
+using digits or English number words with seconds, minutes, hours, days, weeks,
+months, or years. Calendar units also have compact forms: `2d`, `2w`, `2m`
+(months), and `2y`. `next week`, `next month` (same day next month, clamped to
+the last day if the target month is shorter), and `next year` remain convenient
+one-unit spellings. The CLI and TUI share `internal/temporal`. Bare
 month-day (numeric or by name) in the past rolls forward a year; an explicit
 year is always respected as-is.
 
@@ -452,13 +455,20 @@ between month-first and day-first — `date_order = mdy` (the default, US
 month/day/year) or `date_order = dmy` in the config file, or `TASKS_DATE_ORDER`
 env, picks the reading. `tasks config` reports the resolved value.
 
-`due`, `schedule`, and timed `defer` also accept `today 5pm`, `tomorrow at
-09:30`, `fri noon`, `2026-07-20 17:00`, and `2026-07-20T17:00`. A time without
-a zone is floating in the configured evaluation zone. `--timezone
+Second-, minute-, and hour-relative phrases create a timed value from the
+current instant. Stored times have minute precision, so a result carrying
+seconds rounds up to the next minute rather than becoming earlier than the
+requested boundary. A clock-relative duration already identifies an exact side
+of a DST overlap, so combining it with `--fold` is refused. `due`, `schedule`,
+and timed `defer` also accept `today
+5pm`, `tomorrow at 09:30`, `fri noon`, `2026-07-20 17:00`, and
+`2026-07-20T17:00`. A time without a zone is floating in the configured
+evaluation zone. `--timezone
 Europe/London` makes it fixed; `--floating` explicitly selects floating mode;
 `--fold later` selects the later instant during an ambiguous DST fold. A bare
-time is rejected, as are seconds, abbreviations, numeric offsets, unknown IANA
-zones, and nonexistent local times. `TASKS_TIMEZONE` overrides the config's
+time is rejected, as are explicit wall-clock seconds, time-zone abbreviations,
+numeric offsets, unknown IANA zones, and nonexistent local times.
+`TASKS_TIMEZONE` overrides the config's
 `timezone`; `time_format = 12|24` affects human output only.
 If a later configuration-zone change makes a stored floating civil time
 nonexistent, CLI/API reads fail safely with a corrective error instead of a

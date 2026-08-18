@@ -107,7 +107,9 @@ task merely because it also contains task text.
   absolute path; never conclude the CLI is broken or hand-edit files as a
   workaround.
 - Use the CLI for every mutation — dates, priority, state, tags, notes. It
-  accepts relative dates (`+3`, `tomorrow`, `fri`) so you never format one by hand:
+  accepts relative dates (`+3`, `tomorrow`, `fri`, `two weeks`, `in two weeks`,
+  `two weeks from now`, `2d`/`2w`/`2m`/`2y`) and timed relative
+  seconds/minutes/hours, so you never format one by hand:
   - complete a task:  `tasks done "<ref>"`  (completing a parent cascades
                       to its open descendants, as one undo; a recurring task
                       rolls its date forward and stays open, and does not cascade)
@@ -182,7 +184,7 @@ task merely because it also contains task text.
   (full command set + roadmap: `docs/cli-spec.md`)
 - When you give an `INBOX` item a date, the CLI already promotes it to `TODO`
   (dated = processed) — no extra step.
-- Resolve relative dates ("next Friday", "tomorrow") — the CLI's date parser
+- Resolve relative dates ("next Friday", "tomorrow", "two weeks from now") — the CLI's date parser
   takes them directly.
 - Preserve temporal intent. A date without a time is all-day; `tomorrow 9am`
   is floating in the configured zone; add `--timezone Europe/London` only when

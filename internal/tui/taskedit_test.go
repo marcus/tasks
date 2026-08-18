@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/marcus/tasks/internal/temporal"
 	"github.com/marcus/tasks/internal/tui/termform"
@@ -573,6 +574,29 @@ func TestTemporalFormattingRoundTripsThroughTheParser(t *testing.T) {
 	}
 	if FormatTemporal(again) != text {
 		t.Errorf("the value does not survive a round trip: %q", FormatTemporal(again))
+	}
+}
+
+func TestTemporalEditorAcceptsNaturalAndCompactRelativeValues(t *testing.T) {
+	context, err := temporal.NewContext(time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC), "Etc/UTC", 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]string{
+		"two weeks from now": "2026-08-03",
+		"2w":                 "2026-08-03",
+		"in two minutes":     "2026-07-20 12:02 floating",
+	}
+	for input, want := range cases {
+		t.Run(input, func(t *testing.T) {
+			parsed, err := ParseTemporal(input, context.LocalDate(), context)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := FormatTemporal(parsed); got != want {
+				t.Fatalf("ParseTemporal(%q) = %q, want %q", input, got, want)
+			}
+		})
 	}
 }
 

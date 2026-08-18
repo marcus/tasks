@@ -159,7 +159,8 @@ const helpText = "tasks — a plain-text GTD CLI over tasks.jsonl. Every command
 	"lets notes say jira:OPS-1234; system.gitlab = gitlab.acme.io names custom hosts." + "\n" +
 	"Host contexts: host_context.my-mac.local = @home adds that context to new tasks." + "\n" +
 	"" + "\n" +
-	"Dates: 2026-07-15 · 07-15 · fri · today · tomorrow · +3 · tomorrow 9am" + "\n" +
+	"Dates: 2026-07-15 · fri · tomorrow · two weeks · in two weeks · 2d · 2w · 2m · 2y" + "\n" +
+	"       two minutes · in two minutes · two minutes from now (timed; minute precision)" + "\n" +
 	"Timed values: --timezone Europe/London · --floating · --fold earlier|later" + "\n" +
 	"Refs:  a case-insensitive title substring, an exact id, or L<line>." + "\n" +
 	"JSON:  every command takes --json except -p and merge-driver; `tasks help" + "\n" +
