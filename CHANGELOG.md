@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+- Accept the relative dates people actually type. Anywhere a date is taken —
+  `capture`, `propose`, `due`, `schedule`, `defer`, the TUI edit form, and the
+  API — `two weeks`, `in two weeks`, and `two weeks from now` all work, in
+  digits or English number words, over seconds, minutes, hours, days, weeks,
+  months, or years. Calendar units also take compact forms: `2d`, `2w`, `2m`
+  (months), `2y`. Second-, minute-, and hour-relative phrases produce a timed
+  value from the current instant; since stored times have minute precision, a
+  result carrying seconds rounds *up* so it never lands earlier than the
+  boundary that was asked for. Such a phrase already names an exact side of a
+  DST overlap, so pairing it with `--fold` is refused rather than silently
+  resolved. `next week`/`next month`/`next year` keep working as the one-unit
+  spellings.
 - Make releasing one command: `BUMP=major|minor|patch make release` derives the
   version from the latest tag, stamps `## [Unreleased]` with the version and
   date, commits `release: prepare vX.Y.Z`, pushes `main`, and publishes — the
