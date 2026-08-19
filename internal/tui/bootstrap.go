@@ -49,6 +49,7 @@ func NewRuntime(options RuntimeOptions) (*Model, error) {
 		Device:        updatestamp.Device(env),
 		MaxDepth:      paths.MaxDepth,
 		CoalesceScope: runtimeCoalesceScope(env),
+		Modes:         paths.Modes(),
 	}
 	if clock := determinism.Clock(env); clock != nil {
 		writeOptions.Now = clock

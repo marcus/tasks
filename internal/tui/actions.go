@@ -198,7 +198,9 @@ func (m *Model) availability(name string) bool {
 // -- help and the palettes ----------------------------------------------------------
 
 // OpenHelp shows the generated shortcut overlay.
-func (m *Model) OpenHelp() { m.OpenModal(HelpContent(m.styler), ModalHelp, true) }
+func (m *Model) OpenHelp() {
+	m.OpenModal(HelpContent(m.styler, m.app.DelegationModes()), ModalHelp, true)
+}
 
 // OpenModal opens an overlay and enters modal mode.
 func (m *Model) OpenModal(content ModalContent, kind ModalKind, filterable bool) {
@@ -224,6 +226,7 @@ func (m *Model) CloseModal() {
 
 // OpenActionPalette shows every action available right now.
 func (m *Model) OpenActionPalette() {
+	modes := m.app.DelegationModes()
 	entries := shortcuts.PaletteEntries(shortcuts.List, m.availability)
 	if m.panel != nil && m.panel.Kind == PanelDetail {
 		seen := map[string]bool{}
@@ -241,7 +244,7 @@ func (m *Model) OpenActionPalette() {
 	if item := m.CurrentItem(); item != nil {
 		targetID = item.ID
 	}
-	m.SetActionPalette(NewActionPalette(m.styler, entries, ReturnList, targetID))
+	m.SetActionPalette(NewActionPalette(m.styler, shortcuts.WithModesAll(entries, modes), ReturnList, targetID))
 	_ = m.SetMode(ModePalette)
 }
 

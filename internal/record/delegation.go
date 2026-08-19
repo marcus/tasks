@@ -37,6 +37,32 @@ func DelegationErrors(value any) []string {
 	return DelegationErrorsWith(value, BuiltinModes())
 }
 
+// DelegationStoredErrors validates a marker that is ALREADY ON DISK, which is
+// a different question from validating one about to be written.
+//
+// A marker being written must name a mode the active vocabulary lists: that is
+// a refusal, and DelegationErrorsWith is what states it. A marker already in
+// the file may name a mode the CURRENT configuration no longer lists — the
+// user removed it, or the record came from another machine — and that must not
+// invalidate the file. Records like that load, show, and check; the mode comes
+// back as a warning so the user can see it and decide, and every other
+// delegation rule still applies to it in full.
+//
+// A mode of the wrong SHAPE stays an error either way: no configuration could
+// ever have produced it.
+func DelegationStoredErrors(value any, modes ModeVocabulary) (errors []string, warnings []string) {
+	modes = Modes(modes)
+	errors = DelegationErrorsWith(value, anyWellShapedMode{modes})
+	if object, ok := value.(map[string]any); ok {
+		if mode, ok := object["mode"].(string); ok && ValidModeName(mode) && !modes.Valid(mode) {
+			warnings = append(warnings, fmt.Sprintf(
+				"delegation.mode %s is not in the configured vocabulary %s; the record is kept as it is",
+				rubyInspect(mode), modes.Quoted()))
+		}
+	}
+	return errors, warnings
+}
+
 // DelegationErrorsWith is the same check against a caller-supplied mode
 // vocabulary. Nil means the built-in set.
 func DelegationErrorsWith(value any, modes ModeVocabulary) []string {

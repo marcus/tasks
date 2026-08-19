@@ -135,6 +135,7 @@ func buildServer(paths config.Paths, env determinism.Env, port int) (*api.Server
 		JournalDir: journal.DirFor(paths.Org, env),
 		Device:     updatestamp.Device(env),
 		MaxDepth:   paths.MaxDepth,
+		Modes:      paths.Modes(),
 	}
 	if clock := determinism.Clock(env); clock != nil {
 		writeOptions.Now = clock

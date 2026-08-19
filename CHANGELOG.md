@@ -36,6 +36,27 @@
 - The mode vocabulary is carried as a value on the store and checker options
   rather than checked against a literal, so configuring the set later is one
   field, not a hunt through the code.
+- **The delegation mode vocabulary is yours to choose.** `delegation_modes =
+  triage, ship` in `~/.config/tasks/config` (or `TASKS_DELEGATION_MODES`)
+  replaces `refine, research, implement` everywhere at once: what `tasks
+  delegate <ref> <mode>` accepts, what a refusal quotes back, the `delegate`
+  usage line, `tasks help`, the TUI `?` overlay and `D` prompt, the check view,
+  and the API's vocabulary document. A mode is a bare lowercase word and
+  carries no label — the label is the word. With no config key, behaviour is
+  exactly what it was.
+- A `delegation_modes` list this binary cannot honour — a word of the wrong
+  shape, a duplicate, an empty list — is ignored *whole*, with a warning on
+  stderr naming the problem and the set actually in use. Keeping the readable
+  half would run you against a vocabulary you never wrote. Nothing about a bad
+  list makes the store unreadable or unwritable.
+- A record whose `mode` the active vocabulary does not list still loads, shows,
+  and checks: `check` reports it as a WARNING, never an error. Which words are
+  listed is a setting, and settings change — editing `delegation_modes`, or
+  syncing a file from a machine configured differently, can no longer invalidate
+  a file your tasks live in. A stored mode of the wrong *shape* is still an
+  error, and *writing* an unlisted mode is still refused.
+- `tasks config` and `tasks config --json` report the resolved
+  `delegation_modes` and where they came from, alongside every other setting.
 
 ## [1.10.0] - 2026-08-18
 

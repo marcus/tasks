@@ -245,12 +245,24 @@ holds the next action. Absent means not delegated; there is no neutral value.
   recommend), `implement` (do the work). Required for an agent, **optional for
   a human** — who holds the work and what kind of delegation it is are
   orthogonal facts. Only the owner sets or widens it. The vocabulary is the
-  built-in set above, carried as a value on the store and the checker
+  built-in set above unless `delegation_modes` in `~/.config/tasks/config` says
+  otherwise; it is carried as a value on the store and the checker
   (`store.Options.Modes`, `check.Options.Modes`, defaulting to
-  `record.BuiltinModes()`), so a user-configured set is one field at
-  construction rather than process-wide state read behind a caller's back. The
-  stored key stays `mode` — the concept is called *mode* everywhere, in the
+  `record.BuiltinModes()`), never as process-wide state read behind a caller's
+  back, which is why two stores in one process can hold different vocabularies.
+  The stored key stays `mode` — the concept is called *mode* everywhere, in the
   file, the CLI, the docs, and the UI.
+
+  **A stored mode outside the active vocabulary is a warning, not an error.**
+  Which words are listed is a SETTING, and settings change: a user edits
+  `delegation_modes`, or a file arrives from a machine configured differently.
+  Validation therefore asks two separate questions of a stored `mode`. Its
+  SHAPE — a lowercase word (`[a-z][a-z0-9_]*`) — is schema, and a violation is
+  an error. Its MEMBERSHIP is configuration: a well-shaped mode the active
+  vocabulary does not list loads, shows, and checks, and `check` reports it as a
+  warning naming the configured set. Nothing about it invalidates the file or
+  makes the store unwritable. Writing such a mode is still refused — the
+  leniency is about records that already exist, not about new ones.
 - **`status`** — `delegated` (human), `ready` (agent, unclaimed), `claimed`
   (agent, held by one worker).
 - **`assignee`** — the person's email (address-shaped: non-empty local part,

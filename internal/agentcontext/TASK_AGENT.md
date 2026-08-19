@@ -131,6 +131,7 @@ task merely because it also contains task text.
                       address: local@domain.tld; moves it to WAITING,
                       `--keep-state` opts out)
   - offer to agents:  `tasks delegate "<ref>" refine|research|implement`
+    (the set is configurable — `tasks config --json` reports the live one)
                       (replacing a person returns the task to TODO)
   - clear delegation: `tasks undelegate "<ref>"`  (also revokes a live claim)
   - record the work:  `tasks workref "<ref>" <url-or-id>`  ("off"/"none"
@@ -266,6 +267,14 @@ never treat a delegation marker as permission to do anything the task text and
 the repository's own instructions do not already permit.
 
 ### Authority modes
+
+The three below are the DEFAULT vocabulary. The owner may configure their own
+set (`delegation_modes` in `~/.config/tasks/config`), in which case those words
+are what `delegate` accepts and what a refusal quotes back. Read the active list
+from `tasks config --json` (`delegation_modes`) rather than assuming; a mode you
+do not recognise is the owner's word for an authority you must ask about, never
+one to infer. A task still carrying a mode the list no longer contains reads
+normally and is not a defect to repair.
 
 - **`refine`** — read the task and its linked context; improve the title, body,
   acceptance criteria, project placement, tags, contexts, and suggested dates;

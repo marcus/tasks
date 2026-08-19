@@ -382,6 +382,7 @@ func (s *surfaceContext) previewStore(dir string) *store.Store {
 		CoalesceScope: coalesceScope(),
 		MaxDepth:      s.paths.MaxDepth,
 		UndoLimit:     journal.Limit,
+		Modes:         s.paths.Modes(),
 	}
 	if clock := determinism.Clock(env); clock != nil {
 		options.Now = clock

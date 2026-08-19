@@ -83,7 +83,7 @@ func validate(records []record.Record, errors *[]Entry, warnings *[]Entry, dupli
 		stack = checkParent(parsed, seen, stack, errors)
 
 		if typeName == "task" {
-			checkTask(parsed, errors, options)
+			checkTask(parsed, errors, warnings, options)
 			if state := stringField(parsed, "state"); contains(OpenStates, state) {
 				title := query.Downcase(stringField(parsed, "title"))
 				if _, exists := openTitles[title]; !exists {
@@ -205,7 +205,7 @@ func delegationUnknownKeys(raw json.RawMessage) []string {
 	return unknown
 }
 
-func checkTask(parsed record.Record, errors *[]Entry, options Options) {
+func checkTask(parsed record.Record, errors *[]Entry, warnings *[]Entry, options Options) {
 	line := parsed.Line
 	add := func(message string) { *errors = append(*errors, Entry{Line: line, Message: message}) }
 
@@ -287,7 +287,7 @@ func checkTask(parsed record.Record, errors *[]Entry, options Options) {
 			add(fmt.Sprintf("updated %s is not an RFC3339 UTC timestamp with device slug", rubyInspect(updated)))
 		}
 	}
-	checkDelegation(parsed, errors, options)
+	checkDelegation(parsed, errors, warnings, options)
 	checkLinks(parsed, errors)
 }
 
@@ -398,7 +398,7 @@ func checkLead(parsed record.Record, errors *[]Entry) {
 // checkDelegation validates the marker's own shape plus the one lifecycle rule
 // the object cannot state about itself: approval and delegation are
 // independent owner decisions, so an undecided proposal never carries one.
-func checkDelegation(parsed record.Record, errors *[]Entry, options Options) {
+func checkDelegation(parsed record.Record, errors *[]Entry, warnings *[]Entry, options Options) {
 	raw := rawField(parsed, record.DelegationField)
 	if raw == nil || strings.TrimSpace(string(raw)) == "null" {
 		return
@@ -407,8 +407,16 @@ func checkDelegation(parsed record.Record, errors *[]Entry, options Options) {
 	if state := stringField(parsed, "state"); contains(ProposedStates, state) {
 		*errors = append(*errors, Entry{Line: line, Message: fmt.Sprintf("delegation on a proposed task (%s)", state)})
 	}
-	for _, message := range record.DelegationErrorsWith(decodeAny(raw), options.Modes) {
+	// A stored marker is validated as STORED: a mode the configured vocabulary
+	// no longer lists is a warning, so a record written under a different
+	// configuration still loads, shows, and checks instead of invalidating the
+	// whole file. Writing such a mode is still refused; see the store.
+	stored, unconfigured := record.DelegationStoredErrors(decodeAny(raw), options.Modes)
+	for _, message := range stored {
 		*errors = append(*errors, Entry{Line: line, Message: message})
+	}
+	for _, message := range unconfigured {
+		*warnings = append(*warnings, Entry{Line: line, Message: message})
 	}
 }
 
