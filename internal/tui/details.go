@@ -119,7 +119,7 @@ func BuildTaskDetails(styler Styler, queries *taskquery.Queries, item store.Item
 		lines = append(lines, "", detailSection(styler, "DELEGATION",
 			styler.Paint("muted", delegationText(delegation["status"])), usable))
 		lines = append(lines, "")
-		lines = append(lines, delegationLines(styler, item)...)
+		lines = append(lines, delegationLines(styler, item, usable)...)
 	}
 
 	lines = append(lines, subtaskLines(styler, queries, item, usable)...)
@@ -518,7 +518,7 @@ func leadValue(styler Styler, queries *taskquery.Queries, item store.Item) strin
 // work_ref is painted with the link slot but is deliberately NOT part of the
 // `o`-openable link list: that list comes from the task body, and one keypress
 // must keep meaning one thing.
-func delegationLines(styler Styler, item store.Item) []string {
+func delegationLines(styler Styler, item store.Item, usable int) []string {
 	delegation := delegationOf(item)
 	if delegation == nil {
 		return nil
@@ -537,10 +537,40 @@ func delegationLines(styler Styler, item store.Item) []string {
 			value = styler.Paint("muted", value)
 		case "work_ref":
 			label, value = "work ref", styler.Paint("link", value)
+		case "note":
+			// The briefing is prose the receiver has to READ, and it may carry
+			// its own line breaks, so it wraps into the field's column instead
+			// of being cut at the panel edge like a one-word value.
+			lines = append(lines, delegationNoteLines(styler, delegation[key], usable)...)
+			continue
 		}
 		lines = append(lines, "  "+styler.Paint("detail_label", padRight(label, 8))+" "+value)
 	}
 	return lines
+}
+
+// delegationNoteLines wraps the briefing under its own label, continuing lines
+// aligned with the first. The label column is the same one every other
+// delegation field uses, so the block reads as one field, not as free text that
+// escaped the list.
+func delegationNoteLines(styler Styler, note string, usable int) []string {
+	indent := "  " + strings.Repeat(" ", 8) + " "
+	width := max(usable-len([]rune(indent)), 8)
+	out := []string{}
+	for _, paragraph := range strings.Split(note, "\n") {
+		text := delegationText(paragraph)
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		for _, wrapped := range styler.Wrap(text, width) {
+			lead := indent
+			if len(out) == 0 {
+				lead = "  " + styler.Paint("detail_label", padRight("note", 8)) + " "
+			}
+			out = append(out, lead+styler.Paint("description", wrapped))
+		}
+	}
+	return out
 }
 
 func trimmedLines(values []string) []string {

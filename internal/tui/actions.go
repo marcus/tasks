@@ -899,11 +899,18 @@ func (m *Model) CaptureIntoProject() {
 	_ = m.SetMode(ModeForm)
 }
 
-// formSuccess registers the effect to run once the form closes cleanly. It runs
+// formSuccess registers the effect to run once the popup closes cleanly. It runs
 // AFTER the close so a refresh cannot repaint a form that is on its way out.
+//
+// It serves BOTH popups. A submit body — the delegation one is shared between
+// them — stages its flash the same way whichever kind of box it was typed into,
+// rather than each caller learning which overlay it happens to be inside.
 func (m *Model) formSuccess(effect func()) {
 	if m.form != nil {
 		m.form.Success = effect
+	}
+	if m.fieldModal != nil {
+		m.fieldModal.Success = effect
 	}
 }
 

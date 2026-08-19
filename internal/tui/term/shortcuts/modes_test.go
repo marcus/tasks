@@ -34,7 +34,7 @@ func TestExportedCommandsDescribeDelegationWithTheBuiltInModes(t *testing.T) {
 			continue
 		}
 		found++
-		if !strings.Contains(command.Description, "email · refine · research · implement · release · off") {
+		if !strings.Contains(command.Description, "person or agent · refine · research · implement · note") {
 			t.Fatalf("description = %q", command.Description)
 		}
 	}
@@ -55,7 +55,7 @@ func TestExportCommandsWithFillsTheConfiguredModes(t *testing.T) {
 			continue
 		}
 		found++
-		if !strings.Contains(command.Description, "email · triage · ship · release · off") {
+		if !strings.Contains(command.Description, "person or agent · triage · ship · note") {
 			t.Fatalf("description = %q", command.Description)
 		}
 		if strings.Contains(command.Description, "refine") {

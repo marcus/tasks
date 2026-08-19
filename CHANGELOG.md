@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+- **`D` is a three-part modal instead of a one-line prompt.** Delegating now
+  asks the three questions a delegation actually has — who (a person or the
+  agent pool), which mode, and the note the receiver works from — on a modal
+  that is complete by keyboard and by mouse. Re-delegating prefills all three
+  from the current marker, and one submit writes them in a single undo step.
+  Release and undelegate are explicit affordances, and both confirm before they
+  act, which retires the old flat word grammar: `implement`,
+  `release` and the clear words used to share one text field, so the shortest
+  inputs performed the widest and most destructive actions and a three-letter
+  prefix minimum was the only thing standing between a keystroke and a revoked
+  claim. Typing a verb into a text box is no longer how work is taken away.
+
 - **The three-part delegation reaches the CLI and HTTP.** `tasks delegate <ref>
   <mode> --note "…"` writes who, in what mode, and the briefing the receiver
   reads in ONE store write and therefore one undo step — no surface composes a
@@ -70,7 +82,7 @@
   triage, ship` in `~/.config/tasks/config` (or `TASKS_DELEGATION_MODES`)
   replaces `refine, research, implement` everywhere at once: what `tasks
   delegate <ref> <mode>` accepts, what a refusal quotes back, the `delegate`
-  usage line, `tasks help`, the TUI `?` overlay and `D` prompt, the check view,
+  usage line, `tasks help`, the TUI `?` overlay and delegate modal, the check view,
   and the API's vocabulary document. A mode is a bare lowercase word and
   carries no label — the label is the word. With no config key, behaviour is
   exactly what it was.
@@ -88,10 +100,10 @@
 - `tasks config` and `tasks config --json` report the resolved
   `delegation_modes` and where they came from, alongside every other setting.
 - `off`, `none`, `clear`, and `release` are reserved and cannot be configured as
-  modes. The TUI's `D` prompt is one flat word grammar, so a mode named
-  `release` would make every such input ambiguous and leave a live claim
-  impossible to revoke — the collision is reported when the config is read,
-  not at the moment the destructive verb is needed.
+  modes: `release` is a delegation verb and the others clear a work reference or
+  a note, so a mode spelled like one of them would make an instruction and a
+  mode indistinguishable wherever both are written in one place. The collision
+  is reported when the config is read, not at the moment the verb is needed.
 - Hosts embedding the TUI through `pkg/tui` get `ExportCommandsWith(modes)` to
   describe delegation with their own store's vocabulary; plain `ExportCommands`
   now renders the built-in set rather than an unfilled template.

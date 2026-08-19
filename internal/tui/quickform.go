@@ -17,8 +17,10 @@ const (
 	QuickFormProjectRename  QuickFormKind = "project_rename"
 	QuickFormProjectCapture QuickFormKind = "project_capture"
 	QuickFormSectionDates   QuickFormKind = "section_dates"
-	QuickFormDelegate       QuickFormKind = "delegate"
-	QuickFormWorkRef        QuickFormKind = "work_ref"
+	// Delegation is deliberately absent: `D` is a multi-field modal
+	// (FieldModalDelegate), because a delegation needs three different KINDS of
+	// answer and one text field could only carry them as a word grammar.
+	QuickFormWorkRef QuickFormKind = "work_ref"
 )
 
 // QuickFormResult is what one key did to a quick form.

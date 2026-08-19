@@ -164,7 +164,8 @@ the human-readable tour of that contract.
 - `:` searchable action palette. The palette and the keys are the same
   registry as `?`.
 - `c` complete, `d` date, `r` recur (or reject, on a proposal), `z`
-  defer, `D` delegate, `W` work-ref, `K`/`J` raise/lower priority,
+  defer, `D` delegate (person or agent, mode, note), `W` work-ref,
+  `K`/`J` raise/lower priority,
   `x` archive with preview, `#` / Delete hard-delete with confirm.
 - `h`/`l` fold, `H`/`L` fold/expand all, `>`/`<` indent/outdent,
   `alt-j`/`alt-k` reorder.
@@ -352,7 +353,8 @@ the human-readable tour of that contract.
 - `delegation_modes` / `TASKS_DELEGATION_MODES` — the delegation
   vocabulary (default `refine, research, implement`). Comma-separated
   lowercase words; `off`, `none`, `clear`, and `release` are reserved
-  because the delegation prompt already spends them. A list that cannot
+  because a delegation is written with them: `release` is a verb and the
+  others clear a work reference or a note. A list that cannot
   be honoured is ignored whole, with a warning, and never blocks a write.
 - `theme`, `mouse`, `color.<slot>`, `color.border`,
   `color.border_gradient`.

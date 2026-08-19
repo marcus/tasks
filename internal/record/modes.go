@@ -72,20 +72,23 @@ func ValidModeName(mode string) bool { return modeShape.MatchString(mode) }
 // ReservedModeNames are the words a mode may not be, because a surface already
 // spends them on an action.
 //
-// The TUI's `D` prompt is one flat word grammar: the modes, plus `release`, plus
-// the clear words `off`/`none`/`clear`. A mode named `release` would appear in
-// that grammar twice, and the matcher — correctly — would call the input
-// ambiguous and refuse it, so the user could no longer revoke a claim or clear
-// a delegation at all. The destructive verb would become unreachable while the
-// UI told them to type more of a word they had already typed in full.
+// `off`/`none`/`clear` are the words that clear a work reference or a note, and
+// a mode spelled like one of them WOULD be ambiguous where both are written in
+// one place: `tasks delegate <ref> --note off` cannot mean both "clear the
+// briefing" and "the briefing is the word off".
+//
+// `release` is reserved for a weaker but real reason — it is the name of a
+// delegation verb (`tasks release <ref>`, and the modal's Release button), so a
+// mode called `release` would have a person reading "release" in two senses on
+// one screen. That one is about the reader, not the parser.
 //
 // This is refused at CONFIGURATION time rather than resolved with a precedence
 // rule, because the collision is real: someone who wants a mode called
 // `release` has picked a name that already means something, and the honest
 // moment to say so is when they write the config, not at the moment they need
-// to revoke a claim. Refusing also keeps the CLI and the TUI agreeing on one
-// vocabulary; a TUI-side dedupe would leave the CLI happily writing
-// mode:"release" that the TUI could never offer.
+// to revoke a claim. Refusing also keeps every surface agreeing on one
+// vocabulary, rather than one of them quietly accepting a mode the others
+// would read as a verb.
 var ReservedModeNames = []string{"off", "none", "clear", "release"}
 
 func reservedModeName(mode string) bool {
@@ -118,7 +121,7 @@ func ParseModeList(value string) (ModeSet, string) {
 			return nil, fmt.Sprintf("%q is not a mode name (lowercase letters, digits and underscores, starting with a letter)", mode)
 		}
 		if reservedModeName(mode) {
-			return nil, fmt.Sprintf("%q is reserved (%s already mean clear-or-release in the delegation prompt)",
+			return nil, fmt.Sprintf("%q is reserved (%s already mean clear-or-release where a delegation is written)",
 				mode, strings.Join(ReservedModeNames, "/"))
 		}
 		if seen[mode] {

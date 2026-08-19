@@ -30,10 +30,11 @@ func TestKeySequence(t *testing.T) {
 		{name: "ctrl-k", msg: tea.KeyPressMsg{Code: 'k', Mod: tea.ModCtrl}, want: "\x0b"},
 		{name: "ctrl-w", msg: tea.KeyPressMsg{Code: 'w', Mod: tea.ModCtrl}, want: "\x17"},
 		{name: "ctrl-A uppercase code", msg: tea.KeyPressMsg{Code: 'A', Mod: tea.ModCtrl}, want: "\x01"},
+		// ctrl-x is the delegate modal's Undelegate button.
+		{name: "ctrl-x", msg: tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl}, want: "\x18"},
 
 		// Unbound Ctrl must NOT fall through to letter bindings (td-65d0a8)
 		{name: "ctrl-z unbound", msg: tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl}, want: ""},
-		{name: "ctrl-x unbound", msg: tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl}, want: ""},
 		{name: "ctrl-q unbound", msg: tea.KeyPressMsg{Code: 'q', Mod: tea.ModCtrl}, want: ""},
 		{name: "ctrl-g unbound", msg: tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl}, want: ""},
 		{name: "ctrl-y unbound", msg: tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl}, want: ""},
