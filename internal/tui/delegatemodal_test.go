@@ -91,10 +91,8 @@ func TestDelegateModalKeyboardWritesAllThreePartsInOneStep(t *testing.T) {
 	// Return is TEXT in a note, so ctrl-s is what submits from one.
 	harness.pressKeys("\x13")
 
-	if harness.model.Mode() != ModeFieldModal {
-		if harness.model.Mode() != ModeList {
-			t.Fatalf("the modal left mode %s", harness.model.Mode())
-		}
+	if harness.model.Mode() != ModeList {
+		t.Fatalf("submitting left the modal open, in mode %s", harness.model.Mode())
 	}
 	line := taskLineIn(harness.content(), delegateFixFresh)
 	for _, want := range []string{
@@ -314,18 +312,38 @@ func TestDelegateModalRefusalsStayInsideAMotionlessBox(t *testing.T) {
 
 // Release is the owner's forced release, and it is a BUTTON with a key rather
 // than a word typed into a text field.
+//
+// It also takes TWO deliberate gestures. Release ends work a worker may be
+// mid-way through, and its key is the one `redo` owns everywhere else in the
+// app — so the first press has to explain itself, or the collision would spend
+// somebody's in-flight work on a keystroke aimed at something harmless.
 func TestDelegateModalReleaseIsAnExplicitAffordance(t *testing.T) {
 	for _, path := range []string{"key", "mouse"} {
 		t.Run(path, func(t *testing.T) {
 			harness := delegateHarness(t, path == "mouse")
 			modal := openDelegateModal(t, harness, delegateFixClaimed)
 			harness.model.View()
-			if path == "key" {
-				harness.pressKeys("\x12")
-			} else {
+			release := func() {
+				if path == "key" {
+					harness.pressKeys("\x12")
+					return
+				}
 				row, span := buttonSpan(t, modal, delegateReleaseAction)
 				clickModal(t, harness, row, span.begin)
 			}
+			release()
+			if harness.model.Mode() != ModeFieldModal {
+				t.Fatalf("one gesture released the claim, leaving mode %s",
+					harness.model.Mode())
+			}
+			if modal.Error() != delegateReleaseConfirm {
+				t.Fatalf("the first gesture armed %q", modal.Error())
+			}
+			if line := taskLineIn(harness.content(), delegateFixClaimed); !strings.Contains(line, "worker-1") {
+				t.Fatalf("the claim was released before it was confirmed:\n%s", line)
+			}
+			harness.model.View()
+			release()
 			if harness.model.Mode() != ModeList {
 				t.Fatalf("release left mode %s (%q)",
 					harness.model.Mode(), harness.model.FlashMessage())

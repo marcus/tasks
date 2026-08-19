@@ -100,10 +100,10 @@
 - `tasks config` and `tasks config --json` report the resolved
   `delegation_modes` and where they came from, alongside every other setting.
 - `off`, `none`, `clear`, and `release` are reserved and cannot be configured as
-  modes. The TUI's `D` prompt is one flat word grammar, so a mode named
-  `release` would make every such input ambiguous and leave a live claim
-  impossible to revoke — the collision is reported when the config is read,
-  not at the moment the destructive verb is needed.
+  modes: `release` is a delegation verb and the others clear a work reference or
+  a note, so a mode spelled like one of them would make an instruction and a
+  mode indistinguishable wherever both are written in one place. The collision
+  is reported when the config is read, not at the moment the verb is needed.
 - Hosts embedding the TUI through `pkg/tui` get `ExportCommandsWith(modes)` to
   describe delegation with their own store's vocabulary; plain `ExportCommands`
   now renders the built-in set rather than an unfilled template.

@@ -54,7 +54,21 @@ const (
 
 	delegateUndelegateConfirm = "undelegate clears the delegation and revokes any live claim " +
 		"— ctrl-x again confirms"
+	delegateReleaseConfirm = "release forces a claimed task back to the pool, ending work " +
+		"a worker may be mid-way through — ctrl-r again confirms"
 )
+
+// delegateConfirmations is the message each destructive affordance arms before
+// it acts. BOTH of them arm one: this modal exists to retire a grammar where
+// the shortest inputs performed the widest actions, and a button that revokes
+// someone else's in-flight work on a single keystroke would put that hazard
+// straight back — the more so for Release, whose key is the one a user's
+// fingers already spend on `redo` everywhere else in the app. A first press
+// that explains itself makes that collision harmless instead of expensive.
+var delegateConfirmations = map[string]string{
+	delegateReleaseAction:    delegateReleaseConfirm,
+	delegateUndelegateAction: delegateUndelegateConfirm,
+}
 
 // describe is the ONE way a registry entry becomes text a user reads. Entries
 // are a static catalogue built during init, so any of them may carry the
@@ -156,20 +170,22 @@ func (m *Model) DelegateSelected() {
 	// the owner does not hold, and a worker releasing its own claim uses the CLI
 	// with its worker id.
 	modal.OnAction = func(actionID string) FieldModalOutcome {
+		// Two deliberate gestures, the same shape as the discard latch and for
+		// the same reason: these are the buttons that throw away someone else's
+		// live work. Editing anything clears the message, which re-arms the
+		// confirmation.
+		if confirm, destructive := delegateConfirmations[actionID]; destructive {
+			if modal.Error() != confirm {
+				modal.SetError(confirm)
+				return FieldModalOutcome{Result: FieldModalError}
+			}
+		}
 		switch actionID {
 		case delegateReleaseAction:
 			return m.runDelegationFromModal(modal, id, title, delegateRelease,
 				application.DelegationCommand{
 					ID: id, Action: application.ActionRelease, Force: true})
 		case delegateUndelegateAction:
-			// Two deliberate gestures, the same shape as the discard latch and
-			// for the same reason: this is the button that throws away someone
-			// else's live claim. Editing anything clears the message, which
-			// re-arms the confirmation.
-			if modal.Error() != delegateUndelegateConfirm {
-				modal.SetError(delegateUndelegateConfirm)
-				return FieldModalOutcome{Result: FieldModalError}
-			}
 			return m.runDelegationFromModal(modal, id, title, delegateUndelegate,
 				application.DelegationCommand{ID: id, Action: application.ActionUndelegate})
 		}

@@ -33,9 +33,9 @@ var helpGroups = []struct {
 //
 // The vocabulary is a parameter because the registry cannot hold one: it is
 // built during init, before any store exists. The overlay is where a user goes
-// to LEARN the keys, so quoting the built-in modes here while the `D` prompt
-// and the delegate refusal quoted the configured ones would make the two places
-// a user looks disagree about the same word.
+// to LEARN the keys, so quoting the built-in modes here while the delegate
+// modal and the delegate refusal quoted the configured ones would make the two
+// places a user looks disagree about the same word.
 //
 // Generating it is the whole point: a hand-written help list is a second source
 // of truth that goes stale the first time a binding moves, and a task list whose

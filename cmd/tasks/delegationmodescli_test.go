@@ -235,7 +235,7 @@ func TestTheIgnoredListWarningNamesTheSetInForce(t *testing.T) {
 	}
 }
 
-// A mode may not shadow a word the delegation prompt already spends, and the
+// A mode may not shadow a word a delegation is already written with, and the
 // user is told so when they write the config rather than at the moment they
 // need to revoke a claim.
 func TestReservedWordsCannotBeConfiguredAsModes(t *testing.T) {

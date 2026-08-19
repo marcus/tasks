@@ -123,11 +123,11 @@ func TestStoredModesSeparateShapeFromMembership(t *testing.T) {
 	}
 }
 
-// A mode may not be a word a surface already spends on an action. The `D`
-// prompt is one flat word grammar — the modes plus `release` plus the clear
-// words — so a mode named `release` would make the prompt call the input
-// ambiguous and leave the user unable to revoke a claim at all. The collision
-// is reported when the config is READ, not when the verb is needed.
+// A mode may not be a word a surface already spends on an action: `release` is
+// a delegation verb and `off`/`none`/`clear` clear a work reference or a note,
+// so a mode spelled like one of them would make an instruction and a mode
+// indistinguishable wherever both are written in one place. The collision is
+// reported when the config is READ, not when the verb is needed.
 func TestParseModeListRefusesReservedWords(t *testing.T) {
 	for _, reserved := range ReservedModeNames {
 		got, problem := ParseModeList("triage, " + reserved)
