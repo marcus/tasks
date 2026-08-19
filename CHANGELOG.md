@@ -7,8 +7,8 @@
   agent pool), which mode, and the note the receiver works from — on a modal
   that is complete by keyboard and by mouse. Re-delegating prefills all three
   from the current marker, and one submit writes them in a single undo step.
-  Release and undelegate are explicit affordances with a confirmation on the
-  destructive one, which retires the old flat word grammar: `implement`,
+  Release and undelegate are explicit affordances, and both confirm before they
+  act, which retires the old flat word grammar: `implement`,
   `release` and the clear words used to share one text field, so the shortest
   inputs performed the widest and most destructive actions and a three-letter
   prefix minimum was the only thing standing between a keystroke and a revoked

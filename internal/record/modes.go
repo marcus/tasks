@@ -72,11 +72,15 @@ func ValidModeName(mode string) bool { return modeShape.MatchString(mode) }
 // ReservedModeNames are the words a mode may not be, because a surface already
 // spends them on an action.
 //
-// `release` is a delegation verb, and `off`/`none`/`clear` are the words that
-// clear a work reference or a note. A mode spelled like one of them would make
-// an instruction indistinguishable from a mode wherever the two are written in
-// the same place — `tasks delegate <ref> release` cannot mean both "hand this
-// back" and "delegate it in release mode".
+// `off`/`none`/`clear` are the words that clear a work reference or a note, and
+// a mode spelled like one of them WOULD be ambiguous where both are written in
+// one place: `tasks delegate <ref> --note off` cannot mean both "clear the
+// briefing" and "the briefing is the word off".
+//
+// `release` is reserved for a weaker but real reason — it is the name of a
+// delegation verb (`tasks release <ref>`, and the modal's Release button), so a
+// mode called `release` would have a person reading "release" in two senses on
+// one screen. That one is about the reader, not the parser.
 //
 // This is refused at CONFIGURATION time rather than resolved with a precedence
 // rule, because the collision is real: someone who wants a mode called
