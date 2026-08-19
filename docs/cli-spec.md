@@ -214,6 +214,19 @@ last-write-wins; the base is consulted only to detect a removal. In order:
 4. **two non-claims** — later `at`, then canonical bytes: the most recent owner
    intent.
 
+The `mode` and the `note` are **members** of that one value, never fields of
+their own, so they inherit every rule above and add none: the merged record
+takes one side's whole marker, and a note is never spliced onto the other side's
+delegation — a briefing that belonged to the delegation the merge discarded
+would brief the wrong work. Concretely: two devices that write different notes
+on an otherwise unclaimed marker resolve by later `at`, then canonical bytes, so
+the losing briefing is dropped whole; a `claimed` marker carrying an older note
+still outranks a fresher note on a `ready` one, because a note is owner intent
+and a claim is a fact about a worker holding the task; a `mode` on a human
+delegation merges exactly like a mode on an agent one, so a mode and an
+`assignee` from opposite sides can never be combined into a delegation nobody
+stated; and `undelegate` still absorbs everything, note and mode included.
+
 Being a maximum over one total order, this is associative and commutative,
 which is what makes "exactly one worker holds a claim" survive multi-device
 merges. (The earlier rule — one-sided change wins, then last-write-wins — was
@@ -548,9 +561,22 @@ in the same write and returns it `DONE`.
 
 **Delegation and pickup.** An accepted live task can carry one optional
 `delegation` object naming who holds the next action: a person (`kind: human`,
-an email `assignee`, status `delegated`) or the agent pool (`kind: agent`, an
-authority `mode` of `refine`/`research`/`implement`, status `ready` until a
-worker claims it and `claimed` after). `PROPOSED`, closed, and archived tasks
+an email `assignee`, status `delegated`) or the agent pool (`kind: agent`,
+status `ready` until a worker claims it and `claimed` after).
+
+A delegation has three orthogonal parts: **who** (the person or the pool),
+**mode** (what kind of delegation this is — `refine`, `research`, or
+`implement`), and **note** (the briefing the receiver reads). The mode is
+required for an agent, which needs to know its authority before it picks the
+task up, and **optional for a person**: `delegate <ref> --to pat@example.com
+--mode refine` means "Pat, this is a refine — tighten the task, don't build it",
+exactly as it does for an agent. It changes no lifecycle rule and grants no
+permission the person did not have; it is a statement of what was asked for, and
+it is what makes a human and an agent delegation the same shape. The mode
+vocabulary is one set for both kinds, read from a single seam, so configuring it
+later changes both at once. The `note` is free text for the receiver — how to
+work on it, where the work should land, what to avoid — at most 2000 characters,
+paragraphs allowed, control characters refused. It is primarily read by agents. `PROPOSED`, closed, and archived tasks
 refuse delegation with an error naming the state; approval and delegation stay
 two independent owner decisions. Human delegation sets WAITING by default
 (`--keep-state` opts out) because that is exactly what WAITING encodes, and
@@ -583,7 +609,13 @@ refused at the schema boundary instead of sanitized at four surfaces. A human
 exactly one `@`, dotted domain — so `@work` (muscle memory from the TUI's
 context filter, one keystroke from silently moving a task to WAITING) and
 `pat@localhost` are refused. `assignee`/worker ids are bounded at 200
-characters, `work_ref` at 500. Nested keys inside `delegation` that this binary
+characters, `work_ref` at 500, and the delegation `note` at 2000 — enough for a
+real briefing, and short enough to keep one JSONL line readable; longer content
+is task content and belongs in the body. The note may contain paragraphs
+(newlines are escaped in JSONL) but no other control characters, for the same
+terminal-safety reason as the identifiers above. A `mode` on either kind of
+delegation must be a member of the mode vocabulary; a refusal quotes the set
+back. Nested keys inside `delegation` that this binary
 does not know are **preserved** across a rewrite (a claim from an older binary
 cannot silently drop a newer one's field) and reported by `check` as a WARNING,
 not an error — the same forward-compatible posture the top-level schema has.

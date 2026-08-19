@@ -19,12 +19,13 @@ const (
 	AssigneeLimit = 200
 )
 
-// DelegationKinds and DelegationModes are the closed vocabularies a refusal
-// quotes back to the caller.
-var (
-	DelegationKinds = []string{"human", "agent"}
-	DelegationModes = []string{"refine", "research", "implement"}
-)
+// DelegationKinds is the closed kind vocabulary a refusal quotes back.
+var DelegationKinds = []string{"human", "agent"}
+
+// DelegationModes is the mode vocabulary in force. The store holds NO list of
+// its own and reads no configuration: it asks record's vocabulary seam, which
+// is the single place a user-configured set gets wired in.
+func DelegationModes() record.ModeVocabulary { return record.DelegationModes() }
 
 // delegationPlan is what a plan function decides: whether to write, what the
 // history entry is called, and the facts a refusal reports.
@@ -195,6 +196,49 @@ func (s *Store) SetWorkRef(id, workRef, worker, _ string) MutationResult {
 	return result
 }
 
+// SetDelegationNote records the briefing the receiver reads — how to work on
+// the task, where the work should land — or clears it with an empty note. It is
+// an OWNER decision, unlike work_ref, which the holding worker may also write:
+// the note is the instruction, and a worker rewriting its own instructions is
+// not a thing the model should allow. It is not a status transition, so `at` is
+// left alone, and like SetWorkRef the coalesce key is deliberately ignored.
+func (s *Store) SetDelegationNote(id, note, _ string) MutationResult {
+	result := s.delegationMutation(id, "", func(target *record.Record) delegationPlan {
+		return planDelegationNote(target, note)
+	})
+	result.Summary.Action = "delegation_note"
+	result.Summary.TaskID = id
+	return result
+}
+
+func planDelegationNote(target *record.Record, note string) delegationPlan {
+	existing := delegationMarker(*target)
+	if existing == nil {
+		return delegationPlan{status: MutationInvalid, errors: []string{"task is not delegated"}}
+	}
+	text := strings.TrimSpace(note)
+	if text != "" {
+		if problems := record.DelegationNoteErrors(text); len(problems) > 0 {
+			return delegationPlan{status: MutationInvalid, errors: problems[:1]}
+		}
+	}
+	candidate := map[string]string{}
+	for key, value := range existing {
+		candidate[key] = value
+	}
+	candidate["note"] = text
+	encoded := orderedDelegation(candidate, markerOrder(*target))
+	if current, present := target.Get(DelegationField); present && string(current) == string(encoded) {
+		return delegationPlan{status: MutationOK, noChange: true}
+	}
+	target.Set(DelegationField, encoded)
+	label := "clear delegation note: " + target.String("title")
+	if text != "" {
+		label = "delegation note: " + target.String("title")
+	}
+	return delegationPlan{status: MutationOK, label: label}
+}
+
 func planUndelegate(target *record.Record) delegationPlan {
 	existing, present := target.Get(DelegationField)
 	if !present {
@@ -297,9 +341,14 @@ func (s *Store) planDelegate(target *record.Record, kind, mode, assignee string)
 	// A mode update or a new assignee of the SAME kind still points at the same
 	// work, so the work reference survives; a human↔agent replacement is a
 	// different delegation and drops it.
+	// The note briefs whoever holds the work, so it survives the same way and
+	// for the same reason: same kind keeps it, a human↔agent replacement drops
+	// it along with the reference.
 	retained := ""
+	retainedNote := ""
 	if existing != nil && existing["kind"] == kind {
 		retained = existing["work_ref"]
+		retainedNote = existing["note"]
 	}
 	status := DelegationReady
 	if kind == "human" {
@@ -308,6 +357,7 @@ func (s *Store) planDelegate(target *record.Record, kind, mode, assignee string)
 	candidate := map[string]string{
 		"kind": kind, "mode": mode, "assignee": assignee,
 		"at": DelegationStamp(s.now()), "status": status, "work_ref": retained,
+		"note": retainedNote,
 	}
 	// Two delegations describe the same state when only the transition stamp
 	// differs: re-delegating at the current mode must not burn an undo slot.
@@ -378,9 +428,12 @@ func delegateInputError(kind, mode, assignee string) string {
 	if !contains(DelegationKinds, kind) {
 		return "delegation kind " + rubyInspectText(kind) + " must be " + strings.Join(DelegationKinds, " or ")
 	}
+	modes := DelegationModes()
 	if kind == "human" {
-		if mode != "" {
-			return "a human delegation has no mode"
+		// A mode is optional for a person — it says what KIND of delegation this
+		// is, not who holds it — but it is still a member of the vocabulary.
+		if mode != "" && !modes.Valid(mode) {
+			return "mode " + rubyInspectText(mode) + " must be one of " + modes.Quoted()
 		}
 		if !validEmail(assignee) {
 			return "assignee " + rubyInspectText(assignee) + " must be an email address " +
@@ -389,8 +442,8 @@ func delegateInputError(kind, mode, assignee string) string {
 		}
 		return ""
 	}
-	if !contains(DelegationModes, mode) {
-		return "mode " + rubyInspectText(mode) + " must be one of " + strings.Join(DelegationModes, "/")
+	if !modes.Valid(mode) {
+		return "mode " + rubyInspectText(mode) + " must be one of " + modes.Quoted()
 	}
 	if assignee != "" {
 		return "an agent delegation is claimed by a worker, not assigned"
@@ -408,7 +461,7 @@ func settleDelegationOnClose(target *record.Record) {
 }
 
 func settledDelegation(existing, candidate map[string]string) bool {
-	for _, key := range []string{"kind", "mode", "assignee", "status", "work_ref"} {
+	for _, key := range []string{"kind", "mode", "assignee", "status", "work_ref", "note"} {
 		if existing[key] != candidate[key] {
 			return false
 		}

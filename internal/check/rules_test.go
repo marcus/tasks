@@ -224,7 +224,12 @@ func TestEveryDelegationInvariantViolationIsAnError(t *testing.T) {
 		{"delegation must be an object", `"claimed"`},
 		{`kind "team" must be human or agent`, `{"kind":"team","status":"ready",` + at + `}`},
 		{"kind nil must be human or agent", `{"status":"ready",` + at + `}`},
-		{"mode is not allowed for a human", `{"kind":"human","mode":"refine","status":"delegated","assignee":"pat@example.com",` + at + `}`},
+		// A mode is allowed on a human delegation, but it is still a member of
+		// the vocabulary; an invented one is refused for either kind.
+		{"mode \"vibes\" must be one of refine/research/implement", `{"kind":"human","mode":"vibes","status":"delegated","assignee":"pat@example.com",` + at + `}`},
+		{"note must be a non-empty string", `{"kind":"agent","mode":"refine","status":"ready",` + at + `,"note":"   "}`},
+		{"note must not contain control characters", `{"kind":"agent","mode":"refine","status":"ready",` + at + `,"note":"do it\u001b[2K"}`},
+		{"note must be at most 2000 characters", `{"kind":"agent","mode":"refine","status":"ready",` + at + `,"note":"` + strings.Repeat("x", 2001) + `"}`},
 		{`status "ready" must be "delegated" for a human`, `{"kind":"human","status":"ready","assignee":"pat@example.com",` + at + `}`},
 		{`assignee "pat" must be an email address`, `{"kind":"human","status":"delegated","assignee":"pat",` + at + `}`},
 		{`assignee "a b@c.d" must be an email address`, `{"kind":"human","status":"delegated","assignee":"a b@c.d",` + at + `}`},
@@ -281,13 +286,13 @@ func TestNullDelegationIsTreatedAsAbsent(t *testing.T) {
 // merge refuse, and — because the post-write check validates every line —
 // blocked every write store-wide until a patch happened to land on that record.
 func TestUnknownDelegationKeysWarnRatherThanFailTheFile(t *testing.T) {
-	delegation := `{"kind":"agent","mode":"refine","status":"ready","at":"2026-07-27T18:04:11Z","note":"x","lease":1}`
+	delegation := `{"kind":"agent","mode":"refine","status":"ready","at":"2026-07-27T18:04:11Z","hint":"x","lease":1}`
 	result := CheckText(delegatedTask(delegation, "NEXT"))
 	if !result.OK() {
 		t.Fatalf("errors = %#v, want unknown nested keys tolerated", result.Errors)
 	}
 	got := warningMessages(result)
-	want := []string{`unknown delegation key "note"`, `unknown delegation key "lease"`}
+	want := []string{`unknown delegation key "hint"`, `unknown delegation key "lease"`}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("warnings = %#v, want %#v in the record's own member order", got, want)
 	}

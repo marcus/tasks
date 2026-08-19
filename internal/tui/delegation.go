@@ -25,7 +25,7 @@ var delegateClearWords = []string{"off", "none", "clear"}
 
 // delegateWords is the whole `D` vocabulary: the three agent modes, `release`,
 // and the clear words. An email is matched separately.
-var delegateWords = append(append([]string{}, store.DelegationModes...),
+var delegateWords = append(store.DelegationModes().Modes(),
 	append([]string{"release"}, delegateClearWords...)...)
 
 // delegatePrefixMin is where prefix matching starts.

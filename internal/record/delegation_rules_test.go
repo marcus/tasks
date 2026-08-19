@@ -199,8 +199,8 @@ func TestUnknownNestedKeysAreNotErrors(t *testing.T) {
 	}
 	// The set is sorted, so a caller comparing two records' unknown keys is not
 	// comparing map iteration order.
-	several := agentDelegation(map[string]any{"note": "x", "lease": 1, "budget_tokens": 5})
-	want := []string{"budget_tokens", "lease", "note"}
+	several := agentDelegation(map[string]any{"hint": "x", "lease": 1, "budget_tokens": 5})
+	want := []string{"budget_tokens", "hint", "lease"}
 	if got := DelegationUnknownKeys(several); !reflect.DeepEqual(got, want) {
 		t.Fatalf("unknown keys = %#v, want %#v", got, want)
 	}

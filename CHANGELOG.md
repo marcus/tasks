@@ -18,6 +18,23 @@
   or foreign-device file could, and it passed validation. Now `recur` on a
   `PROPOSED` task is a `check` error, and approve+complete refuses it rather
   than reporting a DONE that did not happen.
+- A delegation becomes three orthogonal parts — **who** (a person or the agent
+  pool), **mode** (`refine`/`research`/`implement`), and a new optional
+  **note**, free text briefing the receiver on how to work on the task and
+  where the work should land, up to 2000 characters with paragraphs allowed.
+  *Store and schema support only in this entry; the CLI, HTTP, and TUI
+  spellings follow in the surface work.* The note is stored last in the marker,
+  so a store written by an earlier release loads, checks clean, and re-emits
+  byte for byte. A mode is now valid on a *human* delegation as well: "Pat,
+  this is a refine" is a thing the data model can say. The note travels with
+  the delegation it briefs — kept across a mode change or a new assignee of the
+  same kind, dropped when a person replaces the pool or the reverse — carries
+  its own transition stamp so the most recent briefing wins a multi-device
+  merge, and merges atomically with the rest of the marker, where `undelegate`
+  still always wins.
+- The mode vocabulary is carried as a value on the store and checker options
+  rather than checked against a literal, so configuring the set later is one
+  field, not a hunt through the code.
 
 ## [1.10.0] - 2026-08-18
 

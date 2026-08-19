@@ -235,14 +235,21 @@ holds the next action. Absent means not delegated; there is no neutral value.
 
 ```json
 {"type":"task","id":"e5f6a7b8","state":"WAITING","title":"Renew office lease","delegation":{"kind":"human","status":"delegated","assignee":"pat@example.com","at":"2026-07-27T18:04:11Z"}}
-{"type":"task","id":"f6a7b8c9","state":"TODO","title":"Compare CRDT libraries","delegation":{"kind":"agent","mode":"research","status":"claimed","assignee":"claude-code/claude-fable-5/313cf82e","at":"2026-07-27T18:04:11Z","work_ref":"https://example.com/brief"}}
+{"type":"task","id":"f6a7b8c9","state":"TODO","title":"Compare CRDT libraries","delegation":{"kind":"agent","mode":"research","status":"claimed","assignee":"claude-code/claude-fable-5/313cf82e","at":"2026-07-27T18:04:11Z","work_ref":"https://example.com/brief","note":"Compare only Go libraries. Write the recommendation into the task body."}}
 ```
 
 - **`kind`** — `human` (a person, identified by an email address) or `agent`
   (the agent pool).
-- **`mode`** — agent authority: `refine` (improve the task), `research`
-  (investigate and recommend), `implement` (do the work). Required for an
-  agent, forbidden for a human. Only the owner sets or widens it.
+- **`mode`** — what KIND of delegation this is, and therefore the authority the
+  receiver has: `refine` (improve the task), `research` (investigate and
+  recommend), `implement` (do the work). Required for an agent, **optional for
+  a human** — who holds the work and what kind of delegation it is are
+  orthogonal facts. Only the owner sets or widens it. The vocabulary is the
+  built-in set above; it is read from one seam
+  (`record.DelegationModes()`/`record.UseDelegationModes`) so a
+  user-configured set is a wiring change rather than a schema change. The
+  stored key stays `mode` — the concept is called *mode* everywhere, in the
+  file, the CLI, the docs, and the UI.
 - **`status`** — `delegated` (human), `ready` (agent, unclaimed), `claimed`
   (agent, held by one worker).
 - **`assignee`** — the person's email (address-shaped: non-empty local part,
@@ -253,6 +260,16 @@ holds the next action. Absent means not delegated; there is no neutral value.
 - **`work_ref`** — optional single reference to where the work lives: a ticket,
   PR, research brief, or agent session; one line, at most 500 characters. More
   detail belongs in the body.
+- **`note`** — optional briefing for whoever receives the delegation: how to
+  work on it, where the work should land, what to avoid. Free text, at most
+  **2000 characters** (about 300 words — room for a real briefing, four times
+  `work_ref`'s single URL, and still short enough that one JSONL line stays
+  greppable and diffable; anything longer is task content and belongs in the
+  body). Paragraphs are allowed — newlines are escaped by JSONL — but every
+  other control character is refused at the schema boundary, because the note
+  is rendered raw by the surfaces that show it. It is the **last** key in the
+  canonical order, appended after `work_ref`, so a record written before notes
+  existed re-emits byte for byte.
 
 Nested keys this binary does not know are round-tripped rather than dropped and
 reported by `check` as a warning, so a record written by a newer binary
@@ -268,6 +285,12 @@ is how "who did it, and where" survives into the archive. Completing a
 *recurring* task instead rolls the standing intent forward onto the next
 occurrence — mode or person retained, always unclaimed, fresh `at`, no
 `work_ref`.
+
+The `note` travels with the delegation it briefs: a same-kind re-delegation (a
+mode change, a different person) keeps it along with `work_ref`; replacing a
+person with the agent pool or the reverse drops both, because that is a
+different delegation. Clearing the note removes the key rather than storing an
+empty string — absent means "no briefing", as everywhere else in this schema.
 
 Across devices the object is merged atomically under one total order: a removal
 (`undelegate`) absorbs everything, a `claimed` marker outranks a non-claimed

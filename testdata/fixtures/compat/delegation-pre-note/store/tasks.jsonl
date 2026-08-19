@@ -1,0 +1,5 @@
+{"type":"meta","version":2}
+{"type":"section","id":"e1000001","title":"Written before delegation notes existed"}
+{"type":"task","id":"e1000002","parent":"e1000001","state":"NEXT","title":"Agent-ready with a work ref","delegation":{"kind":"agent","mode":"research","status":"ready","at":"2026-06-03T11:15:00Z","work_ref":"https://example.invalid/brief"}}
+{"type":"task","id":"e1000003","parent":"e1000001","state":"NEXT","title":"Claimed by a worker","delegation":{"kind":"agent","mode":"implement","status":"claimed","assignee":"harness/model/session-0042","at":"2026-06-03T11:16:00Z"}}
+{"type":"task","id":"e1000004","parent":"e1000001","state":"WAITING","title":"Handed to a person","delegation":{"kind":"human","status":"delegated","assignee":"sam.rivera@example.com","at":"2026-06-01T10:00:00Z"}}
