@@ -55,6 +55,8 @@ func TestMalformedDelegationModesFallBackWithAWarning(t *testing.T) {
 		{"space inside a mode", "delegation_modes = deep research\n", `"deep research" is not a mode name`},
 		{"duplicate", "delegation_modes = triage, ship, triage\n", `"triage" is listed twice`},
 		{"empty", "delegation_modes = , ,\n", "the list is empty"},
+		{"reserved", "delegation_modes = triage, release\n", `"release" is reserved`},
+		{"reserved clear word", "delegation_modes = off\n", `"off" is reserved`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			paths := resolve(t, tc.body, nil)
@@ -77,6 +79,11 @@ func TestMalformedDelegationModesFallBackWithAWarning(t *testing.T) {
 
 // An invalid env value must not skip past a VALID config file list, for the
 // same reason a typo'd TASKS_TIMEZONE must not skip past a configured zone.
+//
+// The warning must then name the set that ACTUALLY won. Saying "using
+// refine/research/implement" while the same run's `tasks config` reports
+// "triage, ship (config file)" tells the user the opposite of what happened,
+// and sends them editing a file that was never the problem.
 func TestAnInvalidDelegationModesEnvFallsThroughToTheConfigFile(t *testing.T) {
 	paths := resolve(t, "delegation_modes = triage, ship\n",
 		map[string]string{"TASKS_DELEGATION_MODES": "Nope!"})
@@ -88,6 +95,33 @@ func TestAnInvalidDelegationModesEnvFallsThroughToTheConfigFile(t *testing.T) {
 	}
 	if len(paths.Warnings) != 1 {
 		t.Fatalf("warnings = %v, want one", paths.Warnings)
+	}
+	if !strings.Contains(paths.Warnings[0], "using triage/ship") {
+		t.Fatalf("warning names the wrong set: %q", paths.Warnings[0])
+	}
+	if strings.Contains(paths.Warnings[0], "refine/research/implement") {
+		t.Fatalf("warning names a set nothing is using: %q", paths.Warnings[0])
+	}
+	if !strings.Contains(paths.Warnings[0], "TASKS_DELEGATION_MODES env") {
+		t.Fatalf("warning does not name the ignored source: %q", paths.Warnings[0])
+	}
+}
+
+// Both sources bad means both are reported, and both name the built-in set,
+// because that is what is left in force.
+func TestEveryIgnoredDelegationModesSourceIsReported(t *testing.T) {
+	paths := resolve(t, "delegation_modes = Also bad\n",
+		map[string]string{"TASKS_DELEGATION_MODES": "Nope!"})
+	if got := paths.Modes().Quoted(); got != "refine/research/implement" {
+		t.Fatalf("modes = %q", got)
+	}
+	if len(paths.Warnings) != 2 {
+		t.Fatalf("warnings = %v, want two", paths.Warnings)
+	}
+	for _, warning := range paths.Warnings {
+		if !strings.Contains(warning, "using refine/research/implement") {
+			t.Fatalf("warning names the wrong set: %q", warning)
+		}
 	}
 }
 

@@ -104,4 +104,45 @@ func TestStoredModesSeparateShapeFromMembership(t *testing.T) {
 		got[0] != `delegation.mode "research" must be one of triage/ship` {
 		t.Fatalf("write path = %v", got)
 	}
+
+	// And refused on a HUMAN delegation too. A mode is optional there, which is
+	// exactly why it needs its own assertion: an implementation that skipped the
+	// membership check whenever the mode was optional would pass every
+	// agent-marker test in the suite.
+	human := map[string]any{
+		"kind": "human", "mode": "research", "status": "delegated",
+		"assignee": "pat@example.com", "at": "2026-07-20T11:00:00Z",
+	}
+	if got := DelegationErrorsWith(human, vocabulary); len(got) != 1 ||
+		got[0] != `delegation.mode "research" must be one of triage/ship` {
+		t.Fatalf("human write path = %v", got)
+	}
+	delete(human, "mode")
+	if got := DelegationErrorsWith(human, vocabulary); len(got) != 0 {
+		t.Fatalf("a human delegation without a mode was refused: %v", got)
+	}
+}
+
+// A mode may not be a word a surface already spends on an action. The `D`
+// prompt is one flat word grammar — the modes plus `release` plus the clear
+// words — so a mode named `release` would make the prompt call the input
+// ambiguous and leave the user unable to revoke a claim at all. The collision
+// is reported when the config is READ, not when the verb is needed.
+func TestParseModeListRefusesReservedWords(t *testing.T) {
+	for _, reserved := range ReservedModeNames {
+		got, problem := ParseModeList("triage, " + reserved)
+		if problem == "" {
+			t.Fatalf("%q was accepted as a mode: %#v", reserved, got)
+		}
+		if !strings.Contains(problem, "is reserved") || !strings.Contains(problem, reserved) {
+			t.Fatalf("%q => %q", reserved, problem)
+		}
+		if got != nil {
+			t.Fatalf("%q returned a partial list %#v", reserved, got)
+		}
+	}
+	// Nothing else is reserved: `release_notes` is a fine mode.
+	if _, problem := ParseModeList("release_notes, offboard, cleared"); problem != "" {
+		t.Fatalf("a word merely CONTAINING a reserved one was refused: %s", problem)
+	}
 }

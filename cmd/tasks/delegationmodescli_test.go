@@ -1,8 +1,11 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/marcus/tasks/internal/determinism"
 )
 
 // The configured delegation vocabulary is exercised as a BLACK BOX, because the
@@ -129,6 +132,26 @@ func TestHelpQuotesTheConfiguredDelegationModes(t *testing.T) {
 	}
 }
 
+// Help is the page that tells a user what the modes ARE. Printing the built-in
+// set to somebody whose configured list was ignored, with no word about why, is
+// exactly where a silent degradation becomes a wrong answer.
+func TestHelpExplainsAnIgnoredDelegationModesList(t *testing.T) {
+	dir := seedStore(t, delegationModesFixture)
+	seedConfig(t, dir, "delegation_modes = triage, release\n")
+
+	help := runCLI(t, dir, "help")
+	if help.status != 0 {
+		t.Fatalf("help exit %d", help.status)
+	}
+	if !strings.Contains(help.stdout, "delegate <ref> refine|research|implement") {
+		t.Fatalf("help does not quote the set in force: %q", help.stdout)
+	}
+	if !strings.Contains(help.stderr, "ignoring delegation_modes") ||
+		!strings.Contains(help.stderr, "is reserved") {
+		t.Fatalf("help did not explain the fallback: %q", help.stderr)
+	}
+}
+
 func TestHelpPrintsWithAnUnreadableStore(t *testing.T) {
 	dir := seedStore(t, "{ this is not JSONL\n")
 	seedConfig(t, dir, "delegation_modes = triage, ship\n")
@@ -164,6 +187,72 @@ func TestAnUnconfiguredModeOnAnExistingRecordIsAWarningOnly(t *testing.T) {
 	written := runCLI(t, dir, "delegate", "eeee0002", "ship")
 	if written.status != 0 {
 		t.Fatalf("store was unwritable: %d %q", written.status, written.stderr)
+	}
+}
+
+// runCLIWithModesEnv is runCLI plus TASKS_DELEGATION_MODES, for the one
+// precedence case a config file alone cannot express.
+func runCLIWithModesEnv(t *testing.T, dir, modes string, argv ...string) cliResult {
+	t.Helper()
+	previousEnv := env
+	env = determinism.Env{
+		"TASKS_FILE":             filepath.Join(dir, "tasks.jsonl"),
+		"TASKS_ARCHIVE":          filepath.Join(dir, "archive.jsonl"),
+		"XDG_STATE_HOME":         filepath.Join(dir, "state"),
+		"XDG_CONFIG_HOME":        filepath.Join(dir, "cfg"),
+		"TASKS_DELEGATION_MODES": modes,
+		"TASKS_PIN_NOW":          "2026-07-20T12:00:00Z",
+		"TZ":                     "UTC",
+	}
+	defer func() { env = previousEnv }()
+	stdout, stderr := captureOutput(t, func() int { return run(argv) })
+	return cliResult{stdout: stdout.text, stderr: stderr.text, status: stdout.status}
+}
+
+// A bad env value falls through to a good config file — and the warning must
+// name the set that ACTUALLY won. Naming the built-in set here while the same
+// run's `tasks config` reports the file's list tells the user the opposite of
+// what happened, and sends them editing a file that was never the problem.
+func TestTheIgnoredListWarningNamesTheSetInForce(t *testing.T) {
+	dir := seedStore(t, delegationModesFixture)
+	seedConfig(t, dir, "delegation_modes = triage, ship\n")
+
+	result := runCLIWithModesEnv(t, dir, "Bad!", "config")
+	if !strings.Contains(result.stderr, "using triage/ship") {
+		t.Fatalf("warning names the wrong set: %q", result.stderr)
+	}
+	if strings.Contains(result.stderr, "using refine/research/implement") {
+		t.Fatalf("warning names a set nothing is using: %q", result.stderr)
+	}
+	if !strings.Contains(result.stdout, "delegation_modes: triage, ship  (config file)") {
+		t.Fatalf("config disagrees with its own warning: %q", result.stdout)
+	}
+
+	// And the store enforces the set the warning named.
+	refused := runCLIWithModesEnv(t, dir, "Bad!", "delegate", "eeee0002", "refine")
+	if refused.status == 0 || !strings.Contains(refused.stderr, "triage/ship") {
+		t.Fatalf("exit %d, stderr %q", refused.status, refused.stderr)
+	}
+}
+
+// A mode may not shadow a word the delegation prompt already spends, and the
+// user is told so when they write the config rather than at the moment they
+// need to revoke a claim.
+func TestReservedWordsCannotBeConfiguredAsModes(t *testing.T) {
+	dir := seedStore(t, delegationModesFixture)
+	seedConfig(t, dir, "delegation_modes = triage, release\n")
+
+	settings := runCLI(t, dir, "config")
+	if !strings.Contains(settings.stderr, `"release" is reserved`) {
+		t.Fatalf("stderr = %q", settings.stderr)
+	}
+	if !strings.Contains(settings.stdout, "delegation_modes: refine, research, implement  (default)") {
+		t.Fatalf("stdout = %q", settings.stdout)
+	}
+	// The CLI must not write a mode the TUI could never offer.
+	refused := runCLI(t, dir, "delegate", "eeee0002", "release")
+	if refused.status == 0 {
+		t.Fatal("the CLI wrote a mode that shadows a destructive verb")
 	}
 }
 

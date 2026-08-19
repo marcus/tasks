@@ -13,6 +13,7 @@ import (
 
 	"github.com/marcus/tasks/internal/config"
 	"github.com/marcus/tasks/internal/determinism"
+	"github.com/marcus/tasks/internal/record"
 	internal "github.com/marcus/tasks/internal/tui"
 	"github.com/marcus/tasks/internal/tui/term"
 	"github.com/marcus/tasks/internal/tui/term/shortcuts"
@@ -87,9 +88,23 @@ func ExportBindings() []Binding {
 	return out
 }
 
-// ExportCommands projects the same registry for host palettes and footers.
-func ExportCommands() []Command {
-	exported := shortcuts.ExportCommands()
+// ExportCommands projects the same registry for host palettes and footers,
+// describing delegation with the BUILT-IN mode vocabulary. A host running
+// against a store that configures its own set passes it to ExportCommandsWith,
+// so its palette names the words that store will actually accept.
+func ExportCommands() []Command { return ExportCommandsWith(nil) }
+
+// ExportCommandsWith is ExportCommands for one delegation mode vocabulary, in
+// the order it should be read. An empty list means the built-in set. It is
+// []string rather than an interface because an embedder resolves the
+// vocabulary from `tasks config --json` or the API's meta document, and neither
+// hands back a Go type.
+func ExportCommandsWith(modes []string) []Command {
+	var vocabulary record.ModeVocabulary
+	if len(modes) > 0 {
+		vocabulary = record.ModeSet(modes)
+	}
+	exported := shortcuts.ExportCommandsWith(vocabulary)
 	out := make([]Command, 0, len(exported))
 	for _, command := range exported {
 		out = append(out, Command{

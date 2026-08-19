@@ -246,7 +246,9 @@ holds the next action. Absent means not delegated; there is no neutral value.
   a human** — who holds the work and what kind of delegation it is are
   orthogonal facts. Only the owner sets or widens it. The vocabulary is the
   built-in set above unless `delegation_modes` in `~/.config/tasks/config` says
-  otherwise; it is carried as a value on the store and the checker
+  otherwise (`off`/`none`/`clear`/`release` are reserved — the delegation prompt
+  already spends them, and a mode that shadowed one would make revoking a claim
+  unreachable); it is carried as a value on the store and the checker
   (`store.Options.Modes`, `check.Options.Modes`, defaulting to
   `record.BuiltinModes()`), never as process-wide state read behind a caller's
   back, which is why two stores in one process can hold different vocabularies.

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"strings"
 
 	"github.com/marcus/tasks/internal/config"
@@ -23,7 +25,18 @@ func helpText(modes record.ModeVocabulary) string {
 // surface context, so it resolves configuration itself; resolution reads no
 // store and cannot fail, so help still prints when the store is missing or
 // broken.
-func helpModes() record.ModeVocabulary { return config.Resolve("", env, nil).Modes() }
+//
+// Resolution notes go to stderr the same way the ordinary command path emits
+// them. Help is the page that tells a user what the modes ARE, so printing the
+// built-in set to somebody whose configured list was ignored, with no word
+// about why, is exactly where a silent degradation becomes a wrong answer.
+func helpModes() record.ModeVocabulary {
+	paths := config.Resolve("", env, nil)
+	for _, warning := range paths.Warnings {
+		fmt.Fprintln(os.Stderr, warning)
+	}
+	return paths.Modes()
+}
 
 // `tasks help` is REGISTRY-DRIVEN, not a hand-written page.
 //

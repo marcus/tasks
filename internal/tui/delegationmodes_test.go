@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/marcus/tasks/internal/record"
+	"github.com/marcus/tasks/internal/tui/term/shortcuts"
 )
 
 // The `?` overlay and the command palette are where a TUI user LEARNS the
@@ -40,6 +41,71 @@ func TestTheShortcutsOverlayQuotesTheBuiltInModesByDefault(t *testing.T) {
 	if !strings.Contains(overlay, "Delegate… — email · refine · research · implement · release · off") {
 		t.Fatalf("help overlay = %s", overlay)
 	}
+}
+
+// The `D` grammar is one flat word list — the modes, `release`, and the clear
+// words — so a mode colliding with one of those verbs makes every input
+// ambiguous and the destructive verb unreachable. The collision is refused when
+// the config is read (see record.ReservedModeNames); this asserts the property
+// that refusal exists to protect, for every configurable vocabulary.
+func TestTheDelegatePromptGrammarStaysUnambiguous(t *testing.T) {
+	for _, vocabulary := range []record.ModeVocabulary{
+		nil,
+		record.ModeSet{"triage", "ship"},
+		record.ModeSet{"release_notes", "offboard", "cleared"},
+	} {
+		seen := map[string]bool{}
+		for _, word := range delegateWords(vocabulary) {
+			if seen[word] {
+				t.Fatalf("%v produces the duplicate word %q; the prompt would call it ambiguous",
+					vocabulary, word)
+			}
+			seen[word] = true
+		}
+	}
+
+	// And the words that would collide cannot be configured in the first place.
+	for _, reserved := range record.ReservedModeNames {
+		if _, problem := record.ParseModeList(reserved); problem == "" {
+			t.Fatalf("%q is configurable as a mode and would break the D prompt", reserved)
+		}
+	}
+
+	// The clear words the prompt spends are exactly the ones reserved for it,
+	// so the two lists cannot drift apart.
+	for _, word := range append([]string{"release"}, delegateClearWords...) {
+		if _, problem := record.ParseModeList(word); problem == "" {
+			t.Fatalf("the prompt spends %q but a user may configure it as a mode", word)
+		}
+	}
+}
+
+// No flash or hint may show a user the raw placeholder.
+func TestNoTuiSurfaceShowsTheModesPlaceholder(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{modes: record.ModeSet{"triage", "ship"}})
+	entry, found := shortcutForDelegate()
+	if !found {
+		t.Fatal("the delegate entry is gone from the registry")
+	}
+	described := harness.model.describe(entry)
+	if strings.Contains(described, shortcuts.ModesPlaceholder) {
+		t.Fatalf("describe leaks the placeholder: %q", described)
+	}
+	if !strings.Contains(described, "triage") {
+		t.Fatalf("describe = %q", described)
+	}
+	if hint := delegateHint(harness.model.app.DelegationModes()); strings.Contains(hint, shortcuts.ModesPlaceholder) {
+		t.Fatalf("hint leaks the placeholder: %q", hint)
+	}
+}
+
+func shortcutForDelegate() (shortcuts.Entry, bool) {
+	for _, entry := range shortcuts.Registry {
+		if entry.CommandID == "delegate-selected" {
+			return entry, true
+		}
+	}
+	return shortcuts.Entry{}, false
 }
 
 // The read-only check VIEW displays the store's vocabulary too. It refuses

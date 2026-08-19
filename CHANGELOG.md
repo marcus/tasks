@@ -45,8 +45,8 @@
   carries no label — the label is the word. With no config key, behaviour is
   exactly what it was.
 - A `delegation_modes` list this binary cannot honour — a word of the wrong
-  shape, a duplicate, an empty list — is ignored *whole*, with a warning on
-  stderr naming the problem and the set actually in use. Keeping the readable
+  shape, a duplicate, a reserved word, an empty list — is ignored *whole*, with
+  a warning on stderr naming the problem and the set actually in use. Keeping the readable
   half would run you against a vocabulary you never wrote. Nothing about a bad
   list makes the store unreadable or unwritable.
 - A record whose `mode` the active vocabulary does not list still loads, shows,
@@ -57,6 +57,14 @@
   error, and *writing* an unlisted mode is still refused.
 - `tasks config` and `tasks config --json` report the resolved
   `delegation_modes` and where they came from, alongside every other setting.
+- `off`, `none`, `clear`, and `release` are reserved and cannot be configured as
+  modes. The TUI's `D` prompt is one flat word grammar, so a mode named
+  `release` would make every such input ambiguous and leave a live claim
+  impossible to revoke — the collision is reported when the config is read,
+  not at the moment the destructive verb is needed.
+- Hosts embedding the TUI through `pkg/tui` get `ExportCommandsWith(modes)` to
+  describe delegation with their own store's vocabulary; plain `ExportCommands`
+  now renders the built-in set rather than an unfilled template.
 
 ## [1.10.0] - 2026-08-18
 

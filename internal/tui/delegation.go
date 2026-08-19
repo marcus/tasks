@@ -9,6 +9,7 @@ import (
 	"github.com/marcus/tasks/internal/store"
 	"github.com/marcus/tasks/internal/taskquery"
 	"github.com/marcus/tasks/internal/temporal"
+	"github.com/marcus/tasks/internal/tui/term/shortcuts"
 )
 
 // The delegation prompts (`D`), the work-reference prompt (`W`), and the
@@ -32,6 +33,15 @@ var delegateClearWords = []string{"off", "none", "clear"}
 func delegateWords(modes record.ModeVocabulary) []string {
 	return append(record.Modes(modes).Modes(),
 		append([]string{"release"}, delegateClearWords...)...)
+}
+
+// describe is the ONE way a registry entry becomes text a user reads. Entries
+// are a static catalogue built during init, so any of them may carry the
+// delegation-mode placeholder; rendering one without filling it puts a literal
+// "{modes}" on screen. Every path that shows an entry's own words — the help
+// overlay, the palette, and these flashes — goes through a filler like this.
+func (m *Model) describe(entry shortcuts.Entry) string {
+	return shortcuts.WithModes(entry, m.app.DelegationModes()).Description
 }
 
 // delegatePrefixMin is where prefix matching starts.

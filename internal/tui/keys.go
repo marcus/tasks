@@ -384,7 +384,7 @@ func (m *Model) dispatchAction(sequence string, context shortcuts.Context) bool 
 	}
 	// A registry entry with no handler and no recorded reason is a porting
 	// omission, not a user error — say so rather than swallowing the key.
-	m.Flash("“" + entry.Description + "” has no handler in this build")
+	m.Flash("“" + m.describe(entry) + "” has no handler in this build")
 	return true
 }
 
@@ -699,7 +699,7 @@ func (m *Model) resolvePaletteOutcome(palette *ActionPalette, outcome PaletteOut
 			m.Flash(reason)
 			return
 		}
-		m.restoreActionPalette(palette, "“"+entry.Description+"” has no handler in this build")
+		m.restoreActionPalette(palette, "“"+m.describe(entry)+"” has no handler in this build")
 	}
 }
 

@@ -393,20 +393,32 @@ func pickDelegationModes(conf parsedConfig, env determinism.Env) ([]string, stri
 		{env.Get("TASKS_DELEGATION_MODES"), "TASKS_DELEGATION_MODES env"},
 		{conf.strings["delegation_modes"], "config file"},
 	}
-	warnings := []string{}
+	// The problems are collected BEFORE the winner is announced, because a
+	// warning names the set actually in force afterwards. Rendering it inside
+	// the loop hardcoded the built-in set and then fell through to a valid
+	// config file, so the warning told the user the opposite of what the same
+	// run's `tasks config` reported.
+	type problem struct{ source, reason string }
+	problems := []problem{}
+	modes, source := record.BuiltinModes(), "default"
 	for _, candidate := range candidates {
 		if strings.TrimSpace(candidate.value) == "" {
 			continue
 		}
-		modes, problem := record.ParseModeList(candidate.value)
-		if problem == "" {
-			return modes.Modes(), candidate.source, warnings
+		parsed, reason := record.ParseModeList(candidate.value)
+		if reason == "" {
+			modes, source = parsed, candidate.source
+			break
 		}
+		problems = append(problems, problem{candidate.source, reason})
+	}
+	warnings := []string{}
+	for _, ignored := range problems {
 		warnings = append(warnings, fmt.Sprintf(
 			"tasks: ignoring delegation_modes from %s (%s); using %s",
-			candidate.source, problem, record.BuiltinModes().Quoted()))
+			ignored.source, ignored.reason, modes.Quoted()))
 	}
-	return record.BuiltinModes().Modes(), "default", warnings
+	return modes.Modes(), source, warnings
 }
 
 func pickUrgentDays(conf parsedConfig, env determinism.Env) (int, string) {

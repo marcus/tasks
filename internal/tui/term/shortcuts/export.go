@@ -3,6 +3,8 @@ package shortcuts
 import (
 	"fmt"
 	"strings"
+
+	"github.com/marcus/tasks/internal/record"
 )
 
 // ExportedBinding is one host-consumable default key binding.
@@ -96,8 +98,19 @@ func ExportBindings() []ExportedBinding {
 }
 
 // ExportCommands returns one command per command ID and host context, with all
-// of that entry's default bindings folded onto it.
-func ExportCommands() []ExportedCommand {
+// of that entry's default bindings folded onto it, for the BUILT-IN delegation
+// mode vocabulary.
+//
+// The built-in set is the floor rather than the raw placeholder because this is
+// a PUBLIC projection: an embedding host copies Description straight into its
+// own palette and footer, and a host that never heard of modes would otherwise
+// render "{modes}" at a user. An embedder that knows its store's vocabulary
+// passes it to ExportCommandsWith and gets the real one.
+func ExportCommands() []ExportedCommand { return ExportCommandsWith(nil) }
+
+// ExportCommandsWith is ExportCommands for one vocabulary. Nil means the
+// built-in set.
+func ExportCommandsWith(modes record.ModeVocabulary) []ExportedCommand {
 	var out []ExportedCommand
 	indexes := map[string]int{}
 	for _, projection := range hostContextProjections {
@@ -105,6 +118,7 @@ func ExportCommands() []ExportedCommand {
 			if entry.DocOnly {
 				continue
 			}
+			entry = WithModes(entry, modes)
 			identity := projection.name + "\x00" + entry.CommandID
 			index, present := indexes[identity]
 			if !present {

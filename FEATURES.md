@@ -217,7 +217,8 @@ the human-readable tour of that contract.
 
 - Hand a task to a person: `tasks delegate <ref> --to pat@example.com`
   (moves it to WAITING unless `--keep-state`).
-- Offer it to the agent pool at `refine`, `research`, or `implement`.
+- Offer it to the agent pool at `refine`, `research`, or `implement` —
+  or at whatever words you set `delegation_modes` to.
 - `tasks undelegate` clears the marker and any live claim.
 - `tasks workref` records the single place the work actually happened.
   Survives completion and archival.
@@ -338,6 +339,11 @@ the human-readable tour of that contract.
 - `urgent_days` / `TASKS_URGENT_DAYS` (default 3).
 - `max_depth` / `TASKS_MAX_DEPTH` (default 4).
 - `timezone`, `time_format` (12|24), `date_order`.
+- `delegation_modes` / `TASKS_DELEGATION_MODES` — the delegation
+  vocabulary (default `refine, research, implement`). Comma-separated
+  lowercase words; `off`, `none`, `clear`, and `release` are reserved
+  because the delegation prompt already spends them. A list that cannot
+  be honoured is ignored whole, with a warning, and never blocks a write.
 - `theme`, `mouse`, `color.<slot>`, `color.border`,
   `color.border_gradient`.
 - `host_context.<hostname> = @wherever`.
