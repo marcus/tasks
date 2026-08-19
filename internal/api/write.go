@@ -380,7 +380,20 @@ func (s *Server) deleteTask(request *http.Request, id, requestID string) (respon
 // approved" is the only useful thing to say, and the generic "one or more fields
 // are invalid" would hide it.
 func (s *Server) decideProposal(request *http.Request, id, action, requestID string) (response, error) {
-	if _, err := queryParams(request); err != nil {
+	// `complete=true` belongs to approve alone: it accepts the proposal AND
+	// completes the accepted task in the same write, which is the CLI's
+	// `approve --done` and the TUI's `c` on a proposal.
+	allowed := []string{}
+	if action == "approve" {
+		allowed = append(allowed, "complete")
+	}
+	params, err := queryParams(request, allowed...)
+	if err != nil {
+		return response{}, err
+	}
+	no := false
+	complete, err := booleanQuery(params, "complete", &no)
+	if err != nil {
 		return response{}, err
 	}
 	var notes []string
@@ -410,6 +423,8 @@ func (s *Server) decideProposal(request *http.Request, id, action, requestID str
 	outcome := application.Outcome{}
 	if action == "unreject" {
 		outcome = s.options.App.UnrejectTask(id, expected, operation)
+	} else if complete != nil && *complete {
+		outcome = s.options.App.ApproveAndCompleteTask(id, expected, operation)
 	} else {
 		outcome = s.options.App.DecideProposal(application.ProposalDecision{
 			ID: id, Action: application.ProposalAction(action),

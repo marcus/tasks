@@ -128,6 +128,11 @@ type ProposalDecider interface {
 	DecideProposal(id, action string, notes []string, expectedRevision, today string) store.MutationResult
 }
 
+// ProposalApproveCompleter accepts a proposal and completes it in one write.
+type ProposalApproveCompleter interface {
+	ApproveAndCompleteProposal(id, expectedRevision, today string) store.MutationResult
+}
+
 // ProposalUnrejecter returns a declined proposal to PROPOSED in place.
 type ProposalUnrejecter interface {
 	UnrejectProposal(id, expectedRevision, today string) store.MutationResult

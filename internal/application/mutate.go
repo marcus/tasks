@@ -124,6 +124,26 @@ func (a *Application) ApproveTask(id, expectedRevision string, operation *Operat
 	}, operation)
 }
 
+// ApproveAndCompleteTask accepts a proposal and completes the accepted task in a
+// SINGLE undoable step — the answer to "this was worth doing, and it is already
+// done", which approve-then-complete can only spell as two writes and rejecting
+// spells as a decline that never happened.
+//
+// It is one application command rather than two calls from a surface on purpose:
+// a partial failure must leave the proposal exactly as it was, and `undo` must
+// put it back as PROPOSED in one step.
+func (a *Application) ApproveAndCompleteTask(id, expectedRevision string, operation *OperationContext) Outcome {
+	if trimmed(id) == "" {
+		return invalid("task id is required")
+	}
+	writer, ok := a.store().(ProposalApproveCompleter)
+	if !ok {
+		return unsupported("approve and complete a proposal")
+	}
+	return Outcome{MutationResult: writer.ApproveAndCompleteProposal(
+		id, expectedRevision, a.today(operation))}
+}
+
 // RejectTask declines a proposal into CANCELLED. Notes append withdrawal
 // rationale to the body in the same write — the application-level mirror of the
 // repeatable CLI `reject --note`.

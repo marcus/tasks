@@ -153,7 +153,7 @@ func BuildTaskDetails(styler Styler, queries *taskquery.Queries, item store.Item
 		}
 	}
 	lines = append(lines, "", detailSection(styler, "ACTIONS", "", usable), "",
-		detailActions(styler, usable))
+		detailActions(styler, item, usable))
 	return DetailContent{Title: "task", Lines: lines}
 }
 
@@ -283,9 +283,17 @@ func taskMetaLine(styler Styler, queries *taskquery.Queries, item store.Item,
 // A narrow rail drops whole pairs from the end rather than truncating the row,
 // for the reason the footer hint gives: `… z defer   K` teaches nothing, and a
 // shorter list that ends on a word still does.
-func detailActions(styler Styler, width int) string {
+func detailActions(styler Styler, item store.Item, width int) string {
 	pairs := [][2]string{
 		{"c", "done"}, {"d", "date"}, {"r", "recur"}, {"z", "defer"}, {"K", "priority"},
+	}
+	// A proposal answers to the review keys, and `r` is reject there rather than
+	// recur. `c` approves AND completes, which is the only thing it can honestly
+	// mean on a row the store refuses to complete on its own.
+	if isProposedState(item.State) {
+		pairs = [][2]string{
+			{"a", "approve"}, {"c", "approve+done"}, {"r", "reject"}, {"d", "date"}, {"K", "priority"},
+		}
 	}
 	painted := make([]string, 0, len(pairs))
 	for _, pair := range pairs {

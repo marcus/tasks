@@ -62,11 +62,12 @@ func TestEveryEntryDeclaresContextHandlerAvailabilityAndMetadata(t *testing.T) {
 }
 
 func TestContextLookupKeepsTaskActionsInListAndDetailOnly(t *testing.T) {
-	if got := handlerFor(t, "c", List); got != "complete_selected" {
-		t.Fatalf("c in list = %s", got)
+	ordinary := func(name string) bool { return name == DefaultAvailability }
+	if e, _ := Match("c", List, ordinary); e.Handler != "complete_selected" {
+		t.Fatalf("c in list = %s", e.Handler)
 	}
-	if got := handlerFor(t, "c", Detail); got != "complete_selected" {
-		t.Fatalf("c in detail = %s", got)
+	if e, _ := Match("c", Detail, ordinary); e.Handler != "complete_selected" {
+		t.Fatalf("c in detail = %s", e.Handler)
 	}
 	if got := handlerFor(t, "#", List); got != "delete_selected" {
 		t.Fatalf("# in list = %s", got)
@@ -383,7 +384,7 @@ func TestOpenLinkShortcutAdvertisesSingleAndMultipleLinks(t *testing.T) {
 func TestPaletteEntriesAreContextualAndAvailable(t *testing.T) {
 	resolve := func(name string) bool {
 		switch name {
-		case "selected_action_available?", DefaultAvailability:
+		case "selected_action_available?", "completion_action_available?", DefaultAvailability:
 			return true
 		default:
 			return false
@@ -431,6 +432,17 @@ func TestMatchPrefersTheAvailableBindingWhenSequencesOverlap(t *testing.T) {
 	}
 	if e, _ := Match("a", List, proposal); e.Handler != "approve_proposal" {
 		t.Fatalf("a with a proposal = %s", e.Handler)
+	}
+	// `c` is the same shape: on a proposal it approves AND completes, because
+	// the store refuses to complete a PROPOSED task at all.
+	if e, _ := Match("c", List, proposal); e.Handler != "approve_and_complete_proposal" {
+		t.Fatalf("c with a proposal = %s", e.Handler)
+	}
+	if e, _ := Match("c", Detail, proposal); e.Handler != "approve_and_complete_proposal" {
+		t.Fatalf("c on a proposal detail = %s", e.Handler)
+	}
+	if e, _ := Match("c", List, recurrence); e.Handler != "complete_selected" {
+		t.Fatalf("c without a proposal = %s", e.Handler)
 	}
 }
 

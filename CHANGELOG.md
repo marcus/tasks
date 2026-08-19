@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+- Answer a proposal for work that is already done in one keystroke. On a
+  PROPOSED row `c` now approves the proposal AND completes the accepted task in
+  a single write and a single undo step, so `undo` restores `PROPOSED` exactly;
+  rejecting was previously the only one-key way to clear such a row, and it
+  recorded a decline — the wrong history, and the wrong signal to whoever
+  proposed the task. The store still never completes a PROPOSED task: the
+  approval lands first inside the same transaction. `tasks approve <ref>
+  --done` and `POST /api/v1/tasks/{id}/approve?complete=true` are the CLI and
+  HTTP spellings of the same shared command, both `--json`/ETag-honest. The
+  proposal row's key hints now describe what the keys actually do.
+
 ## [1.10.0] - 2026-08-18
 
 - Accept the relative dates people actually type. Anywhere a date is taken —

@@ -943,9 +943,20 @@ paths:
         Atomically transitions a live PROPOSED task to INBOX. The request has
         no body and requires the proposal's current ETag in `If-Match`.
         Proposed descendants must be decided first.
+
+        `complete=true` accepts the proposal AND completes the accepted task in
+        the same write, one journal entry, so `undo` restores PROPOSED exactly.
+        It is the answer for a proposal whose work is already done; rejecting
+        would record a decline instead. The completion cascades to accepted open
+        descendants. Equivalent to the CLI's `approve --done`.
       parameters:
         - $ref: "#/components/parameters/TaskId"
         - $ref: "#/components/parameters/IfMatch"
+        - name: complete
+          in: query
+          required: false
+          description: Also complete the accepted task, in the same write.
+          schema: { type: boolean, default: false }
       responses:
         "200":
           description: Approved task resource.

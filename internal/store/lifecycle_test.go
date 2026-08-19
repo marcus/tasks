@@ -498,6 +498,62 @@ func TestDecideRefusesATaskThatIsNotProposed(t *testing.T) {
 	}
 }
 
+func TestApproveAndCompleteClosesTheProposalInOneUndoableWrite(t *testing.T) {
+	store, _ := writerFixture(t, proposalFixture)
+	result := store.ApproveAndCompleteProposal("ccdd0003", "", sweepDay)
+	if result.Status != MutationOK {
+		t.Fatalf("approve+complete = %q %v", result.Status, result.Errors)
+	}
+	if result.Summary.From != "PROPOSED" || result.Summary.To != "DONE" ||
+		result.Summary.Action != ProposalApproveComplete {
+		t.Errorf("summary = %+v", result.Summary)
+	}
+	child, _ := recordFor(t, store.org, "Child proposal")
+	if child.String("state") != "DONE" || child.String("closed") != sweepDay {
+		t.Errorf("child = %q closed %q", child.String("state"), child.String("closed"))
+	}
+	// One undo step, and it restores PROPOSED exactly — not INBOX, which is what
+	// two composed writes would leave behind.
+	if _, label := store.HistoryStep(-1); label != "approve + complete proposal: Child proposal" {
+		t.Errorf("history label = %q", label)
+	}
+	restored, _ := recordFor(t, store.org, "Child proposal")
+	if restored.String("state") != "PROPOSED" || restored.String("closed") != "" {
+		t.Errorf("undo left %q closed %q, want PROPOSED", restored.String("state"), restored.String("closed"))
+	}
+}
+
+func TestApproveAndCompleteRefusesWithoutWritingWhenTheRevisionIsStale(t *testing.T) {
+	store, _ := writerFixture(t, proposalFixture)
+	before := readStore(t, store)
+	result := store.ApproveAndCompleteProposal("ccdd0003", "0-deadbeef", sweepDay)
+	if result.Status == MutationOK {
+		t.Fatalf("a stale revision was accepted: %+v", result)
+	}
+	if got := readStore(t, store); got != before {
+		t.Error("a refused approve+complete writes nothing")
+	}
+}
+
+func TestApproveAndCompleteStillDecidesLeavesFirst(t *testing.T) {
+	store, _ := writerFixture(t, proposalFixture)
+	before := readStore(t, store)
+	if result := store.ApproveAndCompleteProposal("ccdd0002", "", sweepDay); result.Status != MutationConflict {
+		t.Fatalf("approve+complete of a parent = %q", result.Status)
+	}
+	if got := readStore(t, store); got != before {
+		t.Error("a leaves-first refusal writes nothing")
+	}
+}
+
+func TestApproveAndCompleteRefusesATaskThatIsNotProposed(t *testing.T) {
+	store, _ := writerFixture(t, proposalFixture)
+	result := store.ApproveAndCompleteProposal("ccdd0004", "", sweepDay)
+	if result.Status != MutationInvalid || result.FirstError() != "task is TODO, not PROPOSED" {
+		t.Errorf("approve+complete = %q %v", result.Status, result.Errors)
+	}
+}
+
 func TestNotesAreOnlyAllowedWhenRejecting(t *testing.T) {
 	store, _ := writerFixture(t, proposalFixture)
 	result := store.DecideProposal("ccdd0003", ProposalApprove, []string{"why"}, "", sweepDay)

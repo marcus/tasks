@@ -65,6 +65,7 @@ tasks capture "text"             # new INBOX item (see flags below)
 tasks capture "text" --link <url> --label "thread" # link filed in the same write
 tasks propose "text" --note "why" --link <url> # inert PROPOSED item + its context
 tasks approve "<ref>"             # accept PROPOSED → INBOX
+tasks approve "<ref>" --done      # accept AND complete it (one undo step)
 tasks reject "<ref>" [--note "why"] # decline PROPOSED → CANCELLED (+ rationale)
 tasks unreject "<ref>"            # restore a declined proposal → PROPOSED, same id
 tasks delegate "<ref>" --to pat@example.com # hand to a person (→ WAITING)

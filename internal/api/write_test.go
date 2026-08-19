@@ -586,6 +586,32 @@ func TestApproveMovesAProposalIntoTheList(t *testing.T) {
 	}
 }
 
+// `?complete=true` is the HTTP spelling of the CLI's `approve --done` and the
+// TUI's `c` on a proposal: one write that accepts the proposal and completes the
+// accepted task, guarded by the same If-Match precondition.
+func TestApproveCompleteAcceptsAndClosesInOneWrite(t *testing.T) {
+	h := newHarness(t)
+	created := h.json("POST", "/api/v1/tasks", `{"title":"Already finished chore","state":"PROPOSED"}`, nil)
+	assertStatus(t, created, 201)
+	id, _ := created.data()["id"].(string)
+
+	assertError(t, h.json("POST", "/api/v1/tasks/"+id+"/approve?complete=true", "", nil),
+		428, "missing_precondition")
+
+	done := h.json("POST", "/api/v1/tasks/"+id+"/approve?complete=true", "",
+		h.withIfMatch(created.etag()))
+	assertStatus(t, done, 200)
+	if done.data()["state"] != "DONE" {
+		t.Errorf("state = %v, want DONE", done.data()["state"])
+	}
+	if record := h.recordFor("Already finished chore"); record["state"] != "DONE" {
+		t.Errorf("the store still holds %v", record["state"])
+	}
+	// The flag belongs to approve alone.
+	assertError(t, h.json("POST", "/api/v1/tasks/"+id+"/reject?complete=true", "",
+		h.withIfMatch(done.etag())), 422, "validation_failed")
+}
+
 func TestRejectCancelsAProposalAndAppendsItsNotes(t *testing.T) {
 	h := newHarness(t)
 	created := h.json("POST", "/api/v1/tasks",

@@ -159,7 +159,12 @@ var Registry = []Entry{
 	entry(Entry{Sequences: []string{"H"}, DisplayKey: "H", Description: "collapse all subtrees", Contexts: []Context{List}, Handler: "collapse_all", Palette: PaletteAlways}),
 	entry(Entry{Sequences: []string{"L"}, DisplayKey: "L", Description: "expand all subtrees", Contexts: []Context{List}, Handler: "expand_all", Palette: PaletteAlways}),
 	entry(Entry{Sequences: []string{"\r", "\n"}, DisplayKey: "return", Description: "open / close task details", FooterLabel: "Details", FooterPriority: 1, Contexts: []Context{List}, Handler: "open_detail", Palette: PaletteWhen("selected_action_available?")}),
-	entry(Entry{Sequences: []string{"c"}, DisplayKey: "c", Description: "complete selected task", FooterLabel: "Complete", FooterPriority: 1, Contexts: []Context{List, Detail}, Handler: "complete_selected", Palette: PaletteWhen("selected_action_available?")}),
+	// On a proposal `c` is approve+complete, and it is listed FIRST so dispatch
+	// reaches it before the plain completion: the store refuses to complete a
+	// PROPOSED task, so the generic binding could only ever advertise an action
+	// that does nothing on that row.
+	entry(Entry{Sequences: []string{"c"}, DisplayKey: "c", Description: "Approve + complete proposal", FooterLabel: "Approve+done", FooterPriority: 1, Contexts: []Context{List, Detail}, Handler: "approve_and_complete_proposal", Availability: "proposal_action_available?", Palette: PaletteWhen("proposal_action_available?")}),
+	entry(Entry{Sequences: []string{"c"}, DisplayKey: "c", Description: "complete selected task", FooterLabel: "Complete", FooterPriority: 1, Contexts: []Context{List, Detail}, Handler: "complete_selected", Palette: PaletteWhen("completion_action_available?")}),
 	entry(Entry{Sequences: []string{"#", "\x1b[3~"}, DisplayKey: "# / del", Description: "delete selected task (hard delete; undoable)", Contexts: []Context{List, Detail}, Handler: "delete_selected", Palette: PaletteWhen("selected_action_available?"), Confirmation: "delete_preview"}),
 	entry(Entry{Sequences: []string{"d"}, DisplayKey: "d", Description: "edit Deadline / Available from date or time", Contexts: []Context{List, Detail}, Handler: "open_date_popup", Palette: PaletteWhen("selected_action_available?"), Form: "date"}),
 	entry(Entry{Sequences: []string{"r"}, DisplayKey: "r", Description: "Reject proposal", Contexts: []Context{List, Detail}, Handler: "reject_proposal", Availability: "proposal_action_available?", Palette: PaletteWhen("proposal_action_available?")}),

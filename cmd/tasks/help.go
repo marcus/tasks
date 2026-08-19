@@ -63,7 +63,8 @@ const helpText = "tasks — a plain-text GTD CLI over tasks.jsonl. Every command
 	"                           except --state/--recur; repeat --note for rationale" + "\n" +
 	"" + "\n" +
 	"Update (take <ref>; support --dry-run/--json/--include-done):" + "\n" +
-	"  approve      <ref>        accept PROPOSED into INBOX" + "\n" +
+	"  approve      <ref>        accept PROPOSED into INBOX; --done also completes" + "\n" +
+	"                           it in the same write/undo step (work already done)" + "\n" +
 	"  reject       <ref> [--note] decline PROPOSED into CANCELLED; repeat --note" + "\n" +
 	"                           for withdrawal rationale (visible in `show`)" + "\n" +
 	"  unreject     <ref>       restore a rejected proposal to PROPOSED in place," + "\n" +

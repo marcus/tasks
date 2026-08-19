@@ -109,11 +109,15 @@ func (s *surfaceContext) decideProposal(args []string, action string) int {
 			return abort("missing value for --note")
 		}
 	}
-	flags, positional, err := takeFlags(rest, "--json")
+	allowed := []string{"--json"}
+	if action == store.ProposalApprove {
+		allowed = append(allowed, "--done")
+	}
+	flags, positional, err := takeFlags(rest, allowed...)
 	if err != nil {
 		return abort(err.Error())
 	}
-	usage := "usage: tasks " + action + " <ref> [--json]"
+	usage := "usage: tasks approve <ref> [--done] [--json]"
 	if action == store.ProposalReject {
 		usage = `usage: tasks reject <ref> [--note "reason"] [--json]`
 	}
@@ -134,7 +138,15 @@ func (s *surfaceContext) decideProposal(args []string, action string) int {
 		return status
 	}
 
-	result := s.writeStore().DecideProposal(item.ID, action, notes, "", today)
+	// `--done` is one write, not approve-then-complete: the accepted task is
+	// completed inside the same transaction, so a failure leaves the proposal
+	// untouched and `undo` restores PROPOSED in one step.
+	result := store.MutationResult{}
+	if flags["--done"] {
+		result = s.writeStore().ApproveAndCompleteProposal(item.ID, "", today)
+	} else {
+		result = s.writeStore().DecideProposal(item.ID, action, notes, "", today)
+	}
 	if result.Status == store.MutationConflict && len(result.Summary.ProposedDescendantIDs) > 0 {
 		return mutationFailed(result, "decide proposed descendants first")
 	}
@@ -150,8 +162,11 @@ func (s *surfaceContext) decideProposal(args []string, action string) int {
 		return s.reportTouched(result, result.TouchedIDs, true)
 	}
 	target, verb := "INBOX", "approved"
-	if action == store.ProposalReject {
+	switch {
+	case action == store.ProposalReject:
 		target, verb = "CANCELLED", "rejected"
+	case flags["--done"]:
+		target, verb = "DONE", "approved + completed"
 	}
 	out(verb + " → " + target + ": " + item.Title)
 	return 0

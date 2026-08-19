@@ -221,3 +221,59 @@ func TestUnrejectOfAnArchivedDeclineSaysItIsArchived(t *testing.T) {
 		t.Errorf("missing ref said %q", missing.stderr)
 	}
 }
+
+// `approve --done` is the CLI half of the TUI's `c` on a proposal: one write,
+// one undo step, and PROPOSED restored exactly.
+func TestApproveDoneCompletesInOneUndoableStep(t *testing.T) {
+	dir := seedStore(t, mutationFixture)
+
+	result := runPinned(t, dir, "approve", "A proposal", "--done")
+	if result.status != 0 {
+		t.Fatalf("approve --done: exit %d, stderr %q", result.status, result.stderr)
+	}
+	if !strings.Contains(result.stdout, "approved + completed \u2192 DONE") {
+		t.Errorf("stdout = %q", result.stdout)
+	}
+	row := recordFor(t, dir, "dddd0006")
+	if row["state"] != "DONE" || row["closed"] != declineDay {
+		t.Fatalf("row = %v, want a closed DONE task", row)
+	}
+
+	if undone := runPinned(t, dir, "undo"); undone.status != 0 {
+		t.Fatalf("undo: exit %d, stderr %q", undone.status, undone.stderr)
+	}
+	restored := recordFor(t, dir, "dddd0006")
+	if restored["state"] != "PROPOSED" || restored["closed"] != nil {
+		t.Errorf("after undo = %v, want PROPOSED", restored)
+	}
+}
+
+func TestApproveDoneReportsJSON(t *testing.T) {
+	dir := seedStore(t, mutationFixture)
+	result := runPinned(t, dir, "approve", "A proposal", "--done", "--json")
+	if result.status != 0 {
+		t.Fatalf("exit %d, stderr %q", result.status, result.stderr)
+	}
+	payload := map[string]any{}
+	if err := json.Unmarshal([]byte(result.stdout), &payload); err != nil {
+		t.Fatalf("stdout is not JSON: %q", result.stdout)
+	}
+	touched, ok := payload["touched"].([]any)
+	if !ok || len(touched) != 1 {
+		t.Fatalf("touched = %v", payload["touched"])
+	}
+	task, _ := touched[0].(map[string]any)
+	if task["state"] != "DONE" {
+		t.Errorf("touched task = %v", task)
+	}
+}
+
+// `--done` belongs to approve alone: reject already closes the row, and a
+// declined proposal is not completed work.
+func TestRejectHasNoDoneFlag(t *testing.T) {
+	dir := seedStore(t, mutationFixture)
+	result := runPinned(t, dir, "reject", "A proposal", "--done")
+	if result.status == 0 || !strings.Contains(result.stderr, "unknown flag: --done") {
+		t.Errorf("exit %d, stderr %q", result.status, result.stderr)
+	}
+}
