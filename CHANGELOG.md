@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.11.0] - 2026-08-18
 
 - **`D` is a three-part modal instead of a one-line prompt.** Delegating now
   asks the three questions a delegation actually has — who (a person or the
