@@ -11,6 +11,7 @@ import (
 	"github.com/marcus/tasks/internal/application"
 	"github.com/marcus/tasks/internal/config"
 	"github.com/marcus/tasks/internal/determinism"
+	"github.com/marcus/tasks/internal/record"
 	"github.com/marcus/tasks/internal/store"
 	"github.com/marcus/tasks/internal/temporal"
 )
@@ -76,6 +77,9 @@ type harnessOptions struct {
 	// nothing here may ever reach a real provider.
 	entries []AgentEntry
 	queue   *agentQueue
+	// modes is the delegation mode vocabulary the store enforces. Nil means the
+	// built-in set, which is what an unconfigured user has.
+	modes record.ModeVocabulary
 }
 
 // blockedArchiveFixture has a closed root with open work still inside it, which
@@ -128,6 +132,7 @@ func newModelHarness(t *testing.T, options harnessOptions) *modelHarness {
 				// contract depends on the scope matching across the fresh store
 				// each application operation builds.
 				CoalesceScope: "pinned-scope",
+				Modes:         options.modes,
 			})
 		},
 		TemporalContext: context,
@@ -143,6 +148,9 @@ func newModelHarness(t *testing.T, options harnessOptions) *modelHarness {
 		MaxDepth:   config.DefaultMaxDepth,
 		Timezone:   "Etc/UTC",
 		TimeFormat: 24,
+	}
+	if options.modes != nil {
+		paths.DelegationModes = options.modes.Modes()
 	}
 	if options.paths != nil {
 		options.paths(&paths)

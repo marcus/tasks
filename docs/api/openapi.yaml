@@ -2817,8 +2817,11 @@ components:
         delegation_modes:
           type: array
           description: |
-            Agent authority levels, narrowest first. Only the owner sets or
-            widens a mode; a worker never promotes its own.
+            The server's configured delegation mode vocabulary, in the order it
+            should be read — the default is `refine`/`research`/`implement`, and
+            `delegation_modes` in the server's config replaces it. This is the
+            authoritative list for a client; do not hard-code one. Only the
+            owner sets or widens a mode; a worker never promotes its own.
           items: { $ref: "#/components/schemas/DelegationMode" }
         delegation_statuses:
           type: array
@@ -3256,13 +3259,22 @@ components:
 
     DelegationMode:
       type: string
-      enum: [refine, research, implement]
+      pattern: "^[a-z][a-z0-9_]*$"
+      example: research
       description: |
-        Agent authority. `refine` may improve the task itself; `research` adds
-        read-only investigation and a written brief; `implement` adds changing
-        files within the task's named scope and completing it when its criteria
-        are met. Modes never authorize scope expansion, deployment, messaging,
-        purchases, or destructive external actions.
+        Agent authority. The set is CONFIGURABLE (`delegation_modes` in the
+        server's config); there is no fixed enum, and a client must read the
+        live vocabulary from `Meta.delegation_modes` rather than hard-code one.
+        The default set is `refine`/`research`/`implement`: `refine` may improve
+        the task itself; `research` adds read-only investigation and a written
+        brief; `implement` adds changing files within the task's named scope and
+        completing it when its criteria are met. Modes never authorize scope
+        expansion, deployment, messaging, purchases, or destructive external
+        actions.
+
+        Writing a mode outside the server's vocabulary is refused, and the
+        refusal quotes the configured set. A mode already stored on a record
+        that the vocabulary no longer lists is still returned as it is.
 
     DelegationStatus:
       type: string

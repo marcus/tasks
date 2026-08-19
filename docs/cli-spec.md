@@ -44,6 +44,28 @@ quadrants urgency window (see `quadrants`), overridable by the `TASKS_URGENT_DAY
 env var, default 3. `max_depth = N` caps how deeply tasks may nest (integer ≥ 1),
 overridable by the `TASKS_MAX_DEPTH` env var, default 4.
 
+`delegation_modes = a, b, c` sets the delegation mode vocabulary — the words
+`delegate <ref> <mode>` accepts and every refusal quotes back. It is a
+comma-separated list of bare lowercase words (letters, digits and underscores,
+starting with a letter); a mode carries no label or description, because the
+label is the word. `off`, `none`, `clear`, and `release` are **reserved**: the
+TUI's `D` prompt is one flat word grammar (the modes, plus `release`, plus the
+clear words), so a mode named `release` would make every such input ambiguous
+and leave the user unable to revoke a claim at all. The collision is reported
+when the config is read, not at the moment the verb is needed. The default is `refine, research, implement`, and
+`TASKS_DELEGATION_MODES` overrides the file. A list this binary cannot honour —
+a word of the wrong shape, a duplicate, or an empty list — is ignored **whole**
+with a warning on stderr and the built-in set is used; keeping the readable half
+would silently run you against a vocabulary you never wrote. Nothing about a bad
+list makes the store unreadable or unwritable: the vocabulary decides only which
+modes may be **written**.
+
+A record already on disk whose `mode` this configuration does not list still
+loads, shows, and checks. `check` reports it as a WARNING, never an error, so
+changing the setting — or syncing a file from a machine configured differently —
+can never invalidate a file your tasks live in. Writing that mode is still
+refused; reading it never is.
+
 `timezone = Area/Location` sets the evaluation/display zone for floating times
 and all-day boundaries. Resolution is `TASKS_TIMEZONE`, config, a valid IANA
 `TZ`, the host `/etc/localtime` zoneinfo link, then `Etc/UTC` with a fallback
@@ -145,8 +167,10 @@ detail-panel slots like `panel_title`, `detail_label`, `description`, `note`,
 
 `tasks config` prints the resolved paths, `urgent_days`, `max_depth`, `theme`,
 `mouse`, the effective IANA `timezone`, `time_format` (12 or 24), `date_order`
-(`mdy` or `dmy` — see Dates and times), and tzdb version (+ any `color.*`,
-link, and `prompt.*` overrides), and where each came from.
+(`mdy` or `dmy` — see Dates and times), `delegation_modes` (the resolved
+vocabulary, in order), and tzdb version (+ any `color.*`, link, and `prompt.*`
+overrides), and where each came from. `--json` emits `delegation_modes` as an
+array and its source alongside the others.
 `--json` includes `prompt_facts` (the effective name→boolean map).
 
 **Multi-device Git merge plumbing.** Every Store write stamps only task records
@@ -572,7 +596,8 @@ status `ready` until a worker claims it and `claimed` after).
 
 A delegation has three orthogonal parts: **who** (the person or the pool),
 **mode** (what kind of delegation this is — `refine`, `research`, or
-`implement`), and **note** (the briefing the receiver reads). The mode is
+`implement` by default, and whatever `delegation_modes` says on a configured
+store), and **note** (the briefing the receiver reads). The mode is
 required for an agent, which needs to know its authority before it picks the
 task up, and **optional for a person**: a human delegation carrying
 `mode: refine` means "Pat, this is a refine — tighten the task, don't build
@@ -580,7 +605,9 @@ it", exactly as it does for an agent. It changes no lifecycle rule and grants
 no permission the person did not have; it is a statement of what was asked
 for, and it is what makes a human and an agent delegation the same shape. The
 mode vocabulary is one set for both kinds, read from a single seam carried on
-the store, so configuring it later changes both at once. The `note` is free
+the store, so configuring it changes both at once — and every surface that
+quotes it, including `tasks help`, the `delegate` usage line, the TUI `?`
+overlay, and the API's vocabulary document. The `note` is free
 text for the receiver — how to work on it, where the work should land, what to
 avoid — at most 2000 characters, paragraphs allowed, control characters
 refused. It is primarily read by agents.
@@ -628,8 +655,11 @@ real briefing, and short enough to keep one JSONL line readable; longer content
 is task content and belongs in the body. The note may contain paragraphs
 (newlines are escaped in JSONL) but no other control characters, for the same
 terminal-safety reason as the identifiers above. A `mode` on either kind of
-delegation must be a member of the mode vocabulary; a refusal quotes the set
-back. Nested keys inside `delegation` that this binary does not know are **preserved** across a rewrite (a claim from an older binary
+delegation must be a member of the mode vocabulary at the moment it is
+**written**; a refusal quotes the set back. Membership on disk is a softer
+rule: a stored mode of the wrong SHAPE is an error, but a well-shaped mode the
+current vocabulary does not list is a `check` warning and nothing more, because
+which words are listed is a setting and settings change. Nested keys inside `delegation` that this binary does not know are **preserved** across a rewrite (a claim from an older binary
 cannot silently drop a newer one's field) and reported by `check` as a WARNING,
 not an error — the same forward-compatible posture the top-level schema has.
 
@@ -1388,7 +1418,7 @@ no fuzzy refs (a transport difference per design rule 7). See
 | `undo [--json]` | | ✅ | Revert the last mutation via the on-disk journal (`internal/journal`, under `$XDG_STATE_HOME/tasks/journal/`), shared with the TUI and across CLI runs. Refuses (exit 1) if `tasks.jsonl` changed out-of-band since that edit — resolve with `git diff` / `git checkout -- tasks.jsonl`. `--json` emits `{action: "undo", label}` naming the mutation it reverted, or an `empty`/`conflict` error object. |
 | `redo [--json]` | | ✅ | Replay the last undone mutation; same shared journal and conflict guard as `undo`, including the `{action: "redo", label}` result and its `empty`/`conflict` error objects. |
 | `-p [--provider N] [--model N] "prompt"` | | ✅ | Natural-language request via a headless LLM agent (Claude CLI by default, or any configured harness). Leading `--provider`/`--model` override the config default for one run; see [LLM agent settings](#llm-agent-settings). Deliberately has no `--json` — see the opt-out in Structured output (`--json`) coverage. |
-| `config [--json]` | | ✅ | Print resolved file paths, `urgent_days`, `max_depth`, theme/colors, effective `timezone`, `time_format`, tzdb version, fallback warning, prompt facts, and each setting's source. |
+| `config [--json]` | | ✅ | Print resolved file paths, `urgent_days`, `max_depth`, theme/colors, effective `timezone`, `time_format`, `delegation_modes`, tzdb version, fallback warning, prompt facts, and each setting's source. |
 | `install-merge-driver [DATA_REPO] [--json]` | | ✅ | Verify both JSONL paths select `merge=tasksjsonl`, then idempotently configure Git with the absolute installed executable. Defaults to the configured task-data repository, else the current Git repository. |
 | `version [--json]` | `--version` | ✅ | Print the executable version and optional commit metadata without resolving task data. |
 | `help [--json]` | `-h`, `--help` | ✅ | Grouped command reference. Also printed (to stderr, exit 1) on an unknown/absent command. `--json` emits the dispatch registry instead — `{commands: [{name, aliases, json, json_reason}]}` — which is the machine-readable form of Structured output (`--json`) coverage above. |

@@ -51,7 +51,7 @@ func run(argv []string) int {
 	}
 	if !isCommand {
 		fmt.Fprintf(os.Stderr, "unknown command: %q\n\n", name)
-		os.Stderr.WriteString(helpText)
+		os.Stderr.WriteString(helpText(helpModes()))
 		return 1
 	}
 	if handler == nil {
@@ -71,7 +71,7 @@ func run(argv []string) int {
 	for _, warning := range paths.Warnings {
 		fmt.Fprintln(os.Stderr, warning)
 	}
-	surface := &surfaceContext{paths: paths, store: store.New(paths.Org, paths.Archive)}
+	surface := &surfaceContext{paths: paths, store: store.NewReader(paths.Org, paths.Archive, paths.Modes())}
 
 	return handler(surface, rest)
 }
@@ -93,6 +93,7 @@ func (s *surfaceContext) writeStore() *store.Store {
 		Device:        updatestamp.Device(env),
 		CoalesceScope: coalesceScope(),
 		MaxDepth:      s.paths.MaxDepth,
+		Modes:         s.paths.Modes(),
 	}
 	if clock := determinism.Clock(env); clock != nil {
 		options.Now = clock

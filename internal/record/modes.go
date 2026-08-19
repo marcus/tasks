@@ -1,6 +1,10 @@
 package record
 
-import "strings"
+import (
+	"fmt"
+	"regexp"
+	"strings"
+)
 
 // The delegation mode vocabulary lives behind ONE seam, and it is carried as a
 // VALUE, never as a location.
@@ -50,6 +54,91 @@ func (s ModeSet) Quoted() string { return strings.Join(s, "/") }
 // BuiltinModes is the vocabulary this build ships with, and the value every
 // seam falls back to when a caller supplies none.
 func BuiltinModes() ModeSet { return ModeSet{"refine", "research", "implement"} }
+
+// modeShape is what a mode may be SPELLED like, wherever one is written down:
+// a lowercase word, digits and underscores allowed after the first letter.
+//
+// Shape and membership are deliberately separate questions. A mode of the
+// wrong shape is a schema fact and is always an error; a well-shaped mode the
+// active vocabulary does not list is a CONFIGURATION fact, and configuration
+// changes — so on disk that is a warning, never a reason to invalidate a file
+// somebody's tasks live in.
+var modeShape = regexp.MustCompile(`\A[a-z][a-z0-9_]*\z`)
+
+// ValidModeName reports whether a string is spelled like a mode. It says
+// nothing about membership; that is the vocabulary's question.
+func ValidModeName(mode string) bool { return modeShape.MatchString(mode) }
+
+// ReservedModeNames are the words a mode may not be, because a surface already
+// spends them on an action.
+//
+// The TUI's `D` prompt is one flat word grammar: the modes, plus `release`, plus
+// the clear words `off`/`none`/`clear`. A mode named `release` would appear in
+// that grammar twice, and the matcher — correctly — would call the input
+// ambiguous and refuse it, so the user could no longer revoke a claim or clear
+// a delegation at all. The destructive verb would become unreachable while the
+// UI told them to type more of a word they had already typed in full.
+//
+// This is refused at CONFIGURATION time rather than resolved with a precedence
+// rule, because the collision is real: someone who wants a mode called
+// `release` has picked a name that already means something, and the honest
+// moment to say so is when they write the config, not at the moment they need
+// to revoke a claim. Refusing also keeps the CLI and the TUI agreeing on one
+// vocabulary; a TUI-side dedupe would leave the CLI happily writing
+// mode:"release" that the TUI could never offer.
+var ReservedModeNames = []string{"off", "none", "clear", "release"}
+
+func reservedModeName(mode string) bool {
+	for _, reserved := range ReservedModeNames {
+		if mode == reserved {
+			return true
+		}
+	}
+	return false
+}
+
+// ParseModeList reads the configured mode list — a comma-separated list of
+// bare words, and nothing more. A mode carries NO label or description on
+// purpose: the label a user would write is the word itself, every surface
+// already renders the word, and a `mode:Label` syntax would need escaping
+// rules, a display column, and a second answer to "what does a refusal quote
+// back". The syntax stays boring so the vocabulary stays one list.
+//
+// The second result explains the refusal; when it is non-empty the caller must
+// fall back to the built-in set rather than run on a half-understood list.
+func ParseModeList(value string) (ModeSet, string) {
+	modes := ModeSet{}
+	seen := map[string]bool{}
+	for _, field := range strings.Split(value, ",") {
+		mode := strings.TrimSpace(field)
+		if mode == "" {
+			continue
+		}
+		if !ValidModeName(mode) {
+			return nil, fmt.Sprintf("%q is not a mode name (lowercase letters, digits and underscores, starting with a letter)", mode)
+		}
+		if reservedModeName(mode) {
+			return nil, fmt.Sprintf("%q is reserved (%s already mean clear-or-release in the delegation prompt)",
+				mode, strings.Join(ReservedModeNames, "/"))
+		}
+		if seen[mode] {
+			return nil, fmt.Sprintf("%q is listed twice", mode)
+		}
+		seen[mode] = true
+		modes = append(modes, mode)
+	}
+	if len(modes) == 0 {
+		return nil, "the list is empty"
+	}
+	return modes, ""
+}
+
+// anyWellShapedMode accepts every well-shaped mode while still QUOTING the
+// vocabulary it wraps. It is how the on-disk validator separates the two
+// questions without a second copy of the marker walk.
+type anyWellShapedMode struct{ ModeVocabulary }
+
+func (anyWellShapedMode) Valid(mode string) bool { return ValidModeName(mode) }
 
 // Modes resolves an optional vocabulary to the one to use.
 func Modes(vocabulary ModeVocabulary) ModeVocabulary {

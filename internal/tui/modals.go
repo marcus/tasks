@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 
+	"github.com/marcus/tasks/internal/record"
 	"github.com/marcus/tasks/internal/tui/term/shortcuts"
 )
 
@@ -28,7 +29,13 @@ var helpGroups = []struct {
 }
 
 // HelpContent is the `?` overlay, generated ENTIRELY from the shortcut
-// registry.
+// registry, for the delegation mode vocabulary this store enforces.
+//
+// The vocabulary is a parameter because the registry cannot hold one: it is
+// built during init, before any store exists. The overlay is where a user goes
+// to LEARN the keys, so quoting the built-in modes here while the `D` prompt
+// and the delegate refusal quoted the configured ones would make the two places
+// a user looks disagree about the same word.
 //
 // Generating it is the whole point: a hand-written help list is a second source
 // of truth that goes stale the first time a binding moves, and a task list whose
@@ -37,7 +44,7 @@ var helpGroups = []struct {
 // The filter groups are the section titles, so filtering the modal keeps a
 // matched binding's heading visible — a bare "x archive" with no section above
 // it does not tell you where the key works.
-func HelpContent(styler Styler) ModalContent {
+func HelpContent(styler Styler, modes record.ModeVocabulary) ModalContent {
 	keyWidth := 0
 	for _, entry := range shortcuts.Registry {
 		if entry.HideInHelp {
@@ -68,7 +75,7 @@ func HelpContent(styler Styler) ModalContent {
 			add(group.Title, "", true)
 		}
 		add(group.Title, styler.Paint("section", group.Title), true)
-		for _, entry := range entries {
+		for _, entry := range shortcuts.WithModesAll(entries, modes) {
 			if entry.HideInHelp {
 				continue
 			}

@@ -224,9 +224,10 @@ func TestEveryDelegationInvariantViolationIsAnError(t *testing.T) {
 		{"delegation must be an object", `"claimed"`},
 		{`kind "team" must be human or agent`, `{"kind":"team","status":"ready",` + at + `}`},
 		{"kind nil must be human or agent", `{"status":"ready",` + at + `}`},
-		// A mode is allowed on a human delegation, but it is still a member of
-		// the vocabulary; an invented one is refused for either kind.
-		{"mode \"vibes\" must be one of refine/research/implement", `{"kind":"human","mode":"vibes","status":"delegated","assignee":"pat@example.com",` + at + `}`},
+		// A mode of the wrong SHAPE is an error for either kind; membership is a
+		// separate question, and on disk it is a warning (see
+		// TestAnUnconfiguredModeOnDiskIsAWarningNotAnError).
+		{"mode \"Vibes!\" must be one of refine/research/implement", `{"kind":"human","mode":"Vibes!","status":"delegated","assignee":"pat@example.com",` + at + `}`},
 		{"note must be a non-empty string", `{"kind":"agent","mode":"refine","status":"ready",` + at + `,"note":"   "}`},
 		{"note must not contain control characters", `{"kind":"agent","mode":"refine","status":"ready",` + at + `,"note":"do it\u001b[2K"}`},
 		{"note must be at most 2000 characters", `{"kind":"agent","mode":"refine","status":"ready",` + at + `,"note":"` + strings.Repeat("x", 2001) + `"}`},
@@ -234,7 +235,7 @@ func TestEveryDelegationInvariantViolationIsAnError(t *testing.T) {
 		{`assignee "pat" must be an email address`, `{"kind":"human","status":"delegated","assignee":"pat",` + at + `}`},
 		{`assignee "a b@c.d" must be an email address`, `{"kind":"human","status":"delegated","assignee":"a b@c.d",` + at + `}`},
 		{"assignee nil must be an email address", `{"kind":"human","status":"delegated",` + at + `}`},
-		{`mode "deploy" must be one of refine/research/implement`, `{"kind":"agent","mode":"deploy","status":"ready",` + at + `}`},
+		{`mode 7 must be one of refine/research/implement`, `{"kind":"agent","mode":7,"status":"ready",` + at + `}`},
 		{"mode nil must be one of", `{"kind":"agent","status":"ready",` + at + `}`},
 		{"assignee is not allowed while ready", `{"kind":"agent","mode":"refine","status":"ready","assignee":"w1",` + at + `}`},
 		{"assignee nil must be a worker id", `{"kind":"agent","mode":"refine","status":"claimed",` + at + `}`},

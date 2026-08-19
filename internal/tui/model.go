@@ -561,13 +561,12 @@ func (m *Model) reportFormatErrors() {
 	case info.Size() == 0:
 		return
 	}
-	// This is the read-only check VIEW, so it validates against the BUILT-IN
-	// mode vocabulary rather than a store's configured one. Harmless today (the
-	// two sets are the same) and display-only when they differ: it can report a
-	// configured mode as invalid without refusing anything. Wiring it to the
-	// store's vocabulary belongs with the configuration work that creates the
-	// difference.
-	result := check.Check(path)
+	// The read-only check VIEW validates against the vocabulary the APPLICATION's
+	// store enforces, not the built-in one. It refuses nothing, but it is what
+	// the format-error flash quotes, and a display that called a user's own
+	// configured mode invalid would send them looking for a fault that is not
+	// there.
+	result := check.CheckWith(path, check.Options{Modes: m.app.DelegationModes()})
 	if result.OK() {
 		return
 	}

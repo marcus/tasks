@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/marcus/tasks/internal/determinism"
+	"github.com/marcus/tasks/internal/record"
 	"github.com/marcus/tasks/internal/timezones"
 )
 
@@ -59,15 +60,20 @@ type Paths struct {
 	TimeFormat              int
 	TimezoneFallbackWarning bool
 	DateOrder               string
-	Links                   map[string]string
-	LinkSystems             map[string]string
-	Hostname                string
-	HostContext             string
-	HostContextSource       string
-	HostContexts            map[string]string
-	PromptFacts             map[string]bool
-	Sources                 map[string]string
-	ConfigFile              string
+	// DelegationModes is the resolved delegation mode vocabulary, in the order
+	// a human should read it. It is a plain []string rather than a
+	// record.ModeVocabulary because config resolves SETTINGS; Modes turns it
+	// into the value the store and the checker carry.
+	DelegationModes   []string
+	Links             map[string]string
+	LinkSystems       map[string]string
+	Hostname          string
+	HostContext       string
+	HostContextSource string
+	HostContexts      map[string]string
+	PromptFacts       map[string]bool
+	Sources           map[string]string
+	ConfigFile        string
 	// Warnings are the resolution notes a surface should show the user, in the
 	// order resolution produced them — today, one per time zone that was
 	// configured and could not be loaded. Ruby writes these straight to stderr
@@ -114,6 +120,8 @@ func Resolve(defaultDir string, env determinism.Env, hostname func() string) Pat
 	timezone, timezoneSource, timezoneWarning, warnings := pickTimezone(conf, env)
 	timeFormat, timeFormatSource := pickTimeFormat(conf, env)
 	dateOrder, dateOrderSource := pickDateOrder(conf, env)
+	delegationModes, delegationModesSource, modeWarnings := pickDelegationModes(conf, env)
+	warnings = append(warnings, modeWarnings...)
 	detectedHostname, hostContext, hostContextSource := pickHostContext(conf.hostContexts, hostname)
 
 	return Paths{
@@ -122,8 +130,8 @@ func Resolve(defaultDir string, env determinism.Env, hostname func() string) Pat
 		UrgentDays: urgentDays, MaxDepth: maxDepth,
 		Theme: theme, Colors: conf.colors, Mouse: mouse,
 		Timezone: timezone, TimeFormat: timeFormat, TimezoneFallbackWarning: timezoneWarning,
-		DateOrder: dateOrder,
-		Links:     conf.links, LinkSystems: conf.linkSystems,
+		DateOrder: dateOrder, DelegationModes: delegationModes,
+		Links: conf.links, LinkSystems: conf.linkSystems,
 		Hostname: detectedHostname, HostContext: hostContext,
 		HostContextSource: hostContextSource, HostContexts: conf.hostContexts,
 		PromptFacts: ResolvePromptFacts(conf.promptFacts),
@@ -132,10 +140,20 @@ func Resolve(defaultDir string, env determinism.Env, hostname func() string) Pat
 			"org": orgSource, "archive": archiveSource, "memory": memorySource,
 			"urgent_days": urgentSource, "max_depth": maxDepthSource, "theme": themeSource,
 			"mouse": mouseSource, "timezone": timezoneSource, "time_format": timeFormatSource,
-			"date_order": dateOrderSource,
+			"date_order": dateOrderSource, "delegation_modes": delegationModesSource,
 		},
 		ConfigFile: file,
 	}
+}
+
+// Modes is the resolved vocabulary as the value the store and the checker
+// carry. It is the ONE conversion from settings to vocabulary, so a surface
+// wires the configured modes in with a single field.
+func (p Paths) Modes() record.ModeVocabulary {
+	if len(p.DelegationModes) == 0 {
+		return record.BuiltinModes()
+	}
+	return record.ModeSet(p.DelegationModes)
 }
 
 // PromptFactDefaults is the registry lib/tasks/prompt_facts.rb owns: the facts
@@ -175,7 +193,8 @@ func ForDir(dir string, env determinism.Env) Paths {
 		Theme: DefaultTheme, Colors: map[string]string{}, Mouse: true,
 		Timezone: timezones.Fallback, TimeFormat: DefaultTimeFormat,
 		TimezoneFallbackWarning: false, DateOrder: DefaultDateOrder,
-		Links: map[string]string{}, LinkSystems: map[string]string{},
+		DelegationModes: record.BuiltinModes().Modes(),
+		Links:           map[string]string{}, LinkSystems: map[string]string{},
 		HostContexts: map[string]string{},
 		PromptFacts:  ResolvePromptFacts(nil),
 		Warnings:     []string{},
@@ -183,7 +202,7 @@ func ForDir(dir string, env determinism.Env) Paths {
 			"org": "pinned", "archive": "pinned", "memory": "pinned",
 			"urgent_days": "default", "max_depth": "default", "theme": "default",
 			"mouse": "default", "timezone": "pinned", "time_format": "default",
-			"date_order": "default",
+			"date_order": "default", "delegation_modes": "default",
 		},
 		ConfigFile: ConfigFile(env),
 	}
@@ -358,6 +377,50 @@ func pickDateOrder(conf parsedConfig, env determinism.Env) (string, string) {
 	return DefaultDateOrder, "default"
 }
 
+// pickDelegationModes resolves the delegation mode vocabulary. The list is
+// validated HERE rather than at parse time so a malformed list can report what
+// was wrong with it and fall through to the next source, exactly as a typo'd
+// time zone does.
+//
+// Degradation is total, not partial: one bad entry drops the whole list back to
+// the built-in vocabulary. Silently keeping the good half would leave the user
+// running against a set they never wrote, and a mode that quietly vanished is
+// how a delegation gets refused with no explanation. A warning says which list
+// was ignored and why; nothing crashes, and the store stays writable, because
+// the vocabulary only ever decides which modes may be WRITTEN.
+func pickDelegationModes(conf parsedConfig, env determinism.Env) ([]string, string, []string) {
+	candidates := []struct{ value, source string }{
+		{env.Get("TASKS_DELEGATION_MODES"), "TASKS_DELEGATION_MODES env"},
+		{conf.strings["delegation_modes"], "config file"},
+	}
+	// The problems are collected BEFORE the winner is announced, because a
+	// warning names the set actually in force afterwards. Rendering it inside
+	// the loop hardcoded the built-in set and then fell through to a valid
+	// config file, so the warning told the user the opposite of what the same
+	// run's `tasks config` reported.
+	type problem struct{ source, reason string }
+	problems := []problem{}
+	modes, source := record.BuiltinModes(), "default"
+	for _, candidate := range candidates {
+		if strings.TrimSpace(candidate.value) == "" {
+			continue
+		}
+		parsed, reason := record.ParseModeList(candidate.value)
+		if reason == "" {
+			modes, source = parsed, candidate.source
+			break
+		}
+		problems = append(problems, problem{candidate.source, reason})
+	}
+	warnings := []string{}
+	for _, ignored := range problems {
+		warnings = append(warnings, fmt.Sprintf(
+			"tasks: ignoring delegation_modes from %s (%s); using %s",
+			ignored.source, ignored.reason, modes.Quoted()))
+	}
+	return modes.Modes(), source, warnings
+}
+
 func pickUrgentDays(conf parsedConfig, env determinism.Env) (int, string) {
 	if value := env.Get("TASKS_URGENT_DAYS"); value != "" {
 		if days, ok := parseDays(value); ok {
@@ -527,6 +590,10 @@ func (c parsedConfig) assign(key, value string, env determinism.Env) {
 			number, _ := strconv.Atoi(value)
 			c.numbers[key] = number
 		}
+	case key == "delegation_modes":
+		// Stored raw: pickDelegationModes owns the validation, so a malformed
+		// list can WARN about itself instead of disappearing here.
+		c.strings[key] = value
 	case key == "date_order":
 		if orderValues[strings.ToLower(value)] {
 			c.strings[key] = strings.ToLower(value)

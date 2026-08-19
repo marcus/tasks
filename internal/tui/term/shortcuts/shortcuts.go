@@ -19,6 +19,34 @@ import (
 	"github.com/marcus/tasks/internal/record"
 )
 
+// ModesPlaceholder is where a description carries the delegation mode
+// vocabulary. The registry is a STATIC catalogue built during init, with no
+// store and no configuration in reach, so an entry that named the modes as a
+// value would freeze the built-in set into every help overlay and command
+// palette before the user's configuration was ever read. It names a hole
+// instead, and the host fills it at render time with WithModes.
+const ModesPlaceholder = "{modes}"
+
+// WithModes renders an entry's human-facing text for one vocabulary. Entries
+// without the placeholder come back unchanged, so a host may pipe every entry
+// through it. Sequences, handlers, and predicates are untouched: this is
+// presentation, not dispatch.
+func WithModes(e Entry, modes record.ModeVocabulary) Entry {
+	filled := strings.Join(record.Modes(modes).Modes(), " · ")
+	e.Description = strings.ReplaceAll(e.Description, ModesPlaceholder, filled)
+	e.HelpDescription = strings.ReplaceAll(e.HelpDescription, ModesPlaceholder, filled)
+	return e
+}
+
+// WithModesAll is WithModes over a list, in order.
+func WithModesAll(entries []Entry, modes record.ModeVocabulary) []Entry {
+	out := make([]Entry, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, WithModes(e, modes))
+	}
+	return out
+}
+
 // Context is where a binding is active.
 type Context string
 
@@ -177,7 +205,7 @@ var Registry = []Entry{
 	entry(Entry{Sequences: []string{"e"}, DisplayKey: "e", Description: "rename selected project", Contexts: []Context{List}, Handler: "rename_project", Availability: "project_selected?", Palette: PaletteWhen("project_selected?"), Form: "project_rename"}),
 	entry(Entry{Sequences: []string{"a"}, DisplayKey: "a", Description: "capture a task into the project", Contexts: []Context{List}, Handler: "capture_into_project", Availability: "project_selected?", Palette: PaletteWhen("project_selected?"), Form: "project_capture"}),
 	entry(Entry{Sequences: []string{"z"}, DisplayKey: "z", Description: "defer until — date/time · someday · now", Contexts: []Context{List, Detail}, Handler: "defer_selected", Palette: PaletteWhen("selected_action_available?"), Form: "defer_until"}),
-	entry(Entry{Sequences: []string{"D"}, DisplayKey: "D", Description: "Delegate… — " + strings.Join(append(append([]string{"email"}, record.BuiltinModes().Modes()...), "release", "off"), " · "), Contexts: []Context{List, Detail}, Handler: "delegate_selected", Availability: "delegation_action_available?", Palette: PaletteWhen("delegation_action_available?"), Form: "delegate"}),
+	entry(Entry{Sequences: []string{"D"}, DisplayKey: "D", Description: "Delegate… — email · " + ModesPlaceholder + " · release · off", Contexts: []Context{List, Detail}, Handler: "delegate_selected", Availability: "delegation_action_available?", Palette: PaletteWhen("delegation_action_available?"), Form: "delegate"}),
 	entry(Entry{Sequences: []string{"W"}, DisplayKey: "W", Description: "Set work reference… — URL/id · off", Contexts: []Context{List, Detail}, Handler: "set_work_ref_selected", Availability: "delegation_action_available?", Palette: PaletteWhen("delegation_action_available?"), Form: "work_ref"}),
 	entry(Entry{Sequences: []string{"Z"}, DisplayKey: "Z", Description: "show / hide unavailable tasks", Contexts: []Context{List}, Handler: "toggle_deferred_view", Palette: PaletteAlways}),
 	entry(Entry{Sequences: []string{"R"}, DisplayKey: "R", Description: "show / hide rejected proposals", Contexts: []Context{List}, Handler: "toggle_rejected_view", Palette: PaletteAlways}),

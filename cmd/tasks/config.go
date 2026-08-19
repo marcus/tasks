@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strings"
 
 	"github.com/marcus/tasks/internal/config"
 	"github.com/marcus/tasks/internal/jsonout"
@@ -40,6 +41,8 @@ func (s *surfaceContext) configJSON() string {
 	w.KeyStr("timezone", paths.Timezone)
 	w.KeyInt("time_format", paths.TimeFormat)
 	w.KeyStr("date_order", paths.DateOrder)
+	w.Key("delegation_modes")
+	w.Strings(paths.DelegationModes)
 	w.KeyStr("tzdb_version", timezones.TZDBVersion())
 	w.KeyBool("timezone_fallback_warning", paths.TimezoneFallbackWarning)
 	w.Key("links")
@@ -86,6 +89,8 @@ func (s *surfaceContext) configHuman() {
 	out(fmt.Sprintf("timezone:    %s  %s", paths.Timezone, source("timezone")))
 	out(fmt.Sprintf("time_format: %d  %s", paths.TimeFormat, source("time_format")))
 	out(fmt.Sprintf("date_order:  %s  %s", paths.DateOrder, source("date_order")))
+	out(fmt.Sprintf("delegation_modes: %s  %s",
+		strings.Join(paths.DelegationModes, ", "), source("delegation_modes")))
 	hostname := paths.Hostname
 	if hostname == "" {
 		hostname = "unavailable"
@@ -139,7 +144,7 @@ func (s *surfaceContext) configHuman() {
 // emission here would produce different bytes for identical settings.
 var sourceOrder = []string{
 	"org", "archive", "memory", "urgent_days", "max_depth",
-	"theme", "mouse", "timezone", "time_format", "date_order",
+	"theme", "mouse", "timezone", "time_format", "date_order", "delegation_modes",
 }
 
 func writeSources(w *jsonout.Writer, sources map[string]string) {

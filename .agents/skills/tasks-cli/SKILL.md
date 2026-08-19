@@ -71,6 +71,7 @@ tasks unreject "<ref>"            # restore a declined proposal → PROPOSED, sa
 tasks delegate "<ref>" --to pat@example.com # hand to a person (→ WAITING)
 # the address must be real: local@domain.tld — "@work" is refused
 tasks delegate "<ref>" research   # offer to agents: refine|research|implement
+# the set is configurable — read it from `tasks config --json` (delegation_modes)
 tasks undelegate "<ref>"         # clear the marker; revokes any live claim
 tasks workref "<ref>" <url|off>  # where the work happened; off/none clears
 tasks claim "<ref>" --worker <id> --json # atomic single-winner pickup
@@ -146,6 +147,15 @@ the task definition only. `research` adds read-only investigation and a durable
 brief. `implement` adds changes within the task's named scope, and even then
 the target repository's own instructions remain the only authority on commit,
 push, and approval gates.
+
+Those three are the DEFAULT vocabulary, not a fixed one: a user may set
+`delegation_modes` in `~/.config/tasks/config`, and then their words are what
+`delegate` accepts and what a refusal quotes back. Never guess a mode — read the
+active list from `tasks config --json` (`delegation_modes`, plus its source),
+and treat a mode you do not recognise as the owner's word for an authority you
+must ask about rather than assume. A task already carrying a mode that is no
+longer listed still reads and shows normally; `check` warns about it and nothing
+more, so do not "repair" it.
 
 To pick up delegated work: read `list --agent-ready --json`, `claim` one task
 (a compare-and-set — exactly one worker wins, and a lost race exits non-zero

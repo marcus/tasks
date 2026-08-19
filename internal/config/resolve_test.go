@@ -39,7 +39,7 @@ func TestDefaultsReportEverySource(t *testing.T) {
 		"org": "default", "archive": "default", "memory": "beside tasks.jsonl",
 		"urgent_days": "default", "max_depth": "default", "theme": "default",
 		"mouse": "default", "timezone": "TZ env", "time_format": "default",
-		"date_order": "default",
+		"date_order": "default", "delegation_modes": "default",
 	}
 	if !reflect.DeepEqual(paths.Sources, want) {
 		t.Fatalf("sources = %#v, want %#v", paths.Sources, want)

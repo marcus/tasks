@@ -93,6 +93,16 @@ type Store struct {
 // New builds a store over the two resolved paths.
 func New(org, archive string) *Store { return &Store{org: org, archive: archive} }
 
+// NewReader is New plus the delegation mode vocabulary. A read-only store still
+// LINTS — `tasks check` runs through one — and a lint that quoted the built-in
+// set on a configured store would report the user's own modes back at them as
+// unknown.
+func NewReader(org, archive string, modes record.ModeVocabulary) *Store {
+	built := New(org, archive)
+	built.options.Modes = modes
+	return built
+}
+
 // Org is the resolved live path, as the caller spelled it.
 func (s *Store) Org() string { return s.org }
 

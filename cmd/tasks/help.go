@@ -1,10 +1,42 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"strings"
 
+	"github.com/marcus/tasks/internal/config"
 	"github.com/marcus/tasks/internal/record"
 )
+
+// modesPlaceholder is where the delegation mode vocabulary goes in the help
+// text. A placeholder, not a value: helpTemplate is built during init, and a
+// vocabulary read then would freeze the built-in set before any configuration
+// was resolved.
+const modesPlaceholder = "\x00modes\x00"
+
+// helpText renders the reference for one vocabulary.
+func helpText(modes record.ModeVocabulary) string {
+	return strings.ReplaceAll(helpTemplate, modesPlaceholder,
+		strings.Join(record.Modes(modes).Modes(), "|"))
+}
+
+// helpModes is the vocabulary help quotes. help is an EARLY command with no
+// surface context, so it resolves configuration itself; resolution reads no
+// store and cannot fail, so help still prints when the store is missing or
+// broken.
+//
+// Resolution notes go to stderr the same way the ordinary command path emits
+// them. Help is the page that tells a user what the modes ARE, so printing the
+// built-in set to somebody whose configured list was ignored, with no word
+// about why, is exactly where a silent degradation becomes a wrong answer.
+func helpModes() record.ModeVocabulary {
+	paths := config.Resolve("", env, nil)
+	for _, warning := range paths.Warnings {
+		fmt.Fprintln(os.Stderr, warning)
+	}
+	return paths.Modes()
+}
 
 // `tasks help` is REGISTRY-DRIVEN, not a hand-written page.
 //
@@ -18,14 +50,19 @@ import (
 // schema-gate exemption carries one too. A command cannot join the set without
 // someone deciding, in this file, what its structured result is.
 
-// helpText is tasks HELP, byte for byte. It is stderr/stdout contract:
-// `tasks` with no arguments and `tasks <typo>` both print it.
+// helpTemplate is tasks HELP, byte for byte, with one hole in it. It is
+// stderr/stdout contract: `tasks` with no arguments and `tasks <typo>` both
+// print it.
 //
-// The delegation line quotes the BUILT-IN mode vocabulary: help is printed
-// without a store (a typo'd command prints it before any store exists), so it
-// cannot report a store-configured set. It reads the seam rather than repeating
-// a literal, which is what keeps the two from drifting.
-var helpText = "tasks — a plain-text GTD CLI over tasks.jsonl. Every command has a short alias." + "\n" +
+// The delegation line carries modesPlaceholder rather than a vocabulary,
+// because help is printed WITHOUT A STORE — a typo'd command prints it before
+// any store exists, and an unreadable or misconfigured store must still print
+// help rather than fail. The vocabulary is filled in at print time from the
+// CONFIG file, which is the same input the store's vocabulary comes from and
+// which resolution can never fail on: a malformed list degrades to the built-in
+// set with a warning. That is what stops `tasks help` and `tasks delegate` from
+// giving a user two different answers about the same word.
+var helpTemplate = "tasks — a plain-text GTD CLI over tasks.jsonl. Every command has a short alias." + "\n" +
 	"" + "\n" +
 	"Read:" + "\n" +
 	"  agenda    a              dated items, soonest first" + "\n" +
@@ -121,7 +158,7 @@ var helpText = "tasks — a plain-text GTD CLI over tasks.jsonl. Every command h
 	"                                   true mistakes." + "\n" +
 	"" + "\n" +
 	"Delegation (hand a task to a person or to the agent pool):" + "\n" +
-	"  delegate <ref> " + strings.Join(record.BuiltinModes().Modes(), "|") + "   agent-ready at that authority" + "\n" +
+	"  delegate <ref> " + modesPlaceholder + "   agent-ready at that authority" + "\n" +
 	"  delegate <ref> --to <email> [--keep-state] hand to a person; sets WAITING" + "\n" +
 	"  undelegate <ref>                clear the marker (also revokes a claim)" + "\n" +
 	"  workref <ref> <url-or-id|off>   record where the work lives (one reference)" + "\n" +
@@ -259,7 +296,7 @@ var helpCommands = []helpCommand{
 // rejects your guess.
 func helpSurface(_ *surfaceContext, args []string) int {
 	if !contains(args, "--json") {
-		out(helpText)
+		out(helpText(helpModes()))
 		return 0
 	}
 	w := jsonWriter()
