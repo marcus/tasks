@@ -11,15 +11,36 @@ import (
 
 const DelegationField = "delegation"
 
-var DelegationKeyOrder = []string{"kind", "mode", "status", "assignee", "at", "work_ref"}
+// note is APPENDED last so every record written before it existed keeps its
+// exact byte layout.
+var DelegationKeyOrder = []string{"kind", "mode", "status", "assignee", "at", "work_ref", "note"}
 
 const (
 	delegationAssigneeLimit = 200
 	delegationWorkRefLimit  = 500
+	// delegationNoteLimit bounds the receiver-facing note. 2000 characters is
+	// roughly 300 words: enough for a real briefing (how to work on it, where
+	// the work should land, what to avoid) and far more than work_ref's 500,
+	// which holds one URL. It stops well short of prose that belongs in the
+	// body, which keeps one JSONL line greppable and diffable and keeps the
+	// marker a marker.
+	delegationNoteLimit = 2000
 )
 
+// DelegationNoteLimit is the note bound a refusal quotes.
+const DelegationNoteLimit = delegationNoteLimit
+
 // DelegationErrors returns Ruby-compatible schema diagnostics for delegation.
+// It validates modes against the BUILT-IN vocabulary; a caller holding a
+// configured one calls DelegationErrorsWith instead.
 func DelegationErrors(value any) []string {
+	return DelegationErrorsWith(value, BuiltinModes())
+}
+
+// DelegationErrorsWith is the same check against a caller-supplied mode
+// vocabulary. Nil means the built-in set.
+func DelegationErrorsWith(value any, modes ModeVocabulary) []string {
+	modes = Modes(modes)
 	object, ok := value.(map[string]any)
 	if !ok {
 		return []string{"delegation must be an object"}
@@ -27,12 +48,15 @@ func DelegationErrors(value any) []string {
 	if len(object) == 0 {
 		return []string{"delegation must not be empty"}
 	}
-	messages := delegationKindErrors(object)
+	messages := delegationKindErrors(object, modes)
 	if !DelegationTimestamp(valueAt(object)) {
 		messages = append(messages, fmt.Sprintf("delegation.at %s is not a UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)", rubyInspect(valueAt(object))))
 	}
 	if reference, present := object["work_ref"]; present {
 		messages = append(messages, delegationWorkRefErrors(reference)...)
+	}
+	if note, present := object["note"]; present {
+		messages = append(messages, delegationNoteErrors(note)...)
 	}
 	return messages
 }
@@ -106,12 +130,14 @@ func DelegationTimestamp(value any) bool {
 }
 func DelegationStamp(value time.Time) string { return value.UTC().Format("2006-01-02T15:04:05Z") }
 
-func delegationKindErrors(object map[string]any) []string {
+func delegationKindErrors(object map[string]any, modes ModeVocabulary) []string {
 	switch object["kind"] {
 	case "human":
 		messages := []string{}
+		// A mode is OPTIONAL on a human delegation: who holds the work and what
+		// kind of delegation it is are orthogonal facts.
 		if _, present := object["mode"]; present {
-			messages = append(messages, "delegation.mode is not allowed for a human delegation")
+			messages = append(messages, delegationModeErrors(object, modes)...)
 		}
 		if object["status"] != "delegated" {
 			messages = append(messages, fmt.Sprintf("delegation.status %s must be \"delegated\" for a human delegation", rubyInspect(valueAt(object, "status"))))
@@ -122,9 +148,7 @@ func delegationKindErrors(object map[string]any) []string {
 		return messages
 	case "agent":
 		messages := []string{}
-		if mode, ok := object["mode"].(string); !ok || (mode != "refine" && mode != "research" && mode != "implement") {
-			messages = append(messages, fmt.Sprintf("delegation.mode %s must be one of refine/research/implement", rubyInspect(valueAt(object, "mode"))))
-		}
+		messages = append(messages, delegationModeErrors(object, modes)...)
 		switch object["status"] {
 		case "ready":
 			if _, present := object["assignee"]; present {
@@ -141,6 +165,42 @@ func delegationKindErrors(object map[string]any) []string {
 	default:
 		return []string{fmt.Sprintf("delegation.kind %s must be human or agent", rubyInspect(valueAt(object, "kind")))}
 	}
+}
+
+// delegationModeErrors is the ONE place a mode is checked for membership. It
+// asks the vocabulary seam; there is no literal list here.
+func delegationModeErrors(object map[string]any, modes ModeVocabulary) []string {
+	modes = Modes(modes)
+	if mode, ok := object["mode"].(string); !ok || !modes.Valid(mode) {
+		return []string{fmt.Sprintf("delegation.mode %s must be one of %s",
+			rubyInspect(valueAt(object, "mode")), modes.Quoted())}
+	}
+	return nil
+}
+
+// DelegationNoteErrors validates one note the way DelegationWorkRefErrors
+// validates one reference: BEFORE a marker is built, so the writer reads the
+// note's own problem rather than a whole-marker shape report.
+func DelegationNoteErrors(value any) []string { return delegationNoteErrors(value) }
+
+func delegationNoteErrors(value any) []string {
+	text, ok := value.(string)
+	if !ok || !utf8.ValidString(text) || strings.TrimSpace(text) == "" {
+		return []string{"delegation.note must be a non-empty string"}
+	}
+	// Newlines are allowed — a briefing has paragraphs, and JSONL escapes them.
+	// Every other control character is refused at the schema boundary, because
+	// the note is rendered raw by show, the TUI panel, and agent prompts.
+	if strings.IndexFunc(text, func(r rune) bool {
+		return r != '\n' && (r <= 0x1f || (r >= 0x7f && r <= 0x9f) || r == 0x2028 || r == 0x2029)
+	}) >= 0 {
+		return []string{"delegation.note must not contain control characters"}
+	}
+	if utf8.RuneCountInString(text) > delegationNoteLimit {
+		return []string{fmt.Sprintf("delegation.note must be at most %d characters (got %d)",
+			delegationNoteLimit, utf8.RuneCountInString(text))}
+	}
+	return nil
 }
 
 func valueAt(object map[string]any, keys ...string) any {

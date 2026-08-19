@@ -19,6 +19,16 @@ const Version = 2
 
 var idPattern = regexp.MustCompile(`\A[0-9a-f]{8}\z`)
 
+// Options are the validation decisions a caller owns rather than the schema.
+// Today that is one: the delegation mode vocabulary, carried as a VALUE so a
+// configured set is a field at the call site rather than process-wide state the
+// checker reads behind the caller's back. The zero Options means the built-in
+// vocabulary, which is what every plain entry point uses.
+type Options struct {
+	// Modes is the delegation mode vocabulary. Nil means the built-in set.
+	Modes record.ModeVocabulary
+}
+
 // Entry is one structural diagnostic, ordered by physical line.
 type Entry struct {
 	Line    int    `json:"line"`
@@ -37,7 +47,10 @@ func (r Result) OK() bool { return len(r.Errors) == 0 }
 
 // Check reads one JSONL store. A missing store is a structural result, not an
 // I/O error, just as it is in the Ruby oracle.
-func Check(path string) Result {
+func Check(path string) Result { return CheckWith(path, Options{}) }
+
+// CheckWith is Check against a caller-supplied vocabulary.
+func CheckWith(path string, options Options) Result {
 	input, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return Result{Errors: []Entry{{Line: 0, Message: fmt.Sprintf("file not found: %s", path)}}}
@@ -45,17 +58,20 @@ func Check(path string) Result {
 	if err != nil {
 		return Result{Errors: []Entry{{Line: 0, Message: err.Error()}}}
 	}
-	return CheckText(input)
+	return CheckTextWith(input, options)
 }
 
 // CheckText validates a whole file's bytes. Invalid encoding short-circuits
 // everything else: the file cannot be split into records at all, so reporting
 // a missing meta record beside it would describe a file nobody could read.
-func CheckText(input []byte) Result {
+func CheckText(input []byte) Result { return CheckTextWith(input, Options{}) }
+
+// CheckTextWith is CheckText against a caller-supplied vocabulary.
+func CheckTextWith(input []byte, options Options) Result {
 	if !utf8.Valid(input) {
 		return Result{Errors: []Entry{{Line: 0, Message: "file is not valid UTF-8"}}, Warnings: []Entry{}}
 	}
-	return CheckParsed(record.Parse(input))
+	return checkParsed(record.Parse(input), Version, options)
 }
 
 // CheckParsed validates bytes a caller has already parsed. It is the seam the
@@ -64,12 +80,23 @@ func CheckText(input []byte) Result {
 // checked and then reopened.
 func CheckParsed(parsed record.Result) Result { return CheckParsedVersion(parsed, Version) }
 
+// CheckParsedWith is CheckParsed against a caller-supplied vocabulary. This is
+// the entry point the store uses, so the vocabulary a store was constructed
+// with is the one its post-write validation enforces.
+func CheckParsedWith(parsed record.Result, options Options) Result {
+	return checkParsed(parsed, Version, options)
+}
+
 // CheckParsedVersion is CheckParsed against a stated schema version rather than
 // this build's. Only one caller needs it: the merge validates a common ancestor
 // against the version that ancestor DECLARES, because a v1 base under two v2
 // sides is the ordinary shape of a merge reaching back past a schema upgrade,
 // and a faithful v1 file must not fail the lint for being one.
 func CheckParsedVersion(parsed record.Result, version int) Result {
+	return checkParsed(parsed, version, Options{})
+}
+
+func checkParsed(parsed record.Result, version int, options Options) Result {
 	errors := make([]Entry, 0, len(parsed.Errors)+1)
 	for _, parseErr := range parsed.Errors {
 		errors = append(errors, Entry{Line: parseErr.Line, Message: parseErr.Message})
@@ -78,7 +105,7 @@ func CheckParsedVersion(parsed record.Result, version int) Result {
 
 	checkMeta(parsed.Records, &errors, version)
 	duplicates := &duplicateIndex{lines: map[string][]int{}}
-	validate(parsed.Records, &errors, &warnings, duplicates)
+	validate(parsed.Records, &errors, &warnings, duplicates, options)
 	for _, id := range duplicates.order {
 		lines := duplicates.lines[id]
 		if len(lines) < 2 {

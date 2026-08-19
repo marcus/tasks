@@ -551,6 +551,12 @@ func (m *Model) reportFormatErrors() {
 	case info.Size() == 0:
 		return
 	}
+	// This is the read-only check VIEW, so it validates against the BUILT-IN
+	// mode vocabulary rather than a store's configured one. Harmless today (the
+	// two sets are the same) and display-only when they differ: it can report a
+	// configured mode as invalid without refusing anything. Wiring it to the
+	// store's vocabulary belongs with the configuration work that creates the
+	// difference.
 	result := check.Check(path)
 	if result.OK() {
 		return

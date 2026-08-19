@@ -55,7 +55,7 @@ func contains(values []string, value string) bool {
 // validate is the whole of Check.check_parsed beyond the metadata and id rules
 // checkMeta/checkID already own: keys, tree shape, task fields, section fields,
 // and the two hazards that are warnings rather than errors.
-func validate(records []record.Record, errors *[]Entry, warnings *[]Entry, duplicates *duplicateIndex) {
+func validate(records []record.Record, errors *[]Entry, warnings *[]Entry, duplicates *duplicateIndex, options Options) {
 	seen := map[string]bool{}
 	openTitles := map[string][]int{}
 	titleOrder := []string{}
@@ -83,7 +83,7 @@ func validate(records []record.Record, errors *[]Entry, warnings *[]Entry, dupli
 		stack = checkParent(parsed, seen, stack, errors)
 
 		if typeName == "task" {
-			checkTask(parsed, errors)
+			checkTask(parsed, errors, options)
 			if state := stringField(parsed, "state"); contains(OpenStates, state) {
 				title := query.Downcase(stringField(parsed, "title"))
 				if _, exists := openTitles[title]; !exists {
@@ -205,7 +205,7 @@ func delegationUnknownKeys(raw json.RawMessage) []string {
 	return unknown
 }
 
-func checkTask(parsed record.Record, errors *[]Entry) {
+func checkTask(parsed record.Record, errors *[]Entry, options Options) {
 	line := parsed.Line
 	add := func(message string) { *errors = append(*errors, Entry{Line: line, Message: message}) }
 
@@ -287,7 +287,7 @@ func checkTask(parsed record.Record, errors *[]Entry) {
 			add(fmt.Sprintf("updated %s is not an RFC3339 UTC timestamp with device slug", rubyInspect(updated)))
 		}
 	}
-	checkDelegation(parsed, errors)
+	checkDelegation(parsed, errors, options)
 	checkLinks(parsed, errors)
 }
 
@@ -398,7 +398,7 @@ func checkLead(parsed record.Record, errors *[]Entry) {
 // checkDelegation validates the marker's own shape plus the one lifecycle rule
 // the object cannot state about itself: approval and delegation are
 // independent owner decisions, so an undecided proposal never carries one.
-func checkDelegation(parsed record.Record, errors *[]Entry) {
+func checkDelegation(parsed record.Record, errors *[]Entry, options Options) {
 	raw := rawField(parsed, record.DelegationField)
 	if raw == nil || strings.TrimSpace(string(raw)) == "null" {
 		return
@@ -407,7 +407,7 @@ func checkDelegation(parsed record.Record, errors *[]Entry) {
 	if state := stringField(parsed, "state"); contains(ProposedStates, state) {
 		*errors = append(*errors, Entry{Line: line, Message: fmt.Sprintf("delegation on a proposed task (%s)", state)})
 	}
-	for _, message := range record.DelegationErrors(decodeAny(raw)) {
+	for _, message := range record.DelegationErrorsWith(decodeAny(raw), options.Modes) {
 		*errors = append(*errors, Entry{Line: line, Message: message})
 	}
 }

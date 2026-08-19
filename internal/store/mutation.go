@@ -343,7 +343,7 @@ func (s *Store) postWriteFailure() string {
 		paths = append(paths, s.archive)
 	}
 	for _, path := range paths {
-		result := check.Check(path)
+		result := check.CheckWith(path, s.checkOptions())
 		if result.OK() {
 			continue
 		}
@@ -415,7 +415,7 @@ func (s *Store) commitRepair(before journal.Snapshot, records []record.Record, l
 // from, taken under the SAME lock as the write so no other process can slip a
 // change between the two.
 func (s *Store) readAfterWrite() (*Snapshot, string) {
-	live, err := captureReadSource(s.org, false, false)
+	live, err := captureReadSource(s.org, false, false, s.checkOptions())
 	if err != nil {
 		return nil, ""
 	}
@@ -425,7 +425,7 @@ func (s *Store) readAfterWrite() (*Snapshot, string) {
 	if err != nil {
 		return nil, ""
 	}
-	archive, err := captureReadSource(s.archive, true, false)
+	archive, err := captureReadSource(s.archive, true, false, s.checkOptions())
 	if err != nil {
 		return snapshot, ""
 	}

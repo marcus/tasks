@@ -115,13 +115,13 @@ func (s *Store) LockPath() string {
 func (s *Store) ReadSnapshot(includeArchive bool) (*Snapshot, error) {
 	var snapshot *Snapshot
 	err := s.withSharedLock(func() error {
-		live, err := captureReadSource(s.org, false, false)
+		live, err := captureReadSource(s.org, false, false, s.checkOptions())
 		if err != nil {
 			return err
 		}
 		archive := emptyReadSource(false)
 		if includeArchive {
-			if archive, err = captureReadSource(s.archive, true, false); err != nil {
+			if archive, err = captureReadSource(s.archive, true, false, s.checkOptions()); err != nil {
 				return err
 			}
 		}
@@ -154,11 +154,11 @@ func (e *buildError) Unwrap() error { return e.err }
 func (s *Store) CheckedReadSnapshot() (CheckedRead, error) {
 	var result CheckedRead
 	err := s.withSharedLock(func() error {
-		live, err := captureReadSource(s.org, false, true)
+		live, err := captureReadSource(s.org, false, true, s.checkOptions())
 		if err != nil {
 			return err
 		}
-		archive, err := captureReadSource(s.archive, true, true)
+		archive, err := captureReadSource(s.archive, true, true, s.checkOptions())
 		if err != nil {
 			return err
 		}
@@ -239,7 +239,7 @@ type readSource struct {
 // A missing archive is an empty optional history. A missing live file is a
 // validation error rather than an I/O failure, because "the store is not there
 // yet" is a first-run state, not a broken host.
-func captureReadSource(path string, optional, validate bool) (readSource, error) {
+func captureReadSource(path string, optional, validate bool, options check.Options) (readSource, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -276,7 +276,7 @@ func captureReadSource(path string, optional, validate bool) (readSource, error)
 	parsed := record.Parse(raw)
 	source := readSource{raw: raw, records: parsed.Records}
 	if validate {
-		source.check = check.CheckParsed(parsed)
+		source.check = check.CheckParsedWith(parsed, options)
 	}
 	return source, nil
 }

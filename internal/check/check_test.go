@@ -112,6 +112,28 @@ func TestUnknownTypeIsTheOnlyDiagnosticItEarns(t *testing.T) {
 	}
 }
 
+// A store written by the release that predates delegation notes must still be
+// clean: the new key is optional, and nothing about the old shape changed.
+func TestStoreWrittenBeforeDelegationNotesIsClean(t *testing.T) {
+	result := Check(fixture("compat", "delegation-pre-note", "tasks.jsonl"))
+	if len(result.Errors) != 0 || len(result.Warnings) != 0 {
+		t.Fatalf("errors = %#v, warnings = %#v, want a clean pre-note store", result.Errors, result.Warnings)
+	}
+}
+
+// A note and a mode-carrying human delegation are both ordinary, valid shapes.
+func TestDelegationNoteAndHumanModeCheckClean(t *testing.T) {
+	at := `"at":"2026-07-27T18:04:11Z"`
+	for _, delegation := range []string{
+		`{"kind":"agent","mode":"research","status":"ready",` + at + `,"note":"Read docs/plan.md.\nLand it on a branch."}`,
+		`{"kind":"human","mode":"refine","status":"delegated","assignee":"pat@example.com",` + at + `,"note":"tighten the acceptance criteria"}`,
+	} {
+		if result := CheckText(delegatedTask(delegation, "NEXT")); !result.OK() || len(result.Warnings) != 0 {
+			t.Fatalf("%s: errors = %#v, warnings = %#v", delegation, result.Errors, result.Warnings)
+		}
+	}
+}
+
 // The unknown-key hazard is a WARNING, not an error: the write path preserves a
 // key it does not understand, so a store written by a newer binary still
 // validates. The delegation object gets the same treatment one level down, and

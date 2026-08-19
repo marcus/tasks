@@ -965,7 +965,7 @@ func (s *Store) Patch(request PatchRequest) MutationResult {
 			return nil
 		}
 		repair := false
-		preflight := check.Check(s.org)
+		preflight := check.CheckWith(s.org, s.checkOptions())
 		if !preflight.OK() {
 			// Targeted repair: a field-owned patch may fix its OWN invalid
 			// record, but only when every preflight error is attributable to
@@ -1082,7 +1082,7 @@ func (s *Store) ExpectedFor(id string, field PatchField) (string, bool) {
 	var value string
 	found := false
 	_ = s.withSharedLock(func() error {
-		if !check.Check(s.org).OK() {
+		if !check.CheckWith(s.org, s.checkOptions()).OK() {
 			return nil
 		}
 		records := freshRecords(s.org)

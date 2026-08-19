@@ -38,7 +38,6 @@ var (
 	metaClosedStates      = []string{"DONE", "CANCELLED"}
 	metaPriorities        = []string{"A", "B", "C"}
 	metaDelegationKinds   = []string{"human", "agent"}
-	metaDelegationModes   = []string{"refine", "research", "implement"}
 	metaDelegationStatues = []string{"delegated", "ready", "claimed"}
 )
 
@@ -94,7 +93,9 @@ func (s *Server) meta(request *http.Request) (response, error) {
 		w.Key("delegation_kinds")
 		w.Strings(metaDelegationKinds)
 		w.Key("delegation_modes")
-		w.Strings(metaDelegationModes)
+		// The mode vocabulary comes from the store this server writes through,
+		// read per request, never from a literal or a start-up snapshot.
+		w.Strings(s.options.App.DelegationModes().Modes())
 		w.Key("delegation_statuses")
 		w.Strings(metaDelegationStatues)
 		w.KeyInt("max_depth", s.options.MaxDepth)

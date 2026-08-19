@@ -99,7 +99,7 @@ func (s *Store) HistoryStep(delta int) (HistoryOutcome, string) {
 		// fix, so undo must faithfully restore those invalid bytes rather than
 		// refuse. The automatic id repair is never so marked, so its undo stays
 		// gated.
-		if step.Target.Org != nil && !step.Repair && !check.Check(s.org).OK() {
+		if step.Target.Org != nil && !step.Repair && !check.CheckWith(s.org, s.checkOptions()).OK() {
 			s.rollbackHistoryFiles(before)
 			outcome = HistoryConflict
 			return nil

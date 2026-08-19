@@ -6,11 +6,16 @@ import (
 	"strings"
 
 	"github.com/marcus/tasks/internal/jsonout"
+	"github.com/marcus/tasks/internal/record"
 	"github.com/marcus/tasks/internal/store"
 )
 
-const delegateUsage = "usage: tasks delegate <ref> <refine|research|implement>  |  " +
-	"tasks delegate <ref> --to <email> [--keep-state]"
+// delegateUsage quotes the mode vocabulary the store will actually enforce, so
+// a configured set reaches the usage line without a second literal here.
+func delegateUsage(modes record.ModeVocabulary) string {
+	return "usage: tasks delegate <ref> <" + strings.Join(record.Modes(modes).Modes(), "|") + ">  |  " +
+		"tasks delegate <ref> --to <email> [--keep-state]"
+}
 
 const workerHint = "pass --worker <id> or set TASKS_WORKER_ID"
 
@@ -20,21 +25,22 @@ const workerHint = "pass --worker <id> or set TASKS_WORKER_ID"
 // target reports the STATE that refuses it rather than a bare no-match: "task
 // is DONE" is actionable, "no match" for a task the user can see is not.
 func (s *surfaceContext) delegate(args []string) int {
+	usage := delegateUsage(s.writeStore().Modes())
 	to, rest, _ := extractValue(args, "--to")
 	flags, rest, err := takeFlags(rest, "--json", "--keep-state")
 	if err != nil {
 		return abort(err.Error())
 	}
 	if len(rest) == 0 || strings.TrimSpace(rest[0]) == "" {
-		return abort(delegateUsage)
+		return abort(usage)
 	}
 	ref := rest[0]
 	mode := joinPositional(rest[1:])
 	if to == "" && mode == "" {
-		return abort(delegateUsage)
+		return abort(usage)
 	}
 	if to != "" && mode != "" {
-		return abort("delegate takes a mode or --to <email>, not both\n" + delegateUsage)
+		return abort("delegate takes a mode or --to <email>, not both\n" + usage)
 	}
 	queries, status := s.readQueries(args, "delegate")
 	if status != 0 {

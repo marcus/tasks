@@ -46,6 +46,12 @@ type Options struct {
 	MaxDepth int
 	// UndoLimit is how many undo steps the journal retains.
 	UndoLimit int
+	// Modes is the delegation mode vocabulary this store validates against.
+	// Nil means the built-in set. It is carried as a VALUE rather than read
+	// from a process-wide location on purpose: the core stays a pure function
+	// of its inputs, two stores in one process can disagree, and configuring
+	// the set is one field at construction rather than an init-order problem.
+	Modes record.ModeVocabulary
 }
 
 // NewWriter builds a store that can mutate. New stays the read-only
