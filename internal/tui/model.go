@@ -150,6 +150,7 @@ type Model struct {
 	modal               *Modal
 	modalFilterInput    *input.Editor
 	form                *QuickForm
+	fieldModal          *FieldModal
 	actionPalette       *ActionPalette
 	contextPalette      *ContextPalette
 	linkPicker          *LinkPicker
@@ -163,6 +164,8 @@ type Model struct {
 	quitReturnMode    Mode
 	quitReturnMessage string
 	agentQuitPending  bool
+	// fieldModalQuitPending is the same latch for a dirty multi-field modal.
+	fieldModalQuitPending bool
 	// pendingProject is the project a confirmation modal is about. It is held
 	// separately from the selection because the selection can move underneath
 	// an open confirmation, and answering `y` must act on what was asked.
@@ -452,6 +455,13 @@ func (m *Model) reconcileOpenOverlays(prior Mode) {
 	case ModeForm:
 		if m.form != nil && m.form.TargetID != "" && !m.selectedTarget(m.form.TargetID) {
 			m.form = nil
+			m.mode = ModeList
+			m.Flash("task no longer exists")
+		}
+	case ModeFieldModal:
+		if m.fieldModal != nil && m.fieldModal.TargetID() != "" &&
+			!m.selectedTarget(m.fieldModal.TargetID()) {
+			m.fieldModal = nil
 			m.mode = ModeList
 			m.Flash("task no longer exists")
 		}
@@ -1287,7 +1297,8 @@ func (m *Model) CurrentView() string { return m.view }
 // ConsumesTextInput reports whether printable keys belong to an input buffer.
 func (m *Model) ConsumesTextInput() bool {
 	return m.mode == ModePrompt || m.mode == ModeFilter || m.mode == ModeModalFilter ||
-		m.mode == ModeForm || m.mode == ModePalette || m.mode == ModeContextPalette || m.mode == ModeLinkPicker ||
+		m.mode == ModeForm || m.mode == ModeFieldModal ||
+		m.mode == ModePalette || m.mode == ModeContextPalette || m.mode == ModeLinkPicker ||
 		m.mode == ModeTaskEdit
 }
 
@@ -1310,6 +1321,8 @@ func (m *Model) FocusContext() string {
 		return "modal"
 	case ModeForm:
 		return "form"
+	case ModeFieldModal:
+		return "field_modal"
 	case ModePalette:
 		return "picker"
 	case ModeContextPalette:

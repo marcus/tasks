@@ -20,12 +20,13 @@ const ModeModalFilter Mode = "modal_filter"
 // form is nil — which is what would produce a screen the keyboard does nothing
 // to.
 var modeTransitions = map[Mode][]Mode{
-	ModeList:           {ModeList, ModePrompt, ModeFilter, ModeModal, ModeForm, ModePalette, ModeContextPalette, ModeLinkPicker, ModeTaskEdit},
+	ModeList:           {ModeList, ModePrompt, ModeFilter, ModeModal, ModeForm, ModeFieldModal, ModePalette, ModeContextPalette, ModeLinkPicker, ModeTaskEdit},
 	ModePrompt:         {ModePrompt, ModeList, ModeModal},
 	ModeFilter:         {ModeFilter, ModeList},
-	ModeModal:          {ModeModal, ModeList, ModeModalFilter, ModeForm, ModePalette, ModeContextPalette},
+	ModeModal:          {ModeModal, ModeList, ModeModalFilter, ModeForm, ModeFieldModal, ModePalette, ModeContextPalette},
 	ModeModalFilter:    {ModeModalFilter, ModeModal, ModeList},
 	ModeForm:           {ModeForm, ModeList, ModeModal},
+	ModeFieldModal:     {ModeFieldModal, ModeList, ModeModal},
 	ModePalette:        {ModePalette, ModeList, ModeModal},
 	ModeContextPalette: {ModeContextPalette, ModeList, ModeModal},
 	ModeLinkPicker:     {ModeLinkPicker, ModeList},
@@ -77,6 +78,13 @@ func (m *Model) SetMode(target Mode) error {
 		if m.form.ReturnMode == ReturnModal && m.modal == nil {
 			return fmt.Errorf("form returning to modal requires a retained modal")
 		}
+	case ModeFieldModal:
+		if m.fieldModal == nil {
+			return fmt.Errorf("field_modal mode requires a field modal")
+		}
+		if m.fieldModal.ReturnMode() == ReturnModal && m.modal == nil {
+			return fmt.Errorf("field modal returning to modal requires a retained modal")
+		}
 	case ModePalette:
 		if m.actionPalette == nil {
 			return fmt.Errorf("palette mode requires an action palette")
@@ -120,6 +128,9 @@ func (m *Model) SetModal(modal *Modal) {
 	switch {
 	case m.mode == ModeForm && m.form != nil && m.form.ReturnMode == ReturnModal:
 		m.form = nil
+		m.mode = ModeList
+	case m.mode == ModeFieldModal && m.fieldModal != nil && m.fieldModal.ReturnMode() == ReturnModal:
+		m.fieldModal = nil
 		m.mode = ModeList
 	case m.mode == ModePalette && m.actionPalette != nil && m.actionPalette.ReturnMode() == ReturnModal:
 		m.actionPalette = nil

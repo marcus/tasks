@@ -1184,3 +1184,83 @@ func ClusterWidth(cluster string) int { return charwidth.Cluster(cluster) }
 // same value — the structured temporal picker writes the canonical spelling
 // back after every arrow step, so the text and the control never disagree.
 func (d *DateInput) SetText(text string) { d.editor.Replace(text) }
+
+// -- pointer support ---------------------------------------------------------------
+//
+// A click has to become a caret offset, which is the inverse of the layout the
+// Render methods already compute. Both inverses live here rather than in a
+// renderer because only the field knows its own scroll offsets — the horizontal
+// window an Input is showing, and the row a TextArea has scrolled to. A renderer
+// that re-derived either would place the caret in the wrong place the moment the
+// value was longer than its window.
+
+// SetCursor moves the caret to a grapheme offset.
+func (t *TextField) SetCursor(offset int) { t.editor.SetCursor(offset) }
+
+// OffsetAt maps a cell column in the window the last Render painted to the
+// grapheme offset under it. A column past the end of the value lands at the end
+// of the value, which is what a click in a field's blank tail means.
+func (i *Input) OffsetAt(column int) int {
+	if column < 0 {
+		column = 0
+	}
+	target := i.columnOffset + column
+	total := 0
+	units := input.Graphemes(i.Text())
+	for index, grapheme := range units {
+		cells := charwidth.Cluster(grapheme)
+		if target < total+cells {
+			return index
+		}
+		total += cells
+	}
+	return len(units)
+}
+
+// RowOffset is the wrapped row the last Render scrolled to. It is part of what
+// a caller comparing two input paths has to compare: two gestures that leave the
+// same text but a different scroll have NOT done the same thing.
+func (a *TextArea) RowOffset() int { return a.rowOffset }
+
+// OffsetAt maps a row and column in the window the last Render painted to the
+// grapheme offset under it. The row is relative to the visible window, so the
+// field's own vertical scroll is added back here.
+func (a *TextArea) OffsetAt(width, row, column int) int {
+	if width < 1 {
+		width = 1
+	}
+	_, positions := wrappedLayout(a.Text(), width)
+	if len(positions) == 0 {
+		return 0
+	}
+	target := a.rowOffset + row
+	best, found := 0, false
+	for index, position := range positions {
+		if position[0] != target {
+			continue
+		}
+		if !found || absInt(position[1]-column) < absInt(positions[best][1]-column) {
+			best, found = index, true
+		}
+	}
+	if !found {
+		// A row below the text — clicking the blank tail of the window — means
+		// the end of the value. Never a negative offset: a caller that did not
+		// clamp would index backwards from the buffer.
+		return len(positions) - 1
+	}
+	return best
+}
+
+// ScrollLines moves the caret by whole wrapped lines, which is how a wheel tick
+// over a text area scrolls it: the SAME motion the arrow keys make, so the two
+// input paths cannot drift apart.
+func (a *TextArea) ScrollLines(delta int) {
+	step := 1
+	if delta < 0 {
+		step = -1
+	}
+	for count := 0; count < absInt(delta); count++ {
+		a.moveVertical(step)
+	}
+}

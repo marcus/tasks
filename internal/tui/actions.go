@@ -131,13 +131,13 @@ func (m *Model) availability(name string) bool {
 		if editor == nil {
 			editor = m.suspendedTaskEditor
 		}
-		return (editor == nil || !editor.PendingQuit()) && !m.agentQuitPending
+		return (editor == nil || !editor.PendingQuit()) && !m.agentQuitPending && !m.fieldModalQuitPending
 	case "quit_confirmation_available?":
 		editor := m.taskEditor
 		if editor == nil {
 			editor = m.suspendedTaskEditor
 		}
-		return (editor != nil && editor.PendingQuit()) || m.agentQuitPending
+		return (editor != nil && editor.PendingQuit()) || m.agentQuitPending || m.fieldModalQuitPending
 	case "selected_action_available?":
 		return m.CurrentItem() != nil
 	case "project_selected?":
@@ -1316,6 +1316,29 @@ func (m *Model) requestQuit() {
 			Lines: lines, Kind: ModalTaskDraftQuitConfirm})
 		m.mode = ModeModal
 		m.Flash("unsaved task draft — y/return discards and quits · n/esc keeps editing")
+		return
+	}
+	// A dirty multi-field modal is guarded for the same reason a dirty task
+	// draft is: it holds work someone wrote — the delegate modal's note is a
+	// briefing for whoever picks the task up — and ctrl-c reaches through every
+	// mode, so without this it is the one route that discards that work in a
+	// single keystroke, behind the back of the two-step escape latch.
+	if m.mode == ModeFieldModal && m.fieldModal != nil && m.fieldModal.Dirty() {
+		m.fieldModalQuitPending = true
+		m.quitReturnModal, m.quitReturnMode = m.modal, m.mode
+		m.quitReturnMessage = m.editorMessage
+		lines := []string{"“" + m.fieldModal.Title() + "” has unsaved changes."}
+		if m.queueHasWork() {
+			lines = append(lines, "Quitting also cancels/discards "+m.agentWorkSummary()+".")
+		}
+		lines = append(lines,
+			"Press y or Return to discard them and quit.",
+			"Press n or Escape to keep them and continue.",
+			"Ctrl-C and q do not confirm this prompt.")
+		m.modal = NewModal(ModalOptions{Title: "Discard unsaved changes?",
+			Lines: lines, Kind: ModalFieldModalQuitConfirm})
+		m.mode = ModeModal
+		m.Flash("unsaved changes — y/return discards and quits · n/esc keeps editing")
 		return
 	}
 	if m.queueHasWork() {
