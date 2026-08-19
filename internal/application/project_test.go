@@ -269,6 +269,31 @@ func TestProposalDecisionsReachTheStoreWithTheOperationsToday(t *testing.T) {
 	}
 }
 
+// Approve+complete is ONE application command with ONE store call: a surface
+// that composed approve and complete could leave the proposal accepted-but-open
+// on a failure, and `undo` would then rewind only half of it.
+func TestApproveAndCompleteIsASingleStoreCall(t *testing.T) {
+	script := &scriptedStore{proposalResult: store.MutationResult{Status: store.MutationOK}}
+	h := projectHarness(t, script, fixtureStore)
+
+	if result := h.app.ApproveAndCompleteTask(fixPlants, "rev-1", nil); !result.OK() {
+		t.Fatalf("approve+complete = %q", result.Status)
+	}
+	if len(script.calls) != 1 || script.calls[0].verb != "decide:approve_complete" {
+		t.Fatalf("calls = %+v", script.calls)
+	}
+	if script.calls[0].detail != "2026-07-14" {
+		t.Fatalf("today = %q, want the application clock", script.calls[0].detail)
+	}
+	blank := h.app.ApproveAndCompleteTask("  ", "", nil)
+	if !blank.Invalid() || blank.FirstError() != "task id is required" {
+		t.Fatalf("blank id = %q %v", blank.Status, blank.Errors)
+	}
+	if len(script.calls) != 1 {
+		t.Fatalf("a blank id must not reach the store: %+v", script.calls)
+	}
+}
+
 // Ruby raises ArgumentError from the decision constructor and rescues it into
 // an invalid result. A transport-facing layer simply never raises.
 func TestAMalformedProposalDecisionIsARefusalNotAPanic(t *testing.T) {

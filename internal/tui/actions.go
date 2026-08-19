@@ -48,43 +48,44 @@ func (m *Model) handlers() map[string]func(key string) {
 		"quit":                 func(string) { m.requestQuit() },
 
 		// This packet's own.
-		"open_help":                    func(string) { m.OpenHelp() },
-		"open_action_palette":          func(string) { m.OpenActionPalette() },
-		"open_context_palette":         func(string) { m.OpenContextPalette() },
-		"complete_selected":            func(string) { m.CompleteSelected() },
-		"delete_selected":              func(string) { m.DeleteSelected() },
-		"approve_proposal":             func(string) { m.DecideProposal(application.ProposalApprove) },
-		"reject_proposal":              func(string) { m.DecideProposal(application.ProposalReject) },
-		"unreject_proposal":            func(string) { m.RestoreRejected() },
-		"toggle_rejected_view":         func(string) { m.ToggleRejected() },
-		"raise_priority":               func(string) { m.BumpPriority(-1) },
-		"lower_priority":               func(string) { m.BumpPriority(1) },
-		"open_date_popup":              func(string) { m.OpenDatePopup() },
-		"open_recur_popup":             func(string) { m.OpenRecurPopup() },
-		"rename_project":               func(string) { m.RenameProject() },
-		"capture_into_project":         func(string) { m.CaptureIntoProject() },
-		"archive_sweep":                func(string) { m.ArchiveSweep() },
-		"undo_last":                    func(string) { m.UndoLast() },
-		"redo_last":                    func(string) { m.RedoLast() },
-		"move_subtree_up":              func(string) { m.ReorderSelected("up") },
-		"move_subtree_down":            func(string) { m.ReorderSelected("down") },
-		"indent_subtree":               func(string) { m.ReorderSelected("indent") },
-		"outdent_subtree":              func(string) { m.ReorderSelected("outdent") },
-		"open_link":                    func(string) { m.OpenLink() },
-		"defer_selected":               func(string) { m.DeferSelected() },
-		"delegate_selected":            func(string) { m.DelegateSelected() },
-		"set_work_ref_selected":        func(string) { m.SetWorkRefSelected() },
-		"focus_prompt":                 func(string) { m.FocusPrompt() },
-		"paste_ref":                    func(string) { m.PasteRef() },
-		"toggle_model":                 func(string) { m.ToggleModel() },
-		"open_agent_activity":          func(string) { m.OpenAgentActivity() },
-		"cancel_queued_agent_requests": func(string) { m.CancelQueuedAgentRequests() },
-		"resp_up":                      func(string) { m.ScrollResponse(-5) },
-		"resp_down":                    func(string) { m.ScrollResponse(5) },
-		"start_task_edit":              func(string) { m.StartTaskEdit("title") },
-		"start_task_edit_last":         func(string) { m.StartTaskEdit(editFields[len(editFields)-1]) },
-		"yank_ref":                     func(string) { m.YankRef() },
-		"yank_markdown":                func(string) { m.YankMarkdown() },
+		"open_help":                     func(string) { m.OpenHelp() },
+		"open_action_palette":           func(string) { m.OpenActionPalette() },
+		"open_context_palette":          func(string) { m.OpenContextPalette() },
+		"complete_selected":             func(string) { m.CompleteSelected() },
+		"delete_selected":               func(string) { m.DeleteSelected() },
+		"approve_proposal":              func(string) { m.DecideProposal(application.ProposalApprove) },
+		"reject_proposal":               func(string) { m.DecideProposal(application.ProposalReject) },
+		"approve_and_complete_proposal": func(string) { m.ApproveAndCompleteProposal() },
+		"unreject_proposal":             func(string) { m.RestoreRejected() },
+		"toggle_rejected_view":          func(string) { m.ToggleRejected() },
+		"raise_priority":                func(string) { m.BumpPriority(-1) },
+		"lower_priority":                func(string) { m.BumpPriority(1) },
+		"open_date_popup":               func(string) { m.OpenDatePopup() },
+		"open_recur_popup":              func(string) { m.OpenRecurPopup() },
+		"rename_project":                func(string) { m.RenameProject() },
+		"capture_into_project":          func(string) { m.CaptureIntoProject() },
+		"archive_sweep":                 func(string) { m.ArchiveSweep() },
+		"undo_last":                     func(string) { m.UndoLast() },
+		"redo_last":                     func(string) { m.RedoLast() },
+		"move_subtree_up":               func(string) { m.ReorderSelected("up") },
+		"move_subtree_down":             func(string) { m.ReorderSelected("down") },
+		"indent_subtree":                func(string) { m.ReorderSelected("indent") },
+		"outdent_subtree":               func(string) { m.ReorderSelected("outdent") },
+		"open_link":                     func(string) { m.OpenLink() },
+		"defer_selected":                func(string) { m.DeferSelected() },
+		"delegate_selected":             func(string) { m.DelegateSelected() },
+		"set_work_ref_selected":         func(string) { m.SetWorkRefSelected() },
+		"focus_prompt":                  func(string) { m.FocusPrompt() },
+		"paste_ref":                     func(string) { m.PasteRef() },
+		"toggle_model":                  func(string) { m.ToggleModel() },
+		"open_agent_activity":           func(string) { m.OpenAgentActivity() },
+		"cancel_queued_agent_requests":  func(string) { m.CancelQueuedAgentRequests() },
+		"resp_up":                       func(string) { m.ScrollResponse(-5) },
+		"resp_down":                     func(string) { m.ScrollResponse(5) },
+		"start_task_edit":               func(string) { m.StartTaskEdit("title") },
+		"start_task_edit_last":          func(string) { m.StartTaskEdit(editFields[len(editFields)-1]) },
+		"yank_ref":                      func(string) { m.YankRef() },
+		"yank_markdown":                 func(string) { m.YankMarkdown() },
 
 		// Modal navigation.
 		"modal_up":             func(string) { m.modalMove(-1) },
@@ -164,6 +165,11 @@ func (m *Model) availability(name string) bool {
 	case "proposal_action_available?":
 		item := m.CurrentItem()
 		return item != nil && isProposedState(item.State)
+	case "completion_action_available?":
+		// A proposal has its own `c`: plain completion is refused by the store on
+		// a PROPOSED row, so advertising it there would be a lie.
+		item := m.CurrentItem()
+		return item != nil && !isProposedState(item.State)
 	case "reject_restore_available?":
 		item := m.CurrentItem()
 		return item != nil && item.State == "CANCELLED" && item.Rejected != "" &&
@@ -425,20 +431,54 @@ func (m *Model) CompleteSelected() {
 
 // DecideProposal is `a` / `r` on a proposed task.
 func (m *Model) DecideProposal(action application.ProposalAction) {
+	m.decideSelectedProposal(action != application.ProposalReject,
+		func(item store.Item) application.Outcome {
+			return m.app.DecideProposal(application.ProposalDecision{
+				ID: item.ID, Action: action,
+				ExpectedRevision: m.read.Snapshot().RevisionFor(item),
+			}, m.operation())
+		},
+		func(title string) string {
+			if action == application.ProposalReject {
+				return "rejected → CANCELLED: " + title
+			}
+			return "approved → INBOX: " + title
+		})
+}
+
+// ApproveAndCompleteProposal is `c` on a proposed task: the proposal is accepted
+// and the accepted task is completed, in ONE undoable step.
+//
+// It is the honest answer to a proposal for work that is already finished.
+// Rejecting would clear the row too, but it records a decline — the wrong
+// history, and the wrong signal to whoever proposed it.
+func (m *Model) ApproveAndCompleteProposal() {
+	m.decideSelectedProposal(true,
+		func(item store.Item) application.Outcome {
+			return m.app.ApproveAndCompleteTask(item.ID,
+				m.read.Snapshot().RevisionFor(item), m.operation())
+		},
+		func(title string) string { return "✓ approved + DONE: " + title + " — x to archive" })
+}
+
+// decideSelectedProposal is the review-pass shape every proposal decision
+// shares: decide the selected proposal against the revision the user is looking
+// at, then land on the NEXT proposal rather than wherever the list reflows to,
+// so a review pass is one keystroke each.
+//
+// keepOnEmpty follows the approve behaviour: when nothing else is pending, the
+// decided row is still on screen and staying on it beats jumping away.
+func (m *Model) decideSelectedProposal(keepOnEmpty bool, decide func(store.Item) application.Outcome,
+	flash func(title string) string) {
+
 	item := m.CurrentItem()
 	if item == nil || !isProposedState(item.State) {
 		m.Flash("select a task pending approval")
 		return
 	}
-	// Review order: after deciding this one, land on the NEXT proposal rather
-	// than wherever the list happens to reflow to, so a review pass is a
-	// sequence of one keystroke each.
 	next := m.nextProposalID(item.ID)
 	title := item.Title
-	result := m.app.DecideProposal(application.ProposalDecision{
-		ID: item.ID, Action: action,
-		ExpectedRevision: m.read.Snapshot().RevisionFor(*item),
-	}, m.operation())
+	result := decide(*item)
 	if !result.OK() {
 		m.Refresh()
 		message := "proposal changed underneath — try again"
@@ -449,16 +489,11 @@ func (m *Model) DecideProposal(action application.ProposalAction) {
 		return
 	}
 	m.selectedID = next
-	if m.selectedID == "" && action == application.ProposalApprove {
+	if m.selectedID == "" && keepOnEmpty {
 		m.selectedID = item.ID
 	}
 	m.Refresh()
-	target := "INBOX"
-	verb := "approved"
-	if action == application.ProposalReject {
-		target, verb = "CANCELLED", "rejected"
-	}
-	m.Flash(verb + " → " + target + ": " + title)
+	m.Flash(flash(title))
 }
 
 // RestoreRejected is `a` on a revealed rejected row: the decline is undone in

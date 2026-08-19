@@ -302,6 +302,29 @@ func TestProposedTaskCannotCarryADelegation(t *testing.T) {
 	}
 }
 
+// Recurrence is a schedule for accepted work, and every write path already
+// refuses to put a cookie on a proposal. The rule exists for the files no write
+// produced — hand-edited, repaired, or written by another device — where the
+// shape would otherwise pass `check` and then meet an operation that cannot act
+// on it: completing a recurring task rolls its anchor forward instead of
+// finishing it.
+func TestProposedTaskCannotCarryRecurrence(t *testing.T) {
+	text := store(
+		section("aaaa0001", "W"),
+		task("aaaa0002", "aaaa0001", "PROPOSED", "a proposal", `"scheduled":"2026-06-01"`, `"recur":"+1w"`),
+	)
+	if got := messages(CheckText(text)); !strings.Contains(got, "recurrence on a proposed task (PROPOSED)") {
+		t.Fatalf("errors = %q", got)
+	}
+	accepted := store(
+		section("aaaa0001", "W"),
+		task("aaaa0002", "aaaa0001", "TODO", "accepted work", `"scheduled":"2026-06-01"`, `"recur":"+1w"`),
+	)
+	if result := CheckText(accepted); !result.OK() {
+		t.Fatalf("recurrence on accepted work must pass: %#v", result.Errors)
+	}
+}
+
 // test_closed_task_may_carry_a_delegation_as_provenance
 func TestClosedTaskMayCarryADelegationAsProvenance(t *testing.T) {
 	delegation := `{"kind":"agent","mode":"implement","status":"claimed","assignee":"cc/fable5/aaaa1111","at":"2026-07-27T18:04:11Z","work_ref":"https://example.com/pr/42"}`

@@ -498,6 +498,109 @@ func TestDecideRefusesATaskThatIsNotProposed(t *testing.T) {
 	}
 }
 
+func TestApproveAndCompleteClosesTheProposalInOneUndoableWrite(t *testing.T) {
+	store, _ := writerFixture(t, proposalFixture)
+	result := store.ApproveAndCompleteProposal("ccdd0003", "", sweepDay)
+	if result.Status != MutationOK {
+		t.Fatalf("approve+complete = %q %v", result.Status, result.Errors)
+	}
+	if result.Summary.From != "PROPOSED" || result.Summary.To != "DONE" ||
+		result.Summary.Action != ProposalApproveComplete {
+		t.Errorf("summary = %+v", result.Summary)
+	}
+	child, _ := recordFor(t, store.org, "Child proposal")
+	if child.String("state") != "DONE" || child.String("closed") != sweepDay {
+		t.Errorf("child = %q closed %q", child.String("state"), child.String("closed"))
+	}
+	// One undo step, and it restores PROPOSED exactly — not INBOX, which is what
+	// two composed writes would leave behind.
+	if _, label := store.HistoryStep(-1); label != "approve + complete proposal: Child proposal" {
+		t.Errorf("history label = %q", label)
+	}
+	restored, _ := recordFor(t, store.org, "Child proposal")
+	if restored.String("state") != "PROPOSED" || restored.String("closed") != "" {
+		t.Errorf("undo left %q closed %q, want PROPOSED", restored.String("state"), restored.String("closed"))
+	}
+}
+
+func TestApproveAndCompleteRefusesWithoutWritingWhenTheRevisionIsStale(t *testing.T) {
+	store, _ := writerFixture(t, proposalFixture)
+	before := readStore(t, store)
+	result := store.ApproveAndCompleteProposal("ccdd0003", "0-deadbeef", sweepDay)
+	if result.Status == MutationOK {
+		t.Fatalf("a stale revision was accepted: %+v", result)
+	}
+	if got := readStore(t, store); got != before {
+		t.Error("a refused approve+complete writes nothing")
+	}
+}
+
+func TestApproveAndCompleteStillDecidesLeavesFirst(t *testing.T) {
+	store, _ := writerFixture(t, proposalFixture)
+	before := readStore(t, store)
+	if result := store.ApproveAndCompleteProposal("ccdd0002", "", sweepDay); result.Status != MutationConflict {
+		t.Fatalf("approve+complete of a parent = %q", result.Status)
+	}
+	if got := readStore(t, store); got != before {
+		t.Error("a leaves-first refusal writes nothing")
+	}
+}
+
+// A recurring task does not complete — it rolls forward — so approve+complete
+// has no coherent meaning on one. No write path can produce a recurring
+// proposal, and `check` now names the shape, so a file carrying one is refused
+// at the door by every mutation's preflight. The compound verb carries its own
+// refusal behind that as well, for a store whose preflight is ever relaxed.
+func TestApproveAndCompleteRefusesARecurringProposal(t *testing.T) {
+	const recurringProposal = `{"type":"meta","version":2}
+{"type":"section","id":"ccdd0001","title":"Inbox"}
+{"type":"task","id":"ccdd0003","parent":"ccdd0001","state":"PROPOSED","title":"Recurring proposal","scheduled":"2026-07-01","recur":"+1w"}
+`
+	store, _ := writerFixture(t, recurringProposal)
+	before := readStore(t, store)
+
+	result := store.ApproveAndCompleteProposal("ccdd0003", "", sweepDay)
+	if result.Status != MutationStoreInvalid ||
+		result.FirstError() != "recurrence on a proposed task (PROPOSED)" {
+		t.Fatalf("approve+complete = %q %v", result.Status, result.Errors)
+	}
+	if got := readStore(t, store); got != before {
+		t.Error("a refused approve+complete writes nothing")
+	}
+}
+
+// The compound verb's own guard, exercised where the file-wide preflight cannot
+// reach it: a recurring task that patchState would ROLL FORWARD is refused
+// rather than committed and reported as DONE.
+func TestApproveAndCompleteNeverReportsARolledRecurrenceAsDone(t *testing.T) {
+	store, _ := writerFixture(t, proposalFixture)
+	records := freshRecords(store.org)
+	index := locateStableIndex(records, "ccdd0003")
+	working := record.CloneAll(records)
+	working[index].SetString("state", "INBOX")
+	working[index].SetString("scheduled", "2026-07-01")
+	working[index].SetString("recur", "+1w")
+	context, err := store.patchContext(PatchRequest{Today: sweepDay})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome := patchState(working, index, TextValue("DONE"), context)
+	if outcome.status != MutationOK || outcome.summary.Action != "recurrence_advanced" {
+		t.Fatalf("precondition: completing a recurring task = %q %+v", outcome.status, outcome.summary)
+	}
+	if state := working[index].String("state"); state == "DONE" {
+		t.Fatal("precondition: a rolled recurrence stays open")
+	}
+}
+
+func TestApproveAndCompleteRefusesATaskThatIsNotProposed(t *testing.T) {
+	store, _ := writerFixture(t, proposalFixture)
+	result := store.ApproveAndCompleteProposal("ccdd0004", "", sweepDay)
+	if result.Status != MutationInvalid || result.FirstError() != "task is TODO, not PROPOSED" {
+		t.Errorf("approve+complete = %q %v", result.Status, result.Errors)
+	}
+}
+
 func TestNotesAreOnlyAllowedWhenRejecting(t *testing.T) {
 	store, _ := writerFixture(t, proposalFixture)
 	result := store.DecideProposal("ccdd0003", ProposalApprove, []string{"why"}, "", sweepDay)

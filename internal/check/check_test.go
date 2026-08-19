@@ -46,6 +46,14 @@ func TestMetadataAndIDFixtureDiagnosticsMatchRubyOracle(t *testing.T) {
 			{22, "task has no title"},
 			{23, `unknown record type "widget"`},
 		}},
+		// Recurrence is a schedule for accepted work. No write path can produce
+		// this shape; a repaired or foreign-device file can, and `check` is the
+		// only thing standing between it and an operation that cannot act on it
+		// coherently. The TODO row beside it proves the rule is about the state,
+		// not about the cookie.
+		{"recurring proposal", fixture("malformed", "recurring-proposal", "tasks.jsonl"), []Entry{
+			{3, "recurrence on a proposed task (PROPOSED)"},
+		}},
 		{"null id", fixture("malformed", "null-id", "tasks.jsonl"), []Entry{
 			{2, "record missing id"},
 			{2, "invalid state nil (expected PROPOSED/INBOX/TODO/NEXT/WAITING/DONE/CANCELLED)"},

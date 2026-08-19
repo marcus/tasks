@@ -254,9 +254,11 @@ view; list navigation stays active and refreshes the panel for each newly
 selected task. Return or Escape closes it. The existing `d` date and `r`
 recurrence quick actions remain available. The sixth and final **Inbox** tab
 composes two visibly separate intake sections: **Approvals** first, containing
-only inert PROPOSED tasks with an `a approve · r reject` hint, then accepted
-**Inbox** captures with their existing tree and inline `@` contexts. `a`
-approves the selected proposal and `r` rejects it; registered shortcut
+only inert PROPOSED tasks with an `a approve · c approve+done · r reject`
+hint, then accepted **Inbox** captures with their existing tree and inline `@`
+contexts. `a` approves the selected proposal, `c` approves and completes it in
+one undoable step (the store never completes a PROPOSED task, so `c` means
+approve+done and nothing else), and `r` rejects it; registered shortcut
 availability keeps project capture and recurrence behavior on their eligible
 rows. Repeated decisions advance through the visible proposal queue. Once it
 is empty, approval follows the accepted task when that task is visible, while
@@ -541,6 +543,8 @@ HTTP clients use `scope=proposed` or `scope=rejected` and the explicit
 `POST /api/v1/tasks/{id}/approve`, `/reject`, or `/unreject` intent routes with
 `If-Match`; all three return the transitioned task plus its new ETag. Reject may
 optionally carry a `notes` body field; approve and unreject take no body.
+Approve additionally accepts `?complete=true`, which completes the accepted task
+in the same write and returns it `DONE`.
 
 **Delegation and pickup.** An accepted live task can carry one optional
 `delegation` object naming who holds the next action: a person (`kind: human`,
@@ -1127,7 +1131,7 @@ display text to parse.
 |---|---|---|---|
 | `done <ref>` | `complete`, `close`, `d` | ✅ | Mark DONE + `closed` date, cascading to every open descendant (see Cascading completion); recurring descendants close outright and their recur cookie is retired. A recurring task (recur cookie on its date) rolls forward and stays open instead — output shows `↻ <title> → next <date>` — and does **not** cascade. `--dry-run` also previews how many open descendants would close. |
 | `cancel <ref> [--note "text"]` | `drop` | ✅ | Mark CANCELLED + `closed` date. Repeatable `--note` appends withdrawal rationale to the body (same join semantics as `propose --note`), visible in `show`. |
-| `approve <ref>` | | ✅ | Accept exactly one PROPOSED task into INBOX. A live non-proposal resolves normally and reports its current state as the semantic error; a proposal with proposed descendants refuses so decisions proceed leaves first. Undoable. |
+| `approve <ref> [--done]` | | ✅ | Accept exactly one PROPOSED task into INBOX. A live non-proposal resolves normally and reports its current state as the semantic error; a proposal with proposed descendants refuses so decisions proceed leaves first. Undoable. `--done` accepts **and** completes it in the same write — one journal entry, so `undo` restores `PROPOSED` exactly — for a proposal whose work is already finished; rejecting would record a decline, which is the wrong history. The completion cascades to accepted open descendants like `done`. HTTP: `POST /api/v1/tasks/{id}/approve?complete=true`. |
 | `reject <ref> [--note "text"]` | | ✅ | Decline exactly one PROPOSED task into CANCELLED and stamp `closed`. Repeatable `--note` records withdrawal rationale on the body in the same write (mirrors `propose --note`). Uses the same broad live-ref/current-state/refusal/undo contract as `approve`. |
 | `unreject <ref>` | | ✅ | Restore one declined proposal to `PROPOSED` in place: same id, title, body (including the withdrawal note the reject appended), tags and links. Nothing is created, so a restore can never mint a second id for work that already has one. Refuses anything that is not a live task that is `CANCELLED` **and** carries the `rejected` marker — an ordinary cancellation was never a review decision — and refuses an archived reject, which cannot be restored in place. Clears `closed` and the `rejected` marker, and inherits the PROPOSED rules (no recurrence, no delegation, no accepted descendants). Undoable. `--json` reports the touched task. HTTP: `POST /api/v1/tasks/{id}/unreject` with `If-Match`, no body.
 | `state <ref> <STATE>` | `mv` | ✅ | Any state transition (PROPOSED/INBOX/TODO/NEXT/WAITING/DONE/CANCELLED). Enforces: entering DONE/CANCELLED sets `closed`; leaving them clears it. A proposal cannot transition directly to DONE or carry recurrence; use `approve`/`reject` for review intent. Entering DONE cascades to accepted open descendants (see Cascading completion); entering CANCELLED does not. Resolves refs across proposed, open, and closed live tasks so you can repair state explicitly. |

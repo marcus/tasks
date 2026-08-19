@@ -141,3 +141,50 @@ func TestPlaceholderSurvivesWhenOnlyRejectsAreShown(t *testing.T) {
 		t.Fatalf("the revealed decline went missing:\n%s", text)
 	}
 }
+
+// `c` on a proposal is approve+complete: the advertised key does what it says,
+// which the plain completion could not — the store refuses to complete a
+// PROPOSED task at all.
+func TestCompleteOnAProposalApprovesAndCompletesIt(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: rejectedFixture})
+	harness.model.SwitchView(ViewInbox)
+	harness.selectRowByID("aaaa0010")
+	if !harness.model.availability("proposal_action_available?") ||
+		harness.model.availability("completion_action_available?") {
+		t.Fatal("a proposal row must offer approve+complete rather than plain completion")
+	}
+	harness.press('c')
+
+	if !strings.Contains(harness.model.FlashMessage(), "approved + DONE") {
+		t.Fatalf("flash = %q", harness.model.FlashMessage())
+	}
+	item, ok := harness.model.read.Queries().FindLive("aaaa0010")
+	if !ok {
+		t.Fatal("the approved task is gone")
+	}
+	if item.State != "DONE" || item.Closed == "" {
+		t.Errorf("item = %+v, want a closed DONE task", item)
+	}
+
+	// One undo step puts the proposal back exactly as it was.
+	harness.model.UndoLast()
+	restored, ok := harness.model.read.Queries().FindLive("aaaa0010")
+	if !ok {
+		t.Fatal("undo lost the proposal")
+	}
+	if restored.State != "PROPOSED" || restored.Closed != "" {
+		t.Errorf("after undo = %+v, want PROPOSED", restored)
+	}
+}
+
+// `c` away from a proposal is the ordinary completion, unchanged.
+func TestCompleteElsewhereIsStillThePlainCompletion(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: rejectedFixture})
+	harness.model.SwitchView(ViewInbox)
+	harness.selectRowByID("aaaa0002")
+	harness.press('c')
+	if !strings.Contains(harness.model.FlashMessage(), "\u2713 DONE") ||
+		strings.Contains(harness.model.FlashMessage(), "approved") {
+		t.Fatalf("flash = %q", harness.model.FlashMessage())
+	}
+}

@@ -309,6 +309,11 @@ func (s *scriptedStore) DecideProposal(id, action string, notes []string, expect
 	return s.proposalResult
 }
 
+func (s *scriptedStore) ApproveAndCompleteProposal(id, expectedRevision, today string) store.MutationResult {
+	s.calls = append(s.calls, recordedCall{verb: "decide:approve_complete", id: id, detail: today})
+	return s.proposalResult
+}
+
 // -- the store that grew nothing ----------------------------------------------
 
 // bareStore exposes ONLY the base Store interface, hiding whatever optional

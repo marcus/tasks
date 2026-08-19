@@ -19,6 +19,12 @@ const (
 // proposal, while this one undoes a decision, with rules of its own.
 const ProposalUnreject = "unreject"
 
+// ProposalApproveComplete names the compound decision in a mutation summary. It
+// is not a fourth decision the caller may ASK for by name — approve+complete has
+// its own entry point — but the summary has to be able to say that the write did
+// both, because "approve" alone would understate what changed.
+const ProposalApproveComplete = "approve_complete"
+
 // DecideProposal accepts or declines one proposal in a single checked
 // transaction.
 //
@@ -34,6 +40,30 @@ const ProposalUnreject = "unreject"
 // meaningful on a rejection — withdrawal rationale appended to the body in the
 // SAME write, so the reason and the decision cannot come apart.
 func (s *Store) DecideProposal(id, action string, notes []string, expectedRevision, today string) MutationResult {
+	return s.decideProposal(id, action, notes, expectedRevision, today, false)
+}
+
+// ApproveAndCompleteProposal accepts a proposal AND completes the accepted task
+// in ONE transaction, one journal entry, and one revision check.
+//
+// It exists because "approve, then complete" is the single most common answer to
+// a proposal for work that is already finished, and composing it from two writes
+// would give a half-applied result its own reachable state: a second write that
+// refuses would leave the proposal accepted-but-open, and `undo` would rewind
+// only half of what the user asked for. Rejecting is NOT the same answer — it
+// records that the work was declined, which is the wrong history for work that
+// was done.
+//
+// The store invariant that a PROPOSED task can never be completed is untouched:
+// the approval lands first, in the working copy, and the completion runs against
+// the now-accepted task.
+func (s *Store) ApproveAndCompleteProposal(id, expectedRevision, today string) MutationResult {
+	return s.decideProposal(id, ProposalApprove, nil, expectedRevision, today, true)
+}
+
+func (s *Store) decideProposal(id, action string, notes []string,
+	expectedRevision, today string, complete bool) MutationResult {
+
 	if action != ProposalApprove && action != ProposalReject {
 		return MutationResult{Status: MutationInvalid,
 			Errors: []string{"proposal action must be approve or reject"}}
@@ -162,15 +192,50 @@ func (s *Store) DecideProposal(id, action string, notes []string, expectedRevisi
 			working[index].SetOptional("body",
 				record.RawString(appendBody(working[index].String("body"), noteText)))
 		}
+		touched := []string{id}
+		label := action + " proposal: " + title
+		summaryAction := action
+		if complete {
+			// The task is INBOX in the working copy now, so this is an ordinary
+			// completion — the "approve before completing" invariant holds, and the
+			// DONE cascade over any accepted descendants comes with it.
+			finished := patchState(working, index, TextValue("DONE"), context)
+			if finished.status != MutationOK {
+				result = MutationResult{Status: finished.status, Errors: finished.errors,
+					Summary: finished.summary}
+				return nil
+			}
+			// A recurring task does not COMPLETE: patchState rolls its anchor
+			// forward and leaves it open. Approve+complete has no coherent
+			// meaning there — the caller asked for one finished task and would
+			// get an open INBOX occurrence — so it is refused rather than
+			// reported under a name that would be a lie. Nothing is committed,
+			// so the proposal is untouched.
+			//
+			// `check` now forbids a recurring PROPOSED task outright, so a file
+			// carrying one is refused by this transaction's own preflight before
+			// reaching here. This guard is what keeps that a REFUSAL rather than
+			// a silent lie if the preflight is ever narrowed: the alternative is
+			// committing a rolled-forward, still-open task and reporting DONE.
+			if finished.summary.Action == "recurrence_advanced" {
+				result = MutationResult{Status: MutationInvalid,
+					Errors: []string{"remove recurrence before approving as done"}}
+				return nil
+			}
+			touched = finished.touchedIDs
+			target = "DONE"
+			label = "approve + complete proposal: " + title
+			summaryAction = ProposalApproveComplete
+		}
 		if _, err := record.Dump(working); err != nil {
 			result = MutationResult{Status: MutationInvalid, Errors: []string{err.Error()}}
 			return nil
 		}
 
-		result = s.commit(before, working, action+" proposal: "+title, "")
+		result = s.commit(before, working, label, "")
 		if result.Status == MutationOK {
-			result.TouchedIDs = []string{id}
-			result.Summary = MutationSummary{Action: action, From: "PROPOSED", To: target}
+			result.TouchedIDs = touched
+			result.Summary = MutationSummary{Action: summaryAction, From: "PROPOSED", To: target}
 		}
 		return nil
 	})

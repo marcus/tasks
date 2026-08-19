@@ -99,7 +99,10 @@ type id parent state priority title tags scheduled scheduled_time deadline deadl
   never appear without their matching date.
 - **`recur`** — a recurrence schedule on a dated task, in one canonical
   spelling: an org-style interval cookie (`.+1w`, `++1m`, `+2d`) or a calendar
-  schedule (`w:mon,wed`, `m:15`, `y:07-04`). See [Recurrence](#recurrence).
+  schedule (`w:mon,wed`, `m:15`, `y:07-04`). Never on a `PROPOSED` task:
+  recurrence is a schedule for accepted work, and completing a recurring task
+  rolls it forward rather than finishing it, so the shape names an occurrence
+  nothing can act on. `check` refuses it. See [Recurrence](#recurrence).
 - **`lead`** — an optional lead-time window on a dated task: a positive count
   and a unit — calendar (`3w`, `2d`, `1m`, `10y`) or the clock unit `h` (`5h`). The task is hidden until that
   span before its anchor. See [Lead time](#lead-time).

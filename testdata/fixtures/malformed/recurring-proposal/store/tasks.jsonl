@@ -1,0 +1,4 @@
+{"type":"meta","version":2}
+{"type":"section","id":"7ecc0001","title":"Recurrence on undecided work"}
+{"type":"task","id":"7ecc0002","parent":"7ecc0001","state":"PROPOSED","title":"Recurring proposal","scheduled":"2026-06-01","recur":"+1w"}
+{"type":"task","id":"7ecc0003","parent":"7ecc0001","state":"TODO","title":"Recurring accepted work","scheduled":"2026-06-01","recur":"+1w"}
