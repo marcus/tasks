@@ -546,6 +546,53 @@ func TestApproveAndCompleteStillDecidesLeavesFirst(t *testing.T) {
 	}
 }
 
+// A recurring task does not complete — it rolls forward — so approve+complete
+// has no coherent meaning on one. No write path can produce a recurring
+// proposal, and `check` now names the shape, so a file carrying one is refused
+// at the door by every mutation's preflight. The compound verb carries its own
+// refusal behind that as well, for a store whose preflight is ever relaxed.
+func TestApproveAndCompleteRefusesARecurringProposal(t *testing.T) {
+	const recurringProposal = `{"type":"meta","version":2}
+{"type":"section","id":"ccdd0001","title":"Inbox"}
+{"type":"task","id":"ccdd0003","parent":"ccdd0001","state":"PROPOSED","title":"Recurring proposal","scheduled":"2026-07-01","recur":"+1w"}
+`
+	store, _ := writerFixture(t, recurringProposal)
+	before := readStore(t, store)
+
+	result := store.ApproveAndCompleteProposal("ccdd0003", "", sweepDay)
+	if result.Status != MutationStoreInvalid ||
+		result.FirstError() != "recurrence on a proposed task (PROPOSED)" {
+		t.Fatalf("approve+complete = %q %v", result.Status, result.Errors)
+	}
+	if got := readStore(t, store); got != before {
+		t.Error("a refused approve+complete writes nothing")
+	}
+}
+
+// The compound verb's own guard, exercised where the file-wide preflight cannot
+// reach it: a recurring task that patchState would ROLL FORWARD is refused
+// rather than committed and reported as DONE.
+func TestApproveAndCompleteNeverReportsARolledRecurrenceAsDone(t *testing.T) {
+	store, _ := writerFixture(t, proposalFixture)
+	records := freshRecords(store.org)
+	index := locateStableIndex(records, "ccdd0003")
+	working := record.CloneAll(records)
+	working[index].SetString("state", "INBOX")
+	working[index].SetString("scheduled", "2026-07-01")
+	working[index].SetString("recur", "+1w")
+	context, err := store.patchContext(PatchRequest{Today: sweepDay})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome := patchState(working, index, TextValue("DONE"), context)
+	if outcome.status != MutationOK || outcome.summary.Action != "recurrence_advanced" {
+		t.Fatalf("precondition: completing a recurring task = %q %+v", outcome.status, outcome.summary)
+	}
+	if state := working[index].String("state"); state == "DONE" {
+		t.Fatal("precondition: a rolled recurrence stays open")
+	}
+}
+
 func TestApproveAndCompleteRefusesATaskThatIsNotProposed(t *testing.T) {
 	store, _ := writerFixture(t, proposalFixture)
 	result := store.ApproveAndCompleteProposal("ccdd0004", "", sweepDay)

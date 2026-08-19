@@ -254,10 +254,10 @@ view; list navigation stays active and refreshes the panel for each newly
 selected task. Return or Escape closes it. The existing `d` date and `r`
 recurrence quick actions remain available. The sixth and final **Inbox** tab
 composes two visibly separate intake sections: **Approvals** first, containing
-only inert PROPOSED tasks with an `a approve · c approve+done · r reject` hint, then accepted
-**Inbox** captures with their existing tree and inline `@` contexts. `a`
-approves the selected proposal, `c` approves and completes it in one undoable
-step (the store never completes a PROPOSED task, so `c` on a proposal means
+only inert PROPOSED tasks with an `a approve · c approve+done · r reject`
+hint, then accepted **Inbox** captures with their existing tree and inline `@`
+contexts. `a` approves the selected proposal, `c` approves and completes it in
+one undoable step (the store never completes a PROPOSED task, so `c` means
 approve+done and nothing else), and `r` rejects it; registered shortcut
 availability keeps project capture and recurrence behavior on their eligible
 rows. Repeated decisions advance through the visible proposal queue. Once it

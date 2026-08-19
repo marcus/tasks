@@ -205,6 +205,23 @@ func (s *Store) decideProposal(id, action string, notes []string,
 					Summary: finished.summary}
 				return nil
 			}
+			// A recurring task does not COMPLETE: patchState rolls its anchor
+			// forward and leaves it open. Approve+complete has no coherent
+			// meaning there — the caller asked for one finished task and would
+			// get an open INBOX occurrence — so it is refused rather than
+			// reported under a name that would be a lie. Nothing is committed,
+			// so the proposal is untouched.
+			//
+			// `check` now forbids a recurring PROPOSED task outright, so a file
+			// carrying one is refused by this transaction's own preflight before
+			// reaching here. This guard is what keeps that a REFUSAL rather than
+			// a silent lie if the preflight is ever narrowed: the alternative is
+			// committing a rolled-forward, still-open task and reporting DONE.
+			if finished.summary.Action == "recurrence_advanced" {
+				result = MutationResult{Status: MutationInvalid,
+					Errors: []string{"remove recurrence before approving as done"}}
+				return nil
+			}
 			touched = finished.touchedIDs
 			target = "DONE"
 			label = "approve + complete proposal: " + title

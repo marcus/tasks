@@ -607,6 +607,12 @@ func TestApproveCompleteAcceptsAndClosesInOneWrite(t *testing.T) {
 	if record := h.recordFor("Already finished chore"); record["state"] != "DONE" {
 		t.Errorf("the store still holds %v", record["state"])
 	}
+	// The precondition is read before the query string, exactly as DELETE reads
+	// it before `cascade`: two parallel routes must not disagree about which
+	// refusal a request missing If-Match earns.
+	assertError(t, h.json("POST", "/api/v1/tasks/"+id+"/approve?complete=bogus", "", nil),
+		428, "missing_precondition")
+
 	// The flag belongs to approve alone.
 	assertError(t, h.json("POST", "/api/v1/tasks/"+id+"/reject?complete=true", "",
 		h.withIfMatch(done.etag())), 422, "validation_failed")

@@ -241,6 +241,15 @@ func checkTask(parsed record.Record, errors *[]Entry) {
 			add(fmt.Sprintf("invalid recur cookie %s (expected e.g. .+1w, ++1m, +2d, w:mon, m:15, y:07-04)",
 				rubyInspect(recurRaw)))
 		}
+		// Recurrence is a schedule for ACCEPTED work: every write path already
+		// refuses to put a cookie on an undecided proposal, or to propose a
+		// recurring task. Stating it here too closes the hole a hand-edited,
+		// repaired, or foreign-device file leaves — a shape no write could
+		// produce and no operation can act on coherently (completing it rolls
+		// the anchor forward instead of finishing anything).
+		if contains(ProposedStates, state) {
+			add(fmt.Sprintf("recurrence on a proposed task (%s)", state))
+		}
 	}
 	checkLead(parsed, errors)
 

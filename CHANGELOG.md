@@ -12,6 +12,12 @@
   --done` and `POST /api/v1/tasks/{id}/approve?complete=true` are the CLI and
   HTTP spellings of the same shared command, both `--json`/ETag-honest. The
   proposal row's key hints now describe what the keys actually do.
+- Refuse a recurring proposal in `check`. Recurrence is a schedule for accepted
+  work — completing a recurring task rolls it forward instead of finishing it —
+  and no write path could ever produce the shape, but a hand-edited, repaired,
+  or foreign-device file could, and it passed validation. Now `recur` on a
+  `PROPOSED` task is a `check` error, and approve+complete refuses it rather
+  than reporting a DONE that did not happen.
 
 ## [1.10.0] - 2026-08-18
 
