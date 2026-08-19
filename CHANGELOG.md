@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+- **`D` is a three-part modal instead of a one-line prompt.** Delegating now
+  asks the three questions a delegation actually has — who (a person or the
+  agent pool), which mode, and the note the receiver works from — on a modal
+  that is complete by keyboard and by mouse. Re-delegating prefills all three
+  from the current marker, and one submit writes them in a single undo step.
+  Release and undelegate are explicit affordances with a confirmation on the
+  destructive one, which retires the old flat word grammar: `implement`,
+  `release` and the clear words used to share one text field, so the shortest
+  inputs performed the widest and most destructive actions and a three-letter
+  prefix minimum was the only thing standing between a keystroke and a revoked
+  claim. Typing a verb into a text box is no longer how work is taken away.
+
 - **The three-part delegation reaches the CLI and HTTP.** `tasks delegate <ref>
   <mode> --note "…"` writes who, in what mode, and the briefing the receiver
   reads in ONE store write and therefore one undo step — no surface composes a
