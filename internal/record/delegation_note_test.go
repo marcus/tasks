@@ -108,32 +108,15 @@ func TestModeVocabularyIsInjectable(t *testing.T) {
 	}
 }
 
-// THE REGRESSION THAT KEEPS THE SEAM A VALUE.
+// WHAT ACTUALLY GUARANTEES THE SEAM STAYS A VALUE: there is no setter, and no
+// package-level vocabulary to set. A caller that wants a different set must pass
+// one, so the guarantee is enforced by the compiler at every call site rather
+// than by an assertion here — an earlier draft's process-wide slot let one
+// caller's configuration become every other caller's, and no test in this file
+// could have caught that without reaching for the global itself.
 //
-// An earlier draft held the vocabulary in a package-level slot with a setter.
-// It was race-free and still wrong: one caller's configuration became every
-// other caller's, and these two tests — parallel, as any pair of tests may be —
-// failed each other. They pass now only because there is nothing to set. If
-// someone reintroduces process-wide mode state, this pair fails again.
-func TestParallelCallerAConfiguresItsOwnVocabulary(t *testing.T) {
-	t.Parallel()
-	marker := map[string]any{"kind": "agent", "mode": "triage", "status": "ready", "at": "2026-07-27T18:04:11Z"}
-	for i := 0; i < 200; i++ {
-		if got := DelegationErrorsWith(marker, ModeSet{"triage"}); len(got) != 0 {
-			t.Fatalf("errors = %#v, want caller A's own vocabulary", got)
-		}
-	}
-}
-
-func TestParallelCallerBIsUnaffectedByCallerA(t *testing.T) {
-	t.Parallel()
-	marker := map[string]any{"kind": "agent", "mode": "research", "status": "ready", "at": "2026-07-27T18:04:11Z"}
-	for i := 0; i < 200; i++ {
-		if got := DelegationErrors(marker); len(got) != 0 {
-			t.Fatalf("errors = %#v, want the built-in vocabulary uncontaminated", got)
-		}
-	}
-}
+// The behavioural half of the claim is TestConfiguredModeVocabularyIsCarriedByTheStore
+// in internal/store: two stores in ONE process, disagreeing.
 
 // The hard compatibility guarantee: a store written by the CURRENT release —
 // markers with no note — parses and re-emits byte for byte. Adding a key to the

@@ -298,13 +298,22 @@ authority nobody asked for, where an inherited briefing is at worst stale text
 a human reads. Clearing the note removes the key rather than storing an empty
 string — absent means "no briefing", as everywhere else in this schema.
 
-A note write **restamps `at`**, unlike a `work_ref` write, which deliberately
-leaves it alone. `at` is what the multi-device merge orders competing owner
-intent by, and a note is owner intent an agent will execute; if note edits kept
-the delegation's original stamp, two devices editing a note would always tie
-and fall through to the byte tiebreak, so clearing a stale briefing could lose
-to an older edit. A `work_ref` is a URL rather than an instruction, so the
-asymmetry is intentional rather than an oversight.
+A note write **restamps `at` on a `delegated` or `ready` marker**, unlike a
+`work_ref` write, which never restamps. `at` is what the multi-device merge
+orders competing owner intent by, and a note is owner intent an agent will
+execute; if note edits kept the delegation's original stamp, two devices
+editing a note would always tie and fall through to the byte tiebreak, so
+clearing a stale briefing could lose to an older edit. A `work_ref` is a URL
+rather than an instruction, so its asymmetry is intentional rather than an
+oversight.
+
+On a **`claimed`** marker a note write leaves `at` alone, because there `at`
+means *when the claim was taken* and two claims are ranked by the earlier one.
+Moving it would make briefing a worker that is already holding the task lose to
+an untouched copy of the same claim on another device — the briefing would
+vanish on sync, and a one-sided note write would be reported as a conflict.
+Both sides tie on `at` instead, and the canonical-byte tiebreak keeps the
+note-bearing marker, which is the outcome that briefing is for.
 
 Across devices the object is merged atomically under one total order: a removal
 (`undelegate`) absorbs everything, a `claimed` marker outranks a non-claimed

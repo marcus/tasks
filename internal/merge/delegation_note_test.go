@@ -110,6 +110,39 @@ func TestALaterNoteClearBeatsAnEarlierNoteEdit(t *testing.T) {
 	}
 }
 
+// The other half of the stamping rule, and this packet's headline use case:
+// the owner briefs a worker that is ALREADY holding the task, while the other
+// device only touches an unrelated field. Because a note write leaves a claim's
+// `at` alone (it is claim time, and two claims rank by the EARLIER one), the two
+// markers tie on `at` and the canonical-byte tiebreak keeps the note-bearing
+// one. Restamping here would drop the briefing on sync and report a conflict
+// for a change only one side made.
+func TestBriefingALiveClaimSurvivesASyncWithAnUntouchedCopy(t *testing.T) {
+	at := "2026-07-27T19:00:00Z"
+	held := claim("worker-a", at, nil)
+	briefed := claim("worker-a", at, map[string]any{"note": "focus on the parser"})
+	base := baseRecords().change("10000002", map[string]any{"delegation": held})
+	ours := base.change("10000002", map[string]any{"delegation": briefed, "updated": homeStamp})
+	theirs := base.change("10000002", map[string]any{"title": "Compare CRDT libraries again", "updated": workStamp})
+
+	merged, result := mergeDocs(t, base, ours, theirs)
+	if got := delegationOf(merged, "10000002"); !reflect.DeepEqual(got, anyMap(briefed)) {
+		t.Fatalf("delegation = %#v, want the briefing to survive", got)
+	}
+	if containsString(result.Events[0].Conflicts, "delegation") {
+		t.Fatalf("conflicts = %v, want no conflict for a one-sided note on a claim",
+			result.Events[0].Conflicts)
+	}
+	// Symmetric: the note wins from either side, since the tiebreak is on bytes.
+	reverse := Merge(base.text(t), theirs.text(t), ours.text(t))
+	if !reverse.OK() {
+		t.Fatalf("merge failed: %q", reverse.Error)
+	}
+	if got := delegationOf(parseDoc(t, reverse.Text), "10000002"); !reflect.DeepEqual(got, anyMap(briefed)) {
+		t.Fatalf("delegation = %#v, want the briefing to survive either way", got)
+	}
+}
+
 // A mode on a HUMAN delegation is merged the same way as any other member: it
 // cannot be combined with the other side's assignee.
 func TestHumanDelegationWithAModeMergesAtomically(t *testing.T) {

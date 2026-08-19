@@ -219,14 +219,17 @@ their own, so they inherit every rule above and add none: the merged record
 takes one side's whole marker, and a note is never spliced onto the other side's
 delegation — a briefing that belonged to the delegation the merge discarded
 would brief the wrong work. Concretely: two devices that write different notes
-on an otherwise unclaimed marker resolve by later `at`, then canonical bytes, so
-the losing briefing is dropped whole — a note write restamps `at` precisely so
-that "most recent intent" is reachable for it, and a later *clear* therefore
-beats an earlier edit rather than tying with it; a `claimed` marker carrying an
-older note
-still outranks a fresher note on a `ready` one, because a note is owner intent
-and a claim is a fact about a worker holding the task; a `mode` on a human
-delegation merges exactly like a mode on an agent one, so a mode and an
+on an otherwise unclaimed marker resolve by later `at`, then canonical bytes,
+so the losing briefing is dropped whole — a note write restamps `at` on an
+unclaimed marker precisely so "most recent intent" is reachable for it, and a
+later *clear* therefore beats an earlier edit rather than tying with it. On a
+`claimed` marker a note write does NOT restamp, because there `at` is claim
+time and the earlier claim wins: briefing a worker that already holds the task
+ties on `at` and is kept by the byte tiebreak, rather than losing to an
+untouched copy of the same claim elsewhere. A `claimed` marker carrying an
+older note still outranks a fresher note on a `ready` one, because a note is
+owner intent and a claim is a fact about a worker holding the task; a `mode` on
+a human delegation merges exactly like a mode on an agent one, so a mode and an
 `assignee` from opposite sides can never be combined into a delegation nobody
 stated; and `undelegate` still absorbs everything, note and mode included.
 

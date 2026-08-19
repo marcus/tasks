@@ -29,9 +29,10 @@
   this is a refine" is a thing the data model can say. The note travels with
   the delegation it briefs — kept across a mode change or a new assignee of the
   same kind, dropped when a person replaces the pool or the reverse — carries
-  its own transition stamp so the most recent briefing wins a multi-device
-  merge, and merges atomically with the rest of the marker, where `undelegate`
-  still always wins.
+  its own transition stamp on an unclaimed delegation so the most recent
+  briefing wins a multi-device merge (a note on a live claim leaves the claim's
+  own stamp alone, so briefing a working agent survives a sync), and merges
+  atomically with the rest of the marker, where `undelegate` still always wins.
 - The mode vocabulary is carried as a value on the store and checker options
   rather than checked against a literal, so configuring the set later is one
   field, not a hunt through the code.

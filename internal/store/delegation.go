@@ -244,7 +244,18 @@ func (s *Store) planDelegationNote(target *record.Record, note string) delegatio
 		return delegationPlan{status: MutationOK, noChange: true}
 	}
 	candidate["note"] = text
-	candidate["at"] = DelegationStamp(s.now())
+	// Restamp — EXCEPT on a claim. `at` means two different things depending on
+	// status: on a delegated or ready marker it is when the owner last stated
+	// their intent, which a note IS, so it moves. On a claimed marker it is when
+	// the claim was TAKEN, and the merge ranks two claims by the earlier one, so
+	// moving it would make briefing a worker that already holds the task lose to
+	// an untouched copy of the same claim on another device — the note would
+	// silently evaporate on sync, and a one-sided note write would be reported
+	// as a conflict. For a claim the byte tiebreak already resolves in the
+	// note-bearing marker's favour, which is the outcome we want.
+	if markerStatus(candidate) != DelegationClaimed {
+		candidate["at"] = DelegationStamp(s.now())
+	}
 	encoded := orderedDelegation(candidate, markerOrder(*target))
 	target.Set(DelegationField, encoded)
 	label := "clear delegation note: " + target.String("title")

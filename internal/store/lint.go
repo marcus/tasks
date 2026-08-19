@@ -203,7 +203,7 @@ func (s *Store) createPreflightFailure() (string, bool) {
 		if path == s.org && emptyOrMissing(path) {
 			continue
 		}
-		result := check.Check(path)
+		result := check.CheckWith(path, s.checkOptions())
 		if result.OK() {
 			continue
 		}

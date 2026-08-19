@@ -157,12 +157,33 @@ func TestANoteWriteRestampsTheTransitionInstant(t *testing.T) {
 	if got := readStore(t, moving); !containsText(got, `"at":"2026-03-14T17:09:26Z"`) || containsText(got, `"note"`) {
 		t.Fatalf("clearing a note must restamp and remove the key:\n%s", got)
 	}
+	// A CLAIMED marker's `at` is claim time, not intent time, and the merge
+	// ranks two claims by the EARLIER one. Briefing a worker that already holds
+	// the task must not move it, or the briefing loses to an untouched copy of
+	// the same claim on another device.
+	clock = clock.Add(time.Hour)
+	if result := moving.Claim("1a2b3c02", "worker-alpha", ""); result.Status != MutationOK {
+		t.Fatalf("claim status = %q", result.Status)
+	}
+	claimedAt := `"at":"2026-03-14T18:09:26Z"`
+	clock = clock.Add(time.Hour)
+	if result := moving.SetDelegationNote("1a2b3c02", "focus on the parser", ""); result.Status != MutationOK {
+		t.Fatalf("note status = %q", result.Status)
+	}
+	got := readStore(t, moving)
+	if !containsText(got, claimedAt) {
+		t.Fatalf("a note write moved a CLAIM's instant:\n%s", got)
+	}
+	if !containsText(got, `"note":"focus on the parser"`) {
+		t.Fatalf("note not written on the claim:\n%s", got)
+	}
+
 	// work_ref deliberately does NOT restamp: it is a URL, not an instruction.
 	clock = clock.Add(time.Hour)
 	if result := moving.SetWorkRef("1a2b3c02", "https://example.invalid/pr/1", "", ""); result.Status != MutationOK {
 		t.Fatalf("work ref status = %q", result.Status)
 	}
-	if got := readStore(t, moving); !containsText(got, `"at":"2026-03-14T17:09:26Z"`) {
+	if got := readStore(t, moving); !containsText(got, claimedAt) {
 		t.Fatalf("work_ref must leave the instant alone:\n%s", got)
 	}
 }
@@ -199,5 +220,21 @@ func TestConfiguredModeVocabularyIsCarriedByTheStore(t *testing.T) {
 	plain, _ := writerFixture(t, fixtureStore)
 	if got := plain.Modes().Quoted(); got != "refine/research/implement" {
 		t.Fatalf("modes = %q, want the built-in set unaffected", got)
+	}
+
+	// EVERY validation the store performs uses the store's own vocabulary —
+	// including the preflight an UNRELATED write runs over the whole file. One
+	// bare check here meant capture, propose, and project create all refused a
+	// store that merely CONTAINED a configured mode, quoting a vocabulary the
+	// user never configured, about a different task.
+	if created := configured.CreateTask(CreateCommand{Title: "a new item"}, "2026-03-14"); created.Status != MutationOK {
+		t.Fatalf("create status = %q, errors = %v — a preflight ignored the store's vocabulary",
+			created.Status, created.Errors)
+	}
+	if message, ok := configured.CreatePreflightFailure(); !ok {
+		t.Fatalf("preflight refused with %q, want the store's own vocabulary honoured", message)
+	}
+	if lint := configured.CheckFiles(); !lint.OK() {
+		t.Fatalf("check errors = %#v, want the store's own vocabulary honoured", lint.Errors)
 	}
 }
