@@ -126,6 +126,82 @@ func TestNoteFileReadsFromDiskAndRefusesWhatItCannotRead(t *testing.T) {
 	}
 }
 
+// A CRLF file is a briefing, not a control-character violation.
+//
+// The note schema allows `\n` so a briefing can have paragraphs and refuses
+// every other control character — `\r` included. `--note-file` is the flag that
+// exists to carry multi-paragraph prose, so a file written on Windows or pasted
+// through a CRLF-preserving editor would be refused for a character the user
+// cannot see. Line endings are normalized at this input boundary; the schema is
+// left exactly as strict.
+func TestNoteFileNormalizesWindowsLineEndings(t *testing.T) {
+	dir := seedStore(t, delegationNoteFixture)
+	path := dir + "/crlf.md"
+	if err := os.WriteFile(path, []byte("line one\r\n\r\nline two\r\n"), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+	result := runCLI(t, dir, "delegate", "ffff0002", "implement", "--note-file", path)
+	if result.status != 0 {
+		t.Fatalf("a CRLF briefing was refused: exit %d, stderr %q", result.status, result.stderr)
+	}
+	if got := markerOf(t, dir, "ffff0002")["note"]; got != "line one\n\nline two" {
+		t.Fatalf("note = %q", got)
+	}
+
+	// A lone CR — a classic-Mac or mangled paste — is a line ending too, and
+	// refusing it would be the same invisible-character refusal.
+	lone := dir + "/cr.md"
+	if err := os.WriteFile(lone, []byte("first\rsecond"), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+	if result := runCLI(t, dir, "delegate", "ffff0003", "implement",
+		"--note-file", lone); result.status != 0 {
+		t.Fatalf("exit %d, stderr %q", result.status, result.stderr)
+	}
+	if got := markerOf(t, dir, "ffff0003")["note"]; got != "first\nsecond" {
+		t.Fatalf("note = %q", got)
+	}
+}
+
+// An option that ate the next flag must be loud.
+//
+// `--note --keep-state` is the argument parser doing what it is told. For every
+// other option that misfire fails the option's own validation; a note is FREE
+// TEXT, so a flag name is a perfectly valid briefing and the task would be
+// delegated with `--keep-state` as its instructions and the flag's intent
+// silently dropped, exit 0.
+func TestNoteRefusesAFlagAsItsValue(t *testing.T) {
+	dir := seedStore(t, delegationNoteFixture)
+	swallowed := runCLI(t, dir, "delegate", "ffff0002", "--to", "pat@example.com",
+		"--note", "--keep-state")
+	if swallowed.status == 0 {
+		t.Fatalf("a swallowed flag was accepted: stdout %q", swallowed.stdout)
+	}
+	if !strings.Contains(swallowed.stderr, "--note expects a value") {
+		t.Fatalf("stderr = %q", swallowed.stderr)
+	}
+	if markerOf(t, dir, "ffff0002") != nil {
+		t.Fatal("a refused command still delegated the task")
+	}
+	if file := runCLI(t, dir, "delegate", "ffff0002", "implement",
+		"--note-file", "--json"); file.status == 0 ||
+		!strings.Contains(file.stderr, "--note-file expects a value") {
+		t.Fatalf("exit %d, stderr %q", file.status, file.stderr)
+	}
+
+	// A note that legitimately begins with a single dash is not a flag
+	// spelling and must still work — that is the whole reason the rule is
+	// "--" and not "-".
+	dashed := runCLI(t, dir, "delegate", "ffff0002", "implement", "--note", "-x is dangerous")
+	if dashed.status != 0 {
+		t.Fatalf("a dash-leading briefing was refused: exit %d, stderr %q",
+			dashed.status, dashed.stderr)
+	}
+	if got := markerOf(t, dir, "ffff0002")["note"]; got != "-x is dangerous" {
+		t.Fatalf("note = %q", got)
+	}
+}
+
 // The briefing survives the round trip byte for byte, including the two things
 // a text pipeline is most likely to mangle.
 func TestDelegationNoteRoundTripsNewlinesAndMultibyte(t *testing.T) {

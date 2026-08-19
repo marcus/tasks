@@ -38,22 +38,64 @@ func noteInput(args []string) (text string, rest []string, given bool, err error
 	case hasInline && hasFile:
 		return "", rest, false, fmt.Errorf("delegate takes --note or --note-file, not both")
 	case hasInline:
+		if err := refuseFlagAsValue("--note", inline); err != nil {
+			return "", rest, false, err
+		}
 		return inline, rest, true, nil
 	case !hasFile:
 		return "", rest, false, nil
+	}
+	if err := refuseFlagAsValue("--note-file", fromFile); err != nil {
+		return "", rest, false, err
 	}
 	if fromFile == "-" {
 		content, readErr := io.ReadAll(os.Stdin)
 		if readErr != nil {
 			return "", rest, false, fmt.Errorf("cannot read the note from stdin: %v", readErr)
 		}
-		return string(content), rest, true, nil
+		return normalizeNoteLineEndings(string(content)), rest, true, nil
 	}
 	content, readErr := os.ReadFile(fromFile)
 	if readErr != nil {
 		return "", rest, false, fmt.Errorf("cannot read the note file %q: %v", fromFile, readErr)
 	}
-	return string(content), rest, true, nil
+	return normalizeNoteLineEndings(string(content)), rest, true, nil
+}
+
+// refuseFlagAsValue catches the option that ate the next flag.
+//
+// `--note --keep-state` is `extractValue` doing exactly what it is told: it
+// takes the next argv element whatever it is. For every other option in this
+// CLI that misfire is loud, because the swallowed word then fails the option's
+// own validation. A note is FREE TEXT, so `--keep-state` is a perfectly valid
+// briefing — the task would be delegated with a flag name as its instructions
+// and the flag's intent silently dropped, exit 0. A value that begins with
+// `--` is refused instead. A note legitimately starting with a single dash
+// ("-x is dangerous") is untouched, because it is not a flag spelling.
+func refuseFlagAsValue(option, value string) error {
+	if !strings.HasPrefix(value, "--") {
+		return nil
+	}
+	return fmt.Errorf("%s expects a value, but got the flag %q — "+
+		"put the flag before %s, or pass the text after -- if it really starts with dashes",
+		option, value, option)
+}
+
+// normalizeNoteLineEndings converts a file's line endings to the one the schema
+// allows.
+//
+// The note schema permits `\n` precisely so a briefing can have paragraphs, and
+// refuses every other control character. `\r` is one of those, so a file
+// written on Windows — or pasted through an editor that preserves CRLF —
+// would be refused for a character the user cannot see, by the one flag that
+// exists to carry multi-paragraph prose. Normalizing at this input boundary is
+// the fix; the schema itself stays exactly as strict as it was, because it also
+// guards bytes that never came through here.
+func normalizeNoteLineEndings(text string) string {
+	if !strings.ContainsRune(text, '\r') {
+		return text
+	}
+	return strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
 }
 
 // clearsNote reports the clearing spelling. It is the SAME two words a work

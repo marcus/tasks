@@ -705,9 +705,17 @@ func (s *Server) putWorkRef(request *http.Request, id, requestID string) (respon
 
 // putDelegationNote rewrites the receiver-facing briefing on a delegation that
 // already exists. It is the note's own route for the same reason work_ref has
-// one: an owner correcting instructions should not have to restate who holds
-// the work and in what mode, and restating it would move the delegation's
-// timestamp for a change that is not a re-delegation.
+// one: /delegate is a REPLACEMENT verb — it rebuilds the whole marker from the
+// body it was given — so folding a briefing correction into it would re-state
+// an intent that has not changed, and would drop the work reference outright
+// on any body that named the other kind.
+//
+// This route restamps `at` on a delegated or ready marker exactly as /delegate
+// would, and for Packet C's reason: there `at` is when the owner last stated
+// their intent, a briefing IS that intent, and the multi-device merge resolves
+// competing intent by later `at`. What it avoids is not the restamp but the
+// replacement. On a CLAIMED marker it leaves `at` alone, because there the
+// stamp is claim time and the merge ranks two claims by the earlier one.
 func (s *Server) putDelegationNote(request *http.Request, id, requestID string) (response, error) {
 	if _, err := queryParams(request); err != nil {
 		return response{}, err

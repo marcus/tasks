@@ -95,8 +95,11 @@ type DelegationRequest struct {
 	ExpectedRevision string
 
 	// CoalesceKey merges a composed follow-up write into this write's undo step.
-	// Only delegate and release compose one; the other verbs ignore it, and the
-	// dispatcher below is where that is enforced rather than at each call site.
+	//
+	// Three verbs deliberately IGNORE it — see coalescingDelegationVerbs — and
+	// the dispatcher below is where that is enforced rather than at each call
+	// site. Delegate, release and claim forward it, exactly as their
+	// pre-consolidation signatures did.
 	CoalesceKey string
 }
 
@@ -113,15 +116,29 @@ const (
 	VerbDelegationNote DelegationVerb = "delegation_note"
 )
 
+// coalescingDelegationVerbs are the verbs that carry a caller's coalescing key
+// into the journal.
+//
+// The three absent from this set — undelegate, work_ref and delegation_note —
+// ignore it DELIBERATELY, and each says so in its own doc comment: Ruby's
+// `undelegate_task!`, `set_work_ref!` and the note writer take no key, so
+// honouring one would merge an unrelated neighbouring edit into this write's
+// undo entry and make one undo revert two decisions.
+//
+// Claim is here even though it composes no second write of its own. It is what
+// the pre-consolidation `Store.Claim` did — it forwarded the key it was handed
+// — and the consolidation must not quietly change a signature's meaning. The
+// key is minted per operation, so forwarding it can never merge anything that
+// was not this claim's own.
+var coalescingDelegationVerbs = map[DelegationVerb]bool{
+	VerbDelegate: true, VerbRelease: true, VerbClaim: true,
+}
+
 // WriteDelegation performs one delegation verb. Every method below is a thin
 // spelling of this call, and every new input reaches the store through it.
 func (s *Store) WriteDelegation(request DelegationRequest) MutationResult {
-	// Only delegate and release compose a second write that has to share an undo
-	// step. Honouring a key on the others would merge, say, a revocation into
-	// whatever delegation write happened to precede it, and one undo would then
-	// revert two decisions.
 	coalesceKey := ""
-	if request.Verb == VerbDelegate || request.Verb == VerbRelease {
+	if coalescingDelegationVerbs[request.Verb] {
 		coalesceKey = request.CoalesceKey
 	}
 	var plan func(*record.Record) delegationPlan
@@ -283,7 +300,9 @@ func (s *Store) Delegate(id, kind, mode, assignee, coalesceKey string) MutationR
 
 // Claim takes an agent-pool task for one worker.
 func (s *Store) Claim(id, worker, coalesceKey string) MutationResult {
-	return s.WriteDelegation(DelegationRequest{ID: id, Verb: VerbClaim, Worker: worker})
+	return s.WriteDelegation(DelegationRequest{
+		ID: id, Verb: VerbClaim, Worker: worker, CoalesceKey: coalesceKey,
+	})
 }
 
 // Undelegate clears the marker: an ordinary undelegate, or the revocation of a
