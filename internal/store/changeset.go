@@ -279,7 +279,7 @@ func (s *Store) ApplyChangeset(changeset Changeset) MutationResult {
 		}
 		// A strict-revision changeset never repairs: a precondition built over
 		// malformed bytes is not a precondition.
-		preflight := check.Check(s.org)
+		preflight := check.CheckWith(s.org, s.checkOptions())
 		if !preflight.OK() {
 			messages := []string{}
 			for _, entry := range preflight.Errors {

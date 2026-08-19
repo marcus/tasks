@@ -22,10 +22,15 @@ const (
 // DelegationKinds is the closed kind vocabulary a refusal quotes back.
 var DelegationKinds = []string{"human", "agent"}
 
-// DelegationModes is the mode vocabulary in force. The store holds NO list of
-// its own and reads no configuration: it asks record's vocabulary seam, which
-// is the single place a user-configured set gets wired in.
-func DelegationModes() record.ModeVocabulary { return record.DelegationModes() }
+// modes is the delegation mode vocabulary THIS store validates against: the
+// value it was constructed with, or the built-in set. The store holds no list
+// of its own and reads no configuration; a configured vocabulary arrives as
+// Options.Modes, which is one field rather than process-wide state.
+func (s *Store) Modes() record.ModeVocabulary { return record.Modes(s.options.Modes) }
+
+// checkOptions passes the store's own decisions down to the checker, so a
+// post-write validation cannot refuse a marker the write path just accepted.
+func (s *Store) checkOptions() check.Options { return check.Options{Modes: s.options.Modes} }
 
 // delegationPlan is what a plan function decides: whether to write, what the
 // history entry is called, and the facts a refusal reports.
@@ -59,7 +64,7 @@ func (s *Store) delegationMutation(id, coalesceKey string, plan func(*record.Rec
 			result = *refusal
 			return nil
 		}
-		preflight := check.Check(s.org)
+		preflight := check.CheckWith(s.org, s.checkOptions())
 		if !preflight.OK() {
 			messages := []string{}
 			for _, entry := range preflight.Errors {
@@ -103,7 +108,7 @@ func (s *Store) delegationMutation(id, coalesceKey string, plan func(*record.Rec
 			return nil
 		}
 		if marker, present := working[index].Get(DelegationField); present {
-			if shape := record.DelegationErrors(decodeAny(marker)); len(shape) > 0 {
+			if shape := record.DelegationErrorsWith(decodeAny(marker), s.Modes()); len(shape) > 0 {
 				result = MutationResult{Status: MutationInvalid, Errors: shape}
 				return nil
 			}
@@ -200,18 +205,25 @@ func (s *Store) SetWorkRef(id, workRef, worker, _ string) MutationResult {
 // the task, where the work should land — or clears it with an empty note. It is
 // an OWNER decision, unlike work_ref, which the holding worker may also write:
 // the note is the instruction, and a worker rewriting its own instructions is
-// not a thing the model should allow. It is not a status transition, so `at` is
-// left alone, and like SetWorkRef the coalesce key is deliberately ignored.
+// not a thing the model should allow. Like SetWorkRef the coalesce key is
+// deliberately ignored.
+//
+// Unlike SetWorkRef it DOES restamp `at`. A note is owner intent about the
+// delegation, and the multi-device order resolves competing intent by later
+// `at`. Leaving the original delegation's stamp would make every note edit tie
+// there and fall through to the canonical-byte tiebreak, so a device that
+// cleared a stale briefing could silently lose to an older edit on another
+// device — and an agent would then read a retracted instruction as live.
 func (s *Store) SetDelegationNote(id, note, _ string) MutationResult {
 	result := s.delegationMutation(id, "", func(target *record.Record) delegationPlan {
-		return planDelegationNote(target, note)
+		return s.planDelegationNote(target, note)
 	})
 	result.Summary.Action = "delegation_note"
 	result.Summary.TaskID = id
 	return result
 }
 
-func planDelegationNote(target *record.Record, note string) delegationPlan {
+func (s *Store) planDelegationNote(target *record.Record, note string) delegationPlan {
 	existing := delegationMarker(*target)
 	if existing == nil {
 		return delegationPlan{status: MutationInvalid, errors: []string{"task is not delegated"}}
@@ -226,11 +238,14 @@ func planDelegationNote(target *record.Record, note string) delegationPlan {
 	for key, value := range existing {
 		candidate[key] = value
 	}
-	candidate["note"] = text
-	encoded := orderedDelegation(candidate, markerOrder(*target))
-	if current, present := target.Get(DelegationField); present && string(current) == string(encoded) {
+	if candidate["note"] == text {
+		// Settled: comparing BEFORE the restamp, so re-stating the same briefing
+		// is not a write and does not move the delegation's instant.
 		return delegationPlan{status: MutationOK, noChange: true}
 	}
+	candidate["note"] = text
+	candidate["at"] = DelegationStamp(s.now())
+	encoded := orderedDelegation(candidate, markerOrder(*target))
 	target.Set(DelegationField, encoded)
 	label := "clear delegation note: " + target.String("title")
 	if text != "" {
@@ -321,7 +336,7 @@ func planWorkRef(target *record.Record, workRef, worker string) delegationPlan {
 func (s *Store) planDelegate(target *record.Record, kind, mode, assignee string) delegationPlan {
 	mode = strings.TrimSpace(mode)
 	assignee = strings.TrimSpace(assignee)
-	if message := delegateInputError(kind, mode, assignee); message != "" {
+	if message := delegateInputErrorWith(kind, mode, assignee, s.Modes()); message != "" {
 		return delegationPlan{status: MutationInvalid, errors: []string{message}}
 	}
 	if plan := delegationIneligible(target, "delegated"); plan != nil {
@@ -424,11 +439,14 @@ func delegationIneligible(target *record.Record, verb string) *delegationPlan {
 	}
 }
 
-func delegateInputError(kind, mode, assignee string) string {
+// delegateInputErrorWith validates the caller's input against the vocabulary
+// the store was given. There is no vocabulary-free spelling on purpose: a
+// refusal has to quote the set that was actually enforced.
+func delegateInputErrorWith(kind, mode, assignee string, modes record.ModeVocabulary) string {
+	modes = record.Modes(modes)
 	if !contains(DelegationKinds, kind) {
 		return "delegation kind " + rubyInspectText(kind) + " must be " + strings.Join(DelegationKinds, " or ")
 	}
-	modes := DelegationModes()
 	if kind == "human" {
 		// A mode is optional for a person — it says what KIND of delegation this
 		// is, not who holds it — but it is still a member of the vocabulary.

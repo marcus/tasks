@@ -1,8 +1,13 @@
 package store
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/marcus/tasks/internal/record"
 )
 
 // The note is the receiver's briefing: it is written after the delegation, it
@@ -103,7 +108,96 @@ func TestHumanDelegationMayCarryAMode(t *testing.T) {
 	if bad.Status != MutationInvalid || bad.Errors[0] != `mode "vibes" must be one of refine/research/implement` {
 		t.Fatalf("status = %q, errors = %v", bad.Status, bad.Errors)
 	}
-	if got := DelegationModes().Modes(); strings.Join(got, "/") != "refine/research/implement" {
+	if got := store.Modes().Modes(); strings.Join(got, "/") != "refine/research/implement" {
 		t.Fatalf("modes = %v, want the built-in vocabulary", got)
+	}
+}
+
+// A note write RESTAMPS `at`. Without that, every note edit after the initial
+// delegation carries the delegation's original instant, every two-device note
+// edit ties on `at`, and the merge's "most recent owner intent" rule becomes
+// structurally unreachable for the one member an agent reads as instruction.
+func TestANoteWriteRestampsTheTransitionInstant(t *testing.T) {
+	root := t.TempDir()
+	org := filepath.Join(root, "tasks.jsonl")
+	if err := os.WriteFile(org, []byte(fixtureStore), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	clock := pinnedNow
+	moving := NewWriter(org, filepath.Join(root, "archive.jsonl"), Options{
+		JournalDir:    filepath.Join(root, "journal"),
+		Now:           func() time.Time { return clock },
+		Device:        "fixture",
+		CoalesceScope: "pinned-scope",
+		MaxDepth:      4,
+	})
+	if result := moving.Delegate("1a2b3c02", "agent", "implement", "", "key"); result.Status != MutationOK {
+		t.Fatalf("delegate status = %q", result.Status)
+	}
+	clock = clock.Add(time.Hour)
+	if result := moving.SetDelegationNote("1a2b3c02", "first briefing", ""); result.Status != MutationOK {
+		t.Fatalf("note status = %q", result.Status)
+	}
+	if got := readStore(t, moving); !containsText(got, `"at":"2026-03-14T16:09:26Z","note":"first briefing"`) {
+		t.Fatalf("note write did not restamp at:\n%s", got)
+	}
+	// A settled re-statement is decided BEFORE the restamp, so it neither writes
+	// nor moves the instant.
+	clock = clock.Add(time.Hour)
+	if again := moving.SetDelegationNote("1a2b3c02", "first briefing", ""); again.Status != MutationNoChange {
+		t.Fatalf("status = %q, want no_change", again.Status)
+	}
+	if got := readStore(t, moving); !containsText(got, `"at":"2026-03-14T16:09:26Z"`) {
+		t.Fatalf("a no-change note write moved the instant:\n%s", got)
+	}
+	// Clearing is a real change, and it is the LATEST intent afterwards.
+	if result := moving.SetDelegationNote("1a2b3c02", "", ""); result.Status != MutationOK {
+		t.Fatalf("clear status = %q", result.Status)
+	}
+	if got := readStore(t, moving); !containsText(got, `"at":"2026-03-14T17:09:26Z"`) || containsText(got, `"note"`) {
+		t.Fatalf("clearing a note must restamp and remove the key:\n%s", got)
+	}
+	// work_ref deliberately does NOT restamp: it is a URL, not an instruction.
+	clock = clock.Add(time.Hour)
+	if result := moving.SetWorkRef("1a2b3c02", "https://example.invalid/pr/1", "", ""); result.Status != MutationOK {
+		t.Fatalf("work ref status = %q", result.Status)
+	}
+	if got := readStore(t, moving); !containsText(got, `"at":"2026-03-14T17:09:26Z"`) {
+		t.Fatalf("work_ref must leave the instant alone:\n%s", got)
+	}
+}
+
+// A store constructed with a configured vocabulary enforces THAT set — in the
+// input refusal, in the marker it accepts, and in its own post-write check —
+// without any process-wide state. This is the whole of what Packet D has to do.
+func TestConfiguredModeVocabularyIsCarriedByTheStore(t *testing.T) {
+	root := t.TempDir()
+	org := filepath.Join(root, "tasks.jsonl")
+	if err := os.WriteFile(org, []byte(fixtureStore), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configured := NewWriter(org, filepath.Join(root, "archive.jsonl"), Options{
+		JournalDir:    filepath.Join(root, "journal"),
+		Now:           func() time.Time { return pinnedNow },
+		Device:        "fixture",
+		CoalesceScope: "pinned-scope",
+		MaxDepth:      4,
+		Modes:         record.ModeSet{"triage", "ship"},
+	})
+	if got := configured.Modes().Quoted(); got != "triage/ship" {
+		t.Fatalf("modes = %q", got)
+	}
+	refused := configured.Delegate("1a2b3c02", "agent", "research", "", "key")
+	if refused.Status != MutationInvalid || refused.Errors[0] != `mode "research" must be one of triage/ship` {
+		t.Fatalf("status = %q, errors = %v", refused.Status, refused.Errors)
+	}
+	if accepted := configured.Delegate("1a2b3c02", "agent", "triage", "", "key2"); accepted.Status != MutationOK {
+		t.Fatalf("status = %q, errors = %v", accepted.Status, accepted.Errors)
+	}
+	// A second store in the SAME process still enforces the built-in set: the
+	// vocabulary is a value on each store, not a location both of them read.
+	plain, _ := writerFixture(t, fixtureStore)
+	if got := plain.Modes().Quoted(); got != "refine/research/implement" {
+		t.Fatalf("modes = %q, want the built-in set unaffected", got)
 	}
 }

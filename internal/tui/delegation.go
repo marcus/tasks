@@ -23,10 +23,16 @@ import (
 // delegateClearWords are the spellings that mean "remove the delegation".
 var delegateClearWords = []string{"off", "none", "clear"}
 
-// delegateWords is the whole `D` vocabulary: the three agent modes, `release`,
+// delegateWords is the whole `D` vocabulary: the delegation modes, `release`,
 // and the clear words. An email is matched separately.
-var delegateWords = append(store.DelegationModes().Modes(),
-	append([]string{"release"}, delegateClearWords...)...)
+//
+// It is a FUNCTION of the vocabulary in force, not a package-level var: a var
+// is evaluated during init, before the process has built the store whose modes
+// these are, so a configured set would never reach the prompt.
+func delegateWords(modes record.ModeVocabulary) []string {
+	return append(record.Modes(modes).Modes(),
+		append([]string{"release"}, delegateClearWords...)...)
+}
 
 // delegatePrefixMin is where prefix matching starts.
 //
@@ -37,7 +43,11 @@ var delegateWords = append(store.DelegationModes().Modes(),
 // with no confirmation. The shortest inputs must not be the ones that cost most.
 const delegatePrefixMin = 3
 
-const delegateHint = "pat@example.com · refine · research · implement · release · off · esc cancels"
+func delegateHint(modes record.ModeVocabulary) string {
+	words := append([]string{"pat@example.com"}, record.Modes(modes).Modes()...)
+	words = append(words, "release", "off", "esc cancels")
+	return strings.Join(words, " · ")
+}
 
 // delegationAction is what a parsed `D` input asks for.
 type delegationAction string
@@ -58,13 +68,15 @@ func (m *Model) DelegateSelected() {
 		return
 	}
 	id, title := item.ID, item.Title
+	// Read the vocabulary the store actually enforces, NOW — not at init.
+	modes := m.app.DelegationModes()
 	m.SetForm(NewQuickForm(QuickFormOptions{
 		Kind: QuickFormDelegate, Title: "Delegate", Prompt: "delegate to",
-		Hint: delegateHint, MinWidth: 84, ReturnMode: ReturnList, TargetID: id,
+		Hint: delegateHint(modes), MinWidth: 84, ReturnMode: ReturnList, TargetID: id,
 		Suffix: "(" + m.delegationStateLabel(item) + ")",
 		Submit: func(raw string) string {
 			text := strings.TrimSpace(raw)
-			action, argument := parseDelegationInput(text)
+			action, argument := parseDelegationInput(text, modes)
 			if action == delegateParseFailed {
 				return argument
 			}
@@ -160,9 +172,9 @@ func (m *Model) delegationTarget() (store.Item, bool) {
 // show. The empty string is rejected BEFORE the prefix scan — every word starts
 // with "", so an empty input would otherwise report itself as ambiguous across
 // the whole vocabulary.
-func parseDelegationInput(text string) (delegationAction, string) {
+func parseDelegationInput(text string, modes record.ModeVocabulary) (delegationAction, string) {
 	if text == "" {
-		return delegateParseFailed, delegationParseError(text)
+		return delegateParseFailed, delegationParseError(text, modes)
 	}
 	if record.DelegationEmail(text) {
 		return delegateHuman, text
@@ -173,7 +185,7 @@ func parseDelegationInput(text string) (delegationAction, string) {
 	if strings.Contains(text, "@") {
 		return delegateParseFailed, "“" + text + "” isn't an email address — use pat@example.com"
 	}
-	matches := delegationWordMatches(strings.ToLower(text))
+	matches := delegationWordMatches(strings.ToLower(text), modes)
 	switch len(matches) {
 	case 1:
 		word := matches[0]
@@ -185,7 +197,7 @@ func parseDelegationInput(text string) (delegationAction, string) {
 		}
 		return delegateAgent, word
 	case 0:
-		return delegateParseFailed, delegationParseError(text)
+		return delegateParseFailed, delegationParseError(text, modes)
 	}
 	return delegateParseFailed,
 		"“" + text + "” matches " + strings.Join(matches, ", ") + " — type more of the word"
@@ -194,12 +206,12 @@ func parseDelegationInput(text string) (delegationAction, string) {
 // delegationWordMatches: nothing shorter than delegatePrefixMin matches
 // anything, so `o`, `n`, `i`, `r` and `re` all land on the unparseable message
 // instead of silently resolving to a word the user did not type.
-func delegationWordMatches(text string) []string {
+func delegationWordMatches(text string, modes record.ModeVocabulary) []string {
 	if len([]rune(text)) < delegatePrefixMin {
 		return nil
 	}
 	matches := []string{}
-	for _, word := range delegateWords {
+	for _, word := range delegateWords(modes) {
 		if strings.HasPrefix(word, text) {
 			matches = append(matches, word)
 		}
@@ -207,8 +219,9 @@ func delegationWordMatches(text string) []string {
 	return matches
 }
 
-func delegationParseError(text string) string {
-	return "can't parse “" + text + "”; use an email, refine/research/implement, release, or off"
+func delegationParseError(text string, modes record.ModeVocabulary) string {
+	return "can't parse “" + text + "”; use an email, " +
+		record.Modes(modes).Quoted() + ", release, or off"
 }
 
 // runDelegation is the shared submit body behind both prompts: run against a

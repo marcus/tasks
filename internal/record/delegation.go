@@ -31,16 +31,16 @@ const (
 const DelegationNoteLimit = delegationNoteLimit
 
 // DelegationErrors returns Ruby-compatible schema diagnostics for delegation.
+// It validates modes against the BUILT-IN vocabulary; a caller holding a
+// configured one calls DelegationErrorsWith instead.
 func DelegationErrors(value any) []string {
-	return DelegationErrorsWith(value, DelegationModes())
+	return DelegationErrorsWith(value, BuiltinModes())
 }
 
-// DelegationErrorsWith is the same check against an explicit mode vocabulary,
-// for callers that hold one rather than reading the process-wide seam.
+// DelegationErrorsWith is the same check against a caller-supplied mode
+// vocabulary. Nil means the built-in set.
 func DelegationErrorsWith(value any, modes ModeVocabulary) []string {
-	if modes == nil {
-		modes = BuiltinModes()
-	}
+	modes = Modes(modes)
 	object, ok := value.(map[string]any)
 	if !ok {
 		return []string{"delegation must be an object"}
@@ -170,9 +170,7 @@ func delegationKindErrors(object map[string]any, modes ModeVocabulary) []string 
 // delegationModeErrors is the ONE place a mode is checked for membership. It
 // asks the vocabulary seam; there is no literal list here.
 func delegationModeErrors(object map[string]any, modes ModeVocabulary) []string {
-	if modes == nil {
-		modes = BuiltinModes()
-	}
+	modes = Modes(modes)
 	if mode, ok := object["mode"].(string); !ok || !modes.Valid(mode) {
 		return []string{fmt.Sprintf("delegation.mode %s must be one of %s",
 			rubyInspect(valueAt(object, "mode")), modes.Quoted())}

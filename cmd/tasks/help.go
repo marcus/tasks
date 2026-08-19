@@ -1,5 +1,11 @@
 package main
 
+import (
+	"strings"
+
+	"github.com/marcus/tasks/internal/record"
+)
+
 // `tasks help` is REGISTRY-DRIVEN, not a hand-written page.
 //
 // The reference text below is prose a human reads; the table under it is the
@@ -14,7 +20,12 @@ package main
 
 // helpText is tasks HELP, byte for byte. It is stderr/stdout contract:
 // `tasks` with no arguments and `tasks <typo>` both print it.
-const helpText = "tasks — a plain-text GTD CLI over tasks.jsonl. Every command has a short alias." + "\n" +
+//
+// The delegation line quotes the BUILT-IN mode vocabulary: help is printed
+// without a store (a typo'd command prints it before any store exists), so it
+// cannot report a store-configured set. It reads the seam rather than repeating
+// a literal, which is what keeps the two from drifting.
+var helpText = "tasks — a plain-text GTD CLI over tasks.jsonl. Every command has a short alias." + "\n" +
 	"" + "\n" +
 	"Read:" + "\n" +
 	"  agenda    a              dated items, soonest first" + "\n" +
@@ -110,7 +121,7 @@ const helpText = "tasks — a plain-text GTD CLI over tasks.jsonl. Every command
 	"                                   true mistakes." + "\n" +
 	"" + "\n" +
 	"Delegation (hand a task to a person or to the agent pool):" + "\n" +
-	"  delegate <ref> refine|research|implement   agent-ready at that authority" + "\n" +
+	"  delegate <ref> " + strings.Join(record.BuiltinModes().Modes(), "|") + "   agent-ready at that authority" + "\n" +
 	"  delegate <ref> --to <email> [--keep-state] hand to a person; sets WAITING" + "\n" +
 	"  undelegate <ref>                clear the marker (also revokes a claim)" + "\n" +
 	"  workref <ref> <url-or-id|off>   record where the work lives (one reference)" + "\n" +

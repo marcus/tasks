@@ -79,9 +79,8 @@ func TestModeIsAllowedOnAHumanDelegation(t *testing.T) {
 	}
 }
 
-// The vocabulary is ONE seam. Feeding it a different set changes membership and
-// the refusal wording everywhere, with no other code change — which is exactly
-// what a user-configured mode list will do.
+// The vocabulary is ONE seam, and it is a VALUE. Feeding a different set
+// changes membership and the refusal wording for that call and no other.
 func TestModeVocabularyIsInjectable(t *testing.T) {
 	custom := ModeSet{"triage", "implement"}
 	marker := map[string]any{"kind": "agent", "mode": "research", "status": "ready", "at": "2026-07-27T18:04:11Z"}
@@ -93,25 +92,46 @@ func TestModeVocabularyIsInjectable(t *testing.T) {
 	if got := DelegationErrorsWith(marker, custom); len(got) != 0 {
 		t.Fatalf("errors = %#v, want the injected vocabulary honoured", got)
 	}
-
-	// The process-wide seam is the wiring point; it restores on nil.
-	t.Cleanup(func() { UseDelegationModes(nil) })
-	UseDelegationModes(custom)
-	if got := DelegationModes().Quoted(); got != "triage/implement" {
+	// Nil means the built-in set, at every entry point.
+	if got := Modes(nil).Quoted(); got != "refine/research/implement" {
 		t.Fatalf("quoted = %q", got)
 	}
-	if got := DelegationErrors(marker); len(got) != 0 {
-		t.Fatalf("errors = %#v, want the installed vocabulary used by default", got)
-	}
-	UseDelegationModes(nil)
-	if got := DelegationModes().Quoted(); got != "refine/research/implement" {
-		t.Fatalf("quoted = %q, want the built-in set restored", got)
+	if got := DelegationErrorsWith(marker, nil); len(got) != 1 ||
+		got[0] != `delegation.mode "triage" must be one of refine/research/implement` {
+		t.Fatalf("errors = %#v", got)
 	}
 	if got := BuiltinModes().Modes(); !reflect.DeepEqual(got, []string{"refine", "research", "implement"}) {
 		t.Fatalf("builtin modes = %#v", got)
 	}
 	if BuiltinModes().Valid("vibes") {
 		t.Fatal("vibes is not a built-in mode")
+	}
+}
+
+// THE REGRESSION THAT KEEPS THE SEAM A VALUE.
+//
+// An earlier draft held the vocabulary in a package-level slot with a setter.
+// It was race-free and still wrong: one caller's configuration became every
+// other caller's, and these two tests — parallel, as any pair of tests may be —
+// failed each other. They pass now only because there is nothing to set. If
+// someone reintroduces process-wide mode state, this pair fails again.
+func TestParallelCallerAConfiguresItsOwnVocabulary(t *testing.T) {
+	t.Parallel()
+	marker := map[string]any{"kind": "agent", "mode": "triage", "status": "ready", "at": "2026-07-27T18:04:11Z"}
+	for i := 0; i < 200; i++ {
+		if got := DelegationErrorsWith(marker, ModeSet{"triage"}); len(got) != 0 {
+			t.Fatalf("errors = %#v, want caller A's own vocabulary", got)
+		}
+	}
+}
+
+func TestParallelCallerBIsUnaffectedByCallerA(t *testing.T) {
+	t.Parallel()
+	marker := map[string]any{"kind": "agent", "mode": "research", "status": "ready", "at": "2026-07-27T18:04:11Z"}
+	for i := 0; i < 200; i++ {
+		if got := DelegationErrors(marker); len(got) != 0 {
+			t.Fatalf("errors = %#v, want the built-in vocabulary uncontaminated", got)
+		}
 	}
 }
 

@@ -78,7 +78,7 @@ func (s *Store) decideProposal(id, action string, notes []string,
 			return nil
 		}
 
-		preflight := check.Check(s.org)
+		preflight := check.CheckWith(s.org, s.checkOptions())
 		if !preflight.OK() {
 			messages := []string{}
 			for _, entry := range preflight.Errors {
@@ -264,7 +264,7 @@ func (s *Store) UnrejectProposal(id, expectedRevision, today string) MutationRes
 			result = *refusal
 			return nil
 		}
-		preflight := check.Check(s.org)
+		preflight := check.CheckWith(s.org, s.checkOptions())
 		if !preflight.OK() {
 			messages := []string{}
 			for _, entry := range preflight.Errors {

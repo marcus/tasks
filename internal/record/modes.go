@@ -1,21 +1,22 @@
 package record
 
-import (
-	"strings"
-	"sync/atomic"
-)
+import "strings"
 
-// The delegation mode vocabulary lives behind ONE seam.
+// The delegation mode vocabulary lives behind ONE seam, and it is carried as a
+// VALUE, never as a location.
 //
 // A mode is the kind of delegation this is — the authority the receiver has.
 // The built-in vocabulary is refine/research/implement, but the set is a user
-// decision, not a schema fact. Everything that has to answer "is this a mode"
-// or "what does a refusal quote back" asks this seam, so making the set
-// configurable is a WIRING change (one UseDelegationModes call at process
-// start) rather than a hunt for literals.
+// decision, not a schema fact, so everything that has to answer "is this a
+// mode" or "what does a refusal quote back" takes a ModeVocabulary from its
+// caller and defaults to BuiltinModes when given nil.
 //
-// internal/record and internal/store deliberately read no configuration file:
-// the seam is fed from the outside by whoever owns config.
+// There is deliberately no package-level setter. A process-wide vocabulary
+// would make this package's answers depend on start-up order (a package-level
+// var in some surface, evaluated during init, would silently keep the built-in
+// set) and would let one test's configuration leak into another's. Instead the
+// store and the checker each hold the vocabulary they were constructed with,
+// which is what makes configuring it later one field rather than a refactor.
 type ModeVocabulary interface {
 	// Valid reports whether one mode string is a member.
 	Valid(mode string) bool
@@ -46,27 +47,14 @@ func (s ModeSet) Modes() []string {
 
 func (s ModeSet) Quoted() string { return strings.Join(s, "/") }
 
-// BuiltinModes is the vocabulary this build ships with. It is the value the
-// seam holds until something wires a different one in.
+// BuiltinModes is the vocabulary this build ships with, and the value every
+// seam falls back to when a caller supplies none.
 func BuiltinModes() ModeSet { return ModeSet{"refine", "research", "implement"} }
 
-var activeModes atomic.Value // ModeVocabulary
-
-// DelegationModes returns the vocabulary in force.
-func DelegationModes() ModeVocabulary {
-	if held, ok := activeModes.Load().(ModeVocabulary); ok && held != nil {
-		return held
-	}
-	return BuiltinModes()
-}
-
-// UseDelegationModes installs a vocabulary process-wide. This is the single
-// wiring point for user-configured modes; passing nil restores the built-in
-// set. Call it once during start-up, before any store or check work.
-func UseDelegationModes(vocabulary ModeVocabulary) {
+// Modes resolves an optional vocabulary to the one to use.
+func Modes(vocabulary ModeVocabulary) ModeVocabulary {
 	if vocabulary == nil {
-		activeModes.Store(ModeVocabulary(BuiltinModes()))
-		return
+		return BuiltinModes()
 	}
-	activeModes.Store(vocabulary)
+	return vocabulary
 }

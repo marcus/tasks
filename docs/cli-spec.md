@@ -220,7 +220,10 @@ takes one side's whole marker, and a note is never spliced onto the other side's
 delegation — a briefing that belonged to the delegation the merge discarded
 would brief the wrong work. Concretely: two devices that write different notes
 on an otherwise unclaimed marker resolve by later `at`, then canonical bytes, so
-the losing briefing is dropped whole; a `claimed` marker carrying an older note
+the losing briefing is dropped whole — a note write restamps `at` precisely so
+that "most recent intent" is reachable for it, and a later *clear* therefore
+beats an earlier edit rather than tying with it; a `claimed` marker carrying an
+older note
 still outranks a fresher note on a `ready` one, because a note is owner intent
 and a claim is a fact about a worker holding the task; a `mode` on a human
 delegation merges exactly like a mode on an agent one, so a mode and an
@@ -568,15 +571,23 @@ A delegation has three orthogonal parts: **who** (the person or the pool),
 **mode** (what kind of delegation this is — `refine`, `research`, or
 `implement`), and **note** (the briefing the receiver reads). The mode is
 required for an agent, which needs to know its authority before it picks the
-task up, and **optional for a person**: `delegate <ref> --to pat@example.com
---mode refine` means "Pat, this is a refine — tighten the task, don't build it",
-exactly as it does for an agent. It changes no lifecycle rule and grants no
-permission the person did not have; it is a statement of what was asked for, and
-it is what makes a human and an agent delegation the same shape. The mode
-vocabulary is one set for both kinds, read from a single seam, so configuring it
-later changes both at once. The `note` is free text for the receiver — how to
-work on it, where the work should land, what to avoid — at most 2000 characters,
-paragraphs allowed, control characters refused. It is primarily read by agents. `PROPOSED`, closed, and archived tasks
+task up, and **optional for a person**: a human delegation carrying
+`mode: refine` means "Pat, this is a refine — tighten the task, don't build
+it", exactly as it does for an agent. It changes no lifecycle rule and grants
+no permission the person did not have; it is a statement of what was asked
+for, and it is what makes a human and an agent delegation the same shape. The
+mode vocabulary is one set for both kinds, read from a single seam carried on
+the store, so configuring it later changes both at once. The `note` is free
+text for the receiver — how to work on it, where the work should land, what to
+avoid — at most 2000 characters, paragraphs allowed, control characters
+refused. It is primarily read by agents.
+
+*Schema and store support ship first; the CLI flags, HTTP fields, and TUI
+prompts for a note and for a mode on a human delegation follow in the surface
+work, and are specified with them. Today `delegate <ref> <mode>` and `delegate
+<ref> --to <email>` remain the only spellings.*
+
+`PROPOSED`, closed, and archived tasks
 refuse delegation with an error naming the state; approval and delegation stay
 two independent owner decisions. Human delegation sets WAITING by default
 (`--keep-state` opts out) because that is exactly what WAITING encodes, and
@@ -615,8 +626,7 @@ is task content and belongs in the body. The note may contain paragraphs
 (newlines are escaped in JSONL) but no other control characters, for the same
 terminal-safety reason as the identifiers above. A `mode` on either kind of
 delegation must be a member of the mode vocabulary; a refusal quotes the set
-back. Nested keys inside `delegation` that this binary
-does not know are **preserved** across a rewrite (a claim from an older binary
+back. Nested keys inside `delegation` that this binary does not know are **preserved** across a rewrite (a claim from an older binary
 cannot silently drop a newer one's field) and reported by `check` as a WARNING,
 not an error — the same forward-compatible posture the top-level schema has.
 

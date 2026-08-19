@@ -130,6 +130,23 @@ func (a *Application) today(operation *OperationContext) string {
 
 func (a *Application) store() Store { return a.factory() }
 
+// DelegationModes is the delegation mode vocabulary the store behind this
+// application enforces. Surfaces ask for it AT USE TIME — a package-level var
+// built during init would freeze the built-in set before the store the process
+// actually writes through was ever constructed, and a user's configured modes
+// would then be silently missing from the prompts and refusals that quote them.
+//
+// It is an optional store capability rather than a method on the Store
+// interface so a caller's own store double is not forced to answer it.
+func (a *Application) DelegationModes() record.ModeVocabulary {
+	if source, ok := a.store().(interface {
+		Modes() record.ModeVocabulary
+	}); ok {
+		return record.Modes(source.Modes())
+	}
+	return record.BuiltinModes()
+}
+
 // Queries builds a read model over ONE fresh snapshot. Every read method here
 // goes through it, so no application read can mix fields from two reads.
 func (a *Application) Queries(includeArchive bool, operation *OperationContext) (*taskquery.Queries, error) {

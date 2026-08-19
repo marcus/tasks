@@ -44,7 +44,7 @@ func (s *Store) DeleteTask(id string, cascade bool, expectedRevision, historyLab
 			}
 		}
 
-		preflight := check.Check(s.org)
+		preflight := check.CheckWith(s.org, s.checkOptions())
 		if !preflight.OK() {
 			messages := []string{}
 			for _, entry := range preflight.Errors {

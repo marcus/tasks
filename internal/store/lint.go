@@ -21,7 +21,7 @@ import (
 // whole store, so a check that could not see it would answer "no structural
 // errors" to a user the refusal had just sent here.
 func (s *Store) CheckLive() check.Result {
-	result := check.Check(s.org)
+	result := check.CheckWith(s.org, s.checkOptions())
 	source, declared := s.unsupportedSchemaSource()
 	if source != SourceArchive {
 		return result
@@ -38,11 +38,11 @@ func (s *Store) CheckLive() check.Result {
 func (s *Store) CheckFiles() check.Result {
 	var result check.Result
 	err := s.withSharedLock(func() error {
-		live, err := captureReadSource(s.org, false, true)
+		live, err := captureReadSource(s.org, false, true, s.checkOptions())
 		if err != nil {
 			return err
 		}
-		archive, err := captureReadSource(s.archive, true, true)
+		archive, err := captureReadSource(s.archive, true, true, s.checkOptions())
 		if err != nil {
 			return err
 		}

@@ -245,9 +245,10 @@ holds the next action. Absent means not delegated; there is no neutral value.
   recommend), `implement` (do the work). Required for an agent, **optional for
   a human** — who holds the work and what kind of delegation it is are
   orthogonal facts. Only the owner sets or widens it. The vocabulary is the
-  built-in set above; it is read from one seam
-  (`record.DelegationModes()`/`record.UseDelegationModes`) so a
-  user-configured set is a wiring change rather than a schema change. The
+  built-in set above, carried as a value on the store and the checker
+  (`store.Options.Modes`, `check.Options.Modes`, defaulting to
+  `record.BuiltinModes()`), so a user-configured set is one field at
+  construction rather than process-wide state read behind a caller's back. The
   stored key stays `mode` — the concept is called *mode* everywhere, in the
   file, the CLI, the docs, and the UI.
 - **`status`** — `delegated` (human), `ready` (agent, unclaimed), `claimed`
@@ -289,8 +290,21 @@ occurrence — mode or person retained, always unclaimed, fresh `at`, no
 The `note` travels with the delegation it briefs: a same-kind re-delegation (a
 mode change, a different person) keeps it along with `work_ref`; replacing a
 person with the agent pool or the reverse drops both, because that is a
-different delegation. Clearing the note removes the key rather than storing an
-empty string — absent means "no briefing", as everywhere else in this schema.
+different delegation. The **`mode` is not retained** the same way — it is
+restated by every delegate write, so re-delegating without naming one leaves
+the task with no mode. That is deliberate: the mode is the substance of the
+instruction, and inheriting it silently would let a task drift into an
+authority nobody asked for, where an inherited briefing is at worst stale text
+a human reads. Clearing the note removes the key rather than storing an empty
+string — absent means "no briefing", as everywhere else in this schema.
+
+A note write **restamps `at`**, unlike a `work_ref` write, which deliberately
+leaves it alone. `at` is what the multi-device merge orders competing owner
+intent by, and a note is owner intent an agent will execute; if note edits kept
+the delegation's original stamp, two devices editing a note would always tie
+and fall through to the byte tiebreak, so clearing a stale briefing could lose
+to an older edit. A `work_ref` is a URL rather than an instruction, so the
+asymmetry is intentional rather than an oversight.
 
 Across devices the object is merged atomically under one total order: a removal
 (`undelegate`) absorbs everything, a `claimed` marker outranks a non-claimed

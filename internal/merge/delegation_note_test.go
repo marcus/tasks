@@ -84,6 +84,32 @@ func TestClaimOutranksANoteAndRemovalBeatsBoth(t *testing.T) {
 	}
 }
 
+// The scenario that made stamping a note write necessary: one device CLEARS a
+// stale briefing, another edits it earlier. Because a note write restamps `at`,
+// the clear is the later intent and wins. If notes shared the delegation's
+// original stamp, both sides would tie on `at`, the canonical-byte tiebreak
+// would decide, and an agent could read a retracted instruction as live.
+func TestALaterNoteClearBeatsAnEarlierNoteEdit(t *testing.T) {
+	base := baseRecords().change("10000002", map[string]any{
+		"delegation": ready(map[string]any{"note": "original briefing"})})
+	cleared := ready(map[string]any{"at": "2026-07-27T20:00:00Z"})
+	edited := ready(map[string]any{"at": "2026-07-27T19:00:00Z", "note": "tweaked wording"})
+	ours := base.change("10000002", map[string]any{"delegation": cleared, "updated": homeStamp})
+	theirs := base.change("10000002", map[string]any{"delegation": edited, "updated": workStamp})
+
+	forward := Merge(base.text(t), ours.text(t), theirs.text(t))
+	reverse := Merge(base.text(t), theirs.text(t), ours.text(t))
+	if !forward.OK() || !reverse.OK() {
+		t.Fatalf("merge failed: %q / %q", forward.Error, reverse.Error)
+	}
+	if got := delegationOf(parseDoc(t, forward.Text), "10000002"); !reflect.DeepEqual(got, anyMap(cleared)) {
+		t.Fatalf("delegation = %#v, want the later clear to hold", got)
+	}
+	if forward.Text != reverse.Text {
+		t.Fatalf("not commutative")
+	}
+}
+
 // A mode on a HUMAN delegation is merged the same way as any other member: it
 // cannot be combined with the other side's assignee.
 func TestHumanDelegationWithAModeMergesAtomically(t *testing.T) {

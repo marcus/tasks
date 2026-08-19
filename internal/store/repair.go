@@ -255,7 +255,7 @@ func (s *Store) repairPlans() []filePlan {
 func (s *Store) repairPlan(path, name string, parsed record.Result, taken map[string]bool) filePlan {
 	records := record.CloneAll(parsed.Records)
 	fixes := s.applyKnownRepairs(records, name, taken)
-	after := check.CheckParsed(record.Result{Records: records, Errors: parsed.Errors})
+	after := check.CheckParsedWith(record.Result{Records: records, Errors: parsed.Errors}, s.checkOptions())
 	blockers := []RepairBlocker{}
 	for _, entry := range after.Errors {
 		blockers = append(blockers, RepairBlocker{File: name, Line: entry.Line, Message: entry.Message})
