@@ -32,6 +32,8 @@ func (m *Model) Overlay() *OverlayBox {
 		return m.modalOverlay(layout)
 	case ModeForm:
 		return m.formOverlay(layout)
+	case ModeFieldModal:
+		return m.fieldModalOverlay(layout)
 	case ModePalette:
 		return m.paletteOverlay(layout, m.actionPalette.Picker())
 	case ModeContextPalette:

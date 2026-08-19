@@ -247,7 +247,7 @@ func (m *Model) footerRoles() []string {
 		roles = append(roles, "chrome")
 	}
 	switch m.mode {
-	case ModeFilter, ModeForm, ModePalette, ModeContextPalette, ModeLinkPicker, ModeTaskEdit:
+	case ModeFilter, ModeForm, ModeFieldModal, ModePalette, ModeContextPalette, ModeLinkPicker, ModeTaskEdit:
 	default:
 		for range m.PromptLines(m.width - 2) {
 			roles = append(roles, "prompt")
@@ -296,6 +296,12 @@ func (m *Model) inPanel(layout ScreenLayout, column int) bool {
 // option list — a palette that re-derived it would act on the wrong row the
 // moment the query narrowed the list between paint and click.
 func (m *Model) overlayMouse(box *OverlayBox, event tea.MouseMsg) bool {
+	if m.mode == ModeFieldModal {
+		// The multi-field modal owns both axes of the pointer — a caret lands
+		// on a column, not just a row — so it is routed whole rather than
+		// through the row-offset dispatch below.
+		return m.fieldModalMouse(box, event)
+	}
 	mouse := event.Mouse()
 	inside := mouse.Y >= box.Row && mouse.Y < box.Row+len(box.Lines)
 	switch e := event.(type) {

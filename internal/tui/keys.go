@@ -40,7 +40,7 @@ func (m *Model) handleKey(message tea.KeyPressMsg) tea.Cmd {
 	if editor != nil && editor.PendingQuit() {
 		return m.modalConfirmationKey(sequence)
 	}
-	if m.agentQuitPending {
+	if m.agentQuitPending || m.fieldModalQuitPending {
 		return m.modalConfirmationKey(sequence)
 	}
 	// Global bindings (ctrl-c) reach through every mode, so a wedged overlay
@@ -88,6 +88,8 @@ func (m *Model) handleKey(message tea.KeyPressMsg) tea.Cmd {
 		if !m.dispatchAction(sequence, shortcuts.Form) {
 			m.formKey(sequence)
 		}
+	case ModeFieldModal:
+		m.fieldModalKey(sequence)
 	case ModePalette:
 		if !m.dispatchAction(sequence, shortcuts.Picker) {
 			m.paletteKey(sequence)
@@ -130,6 +132,10 @@ func (m *Model) handlePaste(text string) {
 	case ModeForm:
 		if m.form != nil {
 			m.form.Paste(text)
+		}
+	case ModeFieldModal:
+		if m.fieldModal != nil {
+			m.resolveFieldModalOutcome(m.fieldModal.Paste(text))
 		}
 	case ModeTaskEdit:
 		if m.taskEditor != nil {
@@ -492,7 +498,8 @@ func (m *Model) modalConfirmationAvailable() bool {
 	switch m.modal.Kind() {
 	case ModalProjectCompleteConfirm, ModalProjectArchiveConfirm,
 		ModalArchiveConfirm, ModalDeleteConfirm, ModalDeleteCascadeConfirm,
-		ModalAgentQueueCancel, ModalTaskDraftQuitConfirm, ModalAgentQuitConfirm:
+		ModalAgentQueueCancel, ModalTaskDraftQuitConfirm, ModalAgentQuitConfirm,
+		ModalFieldModalQuitConfirm:
 		return true
 	default:
 		return false
@@ -505,7 +512,8 @@ func (m *Model) modalConfirmationAcceptsEnter() bool {
 	}
 	switch m.modal.Kind() {
 	case ModalProjectCompleteConfirm, ModalProjectArchiveConfirm,
-		ModalAgentQueueCancel, ModalTaskDraftQuitConfirm, ModalAgentQuitConfirm:
+		ModalAgentQueueCancel, ModalTaskDraftQuitConfirm, ModalAgentQuitConfirm,
+		ModalFieldModalQuitConfirm:
 		return true
 	default:
 		return false
@@ -522,6 +530,9 @@ func (m *Model) modalConfirmationKey(sequence string) tea.Cmd {
 	}
 	if editor != nil && editor.PendingQuit() {
 		return m.taskDraftQuitKey(sequence)
+	}
+	if m.fieldModalQuitPending {
+		return m.fieldModalQuitKey(sequence)
 	}
 	if m.agentQuitPending {
 		return m.agentQuitKey(sequence)
@@ -542,8 +553,41 @@ func (m *Model) modalConfirmationKey(sequence string) tea.Cmd {
 		m.agentQueueCancelKey(sequence)
 	case ModalTaskDraftQuitConfirm:
 		return m.taskDraftQuitKey(sequence)
+	case ModalFieldModalQuitConfirm:
+		return m.fieldModalQuitKey(sequence)
 	case ModalAgentQuitConfirm:
 		return m.agentQuitKey(sequence)
+	}
+	return nil
+}
+
+// fieldModalQuitKey answers the dirty-modal quit confirmation. It mirrors
+// agentQuitKey exactly, including refusing to let ctrl-c or q answer their own
+// prompt — a confirmation you can dismiss with the key that raised it is not a
+// confirmation.
+func (m *Model) fieldModalQuitKey(sequence string) tea.Cmd {
+	switch sequence {
+	case "y", "Y", "\r", "\n":
+		m.clearQuitConfirmation(false)
+		m.fieldModal = nil
+		m.finishQuit()
+		return m.maybeQuit()
+	case "n", "N", "\x1b":
+		m.clearQuitConfirmation(true)
+		// Declining is input, so it disarms the modal's own discard latch — the
+		// same rule a key, a click and a wheel tick already follow.
+		//
+		// Without this the two latches collide, and the collision is worse than
+		// either latch failing alone: esc arms, ctrl-c raises this prompt, `n`
+		// says "unsaved changes kept", and the NEXT esc discards immediately
+		// because the arm survived the interruption. The user is told their work
+		// is safe and then loses it to one keystroke.
+		if m.fieldModal != nil {
+			m.fieldModal.DisarmCancel()
+		}
+		m.Flash("quit cancelled — unsaved changes kept")
+	case "q", "\x03":
+		m.Flash("confirmation still open — y/return discards and quits · n/esc keeps editing")
 	}
 	return nil
 }
@@ -870,6 +914,7 @@ func (m *Model) clearQuitConfirmation(restore bool) {
 	m.quitReturnMode = ""
 	m.quitReturnMessage = ""
 	m.agentQuitPending = false
+	m.fieldModalQuitPending = false
 	if restore {
 		m.modal = retainedModal
 		m.mode = retainedMode
