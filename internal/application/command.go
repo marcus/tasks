@@ -173,15 +173,28 @@ const (
 	ActionClaim      DelegationAction = "claim"
 	ActionRelease    DelegationAction = "release"
 	ActionWorkRef    DelegationAction = "work_ref"
+	// ActionDelegationNote rewrites the receiver-facing briefing on a delegation
+	// that already exists, without restating who holds it or in what mode. The
+	// note gets its own verb for the same reason work_ref has one: an owner
+	// correcting a briefing should not have to re-send the delegation.
+	ActionDelegationNote DelegationAction = "delegation_note"
 )
 
 var delegationActions = []DelegationAction{
 	ActionDelegate, ActionUndelegate, ActionClaim, ActionRelease, ActionWorkRef,
+	ActionDelegationNote,
 }
 
 // workRefClearWords are the words every surface spells "clear this reference"
 // with. They normalize here, once: when each surface kept its own list, the CLI
 // stored the literal string "none" while the TUI cleared.
+//
+// The delegation NOTE clears with the same two words, deliberately. They are
+// already reserved mode names, so no vocabulary can ever contain them and no
+// surface has to disambiguate a clear instruction from a mode; and one clearing
+// spelling across the delegation surface is one thing to remember rather than
+// two. A briefing whose entire text is the word "off" is not expressible, which
+// is the same trade work_ref already makes.
 var workRefClearWords = []string{"off", "none"}
 
 // DelegationCommand is one immutable delegation intent — lib/tasks/delegation_command.rb.
@@ -207,7 +220,21 @@ type DelegationCommand struct {
 	// the only meaning "" could carry is the one it has here.
 	WorkRef string
 
-	Note      string
+	// Note carries text whose meaning depends on the verb, and the two meanings
+	// are deliberately not merged into one field: they are both "the note the
+	// caller typed", and a surface that has one text box should not have to pick
+	// a field name based on the verb behind it.
+	//
+	//   delegate / delegation_note — the receiver-facing briefing STORED in the
+	//     marker. SetNote must be true for it to be written at all, so a
+	//     delegation that says nothing about the note leaves the existing one
+	//     alone rather than erasing it. "off" and "none" clear.
+	//   release — the blocker line APPENDED to the task body in the release's
+	//     own undo step. It is not stored in the marker and needs no SetNote:
+	//     an empty note simply appends nothing.
+	Note    string
+	SetNote bool
+
 	KeepState bool
 	Force     bool
 
@@ -239,6 +266,24 @@ func (c DelegationCommand) normalizedWorkRef() string {
 	// reference with surrounding space is acceptable, and trimming here would
 	// quietly answer a question that is not this layer's.
 	return c.WorkRef
+}
+
+// ClearsNote reports a stored-note instruction that removes the briefing.
+func (c DelegationCommand) ClearsNote() bool {
+	return c.SetNote && c.normalizedNote() == ""
+}
+
+// normalizedNote applies the same clear-word rule the work reference uses, and
+// trims: a stored briefing is compared for equality by the store, so leading
+// and trailing whitespace differences must not read as a new instruction.
+func (c DelegationCommand) normalizedNote() string {
+	trimmed := strings.TrimSpace(c.Note)
+	for _, word := range workRefClearWords {
+		if strings.EqualFold(trimmed, word) {
+			return ""
+		}
+	}
+	return trimmed
 }
 
 func (c DelegationCommand) validate() []string {

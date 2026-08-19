@@ -46,6 +46,9 @@ func (s *surfaceContext) list(args []string) int {
 	if filter.DelegatedOnly() || filter.AgentReadyOnly() {
 		for _, item := range items {
 			out(delegationHeadline(queries, item))
+			if note := delegationNoteLine(item); note != "" {
+				out(note)
+			}
 		}
 		return 0
 	}
@@ -344,6 +347,12 @@ func delegationHeadline(queries *taskquery.Queries, item store.Item) string {
 	}
 	switch marker["status"] {
 	case "delegated":
+		// The mode is optional on a human delegation and appears only when the
+		// owner stated one, so it joins the state rather than replacing it.
+		if mode := marker["mode"]; mode != "" {
+			return fmt.Sprintf("delegated → %s (%s, %s): %s",
+				marker["assignee"], mode, item.State, item.Title)
+		}
 		return fmt.Sprintf("delegated → %s (%s): %s", marker["assignee"], item.State, item.Title)
 	case "ready":
 		return fmt.Sprintf("agent-ready (%s): %s", marker["mode"], item.Title)
@@ -353,6 +362,34 @@ func delegationHeadline(queries *taskquery.Queries, item store.Item) string {
 		return "delegated: " + item.Title
 	}
 }
+
+// delegationNoteLine is the briefing's one-line preview under a list row, or ""
+// when there is none.
+//
+// A list is a scan, so the note is previewed rather than printed: a paragraph
+// per row would bury the rows. The full text is one `tasks show` away, and
+// `--json` carries it whole — which is what an agent heartbeat reads, and the
+// reason truncating here is safe.
+func delegationNoteLine(item store.Item) string {
+	marker := delegationFields(item.Delegation)
+	if marker == nil || marker["note"] == "" {
+		return ""
+	}
+	note := marker["note"]
+	first, _, multiline := strings.Cut(note, "\n")
+	preview := []rune(strings.TrimSpace(first))
+	if len(preview) > delegationNotePreview {
+		return "    " + dim("note: "+string(preview[:delegationNotePreview])+"…")
+	}
+	if multiline {
+		return "    " + dim("note: "+string(preview)+" …")
+	}
+	return "    " + dim("note: "+string(preview))
+}
+
+// delegationNotePreview bounds the previewed briefing. 72 runes is one
+// terminal-friendly line beside the four-space indent.
+const delegationNotePreview = 72
 
 func init() {
 	register("list", (*surfaceContext).list)

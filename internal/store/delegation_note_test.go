@@ -238,3 +238,77 @@ func TestConfiguredModeVocabularyIsCarriedByTheStore(t *testing.T) {
 		t.Fatalf("check errors = %#v, want the store's own vocabulary honoured", lint.Errors)
 	}
 }
+
+// The coalescing key each delegation verb forwards, pinned as a contract.
+//
+// Consolidating six methods onto one WriteDelegation made it possible to change
+// a verb's coalescing behaviour by editing one line, silently — and the first
+// draft did exactly that to `claim`. Three verbs ignore the key DELIBERATELY:
+// Ruby's `undelegate_task!`, `set_work_ref!` and the note writer take none, and
+// honouring one would merge an unrelated neighbouring edit into this write's
+// undo entry so that one undo reverted two decisions. The other three forward
+// it, which is what their pre-consolidation signatures did. This test exists so
+// a verb cannot cross that line without someone deciding to.
+func TestDelegationVerbsForwardTheCoalesceKeyTheyPromiseTo(t *testing.T) {
+	steps := func(t *testing.T, writes func(*Store)) int {
+		t.Helper()
+		store, root := writerFixture(t, fixtureStore)
+		writes(store)
+		raw, err := os.ReadFile(filepath.Join(root, "journal", "index.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Count(string(raw), `"label"`)
+	}
+	delegate := func(s *Store, kind, mode, assignee string) {
+		s.WriteDelegation(DelegationRequest{ID: "1a2b3c02", Verb: VerbDelegate,
+			Kind: kind, Mode: mode, Assignee: assignee, CoalesceKey: "shared"})
+	}
+
+	// Two writes under ONE key: if the key reaches the journal they are one
+	// undo step, and if it is dropped they are two.
+	if got := steps(t, func(s *Store) {
+		delegate(s, "human", "", "pat@example.com")
+		delegate(s, "agent", "refine", "")
+	}); got != 1 {
+		t.Errorf("delegate dropped its coalescing key: %d steps", got)
+	}
+
+	// Claim forwards too. It composes no second write of its own, but the
+	// pre-consolidation Store.Claim passed the key it was handed straight
+	// through, and a consolidation must not quietly change what a signature
+	// means. The key is minted per operation, so forwarding it can never merge
+	// anything that was not this claim's own.
+	if got := steps(t, func(s *Store) {
+		delegate(s, "agent", "refine", "")
+		s.WriteDelegation(DelegationRequest{ID: "1a2b3c02", Verb: VerbClaim,
+			Worker: "worker-alpha", CoalesceKey: "shared"})
+	}); got != 1 {
+		t.Errorf("claim dropped its coalescing key: %d steps", got)
+	}
+
+	// And the three that must NOT merge, each handed a key identical to the
+	// delegation immediately before it.
+	for verb, write := range map[DelegationVerb]func(*Store){
+		VerbWorkRef: func(s *Store) {
+			s.WriteDelegation(DelegationRequest{ID: "1a2b3c02", Verb: VerbWorkRef,
+				WorkRef: "https://example.com/pr/7", CoalesceKey: "shared"})
+		},
+		VerbDelegationNote: func(s *Store) {
+			s.WriteDelegation(DelegationRequest{ID: "1a2b3c02", Verb: VerbDelegationNote,
+				Note: "brief", SetNote: true, CoalesceKey: "shared"})
+		},
+		VerbUndelegate: func(s *Store) {
+			s.WriteDelegation(DelegationRequest{ID: "1a2b3c02", Verb: VerbUndelegate,
+				CoalesceKey: "shared"})
+		},
+	} {
+		got := steps(t, func(s *Store) {
+			delegate(s, "agent", "refine", "")
+			write(s)
+		})
+		if got != 2 {
+			t.Errorf("%s merged into the delegation's undo step: %d steps", verb, got)
+		}
+	}
+}

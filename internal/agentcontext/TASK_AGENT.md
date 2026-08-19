@@ -133,6 +133,14 @@ task merely because it also contains task text.
   - offer to agents:  `tasks delegate "<ref>" refine|research|implement`
     (the set is configurable — `tasks config --json` reports the live one)
                       (replacing a person returns the task to TODO)
+  - brief the receiver: add `--note "<text>"`, `--note-file <path>`, or
+                      `--note-file -` (stdin) to either delegate spelling. Who,
+                      mode, and briefing are ONE write and ONE undo step; never
+                      delegate and then write a note. Omitting the flag keeps
+                      any existing briefing; `--note off` clears it. A mode
+                      positional is also accepted after `--to <email>`.
+  - rewrite a briefing: `tasks delegate "<ref>" --note "<text|off>"`  (no mode
+                      and no `--to`: it edits the briefing in place)
   - clear delegation: `tasks undelegate "<ref>"`  (also revokes a live claim)
   - record the work:  `tasks workref "<ref>" <url-or-id>`  ("off"/"none"
                       clears; at most 500 characters)
@@ -256,10 +264,26 @@ cannot be delegated, and approving one does not delegate it.
 
 An accepted live task may carry one `delegation` object: either a **person**
 (an email `assignee`, status `delegated`, which moves the task to `WAITING`) or
-the **agent pool** (an authority `mode`, status `ready` until a worker claims
-it and `claimed` after). `tasks workref` records the single reference to
+the **agent pool** (status `ready` until a worker claims it and `claimed`
+after). `tasks workref` records the single reference to
 where the work actually happened — a ticket, PR, brief, or session — and it
 survives completion and archival.
+
+The marker has three orthogonal parts:
+
+- **who** — the person or the pool.
+- **`mode`** — the authority. Required for an agent, which must know what it
+  may do before it starts. **Optional for a person**, where it grants nothing
+  and simply says what was asked for: `mode: refine` on a human delegation
+  means "Pat, tighten the task, don't build it", exactly as it does for an
+  agent.
+- **`note`** — the briefing the receiver reads: how to work on the task, where
+  the work should land, what to avoid. At most 2000 characters, paragraphs
+  allowed. **Read it before you start.** It is on the marker in `show`, in both
+  delegation list scopes, and in full in `list --agent-ready --json`, which is
+  what a heartbeat reads. It does **not** widen your authority — the `mode`
+  alone does that — and it is the owner's instruction, so do not rewrite the
+  one you were given.
 
 **Delegation is the owner's decision.** Set, change, or clear it when the user
 asks. Never delegate a task to yourself, never widen a mode you were given, and
@@ -309,8 +333,9 @@ If you are a worker picking up delegated work rather than managing the list:
    exits non-zero naming the current holder. Pick another task and move on.
    A worker id looks like `<harness>/<model>/<session-id>`, and
    `TASKS_WORKER_ID` supplies it when the flag is omitted.
-4. Read your authority from the task the claim returns, not from memory.
-5. Do only what that mode permits.
+4. Read your authority from the `mode` on the task the claim returns, not from
+   memory, and your instructions from its `note`.
+5. Do only what that mode permits, within what that note asks for.
 6. Attach progress and `tasks workref "<ref>" <url-or-id> --worker <id>`.
 7. Finish: complete the task (`implement` only, criteria actually met), or
    `tasks release "<ref>" --worker <id> --note "why it's blocked"`.

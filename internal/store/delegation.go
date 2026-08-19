@@ -56,7 +56,123 @@ type delegationPlan struct {
 // That ordering is deliberate. The post-write check would catch a malformed
 // marker too, but only by rolling the whole file back and reporting a
 // validation failure — a far worse diagnostic than the shape error itself.
-func (s *Store) delegationMutation(id, coalesceKey string, plan func(*record.Record) delegationPlan) MutationResult {
+// DelegationRequest is one delegation write of any verb, with everything the
+// verb can carry.
+//
+// It exists because the delegation surface grew two things the six positional
+// signatures below could not express without another parameter each: the
+// three-part marker's note, and the optimistic-concurrency token an HTTP
+// If-Match carries. One request object keeps the store's delegation entry point
+// singular, so a surface that grows a field does not fan out into six new
+// method spellings.
+type DelegationRequest struct {
+	ID   string
+	Verb DelegationVerb
+
+	// Kind, Mode and Assignee are the delegate verb's inputs.
+	Kind     string
+	Mode     string
+	Assignee string
+
+	// Note is the receiver-facing briefing on delegate and delegation_note.
+	// SetNote distinguishes "leave the existing note alone" (false) from "write
+	// this note, clearing it when empty" (true) — a delegate that did not say
+	// anything about the note must not silently erase one.
+	Note    string
+	SetNote bool
+
+	// Worker is the claiming or releasing worker id; on work_ref it is the
+	// worker proving its claim, and empty means the owner.
+	Worker string
+	// WorkRef is the reference to record; empty clears it.
+	WorkRef string
+	// Force is the owner override on release.
+	Force bool
+
+	// ExpectedRevision is the task revision the caller read before deciding. An
+	// empty value skips the check; a value that no longer matches refuses stale
+	// rather than overwriting a decision made against different facts.
+	ExpectedRevision string
+
+	// CoalesceKey merges a composed follow-up write into this write's undo step.
+	//
+	// Three verbs deliberately IGNORE it — see coalescingDelegationVerbs — and
+	// the dispatcher below is where that is enforced rather than at each call
+	// site. Delegate, release and claim forward it, exactly as their
+	// pre-consolidation signatures did.
+	CoalesceKey string
+}
+
+// DelegationVerb is the closed set of delegation writes the store performs.
+type DelegationVerb string
+
+// The six delegation writes.
+const (
+	VerbDelegate       DelegationVerb = "delegate"
+	VerbUndelegate     DelegationVerb = "undelegate"
+	VerbClaim          DelegationVerb = "claim"
+	VerbRelease        DelegationVerb = "release"
+	VerbWorkRef        DelegationVerb = "work_ref"
+	VerbDelegationNote DelegationVerb = "delegation_note"
+)
+
+// coalescingDelegationVerbs are the verbs that carry a caller's coalescing key
+// into the journal.
+//
+// The three absent from this set — undelegate, work_ref and delegation_note —
+// ignore it DELIBERATELY, and each says so in its own doc comment: Ruby's
+// `undelegate_task!`, `set_work_ref!` and the note writer take no key, so
+// honouring one would merge an unrelated neighbouring edit into this write's
+// undo entry and make one undo revert two decisions.
+//
+// Claim is here even though it composes no second write of its own. It is what
+// the pre-consolidation `Store.Claim` did — it forwarded the key it was handed
+// — and the consolidation must not quietly change a signature's meaning. The
+// key is minted per operation, so forwarding it can never merge anything that
+// was not this claim's own.
+var coalescingDelegationVerbs = map[DelegationVerb]bool{
+	VerbDelegate: true, VerbRelease: true, VerbClaim: true,
+}
+
+// WriteDelegation performs one delegation verb. Every method below is a thin
+// spelling of this call, and every new input reaches the store through it.
+func (s *Store) WriteDelegation(request DelegationRequest) MutationResult {
+	coalesceKey := ""
+	if coalescingDelegationVerbs[request.Verb] {
+		coalesceKey = request.CoalesceKey
+	}
+	var plan func(*record.Record) delegationPlan
+	switch request.Verb {
+	case VerbDelegate:
+		plan = func(target *record.Record) delegationPlan { return s.planDelegate(target, request) }
+	case VerbUndelegate:
+		plan = planUndelegate
+	case VerbClaim:
+		plan = func(target *record.Record) delegationPlan { return s.planClaim(target, request.Worker) }
+	case VerbRelease:
+		plan = func(target *record.Record) delegationPlan {
+			return s.planRelease(target, request.Worker, request.Force)
+		}
+	case VerbWorkRef:
+		plan = func(target *record.Record) delegationPlan {
+			return planWorkRef(target, request.WorkRef, request.Worker)
+		}
+	case VerbDelegationNote:
+		plan = func(target *record.Record) delegationPlan {
+			return s.planDelegationNote(target, request.Note)
+		}
+	default:
+		return MutationResult{Status: MutationInvalid,
+			Errors: []string{"unknown delegation verb " + rubyInspectText(string(request.Verb))}}
+	}
+	result := s.delegationMutation(request.ID, coalesceKey, request.ExpectedRevision, plan)
+	result.Summary.Action = string(request.Verb)
+	result.Summary.TaskID = request.ID
+	return result
+}
+
+func (s *Store) delegationMutation(id, coalesceKey, expectedRevision string,
+	plan func(*record.Record) delegationPlan) MutationResult {
 	var result MutationResult
 	err := s.withLock(func() error {
 		before := s.fileSnapshot()
@@ -83,6 +199,25 @@ func (s *Store) delegationMutation(id, coalesceKey string, plan func(*record.Rec
 		if index < 0 {
 			result = MutationResult{Status: MutationNotFound}
 			return nil
+		}
+
+		// The precondition is checked HERE, inside the same lock the write runs
+		// in, and before the plan decides anything. That ordering is the whole
+		// value of the guard: a caller that read the task, decided, and only then
+		// sent the write must be refused if the task moved underneath, and it must
+		// be refused before an eligibility or conflict verdict computed against
+		// facts it never saw. A delegation marker is part of a task's OWN
+		// revision component, so that component alone is what has to match —
+		// an unrelated sibling capture must not refuse a delegation.
+		if expectedRevision != "" {
+			if status, message := delegationRevisionError(records, index, expectedRevision); status != "" {
+				errors := []string(nil)
+				if message != "" {
+					errors = []string{message}
+				}
+				result = MutationResult{Status: status, Errors: errors}
+				return nil
+			}
 		}
 
 		working := record.CloneAll(records)
@@ -131,24 +266,43 @@ func (s *Store) delegationMutation(id, coalesceKey string, plan func(*record.Rec
 	return result
 }
 
-// Delegate hands a task to the agent pool or to a named person.
+// delegationRevisionError compares the caller's expected task revision against
+// the live one. It returns "" when the write may proceed.
+func delegationRevisionError(records []record.Record, index int, expected string) (MutationStatus, string) {
+	want, ok := revisionParts(expected)
+	if !ok {
+		return MutationInvalid, "malformed expected_revision"
+	}
+	current, err := taskRevision(records, index, siblingIDsByParent(records))
+	if err != nil {
+		return MutationInvalid, err.Error()
+	}
+	have, ok := revisionParts(current)
+	if !ok {
+		return MutationInvalid, "malformed expected_revision"
+	}
+	// Component 0 is the task's own semantic value, which is where the
+	// delegation marker is digested.
+	if have[0] != want[0] {
+		return MutationStale, ""
+	}
+	return "", ""
+}
+
+// Delegate hands a task to the agent pool or to a named person, leaving any
+// existing note alone. WriteDelegation is the spelling that can also write one.
 func (s *Store) Delegate(id, kind, mode, assignee, coalesceKey string) MutationResult {
-	result := s.delegationMutation(id, coalesceKey, func(target *record.Record) delegationPlan {
-		return s.planDelegate(target, kind, mode, assignee)
+	return s.WriteDelegation(DelegationRequest{
+		ID: id, Verb: VerbDelegate, Kind: kind, Mode: mode, Assignee: assignee,
+		CoalesceKey: coalesceKey,
 	})
-	result.Summary.Action = "delegate"
-	result.Summary.TaskID = id
-	return result
 }
 
 // Claim takes an agent-pool task for one worker.
 func (s *Store) Claim(id, worker, coalesceKey string) MutationResult {
-	result := s.delegationMutation(id, coalesceKey, func(target *record.Record) delegationPlan {
-		return s.planClaim(target, worker)
+	return s.WriteDelegation(DelegationRequest{
+		ID: id, Verb: VerbClaim, Worker: worker, CoalesceKey: coalesceKey,
 	})
-	result.Summary.Action = "claim"
-	result.Summary.TaskID = id
-	return result
 }
 
 // Undelegate clears the marker: an ordinary undelegate, or the revocation of a
@@ -164,24 +318,16 @@ func (s *Store) Claim(id, worker, coalesceKey string) MutationResult {
 // and one undo would then revert two decisions. The parameter stays in the
 // signature because the application layer's optional interface declares it.
 func (s *Store) Undelegate(id, _ string) MutationResult {
-	result := s.delegationMutation(id, "", func(target *record.Record) delegationPlan {
-		return planUndelegate(target)
-	})
-	result.Summary.Action = "undelegate"
-	result.Summary.TaskID = id
-	return result
+	return s.WriteDelegation(DelegationRequest{ID: id, Verb: VerbUndelegate})
 }
 
 // Release hands a claim back to the ready queue: claimed → ready, dropping the
 // assignee. A worker must supply the id that matches the live claim; the owner
 // passes force (with no worker id) to clear a stale claim without undelegating.
 func (s *Store) Release(id, worker string, force bool, coalesceKey string) MutationResult {
-	result := s.delegationMutation(id, coalesceKey, func(target *record.Record) delegationPlan {
-		return s.planRelease(target, worker, force)
+	return s.WriteDelegation(DelegationRequest{
+		ID: id, Verb: VerbRelease, Worker: worker, Force: force, CoalesceKey: coalesceKey,
 	})
-	result.Summary.Action = "release"
-	result.Summary.TaskID = id
-	return result
 }
 
 // SetWorkRef records where the work lives, or clears it with an empty ref. One
@@ -193,12 +339,9 @@ func (s *Store) Release(id, worker string, force bool, coalesceKey string) Mutat
 // is on Undelegate: Ruby's `set_work_ref!` takes none, and merging a reference
 // update into a neighbouring delegation write would make one undo revert both.
 func (s *Store) SetWorkRef(id, workRef, worker, _ string) MutationResult {
-	result := s.delegationMutation(id, "", func(target *record.Record) delegationPlan {
-		return planWorkRef(target, workRef, worker)
+	return s.WriteDelegation(DelegationRequest{
+		ID: id, Verb: VerbWorkRef, WorkRef: workRef, Worker: worker,
 	})
-	result.Summary.Action = "work_ref"
-	result.Summary.TaskID = id
-	return result
 }
 
 // SetDelegationNote records the briefing the receiver reads — how to work on
@@ -215,12 +358,7 @@ func (s *Store) SetWorkRef(id, workRef, worker, _ string) MutationResult {
 // cleared a stale briefing could silently lose to an older edit on another
 // device — and an agent would then read a retracted instruction as live.
 func (s *Store) SetDelegationNote(id, note, _ string) MutationResult {
-	result := s.delegationMutation(id, "", func(target *record.Record) delegationPlan {
-		return s.planDelegationNote(target, note)
-	})
-	result.Summary.Action = "delegation_note"
-	result.Summary.TaskID = id
-	return result
+	return s.WriteDelegation(DelegationRequest{ID: id, Verb: VerbDelegationNote, Note: note})
 }
 
 func (s *Store) planDelegationNote(target *record.Record, note string) delegationPlan {
@@ -344,11 +482,21 @@ func planWorkRef(target *record.Record, workRef, worker string) delegationPlan {
 	return delegationPlan{status: MutationOK, label: label}
 }
 
-func (s *Store) planDelegate(target *record.Record, kind, mode, assignee string) delegationPlan {
-	mode = strings.TrimSpace(mode)
-	assignee = strings.TrimSpace(assignee)
+func (s *Store) planDelegate(target *record.Record, request DelegationRequest) delegationPlan {
+	kind := request.Kind
+	mode := strings.TrimSpace(request.Mode)
+	assignee := strings.TrimSpace(request.Assignee)
 	if message := delegateInputErrorWith(kind, mode, assignee, s.Modes()); message != "" {
 		return delegationPlan{status: MutationInvalid, errors: []string{message}}
+	}
+	// The note is validated BEFORE eligibility and before the marker is built, so
+	// an over-long briefing reads as its own problem rather than as a
+	// whole-marker shape report.
+	note := strings.TrimSpace(request.Note)
+	if request.SetNote && note != "" {
+		if problems := record.DelegationNoteErrors(note); len(problems) > 0 {
+			return delegationPlan{status: MutationInvalid, errors: problems[:1]}
+		}
 	}
 	if plan := delegationIneligible(target, "delegated"); plan != nil {
 		return *plan
@@ -370,11 +518,20 @@ func (s *Store) planDelegate(target *record.Record, kind, mode, assignee string)
 	// The note briefs whoever holds the work, so it survives the same way and
 	// for the same reason: same kind keeps it, a human↔agent replacement drops
 	// it along with the reference.
+	//
+	// A delegation that STATES a note overrides that retention in both
+	// directions: it writes what it was given, and an empty one clears. A
+	// delegation that says nothing about the note leaves it exactly as it was —
+	// silently erasing a briefing because the owner re-stated the mode would be
+	// the worst possible reading of an omitted field.
 	retained := ""
 	retainedNote := ""
 	if existing != nil && existing["kind"] == kind {
 		retained = existing["work_ref"]
 		retainedNote = existing["note"]
+	}
+	if request.SetNote {
+		retainedNote = note
 	}
 	status := DelegationReady
 	if kind == "human" {

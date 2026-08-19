@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+- **The three-part delegation reaches the CLI and HTTP.** `tasks delegate <ref>
+  <mode> --note "…"` writes who, in what mode, and the briefing the receiver
+  reads in ONE store write and therefore one undo step — no surface composes a
+  delegation out of a delegate followed by a note write. `--note-file <path>`
+  and `--note-file -` (stdin) exist because a long briefing written by an agent
+  should not have to fight shell quoting. A mode is now accepted alongside
+  `--to <email>`, so a person can be asked for a refine just as an agent can.
+  Omitting the note keeps any existing briefing — restating the mode must not
+  silently erase instructions — and `--note off`/`none`/`""` clears it, the
+  same two words a work reference clears with and both already reserved mode
+  names, so a clear instruction can never be read as a mode. `tasks delegate
+  <ref> --note "…"` with no mode and no `--to` rewrites the briefing in place,
+  for an owner correcting instructions without re-sending a delegation.
+- Delegation reads show all three parts. `show` prints the mode and the
+  briefing in full, `list --delegated` and `list --agent-ready` print the mode
+  in the headline with a one-line preview of the note beneath it, and `--json`
+  carries both as first-class members of the `delegation` object everywhere —
+  including `list --agent-ready --json`, which is what an agent heartbeat
+  reads.
+- **The HTTP delegation writes work.** `POST /api/v1/tasks/{id}/{delegate,
+  undelegate,claim,release}`, `PUT …/work_ref`, and the new `PUT
+  …/delegation_note` answered `501` because the mandatory `If-Match` could not
+  be honoured — the store did not compare a revision inside its delegation
+  transaction, and dropping a precondition a client set is worse than refusing.
+  It does now, under the same lock the write runs in, so the routes perform the
+  operation with their preconditions intact: `200` with the whole canonical
+  task and a fresh `ETag`, `412` on a stale revision, and `409` on a lost claim
+  race carrying `holder` and `at` as their own fields rather than as prose an
+  agent would have to re-parse.
+
 - Answer a proposal for work that is already done in one keystroke. On a
   PROPOSED row `c` now approves the proposal AND completes the accepted task in
   a single write and a single undo step, so `undo` restores `PROPOSED` exactly;

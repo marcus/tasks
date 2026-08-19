@@ -705,3 +705,62 @@ func TestUnsupportedCapabilitiesRefuseRatherThanSilentlySucceed(t *testing.T) {
 		}
 	}
 }
+
+// The briefing travels with the delegation through the verbs that do not
+// replace it.
+//
+// A claim, a release, and a work-ref write all change who holds the task or
+// where the work lives; none of them is a re-delegation, so none of them may
+// touch the instruction the owner wrote. This ran against a double whose
+// marker writer silently dropped any key missing from its field list, which is
+// how the note went missing here while production retained it — so the test is
+// as much a guard on the double as on the application.
+func TestTheBriefingSurvivesClaimReleaseAndWorkRef(t *testing.T) {
+	wrap, _ := capableFactory()
+	h := newHarness(t, harnessOptions{wrap: wrap})
+	const briefing = "Start with the failing test."
+
+	if result := h.app.DelegateTask(DelegationCommand{
+		ID: fixPlants, Kind: "agent", Mode: "implement", Note: briefing, SetNote: true,
+	}, nil); !result.Changed() {
+		t.Fatalf("delegate: status = %q errors = %v", result.Status, result.Errors)
+	}
+	noteNow := func(stage string) string {
+		t.Helper()
+		parsed, found := h.recordFor("Water the plants")
+		if !found {
+			t.Fatalf("%s: task vanished", stage)
+		}
+		raw, present := parsed.Get(store.DelegationField)
+		if !present {
+			t.Fatalf("%s: marker vanished", stage)
+		}
+		return decodeMarker(raw)["note"]
+	}
+	if got := noteNow("delegate"); got != briefing {
+		t.Fatalf("delegate did not store the briefing: %q", got)
+	}
+
+	for _, step := range []struct {
+		name string
+		run  func() Outcome
+	}{
+		{"claim", func() Outcome {
+			return h.app.ClaimTask(DelegationCommand{ID: fixPlants, Worker: worker}, nil)
+		}},
+		{"work_ref", func() Outcome {
+			return h.app.SetWorkRef(DelegationCommand{
+				ID: fixPlants, WorkRef: "https://example.com/pr/7", Worker: worker}, nil)
+		}},
+		{"release", func() Outcome {
+			return h.app.ReleaseTask(DelegationCommand{ID: fixPlants, Worker: worker}, nil)
+		}},
+	} {
+		if result := step.run(); !(result.OK() || result.NoChange()) {
+			t.Fatalf("%s: status = %q errors = %v", step.name, result.Status, result.Errors)
+		}
+		if got := noteNow(step.name); got != briefing {
+			t.Fatalf("%s dropped the briefing: %q", step.name, got)
+		}
+	}
+}

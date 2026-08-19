@@ -72,6 +72,13 @@ tasks delegate "<ref>" --to pat@example.com # hand to a person (→ WAITING)
 # the address must be real: local@domain.tld — "@work" is refused
 tasks delegate "<ref>" research   # offer to agents: refine|research|implement
 # the set is configurable — read it from `tasks config --json` (delegation_modes)
+tasks delegate "<ref>" --to pat@example.com refine # a mode is optional on a person
+tasks delegate "<ref>" implement --note "how to work on it, where it should land"
+tasks delegate "<ref>" implement --note-file brief.md   # …or from a file
+cat brief.md | tasks delegate "<ref>" implement --note-file -  # …or from stdin
+# who + mode + note are ONE write and ONE undo step; never delegate then note.
+# omitting --note keeps any existing briefing; --note off|none|"" clears it
+tasks delegate "<ref>" --note "revised brief"  # rewrite the briefing only
 tasks undelegate "<ref>"         # clear the marker; revokes any live claim
 tasks workref "<ref>" <url|off>  # where the work happened; off/none clears
 tasks claim "<ref>" --worker <id> --json # atomic single-winner pickup
@@ -137,9 +144,18 @@ asks you to approve that specific proposal.
 
 **Delegation** answers a different question: who holds the next action on work
 the owner has already accepted. An accepted live task may carry one
-`delegation` — a person (an email, which moves it to `WAITING`) or the agent
-pool at an authority `mode`. `workref` records the one reference to where the
-work happened and survives completion and archival.
+`delegation` with three orthogonal parts: **who** — a person (an email, which
+moves it to `WAITING`) or the agent pool; **mode** — the authority, required
+for an agent and optional for a person, where it simply says what was asked
+for; and **note** — the briefing the receiver reads. `workref` records the one
+reference to where the work happened and survives completion and archival.
+
+The briefing is where the owner says how to work on the task, where the work
+should land, and what to avoid. Read it before starting: it is on the marker in
+`show`, in both delegation list scopes, and — in full — in
+`list --agent-ready --json`, which is what a heartbeat reads. It is at most
+2000 characters and may contain paragraphs. It does not widen your authority;
+the `mode` still does that.
 
 Delegating is the owner's call: set or clear it when asked, never delegate a
 task to yourself, and never widen a mode you were given. `refine` may improve
@@ -159,8 +175,10 @@ more, so do not "repair" it.
 
 To pick up delegated work: read `list --agent-ready --json`, `claim` one task
 (a compare-and-set — exactly one worker wins, and a lost race exits non-zero
-naming the holder), take your authority from the task the claim returns, set a
-`workref`, then complete it or `release` it with a blocker note. There are no
+naming the holder), take your authority from the `mode` and your instructions
+from the `note` on the task the claim returns, set a `workref`, then complete
+it or `release` it with a blocker note. Do not rewrite the `note` you were
+given: it is the owner's instruction, and `delegate --note` is an owner verb. There are no
 leases, so an abandoned claim stays claimed until the owner clears it.
 
 Completing a delegated *recurring* task keeps the delegation standing: the next

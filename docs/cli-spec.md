@@ -612,10 +612,45 @@ text for the receiver — how to work on it, where the work should land, what to
 avoid — at most 2000 characters, paragraphs allowed, control characters
 refused. It is primarily read by agents.
 
-*Schema and store support ship first; the CLI flags, HTTP fields, and TUI
-prompts for a note and for a mode on a human delegation follow in the surface
-work, and are specified with them. Today `delegate <ref> <mode>` and `delegate
-<ref> --to <email>` remain the only spellings.*
+All three parts are written by **one** `delegate`, which is one store write and
+therefore **one undo step**. No surface composes a delegation out of a delegate
+followed by a note write.
+
+| spelling | effect |
+| --- | --- |
+| `delegate <ref> <mode>` | agent-ready at that mode; an existing note is kept |
+| `delegate <ref> <mode> --note "<text>"` | the same, plus the briefing |
+| `delegate <ref> <mode> --note-file <path>` | the briefing read from a file |
+| `delegate <ref> <mode> --note-file -` | the briefing read from stdin |
+| `delegate <ref> --to <email> [<mode>]` | hand to a person; sets WAITING unless `--keep-state` |
+| `delegate <ref> --note <text\|off>` | rewrite or clear the briefing on the delegation that already exists |
+
+`--note` and `--note-file` are mutually exclusive; passing both is refused
+rather than resolved, because a caller that passed both meant one of them.
+`--note-file -` exists so an agent writing a long briefing does not have to
+fight shell quoting.
+
+**Clearing a note** uses the work reference's words: `--note off`, `--note
+none` (case-insensitive), or an empty `--note ""`. Those two words are
+reserved mode names (see `delegation_modes` under Global conventions), so a clear instruction can never be
+mistaken for a mode — and one clearing spelling across the delegation surface
+is one thing to remember rather than two. The cost is that a briefing whose
+entire text is the word `off` is not expressible, which is the trade `work_ref`
+already makes. Over HTTP the canonical spelling is `"note": null` or `""`;
+`off`/`none` are accepted there too so the surfaces agree.
+
+**An omitted note is not a cleared note.** `delegate <ref> implement` on a task
+that already carries a briefing keeps it: silently erasing instructions because
+the owner restated the mode would be the worst reading of an absent field. Over
+HTTP that is the difference between the `note` member being absent and being
+`null`.
+
+The three parts render everywhere: `show` prints the mode and the briefing in
+full (a briefing the receiver must act on is not truncated where it is read),
+`list --delegated` and `list --agent-ready` print the mode in the headline and
+a one-line preview of the note beneath it, and `--json` carries both as members
+of the `delegation` object on every one of those commands. The `--agent-ready`
+JSON is what an agent heartbeat reads, so the note is present there in full.
 
 `PROPOSED`, closed, and archived tasks
 refuse delegation with an error naming the state; approval and delegation stay
@@ -681,12 +716,26 @@ the merge, because a `claimed` marker outranks a non-claimed one; a one-sided
 release can be overturned when the devices meet. Use `undelegate` when you mean
 "this is no longer theirs, whatever else happened".
 
-All five operations are revision-aware typed
+All six operations are revision-aware typed
 shared application commands (`delegate`, `undelegate`,
-`claim_task`, `release_task`, `set_work_ref`), journaled and undoable; the two
-composed ones (the WAITING default, a release note) fold their second write
-into the same undo step. Heartbeat agents discover work through
-`list --agent-ready --json` and read their authority from `claim --json`.
+`claim_task`, `release_task`, `set_work_ref`, `set_delegation_note`), journaled
+and undoable; the two composed ones (the WAITING default, a release note) fold
+their second write into the same undo step. Heartbeat agents discover work
+through `list --agent-ready --json` and read their authority from
+`claim --json`.
+
+**Over HTTP** the same six are `POST /api/v1/tasks/{id}/{delegate,undelegate,
+claim,release}`, `PUT /api/v1/tasks/{id}/work_ref`, and
+`PUT /api/v1/tasks/{id}/delegation_note`. Each requires `If-Match` like every
+other task write, and the precondition is compared inside the store's own
+delegation transaction — it is honoured, not accepted and dropped. A success is
+`200` with the whole canonical task and a fresh `ETag`, so a worker claims and
+reads its authority in one round trip. A lost claim race is `409 conflict` with
+`holder` and `at` as their own detail fields rather than as prose an agent
+would have to re-parse; a stale precondition is `412`; a mode outside the
+configured vocabulary is `422` quoting the set that was actually enforced. The
+`delegate` body's `kind` is inferred when unambiguous (an `assignee` means
+`human`, a bare `mode` means `agent`) and an explicit `kind` always wins.
 
 Normal create, move, and state operations cannot strand accepted descendants
 beneath a proposed task. In particular, transitioning an accepted parent to
@@ -1220,8 +1269,9 @@ display text to parse.
 | `link rm <ref> <n\|url>` | | ✅ | Remove a formal link by 1-based formal-list position or exact stored URL. Body/title text is never edited; empty omits the stored field. |
 | `link set <ref> <n> --label TEXT` | | ✅ | Replace the non-empty label on a formal link selected by its 1-based formal-list position. URL, ordering, and derived body/title links are unchanged. |
 | `note <ref> "text"` | | ✅ | Append a line to the task's `body`. Resolves accepted open tasks and PROPOSED tasks. |
-| `delegate <ref> <refine\|research\|implement>` | | ✅ | Mark the task agent-ready at that authority mode (`delegation: {kind: agent, status: ready, mode}`). Repeating it on an already-ready task updates the mode and keeps any `work_ref`; re-stating the mode it already has is a clean no-op (exit 0, no undo slot, no new `at`); a claimed task refuses with a conflict naming the holder (`undelegate` first). Replacing a *human* delegation is a different delegation, so its `work_ref` is dropped. Lifecycle state is untouched except when this replaces a human delegation on a WAITING task: the WAITING that delegating to a person set is undone (to `TODO`) in the same undo step, because agent-ready work is actionable again. `--keep-state` opts out (it applies to both kinds of `delegate`). Prints `agent-ready (<mode>): <title>`, or `agent-ready (<mode>) \u2192 <STATE>: <title>` when the state moved. |
-| `delegate <ref> --to <email> [--keep-state]` | | ✅ | Hand the task to a person (`delegation: {kind: human, status: delegated, assignee}`) and move it to WAITING — the next action is outside the owner's control. `--keep-state` opts out. `<email>` must be a real address shape (a non-empty local part, exactly one `@`, and a dotted domain), so `@work` — one keystroke from the TUI's context filter — and `pat@localhost` are refused rather than silently parking the task in WAITING. Replaces an agent delegation (and vice versa): one delegation per task, and a change of kind drops the old `work_ref`. The state change is folded into the same undo step. Prints `delegated → <email> (<STATE>): <title>`. |
+| `delegate <ref> <mode> [--note <text>|--note-file <path|->]` | | ✅ | Mark the task agent-ready at that authority mode (`delegation: {kind: agent, status: ready, mode}`). Repeating it on an already-ready task updates the mode and keeps any `work_ref`; re-stating the mode it already has is a clean no-op (exit 0, no undo slot, no new `at`); a claimed task refuses with a conflict naming the holder (`undelegate` first). Replacing a *human* delegation is a different delegation, so its `work_ref` is dropped. Lifecycle state is untouched except when this replaces a human delegation on a WAITING task: the WAITING that delegating to a person set is undone (to `TODO`) in the same undo step, because agent-ready work is actionable again. `--keep-state` opts out (it applies to both kinds of `delegate`). Prints `agent-ready (<mode>): <title>`, or `agent-ready (<mode>) \u2192 <STATE>: <title>` when the state moved. `--note <text>`, `--note-file <path>` and `--note-file -` (stdin) write the receiver-facing briefing in the SAME store write, so the whole three-part delegation is one undo step; `--note off`/`none`/`""` clears it, and omitting the flag leaves any existing briefing alone. |
+| `delegate <ref> --to <email> [<mode>] [--note …] [--keep-state]` | | ✅ | Hand the task to a person (`delegation: {kind: human, status: delegated, assignee}`) and move it to WAITING — the next action is outside the owner's control. `--keep-state` opts out. `<email>` must be a real address shape (a non-empty local part, exactly one `@`, and a dotted domain), so `@work` — one keystroke from the TUI's context filter — and `pat@localhost` are refused rather than silently parking the task in WAITING. Replaces an agent delegation (and vice versa): one delegation per task, and a change of kind drops the old `work_ref`. A `<mode>` positional is accepted and optional here — a person can be asked for a refine just as an agent can — and `--note`/`--note-file` behave exactly as they do for an agent delegation. The state change and the note are folded into the same undo step. Prints `delegated \u2192 <email> (<STATE>): <title>`, with the mode in the parenthesis when one was stated. |
+| `delegate <ref> --note <text|off>` | | ✅ | Rewrite (or clear) the briefing on the delegation the task ALREADY carries, without restating who holds it or in what mode — so a correction does not read as a re-delegation. Refuses an undelegated task (`task is not delegated`). It is an owner decision: unlike `workref`, a holding worker may not rewrite its own instructions. Restamps `at` on a `delegated` or `ready` marker (owner intent, which the multi-device order resolves by later `at`) but deliberately NOT on a `claimed` one, where `at` is claim time. Prints `delegation note set: <title>` or `delegation note cleared: <title>`. |
 | `undelegate <ref>` | | ✅ | Clear the marker, revoking any live claim; afterwards the stale worker's `release`/`workref` fail their worker match. Lifecycle state is left alone — undelegating does not leave WAITING. An undelegated task is a clean no-op (exit 0, no undo slot). It is also the delegation **repair** route: alone among these verbs it may strip a marker some other writer left malformed even while `tasks check` calls the file invalid — provided that record is the only thing wrong and no `expected_revision`/`If-Match` was supplied (see Repairing an invalid record). Being a repair, `undo` deliberately restores the malformed bytes. |
 | `workref <ref> <url-or-id\|off\|none>` | `work-ref` | ✅ | Record the single reference to where the work lives (ticket, PR, brief, session); setting overwrites, and `off` or `none` (either word, case-insensitive, on every surface) clears it. At most 500 characters, one line, no control characters. The owner may always write it; an agent adds `--worker <id>` to prove its claim still matches (deliberately **not** defaulted from `TASKS_WORKER_ID`, so an exported worker id cannot silently change who is writing). Survives completion and archival. |
 | `claim <ref> --worker <id> [--json]` | | ✅ | Atomic compare-and-set from `ready` to `claimed` under the store mutation lock — exactly one worker can ever hold a task. `--worker` defaults from `TASKS_WORKER_ID`; the flag always wins, and missing both is a usage error (exit 1). A lost race exits 1 with `conflict: already claimed by <holder> at <ts>` on stderr, plus a `{"error":"conflict","action":"claim","id","holder","at","message"}` object on stdout under `--json`. Success prints `claimed by <id>: <title>`; `--json` re-emits the **full canonical task resource** (the `show --json` shape) so an agent claims and reads its authority in one step. |

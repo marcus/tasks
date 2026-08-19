@@ -115,11 +115,17 @@ func (c *capableStore) Release(id, worker string, force bool, coalesceKey string
 		}
 	}
 	return c.edit(id, func(target *record.Record) bool {
-		next := map[string]string{"kind": marker["kind"], "mode": marker["mode"],
-			"status": store.DelegationReady, "at": marker["at"]}
-		if ref := marker["work_ref"]; ref != "" {
-			next["work_ref"] = ref
+		// Everything the marker carried survives a release except the claim
+		// itself: the work reference and the BRIEFING both describe the task,
+		// not the worker that just handed it back, and the real store retains
+		// both. Rebuilding the marker from a literal field list is what let the
+		// note go missing here while production kept it.
+		next := map[string]string{}
+		for key, value := range marker {
+			next[key] = value
 		}
+		next["status"] = store.DelegationReady
+		delete(next, "assignee")
 		writeMarker(target, next)
 		return true
 	})
@@ -153,11 +159,48 @@ func (c *capableStore) SetWorkRef(id, workRef, worker, coalesceKey string) store
 	})
 }
 
+// WriteDelegation is the single delegation entry point the application prefers.
+//
+// It has to be spelled here rather than inherited: the double EMBEDS the real
+// store, so without this method the application's capability probe would find
+// the embedded store's implementation and every override above would be dead
+// code that no test noticed had stopped running. Routing back through the
+// double's own verbs keeps the call log — and the coalescing key it records —
+// describing what the application actually asked for.
+//
+// ExpectedRevision is DELIBERATELY IGNORED on the three verbs routed below,
+// and that is a limit worth naming rather than a gap to trip over: the double
+// edits the file directly instead of going through the store's delegation
+// transaction, which is the only place a revision can be compared without a
+// read-then-write race. An application-level staleness test written against
+// this double would therefore pass vacuously. Staleness is proved where it is
+// actually enforced — internal/store and internal/api, whose harnesses drive
+// the real store. If this double ever needs to answer for it, the honest move
+// is to route these verbs through c.Store.WriteDelegation too, not to
+// approximate the comparison here.
+func (c *capableStore) WriteDelegation(request store.DelegationRequest) store.MutationResult {
+	switch request.Verb {
+	case store.VerbUndelegate:
+		return c.Undelegate(request.ID, request.CoalesceKey)
+	case store.VerbRelease:
+		return c.Release(request.ID, request.Worker, request.Force, request.CoalesceKey)
+	case store.VerbWorkRef:
+		return c.SetWorkRef(request.ID, request.WorkRef, request.Worker, request.CoalesceKey)
+	}
+	return c.Store.WriteDelegation(request)
+}
+
 // -- file editing -------------------------------------------------------------
 
 // markerOrder is the stored key order the schema expects. Writing the members
 // in a fixed order keeps the double's output stable enough to compare.
-var markerOrder = []string{"kind", "mode", "status", "assignee", "at", "work_ref"}
+//
+// `note` belongs here for a reason worth stating: a key MISSING from this list
+// is silently dropped by every write the double performs. While it was absent,
+// the double's Release and SetWorkRef erased the briefing that the real store
+// retains — so no application test could have caught a note-dropping
+// regression in those verbs, and the suite would have gone on passing.
+var markerOrder = []string{"kind", "mode", "status", "assignee", "at", "work_ref", "note"}
 
 func writeMarker(target *record.Record, marker map[string]string) {
 	ordered := map[string]string{}

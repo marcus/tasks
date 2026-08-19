@@ -412,41 +412,6 @@ func TestPatchAppliesEveryDocumentedFieldAndReadsBack(t *testing.T) {
 	}
 }
 
-// Every route this build cannot perform must refuse EXPLICITLY, with a reason,
-// and must leave the store untouched. A silent success or a 503 that invites a
-// retry would both be worse than a stated 501.
-func TestRoutesThisBuildRefusesSayWhy(t *testing.T) {
-	h := newHarness(t)
-	before := string(h.storeBytes())
-	tag := h.etagOf(fixPR)
-
-	cases := []struct {
-		name   string
-		method string
-		path   string
-		body   string
-		expect string
-	}{
-		{"delegate", "POST", "/api/v1/tasks/" + fixPR + "/delegate", `{"kind":"agent","mode":"refine"}`, "delegate over HTTP"},
-		{"undelegate", "POST", "/api/v1/tasks/" + fixPR + "/undelegate", "", "undelegate over HTTP"},
-		{"claim", "POST", "/api/v1/tasks/" + fixPR + "/claim", `{"worker":"w1"}`, "claim over HTTP"},
-		{"release", "POST", "/api/v1/tasks/" + fixPR + "/release", `{"worker":"w1"}`, "release over HTTP"},
-		{"work_ref", "PUT", "/api/v1/tasks/" + fixPR + "/work_ref", `{"work_ref":"https://x"}`, "work_ref over HTTP"},
-	}
-	for _, testCase := range cases {
-		headers := h.withIfMatch(tag)
-		answered := h.json(testCase.method, testCase.path, testCase.body, headers)
-		assertError(t, answered, 501, "not_implemented")
-		if !strings.Contains(answered.message(), testCase.expect) {
-			t.Errorf("%s: message %q does not name %q", testCase.name, answered.message(), testCase.expect)
-		}
-	}
-
-	if string(h.storeBytes()) != before {
-		t.Error("a refused route wrote to the store")
-	}
-}
-
 // The undoable hard delete, mirroring test_app.rb's
 // `test_create_update_noop_and_delete_round_trip` and
 // `test_preconditions_stale_current_and_delete_cascade_conflict`.
