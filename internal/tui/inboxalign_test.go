@@ -16,7 +16,7 @@ const inboxAlignFixture = `{"type":"meta","version":2}
 {"type":"section","id":"aaaa0001","title":"Inbox"}
 {"type":"task","id":"aaaa0002","parent":"aaaa0001","state":"INBOX","title":"unsorted note","tags":["@home"]}
 {"type":"task","id":"aaaa0003","parent":"aaaa0002","state":"INBOX","title":"nested note","tags":["@home"]}
-{"type":"task","id":"aaaa0004","parent":"aaaa0001","state":"PROPOSED","title":"proposed note","tags":["@home"],"deadline":"2026-07-02"}
+{"type":"task","id":"aaaa0004","parent":"aaaa0001","state":"PROPOSED","priority":"A","title":"proposed note","tags":["@home"],"deadline":"2026-07-02"}
 {"type":"task","id":"aaaa0005","parent":"aaaa0001","state":"CANCELLED","title":"declined note","tags":["@home"],"closed":"2026-07-13","rejected":"2026-07-13"}
 `
 
@@ -93,6 +93,16 @@ func TestInboxPlaceholdersShareTheRowLeftEdge(t *testing.T) {
 		if got := contentColumn(t, frame, needle); got != edge {
 			t.Errorf("placeholder %q starts at column %d, rows start at %d:\n%s",
 				needle, got, edge, frame)
+		}
+	}
+}
+
+// The marker gutter is exactly MarkerField wide, which is what lets
+// placeholderIndent be spelled in fields rather than in counted spaces.
+func TestMarkerFieldMatchesTheMarkerGlyphs(t *testing.T) {
+	for _, marker := range []string{MarkLeaf, MarkExpanded, MarkCollapsed} {
+		if got := len([]rune(marker)); got != MarkerField {
+			t.Errorf("marker %q is %d cells, MarkerField is %d", marker, got, MarkerField)
 		}
 	}
 }

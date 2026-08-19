@@ -36,6 +36,12 @@ const (
 	// of overdue work reads as a red edge down the side of the list before any
 	// word on it has been read.
 	BandField = 2
+	// MarkerField is the collapse marker: `▾ `, `▸ ` or the two blanks a leaf
+	// spends to hold the column (see MarkLeaf). It sits between the band and the
+	// body, and EVERY row in a list that has one pays it, leaf or not — that is
+	// what keeps one left edge under a block of proposals and a block of nested
+	// inbox rows alike.
+	MarkerField = 2
 	// PriorityField is the priority letter plus its separation: `A  ` or three
 	// spaces. It sits INSIDE the body, immediately after the state glyph, where
 	// the design puts it — a letter next to the title it ranks, not a lonely
@@ -69,13 +75,10 @@ const MoreGlyph = "▾"
 
 // placeholderIndent lines a section's empty-state message up with the titles of
 // the rows it stands in for. A placeholder is not chrome — it occupies a row's
-// place — so it wears a row's indent rather than a rule's.
-//
-// Its seven cells are read twice over and come out the same both ways: the
-// placeholder is painted after the renderer's own cursor gutter, so against a
-// marker-bearing row it stands in for the band, the two-cell collapse marker
-// (MarkLeaf, exactly CursorField wide) and the priority field.
-var placeholderIndent = strings.Repeat(" ", CursorField+BandField+PriorityField)
+// place — so it wears a row's indent rather than a rule's. The renderer paints
+// the cursor gutter for it, so what it owes is what a row's own text opens
+// with: band, marker, priority.
+var placeholderIndent = strings.Repeat(" ", BandField+MarkerField+PriorityField)
 
 // Section is one labelled block of a view: the rule, then its rows.
 //

@@ -343,34 +343,23 @@ func rejectedRows(request BuildRequest) []Row {
 	return rows
 }
 
-// approvalRows paints the undecided queue. Each row wears the same two-cell
-// marker gutter an INBOX row does, so both blocks of the view share one left
-// edge. The gutter is a real column, not padding: proposalMarker hands back a
-// chevron the day a proposal has children of its own in this queue, and it is
-// MarkLeaf until then — which is what every proposal is today, because the
-// queue lists each proposal in its own right rather than nesting them.
+// approvalRows paints the undecided queue. Every proposal is a leaf here — the
+// queue lists each one on its own line whatever its parentage, so none of them
+// folds — but the row still pays the marker gutter, because the INBOX block
+// below shares this list's left edge and an edge only half the screen keeps is
+// not an edge. A leaf marker claims no hit target, so the two cells stay inert
+// under the mouse.
 func approvalRows(request BuildRequest, proposals []store.Item) []Row {
 	rows := []Row{}
 	for _, item := range proposals {
 		item := item
-		marker := proposalMarker(item)
-		row := Row{Text: urgencyBand(request, item) + marker + taskBody(request, item), Item: &item}
-		if marker != MarkLeaf {
-			row.MarkerBegin = BandField
-			row.MarkerEnd = row.MarkerBegin + 2
-		}
-		rows = append(rows, row)
+		rows = append(rows, Row{
+			Text: urgencyBand(request, item) + MarkLeaf + taskBody(request, item),
+			Item: &item,
+		})
 	}
 	return rows
 }
-
-// proposalMarker is the marker an APPROVALS row carries. A proposal is a leaf
-// in this queue — it is listed on its own line whatever its parentage — so it
-// takes the leaf gutter, which is what keeps its title on the same column as an
-// INBOX title. It is a function rather than a constant so that a queue which
-// ever renders a proposal's children beneath it has one place to grow a real
-// chevron, and the mouse hit target above it already follows.
-func proposalMarker(store.Item) string { return MarkLeaf }
 
 // -- outline ---------------------------------------------------------------
 

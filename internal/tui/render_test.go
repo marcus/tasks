@@ -101,6 +101,19 @@ func TestInboxFrameGolden(t *testing.T) {
 	assertGolden(t, "inbox_80x24", renderAt(t, harness, 80, 24))
 }
 
+// The default fixture has nothing awaiting approval, so the inbox golden above
+// paints an APPROVALS placeholder and never a proposal ROW — which is why it
+// could not see the two-column offset between the two blocks. This one has both
+// blocks populated, with a priority and a deadline on the proposal so the band
+// and priority fields either side of the marker gutter are painted too, and a
+// revealed decline under it.
+func TestInboxApprovalsFrameGolden(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: inboxAlignFixture})
+	harness.model.SwitchView(ViewInbox)
+	harness.press('R')
+	assertGolden(t, "inbox_approvals_80x24", renderAt(t, harness, 80, 24))
+}
+
 func TestNarrowFrameGolden(t *testing.T) {
 	harness := newModelHarness(t, harnessOptions{})
 	harness.model.SwitchView(ViewNext)
