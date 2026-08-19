@@ -211,9 +211,17 @@ func TestTheModelOpensALinkThroughTheSystemOpener(t *testing.T) {
 
 // waitFor polls for the detached launcher's output. The open is deliberately
 // asynchronous, so a test cannot assert on it synchronously.
+//
+// The budget is generous on purpose. What is being waited on is the OS
+// scheduling a detached /bin/sh and that script writing a file — work whose
+// latency belongs to the machine, not to the code under test. A one-second
+// budget failed under ordinary parallel load (`go test -count=8` alongside a
+// busy CPU reproduced it at 1.2-1.5s), which reported a scheduling delay as a
+// broken opener. A test that fails when the machine is busy is measuring the
+// machine.
 func waitFor(t *testing.T, path string) {
 	t.Helper()
-	for range 200 {
+	for range 1000 {
 		if info, err := os.Stat(path); err == nil && info.Size() > 0 {
 			return
 		}
