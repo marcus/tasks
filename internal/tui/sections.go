@@ -70,6 +70,11 @@ const MoreGlyph = "▾"
 // placeholderIndent lines a section's empty-state message up with the titles of
 // the rows it stands in for. A placeholder is not chrome — it occupies a row's
 // place — so it wears a row's indent rather than a rule's.
+//
+// Its seven cells are read twice over and come out the same both ways: the
+// placeholder is painted after the renderer's own cursor gutter, so against a
+// marker-bearing row it stands in for the band, the two-cell collapse marker
+// (MarkLeaf, exactly CursorField wide) and the priority field.
 var placeholderIndent = strings.Repeat(" ", CursorField+BandField+PriorityField)
 
 // Section is one labelled block of a view: the rule, then its rows.
