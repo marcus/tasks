@@ -48,11 +48,11 @@ overridable by the `TASKS_MAX_DEPTH` env var, default 4.
 `delegate <ref> <mode>` accepts and every refusal quotes back. It is a
 comma-separated list of bare lowercase words (letters, digits and underscores,
 starting with a letter); a mode carries no label or description, because the
-label is the word. `off`, `none`, `clear`, and `release` are **reserved**: the
-TUI's `D` prompt is one flat word grammar (the modes, plus `release`, plus the
-clear words), so a mode named `release` would make every such input ambiguous
-and leave the user unable to revoke a claim at all. The collision is reported
-when the config is read, not at the moment the verb is needed. The default is `refine, research, implement`, and
+label is the word. `off`, `none`, `clear`, and `release` are **reserved**: they
+are the words the delegation surface already spends — `release` is a verb, and
+the clear words clear a work reference or a note — so a mode spelled like one of
+them would make an instruction indistinguishable from a mode. The collision is
+reported when the config is read, not at the moment the verb is needed. The default is `refine, research, implement`, and
 `TASKS_DELEGATION_MODES` overrides the file. A list this binary cannot honour —
 a word of the wrong shape, a duplicate, or an empty list — is ignored **whole**
 with a warning on stderr and the built-in set is used; keeping the readable half

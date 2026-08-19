@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/marcus/tasks/internal/application"
@@ -12,28 +13,48 @@ import (
 	"github.com/marcus/tasks/internal/tui/term/shortcuts"
 )
 
-// The delegation prompts (`D`), the work-reference prompt (`W`), and the
+// The delegation modal (`D`), the work-reference prompt (`W`), and the
 // availability prompt (`z`).
 //
-// All three are quick forms over one typed input, and all three go through the
-// application's delegation commands rather than composing store writes here —
-// the WAITING default behind a human delegation and the blocker note behind a
-// release are composed there, in one undo step, and duplicating that would give
-// the TUI a second, subtly different delegation.
+// All three go through the application's delegation commands rather than
+// composing store writes here — the WAITING default behind a human delegation
+// and the blocker note behind a release are composed there, in one undo step,
+// and duplicating that would give the TUI a second, subtly different delegation.
+//
+// `D` is a THREE-FIELD modal, not a word grammar. A delegation has three
+// orthogonal parts — who holds it, what kind of work it is, and what the
+// receiver is being asked to do — and the one-line prompt that used to carry
+// all three made the SHORTEST inputs the most destructive ones: `o` and `n`
+// revoked a live claim with no confirmation, and `i` delegated at `implement`.
+// That grammar is retired rather than reproduced: the escape hatches are
+// buttons that name themselves and their key, and the destructive one confirms.
 
-// delegateClearWords are the spellings that mean "remove the delegation".
+// delegateClearWords are the spellings that mean "remove the reference".
 var delegateClearWords = []string{"off", "none", "clear"}
 
-// delegateWords is the whole `D` vocabulary: the delegation modes, `release`,
-// and the clear words. An email is matched separately.
-//
-// It is a FUNCTION of the vocabulary in force, not a package-level var: a var
-// is evaluated during init, before the process has built the store whose modes
-// these are, so a configured set would never reach the prompt.
-func delegateWords(modes record.ModeVocabulary) []string {
-	return append(record.Modes(modes).Modes(),
-		append([]string{"release"}, delegateClearWords...)...)
-}
+// delegateAgentValue is the assignee field's spelling of "the agent pool". It
+// is a RESERVED mode name and contains no "@", so neither a configured
+// vocabulary nor an address can ever collide with it.
+const delegateAgentValue = "agent"
+
+// delegateRecentAssignees bounds the offered address list. It is an aid to
+// picking, not a directory: typing an address nobody has used before is still
+// the fastest path for a new person.
+const delegateRecentAssignees = 8
+
+// The delegate modal's field keys, its two extra affordances, and the
+// confirmation the destructive one arms.
+const (
+	delegateFieldAssignee = "assignee"
+	delegateFieldMode     = "mode"
+	delegateFieldNote     = "note"
+
+	delegateReleaseAction    = "release"
+	delegateUndelegateAction = "undelegate"
+
+	delegateUndelegateConfirm = "undelegate clears the delegation and revokes any live claim " +
+		"— ctrl-x again confirms"
+)
 
 // describe is the ONE way a registry entry becomes text a user reads. Entries
 // are a static catalogue built during init, so any of them may carry the
@@ -44,73 +65,250 @@ func (m *Model) describe(entry shortcuts.Entry) string {
 	return shortcuts.WithModes(entry, m.app.DelegationModes()).Description
 }
 
-// delegatePrefixMin is where prefix matching starts.
-//
-// The plan promises `ref` / `res` / `imp`, and every word in the vocabulary is
-// at least this long, so no promised spelling is lost — but one stray character
-// no longer performs the widest or the most destructive action in the grammar.
-// `i` used to delegate at `implement`, and `o` / `n` used to revoke a live claim
-// with no confirmation. The shortest inputs must not be the ones that cost most.
-const delegatePrefixMin = 3
-
-func delegateHint(modes record.ModeVocabulary) string {
-	words := append([]string{"pat@example.com"}, record.Modes(modes).Modes()...)
-	words = append(words, "release", "off", "esc cancels")
-	return strings.Join(words, " · ")
-}
-
-// delegationAction is what a parsed `D` input asks for.
+// delegationAction is what one delegate gesture asked for.
 type delegationAction string
 
 const (
-	delegateHuman       delegationAction = "human"
-	delegateAgent       delegationAction = "agent"
-	delegateRelease     delegationAction = "release"
-	delegateUndelegate  delegationAction = "undelegate"
-	delegateWorkRef     delegationAction = "work_ref"
-	delegateParseFailed delegationAction = "error"
+	delegateHuman      delegationAction = "human"
+	delegateAgent      delegationAction = "agent"
+	delegateRelease    delegationAction = "release"
+	delegateUndelegate delegationAction = "undelegate"
+	delegateWorkRef    delegationAction = "work_ref"
 )
 
 // DelegateSelected is `D`.
+//
+// Every part of the delegation is stated in its own control and submitted as
+// ONE application.DelegationCommand: the modal composes nothing, so who holds
+// the task, in what mode, and what they were asked to do are one write and one
+// undo step.
 func (m *Model) DelegateSelected() {
 	item, ok := m.delegationTarget()
 	if !ok {
 		return
 	}
 	id, title := item.ID, item.Title
-	// Read the vocabulary the store actually enforces, NOW — not at init.
-	modes := m.app.DelegationModes()
-	m.SetForm(NewQuickForm(QuickFormOptions{
-		Kind: QuickFormDelegate, Title: "Delegate", Prompt: "delegate to",
-		Hint: delegateHint(modes), MinWidth: 84, ReturnMode: ReturnList, TargetID: id,
-		Suffix: "(" + m.delegationStateLabel(item) + ")",
-		Submit: func(raw string) string {
-			text := strings.TrimSpace(raw)
-			action, argument := parseDelegationInput(text, modes)
-			if action == delegateParseFailed {
-				return argument
+	marker := delegationOf(item)
+
+	var modal *FieldModal
+	modal = NewFieldModal(FieldModalOptions{
+		Kind:     FieldModalDelegate,
+		Title:    "Delegate — " + m.delegationStateLabel(item),
+		MinWidth: 72,
+		TargetID: id, ReturnMode: ReturnList,
+		SubmitLabel: "Delegate",
+		Fields: []FieldSpec{
+			{
+				// One field, two ways to answer it: pick somebody this list has
+				// handed work to before, or type an address that is new.
+				Key: delegateFieldAssignee, Label: "Delegate to", Kind: FieldChoice,
+				FreeText: true, VisibleOptions: 5,
+				Hint:     "an email address, or " + delegateAgentValue + " for the agent pool",
+				Initial:  delegateInitialAssignee(marker),
+				Options:  func() []FieldOption { return m.delegateAssigneeOptions() },
+				Validate: delegateAssigneeError,
+			},
+			{
+				Key: delegateFieldMode, Label: "Mode", Kind: FieldChoice, VisibleOptions: 5,
+				Hint:    "what kind of hand-off this is",
+				Initial: delegateInitialMode(marker, m.app.DelegationModes()),
+				// The vocabulary is read at PAINT time and never captured here:
+				// a configured set is the store's, and the modal open over it
+				// must offer what that store will actually accept.
+				Options: func() []FieldOption { return delegateModeOptions(m.app.DelegationModes()) },
+				Validate: func(value string) string {
+					return delegateModeError(value, m.app.DelegationModes())
+				},
+			},
+			{
+				Key: delegateFieldNote, Label: "Note", Kind: FieldTextArea, Rows: 4,
+				Hint:     "instructions for the receiver — how to work it, where the work lands",
+				Initial:  marker[delegateFieldNote],
+				Validate: delegateNoteError,
+			},
+		},
+		Actions: []FieldModalAction{
+			{ID: delegateReleaseAction, Label: "Release", Key: "\x12", KeyLabel: "ctrl-r"},
+			{ID: delegateUndelegateAction, Label: "Undelegate", Key: "\x18", KeyLabel: "ctrl-x"},
+		},
+		Submit: func(values map[string]string) string {
+			command := application.DelegationCommand{
+				ID: id, Action: application.ActionDelegate,
+				Mode: strings.TrimSpace(values[delegateFieldMode]),
+				// SetNote is always true: this field IS the briefing, so
+				// emptying it means "clear it" exactly as typing in it means
+				// "write it", and a note left untouched submits itself back
+				// unchanged.
+				Note: values[delegateFieldNote], SetNote: true,
 			}
-			command := application.DelegationCommand{ID: id}
-			switch action {
-			case delegateHuman:
-				command.Action = application.ActionDelegate
-				command.Kind, command.Assignee = "human", argument
-			case delegateAgent:
-				command.Action = application.ActionDelegate
-				command.Kind, command.Mode = "agent", argument
-			case delegateRelease:
-				// The owner's D-release is always a FORCED one: this prompt
-				// exists to clear a claim the owner does not hold, and a worker
-				// releasing its own claim uses the CLI with its worker id.
-				command.Action = application.ActionRelease
-				command.Force = true
-			case delegateUndelegate:
-				command.Action = application.ActionUndelegate
+			action := delegateAgent
+			if to := strings.TrimSpace(values[delegateFieldAssignee]); to == delegateAgentValue {
+				command.Kind = "agent"
+			} else {
+				command.Kind, command.Assignee = "human", to
+				action = delegateHuman
 			}
 			return m.runDelegation(id, title, action, command)
 		},
-	}))
-	_ = m.SetMode(ModeForm)
+	})
+	// The escape hatches are affordances, not words typed into a text field.
+	// Release is the OWNER's forced release: this modal exists to clear a claim
+	// the owner does not hold, and a worker releasing its own claim uses the CLI
+	// with its worker id.
+	modal.OnAction = func(actionID string) FieldModalOutcome {
+		switch actionID {
+		case delegateReleaseAction:
+			return m.runDelegationFromModal(modal, id, title, delegateRelease,
+				application.DelegationCommand{
+					ID: id, Action: application.ActionRelease, Force: true})
+		case delegateUndelegateAction:
+			// Two deliberate gestures, the same shape as the discard latch and
+			// for the same reason: this is the button that throws away someone
+			// else's live claim. Editing anything clears the message, which
+			// re-arms the confirmation.
+			if modal.Error() != delegateUndelegateConfirm {
+				modal.SetError(delegateUndelegateConfirm)
+				return FieldModalOutcome{Result: FieldModalError}
+			}
+			return m.runDelegationFromModal(modal, id, title, delegateUndelegate,
+				application.DelegationCommand{ID: id, Action: application.ActionUndelegate})
+		}
+		return fieldModalHandled()
+	}
+	m.OpenFieldModal(modal)
+}
+
+// runDelegationFromModal runs one affordance and says what the modal does next:
+// a refusal stays in the box, in the status row the paint always reserves, and
+// a success closes it and runs the staged flash.
+func (m *Model) runDelegationFromModal(modal *FieldModal, id, title string,
+	action delegationAction, command application.DelegationCommand) FieldModalOutcome {
+
+	if message := m.runDelegation(id, title, action, command); message != "" {
+		modal.SetError(message)
+		return FieldModalOutcome{Result: FieldModalError}
+	}
+	return FieldModalOutcome{Result: FieldModalSubmitted}
+}
+
+// delegateInitialAssignee prefills who holds the task now, so re-delegating
+// starts from the delegation that exists rather than from a blank field.
+func delegateInitialAssignee(marker map[string]string) string {
+	// KIND is asked first, because an agent delegation's `assignee` is the
+	// WORKER id of whoever claimed it, not a person: prefilling that would
+	// offer to re-delegate the task to a worker's name.
+	switch {
+	case marker["kind"] == "agent":
+		return delegateAgentValue
+	case marker["assignee"] != "":
+		return marker["assignee"]
+	}
+	return ""
+}
+
+func delegateInitialMode(marker map[string]string, modes record.ModeVocabulary) string {
+	if mode := marker[delegateFieldMode]; mode != "" {
+		return mode
+	}
+	if available := record.Modes(modes).Modes(); len(available) > 0 {
+		return available[0]
+	}
+	return ""
+}
+
+func delegateModeOptions(modes record.ModeVocabulary) []FieldOption {
+	out := []FieldOption{}
+	for _, mode := range record.Modes(modes).Modes() {
+		out = append(out, FieldOption{Value: mode, Label: mode})
+	}
+	return out
+}
+
+// delegateAssigneeOptions is the agent pool plus the people this list has handed
+// work to before, most recent first. They are OFFERED, not demanded: the field
+// is free text, so a new address is typed straight in.
+func (m *Model) delegateAssigneeOptions() []FieldOption {
+	out := []FieldOption{{Value: delegateAgentValue, Label: delegateAgentValue + " — the agent pool"}}
+	for _, assignee := range m.recentAssignees(delegateRecentAssignees) {
+		out = append(out, FieldOption{Value: assignee, Label: assignee})
+	}
+	return out
+}
+
+// recentAssignees reads the addresses off the live delegations, newest stamp
+// first. It is a read of the list in front of the user rather than a directory:
+// an address that survives only on an archived task is typed, not picked.
+func (m *Model) recentAssignees(limit int) []string {
+	newest := map[string]string{}
+	for _, item := range m.read.Items() {
+		marker := delegationOf(item)
+		if marker["kind"] != "human" || marker["assignee"] == "" {
+			continue
+		}
+		if marker["at"] > newest[marker["assignee"]] {
+			newest[marker["assignee"]] = marker["at"]
+		}
+	}
+	ordered := make([]string, 0, len(newest))
+	for assignee := range newest {
+		ordered = append(ordered, assignee)
+	}
+	sort.Slice(ordered, func(a, b int) bool {
+		if newest[ordered[a]] != newest[ordered[b]] {
+			return newest[ordered[a]] > newest[ordered[b]]
+		}
+		return ordered[a] < ordered[b]
+	})
+	if len(ordered) > limit {
+		ordered = ordered[:limit]
+	}
+	return ordered
+}
+
+// delegateAssigneeError is the field's own rule. A near-miss address is named as
+// a typo here rather than reaching the user as a store refusal about a field
+// they never knew they were writing.
+func delegateAssigneeError(value string) string {
+	text := strings.TrimSpace(value)
+	switch {
+	case text == "":
+		return "name a person's email address, or " + delegateAgentValue + " for the agent pool"
+	case text == delegateAgentValue:
+		return ""
+	case record.DelegationEmail(text):
+		return ""
+	case strings.Contains(text, "@"):
+		return "“" + text + "” isn't an email address — use pat@example.com"
+	}
+	return "can't parse “" + text + "”; use an email address, or " +
+		delegateAgentValue + " for the agent pool"
+}
+
+// delegateModeError refuses a mode the store would refuse, in the store's own
+// vocabulary. The field is a choice over that vocabulary, so this fires when the
+// configured set changed underneath an open modal — and in a test that says so.
+func delegateModeError(value string, modes record.ModeVocabulary) string {
+	text := strings.TrimSpace(value)
+	if text == "" {
+		return "pick a mode — " + record.Modes(modes).Quoted()
+	}
+	if !record.Modes(modes).Valid(text) {
+		return "“" + text + "” is not a configured mode — use " + record.Modes(modes).Quoted()
+	}
+	return ""
+}
+
+// delegateNoteError applies the record's own note rule, so the modal refuses
+// exactly what the store would. An empty note is not an error: it is the
+// instruction to carry no briefing at all.
+func delegateNoteError(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	if problems := record.DelegationNoteErrors(value); len(problems) > 0 {
+		return problems[0]
+	}
+	return ""
 }
 
 // SetWorkRefSelected is `W`.
@@ -178,64 +376,9 @@ func (m *Model) delegationTarget() (store.Item, bool) {
 	return fresh, true
 }
 
-// parseDelegationInput returns an action and its argument, or the error to
-// show. The empty string is rejected BEFORE the prefix scan — every word starts
-// with "", so an empty input would otherwise report itself as ambiguous across
-// the whole vocabulary.
-func parseDelegationInput(text string, modes record.ModeVocabulary) (delegationAction, string) {
-	if text == "" {
-		return delegateParseFailed, delegationParseError(text, modes)
-	}
-	if record.DelegationEmail(text) {
-		return delegateHuman, text
-	}
-	// A near-miss address is a typo, not a person, and the user deserves to
-	// hear that here rather than as a store refusal about a field they never
-	// knew they were writing.
-	if strings.Contains(text, "@") {
-		return delegateParseFailed, "“" + text + "” isn't an email address — use pat@example.com"
-	}
-	matches := delegationWordMatches(strings.ToLower(text), modes)
-	switch len(matches) {
-	case 1:
-		word := matches[0]
-		switch {
-		case word == "release":
-			return delegateRelease, ""
-		case containsString(delegateClearWords, word):
-			return delegateUndelegate, ""
-		}
-		return delegateAgent, word
-	case 0:
-		return delegateParseFailed, delegationParseError(text, modes)
-	}
-	return delegateParseFailed,
-		"“" + text + "” matches " + strings.Join(matches, ", ") + " — type more of the word"
-}
-
-// delegationWordMatches: nothing shorter than delegatePrefixMin matches
-// anything, so `o`, `n`, `i`, `r` and `re` all land on the unparseable message
-// instead of silently resolving to a word the user did not type.
-func delegationWordMatches(text string, modes record.ModeVocabulary) []string {
-	if len([]rune(text)) < delegatePrefixMin {
-		return nil
-	}
-	matches := []string{}
-	for _, word := range delegateWords(modes) {
-		if strings.HasPrefix(word, text) {
-			matches = append(matches, word)
-		}
-	}
-	return matches
-}
-
-func delegationParseError(text string, modes record.ModeVocabulary) string {
-	return "can't parse “" + text + "”; use an email, " +
-		record.Modes(modes).Quoted() + ", release, or off"
-}
-
-// runDelegation is the shared submit body behind both prompts: run against a
-// FROZEN task id, then stage the flash and reselect for after the form closes.
+// runDelegation is the shared submit body behind the modal and the work-ref
+// prompt: run against a FROZEN task id, then stage the flash and reselect for
+// after the popup closes.
 func (m *Model) runDelegation(id, title string, action delegationAction,
 	command application.DelegationCommand) string {
 
@@ -271,7 +414,7 @@ func (m *Model) runDelegation(id, title string, action delegationAction,
 func delegationFailureMessage(outcome application.Outcome) string {
 	if outcome.Conflict() && outcome.Delegation != nil && outcome.Delegation.Holder != "" {
 		return "already claimed by " + outcome.Delegation.Holder +
-			" at " + outcome.Delegation.At + " — off revokes it"
+			" at " + outcome.Delegation.At + " — Undelegate (ctrl-x) revokes it"
 	}
 	if outcome.Stale() {
 		return "file changed underneath — reopen"
@@ -338,8 +481,8 @@ func delegationLabel(marker map[string]string, state string) string {
 	return "delegated"
 }
 
-// delegationStateLabel is the `(now …)` suffix on the D prompt, matching the
-// recurrence popup's shape.
+// delegationStateLabel is the `— …` suffix on the delegate modal's title,
+// matching the recurrence popup's shape.
 func (m *Model) delegationStateLabel(item store.Item) string {
 	marker := delegationOf(item)
 	if len(marker) == 0 {

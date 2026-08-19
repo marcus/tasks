@@ -297,6 +297,7 @@ var ctrlBound = map[byte]struct{}{
 	0x13: {}, // ctrl-s
 	0x15: {}, // ctrl-u
 	0x17: {}, // ctrl-w
+	0x18: {}, // ctrl-x — the delegate modal's Undelegate button
 }
 
 // keyCodeSequences maps Bubble Tea v2 key Codes onto terminal bytes. Only the

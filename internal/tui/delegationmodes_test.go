@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/marcus/tasks/internal/record"
+	"github.com/marcus/tasks/internal/tui/term/ansi"
 	"github.com/marcus/tasks/internal/tui/term/shortcuts"
 )
 
@@ -17,7 +18,7 @@ func TestTheShortcutsOverlayQuotesTheConfiguredModes(t *testing.T) {
 	harness := newModelHarness(t, harnessOptions{modes: record.ModeSet{"triage", "ship"}})
 
 	overlay := strings.Join(HelpContent(harness.model.styler, harness.model.app.DelegationModes()).Lines, "\n")
-	if !strings.Contains(overlay, "Delegate… — email · triage · ship · release · off") {
+	if !strings.Contains(overlay, "Delegate… — person or agent · triage · ship · note") {
 		t.Fatalf("help overlay does not quote the configured modes:\n%s", overlay)
 	}
 	if strings.Contains(overlay, "refine") {
@@ -27,10 +28,14 @@ func TestTheShortcutsOverlayQuotesTheConfiguredModes(t *testing.T) {
 		t.Fatalf("help overlay leaked the placeholder:\n%s", overlay)
 	}
 
-	// The `D` prompt hint, the other half of the pair, agrees with it.
-	if hint := delegateHint(harness.model.app.DelegationModes()); !strings.Contains(hint, "triage") ||
-		strings.Contains(hint, "refine") {
-		t.Fatalf("prompt hint = %q", hint)
+	// The `D` modal's Mode field, the other half of the pair, offers the same
+	// vocabulary — and offers it as options, so there is nothing to spell.
+	offered := []string{}
+	for _, option := range delegateModeOptions(harness.model.app.DelegationModes()) {
+		offered = append(offered, option.Value)
+	}
+	if strings.Join(offered, ",") != "triage,ship" {
+		t.Fatalf("the Mode field offers %v", offered)
 	}
 }
 
@@ -38,44 +43,38 @@ func TestTheShortcutsOverlayQuotesTheConfiguredModes(t *testing.T) {
 func TestTheShortcutsOverlayQuotesTheBuiltInModesByDefault(t *testing.T) {
 	harness := newModelHarness(t, harnessOptions{})
 	overlay := strings.Join(HelpContent(harness.model.styler, harness.model.app.DelegationModes()).Lines, "\n")
-	if !strings.Contains(overlay, "Delegate… — email · refine · research · implement · release · off") {
+	if !strings.Contains(overlay, "Delegate… — person or agent · refine · research · implement · note") {
 		t.Fatalf("help overlay = %s", overlay)
 	}
 }
 
-// The `D` grammar is one flat word list — the modes, `release`, and the clear
-// words — so a mode colliding with one of those verbs makes every input
-// ambiguous and the destructive verb unreachable. The collision is refused when
-// the config is read (see record.ReservedModeNames); this asserts the property
-// that refusal exists to protect, for every configurable vocabulary.
-func TestTheDelegatePromptGrammarStaysUnambiguous(t *testing.T) {
+// The modal has no word grammar left to make ambiguous.
+//
+// The old prompt matched the modes, `release` and the clear words against ONE
+// text field, so a mode spelled like a verb made every input ambiguous. Here
+// each part has its own control: the only word the assignee field reads
+// specially is `agent`, and a mode — even a mode literally named `agent` — is
+// never typed into that field at all. The two vocabularies cannot collide
+// because they are never compared.
+func TestTheDelegateModalHasNoWordGrammarToMakeAmbiguous(t *testing.T) {
+	collides := record.ModeSet{delegateAgentValue, "ship"}
+	if delegateModeError(delegateAgentValue, collides) != "" {
+		t.Fatalf("a mode named %q is refused by the Mode field", delegateAgentValue)
+	}
+	if delegateAssigneeError("pat@example.com") != "" {
+		t.Fatal("an address is refused while such a mode is configured")
+	}
+
+	// Every offered mode is one the field will then accept, for any vocabulary.
 	for _, vocabulary := range []record.ModeVocabulary{
 		nil,
 		record.ModeSet{"triage", "ship"},
 		record.ModeSet{"release_notes", "offboard", "cleared"},
 	} {
-		seen := map[string]bool{}
-		for _, word := range delegateWords(vocabulary) {
-			if seen[word] {
-				t.Fatalf("%v produces the duplicate word %q; the prompt would call it ambiguous",
-					vocabulary, word)
+		for _, option := range delegateModeOptions(vocabulary) {
+			if delegateModeError(option.Value, vocabulary) != "" {
+				t.Fatalf("%v offers %q and then refuses it", vocabulary, option.Value)
 			}
-			seen[word] = true
-		}
-	}
-
-	// And the words that would collide cannot be configured in the first place.
-	for _, reserved := range record.ReservedModeNames {
-		if _, problem := record.ParseModeList(reserved); problem == "" {
-			t.Fatalf("%q is configurable as a mode and would break the D prompt", reserved)
-		}
-	}
-
-	// The clear words the prompt spends are exactly the ones reserved for it,
-	// so the two lists cannot drift apart.
-	for _, word := range append([]string{"release"}, delegateClearWords...) {
-		if _, problem := record.ParseModeList(word); problem == "" {
-			t.Fatalf("the prompt spends %q but a user may configure it as a mode", word)
 		}
 	}
 }
@@ -94,8 +93,17 @@ func TestNoTuiSurfaceShowsTheModesPlaceholder(t *testing.T) {
 	if !strings.Contains(described, "triage") {
 		t.Fatalf("describe = %q", described)
 	}
-	if hint := delegateHint(harness.model.app.DelegationModes()); strings.Contains(hint, shortcuts.ModesPlaceholder) {
-		t.Fatalf("hint leaks the placeholder: %q", hint)
+	// The modal's own hints are written text, not templates, and its Mode field
+	// carries the vocabulary itself — so there is nothing left to leak.
+	harness.model.SwitchView(ViewNext)
+	harness.selectRowByID(fixFlight)
+	harness.pressKeys("D")
+	frame := ansi.Strip(harness.model.Render())
+	if strings.Contains(frame, shortcuts.ModesPlaceholder) {
+		t.Fatalf("the delegate modal leaks the placeholder:\n%s", frame)
+	}
+	if !strings.Contains(frame, "triage") {
+		t.Fatalf("the delegate modal does not offer the configured modes:\n%s", frame)
 	}
 }
 

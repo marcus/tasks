@@ -980,7 +980,8 @@ func TestDelegateToAPersonComposesTheWaitingDefault(t *testing.T) {
 	harness.model.SwitchView(ViewNext)
 	harness.selectRowByID(fixFlight)
 	harness.pressKeys("D")
-	if harness.model.Mode() != ModeForm || harness.model.Form().Kind != QuickFormDelegate {
+	if harness.model.Mode() != ModeFieldModal ||
+		harness.model.FieldModal().Kind() != FieldModalDelegate {
 		t.Fatalf("D produced mode %s (%q)", harness.model.Mode(), harness.model.FlashMessage())
 	}
 	for _, key := range strings.Split("pat@example.com", "") {
@@ -999,10 +1000,14 @@ func TestDelegateToAPersonComposesTheWaitingDefault(t *testing.T) {
 	}
 }
 
-// One stray character must not perform the widest or most destructive action in
-// the grammar: `re` matches both release and refine.
-func TestDelegateRefusesAnAmbiguousOrTooShortPrefix(t *testing.T) {
-	for _, input := range []string{"re", "r", "i", "o"} {
+// The old word grammar is GONE, not re-implemented in a field: none of the
+// spellings that used to perform the widest or most destructive action in it
+// mean anything typed into "Delegate to" any more. `o` and `n` revoked a live
+// claim with no confirmation; `i` delegated at `implement`; `re` was ambiguous
+// between release and refine. All of them are now just a name that is not an
+// address, refused in place, and the two verbs they used to spell are buttons.
+func TestDelegateRetiresTheOldWordGrammar(t *testing.T) {
+	for _, input := range []string{"re", "r", "i", "o", "off", "none", "release", "implement"} {
 		harness := newModelHarness(t, harnessOptions{})
 		harness.model.SwitchView(ViewNext)
 		harness.selectRowByID(fixFlight)
@@ -1012,10 +1017,11 @@ func TestDelegateRefusesAnAmbiguousOrTooShortPrefix(t *testing.T) {
 			harness.pressKeys(key)
 		}
 		harness.pressKeys("\r")
-		if harness.model.Mode() != ModeForm {
-			t.Fatalf("%q closed the form", input)
+		if harness.model.Mode() != ModeFieldModal {
+			t.Fatalf("%q closed the modal", input)
 		}
-		if harness.model.Form().Error() == "" {
+		modal := harness.model.FieldModal()
+		if modal.FieldError(delegateFieldAssignee) == "" {
 			t.Errorf("%q was accepted silently", input)
 		}
 		if harness.content() != before {
@@ -1033,8 +1039,8 @@ func TestDelegateNamesANearMissAddressAsATypo(t *testing.T) {
 		harness.pressKeys(key)
 	}
 	harness.pressKeys("\r")
-	if !strings.Contains(harness.model.Form().Error(), "isn't an email address") {
-		t.Errorf("a near-miss address said %q", harness.model.Form().Error())
+	if got := harness.model.FieldModal().FieldError(delegateFieldAssignee); !strings.Contains(got, "isn't an email address") {
+		t.Errorf("a near-miss address said %q", got)
 	}
 }
 
@@ -1056,7 +1062,7 @@ func TestWorkRefRecordsThenClearsTheReference(t *testing.T) {
 	harness.model.SwitchView(ViewNext)
 	harness.selectRowByID(fixFlight)
 	harness.pressKeys("D")
-	for _, key := range strings.Split("refine", "") {
+	for _, key := range strings.Split(delegateAgentValue, "") {
 		harness.pressKeys(key)
 	}
 	harness.pressKeys("\r")

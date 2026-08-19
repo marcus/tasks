@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/marcus/tasks/internal/record"
 	"github.com/marcus/tasks/internal/store"
 	"github.com/marcus/tasks/internal/taskquery"
 	"github.com/marcus/tasks/internal/temporal"
@@ -291,8 +292,10 @@ func delegationOf(item store.Item) map[string]string {
 }
 
 // delegationKeyOrder is the record's own fixed key order, which the detail
-// panel prints in.
-var delegationKeyOrder = []string{"kind", "mode", "status", "assignee", "at", "work_ref"}
+// panel prints in. It is the record's list rather than a copy of it: the note
+// was appended to that order when the briefing arrived, and a panel keeping its
+// own copy is a panel that silently stops showing the newest field.
+var delegationKeyOrder = record.DelegationKeyOrder
 
 func sortedDelegationKeys(delegation map[string]string) []string {
 	present := []string{}
