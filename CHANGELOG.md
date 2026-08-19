@@ -82,7 +82,7 @@
   triage, ship` in `~/.config/tasks/config` (or `TASKS_DELEGATION_MODES`)
   replaces `refine, research, implement` everywhere at once: what `tasks
   delegate <ref> <mode>` accepts, what a refusal quotes back, the `delegate`
-  usage line, `tasks help`, the TUI `?` overlay and `D` prompt, the check view,
+  usage line, `tasks help`, the TUI `?` overlay and delegate modal, the check view,
   and the API's vocabulary document. A mode is a bare lowercase word and
   carries no label — the label is the word. With no config key, behaviour is
   exactly what it was.
