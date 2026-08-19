@@ -80,6 +80,16 @@ func (s *surfaceContext) show(args []string) int {
 		if ref := marker["work_ref"]; ref != "" {
 			out("  work ref:  " + ref)
 		}
+		// The briefing prints IN FULL and keeps its paragraphs. It is the
+		// instruction the receiver is meant to act on, so truncating it here
+		// would make `show` the one place that cannot answer what was asked.
+		if note := marker["note"]; note != "" {
+			lines := strings.Split(note, "\n")
+			out("  note:      " + lines[0])
+			for _, line := range lines[1:] {
+				out("             " + line)
+			}
+		}
 	}
 	if item.Scheduled != "" {
 		value, ok := queries.ScheduledValue(item)
@@ -150,6 +160,12 @@ func taskNotes(queries *taskquery.Queries, item store.Item) []string {
 func delegationSummary(marker map[string]string) string {
 	switch marker["status"] {
 	case "delegated":
+		// A mode is optional on a human delegation, so it appears only when the
+		// owner stated one — "→ pat@example.com" and "→ pat@example.com
+		// (review)" are both complete answers.
+		if mode := marker["mode"]; mode != "" {
+			return "→ " + marker["assignee"] + " (" + mode + ")"
+		}
 		return "→ " + marker["assignee"]
 	case "ready":
 		return fmt.Sprintf("agent-ready (%s)", marker["mode"])

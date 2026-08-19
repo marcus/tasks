@@ -159,7 +159,16 @@ var helpTemplate = "tasks — a plain-text GTD CLI over tasks.jsonl. Every comma
 	"" + "\n" +
 	"Delegation (hand a task to a person or to the agent pool):" + "\n" +
 	"  delegate <ref> " + modesPlaceholder + "   agent-ready at that authority" + "\n" +
-	"  delegate <ref> --to <email> [--keep-state] hand to a person; sets WAITING" + "\n" +
+	"  delegate <ref> --to <email> [" + modesPlaceholder + "] [--keep-state]" + "\n" +
+	"                                  hand to a person; sets WAITING. A mode is" + "\n" +
+	"                                  optional here and says what was asked for" + "\n" +
+	"    --note \"<text>\" · --note-file <path> · --note-file -   the briefing the" + "\n" +
+	"                                  receiver reads, written in the SAME undo" + "\n" +
+	"                                  step as the delegation (2000 chars max;" + "\n" +
+	"                                  `-` reads stdin, so a long brief needn't" + "\n" +
+	"                                  fight shell quoting)" + "\n" +
+	"  delegate <ref> --note <text|off>  rewrite or clear the briefing on an" + "\n" +
+	"                                  existing delegation (off/none clear)" + "\n" +
 	"  undelegate <ref>                clear the marker (also revokes a claim)" + "\n" +
 	"  workref <ref> <url-or-id|off>   record where the work lives (one reference)" + "\n" +
 	"  claim <ref> --worker <id>       atomic pickup of agent-ready work; --json" + "\n" +

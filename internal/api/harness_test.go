@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/marcus/tasks/internal/application"
+	"github.com/marcus/tasks/internal/record"
 	"github.com/marcus/tasks/internal/store"
 	"github.com/marcus/tasks/internal/taskquery"
 	"github.com/marcus/tasks/internal/temporal"
@@ -70,6 +71,18 @@ type harness struct {
 	logs    *strings.Builder
 	now     time.Time
 	ids     chan string
+	// modes is the delegation vocabulary this server's stores are built with.
+	// Empty means the built-in set, which is what every test that is not ABOUT
+	// the vocabulary wants.
+	modes []string
+}
+
+// newHarnessModes builds a server whose stores enforce a CONFIGURED delegation
+// vocabulary, so an HTTP refusal can be checked for quoting the set actually in
+// force rather than the one this binary shipped with.
+func newHarnessModes(t *testing.T, modes ...string) *harness {
+	t.Helper()
+	return buildWithModes(t, t.TempDir(), fixtureOrg, fixtureArchive, "", true, modes)
 }
 
 // newHarness builds a server whose clock and id mint are PINNED. Both are
@@ -99,7 +112,14 @@ func newHarnessSharing(t *testing.T, other *harness) *harness {
 
 func build(t *testing.T, dir, org, archive, hostContext string, seed bool) *harness {
 	t.Helper()
+	return buildWithModes(t, dir, org, archive, hostContext, seed, nil)
+}
+
+func buildWithModes(t *testing.T, dir, org, archive, hostContext string, seed bool,
+	modes []string) *harness {
+	t.Helper()
 	h := &harness{
+		modes:   modes,
 		t:       t,
 		dir:     dir,
 		org:     filepath.Join(dir, "tasks.jsonl"),
@@ -141,6 +161,9 @@ func build(t *testing.T, dir, org, archive, hostContext string, seed bool) *harn
 			Device:     "pinned",
 			Now:        func() time.Time { return h.now },
 			MaxDepth:   4,
+		}
+		if len(h.modes) > 0 {
+			options.Modes = record.ModeSet(h.modes)
 		}
 		if seed {
 			options.IDSource = func() string { return <-h.ids }

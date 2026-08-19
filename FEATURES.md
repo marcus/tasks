@@ -218,7 +218,15 @@ the human-readable tour of that contract.
 - Hand a task to a person: `tasks delegate <ref> --to pat@example.com`
   (moves it to WAITING unless `--keep-state`).
 - Offer it to the agent pool at `refine`, `research`, or `implement` —
-  or at whatever words you set `delegation_modes` to.
+  or at whatever words you set `delegation_modes` to. A mode is
+  optional on a person too: there it says what was asked for.
+- Brief the receiver: `--note "…"`, `--note-file <path>`, or
+  `--note-file -` for stdin, so a long briefing need not fight shell
+  quoting. Who, mode, and note are one write and one undo step.
+  `--note off` clears it; omitting the flag keeps what is there.
+  The briefing prints in `show`, previews under both delegation list
+  scopes, and is carried whole by every `--json`, including
+  `list --agent-ready --json`.
 - `tasks undelegate` clears the marker and any live claim.
 - `tasks workref` records the single place the work actually happened.
   Survives completion and archival.
@@ -325,7 +333,9 @@ the human-readable tour of that contract.
 - `GET /api/v1/meta`, `/sections`, `/tasks`, `/tasks/{id}`,
   `/projects`, `/views/{name}`, `/recurrence/explain`.
 - Writes: create, patch, delete, approve, reject, delegate,
-  undelegate, claim, release, work_ref, project complete/archive.
+  undelegate, claim, release, work_ref, delegation_note,
+  project complete/archive. The delegation writes honour the same
+  mandatory `If-Match` as every other task write.
 - `GET /history`, `POST /history/undo`, `POST /history/redo`.
 - Archive preview and sweep.
 - `/events` for store-change invalidation.

@@ -153,6 +153,26 @@ func (c *capableStore) SetWorkRef(id, workRef, worker, coalesceKey string) store
 	})
 }
 
+// WriteDelegation is the single delegation entry point the application prefers.
+//
+// It has to be spelled here rather than inherited: the double EMBEDS the real
+// store, so without this method the application's capability probe would find
+// the embedded store's implementation and every override above would be dead
+// code that no test noticed had stopped running. Routing back through the
+// double's own verbs keeps the call log — and the coalescing key it records —
+// describing what the application actually asked for.
+func (c *capableStore) WriteDelegation(request store.DelegationRequest) store.MutationResult {
+	switch request.Verb {
+	case store.VerbUndelegate:
+		return c.Undelegate(request.ID, request.CoalesceKey)
+	case store.VerbRelease:
+		return c.Release(request.ID, request.Worker, request.Force, request.CoalesceKey)
+	case store.VerbWorkRef:
+		return c.SetWorkRef(request.ID, request.WorkRef, request.Worker, request.CoalesceKey)
+	}
+	return c.Store.WriteDelegation(request)
+}
+
 // -- file editing -------------------------------------------------------------
 
 // markerOrder is the stored key order the schema expects. Writing the members

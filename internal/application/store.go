@@ -76,6 +76,24 @@ type TypedPatcher interface {
 	Patch(request store.PatchRequest) store.MutationResult
 }
 
+// DelegationWriter is the whole delegation surface in one call: every verb, the
+// three-part marker including its note, and the optimistic-concurrency token an
+// HTTP If-Match carries.
+//
+// It supersedes the four narrow interfaces below for a store that has it. They
+// stay because a store that implements only some of them is still usefully
+// better than one that implements none, and because dropping them would be an
+// unrelated breaking change to a seam this package owns.
+//
+// Two capabilities exist ONLY here. Writing the delegation note in the same
+// store transaction as the delegation is what makes a three-part delegate one
+// undo step instead of two writes an adapter composed; and honouring
+// ExpectedRevision is what lets the HTTP delegation routes keep their mandatory
+// If-Match rather than refuse.
+type DelegationWriter interface {
+	WriteDelegation(request store.DelegationRequest) store.MutationResult
+}
+
 // Undelegator clears a delegation marker, revoking any live claim.
 type Undelegator interface {
 	Undelegate(id, coalesceKey string) store.MutationResult

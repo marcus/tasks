@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/marcus/tasks/internal/jsonout"
 	"github.com/marcus/tasks/internal/record"
@@ -13,8 +15,62 @@ import (
 // delegateUsage quotes the mode vocabulary the store will actually enforce, so
 // a configured set reaches the usage line without a second literal here.
 func delegateUsage(modes record.ModeVocabulary) string {
-	return "usage: tasks delegate <ref> <" + strings.Join(record.Modes(modes).Modes(), "|") + ">  |  " +
-		"tasks delegate <ref> --to <email> [--keep-state]"
+	return "usage: tasks delegate <ref> <" + strings.Join(record.Modes(modes).Modes(), "|") + ">" +
+		" [--note <text>|--note-file <path|->]  |  " +
+		"tasks delegate <ref> --to <email> [<mode>] [--note …] [--keep-state]  |  " +
+		"tasks delegate <ref> --note <text|off>"
+}
+
+// noteInput resolves the briefing from the two spellings that can carry one.
+//
+// --note-file exists because a note is a BRIEFING — how to work on the task,
+// where the work should land, what to avoid — and the agent writing one should
+// not have to fight shell quoting to send a paragraph with newlines and quotes
+// in it. `-` reads standard input, which is the spelling every other Unix tool
+// uses for the same idea.
+//
+// The two are mutually exclusive rather than merged: a caller that passed both
+// meant one of them, and picking for it would silently discard a briefing.
+func noteInput(args []string) (text string, rest []string, given bool, err error) {
+	inline, rest, hasInline := extractValue(args, "--note")
+	fromFile, rest, hasFile := extractValue(rest, "--note-file")
+	switch {
+	case hasInline && hasFile:
+		return "", rest, false, fmt.Errorf("delegate takes --note or --note-file, not both")
+	case hasInline:
+		return inline, rest, true, nil
+	case !hasFile:
+		return "", rest, false, nil
+	}
+	if fromFile == "-" {
+		content, readErr := io.ReadAll(os.Stdin)
+		if readErr != nil {
+			return "", rest, false, fmt.Errorf("cannot read the note from stdin: %v", readErr)
+		}
+		return string(content), rest, true, nil
+	}
+	content, readErr := os.ReadFile(fromFile)
+	if readErr != nil {
+		return "", rest, false, fmt.Errorf("cannot read the note file %q: %v", fromFile, readErr)
+	}
+	return string(content), rest, true, nil
+}
+
+// clearsNote reports the clearing spelling. It is the SAME two words a work
+// reference clears with, and they are reserved mode names, so a clear
+// instruction can never be mistaken for a mode. An empty --note clears too:
+// there is nothing else "" could mean.
+func clearsNote(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return true
+	}
+	for _, word := range workRefClearWords {
+		if strings.EqualFold(trimmed, word) {
+			return true
+		}
+	}
+	return false
 }
 
 const workerHint = "pass --worker <id> or set TASKS_WORKER_ID"
@@ -27,6 +83,10 @@ const workerHint = "pass --worker <id> or set TASKS_WORKER_ID"
 func (s *surfaceContext) delegate(args []string) int {
 	usage := delegateUsage(s.writeStore().Modes())
 	to, rest, _ := extractValue(args, "--to")
+	note, rest, hasNote, err := noteInput(rest)
+	if err != nil {
+		return abort(err.Error())
+	}
 	flags, rest, err := takeFlags(rest, "--json", "--keep-state")
 	if err != nil {
 		return abort(err.Error())
@@ -36,11 +96,16 @@ func (s *surfaceContext) delegate(args []string) int {
 	}
 	ref := rest[0]
 	mode := joinPositional(rest[1:])
-	if to == "" && mode == "" {
+	// A mode is valid alongside --to: who holds the work and what KIND of
+	// delegation it is are orthogonal facts, and a person can be asked to
+	// review just as an agent can.
+	if to == "" && mode == "" && !hasNote {
 		return abort(usage)
 	}
-	if to != "" && mode != "" {
-		return abort("delegate takes a mode or --to <email>, not both\n" + usage)
+	if !utf8.ValidString(note) {
+		// argv and a file both hand over bytes; there is nothing to re-tag, so
+		// the refusal is the whole rule.
+		return abort("delegation note is not valid UTF-8 text")
 	}
 	queries, status := s.readQueries(args, "delegate")
 	if status != 0 {
@@ -51,9 +116,16 @@ func (s *surfaceContext) delegate(args []string) int {
 		return code
 	}
 
+	// A note with no assignee and no mode is a briefing REWRITE on the
+	// delegation that already exists: an owner correcting instructions should
+	// not have to restate who holds the work and in what mode.
+	if to == "" && mode == "" {
+		return s.delegationNote(args, item, note, flags["--json"])
+	}
+
 	kind, assignee := "agent", ""
 	if to != "" {
-		kind, mode, assignee = "human", "", to
+		kind, assignee = "human", to
 	}
 
 	// The marker this write will REPLACE, read before the write. Whether an
@@ -63,7 +135,18 @@ func (s *surfaceContext) delegate(args []string) int {
 
 	coalesceKey := s.delegationCoalesceKey("delegate")
 	writer := s.writeStore()
-	result := writer.Delegate(item.ID, kind, mode, assignee, coalesceKey)
+	// One store call carries who, in what mode, and the briefing — so the
+	// three-part delegation is ONE write and therefore one undo step. Composing
+	// it out of a delegate followed by a note write would cost two undos and
+	// could half-apply.
+	stored := ""
+	if hasNote && !clearsNote(note) {
+		stored = note
+	}
+	result := writer.WriteDelegation(store.DelegationRequest{
+		ID: item.ID, Verb: store.VerbDelegate, Kind: kind, Mode: mode, Assignee: assignee,
+		Note: stored, SetNote: hasNote, CoalesceKey: coalesceKey,
+	})
 	if status := s.delegationFailed(result, args, "delegate"); status != 0 {
 		return status
 	}
@@ -147,6 +230,34 @@ func (s *surfaceContext) delegateStateFollowUp(writer *store.Store, item store.I
 		result.ReadSnapshot = patched.ReadSnapshot
 	}
 	return true
+}
+
+// delegationNote rewrites the briefing on a delegation that already exists.
+//
+// It is deliberately reachable only through `delegate`: the note is one of the
+// delegation's three parts, not a thing of its own, and a separate command
+// would invite the reading that a note can exist without a delegation.
+func (s *surfaceContext) delegationNote(args []string, item store.Item, note string, asJSON bool) int {
+	text := note
+	if clearsNote(text) {
+		text = ""
+	}
+	result := s.writeStore().WriteDelegation(store.DelegationRequest{
+		ID: item.ID, Verb: store.VerbDelegationNote, Note: text, SetNote: true,
+	})
+	if status := s.delegationFailed(result, args, "delegation_note"); status != 0 {
+		return status
+	}
+	if asJSON {
+		return s.reportTouchedSnapshot(s.delegationSnapshot(result), []string{item.ID}, true, nil)
+	}
+	title := s.delegationTitle(result, item)
+	if text == "" {
+		out("delegation note cleared: " + title)
+		return 0
+	}
+	out("delegation note set: " + title)
+	return 0
 }
 
 // claim takes an agent-pool task for one worker.

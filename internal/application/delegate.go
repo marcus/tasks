@@ -70,15 +70,28 @@ func (a *Application) SetWorkRef(command DelegationCommand, operation *Operation
 	return a.runDelegation(command, operation)
 }
 
+// SetDelegationNote rewrites the receiver-facing briefing on an existing
+// delegation. It is an OWNER decision — unlike a work reference, which the
+// holding worker may also write — because the note is the instruction, and a
+// worker rewriting its own instructions is not a thing the model allows.
+// An empty note (or "off"/"none") clears it.
+func (a *Application) SetDelegationNote(command DelegationCommand, operation *OperationContext) Outcome {
+	command.Action = ActionDelegationNote
+	command.SetNote = true
+	return a.runDelegation(command, operation)
+}
+
 func (a *Application) runDelegation(command DelegationCommand, operation *OperationContext) Outcome {
 	if messages := command.validate(); len(messages) > 0 {
 		return a.refuse(command, invalid(messages...))
 	}
-	if command.ExpectedRevision != "" {
-		// An optimistic-concurrency guard the store cannot enforce must not be
-		// accepted and dropped. Checking it here — read the revision, compare,
-		// then write — would be a guard with a race inside it, which is worse
-		// than none because it reads as protection.
+	// An optimistic-concurrency guard the store cannot enforce must not be
+	// accepted and dropped. Checking it HERE — read the revision, compare, then
+	// write — would be a guard with a race inside it, which is worse than none
+	// because it reads as protection. A store that compares inside its own write
+	// transaction has no such gap, so the guard is passed down to it and only
+	// refused when there is nobody to pass it to.
+	if _, writes := a.store().(DelegationWriter); command.ExpectedRevision != "" && !writes {
 		return a.refuse(command, invalid(
 			"this build cannot honour expected_revision on a delegation — the store does not check it yet"))
 	}
@@ -102,6 +115,24 @@ func (a *Application) runDelegation(command DelegationCommand, operation *Operat
 	return a.finish(result, command, followUp, previous, operation)
 }
 
+// storeRequest maps one command onto the store's delegation request.
+//
+// The release note is deliberately NOT carried: on a release the note is a
+// blocker line appended to the task BODY, which is composition this layer owns,
+// not a marker member the store writes.
+func (c DelegationCommand) storeRequest(coalesceKey string) store.DelegationRequest {
+	request := store.DelegationRequest{
+		ID: c.ID, Verb: store.DelegationVerb(c.Action),
+		Kind: c.Kind, Mode: c.Mode, Assignee: c.Assignee,
+		Worker: c.Worker, WorkRef: c.normalizedWorkRef(), Force: c.Force,
+		ExpectedRevision: c.ExpectedRevision, CoalesceKey: coalesceKey,
+	}
+	if c.Action == ActionDelegate || c.Action == ActionDelegationNote {
+		request.Note, request.SetNote = c.normalizedNote(), c.SetNote
+	}
+	return request
+}
+
 // refuse shapes an argument refusal so it still carries the action and the id.
 // An adapter renders a refusal the same way it renders every other outcome.
 func (a *Application) refuse(command DelegationCommand, outcome Outcome) Outcome {
@@ -113,10 +144,26 @@ func (a *Application) refuse(command DelegationCommand, outcome Outcome) Outcome
 
 func (a *Application) invokeDelegation(command DelegationCommand, coalesceKey string) Outcome {
 	target := a.store()
+	// One store call carries every part of the command, so a three-part delegate
+	// is ONE write and therefore one undo step. Composing it here — delegate,
+	// then write the note — would be two writes, and the second could fail after
+	// the first landed.
+	if writer, ok := target.(DelegationWriter); ok {
+		return Outcome{MutationResult: writer.WriteDelegation(
+			command.storeRequest(coalesceKey))}
+	}
 	switch command.Action {
 	case ActionDelegate:
+		if command.SetNote {
+			// A store that cannot write the note in the delegation's own
+			// transaction cannot make this one undo step, and half-applying a
+			// three-part delegation is worse than refusing it.
+			return unsupported("write a delegation note")
+		}
 		return Outcome{MutationResult: target.Delegate(
 			command.ID, command.Kind, command.Mode, command.Assignee, coalesceKey)}
+	case ActionDelegationNote:
+		return unsupported("write a delegation note")
 	case ActionClaim:
 		return Outcome{MutationResult: target.Claim(command.ID, command.Worker, coalesceKey)}
 	case ActionUndelegate:

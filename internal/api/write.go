@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"sort"
 	"strings"
@@ -481,46 +482,285 @@ func rejectNotes(request *http.Request) ([]string, error) {
 	return notes, nil
 }
 
+// The delegation write routes.
+//
+// These used to answer 501, and the reason was real: the HTTP contract makes
+// If-Match MANDATORY on a delegation, the store did not compare a revision
+// inside its delegation transaction, and dropping a precondition a client set
+// is worse than refusing. The store now compares it under the same lock the
+// write runs in, so the precondition is honoured rather than approximated and
+// these routes do the work.
+//
+// Field vocabularies are declared per verb so an unknown member is refused by
+// name. A body that names `mode` where the caller meant `assignee` is a bug the
+// client wants told about, not one the server should quietly drop.
+
+var (
+	delegateFields       = []string{"kind", "mode", "assignee", "note", "keep_state"}
+	claimFields          = []string{"worker"}
+	releaseFields        = []string{"worker", "force", "note"}
+	workRefFields        = []string{"work_ref", "worker"}
+	delegationNoteFields = []string{"note"}
+)
+
 func (s *Server) delegationAction(request *http.Request, id, action, requestID string) (response, error) {
 	if _, err := queryParams(request); err != nil {
 		return response{}, err
 	}
+	var body *jsonObject
 	if action == "undelegate" {
+		// Undelegate takes no input at all: the marker is cleared whatever it
+		// said. A body would have to be either ignored or invented meaning for.
 		if err := rejectBody(request, "Undelegate requests"); err != nil {
 			return response{}, err
 		}
+		body = &jsonObject{values: map[string]json.RawMessage{}}
+	} else {
+		parsed, err := jsonBody(request)
+		if err != nil {
+			return response{}, err
+		}
+		body = parsed
 	}
-	if _, err := ifMatch(request); err != nil {
+	expected, err := ifMatch(request)
+	if err != nil {
 		return response{}, err
 	}
-	return response{}, delegationPreconditionRefusal(action)
+
+	command := application.DelegationCommand{ID: id, ExpectedRevision: expected}
+	switch action {
+	case "delegate":
+		if err := rejectUnknownFields(body, delegateFields); err != nil {
+			return response{}, err
+		}
+		if err := s.delegateCommand(body, &command); err != nil {
+			return response{}, err
+		}
+	case "claim":
+		if err := rejectUnknownFields(body, claimFields); err != nil {
+			return response{}, err
+		}
+		worker, ok := body.text("worker")
+		if !ok || strings.TrimSpace(worker) == "" {
+			return response{}, validationError(reason("worker", "must be a worker id"))
+		}
+		command.Worker = worker
+	case "release":
+		if err := rejectUnknownFields(body, releaseFields); err != nil {
+			return response{}, err
+		}
+		if body.has("worker") {
+			worker, ok := body.text("worker")
+			if !ok {
+				return response{}, validationError(reason("worker", "must be text"))
+			}
+			command.Worker = worker
+		}
+		if body.has("force") {
+			force, ok := body.boolean("force")
+			if !ok {
+				return response{}, validationError(reason("force", "must be true or false"))
+			}
+			command.Force = force
+		}
+		// On a release the note is the BLOCKER line appended to the task body,
+		// not the marker's briefing — the same field name carrying the same
+		// user-typed text, in the meaning this verb gives it.
+		if body.has("note") && !body.isNull("note") {
+			note, ok := body.text("note")
+			if !ok {
+				return response{}, validationError(reason("note", "must be text"))
+			}
+			command.Note = note
+		}
+	}
+
+	if err := s.ensureStoreReady(); err != nil {
+		return response{}, err
+	}
+	operation, err := s.operationContext(requestID)
+	if err != nil {
+		return response{}, err
+	}
+	var outcome application.Outcome
+	switch action {
+	case "delegate":
+		outcome = s.options.App.DelegateTask(command, operation)
+	case "undelegate":
+		outcome = s.options.App.UndelegateTask(command, operation)
+	case "claim":
+		outcome = s.options.App.ClaimTask(command, operation)
+	case "release":
+		outcome = s.options.App.ReleaseTask(command, operation)
+	}
+	return s.delegationResponse(outcome, id)
 }
 
+// delegateCommand maps a delegate body onto the typed command.
+//
+// `kind` is inferred rather than demanded when the body is unambiguous: a body
+// with an assignee is a human delegation and one with only a mode is an agent
+// delegation, which is the same inference the CLI's `--to` makes. An explicit
+// kind still wins, so a client that states it is never second-guessed.
+func (s *Server) delegateCommand(body *jsonObject, command *application.DelegationCommand) error {
+	if body.has("kind") {
+		kind, ok := body.text("kind")
+		if !ok {
+			return validationError(reason("kind", "must be text"))
+		}
+		command.Kind = kind
+	}
+	if body.has("assignee") && !body.isNull("assignee") {
+		assignee, ok := body.text("assignee")
+		if !ok {
+			return validationError(reason("assignee", "must be an email address"))
+		}
+		command.Assignee = assignee
+	}
+	if body.has("mode") && !body.isNull("mode") {
+		mode, ok := body.text("mode")
+		if !ok {
+			return validationError(reason("mode", "must be text"))
+		}
+		command.Mode = mode
+	}
+	if command.Kind == "" {
+		command.Kind = "agent"
+		if command.Assignee != "" {
+			command.Kind = "human"
+		}
+	}
+	if body.has("keep_state") {
+		keep, ok := body.boolean("keep_state")
+		if !ok {
+			return validationError(reason("keep_state", "must be true or false"))
+		}
+		command.KeepState = keep
+	}
+	return noteFromBody(body, command)
+}
+
+// noteFromBody reads the STORED briefing, distinguishing three cases a single
+// string cannot: absent means leave the existing note alone, null or empty
+// means clear it, and text means write it. That distinction is why a delegate
+// that only changes the mode cannot silently erase a briefing.
+func noteFromBody(body *jsonObject, command *application.DelegationCommand) error {
+	if !body.has("note") {
+		return nil
+	}
+	command.SetNote = true
+	if body.isNull("note") {
+		return nil
+	}
+	note, ok := body.text("note")
+	if !ok {
+		return validationError(reason("note", "must be text or null"))
+	}
+	command.Note = note
+	return nil
+}
+
+// putWorkRef records where the work lives, or clears it.
 func (s *Server) putWorkRef(request *http.Request, id, requestID string) (response, error) {
 	if _, err := queryParams(request); err != nil {
 		return response{}, err
 	}
-	if _, err := ifMatch(request); err != nil {
+	body, err := jsonBody(request)
+	if err != nil {
 		return response{}, err
 	}
-	return response{}, delegationPreconditionRefusal("work_ref")
+	if err := rejectUnknownFields(body, workRefFields); err != nil {
+		return response{}, err
+	}
+	expected, err := ifMatch(request)
+	if err != nil {
+		return response{}, err
+	}
+	command := application.DelegationCommand{ID: id, ExpectedRevision: expected}
+	if body.has("work_ref") && !body.isNull("work_ref") {
+		reference, ok := body.text("work_ref")
+		if !ok {
+			return response{}, validationError(reason("work_ref", "must be text or null"))
+		}
+		command.WorkRef = reference
+	}
+	// A worker writing the reference must prove its claim still stands; an
+	// absent worker means the owner, which is always permitted on a delegation.
+	if body.has("worker") && !body.isNull("worker") {
+		worker, ok := body.text("worker")
+		if !ok {
+			return response{}, validationError(reason("worker", "must be a worker id"))
+		}
+		command.Worker = worker
+	}
+	if err := s.ensureStoreReady(); err != nil {
+		return response{}, err
+	}
+	operation, err := s.operationContext(requestID)
+	if err != nil {
+		return response{}, err
+	}
+	return s.delegationResponse(s.options.App.SetWorkRef(command, operation), id)
 }
 
-// delegationPreconditionRefusal is the one refusal shared by all five
-// delegation routes.
-//
-// The application layer performs every delegation verb, and the store performs
-// the claim compare-and-set. What neither does yet is honour an
-// `expected_revision`: `application.runDelegation` refuses a non-empty one
-// outright, on the grounds that a guard it cannot enforce inside the write
-// transaction would be a race dressed as protection. The HTTP contract makes
-// If-Match MANDATORY on these routes, so accepting the request would mean
-// dropping a precondition the client believes it set — the one thing worse than
-// refusing.
-func delegationPreconditionRefusal(action string) error {
-	return notImplemented(action+" over HTTP",
-		"the store cannot honour the mandatory If-Match precondition on a delegation, "+
-			"and dropping a precondition a client set is not an option")
+// putDelegationNote rewrites the receiver-facing briefing on a delegation that
+// already exists. It is the note's own route for the same reason work_ref has
+// one: an owner correcting instructions should not have to restate who holds
+// the work and in what mode, and restating it would move the delegation's
+// timestamp for a change that is not a re-delegation.
+func (s *Server) putDelegationNote(request *http.Request, id, requestID string) (response, error) {
+	if _, err := queryParams(request); err != nil {
+		return response{}, err
+	}
+	body, err := jsonBody(request)
+	if err != nil {
+		return response{}, err
+	}
+	if err := rejectUnknownFields(body, delegationNoteFields); err != nil {
+		return response{}, err
+	}
+	expected, err := ifMatch(request)
+	if err != nil {
+		return response{}, err
+	}
+	if !body.has("note") {
+		return response{}, validationError(reason("note", "must be text or null"))
+	}
+	command := application.DelegationCommand{ID: id, ExpectedRevision: expected}
+	if err := noteFromBody(body, &command); err != nil {
+		return response{}, err
+	}
+	if err := s.ensureStoreReady(); err != nil {
+		return response{}, err
+	}
+	operation, err := s.operationContext(requestID)
+	if err != nil {
+		return response{}, err
+	}
+	return s.delegationResponse(s.options.App.SetDelegationNote(command, operation), id)
+}
+
+// delegationResponse is the one success and refusal shape all six delegation
+// routes share: the whole canonical task plus its ETag, so a worker that
+// claimed a task reads the authority it is working under without a second
+// round trip.
+func (s *Server) delegationResponse(outcome application.Outcome, id string) (response, error) {
+	if err := s.mutationFailure(outcome, mutationRefusal{
+		ID: id, SemanticInvalid: true, Delegation: outcome.Delegation,
+	}); err != nil {
+		return response{}, err
+	}
+	item, resources, revision, err := s.resourceAfter(outcome, id)
+	if err != nil {
+		return response{}, err
+	}
+	w := jsonout.New()
+	writeSuccess(w, func(w *jsonout.Writer) { resources.writeTask(w, item) }, revision)
+	return response{
+		status:  200,
+		headers: map[string]string{"etag": etag(resources.revisionFor(item))},
+		body:    w.Bytes(),
+	}, nil
 }
 
 // notImplemented is the honest refusal: 501, the operation, and the reason.
@@ -961,6 +1201,11 @@ type mutationRefusal struct {
 	ParentID        string
 	Placement       bool
 	SemanticInvalid bool
+	// Delegation carries the losing side of a claim race. Who holds the work
+	// and since when is the whole content of that answer for an agent deciding
+	// whether to back off, and prose it would have to re-parse is not an
+	// acceptable substitute.
+	Delegation *application.DelegationSummary
 }
 
 // mutationFailure is App#mutation_failure!: the shared outcome vocabulary
@@ -997,6 +1242,13 @@ func (s *Server) mutationFailure(outcome application.Outcome, refusal mutationRe
 		// caller what cascade=true would actually remove. Every other conflict
 		// keeps the canonical sentence — Ruby hands back its untyped summary Hash
 		// there, and the typed Go summary has no member to render for them.
+		if refusal.Delegation != nil && refusal.Delegation.Holder != "" {
+			return errorWith(409, "conflict", delegationConflictMessage(outcome.FirstError())).
+				withDetails(pairDetails(
+					detailPair{Key: "holder", Value: refusal.Delegation.Holder},
+					detailPair{Key: "at", Value: refusal.Delegation.At},
+				))
+		}
 		if outcome.Summary.Descendants > 0 {
 			return errorWith(409, "conflict",
 				"The task has descendants; retry with cascade=true to delete them.").
@@ -1018,6 +1270,16 @@ func (s *Server) mutationFailure(outcome application.Outcome, refusal mutationRe
 		return errorOf(503, "store_invalid")
 	}
 	return unavailableError(outcome.FirstError())
+}
+
+// delegationConflictMessage keeps the store's own sentence — "already claimed
+// by w-2 at 2026-08-18T09:00:00Z" is more useful to a worker deciding whether
+// to back off than the canonical one — and falls back when there is none.
+func delegationConflictMessage(sentence string) string {
+	if strings.TrimSpace(sentence) == "" {
+		return message("conflict")
+	}
+	return sentence
 }
 
 // staleRefusal is the 412 with the CURRENT resource attached, which is what

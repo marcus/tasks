@@ -1123,6 +1123,24 @@ paths:
                 value:
                   kind: "agent"
                   mode: "research"
+              three_part:
+                summary: Who, mode, and briefing in one write — one undo step.
+                value:
+                  kind: "agent"
+                  mode: "implement"
+                  note: "Start with the failing test in spec/merge_spec.rb.\n\nLand it behind the flag."
+              human_with_mode:
+                summary: Ask a person for a refine, with a briefing.
+                value:
+                  assignee: "pat@example.com"
+                  mode: "refine"
+                  note: "Tighten the task, don't build it."
+              clear_note:
+                summary: Keep the delegation, clear the briefing.
+                value:
+                  kind: "agent"
+                  mode: "implement"
+                  note: null
       responses:
         "200":
           description: The delegated task resource.
@@ -1431,6 +1449,72 @@ paths:
         "403": { $ref: "#/components/responses/ForbiddenOrigin" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/ClaimConflict" }
+        "412": { $ref: "#/components/responses/StaleRevision" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "428": { $ref: "#/components/responses/MissingPrecondition" }
+        "503": { $ref: "#/components/responses/StoreInvalid" }
+
+  /tasks/{id}/delegation_note:
+    put:
+      tags: [tasks]
+      operationId: setDelegationNote
+      summary: Rewrite or clear the briefing on an existing delegation.
+      description: |
+        Replaces the `note` member of the task's delegation marker without
+        touching who holds the work or in what mode, and requires the task's
+        current ETag in `If-Match` like every other task write.
+
+        `POST /tasks/{id}/delegate` can carry a note too, and does so in the
+        same write as the delegation itself — that is the three-part form, and
+        it is one undo step. This route is the correction: an owner fixing a
+        briefing should not have to re-send a delegation, and re-sending one
+        would restate an intent that has not changed.
+
+        It restamps the marker's `at` on a `delegated` or `ready` marker,
+        because there `at` is when the owner last stated their intent and a
+        briefing IS that intent — the multi-device merge resolves competing
+        intent by later `at`, so leaving the stamp would let a device that
+        cleared a stale briefing silently lose to an older edit elsewhere. On a
+        `claimed` marker it deliberately does NOT, because there `at` is when
+        the claim was taken and the merge ranks two claims by the earlier one.
+
+        An undelegated task is `422`.
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DelegationNoteRequest" }
+            examples:
+              brief:
+                summary: Correct the briefing.
+                value:
+                  note: "Start with the failing test in spec/merge_spec.rb.\n\nLand it behind the flag."
+              clear:
+                summary: Clear the briefing.
+                value:
+                  note: null
+      responses:
+        "200":
+          description: The task resource with the updated briefing.
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Task" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+        "400": { $ref: "#/components/responses/MalformedRequest" }
+        "403": { $ref: "#/components/responses/ForbiddenOrigin" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "412": { $ref: "#/components/responses/StaleRevision" }
         "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
@@ -3332,18 +3416,34 @@ components:
       type: object
       description: |
         Hand the task to a person or to the agent pool, replacing any marker
-        already present. A human delegation carries `assignee` and no `mode`; an
-        agent delegation carries `mode` and no `assignee` — an agent task is
-        claimed by a worker, never assigned to one.
-      required: [kind]
+        already present. A delegation has three orthogonal parts — **who**
+        (`kind` plus `assignee`), **mode** (what kind of delegation this is),
+        and **note** (the briefing the receiver reads) — and all three are
+        written by this one request, in one store transaction, and therefore in
+        one undo step. There is deliberately no way to compose a delegation out
+        of a delegate followed by a separate note write.
       additionalProperties: false
       properties:
-        kind: { $ref: "#/components/schemas/DelegationKind" }
+        kind:
+          allOf:
+            - { $ref: "#/components/schemas/DelegationKind" }
+          description: |
+            Optional when the rest of the body is unambiguous: a body carrying
+            an `assignee` is a human delegation, and a body carrying only a
+            `mode` is an agent one. An explicit `kind` always wins, so a client
+            that states it is never second-guessed.
         mode:
           allOf:
             - { $ref: "#/components/schemas/DelegationMode" }
           description: |
-            Required for `kind: agent`, rejected for `kind: human`.
+            Required for `kind: agent`, which needs to know its authority before
+            it picks the task up, and OPTIONAL for `kind: human` — who holds the
+            work and what kind of delegation it is are orthogonal facts, and
+            `mode: refine` on a human delegation means the same thing it means
+            on an agent one. It grants no permission and changes no lifecycle
+            rule. A value outside the configured vocabulary is `422` quoting the
+            set that was actually enforced, which is not necessarily the
+            built-in one (see `delegation_modes` in `/meta`).
         assignee:
           type: string
           maxLength: 200
@@ -3352,6 +3452,26 @@ components:
             non-empty local part, exactly one `@`, and a dotted domain, with no
             whitespace or control characters. `@work` and `pat@localhost` are
             `422`. Rejected for `kind: agent`.
+        note:
+          type: [string, "null"]
+          maxLength: 2000
+          description: |
+            The receiver-facing briefing STORED in the marker — how to work on
+            the task, where the work should land, what to avoid. At most 2000
+            characters; paragraphs are allowed, every other control character is
+            `422`; an over-long note is `422` quoting the limit and the length
+            it got.
+
+            Three cases a single string cannot express, and the distinction
+            matters: **absent** leaves any existing briefing alone (restating
+            the mode must not silently erase instructions), **`null` or `""`**
+            clears it, and text replaces it. The CLI's clear words `off` and
+            `none` are accepted here too so the surfaces agree, but `null` is
+            the canonical HTTP spelling.
+
+            This is not the `note` on `/release`, which is a blocker line
+            appended to the task BODY. Same word, same user-typed text, the
+            meaning each verb gives it.
         keep_state:
           type: boolean
           default: false
@@ -3442,6 +3562,31 @@ components:
             held by exactly this id, otherwise `409` / `claim_conflict`. Absent
             means the owner is writing, which is always permitted on a delegated
             task.
+
+    DelegationNoteRequest:
+      type: object
+      description: |
+        Rewrite (or clear) the receiver-facing briefing on the delegation the
+        task ALREADY carries, without restating who holds it or in what mode.
+        It exists for the same reason `work_ref` has its own route: an owner
+        correcting instructions should not have to re-send a delegation, and
+        re-sending one would read as a new delegation.
+
+        It is an OWNER decision, unlike `work_ref`, which the holding worker may
+        also write — the note is the instruction, and a worker rewriting its own
+        instructions is not a thing the model allows. There is no `worker`
+        member for that reason.
+      required: [note]
+      additionalProperties: false
+      properties:
+        note:
+          type: [string, "null"]
+          maxLength: 2000
+          description: |
+            The briefing, or `null`/`""`/`off`/`none` to clear it. Same bounds
+            and same character rules as `note` on `/delegate`. An undelegated
+            task is `422` (`task is not delegated`): a briefing with nothing to
+            brief is not a delegation.
 
     CreateTaskRequest:
       type: object
