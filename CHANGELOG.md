@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.12.0] - 2026-08-20
+
+- **Embedded hosts can compose Tasks' list and detail regions into their own
+  focus rings.** The public `pkg/tui` API now exposes stable spatial-focus IDs,
+  the exact rectangles from the layout Tasks renders and hit-tests, the current
+  region, direct focus control, and `TabOwnsFocus`. The README documents the
+  Sidecar capability check and the boundary between spatial focus and Tasks'
+  existing interaction contexts.
+- Inputs and overlays keep ownership of Tab, including field modals, while
+  passive list/detail and response views can yield it to an outer host. Compact
+  layouts expose only positive rendered focus stops; hidden, unknown, or
+  input-covered targets refuse direct focus without changing selection. Keys
+  and clicks follow the same spatial focus, and project-detail panels retain
+  list command routing so task-detail actions cannot run against a project row.
+
 ## [1.11.0] - 2026-08-18
 
 - **`D` is a three-part modal instead of a one-line prompt.** Delegating now
