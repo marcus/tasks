@@ -49,6 +49,14 @@ func main() {
 		fail(err)
 	}
 	model.Init()
+	model.View(72, 20)
+	stops := model.VisibleSpatialFocusStops()
+	if len(stops) != 1 || stops[0].ID != taskstui.SpatialFocusList || stops[0].Rect.Width <= 0 {
+		fail(fmt.Errorf("invalid initial spatial focus stops: %#v", stops))
+	}
+	if model.SetSpatialFocus(taskstui.SpatialFocusDetail) || model.TabOwnsFocus() {
+		fail(fmt.Errorf("hidden detail or passive list focus contract is wrong"))
+	}
 	if available, err := model.CommandAvailable("view-agenda"); err != nil || !available {
 		fail(fmt.Errorf("view-agenda availability=%v err=%v", available, err))
 	}
@@ -69,6 +77,9 @@ func main() {
 	}
 	model.ClearQuitRequest()
 	model.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	if !model.TabOwnsFocus() || model.SetSpatialFocus(taskstui.SpatialFocusList) {
+		fail(fmt.Errorf("prompt did not retain Tab/direct focus ownership"))
+	}
 	model.Update(tea.KeyPressMsg{Code: 'x', Text: "external prompt"})
 	model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	pid := waitForPID(os.Getenv("FAKE_PID_FILE"))

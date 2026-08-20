@@ -5,7 +5,7 @@ import "testing"
 func TestExportCoversEveryStableHostContext(t *testing.T) {
 	want := map[string]bool{
 		"list": true, "detail": true, "task_edit": true, "modal": true,
-		"modal_filter": true, "form": true, "picker": true, "context_picker": true,
+		"modal_filter": true, "form": true, "field_modal": true, "picker": true, "context_picker": true,
 		"filter": true, "prompt": true, "response": true, "response_detail": true,
 		"agent_activity": true, "agent_activity_filter": true,
 	}

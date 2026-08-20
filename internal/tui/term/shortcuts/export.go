@@ -47,6 +47,10 @@ var hostContextProjections = []contextProjection{
 	{name: "modal", sources: []Context{Modal, Global}},
 	{name: "modal_filter", textInput: true, sources: []Context{ModalFilter, Global}},
 	{name: "form", textInput: true, sources: []Context{Form, Global}},
+	// FieldModal routes its heterogeneous fields before the registry. Only
+	// globals project here, but the context stays explicit so an outer host
+	// never mistakes its Tab-driven navigation for passive detail.
+	{name: "field_modal", textInput: true, sources: []Context{Global}},
 	{name: "picker", textInput: true, sources: []Context{Picker, Global}},
 	{name: "context_picker", textInput: true, sources: []Context{ContextPicker, Global}},
 	{name: "filter", textInput: true, sources: []Context{Filter, Global}},

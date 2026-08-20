@@ -41,6 +41,7 @@ const (
 	FocusModal               FocusContext = "tasks-modal"
 	FocusModalFilter         FocusContext = "tasks-modal-filter"
 	FocusForm                FocusContext = "tasks-form"
+	FocusFieldModal          FocusContext = "tasks-field-modal"
 	FocusPicker              FocusContext = "tasks-picker"
 	FocusContextPicker       FocusContext = "tasks-context-picker"
 	FocusFilter              FocusContext = "tasks-filter"
@@ -50,6 +51,29 @@ const (
 	FocusAgentActivity       FocusContext = "tasks-agent-activity"
 	FocusAgentActivityFilter FocusContext = "tasks-agent-activity-filter"
 )
+
+// SpatialFocus names one stable region in Tasks' rendered list/detail layout.
+// It is separate from FocusContext, which reports input and overlay ownership.
+type SpatialFocus string
+
+const (
+	SpatialFocusList   SpatialFocus = "list"
+	SpatialFocusDetail SpatialFocus = "detail"
+)
+
+// Rect is one half-open rectangle in 0-based terminal cells.
+type Rect struct {
+	X, Y          int
+	Width, Height int
+}
+
+// SpatialFocusStop is one visible host focus destination. Stops are returned
+// in current visual order and their rectangles are taken from the exact layout
+// Tasks renders and hit-tests.
+type SpatialFocusStop struct {
+	ID   SpatialFocus
+	Rect Rect
+}
 
 // Binding is a default Bubble Tea key name mapped to a Tasks command.
 type Binding struct {
@@ -360,6 +384,49 @@ func (m *Model) shutdown() {
 
 // FocusContext is the stable Tasks interaction context for host key routing.
 func (m *Model) FocusContext() FocusContext { return hostFocusContext(m.inner.FocusContext()) }
+
+// VisibleSpatialFocusStops reports Tasks' visible list/detail focus ring in
+// visual order, with geometry from the same sampled layout used to render.
+func (m *Model) VisibleSpatialFocusStops() []SpatialFocusStop {
+	internalStops := m.inner.VisibleSpatialFocusStops()
+	stops := make([]SpatialFocusStop, 0, len(internalStops))
+	for _, stop := range internalStops {
+		stops = append(stops, SpatialFocusStop{
+			ID: SpatialFocus(stop.ID),
+			Rect: Rect{
+				X: stop.Rect.X, Y: stop.Rect.Y,
+				Width: stop.Rect.Width, Height: stop.Rect.Height,
+			},
+		})
+	}
+	return stops
+}
+
+// CurrentSpatialFocus reports the current visible list/detail stop.
+func (m *Model) CurrentSpatialFocus() SpatialFocus {
+	return SpatialFocus(m.inner.CurrentSpatialFocus())
+}
+
+// SetSpatialFocus focuses one visible stop directly. It refuses unknown,
+// hidden, or currently input/overlay-owned targets without changing focus.
+func (m *Model) SetSpatialFocus(focus SpatialFocus) bool {
+	return m.inner.SetSpatialFocus(internal.SpatialFocus(focus))
+}
+
+// TabOwnsFocus reports whether an input or overlay must receive Tab. A host
+// with an outer focus ring may intercept Tab only when this returns false.
+func (m *Model) TabOwnsFocus() bool {
+	return m.inner.TabOwnsFocus() || focusContextOwnsTab(m.FocusContext())
+}
+
+func focusContextOwnsTab(context FocusContext) bool {
+	switch context {
+	case FocusList, FocusDetail, FocusResponse, FocusResponseDetail:
+		return false
+	default:
+		return true
+	}
+}
 
 // ConsumesTextInput reports whether printable keys belong to Tasks input.
 func (m *Model) ConsumesTextInput() bool { return m.inner.ConsumesTextInput() }

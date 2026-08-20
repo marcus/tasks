@@ -426,10 +426,12 @@ func (m *Model) refuseDelegation() {
 	m.Flash(strings.ToLower(item.State) + " tasks can't be delegated")
 }
 
-// listKey tries the detail context first when the panel is open, so `e` edits
-// the task whose details are showing rather than renaming a project.
+// listKey tries the detail context first only when the detail panel owns
+// spatial focus, so `e` edits the task there without leaking into list focus.
 func (m *Model) listKey(sequence string) {
-	if m.panel != nil && m.panel.Kind == PanelDetail && m.dispatchAction(sequence, shortcuts.Detail) {
+	if m.CurrentSpatialFocus() == SpatialFocusDetail &&
+		m.panel != nil && m.panel.Kind == PanelDetail &&
+		m.dispatchAction(sequence, shortcuts.Detail) {
 		return
 	}
 	if m.dispatchAction(sequence, shortcuts.List) {

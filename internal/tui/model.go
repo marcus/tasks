@@ -138,6 +138,7 @@ type Model struct {
 	selected     int
 	selectedID   string
 	panel        *RightPanel
+	spatialFocus SpatialFocus
 
 	// rowWidth is the list width the current rows were built at, so a frame
 	// that changed it can rebuild them — see reconcileRowWidth.
@@ -253,6 +254,7 @@ func New(options Options) *Model {
 		panelOffset:      options.Session.PanelOffset,
 		contextFilters:   restoreContextFilters(options.Session),
 		mode:             ModeList,
+		spatialFocus:     SpatialFocusList,
 		width:            80,
 		height:           24,
 		opener:           options.Opener,
@@ -326,6 +328,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = max(typed.Width, MinWidth)
 		m.height = max(typed.Height, MinHeight)
 		m.reconcileEditorLayout()
+		m.reconcileSpatialFocus()
 		return m, nil
 	case tickMsg:
 		m.clearExpiredFlash()
@@ -1088,6 +1091,7 @@ func (m *Model) ToggleDeferred() {
 func (m *Model) OpenDetail() {
 	if m.panel != nil && m.panel.Identity == m.selectedID {
 		m.panel = nil
+		m.spatialFocus = SpatialFocusList
 		return
 	}
 	m.showDetail()
@@ -1098,6 +1102,7 @@ func (m *Model) showDetail() {
 		content := BuildProjectDetails(m.styler, m.read.Queries(), *project,
 			m.projectTasks(*project), m.panelContentWidth())
 		m.panel = NewRightPanel(content.Title, PanelProjectDetail, project.ID, content.Lines)
+		m.spatialFocus = SpatialFocusDetail
 		return
 	}
 	item := m.CurrentItem()
@@ -1108,6 +1113,7 @@ func (m *Model) showDetail() {
 	content := BuildTaskDetails(m.styler, m.read.Queries(), *item, m.panelContentWidth(),
 		m.projectNameOf(*item))
 	m.panel = NewRightPanel(content.Title, PanelDetail, item.ID, content.Lines)
+	m.spatialFocus = SpatialFocusDetail
 }
 
 // refreshOpenPanel keeps an open detail panel pointed at the selection. Because
@@ -1122,6 +1128,7 @@ func (m *Model) refreshOpenPanel() {
 		item := m.CurrentItem()
 		if item == nil {
 			m.panel = nil
+			m.spatialFocus = SpatialFocusList
 			return
 		}
 		content := BuildTaskDetails(m.styler, m.read.Queries(), *item, m.panelContentWidth(),
@@ -1142,7 +1149,10 @@ func (m *Model) refreshOpenPanel() {
 func (m *Model) Panel() *RightPanel { return m.panel }
 
 // ClosePanel closes the right panel.
-func (m *Model) ClosePanel() { m.panel = nil }
+func (m *Model) ClosePanel() {
+	m.panel = nil
+	m.spatialFocus = SpatialFocusList
+}
 
 func (m *Model) projectNameOf(item store.Item) string {
 	node := m.read.Queries().NodeFor(item)
@@ -1332,12 +1342,12 @@ func (m *Model) FocusContext() string {
 		return "task_edit"
 	default:
 		if m.respOpen {
-			if m.panel != nil && m.panel.Kind == PanelDetail {
+			if m.CurrentSpatialFocus() == SpatialFocusDetail && m.panel != nil && m.panel.Kind == PanelDetail {
 				return "response_detail"
 			}
 			return "response"
 		}
-		if m.panel != nil && m.panel.Kind == PanelDetail {
+		if m.CurrentSpatialFocus() == SpatialFocusDetail {
 			return "detail"
 		}
 		return "list"

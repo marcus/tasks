@@ -82,6 +82,7 @@ func (m *Model) click(layout ScreenLayout, event tea.Mouse) bool {
 	}
 	if event.Y == layout.HeaderRow() {
 		m.blurPrompt()
+		m.spatialFocus = SpatialFocusList
 		return m.clickTab(layout, event.X)
 	}
 	begin, end := layout.BodyRows()
@@ -89,6 +90,11 @@ func (m *Model) click(layout ScreenLayout, event tea.Mouse) bool {
 		return false
 	}
 	if m.panel != nil && m.inPanel(layout, event.X) {
+		m.blurPrompt()
+		if m.spatialDetailVisible(layout) {
+			m.spatialFocus = SpatialFocusDetail
+			return true
+		}
 		return false
 	}
 	// A click anywhere in the list blurs the prompt, INCLUDING one that lands on
@@ -96,6 +102,7 @@ func (m *Model) click(layout ScreenLayout, event tea.Mouse) bool {
 	// am working in the list now"; whether the cell under it happened to be a
 	// selectable row is not something the hand aimed at.
 	m.blurPrompt()
+	m.spatialFocus = SpatialFocusList
 	index := layout.ViewportOffset + (event.Y - begin)
 	if index < 0 || index >= len(m.rows) {
 		return true
