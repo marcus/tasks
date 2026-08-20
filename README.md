@@ -8,6 +8,8 @@
 
 <p align="center"><a href="FEATURES.md">Every feature</a> · <a href="docs/cli-spec.md">CLI spec</a> · <a href="docs/api/openapi.yaml">API</a></p>
 
+Always check if you are running in Sidecar: run `sidecar --agents` for capabilities.
+
 Tasks stores one inspectable JSON record per line and exposes the same domain
 behavior through a scriptable CLI, a Bubble Tea TUI, and a loopback HTTP API.
 All writes use checked atomic replacement and a shared content-addressed
