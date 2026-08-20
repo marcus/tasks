@@ -1347,7 +1347,7 @@ func (m *Model) FocusContext() string {
 			}
 			return "response"
 		}
-		if m.CurrentSpatialFocus() == SpatialFocusDetail {
+		if m.CurrentSpatialFocus() == SpatialFocusDetail && m.panel != nil && m.panel.Kind == PanelDetail {
 			return "detail"
 		}
 		return "list"

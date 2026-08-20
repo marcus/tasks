@@ -93,6 +93,37 @@ func TestSpatialFocusControlsKeyRoutingAndFocusContext(t *testing.T) {
 	}
 }
 
+func TestProjectDetailSpatialFocusKeepsListCommandRouting(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.SwitchView(ViewProjects)
+	if !selectFirstProject(harness) {
+		t.Fatal("project fixture has no selectable project")
+	}
+	harness.model.OpenDetail()
+
+	if harness.model.Panel() == nil || harness.model.Panel().Kind != PanelProjectDetail {
+		t.Fatalf("panel = %#v, want project detail", harness.model.Panel())
+	}
+	if got := harness.model.CurrentSpatialFocus(); got != SpatialFocusDetail {
+		t.Fatalf("spatial focus = %q, want detail", got)
+	}
+	if got := harness.model.FocusContext(); got != "list" {
+		t.Fatalf("focus context = %q, want list", got)
+	}
+	if available, _ := harness.model.CommandAvailable("start-task-edit-last"); available {
+		t.Fatal("project detail advertised task-detail Shift-Tab command")
+	}
+	if _, err := harness.model.InvokeCommand("start-task-edit-last"); err == nil {
+		t.Fatal("project detail invoked task-detail Shift-Tab command")
+	}
+
+	harness.pressKeys("\x1b[Z")
+	if harness.model.Mode() != ModeList || harness.model.taskEditor != nil {
+		t.Fatalf("direct Shift-Tab entered task edit: mode=%q editor=%#v",
+			harness.model.Mode(), harness.model.taskEditor)
+	}
+}
+
 func TestSpatialFocusFollowsListAndDetailClicks(t *testing.T) {
 	harness := mouseHarness(t, "")
 	harness.model.SwitchView(ViewNext)
