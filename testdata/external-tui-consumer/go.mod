@@ -1,6 +1,6 @@
 module example.com/tasks-external-consumer
 
-go 1.26.0
+go 1.27.0
 
 require (
 	charm.land/bubbletea/v2 v2.0.7
