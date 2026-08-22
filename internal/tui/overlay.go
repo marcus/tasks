@@ -22,6 +22,10 @@ type OverlayBox struct {
 	Col   int
 	// FocusedContentRow is the row inside Lines carrying the caret, or -1.
 	FocusedContentRow int
+	// Backdrop dims the frame cells BESIDE the box (the rows it spans) in the
+	// modal_backdrop slot. Only the modals that ask for it get it — palettes
+	// and quick forms keep their flat surroundings until they opt in.
+	Backdrop bool
 }
 
 // Overlay is the popup the current mode wants painted, or nil.
@@ -127,6 +131,9 @@ func (m *Model) composite(frame []string, box *OverlayBox) []string {
 		width := m.styler.Width(line)
 		left := ansi.CellSlice(out[row], 0, box.Col)
 		right := ansi.CellSliceToEnd(out[row], box.Col+width)
+		if box.Backdrop {
+			left, right = ApplyModalBackdrop(m.styler, left, right)
+		}
 		out[row] = left + line + right
 	}
 	return out

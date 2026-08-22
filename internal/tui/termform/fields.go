@@ -1222,6 +1222,18 @@ func (i *Input) OffsetAt(column int) int {
 // same text but a different scroll have NOT done the same thing.
 func (a *TextArea) RowOffset() int { return a.rowOffset }
 
+// LineCount is how many rows the text wraps to at width — the scrollbar's
+// total, against which Render's RowOffset is the offset. It deliberately takes
+// the same width Render was given, so the count and the window can never be
+// measured at two different folds.
+func (a *TextArea) LineCount(width int) int {
+	if width < 1 {
+		width = 1
+	}
+	lines, _ := wrappedLayout(a.Text(), width)
+	return len(lines)
+}
+
 // OffsetAt maps a row and column in the window the last Render painted to the
 // grapheme offset under it. The row is relative to the visible window, so the
 // field's own vertical scroll is added back here.
@@ -1263,4 +1275,29 @@ func (a *TextArea) ScrollLines(delta int) {
 	for count := 0; count < absInt(delta); count++ {
 		a.moveVertical(step)
 	}
+}
+
+// CaretRow is the wrapped row the caret sits on at width — the row count's
+// counterpart to RowOffset.
+func (a *TextArea) CaretRow() int {
+	width := a.width
+	if width < 1 {
+		width = 1
+	}
+	_, positions := wrappedLayout(a.Text(), width)
+	return positions[clampInt(a.Cursor(), 0, len(positions)-1)][0]
+}
+
+// ScrollToRow scrolls the window so wrapped row `row` is its FIRST row, by
+// moving the caret — scrolling in a text area is caret motion, so an absolute
+// scroll has to pick a caret position that RENDERS as the requested window:
+// the requested row's bottom edge. Clamped by moveVertical, so a row past the
+// text parks at the end. This is what a scrollbar jump or drag asks for; wheel
+// ticks keep ScrollLines' caret-relative motion.
+func (a *TextArea) ScrollToRow(row int) {
+	height := a.height
+	if height < 1 {
+		height = 1
+	}
+	a.ScrollLines(row + height - 1 - a.CaretRow())
 }

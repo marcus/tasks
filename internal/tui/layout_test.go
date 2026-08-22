@@ -1,6 +1,9 @@
 package tui
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func layoutOf(request LayoutRequest) ScreenLayout {
 	return NewScreenLayout(PlainStyler{}, request)
@@ -193,5 +196,38 @@ func TestVisibleRowsWindowsTheList(t *testing.T) {
 	visible := layout.VisibleRows(rows)
 	if len(visible) != layout.BodyHeight {
 		t.Fatalf("visible %d rows, body holds %d", len(visible), layout.BodyHeight)
+	}
+}
+
+// The main frame draws NO border of its own: section rules may use "─", but
+// corners and edges belong to the popups, and the body keeps one blank cell of
+// separation on each edge. This is the regression guard for that decision.
+func TestTheFrameDrawsNoBorderAndSeparatesWithSpace(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.SwitchView(ViewAgenda)
+	lines := strings.Split(renderAt(t, harness, 80, 20), "\n")
+
+	for index, line := range lines {
+		// Section rules legitimately draw "─"; a FRAME is corners and edges.
+		if strings.ContainsAny(line, "┌┐└┘├┤") {
+			t.Fatalf("line %d still draws frame chrome: %q", index, line)
+		}
+		cells := []rune(line)
+		if cells[0] != ' ' || cells[len(cells)-1] != ' ' {
+			t.Fatalf("line %d still has an edge cell: %q", index, line)
+		}
+		if got := len([]rune(line)); got != 80 {
+			t.Fatalf("line %d is %d cells wide", index, got)
+		}
+	}
+	layout := harness.model.Layout()
+	bodyBegin, bodyEnd := layout.BodyRows()
+	for _, blank := range []int{bodyBegin - 1, bodyEnd} {
+		if strings.TrimSpace(lines[blank]) != "" {
+			t.Fatalf("row %d should be the blank that replaced a rule: %q", blank, lines[blank])
+		}
+	}
+	if strings.TrimSpace(lines[layout.HeaderRow()]) == "" {
+		t.Fatal("the header row is blank")
 	}
 }

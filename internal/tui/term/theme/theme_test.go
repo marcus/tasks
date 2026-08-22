@@ -224,3 +224,48 @@ func TestGeneratedThemeResolvesTruecolorSlots(t *testing.T) {
 		t.Fatal("dracula should carry its own border gradient")
 	}
 }
+
+// The modal chrome components (button.go, keychips.go, scrollregion.go,
+// chrome.go in package tui) paint only these slots, so the whole surface is
+// restyleable from config and projectable by a host. Every slot needs a stock
+// default AND a mono entry: attribute-only output is the NO_COLOR contract,
+// and a modal that loses its buttons' look under mono would be unreadable.
+func TestModalChromeSlotsHaveDefaultsAndMonoCoverage(t *testing.T) {
+	chromeSlots := []Slot{
+		"button_primary", "button_danger", "button_danger_armed", "button_muted",
+		"chip_key", "chip_label", "field_border", "field_border_focused",
+		"scrollbar_thumb", "scrollbar_track", "modal_backdrop",
+		"modal_border_accent", "modal_border_warning",
+	}
+	for _, slot := range chromeSlots {
+		if spec, ok := Defaults[slot]; !ok {
+			t.Fatalf("chrome slot %q has no default", slot)
+		} else if _, ok := Parse(spec); !ok {
+			t.Fatalf("chrome slot %q default %q unparseable", slot, spec)
+		}
+		spec, ok := builtinThemes["mono"][slot]
+		if !ok {
+			t.Fatalf("mono does not cover chrome slot %q", slot)
+		}
+		if _, ok := Parse(spec); !ok {
+			t.Fatalf("mono slot %q has unparseable spec %q", slot, spec)
+		}
+	}
+
+	def := Configure("default", nil)
+	for _, slot := range chromeSlots {
+		if !HasSlot(slot) {
+			t.Fatalf("HasSlot(%q) = false", slot)
+		}
+		if def.Paint(slot, "x") == "" {
+			t.Fatalf("Paint(%q) dropped its text", slot)
+		}
+	}
+
+	// A host overlay can restyle any of them — this is the seam the Sidecar
+	// embed will use for the new surfaces.
+	restyle := Configure("default", map[string]string{"button_primary": "bold black on-#ff8800"})
+	if restyle.SGR("button_primary") == def.SGR("button_primary") {
+		t.Fatal("button_primary override had no effect")
+	}
+}

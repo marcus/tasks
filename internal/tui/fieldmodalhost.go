@@ -103,7 +103,11 @@ func (m *Model) fieldModalOverlay(layout ScreenLayout) *OverlayBox {
 	// quick form does in a terminal too small for either.
 	render := m.fieldModal.Render(m.styler,
 		max(layout.Width-4, 8), min(m.fieldModal.Height(), max(layout.BodyHeight, 1)))
-	return m.center(layout, render.Lines, render.FocusedContentRow)
+	box := m.center(layout, render.Lines, render.FocusedContentRow)
+	if box != nil {
+		box.Backdrop = true
+	}
+	return box
 }
 
 // fieldModalMouse routes a click or wheel tick that landed on the open modal.
@@ -130,6 +134,17 @@ func (m *Model) fieldModalMouse(box *OverlayBox, event tea.MouseMsg) bool {
 		}
 		m.resolveFieldModalOutcome(m.fieldModal.Wheel(row, column, direction))
 		return true
+	case tea.MouseMotionMsg:
+		// Motion only means anything while a scrollbar drag is in flight; a
+		// drag that has left the box keeps scrolling its surface (clamped),
+		// which is what makes a one-row thumb on a long list grabbable.
+		if m.fieldModal.scrollDrag == nil {
+			return false
+		}
+		m.resolveFieldModalOutcome(m.fieldModal.Drag(row))
+		return true
+	case tea.MouseReleaseMsg:
+		return m.fieldModal.EndDrag()
 	case tea.MouseClickMsg:
 		if typed.Button != tea.MouseLeft {
 			return false

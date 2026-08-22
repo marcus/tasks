@@ -131,6 +131,30 @@ var Defaults = map[Slot]string{
 	"state_next":           "cyan",
 	"state_waiting":        "yellow",
 	"state_done":           "gray",
+	// Modal chrome — buttons, key chips, field boxes, scrollbar, backdrop.
+	// Each button variant is ONE slot carrying foreground and background
+	// together (the shape form_group_label already uses), so a host projecting
+	// a palette — the Sidecar embed — has exactly one key per surface to map.
+	// The muted button and the key chips reuse the selection band's near-black
+	// background so a modal's quiet surfaces read as depth, matching the rule
+	// that a standing surface recedes rather than alarms.
+	"button_primary":       "bold black on-cyan",
+	"button_danger":        "red",
+	"button_danger_armed":  "bold white on-red",
+	"button_muted":         "253 on-236",
+	"chip_key":             "cyan",
+	"chip_label":           "dim",
+	"field_border":         "gray",
+	"field_border_focused": "cyan",
+	// The thumb reuses the selection band (light on near-black) rather than a
+	// fixed color, so it contrasts with the track on light and dark terminals
+	// alike — a bare "white" thumb vanishes on a light background, exactly the
+	// failure the gray→dim rationale above exists for.
+	"scrollbar_thumb":      "253 on-236",
+	"scrollbar_track":      "dim",
+	"modal_backdrop":       "dim",
+	"modal_border_accent":  "cyan",
+	"modal_border_warning": "yellow",
 }
 
 // SlotBorderGradient is not an SGR slot (it is per-cell truecolor, not one code
@@ -178,6 +202,16 @@ var builtinThemes = map[string]map[Slot]string{
 		"due_far": "dim", "state_next": "bold", "state_waiting": "none",
 		"state_done": "dim", "priority_selected": "bold",
 		"priority_a": "bold", "priority_b": "none", "priority_c": "none",
+		// Modal chrome stays attribute-only: a filled button is reverse, an
+		// armed one is the same marker (the label carries the alarm), and
+		// borders and scrollbar stay visible by weight rather than color.
+		"button_primary": "reverse", "button_danger": "bold",
+		"button_danger_armed": "reverse", "button_muted": "dim",
+		"chip_key": "bold", "chip_label": "dim",
+		"field_border": "none", "field_border_focused": "bold",
+		"scrollbar_thumb": "bold", "scrollbar_track": "dim",
+		"modal_backdrop": "dim", "modal_border_accent": "bold",
+		"modal_border_warning": "bold",
 	},
 }
 

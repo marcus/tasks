@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"github.com/marcus/tasks/internal/tui/term"
+	"github.com/marcus/tasks/internal/tui/term/ansi"
 	"github.com/marcus/tasks/internal/tui/term/shortcuts"
 	"os"
 	"path/filepath"
@@ -291,4 +293,46 @@ func TestProjectsFrameGolden(t *testing.T) {
 	harness := newModelHarness(t, harnessOptions{live: projectsDormantStore})
 	harness.model.SwitchView(ViewProjects)
 	assertGolden(t, "projects_100x20", renderAt(t, harness, 100, 20))
+}
+
+// The strip advertises jump keys nowhere (the host may own the number row) and
+// the SELECTED row must stay lit end to end: a row whose own fields close with
+// a reset — the coloured priority letter — would lose the highlight at its
+// first reset if compositing did not re-open the selection SGR after each one.
+func TestTheTabStripIsNamesAndTheSelectedRowIsLitEndToEnd(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.styler = term.NewStyler("default", nil)
+	if plain := ansi.Strip(harness.model.TabStrip(200)); strings.ContainsAny(plain, "123456") &&
+		!strings.Contains(plain, "inbox 1") {
+		t.Fatalf("the strip advertises a jump key: %q", plain)
+	}
+
+	harness.model.SwitchView(ViewAgenda)
+	harness.selectRowByID(fixFlight)
+	line := ""
+	for _, painted := range strings.Split(harness.model.Render(), "\n") {
+		if strings.Contains(ansi.Strip(painted), Cursor) {
+			line = painted
+			break
+		}
+	}
+	if line == "" {
+		t.Fatal("no selected row was painted")
+	}
+	selection := harness.model.styler.(*term.Styler).Theme().SGR("selection")
+	if selection == "" {
+		t.Skip("this theme does not paint selection")
+	}
+	resets := strings.Count(line, "\x1b[0m")
+	reopens := strings.Count(line, "\x1b[0m"+selection)
+	if resets == 0 {
+		t.Fatalf("the selected row carries no styling at all: %q", line)
+	}
+	if reopens < resets-1 {
+		t.Fatalf("the selection dies at a field reset (%d resets, %d re-opens): %q",
+			resets, reopens, line)
+	}
+	if !strings.HasPrefix(strings.TrimLeft(line, " "), selection) {
+		t.Fatalf("the selected row does not open with the selection: %q", line)
+	}
 }
