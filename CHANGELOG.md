@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.13.0] - 2026-08-22
+
+### Dependencies
+
+- **Tasks now builds with Go 1.27.** `encoding/json/v2` is the default JSON
+  implementation in this release; Tasks' stored task data, config, and API
+  payloads round-trip unchanged, and `GOEXPERIMENT=nojsonv2` remains as an
+  escape hatch. The `testdata/external-tui-consumer` module moves with it, so
+  the embedded-host contract keeps compiling against the same directive as the
+  library it consumes.
+- This release exists so the td / Tasks / Sidecar trio share one toolchain:
+  Sidecar resolves its CI Go version from its own `go.mod`, so it can only pin
+  a Tasks that declares a directive its toolchain already satisfies.
+
 ## [1.12.0] - 2026-08-20
 
 - **Embedded hosts can compose Tasks' list and detail regions into their own
