@@ -3,6 +3,9 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	"github.com/marcus/tasks/internal/tui/term"
+	"github.com/marcus/tasks/internal/tui/term/ansi"
 )
 
 // suppressViewKeyHints removes exactly one thing: the footer's "1-6 views"
@@ -149,4 +152,39 @@ func tabFor(t *testing.T, view string) Tab {
 	}
 	t.Fatalf("no tab for view %q", view)
 	return Tab{}
+}
+
+// Truncation drops WHOLE pairs and spends the budget on the ways out: a hint
+// that cut "q" off of "quit", or dropped the exits before the conveniences,
+// would be worse than a shorter hint.
+func TestKeyHintsDropWholePairsAndKeepTheWaysOutLongest(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.styler = term.NewStyler("mono", nil)
+
+	previous := 999
+	for width := 120; width >= 20; width -= 4 {
+		harness.model.width = width
+		hint := ansi.Strip(harness.model.keyHint())
+		if hint == "" {
+			continue
+		}
+		if got := len([]rune(hint)); got > width-2 {
+			t.Fatalf("width %d: hint is %d cells: %q", width, got, hint)
+		}
+		// Never cut mid-pair: every key still has its whole label.
+		pairs := strings.Split(strings.TrimSpace(hint), "   ")
+		for _, pair := range pairs {
+			if len(strings.Fields(pair)) < 2 {
+				t.Fatalf("width %d: hint was truncated mid-pair: %q", width, hint)
+			}
+		}
+		count := len(pairs)
+		if count > previous {
+			t.Fatalf("width %d: a narrower terminal grew the hint: %q", width, hint)
+		}
+		previous = count
+		if count > 0 && !strings.Contains(hint, "q quit") {
+			t.Fatalf("width %d: quit is the last thing to drop, not the first: %q", width, hint)
+		}
+	}
 }

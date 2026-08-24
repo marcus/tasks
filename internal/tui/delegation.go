@@ -177,6 +177,7 @@ func (m *Model) DelegateSelected() {
 		if confirm, destructive := delegateConfirmations[actionID]; destructive {
 			if modal.Error() != confirm {
 				modal.SetError(confirm)
+				modal.SetArmedAction(actionID)
 				return FieldModalOutcome{Result: FieldModalError}
 			}
 		}

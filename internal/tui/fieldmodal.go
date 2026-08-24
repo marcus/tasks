@@ -64,12 +64,29 @@ type FieldModal struct {
 	// dirty modal and disarms on any other input, mirroring the task-draft quit
 	// confirmation: a destructive discard always takes two deliberate gestures.
 	guard bool
+	// variant is the box's border look. Neutral keeps every existing modal
+	// unpainted; a host asks for accent/warning/danger when the border itself
+	// carries news.
+	variant BoxVariant
+	// armedAction is the extra affordance standing behind its first press,
+	// painted in the armed danger look until the second press acts or anything
+	// clears it. It mirrors the confirmation-message arming the delegate modal
+	// already does through SetError, so the button and the status line tell
+	// the same story.
+	armedAction string
 
 	width int
 	// layout and renderWidth are the last paint's hit map and its painted width,
 	// which together bound both axes of a click.
 	layout      []fieldModalLine
 	renderWidth int
+
+	// scrollDrag is an in-flight scrollbar drag: which surface owns the thumb,
+	// where inside the thumb the pointer grabbed, and where the track sits in
+	// box rows. The offset is recomputed from the GRAB each motion via
+	// OffsetAtRow — never accumulated per event — so a dropped or coalesced
+	// motion event cannot make the thumb drift away from the pointer.
+	scrollDrag *fieldModalScrollDrag
 
 	// Success is the effect to run after a successful submit, set by the submit
 	// callback itself, exactly as QuickForm does it.
@@ -185,6 +202,21 @@ type FieldModalOutcome struct {
 
 func fieldModalHandled() FieldModalOutcome { return FieldModalOutcome{Result: FieldModalHandled} }
 func fieldModalChanged() FieldModalOutcome { return FieldModalOutcome{Result: FieldModalChanged} }
+
+// fieldModalScrollDrag is one scrollbar drag's captured state.
+type fieldModalScrollDrag struct {
+	// key is the owning field; area distinguishes a note's editor from a
+	// choice list when both could carry a thumb.
+	key  string
+	area bool
+	// grab is how far inside the thumb the pointer pressed. A drag asks for
+	// "thumb top at row minus grab", so the thumb moves with the pointer
+	// without snapping its top under it.
+	grab int
+	// trackTop is the box row of track row zero at press time, so a motion at
+	// any box row can be turned back into a track row.
+	trackTop int
+}
 
 // modalField is one field's live state.
 type modalField struct {
@@ -353,8 +385,15 @@ func (f *FieldModal) Dirty() bool {
 // Error is the host's refusal message.
 func (f *FieldModal) Error() string { return f.err }
 
-// SetError posts a host refusal without closing the modal.
-func (f *FieldModal) SetError(message string) { f.err = message }
+// SetError posts a host refusal without closing the modal. Posting any refusal
+// disarms an armed action: the armed button and the confirmation message it
+// armed are ONE story, and a refusal that overwrote the message while the
+// button stayed inverted would be an armed look with nothing behind it. A caller
+// that is arming — posting the confirmation — calls SetArmedAction after.
+func (f *FieldModal) SetError(message string) {
+	f.err = message
+	f.armedAction = ""
+}
 
 // FieldError is one field's inline validation message.
 func (f *FieldModal) FieldError(key string) string {
@@ -377,6 +416,23 @@ func (f *FieldModal) SetFieldError(key, message string) bool {
 
 // PendingCancel reports the armed unsaved-changes latch.
 func (f *FieldModal) PendingCancel() bool { return f.guard }
+
+// SetArmedAction marks one of the modal's actions as standing behind its first
+// press: its button inverts to the armed look and, while armed, the box border
+// reads as warning — the same news in two places. Arming without a matching
+// action id reports false and changes nothing.
+func (f *FieldModal) SetArmedAction(id string) bool {
+	for _, action := range f.actions {
+		if action.ID == id {
+			f.armedAction = id
+			return true
+		}
+	}
+	return false
+}
+
+// ArmedAction reports which action is behind its first press, or "".
+func (f *FieldModal) ArmedAction() string { return f.armedAction }
 
 // DisarmCancel drops the armed latch, for a host that interrupted the modal
 // with something the user has since answered. An interruption is input like any
@@ -489,15 +545,18 @@ func (m *modalField) validationError() string {
 	return m.spec.Validate(m.value())
 }
 
-// rows is the field's FIXED row count, hint row included.
+// rows is the field's FIXED row count, its bordered boxes' borders included
+// and the hint row included. It must agree exactly with what fieldRows paints,
+// because Height is what bounds the viewport — undercounting here scrolls the
+// buttons out of the box.
 func (m *modalField) rows() int {
 	switch m.spec.Kind {
 	case FieldTextArea:
-		return 1 + m.spec.Rows + 1
+		return 1 + m.spec.Rows + 2 + 1 // label, bordered editor, hint
 	case FieldChoice:
-		return 1 + m.spec.VisibleOptions + 1
+		return 1 + 3 + m.spec.VisibleOptions + 2 + 1 // label, value box, option list, hint
 	default:
-		return 2
+		return 1 + 3 + 1 // label, bordered editor, hint
 	}
 }
 

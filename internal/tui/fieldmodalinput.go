@@ -10,6 +10,9 @@ import "github.com/marcus/tasks/internal/tui/term/input"
 //	place the caret  arrows, home, end          click inside the value
 //	choose an option arrows, prefix typing      click the option
 //	scroll a note    arrows past the window     wheel over the note
+//	scroll a list    wheel over it              wheel over it
+//	drag a scrollbar press the thumb, drag       press the thumb, drag
+//	jump a scrollbar click the track            click the track
 //	submit           enter (ctrl-s in a note)   click [ Save ]
 //	cancel           esc, twice when dirty      click [ Cancel ], twice when dirty
 //	extra actions    the action's own key       click the action's button
@@ -32,10 +35,14 @@ import "github.com/marcus/tasks/internal/tui/term/input"
 //
 //     The visible consequence, which is inherent to previewing rather than a
 //     defect: wheel far enough and the selected option leaves the window, so
-//     neither the `>` cursor nor the `[x]` mark is painted and the field shows
+//     neither the `❯` cursor nor the `[x]` mark is painted and the field shows
 //     no selection at all for as long as you are looking elsewhere. The value is
 //     untouched — wheeling back, or moving focus away and returning, brings the
-//     marks straight back.
+//     marks straight back. What made this state confusing was that it used to be
+//     INVISIBLE: nothing on screen distinguished "the window moved" from "the
+//     selection vanished". The painted scrollbar resolves exactly that — the
+//     thumb now SHOWS where the window sits inside the vocabulary — so the
+//     preview semantics stay and the confusion goes.
 //
 // Ctrl-C is NOT in the table on purpose: it is the shell's global binding, so a
 // wedged overlay can always be escaped, and it reaches this modal exactly as it
@@ -48,6 +55,10 @@ import "github.com/marcus/tasks/internal/tui/term/input"
 
 // HandleKey routes one raw key sequence.
 func (f *FieldModal) HandleKey(sequence string) FieldModalOutcome {
+	// A key ends any in-flight scrollbar drag: the pointer gesture handed off
+	// to the keyboard, and a thumb that kept chasing a pointer the hand has
+	// abandoned would scroll whichever field the drag started on.
+	f.scrollDrag = nil
 	if sequence != "\x1b" {
 		// Any input other than a second escape means the user carried on
 		// working, so the discard latch disarms — the task-draft confirmation
@@ -149,10 +160,13 @@ func (f *FieldModal) applyEdit(field *modalField, status input.Result) FieldModa
 
 // clearErrors drops the messages the user is in the middle of answering. Both
 // the field's own error and the host's refusal go, because a refusal about a
-// value that no longer exists is noise.
+// value that no longer exists is noise. An armed action disarms with them: its
+// button and the confirmation message are ONE story, so editing anything
+// retells it from the first press.
 func (f *FieldModal) clearErrors(field *modalField) {
 	field.err = ""
 	f.err = ""
+	f.armedAction = ""
 }
 
 func (f *FieldModal) moveFocus(offset int) {
@@ -221,6 +235,7 @@ func (f *FieldModal) applyQuery(field *modalField) {
 func (f *FieldModal) Submit() FieldModalOutcome {
 	f.guard = false
 	f.err = ""
+	f.armedAction = "" // a submit attempt answers whatever was armed
 	invalid := -1
 	for index, field := range f.fields {
 		field.err = field.validationError()
@@ -282,6 +297,9 @@ func (f *FieldModal) Click(row, column int) FieldModalOutcome {
 	// working, so the discard latch disarms exactly as it does for a key.
 	armed := f.guard
 	f.guard = false
+	if line.scroll != nil && column == line.scrollBarCol {
+		return f.scrollPress(row, line)
+	}
 	switch line.kind {
 	case fieldModalButton:
 		for _, span := range line.spans {
@@ -328,6 +346,105 @@ func (f *FieldModal) Click(row, column int) FieldModalOutcome {
 		return fieldModalHandled()
 	}
 	return fieldModalHandled()
+}
+
+// scrollPress answers a press on one painted scrollbar cell. A press on the
+// thumb starts a drag (recording where inside the thumb the pointer grabbed);
+// a press on the track jumps so the thumb TOP anchors at the click — macOS
+// jump-to-spot, so the thumb never teleports its middle to the pointer.
+func (f *FieldModal) scrollPress(boxRow int, line fieldModalLine) FieldModalOutcome {
+	s := line.scroll
+	// The pressed cell's track index was recorded by the paint — never re-derive
+	// it from arithmetic that could disagree with what was drawn.
+	trackRow := line.scrollRow
+	thumb := ThumbLocFor(s.total, f.scrollOffset(line), s.track, s.track)
+	if !thumb.Has {
+		return fieldModalHandled()
+	}
+	if trackRow >= thumb.Pos && trackRow < thumb.Pos+thumb.Size {
+		f.scrollDrag = &fieldModalScrollDrag{
+			key: line.key, area: line.kind == fieldModalValue,
+			grab: trackRow - thumb.Pos, trackTop: boxRow - trackRow,
+		}
+		return fieldModalHandled()
+	}
+	f.applyScrollOffset(line, OffsetAtRow(s.total, s.visible, s.track, trackRow))
+	return fieldModalHandled()
+}
+
+// Drag continues an in-flight scrollbar drag: the motion's box row becomes a
+// track row via the track origin captured at press, the grab offset restores
+// the pointer's place within the thumb, and the params are rebuilt LIVE from
+// the field — not trusted from the paint — because the vocabulary behind a
+// choice list is a runtime func and a note may have been edited mid-drag.
+func (f *FieldModal) Drag(row int) FieldModalOutcome {
+	if f.scrollDrag == nil {
+		return fieldModalHandled()
+	}
+	d := f.scrollDrag
+	field := f.byKey[d.key]
+	if field == nil {
+		f.scrollDrag = nil
+		return fieldModalHandled()
+	}
+	var total, visible int
+	if d.area {
+		total = field.area.LineCount(field.valueWidth)
+		visible = field.spec.Rows
+	} else {
+		total = len(field.filtered())
+		visible = field.spec.VisibleOptions
+	}
+	trackRow := row - d.trackTop - d.grab // where the thumb top should go
+	target := OffsetAtRow(total, visible, visible, trackRow)
+	current := f.fieldScrollOffset(field, d.area)
+	if target == current {
+		return fieldModalHandled()
+	}
+	if d.area {
+		field.area.ScrollToRow(target)
+	} else {
+		field.offset = target
+	}
+	return fieldModalHandled()
+}
+
+// EndDrag releases the pointer after a scrollbar drag. It reports whether a
+// drag was actually in flight, so a stray release can fall through.
+func (f *FieldModal) EndDrag() bool {
+	inFlight := f.scrollDrag != nil
+	f.scrollDrag = nil
+	return inFlight
+}
+
+// scrollOffset reads the surface's current offset from the painted geometry's
+// owning line.
+func (f *FieldModal) scrollOffset(line fieldModalLine) int {
+	field := f.byKey[line.key]
+	if field == nil {
+		return 0
+	}
+	return f.fieldScrollOffset(field, line.kind == fieldModalValue)
+}
+
+func (f *FieldModal) fieldScrollOffset(field *modalField, area bool) int {
+	if area {
+		return field.area.RowOffset()
+	}
+	return field.offset
+}
+
+// applyScrollOffset moves the pressed surface so its offset becomes target.
+func (f *FieldModal) applyScrollOffset(line fieldModalLine, target int) {
+	field := f.byKey[line.key]
+	if field == nil {
+		return
+	}
+	if line.kind == fieldModalValue {
+		field.area.ScrollToRow(target)
+		return
+	}
+	field.offset = clamp(target, 0, max(len(field.filtered())-field.spec.VisibleOptions, 0))
 }
 
 // placeCaret turns a column into a caret offset by asking the field to invert

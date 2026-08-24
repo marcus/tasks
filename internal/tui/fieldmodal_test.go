@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/marcus/tasks/internal/config"
+	"github.com/marcus/tasks/internal/tui/term/ansi"
 )
 
 // The fixture modal is deliberately NOT the delegate modal.
@@ -500,6 +501,65 @@ func TestFieldModalButtonsAreHittable(t *testing.T) {
 	}
 }
 
+// The status row, buttons, and key chips are a FIXED FOOTER: in a terminal too
+// short for the whole box they pin to the bottom and the FIELD BODY scrolls,
+// because a modal whose submit button scrolls out cannot be submitted by mouse
+// in exactly the terminals that can least afford it. The pinned rows must also
+// stay hittable where they were painted.
+func TestFieldModalFooterPinsToTheBottomWhenTheBoxIsClipped(t *testing.T) {
+	fixture := newFieldModalFixture(t)
+	modal := fixture.modal
+	painted := modal.Render(PlainStyler{}, 70, 14) // far short of modal.Height()
+	stripped := make([]string, len(painted.Lines))
+	for index, line := range painted.Lines {
+		stripped[index] = ansi.Strip(line)
+	}
+	last := stripped[len(stripped)-2] // above the bottom border
+	if !strings.Contains(last, "[tab]") {
+		t.Fatalf("the key chips are not the last body row: %q", last)
+	}
+	buttons := stripped[len(stripped)-3]
+	if !strings.Contains(buttons, "Move") || !strings.Contains(buttons, "Cancel") {
+		t.Fatalf("the buttons are not pinned above the chips: %q", buttons)
+	}
+
+	// And the recorded hit map agrees with the paint: clicking where the submit
+	// button was PAINTED submits, even with fields scrolled out of view.
+	row, span := buttonSpan(t, modal, fieldModalSubmitID)
+	if outcome := modal.Click(row, span.begin); outcome.Result != FieldModalSubmitted {
+		t.Fatalf("clicking the pinned Move button gave %s", outcome.Result)
+	}
+}
+
+// When the budget cannot afford the whole footer, the rows drop by priority:
+// key chips first, then the status line, and the BUTTONS last — a box that
+// cannot show its submit cannot be submitted by mouse.
+func TestFieldModalFooterDropsByPriorityInATinyTerminal(t *testing.T) {
+	fixture := newFieldModalFixture(t)
+	modal := fixture.modal
+	painted := modal.Render(PlainStyler{}, 70, 4) // budget 2: status + buttons, no body
+	stripped := make([]string, 0, len(painted.Lines))
+	for _, line := range painted.Lines {
+		stripped = append(stripped, ansi.Strip(line))
+	}
+	lastBody := stripped[len(stripped)-2]
+	if !strings.Contains(lastBody, "Move") || !strings.Contains(lastBody, "Cancel") {
+		t.Fatalf("the buttons did not survive a tiny budget: %q", lastBody)
+	}
+	for _, row := range stripped[:len(stripped)-2] {
+		if strings.Contains(row, "[tab]") {
+			t.Fatalf("chips outranked the buttons in a tiny budget: %q", row)
+		}
+	}
+
+	// One row less still keeps the buttons as the only footer row.
+	painted = modal.Render(PlainStyler{}, 70, 3) // budget 1: buttons alone
+	lastBody = ansi.Strip(painted.Lines[len(painted.Lines)-2])
+	if !strings.Contains(lastBody, "Move") {
+		t.Fatalf("the buttons did not survive a 3-row budget: %q", lastBody)
+	}
+}
+
 func TestFieldModalClickOutsideTheBoxIsInertOnBothAxes(t *testing.T) {
 	fixture := newFieldModalFixture(t)
 	fixture.modal.HandleKey("x")
@@ -530,10 +590,12 @@ func TestFieldModalClickOutsideTheBoxIsInertOnBothAxes(t *testing.T) {
 	}
 }
 
-// A narrow box truncates its button row, but the spans were recorded against
-// the UNtruncated text. Without a column bound the `clear` action sat at columns
-// 36-54 of a 24-cell box — a dozen columns out on the list behind it — and
-// clicking there invoked it.
+// A narrow box truncates its button row. The guarantee is two-layered now:
+// spans are CLAMPED to the painted interior, so a partially visible button is
+// clickable exactly as far as its paint runs, and a button truncated away
+// entirely is not recorded at all — there is no stale span left to click off
+// the box, which is how the `clear` action once sat a dozen columns out on the
+// list behind it.
 func TestFieldModalATruncatedButtonCannotBeClickedOffTheBox(t *testing.T) {
 	fixture := newFieldModalFixture(t)
 	render := fixture.modal.Render(PlainStyler{}, 24, fixture.modal.Height())
@@ -541,20 +603,32 @@ func TestFieldModalATruncatedButtonCannotBeClickedOffTheBox(t *testing.T) {
 		t.Fatalf("the box painted %d cells, want the clamped 24", render.Width)
 	}
 	before := fieldModalState(fixture.modal)
-	row, span := buttonSpan(t, fixture.modal, "clear")
-	if span.begin < render.Width {
-		t.Fatalf("the clear button starts at %d, inside a %d-cell box — pick a narrower one",
-			span.begin, render.Width)
-	}
-	for column := render.Width; column < span.end+4; column++ {
-		outcome := fixture.modal.Click(row, column)
-		if outcome.Result != FieldModalHandled || outcome.ActionID != "" {
-			t.Fatalf("column %d outside a %d-cell box gave %s/%s",
-				column, render.Width, outcome.Result, outcome.ActionID)
+	for _, line := range fixture.modal.layout {
+		for _, span := range line.spans {
+			if span.id == "clear" {
+				t.Fatalf("the fully truncated clear button is still recorded at [%d,%d)",
+					span.begin, span.end)
+			}
+			if span.end > render.Width-1 {
+				t.Fatalf("span [%d,%d) for %q runs past the interior of a %d-cell box",
+					span.begin, span.end, span.id, render.Width)
+			}
 		}
 	}
+	row, _ := rowOf(t, fixture.modal, fieldModalButton, "", nil)
+	for column := 0; column < render.Width; column++ {
+		outcome := fixture.modal.Click(row, column)
+		if outcome.Result == FieldModalActioned || outcome.ActionID == "clear" {
+			t.Fatalf("column %d invoked %q off a %d-cell box", column, outcome.ActionID, render.Width)
+		}
+	}
+	// The visible buttons still work where they were painted.
+	_, span := buttonSpan(t, fixture.modal, fieldModalSubmitID)
+	if outcome := fixture.modal.Click(row, span.begin); outcome.Result != FieldModalSubmitted {
+		t.Fatalf("clicking Move gave %s", outcome.Result)
+	}
 	if after := fieldModalState(fixture.modal); after != before {
-		t.Fatal("a click past the border changed the modal")
+		t.Fatalf("probe clicks changed the modal:\nbefore: %s\nafter:  %s", before, after)
 	}
 }
 
@@ -784,7 +858,7 @@ func TestFieldModalOpensAsItsOwnModeAndPaintsOverTheList(t *testing.T) {
 		t.Fatalf("focus context is %s", harness.model.FocusContext())
 	}
 	frame := fmt.Sprint(harness.model.View().Content)
-	if !strings.Contains(frame, "Move task") || !strings.Contains(frame, "Section") {
+	if !strings.Contains(frame, "Move task") || !strings.Contains(frame, "SECTION") {
 		t.Fatalf("the box is not painted over the list:\n%s", frame)
 	}
 	harness.pressKeys("\x1b")
@@ -958,4 +1032,407 @@ func TestFieldModalGuardFlashesBeforeItDiscards(t *testing.T) {
 	if harness.model.Mode() != ModeList || harness.model.FieldModal() != nil {
 		t.Fatal("the second escape did not discard")
 	}
+}
+
+// An armed action is ONE story told in two places: its button inverts to the
+// armed look and the border reads as warning. Anything that answers it — a
+// refusal overwriting the message, a submit attempt, an edit — disarms both,
+// because an armed look with no confirmation behind it is a lie about state.
+func TestFieldModalArmingPaintsAndAnythingElseDisarms(t *testing.T) {
+	fixture := newFieldModalFixture(t)
+	modal := fixture.modal
+
+	if modal.ArmedAction() != "" {
+		t.Fatal("a fresh modal is already armed")
+	}
+	if !modal.SetArmedAction("clear") {
+		t.Fatal("arming a declared action failed")
+	}
+	if modal.SetArmedAction("no-such-action") || modal.ArmedAction() != "clear" {
+		t.Fatal("arming an unknown action disturbed the armed one")
+	}
+	for _, button := range modal.modalButtons() {
+		want := ButtonDanger
+		switch button.ID {
+		case fieldModalSubmitID:
+			want = ButtonPrimary
+		case fieldModalCancelID:
+			want = ButtonMuted
+		case "clear":
+			want = ButtonDangerArmed
+		}
+		if button.Variant != want {
+			t.Fatalf("button %s painted variant %d, want %d", button.ID, button.Variant, want)
+		}
+	}
+	if modal.variantForPaint() != BoxWarning {
+		t.Fatal("an armed action left the border neutral")
+	}
+
+	// A host refusal overwrites the confirmation message, so it must disarm.
+	modal.SetError("store refused")
+	if modal.ArmedAction() != "" || modal.variantForPaint() != BoxNeutral {
+		t.Fatal("SetError did not disarm")
+	}
+
+	// Editing disarms, through the same path that clears the messages.
+	modal.SetArmedAction("clear")
+	modal.HandleKey("x")
+	if modal.ArmedAction() != "" {
+		t.Fatal("an edit did not disarm")
+	}
+
+	// A submit attempt answers whatever was armed.
+	modal.SetArmedAction("clear")
+	if outcome := modal.Submit(); outcome.Result != FieldModalSubmitted {
+		t.Fatalf("submit gave %s", outcome.Result)
+	}
+	if modal.ArmedAction() != "" {
+		t.Fatal("submit did not disarm")
+	}
+}
+
+// scrollLines collects every painted scrollbar row for one field, keyed by
+// track row, so tests aim gestures at geometry the paint recorded.
+func scrollLines(t *testing.T, f *FieldModal, key string) map[int]fieldModalLine {
+	t.Helper()
+	out := map[int]fieldModalLine{}
+	for _, line := range f.layout {
+		if line.scroll != nil && line.key == key {
+			if line.scrollRow != len(out) {
+				t.Fatalf("track rows out of order at %d", line.scrollRow)
+			}
+			out[line.scrollRow] = line
+		}
+	}
+	if len(out) == 0 {
+		t.Fatalf("no scrollbar rows were painted for %q", key)
+	}
+	return out
+}
+
+var _ = fmt.Sprint // keep fmt while tests evolve
+
+// A press on the THUMB starts a drag that follows the pointer; a press on the
+// TRACK jumps so the thumb top anchors at the click. Both are answered from
+// the numbers the paint recorded, never re-derived.
+func TestFieldModalOptionScrollbarThumbDragsAndTrackJumps(t *testing.T) {
+	fixture := newFieldModalFixture(t)
+	modal := fixture.modal
+	paint(modal)
+	rows := scrollLines(t, modal, "section")
+	if len(rows) != 3 {
+		t.Fatalf("%d track rows, want 3", len(rows))
+	}
+
+	// Geometry: 6 options, 3 visible → thumb size 1 at track row 0.
+	line0 := rows[0]
+	row0 := bottomBoxRow(t, modal, line0)
+	if outcome := modal.Click(row0, line0.scrollBarCol); outcome.Result != FieldModalHandled {
+		t.Fatalf("thumb press gave %s", outcome.Result)
+	}
+	if modal.scrollDrag == nil || modal.scrollDrag.grab != 0 || modal.scrollDrag.key != "section" {
+		t.Fatalf("thumb press did not start a drag: %+v", modal.scrollDrag)
+	}
+	// A thumb press must not change the selection or the offset.
+	if got := modal.Value("section"); got != "work" || modal.byKey["section"].offset != 0 {
+		t.Fatalf("thumb press scrolled or selected: %q off=%d", got, modal.byKey["section"].offset)
+	}
+
+	// Drag the thumb down: motion to track row 2 → offset OffsetAtRow(6,3,3,2)=3.
+	bottom := rows[2]
+	if outcome := modal.Drag(bottomBoxRow(t, modal, bottom)); outcome.Result != FieldModalHandled {
+		t.Fatalf("drag gave %s", outcome.Result)
+	}
+	if got := modal.byKey["section"].offset; got != 3 {
+		t.Fatalf("drag left offset %d, want 3", got)
+	}
+	if !modal.EndDrag() || modal.EndDrag() {
+		t.Fatal("EndDrag did not clear the drag exactly once")
+	}
+	if got := modal.Value("section"); got != "work" {
+		t.Fatalf("a drag changed the selection: %q", got)
+	}
+
+	// Track jump: click BELOW the thumb on a fresh paint anchors thumb top there.
+	fixture2 := newFieldModalFixture(t)
+	modal2 := fixture2.modal
+	paint(modal2)
+	rows2 := scrollLines(t, modal2, "section")
+	line2 := rows2[2]
+	boxRow := bottomBoxRow(t, modal2, line2)
+	if outcome := modal2.Click(boxRow, line2.scrollBarCol); outcome.Result != FieldModalHandled {
+		t.Fatalf("track jump gave %s", outcome.Result)
+	}
+	if modal2.scrollDrag != nil {
+		t.Fatal("a track jump started a drag")
+	}
+	want := OffsetAtRow(6, 3, 3, 2)
+	if got := modal2.byKey["section"].offset; got != want {
+		t.Fatalf("track jump offset = %d, want %d", got, want)
+	}
+	if got := modal2.Value("section"); got != "work" {
+		t.Fatalf("a track jump changed the selection: %q", got)
+	}
+}
+
+// bottomBoxRow finds the layout row a painted line was recorded at.
+func bottomBoxRow(t *testing.T, f *FieldModal, target fieldModalLine) int {
+	t.Helper()
+	for index, line := range f.layout {
+		if line.scrollRow == target.scrollRow && line.key == target.key && line.kind == target.kind &&
+			line.optionValue == target.optionValue && line.valueRow == target.valueRow {
+			return index
+		}
+	}
+	t.Fatal("painted row vanished from the hit map")
+	return -1
+}
+
+// The note's editor carries its own draggable scrollbar when the text wraps to
+// more rows than the window shows.
+func TestFieldModalNoteScrollbarDragsAndJumps(t *testing.T) {
+	fixture := newFieldModalFixture(t)
+	modal := fixture.modal
+	note := strings.Repeat("a\n", 7) + "b" // 8 single-cell lines
+	modal.SetValue("note", note)
+	modal.SetFocus("note")
+	paint(modal)
+	rows := scrollLines(t, modal, "note")
+
+	// Track jump on a fresh surface: total 8, visible 3 → maxOffset 5;
+	// OffsetAtRow(8,3,3,2) = 5 — the jump lands at the end.
+	line2 := rows[2]
+	boxRow := bottomBoxRow(t, modal, line2)
+	if outcome := modal.Click(boxRow, line2.scrollBarCol); outcome.Result != FieldModalHandled {
+		t.Fatalf("note track jump gave %s", outcome.Result)
+	}
+	paint(modal) // the viewport follows the caret on the next paint
+	if got := modal.byKey["note"].area.RowOffset(); got != 5 {
+		t.Fatalf("note jump RowOffset = %d, want 5", got)
+	}
+
+	// Drag from the thumb: grab at track row 0, motion to track row 1 →
+	// OffsetAtRow(8,3,3,1) = 3.
+	modal.SetValue("note", note)
+	modal.byKey["note"].area.ScrollLines(-10)
+	paint(modal)
+	rows = scrollLines(t, modal, "note")
+	if outcome := modal.Click(bottomBoxRow(t, modal, rows[0]), rows[0].scrollBarCol); outcome.Result != FieldModalHandled {
+		t.Fatalf("note thumb press gave %s", outcome.Result)
+	}
+	if modal.scrollDrag == nil || !modal.scrollDrag.area {
+		t.Fatalf("note thumb press did not start an area drag: %+v", modal.scrollDrag)
+	}
+	if outcome := modal.Drag(bottomBoxRow(t, modal, rows[1])); outcome.Result != FieldModalHandled {
+		t.Fatalf("note drag gave %s", outcome.Result)
+	}
+	paint(modal)
+	if got := modal.byKey["note"].area.RowOffset(); got != 3 {
+		t.Fatalf("note drag RowOffset = %d, want 3", got)
+	}
+	modal.EndDrag()
+}
+
+// The scrollbar column sits INSIDE option rows' cells. Without interception a
+// click there selected whatever option the row carried; it must only scroll.
+func TestFieldModalClickOnScrollbarColumnDoesNotSelectAnOption(t *testing.T) {
+	fixture := newFieldModalFixture(t)
+	modal := fixture.modal
+	paint(modal)
+	rows := scrollLines(t, modal, "section")
+	line := rows[2] // a track press that actually scrolls
+	before := fieldModalState(modal)
+	boxRow := bottomBoxRow(t, modal, line)
+	if outcome := modal.Click(boxRow, line.scrollBarCol); outcome.Result == FieldModalChanged {
+		t.Fatal("a scrollbar click selected an option")
+	}
+	if after := fieldModalState(modal); after == before {
+		t.Fatal("the scrollbar click did nothing at all (expected a scroll)")
+	}
+	if got := modal.Value("section"); got != "work" || modal.scrollDrag != nil {
+		t.Fatalf("scrollbar click selected or started a drag: %q %+v", got, modal.scrollDrag)
+	}
+}
+
+// The drag gesture runs end to end through the model's mouse router, not just
+// through the component: thumb press → motion → release, with a motion before
+// any press falling through to whatever owns the pointer.
+func TestFieldModalScrollbarDragRunsThroughTheModel(t *testing.T) {
+	harness, _ := fieldModalHarness(t, true)
+	harness.model.View()
+	box := harness.model.Overlay()
+	if box == nil {
+		t.Fatal("no overlay was painted")
+	}
+	modal := harness.model.FieldModal()
+	rows := scrollLines(t, modal, "section")
+	line := rows[0]
+	boxRow := bottomBoxRow(t, modal, line)
+
+	// Motion with no drag in flight is not consumed by the modal.
+	before := fieldModalState(modal)
+	if harness.model.HandleMouse(tea.MouseMotionMsg{X: box.Col + line.scrollBarCol, Y: box.Row + boxRow}) {
+		t.Fatal("a bare motion was consumed")
+	}
+	if after := fieldModalState(modal); after != before {
+		t.Fatal("a bare motion changed the modal")
+	}
+
+	// Thumb press starts the drag; motion to track row 2 scrolls; release ends it.
+	if !harness.model.HandleMouse(tea.MouseClickMsg{
+		X: box.Col + line.scrollBarCol, Y: box.Row + boxRow, Button: tea.MouseLeft}) {
+		t.Fatal("the thumb press was not consumed")
+	}
+	if modal.scrollDrag == nil {
+		t.Fatal("the press did not start a drag")
+	}
+	bottom := rows[2]
+	if !harness.model.HandleMouse(tea.MouseMotionMsg{
+		X: box.Col + line.scrollBarCol, Y: box.Row + bottomBoxRow(t, modal, bottom)}) {
+		t.Fatal("the drag motion was not consumed")
+	}
+	if got := modal.byKey["section"].offset; got != 3 {
+		t.Fatalf("drag offset = %d, want 3", got)
+	}
+	if !harness.model.HandleMouse(tea.MouseReleaseMsg{
+		X: box.Col + line.scrollBarCol, Y: box.Row + boxRow}) {
+		t.Fatal("the release was not consumed")
+	}
+	if modal.scrollDrag != nil {
+		t.Fatal("the release did not end the drag")
+	}
+	if got := modal.Value("section"); got != "work" {
+		t.Fatalf("the drag changed the selection: %q", got)
+	}
+}
+
+// Every recorded button span must sit exactly under the cells that button was
+// painted into. The rest of the button-click tests derive their column from
+// buttonSpan(), i.e. from the very map under test, so they stay self-consistent
+// while the paint and the hit map drift apart — which is how a one-cell shift
+// shipped, putting the blank left of Release and Undelegate inside those
+// destructive buttons.
+//
+// This compares against the painted line instead, at several widths including
+// the ones where a button is partly and then wholly truncated.
+func TestFieldModalButtonSpansMatchTheCellsTheyArePaintedIn(t *testing.T) {
+	for _, width := range []int{16, 24, 29, 40, 58, 72} {
+		fixture := newFieldModalFixture(t)
+		render := fixture.modal.Render(PlainStyler{}, width, fixture.modal.Height())
+
+		// The painted button row, as box columns: index 0 is the left rail.
+		var painted []rune
+		for index, line := range fixture.modal.layout {
+			if line.kind == fieldModalButton {
+				painted = []rune(ansi.Strip(render.Lines[index]))
+				break
+			}
+		}
+		if painted == nil {
+			t.Fatalf("width %d painted no button row", width)
+		}
+
+		for _, line := range fixture.modal.layout {
+			for _, span := range line.spans {
+				label := buttonLabelFor(fixture.modal, span.id)
+				if label == "" {
+					continue // not a button span
+				}
+				if span.begin < 1 || span.end > render.Width-1 {
+					t.Fatalf("width %d: %q recorded [%d,%d), outside the interior of a %d-cell box",
+						width, span.id, span.begin, span.end, render.Width)
+				}
+				if span.end > len(painted) {
+					t.Fatalf("width %d: %q recorded [%d,%d) past the %d painted cells",
+						width, span.id, span.begin, span.end, len(painted))
+				}
+				// A narrowed row is painted with a trailing ellipsis. A button
+				// the user can still partly see stays clickable, so compare
+				// what was painted as a prefix of the label rather than
+				// demanding the whole of it.
+				got := strings.TrimRight(string(painted[span.begin:span.end]), " ")
+				got = strings.TrimSuffix(got, "…")
+				if strings.TrimSpace(got) == "" || !strings.HasPrefix(label, got) {
+					t.Fatalf("width %d: %q recorded [%d,%d) which paints %q, not the start of %q\nrow: %q",
+						width, span.id, span.begin, span.end, got, label, string(painted))
+				}
+				// The cell before the span must not belong to this button: an
+				// off-by-one to the left is exactly the bug, and it hides
+				// whenever the span still overlaps its own label.
+				if span.begin > 1 && painted[span.begin-1] != ' ' {
+					t.Fatalf("width %d: %q starts at %d but %q is painted immediately before it\nrow: %q",
+						width, span.id, span.begin, string(painted[span.begin-1]), string(painted))
+				}
+			}
+		}
+	}
+}
+
+// buttonLabelFor returns the visible label of a modal button, or "" if the id
+// is not one.
+func buttonLabelFor(f *FieldModal, id string) string {
+	for _, button := range f.modalButtons() {
+		if button.ID == id {
+			return button.plain()
+		}
+	}
+	return ""
+}
+
+// The ctrl-s chip has to describe what ctrl-s does. Return is what inserts a
+// newline in a note; ctrl-s submits. The chip read "newline in note", so a user
+// following the on-screen hint to break a line delegated the task instead.
+//
+// Asserting the label against the key's actual effect, rather than against a
+// fixed string, is what keeps the two from drifting apart again.
+func TestFieldModalNoteChipNamesWhatTheKeyDoes(t *testing.T) {
+	fixture := newFieldModalFixture(t)
+	fixture.modal.Render(PlainStyler{}, 72, fixture.modal.Height())
+
+	var chip KeyChip
+	for _, candidate := range fixture.modal.footerChips() {
+		if candidate.Key == "ctrl-s" {
+			chip = candidate
+		}
+	}
+	if chip.Key == "" {
+		t.Fatal("a modal with a note field advertises no ctrl-s chip")
+	}
+	if !strings.Contains(chip.Label, fixture.modal.submitLabel) {
+		t.Fatalf("the ctrl-s chip reads %q, which does not name the submit action %q",
+			chip.Label, fixture.modal.submitLabel)
+	}
+
+	// And the key really does submit, so the label is not merely consistent
+	// with itself.
+	focusFieldByKey(t, fixture.modal, "note")
+	result := fixture.modal.HandleKey("\x13")
+	if result.Result != FieldModalSubmitted {
+		t.Fatalf("ctrl-s in a note returned %q, want %q", result.Result, FieldModalSubmitted)
+	}
+
+	// Return is the one that adds the newline the old label promised.
+	other := newFieldModalFixture(t)
+	other.modal.Render(PlainStyler{}, 72, other.modal.Height())
+	focusFieldByKey(t, other.modal, "note")
+	before := other.modal.Value("note")
+	if returned := other.modal.HandleKey("\r"); returned.Result == FieldModalSubmitted {
+		t.Fatal("return submitted from a note instead of inserting a newline")
+	}
+	if other.modal.Value("note") == before {
+		t.Fatal("return did not insert a newline in the note")
+	}
+}
+
+// focusFieldByKey moves the modal's focus to the named field.
+func focusFieldByKey(t *testing.T, f *FieldModal, key string) {
+	t.Helper()
+	for range f.fields {
+		if field := f.focused(); field != nil && field.spec.Key == key {
+			return
+		}
+		f.moveFocus(1)
+	}
+	t.Fatalf("no field %q to focus", key)
 }
