@@ -1306,3 +1306,133 @@ func TestFieldModalScrollbarDragRunsThroughTheModel(t *testing.T) {
 		t.Fatalf("the drag changed the selection: %q", got)
 	}
 }
+
+// Every recorded button span must sit exactly under the cells that button was
+// painted into. The rest of the button-click tests derive their column from
+// buttonSpan(), i.e. from the very map under test, so they stay self-consistent
+// while the paint and the hit map drift apart — which is how a one-cell shift
+// shipped, putting the blank left of Release and Undelegate inside those
+// destructive buttons.
+//
+// This compares against the painted line instead, at several widths including
+// the ones where a button is partly and then wholly truncated.
+func TestFieldModalButtonSpansMatchTheCellsTheyArePaintedIn(t *testing.T) {
+	for _, width := range []int{16, 24, 29, 40, 58, 72} {
+		fixture := newFieldModalFixture(t)
+		render := fixture.modal.Render(PlainStyler{}, width, fixture.modal.Height())
+
+		// The painted button row, as box columns: index 0 is the left rail.
+		var painted []rune
+		for index, line := range fixture.modal.layout {
+			if line.kind == fieldModalButton {
+				painted = []rune(ansi.Strip(render.Lines[index]))
+				break
+			}
+		}
+		if painted == nil {
+			t.Fatalf("width %d painted no button row", width)
+		}
+
+		for _, line := range fixture.modal.layout {
+			for _, span := range line.spans {
+				label := buttonLabelFor(fixture.modal, span.id)
+				if label == "" {
+					continue // not a button span
+				}
+				if span.begin < 1 || span.end > render.Width-1 {
+					t.Fatalf("width %d: %q recorded [%d,%d), outside the interior of a %d-cell box",
+						width, span.id, span.begin, span.end, render.Width)
+				}
+				if span.end > len(painted) {
+					t.Fatalf("width %d: %q recorded [%d,%d) past the %d painted cells",
+						width, span.id, span.begin, span.end, len(painted))
+				}
+				// A narrowed row is painted with a trailing ellipsis. A button
+				// the user can still partly see stays clickable, so compare
+				// what was painted as a prefix of the label rather than
+				// demanding the whole of it.
+				got := strings.TrimRight(string(painted[span.begin:span.end]), " ")
+				got = strings.TrimSuffix(got, "…")
+				if strings.TrimSpace(got) == "" || !strings.HasPrefix(label, got) {
+					t.Fatalf("width %d: %q recorded [%d,%d) which paints %q, not the start of %q\nrow: %q",
+						width, span.id, span.begin, span.end, got, label, string(painted))
+				}
+				// The cell before the span must not belong to this button: an
+				// off-by-one to the left is exactly the bug, and it hides
+				// whenever the span still overlaps its own label.
+				if span.begin > 1 && painted[span.begin-1] != ' ' {
+					t.Fatalf("width %d: %q starts at %d but %q is painted immediately before it\nrow: %q",
+						width, span.id, span.begin, string(painted[span.begin-1]), string(painted))
+				}
+			}
+		}
+	}
+}
+
+// buttonLabelFor returns the visible label of a modal button, or "" if the id
+// is not one.
+func buttonLabelFor(f *FieldModal, id string) string {
+	for _, button := range f.modalButtons() {
+		if button.ID == id {
+			return button.plain()
+		}
+	}
+	return ""
+}
+
+// The ctrl-s chip has to describe what ctrl-s does. Return is what inserts a
+// newline in a note; ctrl-s submits. The chip read "newline in note", so a user
+// following the on-screen hint to break a line delegated the task instead.
+//
+// Asserting the label against the key's actual effect, rather than against a
+// fixed string, is what keeps the two from drifting apart again.
+func TestFieldModalNoteChipNamesWhatTheKeyDoes(t *testing.T) {
+	fixture := newFieldModalFixture(t)
+	fixture.modal.Render(PlainStyler{}, 72, fixture.modal.Height())
+
+	var chip KeyChip
+	for _, candidate := range fixture.modal.footerChips() {
+		if candidate.Key == "ctrl-s" {
+			chip = candidate
+		}
+	}
+	if chip.Key == "" {
+		t.Fatal("a modal with a note field advertises no ctrl-s chip")
+	}
+	if !strings.Contains(chip.Label, fixture.modal.submitLabel) {
+		t.Fatalf("the ctrl-s chip reads %q, which does not name the submit action %q",
+			chip.Label, fixture.modal.submitLabel)
+	}
+
+	// And the key really does submit, so the label is not merely consistent
+	// with itself.
+	focusFieldByKey(t, fixture.modal, "note")
+	result := fixture.modal.HandleKey("\x13")
+	if result.Result != FieldModalSubmitted {
+		t.Fatalf("ctrl-s in a note returned %q, want %q", result.Result, FieldModalSubmitted)
+	}
+
+	// Return is the one that adds the newline the old label promised.
+	other := newFieldModalFixture(t)
+	other.modal.Render(PlainStyler{}, 72, other.modal.Height())
+	focusFieldByKey(t, other.modal, "note")
+	before := other.modal.Value("note")
+	if returned := other.modal.HandleKey("\r"); returned.Result == FieldModalSubmitted {
+		t.Fatal("return submitted from a note instead of inserting a newline")
+	}
+	if other.modal.Value("note") == before {
+		t.Fatal("return did not insert a newline in the note")
+	}
+}
+
+// focusFieldByKey moves the modal's focus to the named field.
+func focusFieldByKey(t *testing.T, f *FieldModal, key string) {
+	t.Helper()
+	for range f.fields {
+		if field := f.focused(); field != nil && field.spec.Key == key {
+			return
+		}
+		f.moveFocus(1)
+	}
+	t.Fatalf("no field %q to focus", key)
+}

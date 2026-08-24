@@ -1299,5 +1299,17 @@ func (a *TextArea) ScrollToRow(row int) {
 	if height < 1 {
 		height = 1
 	}
+	// Which edge to park the caret on depends on the direction of travel,
+	// because Render derives the offset from whichever edge the caret crossed.
+	// Scrolling down, the caret lands past the window's bottom and Render
+	// computes caret-height+1, which is the row asked for. Scrolling up, the
+	// caret lands above the window and Render computes the offset as the caret
+	// row itself — so parking it on the bottom edge landed height-1 rows low,
+	// and landed there for good: the next identical gesture computed a delta of
+	// zero and never converged. Going up, ask for the top edge instead.
+	if row <= a.rowOffset {
+		a.ScrollLines(row - a.CaretRow())
+		return
+	}
 	a.ScrollLines(row + height - 1 - a.CaretRow())
 }

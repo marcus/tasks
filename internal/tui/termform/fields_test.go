@@ -442,3 +442,47 @@ func cellWidth(text string) int {
 	}
 	return total
 }
+
+// An absolute scroll has to land on the row it was given in BOTH directions.
+// Scrolling in a text area is caret motion, and Render derives the window from
+// whichever edge the caret crossed, so parking the caret on the bottom edge
+// unconditionally landed every upward jump height-1 rows low — and landed there
+// permanently, because the next identical gesture then computed a delta of
+// zero. The note's scrollbar could not reach the top of a note.
+func TestTextAreaScrollToRowLandsExactlyInBothDirections(t *testing.T) {
+	const width, height = 24, 4
+	text := strings.TrimRight(strings.Repeat("a wrapped line of text\n", 12), "\n")
+
+	area := NewTextArea(Base{FieldKey: "note", Value: text})
+	area.Render(width, height)
+	area.ScrollLines(len(strings.Split(text, "\n")) * 2) // park at the bottom
+	area.Render(width, height)
+	bottom := area.rowOffset
+	if bottom == 0 {
+		t.Fatal("the fixture never scrolled, so nothing below is being tested")
+	}
+
+	// Upward, to the very top, and idempotent once there.
+	for attempt := 1; attempt <= 3; attempt++ {
+		area.ScrollToRow(0)
+		area.Render(width, height)
+		if area.rowOffset != 0 {
+			t.Fatalf("attempt %d: ScrollToRow(0) from %d landed at %d, want 0",
+				attempt, bottom, area.rowOffset)
+		}
+	}
+
+	// Downward still lands exactly.
+	area.ScrollToRow(5)
+	area.Render(width, height)
+	if area.rowOffset != 5 {
+		t.Fatalf("downward ScrollToRow(5) landed at %d, want 5", area.rowOffset)
+	}
+
+	// And upward again from a mid-buffer position, not just from the bottom.
+	area.ScrollToRow(2)
+	area.Render(width, height)
+	if area.rowOffset != 2 {
+		t.Fatalf("upward ScrollToRow(2) from 5 landed at %d, want 2", area.rowOffset)
+	}
+}

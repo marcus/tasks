@@ -555,17 +555,27 @@ func (f *FieldModal) modalButtons() []ModalButton {
 }
 
 // appendButtonRow paints every affordance and records its columns. Component
-// spans index the returned row text; the recorded ones gain the one
-// left-border cell, because clicks arrive in box coordinates. Spans are clamped
-// to the interior the paint actually shows: a narrow box truncates the row, but
-// the recorded spans were built against the full text, and an unclamped end
-// would let a click on the RIGHT BORDER invoke a button whose label was cut
-// off — the exact hole the both-axes bound in Click exists to close.
+// spans index the text PaintButtonRow returned; the recorded ones are box
+// columns, because that is what clicks arrive in. Two cells separate the two
+// coordinate systems, and both have to be counted: Render lays each row out as
+// rail + text, which puts row.text at box column 1, and this row's text is
+// itself " " + the painted buttons. Counting only the rail put every span one
+// cell left of its paint, so the blank between two buttons invoked the button
+// to its right — on this modal that is Release and Undelegate.
+//
+// Spans are clamped to the interior the paint actually shows: a narrow box
+// truncates the row, but the recorded spans were built against the full text,
+// and an unclamped end would let a click on the RIGHT BORDER invoke a button
+// whose label was cut off — the exact hole the both-axes bound in Click exists
+// to close. The clamp is applied after the shift, so a button that begins past
+// the interior is dropped rather than being clamped into a live one-cell span.
 func (f *FieldModal) appendButtonRow(out []fieldModalLine, styler Styler, inner int) []fieldModalLine {
+	const textOrigin = 2 // one rail cell, one leading space
 	text, spans := PaintButtonRow(styler, f.modalButtons())
 	recorded := make([]fieldModalSpan, 0, len(spans))
 	for _, span := range spans {
-		begin, end := span.Begin+1, min(span.End+1, inner+1) // inner+1: first cell past the interior
+		begin := span.Begin + textOrigin
+		end := min(span.End+textOrigin, inner+1) // inner+1: first cell past the interior
 		if begin >= end {
 			continue // truncated away entirely
 		}
@@ -598,7 +608,7 @@ func (f *FieldModal) footerChips() []KeyChip {
 			// other, so it is a convenience, not the only place the key is
 			// documented — the exception is stated in fieldmodalinput.go's
 			// contract and in the API docs Packet G reads.
-			chips = append(chips, KeyChip{Key: "ctrl-s", Label: "newline in note"})
+			chips = append(chips, KeyChip{Key: "ctrl-s", Label: f.submitLabel + " from a note"})
 			break
 		}
 	}
