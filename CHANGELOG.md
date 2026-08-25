@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.14.0] - 2026-08-24
+
+### Features
+
+- **The TUI's modals adopt Sidecar's design language.** The delegate modal is the first surface rewritten on the new chrome primitives: boxed form fields instead of bare lines, buttons as real interactive surfaces, a fixed footer that stays put as content scrolls, and full scrollbars whose thumb shows where the window sits in a long note. The chrome is built from named theme slots (`internal/tui/term/theme`), so an embedding host — Sidecar today, anything else later — projects its own palette into them through the existing `pkg/tui.ThemeOptions` seam rather than having colors baked into the renderer.
+- **Scrollbars are draggable.** Grab the thumb and it tracks the pointer, preserving the offset you grabbed it at; click anywhere on the track to jump there. The math is state-free and ported from Sidecar's implementation, so the two behave the same way under the same gesture.
+
+### Bug Fixes
+
+- **Clicking just left of a button no longer invokes it.** Button hit spans were computed one cell left of where the buttons were painted, so the blank column beside a button was live — on the delegate modal that meant Release and Undelegate could fire from a click that visually missed them. At narrow widths the clamp was applied to already-shifted coordinates, so a button truncated off the screen entirely stayed clickable, which is precisely the case the clamp exists to prevent.
+- **The ctrl-s hint names what ctrl-s does.** The chip read "newline in note" while ctrl-s submits and Return is what inserts a newline, so following the on-screen hint to break a line delegated the task instead.
+- **An upward scrollbar jump lands where you clicked.** `ScrollToRow` always parked the caret on the window's bottom edge, but the renderer derives the offset from whichever edge the caret crossed, so jumping upward settled height-1 rows low and stayed there.
+
 ## [1.13.0] - 2026-08-22
 
 ### Dependencies
