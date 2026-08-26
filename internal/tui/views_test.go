@@ -100,6 +100,93 @@ func TestNextGivesAContextlessTaskItsOwnGroup(t *testing.T) {
 	}
 }
 
+// nextEmptyStore has dated, prioritized, open work and not one NEXT mark — the
+// shape every capture/approve/date workflow ends up in.
+const nextEmptyStore = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0003","title":"Work"}
+{"type":"task","id":"cccc0001","parent":"aaaa0003","state":"TODO","priority":"A","title":"Dated but unmarked","deadline":"2026-07-15"}
+{"type":"task","id":"cccc0002","parent":"aaaa0003","state":"TODO","title":"Also dated","deadline":"2026-07-20"}
+{"type":"task","id":"cccc0003","parent":"aaaa0003","state":"TODO","title":"Undated"}
+`
+
+// A Next tab with nothing marked NEXT has to explain itself. Blank is the one
+// answer it must not give: dating lands work in TODO, so this list sits beside
+// a FULL agenda, and an empty pane reads as a broken tab rather than as work
+// nobody has named yet.
+func TestNextEmptyStatePointsAtTheAgendaAndSaysHowToMark(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: nextEmptyStore})
+	for _, useTree := range []bool{true, false} {
+		// 72 cells is a narrow-but-ordinary pane: the copy has to survive the
+		// meta column's truncation with the command still on it.
+		text := strings.Join(rowTextsOf(nextRows(t, harness, useTree, 72)), "\n")
+		for _, want := range []string{
+			"NEXT",
+			"No explicit next actions.",
+			"2 dated items are waiting on Agenda.",
+			"Mark one with N, or: tasks state <ref> NEXT",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("tree=%v: the empty Next tab never said %q:\n%s", useTree, want, text)
+			}
+		}
+	}
+}
+
+// The placeholder is a stand-in for rows, so it obeys the rows' contract: one
+// shared right edge, and a body padded to the same width as any other line.
+func TestNextEmptyStateKeepsTheSharedRowWidth(t *testing.T) {
+	const width = 100
+	harness := newModelHarness(t, harnessOptions{live: nextEmptyStore})
+	for _, row := range nextRows(t, harness, true, width) {
+		want := width
+		if row.Chrome {
+			want += CursorField
+		}
+		if got := len([]rune(row.Text)); got != want {
+			t.Fatalf("row is %d cells wide, want %d: %q", got, want, row.Text)
+		}
+	}
+}
+
+// Nothing about a POPULATED Next tab changes: the groups are still the
+// contexts, and no placeholder prose leaks in beside real actions.
+func TestNextWithActionsIsUntouchedByTheEmptyState(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.SwitchView(ViewNext)
+	text := rowTexts(harness)
+	for _, unwanted := range []string{"No explicit next actions.", "waiting on Agenda"} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("the empty state painted over a populated list:\n%s", text)
+		}
+	}
+	for _, want := range []string{"@computer", "@home", "Book flight", "Water the plants"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("a populated Next tab lost %q:\n%s", want, text)
+		}
+	}
+}
+
+// nextRows builds the Next tab in either mode at a known width. The flat mode
+// is the one a `/` search drops into, and it needs the same empty state.
+func nextRows(t *testing.T, harness *modelHarness, useTree bool, width int) []Row {
+	t.Helper()
+	harness.model.SwitchView(ViewNext)
+	read := harness.model.ReadModel()
+	return BuildRows(BuildRequest{
+		View: ViewNext, Styler: PlainStyler{}, Queries: read.Queries(),
+		Items: read.Items(), Tree: read.Queries().Tree().Roots, UseTree: useTree,
+		Collapsed: map[string]bool{}, Width: width,
+	})
+}
+
+func rowTextsOf(rows []Row) []string {
+	out := []string{}
+	for _, row := range rows {
+		out = append(out, row.Text)
+	}
+	return out
+}
+
 func TestQuadrantsAlwaysPaintsAllFourBucketsWithAPlaceholder(t *testing.T) {
 	harness := newModelHarness(t, harnessOptions{live: nestedStore})
 	harness.model.SwitchView(ViewQuadrants)

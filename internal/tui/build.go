@@ -122,7 +122,7 @@ func nextFlat(request BuildRequest) []Row {
 		}
 		sections = append(sections, Section{Label: group.Key, Slot: "context", Rows: rows})
 	}
-	return renderSections(request, sections, dateMeta(request))
+	return renderSections(request, nextSections(request, sections), dateMeta(request))
 }
 
 func quadrantsFlat(request BuildRequest) []Row {
@@ -198,7 +198,7 @@ func nextTree(request BuildRequest) []Row {
 		}
 		sections = append(sections, Section{Label: group.Key, Slot: "context", Rows: rows})
 	}
-	return renderSections(request, sections, dateMeta(request))
+	return renderSections(request, nextSections(request, sections), dateMeta(request))
 }
 
 func quadrantsTree(request BuildRequest) []Row {
@@ -246,6 +246,55 @@ func matchingAncestor(request BuildRequest, query ViewQuery, node *taskquery.Nod
 		ancestor = ancestor.Parent
 	}
 	return false
+}
+
+// -- the next empty state --------------------------------------------------
+
+// nextSections hands the Next builders their sections back, or — when nothing
+// carries an explicit NEXT mark — the one block that explains the emptiness.
+func nextSections(request BuildRequest, sections []Section) []Section {
+	if len(sections) > 0 {
+		return sections
+	}
+	return []Section{nextEmptyState(request)}
+}
+
+// nextEmptyState is the block a Next tab with no marked actions paints instead
+// of a blank pane.
+//
+// An empty Next is not the same fact as an empty task list. Capture, approval
+// and dating all land work in TODO, so the usual reason this list is empty is
+// that nobody has NAMED a next action — while the agenda next door is full. A
+// blank pane says "broken"; this block says which of the two it is, counts what
+// the agenda is holding, and names both ways to mark a row.
+//
+// The count comes from the SAME items the tabs are showing — already narrowed
+// by the active `/` and `@` filters — so the number here and the number of rows
+// on Agenda cannot disagree.
+func nextEmptyState(request BuildRequest) Section {
+	styler := request.styler()
+	dated := len(request.query(ViewAgenda).Select(request.Items))
+	lines := []string{"No explicit next actions."}
+	switch {
+	case dated == 0:
+		lines = append(lines, "No dated work on Agenda either.")
+	case dated == 1:
+		lines = append(lines, "1 dated item is waiting on Agenda.")
+	default:
+		lines = append(lines, fmt.Sprintf("%d dated items are waiting on Agenda.", dated))
+	}
+	// Short on purpose: the meta column takes eleven cells and the placeholder
+	// indent seven, so a line much past fifty characters loses its tail — and
+	// the tail here is the command.
+	lines = append(lines, "Mark one with N, or: tasks state <ref> NEXT")
+	rows := make([]Row, 0, len(lines))
+	for _, line := range lines {
+		// Padded like a row, as every placeholder is: it occupies rows' places,
+		// and a frame that paints a background must find the same width under it.
+		rows = append(rows, withMeta(request,
+			headerRow(styler.Paint("muted", placeholderIndent+line)), "", ""))
+	}
+	return Section{Label: "NEXT", Slot: "context", Rows: rows}
 }
 
 // -- inbox and approvals ---------------------------------------------------

@@ -20,6 +20,14 @@ func (s *surfaceContext) next(args []string) int {
 	if hasFlag(args, "--json") {
 		return s.emitItemsJSON(queries, items)
 	}
+	// Silence is the one thing an empty NEXT list must not be. Nothing marked
+	// NEXT is not the same fact as nothing to do — dated work usually still sits
+	// on the agenda, unmarked — and a blank screen cannot tell the two apart or
+	// say which command fixes it.
+	if len(items) == 0 {
+		out("No next actions. Dated work is on the agenda; mark one with: tasks state <ref> NEXT")
+		return 0
+	}
 
 	const noContext = "(no context)"
 	byContext := map[string][]store.Item{}

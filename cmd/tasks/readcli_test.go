@@ -293,8 +293,28 @@ func TestNextHidesUnavailableActions(t *testing.T) {
 {"type":"task","id":"bbbb0002","parent":"bbbb0001","state":"NEXT","title":"held","scheduled":"2027-01-01"}
 `
 	dir := seedStore(t, fixture)
-	if result := runCLI(t, dir, "next"); result.stdout != "" {
+	if result := runCLI(t, dir, "next"); strings.Contains(result.stdout, "held") {
 		t.Fatalf("a task held behind a future start date is not a next action: %q", result.stdout)
+	}
+}
+
+// An empty NEXT list is a fact worth SAYING. Printing nothing is
+// indistinguishable from a broken command, and it hides the two things the
+// reader needs: that dated work is still on the agenda, and which command marks
+// a next action. `--json` keeps its empty array — a caller parses shapes, not
+// prose.
+func TestNextReportsEmptyWithoutChangingJSON(t *testing.T) {
+	fixture := `{"type":"meta","version":2}
+{"type":"section","id":"bbbb0001","title":"Work"}
+{"type":"task","id":"bbbb0002","parent":"bbbb0001","state":"TODO","title":"dated but unmarked","deadline":"2026-07-01"}
+`
+	dir := seedStore(t, fixture)
+	want := "No next actions. Dated work is on the agenda; mark one with: tasks state <ref> NEXT\n"
+	if got := runCLI(t, dir, "next").stdout; got != want {
+		t.Fatalf("empty state = %q, want %q", got, want)
+	}
+	if got := runCLI(t, dir, "next", "--json").stdout; got != "[]\n" {
+		t.Fatalf("--json = %q, want an empty array", got)
 	}
 }
 
