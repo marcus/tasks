@@ -211,6 +211,11 @@ var Registry = []Entry{
 	entry(Entry{Sequences: []string{"R"}, DisplayKey: "R", Description: "show / hide rejected proposals", Contexts: []Context{List}, Handler: "toggle_rejected_view", Palette: PaletteAlways}),
 	entry(Entry{Sequences: []string{"K"}, DisplayKey: "K", Description: "raise priority (→ A)", Contexts: []Context{List, Detail}, Handler: "raise_priority", Palette: PaletteWhen("selected_action_available?")}),
 	entry(Entry{Sequences: []string{"J"}, DisplayKey: "J", Description: "lower priority (→ none)", Contexts: []Context{List, Detail}, Handler: "lower_priority", Palette: PaletteWhen("selected_action_available?")}),
+	// Uppercase: lowercase `n` already answers a modal confirmation, and this key
+	// moves the task's STATE rather than the cursor. It sits beside K/J because
+	// it is the same shape of action — one keystroke, one field, one undo step —
+	// and filling the Next tab should cost no more than raising a priority.
+	entry(Entry{Sequences: []string{"N"}, DisplayKey: "N", Description: "mark NEXT (fills the Next tab)", FooterLabel: "Mark NEXT", Contexts: []Context{List, Detail}, Handler: "mark_next", Availability: "next_state_action_available?", Palette: PaletteWhen("next_state_action_available?")}),
 	entry(Entry{Sequences: []string{"o"}, DisplayKey: "o", Description: "open task link(s) in browser", Contexts: []Context{List, Detail}, Handler: "open_link", Palette: PaletteWhen("link_action_available?")}),
 	entry(Entry{Sequences: []string{"y"}, DisplayKey: "y", Description: "yank stable task id", Contexts: []Context{List, Detail}, Handler: "yank_ref", Palette: PaletteWhen("selected_action_available?")}),
 	entry(Entry{Sequences: []string{"Y"}, DisplayKey: "Y", Description: "yank task as markdown", Contexts: []Context{List, Detail}, Handler: "yank_markdown", Palette: PaletteWhen("selected_action_available?")}),

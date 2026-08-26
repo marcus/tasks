@@ -403,13 +403,20 @@ func (m *Model) refuseUnavailable(entry shortcuts.Entry) {
 		m.Flash("ordering requires the unfiltered Outline tab")
 	case "delegate_selected", "set_work_ref_selected":
 		m.refuseDelegation()
+	case "mark_next":
+		m.refuseStateAction("marked NEXT")
 	}
 }
 
 // refuseDelegation is Ruby's `unavailable_delegation`: a consumed delegation key
 // still owes the reader a reason, because silently swallowing D on a proposal
 // reads as a broken keyboard.
-func (m *Model) refuseDelegation() {
+func (m *Model) refuseDelegation() { m.refuseStateAction("delegated") }
+
+// refuseStateAction says why a key that only applies to live, accepted work was
+// swallowed on this row. verb completes "... can't be <verb>", so every member
+// of the family refuses in one voice and only the last word changes.
+func (m *Model) refuseStateAction(verb string) {
 	if m.CurrentProject() != nil {
 		m.needsTask()
 		return
@@ -420,10 +427,10 @@ func (m *Model) refuseDelegation() {
 		return
 	}
 	if isProposedState(item.State) {
-		m.Flash("approve the proposal first \u2014 a proposal can't be delegated")
+		m.Flash("approve the proposal first \u2014 a proposal can't be " + verb)
 		return
 	}
-	m.Flash(strings.ToLower(item.State) + " tasks can't be delegated")
+	m.Flash(strings.ToLower(item.State) + " tasks can't be " + verb)
 }
 
 // listKey tries the detail context first only when the detail panel owns
