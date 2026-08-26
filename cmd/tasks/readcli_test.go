@@ -293,8 +293,50 @@ func TestNextHidesUnavailableActions(t *testing.T) {
 {"type":"task","id":"bbbb0002","parent":"bbbb0001","state":"NEXT","title":"held","scheduled":"2027-01-01"}
 `
 	dir := seedStore(t, fixture)
-	if result := runCLI(t, dir, "next"); result.stdout != "" {
-		t.Fatalf("a task held behind a future start date is not a next action: %q", result.stdout)
+	// Exactly the empty state and nothing else. The held task is also the only
+	// dated row here and it is unavailable, so the agenda is empty too and the
+	// message must not point at one.
+	want := "No next actions. Mark one with: tasks state <ref> NEXT\n"
+	if got := runCLI(t, dir, "next").stdout; got != want {
+		t.Fatalf("a task held behind a future start date is not a next action: %q, want %q", got, want)
+	}
+}
+
+// An empty NEXT list is a fact worth SAYING. Printing nothing is
+// indistinguishable from a broken command, and it hides the two things the
+// reader needs: where the unmarked work went, and which command marks a next
+// action. The agenda half of that is a CLAIM about the store, so it is only
+// made when the agenda really has rows — a reader sent to an empty list is
+// worse off than one told nothing. `--json` keeps its empty array either way:
+// a caller parses shapes, not prose.
+func TestNextReportsEmptyWithoutChangingJSON(t *testing.T) {
+	dated := seedStore(t, `{"type":"meta","version":2}
+{"type":"section","id":"bbbb0001","title":"Work"}
+{"type":"task","id":"bbbb0002","parent":"bbbb0001","state":"TODO","title":"dated but unmarked","deadline":"2026-07-01"}
+`)
+	want := "No next actions. Dated work is on the agenda; mark one with: tasks state <ref> NEXT\n"
+	if got := runCLI(t, dated, "next").stdout; got != want {
+		t.Fatalf("empty state = %q, want %q", got, want)
+	}
+	if got := runCLI(t, dated, "next", "--json").stdout; got != "[]\n" {
+		t.Fatalf("--json = %q, want an empty array", got)
+	}
+
+	// One undated TODO: `tasks agenda` prints nothing here, so neither may
+	// `tasks next` promise anything is on it.
+	undated := seedStore(t, `{"type":"meta","version":2}
+{"type":"section","id":"bbbb0001","title":"Work"}
+{"type":"task","id":"bbbb0002","parent":"bbbb0001","state":"TODO","title":"undated and unmarked"}
+`)
+	if got := runCLI(t, undated, "agenda").stdout; got != "" {
+		t.Fatalf("the fixture was supposed to have an empty agenda: %q", got)
+	}
+	want = "No next actions. Mark one with: tasks state <ref> NEXT\n"
+	if got := runCLI(t, undated, "next").stdout; got != want {
+		t.Fatalf("empty state = %q, want %q", got, want)
+	}
+	if got := runCLI(t, undated, "next", "--json").stdout; got != "[]\n" {
+		t.Fatalf("--json = %q, want an empty array", got)
 	}
 }
 
