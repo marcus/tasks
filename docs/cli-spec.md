@@ -569,7 +569,10 @@ still sorts below an undated `A`. The same order applies to `list --proposed`
 (`taskquery.Queries.RankByPriorityThenDue`, which also ranks `--agent-ready`).
 The default `--open` list, agenda, and Outline are unaffected and stay in
 file/DFS order. Proposals stay out of agenda, next, quadrants,
-inbox, project rollups, Outline, and the default open list. They cannot recur
+inbox, project rollups, Outline, and the default open list. `priority`,
+`retitle`, `tag`, `note`, and `move` all resolve a proposal so its presentation
+and its place in the tree can be corrected before the decision; none of them
+changes its state. They cannot recur
 or transition directly to DONE. Approval/rejection are checked atomic Store
 mutations with revision support in the application/API, undo history, and
 leaves-first handling for proposal trees. A proposal is retained live until it
@@ -738,7 +741,8 @@ configured vocabulary is `422` quoting the set that was actually enforced. The
 `human`, a bare `mode` means `agent`) and an explicit `kind` always wins.
 
 Normal create, move, and state operations cannot strand accepted descendants
-beneath a proposed task. In particular, transitioning an accepted parent to
+beneath a proposed task — `move --under` a proposal is offered only to another
+proposal, and the store refuses the accepted case outright. In particular, transitioning an accepted parent to
 PROPOSED refuses while any accepted descendant remains. The explicit
 leaf-first approval command is the narrow exception: it may temporarily accept
 a proposed leaf beneath a proposed parent so the parent can be decided next.
@@ -927,6 +931,10 @@ back cleanly):
 (mutually exclusive with `--project`, which files under a section). `move`'s
 destination is exactly one of a positional section, `--under <ref>` (nest the
 whole subtree below another task), or `--top` (unnest to the section level).
+`move` resolves a PROPOSED source as readily as an open one — relocating a
+proposal never changes its state — and, like `capture --under`, opens its
+destination refs to proposals only when the moving subtree is itself proposed,
+because accepted work may not sit under an undecided proposal.
 Over-cap moves/captures exit 1 with a depth message and write nothing; nesting a
 task under itself or a descendant exits 1 (a cycle); `move --top` on an
 already-top-level task is a no-op (prints "already at top level", exit 0, burns
@@ -964,7 +972,11 @@ destination is allowed. Existing `move <ref> --under <ref>`, `move <ref>
 --top`, and positional section moves remain append operations.
 
 Source, parent, and anchor task refs use normal exact-id/line/fuzzy resolution:
-no match or ambiguity exits 2. Missing flag values, contradictory destinations,
+no match or ambiguity exits 2. A PROPOSED source resolves like an open one; a
+proposed parent or anchor resolves only when the source is itself proposed, and
+is otherwise refused — by ref resolution (exit 2, naming the state) or, when a
+flag such as `--include-done` widens the ref scope past it, by the store's
+placement backstop (exit 1). Missing flag values, contradictory destinations,
 a missing section, a self-anchor, an anchor outside the requested parent,
 cycles, and excessive depth exit 1 and write nothing. A placement that already
 describes the exact slot succeeds with exit 0, writes nothing, and creates no
@@ -1276,8 +1288,8 @@ display text to parse.
 | `workref <ref> <url-or-id\|off\|none>` | `work-ref` | ✅ | Record the single reference to where the work lives (ticket, PR, brief, session); setting overwrites, and `off` or `none` (either word, case-insensitive, on every surface) clears it. At most 500 characters, one line, no control characters. The owner may always write it; an agent adds `--worker <id>` to prove its claim still matches (deliberately **not** defaulted from `TASKS_WORKER_ID`, so an exported worker id cannot silently change who is writing). Survives completion and archival. |
 | `claim <ref> --worker <id> [--json]` | | ✅ | Atomic compare-and-set from `ready` to `claimed` under the store mutation lock — exactly one worker can ever hold a task. `--worker` defaults from `TASKS_WORKER_ID`; the flag always wins, and missing both is a usage error (exit 1). A lost race exits 1 with `conflict: already claimed by <holder> at <ts>` on stderr, plus a `{"error":"conflict","action":"claim","id","holder","at","message"}` object on stdout under `--json`. Success prints `claimed by <id>: <title>`; `--json` re-emits the **full canonical task resource** (the `show --json` shape) so an agent claims and reads its authority in one step. |
 | `release <ref> --worker <id> [--note "text"] [--force]` | | ✅ | Hand a claim back (`claimed → ready`, assignee dropped, `work_ref` kept). Requires the worker id matching the live claim unless `--force` (the owner override, which needs no worker). `--note` appends a blocker line to the body through the ordinary note seam, folded into the **same undo step** as the release. A worker mismatch exits 1 with `conflict: claim is held by <holder>, not "<id>"`. Prints `released → agent-ready (<mode>): <title>`. |
-| `move <ref> ("Section" \| --under <ref> \| --top)` | | ✅ | Relocate a task's whole subtree by re-pointing its `parent`. Exactly one destination: a positional **section** name (out of `Inbox` into `Work`), `--under <ref>` to **nest** below another task, or `--top` to **unnest** to the section level. A section name resolves in the same widening tiers as `capture --project` (exact top-level, exact any-level, substring top-level, substring any-level; case-insensitive), so a **nested project sub-section** — e.g. a project under the "Projects" root — is a valid destination, not just a top-level heading. Section and `--top` moves are never depth-checked; `--under` is capped at `max_depth` (over-cap exits 1 with a depth message). Nesting under itself or a descendant exits 1 (cycle). `--top` on an already-top-level task prints "already at top level" (exit 0, no-op). See Nesting. |
-| `move <ref> ["Section" \| --under <ref>] --before <ref>` | | ✅ | Place the whole subtree before a stable sibling. Without an explicit destination, infer the anchor's current parent; otherwise require the anchor to be a direct child of the named task/section. Not combinable with `--top`. Exact errors and human/JSON/dry-run output are frozen under Manual sibling placement above. |
+| `move <ref> ("Section" \| --under <ref> \| --top)` | | ✅ | Relocate a task's whole subtree by re-pointing its `parent`. Exactly one destination: a positional **section** name (out of `Inbox` into `Work`), `--under <ref>` to **nest** below another task, or `--top` to **unnest** to the section level. A section name resolves in the same widening tiers as `capture --project` (exact top-level, exact any-level, substring top-level, substring any-level; case-insensitive), so a **nested project sub-section** — e.g. a project under the "Projects" root — is a valid destination, not just a top-level heading. Section and `--top` moves are never depth-checked; `--under` is capped at `max_depth` (over-cap exits 1 with a depth message). Nesting under itself or a descendant exits 1 (cycle). `--top` on an already-top-level task prints "already at top level" (exit 0, no-op). Resolves accepted open tasks and PROPOSED tasks: filing a proposal is a location change, not a decision, so the task stays PROPOSED and the destination refs may name a proposal only when the moving subtree is itself proposed (accepted work under an undecided proposal is refused — exit 2 at ref resolution, or exit 1 from the store backstop when `--include-done` widens the ref scope). See Nesting. |
+| `move <ref> ["Section" \| --under <ref>] --before <ref>` | | ✅ | Place the whole subtree before a stable sibling. Without an explicit destination, infer the anchor's current parent; otherwise require the anchor to be a direct child of the named task/section. Not combinable with `--top`. The source and anchor resolve in the same scope as the append forms — a PROPOSED source is accepted, and a proposed anchor or `--under` parent only when the moving subtree is itself proposed. Exact errors and human/JSON/dry-run output are frozen under Manual sibling placement above. |
 | `recur <ref> <schedule>` | `repeat`, `every` | ✅ | Attach/replace the `recur` value on the task's date. `<schedule>` is any input form the one parser takes (see Recurrence): an interval cookie (`.+1w`/`+2d`/`++1m`) or friendly interval (`weekly`/`2w`/`every 3 days`), a calendar phrase (`every mon,wed`/`weekdays`/`the 15th`/`2nd tuesday`/`last day of the month`/`every july 4`), or the canonical calendar grammar (`w:mon,wed`/`2w:mon`/`m:15`/`m:last`/`m:2tue`/`y:07-04`, optional `+` one-hop prefix); `off`/`none` clears it. Input is stored canonical, so two spellings of one schedule store identically. `--from schedule\|completion` picks `+`/`.+` for a bare **interval** (default `completion` → `.+`); with a calendar schedule it exits 1 naming the prefix the input lacks — bare input is told to write `+w:mon` for one-hop, `+`-prefixed input is told to drop the `+` for catch-up. `--on <date>` seeds a `deadline` when the task has no date yet (else it errors); the seed and the schedule land in **one checked transaction**, so a refused schedule leaves the file byte-unchanged and a successful one is a single `undo`. Unreadable input exits 1 with the parser's reason (quoting the input verbatim) plus an example line; a schedule that could never fire from the task's stamp is refused by the store with its reason. Success prints `↻ <humanized> (<canonical>) → next <date> (<Dow>)` above the touched headline, where `<date>` is the task's stamp after the write — the stamp *is* the next occurrence, the same convention `done` prints; `--json` carries that date as `"next"` beside `touched`. `--dry-run`/`--json`/`--include-done`. |
 | `recur <ref>` | | ✅ | Read-only preview — no schedule argument, no write. Prints the headline, `↻ <humanized> (<canonical>)`, then `--count N` occurrence dates (default 5, max 50). The list **starts with the task's stamp** — that is its next occurrence — and projects forward from there, so `--count 5` is the stamp plus four. A task with no recurrence says so and exits 0. `--json` emits `{"id","line","title","recur","recur_human","anchor","next":[…]}` with `next` starting at the stamp likewise (`recur`/`recur_human` null when absent, `"error"` added when nothing can be projected past the stamp — the stamp itself still lists). Rejects `--from`/`--on`/`--dry-run`, which only make sense when setting. |
 | `recur --explain "<schedule>"` | | ✅ | Taskless parse/preview: no ref, no store access. Prints `<canonical> — <humanized>` and the next `--count N` dates (default 5) from today. Three outcomes: understood and projected (exit 0); understood but never firing from today's anchor (dates empty, reason on stderr, exit 1); unreadable (parser reason plus the example line on stderr, exit 1). `off` reports that it clears the schedule (exit 0). `--json` emits the engine payload verbatim — `{"input","canonical","human","next":[ISO dates]}`, with `"error"` present on either failure and dates as ISO strings — on stdout, with the same exit codes. The agent-facing contract: propose a schedule, explain it, verify the dates, then commit. |
