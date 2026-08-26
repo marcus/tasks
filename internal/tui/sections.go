@@ -169,6 +169,36 @@ func ruledHead(request BuildRequest, head, right, rightSlot string, left int) st
 	return head + " " + styler.Paint(rightSlot, right)
 }
 
+// subRule is a heading INSIDE a section: the same ruled line a section rule
+// paints, quieter, and indented one field so it reads as dividing a block rather
+// than opening one. `head` is already painted and already carries that indent.
+//
+// It is the shared spelling behind the outline's urgency bands and the intake
+// view's project groups. Both are the same gesture — a block, cut into named
+// runs, each with its own count on the shared meta column — and two of them
+// would have drifted.
+func subRule(request BuildRequest, head string, count int) Row {
+	styler := request.styler()
+	right := fmt.Sprintf("%d", count)
+	left, ok := metaColumns(request, CursorField)
+	if !ok {
+		return chromeRow(head + styler.Paint("muted", " "+right))
+	}
+	return chromeRow(ruledHead(request, head, right, "muted", left))
+}
+
+// groupRule is one project's heading inside an intake block.
+//
+// The label sits on the BAND column — one field in from the pane edge, one field
+// out from the titles under it — so a reader scanning intake sees the theme
+// before the rows, and the rows still start where every other row in the view
+// starts. The title is painted verbatim: a project's name is its author's words.
+func groupRule(request BuildRequest, label string, count int) Row {
+	styler := request.styler()
+	head := strings.Repeat(" ", CursorField) + styler.Paint("project", label)
+	return subRule(request, head, count)
+}
+
 // withMeta right-aligns one row's meta value into the shared column.
 //
 // It runs over a BUILT row rather than inside a body builder because the left

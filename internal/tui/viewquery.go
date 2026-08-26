@@ -118,8 +118,7 @@ func (q ViewQuery) ViewRule(item store.Item) bool {
 	case ViewInbox:
 		return item.State == "INBOX"
 	case ViewProjects:
-		project := q.projectName(item)
-		return isOpenState(item.State) && project != "" && project != "Inbox"
+		return isOpenState(item.State) && !unfiledProject(q.projectName(item))
 	default:
 		return false
 	}
@@ -161,9 +160,38 @@ func (q ViewQuery) GroupKeys(item store.Item) []string {
 		return []string{q.Queries.QuadrantOf(item, q.UrgentDays)}
 	case ViewProjects:
 		return []string{q.projectName(item)}
+	case ViewInbox:
+		// Intake groups by the SAME enclosing section Projects groups by — see
+		// projectName — so a task filed under Aviator sits with the rest of the
+		// Aviator intake rather than beside whatever chore shares its file line.
+		// Everything with no project of its own collapses into ONE bucket, which
+		// SortedGroups then keeps at the end of the block.
+		return []string{q.intakeGroupKey(item)}
 	default:
 		return []string{""}
 	}
+}
+
+// UnfiledIntake is the one bucket every intake row with no project of its own
+// lands in: a task sitting directly in the file's Inbox section, and a task
+// sitting under no section at all, are the same thing to a reader triaging
+// them — unfiled. It is a display key as well as a bucket key, so it is spelled
+// the way the file spells that section rather than as a marker word.
+const UnfiledIntake = "Inbox"
+
+// unfiledProject reports a project name that is not a project: the Inbox, or no
+// enclosing section at all. Projects excludes those rows; intake gathers them
+// into its trailing group. One spelling, so the two views cannot drift on what
+// counts as filed.
+func unfiledProject(name string) bool { return name == "" || name == UnfiledIntake }
+
+// intakeGroupKey is an intake row's bucket: its project, or UnfiledIntake.
+func (q ViewQuery) intakeGroupKey(item store.Item) string {
+	name := q.projectName(item)
+	if unfiledProject(name) {
+		return UnfiledIntake
+	}
+	return name
 }
 
 // sortKey is the ordering tuple for one item, as three comparable components.
@@ -265,34 +293,128 @@ func (q ViewQuery) GroupedNodes(nodes []*taskquery.Node) map[string][]*taskquery
 	return groups
 }
 
-// SortedGroups orders the buckets. Every view but Projects orders by key text;
-// Projects orders by the soonest date anywhere in the bucket, then by key.
+// groupItems adapts the flat item path onto the node-shaped grouping API by
+// wrapping each item in a throwaway node. The alternative is two copies of the
+// grouping policy, one per shape, and they would drift.
+func groupItems(query ViewQuery, items []store.Item) map[string][]*taskquery.Node {
+	nodes := make([]*taskquery.Node, 0, len(items))
+	for index := range items {
+		nodes = append(nodes, &taskquery.Node{Item: &items[index]})
+	}
+	return query.GroupedNodes(nodes)
+}
+
+// SortedGroups orders the buckets. Most views order by key text; Projects
+// orders by the soonest date anywhere in the bucket, then by key, and Inbox
+// borrows that same sequence outright — see orderGroups.
 func (q ViewQuery) SortedGroups(groups map[string][]*taskquery.Node) []Group {
 	out := make([]Group, 0, len(groups))
 	for key, nodes := range groups {
 		out = append(out, Group{Key: key, Nodes: nodes})
 	}
-	if q.View == ViewProjects {
-		soonest := func(group Group) float64 {
-			best := math.Inf(1)
-			for _, node := range group.Nodes {
-				if key := q.temporalSortKey(*node.Item); key < best {
-					best = key
-				}
-			}
-			return best
-		}
-		sort.SliceStable(out, func(left, right int) bool {
-			leftKey, rightKey := soonest(out[left]), soonest(out[right])
-			if leftKey != rightKey {
-				return leftKey < rightKey
-			}
-			return out[left].Key < out[right].Key
-		})
+	return q.orderGroups(out)
+}
+
+// orderGroups is the group order alone, over buckets already built. It is
+// separate from SortedGroups because the approvals queue arrives pre-ranked and
+// must keep that rank INSIDE each bucket — see GroupItemsInOrder — while still
+// laying the buckets out the way every other grouped view does.
+func (q ViewQuery) orderGroups(groups []Group) []Group {
+	out := append([]Group{}, groups...)
+	if q.View != ViewProjects && q.View != ViewInbox {
+		sort.SliceStable(out, func(left, right int) bool { return out[left].Key < out[right].Key })
 		return out
 	}
-	sort.SliceStable(out, func(left, right int) bool { return out[left].Key < out[right].Key })
+	// Inbox does not compute a project order of its own; it adopts the Projects
+	// view's. Two orders derived from two different sets of rows would disagree —
+	// the approvals block holds proposals, the accepted block holds captures, and
+	// each would rank the same two projects by whatever dates its own handful of
+	// rows carried. One borrowed sequence keeps the two blocks, and the two tabs,
+	// telling the same story.
+	ranks := map[string]int{}
+	if q.View == ViewInbox {
+		ranks = q.projectRanks()
+	}
+	soonest := func(group Group) float64 {
+		best := math.Inf(1)
+		for _, node := range group.Nodes {
+			if key := q.temporalSortKey(*node.Item); key < best {
+				best = key
+			}
+		}
+		return best
+	}
+	sort.SliceStable(out, func(left, right int) bool {
+		// The unfiled bucket is a REMAINDER, not a project, so it goes last
+		// whatever dates it happens to carry. Interleaving it would put "things
+		// I have not decided where to put" in the middle of the themes, which is
+		// the one place a triage pass cannot use it. Projects never produces the
+		// bucket at all, so the term is inert there.
+		leftUnfiled, rightUnfiled := out[left].Key == UnfiledIntake, out[right].Key == UnfiledIntake
+		if leftUnfiled != rightUnfiled {
+			return rightUnfiled
+		}
+		// A section the Projects view lists comes in that view's sequence. A
+		// section it does not list — a holding pen that contains nothing but
+		// proposals, say — has no place in that sequence, so it falls in behind
+		// the projects and orders itself by the rule Projects itself uses.
+		leftRank, leftKnown := ranks[out[left].Key]
+		rightRank, rightKnown := ranks[out[right].Key]
+		if leftKnown != rightKnown {
+			return leftKnown
+		}
+		if leftKnown && leftRank != rightRank {
+			return leftRank < rightRank
+		}
+		leftKey, rightKey := soonest(out[left]), soonest(out[right])
+		if leftKey != rightKey {
+			return leftKey < rightKey
+		}
+		return out[left].Key < out[right].Key
+	})
 	return out
+}
+
+// projectRanks is the Projects view's own group order, as key → position.
+//
+// It is measured over the WHOLE live store, unfiltered: a `/` search or an `@`
+// context decides which groups are PAINTED, not what sequence they come in, and
+// an order that reshuffled while a filter was typed would be no order at all.
+func (q ViewQuery) projectRanks() map[string]int {
+	ranks := map[string]int{}
+	if q.Queries == nil {
+		return ranks
+	}
+	projects := NewViewQuery(ViewProjects, q.Queries, q.UrgentDays, q.ShowDeferred, nil)
+	for position, group := range projects.SortedGroups(groupItems(projects, q.Queries.LiveItems())) {
+		ranks[group.Key] = position
+	}
+	return ranks
+}
+
+// GroupItemsInOrder buckets items by GroupKeys, PRESERVING the order they were
+// given inside each bucket, and returns the buckets in the view's group order.
+//
+// It is the approvals queue's path: that list is already ranked by the core's
+// shared triage order, and re-sorting a bucket by the view's own key would throw
+// that ranking away. Eligibility is the caller's — the queue's rows are PROPOSED
+// and no view rule admits them.
+func (q ViewQuery) GroupItemsInOrder(items []store.Item) []Group {
+	held := append([]store.Item{}, items...)
+	groups := []Group{}
+	index := map[string]int{}
+	for position := range held {
+		for _, key := range q.GroupKeys(held[position]) {
+			slot, seen := index[key]
+			if !seen {
+				slot = len(groups)
+				index[key] = slot
+				groups = append(groups, Group{Key: key})
+			}
+			groups[slot].Nodes = append(groups[slot].Nodes, &taskquery.Node{Item: &held[position]})
+		}
+	}
+	return q.orderGroups(groups)
 }
 
 func (q ViewQuery) available(item store.Item) bool {
