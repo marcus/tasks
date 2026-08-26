@@ -80,7 +80,7 @@ Every exported name in `pkg/tui` is part of the contract:
 | `.Theme` (`ThemeOptions{Name, Colors, ReplaceColors}`) | `Colors` is an overlay by default |
 | `.Environment` | Determinism/test seam; nil snapshots `os.Environ` |
 | `Model`: `Init`, `Update`, `View(w,h)`, `Close`, `Discard`, `Invoke`, `CommandAvailable`, `FocusContext`, `ConsumesTextInput`, `CurrentView`, `Contexts`, `QuitRequested`, `ClearQuitRequest`, `LoadError`, `Warnings` | |
-| `ExportBindings` / `ExportCommands` / `ExportContexts` | Projections of the one shortcut registry: today 355 bindings, 310 commands, 14 contexts |
+| `ExportBindings` / `ExportCommands` / `ExportContexts` | Projections of the one shortcut registry: today 373 bindings, 328 commands, 15 contexts |
 | `Binding`, `Command`, `ContextMetadata`, `FocusContext`, `View` | Field names and values are the contract, not just the types |
 
 `Close` and `Discard` share one `sync.Once`: the first to run wins, the other is

@@ -60,6 +60,7 @@ func (m *Model) handlers() map[string]func(key string) {
 		"toggle_rejected_view":          func(string) { m.ToggleRejected() },
 		"raise_priority":                func(string) { m.BumpPriority(-1) },
 		"lower_priority":                func(string) { m.BumpPriority(1) },
+		"mark_next":                     func(string) { m.MarkNextSelected() },
 		"open_date_popup":               func(string) { m.OpenDatePopup() },
 		"open_recur_popup":              func(string) { m.OpenRecurPopup() },
 		"rename_project":                func(string) { m.RenameProject() },
@@ -181,7 +182,14 @@ func (m *Model) availability(name string) bool {
 	case "link_action_available?":
 		item := m.CurrentItem()
 		return item != nil && m.read != nil && len(m.read.Queries().Links(*item)) > 0
-	case "delegation_action_available?":
+	// Both families act on LIVE, accepted work and nothing else. They are named
+	// apart because they refuse in their own words — see refuseUnavailable — and
+	// because either could gain its own rule without dragging the other with it.
+	//
+	// `N` stays available on a row that is ALREADY NEXT: the action is
+	// idempotent, and dropping it from the palette the moment it lands would
+	// make the entry flicker in and out as the cursor moves.
+	case "delegation_action_available?", "next_state_action_available?":
 		item := m.CurrentItem()
 		return item != nil && isOpenState(item.State)
 	case "ordering_action_available?":
@@ -583,6 +591,42 @@ func (m *Model) BumpPriority(delta int) {
 		m.Flash("priority cleared: " + item.Title)
 	}
 	id := item.ID
+	m.Refresh()
+	m.reselect(id)
+}
+
+// MarkNextSelected is `N`: promote the selected open task to NEXT so it lands on
+// the Next tab, in ONE undo step.
+//
+// It does not toggle. `N` means "this is a next action", and a second press
+// leaves it one — a key that quietly demoted the task back to TODO would make
+// the state depend on how many times it had been pressed, which is not
+// something the row shows.
+func (m *Model) MarkNextSelected() {
+	if m.CurrentProject() != nil {
+		m.needsTask()
+		return
+	}
+	item := m.CurrentItem()
+	if item == nil {
+		m.Flash("nothing selected")
+		return
+	}
+	if !isOpenState(item.State) {
+		m.refuseStateAction("marked NEXT")
+		return
+	}
+	if item.State == "NEXT" {
+		// Already there. No write, so no empty undo step to rewind past, and no
+		// flash: the row itself already says NEXT.
+		return
+	}
+	id, title := item.ID, item.Title
+	result, found := m.patchSelected(id, store.FieldState, "NEXT", "next: "+title)
+	if m.flashPatchRefusal(result, found) {
+		return
+	}
+	m.Flash("→ NEXT: " + title)
 	m.Refresh()
 	m.reselect(id)
 }
