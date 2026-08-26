@@ -137,6 +137,7 @@ func quadrantsFlat(request BuildRequest) []Row {
 func inboxFlatSection(request BuildRequest) []Row {
 	query := request.query(ViewInbox)
 	return intakeGroupRows(request, query.SortedGroups(groupItems(query, request.Items)),
+		oneTaskEach,
 		func(node *taskquery.Node) []Row {
 			item := *node.Item
 			// The marker gutter is the inbox VIEW's column, not tree mode's: the
@@ -217,11 +218,13 @@ func quadrantsTree(request BuildRequest) []Row {
 func inboxTreeSection(request BuildRequest) []Row {
 	query := request.query(ViewInbox)
 	anchors := query.GroupedNodes(maximalAnchors(request, query))
-	return intakeGroupRows(request, query.SortedGroups(anchors), func(anchor *taskquery.Node) []Row {
-		return appendSubtree(request, nil, anchor, "",
-			func(item store.Item) string { return urgencyBand(request, item) },
-			func(item store.Item) string { return taskBody(request, item) })
-	})
+	return intakeGroupRows(request, query.SortedGroups(anchors),
+		func(anchor *taskquery.Node) int { return intakeTaskCount(request, query, anchor) },
+		func(anchor *taskquery.Node) []Row {
+			return appendSubtree(request, nil, anchor, "",
+				func(item store.Item) string { return urgencyBand(request, item) },
+				func(item store.Item) string { return taskBody(request, item) })
+		})
 }
 
 // maximalAnchors is the NEXT/INBOX anchor rule: a matching node anchors unless
@@ -357,6 +360,7 @@ func rejectedRows(request BuildRequest) []Row {
 func approvalRows(request BuildRequest, proposals []store.Item) []Row {
 	query := request.query(ViewInbox)
 	return intakeGroupRows(request, query.GroupItemsInOrder(proposals),
+		oneTaskEach,
 		func(node *taskquery.Node) []Row {
 			item := *node.Item
 			return []Row{{
@@ -380,21 +384,28 @@ func approvalRows(request BuildRequest, proposals []store.Item) []Row {
 // Selection is untouched by any of this. Headings are chrome, so they are not
 // selectable, and every task row still carries the same Item and therefore the
 // same durable id the cursor follows across a rebuild.
-func intakeGroupRows(request BuildRequest, groups []Group, body func(*taskquery.Node) []Row) []Row {
+//
+// `count` is how many TASKS a group's badge stands for, which is not how many
+// rows it painted — see intakeTaskCount.
+func intakeGroupRows(request BuildRequest, groups []Group, count func(*taskquery.Node) int,
+	body func(*taskquery.Node) []Row) []Row {
+
 	type block struct {
-		key  string
-		rows []Row
+		key   string
+		tasks int
+		rows  []Row
 	}
 	blocks := []block{}
 	for _, group := range groups {
-		rows := []Row{}
+		current := block{key: group.Key}
 		for _, node := range group.Nodes {
-			rows = append(rows, body(node)...)
+			current.tasks += count(node)
+			current.rows = append(current.rows, body(node)...)
 		}
-		if len(rows) == 0 {
+		if len(current.rows) == 0 {
 			continue
 		}
-		blocks = append(blocks, block{key: group.Key, rows: rows})
+		blocks = append(blocks, current)
 	}
 	headed := len(blocks) > 1 || (len(blocks) == 1 && blocks[0].key != UnfiledIntake)
 	out := []Row{}
@@ -406,10 +417,38 @@ func intakeGroupRows(request BuildRequest, groups []Group, body func(*taskquery.
 		if len(out) > 0 {
 			out = append(out, chromeRow(""))
 		}
-		out = append(out, groupRule(request, current.key, countSelectable(current.rows)))
+		out = append(out, groupRule(request, current.key, current.tasks))
 		out = append(out, current.rows...)
 	}
 	return out
+}
+
+// oneTaskEach is the count rule for a list of rows that are each exactly one
+// task: the approvals queue, and the flat inbox a `/` search drops the view
+// into. Nothing rides along and nothing folds, so the group's tasks are its
+// nodes.
+func oneTaskEach(*taskquery.Node) int { return 1 }
+
+// intakeTaskCount is how many INBOX TASKS an anchor's subtree holds — what a
+// group heading in tree mode counts.
+//
+// It is the rule Model.intakeCounts spells for the section badge, applied one
+// group at a time, and it is deliberately NOT a row count. Tree mode rides
+// non-matching descendants along under a matching anchor for context, so rows
+// overcount; and collapsing an anchor hides rows without emptying the group, so
+// rows shrink under a fold. Either way the headings would stop summing to the
+// badge above them, and a reader would be told two different numbers about the
+// same list. So it walks the visible subtree, ignoring collapse, and counts only
+// what the badge counts.
+func intakeTaskCount(request BuildRequest, query ViewQuery, node *taskquery.Node) int {
+	total := 0
+	if node.Task() && query.Matching(*node.Item) {
+		total = 1
+	}
+	for _, child := range visibleChildren(request, node) {
+		total += intakeTaskCount(request, query, child)
+	}
+	return total
 }
 
 // -- outline ---------------------------------------------------------------

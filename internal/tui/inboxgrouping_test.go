@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -15,6 +16,9 @@ import (
 //
 //   - the approvals queue is ranked A, B, C, so the Bakery flour order lands
 //     BETWEEN the two Aviator proposals when the queue is left flat;
+//   - the two Aviator proposals rank in the reverse of both their line order and
+//     their alphabetical order, so a group that re-sorted its own bucket by
+//     either would be caught;
 //   - the unfiled captures sit at the head of the file, so they lead the
 //     accepted block when it is left in line order.
 //
@@ -28,8 +32,8 @@ const intakeGroupingFixture = `{"type":"meta","version":2}
 {"type":"section","id":"aaaa0011","parent":"aaaa0010","title":"Aviator"}
 {"type":"task","id":"cccc0001","parent":"aaaa0011","state":"INBOX","title":"aviator radio check"}
 {"type":"task","id":"cccc0003","parent":"aaaa0011","state":"INBOX","title":"aviator logbook"}
-{"type":"task","id":"cccc0005","parent":"aaaa0011","state":"PROPOSED","priority":"A","title":"aviator checkride prep"}
-{"type":"task","id":"cccc0007","parent":"aaaa0011","state":"PROPOSED","priority":"C","title":"aviator oil change"}
+{"type":"task","id":"cccc0005","parent":"aaaa0011","state":"PROPOSED","priority":"C","title":"aviator checkride prep"}
+{"type":"task","id":"cccc0007","parent":"aaaa0011","state":"PROPOSED","priority":"A","title":"aviator oil change"}
 {"type":"task","id":"cccc0009","parent":"aaaa0011","state":"NEXT","title":"aviator flight review","deadline":"2026-07-16"}
 {"type":"section","id":"aaaa0012","parent":"aaaa0010","title":"Bakery"}
 {"type":"task","id":"cccc0002","parent":"aaaa0012","state":"INBOX","title":"bakery chore"}
@@ -80,6 +84,36 @@ func intakeSections(t *testing.T, harness *modelHarness) intakeLayout {
 	return layout
 }
 
+// intakeHeadings is the badge each group heading in one block carries, keyed by
+// its label. A rule is `label ─────… count`, so the label is the first field and
+// the badge is the last — the fixtures here keep project titles to one word.
+func intakeHeadings(t *testing.T, harness *modelHarness, want string) map[string]int {
+	t.Helper()
+	counts := map[string]int{}
+	block := ""
+	for _, row := range harness.model.Rows() {
+		text := strings.TrimSpace(row.Text)
+		switch {
+		case strings.HasPrefix(text, "APPROVALS"):
+			block = "approvals"
+			continue
+		case strings.HasPrefix(text, "INBOX"):
+			block = "accepted"
+			continue
+		}
+		if row.Item != nil || text == "" || block != want {
+			continue
+		}
+		fields := strings.Fields(text)
+		badge, err := strconv.Atoi(fields[len(fields)-1])
+		if err != nil {
+			t.Fatalf("group heading %q carries no count: %v", text, err)
+		}
+		counts[fields[0]] = badge
+	}
+	return counts
+}
+
 func equalStrings(got, want []string) bool {
 	return strings.Join(got, "|") == strings.Join(want, "|")
 }
@@ -102,9 +136,12 @@ func TestInboxGroupsBothIntakeBlocksByProject(t *testing.T) {
 			layout := intakeSections(t, harness)
 
 			// The two Aviator proposals are neighbours here even though the
-			// queue's own ranking puts the Bakery flour order between them.
+			// queue's own ranking puts the Bakery flour order between them —
+			// and INSIDE the group they keep that ranking, so the A-priority
+			// oil change leads the C-priority checkride prep even though the
+			// checkride prep comes first by both line and title.
 			wantApprovals := []string{
-				"# Aviator", "aviator checkride prep", "aviator oil change",
+				"# Aviator", "aviator oil change", "aviator checkride prep",
 				"# Bakery", "bakery flour order",
 				"# Inbox", "unfiled idea",
 			}
@@ -189,6 +226,73 @@ func TestInboxOmitsEmptyProjectGroups(t *testing.T) {
 	}
 }
 
+// A group heading counts TASKS, the same rule the section badge above it counts
+// by — not the rows it painted. Tree mode rides a non-matching descendant along
+// under a matching anchor, and folding an anchor hides rows without emptying the
+// group; a heading that counted rows would overcount in the first case and
+// shrink in the second, and the headings would stop summing to the badge.
+func TestInboxGroupHeadingsCountTasksNotRows(t *testing.T) {
+	live := `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0010","title":"Projects"}
+{"type":"section","id":"aaaa0011","parent":"aaaa0010","title":"Aviator"}
+{"type":"task","id":"cccc0001","parent":"aaaa0011","state":"INBOX","title":"aviator capture"}
+{"type":"task","id":"cccc0002","parent":"cccc0001","state":"NEXT","title":"aviator rider"}
+{"type":"task","id":"cccc0003","parent":"aaaa0011","state":"INBOX","title":"aviator second capture"}
+{"type":"section","id":"aaaa0012","parent":"aaaa0010","title":"Bakery"}
+{"type":"task","id":"cccc0004","parent":"aaaa0012","state":"INBOX","title":"bakery capture"}
+`
+	harness := newModelHarness(t, harnessOptions{live: live})
+	harness.model.SwitchView(ViewInbox)
+	badge := harness.model.intakeCounts(harness.model.filteredItems()).Inbox
+
+	// The Aviator block paints three rows — two captures and the NEXT rider
+	// riding along under the first — and stands for two inbox tasks.
+	headings := intakeHeadings(t, harness, "accepted")
+	if headings["Aviator"] != 2 || headings["Bakery"] != 1 {
+		t.Fatalf("group headings = %v, want Aviator 2 and Bakery 1:\n%s",
+			headings, rowTexts(harness))
+	}
+	if total := headings["Aviator"] + headings["Bakery"]; total != badge {
+		t.Fatalf("the headings count %d between them, the INBOX badge says %d:\n%s",
+			total, badge, rowTexts(harness))
+	}
+
+	harness.model.collapsed["cccc0001"] = true
+	harness.model.RefreshRows()
+	folded := intakeHeadings(t, harness, "accepted")
+	if folded["Aviator"] != headings["Aviator"] || folded["Bakery"] != headings["Bakery"] {
+		t.Fatalf("folding an anchor moved the headings from %v to %v:\n%s",
+			headings, folded, rowTexts(harness))
+	}
+	if after := harness.model.intakeCounts(harness.model.filteredItems()).Inbox; after != badge {
+		t.Fatalf("folding an anchor moved the INBOX badge from %d to %d", badge, after)
+	}
+}
+
+// The flat path a `/` search drops the view into counts the same way: one row is
+// one task there, so the two modes agree on every badge.
+func TestInboxGroupHeadingCountsAgreeAcrossTreeAndFlatModes(t *testing.T) {
+	tree := newModelHarness(t, harnessOptions{live: intakeGroupingFixture})
+	tree.model.SwitchView(ViewInbox)
+	treeCounts := intakeHeadings(t, tree, "accepted")
+
+	flat := newModelHarness(t, harnessOptions{live: intakeGroupingFixture})
+	flat.model.SwitchView(ViewInbox)
+	flat.model.filter = "a"
+	flat.model.RefreshRows()
+	if flat.model.useTree() {
+		t.Fatal("the search path did not drop the inbox into flat mode")
+	}
+	flatCounts := intakeHeadings(t, flat, "accepted")
+
+	for label, count := range treeCounts {
+		if flatCounts[label] != count {
+			t.Fatalf("group %q counts %d in tree mode and %d in flat mode:\n%s",
+				label, count, flatCounts[label], rowTexts(flat))
+		}
+	}
+}
+
 // A block whose ONLY group is the unfiled one paints no heading at all: "INBOX"
 // followed by "Inbox" is a heading repeating the rule directly above it, and an
 // inbox nobody has filed yet is the common case.
@@ -270,15 +374,15 @@ func TestApproveRejectWalksTheProposalsInPaintedOrder(t *testing.T) {
 		}
 	}
 	want := []string{
-		"aviator checkride prep", "aviator oil change", "bakery flour order", "unfiled idea",
+		"aviator oil change", "aviator checkride prep", "bakery flour order", "unfiled idea",
 	}
 	if !equalStrings(queue, want) {
 		t.Fatalf("the approvals queue reads %v, want %v\n\n%s", queue, want, rowTexts(harness))
 	}
 
-	harness.selectRowByID("cccc0005") // "aviator checkride prep", first in the queue
+	harness.selectRowByID("cccc0007") // "aviator oil change", first in the queue
 	harness.press('a')
-	if item := harness.model.CurrentItem(); item == nil || item.Title != "aviator oil change" {
+	if item := harness.model.CurrentItem(); item == nil || item.Title != "aviator checkride prep" {
 		t.Fatalf("approve did not advance to the next proposal: %#v", item)
 	}
 	harness.press('r')
@@ -289,7 +393,7 @@ func TestApproveRejectWalksTheProposalsInPaintedOrder(t *testing.T) {
 	// project's group rather than at the end of the block.
 	layout := intakeSections(t, harness)
 	wantAccepted := []string{
-		"# Aviator", "aviator radio check", "aviator logbook", "aviator checkride prep",
+		"# Aviator", "aviator radio check", "aviator logbook", "aviator oil change",
 		"# Bakery", "bakery chore",
 		"# Inbox", "unfiled scrap",
 	}
