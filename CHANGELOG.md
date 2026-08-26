@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.15.0] - 2026-08-26
+
+### Features
+
+- **`N` marks the selected task NEXT.** (#16) One keypress in the list or detail view now does what previously took the edit form or `tasks state <ref> NEXT`: the selected open task becomes a GTD next action and appears on the Next tab, in a single undo step. The key sits in the `?` help and the `:` palette, refuses politely on proposed and done tasks, and is a silent no-op when the task is already NEXT. Lowercase `n` (modal cancel) is untouched, and pressing `N` inside any modal, filter, or form field types or cancels as before — it can never mutate state from an input context.
+- **An empty Next tab explains itself.** (#15) When nothing is marked NEXT, the tab no longer renders a blank pane that looks broken next to a full Agenda. It now says there are no explicit next actions, how many dated items are waiting on Agenda (the count comes from the same query the Agenda tab paints, so the two can never disagree), and how to mark one — `N`, or `tasks state <ref> NEXT`. The CLI matches: `tasks next` with no next actions prints a one-line message instead of silence, mentioning Agenda only when dated work actually exists there. `tasks next --json` still prints `[]`, unchanged.
+- **The Inbox tab groups intake by project.** (#13) Approvals and accepted Inbox rows are now bucketed under project headings inside their sections, so a triage pass stays inside one theme instead of hopping between projects in file order. Group order follows the Projects tab's sequence, unfiled one-offs collect in a single trailing group, empty groups vanish, and headings are chrome — unselectable, invisible to the a/r approve-reject walk, and counted by task (the section badge's own rule) so folding a subtree never shrinks a heading. Within a group, approvals keep their priority-then-due triage order. CLI `tasks inbox` stays flat.
+- **`tasks move` files proposals.** (#14) A PROPOSED task can now be moved into a project — positional section, `--under`, `--before`, or `--top` — instead of the old reject-and-re-propose dance that minted a new id and polluted rejection history. Filing is a location change, not a decision: the task stays PROPOSED, and destination refs may name a proposal only when the moving subtree is itself proposed, so accepted work still can't nest under an undecided proposal. This matches what `PATCH /api/v1/tasks/{id}` always allowed; the API is unchanged.
+
 ## [1.14.0] - 2026-08-24
 
 ### Features
