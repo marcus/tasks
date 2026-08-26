@@ -315,7 +315,11 @@ per-project heading carrying that group's count, so a triage pass stays inside
 one theme. The groups run in the Projects tab's own order (soonest date, then
 title) in both sections, everything unfiled gathers into one trailing group, and
 a group with no rows in that section is not painted at all; a section whose only
-group is the unfiled one paints no heading. Grouping is presentation: selection
+group is the unfiled one paints no heading. A group heading counts the TASKS it
+stands for, by the same rule the section badge counts by, so the headings sum to
+the badge and neither number moves when a subtree is folded. Filing an intake
+item — `tasks move`, which accepts a PROPOSED item — moves it between groups.
+Grouping is presentation: selection
 still follows task identity, the decision walk still advances through the
 proposal queue as painted, and `tasks inbox` and `tasks list --proposed` are
 unchanged flat listings.
