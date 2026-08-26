@@ -58,7 +58,14 @@ func (s *surfaceContext) move(args []string) int {
 	if status != 0 {
 		return status
 	}
-	item, code := resolveRef(queries, ref, refScope{includeDone: flags["--include-done"]})
+	// A PROPOSED task resolves here exactly as `priority`, `retitle`, `tag` and
+	// `note` resolve one: filing a proposal is a LOCATION change, not a decision
+	// about it, and the store keeps the state untouched. Refusing it would leave
+	// an agent's proposal stranded wherever it was captured, with the only fix
+	// being an approval it has no authority to make.
+	item, code := resolveRef(queries, ref, refScope{
+		includeDone: flags["--include-done"], includeProposed: true,
+	})
 	if code != 0 {
 		return code
 	}
@@ -88,7 +95,9 @@ func (s *surfaceContext) move(args []string) int {
 func (s *surfaceContext) movePlacement(args []string, queries *taskquery.Queries, item store.Item,
 	before, under, section string, flags map[string]bool) int {
 
-	anchor, code := resolveRef(queries, before, refScope{includeDone: flags["--include-done"]})
+	anchor, code := resolveRef(queries, before, refScope{
+		includeDone: flags["--include-done"], includeProposed: proposalDestinations(item),
+	})
 	if code != 0 {
 		return code
 	}
@@ -102,7 +111,9 @@ func (s *surfaceContext) movePlacement(args []string, queries *taskquery.Queries
 	missingParent := ""
 	switch {
 	case under != "":
-		parentItem, code := resolveRef(queries, under, refScope{includeDone: flags["--include-done"]})
+		parentItem, code := resolveRef(queries, under, refScope{
+			includeDone: flags["--include-done"], includeProposed: proposalDestinations(item),
+		})
 		if code != 0 {
 			return code
 		}
@@ -231,7 +242,7 @@ func (s *surfaceContext) moveTop(args []string, queries *taskquery.Queries, item
 func (s *surfaceContext) moveUnder(args []string, queries *taskquery.Queries, item store.Item,
 	under string, flags map[string]bool) int {
 
-	parent, code := resolveRef(queries, under, refScope{})
+	parent, code := resolveRef(queries, under, refScope{includeProposed: proposalDestinations(item)})
 	if code != 0 {
 		return code
 	}
@@ -390,6 +401,18 @@ func (s *surfaceContext) previewStore(dir string) *store.Store {
 	return store.NewWriter(filepath.Join(dir, "tasks.jsonl"), filepath.Join(dir, "archive.jsonl"),
 		options)
 }
+
+// proposalDestinations is whether a move's DESTINATION refs (the `--under`
+// parent, the `--before` anchor) may name a PROPOSED task.
+//
+// They may exactly when the subtree being moved is itself a proposal, which is
+// the same rule `capture --under` applies to a new proposal's parent. The store
+// settles a proposal tree leaves-first, so a proposal under a proposal is legal
+// while accepted work under an undecided one is not. Leaving the tier closed for
+// accepted work is what keeps that refusal at ref resolution — naming the state
+// that blocked it — instead of a store refusal after the destination was
+// accepted.
+func proposalDestinations(item store.Item) bool { return item.State == "PROPOSED" }
 
 // placementDestination is how a destination is named back to the user: a task
 // is nested UNDER, a section is filed IN.

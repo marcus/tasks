@@ -100,7 +100,7 @@ tasks link add "<ref>" <url> [--label "description"] # link an existing task
 tasks link rm "<ref>" <n-or-url>  # remove from formal links only
 tasks link set "<ref>" <n> --label "description" # relabel a formal link only
 tasks capture "sub" --under "<ref>" # nest a new task below an existing one
-tasks move "<ref>" "Section"     # relocate the block under a top-level heading
+tasks move "<ref>" "Section"     # relocate the block under a heading (incl. PROPOSED)
 tasks move "<ref>" --under "<ref>"  # nest the subtree below another task
 tasks move "<ref>" --top         # unnest the subtree back to the section level
 tasks move "<ref>" --before "<ref>" # reorder before a sibling (infers its parent)
@@ -123,7 +123,9 @@ list, agenda, next, quadrants, inbox, and project rollups; review it with
 `--priority` and `--due` on a proposal changes where the owner sees it. A
 proposal cannot recur or be
 completed. Before the owner decides it, `priority`, `retitle`, `tag`, and
-`note` can correct its presentation without changing its PROPOSED state.
+`note` can correct its presentation without changing its PROPOSED state, and
+`move` can file it where it belongs — a proposal captured into the Inbox can be
+moved into a project (or nested under another proposal) and stays PROPOSED.
 Approval and rejection are undoable lifecycle decisions. A reject stamps
 `rejected` with the day it was declined, which is what separates a declined
 proposal from an ordinary cancellation: `list --rejected` lists declines from the

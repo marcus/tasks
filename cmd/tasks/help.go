@@ -132,7 +132,8 @@ var helpTemplate = "tasks — a plain-text GTD CLI over tasks.jsonl. Every comma
 	"  link set     <ref> <n> --label TEXT     rename a formal link (n is formal-only)" + "\n" +
 	"  note         <ref> \"text\"        append a body line (incl. PROPOSED)" + "\n" +
 	"  move         <ref> \"Section\"     relocate the subtree under a heading" + "\n" +
-	"                                   (top-level or a nested project section)" + "\n" +
+	"                                   (top-level or a nested project section;" + "\n" +
+	"                                    incl. PROPOSED — filing is not approving)" + "\n" +
 	"               <ref> --under <ref> nest the subtree below another task (≤ max_depth)" + "\n" +
 	"               <ref> --top         unnest the subtree back to the section level" + "\n" +
 	"               <ref> [\"Section\"|--under <ref>] --before <ref>" + "\n" +
