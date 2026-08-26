@@ -149,6 +149,8 @@ the human-readable tour of that contract.
 - Outline with overdue / today / later bands inside plain lists.
 - Inbox as one intake tab: Approvals first, then accepted Inbox.
   `a` approves, `r` rejects, and the selection walks the queue.
+  Both sections group by project, in the Projects tab's order, with
+  everything unfiled in one trailing group.
 - Shared row vocabulary: cursor gutter, urgency band, priority letter
   beside the title, right-aligned `@` column, shared date/meta column.
 - Selection is a dark band, not reverse video.

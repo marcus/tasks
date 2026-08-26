@@ -309,6 +309,17 @@ rejection uses the nearest selectable Inbox row. Both decisions participate in
 undo/redo. A session saved on the former `approvals` view restores to this
 combined Inbox tab.
 
+Inside each of the two sections, rows are grouped by the project they sit under
+— the same enclosing-section rule the Projects tab groups by — under a quiet
+per-project heading carrying that group's count, so a triage pass stays inside
+one theme. The groups run in the Projects tab's own order (soonest date, then
+title) in both sections, everything unfiled gathers into one trailing group, and
+a group with no rows in that section is not painted at all; a section whose only
+group is the unfiled one paints no heading. Grouping is presentation: selection
+still follows task identity, the decision walk still advances through the
+proposal queue as painted, and `tasks inbox` and `tasks list --proposed` are
+unchanged flat listings.
+
 The final tab label always shows both scoped counts, including zeroes, with the
 Inbox count first and approval count second: `Inbox 4 | 2`. Both counts use the
 active `@` context group and `/` text filter. The Inbox count additionally uses

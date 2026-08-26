@@ -136,15 +136,17 @@ func quadrantsFlat(request BuildRequest) []Row {
 
 func inboxFlatSection(request BuildRequest) []Row {
 	query := request.query(ViewInbox)
-	rows := []Row{}
-	for _, item := range query.Sort(query.Select(request.Items)) {
-		item := item
-		// The marker gutter is the inbox VIEW's column, not tree mode's: the
-		// APPROVALS block above shares this list's left edge, and an edge that
-		// moved when `/` dropped the view into flat mode would be no edge at all.
-		rows = append(rows, Row{Text: urgencyBand(request, item) + MarkLeaf + taskBody(request, item), Item: &item})
-	}
-	return rows
+	return intakeGroupRows(request, query.SortedGroups(groupItems(query, request.Items)),
+		func(node *taskquery.Node) []Row {
+			item := *node.Item
+			// The marker gutter is the inbox VIEW's column, not tree mode's: the
+			// APPROVALS block above shares this list's left edge, and an edge that
+			// moved when `/` dropped the view into flat mode would be no edge at all.
+			return []Row{{
+				Text: urgencyBand(request, item) + MarkLeaf + taskBody(request, item),
+				Item: &item,
+			}}
+		})
 }
 
 // -- tree builders --------------------------------------------------------
@@ -214,13 +216,12 @@ func quadrantsTree(request BuildRequest) []Row {
 
 func inboxTreeSection(request BuildRequest) []Row {
 	query := request.query(ViewInbox)
-	rows := []Row{}
-	for _, anchor := range query.SortNodes(maximalAnchors(request, query)) {
-		rows = appendSubtree(request, rows, anchor, "",
+	anchors := query.GroupedNodes(maximalAnchors(request, query))
+	return intakeGroupRows(request, query.SortedGroups(anchors), func(anchor *taskquery.Node) []Row {
+		return appendSubtree(request, nil, anchor, "",
 			func(item store.Item) string { return urgencyBand(request, item) },
 			func(item store.Item) string { return taskBody(request, item) })
-	}
-	return rows
+	})
 }
 
 // maximalAnchors is the NEXT/INBOX anchor rule: a matching node anchors unless
@@ -349,16 +350,66 @@ func rejectedRows(request BuildRequest) []Row {
 // below shares this list's left edge and an edge only half the screen keeps is
 // not an edge. A leaf marker claims no hit target, so the two cells stay inert
 // under the mouse.
+//
+// The queue arrives already ranked by the core's triage order, so it is bucketed
+// by GroupItemsInOrder, which keeps that rank inside each project rather than
+// re-sorting it away.
 func approvalRows(request BuildRequest, proposals []store.Item) []Row {
-	rows := []Row{}
-	for _, item := range proposals {
-		item := item
-		rows = append(rows, Row{
-			Text: urgencyBand(request, item) + MarkLeaf + taskBody(request, item),
-			Item: &item,
+	query := request.query(ViewInbox)
+	return intakeGroupRows(request, query.GroupItemsInOrder(proposals),
+		func(node *taskquery.Node) []Row {
+			item := *node.Item
+			return []Row{{
+				Text: urgencyBand(request, item) + MarkLeaf + taskBody(request, item),
+				Item: &item,
+			}}
 		})
+}
+
+// intakeGroupRows lays one intake block out as its project groups: a heading per
+// project, its rows beneath, blocks separated by a blank line, and the unfiled
+// remainder last — the groups arrive already in the view's order, unfiled tail
+// included, from ViewQuery.
+//
+// A group with no rows is dropped rather than headed — an empty heading costs
+// two lines to say nothing, the same reason a Section with a nil Empty drops
+// whole. And when the ONLY group is the unfiled one, the headings go too: a
+// heading that repeats the section rule directly above it ("INBOX", then
+// "Inbox") is noise, and an inbox nobody has filed yet is the common case.
+//
+// Selection is untouched by any of this. Headings are chrome, so they are not
+// selectable, and every task row still carries the same Item and therefore the
+// same durable id the cursor follows across a rebuild.
+func intakeGroupRows(request BuildRequest, groups []Group, body func(*taskquery.Node) []Row) []Row {
+	type block struct {
+		key  string
+		rows []Row
 	}
-	return rows
+	blocks := []block{}
+	for _, group := range groups {
+		rows := []Row{}
+		for _, node := range group.Nodes {
+			rows = append(rows, body(node)...)
+		}
+		if len(rows) == 0 {
+			continue
+		}
+		blocks = append(blocks, block{key: group.Key, rows: rows})
+	}
+	headed := len(blocks) > 1 || (len(blocks) == 1 && blocks[0].key != UnfiledIntake)
+	out := []Row{}
+	for _, current := range blocks {
+		if !headed {
+			out = append(out, current.rows...)
+			continue
+		}
+		if len(out) > 0 {
+			out = append(out, chromeRow(""))
+		}
+		out = append(out, groupRule(request, current.key, countSelectable(current.rows)))
+		out = append(out, current.rows...)
+	}
+	return out
 }
 
 // -- outline ---------------------------------------------------------------
@@ -560,13 +611,7 @@ func outlineBandRule(request BuildRequest, label, slot string, count int) Row {
 	// the same column on every row at every depth, and a rule whose glyph does
 	// not sit on that column is not the top of the stripe it claims to head.
 	indent := strings.Repeat(" ", CursorField)
-	head := indent + styler.Paint(slot, Band) + " " + styler.Paint("muted", label)
-	right := fmt.Sprintf("%d", count)
-	left, ok := metaColumns(request, CursorField)
-	if !ok {
-		return chromeRow(head + styler.Paint("muted", " "+right))
-	}
-	return chromeRow(ruledHead(request, head, right, "muted", left))
+	return subRule(request, indent+styler.Paint(slot, Band)+" "+styler.Paint("muted", label), count)
 }
 
 // outlineSectionRow builds one selectable section row: chevron, title, an
@@ -1094,17 +1139,6 @@ func agendaAnchorDate(request BuildRequest, query ViewQuery, node *taskquery.Nod
 		}
 	}
 	return best
-}
-
-// groupItems adapts the flat item path onto the node-shaped grouping API by
-// wrapping each item in a throwaway node. The alternative is two copies of the
-// grouping policy, one per shape, and they would drift.
-func groupItems(query ViewQuery, items []store.Item) map[string][]*taskquery.Node {
-	nodes := make([]*taskquery.Node, 0, len(items))
-	for index := range items {
-		nodes = append(nodes, &taskquery.Node{Item: &items[index]})
-	}
-	return query.GroupedNodes(nodes)
 }
 
 func dropTrailingBlank(rows []Row) []Row {
