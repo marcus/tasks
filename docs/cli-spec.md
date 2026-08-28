@@ -1015,10 +1015,20 @@ is added in this slice.
 
 Agenda, Next, Quadrants, Inbox, and Projects are not eligible for ordering:
 they filter, regroup, or sort away live siblings. The fifth **Outline** tab
-renders every live section and task in canonical DFS order, including closed
-and unavailable tasks. Only collapse may hide
-descendants. `Alt+↑`/`Alt+k`, `Alt+↓`/`Alt+j`, `>`, and `<` reorder, indent,
-and outdent in that unfiltered tab. In another tab, or while `/` text or `@`
+renders every live section and task in canonical DFS order, including
+unavailable tasks. `PROPOSED` rows never appear (Inbox/Approvals owns them),
+and closed (`DONE`/`CANCELLED`) rows are hidden by default: `C` shows and hides
+them, session-only like `Z`, and the header says `closed shown` while they are
+revealed. A hidden row is transparent rather than pruned — an open task under a
+completed parent is hoisted into the parent's place, the same way the other tree
+views hoist. Section badges and folded-row counts state what the view is
+*showing*; what the toggle is holding back is named beside the badge as
+`4 · 1 closed`, so a section whose children are all closed keeps its heading and
+its history instead of reading as an empty project. Apart from that, only
+collapse may hide descendants. `Alt+↑`/`Alt+k`, `Alt+↓`/`Alt+j`, `>`, and `<`
+reorder, indent, and outdent in that unfiltered tab; they move a task among
+*all* its file siblings, so a step across a hidden closed sibling is a real
+write that does not visibly move the row until `C` is on. In another tab, or while `/` text or `@`
 context filtering is active, those keys are consumed and the footer directs
 the user to the unfiltered Outline tab. Up/down stay within the current direct
 sibling list; indent appends under the preceding sibling; outdent places the

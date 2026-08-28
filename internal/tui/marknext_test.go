@@ -114,14 +114,21 @@ func TestMarkNextRefusesProposalsAndClosedWork(t *testing.T) {
 		view  string
 		state string
 		want  string
+		// reveal is the toggle that has to be on for the row to be on screen
+		// at all. A closed task only paints in the Outline once `C` asks for it.
+		reveal func(*Model)
 	}{
-		{"proposal", "aaaa0010", ViewInbox, "PROPOSED",
-			"approve the proposal first \u2014 a proposal can't be marked NEXT"},
-		{"closed", "aaaa0008", ViewOutline, "DONE", "done tasks can't be marked NEXT"},
+		{name: "proposal", id: "aaaa0010", view: ViewInbox, state: "PROPOSED",
+			want: "approve the proposal first \u2014 a proposal can't be marked NEXT"},
+		{name: "closed", id: "aaaa0008", view: ViewOutline, state: "DONE",
+			want: "done tasks can't be marked NEXT", reveal: (*Model).ToggleClosed},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			harness := newModelHarness(t, harnessOptions{live: markNextFixture})
 			harness.model.SwitchView(testCase.view)
+			if testCase.reveal != nil {
+				testCase.reveal(harness.model)
+			}
 			harness.selectRowByID(testCase.id)
 			harness.press('N')
 

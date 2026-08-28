@@ -75,9 +75,15 @@ type ViewQuery struct {
 	UrgentDays     int
 	ShowDeferred   bool
 	ContextFilters []string
+	// ShowClosed reveals DONE and CANCELLED rows in the views whose rule keeps
+	// them out by default — today only Outline. It is off in the zero value and
+	// off out of NewViewQuery, so a caller that has never heard of the toggle
+	// gets the working view rather than the graveyard.
+	ShowClosed bool
 }
 
-// NewViewQuery builds the query for one view.
+// NewViewQuery builds the query for one view. Closed rows start hidden; a
+// caller that wants them says so with ShowingClosed.
 func NewViewQuery(view string, queries *taskquery.Queries, urgentDays int, showDeferred bool,
 	contextFilters []string) ViewQuery {
 	if urgentDays <= 0 {
@@ -87,6 +93,14 @@ func NewViewQuery(view string, queries *taskquery.Queries, urgentDays int, showD
 		View: view, Queries: queries, UrgentDays: urgentDays,
 		ShowDeferred: showDeferred, ContextFilters: contextFilters,
 	}
+}
+
+// ShowingClosed returns the same query with the closed-row toggle set. It is a
+// separate builder rather than a seventh constructor argument so the reveal
+// stays opt-in for every caller that never mentions it.
+func (q ViewQuery) ShowingClosed(show bool) ViewQuery {
+	q.ShowClosed = show
+	return q
 }
 
 // Eligible is view-only eligibility: the per-view state/date rule, and then
@@ -107,8 +121,21 @@ func (q ViewQuery) Eligible(item store.Item) bool {
 }
 
 // ViewRule is the per-view state and date test, availability aside.
+//
+// Outline's rule is the one that reads a toggle rather than only the item: the
+// tab is the whole live tree, so what it excludes is a CHOICE, not a property of
+// the row. PROPOSED is excluded unconditionally — undecided work belongs to
+// Inbox/Approvals — and closed work is excluded until the reader asks for it,
+// because a triaged section is otherwise mostly cancelled leftovers that have
+// not been swept yet. Spelling it here rather than inside the row builder is
+// what lets a headless outline dump hide the same rows the tab does.
 func (q ViewQuery) ViewRule(item store.Item) bool {
 	switch q.View {
+	case ViewOutline:
+		if isProposedState(item.State) {
+			return false
+		}
+		return q.ShowClosed || isOpenState(item.State)
 	case ViewAgenda:
 		return isOpenState(item.State) && (item.Deadline != "" || item.Scheduled != "")
 	case ViewNext:
@@ -480,3 +507,10 @@ func isOpenState(state string) bool {
 }
 
 func isProposedState(state string) bool { return state == "PROPOSED" }
+
+// isClosedState is DONE or CANCELLED: work whose lifecycle has ended. A
+// proposal is undecided rather than closed, so it is neither open nor closed
+// here — the three predicates partition the states.
+func isClosedState(state string) bool {
+	return !isProposedState(state) && !isOpenState(state)
+}

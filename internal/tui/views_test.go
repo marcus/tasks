@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	"github.com/marcus/tasks/internal/tui/term/shortcuts"
 )
 
 // A subtree fixture: an open parent with an open child, plus a closed parent
@@ -250,20 +252,317 @@ func TestInboxEmptyMessage(t *testing.T) {
 	}
 }
 
-func TestOutlineShowsEveryLiveRecordIncludingClosedOnes(t *testing.T) {
+func TestOutlineShowsEveryLiveOpenRecordAndHidesClosedOnes(t *testing.T) {
 	harness := newModelHarness(t, harnessOptions{})
 	harness.model.SwitchView(ViewOutline)
 	text := rowTexts(harness)
-	// Closed tasks speak the shared dot vocabulary now, not a state word: the
-	// DONE row is the closed dot with its title kept on the row.
-	// The priority letter now sits between the dot and the title — see
-	// priorityField — so a closed C-priority row reads `● C  title`.
-	for _, want := range []string{"Inbox", "Work", "Home", DotClosed + " C  Old finished thing"} {
+	for _, want := range []string{"Inbox", "Work", "Home", "Book flight in Concur"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("outline is missing %q:\n%s", want, text)
 		}
 	}
+	if strings.Contains(text, "Old finished thing") {
+		t.Fatalf("outline showed a closed task before anyone asked:\n%s", text)
+	}
 }
+
+func TestOutlineTogglesClosedTasksBackInWithTheirClosedStyling(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.SwitchView(ViewOutline)
+	harness.model.ToggleClosed()
+	// Closed tasks speak the shared dot vocabulary, not a state word: the DONE
+	// row is the closed dot with its title kept on the row. The priority letter
+	// sits between the dot and the title — see priorityField — so a closed
+	// C-priority row reads `● C  title`.
+	if text := rowTexts(harness); !strings.Contains(text, DotClosed+" C  Old finished thing") {
+		t.Fatalf("the toggle did not restore the closed row in place:\n%s", text)
+	}
+	harness.model.ToggleClosed()
+	if text := rowTexts(harness); strings.Contains(text, "Old finished thing") {
+		t.Fatalf("toggling back did not hide the closed row again:\n%s", text)
+	}
+}
+
+// The `C` key, the `:` palette and `?` help all have to reach the same toggle,
+// or the capability exists only for whoever guessed the keystroke.
+func TestClosedToggleIsReachableByKeyAndPaletteAndHelp(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.SwitchView(ViewOutline)
+	harness.press('C')
+	if !harness.model.showClosed {
+		t.Fatal("C did not toggle closed rows on")
+	}
+	if !strings.Contains(rowTexts(harness), "Old finished thing") {
+		t.Fatalf("C did not reveal the closed row:\n%s", rowTexts(harness))
+	}
+	harness.press('C')
+	if harness.model.showClosed {
+		t.Fatal("a second C did not toggle closed rows back off")
+	}
+
+	if !paletteOffers(harness, "toggle_closed_view") {
+		t.Fatal("the action palette does not offer the closed-row toggle")
+	}
+	help := strings.Join(
+		HelpContent(harness.model.styler, harness.model.app.DelegationModes()).Lines, "\n")
+	if !strings.Contains(help, "show / hide closed tasks") {
+		t.Fatalf("the help overlay does not document the closed-row toggle:\n%s", help)
+	}
+}
+
+// PROPOSED is intake's, whichever way the closed toggle is set: an undecided
+// proposal is not finished work, and revealing history must not smuggle the
+// approval queue into the outline.
+func TestOutlineNeverShowsProposalsEitherWayRoundTheToggle(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: proposalOutlineFixture})
+	harness.model.SwitchView(ViewOutline)
+	for _, showClosed := range []bool{false, true} {
+		harness.model.showClosed = showClosed
+		harness.model.RefreshRows()
+		if text := rowTexts(harness); strings.Contains(text, "Proposed thing") {
+			t.Fatalf("showClosed=%v let a proposal into the outline:\n%s", showClosed, text)
+		}
+	}
+}
+
+// A section whose children are ALL closed must not read as an empty project. It
+// keeps its heading and says what it is holding, so the reader can see there is
+// history there and one keystroke away.
+func TestOutlineSectionOfOnlyClosedWorkKeepsALeftoverMarker(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: closedOnlyOutlineFixture})
+	harness.model.SwitchView(ViewOutline)
+	heading := headingRowText(harness.model.Rows(), "Archive candidates")
+	if heading == "" {
+		t.Fatalf("the closed-only section vanished entirely:\n%s", rowTexts(harness))
+	}
+	if !strings.Contains(heading, "· 2 closed") {
+		t.Fatalf("closed-only heading %q does not name its leftovers", heading)
+	}
+	if strings.Contains(rowTexts(harness), "Swept later") {
+		t.Fatalf("a closed row painted while the toggle was off:\n%s", rowTexts(harness))
+	}
+	// With the toggle on the rows ARE the evidence, so the marker retires
+	// rather than double-counting what is now on the screen.
+	harness.model.ToggleClosed()
+	heading = headingRowText(harness.model.Rows(), "Archive candidates")
+	if strings.Contains(heading, "closed") || !strings.HasSuffix(strings.TrimSpace(heading), "2") {
+		t.Fatalf("revealed heading %q should badge 2 and drop the leftover marker", heading)
+	}
+}
+
+// The badge counts what is on the screen. A section badge that silently
+// included hidden history would send the reader looking for rows that are not
+// there; naming the split keeps the number and the list in agreement.
+func TestOutlineSectionBadgeCountsOnlyWhatItShows(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.SwitchView(ViewOutline)
+	heading := headingRowText(harness.model.Rows(), "Work")
+	if !strings.Contains(heading, "4 · 1 closed") {
+		t.Fatalf("Work heading %q, want the shown count and the leftover split", heading)
+	}
+	harness.model.ToggleClosed()
+	heading = headingRowText(harness.model.Rows(), "Work")
+	if strings.Contains(heading, "closed") || !strings.HasSuffix(strings.TrimSpace(heading), "5") {
+		t.Fatalf("revealed Work heading %q, want a plain badge of 5", heading)
+	}
+}
+
+// A folded row's dim count is the same promise the badge makes: it stands for
+// rows the fold hid, not for rows the filter already removed.
+func TestOutlineFoldedCountIgnoresHiddenClosedDescendants(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: closedChildOutlineFixture})
+	harness.model.SwitchView(ViewOutline)
+	harness.model.collapsed["bbbb0001"] = true
+	harness.model.RefreshRows()
+	text := rowTexts(harness)
+	if !strings.Contains(text, MoreGlyph+" 1") {
+		t.Fatalf("folded count should stand for the one shown child:\n%s", text)
+	}
+	harness.model.ToggleClosed()
+	if text := rowTexts(harness); !strings.Contains(text, MoreGlyph+" 2") {
+		t.Fatalf("revealing closed work did not widen the folded count:\n%s", text)
+	}
+}
+
+// A closed parent is transparent, not a wall: hiding it must not take an open
+// child down with it. That is the same hoisting anchorRoots does for the other
+// tree views, and the outline owes the reader the same guarantee.
+func TestOutlineHoistsAnOpenChildOutOfAHiddenClosedParent(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: closedParentOutlineFixture})
+	harness.model.SwitchView(ViewOutline)
+	text := rowTexts(harness)
+	if !strings.Contains(text, "Still open inside") {
+		t.Fatalf("an open child vanished with its hidden closed parent:\n%s", text)
+	}
+	if strings.Contains(text, "Closed parent") {
+		t.Fatalf("the closed parent painted a row of its own:\n%s", text)
+	}
+}
+
+// Z and C answer different questions — "not yet" and "no longer" — and neither
+// may move the other's rows.
+//
+// The Outline has always painted unavailable work (it is the unfiltered tree;
+// that is what makes it the ordering tab), so Z is a no-op HERE and must stay
+// one: all four settings show the deferred row, and only C moves the closed one.
+func TestClosedAndDeferredTogglesComposeIndependently(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: deferredAndClosedOutlineFixture})
+	harness.model.SwitchView(ViewOutline)
+	for _, deferred := range []bool{false, true} {
+		for _, closed := range []bool{false, true} {
+			harness.model.showDeferred = deferred
+			harness.model.showClosed = closed
+			harness.model.RefreshRows()
+			text := rowTexts(harness)
+			if got := strings.Contains(text, "Finished work"); got != closed {
+				t.Fatalf("Z=%v C=%v: closed row shown = %v, want %v:\n%s",
+					deferred, closed, got, closed, text)
+			}
+			// Neither toggle owns these two, so all four settings keep them.
+			for _, want := range []string{"Live work", "Blocked work"} {
+				if !strings.Contains(text, want) {
+					t.Fatalf("Z=%v C=%v: %q disappeared:\n%s", deferred, closed, want, text)
+				}
+			}
+		}
+	}
+}
+
+// Z's own view keeps working while C is on, which is the other half of "these
+// two compose": the closed toggle must not reach into the tabs Z governs.
+func TestClosedRevealDoesNotDisturbTheDeferredToggleElsewhere(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: nestedStore})
+	harness.model.SwitchView(ViewNext)
+	harness.model.ToggleClosed()
+	if strings.Contains(rowTexts(harness), "Buried child") {
+		t.Fatalf("revealing closed work leaked a deferred subtree into Next:\n%s", rowTexts(harness))
+	}
+	harness.model.ToggleDeferred()
+	if !strings.Contains(rowTexts(harness), "Buried child") {
+		t.Fatalf("Z stopped working while closed rows were revealed:\n%s", rowTexts(harness))
+	}
+}
+
+// `/` and `@` narrow what the reveal reveals. Turning history on is not a way
+// to escape the filter the user is standing in.
+func TestClosedRevealStillObeysSearchAndContextFilters(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.SwitchView(ViewOutline)
+	harness.model.ToggleClosed()
+
+	harness.model.filter = "finished"
+	harness.model.RefreshRows()
+	text := rowTexts(harness)
+	if !strings.Contains(text, "Old finished thing") {
+		t.Fatalf("the search dropped a revealed closed row that matched:\n%s", text)
+	}
+	if strings.Contains(text, "Water the plants") {
+		t.Fatalf("the reveal leaked rows the search excludes:\n%s", text)
+	}
+
+	harness.model.filter = ""
+	harness.model.contextFilters = []string{"@home"}
+	harness.model.RefreshRows()
+	if text := rowTexts(harness); strings.Contains(text, "Old finished thing") {
+		t.Fatalf("the reveal ignored the @context filter:\n%s", text)
+	}
+}
+
+// A reveal has to be visible in the chrome, and only where it is in force: a
+// header that claimed closed rows were shown on Agenda would describe a list
+// that is not there.
+func TestClosedRevealIsNamedInTheHeaderOnlyWhereItApplies(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.SwitchView(ViewOutline)
+	if strings.Contains(harness.model.headerCount(), "closed shown") {
+		t.Fatal("the header claimed closed rows were shown by default")
+	}
+	harness.model.ToggleClosed()
+	if !strings.Contains(harness.model.headerCount(), "closed shown") {
+		t.Fatalf("the header did not name the reveal: %q", harness.model.headerCount())
+	}
+	harness.model.SwitchView(ViewAgenda)
+	if strings.Contains(harness.model.headerCount(), "closed shown") {
+		t.Fatalf("the header named a reveal on a tab it does not touch: %q",
+			harness.model.headerCount())
+	}
+}
+
+// The toggle is an errand, not a preference: the next session opens on the work.
+func TestClosedToggleIsNotPersistedInTheSession(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.SwitchView(ViewOutline)
+	harness.model.ToggleClosed()
+	if !harness.model.showClosed {
+		t.Fatal("the toggle did not turn on")
+	}
+	harness.model.Save()
+
+	revived := newModelHarness(t, harnessOptions{})
+	if revived.model.showClosed {
+		t.Fatal("the closed-row toggle survived a restart")
+	}
+	revived.model.SwitchView(ViewOutline)
+	if strings.Contains(rowTexts(revived), "Old finished thing") {
+		t.Fatalf("a restarted outline opened on closed rows:\n%s", rowTexts(revived))
+	}
+}
+
+// headingRowText is one outline heading's whole row, badge included.
+func headingRowText(rows []Row, label string) string {
+	for _, row := range rows {
+		if row.Item != nil {
+			continue
+		}
+		text := strings.TrimSpace(row.Text)
+		text = strings.TrimPrefix(strings.TrimPrefix(text, MarkExpanded), MarkCollapsed)
+		if strings.HasPrefix(text, label+" ") {
+			return row.Text
+		}
+	}
+	return ""
+}
+
+func paletteOffers(harness *modelHarness, handler string) bool {
+	for _, entry := range shortcuts.PaletteEntries(shortcuts.List, harness.model.availability) {
+		if entry.Handler == handler {
+			return true
+		}
+	}
+	return false
+}
+
+const proposalOutlineFixture = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0003","title":"Work"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0003","state":"NEXT","title":"Live work"}
+{"type":"task","id":"bbbb0002","parent":"aaaa0003","state":"PROPOSED","title":"Proposed thing"}
+`
+
+const closedOnlyOutlineFixture = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0003","title":"Archive candidates"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0003","state":"DONE","title":"Swept later","closed":"2026-06-20"}
+{"type":"task","id":"bbbb0002","parent":"aaaa0003","state":"CANCELLED","title":"Dropped idea","closed":"2026-06-21"}
+`
+
+const closedChildOutlineFixture = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0003","title":"Work"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0003","state":"NEXT","title":"Parent action"}
+{"type":"task","id":"bbbb0002","parent":"bbbb0001","state":"NEXT","title":"Open child"}
+{"type":"task","id":"bbbb0003","parent":"bbbb0001","state":"DONE","title":"Closed child","closed":"2026-06-20"}
+`
+
+const closedParentOutlineFixture = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0003","title":"Work"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0003","state":"DONE","title":"Closed parent","closed":"2026-06-20"}
+{"type":"task","id":"bbbb0002","parent":"bbbb0001","state":"NEXT","title":"Still open inside"}
+`
+
+const deferredAndClosedOutlineFixture = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0003","title":"Work"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0003","state":"NEXT","title":"Live work"}
+{"type":"task","id":"bbbb0002","parent":"aaaa0003","state":"TODO","title":"Blocked work","scheduled":"2027-01-01"}
+{"type":"task","id":"bbbb0003","parent":"aaaa0003","state":"DONE","title":"Finished work","closed":"2026-06-20"}
+`
 
 func TestOutlineSectionRowsAreSelectableAndFoldable(t *testing.T) {
 	harness := newModelHarness(t, harnessOptions{})
@@ -298,8 +597,11 @@ func TestOutlineFoldsASectionAndKeepsItsBadge(t *testing.T) {
 	if strings.Contains(text, "Book flight in Concur") {
 		t.Fatalf("a folded section still shows its tasks:\n%s", text)
 	}
-	if tally := headingTally(harness.model.Rows(), "Work"); tally != "5" {
-		t.Fatalf("folded Work badge %q, want the full task count 5:\n%s", tally, text)
+	// The badge is the fold's whole point: it survives the fold and still says
+	// what the section holds — the four it is showing, plus the closed row the
+	// toggle is holding back.
+	if heading := headingRowText(harness.model.Rows(), "Work"); !strings.Contains(heading, "4 · 1 closed") {
+		t.Fatalf("folded Work badge %q, want the full shown count and its leftovers:\n%s", heading, text)
 	}
 }
 

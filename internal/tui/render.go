@@ -206,13 +206,22 @@ func (m *Model) editorColumn(layout ScreenLayout) []string {
 	return render.Lines
 }
 
-// headerCount is the right-hand side of the header: the open count, the
-// unavailable-shown note, and the help hint.
+// headerCount is the right-hand side of the header: the open count, the notes
+// naming any reveal that is currently on, and the help hint.
 func (m *Model) headerCount() string {
 	styler := m.styler
-	deferredNote := ""
+	// A reveal has to be visible in the chrome or the list is lying about what
+	// it is: rows nothing on screen accounts for are how a reader concludes the
+	// filter is broken.
+	reveals := ""
 	if m.showDeferred {
-		deferredNote = styler.Paint("warning", "unavailable shown") + styler.Paint("muted", " · ")
+		reveals += styler.Paint("warning", "unavailable shown") + styler.Paint("muted", " · ")
+	}
+	// The closed note is view-scoped where the unavailable one is not, because
+	// the toggle behind it is: saying "closed shown" over an Agenda that cannot
+	// show a closed row either way would describe a list that is not there.
+	if m.showClosed && closedToggleViews[m.view] {
+		reveals += styler.Paint("warning", "closed shown") + styler.Paint("muted", " · ")
 	}
 	// The date leads the count because the agenda groups rows into OVERDUE and
 	// TODAY: "today" is the frame of reference for the whole list, and a TUI
@@ -231,7 +240,7 @@ func (m *Model) headerCount() string {
 		overdue = styler.Paint("due_overdue", fmt.Sprintf("%d overdue", count)) +
 			styler.Paint("muted", " · ")
 	}
-	return styler.Paint("muted", m.todayStamp()+" · ") + deferredNote + overdue +
+	return styler.Paint("muted", m.todayStamp()+" · ") + reveals + overdue +
 		styler.Paint("muted", fmt.Sprintf("%d open", m.OpenTaskCount()))
 }
 

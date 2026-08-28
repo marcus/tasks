@@ -58,6 +58,7 @@ func (m *Model) handlers() map[string]func(key string) {
 		"approve_and_complete_proposal": func(string) { m.ApproveAndCompleteProposal() },
 		"unreject_proposal":             func(string) { m.RestoreRejected() },
 		"toggle_rejected_view":          func(string) { m.ToggleRejected() },
+		"toggle_closed_view":            func(string) { m.ToggleClosed() },
 		"raise_priority":                func(string) { m.BumpPriority(-1) },
 		"lower_priority":                func(string) { m.BumpPriority(1) },
 		"mark_next":                     func(string) { m.MarkNextSelected() },
@@ -1258,6 +1259,7 @@ func (m *Model) suspendedTargetCanonicalView() string {
 			UseTree:      true,
 			Collapsed:    map[string]bool{},
 			ShowDeferred: m.showDeferred,
+			ShowClosed:   m.showClosed,
 			UrgentDays:   m.paths.UrgentDays,
 		}
 		if tab.Key == ViewProjects {
