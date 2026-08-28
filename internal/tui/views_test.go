@@ -1423,6 +1423,443 @@ func TestProjectHeadingFoldsItsTasks(t *testing.T) {
 	}
 }
 
+// -- issue #19: Projects shows closed work behind the same C toggle --------
+
+// projectsClosedStore is one project holding open work, a closed parent with an
+// open child under it, and a second project whose only live child is CANCELLED.
+// The Inbox holds finished work of its own, which Projects owes nobody.
+const projectsClosedStore = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Projects"}
+{"type":"section","id":"aaaa0002","parent":"aaaa0001","title":"Launch the site"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0002","state":"NEXT","title":"pick a generator"}
+{"type":"task","id":"bbbb0002","parent":"aaaa0002","state":"DONE","title":"buy the domain"}
+{"type":"task","id":"bbbb0003","parent":"bbbb0002","state":"TODO","title":"renew it yearly"}
+{"type":"section","id":"aaaa0003","parent":"aaaa0001","title":"Mid-year reviews"}
+{"type":"task","id":"bbbb0004","parent":"aaaa0003","state":"CANCELLED","title":"draft the memo"}
+{"type":"section","id":"aaaa0004","parent":"aaaa0001","title":"RaaS consolidation"}
+{"type":"section","id":"aaaa0005","title":"Inbox"}
+{"type":"task","id":"bbbb0005","parent":"aaaa0005","state":"DONE","title":"unfiled leftover"}
+`
+
+// The landing page does not change. Projects opens on what is moving, closed
+// rows stay out, the dormant tail still rolls up the quiet projects, and the
+// open child of a completed parent is still hoisted into its place.
+func TestProjectsStillOpensOnOpenWorkOnly(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: projectsClosedStore})
+	harness.model.SwitchView(ViewProjects)
+	text := rowTexts(harness)
+	for _, gone := range []string{"buy the domain", "draft the memo", "unfiled leftover"} {
+		if strings.Contains(text, gone) {
+			t.Fatalf("Projects showed closed row %q before anyone asked:\n%s", gone, text)
+		}
+	}
+	if !strings.Contains(text, "pick a generator") {
+		t.Fatalf("Projects lost its open work:\n%s", text)
+	}
+	// Hoisting: the open child survives its completed parent's pruning.
+	if !strings.Contains(text, "renew it yearly") {
+		t.Fatalf("the open child of a closed parent was pruned with it:\n%s", text)
+	}
+	// Mid-year reviews has only a CANCELLED child, so it is still tail, not
+	// heading; RaaS has nothing at all and keeps it company.
+	if !strings.Contains(text, "Mid-year reviews · RaaS consolidation") {
+		t.Fatalf("the dormant tail changed shape:\n%s", text)
+	}
+}
+
+// The reveal is the whole point of the tab for a finished commitment: DONE and
+// CANCELLED rows arrive under the project they were filed in, wearing the same
+// dot and the same `· cancelled` suffix the Outline gives them.
+func TestProjectsRevealsClosedWorkUnderItsProject(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: projectsClosedStore})
+	harness.model.SwitchView(ViewProjects)
+	harness.model.ToggleClosed()
+	text := rowTexts(harness)
+	if !strings.Contains(text, DotClosed+"    buy the domain") {
+		t.Fatalf("the DONE row did not arrive in the Outline's vocabulary:\n%s", text)
+	}
+	if !strings.Contains(text, DotClosed+"    draft the memo · cancelled") {
+		t.Fatalf("the CANCELLED row lost its reason word:\n%s", text)
+	}
+	harness.model.ToggleClosed()
+	if text := rowTexts(harness); strings.Contains(text, "buy the domain") {
+		t.Fatalf("toggling back did not hide the closed rows again:\n%s", text)
+	}
+}
+
+// A project whose only live children are closed is a finished commitment, not
+// an empty one. With the reveal on it earns its heading back — and stops being
+// warned about as `stuck`, which would be a false alarm about work that is over.
+func TestAClosedOnlyProjectBecomesARealHeadingWhenRevealed(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: projectsClosedStore})
+	harness.model.SwitchView(ViewProjects)
+	harness.model.ToggleClosed()
+	text := rowTexts(harness)
+	if !strings.Contains(text, MarkExpanded+"Mid-year reviews") {
+		t.Fatalf("a closed-only project stayed on the dormant tail:\n%s", text)
+	}
+	if strings.Contains(text, "Mid-year reviews  ⚠ stuck") {
+		t.Fatalf("a finished project was warned about as stalled:\n%s", text)
+	}
+	// It folds like any other heading, because it has something to fold.
+	harness.selectRowByID("aaaa0003")
+	harness.model.CollapseSelected()
+	if text := rowTexts(harness); strings.Contains(text, "draft the memo") {
+		t.Fatalf("the revealed project heading would not fold:\n%s", text)
+	}
+	// A project with nothing at all under it is still tail — the reveal widens
+	// what counts as live, it does not abolish the tail.
+	if !strings.Contains(rowTexts(harness), MarkCollapsed+"RaaS consolidation") {
+		t.Fatalf("a genuinely empty project left the dormant tail:\n%s", rowTexts(harness))
+	}
+}
+
+// Hoisting is the open-only mode's rule and stays there. With history revealed
+// the tab shows the tree the FILE holds, or a reader reviewing what a project
+// did would be told the wrong story about which step produced which.
+func TestRevealedProjectsShowTheStoredTreeRatherThanHoisting(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: projectsClosedStore})
+	harness.model.SwitchView(ViewProjects)
+	harness.model.ToggleClosed()
+	rows := harness.model.Rows()
+	parentAt, childAt := -1, -1
+	for index, row := range rows {
+		if row.Item == nil {
+			continue
+		}
+		switch row.Item.ID {
+		case "bbbb0002":
+			parentAt = index
+		case "bbbb0003":
+			childAt = index
+		}
+	}
+	if parentAt < 0 || childAt < 0 {
+		t.Fatalf("missing the parent or the child:\n%s", rowTexts(harness))
+	}
+	if childAt != parentAt+1 {
+		t.Fatalf("the child did not land directly under its parent (%d, %d):\n%s",
+			parentAt, childAt, rowTexts(harness))
+	}
+	// Nesting, not adjacency. A descendant wears the dim thread the subtree
+	// walker drops at every level below its anchor; an anchor does not. That
+	// glyph IS the difference between "shown under it" and "hoisted beside it".
+	if !strings.Contains(rows[childAt].Text, "│") {
+		t.Fatalf("the child anchored in its own right instead of nesting:\n%s", rowTexts(harness))
+	}
+	if strings.Contains(rows[parentAt].Text, "│") {
+		t.Fatalf("the closed parent is not the anchor it should be:\n%s", rowTexts(harness))
+	}
+	// The closed parent is a container now, so it offers the fold its children
+	// justify — a chevron that opens onto something.
+	if rows[parentAt].MarkerBegin == rows[parentAt].MarkerEnd {
+		t.Fatalf("the revealed closed parent has no fold marker:\n%s", rowTexts(harness))
+	}
+
+	// The contrast: with the reveal off, the same child is hoisted into the
+	// closed parent's place and threads off nothing.
+	harness.model.ToggleClosed()
+	for _, row := range harness.model.Rows() {
+		if row.Item != nil && row.Item.ID == "bbbb0003" && strings.Contains(row.Text, "│") {
+			t.Fatalf("open-only mode stopped hoisting:\n%s", rowTexts(harness))
+		}
+	}
+}
+
+// Projects is a listing of commitments. An unfiled capture has no project to
+// sit beneath, so it is out of the tab whatever the toggle says — otherwise
+// "show me what this project finished" would quietly include the Inbox.
+func TestProjectsKeepsUnfiledClosedWorkOut(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: projectsClosedStore})
+	harness.model.SwitchView(ViewProjects)
+	harness.model.ToggleClosed()
+	if text := rowTexts(harness); strings.Contains(text, "unfiled leftover") {
+		t.Fatalf("the reveal dragged unfiled closed work into Projects:\n%s", text)
+	}
+	// And the note must not promise it either: it counts what C would paint.
+	harness.model.ToggleClosed()
+	if text := rowTexts(harness); !strings.Contains(text, "2 closed hidden · C shows") {
+		t.Fatalf("the hidden-work note counted the unfiled row:\n%s", text)
+	}
+}
+
+// `x` sweeps closed rows into archive.jsonl; this toggle is about the ones
+// still in the live file. Widening to the archive under the same key would make
+// "show closed" and "show the archive" the same surprise.
+func TestProjectsRevealNeverReachesTheArchive(t *testing.T) {
+	live := `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Projects"}
+{"type":"section","id":"aaaa0002","parent":"aaaa0001","title":"Launch the site"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0002","state":"NEXT","title":"pick a generator"}
+`
+	archived := `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Projects"}
+{"type":"section","id":"aaaa0002","parent":"aaaa0001","title":"Launch the site"}
+{"type":"task","id":"cccc0001","parent":"aaaa0002","state":"DONE","title":"swept away"}
+`
+	harness := newModelHarness(t, harnessOptions{live: live, archive: archived})
+	harness.model.SwitchView(ViewProjects)
+	harness.model.ToggleClosed()
+	if text := rowTexts(harness); strings.Contains(text, "swept away") {
+		t.Fatalf("the reveal reached into archive.jsonl:\n%s", text)
+	}
+}
+
+// Z and C answer different questions — "what can I not do yet" and "what do I
+// no longer have to" — and each has to keep working while the other is on.
+// A Z-hidden parent still takes its subtree with it, history included, so
+// revealing finished work cannot hoist it out of the parked parent it belongs
+// to and drop it at the top of the project.
+func TestProjectsClosedAndDeferredTogglesCompose(t *testing.T) {
+	live := `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Projects"}
+{"type":"section","id":"aaaa0002","parent":"aaaa0001","title":"Launch the site"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0002","state":"TODO","title":"parked parent","scheduled":"2099-01-01"}
+{"type":"task","id":"bbbb0002","parent":"bbbb0001","state":"DONE","title":"finished under park"}
+{"type":"task","id":"bbbb0003","parent":"aaaa0002","state":"DONE","title":"plain finished"}
+`
+	for _, want := range []struct {
+		deferred, closed             bool
+		parked, underPark, plainDone bool
+	}{
+		{false, false, false, false, false},
+		{true, false, true, false, false},
+		{false, true, false, false, true},
+		{true, true, true, true, true},
+	} {
+		harness := newModelHarness(t, harnessOptions{live: live})
+		harness.model.SwitchView(ViewProjects)
+		if want.deferred {
+			harness.model.ToggleDeferred()
+		}
+		if want.closed {
+			harness.model.ToggleClosed()
+		}
+		text := rowTexts(harness)
+		for _, check := range []struct {
+			title string
+			want  bool
+		}{
+			{"parked parent", want.parked},
+			{"finished under park", want.underPark},
+			{"plain finished", want.plainDone},
+		} {
+			if got := strings.Contains(text, check.title); got != check.want {
+				t.Fatalf("Z=%v C=%v: %q shown = %v, want %v:\n%s",
+					want.deferred, want.closed, check.title, got, check.want, text)
+			}
+		}
+	}
+}
+
+// Projects is a commitment listing, not the repair view. A state nobody
+// recognizes is neither commitment nor history: it stays out of the tab both
+// ways round, and `C` never claims it as something the reader finished. The
+// Outline is where a broken row is meant to surface, and still does.
+func TestProjectsNeverTreatsAMalformedStateAsClosed(t *testing.T) {
+	live := `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Projects"}
+{"type":"section","id":"aaaa0002","parent":"aaaa0001","title":"Launch the site"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0002","state":"NEXT","title":"pick a generator"}
+{"type":"task","id":"bbbb0002","parent":"aaaa0002","state":"TODOO","title":"typo state row"}
+{"type":"task","id":"bbbb0003","parent":"aaaa0002","state":"DONE","title":"genuinely finished"}
+`
+	harness := newModelHarness(t, harnessOptions{live: live})
+	harness.model.SwitchView(ViewProjects)
+	if text := rowTexts(harness); !strings.Contains(text, "1 closed hidden · C shows") {
+		t.Fatalf("the malformed row was counted as history:\n%s", text)
+	}
+	harness.model.ToggleClosed()
+	text := rowTexts(harness)
+	if strings.Contains(text, "typo state row") {
+		t.Fatalf("C claimed a malformed row as finished work:\n%s", text)
+	}
+	if !strings.Contains(text, "genuinely finished") {
+		t.Fatalf("C missed the row that really is finished:\n%s", text)
+	}
+	harness.model.SwitchView(ViewOutline)
+	if text := rowTexts(harness); !strings.Contains(text, "typo state row") {
+		t.Fatalf("the repair view lost the malformed row:\n%s", text)
+	}
+}
+
+// Badges count what is on the screen, and what is being held back is named
+// beside them rather than folded into them — the Outline's `4 · 1 closed`
+// vocabulary, where `· N closed` always means work that is NOT painted.
+func TestProjectsBadgesCountWhatIsShownAndNameWhatIsHeldBack(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: projectsClosedStore})
+	harness.model.SwitchView(ViewProjects)
+	text := rowTexts(harness)
+	if !strings.Contains(text, "Launch the site  · 1 closed") {
+		t.Fatalf("the project row hid the fact that it holds history:\n%s", text)
+	}
+	if !strings.Contains(text, "1/3 open") {
+		t.Fatalf("the section badge no longer names the live share:\n%s", text)
+	}
+	harness.model.ToggleClosed()
+	text = rowTexts(harness)
+	if strings.Contains(text, "closed") && !strings.Contains(text, "· cancelled") {
+		t.Fatalf("a leftover marker survived the thing it was about:\n%s", text)
+	}
+	// Two of the three projects now have rows, and neither is "open" — one is
+	// finished. The word follows the number.
+	if !strings.Contains(text, "2/3 shown") {
+		t.Fatalf("the section badge called a finished project open:\n%s", text)
+	}
+}
+
+// A `/` search drops Projects into its flat shape, where a project whose only
+// matches are closed produces no group at all — the same blind spot the Outline
+// answers with one muted line, for the same reason.
+func TestProjectsSearchThatMatchesOnlyClosedWorkSaysSo(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: projectsClosedStore})
+	harness.model.SwitchView(ViewProjects)
+	harness.model.filter = "memo"
+	harness.model.RefreshRows()
+	text := rowTexts(harness)
+	if strings.Contains(text, "draft the memo") {
+		t.Fatalf("the search revealed a closed row on its own:\n%s", text)
+	}
+	if !strings.Contains(text, "1 closed hidden · C shows") {
+		t.Fatalf("a search matching only hidden work said nothing:\n%s", text)
+	}
+	harness.model.ToggleClosed()
+	text = rowTexts(harness)
+	if !strings.Contains(text, "draft the memo") {
+		t.Fatalf("the note's own key did not produce the row:\n%s", text)
+	}
+	if strings.Contains(text, "closed hidden") {
+		t.Fatalf("the note outstayed the thing it was about:\n%s", text)
+	}
+	// The flat heading counts OPEN rows, so its number stays true beneath a
+	// group the reveal has added finished rows to.
+	if !strings.Contains(text, "Mid-year reviews  0 open") {
+		t.Fatalf("the flat heading counted a closed row as open:\n%s", text)
+	}
+}
+
+// The toggle is an errand, not a preference: nothing about it is written to the
+// session file, so the next launch opens on the work.
+func TestProjectsClosedRevealIsNotPersisted(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: projectsClosedStore})
+	harness.model.SwitchView(ViewProjects)
+	harness.press('C')
+	if !harness.model.showClosed {
+		t.Fatal("C did not reveal closed rows on the Projects tab")
+	}
+	harness.model.Save()
+
+	revived := newModelHarness(t, harnessOptions{live: projectsClosedStore})
+	if revived.model.showClosed {
+		t.Fatal("the closed reveal survived a restart")
+	}
+	revived.model.SwitchView(ViewProjects)
+	if strings.Contains(rowTexts(revived), "buy the domain") {
+		t.Fatalf("a restarted Projects tab opened on the history:\n%s", rowTexts(revived))
+	}
+}
+
+// slotStyler tags each painted span with the slot it was painted in, so a test
+// can assert the TONE of a header and not merely its words. The harness paints
+// plain by default, which is what keeps the row goldens readable — and also
+// what makes "is this loud?" invisible to an ordinary row assertion.
+type slotStyler struct{ PlainStyler }
+
+func (slotStyler) Paint(slot, text string) string { return "{" + slot + ":" + text + "}" }
+
+// `0 next` is a warning about a STALL. `/done` plus `C` produces a group whose
+// every row is finished, and a project that is over is not stalled — the same
+// false alarm the tree shape puts down, which survived on the flat path because
+// its heading counts rows rather than asking the project.
+func TestAFinishedFlatGroupIsNotWarnedAboutAsStalled(t *testing.T) {
+	live := `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Projects"}
+{"type":"section","id":"aaaa0002","parent":"aaaa0001","title":"Epsilon"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0002","state":"DONE","title":"done thing"}
+{"type":"section","id":"aaaa0003","parent":"aaaa0001","title":"Zeta"}
+{"type":"task","id":"bbbb0002","parent":"aaaa0003","state":"TODO","title":"done nothing yet"}
+`
+	harness := newModelHarness(t, harnessOptions{live: live})
+	harness.model.styler = slotStyler{}
+	harness.model.SwitchView(ViewProjects)
+	harness.model.filter = "done"
+	harness.model.ToggleClosed()
+	headers := map[string]string{}
+	for _, row := range harness.model.Rows() {
+		for _, name := range []string{"Epsilon", "Zeta"} {
+			if strings.Contains(row.Text, "{project:"+name+"}") {
+				headers[name] = row.Text
+			}
+		}
+	}
+	if headers["Epsilon"] == "" || headers["Zeta"] == "" {
+		t.Fatalf("the repro did not produce both groups:\n%s", rowTexts(harness))
+	}
+	// Epsilon's one row is DONE: nothing open, so nothing to stall.
+	if !strings.Contains(headers["Epsilon"], "{muted:0 open}") {
+		t.Fatalf("the finished group counted a closed row as open: %q", headers["Epsilon"])
+	}
+	if strings.Contains(headers["Epsilon"], "{warning:") {
+		t.Fatalf("a finished group was warned about as stalled: %q", headers["Epsilon"])
+	}
+	// Zeta is the control: open work with nothing marked NEXT is the stall the
+	// tone exists to report, and it still reports it.
+	if !strings.Contains(headers["Zeta"], "{warning: · 0 next}") {
+		t.Fatalf("a genuinely stalled group lost its warning: %q", headers["Zeta"])
+	}
+}
+
+// An AREA is defined as a top-level list that currently holds open work, so one
+// whose work is all finished is not an area any more and leaves the listing
+// entirely — today, before any toggle. That definition lives in the shared core
+// (Queries.Projects, which `tasks projects` and GET /api/v1/projects both read),
+// so the TUI does not widen it for a keystroke. What the tab must not do is
+// PROMISE the row anyway: the hidden-work note counts only what C would paint.
+func TestTheClosedRevealDoesNotResurrectAFinishedArea(t *testing.T) {
+	live := `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Projects"}
+{"type":"section","id":"aaaa0002","parent":"aaaa0001","title":"Launch the site"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0002","state":"NEXT","title":"pick a generator"}
+{"type":"section","id":"aaaa0010","title":"Home"}
+{"type":"task","id":"bbbb0010","parent":"aaaa0010","state":"DONE","title":"finished chore"}
+{"type":"section","id":"aaaa0011","title":"Garden"}
+{"type":"task","id":"bbbb0011","parent":"aaaa0011","state":"TODO","title":"live chore"}
+{"type":"task","id":"bbbb0012","parent":"aaaa0011","state":"DONE","title":"done chore"}
+`
+	harness := newModelHarness(t, harnessOptions{live: live})
+	harness.model.SwitchView(ViewProjects)
+	// One hidden row, not two: the finished area's row is not on offer, so the
+	// note must not count it.
+	if text := rowTexts(harness); !strings.Contains(text, "1 closed hidden · C shows") {
+		t.Fatalf("the note promised a row the toggle cannot produce:\n%s", text)
+	}
+	harness.model.ToggleClosed()
+	text := rowTexts(harness)
+	if strings.Contains(text, "finished chore") || strings.Contains(text, "Home") {
+		t.Fatalf("the reveal resurrected an area the shared listing drops:\n%s", text)
+	}
+	// An area that still holds open work keeps its history, like any project.
+	if !strings.Contains(text, "done chore") {
+		t.Fatalf("a living area lost its finished work:\n%s", text)
+	}
+}
+
+// The header names a reveal only where it changes something. Projects is now
+// one of the two tabs where it does, and the Agenda is still not.
+func TestProjectsHeaderNamesTheClosedReveal(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: projectsClosedStore})
+	harness.model.SwitchView(ViewProjects)
+	harness.model.ToggleClosed()
+	if !strings.Contains(harness.model.headerCount(), "closed shown") {
+		t.Fatalf("the Projects header hid the reveal: %q", harness.model.headerCount())
+	}
+	harness.model.SwitchView(ViewAgenda)
+	if strings.Contains(harness.model.headerCount(), "closed shown") {
+		t.Fatalf("the header named a reveal on a tab it does not touch: %q",
+			harness.model.headerCount())
+	}
+}
+
 // -- design 6b: the outline bands its lists by urgency ---------------------
 
 // outlineBandStore: one plain GTD list holding overdue, due-today and undated

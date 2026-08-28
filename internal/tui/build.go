@@ -25,9 +25,13 @@ type BuildRequest struct {
 	// off by default: intake is a queue of undecided work, and a decision already
 	// made is not part of it until the reviewer asks to see it.
 	ShowRejected bool
-	// ShowClosed reveals DONE and CANCELLED rows in the Outline. Off by
-	// default: the outline is the whole live tree, and a section that has been
-	// triaged but not yet swept to archive.jsonl is mostly closed leftovers.
+	// ShowClosed reveals DONE and CANCELLED rows in the Outline, and under their
+	// project in Projects. Off by default in both: the outline is the whole live
+	// tree, and a section triaged but not yet swept to archive.jsonl is mostly
+	// closed leftovers; Projects is the landing page for what is moving, and the
+	// history is what you go looking for rather than what greets you. The
+	// archive store is out of scope either way — this is closed rows still in
+	// the live file.
 	ShowClosed     bool
 	UrgentDays     int
 	ContextFilters []string
@@ -942,6 +946,13 @@ func buildProjects(request BuildRequest) []Row {
 	// project with nothing to show folds together into ONE trailing row naming
 	// them, so a long tail of dormant projects costs a line rather than a
 	// screenful — and the section badge says how much of the list is moving.
+	//
+	// "Live" is what the closed toggle widens. With `C` on, a finished row
+	// counts as something to show, so a project whose children are all DONE
+	// stops being one name on the dormant tail and becomes a foldable heading
+	// with its history under it. What "live" never widens to is the Inbox — an
+	// unfiled task has no project to sit beneath, closed or not — or the archive
+	// store, which `x` owns.
 	query := request.query(ViewProjects)
 	sections := []Section{}
 	for _, group := range [][2]any{
@@ -1005,15 +1016,24 @@ func buildProjects(request BuildRequest) []Row {
 		// cells, which that phrasing overruns and the frame then truncates. The
 		// ratio form says the same thing in eight, and matches the `next/open`
 		// ratio the project rows already carry one column below.
+		//
+		// The word changes with the toggle because the numerator does. With
+		// closed rows revealed, a project keeps its heading on the strength of
+		// finished work, and calling that project "open" would send a reader
+		// looking for something to do inside a commitment that is over.
+		word := "open"
+		if request.ShowClosed {
+			word = "shown"
+		}
 		right := fmt.Sprintf("%d", len(members))
 		if len(dormant) > 0 {
-			right = fmt.Sprintf("%d/%d open", len(members)-len(dormant), len(members))
+			right = fmt.Sprintf("%d/%d %s", len(members)-len(dormant), len(members), word)
 		}
 		sections = append(sections, Section{
 			Label: label, Slot: "section", Right: right, Rows: rows,
 		})
 	}
-	return renderSections(request, sections, dateMeta(request))
+	return projectsHiddenNote(request, renderSections(request, sections, dateMeta(request)))
 }
 
 // dormantProjectsRow is design 6b's collapsed tail: every project with nothing
@@ -1045,10 +1065,40 @@ func projectNode(request BuildRequest, project taskquery.ProjectView) *taskquery
 // question — "is anything moving here" is.
 func projectMeta(request BuildRequest, project taskquery.ProjectView) (string, string) {
 	slot := "muted"
-	if project.NextCount == 0 {
+	if project.NextCount == 0 && !projectFinished(request, project) {
 		slot = "warning"
 	}
 	return fmt.Sprintf("%d/%d", project.NextCount, project.OpenCount), slot
+}
+
+// projectFinished reports a project that has a row ONLY because the reader
+// asked to see closed work: nothing open is left anywhere under it.
+//
+// It is the difference between the two things `0/0  ⚠ stuck` could mean. A
+// project with open work and no NEXT is stalled and the warning is the point of
+// the view. A project with nothing open at all is not stalled, it is over —
+// warning a reader about a commitment they finished is a false alarm, and one
+// that only appears because they pressed a key to look at their own history.
+func projectFinished(request BuildRequest, project taskquery.ProjectView) bool {
+	if !request.ShowClosed || request.Queries == nil {
+		return false
+	}
+	return !hasOpenTaskUnder(request.Queries.Tree().NodesByLine[project.Line])
+}
+
+func hasOpenTaskUnder(root *taskquery.Node) bool {
+	if root == nil {
+		return false
+	}
+	for _, child := range root.Children {
+		if child.Task() && isOpenState(child.Item.State) {
+			return true
+		}
+		if hasOpenTaskUnder(child) {
+			return true
+		}
+	}
+	return false
 }
 
 // anchorsForProject keeps anchor roots that belong under a ProjectView section.
@@ -1095,7 +1145,8 @@ func projectsFlat(request BuildRequest) []Row {
 	query := request.query(ViewProjects)
 	groups := groupItems(query, request.Items)
 	if len(groups) == 0 {
-		return []Row{headerRow(styler.Paint("muted", "No active projects."))}
+		return projectsHiddenNote(request,
+			[]Row{headerRow(styler.Paint("muted", "No active projects."))})
 	}
 	rows := []Row{}
 	for _, group := range query.SortedGroups(groups) {
@@ -1112,7 +1163,7 @@ func projectsFlat(request BuildRequest) []Row {
 		}
 		rows = append(rows, headerRow(""))
 	}
-	return withMetaRows(request, dropTrailingBlank(rows))
+	return projectsHiddenNote(request, withMetaRows(request, dropTrailingBlank(rows)))
 }
 
 // projectRow is a project's own row: a fold marker, its name, and a warning
@@ -1126,24 +1177,131 @@ func projectsFlat(request BuildRequest) []Row {
 func projectRow(request BuildRequest, project taskquery.ProjectView, marker string) string {
 	styler := request.styler()
 	head := strings.Repeat(" ", BandField) + marker + styler.Paint("project", project.Title)
-	if project.Stuck {
+	if project.Stuck && !projectFinished(request, project) {
 		head += styler.Paint("warning", "  ⚠ stuck")
+	}
+	// What the toggle is holding back, in the Outline's own words and with the
+	// Outline's own meaning: `· N closed` always names work that is NOT on the
+	// screen. Without it a project reads as if its whole history were the two
+	// open rows under it, and the reader has no reason to suspect a key exists.
+	if hidden := projectHiddenClosedCount(request, project); hidden > 0 {
+		head += styler.Paint("muted", fmt.Sprintf("  · %d closed", hidden))
 	}
 	return head
 }
 
+// projectHiddenClosedCount is how much finished work sits under one project
+// that the toggle is currently holding back — and, with the toggle on, zero by
+// construction, because nothing is being held back.
+func projectHiddenClosedCount(request BuildRequest, project taskquery.ProjectView) int {
+	if request.ShowClosed || request.Queries == nil {
+		return 0
+	}
+	return hiddenClosedUnder(request, request.Queries.Tree().NodesByLine[project.Line])
+}
+
+// hiddenClosedUnder counts the closed tasks anywhere beneath a node that
+// pressing `C` would actually paint. A finished row inside a Z-hidden subtree
+// is not one of them — see closedRowVisible — and promising it would be a count
+// the keystroke cannot honour.
+func hiddenClosedUnder(request BuildRequest, root *taskquery.Node) int {
+	if root == nil {
+		return 0
+	}
+	total := 0
+	for _, child := range root.Children {
+		if child.Task() && isClosedState(child.Item.State) && closedRowVisible(request, child) {
+			total++
+		}
+		total += hiddenClosedUnder(request, child)
+	}
+	return total
+}
+
+// projectsHiddenNote is the Projects tab's counterpart to the Outline's foot
+// line, and it exists for the paths a project row cannot reach.
+//
+// A project whose live children are ALL closed has no row of its own at all:
+// it is one name on the dormant tail, whose meta says `no tasks`. And a `/`
+// search or an `@` context drops the tab into its flat shape, where a project
+// with only closed matches produces no group whatsoever. In both cases the
+// finished work is not merely dimmed, it is absent and unannounced — so a
+// reader who filed something under a project and finished it concludes it was
+// lost rather than hidden.
+//
+// One muted line, naming the key, absent whenever nothing is hidden. Same
+// sentence the Outline uses, because it is the same promise.
+func projectsHiddenNote(request BuildRequest, rows []Row) []Row {
+	hidden := projectsHiddenClosedCount(request)
+	if hidden == 0 {
+		return rows
+	}
+	if len(rows) > 0 {
+		rows = append(rows, chromeRow(""))
+	}
+	return append(rows, withMeta(request, headerRow(request.styler().Paint("muted",
+		fmt.Sprintf("%s%d closed hidden · C shows", placeholderIndent, hidden))), "", ""))
+}
+
+// projectsHiddenClosedCount is the whole tab's held-back total.
+//
+// Tree mode counts under the listed projects and areas, which is exactly the
+// population the tab would reveal — a closed task in the Inbox stays out
+// whatever the toggle says, so counting it would advertise a row `C` never
+// produces. The listing's own sections do not overlap (areas are top-level and
+// exclude the Projects subtree), so no row is counted twice.
+//
+// Flat mode counts ITEMS instead, because that path renders from the filtered
+// item list: the number then describes what THIS search is hiding rather than
+// what the file holds.
+func projectsHiddenClosedCount(request BuildRequest) int {
+	if request.ShowClosed {
+		return 0
+	}
+	if !request.UseTree {
+		revealed := request.query(ViewProjects).ShowingClosed(true)
+		hidden := 0
+		for _, item := range request.Items {
+			if isClosedState(item.State) && revealed.ViewRule(item) {
+				hidden++
+			}
+		}
+		return hidden
+	}
+	hidden := 0
+	for _, project := range request.Projects {
+		hidden += projectHiddenClosedCount(request, project)
+	}
+	return hidden
+}
+
+// projectHeader is a flat-mode group's heading. The counts describe what is
+// UNDER it: `N open` counts open rows only, so the number stays true when the
+// closed reveal has added finished rows beneath it, and `N next` is the share
+// that is actionable.
+//
+// `0 next` is loud only where it is a claim about a STALL. A group with no open
+// work left under it in this shape is not stalled, it is over — the same false
+// alarm projectFinished puts down in tree mode, and it survives here for the
+// same reason: `/done` plus `C` produces a group whose every row is finished,
+// and warning a reader about a commitment they completed is noise pointed at
+// the one thing they cannot act on. With the toggle off the case cannot arise,
+// because only open rows are admitted to a group at all.
 func projectHeader(request BuildRequest, name string, items []store.Item) string {
 	styler := request.styler()
-	nexts := 0
+	nexts, opens := 0, 0
 	for _, item := range items {
 		if item.State == "NEXT" {
 			nexts++
 		}
+		if isOpenState(item.State) {
+			opens++
+		}
 	}
 	head := styler.Paint("project", name) + "  " +
-		styler.Paint("muted", fmt.Sprintf("%d open", len(items)))
+		styler.Paint("muted", fmt.Sprintf("%d open", opens))
 	slot := "muted"
-	if nexts == 0 {
+	if nexts == 0 && opens > 0 {
 		slot = "warning"
 	}
 	head += styler.Paint(slot, fmt.Sprintf(" · %d next", nexts))
@@ -1296,11 +1454,54 @@ func anchorRoots(request BuildRequest) []*taskquery.Node {
 
 // nodeVisible is: open, and either deferred rows are being shown or this one is
 // available. A hidden node takes its whole subtree with it.
+//
+// Projects with the closed toggle on is the one widening: a finished row is
+// visible there too. That single fact is also what turns HOISTING off in that
+// mode, without a second code path — anchorRoots promotes a node only when its
+// parent is invisible, so a closed parent that is now visible anchors in its own
+// right and its open child hangs beneath it, which is the stored tree. Every
+// other reason a row is not painted — a proposal, a malformed state, a
+// Z-hidden subtree — keeps hoisting exactly as it does today.
 func nodeVisible(request BuildRequest, node *taskquery.Node) bool {
-	if !node.Task() || !isOpenState(node.Item.State) {
+	if !node.Task() {
+		return false
+	}
+	if projectsRevealsClosed(request) && isClosedState(node.Item.State) {
+		return closedRowVisible(request, node)
+	}
+	if !isOpenState(node.Item.State) {
 		return false
 	}
 	return request.ShowDeferred || request.Queries.AvailabilityFor(*node.Item).Available()
+}
+
+// projectsRevealsClosed reports the one mode in which the tree helpers admit
+// finished work. It is asked of the REQUEST rather than of a bare flag because
+// `C` is bound list-wide: the other tree tabs carry ShowClosed around and must
+// keep anchoring on open work regardless.
+func projectsRevealsClosed(request BuildRequest) bool {
+	return request.View == ViewProjects && request.ShowClosed
+}
+
+// closedRowVisible gates a revealed closed row on its ANCESTORS only.
+//
+// Not on its own availability: AvailabilityFor answers `closed` for every
+// finished row, so gating it there would make `C` do nothing until `Z` was on
+// as well — and the two are meant to compose, not to license each other. But a
+// Z-hidden ancestor still takes its whole subtree with it, or revealing history
+// would hoist a finished task out of the parked parent it belongs to and drop
+// it at the top of the project.
+func closedRowVisible(request BuildRequest, node *taskquery.Node) bool {
+	if request.ShowDeferred {
+		return true
+	}
+	for parent := node.Parent; parent != nil && parent.Task(); parent = parent.Parent {
+		if isOpenState(parent.Item.State) &&
+			!request.Queries.AvailabilityFor(*parent.Item).Available() {
+			return false
+		}
+	}
+	return true
 }
 
 func visibleChildren(request BuildRequest, node *taskquery.Node) []*taskquery.Node {

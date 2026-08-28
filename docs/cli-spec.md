@@ -1052,6 +1052,36 @@ whose only children are hidden wears a leaf marker, and a fold saved on a node
 that later becomes hidden or unfoldable is discarded rather than respected.
 Apart from that, only collapse may hide descendants.
 
+The **Projects** tab reads the same tree from the other end, and `C` governs it
+too — Outline is the working tree, Projects is the project history. Its default
+is unchanged: open work only, closed ancestors pruned with their open
+descendants hoisted into their place, and every project with nothing live rolled
+into the one-line dormant tail. With the toggle on, `DONE` and `CANCELLED` rows
+appear beneath the project they are filed under, in the Outline's own row
+vocabulary (`●`, muted, `· cancelled`); a project whose only live children are
+closed stops being a name on the tail and becomes a real foldable heading; and
+the tab shows the tree the *file* holds rather than hoisting, so a closed parent
+is painted with its open child nested under it. A finished project drops the
+`⚠ stuck` warning — no open NEXT is the point of a commitment that is over, not
+a stall. Unfiled/Inbox work stays out either way (Projects lists commitments,
+and an unfiled capture has no project to sit beneath), and `archive.jsonl` stays
+out: this is closed rows still in the live file, which is what `x` has not swept
+yet. `Z` and `C` compose — a `Z`-hidden parent still takes its whole subtree
+with it, history included, so the reveal cannot hoist a finished task out of a
+parked parent. A state that is neither open nor closed — a malformed or absent
+`state` — is not project history and is never revealed by `C`; it surfaces in
+the Outline, which is the repair view. Badges follow the Outline's rule: the
+project row carries `· N closed` for work it is holding back, the section badge
+reads `1/4 open` and becomes `2/4 shown` while closed rows are revealed, and the
+flat `/`-search shape carries the same `N closed hidden · C shows` foot line for
+the projects that produce no group at all. The reveal does not widen the
+*listing*: an area is by definition a top-level list that currently holds open
+work, so one whose work is all finished has already left `Queries.Projects`
+(and `tasks projects`, and `GET /api/v1/projects`) and `C` does not bring it
+back — nor does the foot line count it, because the note only ever promises
+rows the keystroke can produce. Projects proper are listed even when empty, so
+a finished project always has a heading to come back to.
+
 `Alt+↑`/`Alt+k`, `Alt+↓`/`Alt+j`, `>`, and `<` reorder, indent, and outdent in
 that unfiltered tab. They anchor on the nearest *visible* sibling, so a row the
 Outline is hiding is stepped over rather than onto: one press is always one
@@ -1282,7 +1312,7 @@ The sweep's preview pinning matches the endpoint's documented `fingerprint` →
 | `next` | `n` | ✅ | NEXT actions by context. With none, prints a one-line empty state rather than nothing — dating lands work in `TODO`, so an empty NEXT list commonly sits beside a full agenda. The pointer at the agenda is only made when `agenda` really has rows: `No next actions. Dated work is on the agenda; mark one with: tasks state <ref> NEXT`, else `No next actions. Mark one with: tasks state <ref> NEXT`. `--json` is unaffected (an empty array). |
 | `quadrants` | `q` | ✅ | Covey 2×2 from priority (A/B ⇒ important) + a `DEADLINE` within `urgent_days` (default 3, overdue counts) ⇒ urgent, with `important`/`urgent` tags as overrides. `--json` adds `quadrant`. |
 | `inbox` | `i` | ✅ | Unprocessed INBOX items. `--json` |
-| `projects` | `pj` | ✅ | Projects and areas rolled up over their open, non-deferred tasks (at any depth). Projects are the section children of the top-level "Projects" heading (listed even when empty); areas are the other top-level sections that currently hold open work (Inbox excluded). Each carries an open count, a NEXT count, the soonest deadline-or-scheduled value, and a `stuck` flag (no open NEXT — including an empty project). Ordered projects-before-areas, then by soonest boundary (nil last), then title. `--json` adds `next_time` and `next_at` beside the compatibility `next_date`. |
+| `projects` | `pj` | ✅ | Projects and areas rolled up over their open, non-deferred tasks (at any depth). Projects are the section children of the top-level "Projects" heading (listed even when empty); areas are the other top-level sections that currently hold open work (Inbox excluded). Each carries an open count, a NEXT count, the soonest deadline-or-scheduled value, and a `stuck` flag (no open NEXT — including an empty project). Ordered projects-before-areas, then by soonest boundary (nil last), then title. `--json` adds `next_time` and `next_at` beside the compatibility `next_date`. It is a **rollup, not a task listing** — it prints no rows under a project — so it takes no closed-work flag; the TUI Projects tab's `C` reveal has no CLI twin because there is no CLI projection of that body. Closed rows under a project are read with `tasks list --done`/`--all`, and `project show --json` names the open rollup's members in `task_ids`. |
 | `show <ref>` | `s` | ✅ | One live task in full, including PROPOSED without an extra flag: rendered headline + body/notes + links. Human output labels `scheduled` as `available from`, reports exact effective availability, and prints a delegation's transition stamp in the configured zone and clock format (`delegation: agent-ready (research) (since thu 08-27 5:46p)`) while `--json` keeps the stored UTC instant. `--json` keeps nullable ISO `scheduled`/`deadline` and adds nullable `scheduled_time`/`deadline_time` plus `available_at`; time objects carry `local`, stored `timezone`, `fold`, `effective_timezone`, and derived UTC `instant`. Reasons remain `available`, `proposed`, `scheduled`, `on_hold`, `ancestor_scheduled`, `ancestor_on_hold`, or `closed`. |
 | `id <ref> [--json]` | | ✅ | Print a task's stable `id`, minting one if absent (post-migration every record already has one — this is the repair path). Idempotent. Resolves refs regardless of state. |
 | `links [<ref>]` | `urls` | ✅ | The openable union: stored formal links first, then links found in task titles/notes, deduplicated by URL and classified by system. One task's links with `<ref>`; every open task's otherwise. `--system <name>` filters, `--all` widens to done + archived, and `--json` emits `{links: [{url, label, system, link_source, task, id, line, source}]}` where link_source is `formal`, `title`, or `body`, while source remains the task's `live` or `archive`. Derived links recognize org links, bare URLs, and configured shorthands. |
