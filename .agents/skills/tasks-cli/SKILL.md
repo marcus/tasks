@@ -183,6 +183,12 @@ it or `release` it with a blocker note. Do not rewrite the `note` you were
 given: it is the owner's instruction, and `delegate --note` is an owner verb. There are no
 leases, so an abandoned claim stays claimed until the owner clears it.
 
+The marker's `at` is the transition stamp. `--json` and the API always give it
+as a UTC RFC 3339 instant — compare and reason with that one. Human output
+(`show`, the TUI, a conflict on stderr) prints the same instant in the user's
+configured zone and clock, e.g. `since thu 08-27 5:46p`; that is a rendering,
+not a second value, so never write it back or quote it as the stored stamp.
+
 Completing a delegated *recurring* task keeps the delegation standing: the next
 occurrence carries the same mode or person, always unclaimed and without the
 finished cycle's work reference.

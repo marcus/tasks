@@ -352,10 +352,19 @@ func (s *surfaceContext) delegationFailed(result store.MutationResult, args []st
 		return 0
 	}
 	if result.Status == store.MutationConflict {
+		// Two spellings of one refusal: `message` quotes the stored UTC instant
+		// for the JSON envelope, `human` speaks the reader's clock on stderr.
 		message := "conflict: " + defaultText(result.FirstError(), "delegation conflict")
+		human := s.localizedStamps(message, result.Summary.At)
 		if action == "claim" && result.Summary.Holder != "" {
+			// Composed from the STRUCTURED holder and instant rather than
+			// rewritten out of prose: a worker id is free-form enough to be
+			// spelled like a timestamp, and a substring swap would translate
+			// the holder's name into a time.
 			message = fmt.Sprintf("conflict: already claimed by %s at %s",
 				result.Summary.Holder, result.Summary.At)
+			human = fmt.Sprintf("conflict: already claimed by %s at %s",
+				result.Summary.Holder, s.readerContext().StampLabel(result.Summary.At))
 		}
 		if jsonRequested(args) {
 			w := jsonWriter()
@@ -369,7 +378,10 @@ func (s *surfaceContext) delegationFailed(result store.MutationResult, args []st
 			w.EndObject()
 			out(w.String())
 		}
-		fmt.Fprintln(os.Stderr, message)
+		// stdout is the machine's copy and keeps the stored UTC instant in both
+		// `at` and the sentence that quotes it. stderr is the person's copy, so
+		// the same instant is spoken in the zone they read every other date in.
+		fmt.Fprintln(os.Stderr, human)
 		return result.ExitCode()
 	}
 	// An `invalid` refusal already carries the sentence that explains it, and

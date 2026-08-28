@@ -75,8 +75,18 @@ func (s *surfaceContext) show(args []string) int {
 		out("  project:   " + project)
 	}
 	if marker := delegationFields(item.Delegation); marker != nil {
-		out(fmt.Sprintf("  delegation: %s %s", delegationSummary(marker),
-			dim(fmt.Sprintf("(since %s)", marker["at"]))))
+		// The transition stamp is stored UTC and READ locally: every other
+		// instant on this screen is already projected into the configured zone,
+		// and "since 18:03Z" would be the one line asking the reader to convert.
+		//
+		// A marker missing its stamp drops the parenthetical rather than
+		// printing an empty one: "(since )" answers nothing and looks like a
+		// rendering fault rather than the malformed record it is reporting.
+		line := "  delegation: " + delegationSummary(marker)
+		if at := marker["at"]; at != "" {
+			line += " " + dim(fmt.Sprintf("(since %s)", queries.Context().StampLabel(at)))
+		}
+		out(line)
 		if ref := marker["work_ref"]; ref != "" {
 			out("  work ref:  " + ref)
 		}
