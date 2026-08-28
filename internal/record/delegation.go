@@ -146,15 +146,24 @@ func DelegationUnknownKeys(value any) []string {
 	return keys
 }
 
+// delegationStampLayout is the ONE spelling of `delegation.at`: UTC, second
+// precision, literal Z. Written here rather than imported so the schema layer
+// keeps depending on nothing; temporal.StampLayout is the same string, and the
+// projection surfaces read it from there.
+const delegationStampLayout = "2006-01-02T15:04:05Z"
+
 func DelegationTimestamp(value any) bool {
 	text, ok := value.(string)
 	if !ok || len(text) != 20 {
 		return false
 	}
-	parsed, err := time.Parse("2006-01-02T15:04:05Z", text)
+	parsed, err := time.Parse(delegationStampLayout, text)
 	return err == nil && DelegationStamp(parsed) == text
 }
-func DelegationStamp(value time.Time) string { return value.UTC().Format("2006-01-02T15:04:05Z") }
+
+func DelegationStamp(value time.Time) string {
+	return value.UTC().Format(delegationStampLayout)
+}
 
 func delegationKindErrors(object map[string]any, modes ModeVocabulary) []string {
 	switch object["kind"] {

@@ -678,7 +678,9 @@ reader must never have to guess the viewer's zone to compare two claims. Every
 the same path deadlines and scheduled values already take: `show` prints
 `(since thu 08-27 5:46p)`, or `(since thu 08-27 17:46)` under `time_format =
 24`; the TUI detail panel paints that same rendering; and a conflict that names
-a holder names the same local instant on stderr. "When did I hand this off?" is
+a holder names the same local instant on stderr. A stamp from a year other than
+the reader's own carries that year (`since sun 2023-08-27 5:46p`), so an old
+handoff can never render as yesterday's. "When did I hand this off?" is
 the one delegation question, and answering it in UTC made it a timezone
 conversion on a screen where every other date was already projected. A stored
 `at` this build cannot parse is printed exactly as stored rather than dropped —

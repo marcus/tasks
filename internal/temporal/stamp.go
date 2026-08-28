@@ -19,25 +19,30 @@ import (
 )
 
 // StampLayout is the stored spelling of an instant: UTC, second precision,
-// literal Z. It is what record.DelegationStamp writes and what JSON emits.
+// literal Z — the shape `check` requires of `delegation.at` and the one every
+// writer in the tree emits. (record spells the same literal itself rather than
+// importing this package: the schema layer has no other reason to depend on
+// projection, and one string constant is not a reason to give it one.)
 const StampLayout = "2006-01-02T15:04:05Z"
 
-// ParseStamp reads a stored instant. The canonical spelling is StampLayout;
-// RFC 3339 with an explicit offset is accepted too, because a hand-edited file
-// is still a file we would rather render than refuse. Anything else reports
-// false, and callers print what the record said rather than dropping the field.
+// ParseStamp reads a stored instant, and it accepts ONLY the stored spelling.
+//
+// Being lenient here — taking RFC 3339 with an explicit offset, say — would
+// launder a record `check` calls invalid: the field would render as a healthy
+// local time on every human surface while validation refused the file, which is
+// the worst of both answers. Nothing in the tree writes those forms, so the
+// leniency bought nothing and hid something. Refusing means "print as stored"
+// fires exactly when the record is wrong, which is when a person should see it.
 func ParseStamp(stored string) (time.Time, bool) {
-	trimmed := strings.TrimSpace(stored)
-	if trimmed == "" {
+	instant, err := time.Parse(StampLayout, stored)
+	// The ROUND TRIP is the real test. Go's parser tolerates a fractional second
+	// the layout never named, so "…:44.500Z" would slip through a plain parse —
+	// and that is one of the shapes `check` refuses. Formatting back and
+	// comparing is precisely the predicate record.DelegationTimestamp applies.
+	if err != nil || instant.UTC().Format(StampLayout) != stored {
 		return time.Time{}, false
 	}
-	if instant, err := time.Parse(StampLayout, trimmed); err == nil {
-		return instant.UTC(), true
-	}
-	if instant, err := time.Parse(time.RFC3339, trimmed); err == nil {
-		return instant.UTC(), true
-	}
-	return time.Time{}, false
+	return instant.UTC(), true
 }
 
 // ClockLabel renders a wall time in the configured format: 24-hour zero-padded,
@@ -67,6 +72,19 @@ func (c Context) Clock(hour, minute int) string { return ClockLabel(hour, minute
 // month-day does not say whether the handoff was a working day, which is the
 // first thing anyone asks of a delegation clock.
 //
+// A stamp from ANOTHER YEAR carries that year — "sun 2023-08-27 11:03a". Terse
+// is right for the common case, where everything on screen is within weeks; it
+// is wrong the moment a two-year-old handoff renders byte-identical to
+// yesterday's, which is precisely when the reader is being misled rather than
+// merely under-informed.
+//
+// It does NOT disambiguate a DST fall-back fold: the two 01:30s of a repeated
+// hour render the same, without the "(later fold)" marker a stored value gets.
+// A stored value's fold is a CHOICE the user made and a renderer must not eat;
+// an instant's fold is an accident of the calendar, and one second of ambiguity
+// once a year is not worth a marker on every delegation line. Anyone who needs
+// the exact instant has it in `--json`.
+//
 // A stamp this build cannot parse comes back UNCHANGED. A field the reader can
 // see and question is worth more than a field that quietly disappeared because
 // something hand-edited it into a shape the parser did not know.
@@ -76,7 +94,10 @@ func (c Context) StampLabel(stored string) string {
 		return stored
 	}
 	local := instant.In(c.Timezone)
-	return fmt.Sprintf("%s %02d-%02d %s",
-		strings.ToLower(local.Weekday().String()[:3]),
-		int(local.Month()), local.Day(), c.Clock(local.Hour(), local.Minute()))
+	date := fmt.Sprintf("%02d-%02d", int(local.Month()), local.Day())
+	if local.Year() != c.LocalNow().Year() {
+		date = fmt.Sprintf("%04d-%s", local.Year(), date)
+	}
+	return fmt.Sprintf("%s %s %s", strings.ToLower(local.Weekday().String()[:3]),
+		date, c.Clock(local.Hour(), local.Minute()))
 }

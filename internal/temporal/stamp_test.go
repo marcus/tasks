@@ -70,22 +70,47 @@ func TestStampLabelWithoutAZoneReturnsTheStoredSpelling(t *testing.T) {
 	}
 }
 
-// The canonical spelling is UTC with a literal Z. An offset form is a
-// hand-edited file, and rendering it beats refusing it.
-func TestParseStampAcceptsTheStoredSpellingAndOffsetForms(t *testing.T) {
-	canonical, ok := ParseStamp("2026-08-28T00:46:44Z")
-	if !ok {
+// A stamp from another year says so. A rendering that made a 2023 handoff read
+// exactly like yesterday's would not be terse, it would be wrong.
+func TestStampLabelNamesTheYearOnlyWhenItIsNotTheReadersOwn(t *testing.T) {
+	context := stampContext(t, "America/Los_Angeles", 12)
+	if got := context.StampLabel("2026-08-28T00:46:44Z"); got != "thu 08-27 5:46p" {
+		t.Errorf("a stamp in the reader's own year = %q, want it terse", got)
+	}
+	if got := context.StampLabel("2023-08-28T00:46:44Z"); got != "sun 2023-08-27 5:46p" {
+		t.Errorf("a prior-year stamp = %q, want its year named", got)
+	}
+	if got := context.StampLabel("2027-01-01T08:00:00Z"); got != "fri 2027-01-01 12:00a" {
+		t.Errorf("a next-year stamp = %q, want its year named", got)
+	}
+}
+
+// The stored spelling is UTC with a literal Z, and ONLY that. An offset form is
+// a record `check` rejects, so rendering it as a healthy local time would hide
+// exactly the fault the reader needs to see.
+func TestParseStampAcceptsOnlyTheStoredSpelling(t *testing.T) {
+	if _, ok := ParseStamp("2026-08-28T00:46:44Z"); !ok {
 		t.Fatalf("the canonical spelling was refused")
 	}
-	offset, ok := ParseStamp("2026-08-27T17:46:44-07:00")
-	if !ok {
-		t.Fatalf("an RFC 3339 offset spelling was refused")
+	for _, stored := range []string{
+		"2026-08-27T17:46:44-07:00",
+		"2026-08-28T00:46:44+00:00",
+		"2026-08-28T00:46:44.500Z",
+		"2026-8-28T00:46:44Z",
+		"28 Aug 2026",
+	} {
+		if _, ok := ParseStamp(stored); ok {
+			t.Errorf("ParseStamp(%q) accepted a spelling the store never writes", stored)
+		}
 	}
-	if !canonical.Equal(offset) {
-		t.Errorf("the two spellings named different instants: %s vs %s", canonical, offset)
-	}
-	if _, ok := ParseStamp("28 Aug 2026"); ok {
-		t.Errorf("a free-form date was accepted as a stored stamp")
+}
+
+// …and a spelling ParseStamp refuses reaches the reader untouched.
+func TestStampLabelPrintsAnOffsetSpellingAsStored(t *testing.T) {
+	context := stampContext(t, "America/Los_Angeles", 12)
+	const stored = "2026-08-27T17:46:44-07:00"
+	if got := context.StampLabel(stored); got != stored {
+		t.Errorf("StampLabel(%q) = %q, want the stored spelling back", stored, got)
 	}
 }
 

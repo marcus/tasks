@@ -180,7 +180,8 @@ var helpTemplate = "tasks — a plain-text GTD CLI over tasks.jsonl. Every comma
 	"                                  undo step · --force is the owner override" + "\n" +
 	"  list --delegated · list --agent-ready    the two delegation read scopes" + "\n" +
 	"  --worker defaults from TASKS_WORKER_ID; the flag always wins." + "\n" +
-	"  A lost claim race exits 1 with `conflict: already claimed by <id> at <ts>`." + "\n" +
+	"  A lost claim race exits 1 with `conflict: already claimed by <id> at <ts>`" + "\n" +
+	"  on stderr, <ts> in your zone and clock; --json keeps the stored UTC `at`." + "\n" +
 	"" + "\n" +
 	"Projects (a project/area is a rolled-up section):" + "\n" +
 	"  projects  pj             list projects & areas (see Read above)" + "\n" +

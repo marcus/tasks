@@ -319,8 +319,10 @@ func (c *resourceContext) writeTask(w *jsonout.Writer, item store.Item) {
 	w.EndObject()
 }
 
-// instantLayout is Time#iso8601 for a UTC instant.
-const instantLayout = "2006-01-02T15:04:05Z"
+// instantLayout is Time#iso8601 for a UTC instant. It is the SAME spelling the
+// store writes and human surfaces project from, taken from the one constant
+// rather than spelled again here.
+const instantLayout = temporal.StampLayout
 
 // ordinaryTags drops contexts and the defer marker, which are exposed as their
 // own members rather than as tags.

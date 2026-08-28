@@ -179,16 +179,27 @@ func (s *surfaceContext) readerContext() temporal.Context {
 // localizedStamps projects a stored instant WHERE IT APPEARS inside a sentence
 // the store wrote. The store has no reader and cannot know a zone, and its
 // wording is already the right wording — so the surface translates the stamp
-// rather than re-authoring the sentence around it.
+// rather than re-authoring the sentence around it. A surface that HAS the
+// structured holder and instant composes its own sentence instead; this is the
+// fallback for the ones that only have the prose.
+//
+// The LAST occurrence is the one translated. The store's conflict sentence
+// reads "already claimed by <assignee> at <at>", a worker id is free-form
+// enough to be spelled like a timestamp, and rewriting every match would turn
+// such a holder's name into a time.
 func (s *surfaceContext) localizedStamps(message, stored string) string {
-	if stored == "" || !strings.Contains(message, stored) {
+	if stored == "" {
+		return message
+	}
+	at := strings.LastIndex(message, stored)
+	if at < 0 {
 		return message
 	}
 	label := s.readerContext().StampLabel(stored)
 	if label == stored {
 		return message
 	}
-	return strings.ReplaceAll(message, stored, label)
+	return message[:at] + label + message[at+len(stored):]
 }
 
 // today is the reader's own calendar day, which is what every `Captured [...]`
