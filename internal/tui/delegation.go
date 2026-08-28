@@ -411,7 +411,7 @@ func (m *Model) runDelegation(id, title string, action delegationAction,
 		outcome = m.app.SetWorkRef(command, m.operation())
 	}
 	if !(outcome.OK() || outcome.NoChange()) {
-		message := delegationFailureMessage(outcome)
+		message := delegationFailureMessage(outcome, m.temporalContext())
 		m.Refresh()
 		return message
 	}
@@ -428,10 +428,14 @@ func (m *Model) runDelegation(id, title string, action delegationAction,
 // are already user-facing ("task is DONE; only accepted live tasks can be
 // delegated") — and reserves the TUI's own wording for the two statuses that
 // mean "something changed underneath you".
-func delegationFailureMessage(outcome application.Outcome) string {
+//
+// The conflict names the instant the holder took the work, and it names it in
+// the reader's zone: the person deciding whether to wait or revoke is reading a
+// clock on their own wall, not a UTC stamp.
+func delegationFailureMessage(outcome application.Outcome, context temporal.Context) string {
 	if outcome.Conflict() && outcome.Delegation != nil && outcome.Delegation.Holder != "" {
 		return "already claimed by " + outcome.Delegation.Holder +
-			" at " + outcome.Delegation.At + " — Undelegate (ctrl-x) revokes it"
+			" at " + context.StampLabel(outcome.Delegation.At) + " — Undelegate (ctrl-x) revokes it"
 	}
 	if outcome.Stale() {
 		return "file changed underneath — reopen"

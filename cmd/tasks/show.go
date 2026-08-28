@@ -75,8 +75,11 @@ func (s *surfaceContext) show(args []string) int {
 		out("  project:   " + project)
 	}
 	if marker := delegationFields(item.Delegation); marker != nil {
+		// The transition stamp is stored UTC and READ locally: every other
+		// instant on this screen is already projected into the configured zone,
+		// and "since 18:03Z" would be the one line asking the reader to convert.
 		out(fmt.Sprintf("  delegation: %s %s", delegationSummary(marker),
-			dim(fmt.Sprintf("(since %s)", marker["at"]))))
+			dim(fmt.Sprintf("(since %s)", queries.Context().StampLabel(marker["at"])))))
 		if ref := marker["work_ref"]; ref != "" {
 			out("  work ref:  " + ref)
 		}

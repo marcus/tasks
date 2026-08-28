@@ -160,6 +160,37 @@ func (s *surfaceContext) temporalContext() (temporal.Context, int) {
 	return context, 0
 }
 
+// readerContext is the reader's clock for RENDERING ALONE, and unlike
+// temporalContext it never fails loudly: a surface that is already printing a
+// refusal still has to print it, and a zero context renders stored values
+// unchanged rather than swallowing the sentence.
+func (s *surfaceContext) readerContext() temporal.Context {
+	instant, err := determinism.NowForAdapter(env)
+	if err != nil {
+		return temporal.Context{}
+	}
+	context, err := temporal.NewContext(instant, s.paths.Timezone, s.paths.TimeFormat)
+	if err != nil {
+		return temporal.Context{}
+	}
+	return context
+}
+
+// localizedStamps projects a stored instant WHERE IT APPEARS inside a sentence
+// the store wrote. The store has no reader and cannot know a zone, and its
+// wording is already the right wording — so the surface translates the stamp
+// rather than re-authoring the sentence around it.
+func (s *surfaceContext) localizedStamps(message, stored string) string {
+	if stored == "" || !strings.Contains(message, stored) {
+		return message
+	}
+	label := s.readerContext().StampLabel(stored)
+	if label == stored {
+		return message
+	}
+	return strings.ReplaceAll(message, stored, label)
+}
+
 // today is the reader's own calendar day, which is what every `Captured [...]`
 // body and every `closed` date is stamped with.
 func (s *surfaceContext) today() (string, int) {

@@ -119,7 +119,7 @@ func BuildTaskDetails(styler Styler, queries *taskquery.Queries, item store.Item
 		lines = append(lines, "", detailSection(styler, "DELEGATION",
 			styler.Paint("muted", delegationText(delegation["status"])), usable))
 		lines = append(lines, "")
-		lines = append(lines, delegationLines(styler, item, usable)...)
+		lines = append(lines, delegationLines(styler, queries.Context(), item, usable)...)
 	}
 
 	lines = append(lines, subtaskLines(styler, queries, item, usable)...)
@@ -518,7 +518,9 @@ func leadValue(styler Styler, queries *taskquery.Queries, item store.Item) strin
 // work_ref is painted with the link slot but is deliberately NOT part of the
 // `o`-openable link list: that list comes from the task body, and one keypress
 // must keep meaning one thing.
-func delegationLines(styler Styler, item store.Item, usable int) []string {
+func delegationLines(styler Styler, context temporal.Context, item store.Item,
+	usable int) []string {
+
 	delegation := delegationOf(item)
 	if delegation == nil {
 		return nil
@@ -534,7 +536,9 @@ func delegationLines(styler Styler, item store.Item, usable int) []string {
 			}
 			value = styler.Paint(slot, value)
 		case "at":
-			value = styler.Paint("muted", value)
+			// Projected, not painted-as-stored: the panel is a reading surface
+			// and this is the same instant `show` prints, in the same zone.
+			value = styler.Paint("muted", context.StampLabel(value))
 		case "work_ref":
 			label, value = "work ref", styler.Paint("link", value)
 		case "note":

@@ -369,7 +369,10 @@ func (s *surfaceContext) delegationFailed(result store.MutationResult, args []st
 			w.EndObject()
 			out(w.String())
 		}
-		fmt.Fprintln(os.Stderr, message)
+		// stdout is the machine's copy and keeps the stored UTC instant in both
+		// `at` and the sentence that quotes it. stderr is the person's copy, so
+		// the same instant is spoken in the zone they read every other date in.
+		fmt.Fprintln(os.Stderr, s.localizedStamps(message, result.Summary.At))
 		return result.ExitCode()
 	}
 	// An `invalid` refusal already carries the sentence that explains it, and
