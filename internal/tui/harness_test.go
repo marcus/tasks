@@ -67,7 +67,10 @@ func (h *modelHarness) advanceClock(delta time.Duration) {
 
 type harnessOptions struct {
 	live string
-	now  time.Time
+	// archive seeds archive.jsonl, for the tests that have to prove a view does
+	// NOT reach into swept history.
+	archive string
+	now     time.Time
 	// paths overrides the resolved configuration for this model.
 	paths func(*config.Paths)
 	// opener is the link launcher. Tests inject a fake; nothing here may ever
@@ -114,6 +117,11 @@ func newModelHarness(t *testing.T, options harnessOptions) *modelHarness {
 	archive := filepath.Join(root, "archive.jsonl")
 	if err := os.WriteFile(org, []byte(options.live), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	if options.archive != "" {
+		if err := os.WriteFile(archive, []byte(options.archive), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	clock := options.now

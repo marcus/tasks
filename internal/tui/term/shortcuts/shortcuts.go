@@ -211,7 +211,7 @@ var Registry = []Entry{
 	// `C` rather than `c`: the lowercase key completes a task, and the two would
 	// be a bad pair to confuse. It joins Z and R as the third uppercase
 	// "show me the rows this view leaves out" toggle.
-	entry(Entry{Sequences: []string{"C"}, DisplayKey: "C", Description: "show / hide closed tasks (outline)", Contexts: []Context{List}, Handler: "toggle_closed_view", Palette: PaletteAlways}),
+	entry(Entry{Sequences: []string{"C"}, DisplayKey: "C", Description: "show / hide closed tasks (outline · projects)", Contexts: []Context{List}, Handler: "toggle_closed_view", Palette: PaletteAlways}),
 	entry(Entry{Sequences: []string{"R"}, DisplayKey: "R", Description: "show / hide rejected proposals", Contexts: []Context{List}, Handler: "toggle_rejected_view", Palette: PaletteAlways}),
 	entry(Entry{Sequences: []string{"K"}, DisplayKey: "K", Description: "raise priority (→ A)", Contexts: []Context{List, Detail}, Handler: "raise_priority", Palette: PaletteWhen("selected_action_available?")}),
 	entry(Entry{Sequences: []string{"J"}, DisplayKey: "J", Description: "lower priority (→ none)", Contexts: []Context{List, Detail}, Handler: "lower_priority", Palette: PaletteWhen("selected_action_available?")}),

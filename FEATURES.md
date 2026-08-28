@@ -145,7 +145,11 @@ the human-readable tour of that contract.
 - Agenda grouped as a calendar: OVERDUE / TODAY / TOMORROW / LATER.
 - Next grouped by `@context`.
 - Projects as foldable headings. Empty projects collapse onto one row.
-  The badge names the live share (`1/4 open`).
+  The badge names the live share (`1/4 open`). Closed (DONE/CANCELLED)
+  tasks are hidden by default; the project row names what is held back
+  (`· 1 closed`) and `C` shows them under their project, in the stored
+  tree, turning a finished project back into a real heading. Unfiled
+  work and the archive stay out.
 - Outline with overdue / today / later bands inside plain lists.
   Closed (DONE/CANCELLED) tasks are hidden by default; section badges
   name what is held back (`4 · 1 closed`) and `C` shows them.
@@ -174,7 +178,7 @@ the human-readable tour of that contract.
 - `h`/`l` fold, `H`/`L` fold/expand all, `>`/`<` indent/outdent,
   `alt-j`/`alt-k` reorder.
 - `Z` show/hide unavailable tasks, `C` show/hide closed tasks in the
-  Outline. Both are session-only.
+  Outline and Projects. Both are session-only and compose.
 - `o` opens one link, or a searchable picker when there are several.
 - `y` yanks the stable id, `Y` yanks markdown, `p` pastes the id into
   the agent prompt.

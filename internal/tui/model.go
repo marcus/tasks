@@ -135,7 +135,8 @@ type Model struct {
 	// showDeferred it is interaction state, not durable: a reveal is for the
 	// review pass you are in, and intake opens clean next time.
 	showRejected bool
-	// showClosed reveals DONE and CANCELLED rows in the Outline. Session-only
+	// showClosed reveals DONE and CANCELLED rows in the Outline, and under
+	// their project in the Projects tab. Session-only
 	// for the same reason showDeferred is: looking at what you finished is an
 	// errand, not a preference, and the next session should open on the work.
 	showClosed   bool
@@ -965,9 +966,13 @@ func (m *Model) nodeFoldable(node *taskquery.Node) bool {
 }
 
 // treeRequest is the minimum BuildRequest the tree helpers need to answer
-// visibility questions outside a render.
+// visibility questions outside a render. It carries the VIEW because visibility
+// is view-scoped now — Projects widens to closed rows where the other tree tabs
+// do not — and a fold marker computed against the wrong tab is a chevron that
+// opens onto nothing.
 func (m *Model) treeRequest() BuildRequest {
 	return BuildRequest{
+		View:    m.view,
 		Queries: m.read.Queries(), Tree: m.read.Queries().Tree().Roots,
 		ShowDeferred: m.showDeferred, ShowClosed: m.showClosed,
 	}
@@ -1037,9 +1042,7 @@ func (m *Model) currentNode() *taskquery.Node {
 }
 
 func (m *Model) visibleChildrenOf(node *taskquery.Node) []*taskquery.Node {
-	return visibleChildren(BuildRequest{
-		Queries: m.read.Queries(), ShowDeferred: m.showDeferred,
-	}, node)
+	return visibleChildren(m.treeRequest(), node)
 }
 
 func (m *Model) jumpToParent(node *taskquery.Node) {
@@ -1098,12 +1101,17 @@ func (m *Model) ToggleDeferred() {
 // key is bound list-wide, the way Z is, so the choice can be made before
 // arriving — but the header only claims closed rows are shown on a tab where
 // they would be.
-var closedToggleViews = map[string]bool{ViewOutline: true}
+//
+// The two are the same tree read from opposite ends: Outline is the working
+// tree, where finished work is noise, and Projects is the project history,
+// where it is the point. Agenda, Next, Quadrants and Inbox are not on the list
+// because no closed row could satisfy their rules whatever the toggle says.
+var closedToggleViews = map[string]bool{ViewOutline: true, ViewProjects: true}
 
 // ToggleClosed flips whether finished work — DONE and CANCELLED — is shown in
-// the Outline. It is the Z gesture applied to the other reason a row is not
-// part of today's work: Z hides what you cannot do yet, this hides what you no
-// longer have to.
+// the Outline and under its project in Projects. It is the Z gesture applied to
+// the other reason a row is not part of today's work: Z hides what you cannot
+// do yet, this hides what you no longer have to.
 //
 // It composes with everything rather than replacing it: `/`, `@` and Z all
 // still narrow what the reveal reveals, and nothing here is written to the
@@ -1116,10 +1124,24 @@ func (m *Model) ToggleClosed() {
 	m.RefreshRows()
 	m.reconcileSuspendedAfterNavigation()
 	if m.showClosed {
-		m.Flash("showing closed tasks in the outline")
+		m.Flash("showing closed tasks" + closedToggleWhere(m.view))
 		return
 	}
-	m.Flash("hiding closed tasks in the outline")
+	m.Flash("hiding closed tasks" + closedToggleWhere(m.view))
+}
+
+// closedToggleWhere names the tab the press just changed, or names both tabs
+// when it changed neither. Pressing C on the Agenda changes nothing on screen,
+// and a flash that claimed otherwise would be the list lying about itself.
+func closedToggleWhere(view string) string {
+	switch {
+	case view == ViewOutline:
+		return " in the outline"
+	case view == ViewProjects:
+		return " under their projects"
+	default:
+		return " in the outline and projects"
+	}
 }
 
 // -- the right panel --------------------------------------------------------

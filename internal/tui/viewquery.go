@@ -76,9 +76,9 @@ type ViewQuery struct {
 	ShowDeferred   bool
 	ContextFilters []string
 	// ShowClosed reveals DONE and CANCELLED rows in the views whose rule keeps
-	// them out by default — today only Outline. It is off in the zero value and
-	// off out of NewViewQuery, so a caller that has never heard of the toggle
-	// gets the working view rather than the graveyard.
+	// them out by default — Outline and Projects. It is off in the zero value
+	// and off out of NewViewQuery, so a caller that has never heard of the
+	// toggle gets the working view rather than the graveyard.
 	ShowClosed bool
 }
 
@@ -117,18 +117,28 @@ func (q ViewQuery) Eligible(item store.Item) bool {
 	if !q.ViewRule(item) {
 		return false
 	}
+	// Availability answers "can this be worked on now", which is a question only
+	// LIVING work has: AvailabilityFor reports every closed row as unavailable by
+	// construction. A row a view admitted BECAUSE it is finished must therefore
+	// skip the gate, or the closed reveal would do nothing until Z was on too —
+	// and Z is supposed to compose with it, not license it.
+	if isClosedState(item.State) {
+		return true
+	}
 	return q.ShowDeferred || q.available(item)
 }
 
 // ViewRule is the per-view state and date test, availability aside.
 //
-// Outline's rule is the one that reads a toggle rather than only the item: the
-// tab is the whole live tree, so what it excludes is a CHOICE, not a property of
-// the row. PROPOSED is excluded unconditionally — undecided work belongs to
-// Inbox/Approvals — and closed work is excluded until the reader asks for it,
-// because a triaged section is otherwise mostly cancelled leftovers that have
-// not been swept yet. Spelling it here rather than inside the row builder is
-// what lets a headless outline dump hide the same rows the tab does.
+// Outline and Projects are the two rules that read a toggle rather than only
+// the item, because what they exclude is a CHOICE rather than a property of the
+// row. Outline is the whole live tree with PROPOSED taken out unconditionally —
+// undecided work belongs to Inbox/Approvals — and closed work taken out until
+// the reader asks for it, because a triaged section is otherwise mostly
+// cancelled leftovers nobody has swept. Projects is the same question from the
+// other end: the tab is a commitment listing, so it anchors on open work and
+// widens to finished work on request. Spelling both here rather than inside the
+// row builders is what lets a headless dump hide the same rows the tabs do.
 func (q ViewQuery) ViewRule(item store.Item) bool {
 	switch q.View {
 	case ViewOutline:
@@ -148,10 +158,28 @@ func (q ViewQuery) ViewRule(item store.Item) bool {
 	case ViewInbox:
 		return item.State == "INBOX"
 	case ViewProjects:
-		return isOpenState(item.State) && !unfiledProject(q.projectName(item))
+		return q.projectsState(item.State) && !unfiledProject(q.projectName(item))
 	default:
 		return false
 	}
+}
+
+// projectsState is the Projects tab's state test, both halves stated as
+// POSITIVE membership: open work always, finished work when the reader has
+// asked for it.
+//
+// It is deliberately not Outline's "everything except closed". A state nobody
+// recognizes — a hand-edited `TODOO`, a record with no state at all — is
+// neither commitment nor history, so it is out of Projects in BOTH modes and
+// the closed toggle never claims it: `C` reveals what you finished, and a
+// broken row is not that. The Outline is the tab that surfaces a defect, and it
+// still does, because isClosedState reads the closed vocabulary directly rather
+// than negating the open one.
+func (q ViewQuery) projectsState(state string) bool {
+	if isOpenState(state) {
+		return true
+	}
+	return q.ShowClosed && isClosedState(state)
 }
 
 // ContextMatch is true when no context filter is active, or the item carries
@@ -410,6 +438,11 @@ func (q ViewQuery) orderGroups(groups []Group) []Group {
 // It is measured over the WHOLE live store, unfiltered: a `/` search or an `@`
 // context decides which groups are PAINTED, not what sequence they come in, and
 // an order that reshuffled while a filter was typed would be no order at all.
+//
+// The closed reveal is deliberately NOT threaded through either. The sequence
+// is "which project is moving soonest", and a project that only rose into the
+// ranking because someone pressed C to look at its history is not moving at
+// all — the Inbox would reorder itself under a keystroke aimed at another tab.
 func (q ViewQuery) projectRanks() map[string]int {
 	ranks := map[string]int{}
 	if q.Queries == nil {
