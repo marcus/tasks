@@ -1279,6 +1279,14 @@ func projectsHiddenClosedCount(request BuildRequest) int {
 // UNDER it: `N open` counts open rows only, so the number stays true when the
 // closed reveal has added finished rows beneath it, and `N next` is the share
 // that is actionable.
+//
+// `0 next` is loud only where it is a claim about a STALL. A group with no open
+// work left under it in this shape is not stalled, it is over — the same false
+// alarm projectFinished puts down in tree mode, and it survives here for the
+// same reason: `/done` plus `C` produces a group whose every row is finished,
+// and warning a reader about a commitment they completed is noise pointed at
+// the one thing they cannot act on. With the toggle off the case cannot arise,
+// because only open rows are admitted to a group at all.
 func projectHeader(request BuildRequest, name string, items []store.Item) string {
 	styler := request.styler()
 	nexts, opens := 0, 0
@@ -1293,7 +1301,7 @@ func projectHeader(request BuildRequest, name string, items []store.Item) string
 	head := styler.Paint("project", name) + "  " +
 		styler.Paint("muted", fmt.Sprintf("%d open", opens))
 	slot := "muted"
-	if nexts == 0 {
+	if nexts == 0 && opens > 0 {
 		slot = "warning"
 	}
 	head += styler.Paint(slot, fmt.Sprintf(" · %d next", nexts))

@@ -1759,6 +1759,56 @@ func TestProjectsClosedRevealIsNotPersisted(t *testing.T) {
 	}
 }
 
+// slotStyler tags each painted span with the slot it was painted in, so a test
+// can assert the TONE of a header and not merely its words. The harness paints
+// plain by default, which is what keeps the row goldens readable — and also
+// what makes "is this loud?" invisible to an ordinary row assertion.
+type slotStyler struct{ PlainStyler }
+
+func (slotStyler) Paint(slot, text string) string { return "{" + slot + ":" + text + "}" }
+
+// `0 next` is a warning about a STALL. `/done` plus `C` produces a group whose
+// every row is finished, and a project that is over is not stalled — the same
+// false alarm the tree shape puts down, which survived on the flat path because
+// its heading counts rows rather than asking the project.
+func TestAFinishedFlatGroupIsNotWarnedAboutAsStalled(t *testing.T) {
+	live := `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Projects"}
+{"type":"section","id":"aaaa0002","parent":"aaaa0001","title":"Epsilon"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0002","state":"DONE","title":"done thing"}
+{"type":"section","id":"aaaa0003","parent":"aaaa0001","title":"Zeta"}
+{"type":"task","id":"bbbb0002","parent":"aaaa0003","state":"TODO","title":"done nothing yet"}
+`
+	harness := newModelHarness(t, harnessOptions{live: live})
+	harness.model.styler = slotStyler{}
+	harness.model.SwitchView(ViewProjects)
+	harness.model.filter = "done"
+	harness.model.ToggleClosed()
+	headers := map[string]string{}
+	for _, row := range harness.model.Rows() {
+		for _, name := range []string{"Epsilon", "Zeta"} {
+			if strings.Contains(row.Text, "{project:"+name+"}") {
+				headers[name] = row.Text
+			}
+		}
+	}
+	if headers["Epsilon"] == "" || headers["Zeta"] == "" {
+		t.Fatalf("the repro did not produce both groups:\n%s", rowTexts(harness))
+	}
+	// Epsilon's one row is DONE: nothing open, so nothing to stall.
+	if !strings.Contains(headers["Epsilon"], "{muted:0 open}") {
+		t.Fatalf("the finished group counted a closed row as open: %q", headers["Epsilon"])
+	}
+	if strings.Contains(headers["Epsilon"], "{warning:") {
+		t.Fatalf("a finished group was warned about as stalled: %q", headers["Epsilon"])
+	}
+	// Zeta is the control: open work with nothing marked NEXT is the stall the
+	// tone exists to report, and it still reports it.
+	if !strings.Contains(headers["Zeta"], "{warning: · 0 next}") {
+		t.Fatalf("a genuinely stalled group lost its warning: %q", headers["Zeta"])
+	}
+}
+
 // An AREA is defined as a top-level list that currently holds open work, so one
 // whose work is all finished is not an area any more and leaves the listing
 // entirely — today, before any toggle. That definition lives in the shared core
