@@ -192,7 +192,7 @@ func shortDue(queries *taskquery.Queries, item store.Item) string {
 			hour, minute, ok := splitClock(projected.Local)
 			if ok {
 				label = fmt.Sprintf("%d/%d %s", int(projected.Date.Month), projected.Date.Day,
-					clockLabel(hour, minute, queries.Context().TimeFormat))
+					queries.Context().Clock(hour, minute))
 				if value.Fixed() && value.Timezone != queries.Context().TimezoneID {
 					label += " " + value.Timezone
 				}
@@ -203,23 +203,6 @@ func shortDue(queries *taskquery.Queries, item store.Item) string {
 		label = "~" + label
 	}
 	return colorize(label, dueColor(days))
-}
-
-// clockLabel renders a wall time in the configured format: 24-hour zero-padded,
-// or 12-hour with an a/p suffix and no leading zero.
-func clockLabel(hour, minute, timeFormat int) string {
-	if timeFormat == 24 {
-		return fmt.Sprintf("%02d:%02d", hour, minute)
-	}
-	display := hour % 12
-	if display == 0 {
-		display = 12
-	}
-	suffix := "p"
-	if hour < 12 {
-		suffix = "a"
-	}
-	return fmt.Sprintf("%d:%02d%s", display, minute, suffix)
 }
 
 func splitClock(value string) (int, int, bool) {
