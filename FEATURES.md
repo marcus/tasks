@@ -147,6 +147,8 @@ the human-readable tour of that contract.
 - Projects as foldable headings. Empty projects collapse onto one row.
   The badge names the live share (`1/4 open`).
 - Outline with overdue / today / later bands inside plain lists.
+  Closed (DONE/CANCELLED) tasks are hidden by default; section badges
+  name what is held back (`4 · 1 closed`) and `C` shows them.
 - Inbox as one intake tab: Approvals first, then accepted Inbox.
   `a` approves, `r` rejects, and the selection walks the queue.
   Both sections group by project, in the Projects tab's order, with
@@ -171,7 +173,8 @@ the human-readable tour of that contract.
   `x` archive with preview, `#` / Delete hard-delete with confirm.
 - `h`/`l` fold, `H`/`L` fold/expand all, `>`/`<` indent/outdent,
   `alt-j`/`alt-k` reorder.
-- `Z` show/hide unavailable tasks.
+- `Z` show/hide unavailable tasks, `C` show/hide closed tasks in the
+  Outline. Both are session-only.
 - `o` opens one link, or a searchable picker when there are several.
 - `y` yanks the stable id, `Y` yanks markdown, `p` pastes the id into
   the agent prompt.

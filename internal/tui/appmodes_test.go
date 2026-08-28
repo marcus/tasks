@@ -761,6 +761,87 @@ func TestOrderingMovesASubtreeAndReportsIt(t *testing.T) {
 	}
 }
 
+// Ordering is a WYSIWYG gesture: one press, one visible step. A sibling the
+// outline is not painting — a proposal, or closed work while `C` is off — must
+// be stepped OVER, not stepped onto. Otherwise alt-↑ rewrites the file and
+// moves nothing on screen, which reads as a broken keyboard over a real write.
+func TestOrderingStepsOverSiblingsTheOutlineIsHiding(t *testing.T) {
+	for _, hiddenState := range []string{"DONE", "CANCELLED", "PROPOSED"} {
+		t.Run(hiddenState, func(t *testing.T) {
+			harness := newModelHarness(t, harnessOptions{live: orderingHiddenFixture(hiddenState)})
+			harness.model.SwitchView(ViewOutline)
+			harness.selectRowByID("bbbb0003")
+			harness.pressKeys("\x1b[1;3A") // alt-up
+			if !strings.Contains(harness.model.FlashMessage(), "move up") {
+				t.Fatalf("alt-up said %q", harness.model.FlashMessage())
+			}
+			// What the reader sees.
+			text := rowTexts(harness)
+			if strings.Index(text, "Third open") > strings.Index(text, "First open") {
+				t.Fatalf("the row did not visibly move over the hidden sibling:\n%s", text)
+			}
+			// And what the file says, in the same order.
+			content := harness.content()
+			if strings.Index(content, `"id":"bbbb0003"`) > strings.Index(content, `"id":"bbbb0001"`) {
+				t.Fatalf("the file disagrees with the screen:\n%s", content)
+			}
+		})
+	}
+}
+
+// `>` reparents, so anchoring it on a hidden row is worse than a no-op: it
+// files an open task under a row the reader cannot see, reachable only by
+// discovering the toggle that hid it.
+func TestOrderingIndentsUnderTheVisiblePrecedingSiblingNotAHiddenOne(t *testing.T) {
+	for _, hiddenState := range []string{"DONE", "PROPOSED"} {
+		t.Run(hiddenState, func(t *testing.T) {
+			harness := newModelHarness(t, harnessOptions{live: orderingHiddenFixture(hiddenState)})
+			harness.model.SwitchView(ViewOutline)
+			harness.selectRowByID("bbbb0003")
+			harness.pressKeys(">")
+			line := taskLineIn(harness.content(), "bbbb0003")
+			if strings.Contains(line, `"parent":"bbbb0002"`) {
+				t.Fatalf("indent filed the task under the hidden sibling:\n%s", line)
+			}
+			if !strings.Contains(line, `"parent":"bbbb0001"`) {
+				t.Fatalf("indent did not land under the visible preceding sibling:\n%s", line)
+			}
+			if !strings.Contains(rowTexts(harness), "Third open") {
+				t.Fatalf("the indented task left the screen:\n%s", rowTexts(harness))
+			}
+		})
+	}
+}
+
+// With the toggle ON the hidden sibling is an ordinary row again, so the same
+// press steps onto it rather than over it.
+func TestOrderingStepsOntoAClosedSiblingOnceItIsShown(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: orderingHiddenFixture("DONE")})
+	harness.model.SwitchView(ViewOutline)
+	harness.model.ToggleClosed()
+	harness.selectRowByID("bbbb0003")
+	harness.pressKeys("\x1b[1;3A")
+	content := harness.content()
+	if strings.Index(content, `"id":"bbbb0003"`) > strings.Index(content, `"id":"bbbb0002"`) ||
+		strings.Index(content, `"id":"bbbb0003"`) < strings.Index(content, `"id":"bbbb0001"`) {
+		t.Fatalf("the revealed row was not the anchor:\n%s", content)
+	}
+}
+
+// orderingHiddenFixture is three siblings with a hidden one in the middle.
+func orderingHiddenFixture(hiddenState string) string {
+	stamp := ""
+	if hiddenState == "DONE" || hiddenState == "CANCELLED" {
+		stamp = `,"closed":"2026-06-20"`
+	}
+	return `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0003","title":"Work"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0003","state":"NEXT","title":"First open"}
+{"type":"task","id":"bbbb0002","parent":"aaaa0003","state":"` + hiddenState + `","title":"Middle hidden"` + stamp + `}
+{"type":"task","id":"bbbb0003","parent":"aaaa0003","state":"NEXT","title":"Third open"}
+`
+}
+
 func TestOrderingReportsItsBoundariesWithoutWriting(t *testing.T) {
 	harness := newModelHarness(t, harnessOptions{})
 	harness.model.SwitchView(ViewOutline)

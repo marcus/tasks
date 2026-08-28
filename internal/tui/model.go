@@ -135,6 +135,10 @@ type Model struct {
 	// showDeferred it is interaction state, not durable: a reveal is for the
 	// review pass you are in, and intake opens clean next time.
 	showRejected bool
+	// showClosed reveals DONE and CANCELLED rows in the Outline. Session-only
+	// for the same reason showDeferred is: looking at what you finished is an
+	// errand, not a preference, and the next session should open on the work.
+	showClosed   bool
 	selected     int
 	selectedID   string
 	panel        *RightPanel
@@ -608,6 +612,7 @@ func (m *Model) RefreshRows() {
 		Collapsed:      m.collapsed,
 		ShowDeferred:   m.showDeferred,
 		ShowRejected:   m.showRejected,
+		ShowClosed:     m.showClosed,
 		UrgentDays:     m.paths.UrgentDays,
 		ContextFilters: m.contextFilters,
 		TextFilter:     m.activeFilter(),
@@ -943,11 +948,12 @@ func (m *Model) CollapseSelected() {
 }
 
 // nodeFoldable reports whether folding the node would hide anything. The
-// outline renders EVERY child — sections included — so any child suffices
-// there; the other tree views render only visible task children.
+// outline renders every child it is SHOWING — sections included — so any
+// painted descendant suffices there; the other tree views render only visible
+// task children.
 func (m *Model) nodeFoldable(node *taskquery.Node) bool {
 	if m.view == ViewOutline {
-		return len(node.Children) > 0
+		return outlineRenders(m.treeRequest(), node)
 	}
 	// A Projects heading folds its whole subtree's worth of anchors, which is
 	// what the view renders under it — not just its direct children, since a
@@ -963,7 +969,7 @@ func (m *Model) nodeFoldable(node *taskquery.Node) bool {
 func (m *Model) treeRequest() BuildRequest {
 	return BuildRequest{
 		Queries: m.read.Queries(), Tree: m.read.Queries().Tree().Roots,
-		ShowDeferred: m.showDeferred,
+		ShowDeferred: m.showDeferred, ShowClosed: m.showClosed,
 	}
 }
 
@@ -986,9 +992,10 @@ func (m *Model) CollapseAll() {
 		return
 	}
 	outline := m.view == ViewOutline
+	request := m.treeRequest()
 	var walk func(*taskquery.Node)
 	walk = func(node *taskquery.Node) {
-		if node.ID != "" && (node.Task() || outline) && hasTaskChildren(node, outline) {
+		if node.ID != "" && (node.Task() || outline) && hasTaskChildren(request, node, outline) {
 			m.collapsed[node.ID] = true
 		}
 		for _, child := range node.Children {
@@ -1001,9 +1008,12 @@ func (m *Model) CollapseAll() {
 	m.RefreshRows()
 }
 
-func hasTaskChildren(node *taskquery.Node, outline bool) bool {
+func hasTaskChildren(request BuildRequest, node *taskquery.Node, outline bool) bool {
 	if outline {
-		return len(node.Children) > 0
+		// Same question the outline's own marker asks: would folding hide a row
+		// that is actually painted? Collapsing a node whose only children are
+		// hidden closed work would arm a fold nothing can see.
+		return outlineRenders(request, node)
 	}
 	for _, child := range node.Children {
 		if child.Task() {
@@ -1082,6 +1092,34 @@ func (m *Model) ToggleDeferred() {
 	} else {
 		m.Flash("hiding unavailable tasks")
 	}
+}
+
+// closedToggleViews are the tabs the closed-row toggle actually changes. The
+// key is bound list-wide, the way Z is, so the choice can be made before
+// arriving — but the header only claims closed rows are shown on a tab where
+// they would be.
+var closedToggleViews = map[string]bool{ViewOutline: true}
+
+// ToggleClosed flips whether finished work — DONE and CANCELLED — is shown in
+// the Outline. It is the Z gesture applied to the other reason a row is not
+// part of today's work: Z hides what you cannot do yet, this hides what you no
+// longer have to.
+//
+// It composes with everything rather than replacing it: `/`, `@` and Z all
+// still narrow what the reveal reveals, and nothing here is written to the
+// session file.
+func (m *Model) ToggleClosed() {
+	m.showClosed = !m.showClosed
+	if m.suspendedTaskEditor != nil && !m.suspendedTaskEditor.Missing() {
+		m.selectedID = m.suspendedTaskEditor.TargetID()
+	}
+	m.RefreshRows()
+	m.reconcileSuspendedAfterNavigation()
+	if m.showClosed {
+		m.Flash("showing closed tasks in the outline")
+		return
+	}
+	m.Flash("hiding closed tasks in the outline")
 }
 
 // -- the right panel --------------------------------------------------------

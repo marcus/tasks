@@ -208,6 +208,10 @@ var Registry = []Entry{
 	entry(Entry{Sequences: []string{"D"}, DisplayKey: "D", Description: "Delegate… — person or agent · " + ModesPlaceholder + " · note", Contexts: []Context{List, Detail}, Handler: "delegate_selected", Availability: "delegation_action_available?", Palette: PaletteWhen("delegation_action_available?"), Form: "delegate"}),
 	entry(Entry{Sequences: []string{"W"}, DisplayKey: "W", Description: "Set work reference… — URL/id · off", Contexts: []Context{List, Detail}, Handler: "set_work_ref_selected", Availability: "delegation_action_available?", Palette: PaletteWhen("delegation_action_available?"), Form: "work_ref"}),
 	entry(Entry{Sequences: []string{"Z"}, DisplayKey: "Z", Description: "show / hide unavailable tasks", Contexts: []Context{List}, Handler: "toggle_deferred_view", Palette: PaletteAlways}),
+	// `C` rather than `c`: the lowercase key completes a task, and the two would
+	// be a bad pair to confuse. It joins Z and R as the third uppercase
+	// "show me the rows this view leaves out" toggle.
+	entry(Entry{Sequences: []string{"C"}, DisplayKey: "C", Description: "show / hide closed tasks (outline)", Contexts: []Context{List}, Handler: "toggle_closed_view", Palette: PaletteAlways}),
 	entry(Entry{Sequences: []string{"R"}, DisplayKey: "R", Description: "show / hide rejected proposals", Contexts: []Context{List}, Handler: "toggle_rejected_view", Palette: PaletteAlways}),
 	entry(Entry{Sequences: []string{"K"}, DisplayKey: "K", Description: "raise priority (→ A)", Contexts: []Context{List, Detail}, Handler: "raise_priority", Palette: PaletteWhen("selected_action_available?")}),
 	entry(Entry{Sequences: []string{"J"}, DisplayKey: "J", Description: "lower priority (→ none)", Contexts: []Context{List, Detail}, Handler: "lower_priority", Palette: PaletteWhen("selected_action_available?")}),

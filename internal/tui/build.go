@@ -24,7 +24,11 @@ type BuildRequest struct {
 	// ShowRejected reveals recently declined proposals inside APPROVALS. It is
 	// off by default: intake is a queue of undecided work, and a decision already
 	// made is not part of it until the reviewer asks to see it.
-	ShowRejected   bool
+	ShowRejected bool
+	// ShowClosed reveals DONE and CANCELLED rows in the Outline. Off by
+	// default: the outline is the whole live tree, and a section that has been
+	// triaged but not yet swept to archive.jsonl is mostly closed leftovers.
+	ShowClosed     bool
 	UrgentDays     int
 	ContextFilters []string
 	// TextFilter is the active `/` search, lowercased by the caller's own rule
@@ -50,7 +54,8 @@ func (r BuildRequest) styler() Styler {
 }
 
 func (r BuildRequest) query(view string) ViewQuery {
-	return NewViewQuery(view, r.Queries, r.UrgentDays, r.ShowDeferred, r.ContextFilters)
+	return NewViewQuery(view, r.Queries, r.UrgentDays, r.ShowDeferred, r.ContextFilters).
+		ShowingClosed(r.ShowClosed)
 }
 
 // BuildRows is the single entry point: `Views.rows`.
@@ -506,19 +511,19 @@ func buildOutline(request BuildRequest) []Row {
 	if !request.UseTree {
 		rows := []Row{}
 		for _, item := range request.Items {
-			if isProposedState(item.State) {
+			if !outlineShows(request, item) {
 				continue
 			}
 			item := item
 			rows = append(rows, Row{Text: outlineBody(request, item), Item: &item})
 		}
-		return withMetaRows(request, rows)
+		return outlineHiddenNote(request, withMetaRows(request, rows))
 	}
 	rows := []Row{}
 	for _, root := range request.Tree {
 		rows = appendOutlineNode(request, rows, root, 0, "")
 	}
-	return withMetaRows(request, dropTrailingBlank(rows))
+	return outlineHiddenNote(request, withMetaRows(request, dropTrailingBlank(rows)))
 }
 
 // appendOutlineNode walks one node.
@@ -542,7 +547,7 @@ func appendOutlineNode(request BuildRequest, rows []Row, node *taskquery.Node, d
 			rows = append(rows, chromeRow(""))
 		}
 		rows = append(rows, outlineSectionRow(request, node, depth))
-		if node.ID != "" && request.Collapsed[node.ID] && len(node.Children) > 0 {
+		if node.ID != "" && request.Collapsed[node.ID] && outlineRenders(request, node) {
 			return rows
 		}
 		if banded, ok := outlineUrgencyBands(request, node, depth); ok {
@@ -553,32 +558,41 @@ func appendOutlineNode(request BuildRequest, rows []Row, node *taskquery.Node, d
 		}
 		return rows
 	}
-	if isProposedState(node.Item.State) {
+	// A row the view is not showing — a proposal, or a closed task while the
+	// toggle is off — is TRANSPARENT rather than pruned: its children carry on
+	// at the same depth. That is what keeps an open task from vanishing under a
+	// parent someone completed, and it is the same hoisting the other tree
+	// views do through anchorRoots.
+	if !outlineShows(request, *node.Item) {
 		for _, child := range node.Children {
 			rows = appendOutlineNode(request, rows, child, depth, band)
 		}
 		return rows
 	}
-	folded := node.ID != "" && request.Collapsed[node.ID] && len(node.Children) > 0
+	// Foldability is about what PAINTS, not about what the file holds: a task
+	// whose only children are hidden renders nothing under it, so it wears a
+	// leaf's marker and does not offer a fold that would hide nothing.
+	expandable := outlineRenders(request, node)
+	folded := expandable && node.ID != "" && request.Collapsed[node.ID]
 	marker := MarkLeaf
 	switch {
-	case len(node.Children) == 0:
+	case !expandable:
 	case folded:
 		marker = MarkCollapsed
 	default:
 		marker = MarkExpanded
 	}
 	body := outlineBody(request, *node.Item)
-	if len(node.Children) > 0 {
+	if expandable {
 		body = request.styler().Paint("outline_container", body)
 	}
 	head := urgencyBandIn(request, *node.Item, band)
 	text := head + indent + marker + body
 	if folded {
-		text += foldedCount(request, outlineDescendantCount(node))
+		text += foldedCount(request, outlineDescendantCount(request, node))
 	}
 	row := Row{Text: text, Item: node.Item, Node: node}
-	if len(node.Children) > 0 {
+	if expandable {
 		row.MarkerBegin = request.styler().Width(head) + request.styler().Width(indent)
 		row.MarkerEnd = row.MarkerBegin + 2
 	}
@@ -712,10 +726,11 @@ func outlineBandRule(request BuildRequest, label, slot string, count int) Row {
 // reads as ONE tree rather than as rules with lists between them.
 func outlineSectionRow(request BuildRequest, node *taskquery.Node, depth int) Row {
 	styler := request.styler()
-	folded := node.ID != "" && request.Collapsed[node.ID] && len(node.Children) > 0
+	expandable := outlineRenders(request, node)
+	folded := expandable && node.ID != "" && request.Collapsed[node.ID]
 	marker := MarkLeaf
 	switch {
-	case len(node.Children) == 0:
+	case !expandable:
 	case folded:
 		marker = MarkCollapsed
 	default:
@@ -744,14 +759,11 @@ func outlineSectionRow(request BuildRequest, node *taskquery.Node, depth int) Ro
 			row.Project = &held
 		}
 	}
-	if len(node.Children) > 0 {
+	if expandable {
 		row.MarkerBegin = styler.Width(head)
 		row.MarkerEnd = row.MarkerBegin + 2
 	}
-	badge := ""
-	if count := outlineTaskCount(node); count > 0 {
-		badge = fmt.Sprintf("%d", count)
-	}
+	badge := outlineSectionBadge(request, node)
 	// The rule fill runs to one cell before the count, the same way every other
 	// rule in the view does — see ruledHead. It is painted only when the frame
 	// is wide enough for the meta column at all; narrow frames degrade to the
@@ -763,29 +775,149 @@ func outlineSectionRow(request BuildRequest, node *taskquery.Node, depth int) Ro
 	return withMeta(request, row, badge, "muted")
 }
 
-// outlineTaskCount is the section badge: every non-proposed task anywhere
-// beneath, folded or not. It counts TASKS rather than rows so collapsing a
-// subtree cannot make a section look emptier than it is.
-func outlineTaskCount(node *taskquery.Node) int {
+// outlineShows is the Outline's per-row rule, asked of ViewQuery rather than
+// spelled here: PROPOSED never appears (Inbox/Approvals owns undecided work),
+// and DONE/CANCELLED appear only while the reader has asked for them.
+//
+// It goes through the shared query for the same reason every other view's rule
+// does — so a headless outline dump and this tab cannot come to disagree about
+// what "the outline" means.
+func outlineShows(request BuildRequest, item store.Item) bool {
+	return request.query(ViewOutline).ViewRule(item)
+}
+
+// outlineRenders reports whether anything at all paints beneath a node.
+//
+// It is NOT `len(node.Children) > 0`: a hidden row is transparent, so a closed
+// task can still hoist an open descendant into view, and a task whose only
+// children are hidden paints nothing under it at all. Fold markers, fold state
+// and the mouse's chevron target all key off this, because a chevron that opens
+// onto nothing is a lie about the tree.
+func outlineRenders(request BuildRequest, node *taskquery.Node) bool {
+	for _, child := range node.Children {
+		if child.Section() || outlineShows(request, *child.Item) {
+			return true
+		}
+		if outlineRenders(request, child) {
+			return true
+		}
+	}
+	return false
+}
+
+// outlineSectionBadge is a section's value in the shared meta column.
+//
+// The count is what the section is SHOWING — never what the file holds — so it
+// agrees with the rows under it whatever the toggle is set to. What the toggle
+// is holding back is then named outright, `4 · 2 closed`, rather than folded
+// into the number: a badge that quietly counted hidden rows would send the
+// reader looking for work that is not on the screen, and a section whose
+// children are ALL closed would otherwise read as an empty project rather than
+// a finished one.
+func outlineSectionBadge(request BuildRequest, node *taskquery.Node) string {
+	badge := ""
+	if count := outlineTaskCount(request, node); count > 0 {
+		badge = fmt.Sprintf("%d", count)
+	}
+	hidden := outlineHiddenClosedCount(request, node)
+	if hidden == 0 {
+		return badge
+	}
+	leftover := fmt.Sprintf("· %d closed", hidden)
+	if badge == "" {
+		return leftover
+	}
+	return badge + " " + leftover
+}
+
+// outlineTaskCount is the section badge's number: every task anywhere beneath
+// that the current filter is showing, folded or not. It counts TASKS rather
+// than rows so collapsing a subtree cannot make a section look emptier than it
+// is.
+func outlineTaskCount(request BuildRequest, node *taskquery.Node) int {
 	total := 0
 	for _, child := range node.Children {
-		if child.Task() && !isProposedState(child.Item.State) {
+		if child.Task() && outlineShows(request, *child.Item) {
 			total++
 		}
-		total += outlineTaskCount(child)
+		total += outlineTaskCount(request, child)
 	}
 	return total
 }
 
-func outlineDescendantCount(node *taskquery.Node) int {
+// outlineHiddenClosedCount is how many closed tasks the toggle is holding back
+// anywhere beneath a node — the number behind a section's `· N closed` marker.
+// With the toggle on it is zero by construction: nothing is being held back.
+func outlineHiddenClosedCount(request BuildRequest, node *taskquery.Node) int {
+	if request.ShowClosed {
+		return 0
+	}
 	total := 0
 	for _, child := range node.Children {
-		if child.Task() {
+		if child.Task() && isClosedState(child.Item.State) {
 			total++
 		}
-		total += outlineDescendantCount(child)
+		total += outlineHiddenClosedCount(request, child)
 	}
 	return total
+}
+
+// outlineDescendantCount is the dim count a folded row carries: every ROW the
+// fold is hiding.
+//
+// Rows, not tasks: a section heading beneath a task is a row too, and counting
+// only tasks let a fold that hid a whole sub-section report `▾ 0` — a count
+// that contradicts the chevron sitting next to it. It is exactly the quantity
+// outlineRenders answers yes/no about, so the marker and the number can never
+// disagree.
+func outlineDescendantCount(request BuildRequest, node *taskquery.Node) int {
+	total := 0
+	for _, child := range node.Children {
+		if child.Section() || outlineShows(request, *child.Item) {
+			total++
+		}
+		total += outlineDescendantCount(request, child)
+	}
+	return total
+}
+
+// outlineHiddenNote is the one line the outline owes a reader whose view is
+// holding finished work back.
+//
+// Section badges carry `· N closed` where there is a section to carry it, but
+// two paths have no section row at all: a `/` search or an `@` filter drops the
+// view into its flat shape, and a store whose live roots are closed and
+// section-less paints nothing whatsoever. Without this, a search for a task you
+// finished last week comes back empty and a swept-but-unarchived store comes
+// back BLANK, and neither says a toggle exists — so the reader concludes the
+// task is gone rather than hidden.
+//
+// It is one muted line at the foot of the list, and it names the key, because
+// the whole failure mode is not knowing there is one. It is absent whenever
+// nothing is hidden, so an outline with no history pays nothing for it.
+func outlineHiddenNote(request BuildRequest, rows []Row) []Row {
+	if request.ShowClosed {
+		return rows
+	}
+	// Items arrives already narrowed by the active `/` and `@` filters, so the
+	// number counts what THIS view is hiding rather than what the file holds —
+	// a search that hides one closed match may not claim forty.
+	hidden := 0
+	for _, item := range request.Items {
+		if isClosedState(item.State) {
+			hidden++
+		}
+	}
+	if hidden == 0 {
+		return rows
+	}
+	if len(rows) > 0 {
+		rows = append(rows, chromeRow(""))
+	}
+	// Padded like a row, as every placeholder is — it occupies a row's place,
+	// and the shared meta column has to find the same width under it.
+	return append(rows, withMeta(request, headerRow(request.styler().Paint("muted",
+		fmt.Sprintf("%s%d closed hidden · C shows", placeholderIndent, hidden))), "", ""))
 }
 
 // -- projects --------------------------------------------------------------

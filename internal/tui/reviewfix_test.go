@@ -534,12 +534,28 @@ func TestSuspendedTargetIsReselectedByViewSwitchAndDeferredReveal(t *testing.T) 
 		nav    func(*Model)
 	}{
 		{
+			// WAITING drops the task out of Next and leaves it open, so the
+			// Outline is genuinely where it went.
 			name: "canonical view",
+			mutate: func(raw string) string {
+				return strings.Replace(raw, `"state":"NEXT","priority":"A","title":"Book flight`,
+					`"state":"WAITING","priority":"A","title":"Book flight`, 1)
+			},
+			nav: func(model *Model) { model.SwitchView(ViewOutline) },
+		},
+		{
+			// A completed target is hidden even in the Outline until `C` asks
+			// for closed work, and the reveal has to recover the draft the same
+			// way a view switch does.
+			name: "closed reveal",
 			mutate: func(raw string) string {
 				return strings.Replace(raw, `"state":"NEXT","priority":"A","title":"Book flight`,
 					`"state":"DONE","priority":"A","title":"Book flight`, 1)
 			},
-			nav: func(model *Model) { model.SwitchView(ViewOutline) },
+			nav: func(model *Model) {
+				model.SwitchView(ViewOutline)
+				model.ToggleClosed()
+			},
 		},
 		{
 			name: "deferred reveal",
