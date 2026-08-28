@@ -1074,7 +1074,13 @@ the Outline, which is the repair view. Badges follow the Outline's rule: the
 project row carries `· N closed` for work it is holding back, the section badge
 reads `1/4 open` and becomes `2/4 shown` while closed rows are revealed, and the
 flat `/`-search shape carries the same `N closed hidden · C shows` foot line for
-the projects that produce no group at all.
+the projects that produce no group at all. The reveal does not widen the
+*listing*: an area is by definition a top-level list that currently holds open
+work, so one whose work is all finished has already left `Queries.Projects`
+(and `tasks projects`, and `GET /api/v1/projects`) and `C` does not bring it
+back — nor does the foot line count it, because the note only ever promises
+rows the keystroke can produce. Projects proper are listed even when empty, so
+a finished project always has a heading to come back to.
 
 `Alt+↑`/`Alt+k`, `Alt+↓`/`Alt+j`, `>`, and `<` reorder, indent, and outdent in
 that unfiltered tab. They anchor on the nearest *visible* sibling, so a row the

@@ -1759,6 +1759,41 @@ func TestProjectsClosedRevealIsNotPersisted(t *testing.T) {
 	}
 }
 
+// An AREA is defined as a top-level list that currently holds open work, so one
+// whose work is all finished is not an area any more and leaves the listing
+// entirely — today, before any toggle. That definition lives in the shared core
+// (Queries.Projects, which `tasks projects` and GET /api/v1/projects both read),
+// so the TUI does not widen it for a keystroke. What the tab must not do is
+// PROMISE the row anyway: the hidden-work note counts only what C would paint.
+func TestTheClosedRevealDoesNotResurrectAFinishedArea(t *testing.T) {
+	live := `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Projects"}
+{"type":"section","id":"aaaa0002","parent":"aaaa0001","title":"Launch the site"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0002","state":"NEXT","title":"pick a generator"}
+{"type":"section","id":"aaaa0010","title":"Home"}
+{"type":"task","id":"bbbb0010","parent":"aaaa0010","state":"DONE","title":"finished chore"}
+{"type":"section","id":"aaaa0011","title":"Garden"}
+{"type":"task","id":"bbbb0011","parent":"aaaa0011","state":"TODO","title":"live chore"}
+{"type":"task","id":"bbbb0012","parent":"aaaa0011","state":"DONE","title":"done chore"}
+`
+	harness := newModelHarness(t, harnessOptions{live: live})
+	harness.model.SwitchView(ViewProjects)
+	// One hidden row, not two: the finished area's row is not on offer, so the
+	// note must not count it.
+	if text := rowTexts(harness); !strings.Contains(text, "1 closed hidden · C shows") {
+		t.Fatalf("the note promised a row the toggle cannot produce:\n%s", text)
+	}
+	harness.model.ToggleClosed()
+	text := rowTexts(harness)
+	if strings.Contains(text, "finished chore") || strings.Contains(text, "Home") {
+		t.Fatalf("the reveal resurrected an area the shared listing drops:\n%s", text)
+	}
+	// An area that still holds open work keeps its history, like any project.
+	if !strings.Contains(text, "done chore") {
+		t.Fatalf("a living area lost its finished work:\n%s", text)
+	}
+}
+
 // The header names a reveal only where it changes something. Projects is now
 // one of the two tabs where it does, and the Agenda is still not.
 func TestProjectsHeaderNamesTheClosedReveal(t *testing.T) {
