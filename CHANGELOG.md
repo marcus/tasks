@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.16.0] - 2026-08-27
+
+### Features
+
+- **Delegation stamps read in your timezone.** (#17) Every human-facing print of `delegation.at` — `tasks show`'s `(since …)`, the TUI detail pane, and the claim-conflict message — now renders in the configured `timezone` and `time_format` (`thu 08-27 5:46p`, `17:46` under 24-hour) instead of the raw UTC stamp. The year appears only when it is not the reader's own, so an old handoff can't masquerade as yesterday's. Storage, `--json`, and the API keep the exact UTC instant, and a stamp the validator would reject prints as stored rather than being laundered into a healthy-looking local time. The 12/24 rule now has a single implementation (`temporal.ClockLabel`) shared by `tasks list`.
+- **The Outline hides finished work behind `C`.** (#18) DONE and CANCELLED rows no longer bury the tree: the Outline shows open work by default, and `C` (palette: toggle closed view) reveals the closed rows in place with their existing styling. Hidden rows are transparent — an open child hoists through a hidden closed parent — and every trace stays honest: section badges read `4 · 1 closed`, a search or store whose matches are all closed says `N closed hidden · C shows` instead of rendering blank, and malformed states stay visible rather than being miscounted as closed. Reordering and indenting now anchor on the nearest *visible* sibling, so a keypress can never rewrite the file without moving anything on screen. PROPOSED stays excluded, `Z` composes independently, and the toggle is session-only.
+- **Projects can show what already shipped.** (#19) The same `C` toggle on the Projects tab includes DONE and CANCELLED children under their project. Toggled on, the stored tree is shown as-is — a closed parent appears with its open child nested beneath it instead of being pruned and hoisted — and a project whose only live children are closed becomes a real foldable heading rather than a line on the dormant tail. A finished project drops the `⚠ stuck` warning, badges count what the current filter shows with a muted `· N closed` leftover, and unfiled work and swept `archive.jsonl` history stay out. Default off: the open-only view, hoisting and all, is unchanged.
+
 ## [1.15.0] - 2026-08-26
 
 ### Features
