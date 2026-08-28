@@ -1221,26 +1221,44 @@ func (m *Model) showSuspendedEditorPanel() {
 	title := "task draft · target not visible"
 	explanation := "Task exists but is hidden from the canonical views."
 	canonicalView := m.suspendedTargetCanonicalView()
-	if editor.Missing() {
+	// A target that merely got COMPLETED is not hidden in any way the reader
+	// can act on blindly — it is hidden by one toggle, and naming that toggle
+	// is the whole difference between a recoverable draft and an abandoned one.
+	closedReveal := m.suspendedTargetNeedsClosedReveal()
+	guidance := "y copies field · esc discards draft"
+	switch {
+	case editor.Missing():
 		title = "task draft · target deleted"
 		explanation = "Task no longer exists; local field retained."
-	} else if canonicalView != "" {
+	case canonicalView != "":
 		explanation = fmt.Sprintf("Task left %s; switch to %s to resume.", m.view, canonicalView)
-	}
-	guidance := "y copies field · esc discards draft"
-	if canonicalView != "" {
 		guidance = "switch view + e resumes · y copies · esc discards"
-	}
-	if editor.Missing() {
-		guidance = "y copies field · esc discards draft"
+	case closedReveal:
+		explanation = fmt.Sprintf("Task left %s by closing; C in the Outline shows it.", m.view)
+		guidance = "Outline + C + e resumes · y copies · esc discards"
 	}
 	lines := []string{explanation, "Draft: " + valueText(editor.CopyValue()), guidance}
 	m.panel = NewRightPanel(title, PanelSuspendedTaskEdit, editor.TargetID(), lines)
-	if canonicalView != "" {
+	switch {
+	case canonicalView != "":
 		m.Flash(fmt.Sprintf("paused task draft: switch to %s to resume · y copies · esc discards", canonicalView))
-	} else {
+	case closedReveal:
+		m.Flash("paused task draft: the task is closed — C in the Outline shows it · y copies · esc discards")
+	default:
 		m.Flash("paused task draft: target is not selectable · y copies · esc discards")
 	}
+}
+
+// suspendedTargetNeedsClosedReveal reports that the paused draft's task is
+// simply closed while the closed toggle is off — the one kind of invisibility a
+// single documented keystroke undoes.
+func (m *Model) suspendedTargetNeedsClosedReveal() bool {
+	if m.showClosed || m.read == nil ||
+		m.suspendedTaskEditor == nil || m.suspendedTaskEditor.Missing() {
+		return false
+	}
+	task, found := m.read.TaskFor(m.suspendedTaskEditor.TargetID())
+	return found && isClosedState(task.State)
 }
 
 func (m *Model) suspendedTargetCanonicalView() string {

@@ -517,13 +517,13 @@ func buildOutline(request BuildRequest) []Row {
 			item := item
 			rows = append(rows, Row{Text: outlineBody(request, item), Item: &item})
 		}
-		return withMetaRows(request, rows)
+		return outlineHiddenNote(request, withMetaRows(request, rows))
 	}
 	rows := []Row{}
 	for _, root := range request.Tree {
 		rows = appendOutlineNode(request, rows, root, 0, "")
 	}
-	return withMetaRows(request, dropTrailingBlank(rows))
+	return outlineHiddenNote(request, withMetaRows(request, dropTrailingBlank(rows)))
 }
 
 // appendOutlineNode walks one node.
@@ -862,17 +862,62 @@ func outlineHiddenClosedCount(request BuildRequest, node *taskquery.Node) int {
 	return total
 }
 
-// outlineDescendantCount is the dim count a folded row carries: the tasks that
-// fold hid, which is the tasks the view would otherwise be showing.
+// outlineDescendantCount is the dim count a folded row carries: every ROW the
+// fold is hiding.
+//
+// Rows, not tasks: a section heading beneath a task is a row too, and counting
+// only tasks let a fold that hid a whole sub-section report `▾ 0` — a count
+// that contradicts the chevron sitting next to it. It is exactly the quantity
+// outlineRenders answers yes/no about, so the marker and the number can never
+// disagree.
 func outlineDescendantCount(request BuildRequest, node *taskquery.Node) int {
 	total := 0
 	for _, child := range node.Children {
-		if child.Task() && outlineShows(request, *child.Item) {
+		if child.Section() || outlineShows(request, *child.Item) {
 			total++
 		}
 		total += outlineDescendantCount(request, child)
 	}
 	return total
+}
+
+// outlineHiddenNote is the one line the outline owes a reader whose view is
+// holding finished work back.
+//
+// Section badges carry `· N closed` where there is a section to carry it, but
+// two paths have no section row at all: a `/` search or an `@` filter drops the
+// view into its flat shape, and a store whose live roots are closed and
+// section-less paints nothing whatsoever. Without this, a search for a task you
+// finished last week comes back empty and a swept-but-unarchived store comes
+// back BLANK, and neither says a toggle exists — so the reader concludes the
+// task is gone rather than hidden.
+//
+// It is one muted line at the foot of the list, and it names the key, because
+// the whole failure mode is not knowing there is one. It is absent whenever
+// nothing is hidden, so an outline with no history pays nothing for it.
+func outlineHiddenNote(request BuildRequest, rows []Row) []Row {
+	if request.ShowClosed {
+		return rows
+	}
+	// Items arrives already narrowed by the active `/` and `@` filters, so the
+	// number counts what THIS view is hiding rather than what the file holds —
+	// a search that hides one closed match may not claim forty.
+	hidden := 0
+	for _, item := range request.Items {
+		if isClosedState(item.State) {
+			hidden++
+		}
+	}
+	if hidden == 0 {
+		return rows
+	}
+	if len(rows) > 0 {
+		rows = append(rows, chromeRow(""))
+	}
+	// Padded like a row, as every placeholder is — it occupies a row's place,
+	// and the shared meta column has to find the same width under it.
+	return append(rows, withMeta(request, headerRow(request.styler().Paint("muted",
+		fmt.Sprintf("%s%d closed hidden · C shows", placeholderIndent, hidden))), "", ""))
 }
 
 // -- projects --------------------------------------------------------------

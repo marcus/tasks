@@ -414,12 +414,7 @@ func (m *Model) ReorderSelected(action string) {
 // flashes rather than refusals — "already first among siblings" is information,
 // not an error.
 func (m *Model) orderingPlacement(action string, task store.Item) (store.Placement, bool) {
-	siblings := []store.Item{}
-	for _, candidate := range m.read.Items() {
-		if candidate.Parent == task.Parent {
-			siblings = append(siblings, candidate)
-		}
-	}
+	siblings := m.orderingSiblings(task.Parent, task.ID)
 	index := -1
 	for position, candidate := range siblings {
 		if candidate.ID == task.ID {
@@ -464,12 +459,7 @@ func (m *Model) orderingPlacement(action string, task store.Item) (store.Placeme
 			m.Flash("already at section level")
 			return store.Placement{}, false
 		}
-		parentSiblings := []store.Item{}
-		for _, candidate := range m.read.Items() {
-			if candidate.Parent == parent.Parent {
-				parentSiblings = append(parentSiblings, candidate)
-			}
-		}
+		parentSiblings := m.orderingSiblings(parent.Parent, parent.ID)
 		parentIndex := -1
 		for position, candidate := range parentSiblings {
 			if candidate.ID == parent.ID {
@@ -488,6 +478,42 @@ func (m *Model) orderingPlacement(action string, task store.Item) (store.Placeme
 		return store.Placement{ParentID: parent.Parent, BeforeID: before}, true
 	}
 	return store.Placement{}, false
+}
+
+// orderingSiblings is the sibling run an ordering move steps through: one
+// parent's children that the OUTLINE IS PAINTING, in file order.
+//
+// Ordering only runs in the Outline, and the Outline hides rows — PROPOSED
+// always, closed work until `C` asks for it. Reading the raw file order would
+// let one keystroke step across a row nobody can see: `Alt+↑` over a hidden
+// DONE sibling rewrites the file and moves nothing on the screen, and `>`
+// silently reparents an open task UNDER a hidden DONE one, where it is
+// reachable only by turning the toggle back on.
+//
+// Anchoring on what is painted makes the gesture WYSIWYG again — one press,
+// one visible step — without pinning anything: a move is expressed as "before
+// this visible row", so the hidden rows keep their own relative places in the
+// file and are simply passed over.
+//
+// `keep` names rows that stay in the list whatever the filter says, because
+// they are the move's reference points rather than candidates for it: the
+// moving task itself, and the parent an outdent measures from.
+func (m *Model) orderingSiblings(parentID string, keep ...string) []store.Item {
+	request := m.treeRequest()
+	kept := map[string]bool{}
+	for _, id := range keep {
+		kept[id] = true
+	}
+	siblings := []store.Item{}
+	for _, candidate := range m.read.Items() {
+		if candidate.Parent != parentID {
+			continue
+		}
+		if kept[candidate.ID] || outlineShows(request, candidate) {
+			siblings = append(siblings, candidate)
+		}
+	}
+	return siblings
 }
 
 // orderingFailureMessage translates a refused move into the sentence Ruby

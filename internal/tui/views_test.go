@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/marcus/tasks/internal/tui/term/shortcuts"
 )
 
@@ -467,6 +469,176 @@ func TestClosedRevealStillObeysSearchAndContextFilters(t *testing.T) {
 		t.Fatalf("the reveal ignored the @context filter:\n%s", text)
 	}
 }
+
+// The Outline is where a reader goes to FIND a broken row, so "hide the closed
+// ones" must mean exactly DONE and CANCELLED. A state nobody recognizes is a
+// defect, not history: it stays on screen and is never counted as closed.
+func TestOutlineKeepsMalformedStatesVisibleAndUncounted(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: malformedStateOutlineFixture})
+	harness.model.SwitchView(ViewOutline)
+	text := rowTexts(harness)
+	if !strings.Contains(text, "Typo state") {
+		t.Fatalf("an unknown-state row vanished from the repair view:\n%s", text)
+	}
+	if !strings.Contains(text, "Stateless row") {
+		t.Fatalf("a row with no state at all vanished from the repair view:\n%s", text)
+	}
+	heading := headingRowText(harness.model.Rows(), "Work")
+	if !strings.Contains(heading, "3 · 1 closed") {
+		t.Fatalf("Work heading %q: the malformed rows should count as shown, not as closed", heading)
+	}
+	if strings.Contains(text, "closed hidden · C shows") &&
+		!strings.Contains(text, "1 closed hidden") {
+		t.Fatalf("the hidden-work note miscounted the malformed rows:\n%s", text)
+	}
+}
+
+// A `/` search drops the outline into its flat shape, where there is no section
+// row to carry `· N closed`. Without a note of its own, searching for something
+// you finished last week comes back empty and says nothing — and "gone" is the
+// wrong conclusion to hand a reader about their own data.
+func TestOutlineSearchThatMatchesOnlyClosedWorkSaysSo(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.SwitchView(ViewOutline)
+	harness.model.filter = "finished"
+	harness.model.RefreshRows()
+	text := rowTexts(harness)
+	if strings.Contains(text, "Old finished thing") {
+		t.Fatalf("the search revealed a closed row on its own:\n%s", text)
+	}
+	if !strings.Contains(text, "1 closed hidden · C shows") {
+		t.Fatalf("a search matching only hidden work returned nothing and said nothing:\n%s", text)
+	}
+	harness.model.ToggleClosed()
+	text = rowTexts(harness)
+	if !strings.Contains(text, "Old finished thing") {
+		t.Fatalf("the note's own key did not produce the row:\n%s", text)
+	}
+	if strings.Contains(text, "closed hidden") {
+		t.Fatalf("the note outstayed the thing it was about:\n%s", text)
+	}
+}
+
+// A store swept into DONE but not yet archived has nothing open and no section
+// to badge. A blank pane there reads as a broken tab rather than as a finished
+// list.
+func TestOutlineOfNothingButClosedWorkIsNotBlank(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: closedRootsOutlineFixture})
+	harness.model.SwitchView(ViewOutline)
+	text := rowTexts(harness)
+	if strings.TrimSpace(text) == "" {
+		t.Fatal("an outline of only closed work painted a blank pane")
+	}
+	if !strings.Contains(text, "2 closed hidden · C shows") {
+		t.Fatalf("the pane does not say what it is holding:\n%s", text)
+	}
+	harness.model.ToggleClosed()
+	if !strings.Contains(rowTexts(harness), "Swept but unarchived") {
+		t.Fatalf("the toggle did not produce the rows:\n%s", rowTexts(harness))
+	}
+}
+
+// The note is absent when nothing is hidden — an outline with no history pays
+// nothing for it.
+func TestOutlineWithNoClosedWorkCarriesNoNote(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: proposalOutlineFixture})
+	harness.model.SwitchView(ViewOutline)
+	if strings.Contains(rowTexts(harness), "closed hidden") {
+		t.Fatalf("a note appeared with nothing to report:\n%s", rowTexts(harness))
+	}
+}
+
+// A folded row's count and its chevron are two statements about the same fact.
+// `▾ 0` beside an expandable marker is a contradiction — and it happened when
+// the count knew only about tasks while the fold also hid a section heading.
+func TestOutlineFoldedCountNeverContradictsItsChevron(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: foldedSectionOutlineFixture})
+	harness.model.SwitchView(ViewOutline)
+	harness.model.collapsed["bbbb0001"] = true
+	harness.model.RefreshRows()
+	text := rowTexts(harness)
+	if strings.Contains(text, MoreGlyph+" 0") {
+		t.Fatalf("a fold reported hiding nothing while wearing a chevron:\n%s", text)
+	}
+	if !strings.Contains(text, MoreGlyph+" 1") {
+		t.Fatalf("the fold did not count the section heading it hid:\n%s", text)
+	}
+	if strings.Contains(text, "Nested") {
+		t.Fatalf("the fold did not actually hide the heading:\n%s", text)
+	}
+}
+
+// The marker and the count come from one fact and must never disagree: an
+// expandable row always hides something, a leaf never does.
+func TestOutlineFoldMarkersAndCountsAgreeAcrossTheToggle(t *testing.T) {
+	for _, live := range []string{
+		fixtureStore, foldedSectionOutlineFixture, closedChildOutlineFixture, closedRootsOutlineFixture,
+	} {
+		for _, showClosed := range []bool{false, true} {
+			harness := newModelHarness(t, harnessOptions{live: live})
+			harness.model.SwitchView(ViewOutline)
+			harness.model.showClosed = showClosed
+			harness.model.CollapseAll()
+			for _, row := range harness.model.Rows() {
+				if row.Node == nil {
+					continue
+				}
+				expandable := outlineRenders(harness.model.treeRequest(), row.Node)
+				if expandable != (outlineDescendantCount(harness.model.treeRequest(), row.Node) > 0) {
+					t.Fatalf("showClosed=%v: marker and count disagree on %q", showClosed, row.Text)
+				}
+				if row.HasMarker() != expandable {
+					t.Fatalf("showClosed=%v: %q wears the wrong marker", showClosed, row.Text)
+				}
+			}
+		}
+	}
+}
+
+// A paused draft whose task got COMPLETED is one keystroke from recovery, and
+// the panel that exists to rescue it has to name that keystroke.
+func TestPausedDraftOnAClosedTargetNamesTheClosedToggle(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{})
+	harness.model.SwitchView(ViewNext)
+	harness.selectRowByID(fixFlight)
+	harness.pressKeys("\r", "e", "!")
+	harness.model.Update(tea.WindowSizeMsg{Width: 20, Height: 8})
+	harness.rewrite(strings.Replace(fixtureStore,
+		`"state":"NEXT","priority":"A","title":"Book flight`,
+		`"state":"DONE","priority":"A","title":"Book flight`, 1))
+	harness.model.Refresh()
+	panel := harness.model.Panel()
+	if panel == nil || panel.Kind != PanelSuspendedTaskEdit {
+		t.Fatal("the completed target did not raise a recovery panel")
+	}
+	lines := strings.Join(panel.Lines, "\n")
+	if !strings.Contains(lines, "C in the Outline") {
+		t.Fatalf("the recovery panel does not name the toggle that recovers it:\n%s", lines)
+	}
+	if !strings.Contains(harness.model.FlashMessage(), "C in the Outline") {
+		t.Fatalf("the flash does not name the toggle: %q", harness.model.FlashMessage())
+	}
+}
+
+const malformedStateOutlineFixture = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0003","title":"Work"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0003","state":"NEXT","title":"Live work"}
+{"type":"task","id":"bbbb0002","parent":"aaaa0003","state":"TODOO","title":"Typo state"}
+{"type":"task","id":"bbbb0003","parent":"aaaa0003","title":"Stateless row"}
+{"type":"task","id":"bbbb0004","parent":"aaaa0003","state":"DONE","title":"Real history","closed":"2026-06-20"}
+`
+
+const closedRootsOutlineFixture = `{"type":"meta","version":2}
+{"type":"task","id":"bbbb0001","state":"DONE","title":"Swept but unarchived","closed":"2026-06-20"}
+{"type":"task","id":"bbbb0002","state":"CANCELLED","title":"Dropped root","closed":"2026-06-21"}
+`
+
+const foldedSectionOutlineFixture = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0003","title":"Work"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0003","state":"NEXT","title":"Parent action"}
+{"type":"section","id":"bbbb0002","parent":"bbbb0001","title":"Nested heading"}
+{"type":"task","id":"bbbb0003","parent":"bbbb0002","state":"DONE","title":"Nested history","closed":"2026-06-20"}
+`
 
 // A reveal has to be visible in the chrome, and only where it is in force: a
 // header that claimed closed rows were shown on Agenda would describe a list

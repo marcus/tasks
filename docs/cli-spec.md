@@ -1032,24 +1032,37 @@ is added in this slice.
 Agenda, Next, Quadrants, Inbox, and Projects are not eligible for ordering:
 they filter, regroup, or sort away live siblings. The fifth **Outline** tab
 renders every live section and task in canonical DFS order, including
-unavailable tasks. `PROPOSED` rows never appear (Inbox/Approvals owns them),
-and closed (`DONE`/`CANCELLED`) rows are hidden by default: `C` shows and hides
-them, session-only like `Z`, and the header says `closed shown` while they are
-revealed. A hidden row is transparent rather than pruned — an open task under a
-completed parent is hoisted into the parent's place, the same way the other tree
-views hoist. Section badges and folded-row counts state what the view is
-*showing*; what the toggle is holding back is named beside the badge as
-`4 · 1 closed`, so a section whose children are all closed keeps its heading and
-its history instead of reading as an empty project. Apart from that, only
-collapse may hide descendants. `Alt+↑`/`Alt+k`, `Alt+↓`/`Alt+j`, `>`, and `<`
-reorder, indent, and outdent in that unfiltered tab; they move a task among
-*all* its file siblings, so a step across a hidden closed sibling is a real
-write that does not visibly move the row until `C` is on. In another tab, or while `/` text or `@`
-context filtering is active, those keys are consumed and the footer directs
-the user to the unfiltered Outline tab. Up/down stay within the current direct
-sibling list; indent appends under the preceding sibling; outdent places the
-subtree immediately after its old parent. Each action is one checked placement
-changeset and one undo entry, while boundary/refusal cases write nothing.
+unavailable tasks and tasks whose `state` is malformed or absent — the Outline
+is the repair view, so a defective row must stay findable. `PROPOSED` rows
+never appear (Inbox/Approvals owns them), and closed (`DONE`/`CANCELLED`) rows
+are hidden by default: `C` shows and hides them, session-only like `Z`, and the
+header says `closed shown` while they are revealed.
+
+A hidden row is transparent rather than pruned — an open task under a completed
+parent is hoisted into the parent's place, the same way the other tree views
+hoist. Section badges and folded-row counts state what the view is *showing*;
+what the toggle is holding back is named beside the badge as `4 · 1 closed`, so
+a section whose children are all closed keeps its heading and its history
+instead of reading as an empty project. Where there is no section row to carry
+that — a `/` or `@` filter drops the tab into its flat shape, and closed
+section-less roots have no heading at all — one muted line at the foot of the
+list reads `N closed hidden · C shows`, so neither an empty search nor a blank
+pane can imply the work is gone. A fold marker follows what is *painted*: a row
+whose only children are hidden wears a leaf marker, and a fold saved on a node
+that later becomes hidden or unfoldable is discarded rather than respected.
+Apart from that, only collapse may hide descendants.
+
+`Alt+↑`/`Alt+k`, `Alt+↓`/`Alt+j`, `>`, and `<` reorder, indent, and outdent in
+that unfiltered tab. They anchor on the nearest *visible* sibling, so a row the
+Outline is hiding is stepped over rather than onto: one press is always one
+visible step, and `>` can never file an open task under a hidden proposal or a
+hidden closed task. The hidden rows keep their own relative places in the file.
+In another tab, or while `/` text or `@` context filtering is active, those
+keys are consumed and the footer directs the user to the unfiltered Outline
+tab. Up/down stay within the current direct sibling list; indent appends under
+the preceding sibling; outdent places the subtree immediately after its old
+parent. Each action is one checked placement changeset and one undo entry,
+while boundary/refusal cases write nothing.
 
 **Output.** Human-readable by default. Read commands and mutations accept
 `--json`; shapes below. Mutations always print (or return in JSON) the full

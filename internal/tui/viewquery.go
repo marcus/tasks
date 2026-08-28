@@ -135,7 +135,10 @@ func (q ViewQuery) ViewRule(item store.Item) bool {
 		if isProposedState(item.State) {
 			return false
 		}
-		return q.ShowClosed || isOpenState(item.State)
+		// Hidden is the narrow case, on purpose: only a genuinely CLOSED row
+		// goes away. A row with a state nobody recognizes is not history, it is
+		// a defect, and this is the tab a reader opens to find one.
+		return q.ShowClosed || !isClosedState(item.State)
 	case ViewAgenda:
 		return isOpenState(item.State) && (item.Deadline != "" || item.Scheduled != "")
 	case ViewNext:
@@ -508,9 +511,19 @@ func isOpenState(state string) bool {
 
 func isProposedState(state string) bool { return state == "PROPOSED" }
 
-// isClosedState is DONE or CANCELLED: work whose lifecycle has ended. A
-// proposal is undecided rather than closed, so it is neither open nor closed
-// here — the three predicates partition the states.
+// isClosedState is DONE or CANCELLED: work whose lifecycle has ended.
+//
+// It asks the closed vocabulary DIRECTLY rather than spelling itself as
+// "neither open nor proposed". The three predicates do not partition the
+// states, because a state can also be nonsense — a hand-edited `TODOO`, or a
+// record with no state at all — and the negation would file every one of those
+// as finished. The Outline is where a reader goes to FIND a broken row, so a
+// malformed task must stay on screen and must never be counted as history.
 func isClosedState(state string) bool {
-	return !isProposedState(state) && !isOpenState(state)
+	for _, closed := range taskquery.ClosedStates() {
+		if closed == state {
+			return true
+		}
+	}
+	return false
 }
