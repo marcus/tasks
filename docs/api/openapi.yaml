@@ -1535,6 +1535,17 @@ paths:
         deadline-or-scheduled date, and a `stuck` flag (no open NEXT). Ordered
         projects-before-areas, then by soonest date (nil last), then title.
         `line` is never exposed.
+        Closed projects are excluded by default; use `?closed=include` to see
+        them or `?closed=only` for only closed projects.
+      parameters:
+        - name: closed
+          in: query
+          description: Filter by closed projects.
+          required: false
+          schema:
+            type: string
+            enum: [exclude, include, only]
+            default: exclude
       responses:
         "200":
           description: Projects then areas, in display order.
@@ -1568,6 +1579,8 @@ paths:
                         stuck: false
                         held_count: 1
                         body: "Goal: ship the personal site."
+                        state: null
+                        closed: null
                         task_ids: ["cccc0005", "cccc0006", "cccc0008"]
                       - id: "cccc000d"
                         title: "Tasks"
@@ -1581,6 +1594,8 @@ paths:
                         stuck: false
                         held_count: 0
                         body: null
+                        state: null
+                        closed: null
                         task_ids: ["cccc000e", "cccc000f"]
                     meta:
                       store_revision: "s1.6f2a9c0b"
@@ -1646,6 +1661,8 @@ paths:
                       stuck: true
                       held_count: 0
                       body: null
+                      state: null
+                      closed: null
                       task_ids: []
                     meta:
                       store_revision: "s2.9e8d7c6b"
@@ -1797,7 +1814,8 @@ paths:
         Closes every open descendant task of the project — the same cascade as
         completing each task: DONE + today's `closed` date, `defer` dropped, and
         a recurring descendant retired (cookie removed, no roll-forward). The
-        section itself remains. Returns the project resource with its refreshed
+        section itself is stamped DONE with today's `closed` date, in the same
+        write as the tasks. Returns the project resource with its refreshed
         counts (`open_count` now 0); a completed area that no longer surfaces in
         the read model still returns its `200` post-state, never a `404` after
         the write committed. An id that is not a project or area (a task, Inbox,
@@ -1832,9 +1850,11 @@ paths:
                       next_date: null
                       next_time: null
                       next_at: null
-                      stuck: true
+                      stuck: false
                       held_count: 0
                       body: "Goal: ship the personal site."
+                      state: "DONE"
+                      closed: "2026-07-20"
                       task_ids: []
                     meta:
                       store_revision: "s2.1a2b3c4d"
@@ -1916,6 +1936,119 @@ paths:
           $ref: "#/components/responses/ForbiddenOrigin"
         "422":
           $ref: "#/components/responses/ValidationFailed"
+        "503":
+          $ref: "#/components/responses/StoreInvalid"
+
+  /projects/{id}/drop:
+    parameters:
+      - $ref: "#/components/parameters/TaskId"
+    post:
+      tags: [projects]
+      operationId: dropProject
+      summary: Drop every open task in the project.
+      description: |
+        Cancels every open descendant task of the project — CANCELLED + today's
+        `closed` date, `defer` dropped, and a recurring descendant retired. The
+        section itself is stamped CANCELLED with today's `closed` date, in the
+        same write as the tasks. Returns the project resource with its refreshed
+        counts. No `If-Match` precondition.
+      responses:
+        "200":
+          description: The project resource after dropping (open_count now 0).
+          headers:
+            ETag:
+              description: Current global store revision.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Project" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+              examples:
+                dropped:
+                  value:
+                    data:
+                      id: "cccc0004"
+                      title: "Site launch"
+                      parent_id: "cccc0003"
+                      kind: "project"
+                      open_count: 0
+                      next_count: 0
+                      next_date: null
+                      next_time: null
+                      next_at: null
+                      stuck: false
+                      held_count: 0
+                      body: "Goal: ship the personal site."
+                      state: "CANCELLED"
+                      closed: "2026-07-20"
+                      task_ids: []
+                    meta:
+                      store_revision: "s2.1a2b3c4d"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenOrigin"
+        "503":
+          $ref: "#/components/responses/StoreInvalid"
+
+  /projects/{id}/reopen:
+    parameters:
+      - $ref: "#/components/parameters/TaskId"
+    post:
+      tags: [projects]
+      operationId: reopenProject
+      summary: Reopen a closed project.
+      description: |
+        Clears `state` and `closed` from the section, leaving its tasks untouched.
+        No `If-Match` precondition.
+      responses:
+        "200":
+          description: The reopened project resource.
+          headers:
+            ETag:
+              description: Current global store revision.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Project" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+              examples:
+                reopened:
+                  value:
+                    data:
+                      id: "cccc0004"
+                      title: "Site launch"
+                      parent_id: "cccc0003"
+                      kind: "project"
+                      open_count: 3
+                      next_count: 1
+                      next_date: "2026-07-25"
+                      next_time: null
+                      next_at: null
+                      stuck: false
+                      held_count: 1
+                      body: "Goal: ship the personal site."
+                      state: null
+                      closed: null
+                      task_ids: ["cccc0005", "cccc0006", "cccc0008"]
+                    meta:
+                      store_revision: "s2.1a2b3c4d"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenOrigin"
         "503":
           $ref: "#/components/responses/StoreInvalid"
 
@@ -2964,6 +3097,8 @@ components:
         - stuck
         - held_count
         - body
+        - state
+        - closed
         - task_ids
       additionalProperties: false
       properties:
@@ -3007,6 +3142,16 @@ components:
         body:
           type: [string, "null"]
           description: The section's body note, or null.
+        state:
+          description: Section lifecycle state, null when open.
+          oneOf:
+            - { type: string, enum: [DONE, CANCELLED] }
+            - { type: "null" }
+        closed:
+          description: Date the section was closed, null when open.
+          oneOf:
+            - { $ref: "#/components/schemas/IsoDate" }
+            - { type: "null" }
         task_ids:
           type: array
           description: Ids of the rolled-up open, non-deferred tasks in DFS order.

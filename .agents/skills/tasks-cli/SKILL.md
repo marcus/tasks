@@ -30,6 +30,10 @@ tasks inbox            # unprocessed captures
 tasks show "<ref>"     # one task in full (fields + notes); --json
 tasks check            # is the file structurally sound? (exit 1 = no)
 tasks config           # where tasks.jsonl/archive.jsonl resolve + urgent_days; --json
+tasks projects [--closed|--all] [--json] # rolled-up projects/areas; state/closed when closed
+tasks project complete "<ref>" # close tasks + stamp DONE
+tasks project drop "<ref>"    # cancel tasks + stamp CANCELLED (alias: cancel)
+tasks project reopen "<ref>"  # clear stamps
 ```
 
 Quadrants are computed, not stored: **important** = priority `A`/`B` or the

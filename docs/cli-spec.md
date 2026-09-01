@@ -1536,21 +1536,25 @@ title ambiguity a bare `project "<ref>"` would create.
 |---|---|---|---|
 | `project create <title> [--json] [--dry-run]` | `project new` | ✅ | Create a new empty project — a section filed under the top-level "Projects" root (created first if the store has none yet, so an empty/rootless file still works). A blank title, or one that duplicates an existing project or area (case-insensitive; the project-ref candidate set, so a duplicate would make later refs ambiguous), exits 1 with the reason. Success prints the new project row (`--json` emits the project object). `--dry-run` writes nothing. Then `move <ref> "<title>"` files tasks into it. |
 | `project show <ref> [--json]` | | ✅ | One project/area in full: title, kind, rolled-up open/NEXT counts, soonest date, and body note. `--json` is the project object (same shape as a `projects` element). |
-| `project complete <ref>` | `project done` | ✅ | Close every open descendant task of the project — the same cascade as `done`: DONE + today's `closed` date, `defer` dropped, and a recurring descendant retired (its cookie removed, no roll-forward). Prints every touched task's new headline (identified by line). |
+| `project complete <ref>` | `project done` | ✅ | Close every open descendant task of the project — the same cascade as `done`: DONE + today's `closed` date, `defer` dropped, and a recurring descendant retired (its cookie removed, no roll-forward). Additionally stamps the section itself DONE with today's date, in the same write. Prints every touched task's new headline (identified by line) plus a line naming the project closed. |
+| `project drop <ref>` | `project cancel` | ✅ | Cancel every open descendant task — CANCELLED + today's closed date, defer dropped, recurrence retired — and stamp the section CANCELLED. One write. |
+| `project reopen <ref>` | | ✅ | Clear state and closed from the section, leaving its tasks untouched. |
 | `project archive <ref> [--force]` | | ✅ | Sweep the project's whole section subtree to `archive.jsonl` (the root section drops its `parent` and gains today's `archived` stamp). Refuses with exit 1 while the project still has open work unless `--force`; deferred/held tasks (`held_count`) count as open work too. PROPOSED descendants always refuse, even with `--force`, until approved or rejected. |
 | `project rename <ref> <new title>` | | ✅ | Replace the section title (leading/trailing space trimmed). |
 
-**Project refs.** A `<ref>` resolves against the `projects` listing: an exact
+**Project refs.** A `<ref>` resolves against the `projects` listing including closed: an exact
 8-hex section id (case-insensitive) wins, then an `L<line>` section line, then a
-case-insensitive title substring across both projects and areas. Zero matches or
+case-insensitive title substring across both projects and areas (closed included). Zero matches or
 an ambiguous substring exits 2, listing candidates as `L<line>: <title>` — the
 same contract as task refs. All four commands accept `--json`; the three
 mutations accept `--dry-run` and write nothing in that mode.
 
-Over the HTTP API the same capability is `GET /api/v1/projects`,
+`tasks projects` is the rolled-up listing. By default closed projects are hidden; `--all` includes them and `--closed` selects only closed. `--json` emits the project resource now including `state` and `closed` when present.
+
+Over the HTTP API the same capability is `GET /api/v1/projects` (`?closed=exclude|include|only`),
 `POST /api/v1/projects` (create — `{"title": …}` → 201 with the project; 422 on
 a blank/duplicate title), `GET/PATCH /api/v1/projects/{id}`, and
-`POST /api/v1/projects/{id}/complete` and `…/archive` — strict 8-hex ids only,
+`POST /api/v1/projects/{id}/complete`, `/drop`, `/reopen`, and `…/archive` — strict 8-hex ids only,
 no fuzzy refs (a transport difference per design rule 7). See
 `docs/api/openapi.yaml`.
 

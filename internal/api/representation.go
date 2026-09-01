@@ -480,6 +480,18 @@ func writeProject(w *jsonout.Writer, view taskquery.ProjectView) {
 	} else {
 		w.Null()
 	}
+	w.Key("state")
+	if view.State != "" {
+		w.Str(view.State)
+	} else {
+		w.Null()
+	}
+	w.Key("closed")
+	if view.HasClosed {
+		w.Str(view.Closed)
+	} else {
+		w.Null()
+	}
 	w.Key("task_ids")
 	w.Strings(view.TaskIDs)
 	w.EndObject()

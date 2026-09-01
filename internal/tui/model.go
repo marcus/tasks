@@ -620,7 +620,7 @@ func (m *Model) RefreshRows() {
 		IntakeCounts:   m.intakeCounts(items),
 	}
 	if m.view == ViewProjects && request.UseTree {
-		request.Projects = queries.Projects()
+		request.Projects = queries.ProjectsIncluding(m.showClosed)
 	}
 	m.rows = BuildRows(request)
 	m.syncSelection()

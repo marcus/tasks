@@ -917,7 +917,63 @@ func (s *Server) completeProject(request *http.Request, id, requestID string) (r
 		return response{}, err
 	}
 	return s.projectAfterMutation(id, operation, func() taskquery.ProjectView {
-		return completedProjectView(before.Data)
+		return completedProjectView(before.Data, outcome)
+	})
+}
+
+// dropProject cancels every open descendant task of the project.
+func (s *Server) dropProject(request *http.Request, id, requestID string) (response, error) {
+	if _, err := queryParams(request); err != nil {
+		return response{}, err
+	}
+	if err := rejectBody(request, "Project action requests"); err != nil {
+		return response{}, err
+	}
+	if err := s.ensureStoreReady(); err != nil {
+		return response{}, err
+	}
+	operation, err := s.operationContext(requestID)
+	if err != nil {
+		return response{}, err
+	}
+	before := s.options.App.ProjectResult(id, operation)
+	if !before.OK() {
+		return response{}, projectReadFailure(before.Status, firstReadMessage(before.Errors))
+	}
+	outcome := s.options.App.DropProject(id, operation)
+	if err := s.projectMutationFailure(outcome, id); err != nil {
+		return response{}, err
+	}
+	return s.projectAfterMutation(id, operation, func() taskquery.ProjectView {
+		return droppedProjectView(before.Data, outcome)
+	})
+}
+
+// reopenProject clears the lifecycle stamps from the project.
+func (s *Server) reopenProject(request *http.Request, id, requestID string) (response, error) {
+	if _, err := queryParams(request); err != nil {
+		return response{}, err
+	}
+	if err := rejectBody(request, "Project action requests"); err != nil {
+		return response{}, err
+	}
+	if err := s.ensureStoreReady(); err != nil {
+		return response{}, err
+	}
+	operation, err := s.operationContext(requestID)
+	if err != nil {
+		return response{}, err
+	}
+	before := s.options.App.ProjectResult(id, operation)
+	if !before.OK() {
+		return response{}, projectReadFailure(before.Status, firstReadMessage(before.Errors))
+	}
+	outcome := s.options.App.ReopenProject(id, operation)
+	if err := s.projectMutationFailure(outcome, id); err != nil {
+		return response{}, err
+	}
+	return s.projectAfterMutation(id, operation, func() taskquery.ProjectView {
+		return reopenedProjectView(before.Data)
 	})
 }
 
@@ -1038,16 +1094,59 @@ func projectResponse(view taskquery.ProjectView, revision string) response {
 }
 
 // completedProjectView is the pre-read project as it stands after a completing
-// cascade: every open task, deferred included, is closed, so the rollups are zero
-// and the project is stuck.
-func completedProjectView(view taskquery.ProjectView) taskquery.ProjectView {
+// cascade: every open task, deferred included, is closed, so the rollups are zero.
+// A closed project is never stuck; an area with no NEXT still reads stuck.
+func completedProjectView(view taskquery.ProjectView, outcome application.Outcome) taskquery.ProjectView {
+	state := "DONE"
+	closed := ""
+	if outcome.Project != nil && outcome.Project.ClosedAt != "" {
+		closed = outcome.Project.ClosedAt
+	}
+	if outcome.Project != nil && outcome.Project.State != "" {
+		state = outcome.Project.State
+	}
+	stuck := view.Kind != "project"
+	if view.Kind == "project" {
+		stuck = false
+	}
 	return taskquery.ProjectView{
 		ID: view.ID, Title: view.Title,
 		ParentID: view.ParentID, HasParentID: view.HasParentID,
 		Kind: view.Kind, Line: view.Line,
-		OpenCount: 0, NextCount: 0, Stuck: true, HeldCount: 0,
+		OpenCount: 0, NextCount: 0, Stuck: stuck, HeldCount: 0,
 		Body: view.Body, HasBody: view.HasBody, TaskIDs: []string{},
+		State: state, Closed: closed, HasClosed: closed != "",
 	}
+}
+
+func droppedProjectView(view taskquery.ProjectView, outcome application.Outcome) taskquery.ProjectView {
+	state := "CANCELLED"
+	closed := ""
+	if outcome.Project != nil && outcome.Project.ClosedAt != "" {
+		closed = outcome.Project.ClosedAt
+	}
+	if outcome.Project != nil && outcome.Project.State != "" {
+		state = outcome.Project.State
+	}
+	stuck := view.Kind != "project"
+	if view.Kind == "project" {
+		stuck = false
+	}
+	return taskquery.ProjectView{
+		ID: view.ID, Title: view.Title,
+		ParentID: view.ParentID, HasParentID: view.HasParentID,
+		Kind: view.Kind, Line: view.Line,
+		OpenCount: 0, NextCount: 0, Stuck: stuck, HeldCount: 0,
+		Body: view.Body, HasBody: view.HasBody, TaskIDs: []string{},
+		State: state, Closed: closed, HasClosed: closed != "",
+	}
+}
+
+func reopenedProjectView(view taskquery.ProjectView) taskquery.ProjectView {
+	view.State = ""
+	view.Closed = ""
+	view.HasClosed = false
+	return view
 }
 
 // renamedProjectView is the pre-read project with only its title replaced: a

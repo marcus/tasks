@@ -113,6 +113,8 @@ func (o Outcome) RolledBackValidation() bool {
 type ProjectSummary struct {
 	Closed   int
 	Archived int
+	State    string
+	ClosedAt string
 }
 
 // DelegationSummary is the composed outcome of one delegation verb, rich enough

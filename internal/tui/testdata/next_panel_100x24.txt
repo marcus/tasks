@@ -6,11 +6,11 @@
                                                              ┆ A   due thu 07-02   12d ago          
   @home ────────────────────────────────────────────────── 1 ┆ Labels: Work, @computer, important,  
            Water the plants                                  ┆                                      
-                                                             ┆ ACTIONS ──────────────────────────── 
+                                                             ┆ list       Work                      
+                                                             ┃                                      
+                                                             ┃ ACTIONS ──────────────────────────── 
                                                              ┃                                      
                                                              ┃ c done   d date   r recur   z defer  
-                                                             ┃                                      
-                                                             ┃                                      
                                                              ┆                                      
                                                              ┆                                      
                                                              ┆                                      

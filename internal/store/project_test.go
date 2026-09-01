@@ -167,7 +167,9 @@ func TestCompleteProjectClosesOpenDescendantsDroppingDeferAndRecur(t *testing.T)
 
 // test_complete_project_is_a_clean_zero_when_nothing_is_open: closing nothing
 // records no history, which is what lets a caller distinguish it from a
-// rollback that also reported zero.
+// rollback that also reported zero. With the lifecycle stamp, an OPEN empty
+// project still writes the section stamp, so closing it is not a no-op — only
+// a project already stamped DONE/CANCELLED is.
 func TestCompleteProjectIsACleanZeroWhenNothingIsOpen(t *testing.T) {
 	target, _ := writerFixture(t, projectsFixture)
 
@@ -175,11 +177,42 @@ func TestCompleteProjectIsACleanZeroWhenNothingIsOpen(t *testing.T) {
 	if !found || closed != 0 {
 		t.Fatalf("closed = %d, found = %v", closed, found)
 	}
-	if status, _ := target.HistoryStep(-1); status != HistoryEmpty {
-		t.Error("closing nothing recorded history")
+	if reason, stage := target.LastRollback(); reason != "" {
+		t.Fatalf("unexpected rollback %q stage %q after first complete", reason, stage)
+	}
+	stamped, _ := recordTitled(t, target.org, "Empty project")
+	if stamped["state"] != "DONE" || stamped["closed"] != "2026-07-20" {
+		t.Fatalf("stamped = %v, want DONE/2026-07-20, rollback %q", stamped, func() string { r, _ := target.LastRollback(); return r }())
+	}
+	// Verify it recorded history — this is an undo, so restore afterwards.
+	if status, _ := target.HistoryStep(-1); status != HistoryOK {
+		t.Fatalf("stamping must record history, got %v", status)
+	}
+	if status, _ := target.HistoryStep(1); status != HistoryOK {
+		t.Fatalf("redo must restore stamp, got %v", status)
+	}
+	// Undo to open for the idempotency check.
+	if status, _ := target.HistoryStep(-1); status != HistoryOK {
+		t.Fatalf("undo = %v", status)
+	}
+	// Re-stamp.
+	closed, found = target.CompleteProject("cccc000c", "2026-07-20")
+	if !found || closed != 0 {
+		t.Fatalf("first stamp = %d, %v", closed, found)
+	}
+	// Already DONE with same date → clean no-op, no new history, no rollback.
+	closed, found = target.CompleteProject("cccc000c", "2026-07-20")
+	if !found || closed != 0 {
+		t.Fatalf("re-completing already DONE = %d, %v", closed, found)
 	}
 	if reason, _ := target.LastRollback(); reason != "" {
 		t.Errorf("a clean zero recorded a rollback: %q", reason)
+	}
+	if status, label := target.HistoryStep(-1); status != HistoryOK || label != "complete project: cccc000c" {
+		t.Fatalf("history tip = %v %q, want the single stamp", status, label)
+	}
+	if status, _ := target.HistoryStep(-1); status != HistoryEmpty {
+		t.Errorf("after draining stamp, history empty = %v", status)
 	}
 	assertChecked(t, target)
 }

@@ -17,7 +17,7 @@
   │ L             expand all subtrees                                                        │  
   │ return        open / close task details                                                  │  
   │ c             Approve + complete proposal                                                │  
-  │ ── 16/111 · ↑↓ scroll ──                                                                 │  
+  │ ── 16/114 · ↑↓ scroll ──                                                                 │  
   └──────────────────────────────────────────────────────────────────────────────────────────┘  
                                                                                                 
   ❯ tab to ask the agent — reschedule, capture, edit anything…                                  

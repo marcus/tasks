@@ -300,6 +300,10 @@ type scriptedStore struct {
 	renameFound     bool
 	completeClosed  int
 	completeFound   bool
+	dropClosed      int
+	dropFound       bool
+	reopenReopened  bool
+	reopenFound     bool
 	archiveMoved    []string
 	archiveProposed bool
 	archiveFound    bool
@@ -325,6 +329,16 @@ func (s *scriptedStore) RenameSection(id, title string) (string, bool) {
 func (s *scriptedStore) CompleteProject(id, today string) (int, bool) {
 	s.calls = append(s.calls, recordedCall{verb: "complete_project", id: id, detail: today})
 	return s.completeClosed, s.completeFound
+}
+
+func (s *scriptedStore) DropProject(id, today string) (int, bool) {
+	s.calls = append(s.calls, recordedCall{verb: "drop_project", id: id, detail: today})
+	return s.dropClosed, s.dropFound
+}
+
+func (s *scriptedStore) ReopenProject(id string) (bool, bool) {
+	s.calls = append(s.calls, recordedCall{verb: "reopen_project", id: id})
+	return s.reopenReopened, s.reopenFound
 }
 
 func (s *scriptedStore) ArchiveProject(id, today string) ([]string, bool, bool) {

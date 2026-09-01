@@ -42,7 +42,16 @@ type ProjectView struct {
 	HasBody     bool
 	TaskIDs     []string
 	HeldCount   int
+	State       string
+	Closed      string
+	HasClosed   bool
 }
+
+// Closed reports whether the project section is closed (DONE or CANCELLED).
+func (v ProjectView) ClosedView() bool { return v.HasClosed }
+
+// Open reports whether the project is still open.
+func (v ProjectView) Open() bool { return !v.HasClosed }
 
 // Projects is every project and area as a rolled-up view.
 //
@@ -57,11 +66,22 @@ type ProjectView struct {
 // Sorted projects before areas, then by soonest date (dateless last), then
 // title, then file order.
 func (q *Queries) Projects() []ProjectView {
+	return q.ProjectsIncluding(false)
+}
+
+// ProjectsIncluding is Projects with an explicit closed filter. When
+// includeClosed is false, closed projects are omitted — the default for every
+// existing caller. When true, they are included.
+func (q *Queries) ProjectsIncluding(includeClosed bool) []ProjectView {
 	root, hasRoot := q.projectsRoot()
 	views := []ProjectView{}
 	for _, section := range q.liveSections() {
 		if hasRoot && stringOf(section, "parent") == stringOf(root, "id") {
-			views = append(views, q.buildProjectView(section, "project"))
+			view := q.buildProjectView(section, "project")
+			if !includeClosed && view.HasClosed {
+				continue
+			}
+			views = append(views, view)
 		}
 	}
 	for _, section := range q.liveSections() {
@@ -326,6 +346,18 @@ func (q *Queries) buildProjectView(section record.Record, kind string) ProjectVi
 		view.NextTime, view.HasNextTime = q.APITimeFor(nextValue, true)
 		view.NextAt = q.temporalBoundary(nextItem, nextValue).UTC()
 	}
+	if state := stringOf(section, "state"); state != "" {
+		view.State = state
+		if closed := stringOf(section, "closed"); closed != "" {
+			view.Closed = closed
+			view.HasClosed = true
+		}
+	}
+	// A closed project is never stuck: no open NEXT is the point of a
+	// commitment that is over.
+	if view.HasClosed {
+		view.Stuck = false
+	}
 	return view
 }
 
@@ -357,6 +389,11 @@ func sortProjects(views []ProjectView) []ProjectView {
 		leftView, rightView := sorted[left], sorted[right]
 		if rank(leftView.Kind) != rank(rightView.Kind) {
 			return rank(leftView.Kind) < rank(rightView.Kind)
+		}
+		// Closed projects sort after open ones. A dormant tail keeps meaning "an
+		// open project with nothing live under it", so closed rows never join it.
+		if leftView.HasClosed != rightView.HasClosed {
+			return !leftView.HasClosed
 		}
 		if leftView.HasNextDate != rightView.HasNextDate {
 			return leftView.HasNextDate

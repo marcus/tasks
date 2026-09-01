@@ -255,12 +255,24 @@ func (s *Store) RenameSection(id, title string) (string, bool) {
 }
 
 // CompleteProject closes every open descendant task of a section — DONE, today's
-// closed date, the defer tag dropped, the recurrence cookie retired.
+// closed date, the defer tag dropped, the recurrence cookie retired, and stamps
+// the section itself DONE with the same closed date, all in one write.
 //
 // Zero closed is a CLEAN result for a project that was already fully closed, and
 // it is also what a rollback returns. Only the second records a rollback, which
 // is the only way a caller can tell them apart.
 func (s *Store) CompleteProject(id, today string) (int, bool) {
+	return s.completeProjectWithState(id, today, "DONE")
+}
+
+// DropProject cancels every open descendant task of a section — CANCELLED,
+// today's closed date, the defer tag dropped, the recurrence cookie retired,
+// and stamps the section itself CANCELLED.
+func (s *Store) DropProject(id, today string) (int, bool) {
+	return s.completeProjectWithState(id, today, "CANCELLED")
+}
+
+func (s *Store) completeProjectWithState(id, today, state string) (int, bool) {
 	closed := 0
 	ok := s.withHistory("complete project: "+id, func() bool {
 		records := freshRecords(s.org)
@@ -268,10 +280,15 @@ func (s *Store) CompleteProject(id, today string) (int, bool) {
 		if index < 0 {
 			return false
 		}
-		touched := closeOpenDescendants(records, index, today)
-		if len(touched) == 0 {
+		touched := closeOpenDescendantsWithState(records, index, today, state)
+		needsStamp := records[index].String("state") != state || records[index].String("closed") != today
+		if len(touched) == 0 && !needsStamp {
 			// A clean no-op: nothing written, so nothing to validate or journal.
 			return true
+		}
+		if needsStamp {
+			records[index].SetString("state", state)
+			records[index].SetString("closed", today)
 		}
 		if s.writeRecords(s.org, records) != nil {
 			return false
@@ -283,6 +300,41 @@ func (s *Store) CompleteProject(id, today string) (int, bool) {
 		return 0, false
 	}
 	return closed, true
+}
+
+// ReopenProject clears the lifecycle stamps from a section, leaving its tasks
+// untouched. It reports whether it cleared something and whether the section
+// was found. A clean no-op (already open) and a rolled-back write both report
+// false, with only the second recording a rollback.
+func (s *Store) ReopenProject(id string) (bool, bool) {
+	cleared := false
+	ok := s.withHistory("reopen project: "+id, func() bool {
+		records := freshRecords(s.org)
+		index := sectionIndex(records, id)
+		if index < 0 {
+			return false
+		}
+		hasState := records[index].Truthy("state")
+		hasClosed := records[index].Truthy("closed")
+		if !hasState && !hasClosed {
+			// Already open — clean no-op.
+			return true
+		}
+		records[index].Delete("state")
+		records[index].Delete("closed")
+		if s.writeRecords(s.org, records) != nil {
+			return false
+		}
+		cleared = true
+		return true
+	})
+	if !ok {
+		return false, false
+	}
+	if !cleared {
+		return false, true
+	}
+	return true, true
 }
 
 // ArchiveProject moves a section's entire contiguous subtree to the archive,
@@ -397,6 +449,24 @@ func (s *Store) EnsureID(line int, existing, title string) (string, bool) {
 		return "", false
 	}
 	return assigned, true
+}
+
+func closeOpenDescendantsWithState(records []record.Record, index int, today, state string) []string {
+	end := subtreeEnd(records, index)
+	touched := []string{}
+	for position := index + 1; position < end; position++ {
+		if records[position].String("type") != "task" ||
+			!contains(check.OpenStates, records[position].String("state")) {
+			continue
+		}
+		records[position].SetString("state", state)
+		records[position].SetString("closed", today)
+		records[position].SetOptional("tags", record.RawStrings(withoutTag(semanticTags(records[position]), DeferTag)))
+		records[position].Delete("recur")
+		settleDelegationOnClose(&records[position])
+		touched = append(touched, records[position].String("id"))
+	}
+	return touched
 }
 
 // sectionIndex locates a SECTION by stable id. It is deliberately not

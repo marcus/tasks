@@ -11,7 +11,7 @@ import (
 	"github.com/marcus/tasks/internal/taskquery"
 )
 
-const projectUsage = "usage: tasks project <create|show|complete|archive|rename> <title|ref> [...]"
+const projectUsage = "usage: tasks project <create|show|complete|drop|reopen|archive|rename> <title|ref> [...]"
 
 // projectSubcommands is CliCommands.subcommands_of("project"): every accepted
 // sub-verb spelling mapped to its canonical command.
@@ -23,6 +23,8 @@ var projectSubcommands = map[string]string{
 	"create": "project create", "new": "project create",
 	"show":     "project show",
 	"complete": "project complete", "done": "project complete",
+	"drop": "project drop", "cancel": "project drop",
+	"reopen":  "project reopen",
 	"archive": "project archive",
 	"rename":  "project rename",
 }
@@ -50,6 +52,10 @@ func (s *surfaceContext) project(args []string) int {
 		return s.projectRename(rest)
 	case "project complete":
 		return s.projectComplete(rest)
+	case "project drop":
+		return s.projectDrop(rest)
+	case "project reopen":
+		return s.projectReopen(rest)
 	default:
 		return s.projectArchive(rest)
 	}
@@ -155,7 +161,8 @@ func (s *surfaceContext) projectRename(args []string) int {
 		`renamed "`+view.Title+`" → "`+title+`"`)
 }
 
-// projectComplete closes a project's open descendant tasks.
+// projectComplete closes a project's open descendant tasks and stamps the
+// section DONE.
 //
 // The touched ids are captured BEFORE the cascade, because afterwards the tasks
 // are closed and "which ones did this close" is no longer derivable from the
@@ -179,7 +186,7 @@ func (s *surfaceContext) projectComplete(args []string) int {
 	touched := openDescendantIDs(queries, view.ID)
 
 	if flags["--dry-run"] {
-		out(fmt.Sprintf(`would complete "%s": close %s`, view.Title,
+		out(fmt.Sprintf(`would complete "%s": close %s and stamp DONE`, view.Title,
 			pluralize(len(touched), "open task")))
 		return 0
 	}
@@ -207,13 +214,101 @@ func (s *surfaceContext) projectComplete(args []string) int {
 		return status
 	}
 	if !flags["--json"] {
-		out(fmt.Sprintf(`completed "%s" (closed %d)`, view.Title, closed))
+		out(fmt.Sprintf(`completed "%s" (closed %d) — project stamped DONE %s`, view.Title, closed, today))
 	}
 	fresh, status := s.readQueries(args, "project complete")
 	if status != 0 {
 		return status
 	}
 	return s.reportTouchedSnapshot(fresh.Snapshot(), touched, flags["--json"], nil)
+}
+
+// projectDrop cancels a project's open tasks and stamps the section CANCELLED.
+func (s *surfaceContext) projectDrop(args []string) int {
+	flags, rest, err := takeFlags(args, "--dry-run", "--json")
+	if err != nil {
+		return abort(err.Error())
+	}
+	if len(rest) != 1 || strings.TrimSpace(rest[0]) == "" {
+		return abort("usage: tasks project drop <ref> (alias: tasks project cancel <ref>)")
+	}
+	view, status := s.resolveProject(args, "project drop", rest[0])
+	if status != 0 {
+		return status
+	}
+	queries, status := s.readQueries(args, "project drop")
+	if status != 0 {
+		return status
+	}
+	touched := openDescendantIDs(queries, view.ID)
+	if flags["--dry-run"] {
+		out(fmt.Sprintf(`would drop "%s": cancel %s and stamp CANCELLED`, view.Title,
+			pluralize(len(touched), "open task")))
+		return 0
+	}
+	today, status := s.today()
+	if status != 0 {
+		return status
+	}
+	writer := s.writeStore()
+	closed, found := writer.DropProject(view.ID, today)
+	result := store.MutationResult{Status: store.MutationOK}
+	if !found {
+		result = rollbackResult(writer, store.MutationNotFound)
+	} else if closed == 0 {
+		if reverted := rollbackResult(writer, store.MutationOK); reverted.RolledBack {
+			result = reverted
+		}
+	}
+	if status := mutationResultFailed(result, args, "project drop",
+		"failed to drop project"); status != 0 {
+		return status
+	}
+	if !flags["--json"] {
+		out(fmt.Sprintf(`dropped "%s" (cancelled %d) — project stamped CANCELLED %s`, view.Title, closed, today))
+	}
+	fresh, status := s.readQueries(args, "project drop")
+	if status != 0 {
+		return status
+	}
+	return s.reportTouchedSnapshot(fresh.Snapshot(), touched, flags["--json"], nil)
+}
+
+// projectReopen clears the DONE/CANCELLED stamps from a project section.
+func (s *surfaceContext) projectReopen(args []string) int {
+	flags, rest, err := takeFlags(args, "--dry-run", "--json")
+	if err != nil {
+		return abort(err.Error())
+	}
+	if len(rest) != 1 || strings.TrimSpace(rest[0]) == "" {
+		return abort("usage: tasks project reopen <ref>")
+	}
+	view, status := s.resolveProject(args, "project reopen", rest[0])
+	if status != 0 {
+		return status
+	}
+	if flags["--dry-run"] {
+		out(fmt.Sprintf(`would reopen "%s"`, view.Title))
+		return 0
+	}
+	writer := s.writeStore()
+	reopened, found := writer.ReopenProject(view.ID)
+	result := store.MutationResult{Status: store.MutationOK}
+	if !found {
+		result = rollbackResult(writer, store.MutationNotFound)
+	} else if !reopened {
+		if reverted := rollbackResult(writer, store.MutationOK); reverted.RolledBack {
+			result = reverted
+		}
+	}
+	if status := mutationResultFailed(result, args, "project reopen",
+		"failed to reopen project"); status != 0 {
+		return status
+	}
+	if !flags["--json"] {
+		out(fmt.Sprintf(`reopened "%s"`, view.Title))
+	}
+	return s.emitProject(args, view.ID, flags["--json"], `reopened "`+view.Title+`"`)
 }
 
 // projectArchive sweeps a project's subtree into the archive.
@@ -365,7 +460,7 @@ var projectLineRef = regexp.MustCompile(`(?i)\AL(\d+)\z`)
 // and a capability reachable only through a UI is a feature agents cannot use —
 // so resolution admits them even though the listing does not.
 func projectCandidates(queries *taskquery.Queries) []taskquery.ProjectView {
-	views := queries.Projects()
+	views := queries.ProjectsIncluding(true)
 	seen := map[string]bool{}
 	for _, view := range views {
 		seen[view.ID] = true

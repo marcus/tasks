@@ -115,6 +115,9 @@ func (a *Application) CompleteProject(id string, operation *OperationContext) Ou
 		if refusal := lockUnavailable(writer); refusal != nil {
 			return *refusal
 		}
+		if rollback := rollbackOutcome(target); rollback != nil {
+			return *rollback
+		}
 		return Outcome{MutationResult: store.MutationResult{Status: store.MutationNotFound}}
 	}
 	if closed == 0 {
@@ -124,8 +127,68 @@ func (a *Application) CompleteProject(id string, operation *OperationContext) Ou
 	}
 	return Outcome{
 		MutationResult: store.MutationResult{Status: store.MutationOK},
-		Project:        &ProjectSummary{Closed: closed},
+		Project:        &ProjectSummary{Closed: closed, State: "DONE", ClosedAt: a.today(operation)},
 	}
+}
+
+// DropProject cancels a project's open tasks and stamps the section CANCELLED.
+func (a *Application) DropProject(id string, operation *OperationContext) Outcome {
+	target := a.store()
+	if refusal := unsupportedSchemaRefusal(target); refusal != nil {
+		return *refusal
+	}
+	writer, ok := target.(ProjectWriter)
+	if !ok {
+		return unsupported("drop a project")
+	}
+	closed, found := writer.DropProject(id, a.today(operation))
+	if !found {
+		if refusal := lockUnavailable(writer); refusal != nil {
+			return *refusal
+		}
+		if rollback := rollbackOutcome(target); rollback != nil {
+			return *rollback
+		}
+		return Outcome{MutationResult: store.MutationResult{Status: store.MutationNotFound}}
+	}
+	if closed == 0 {
+		if rollback := rollbackOutcome(target); rollback != nil {
+			return *rollback
+		}
+	}
+	return Outcome{
+		MutationResult: store.MutationResult{Status: store.MutationOK},
+		Project:        &ProjectSummary{Closed: closed, State: "CANCELLED", ClosedAt: a.today(operation)},
+	}
+}
+
+// ReopenProject clears the lifecycle stamps from a section, leaving its tasks
+// untouched.
+func (a *Application) ReopenProject(id string, _ *OperationContext) Outcome {
+	target := a.store()
+	if refusal := unsupportedSchemaRefusal(target); refusal != nil {
+		return *refusal
+	}
+	writer, ok := target.(ProjectWriter)
+	if !ok {
+		return unsupported("reopen a project")
+	}
+	reopened, found := writer.ReopenProject(id)
+	if !found {
+		if refusal := lockUnavailable(writer); refusal != nil {
+			return *refusal
+		}
+		if rollback := rollbackOutcome(target); rollback != nil {
+			return *rollback
+		}
+		return Outcome{MutationResult: store.MutationResult{Status: store.MutationNotFound}}
+	}
+	if !reopened {
+		if rollback := rollbackOutcome(target); rollback != nil {
+			return *rollback
+		}
+	}
+	return Outcome{MutationResult: store.MutationResult{Status: store.MutationOK}}
 }
 
 // ArchiveProject sweeps a project's subtree into the archive and reports the

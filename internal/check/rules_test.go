@@ -153,10 +153,10 @@ func TestParentlessRecordOpensANewRoot(t *testing.T) {
 // three the fixture happens to hold.
 func TestSectionMustNotCarryAnyTaskField(t *testing.T) {
 	values := map[string]string{
-		"state": `"NEXT"`, "priority": `"A"`, "scheduled": `"2026-07-01"`,
+		"priority": `"A"`, "scheduled": `"2026-07-01"`,
 		"scheduled_time": `{"local":"09:00"}`, "deadline": `"2026-07-01"`,
 		"deadline_time": `{"local":"09:00"}`, "recur": `".+1w"`, "lead": `"3w"`,
-		"lead_skip": `"2026-07-01"`, "closed": `"2026-07-01"`, "tags": `["@home"]`,
+		"lead_skip": `"2026-07-01"`, "tags": `["@home"]`,
 		"delegation": `{"kind":"agent","mode":"research","status":"ready","at":"2026-07-27T18:04:11Z"}`,
 	}
 	for key, value := range values {
@@ -165,6 +165,27 @@ func TestSectionMustNotCarryAnyTaskField(t *testing.T) {
 		if got := messages(CheckText(text)); !strings.Contains(got, want) {
 			t.Fatalf("section with %s: errors = %q, want %q", key, got, want)
 		}
+	}
+	// `state` and `closed` are the section lifecycle pair: DONE/CANCELLED +
+	// YYYY-MM-DD travel together, and no other state is permitted. A single
+	// half-stamped field or an open state is an error with a different wording.
+	for _, tc := range []struct{ extra, want string }{
+		{`"state":"NEXT","closed":"2026-07-01"`, "invalid section state"},
+		{`"state":"DONE"`, "section state requires closed date"},
+		{`"closed":"2026-07-01"`, "section closed date requires state"},
+		{`"state":"CANCELLED"`, "section state requires closed date"},
+	} {
+		text := store(section("aaaa0001", "W", tc.extra))
+		if got := messages(CheckText(text)); !strings.Contains(got, tc.want) {
+			t.Fatalf("section with %s: errors = %q, want %q", tc.extra, got, tc.want)
+		}
+	}
+	// The valid closed pair passes.
+	if result := CheckText(store(section("aaaa0001", "W", `"state":"DONE","closed":"2026-07-01"`))); !result.OK() {
+		t.Fatalf("errors = %#v, want DONE+closed to be legal on a section", result.Errors)
+	}
+	if result := CheckText(store(section("aaaa0001", "W", `"state":"CANCELLED","closed":"2026-07-01"`))); !result.OK() {
+		t.Fatalf("errors = %#v, want CANCELLED+closed to be legal on a section", result.Errors)
 	}
 	// `archived` is deliberately allowed: a swept subtree root can be a section.
 	if result := CheckText(store(section("aaaa0001", "W", `"archived":"2026-07-01"`))); !result.OK() {

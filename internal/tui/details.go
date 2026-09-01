@@ -88,6 +88,13 @@ func BuildTaskDetails(styler Styler, queries *taskquery.Queries, item store.Item
 	// value carries more than the stamp already shown — a wall time, a fixed
 	// zone, a projection into the local one.
 	extra := []string{}
+	if node := queries.NodeFor(item); node != nil {
+		if proj := node.ProjectSection(); proj != nil {
+			extra = append(extra, detailRow(styler, "project", proj.Title))
+		} else if list := enclosingList(node); list != nil {
+			extra = append(extra, detailRow(styler, "list", list.Title))
+		}
+	}
 	if value, ok := queries.DeadlineValue(item); ok && !value.AllDay() {
 		extra = append(extra, detailRow(styler, "deadline",
 			temporalValue(styler, queries, value, "deadline", today)))
@@ -379,6 +386,20 @@ func projectTaskLine(styler Styler, queries *taskquery.Queries, task store.Item)
 
 func detailRow(styler Styler, label, value string) string {
 	return styler.Paint("detail_label", padRight(label, 10)) + " " + value
+}
+
+func enclosingList(node *taskquery.Node) *taskquery.Node {
+	if node == nil {
+		return nil
+	}
+	current := node.Parent
+	for current != nil {
+		if current.Section() {
+			return current
+		}
+		current = current.Parent
+	}
+	return nil
 }
 
 func dateValue(styler Styler, date temporal.Date, today temporal.Date) string {
