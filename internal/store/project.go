@@ -262,26 +262,31 @@ func (s *Store) RenameSection(id, title string) (string, bool) {
 // it is also what a rollback returns. Only the second records a rollback, which
 // is the only way a caller can tell them apart.
 func (s *Store) CompleteProject(id, today string) (int, bool) {
-	return s.completeProjectWithState(id, today, "DONE")
+	return s.completeProjectWithState(id, today, "DONE", "complete project: ")
 }
 
 // DropProject cancels every open descendant task of a section — CANCELLED,
 // today's closed date, the defer tag dropped, the recurrence cookie retired,
 // and stamps the section itself CANCELLED.
 func (s *Store) DropProject(id, today string) (int, bool) {
-	return s.completeProjectWithState(id, today, "CANCELLED")
+	return s.completeProjectWithState(id, today, "CANCELLED", "drop project: ")
 }
 
-func (s *Store) completeProjectWithState(id, today, state string) (int, bool) {
+func (s *Store) completeProjectWithState(id, today, state, historyPrefix string) (int, bool) {
 	closed := 0
-	ok := s.withHistory("complete project: "+id, func() bool {
+	ok := s.withHistory(historyPrefix+id, func() bool {
 		records := freshRecords(s.org)
 		index := sectionIndex(records, id)
 		if index < 0 {
 			return false
 		}
 		touched := closeOpenDescendantsWithState(records, index, today, state)
-		needsStamp := records[index].String("state") != state || records[index].String("closed") != today
+		// A section's first close owns its lifecycle stamp. Repeating complete or
+		// drop later may still settle an open descendant that was filed beneath
+		// it, but it must not rewrite the historical date or silently turn DONE
+		// into CANCELLED (or vice versa). Reopen is the explicit transition back
+		// to an open project before a different close decision can be recorded.
+		needsStamp := !records[index].Truthy("state") && !records[index].Truthy("closed")
 		if len(touched) == 0 && !needsStamp {
 			// A clean no-op: nothing written, so nothing to validate or journal.
 			return true

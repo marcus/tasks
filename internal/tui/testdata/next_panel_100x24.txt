@@ -4,7 +4,7 @@
   ❯ ▌   A  Book flight in Concur                     12d ago ┆                                      
         B  Review PR backlog                                 ┆ Book flight in Concur                
                                                              ┆ A   due thu 07-02   12d ago          
-  @home ────────────────────────────────────────────────── 1 ┆ Labels: Work, @computer, important,  
+  @home ────────────────────────────────────────────────── 1 ┆ Labels: @computer, important, urgent 
            Water the plants                                  ┆                                      
                                                              ┆ list       Work                      
                                                              ┃                                      

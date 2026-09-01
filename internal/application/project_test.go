@@ -77,13 +77,18 @@ func TestCreateProjectRefusesADuplicateProjectOrAreaName(t *testing.T) {
 // The multi-call project commands gate on the checked read FIRST, so a store at
 // a schema this build must not interpret is refused before any of them runs.
 func TestProjectCommandsRefuseAnUnsupportedSchemaBeforeWriting(t *testing.T) {
-	script := &scriptedStore{renameFound: true, completeFound: true, archiveFound: true}
+	script := &scriptedStore{
+		renameFound: true, completeFound: true, dropFound: true,
+		reopenFound: true, archiveFound: true,
+	}
 	h := projectHarness(t, script, `{"type":"meta","version":99}`+"\n")
 
 	for name, run := range map[string]func() Outcome{
 		"create":   func() Outcome { return h.app.CreateProject("Anything", nil) },
 		"rename":   func() Outcome { return h.app.RenameProject("cccc0003", "Renamed", nil) },
 		"complete": func() Outcome { return h.app.CompleteProject("cccc0003", nil) },
+		"drop":     func() Outcome { return h.app.DropProject("cccc0003", nil) },
+		"reopen":   func() Outcome { return h.app.ReopenProject("cccc0003", nil) },
 		"archive":  func() Outcome { return h.app.ArchiveProject("cccc0003", nil) },
 	} {
 		result := run()
@@ -96,6 +101,53 @@ func TestProjectCommandsRefuseAnUnsupportedSchemaBeforeWriting(t *testing.T) {
 	}
 	if len(script.calls) != 0 {
 		t.Fatalf("no project call may run behind the gate: %+v", script.calls)
+	}
+}
+
+func TestProjectLifecycleCommandsShareApplicationOutcomes(t *testing.T) {
+	script := &scriptedStore{
+		completeFound: true, completeClosed: 2,
+		dropFound: true, dropClosed: 3,
+		reopenFound: true, reopenReopened: true,
+	}
+	h := projectHarness(t, script, projectsFixture)
+
+	completed := h.app.CompleteProject("cccc0003", nil)
+	if !completed.OK() || completed.Project == nil || completed.Project.Closed != 2 ||
+		completed.Project.State != "DONE" {
+		t.Fatalf("complete = %q %+v", completed.Status, completed.Project)
+	}
+	dropped := h.app.DropProject("cccc0003", nil)
+	if !dropped.OK() || dropped.Project == nil || dropped.Project.Closed != 3 ||
+		dropped.Project.State != "CANCELLED" {
+		t.Fatalf("drop = %q %+v", dropped.Status, dropped.Project)
+	}
+	if reopened := h.app.ReopenProject("cccc0003", nil); !reopened.OK() {
+		t.Fatalf("reopen = %q", reopened.Status)
+	}
+	verbs := []string{}
+	for _, call := range script.calls {
+		verbs = append(verbs, call.verb)
+	}
+	if want := []string{"complete_project", "drop_project", "reopen_project"}; !equalStrings(verbs, want) {
+		t.Fatalf("calls = %v", verbs)
+	}
+}
+
+func TestApplicationRefusesLifecycleOnANonProjectSection(t *testing.T) {
+	script := &scriptedStore{completeFound: true, dropFound: true, reopenFound: true}
+	h := projectHarness(t, script, projectsFixture)
+	for name, run := range map[string]func() Outcome{
+		"complete": func() Outcome { return h.app.CompleteProject("cccc0001", nil) },
+		"drop":     func() Outcome { return h.app.DropProject("cccc0001", nil) },
+		"reopen":   func() Outcome { return h.app.ReopenProject("cccc0001", nil) },
+	} {
+		if result := run(); !result.NotFound() {
+			t.Errorf("%s status = %q", name, result.Status)
+		}
+	}
+	if len(script.calls) != 0 {
+		t.Fatalf("non-project reached store: %+v", script.calls)
 	}
 }
 

@@ -23,6 +23,7 @@ const (
 	ModalProjectCompleteConfirm ModalKind = "project_complete_confirm"
 	ModalProjectArchiveConfirm  ModalKind = "project_archive_confirm"
 	ModalProjectDropConfirm     ModalKind = "project_drop_confirm"
+	ModalProjectReopenConfirm   ModalKind = "project_reopen_confirm"
 	ModalUnsupportedSchema      ModalKind = "unsupported_schema"
 	ModalTaskDraftQuitConfirm   ModalKind = "task_draft_quit_confirm"
 	ModalFieldModalQuitConfirm  ModalKind = "field_modal_quit_confirm"

@@ -106,6 +106,15 @@ func (a *Application) CompleteProject(id string, operation *OperationContext) Ou
 	if refusal := unsupportedSchemaRefusal(target); refusal != nil {
 		return *refusal
 	}
+	before, found, err := a.GetProject(id, operation)
+	if err != nil {
+		return Outcome{MutationResult: store.MutationResult{
+			Status: store.MutationUnavailable, Errors: []string{store.UnavailableMessage(err)},
+		}}
+	}
+	if !found {
+		return Outcome{MutationResult: store.MutationResult{Status: store.MutationNotFound}}
+	}
 	writer, ok := target.(ProjectWriter)
 	if !ok {
 		return unsupported("complete a project")
@@ -125,9 +134,13 @@ func (a *Application) CompleteProject(id string, operation *OperationContext) Ou
 			return *rollback
 		}
 	}
+	state, closedAt := "DONE", a.today(operation)
+	if before.HasClosed {
+		state, closedAt = before.State, before.Closed
+	}
 	return Outcome{
 		MutationResult: store.MutationResult{Status: store.MutationOK},
-		Project:        &ProjectSummary{Closed: closed, State: "DONE", ClosedAt: a.today(operation)},
+		Project:        &ProjectSummary{Closed: closed, State: state, ClosedAt: closedAt},
 	}
 }
 
@@ -136,6 +149,15 @@ func (a *Application) DropProject(id string, operation *OperationContext) Outcom
 	target := a.store()
 	if refusal := unsupportedSchemaRefusal(target); refusal != nil {
 		return *refusal
+	}
+	before, found, err := a.GetProject(id, operation)
+	if err != nil {
+		return Outcome{MutationResult: store.MutationResult{
+			Status: store.MutationUnavailable, Errors: []string{store.UnavailableMessage(err)},
+		}}
+	}
+	if !found {
+		return Outcome{MutationResult: store.MutationResult{Status: store.MutationNotFound}}
 	}
 	writer, ok := target.(ProjectWriter)
 	if !ok {
@@ -156,18 +178,29 @@ func (a *Application) DropProject(id string, operation *OperationContext) Outcom
 			return *rollback
 		}
 	}
+	state, closedAt := "CANCELLED", a.today(operation)
+	if before.HasClosed {
+		state, closedAt = before.State, before.Closed
+	}
 	return Outcome{
 		MutationResult: store.MutationResult{Status: store.MutationOK},
-		Project:        &ProjectSummary{Closed: closed, State: "CANCELLED", ClosedAt: a.today(operation)},
+		Project:        &ProjectSummary{Closed: closed, State: state, ClosedAt: closedAt},
 	}
 }
 
 // ReopenProject clears the lifecycle stamps from a section, leaving its tasks
 // untouched.
-func (a *Application) ReopenProject(id string, _ *OperationContext) Outcome {
+func (a *Application) ReopenProject(id string, operation *OperationContext) Outcome {
 	target := a.store()
 	if refusal := unsupportedSchemaRefusal(target); refusal != nil {
 		return *refusal
+	}
+	if _, found, err := a.GetProject(id, operation); err != nil {
+		return Outcome{MutationResult: store.MutationResult{
+			Status: store.MutationUnavailable, Errors: []string{store.UnavailableMessage(err)},
+		}}
+	} else if !found {
+		return Outcome{MutationResult: store.MutationResult{Status: store.MutationNotFound}}
 	}
 	writer, ok := target.(ProjectWriter)
 	if !ok {

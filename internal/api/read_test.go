@@ -339,7 +339,7 @@ func TestProjectsAreRolledUpAndAddressableByID(t *testing.T) {
 	project := one.data()
 	for _, key := range []string{
 		"id", "title", "parent_id", "kind", "open_count", "next_count", "next_date",
-		"next_time", "next_at", "stuck", "held_count", "body", "task_ids",
+		"next_time", "next_at", "stuck", "held_count", "body", "state", "closed", "task_ids",
 	} {
 		if _, present := project[key]; !present {
 			t.Errorf("project resource omits %q: %s", key, one.Body)

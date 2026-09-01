@@ -422,13 +422,19 @@ func TestMatchReturnsAnUnavailableBindingRatherThanNothing(t *testing.T) {
 // Two entries share `r` and `a` in list/detail; the available one must win.
 func TestMatchPrefersTheAvailableBindingWhenSequencesOverlap(t *testing.T) {
 	proposal := func(name string) bool { return name == "proposal_action_available?" }
-	recurrence := func(name string) bool { return name == DefaultAvailability }
+	ordinaryTask := func(name string) bool {
+		return name == DefaultAvailability || name == "selected_action_available?"
+	}
+	closedProject := func(name string) bool { return name == "project_closed_selected?" }
 
 	if e, _ := Match("r", List, proposal); e.Handler != "reject_proposal" {
 		t.Fatalf("r with a proposal = %s", e.Handler)
 	}
-	if e, _ := Match("r", List, recurrence); e.Handler != "open_recur_popup" {
+	if e, _ := Match("r", List, ordinaryTask); e.Handler != "open_recur_popup" {
 		t.Fatalf("r without a proposal = %s", e.Handler)
+	}
+	if e, _ := Match("r", List, closedProject); e.Handler != "reopen_project" {
+		t.Fatalf("r on a closed project = %s", e.Handler)
 	}
 	if e, _ := Match("a", List, proposal); e.Handler != "approve_proposal" {
 		t.Fatalf("a with a proposal = %s", e.Handler)
@@ -441,7 +447,7 @@ func TestMatchPrefersTheAvailableBindingWhenSequencesOverlap(t *testing.T) {
 	if e, _ := Match("c", Detail, proposal); e.Handler != "approve_and_complete_proposal" {
 		t.Fatalf("c on a proposal detail = %s", e.Handler)
 	}
-	if e, _ := Match("c", List, recurrence); e.Handler != "complete_selected" {
+	if e, _ := Match("c", List, ordinaryTask); e.Handler != "complete_selected" {
 		t.Fatalf("c without a proposal = %s", e.Handler)
 	}
 }

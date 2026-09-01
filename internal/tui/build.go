@@ -987,7 +987,7 @@ func buildProjects(request BuildRequest) []Row {
 		if len(request.Items) == 0 {
 			message = "No active projects."
 		}
-		return []Row{headerRow(styler.Paint("muted", message))}
+		return projectsHiddenNote(request, []Row{headerRow(styler.Paint("muted", message))})
 	}
 	// Tree mode (design 6b): the outline only shows what is LIVE. A project with
 	// work under it is a foldable heading with its outliner body beneath; every
@@ -1022,7 +1022,7 @@ func buildProjects(request BuildRequest) []Row {
 		for _, project := range members {
 			project := project
 			anchors := query.SortNodes(anchorsForProject(request, project))
-			if len(anchors) == 0 {
+			if len(anchors) == 0 && !project.HasClosed {
 				dormant = append(dormant, project)
 				continue
 			}
@@ -1325,7 +1325,15 @@ func projectsHiddenClosedCount(request BuildRequest) int {
 		return hidden
 	}
 	hidden := 0
-	for _, project := range request.Projects {
+	// The ordinary request deliberately excludes closed projects, so use the
+	// explicit inclusive query for the reveal promise. Count the hidden project
+	// heading itself as well as any closed task rows beneath it; this matches the
+	// Outline's vocabulary and makes C discoverable even when the store contains
+	// only one empty closed project.
+	for _, project := range request.Queries.ProjectsIncluding(true) {
+		if project.Kind == "project" && project.HasClosed {
+			hidden++
+		}
 		hidden += projectHiddenClosedCount(request, project)
 	}
 	return hidden

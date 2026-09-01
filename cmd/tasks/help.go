@@ -70,7 +70,7 @@ var helpTemplate = "tasks — a plain-text GTD CLI over tasks.jsonl. Every comma
 	"  quadrants q              Covey 2x2: priority (A/B) + near deadline, or tags" + "\n" +
 	"  inbox     i              unprocessed INBOX items" + "\n" +
 	"  projects  pj             projects & areas rolled up over their open tasks" + "\n" +
-	"                           (open/NEXT counts, soonest date, stuck flag)" + "\n" +
+	"                           (open/NEXT counts, date, stuck; --closed / --all)" + "\n" +
 	"  list      l [filters]    tasks by state. Filters: @context /text +tag -A|-B|-C" + "\n" +
 	"                           Scope: --open/-o (default) --proposed --done/-d" + "\n" +
 	"                           --archived/-x --all/-a --rejected (choose one)" + "\n" +
@@ -187,7 +187,9 @@ var helpTemplate = "tasks — a plain-text GTD CLI over tasks.jsonl. Every comma
 	"  projects  pj             list projects & areas (see Read above)" + "\n" +
 	"  project create \"title\"   new empty project under the \"Projects\" root" + "\n" +
 	"  project show <ref>       one project/area in full" + "\n" +
-	"  project complete <ref>   close every open task in the project (aka done)" + "\n" +
+	"  project complete <ref>   close tasks + stamp project DONE (aka done)" + "\n" +
+	"  project drop <ref>       cancel tasks + stamp project CANCELLED (aka cancel)" + "\n" +
+	"  project reopen <ref>     clear project stamp; leave tasks closed" + "\n" +
 	"  project archive <ref>    sweep the project's subtree to archive.jsonl" + "\n" +
 	"                           (--force past remaining open tasks)" + "\n" +
 	"  project rename <ref> \"title\"   retitle the section" + "\n" +
@@ -255,6 +257,8 @@ var helpCommands = []helpCommand{
 	{name: "project create", aliases: []string{"project new"}, json: true, gate: true},
 	{name: "project show", json: true, gate: true},
 	{name: "project complete", aliases: []string{"project done"}, json: true, gate: true},
+	{name: "project drop", aliases: []string{"project cancel"}, json: true, gate: true},
+	{name: "project reopen", json: true, gate: true},
 	{name: "project archive", json: true, gate: true},
 	{name: "project rename", json: true, gate: true},
 	{name: "capture", aliases: []string{"add", "c"}, json: true, gate: true},

@@ -39,8 +39,8 @@ type Node struct {
 	HasClosed bool
 }
 
-// Closed reports whether this section node is closed.
-func (n *Node) ClosedView() bool { return n != nil && n.HasClosed }
+// IsClosed reports whether this section node is closed.
+func (n *Node) IsClosed() bool { return n != nil && n.HasClosed }
 
 // Open reports whether this section node is open.
 func (n *Node) Open() bool { return n == nil || !n.HasClosed }
@@ -60,6 +60,23 @@ func (n *Node) ProjectSection() *Node {
 		current = current.Parent
 	}
 	return nil
+}
+
+// TopLevelSection returns the outermost section containing this node. It is
+// nil for a detached task or section. Presentation callers use it only after
+// ProjectSection returns nil, so a task filed under Projects still names its
+// concrete project rather than the Projects root.
+func (n *Node) TopLevelSection() *Node {
+	if n == nil {
+		return nil
+	}
+	var top *Node
+	for current := n.Parent; current != nil; current = current.Parent {
+		if current.Section() {
+			top = current
+		}
+	}
+	return top
 }
 
 func isProjectsRoot(node *Node) bool {

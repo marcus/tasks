@@ -7,8 +7,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/marcus/tasks/internal/application"
 	"github.com/marcus/tasks/internal/store"
 	"github.com/marcus/tasks/internal/taskquery"
+	"github.com/marcus/tasks/internal/temporal"
 )
 
 const projectUsage = "usage: tasks project <create|show|complete|drop|reopen|archive|rename> <title|ref> [...]"
@@ -191,30 +193,26 @@ func (s *surfaceContext) projectComplete(args []string) int {
 		return 0
 	}
 
-	today, status := s.today()
+	app, today, status := s.projectApplication()
 	if status != 0 {
 		return status
 	}
-	writer := s.writeStore()
-	closed, found := writer.CompleteProject(view.ID, today)
-	result := store.MutationResult{Status: store.MutationOK}
-	if !found {
-		result = rollbackResult(writer, store.MutationNotFound)
-	} else if closed == 0 {
-		// Zero closed is a CLEAN result for a project that was already fully
-		// closed — and the same zero the store returns after a rollback. Asking
-		// for the rollback is what keeps a reverted write from masquerading as a
-		// successful no-op.
-		if reverted := rollbackResult(writer, store.MutationOK); reverted.RolledBack {
-			result = reverted
-		}
-	}
-	if status := mutationResultFailed(result, args, "project complete",
+	outcome := app.CompleteProject(view.ID, nil)
+	if status := mutationResultFailed(outcome.MutationResult, args, "project complete",
 		"failed to complete project"); status != 0 {
 		return status
 	}
+	closed := 0
+	if outcome.Project != nil {
+		closed = outcome.Project.Closed
+	}
 	if !flags["--json"] {
-		out(fmt.Sprintf(`completed "%s" (closed %d) — project stamped DONE %s`, view.Title, closed, today))
+		state, date, action := "DONE", today, "stamped"
+		if view.HasClosed {
+			state, date, action = view.State, view.Closed, "remains"
+		}
+		out(fmt.Sprintf(`completed "%s" (closed %d) — project %s %s %s`,
+			view.Title, closed, action, state, date))
 	}
 	fresh, status := s.readQueries(args, "project complete")
 	if status != 0 {
@@ -246,26 +244,26 @@ func (s *surfaceContext) projectDrop(args []string) int {
 			pluralize(len(touched), "open task")))
 		return 0
 	}
-	today, status := s.today()
+	app, today, status := s.projectApplication()
 	if status != 0 {
 		return status
 	}
-	writer := s.writeStore()
-	closed, found := writer.DropProject(view.ID, today)
-	result := store.MutationResult{Status: store.MutationOK}
-	if !found {
-		result = rollbackResult(writer, store.MutationNotFound)
-	} else if closed == 0 {
-		if reverted := rollbackResult(writer, store.MutationOK); reverted.RolledBack {
-			result = reverted
-		}
-	}
-	if status := mutationResultFailed(result, args, "project drop",
+	outcome := app.DropProject(view.ID, nil)
+	if status := mutationResultFailed(outcome.MutationResult, args, "project drop",
 		"failed to drop project"); status != 0 {
 		return status
 	}
+	closed := 0
+	if outcome.Project != nil {
+		closed = outcome.Project.Closed
+	}
 	if !flags["--json"] {
-		out(fmt.Sprintf(`dropped "%s" (cancelled %d) — project stamped CANCELLED %s`, view.Title, closed, today))
+		state, date, action := "CANCELLED", today, "stamped"
+		if view.HasClosed {
+			state, date, action = view.State, view.Closed, "remains"
+		}
+		out(fmt.Sprintf(`dropped "%s" (cancelled %d) — project %s %s %s`,
+			view.Title, closed, action, state, date))
 	}
 	fresh, status := s.readQueries(args, "project drop")
 	if status != 0 {
@@ -291,17 +289,12 @@ func (s *surfaceContext) projectReopen(args []string) int {
 		out(fmt.Sprintf(`would reopen "%s"`, view.Title))
 		return 0
 	}
-	writer := s.writeStore()
-	reopened, found := writer.ReopenProject(view.ID)
-	result := store.MutationResult{Status: store.MutationOK}
-	if !found {
-		result = rollbackResult(writer, store.MutationNotFound)
-	} else if !reopened {
-		if reverted := rollbackResult(writer, store.MutationOK); reverted.RolledBack {
-			result = reverted
-		}
+	app, _, status := s.projectApplication()
+	if status != 0 {
+		return status
 	}
-	if status := mutationResultFailed(result, args, "project reopen",
+	outcome := app.ReopenProject(view.ID, nil)
+	if status := mutationResultFailed(outcome.MutationResult, args, "project reopen",
 		"failed to reopen project"); status != 0 {
 		return status
 	}
@@ -309,6 +302,24 @@ func (s *surfaceContext) projectReopen(args []string) int {
 		out(fmt.Sprintf(`reopened "%s"`, view.Title))
 	}
 	return s.emitProject(args, view.ID, flags["--json"], `reopened "`+view.Title+`"`)
+}
+
+// projectApplication builds the shared command boundary used by every project
+// lifecycle surface. Friendly ref resolution and rendering stay in the CLI;
+// schema gating, rollback mapping, and lifecycle outcomes stay in application.
+func (s *surfaceContext) projectApplication() (*application.Application, string, int) {
+	context, status := s.temporalContext()
+	if status != 0 {
+		return nil, "", status
+	}
+	app, err := application.New(application.Options{
+		Factory:         func() application.Store { return s.writeStore() },
+		TemporalContext: func() temporal.Context { return context },
+	})
+	if err != nil {
+		return nil, "", abort(err.Error())
+	}
+	return app, context.LocalDate().ISO(), 0
 }
 
 // projectArchive sweeps a project's subtree into the archive.

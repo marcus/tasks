@@ -1425,6 +1425,65 @@ func TestProjectHeadingFoldsItsTasks(t *testing.T) {
 
 // -- issue #19: Projects shows closed work behind the same C toggle --------
 
+const closedProjectLifecycleStore = `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Projects"}
+{"type":"section","id":"aaaa0002","parent":"aaaa0001","state":"DONE","title":"Finished commitment","closed":"2026-09-01"}
+{"type":"section","id":"aaaa0003","parent":"aaaa0001","state":"CANCELLED","title":"Closed with live work","closed":"2026-09-01"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0003","state":"NEXT","title":"Still actionable","deadline":"2026-09-02"}
+`
+
+func TestClosedEmptyProjectBecomesARealProjectRowAfterC(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: closedProjectLifecycleStore})
+	harness.model.SwitchView(ViewProjects)
+	before := rowTexts(harness)
+	if strings.Contains(before, "Finished commitment") {
+		t.Fatalf("closed project visible before C:\n%s", before)
+	}
+	if !strings.Contains(before, "2 closed hidden · C shows") {
+		t.Fatalf("closed project had no reveal hint:\n%s", before)
+	}
+
+	harness.model.ToggleClosed()
+	var finished *Row
+	rows := harness.model.Rows()
+	for index := range rows {
+		row := &rows[index]
+		if row.Project != nil && row.Project.ID == "aaaa0002" {
+			finished = row
+			break
+		}
+	}
+	if finished == nil {
+		t.Fatalf("C did not produce a selectable project row:\n%s", rowTexts(harness))
+	}
+	if !finished.Project.HasClosed || finished.Project.Stuck || finished.MarkerBegin == finished.MarkerEnd {
+		t.Fatalf("closed row = %+v", *finished)
+	}
+	if !strings.Contains(finished.Text, "DONE 2026-09-01") {
+		t.Fatalf("closed row lacks muted lifecycle vocabulary: %q", finished.Text)
+	}
+	if strings.Contains(rowTexts(harness), "Finished commitment ·") {
+		t.Fatalf("closed project leaked into dormant tail:\n%s", rowTexts(harness))
+	}
+}
+
+func TestClosedProjectIsTransparentToOpenWorkOutsideProjects(t *testing.T) {
+	harness := newModelHarness(t, harnessOptions{live: closedProjectLifecycleStore})
+	harness.model.SwitchView(ViewOutline)
+	outline := rowTexts(harness)
+	if strings.Contains(outline, "Closed with live work") || !strings.Contains(outline, "Still actionable") {
+		t.Fatalf("outline did not hoist open work:\n%s", outline)
+	}
+	harness.model.SwitchView(ViewAgenda)
+	if text := rowTexts(harness); !strings.Contains(text, "Still actionable") {
+		t.Fatalf("agenda hid open task under closed project:\n%s", text)
+	}
+	harness.model.SwitchView(ViewNext)
+	if text := rowTexts(harness); !strings.Contains(text, "Still actionable") {
+		t.Fatalf("next hid open task under closed project:\n%s", text)
+	}
+}
+
 // projectsClosedStore is one project holding open work, a closed parent with an
 // open child under it, and a second project whose only live child is CANCELLED.
 // The Inbox holds finished work of its own, which Projects owes nobody.

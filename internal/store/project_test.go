@@ -152,6 +152,10 @@ func TestCompleteProjectClosesOpenDescendantsDroppingDeferAndRecur(t *testing.T)
 	if strings.Contains(deferred["__raw"], `"defer"`) {
 		t.Error("the defer tag survived a close")
 	}
+	project, _ := recordTitled(t, target.org, "Site launch")
+	if project["state"] != "DONE" || project["closed"] != "2026-07-20" {
+		t.Fatalf("project stamp = %v", project)
+	}
 	assertChecked(t, target)
 
 	status, label := target.HistoryStep(-1)
@@ -162,7 +166,80 @@ func TestCompleteProjectClosesOpenDescendantsDroppingDeferAndRecur(t *testing.T)
 	if restored["state"] != "NEXT" {
 		t.Errorf("undo left state %q", restored["state"])
 	}
+	restoredProject, _ := recordTitled(t, target.org, "Site launch")
+	if restoredProject["state"] != "" || restoredProject["closed"] != "" {
+		t.Errorf("undo left project stamp %v", restoredProject)
+	}
+	if status, label := target.HistoryStep(1); status != HistoryOK || label != "complete project: cccc0004" {
+		t.Fatalf("redo = %v %q", status, label)
+	}
+	redoneProject, _ := recordTitled(t, target.org, "Site launch")
+	if redoneProject["state"] != "DONE" || redoneProject["closed"] != "2026-07-20" {
+		t.Errorf("redo lost project stamp %v", redoneProject)
+	}
 	assertChecked(t, target)
+}
+
+func TestDropAndReopenProjectAreDistinctUndoableLifecycleSteps(t *testing.T) {
+	target, _ := writerFixture(t, projectsFixture)
+
+	closed, found := target.DropProject("cccc0004", "2026-07-20")
+	if !found || closed != 4 {
+		t.Fatalf("drop = %d, %v", closed, found)
+	}
+	project, _ := recordTitled(t, target.org, "Site launch")
+	task, _ := recordTitled(t, target.org, "Pick a static-site generator")
+	if project["state"] != "CANCELLED" || project["closed"] != "2026-07-20" {
+		t.Fatalf("project = %v", project)
+	}
+	if task["state"] != "CANCELLED" || task["closed"] != "2026-07-20" ||
+		strings.Contains(task["__raw"], `"recur"`) {
+		t.Fatalf("task = %v", task)
+	}
+	if status, label := target.HistoryStep(-1); status != HistoryOK || label != "drop project: cccc0004" {
+		t.Fatalf("undo drop = %v %q", status, label)
+	}
+	if status, _ := target.HistoryStep(1); status != HistoryOK {
+		t.Fatalf("redo drop = %v", status)
+	}
+
+	reopened, found := target.ReopenProject("cccc0004")
+	if !found || !reopened {
+		t.Fatalf("reopen = %v, %v", reopened, found)
+	}
+	project, _ = recordTitled(t, target.org, "Site launch")
+	task, _ = recordTitled(t, target.org, "Pick a static-site generator")
+	if project["state"] != "" || project["closed"] != "" {
+		t.Fatalf("reopen left project stamp %v", project)
+	}
+	if task["state"] != "CANCELLED" || task["closed"] != "2026-07-20" {
+		t.Fatalf("reopen changed descendant lifecycle %v", task)
+	}
+	if status, label := target.HistoryStep(-1); status != HistoryOK || label != "reopen project: cccc0004" {
+		t.Fatalf("undo reopen = %v %q", status, label)
+	}
+	project, _ = recordTitled(t, target.org, "Site launch")
+	if project["state"] != "CANCELLED" || project["closed"] != "2026-07-20" {
+		t.Fatalf("undo reopen did not restore stamp %v", project)
+	}
+	assertChecked(t, target)
+}
+
+func TestAClosedProjectKeepsItsFirstLifecycleDecision(t *testing.T) {
+	target, _ := writerFixture(t, projectsFixture)
+	if closed, found := target.CompleteProject("cccc000c", "2026-07-20"); !found || closed != 0 {
+		t.Fatalf("complete = %d, %v", closed, found)
+	}
+	if closed, found := target.DropProject("cccc000c", "2026-07-21"); !found || closed != 0 {
+		t.Fatalf("drop closed project = %d, %v", closed, found)
+	}
+	project, _ := recordTitled(t, target.org, "Empty project")
+	if project["state"] != "DONE" || project["closed"] != "2026-07-20" {
+		t.Fatalf("second close rewrote history: %v", project)
+	}
+	if status, label := target.HistoryStep(-1); status != HistoryOK || label != "complete project: cccc000c" {
+		t.Fatalf("a clean repeat added history: %v %q", status, label)
+	}
 }
 
 // test_complete_project_is_a_clean_zero_when_nothing_is_open: closing nothing

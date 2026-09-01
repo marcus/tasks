@@ -56,6 +56,60 @@ func TestProjectsListsProjectsBeforeAreasOrderedByDateThenTitle(t *testing.T) {
 	}
 }
 
+func TestClosedProjectsAreFilteredButRemainAddressable(t *testing.T) {
+	fixture := `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Projects"}
+{"type":"section","id":"aaaa0002","parent":"aaaa0001","title":"Open project"}
+{"type":"section","id":"aaaa0003","parent":"aaaa0001","state":"DONE","title":"Finished project","closed":"2026-09-01"}
+`
+	queries := queriesFrom(t, fixture)
+	if got := viewIDs(queries.Projects()); !sameIDs(got, "aaaa0002") {
+		t.Fatalf("default projects = %v", got)
+	}
+	all := queries.ProjectsIncluding(true)
+	if got := viewIDs(all); !sameIDs(got, "aaaa0002", "aaaa0003") {
+		t.Fatalf("inclusive projects = %v", got)
+	}
+	closed, found := queries.ProjectView("aaaa0003")
+	if !found || closed.State != "DONE" || closed.Closed != "2026-09-01" ||
+		!closed.HasClosed || closed.Stuck || closed.Open() || !closed.IsClosed() {
+		t.Fatalf("closed view = %+v, found=%v", closed, found)
+	}
+	node := queries.Tree().NodesByLine[4]
+	if node == nil || node.State != "DONE" || node.Closed != "2026-09-01" ||
+		!node.HasClosed || node.Open() || !node.IsClosed() {
+		t.Fatalf("closed node = %+v", node)
+	}
+}
+
+func TestTaskNodesResolveTheirProjectAndTopLevelList(t *testing.T) {
+	fixture := `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Projects"}
+{"type":"section","id":"aaaa0002","parent":"aaaa0001","state":"CANCELLED","title":"Launch","closed":"2026-09-01"}
+{"type":"section","id":"aaaa0003","parent":"aaaa0002","title":"Nested"}
+{"type":"task","id":"aaaa0004","parent":"aaaa0003","state":"TODO","title":"Project task"}
+{"type":"section","id":"bbbb0001","title":"Home"}
+{"type":"section","id":"bbbb0002","parent":"bbbb0001","title":"Room"}
+{"type":"task","id":"bbbb0003","parent":"bbbb0002","state":"NEXT","title":"List task"}
+`
+	queries := queriesFrom(t, fixture)
+	items := queries.LiveItems()
+	if len(items) != 2 {
+		t.Fatalf("items = %d", len(items))
+	}
+	projectNode := queries.NodeFor(items[0])
+	if got := projectNode.ProjectSection(); got == nil || got.Title != "Launch" || got.State != "CANCELLED" {
+		t.Fatalf("project section = %+v", got)
+	}
+	listNode := queries.NodeFor(items[1])
+	if got := listNode.ProjectSection(); got != nil {
+		t.Fatalf("list task resolved project %+v", got)
+	}
+	if got := listNode.TopLevelSection(); got == nil || got.Title != "Home" {
+		t.Fatalf("top-level section = %+v", got)
+	}
+}
+
 func TestProjectViewRollsUpOpenNonDeferredDescendantsAcrossDepth(t *testing.T) {
 	site, found := queriesFrom(t, projectsFixture).ProjectView("cccc0004")
 	if !found {

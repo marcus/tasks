@@ -1019,15 +1019,7 @@ func (m *Model) ReopenProject() {
 		m.Flash("select a project")
 		return
 	}
-	result := m.app.ReopenProject(project.ID, m.operation())
-	if !(result.OK() || result.NoChange()) {
-		m.Refresh()
-		m.Flash("project no longer exists")
-		return
-	}
-	m.Flash("↺ reopened " + project.Title)
-	m.Refresh()
-	m.reselect(project.ID)
+	m.ConfirmReopenProject(project)
 }
 
 // ConfirmCompleteProject asks before closing every open task in a section.
@@ -1151,6 +1143,46 @@ func (m *Model) projectDropConfirmKey(key string) {
 	case "n", "N", "\x1b", "q":
 		m.CloseModal()
 		m.Flash("drop cancelled")
+	}
+}
+
+func (m *Model) ConfirmReopenProject(project *taskquery.ProjectView) {
+	if project == nil {
+		m.Flash("select a project")
+		return
+	}
+	held := *project
+	m.pendingProject = &held
+	m.OpenModal(ModalContent{
+		Title: "Reopen project",
+		Lines: []string{
+			fmt.Sprintf("Reopen %s? Its tasks stay in their current states.", project.Title),
+			"",
+			m.styler.Paint("muted", "Press y to reopen · n / esc cancels"),
+		},
+	}, ModalProjectReopenConfirm, false)
+}
+
+func (m *Model) projectReopenConfirmKey(key string) {
+	switch key {
+	case "y", "Y", "\r", "\n":
+		project := m.pendingProject
+		m.CloseModal()
+		if project == nil {
+			return
+		}
+		result := m.app.ReopenProject(project.ID, m.operation())
+		if !(result.OK() || result.NoChange()) {
+			m.Refresh()
+			m.Flash("project no longer exists")
+			return
+		}
+		m.Flash("↺ reopened " + project.Title)
+		m.Refresh()
+		m.reselect(project.ID)
+	case "n", "N", "\x1b", "q":
+		m.CloseModal()
+		m.Flash("reopen cancelled")
 	}
 }
 

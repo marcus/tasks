@@ -62,7 +62,7 @@ func detailSectionIn(styler Styler, label, slot, badge string, width int) string
 // could be hosted by any other surface tomorrow, because it depends on no
 // modal, no store, and no panel state.
 func BuildTaskDetails(styler Styler, queries *taskquery.Queries, item store.Item,
-	width int, projectName string) DetailContent {
+	width int) DetailContent {
 	if styler == nil {
 		styler = PlainStyler{}
 	}
@@ -80,7 +80,7 @@ func BuildTaskDetails(styler Styler, queries *taskquery.Queries, item store.Item
 	}
 	// Truncated, never wrapped: this is a fielded line whose columns are made of
 	// space runs, and a wrapper that reflows on whitespace would eat them.
-	for _, meta := range taskMetaLine(styler, queries, item, projectName) {
+	for _, meta := range taskMetaLine(styler, queries, item) {
 		lines = append(lines, styler.Truncate(meta, usable))
 	}
 
@@ -90,8 +90,13 @@ func BuildTaskDetails(styler Styler, queries *taskquery.Queries, item store.Item
 	extra := []string{}
 	if node := queries.NodeFor(item); node != nil {
 		if proj := node.ProjectSection(); proj != nil {
-			extra = append(extra, detailRow(styler, "project", proj.Title))
-		} else if list := enclosingList(node); list != nil {
+			name := proj.Title
+			if proj.HasClosed {
+				name += " · " + proj.State
+			}
+			extra = append(extra, detailRow(styler, "project", name))
+		} else if list := node.TopLevelSection(); list != nil &&
+			!taskquery.ReservedListTitle(list.Title) {
 			extra = append(extra, detailRow(styler, "list", list.Title))
 		}
 	}
@@ -235,8 +240,7 @@ func childSlot(item store.Item) string {
 //
 // Absent facts drop out rather than printing a placeholder. An em dash where a
 // date is not is a fact nobody needs.
-func taskMetaLine(styler Styler, queries *taskquery.Queries, item store.Item,
-	projectName string) []string {
+func taskMetaLine(styler Styler, queries *taskquery.Queries, item store.Item) []string {
 	fields := []string{}
 	if item.Priority != "" {
 		fields = append(fields, styler.Paint(prioritySlot(item.Priority), item.Priority))
@@ -262,9 +266,6 @@ func taskMetaLine(styler Styler, queries *taskquery.Queries, item store.Item,
 	}
 
 	labels := []string{}
-	if projectName != "" {
-		labels = append(labels, styler.Paint("project", projectName))
-	}
 	for _, context := range item.Contexts {
 		labels = append(labels, styler.Paint("context", context))
 	}
@@ -332,6 +333,10 @@ func BuildProjectDetails(styler Styler, queries *taskquery.Queries, project task
 	lines = append(lines, "")
 	lines = append(lines, detailRow(styler, "open", fmt.Sprintf("%d", project.OpenCount)))
 	lines = append(lines, detailRow(styler, "next", fmt.Sprintf("%d", project.NextCount)))
+	if project.HasClosed {
+		lines = append(lines, detailRow(styler, "state", project.State))
+		lines = append(lines, detailRow(styler, "closed", project.Closed))
+	}
 	if project.Stuck {
 		lines = append(lines, detailRow(styler, "stuck", styler.Paint("warning", "no open next action")))
 	}
@@ -360,7 +365,21 @@ func BuildProjectDetails(styler Styler, queries *taskquery.Queries, project task
 			lines = append(lines, projectTaskLine(styler, queries, task))
 		}
 	}
+	lines = append(lines, "", detailSection(styler, "ACTIONS", "", usable), "",
+		projectActions(styler, project, usable))
 	return DetailContent{Title: "project", Lines: lines}
+}
+
+func projectActions(styler Styler, project taskquery.ProjectView, width int) string {
+	var actions string
+	if project.HasClosed {
+		actions = styler.Paint("accent", "r") + styler.Paint("muted", " reopen   ") +
+			styler.Paint("accent", "x") + styler.Paint("muted", " archive")
+	} else {
+		actions = styler.Paint("accent", "c") + styler.Paint("muted", " complete   ") +
+			styler.Paint("accent", "x") + styler.Paint("muted", " archive   drop")
+	}
+	return styler.Truncate(actions, width)
 }
 
 // projectTaskLine is state · priority · title · date, in the shared idioms.
@@ -386,20 +405,6 @@ func projectTaskLine(styler Styler, queries *taskquery.Queries, task store.Item)
 
 func detailRow(styler Styler, label, value string) string {
 	return styler.Paint("detail_label", padRight(label, 10)) + " " + value
-}
-
-func enclosingList(node *taskquery.Node) *taskquery.Node {
-	if node == nil {
-		return nil
-	}
-	current := node.Parent
-	for current != nil {
-		if current.Section() {
-			return current
-		}
-		current = current.Parent
-	}
-	return nil
 }
 
 func dateValue(styler Styler, date temporal.Date, today temporal.Date) string {

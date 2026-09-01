@@ -47,8 +47,8 @@ type ProjectView struct {
 	HasClosed   bool
 }
 
-// Closed reports whether the project section is closed (DONE or CANCELLED).
-func (v ProjectView) ClosedView() bool { return v.HasClosed }
+// IsClosed reports whether the project section is closed (DONE or CANCELLED).
+func (v ProjectView) IsClosed() bool { return v.HasClosed }
 
 // Open reports whether the project is still open.
 func (v ProjectView) Open() bool { return !v.HasClosed }
@@ -257,6 +257,12 @@ var reservedListTitles = map[string]bool{
 func reservedList(title string) bool {
 	return reservedListTitles[strings.ToLower(strings.TrimSpace(title))]
 }
+
+// ReservedListTitle reports whether a top-level section title is one of the
+// saved GTD lists whose membership is already expressed by task state. These
+// lists remain addressable sections, but callers should not present them as a
+// project or area label beside the task's own state.
+func ReservedListTitle(title string) bool { return reservedList(title) }
 
 func isInboxTitle(title string) bool {
 	return strings.ToLower(strings.TrimSpace(title)) == "inbox"
