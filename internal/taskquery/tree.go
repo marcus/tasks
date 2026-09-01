@@ -31,6 +31,59 @@ type Node struct {
 	Body     []string
 	Children []*Node
 	Parent   *Node
+	// State and Closed are the section lifecycle pair when this node is a
+	// section. Tasks carry lifecycle on their Item, sections carry it here
+	// so row builders can ask a node directly without a second lookup.
+	State     string
+	Closed    string
+	HasClosed bool
+}
+
+// IsClosed reports whether this section node is closed.
+func (n *Node) IsClosed() bool { return n != nil && n.HasClosed }
+
+// Open reports whether this section node is open.
+func (n *Node) Open() bool { return n == nil || !n.HasClosed }
+
+// ProjectSection climbs ancestors to the section that is a child of the
+// Projects root, or nil when there is none. It is the resolver the task
+// detail rail uses to name the project a task belongs to.
+func (n *Node) ProjectSection() *Node {
+	if n == nil {
+		return nil
+	}
+	current := n.Parent
+	for current != nil {
+		if current.Section() && current.Parent != nil && isProjectsRoot(current.Parent) {
+			return current
+		}
+		current = current.Parent
+	}
+	return nil
+}
+
+// TopLevelSection returns the outermost section containing this node. It is
+// nil for a detached task or section. Presentation callers use it only after
+// ProjectSection returns nil, so a task filed under Projects still names its
+// concrete project rather than the Projects root.
+func (n *Node) TopLevelSection() *Node {
+	if n == nil {
+		return nil
+	}
+	var top *Node
+	for current := n.Parent; current != nil; current = current.Parent {
+		if current.Section() {
+			top = current
+		}
+	}
+	return top
+}
+
+func isProjectsRoot(node *Node) bool {
+	if node == nil || node.Parent != nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(node.Title), "Projects")
 }
 
 // Task reports a node that carries an item.
@@ -94,6 +147,13 @@ func BuildTree(records []record.Record, items []store.Item) Tree {
 		if id := stringOf(parsed, "id"); id != "" {
 			node.ID = id
 			byID[id] = node
+		}
+		if state := stringOf(parsed, "state"); state != "" {
+			node.State = state
+			if closed := stringOf(parsed, "closed"); closed != "" {
+				node.Closed = closed
+				node.HasClosed = true
+			}
 		}
 		if parentID := stringOf(parsed, "parent"); parentID != "" {
 			if parent, found := byID[parentID]; found {

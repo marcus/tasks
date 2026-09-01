@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/marcus/tasks/internal/store"
+	"github.com/marcus/tasks/internal/taskquery"
 )
 
 // Project mutations mapped to the shared outcome vocabulary, so a CLI and a
@@ -106,6 +107,15 @@ func (a *Application) CompleteProject(id string, operation *OperationContext) Ou
 	if refusal := unsupportedSchemaRefusal(target); refusal != nil {
 		return *refusal
 	}
+	before, found, err := a.getSection(id, operation)
+	if err != nil {
+		return Outcome{MutationResult: store.MutationResult{
+			Status: store.MutationUnavailable, Errors: []string{store.UnavailableMessage(err)},
+		}}
+	}
+	if !found {
+		return Outcome{MutationResult: store.MutationResult{Status: store.MutationNotFound}}
+	}
 	writer, ok := target.(ProjectWriter)
 	if !ok {
 		return unsupported("complete a project")
@@ -115,6 +125,9 @@ func (a *Application) CompleteProject(id string, operation *OperationContext) Ou
 		if refusal := lockUnavailable(writer); refusal != nil {
 			return *refusal
 		}
+		if rollback := rollbackOutcome(target); rollback != nil {
+			return *rollback
+		}
 		return Outcome{MutationResult: store.MutationResult{Status: store.MutationNotFound}}
 	}
 	if closed == 0 {
@@ -122,10 +135,109 @@ func (a *Application) CompleteProject(id string, operation *OperationContext) Ou
 			return *rollback
 		}
 	}
+	state, closedAt := "DONE", a.today(operation)
+	if before.HasClosed {
+		state, closedAt = before.State, before.Closed
+	}
 	return Outcome{
 		MutationResult: store.MutationResult{Status: store.MutationOK},
-		Project:        &ProjectSummary{Closed: closed},
+		Project:        &ProjectSummary{Closed: closed, State: state, ClosedAt: closedAt},
 	}
+}
+
+// DropProject cancels a project's open tasks and stamps the section CANCELLED.
+func (a *Application) DropProject(id string, operation *OperationContext) Outcome {
+	target := a.store()
+	if refusal := unsupportedSchemaRefusal(target); refusal != nil {
+		return *refusal
+	}
+	before, found, err := a.getSection(id, operation)
+	if err != nil {
+		return Outcome{MutationResult: store.MutationResult{
+			Status: store.MutationUnavailable, Errors: []string{store.UnavailableMessage(err)},
+		}}
+	}
+	if !found {
+		return Outcome{MutationResult: store.MutationResult{Status: store.MutationNotFound}}
+	}
+	writer, ok := target.(ProjectWriter)
+	if !ok {
+		return unsupported("drop a project")
+	}
+	closed, found := writer.DropProject(id, a.today(operation))
+	if !found {
+		if refusal := lockUnavailable(writer); refusal != nil {
+			return *refusal
+		}
+		if rollback := rollbackOutcome(target); rollback != nil {
+			return *rollback
+		}
+		return Outcome{MutationResult: store.MutationResult{Status: store.MutationNotFound}}
+	}
+	if closed == 0 {
+		if rollback := rollbackOutcome(target); rollback != nil {
+			return *rollback
+		}
+	}
+	state, closedAt := "CANCELLED", a.today(operation)
+	if before.HasClosed {
+		state, closedAt = before.State, before.Closed
+	}
+	return Outcome{
+		MutationResult: store.MutationResult{Status: store.MutationOK},
+		Project:        &ProjectSummary{Closed: closed, State: state, ClosedAt: closedAt},
+	}
+}
+
+// ReopenProject clears the lifecycle stamps from a section, leaving its tasks
+// untouched.
+func (a *Application) ReopenProject(id string, operation *OperationContext) Outcome {
+	target := a.store()
+	if refusal := unsupportedSchemaRefusal(target); refusal != nil {
+		return *refusal
+	}
+	if _, found, err := a.getSection(id, operation); err != nil {
+		return Outcome{MutationResult: store.MutationResult{
+			Status: store.MutationUnavailable, Errors: []string{store.UnavailableMessage(err)},
+		}}
+	} else if !found {
+		return Outcome{MutationResult: store.MutationResult{Status: store.MutationNotFound}}
+	}
+	writer, ok := target.(ProjectWriter)
+	if !ok {
+		return unsupported("reopen a project")
+	}
+	reopened, found := writer.ReopenProject(id)
+	if !found {
+		if refusal := lockUnavailable(writer); refusal != nil {
+			return *refusal
+		}
+		if rollback := rollbackOutcome(target); rollback != nil {
+			return *rollback
+		}
+		return Outcome{MutationResult: store.MutationResult{Status: store.MutationNotFound}}
+	}
+	if !reopened {
+		if rollback := rollbackOutcome(target); rollback != nil {
+			return *rollback
+		}
+	}
+	return Outcome{MutationResult: store.MutationResult{Status: store.MutationOK}}
+}
+
+// getSection validates the shared lifecycle target without imposing an
+// adapter's narrower vocabulary. CLI and HTTP project routes resolve only
+// projects, areas, and saved lists before they call this boundary; the Outline
+// also exposes nested section rows, which have always used the same lifecycle
+// mutations. Keeping that distinction here preserves one core without making
+// the TUI's valid section rows disappear behind a project-only lookup.
+func (a *Application) getSection(id string, operation *OperationContext) (taskquery.ProjectView, bool, error) {
+	queries, err := a.Queries(false, operation)
+	if err != nil {
+		return taskquery.ProjectView{}, false, err
+	}
+	view, found := queries.SectionView(id)
+	return view, found, nil
 }
 
 // ArchiveProject sweeps a project's subtree into the archive and reports the

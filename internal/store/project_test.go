@@ -152,6 +152,10 @@ func TestCompleteProjectClosesOpenDescendantsDroppingDeferAndRecur(t *testing.T)
 	if strings.Contains(deferred["__raw"], `"defer"`) {
 		t.Error("the defer tag survived a close")
 	}
+	project, _ := recordTitled(t, target.org, "Site launch")
+	if project["state"] != "DONE" || project["closed"] != "2026-07-20" {
+		t.Fatalf("project stamp = %v", project)
+	}
 	assertChecked(t, target)
 
 	status, label := target.HistoryStep(-1)
@@ -162,12 +166,87 @@ func TestCompleteProjectClosesOpenDescendantsDroppingDeferAndRecur(t *testing.T)
 	if restored["state"] != "NEXT" {
 		t.Errorf("undo left state %q", restored["state"])
 	}
+	restoredProject, _ := recordTitled(t, target.org, "Site launch")
+	if restoredProject["state"] != "" || restoredProject["closed"] != "" {
+		t.Errorf("undo left project stamp %v", restoredProject)
+	}
+	if status, label := target.HistoryStep(1); status != HistoryOK || label != "complete project: cccc0004" {
+		t.Fatalf("redo = %v %q", status, label)
+	}
+	redoneProject, _ := recordTitled(t, target.org, "Site launch")
+	if redoneProject["state"] != "DONE" || redoneProject["closed"] != "2026-07-20" {
+		t.Errorf("redo lost project stamp %v", redoneProject)
+	}
 	assertChecked(t, target)
+}
+
+func TestDropAndReopenProjectAreDistinctUndoableLifecycleSteps(t *testing.T) {
+	target, _ := writerFixture(t, projectsFixture)
+
+	closed, found := target.DropProject("cccc0004", "2026-07-20")
+	if !found || closed != 4 {
+		t.Fatalf("drop = %d, %v", closed, found)
+	}
+	project, _ := recordTitled(t, target.org, "Site launch")
+	task, _ := recordTitled(t, target.org, "Pick a static-site generator")
+	if project["state"] != "CANCELLED" || project["closed"] != "2026-07-20" {
+		t.Fatalf("project = %v", project)
+	}
+	if task["state"] != "CANCELLED" || task["closed"] != "2026-07-20" ||
+		strings.Contains(task["__raw"], `"recur"`) {
+		t.Fatalf("task = %v", task)
+	}
+	if status, label := target.HistoryStep(-1); status != HistoryOK || label != "drop project: cccc0004" {
+		t.Fatalf("undo drop = %v %q", status, label)
+	}
+	if status, _ := target.HistoryStep(1); status != HistoryOK {
+		t.Fatalf("redo drop = %v", status)
+	}
+
+	reopened, found := target.ReopenProject("cccc0004")
+	if !found || !reopened {
+		t.Fatalf("reopen = %v, %v", reopened, found)
+	}
+	project, _ = recordTitled(t, target.org, "Site launch")
+	task, _ = recordTitled(t, target.org, "Pick a static-site generator")
+	if project["state"] != "" || project["closed"] != "" {
+		t.Fatalf("reopen left project stamp %v", project)
+	}
+	if task["state"] != "CANCELLED" || task["closed"] != "2026-07-20" {
+		t.Fatalf("reopen changed descendant lifecycle %v", task)
+	}
+	if status, label := target.HistoryStep(-1); status != HistoryOK || label != "reopen project: cccc0004" {
+		t.Fatalf("undo reopen = %v %q", status, label)
+	}
+	project, _ = recordTitled(t, target.org, "Site launch")
+	if project["state"] != "CANCELLED" || project["closed"] != "2026-07-20" {
+		t.Fatalf("undo reopen did not restore stamp %v", project)
+	}
+	assertChecked(t, target)
+}
+
+func TestAClosedProjectKeepsItsFirstLifecycleDecision(t *testing.T) {
+	target, _ := writerFixture(t, projectsFixture)
+	if closed, found := target.CompleteProject("cccc000c", "2026-07-20"); !found || closed != 0 {
+		t.Fatalf("complete = %d, %v", closed, found)
+	}
+	if closed, found := target.DropProject("cccc000c", "2026-07-21"); !found || closed != 0 {
+		t.Fatalf("drop closed project = %d, %v", closed, found)
+	}
+	project, _ := recordTitled(t, target.org, "Empty project")
+	if project["state"] != "DONE" || project["closed"] != "2026-07-20" {
+		t.Fatalf("second close rewrote history: %v", project)
+	}
+	if status, label := target.HistoryStep(-1); status != HistoryOK || label != "complete project: cccc000c" {
+		t.Fatalf("a clean repeat added history: %v %q", status, label)
+	}
 }
 
 // test_complete_project_is_a_clean_zero_when_nothing_is_open: closing nothing
 // records no history, which is what lets a caller distinguish it from a
-// rollback that also reported zero.
+// rollback that also reported zero. With the lifecycle stamp, an OPEN empty
+// project still writes the section stamp, so closing it is not a no-op — only
+// a project already stamped DONE/CANCELLED is.
 func TestCompleteProjectIsACleanZeroWhenNothingIsOpen(t *testing.T) {
 	target, _ := writerFixture(t, projectsFixture)
 
@@ -175,11 +254,42 @@ func TestCompleteProjectIsACleanZeroWhenNothingIsOpen(t *testing.T) {
 	if !found || closed != 0 {
 		t.Fatalf("closed = %d, found = %v", closed, found)
 	}
-	if status, _ := target.HistoryStep(-1); status != HistoryEmpty {
-		t.Error("closing nothing recorded history")
+	if reason, stage := target.LastRollback(); reason != "" {
+		t.Fatalf("unexpected rollback %q stage %q after first complete", reason, stage)
+	}
+	stamped, _ := recordTitled(t, target.org, "Empty project")
+	if stamped["state"] != "DONE" || stamped["closed"] != "2026-07-20" {
+		t.Fatalf("stamped = %v, want DONE/2026-07-20, rollback %q", stamped, func() string { r, _ := target.LastRollback(); return r }())
+	}
+	// Verify it recorded history — this is an undo, so restore afterwards.
+	if status, _ := target.HistoryStep(-1); status != HistoryOK {
+		t.Fatalf("stamping must record history, got %v", status)
+	}
+	if status, _ := target.HistoryStep(1); status != HistoryOK {
+		t.Fatalf("redo must restore stamp, got %v", status)
+	}
+	// Undo to open for the idempotency check.
+	if status, _ := target.HistoryStep(-1); status != HistoryOK {
+		t.Fatalf("undo = %v", status)
+	}
+	// Re-stamp.
+	closed, found = target.CompleteProject("cccc000c", "2026-07-20")
+	if !found || closed != 0 {
+		t.Fatalf("first stamp = %d, %v", closed, found)
+	}
+	// Already DONE with same date → clean no-op, no new history, no rollback.
+	closed, found = target.CompleteProject("cccc000c", "2026-07-20")
+	if !found || closed != 0 {
+		t.Fatalf("re-completing already DONE = %d, %v", closed, found)
 	}
 	if reason, _ := target.LastRollback(); reason != "" {
 		t.Errorf("a clean zero recorded a rollback: %q", reason)
+	}
+	if status, label := target.HistoryStep(-1); status != HistoryOK || label != "complete project: cccc000c" {
+		t.Fatalf("history tip = %v %q, want the single stamp", status, label)
+	}
+	if status, _ := target.HistoryStep(-1); status != HistoryEmpty {
+		t.Errorf("after draining stamp, history empty = %v", status)
 	}
 	assertChecked(t, target)
 }

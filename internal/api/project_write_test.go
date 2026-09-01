@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// The four project-write routes, mirroring test/api/test_projects.rb name for
+// The project-write routes, mirroring test/api/test_projects.rb name for
 // name, plus the coverage that suite does not carry: the bootstrapped root, the
 // checked-store gate on each route, the archive's moved ids, and the live and
 // archive BYTES a sweep leaves behind.
@@ -371,6 +371,9 @@ func TestCompleteProjectClosesOpenTasks(t *testing.T) {
 	if ids := stringsOf(data["task_ids"]); len(ids) != 0 {
 		t.Errorf("task_ids = %v, want empty", ids)
 	}
+	if data["state"] != "DONE" || data["closed"] != "2026-07-15" || data["stuck"] != false {
+		t.Errorf("lifecycle after completion = %v", data)
+	}
 	// The cascade reaches a nested sub-section's task and the DEFERRED one, and
 	// retires the recurrence cookie rather than rolling it forward.
 	for _, title := range []string{
@@ -395,6 +398,56 @@ func TestCompleteProjectClosesOpenTasks(t *testing.T) {
 		t.Error("completion removed the project section")
 	}
 	assertStatus(t, h.get("/api/v1/projects/"+pfxSite), 200)
+}
+
+func TestProjectListClosedFilterAndDirectResolutionAgree(t *testing.T) {
+	h := newProjectHarness(t)
+	assertStatus(t, h.json("POST", "/api/v1/projects/"+pfxSite+"/complete", "", nil), 200)
+	if containsString(h.get("/api/v1/projects").ids(), pfxSite) {
+		t.Fatal("default project list exposed the closed project")
+	}
+	include := h.get("/api/v1/projects?closed=include")
+	if !containsString(include.ids(), pfxSite) {
+		t.Fatalf("inclusive ids = %v", include.ids())
+	}
+	only := h.get("/api/v1/projects?closed=only")
+	if ids := only.ids(); len(ids) != 1 || ids[0] != pfxSite {
+		t.Fatalf("closed-only ids = %v", ids)
+	}
+	row := only.rows()[0]
+	if row["state"] != "DONE" || row["closed"] != "2026-07-15" || row["stuck"] != false {
+		t.Fatalf("closed resource = %v", row)
+	}
+	assertStatus(t, h.get("/api/v1/projects/"+pfxSite), 200)
+	assertError(t, h.get("/api/v1/projects?closed=done"), 422, "validation_failed")
+}
+
+func TestDropAndReopenProjectEndpointsShareLifecycleSemantics(t *testing.T) {
+	h := newProjectHarness(t)
+	dropped := h.json("POST", "/api/v1/projects/"+pfxSite+"/drop", "", nil)
+	assertStatus(t, dropped, 200)
+	if data := dropped.data(); data["state"] != "CANCELLED" || data["closed"] != "2026-07-15" {
+		t.Fatalf("drop response = %v", data)
+	}
+	if task := h.recordFor("Pick a static-site generator"); task["state"] != "CANCELLED" {
+		t.Fatalf("drop task = %v", task)
+	}
+
+	reopened := h.json("POST", "/api/v1/projects/"+pfxSite+"/reopen", "", nil)
+	assertStatus(t, reopened, 200)
+	if data := reopened.data(); data["state"] != nil || data["closed"] != nil {
+		t.Fatalf("reopen response = %v", data)
+	}
+	if task := h.recordFor("Pick a static-site generator"); task["state"] != "CANCELLED" {
+		t.Fatalf("reopen changed task = %v", task)
+	}
+	assertStatus(t, h.get("/api/v1/projects/"+pfxSite), 200)
+
+	for _, suffix := range []string{"drop", "reopen"} {
+		assertError(t, h.json("POST", "/api/v1/projects/ffffffff/"+suffix, "", nil), 404, "not_found")
+		assertError(t, h.json("POST", "/api/v1/projects/"+pfxSite+"/"+suffix,
+			`{"unexpected":true}`, nil), 400, "malformed_request")
+	}
 }
 
 // A second completion writes nothing and is still a clean 200. Zero closed is
@@ -630,6 +683,8 @@ func TestProjectMutationRejectsAForeignOrigin(t *testing.T) {
 	assertError(t, h.json("PATCH", "/api/v1/projects/"+pfxReno, `{"title":"X"}`, foreign), 403, "forbidden_origin")
 	assertError(t, h.json("POST", "/api/v1/projects", `{"title":"X"}`, foreign), 403, "forbidden_origin")
 	assertError(t, h.json("POST", "/api/v1/projects/"+pfxSite+"/complete", "", foreign), 403, "forbidden_origin")
+	assertError(t, h.json("POST", "/api/v1/projects/"+pfxSite+"/drop", "", foreign), 403, "forbidden_origin")
+	assertError(t, h.json("POST", "/api/v1/projects/"+pfxSite+"/reopen", "", foreign), 403, "forbidden_origin")
 	assertError(t, h.do(request{
 		method: "POST", path: "/api/v1/projects/" + pfxEmpty + "/archive", headers: foreign,
 	}), 403, "forbidden_origin")
@@ -646,6 +701,8 @@ func TestProjectWritesGateOnTheCheckedStore(t *testing.T) {
 		{"create", "POST", "/api/v1/projects", `{"title":"X"}`},
 		{"rename", "PATCH", "/api/v1/projects/" + pfxReno, `{"title":"X"}`},
 		{"complete", "POST", "/api/v1/projects/" + pfxSite + "/complete", ""},
+		{"drop", "POST", "/api/v1/projects/" + pfxSite + "/drop", ""},
+		{"reopen", "POST", "/api/v1/projects/" + pfxSite + "/reopen", ""},
 		{"archive", "POST", "/api/v1/projects/" + pfxEmpty + "/archive", ""},
 	}
 	for _, testCase := range cases {

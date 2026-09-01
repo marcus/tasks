@@ -1228,6 +1228,8 @@ than what would be nicer.
 | `project create` | ✅ | the project object |
 | `project show` | ✅ | the project object |
 | `project complete` | ✅ | `{touched: [task]}` |
+| `project drop` | ✅ | `{touched: [task]}` |
+| `project reopen` | ✅ | the reopened project object |
 | `project archive` | ✅ | `{archived, moved_ids}` |
 | `project rename` | ✅ | the project object |
 | `capture` | ✅ | `{touched: [task]}` |
@@ -1312,7 +1314,7 @@ The sweep's preview pinning matches the endpoint's documented `fingerprint` →
 | `next` | `n` | ✅ | NEXT actions by context. With none, prints a one-line empty state rather than nothing — dating lands work in `TODO`, so an empty NEXT list commonly sits beside a full agenda. The pointer at the agenda is only made when `agenda` really has rows: `No next actions. Dated work is on the agenda; mark one with: tasks state <ref> NEXT`, else `No next actions. Mark one with: tasks state <ref> NEXT`. `--json` is unaffected (an empty array). |
 | `quadrants` | `q` | ✅ | Covey 2×2 from priority (A/B ⇒ important) + a `DEADLINE` within `urgent_days` (default 3, overdue counts) ⇒ urgent, with `important`/`urgent` tags as overrides. `--json` adds `quadrant`. |
 | `inbox` | `i` | ✅ | Unprocessed INBOX items. `--json` |
-| `projects` | `pj` | ✅ | Projects and areas rolled up over their open, non-deferred tasks (at any depth). Projects are the section children of the top-level "Projects" heading (listed even when empty); areas are the other top-level sections that currently hold open work (Inbox excluded). Each carries an open count, a NEXT count, the soonest deadline-or-scheduled value, and a `stuck` flag (no open NEXT — including an empty project). Ordered projects-before-areas, then by soonest boundary (nil last), then title. `--json` adds `next_time` and `next_at` beside the compatibility `next_date`. It is a **rollup, not a task listing** — it prints no rows under a project — so it takes no closed-work flag; the TUI Projects tab's `C` reveal has no CLI twin because there is no CLI projection of that body. Closed rows under a project are read with `tasks list --done`/`--all`, and `project show --json` names the open rollup's members in `task_ids`. |
+| `projects [--closed\|--all]` | `pj` | ✅ | Projects and areas rolled up over their open, non-deferred tasks (at any depth). Projects are the section children of the top-level "Projects" heading (listed even when empty while open); areas are the other top-level sections that currently hold open work (Inbox excluded). Closed projects are excluded by default, `--closed` selects them, and `--all` includes open and closed projects; the area rule is unchanged. Each resource carries open/NEXT counts, the soonest deadline-or-scheduled value, and a `stuck` flag; a closed project is never stuck. Ordered projects-before-areas, open before closed, then by soonest boundary (nil last) and title. `--json` adds `next_time` and `next_at` beside the compatibility `next_date`, plus `state` and `closed` when present. The command remains a **rollup, not a task listing**: closed task rows are read with `tasks list --done`/`--all`, and `project show --json` names the open rollup's members in `task_ids`. |
 | `show <ref>` | `s` | ✅ | One live task in full, including PROPOSED without an extra flag: rendered headline + body/notes + links. Human output labels `scheduled` as `available from`, reports exact effective availability, and prints a delegation's transition stamp in the configured zone and clock format (`delegation: agent-ready (research) (since thu 08-27 5:46p)`) while `--json` keeps the stored UTC instant. `--json` keeps nullable ISO `scheduled`/`deadline` and adds nullable `scheduled_time`/`deadline_time` plus `available_at`; time objects carry `local`, stored `timezone`, `fold`, `effective_timezone`, and derived UTC `instant`. Reasons remain `available`, `proposed`, `scheduled`, `on_hold`, `ancestor_scheduled`, `ancestor_on_hold`, or `closed`. |
 | `id <ref> [--json]` | | ✅ | Print a task's stable `id`, minting one if absent (post-migration every record already has one — this is the repair path). Idempotent. Resolves refs regardless of state. |
 | `links [<ref>]` | `urls` | ✅ | The openable union: stored formal links first, then links found in task titles/notes, deduplicated by URL and classified by system. One task's links with `<ref>`; every open task's otherwise. `--system <name>` filters, `--all` widens to done + archived, and `--json` emits `{links: [{url, label, system, link_source, task, id, line, source}]}` where link_source is `formal`, `title`, or `body`, while source remains the task's `live` or `archive`. Derived links recognize org links, bare URLs, and configured shorthands. |
@@ -1536,21 +1538,25 @@ title ambiguity a bare `project "<ref>"` would create.
 |---|---|---|---|
 | `project create <title> [--json] [--dry-run]` | `project new` | ✅ | Create a new empty project — a section filed under the top-level "Projects" root (created first if the store has none yet, so an empty/rootless file still works). A blank title, or one that duplicates an existing project or area (case-insensitive; the project-ref candidate set, so a duplicate would make later refs ambiguous), exits 1 with the reason. Success prints the new project row (`--json` emits the project object). `--dry-run` writes nothing. Then `move <ref> "<title>"` files tasks into it. |
 | `project show <ref> [--json]` | | ✅ | One project/area in full: title, kind, rolled-up open/NEXT counts, soonest date, and body note. `--json` is the project object (same shape as a `projects` element). |
-| `project complete <ref>` | `project done` | ✅ | Close every open descendant task of the project — the same cascade as `done`: DONE + today's `closed` date, `defer` dropped, and a recurring descendant retired (its cookie removed, no roll-forward). Prints every touched task's new headline (identified by line). |
+| `project complete <ref>` | `project done` | ✅ | Close every open descendant task of the project — the same cascade as `done`: DONE + today's `closed` date, `defer` dropped, and a recurring descendant retired (its cookie removed, no roll-forward). Additionally stamps the section itself DONE with today's date, in the same write. Prints every touched task's new headline (identified by line) plus a line naming the project closed. |
+| `project drop <ref>` | `project cancel` | ✅ | Cancel every open descendant task — CANCELLED + today's closed date, defer dropped, recurrence retired — and stamp the section CANCELLED. One write. |
+| `project reopen <ref>` | | ✅ | Clear state and closed from the section, leaving its tasks untouched. |
 | `project archive <ref> [--force]` | | ✅ | Sweep the project's whole section subtree to `archive.jsonl` (the root section drops its `parent` and gains today's `archived` stamp). Refuses with exit 1 while the project still has open work unless `--force`; deferred/held tasks (`held_count`) count as open work too. PROPOSED descendants always refuse, even with `--force`, until approved or rejected. |
 | `project rename <ref> <new title>` | | ✅ | Replace the section title (leading/trailing space trimmed). |
 
-**Project refs.** A `<ref>` resolves against the `projects` listing: an exact
+**Project refs.** A `<ref>` resolves against the `projects` listing including closed: an exact
 8-hex section id (case-insensitive) wins, then an `L<line>` section line, then a
-case-insensitive title substring across both projects and areas. Zero matches or
+case-insensitive title substring across both projects and areas (closed included). Zero matches or
 an ambiguous substring exits 2, listing candidates as `L<line>: <title>` — the
-same contract as task refs. All four commands accept `--json`; the three
+same contract as task refs. Every project verb accepts `--json`; all six
 mutations accept `--dry-run` and write nothing in that mode.
 
-Over the HTTP API the same capability is `GET /api/v1/projects`,
+`tasks projects` is the rolled-up listing. By default closed projects are hidden; `--all` includes them and `--closed` selects only closed. `--json` emits the project resource now including `state` and `closed` when present.
+
+Over the HTTP API the same capability is `GET /api/v1/projects` (`?closed=exclude|include|only`),
 `POST /api/v1/projects` (create — `{"title": …}` → 201 with the project; 422 on
 a blank/duplicate title), `GET/PATCH /api/v1/projects/{id}`, and
-`POST /api/v1/projects/{id}/complete` and `…/archive` — strict 8-hex ids only,
+`POST /api/v1/projects/{id}/complete`, `/drop`, `/reopen`, and `…/archive` — strict 8-hex ids only,
 no fuzzy refs (a transport difference per design rule 7). See
 `docs/api/openapi.yaml`.
 

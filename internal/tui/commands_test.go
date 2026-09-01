@@ -42,6 +42,53 @@ func TestConditionalSameKeyCommandsHaveIndependentAvailabilityAndInvocation(t *t
 	}
 }
 
+func TestProjectDropAndReopenCommandsConfirmThenMutate(t *testing.T) {
+	drop := newModelHarness(t, harnessOptions{live: projectsDoubleNestedStore})
+	drop.model.SwitchView(ViewProjects)
+	drop.selectRowByID("aaaa0002")
+	if available, err := drop.model.CommandAvailable("drop-project"); err != nil || !available {
+		t.Fatalf("drop availability=%v err=%v", available, err)
+	}
+	if _, err := drop.model.InvokeCommand("drop-project"); err != nil {
+		t.Fatal(err)
+	}
+	if drop.model.Modal() == nil || drop.model.Modal().Kind() != ModalProjectDropConfirm {
+		t.Fatalf("drop modal = %#v", drop.model.Modal())
+	}
+	drop.pressKeys("y")
+	dropped, found := drop.model.ReadModel().Queries().ProjectView("aaaa0002")
+	if !found || dropped.State != "CANCELLED" || !dropped.HasClosed {
+		t.Fatalf("dropped project = %+v found=%v", dropped, found)
+	}
+	var droppedTaskState string
+	for _, item := range drop.model.ReadModel().Queries().LiveItems() {
+		if item.ID == "bbbb0001" {
+			droppedTaskState = item.State
+		}
+	}
+	if droppedTaskState != "CANCELLED" {
+		t.Fatalf("dropped task state = %q", droppedTaskState)
+	}
+
+	reopen := newModelHarness(t, harnessOptions{live: closedProjectLifecycleStore})
+	reopen.model.SwitchView(ViewProjects)
+	reopen.model.ToggleClosed()
+	reopen.selectRowByID("aaaa0002")
+	reopen.pressKeys("r")
+	if reopen.model.Modal() == nil || reopen.model.Modal().Kind() != ModalProjectReopenConfirm {
+		t.Fatalf("reopen modal = %#v", reopen.model.Modal())
+	}
+	stillClosed, _ := reopen.model.ReadModel().Queries().ProjectView("aaaa0002")
+	if !stillClosed.HasClosed {
+		t.Fatal("reopen mutated before confirmation")
+	}
+	reopen.pressKeys("y")
+	reopened, found := reopen.model.ReadModel().Queries().ProjectView("aaaa0002")
+	if !found || reopened.HasClosed || reopened.State != "" || reopened.Closed != "" {
+		t.Fatalf("reopened project = %+v found=%v", reopened, found)
+	}
+}
+
 func TestDirectWidgetKeyAndCommandInvocationAgree(t *testing.T) {
 	direct := newModelHarness(t, harnessOptions{})
 	direct.pressKeys("/")

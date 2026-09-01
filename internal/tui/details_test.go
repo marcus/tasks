@@ -10,7 +10,7 @@ func detailFor(t *testing.T, harness *modelHarness, id string) string {
 	for _, item := range harness.model.ReadModel().Items() {
 		if item.ID == id {
 			content := BuildTaskDetails(PlainStyler{}, harness.model.ReadModel().Queries(),
-				item, 60, harness.model.projectNameOf(item))
+				item, 60)
 			return strings.Join(content.Lines, "\n")
 		}
 	}
@@ -146,10 +146,77 @@ func TestProjectDetailsRollsUpTheSection(t *testing.T) {
 	if text == "" {
 		t.Fatal("no Work project row")
 	}
-	for _, want := range []string{"PROJECT ", "Work", "open", "next", "TASKS ", "Book flight in Concur"} {
+	for _, want := range []string{
+		"PROJECT ", "Work", "open", "next", "TASKS ", "Book flight in Concur",
+		"ACTIONS ", "c complete", "x archive", "drop",
+	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("project panel is missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestTaskDetailsNameProjectOrMeaningfulTopLevelListOnce(t *testing.T) {
+	live := `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Projects"}
+{"type":"section","id":"aaaa0002","parent":"aaaa0001","state":"DONE","title":"Launch","closed":"2026-09-01"}
+{"type":"section","id":"aaaa0003","parent":"aaaa0002","title":"Nested"}
+{"type":"task","id":"aaaa0004","parent":"aaaa0003","state":"NEXT","title":"Project task","tags":["@desk","important"]}
+{"type":"section","id":"bbbb0001","title":"Home"}
+{"type":"section","id":"bbbb0002","parent":"bbbb0001","title":"Room"}
+{"type":"task","id":"bbbb0003","parent":"bbbb0002","state":"TODO","title":"List task"}
+{"type":"section","id":"cccc0001","title":"Inbox"}
+{"type":"task","id":"cccc0002","parent":"cccc0001","state":"INBOX","title":"Inbox task"}
+{"type":"section","id":"dddd0001","title":"Waiting For"}
+{"type":"task","id":"dddd0002","parent":"dddd0001","state":"WAITING","title":"Waiting task"}
+`
+	harness := newModelHarness(t, harnessOptions{live: live})
+	project := detailFor(t, harness, "aaaa0004")
+	if !strings.Contains(project, "project    Launch · DONE") {
+		t.Fatalf("closed project row missing:\n%s", project)
+	}
+	if strings.Contains(project, "Labels: Launch") || !strings.Contains(project, "Labels: @desk, important") {
+		t.Fatalf("Labels mixed project and tags:\n%s", project)
+	}
+	if count := strings.Count(project, "Launch"); count != 1 {
+		t.Fatalf("project named %d times:\n%s", count, project)
+	}
+
+	list := detailFor(t, harness, "bbbb0003")
+	if !strings.Contains(list, "list       Home") || strings.Contains(list, "Room") {
+		t.Fatalf("list row did not name top-level section:\n%s", list)
+	}
+	for _, id := range []string{"cccc0002", "dddd0002"} {
+		text := detailFor(t, harness, id)
+		if strings.Contains(text, "list       ") || strings.Contains(text, "project    ") {
+			t.Fatalf("reserved list %s gained a redundant location:\n%s", id, text)
+		}
+	}
+}
+
+func TestClosedProjectDetailsShowLifecycleAndClosedActions(t *testing.T) {
+	live := `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Projects"}
+{"type":"section","id":"aaaa0002","parent":"aaaa0001","state":"CANCELLED","title":"Dropped","closed":"2026-09-01"}
+`
+	harness := newModelHarness(t, harnessOptions{live: live})
+	harness.model.SwitchView(ViewProjects)
+	harness.model.ToggleClosed()
+	var text string
+	for _, row := range harness.model.Rows() {
+		if row.Project != nil && row.Project.ID == "aaaa0002" {
+			content := BuildProjectDetails(PlainStyler{}, harness.model.ReadModel().Queries(),
+				*row.Project, nil, 60)
+			text = strings.Join(content.Lines, "\n")
+		}
+	}
+	for _, want := range []string{"state      CANCELLED", "closed     2026-09-01", "ACTIONS ", "r reopen", "x archive"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("closed project detail missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "c complete") || strings.Contains(text, "drop") {
+		t.Fatalf("closed project advertised open actions:\n%s", text)
 	}
 }
 

@@ -372,17 +372,40 @@ func findInSource(queries *taskquery.Queries, id string, source store.Source) (s
 }
 
 func (s *Server) listProjects(request *http.Request) (response, error) {
-	if _, err := queryParams(request); err != nil {
+	params, err := queryParams(request, "closed")
+	if err != nil {
 		return response{}, err
+	}
+	closedParam := "exclude"
+	if params.Has("closed") {
+		closedParam = params.Get("closed")
+	}
+	switch closedParam {
+	case "exclude", "include", "only":
+	default:
+		return response{}, validationError(reason("closed", "must be exclude, include, or only"))
 	}
 	read, err := s.options.Read()
 	if err != nil || !read.OK() {
 		return response{}, readFailure(read, err)
 	}
+	var views []taskquery.ProjectView
+	switch closedParam {
+	case "exclude":
+		views = read.Queries.Projects()
+	case "include":
+		views = read.Queries.ProjectsIncluding(true)
+	case "only":
+		for _, view := range read.Queries.ProjectsIncluding(true) {
+			if view.HasClosed {
+				views = append(views, view)
+			}
+		}
+	}
 	w := jsonout.New()
 	writeSuccess(w, func(w *jsonout.Writer) {
 		w.BeginArray()
-		for _, view := range read.Queries.Projects() {
+		for _, view := range views {
 			writeProject(w, view)
 		}
 		w.EndArray()

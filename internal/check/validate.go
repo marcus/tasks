@@ -27,9 +27,11 @@ var (
 
 // sectionForbidden is the task-only semantics a section record must not carry.
 // `archived` is deliberately absent: a swept subtree root can be a section.
+// `state` and `closed` are permitted on a section but only together as a
+// lifecycle pair (DONE/CANCELLED + YYYY-MM-DD); see checkSection.
 var sectionForbidden = []string{
-	"state", "priority", "scheduled", "scheduled_time", "deadline", "deadline_time",
-	"recur", "lead", "lead_skip", "delegation", "closed", "rejected", "tags",
+	"priority", "scheduled", "scheduled_time", "deadline", "deadline_time",
+	"recur", "lead", "lead_skip", "delegation", "rejected", "tags",
 	"links",
 }
 
@@ -432,6 +434,29 @@ func checkSection(parsed record.Record, errors *[]Entry) {
 		if truthy(rawField(parsed, key)) {
 			*errors = append(*errors, Entry{Line: line,
 				Message: fmt.Sprintf("section must not carry %s", rubyInspectString(key))})
+		}
+	}
+	// Section lifecycle: state and closed travel together, state is DONE or
+	// CANCELLED only, closed is a real calendar date. Rejected stays forbidden.
+	stateRaw := rawField(parsed, "state")
+	closedRaw := rawField(parsed, "closed")
+	hasState := truthy(stateRaw)
+	hasClosed := truthy(closedRaw)
+	if hasState {
+		state, ok := decodeString(stateRaw)
+		if !ok || !contains(ClosedStates, state) {
+			*errors = append(*errors, Entry{Line: line,
+				Message: fmt.Sprintf("invalid section state %s (expected DONE/CANCELLED)", rubyInspect(stateRaw))})
+		}
+	}
+	if hasClosed {
+		checkDate(parsed, "closed", errors)
+	}
+	if hasState != hasClosed {
+		if hasState {
+			*errors = append(*errors, Entry{Line: line, Message: "section state requires closed date"})
+		} else {
+			*errors = append(*errors, Entry{Line: line, Message: "section closed date requires state"})
 		}
 	}
 	checkDate(parsed, "archived", errors)

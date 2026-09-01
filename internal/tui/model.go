@@ -620,7 +620,7 @@ func (m *Model) RefreshRows() {
 		IntakeCounts:   m.intakeCounts(items),
 	}
 	if m.view == ViewProjects && request.UseTree {
-		request.Projects = queries.Projects()
+		request.Projects = queries.ProjectsIncluding(m.showClosed)
 	}
 	m.rows = BuildRows(request)
 	m.syncSelection()
@@ -1170,8 +1170,7 @@ func (m *Model) showDetail() {
 		m.Flash("nothing selected")
 		return
 	}
-	content := BuildTaskDetails(m.styler, m.read.Queries(), *item, m.panelContentWidth(),
-		m.projectNameOf(*item))
+	content := BuildTaskDetails(m.styler, m.read.Queries(), *item, m.panelContentWidth())
 	m.panel = NewRightPanel(content.Title, PanelDetail, item.ID, content.Lines)
 	m.spatialFocus = SpatialFocusDetail
 }
@@ -1191,8 +1190,7 @@ func (m *Model) refreshOpenPanel() {
 			m.spatialFocus = SpatialFocusList
 			return
 		}
-		content := BuildTaskDetails(m.styler, m.read.Queries(), *item, m.panelContentWidth(),
-			m.projectNameOf(*item))
+		content := BuildTaskDetails(m.styler, m.read.Queries(), *item, m.panelContentWidth())
 		m.panel.Replace(content.Title, item.ID, content.Lines)
 	case PanelProjectDetail:
 		project := m.CurrentProject()
@@ -1212,17 +1210,6 @@ func (m *Model) Panel() *RightPanel { return m.panel }
 func (m *Model) ClosePanel() {
 	m.panel = nil
 	m.spatialFocus = SpatialFocusList
-}
-
-func (m *Model) projectNameOf(item store.Item) string {
-	node := m.read.Queries().NodeFor(item)
-	if node == nil {
-		return ""
-	}
-	if section := projectSection(node); section != nil {
-		return section.Title
-	}
-	return ""
 }
 
 func (m *Model) projectTasks(project taskquery.ProjectView) []store.Item {

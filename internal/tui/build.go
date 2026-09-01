@@ -543,6 +543,15 @@ func buildOutline(request BuildRequest) []Row {
 func appendOutlineNode(request BuildRequest, rows []Row, node *taskquery.Node, depth int, band string) []Row {
 	indent := strings.Repeat("  ", depth)
 	if node.Section() {
+		// Closed sections are hidden unless the reader has asked for them, and
+		// hiding is transparent — children carry on at the same depth, so an
+		// open task under a closed project stays visible.
+		if node.HasClosed && !request.ShowClosed {
+			for _, child := range node.Children {
+				rows = appendOutlineNode(request, rows, child, depth, band)
+			}
+			return rows
+		}
 		// Only a TOP-LEVEL section opens with a blank line. A nested project
 		// heading is part of its parent's block, and spacing every one of them
 		// turned a list of four projects into a screenful of air — the reader
@@ -745,6 +754,10 @@ func outlineSectionRow(request BuildRequest, node *taskquery.Node, depth int) Ro
 	if depth > 0 {
 		slot = "project"
 	}
+	if node.HasClosed {
+		slot = "muted"
+		marker = styler.Paint("muted", marker)
+	}
 	// A section heading spends the BAND column on its own chevron. A section is
 	// not due; the cell that would carry its urgency is free, and putting the
 	// chevron there is what pulls the headings out to the left edge where the
@@ -799,7 +812,16 @@ func outlineShows(request BuildRequest, item store.Item) bool {
 // onto nothing is a lie about the tree.
 func outlineRenders(request BuildRequest, node *taskquery.Node) bool {
 	for _, child := range node.Children {
-		if child.Section() || outlineShows(request, *child.Item) {
+		if child.Section() {
+			if child.HasClosed && !request.ShowClosed {
+				if outlineRenders(request, child) {
+					return true
+				}
+				continue
+			}
+			return true
+		}
+		if outlineShows(request, *child.Item) {
 			return true
 		}
 		if outlineRenders(request, child) {
@@ -858,6 +880,9 @@ func outlineHiddenClosedCount(request BuildRequest, node *taskquery.Node) int {
 	}
 	total := 0
 	for _, child := range node.Children {
+		if child.Section() && child.HasClosed {
+			total++
+		}
 		if child.Task() && isClosedState(child.Item.State) {
 			total++
 		}
@@ -877,7 +902,13 @@ func outlineHiddenClosedCount(request BuildRequest, node *taskquery.Node) int {
 func outlineDescendantCount(request BuildRequest, node *taskquery.Node) int {
 	total := 0
 	for _, child := range node.Children {
-		if child.Section() || outlineShows(request, *child.Item) {
+		if child.Section() {
+			if child.HasClosed && !request.ShowClosed {
+				total += outlineDescendantCount(request, child)
+				continue
+			}
+			total++
+		} else if outlineShows(request, *child.Item) {
 			total++
 		}
 		total += outlineDescendantCount(request, child)
@@ -912,6 +943,12 @@ func outlineHiddenNote(request BuildRequest, rows []Row) []Row {
 			hidden++
 		}
 	}
+	// Also count hidden closed sections that have no task representation in Items.
+	if request.Queries != nil {
+		for _, node := range request.Queries.Tree().Roots {
+			hidden += countHiddenClosedSections(request, node)
+		}
+	}
 	if hidden == 0 {
 		return rows
 	}
@@ -922,6 +959,17 @@ func outlineHiddenNote(request BuildRequest, rows []Row) []Row {
 	// and the shared meta column has to find the same width under it.
 	return append(rows, withMeta(request, headerRow(request.styler().Paint("muted",
 		fmt.Sprintf("%s%d closed hidden · C shows", placeholderIndent, hidden))), "", ""))
+}
+
+func countHiddenClosedSections(request BuildRequest, node *taskquery.Node) int {
+	total := 0
+	if node.Section() && node.HasClosed && !request.ShowClosed {
+		total++
+	}
+	for _, child := range node.Children {
+		total += countHiddenClosedSections(request, child)
+	}
+	return total
 }
 
 // -- projects --------------------------------------------------------------
@@ -939,7 +987,7 @@ func buildProjects(request BuildRequest) []Row {
 		if len(request.Items) == 0 {
 			message = "No active projects."
 		}
-		return []Row{headerRow(styler.Paint("muted", message))}
+		return projectsHiddenNote(request, []Row{headerRow(styler.Paint("muted", message))})
 	}
 	// Tree mode (design 6b): the outline only shows what is LIVE. A project with
 	// work under it is a foldable heading with its outliner body beneath; every
@@ -974,7 +1022,7 @@ func buildProjects(request BuildRequest) []Row {
 		for _, project := range members {
 			project := project
 			anchors := query.SortNodes(anchorsForProject(request, project))
-			if len(anchors) == 0 {
+			if len(anchors) == 0 && !project.HasClosed {
 				dormant = append(dormant, project)
 				continue
 			}
@@ -1176,7 +1224,15 @@ func projectsFlat(request BuildRequest) []Row {
 // section reads as one tree.
 func projectRow(request BuildRequest, project taskquery.ProjectView, marker string) string {
 	styler := request.styler()
-	head := strings.Repeat(" ", BandField) + marker + styler.Paint("project", project.Title)
+	titleSlot := "project"
+	if project.HasClosed {
+		titleSlot = "muted"
+		marker = styler.Paint("muted", marker)
+	}
+	head := strings.Repeat(" ", BandField) + marker + styler.Paint(titleSlot, project.Title)
+	if project.HasClosed {
+		head += styler.Paint("muted", fmt.Sprintf("  · %s %s", project.State, project.Closed))
+	}
 	if project.Stuck && !projectFinished(request, project) {
 		head += styler.Paint("warning", "  ⚠ stuck")
 	}
@@ -1269,7 +1325,15 @@ func projectsHiddenClosedCount(request BuildRequest) int {
 		return hidden
 	}
 	hidden := 0
-	for _, project := range request.Projects {
+	// The ordinary request deliberately excludes closed projects, so use the
+	// explicit inclusive query for the reveal promise. Count the hidden project
+	// heading itself as well as any closed task rows beneath it; this matches the
+	// Outline's vocabulary and makes C discoverable even when the store contains
+	// only one empty closed project.
+	for _, project := range request.Queries.ProjectsIncluding(true) {
+		if project.Kind == "project" && project.HasClosed {
+			hidden++
+		}
 		hidden += projectHiddenClosedCount(request, project)
 	}
 	return hidden

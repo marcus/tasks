@@ -356,6 +356,14 @@ func (s *Server) dispatch(request *http.Request, requestID string) (response, er
 			if method == http.MethodPost {
 				return s.completeProject(request, id, requestID)
 			}
+		case "/drop":
+			if method == http.MethodPost {
+				return s.dropProject(request, id, requestID)
+			}
+		case "/reopen":
+			if method == http.MethodPost {
+				return s.reopenProject(request, id, requestID)
+			}
 		case "/archive":
 			if method == http.MethodPost {
 				return s.archiveProject(request, id, requestID)
@@ -374,7 +382,7 @@ var (
 	// The briefing has its own route for the same reason work_ref does: an
 	// owner correcting instructions should not have to restate the delegation.
 	delegationNotePath = regexp.MustCompile(`^/api/v1/tasks/([^/]+)/delegation_note$`)
-	projectPath        = regexp.MustCompile(`^/api/v1/projects/([^/]+?)(/complete|/archive)?$`)
+	projectPath        = regexp.MustCompile(`^/api/v1/projects/([^/]+?)(/complete|/drop|/reopen|/archive)?$`)
 )
 
 func validTaskID(value string) (string, error) {
@@ -405,6 +413,12 @@ func routeName(path string) string {
 	if completeRoute.MatchString(path) {
 		return "/api/v1/projects/{id}/complete"
 	}
+	if dropRoute.MatchString(path) {
+		return "/api/v1/projects/{id}/drop"
+	}
+	if reopenRoute.MatchString(path) {
+		return "/api/v1/projects/{id}/reopen"
+	}
 	if archiveRoute.MatchString(path) {
 		return "/api/v1/projects/{id}/archive"
 	}
@@ -417,6 +431,8 @@ func routeName(path string) string {
 var (
 	actionRoute   = regexp.MustCompile(`^/api/v1/tasks/[^/]+/(delegate|undelegate|claim|release|work_ref|delegation_note)$`)
 	completeRoute = regexp.MustCompile(`^/api/v1/projects/[^/]+/complete$`)
+	dropRoute     = regexp.MustCompile(`^/api/v1/projects/[^/]+/drop$`)
+	reopenRoute   = regexp.MustCompile(`^/api/v1/projects/[^/]+/reopen$`)
 	archiveRoute  = regexp.MustCompile(`^/api/v1/projects/[^/]+/archive$`)
 	projectRoute  = regexp.MustCompile(`^/api/v1/projects/[^/]+$`)
 )

@@ -506,7 +506,8 @@ func (m *Model) modalConfirmationAvailable() bool {
 		return false
 	}
 	switch m.modal.Kind() {
-	case ModalProjectCompleteConfirm, ModalProjectArchiveConfirm,
+	case ModalProjectCompleteConfirm, ModalProjectArchiveConfirm, ModalProjectDropConfirm,
+		ModalProjectReopenConfirm,
 		ModalArchiveConfirm, ModalDeleteConfirm, ModalDeleteCascadeConfirm,
 		ModalAgentQueueCancel, ModalTaskDraftQuitConfirm, ModalAgentQuitConfirm,
 		ModalFieldModalQuitConfirm:
@@ -521,7 +522,8 @@ func (m *Model) modalConfirmationAcceptsEnter() bool {
 		return false
 	}
 	switch m.modal.Kind() {
-	case ModalProjectCompleteConfirm, ModalProjectArchiveConfirm,
+	case ModalProjectCompleteConfirm, ModalProjectArchiveConfirm, ModalProjectDropConfirm,
+		ModalProjectReopenConfirm,
 		ModalAgentQueueCancel, ModalTaskDraftQuitConfirm, ModalAgentQuitConfirm,
 		ModalFieldModalQuitConfirm:
 		return true
@@ -553,6 +555,10 @@ func (m *Model) modalConfirmationKey(sequence string) tea.Cmd {
 	switch m.modal.Kind() {
 	case ModalProjectCompleteConfirm:
 		m.projectCompleteConfirmKey(sequence)
+	case ModalProjectDropConfirm:
+		m.projectDropConfirmKey(sequence)
+	case ModalProjectReopenConfirm:
+		m.projectReopenConfirmKey(sequence)
 	case ModalProjectArchiveConfirm:
 		m.projectArchiveConfirmKey(sequence)
 	case ModalArchiveConfirm:

@@ -12,14 +12,17 @@ import (
 // review's read: not "what should I do next" but "is anything I committed to
 // quietly stalled", which is what the `(stuck)` marker answers.
 func (s *surfaceContext) projects(args []string) int {
-	flags, rest, err := takeFlags(args, "--json")
+	flags, rest, err := takeFlags(args, "--json", "--closed", "--all")
 	if err != nil {
 		return abort(err.Error())
+	}
+	if flags["--closed"] && flags["--all"] {
+		return abort("--closed and --all cannot be combined")
 	}
 	// `projects` takes no arguments at all: a stray word is more likely a ref
 	// meant for `project show` than something to ignore.
 	if len(rest) > 0 {
-		return abort("usage: tasks projects [--json]")
+		return abort("usage: tasks projects [--json] [--closed|--all]")
 	}
 	queries, status := s.readQueries(args, "projects")
 	if status != 0 {
@@ -33,7 +36,19 @@ func (s *surfaceContext) projects(args []string) int {
 	if checked, err := s.store.CheckedReadSnapshot(); err != nil || !checked.OK() {
 		return abort("task file is invalid — run `tasks check`")
 	}
-	views := queries.Projects()
+	var views []taskquery.ProjectView
+	switch {
+	case flags["--closed"]:
+		for _, view := range queries.ProjectsIncluding(true) {
+			if view.HasClosed {
+				views = append(views, view)
+			}
+		}
+	case flags["--all"]:
+		views = queries.ProjectsIncluding(true)
+	default:
+		views = queries.Projects()
+	}
 
 	if flags["--json"] {
 		w := jsonout.New()
@@ -138,6 +153,12 @@ func writeProjectJSON(w *jsonout.Writer, view taskquery.ProjectView) {
 	w.KeyInt("held_count", view.HeldCount)
 	if view.HasBody {
 		w.KeyStr("body", view.Body)
+	}
+	if view.State != "" {
+		w.KeyStr("state", view.State)
+	}
+	if view.HasClosed {
+		w.KeyStr("closed", view.Closed)
 	}
 	w.Key("task_ids")
 	w.Strings(view.TaskIDs)

@@ -66,6 +66,9 @@ func (m *Model) handlers() map[string]func(key string) {
 		"open_recur_popup":              func(string) { m.OpenRecurPopup() },
 		"rename_project":                func(string) { m.RenameProject() },
 		"capture_into_project":          func(string) { m.CaptureIntoProject() },
+		"complete_project":              func(string) { m.CompleteProject() },
+		"drop_project":                  func(string) { m.DropProject() },
+		"reopen_project":                func(string) { m.ReopenProject() },
 		"archive_sweep":                 func(string) { m.ArchiveSweep() },
 		"undo_last":                     func(string) { m.UndoLast() },
 		"redo_last":                     func(string) { m.RedoLast() },
@@ -144,6 +147,12 @@ func (m *Model) availability(name string) bool {
 		return m.CurrentItem() != nil
 	case "project_selected?":
 		return m.CurrentProject() != nil
+	case "project_open_selected?":
+		project := m.CurrentProject()
+		return project != nil && !project.HasClosed
+	case "project_closed_selected?":
+		project := m.CurrentProject()
+		return project != nil && project.HasClosed
 	case "modal_filter_available?":
 		return m.modal != nil && m.modal.Filterable()
 	case "modal_navigation_available?":
@@ -983,6 +992,36 @@ func (m *Model) CloseForm(success bool) {
 
 // -- project confirmations -----------------------------------------------------------
 
+// CompleteProject is c on a project header.
+func (m *Model) CompleteProject() {
+	project := m.CurrentProject()
+	if project == nil {
+		m.Flash("select a project")
+		return
+	}
+	m.ConfirmCompleteProject(project)
+}
+
+// DropProject is the palette-only drop: it asks before cancelling.
+func (m *Model) DropProject() {
+	project := m.CurrentProject()
+	if project == nil {
+		m.Flash("select a project")
+		return
+	}
+	m.ConfirmDropProject(project)
+}
+
+// ReopenProject is r on a closed project header.
+func (m *Model) ReopenProject() {
+	project := m.CurrentProject()
+	if project == nil {
+		m.Flash("select a project")
+		return
+	}
+	m.ConfirmReopenProject(project)
+}
+
 // ConfirmCompleteProject asks before closing every open task in a section.
 func (m *Model) ConfirmCompleteProject(project *taskquery.ProjectView) {
 	if project == nil {
@@ -1056,6 +1095,94 @@ func (m *Model) projectCompleteConfirmKey(key string) {
 	case "n", "N", "\x1b", "q":
 		m.CloseModal()
 		m.Flash("complete cancelled")
+	}
+}
+
+func (m *Model) ConfirmDropProject(project *taskquery.ProjectView) {
+	if project == nil {
+		m.Flash("select a project")
+		return
+	}
+	held := *project
+	m.pendingProject = &held
+	plural := "s"
+	if project.OpenCount == 1 {
+		plural = ""
+	}
+	m.OpenModal(ModalContent{
+		Title: "Drop project",
+		Lines: []string{
+			fmt.Sprintf("Drop %d open task%s in %s?", project.OpenCount, plural, project.Title),
+			"",
+			m.styler.Paint("muted", "Press y to drop · n / esc cancels"),
+		},
+	}, ModalProjectDropConfirm, false)
+}
+
+func (m *Model) projectDropConfirmKey(key string) {
+	switch key {
+	case "y", "Y", "\r", "\n":
+		project := m.pendingProject
+		m.CloseModal()
+		if project == nil {
+			return
+		}
+		result := m.app.DropProject(project.ID, m.operation())
+		if !(result.OK() || result.NoChange()) {
+			m.Refresh()
+			m.Flash("project no longer exists")
+			return
+		}
+		closed := 0
+		if result.Project != nil {
+			closed = result.Project.Closed
+		}
+		m.Flash(fmt.Sprintf("✕ dropped %d in %s", closed, project.Title))
+		m.Refresh()
+		m.reselect(project.ID)
+	case "n", "N", "\x1b", "q":
+		m.CloseModal()
+		m.Flash("drop cancelled")
+	}
+}
+
+func (m *Model) ConfirmReopenProject(project *taskquery.ProjectView) {
+	if project == nil {
+		m.Flash("select a project")
+		return
+	}
+	held := *project
+	m.pendingProject = &held
+	m.OpenModal(ModalContent{
+		Title: "Reopen project",
+		Lines: []string{
+			fmt.Sprintf("Reopen %s? Its tasks stay in their current states.", project.Title),
+			"",
+			m.styler.Paint("muted", "Press y to reopen · n / esc cancels"),
+		},
+	}, ModalProjectReopenConfirm, false)
+}
+
+func (m *Model) projectReopenConfirmKey(key string) {
+	switch key {
+	case "y", "Y", "\r", "\n":
+		project := m.pendingProject
+		m.CloseModal()
+		if project == nil {
+			return
+		}
+		result := m.app.ReopenProject(project.ID, m.operation())
+		if !(result.OK() || result.NoChange()) {
+			m.Refresh()
+			m.Flash("project no longer exists")
+			return
+		}
+		m.Flash("↺ reopened " + project.Title)
+		m.Refresh()
+		m.reselect(project.ID)
+	case "n", "N", "\x1b", "q":
+		m.CloseModal()
+		m.Flash("reopen cancelled")
 	}
 }
 

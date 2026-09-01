@@ -1,6 +1,6 @@
 # Project lifecycle: open, closed, and where a project shows
 
-Status: planned; ready to implement.
+Status: implemented 2026-09-01.
 
 A project is a section under the top-level `Projects` root, and today a section
 has no lifecycle. `project complete` closes a project's descendant *tasks* and
@@ -200,9 +200,19 @@ reviewable.
   `"state":"DONE"`, and `tasks project show <ref>` still resolves it.
 - `tasks check` passes on the resulting file, and rejects a section stamped
   `NEXT` or stamped `DONE` with no `closed` date.
-- TUI visual proof under `docs/plans/active/evidence/`: Outline and Projects
+- TUI visual proof under `docs/plans/implemented/evidence/project-lifecycle/`: Outline and Projects
   before and after `C`, and a task detail rail in Agenda showing its `project`
   row.
+
+## Implementation evidence
+
+The implementation is covered by store, query, application, CLI, API, and TUI
+tests. The visual proof was captured from the worktree binaries against the
+fixture in `testdata/fixtures/project-lifecycle` on an isolated tmux server:
+
+- `outline-before-c.png` and `outline-after-c.png`
+- `projects-before-c.png` and `projects-after-c.png`
+- `agenda-project-detail.png`
 
 ## Settled decisions
 

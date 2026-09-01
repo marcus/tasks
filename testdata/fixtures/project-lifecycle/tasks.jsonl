@@ -1,0 +1,7 @@
+{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Projects"}
+{"type":"section","id":"aaaa0002","parent":"aaaa0001","title":"Active launch"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0002","state":"NEXT","title":"Prepare launch notes","deadline":"2026-09-03","tags":["@desk"]}
+{"type":"section","id":"aaaa0003","parent":"aaaa0001","state":"DONE","title":"Finished migration","closed":"2026-09-01"}
+{"type":"section","id":"aaaa0004","parent":"aaaa0001","state":"CANCELLED","title":"Dropped experiment","closed":"2026-09-01"}
+{"type":"task","id":"bbbb0002","parent":"aaaa0004","state":"NEXT","title":"Follow up after closure","deadline":"2026-09-02","tags":["@desk"]}
