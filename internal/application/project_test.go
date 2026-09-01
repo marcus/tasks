@@ -134,20 +134,23 @@ func TestProjectLifecycleCommandsShareApplicationOutcomes(t *testing.T) {
 	}
 }
 
-func TestApplicationRefusesLifecycleOnANonProjectSection(t *testing.T) {
+func TestApplicationLifecycleAcceptsAnOutlineSection(t *testing.T) {
 	script := &scriptedStore{completeFound: true, dropFound: true, reopenFound: true}
-	h := projectHarness(t, script, projectsFixture)
+	h := projectHarness(t, script, `{"type":"meta","version":2}
+{"type":"section","id":"cccc0001","title":"Work"}
+{"type":"section","id":"cccc0002","parent":"cccc0001","title":"Nested"}
+`)
 	for name, run := range map[string]func() Outcome{
-		"complete": func() Outcome { return h.app.CompleteProject("cccc0001", nil) },
-		"drop":     func() Outcome { return h.app.DropProject("cccc0001", nil) },
-		"reopen":   func() Outcome { return h.app.ReopenProject("cccc0001", nil) },
+		"complete": func() Outcome { return h.app.CompleteProject("cccc0002", nil) },
+		"drop":     func() Outcome { return h.app.DropProject("cccc0002", nil) },
+		"reopen":   func() Outcome { return h.app.ReopenProject("cccc0002", nil) },
 	} {
-		if result := run(); !result.NotFound() {
+		if result := run(); !result.OK() {
 			t.Errorf("%s status = %q", name, result.Status)
 		}
 	}
-	if len(script.calls) != 0 {
-		t.Fatalf("non-project reached store: %+v", script.calls)
+	if len(script.calls) != 3 {
+		t.Fatalf("outline section calls = %+v", script.calls)
 	}
 }
 

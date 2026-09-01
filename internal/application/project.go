@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/marcus/tasks/internal/store"
+	"github.com/marcus/tasks/internal/taskquery"
 )
 
 // Project mutations mapped to the shared outcome vocabulary, so a CLI and a
@@ -106,7 +107,7 @@ func (a *Application) CompleteProject(id string, operation *OperationContext) Ou
 	if refusal := unsupportedSchemaRefusal(target); refusal != nil {
 		return *refusal
 	}
-	before, found, err := a.GetProject(id, operation)
+	before, found, err := a.getSection(id, operation)
 	if err != nil {
 		return Outcome{MutationResult: store.MutationResult{
 			Status: store.MutationUnavailable, Errors: []string{store.UnavailableMessage(err)},
@@ -150,7 +151,7 @@ func (a *Application) DropProject(id string, operation *OperationContext) Outcom
 	if refusal := unsupportedSchemaRefusal(target); refusal != nil {
 		return *refusal
 	}
-	before, found, err := a.GetProject(id, operation)
+	before, found, err := a.getSection(id, operation)
 	if err != nil {
 		return Outcome{MutationResult: store.MutationResult{
 			Status: store.MutationUnavailable, Errors: []string{store.UnavailableMessage(err)},
@@ -195,7 +196,7 @@ func (a *Application) ReopenProject(id string, operation *OperationContext) Outc
 	if refusal := unsupportedSchemaRefusal(target); refusal != nil {
 		return *refusal
 	}
-	if _, found, err := a.GetProject(id, operation); err != nil {
+	if _, found, err := a.getSection(id, operation); err != nil {
 		return Outcome{MutationResult: store.MutationResult{
 			Status: store.MutationUnavailable, Errors: []string{store.UnavailableMessage(err)},
 		}}
@@ -222,6 +223,21 @@ func (a *Application) ReopenProject(id string, operation *OperationContext) Outc
 		}
 	}
 	return Outcome{MutationResult: store.MutationResult{Status: store.MutationOK}}
+}
+
+// getSection validates the shared lifecycle target without imposing an
+// adapter's narrower vocabulary. CLI and HTTP project routes resolve only
+// projects, areas, and saved lists before they call this boundary; the Outline
+// also exposes nested section rows, which have always used the same lifecycle
+// mutations. Keeping that distinction here preserves one core without making
+// the TUI's valid section rows disappear behind a project-only lookup.
+func (a *Application) getSection(id string, operation *OperationContext) (taskquery.ProjectView, bool, error) {
+	queries, err := a.Queries(false, operation)
+	if err != nil {
+		return taskquery.ProjectView{}, false, err
+	}
+	view, found := queries.SectionView(id)
+	return view, found, nil
 }
 
 // ArchiveProject sweeps a project's subtree into the archive and reports the

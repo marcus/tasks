@@ -1312,6 +1312,27 @@ func TestOutlineRenamesASelectedSection(t *testing.T) {
 	}
 }
 
+func TestOutlineCompletesANestedSectionThroughTheSharedApplication(t *testing.T) {
+	live := `{"type":"meta","version":2}
+{"type":"section","id":"aaaa0001","title":"Work"}
+{"type":"section","id":"aaaa0002","parent":"aaaa0001","title":"Nested commitment"}
+{"type":"task","id":"bbbb0001","parent":"aaaa0002","state":"NEXT","title":"Finish it"}
+`
+	harness := newModelHarness(t, harnessOptions{live: live})
+	harness.model.SwitchView(ViewOutline)
+	harness.selectRowByID("aaaa0002")
+
+	harness.press('c')
+	if harness.model.modal == nil || harness.model.modal.Kind() != ModalProjectCompleteConfirm {
+		t.Fatal("c on a nested section did not open the lifecycle confirmation")
+	}
+	harness.press('y')
+	view, ok := harness.model.read.Queries().SectionView("aaaa0002")
+	if !ok || view.State != "DONE" || view.Closed == "" || view.OpenCount != 0 {
+		t.Fatalf("nested section lifecycle = %+v, found=%v", view, ok)
+	}
+}
+
 func TestOutlineEditsACalendarSectionsDates(t *testing.T) {
 	live := `{"type":"meta","version":2}
 {"type":"section","id":"aaaa0001","title":"Calendar / Hard Landscape"}
