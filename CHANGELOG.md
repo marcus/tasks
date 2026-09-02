@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.17.0] - 2026-09-02
+
+### Features
+
+- **A project has an open/closed lifecycle of its own.** (#22) Closing a project used to close its tasks and leave the section itself looking open forever. `tasks project complete <ref>` now stamps the section DONE with today's date in the same write that cascades DONE over its open descendants, and two new verbs finish the cycle: `project drop` (alias `project cancel`) does the same with CANCELLED, and `project reopen` clears state and closed date from the section while leaving its tasks untouched. The lifecycle is open, then closed, then archived, each step explicit: a closed project stays in the live file until `project archive` sweeps it. `tasks projects` excludes closed projects by default, `--closed` selects only them, `--all` shows both, and a closed project is never reported as stuck. `--json` carries `state` and `closed` when present, and a project ref resolves against closed projects too. Over the API, `GET /api/v1/projects` takes `?closed=exclude|include|only`, and `POST /api/v1/projects/{id}/drop` and `/reopen` join `/complete`. In the TUI, the Outline and the Projects tab hide closed projects transparently, so depth is unchanged and an open descendant hoists through a closed parent, and the existing session-only `C` toggle reveals them in place with the same muted styling closed tasks use. The detail rail now names the task's project in every view.
+
 ## [1.16.0] - 2026-08-27
 
 ### Features
