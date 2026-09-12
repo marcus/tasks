@@ -1,0 +1,175 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-labelledby="sequence-title sequence-description" data-theme="graphite" data-theme-appearance="light">
+  <title id="sequence-title">An HTTP Conditional Write Refused as Stale</title><desc id="sequence-description">PATCH /api/v1/tasks/{id} with an If-Match that no longer matches: the loopback gates pass, the precondition is present, but the store compares revisions under its lock and the adapter answers 412 with the current resource and a fresh ETag.</desc><metadata>{&quot;journeyId&quot;:&quot;http-conditional-write&quot;,&quot;provenance&quot;:&quot;Authored 2026-09-11 from cmd/tasks-api/main.go, internal/api/server.go (enforceHost, enforceOrigin, dispatch), internal/api/request.go (ifMatch, jsonBody), internal/api/write.go (updateTask, ensureStoreReady, staleRefusal), internal/api/read.go (readFailure), internal/api/seams.go, internal/store/changeset.go (ApplyChangeset, changesetRevisionError), internal/store/revision.go (taskRevision), and docs/api/openapi.yaml. Authored scenario, not a captured trace.&quot;,&quot;hiddenLanes&quot;:[],&quot;rows&quot;:[{&quot;id&quot;:&quot;gate&quot;,&quot;type&quot;:&quot;phase&quot;,&quot;messageIds&quot;:[&quot;request&quot;,&quot;host&quot;,&quot;origin&quot;,&quot;dispatch&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;client&quot;,&quot;gates&quot;,&quot;routes&quot;]},{&quot;id&quot;:&quot;request&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;request&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;client&quot;,&quot;gates&quot;]},{&quot;id&quot;:&quot;host&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;host&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;gates&quot;,&quot;gates&quot;]},{&quot;id&quot;:&quot;origin&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;origin&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;gates&quot;,&quot;gates&quot;]},{&quot;id&quot;:&quot;dispatch&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;dispatch&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;gates&quot;,&quot;routes&quot;]},{&quot;id&quot;:&quot;precondition-phase&quot;,&quot;type&quot;:&quot;phase&quot;,&quot;messageIds&quot;:[&quot;ifmatch&quot;,&quot;expected&quot;,&quot;body&quot;,&quot;read&quot;,&quot;checked&quot;,&quot;checked-back&quot;,&quot;validate&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;routes&quot;,&quot;precondition&quot;,&quot;seams&quot;,&quot;snapshot&quot;]},{&quot;id&quot;:&quot;ifmatch&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;ifmatch&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;routes&quot;,&quot;precondition&quot;]},{&quot;id&quot;:&quot;expected&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;expected&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;precondition&quot;,&quot;routes&quot;]},{&quot;id&quot;:&quot;body&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;body&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;routes&quot;,&quot;routes&quot;]},{&quot;id&quot;:&quot;read&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;read&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;routes&quot;,&quot;seams&quot;]},{&quot;id&quot;:&quot;checked&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;checked&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;seams&quot;,&quot;snapshot&quot;]},{&quot;id&quot;:&quot;checked-back&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;checked-back&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;snapshot&quot;,&quot;routes&quot;]},{&quot;id&quot;:&quot;validate&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;validate&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;routes&quot;,&quot;routes&quot;]},{&quot;id&quot;:&quot;apply&quot;,&quot;type&quot;:&quot;phase&quot;,&quot;messageIds&quot;:[&quot;changeset&quot;,&quot;store-apply&quot;,&quot;lock-ex&quot;,&quot;compare&quot;,&quot;mismatch&quot;,&quot;stale&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;routes&quot;,&quot;seams&quot;,&quot;core&quot;,&quot;lock&quot;,&quot;revision&quot;]},{&quot;id&quot;:&quot;changeset&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;changeset&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;routes&quot;,&quot;seams&quot;]},{&quot;id&quot;:&quot;store-apply&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;store-apply&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;seams&quot;,&quot;core&quot;]},{&quot;id&quot;:&quot;lock-ex&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;lock-ex&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;core&quot;,&quot;lock&quot;]},{&quot;id&quot;:&quot;compare&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;compare&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;core&quot;,&quot;revision&quot;]},{&quot;id&quot;:&quot;mismatch&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;mismatch&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;revision&quot;,&quot;core&quot;]},{&quot;id&quot;:&quot;stale&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;stale&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;core&quot;,&quot;seams&quot;]},{&quot;id&quot;:&quot;refuse&quot;,&quot;type&quot;:&quot;phase&quot;,&quot;messageIds&quot;:[&quot;stale-refusal&quot;,&quot;current&quot;,&quot;response&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;routes&quot;,&quot;precondition&quot;,&quot;seams&quot;,&quot;client&quot;]},{&quot;id&quot;:&quot;stale-refusal&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;stale-refusal&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;routes&quot;,&quot;precondition&quot;]},{&quot;id&quot;:&quot;current&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;current&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;precondition&quot;,&quot;seams&quot;]},{&quot;id&quot;:&quot;response&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;response&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;routes&quot;,&quot;client&quot;]}]}</metadata>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#85857f"/></marker>
+    <marker id="arrow-open" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10" fill="none" stroke="#85857f" stroke-width="1.5"/></marker>
+  </defs>
+  <rect width="1920" height="1080" fill="#f8f8f6"/>
+  <g font-family="Arial, Helvetica, sans-serif" data-export-layer="title">
+    <text x="70" y="43" font-size="11" letter-spacing="2.5" fill="#626b6f">FRACTAL / SEQUENCE JOURNEY</text>
+    <text x="70" y="88" text-anchor="start" font-size="34" fill="#292927"><tspan x="70" dy="0">An HTTP Conditional Write Refused as Stale</tspan></text>
+    <text x="70" y="126" text-anchor="start" font-size="15" fill="#74746f"><tspan x="70" dy="0">PATCH /api/v1/tasks/{id} with an If-Match that no longer matches: the loopback gates pass, the precondition is present, but the store compares revisions under its lock and the adapter answers</tspan><tspan x="70" dy="19">412 with the current resource and a fresh ETag.</tspan></text>
+  </g>
+  <g font-family="Arial, Helvetica, sans-serif" transform="translate(597.2644667623147 190) scale(0.3634624581539933)"><g data-column="client" data-members="client" data-elements="external.http_client">
+    <rect x="102" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#B59669" stroke-width="2"/>
+    <text x="182" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="182" dy="0">Loopback Client</tspan></text>
+    <path d="M182 95V2021" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="gates" data-members="gates" data-elements="api.gates">
+    <rect x="306" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#B59669" stroke-width="2"/>
+    <text x="386" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="386" dy="0">Transport Gates</tspan></text>
+    <path d="M386 95V2021" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="routes" data-members="routes" data-elements="api.routes">
+    <rect x="510" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#B59669" stroke-width="2"/>
+    <text x="590" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="590" dy="0">Routes</tspan></text>
+    <path d="M590 95V2021" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="precondition" data-members="precondition" data-elements="api.precondition">
+    <rect x="714" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#B59669" stroke-width="2"/>
+    <text x="794" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="794" dy="0">If-Match</tspan></text>
+    <path d="M794 95V2021" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="seams" data-members="seams" data-elements="api.seams">
+    <rect x="918" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#B59669" stroke-width="2"/>
+    <text x="998" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="998" dy="0">Reader /</tspan><tspan x="998" dy="19">Changesets</tspan></text>
+    <path d="M998 95V2021" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="snapshot" data-members="snapshot" data-elements="store.snapshot">
+    <rect x="1122" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#89A579" stroke-width="2"/>
+    <text x="1202" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="1202" dy="0">Checked Read</tspan></text>
+    <path d="M1202 95V2021" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="core" data-members="core" data-elements="store.core">
+    <rect x="1326" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#89A579" stroke-width="2"/>
+    <text x="1406" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="1406" dy="0">Store</tspan><tspan x="1406" dy="19">Transaction</tspan></text>
+    <path d="M1406 95V2021" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="lock" data-members="lock" data-elements="store.lock">
+    <rect x="1530" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#89A579" stroke-width="2"/>
+    <text x="1610" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="1610" dy="0">Store Lock</tspan></text>
+    <path d="M1610 95V2021" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="revision" data-members="revision" data-elements="store.revision">
+    <rect x="1734" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#89A579" stroke-width="2"/>
+    <text x="1814" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="1814" dy="0">Revisions</tspan></text>
+    <path d="M1814 95V2021" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-row-id="gate" data-message-ids="request,host,origin,dispatch" data-participant-ids="client,gates,routes" data-row-type="phase" data-phase-depth="0" data-collapsed="false">
+        <rect x="58" y="137" width="1880" height="35" rx="10" fill="#eeeeeb" stroke="#d5d5d0"/>
+        <text x="78" y="160" text-anchor="start" font-size="15" fill="#292927"><tspan x="78" dy="0">1. Loopback gates</tspan></text>
+        
+        <text x="1896" y="158.5" text-anchor="end" font-size="11" fill="#7d7d77">4 interactions</text>
+      </g><g data-row-id="request" data-message-ids="request" data-participant-ids="client,gates" data-row-type="message" data-kind="call">
+      <rect x="104" y="186" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="284" y="209" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="284" dy="0">PATCH /api/v1/tasks/{id} · If-Match: &quot;&lt;revision</tspan><tspan x="284" dy="17">read earlier&gt;&quot; · application/json body</tspan></text>
+      
+      <path d="M182 240H378" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="host" data-message-ids="host" data-participant-ids="gates,gates" data-row-type="message" data-kind="call">
+      <rect x="206" y="265" width="360" height="69" rx="7" fill="#f8f8f6"/>
+      <text x="386" y="288" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="386" dy="0">enforceHost: Host must be 127.0.0.1:port or</tspan><tspan x="386" dy="17">localhost:port; any Forwarded header is 400</tspan></text>
+      
+      <path d="M 386 319 H 434 Q 440 319 440 325 V 333 Q 440 339 434 339 H 394" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="origin" data-message-ids="origin" data-participant-ids="gates,gates" data-row-type="message" data-kind="call">
+      <rect x="206" y="364" width="360" height="69" rx="7" fill="#f8f8f6"/>
+      <text x="386" y="387" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="386" dy="0">enforceOrigin: a browser Origin on a mutating</tspan><tspan x="386" dy="17">method must name this server, else 403</tspan></text>
+      
+      <path d="M 386 418 H 434 Q 440 418 440 424 V 432 Q 440 438 434 438 H 394" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="dispatch" data-message-ids="dispatch" data-participant-ids="gates,routes" data-row-type="message" data-kind="call">
+      <rect x="308" y="463" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="488" y="486" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="488" dy="0">dispatch: task path matches, id must be 8 hex</tspan></text>
+      
+      <path d="M386 502H582" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="precondition-phase" data-message-ids="ifmatch,expected,body,read,checked,checked-back,validate" data-participant-ids="routes,precondition,seams,snapshot" data-row-type="phase" data-phase-depth="0" data-collapsed="false">
+        <rect x="58" y="527" width="1880" height="35" rx="10" fill="#eeeeeb" stroke="#d5d5d0"/>
+        <text x="78" y="550" text-anchor="start" font-size="15" fill="#292927"><tspan x="78" dy="0">2. Precondition and body</tspan></text>
+        
+        <text x="1896" y="548.5" text-anchor="end" font-size="11" fill="#7d7d77">7 interactions</text>
+      </g><g data-row-id="ifmatch" data-message-ids="ifmatch" data-participant-ids="routes,precondition" data-row-type="message" data-kind="call">
+      <rect x="512" y="576" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="692" y="599" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="692" dy="0">ifMatch: missing is 428 missing_precondition;</tspan><tspan x="692" dy="17">unquoted or malformed is 422</tspan></text>
+      
+      <path d="M590 630H786" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="expected" data-message-ids="expected" data-participant-ids="precondition,routes" data-row-type="message" data-kind="return">
+      <rect x="512" y="655" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="692" y="678" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="692" dy="0">Expected revision token</tspan></text>
+      
+      <path d="M794 694H598" fill="none" stroke="#85857f" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+    </g><g data-row-id="body" data-message-ids="body" data-participant-ids="routes,routes" data-row-type="message" data-kind="call">
+      <rect x="410" y="719" width="360" height="69" rx="7" fill="#f8f8f6"/>
+      <text x="590" y="742" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="590" dy="0">jsonBody: 64 KiB limit, application/json only,</tspan><tspan x="590" dy="17">unknown fields refused, at least one change</tspan></text>
+      
+      <path d="M 590 773 H 638 Q 644 773 644 779 V 787 Q 644 793 638 793 H 598" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="read" data-message-ids="read" data-participant-ids="routes,seams" data-row-type="message" data-kind="call">
+      <rect x="614" y="818" width="360" height="68" rx="7" fill="#f8f8f6"/>
+      <text x="794" y="841" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="794" dy="0">Read(): a checked read for validation</tspan><tspan x="794" dy="17">(ensureStoreReady and staleRefusal each read</tspan><tspan x="794" dy="17">again; every read builds a fresh store)</tspan></text>
+      
+      <path d="M590 891H990" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="checked" data-message-ids="checked" data-participant-ids="seams,snapshot" data-row-type="message" data-kind="call">
+      <rect x="920" y="916" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="1100" y="939" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1100" dy="0">CheckedReadSnapshot: status, snapshot, global</tspan><tspan x="1100" dy="17">store revision</tspan></text>
+      
+      <path d="M998 970H1194" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="checked-back" data-message-ids="checked-back" data-participant-ids="snapshot,routes" data-row-type="message" data-kind="return">
+      <rect x="716" y="995" width="360" height="68" rx="7" fill="#f8f8f6"/>
+      <text x="896" y="1018" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="896" dy="0">Queries + revision (503 store_invalid,</tspan><tspan x="896" dy="17">unsupported_schema, or unavailable; never 409 on</tspan><tspan x="896" dy="17">the read path)</tspan></text>
+      
+      <path d="M1202 1068H598" fill="none" stroke="#85857f" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+    </g><g data-row-id="validate" data-message-ids="validate" data-participant-ids="routes,routes" data-row-type="message" data-kind="call">
+      <rect x="410" y="1093" width="360" height="69" rx="7" fill="#f8f8f6"/>
+      <text x="590" y="1116" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="590" dy="0">validatePatchBody and patchChanges: typed</tspan><tspan x="590" dy="17">changes in field order</tspan></text>
+      
+      <path d="M 590 1147 H 638 Q 644 1147 644 1153 V 1161 Q 644 1167 638 1167 H 598" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="apply" data-message-ids="changeset,store-apply,lock-ex,compare,mismatch,stale" data-participant-ids="routes,seams,core,lock,revision" data-row-type="phase" data-phase-depth="0" data-collapsed="false">
+        <rect x="58" y="1192" width="1880" height="35" rx="10" fill="#eeeeeb" stroke="#d5d5d0"/>
+        <text x="78" y="1215" text-anchor="start" font-size="15" fill="#292927"><tspan x="78" dy="0">3. Guarded changeset under the lock</tspan></text>
+        
+        <text x="1896" y="1213.5" text-anchor="end" font-size="11" fill="#7d7d77">6 interactions</text>
+      </g><g data-row-id="changeset" data-message-ids="changeset" data-participant-ids="routes,seams" data-row-type="message" data-kind="call">
+      <rect x="614" y="1241" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="794" y="1264" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="794" dy="0">ApplyChangeset{ID, Changes, ExpectedRevision:</tspan><tspan x="794" dy="17">expected}</tspan></text>
+      
+      <path d="M590 1295H990" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="store-apply" data-message-ids="store-apply" data-participant-ids="seams,core" data-row-type="message" data-kind="call">
+      <rect x="1022" y="1320" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="1202" y="1343" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1202" dy="0">store.ApplyChangeset on a fresh per-request</tspan><tspan x="1202" dy="17">store</tspan></text>
+      
+      <path d="M998 1374H1398" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="lock-ex" data-message-ids="lock-ex" data-participant-ids="core,lock" data-row-type="message" data-kind="call">
+      <rect x="1328" y="1399" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="1508" y="1422" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1508" dy="0">withLock LOCK_EX; strict preflight check; re-read</tspan><tspan x="1508" dy="17">records</tspan></text>
+      
+      <path d="M1406 1453H1602" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="compare" data-message-ids="compare" data-participant-ids="core,revision" data-row-type="message" data-kind="call">
+      <rect x="1430" y="1478" width="360" height="68" rx="7" fill="#f8f8f6"/>
+      <text x="1610" y="1501" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1610" dy="0">taskRevision v1.&lt;own&gt;.&lt;location&gt;.&lt;lifecycle&gt; vs</tspan><tspan x="1610" dy="17">ExpectedRevision: own always; location and</tspan><tspan x="1610" dy="17">lifecycle only when the change touches them</tspan></text>
+      
+      <path d="M1406 1551H1806" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="mismatch" data-message-ids="mismatch" data-participant-ids="revision,core" data-row-type="message" data-kind="return">
+      <rect x="1430" y="1576" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="1610" y="1599" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1610" dy="0">Mismatch: another writer changed this task since</tspan><tspan x="1610" dy="17">the client read it</tspan></text>
+      
+      <path d="M1814 1630H1414" fill="none" stroke="#85857f" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+    </g><g data-row-id="stale" data-message-ids="stale" data-participant-ids="core,seams" data-row-type="message" data-kind="return">
+      <rect x="1022" y="1655" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="1202" y="1678" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1202" dy="0">MutationResult{Status: stale}; nothing written,</tspan><tspan x="1202" dy="17">lock released</tspan></text>
+      
+      <path d="M1406 1709H1006" fill="none" stroke="#85857f" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+    </g><g data-row-id="refuse" data-message-ids="stale-refusal,current,response" data-participant-ids="routes,precondition,seams,client" data-row-type="phase" data-phase-depth="0" data-collapsed="false">
+        <rect x="58" y="1734" width="1880" height="35" rx="10" fill="#eeeeeb" stroke="#d5d5d0"/>
+        <text x="78" y="1757" text-anchor="start" font-size="15" fill="#292927"><tspan x="78" dy="0">4. Refuse with fresh state</tspan></text>
+        
+        <text x="1896" y="1755.5" text-anchor="end" font-size="11" fill="#7d7d77">3 interactions</text>
+      </g><g data-row-id="stale-refusal" data-message-ids="stale-refusal" data-participant-ids="routes,precondition" data-row-type="message" data-kind="call">
+      <rect x="512" y="1783" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="692" y="1806" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="692" dy="0">staleRefusal(id): re-read the current resource</tspan></text>
+      
+      <path d="M590 1822H786" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="current" data-message-ids="current" data-participant-ids="precondition,seams" data-row-type="message" data-kind="call">
+      <rect x="716" y="1847" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="896" y="1870" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="896" dy="0">Read(): current task and its revision</tspan></text>
+      
+      <path d="M794 1886H990" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="response" data-message-ids="response" data-participant-ids="routes,client" data-row-type="message" data-kind="return">
+      <rect x="206" y="1911" width="360" height="100" rx="7" fill="#f8f8f6"/>
+      <text x="386" y="1934" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="386" dy="0">412 stale_revision · details.current = canonical</tspan><tspan x="386" dy="17">task · ETag: &quot;&lt;fresh revision&gt;&quot; · x-request-id</tspan></text>
+      <text x="386" y="1975" text-anchor="middle" font-size="11" fill="#7d7d77"><tspan x="386" dy="0">The client can decide again without a second round trip. A</tspan><tspan x="386" dy="15">matching If-Match would instead have produced 200 with</tspan><tspan x="386" dy="15">the updated resource and its new ETag.</tspan></text>
+      <path d="M590 2016H190" fill="none" stroke="#85857f" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+    </g></g>
+  <g font-family="Arial, Helvetica, sans-serif" data-export-layer="footer">
+    <path d="M70 992H1850" stroke="#ddddda"/>
+    <text x="70" y="1027" font-size="12" font-weight="600" letter-spacing="1" fill="#626b6f">CURRENT · 20 INTERACTIONS</text>
+    <text x="620" y="1027" font-size="11" fill="#7d7d77">SOURCE · Authored 2026-09-11 from cmd/tasks-api/main.go, internal/api/server.go (enforceHost, enforceOrigin, dispatch), internal/api/request.go (ifMatch, jsonBody), internal/api/write.go (updateTask, ensureStoreReady, st…</text>
+  </g>
+  </svg>

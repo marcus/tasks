@@ -1,0 +1,199 @@
+{
+  "version": 1,
+  "id": "tasks",
+  "title": "Tasks",
+  "description": "One checked Go core for personal GTD lists over JSONL, with CLI, TUI, and loopback HTTP adapters.",
+  "provenance": "Authored 2026-09-11 from the Tasks codebase: the three composition roots (cmd/tasks, cmd/tasks-tui, cmd/tasks-api), pkg/tui, internal/*, docs/technical-architecture.md, docs/conventions.md, ADRs 0005/0006/0007/0010/0013/0015, and docs/plans/active. Relationships were traced through imports and call sites and then re-checked against `go list -deps` from every composition root; the same day an adversarial review corrected the first pass (dead term/frame packages, the merge-driver dispatch tier, the TUI adapter's non-blocking Pump, the harness reading task files). Known nuance recorded in the model: the CLI calls the store directly for every verb except capture and project complete/drop/reopen, which use the application facade; project create/rename/archive are also direct; the HTTP adapter uses two named store seams (checked read, changeset PATCH) documented in internal/api/seams.go and validates recurrence, lead, zone, and link inputs itself. Judgment calls: cli.prompt and tui.queue stay inside the agent-trust boundary as host-side orchestration that assembles prompts and spawns the harness, even though neither touches task data; store.journal is code, so it belongs to the persistence authority only and the durable-state boundary lists the on-disk XDG state directory instead. Parallel edges that make one claim share a title so the overview draws one line per claim; drilldowns keep every underlying relationship. Proposed content comes only from docs/plans/active. Not an exhaustive file inventory.",
+  "boundaries": [
+    {
+      "id": "persistence-invariants",
+      "title": "Persistence and invariant authority",
+      "description": "The only code allowed to write task files. Owns the lock, canonical bytes, schema-v2 invariants, atomic replacement, rollback, revisions, and history.",
+      "kind": "authority",
+      "members": [
+        "store.core",
+        "store.lock",
+        "store.snapshot",
+        "store.revision",
+        "store.record",
+        "store.check",
+        "store.atomic",
+        "store.journal",
+        "store.merge"
+      ],
+      "color": "#7DA86B"
+    },
+    {
+      "id": "durable-state",
+      "title": "On-disk durable state",
+      "description": "User-owned task data and non-precious XDG state. Task files are the source of truth; the journal and sessions are recoverable.",
+      "kind": "storage",
+      "members": [
+        "external.taskfiles",
+        "external.memory",
+        "external.statedir",
+        "tui.session"
+      ],
+      "color": "#C4913F"
+    },
+    {
+      "id": "agent-trust",
+      "title": "Agent and provider trust boundary",
+      "description": "Everything that assembles prompts for, spawns, or receives output from an autonomous harness. Agents read and act on task data only through the installed CLI; no private path crosses this line.",
+      "kind": "permission",
+      "members": [
+        "cli.prompt",
+        "tui.queue",
+        "agent.llm",
+        "agent.harnesses",
+        "agent.context",
+        "agent.facts",
+        "external.harness",
+        "external.provider",
+        "external.memory"
+      ],
+      "color": "#8E7CC3"
+    },
+    {
+      "id": "loopback-network",
+      "title": "Loopback network boundary",
+      "description": "127.0.0.1 only: no remote bind, no auth mode, Host and Origin allowlists, forwarded headers refused, conditional writes required on task resources.",
+      "kind": "network",
+      "members": [
+        "external.http_client",
+        "api.listener",
+        "api.gates",
+        "api.routes",
+        "api.precondition",
+        "api.seams"
+      ],
+      "color": "#C96A6A"
+    },
+    {
+      "id": "git-merge",
+      "title": "Git merge driver process",
+      "description": "Git invokes tasks merge-driver with stage files through the early dispatch tier; the merge is built and checked entirely in memory with no configured store before it replaces Git's ours copy.",
+      "kind": "process",
+      "members": [
+        "external.git",
+        "cli.mergedriver",
+        "store.merge"
+      ],
+      "color": "#5B8FC9"
+    }
+  ],
+  "scenes": [
+    {
+      "id": "overview",
+      "title": "One Core, Three Surfaces",
+      "description": "Tasks is a single checked Go core over JSONL files. The CLI, TUI, and loopback API are thin adapters; agents, Git, and Sidecar sit outside.",
+      "expanded": [],
+      "proposed": false,
+      "lens": "structure"
+    },
+    {
+      "id": "cli-inside",
+      "title": "Inside the tasks CLI",
+      "description": "Registry and dispatch tiers, the read, mutation, prompt, and maintenance verbs, and the merge-driver plumbing Git invokes. Which verbs use the facade and which call the store directly is stated on each card; the cli-mutation journey walks one write.",
+      "scope": "cli",
+      "expanded": [
+        "cli"
+      ],
+      "proposed": false,
+      "lens": "structure"
+    },
+    {
+      "id": "application-facade",
+      "title": "The Shared Application Core",
+      "description": "What every surface agrees on: the command facade and its owned store seam, the read models, query semantics, temporal rules, and link classification. Surfaces and the store sit outside this focus.",
+      "scope": "core",
+      "expanded": [
+        "core",
+        "application",
+        "query",
+        "temporal"
+      ],
+      "proposed": false,
+      "lens": "structure"
+    },
+    {
+      "id": "persistence-and-invariants",
+      "title": "Persistence and Invariants",
+      "description": "Inside the store: exclusive lock, canonical records, invariant checks, atomic replacement with rollback, revisions, the undo journal, and the Git merge driver that reuses them. tasks.jsonl itself sits outside this focus; the cli-mutation journey shows a write landing.",
+      "scope": "store",
+      "expanded": [
+        "store"
+      ],
+      "proposed": false,
+      "lens": "structure"
+    },
+    {
+      "id": "http-boundary",
+      "title": "The Loopback HTTP Boundary",
+      "description": "Inside tasks-api: the loopback listener, transport gates, explicit routes, the If-Match precondition, and the two named store seams. The client and store sit outside this focus; the HTTP journey walks the full path.",
+      "scope": "api",
+      "expanded": [
+        "api"
+      ],
+      "proposed": false,
+      "lens": "structure"
+    },
+    {
+      "id": "tui-and-embedding",
+      "title": "Inside tasks-tui and the pkg/tui Surface",
+      "description": "The standalone tasks-tui runtime, the shortcut registry, the agent prompt queue, session state, and the public pkg/tui surface a host such as Sidecar embeds.",
+      "scope": "tui",
+      "expanded": [
+        "tui"
+      ],
+      "proposed": false,
+      "lens": "structure"
+    },
+    {
+      "id": "agent-adapters",
+      "title": "Agent Adapters",
+      "description": "The provider seam: the harness contract, the built-in harnesses, the system context assembler, and prompt facts. The spawn-and-act path is the agent-prompt and tui-agent-queue journeys.",
+      "scope": "agent",
+      "expanded": [
+        "agent"
+      ],
+      "proposed": false,
+      "lens": "structure"
+    },
+    {
+      "id": "trust-who-writes",
+      "title": "Who May Write Task Files",
+      "description": "The persistence authority is the only code that writes tasks.jsonl and archive.jsonl; the durable on-disk state around it is either the source of truth or recoverable.",
+      "expanded": [
+        "store",
+        "external"
+      ],
+      "proposed": false,
+      "lens": "trust"
+    },
+    {
+      "id": "trust-containment",
+      "title": "Where Agents, HTTP, and Git Are Contained",
+      "description": "Autonomous harnesses act only through the installed CLI, HTTP stays on the loopback interface, and the merge driver runs inside Git with no configured store.",
+      "expanded": [
+        "cli",
+        "api",
+        "agent",
+        "external"
+      ],
+      "proposed": false,
+      "lens": "trust"
+    },
+    {
+      "id": "proposed-context-tree",
+      "title": "Proposed: Subtasks in Context-Filtered Views",
+      "description": "Planned TUI work from docs/plans/active: a matching descendant whose parent lacks the context keeps its ancestor chain, reusing the shared tree builder outside this focus. Sidecar's mapped-project capture defaults are the other open proposal, also outside this focus.",
+      "scope": "tui",
+      "expanded": [
+        "tui"
+      ],
+      "proposed": true,
+      "lens": "structure"
+    }
+  ]
+}

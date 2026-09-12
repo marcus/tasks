@@ -1,0 +1,170 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-labelledby="sequence-title sequence-description" data-theme="graphite" data-theme-appearance="light">
+  <title id="sequence-title">A Queued Agent Request in the TUI</title><desc id="sequence-description">The prompt queue probes availability at submit, builds a fresh system context when the request starts, checks for completion each tick while a goroutine drains the transcript, and the list re-reads the store rather than trusting anything the TUI knows.</desc><metadata>{&quot;journeyId&quot;:&quot;tui-agent-queue&quot;,&quot;provenance&quot;:&quot;Authored 2026-09-11 from internal/tui/agentprompt.go (SubmitPrompt, PumpQueue, advanceQueue), internal/tui/term/agent/queue.go (Enqueue, StartNext, Pump), internal/tui/bootstrap.go (BuildAgentQueue, AgentFactory, AgentAvailability, the only caller of agentcontext.Build, llm.Build, llm.LoadConfig, runtimepath.TasksCLI in the TUI), internal/tui/agentadapter.go (Pump as a non-blocking Done check), internal/llm/agent.go (Start, drain, Cancel), and internal/tui/model.go (Refresh, Stale). Authored scenario, not a captured trace.&quot;,&quot;hiddenLanes&quot;:[],&quot;rows&quot;:[{&quot;id&quot;:&quot;submit&quot;,&quot;type&quot;:&quot;phase&quot;,&quot;messageIds&quot;:[&quot;type&quot;,&quot;enqueue&quot;,&quot;probe&quot;,&quot;accepted&quot;,&quot;flash&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;dev&quot;,&quot;runtime&quot;,&quot;queue&quot;,&quot;llm&quot;]},{&quot;id&quot;:&quot;type&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;type&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;dev&quot;,&quot;runtime&quot;]},{&quot;id&quot;:&quot;enqueue&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;enqueue&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;runtime&quot;,&quot;queue&quot;]},{&quot;id&quot;:&quot;probe&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;probe&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;queue&quot;,&quot;llm&quot;]},{&quot;id&quot;:&quot;accepted&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;accepted&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;queue&quot;,&quot;runtime&quot;]},{&quot;id&quot;:&quot;flash&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;flash&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;runtime&quot;,&quot;dev&quot;]},{&quot;id&quot;:&quot;start&quot;,&quot;type&quot;:&quot;phase&quot;,&quot;messageIds&quot;:[&quot;startnext&quot;,&quot;factory-context&quot;,&quot;factory-build&quot;,&quot;spawn&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;runtime&quot;,&quot;queue&quot;,&quot;context&quot;,&quot;llm&quot;,&quot;harness&quot;]},{&quot;id&quot;:&quot;startnext&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;startnext&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;runtime&quot;,&quot;queue&quot;]},{&quot;id&quot;:&quot;factory-context&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;factory-context&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;queue&quot;,&quot;context&quot;]},{&quot;id&quot;:&quot;factory-build&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;factory-build&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;queue&quot;,&quot;llm&quot;]},{&quot;id&quot;:&quot;spawn&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;spawn&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;llm&quot;,&quot;harness&quot;]},{&quot;id&quot;:&quot;pump&quot;,&quot;type&quot;:&quot;phase&quot;,&quot;messageIds&quot;:[&quot;tick&quot;,&quot;pump-output&quot;,&quot;agent-cli&quot;,&quot;cli-write&quot;,&quot;activity&quot;,&quot;finished&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;runtime&quot;,&quot;queue&quot;,&quot;llm&quot;,&quot;harness&quot;,&quot;cli&quot;,&quot;files&quot;,&quot;dev&quot;]},{&quot;id&quot;:&quot;tick&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;tick&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;runtime&quot;,&quot;queue&quot;]},{&quot;id&quot;:&quot;pump-output&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;pump-output&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;queue&quot;,&quot;llm&quot;]},{&quot;id&quot;:&quot;agent-cli&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;agent-cli&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;harness&quot;,&quot;cli&quot;]},{&quot;id&quot;:&quot;cli-write&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;cli-write&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;cli&quot;,&quot;files&quot;]},{&quot;id&quot;:&quot;activity&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;activity&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;runtime&quot;,&quot;dev&quot;]},{&quot;id&quot;:&quot;finished&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;finished&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;llm&quot;,&quot;queue&quot;]},{&quot;id&quot;:&quot;refresh&quot;,&quot;type&quot;:&quot;phase&quot;,&quot;messageIds&quot;:[&quot;record-result&quot;,&quot;refresh-read&quot;,&quot;rows&quot;,&quot;advance&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;queue&quot;,&quot;runtime&quot;,&quot;readmodel&quot;]},{&quot;id&quot;:&quot;record-result&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;record-result&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;queue&quot;,&quot;runtime&quot;]},{&quot;id&quot;:&quot;refresh-read&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;refresh-read&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;runtime&quot;,&quot;readmodel&quot;]},{&quot;id&quot;:&quot;rows&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;rows&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;readmodel&quot;,&quot;runtime&quot;]},{&quot;id&quot;:&quot;advance&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;advance&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;runtime&quot;,&quot;queue&quot;]}]}</metadata>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#85857f"/></marker>
+    <marker id="arrow-open" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10" fill="none" stroke="#85857f" stroke-width="1.5"/></marker>
+  </defs>
+  <rect width="1920" height="1080" fill="#f8f8f6"/>
+  <g font-family="Arial, Helvetica, sans-serif" data-export-layer="title">
+    <text x="70" y="43" font-size="11" letter-spacing="2.5" fill="#626b6f">FRACTAL / SEQUENCE JOURNEY</text>
+    <text x="70" y="88" text-anchor="start" font-size="34" fill="#292927"><tspan x="70" dy="0">A Queued Agent Request in the TUI</tspan></text>
+    <text x="70" y="126" text-anchor="start" font-size="15" fill="#74746f"><tspan x="70" dy="0">The prompt queue probes availability at submit, builds a fresh system context when the request starts, checks for completion each tick while a goroutine drains the transcript, and the list</tspan><tspan x="70" dy="19">re-reads the store rather than trusting anything the TUI knows.</tspan></text>
+  </g>
+  <g font-family="Arial, Helvetica, sans-serif" transform="translate(539.0899001109879 190) scale(0.42175360710321863)"><g data-column="dev" data-members="dev" data-elements="developer">
+    <rect x="102" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#759EB5" stroke-width="2"/>
+    <text x="182" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="182" dy="0">Developer</tspan></text>
+    <path d="M182 95V1732" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="readmodel" data-members="readmodel" data-elements="application.readmodel">
+    <rect x="306" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#739886" stroke-width="2"/>
+    <text x="386" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="386" dy="0">Read Model</tspan></text>
+    <path d="M386 95V1732" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="runtime" data-members="runtime" data-elements="tui.runtime">
+    <rect x="510" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#759EB5" stroke-width="2"/>
+    <text x="590" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="590" dy="0">TUI Runtime</tspan></text>
+    <path d="M590 95V1732" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="queue" data-members="queue" data-elements="tui.queue">
+    <rect x="714" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#759EB5" stroke-width="2"/>
+    <text x="794" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="794" dy="0">Prompt Queue</tspan></text>
+    <path d="M794 95V1732" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="context" data-members="context" data-elements="agent.context">
+    <rect x="918" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#9A91C4" stroke-width="2"/>
+    <text x="998" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="998" dy="0">System Context</tspan></text>
+    <path d="M998 95V1732" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="llm" data-members="llm" data-elements="agent.llm">
+    <rect x="1122" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#9A91C4" stroke-width="2"/>
+    <text x="1202" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="1202" dy="0">Harness Contract</tspan></text>
+    <path d="M1202 95V1732" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="harness" data-members="harness" data-elements="external.harness">
+    <rect x="1326" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#9A91C4" stroke-width="2"/>
+    <text x="1406" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="1406" dy="0">Harness Process</tspan></text>
+    <path d="M1406 95V1732" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="cli" data-members="cli" data-elements="cli.dispatch">
+    <rect x="1530" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#82A6B6" stroke-width="2"/>
+    <text x="1610" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="1610" dy="0">Installed tasks</tspan><tspan x="1610" dy="19">CLI</tspan></text>
+    <path d="M1610 95V1732" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="files" data-members="files" data-elements="external.taskfiles">
+    <rect x="1734" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#89A579" stroke-width="2"/>
+    <text x="1814" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="1814" dy="0">tasks.jsonl</tspan></text>
+    <path d="M1814 95V1732" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-row-id="submit" data-message-ids="type,enqueue,probe,accepted,flash" data-participant-ids="dev,runtime,queue,llm" data-row-type="phase" data-phase-depth="0" data-collapsed="false">
+        <rect x="58" y="137" width="1880" height="35" rx="10" fill="#eeeeeb" stroke="#d5d5d0"/>
+        <text x="78" y="160" text-anchor="start" font-size="15" fill="#292927"><tspan x="78" dy="0">1. Submit</tspan></text>
+        
+        <text x="1896" y="158.5" text-anchor="end" font-size="11" fill="#7d7d77">5 interactions</text>
+      </g><g data-row-id="type" data-message-ids="type" data-participant-ids="dev,runtime" data-row-type="message" data-kind="call">
+      <rect x="206" y="186" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="386" y="209" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="386" dy="0">Type a prompt; Enter</tspan></text>
+      
+      <path d="M182 225H582" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="enqueue" data-message-ids="enqueue" data-participant-ids="runtime,queue" data-row-type="message" data-kind="call">
+      <rect x="512" y="250" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="692" y="273" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="692" dy="0">Enqueue(text, current provider:model entry)</tspan></text>
+      
+      <path d="M590 289H786" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="probe" data-message-ids="probe" data-participant-ids="queue,llm" data-row-type="message" data-kind="call">
+      <rect x="818" y="314" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="998" y="337" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="998" dy="0">Availability probe: Build without a system context,</tspan><tspan x="998" dy="17">then Available()</tspan></text>
+      
+      <path d="M794 368H1194" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="accepted" data-message-ids="accepted" data-participant-ids="queue,runtime" data-row-type="message" data-kind="return">
+      <rect x="512" y="393" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="692" y="416" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="692" dy="0">Accepted (or refused: full queue / unavailable</tspan><tspan x="692" dy="17">provider keeps the text)</tspan></text>
+      
+      <path d="M794 447H598" fill="none" stroke="#85857f" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+    </g><g data-row-id="flash" data-message-ids="flash" data-participant-ids="runtime,dev" data-row-type="message" data-kind="return">
+      <rect x="206" y="472" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="386" y="495" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="386" dy="0">Flash: starting agent request #n, or queued</tspan><tspan x="386" dy="17">behind the running one</tspan></text>
+      
+      <path d="M590 526H190" fill="none" stroke="#85857f" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+    </g><g data-row-id="start" data-message-ids="startnext,factory-context,factory-build,spawn" data-participant-ids="runtime,queue,context,llm,harness" data-row-type="phase" data-phase-depth="0" data-collapsed="false">
+        <rect x="58" y="551" width="1880" height="35" rx="10" fill="#eeeeeb" stroke="#d5d5d0"/>
+        <text x="78" y="574" text-anchor="start" font-size="15" fill="#292927"><tspan x="78" dy="0">2. Start the next request</tspan></text>
+        
+        <text x="1896" y="572.5" text-anchor="end" font-size="11" fill="#7d7d77">4 interactions</text>
+      </g><g data-row-id="startnext" data-message-ids="startnext" data-participant-ids="runtime,queue" data-row-type="message" data-kind="call">
+      <rect x="512" y="600" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="692" y="623" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="692" dy="0">StartNext (only when no adapter is running)</tspan></text>
+      
+      <path d="M590 639H786" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="factory-context" data-message-ids="factory-context" data-participant-ids="queue,context" data-row-type="message" data-kind="call">
+      <rect x="716" y="664" width="360" height="68" rx="7" fill="#f8f8f6"/>
+      <text x="896" y="687" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="896" dy="0">Factory (bootstrap.go): agentcontext.Build</tspan><tspan x="896" dy="17">fresh, so memory edits since the last request are</tspan><tspan x="896" dy="17">picked up</tspan></text>
+      
+      <path d="M794 737H990" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="factory-build" data-message-ids="factory-build" data-participant-ids="queue,llm" data-row-type="message" data-kind="call">
+      <rect x="818" y="762" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="998" y="785" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="998" dy="0">llm.Build(entry, {Root: data dir, System}) then</tspan><tspan x="998" dy="17">adapter.Start(prompt, model)</tspan></text>
+      
+      <path d="M794 816H1194" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="spawn" data-message-ids="spawn" data-participant-ids="llm,harness" data-row-type="message" data-kind="async">
+      <rect x="1124" y="841" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="1304" y="864" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1304" dy="0">Start: spawn in its own process group; a</tspan><tspan x="1304" dy="17">goroutine drains captured output until exit</tspan></text>
+      
+      <path d="M1202 895H1398" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow-open)"/>
+    </g><g data-row-id="pump" data-message-ids="tick,pump-output,agent-cli,cli-write,activity,finished" data-participant-ids="runtime,queue,llm,harness,cli,files,dev" data-row-type="phase" data-phase-depth="0" data-collapsed="false">
+        <rect x="58" y="920" width="1880" height="35" rx="10" fill="#eeeeeb" stroke="#d5d5d0"/>
+        <text x="78" y="943" text-anchor="start" font-size="15" fill="#292927"><tspan x="78" dy="0">3. Pump each tick</tspan></text>
+        
+        <text x="1896" y="941.5" text-anchor="end" font-size="11" fill="#7d7d77">6 interactions</text>
+      </g><g data-row-id="tick" data-message-ids="tick" data-participant-ids="runtime,queue" data-row-type="message" data-kind="call">
+      <rect x="512" y="969" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="692" y="992" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="692" dy="0">PumpQueue on the timer tick</tspan></text>
+      
+      <path d="M590 1008H786" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="pump-output" data-message-ids="pump-output" data-participant-ids="queue,llm" data-row-type="message" data-kind="call">
+      <rect x="818" y="1033" width="360" height="68" rx="7" fill="#f8f8f6"/>
+      <text x="998" y="1056" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="998" dy="0">adapter.Pump: non-blocking Done() check (no</tspan><tspan x="998" dy="17">output pumping; the drain goroutine owns the</tspan><tspan x="998" dy="17">transcript)</tspan></text>
+      
+      <path d="M794 1106H1194" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="agent-cli" data-message-ids="agent-cli" data-participant-ids="harness,cli" data-row-type="message" data-kind="call">
+      <rect x="1328" y="1131" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="1508" y="1154" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1508" dy="0">The harness runs tasks verbs against the same</tspan><tspan x="1508" dy="17">store</tspan></text>
+      
+      <path d="M1406 1185H1602" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="cli-write" data-message-ids="cli-write" data-participant-ids="cli,files" data-row-type="message" data-kind="call">
+      <rect x="1532" y="1210" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="1712" y="1233" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1712" dy="0">Checked transaction installs new bytes</tspan></text>
+      
+      <path d="M1610 1249H1806" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="activity" data-message-ids="activity" data-participant-ids="runtime,dev" data-row-type="message" data-kind="async">
+      <rect x="206" y="1274" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="386" y="1297" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="386" dy="0">Agent activity view shows the live transcript</tspan></text>
+      
+      <path d="M590 1313H190" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow-open)"/>
+    </g><g data-row-id="finished" data-message-ids="finished" data-participant-ids="llm,queue" data-row-type="message" data-kind="return">
+      <rect x="818" y="1338" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="998" y="1361" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="998" dy="0">Process finished: succeeded, failed, or cancelled</tspan></text>
+      
+      <path d="M1202 1377H802" fill="none" stroke="#85857f" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+    </g><g data-row-id="refresh" data-message-ids="record-result,refresh-read,rows,advance" data-participant-ids="queue,runtime,readmodel" data-row-type="phase" data-phase-depth="0" data-collapsed="false">
+        <rect x="58" y="1402" width="1880" height="35" rx="10" fill="#eeeeeb" stroke="#d5d5d0"/>
+        <text x="78" y="1425" text-anchor="start" font-size="15" fill="#292927"><tspan x="78" dy="0">4. Re-read, never trust</tspan></text>
+        
+        <text x="1896" y="1423.5" text-anchor="end" font-size="11" fill="#7d7d77">4 interactions</text>
+      </g><g data-row-id="record-result" data-message-ids="record-result" data-participant-ids="queue,runtime" data-row-type="message" data-kind="return">
+      <rect x="512" y="1451" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="692" y="1474" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="692" dy="0">Finished snapshot; response pane opens</tspan></text>
+      
+      <path d="M794 1490H598" fill="none" stroke="#85857f" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+    </g><g data-row-id="refresh-read" data-message-ids="refresh-read" data-participant-ids="runtime,readmodel" data-row-type="message" data-kind="call">
+      <rect x="308" y="1515" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="488" y="1538" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="488" dy="0">Refresh: ReadTasks (one fresh snapshot; Stale()</tspan><tspan x="488" dy="17">also fires on any external write)</tspan></text>
+      
+      <path d="M590 1569H394" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="rows" data-message-ids="rows" data-participant-ids="readmodel,runtime" data-row-type="message" data-kind="return">
+      <rect x="308" y="1594" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="488" y="1617" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="488" dy="0">Read model; rows rebuilt with selection preserved</tspan><tspan x="488" dy="17">by id</tspan></text>
+      
+      <path d="M386 1648H582" fill="none" stroke="#85857f" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+    </g><g data-row-id="advance" data-message-ids="advance" data-participant-ids="runtime,queue" data-row-type="message" data-kind="call">
+      <rect x="512" y="1673" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="692" y="1696" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="692" dy="0">advanceQueue: start the next pending request, if</tspan><tspan x="692" dy="17">any</tspan></text>
+      
+      <path d="M590 1727H786" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g></g>
+  <g font-family="Arial, Helvetica, sans-serif" data-export-layer="footer">
+    <path d="M70 992H1850" stroke="#ddddda"/>
+    <text x="70" y="1027" font-size="12" font-weight="600" letter-spacing="1" fill="#626b6f">CURRENT · 19 INTERACTIONS</text>
+    <text x="620" y="1027" font-size="11" fill="#7d7d77">SOURCE · Authored 2026-09-11 from internal/tui/agentprompt.go (SubmitPrompt, PumpQueue, advanceQueue), internal/tui/term/agent/queue.go (Enqueue, StartNext, Pump), internal/tui/bootstrap.go (BuildAgentQueue, AgentFacto…</text>
+  </g>
+  </svg>

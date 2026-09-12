@@ -1,0 +1,518 @@
+// Authored architecture for Tasks. Evidence paths are relative to the repository root.
+//
+// Coverage note: subsystems follow the implemented responsibilities under cmd/ and internal/
+// as wired by the three composition roots (cmd/tasks, cmd/tasks-tui, cmd/tasks-api) and the
+// public embedding package (pkg/tui). Sibling packages record/check/atomic/journal are grouped
+// under "Persistence & Invariants" because internal/store composes them; internal/merge is
+// grouped there as a sibling consumer of record/check/atomic (store does not import merge).
+// That grouping is a responsibility claim, not the directory layout. Planned work is #proposed.
+specification {
+  element subsystem
+  element component
+  element adapter
+  element service
+  element store
+  element actor
+  relationship calls
+  relationship sends
+  relationship reads
+  relationship writes
+  relationship streams
+  relationship manages
+  relationship renders
+  relationship supplies
+  relationship notifies
+  tag current
+  tag proposed
+}
+
+model {
+  developer = actor 'Developer' {
+    description 'Runs the tasks CLI from a shell and drives tasks-tui interactively.'
+    metadata { uid 'developer' fractalColor '#759EB5' evidence ['README.md', 'docs/cli-spec.md'] }
+  }
+
+  // -- Surfaces --------------------------------------------------------------------------------
+
+  cli = subsystem 'tasks CLI' {
+    description 'Scriptable, non-interactive surface: argv in, human text or byte-exact JSON out, over the shared core.'
+    technology 'Go, cmd/tasks'
+    metadata { uid 'cli' fractalColor '#82A6B6' evidence ['cmd/tasks/main.go', 'cmd/tasks/registry.go', 'docs/cli-spec.md'] }
+
+    dispatch = component 'Registry & Dispatch' {
+      description 'Verb registry, aliases, help, version. Only help, version, merge-driver, install-merge-driver run before config; all else needs a store.'
+      metadata { uid 'cli.dispatch' fractalColor '#82A6B6' evidence ['cmd/tasks/main.go', 'cmd/tasks/registry.go', 'cmd/tasks/help.go', 'cmd/tasks/version.go'] }
+    }
+
+    read = component 'Read & Render Commands' {
+      description 'list, show, agenda, next, quadrants, inbox, projects, links, id, workref: one snapshot, taskquery, text or --json. open shells out.'
+      metadata { uid 'cli.read' fractalColor '#82A6B6' evidence ['cmd/tasks/list.go', 'cmd/tasks/show.go', 'cmd/tasks/agenda.go', 'cmd/tasks/projects.go', 'cmd/tasks/open.go', 'cmd/tasks/render.go', 'cmd/tasks/itemjson.go'] }
+    }
+
+    mutate = component 'Mutation Commands' {
+      description 'capture and project complete, drop, reopen use the facade; every other verb calls the store directly. Baselines guard patches, changesets, delete.'
+      metadata { uid 'cli.mutate' fractalColor '#82A6B6' evidence ['cmd/tasks/mutcli.go', 'cmd/tasks/priority.go', 'cmd/tasks/capture.go', 'cmd/tasks/move.go', 'cmd/tasks/delete.go', 'cmd/tasks/delegate.go', 'cmd/tasks/project.go', 'cmd/tasks/undo.go'] }
+    }
+
+    prompt = component 'Agent Prompt (tasks -p)' {
+      description 'Builds the system context, runs the harness synchronously in the data directory, then prints git diff of the task files. No --json.'
+      metadata { uid 'cli.prompt' fractalColor '#82A6B6' evidence ['cmd/tasks/prompt.go', 'internal/agentdiff/agentdiff.go'] }
+    }
+
+    maintenance = component 'Check & Repair' {
+      description 'tasks check and repair over the store lint and repair entry points; both need a configured store like any other verb.'
+      metadata { uid 'cli.maintenance' fractalColor '#82A6B6' evidence ['cmd/tasks/check.go', 'cmd/tasks/repair.go', 'internal/store/lint.go', 'internal/store/repair.go'] }
+    }
+
+    mergedriver = component 'Merge Driver Plumbing' {
+      description 'merge-driver, the early verb Git invokes with stage files, and install-merge-driver, which sets merge.tasksjsonl and checks .gitattributes.'
+      metadata { uid 'cli.mergedriver' fractalColor '#82A6B6' evidence ['cmd/tasks/mergedriver.go', 'cmd/tasks/install_merge_driver.go'] }
+    }
+  }
+
+  tui = subsystem 'tasks-tui' {
+    description 'Bubble Tea v2 terminal client of the same application facade, shipped standalone and as an embeddable Go component.'
+    technology 'Go, Bubble Tea v2, cmd/tasks-tui + internal/tui + pkg/tui'
+    metadata { uid 'tui' fractalColor '#759EB5' evidence ['cmd/tasks-tui/main.go', 'internal/tui/bootstrap.go', 'docs/adr/0013-public-embeddable-tui-api.md'] }
+
+    runtime = component 'Runtime & Model Loop' {
+      description 'Builds the facade over a host-wired writer store; the model re-reads rows when the file stat changes or the local date rolls.'
+      metadata { uid 'tui.runtime' fractalColor '#759EB5' evidence ['internal/tui/bootstrap.go', 'internal/tui/model.go', 'cmd/tasks-tui/main.go'] }
+    }
+
+    rows = component 'Views, Rows & Task Panel' {
+      description 'Agenda, Next, Quadrants, Inbox, Projects, Outline rows, list actions, the read-first task panel, and save-on-blur edits.'
+      metadata { uid 'tui.views' fractalColor '#759EB5' evidence ['internal/tui/rows.go', 'internal/tui/viewquery.go', 'internal/tui/listactions.go', 'internal/tui/actions.go', 'internal/tui/delegation.go', 'internal/tui/panel.go', 'internal/tui/taskeditsession.go'] }
+    }
+
+    shortcuts = component 'Shortcut Registry & Commands' {
+      description 'Declarative registry of every key action with focus context and availability; exported to hosts and rendered in help.'
+      metadata { uid 'tui.shortcuts' fractalColor '#759EB5' evidence ['internal/tui/term/shortcuts/shortcuts.go', 'internal/tui/term/shortcuts/export.go', 'internal/tui/commands.go', 'internal/tui/keys.go'] }
+    }
+
+    chrome = component 'Terminal Primitives & Theme' {
+      description 'Styler seam over term/: theme slots, ANSI width and wrap, borders, buttons, key chips, scroll regions, status line, modals, forms.'
+      metadata { uid 'tui.chrome' fractalColor '#759EB5' evidence ['internal/tui/term/styler.go', 'internal/tui/term/theme/theme.go', 'internal/tui/term/border/border.go', 'internal/tui/term/ansi/ansi.go', 'internal/tui/chrome.go', 'internal/tui/layout.go', 'internal/tui/mouse.go', 'internal/tui/button.go', 'internal/tui/keychips.go', 'internal/tui/scrollregion.go', 'internal/tui/statusline.go', 'internal/tui/termform/form.go', 'docs/adr/0001-embedded-terminal-form-library.md', 'docs/plans/active/sidecar-style-modals.md'] }
+    }
+
+    queue = component 'Agent Prompt Queue' {
+      description 'Serial FIFO of prompt requests: probe at submit, fresh context at start, one running adapter, cancel, shutdown. Touches no task data.'
+      metadata { uid 'tui.queue' fractalColor '#759EB5' evidence ['internal/tui/term/agent/queue.go', 'internal/tui/agentprompt.go', 'internal/tui/agentadapter.go', 'internal/tui/bootstrap.go'] }
+    }
+
+    session = store 'Session State' {
+      description 'UI preference only (view, collapsed set, panel geometry, context filters) under the XDG state dir; an unreadable file yields the zero value.'
+      metadata { uid 'tui.session' fractalColor '#759EB5' evidence ['internal/tui/session.go'] }
+    }
+
+    embed = adapter 'Public Embeddable API (pkg/tui)' {
+      description 'Same runtime for a Go host: namespaced session, suppressed footer, quit and key hints, exported bindings, Invoke by ID, Close or Discard.'
+      technology 'Go module API'
+      metadata { uid 'tui.embed' fractalColor '#759EB5' evidence ['pkg/tui/tui.go', 'docs/adr/0013-public-embeddable-tui-api.md', 'docs/adr/0015-embeddable-tui-fixes-from-the-first-host.md', 'docs/guides/embedding-in-sidecar.md'] }
+    }
+
+    context_tree = component 'Context-Aware Subtree Rows' {
+      #proposed
+      description 'Planned: a matching descendant whose parent lacks the context keeps its minimal ancestor chain; direct matches already keep the tree.'
+      metadata { uid 'tui.context_tree' fractalColor '#759EB5' evidence ['docs/plans/active/subtasks-in-context-filtered-views.md', 'internal/tui/model.go'] }
+    }
+  }
+
+  api = subsystem 'tasks-api' {
+    description 'Loopback-only HTTP adapter over the shared core, specified by OpenAPI v1. No remote bind and no auth mode, by design.'
+    technology 'Go net/http, cmd/tasks-api + internal/api'
+    metadata { uid 'api' fractalColor '#B59669' evidence ['cmd/tasks-api/main.go', 'internal/api/server.go', 'docs/api/openapi.yaml', 'docs/adr/0006-net-http-transport.md'] }
+
+    listener = component 'Loopback Listener & Lifecycle' {
+      description 'Binds 127.0.0.1 only (port 4747), drains on SIGINT/SIGTERM; store factories yield a fresh store per access, not per request.'
+      metadata { uid 'api.listener' fractalColor '#B59669' evidence ['cmd/tasks-api/main.go', 'internal/api/seams.go'] }
+    }
+
+    gates = component 'Transport Gates' {
+      description 'Host allowlist, forwarded headers refused, Origin check on mutating methods, JSON media type, 64 KiB body limit, one error envelope.'
+      metadata { uid 'api.gates' fractalColor '#B59669' evidence ['internal/api/server.go', 'internal/api/request.go', 'internal/api/errors.go'] }
+    }
+
+    routes = component 'Routes & Representation' {
+      description 'Explicit dispatch: health, meta, sections, tasks, decisions, delegation, notes, projects, recurrence explain. Documented /views, /history, /events are unserved.'
+      metadata { uid 'api.routes' fractalColor '#B59669' evidence ['internal/api/server.go', 'internal/api/read.go', 'internal/api/write.go', 'internal/api/representation.go', 'internal/api/validate.go', 'docs/api/openapi.yaml'] }
+    }
+
+    precondition = component 'ETag / If-Match Precondition' {
+      description 'Every task-resource write needs a quoted If-Match (428 missing, 422 malformed); stale is 412 with the current resource. Project writes: none.'
+      metadata { uid 'api.precondition' fractalColor '#B59669' evidence ['internal/api/request.go', 'internal/api/write.go', 'docs/adr/0007-concurrency-and-revisions.md'] }
+    }
+
+    seams = adapter 'Checked Reader & Changeset Seams' {
+      description 'Two documented gaps in the facade: a checked read carrying the global store revision, and multi-field PATCH straight through the store changeset API.'
+      metadata { uid 'api.seams' fractalColor '#B59669' evidence ['internal/api/seams.go', 'internal/api/read.go'] }
+    }
+  }
+
+  // -- Shared core -----------------------------------------------------------------------------
+
+  core = subsystem 'Shared Application Core' {
+    description 'Transport-neutral rules every surface shares: command facade, read models, query and temporal semantics, links. Knows no argv, terminal, or HTTP.'
+    technology 'Go, internal/application + query + taskquery + temporal + recur + lead + links'
+    metadata { uid 'core' fractalColor '#739886' evidence ['internal/application/application.go', 'docs/adr/0005-application-boundary.md', 'docs/technical-architecture.md'] }
+
+    application = subsystem 'Application Facade' {
+      description 'Typed commands, composed operations, immutable read models, one outcome vocabulary, and the owned store seam.'
+      technology 'Go, internal/application'
+      metadata { uid 'application' fractalColor '#739886' evidence ['internal/application/application.go', 'docs/adr/0005-application-boundary.md'] }
+
+      commands = component 'Typed Commands' {
+        description 'CreateTask, typed patches, Update/Move changesets, DeleteTask, decisions, delegation follow-ups in one undo step, archive sweep, projects.'
+        metadata { uid 'application.commands' fractalColor '#739886' evidence ['internal/application/command.go', 'internal/application/create.go', 'internal/application/mutate.go', 'internal/application/delegate.go', 'internal/application/project.go'] }
+      }
+
+      readmodel = component 'Read Model & Queries' {
+        description 'ReadTasks captures one snapshot, its queries, and a file stat key; Stale() detects external writes without holding a store.'
+        metadata { uid 'application.readmodel' fractalColor '#739886' evidence ['internal/application/readmodel.go', 'internal/application/application.go'] }
+      }
+
+      outcomes = component 'Outcome Vocabulary' {
+        description 'ReadResult and Outcome: ok, no-change, not-found, stale, invalid, conflict, unavailable, unsupported schema, rolled back. Adapters translate.'
+        metadata { uid 'application.outcomes' fractalColor '#739886' evidence ['internal/application/result.go'] }
+      }
+
+      seam = adapter 'Store Seam & Capabilities' {
+        description 'The owned Store interface plus optional capability interfaces; a store lacking one yields a typed refusal, never different behavior.'
+        metadata { uid 'application.seam' fractalColor '#739886' evidence ['internal/application/store.go'] }
+      }
+    }
+
+    query = subsystem 'Query & Views' {
+      description 'Read-side semantics shared by every surface: the filter grammar and the derived answers (views, tree, availability, quadrants, projects).'
+      technology 'Go, internal/query + internal/taskquery'
+      metadata { uid 'query' fractalColor '#6FA39C' evidence ['internal/query/filter.go', 'internal/taskquery/queries.go'] }
+
+      filter = component 'Filter Grammar' {
+        description 'Scopes (open, proposed, done, archived, rejected, all), state and tag predicates, one Filter value from CLI or HTTP, coercion of bad records.'
+        metadata { uid 'query.filter' fractalColor '#6FA39C' evidence ['internal/query/filter.go', 'internal/query/coerce.go'] }
+      }
+
+      derivations = component 'Named Views & Derivations' {
+        description 'agenda, next, quadrants, inbox; the tree; ancestor-aware availability with lead gates; Covey quadrants; project views; link classes.'
+        metadata { uid 'query.views' fractalColor '#6FA39C' evidence ['internal/taskquery/queries.go', 'internal/taskquery/view.go', 'internal/taskquery/tree.go', 'internal/taskquery/quadrants.go', 'internal/taskquery/projects.go'] }
+      }
+    }
+
+    temporal = subsystem 'Temporal Semantics' {
+      description 'Stored dates with optional wall time and zone, the reader context that resolves them, zone detection, recurrence schedules, lead windows.'
+      technology 'Go, internal/temporal + timezones + recur + lead'
+      metadata { uid 'temporal' fractalColor '#D4A373' evidence ['internal/temporal/temporal.go', 'docs/adr/0010-temporal-values-and-time-zones.md'] }
+
+      values = component 'Temporal Values & Context' {
+        description 'A stored value never moves; the context (now, zone, time format) turns it into an instant, a rendering, or a release decision. Fuzzy parsing.'
+        metadata { uid 'temporal.values' fractalColor '#D4A373' evidence ['internal/temporal/temporal.go', 'internal/temporal/parser.go', 'internal/temporal/dates.go'] }
+      }
+
+      timezones = component 'Time Zone Resolution' {
+        description 'IANA gate; Detect walks TZ, /etc/localtime, then Etc/UTC. Config tries TASKS_TIMEZONE and the config file before Detect.'
+        metadata { uid 'temporal.timezones' fractalColor '#D4A373' evidence ['internal/timezones/timezones.go', 'internal/config/config.go'] }
+      }
+
+      recur = component 'Recurrence Schedules' {
+        description 'Interval cookies (+, ++, .+) and calendar schedules, canonical spelling, natural-language input, roll-forward when a recurring task completes.'
+        metadata { uid 'temporal.recur' fractalColor '#D4A373' evidence ['internal/recur/recur.go', 'internal/recur/calendar.go', 'internal/recur/roll.go', 'internal/recur/natural.go'] }
+      }
+
+      lead = component 'Lead-Time Windows' {
+        description 'How long before its anchor date a task becomes visible: calendar units gate at local midnight, the clock unit h gates on the instant.'
+        metadata { uid 'temporal.lead' fractalColor '#D4A373' evidence ['internal/lead/lead.go', 'internal/lead/parse.go'] }
+      }
+    }
+
+    links = component 'Links' {
+      description 'Formal task links plus the one classifier for org-mode and bare URLs in text, so show, links, open, the TUI opener, and the API agree.'
+      metadata { uid 'platform.links' fractalColor '#6FA39C' evidence ['internal/links/links.go'] }
+    }
+  }
+
+  // -- Persistence -----------------------------------------------------------------------------
+
+  persistence = subsystem 'Persistence & Invariants' {
+    description 'The one checked reader and writer over tasks.jsonl and archive.jsonl, plus the Git merge driver that reuses its records, checks, and atomic writes.'
+    technology 'Go, internal/store + record/check/atomic/journal/merge'
+    metadata { uid 'store' fractalColor '#89A579' evidence ['internal/store/store.go', 'internal/store/mutation.go', 'docs/conventions.md'] }
+
+    core = component 'Store Transactions' {
+      description 'Every mutation: exclusive lock, file snapshot, schema and preflight check, re-read, plan, serialize, stamp changed tasks, commit.'
+      metadata { uid 'store.core' fractalColor '#89A579' evidence ['internal/store/write.go', 'internal/store/mutation.go', 'internal/store/patch.go', 'internal/store/changeset.go', 'internal/store/placement.go', 'internal/store/delegation.go', 'internal/store/archive.go', 'internal/store/repair.go'] }
+    }
+
+    lock = component 'Advisory Store Lock' {
+      description 'flock on .tasks.jsonl.lock: exclusive for writers, shared for reads. Waits at most 5s, then refuses naming the holder pid and time.'
+      metadata { uid 'store.lock' fractalColor '#89A579' evidence ['internal/store/lock.go', 'docs/adr/0007-concurrency-and-revisions.md'] }
+    }
+
+    snapshot = component 'Snapshots & Checked Reads' {
+      description 'ReadSnapshot deep-copies live (and archive) records under the shared lock; CheckedReadSnapshot adds the store verdict and global revision.'
+      metadata { uid 'store.snapshot' fractalColor '#89A579' evidence ['internal/store/snapshot.go', 'internal/store/store.go'] }
+    }
+
+    revision = component 'Revisions & Update Stamps' {
+      description 'Per-task digests over own fields, location, and lifecycle; a global revision over exact bytes; sortable instant#device update stamps.'
+      metadata { uid 'store.revision' fractalColor '#89A579' evidence ['internal/store/revision.go', 'internal/updatestamp/updatestamp.go', 'internal/store/write.go'] }
+    }
+
+    record = component 'Canonical Records' {
+      description 'Order-preserving JSONL parser and canonical emitter: fixed key order, empties omitted, Ruby-compatible escaping, unknown keys kept.'
+      metadata { uid 'store.record' fractalColor '#89A579' evidence ['internal/record/parse.go', 'internal/record/emit.go', 'internal/record/mutate.go', 'docs/conventions.md'] }
+    }
+
+    check = component 'Invariant Checker' {
+      description 'Schema-v2 header, 8-hex ids, parent integrity, DFS pre-order, vocabularies. Runs before and after every write, on check, in the merge driver.'
+      metadata { uid 'store.check' fractalColor '#89A579' evidence ['internal/check/check.go', 'internal/check/validate.go', 'internal/store/lint.go'] }
+    }
+
+    atomic = component 'Atomic Replace' {
+      description 'Sibling temp file, fsync, rename over the resolved target, mode carried, directory fsynced: readers see the whole old file or the whole new.'
+      metadata { uid 'store.atomic' fractalColor '#89A579' evidence ['internal/atomic/atomic.go'] }
+    }
+
+    journal = component 'Content-Addressed Journal' {
+      description 'Undo/redo keyed by task-file path under the XDG state dir: sha-addressed blobs, an index with a cursor, coalescing scopes, tip-mismatch refusal.'
+      metadata { uid 'store.journal' fractalColor '#89A579' evidence ['internal/journal/journal.go', 'internal/journal/index.go', 'internal/journal/write.go', 'internal/store/history.go'] }
+    }
+
+    merge = component 'Git Merge Driver' {
+      description 'Three-way merge by stable id: fields combine, tags union, closed states win, stamps settle conflicts; dumped text is checked before it replaces ours.'
+      metadata { uid 'store.merge' fractalColor '#89A579' evidence ['internal/merge/merge.go', 'internal/merge/driver.go', 'internal/merge/order.go', 'docs/multi-device-sync.md'] }
+    }
+  }
+
+  taskfiles = store 'tasks.jsonl / archive.jsonl' {
+    description 'The source of truth: schema-v2 JSONL, one canonical record per line, tree by parent ids in DFS pre-order, in a user-owned Git repository.'
+    technology 'JSONL'
+    metadata { uid 'external.taskfiles' fractalColor '#89A579' evidence ['docs/conventions.md', 'examples/tasks.jsonl'] }
+  }
+
+  // -- Agent adapters --------------------------------------------------------------------------
+
+  agent = subsystem 'Agent Adapters' {
+    description 'The provider seam: a harness gets a prompt, a system context, and the data directory; Tasks re-reads the store afterwards. No private mutation path.'
+    technology 'Go, internal/llm + agentcontext + promptfacts + runtimepath'
+    metadata { uid 'agent' fractalColor '#9A91C4' evidence ['internal/llm/agent.go', 'internal/agentcontext/agentcontext.go'] }
+
+    llm = adapter 'Harness Contract & Registry' {
+      description 'One Agent spawns any Harness: RunSync (inherited stdio) for tasks -p; Start, drain goroutine, Done, Cancel for the TUI. Parses LLM config itself.'
+      metadata { uid 'agent.llm' fractalColor '#9A91C4' evidence ['internal/llm/agent.go', 'internal/llm/registry.go', 'internal/llm/config.go'] }
+    }
+
+    harnesses = adapter 'Built-in Harnesses' {
+      description 'claude-cli, hermes, cursor-cli in default order; each supplies a binary, a reachability probe (hermes GETs Ollama /api/tags), and argv.'
+      metadata { uid 'agent.harnesses' fractalColor '#9A91C4' evidence ['internal/llm/claudecli.go', 'internal/llm/hermes.go', 'internal/llm/cursorcli.go', 'internal/llm/registry.go'] }
+    }
+
+    context = component 'System Context Assembler' {
+      description 'One assembler for -p and the TUI: embedded TASK_AGENT.md, environment facts, the installed tasks path (never tasks-tui), agent-memory.md (16 KiB).'
+      metadata { uid 'agent.context' fractalColor '#9A91C4' evidence ['internal/agentcontext/agentcontext.go', 'internal/agentcontext/TASK_AGENT.md', 'internal/runtimepath/runtimepath.go'] }
+    }
+
+    facts = component 'Prompt Facts' {
+      description 'Config-toggled, ordered environment facts (datetime, hostname) under one heading; a failing provider is omitted, never fatal.'
+      metadata { uid 'agent.facts' fractalColor '#9A91C4' evidence ['internal/promptfacts/promptfacts.go'] }
+    }
+  }
+
+  // -- Platform --------------------------------------------------------------------------------
+
+  platform = subsystem 'Configuration & Harness Pins' {
+    description 'Seams the composition roots read once and inject downward: path and settings resolution, and the TASKS_PIN_* harness pins.'
+    technology 'Go, internal/config + determinism'
+    metadata { uid 'platform' fractalColor '#9AA5A0' evidence ['internal/config/config.go', 'internal/determinism/determinism.go'] }
+
+    config = component 'Configuration Resolution' {
+      description 'TASKS_FILE/ARCHIVE, then TASKS_DIR, then $XDG_CONFIG_HOME/tasks/config; no default data path, so unconfigured refuses. Settings have defaults.'
+      metadata { uid 'platform.config' fractalColor '#9AA5A0' evidence ['internal/config/config.go'] }
+    }
+
+    determinism = component 'Harness Pins' {
+      description 'TASKS_PIN_* pins (now, ids, coalesce scope, delegation keys, hostname) become injectable clock, id, and scope values; the store stays env-free.'
+      metadata { uid 'platform.determinism' fractalColor '#9AA5A0' evidence ['internal/determinism/determinism.go'] }
+    }
+  }
+
+  jsonout = component 'Ordered JSON Writer' {
+    description 'Byte-exact JSON documents (caller-ordered members, Ruby escape set) for every CLI --json verb and the HTTP envelope.'
+    technology 'Go, internal/jsonout'
+    metadata { uid 'platform.jsonout' fractalColor '#9AA5A0' evidence ['internal/jsonout/jsonout.go'] }
+  }
+
+  sidecar = service 'Sidecar (Embedding Host)' {
+    description 'The first Go host of pkg/tui: owns placement, size, chrome, key routing, lifecycle; Tasks owns config, data, rendering, agent processes.'
+    metadata { uid 'external.sidecar' fractalColor '#759EB5' evidence ['docs/plans/active/tasks-in-sidecar.md', 'docs/guides/embedding-in-sidecar.md', 'docs/adr/0015-embeddable-tui-fixes-from-the-first-host.md'] }
+  }
+
+  // -- External actors and stores --------------------------------------------------------------
+
+  external = subsystem 'External Actors & Stores' {
+    description 'Local clients, spawned agent processes, model servers, and the non-precious files beside the Tasks binaries.'
+    metadata { uid 'external' fractalColor '#B59669' evidence ['docs/technical-architecture.md'] }
+
+    http_client = actor 'Loopback HTTP Client' {
+      description 'A local script, tool, or UI process calling http://127.0.0.1:4747 with stable task ids, JSON bodies, and If-Match ETags.'
+      metadata { uid 'external.http_client' fractalColor '#B59669' evidence ['docs/api/openapi.yaml'] }
+    }
+
+    memory = store 'agent-memory.md' {
+      description 'Optional user-approved defaults beside tasks.jsonl (or via TASKS_MEMORY), injected into every agent context; edited only on explicit request.'
+      technology 'Markdown'
+      metadata { uid 'external.memory' fractalColor '#9A91C4' evidence ['examples/agent-memory.md', 'internal/agentcontext/agentcontext.go'] }
+    }
+
+    statedir = store 'XDG State Directory' {
+      description '$XDG_STATE_HOME/tasks: journal/<digest>/ per task file, tui.json, and hosts/<namespace>/tui.json. Persist-but-not-precious.'
+      technology 'Filesystem'
+      metadata { uid 'external.statedir' fractalColor '#89A579' evidence ['internal/journal/journal.go', 'internal/tui/session.go'] }
+    }
+
+    git = service 'Git' {
+      description 'Version control for the data repository; merge.tasksjsonl makes it invoke tasks merge-driver, and tasks -p diffs through it.'
+      metadata { uid 'external.git' fractalColor '#B59669' evidence ['docs/multi-device-sync.md', 'cmd/tasks/install_merge_driver.go'] }
+    }
+
+    harness = service 'Agent Harness Process' {
+      description 'The spawned claude, agent (Cursor), or hermes CLI in the data directory. It reads and mutates through tasks --json verbs, never the file.'
+      metadata { uid 'external.harness' fractalColor '#9A91C4' evidence ['internal/llm/agent.go', 'internal/agentcontext/TASK_AGENT.md'] }
+    }
+
+    provider = service 'LLM Provider or Local Model Server' {
+      description 'A hosted model API or a local Ollama-style server behind hermes. Tasks never calls a model for inference; hermes only probes reachability.'
+      metadata { uid 'external.provider' fractalColor '#9A91C4' evidence ['internal/llm/hermes.go', 'internal/llm/agent.go'] }
+    }
+  }
+
+  // -- Relationships ---------------------------------------------------------------------------
+  // Parallel edges that make the same claim share a title on purpose: Fractal merges rolled-up
+  // edges only when kind and title agree, so the overview shows one line per claim.
+
+  // Actors and hosts
+  developer .calls cli.dispatch 'Runs tasks verbs from a shell' { metadata { uid 'developer-cli' } }
+  developer .calls tui.runtime 'Drives tasks-tui interactively' { metadata { uid 'developer-tui' } }
+  external.http_client .calls api.gates 'HTTP requests to 127.0.0.1' { metadata { uid 'http-gates' } }
+  sidecar .calls tui.embed 'NewEmbedded, Update, View, Invoke, Close' { metadata { uid 'sidecar-embed' } }
+  sidecar .supplies tui.embed 'Mapped project and context as capture defaults' {
+    #proposed
+    metadata { uid 'sidecar-capture-defaults' }
+  }
+
+  // Composition roots read platform seams
+  cli.dispatch .reads platform.config 'Resolves paths, settings, and pins' { metadata { uid 'cli-config' } }
+  tui.runtime .reads platform.config 'Resolves paths, settings, and pins' { metadata { uid 'tui-config' } }
+  tui.embed .reads platform.config 'Resolves paths, settings, and pins' { metadata { uid 'embed-config' } }
+  api.listener .reads platform.config 'Resolves paths, settings, and pins' { metadata { uid 'api-config' } }
+  platform.config .reads platform.determinism 'Environment map and harness pins' { metadata { uid 'config-determinism' } }
+
+  // CLI internals
+  cli.dispatch .calls cli.read 'Dispatches read verbs' { metadata { uid 'dispatch-read' } }
+  cli.dispatch .calls cli.mutate 'Dispatches mutation verbs' { metadata { uid 'dispatch-mutate' } }
+  cli.dispatch .calls cli.prompt 'Dispatches -p' { metadata { uid 'dispatch-prompt' } }
+  cli.dispatch .calls cli.maintenance 'Dispatches check and repair' { metadata { uid 'dispatch-maintenance' } }
+  cli.dispatch .calls cli.mergedriver 'Early dispatch, before config resolves' { metadata { uid 'dispatch-mergedriver' } }
+  cli.read .calls core.query.filter 'Parses filters and answers views' { metadata { uid 'cliread-filter' } }
+  cli.read .calls core.query.derivations 'Parses filters and answers views' { metadata { uid 'cliread-views' } }
+  cli.read .calls persistence.snapshot 'Calls the store directly, not the facade' { metadata { uid 'cliread-snapshot' } }
+  cli.mutate .calls persistence.snapshot 'Calls the store directly, not the facade' { metadata { uid 'climutate-snapshot' } }
+  cli.mutate .calls persistence.core 'Calls the store directly, not the facade' { metadata { uid 'climutate-store' } }
+  cli.maintenance .calls persistence.core 'Calls the store directly, not the facade' { metadata { uid 'maint-core' } }
+  cli.mutate .calls core.application.commands 'capture, project complete, drop, reopen via the facade' { metadata { uid 'climutate-app' } }
+  cli.read .renders jsonout 'Emits --json documents' { metadata { uid 'cliread-jsonout' } }
+  cli.mutate .renders jsonout 'Emits --json documents' { metadata { uid 'climutate-jsonout' } }
+  cli.maintenance .renders jsonout 'Emits --json documents' { metadata { uid 'maint-jsonout' } }
+  cli.prompt .calls agent.context 'tasks -p: builds the context, runs the harness' { metadata { uid 'prompt-context' } }
+  cli.prompt .calls agent.llm 'tasks -p: builds the context, runs the harness' { metadata { uid 'prompt-llm' } }
+  cli.prompt .calls external.git 'git diff of the task files after the run' { metadata { uid 'prompt-git' } }
+  cli.mergedriver .calls persistence.merge 'RunDriver over the stage files' { metadata { uid 'mergedriver-merge' } }
+  external.git .calls cli.mergedriver 'Invokes tasks merge-driver %O %A %B %P %L %X %Y' { metadata { uid 'git-mergedriver' } }
+
+  // TUI internals
+  tui.embed .calls tui.runtime 'Builds the same runtime with Embedded options' { metadata { uid 'embed-runtime' } }
+  tui.embed .reads tui.shortcuts 'Exports bindings, commands, and contexts' { metadata { uid 'embed-shortcuts' } }
+  tui.runtime .calls core.application.readmodel 'Reads and writes only through the facade' { metadata { uid 'tuiruntime-readmodel' } }
+  tui.rows .calls core.application.commands 'Reads and writes only through the facade' { metadata { uid 'tuiviews-commands' } }
+  tui.runtime .calls persistence.check 'Store helpers outside the facade: format banner, atomic session save' { metadata { uid 'tuiruntime-check' } }
+  tui.session .calls persistence.atomic 'Store helpers outside the facade: format banner, atomic session save' { metadata { uid 'session-atomic' } }
+  tui.runtime .renders tui.rows 'Rebuilds rows from one read' { metadata { uid 'tuiruntime-views' } }
+  tui.runtime .calls tui.shortcuts 'Dispatches keys by focus context' { metadata { uid 'tuiruntime-shortcuts' } }
+  tui.runtime .calls tui.queue 'Submits prompts and checks the queue each tick' { metadata { uid 'tuiruntime-queue' } }
+  tui.runtime .writes tui.session 'Saves view, collapse, panel, contexts' { metadata { uid 'tuiruntime-session' } }
+  tui.rows .renders tui.chrome 'Paints frames, panels, forms, modals' { metadata { uid 'tuiviews-chrome' } }
+  tui.rows .calls tui.context_tree 'Builds rows under an active context filter' { metadata { uid 'tuiviews-contexttree' } }
+  tui.context_tree .calls core.query.derivations 'Reuses the tree builder with a state-free predicate' { metadata { uid 'contexttree-views' } }
+  tui.queue .calls agent.context 'Queued request: fresh context, then Start, Done, Cancel' { metadata { uid 'queue-context' } }
+  tui.queue .calls agent.llm 'Queued request: fresh context, then Start, Done, Cancel' { metadata { uid 'queue-llm' } }
+
+  // API internals
+  api.listener .calls api.gates 'Serves each request' { metadata { uid 'listener-gates' } }
+  api.gates .calls api.routes 'Dispatches gated requests' { metadata { uid 'gates-routes' } }
+  api.routes .calls api.precondition 'Requires If-Match on task writes' { metadata { uid 'routes-precondition' } }
+  api.routes .calls core.application.commands 'Create, delete, decisions, delegation, projects' { metadata { uid 'routes-commands' } }
+  api.routes .calls core.temporal.recur 'Validates recurrence, lead, zone, and link inputs directly' { metadata { uid 'routes-recur' } }
+  api.routes .calls core.temporal.lead 'Validates recurrence, lead, zone, and link inputs directly' { metadata { uid 'routes-lead' } }
+  api.routes .calls core.temporal.timezones 'Validates recurrence, lead, zone, and link inputs directly' { metadata { uid 'routes-timezones' } }
+  api.routes .calls core.links 'Validates recurrence, lead, zone, and link inputs directly' { metadata { uid 'routes-links' } }
+  api.routes .calls api.seams 'Checked reads and multi-field PATCH' { metadata { uid 'routes-seams' } }
+  api.routes .renders jsonout 'Renders envelopes and resources' { metadata { uid 'routes-jsonout' } }
+  api.seams .calls persistence.snapshot 'Two named seams: checked read, guarded changeset' { metadata { uid 'seams-snapshot' } }
+  api.seams .calls persistence.core 'Two named seams: checked read, guarded changeset' { metadata { uid 'seams-core' } }
+
+  // Application internals
+  core.application.commands .calls core.application.seam 'All persistence through the owned interface' { metadata { uid 'commands-seam' } }
+  core.application.commands .calls core.temporal.values 'Parses dates against the operation clock' { metadata { uid 'commands-temporal' } }
+  core.application.commands .notifies core.application.outcomes 'Reports one outcome per operation' { metadata { uid 'commands-outcomes' } }
+  core.application.readmodel .calls core.application.seam 'ReadSnapshot through the owned interface' { metadata { uid 'readmodel-seam' } }
+  core.application.readmodel .calls core.query.derivations 'Queries over the same snapshot' { metadata { uid 'readmodel-views' } }
+  core.application.seam .calls persistence.core 'A fresh store per operation behind the owned interface' { metadata { uid 'seam-core' } }
+  core.application.seam .calls persistence.snapshot 'A fresh store per operation behind the owned interface' { metadata { uid 'seam-snapshot' } }
+
+  // Query, temporal, and links internals
+  core.query.derivations .calls core.query.filter 'Applies filters to items' { metadata { uid 'views-filter' } }
+  core.query.derivations .calls core.temporal.values 'Resolves release and overdue instants' { metadata { uid 'views-temporal' } }
+  core.query.derivations .calls core.temporal.lead 'Lead-time visibility gates' { metadata { uid 'views-lead' } }
+  core.query.derivations .calls core.links 'Classifies links in bodies' { metadata { uid 'views-links' } }
+  core.temporal.values .calls core.temporal.timezones 'Resolves IANA zones' { metadata { uid 'temporal-timezones' } }
+  core.temporal.recur .calls core.temporal.values 'Rolls dates through the temporal context' { metadata { uid 'recur-values' } }
+  core.temporal.lead .calls core.temporal.values 'Gates on temporal dates' { metadata { uid 'lead-values' } }
+
+  // Store internals
+  persistence.core .calls persistence.lock 'Exclusive flock for every mutation' { metadata { uid 'core-lock' } }
+  persistence.snapshot .calls persistence.lock 'Shared flock for every snapshot' { metadata { uid 'snapshot-lock' } }
+  persistence.core .reads persistence.record 'Re-reads records under the lock' { metadata { uid 'core-record-read' } }
+  persistence.core .writes persistence.record 'Serializes the planned record set canonically' { metadata { uid 'core-record-emit' } }
+  persistence.core .calls persistence.check 'Preflight and post-write validation; failure rolls back' { metadata { uid 'core-check' } }
+  persistence.core .calls persistence.atomic 'Replaces the file all-or-nothing; restores on rollback, undo, redo' { metadata { uid 'core-atomic' } }
+  persistence.core .writes persistence.journal 'Records before/after snapshots after validation' { metadata { uid 'core-journal' } }
+  persistence.core .calls persistence.revision 'Compares expected revisions; stamps changed tasks' { metadata { uid 'core-revision' } }
+  persistence.core .calls core.temporal.recur 'Shared rules on write: recurrence roll, formal link checks' { metadata { uid 'core-recur' } }
+  persistence.core .calls core.links 'Shared rules on write: recurrence roll, formal link checks' { metadata { uid 'core-links' } }
+  persistence.snapshot .reads persistence.record 'Parses both files' { metadata { uid 'snapshot-record' } }
+  persistence.snapshot .calls persistence.check 'Validates for the checked read' { metadata { uid 'snapshot-check' } }
+  persistence.snapshot .calls persistence.revision 'Global revision of the exact bytes' { metadata { uid 'snapshot-revision' } }
+  persistence.snapshot .reads taskfiles 'Reads live and archive under the shared lock' { metadata { uid 'snapshot-taskfiles' } }
+  persistence.atomic .writes taskfiles 'Installs whole files: temp, fsync, rename' { metadata { uid 'atomic-taskfiles' } }
+  persistence.journal .writes external.statedir 'blobs/<sha> and index.json' { metadata { uid 'journal-statedir' } }
+  persistence.journal .calls persistence.atomic 'Writes blobs and index.json atomically' { metadata { uid 'journal-atomic' } }
+  persistence.merge .calls persistence.record 'Parses and emits both sides' { metadata { uid 'merge-record' } }
+  persistence.merge .calls persistence.check 'Checks the dumped text in memory' { metadata { uid 'merge-check' } }
+  persistence.merge .calls persistence.revision 'Compares updated stamps on same-field conflicts' { metadata { uid 'merge-revision' } }
+  persistence.merge .calls persistence.atomic 'Writes a validated result over the ours stage' { metadata { uid 'merge-atomic' } }
+
+  // Agent layer
+  agent.llm .calls agent.harnesses 'Argv and reachability per provider' { metadata { uid 'llm-harnesses' } }
+  agent.llm .manages external.harness 'Spawns the harness in the data directory; cancel via process group' { metadata { uid 'llm-harness' } }
+  agent.harnesses .calls external.provider 'Reachability probe before every run' { metadata { uid 'harnesses-provider' } }
+  agent.context .calls agent.facts 'Current environment block' { metadata { uid 'context-facts' } }
+  agent.context .reads external.memory 'Injects user-approved defaults, read fresh' { metadata { uid 'context-memory' } }
+  external.harness .calls external.provider 'Model requests' { metadata { uid 'harness-provider' } }
+  external.harness .calls cli.dispatch 'Reads and mutates only through the installed tasks CLI' { metadata { uid 'harness-cli' } }
+  external.harness .writes external.memory 'Edits defaults only on explicit request' { metadata { uid 'harness-memory' } }
+}
+
+views {
+  view index {
+    include *
+  }
+}

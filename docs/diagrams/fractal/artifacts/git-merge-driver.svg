@@ -1,0 +1,155 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-labelledby="sequence-title sequence-description" data-theme="graphite" data-theme-appearance="light">
+  <title id="sequence-title">Git Merges Two Devices&apos; Task Files</title><desc id="sequence-description">On a pull, Git hands the driver three stage files. The merge is built and validated entirely in memory; only a valid result replaces Git&apos;s copy, and a refusal leaves both sides fenced so nothing is silently discarded.</desc><metadata>{&quot;journeyId&quot;:&quot;git-merge-driver&quot;,&quot;provenance&quot;:&quot;Authored 2026-09-11 from cmd/tasks/main.go (early dispatch), cmd/tasks/registry.go (earlyCommands), cmd/tasks/mergedriver.go, cmd/tasks/install_merge_driver.go, internal/merge/driver.go (RunDriver, writeConflict, appendLog), internal/merge/merge.go (Merge: Dump then CheckText), internal/merge/order.go, and docs/multi-device-sync.md. Authored scenario, not a captured trace.&quot;,&quot;hiddenLanes&quot;:[],&quot;rows&quot;:[{&quot;id&quot;:&quot;setup&quot;,&quot;type&quot;:&quot;phase&quot;,&quot;messageIds&quot;:[&quot;install&quot;,&quot;configure&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;dev&quot;,&quot;dispatch&quot;,&quot;maintenance&quot;,&quot;git&quot;]},{&quot;id&quot;:&quot;install&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;install&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;dev&quot;,&quot;dispatch&quot;]},{&quot;id&quot;:&quot;configure&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;configure&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;maintenance&quot;,&quot;git&quot;]},{&quot;id&quot;:&quot;invoke&quot;,&quot;type&quot;:&quot;phase&quot;,&quot;messageIds&quot;:[&quot;pull&quot;,&quot;driver&quot;,&quot;early&quot;,&quot;run&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;dev&quot;,&quot;git&quot;,&quot;dispatch&quot;,&quot;maintenance&quot;,&quot;merge&quot;]},{&quot;id&quot;:&quot;pull&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;pull&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;dev&quot;,&quot;git&quot;]},{&quot;id&quot;:&quot;driver&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;driver&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;git&quot;,&quot;dispatch&quot;]},{&quot;id&quot;:&quot;early&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;early&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;dispatch&quot;,&quot;maintenance&quot;]},{&quot;id&quot;:&quot;run&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;run&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;maintenance&quot;,&quot;merge&quot;]},{&quot;id&quot;:&quot;merge-phase&quot;,&quot;type&quot;:&quot;phase&quot;,&quot;messageIds&quot;:[&quot;read&quot;,&quot;align&quot;,&quot;stamps&quot;,&quot;order&quot;,&quot;emit&quot;,&quot;validate&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;merge&quot;,&quot;record&quot;,&quot;revision&quot;,&quot;check&quot;]},{&quot;id&quot;:&quot;read&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;read&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;merge&quot;,&quot;record&quot;]},{&quot;id&quot;:&quot;align&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;align&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;merge&quot;,&quot;merge&quot;]},{&quot;id&quot;:&quot;stamps&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;stamps&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;merge&quot;,&quot;revision&quot;]},{&quot;id&quot;:&quot;order&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;order&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;merge&quot;,&quot;merge&quot;]},{&quot;id&quot;:&quot;emit&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;emit&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;merge&quot;,&quot;record&quot;]},{&quot;id&quot;:&quot;validate&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;validate&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;merge&quot;,&quot;check&quot;]},{&quot;id&quot;:&quot;outcome&quot;,&quot;type&quot;:&quot;phase&quot;,&quot;messageIds&quot;:[&quot;install-result&quot;,&quot;refuse&quot;,&quot;back-to-git&quot;,&quot;report&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;merge&quot;,&quot;atomic&quot;,&quot;maintenance&quot;,&quot;git&quot;,&quot;dev&quot;]},{&quot;id&quot;:&quot;install-result&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;install-result&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;merge&quot;,&quot;atomic&quot;]},{&quot;id&quot;:&quot;refuse&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;refuse&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;merge&quot;,&quot;merge&quot;]},{&quot;id&quot;:&quot;back-to-git&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;back-to-git&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;maintenance&quot;,&quot;git&quot;]},{&quot;id&quot;:&quot;report&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;report&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;git&quot;,&quot;dev&quot;]}]}</metadata>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#85857f"/></marker>
+    <marker id="arrow-open" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10" fill="none" stroke="#85857f" stroke-width="1.5"/></marker>
+  </defs>
+  <rect width="1920" height="1080" fill="#f8f8f6"/>
+  <g font-family="Arial, Helvetica, sans-serif" data-export-layer="title">
+    <text x="70" y="43" font-size="11" letter-spacing="2.5" fill="#626b6f">FRACTAL / SEQUENCE JOURNEY</text>
+    <text x="70" y="88" text-anchor="start" font-size="34" fill="#292927"><tspan x="70" dy="0">Git Merges Two Devices&apos; Task Files</tspan></text>
+    <text x="70" y="126" text-anchor="start" font-size="15" fill="#74746f"><tspan x="70" dy="0">On a pull, Git hands the driver three stage files. The merge is built and validated entirely in memory; only a valid result replaces Git&apos;s copy, and a refusal leaves both sides fenced so nothing is</tspan><tspan x="70" dy="19">silently discarded.</tspan></text>
+  </g>
+  <g font-family="Arial, Helvetica, sans-serif" transform="translate(539.5565410199556 190) scale(0.4212860310421286)"><g data-column="dev" data-members="dev" data-elements="developer">
+    <rect x="102" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#759EB5" stroke-width="2"/>
+    <text x="182" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="182" dy="0">Developer</tspan></text>
+    <path d="M182 95V1734" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="git" data-members="git" data-elements="external.git">
+    <rect x="306" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#B59669" stroke-width="2"/>
+    <text x="386" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="386" dy="0">Git</tspan></text>
+    <path d="M386 95V1734" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="dispatch" data-members="dispatch" data-elements="cli.dispatch">
+    <rect x="510" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#82A6B6" stroke-width="2"/>
+    <text x="590" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="590" dy="0">Registry &amp;</tspan><tspan x="590" dy="19">Dispatch</tspan></text>
+    <path d="M590 95V1734" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="maintenance" data-members="maintenance" data-elements="cli.mergedriver">
+    <rect x="714" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#82A6B6" stroke-width="2"/>
+    <text x="794" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="794" dy="0">merge-driver</tspan><tspan x="794" dy="19">Command</tspan></text>
+    <path d="M794 95V1734" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="merge" data-members="merge" data-elements="store.merge">
+    <rect x="918" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#89A579" stroke-width="2"/>
+    <text x="998" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="998" dy="0">Merge Driver</tspan></text>
+    <path d="M998 95V1734" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="record" data-members="record" data-elements="store.record">
+    <rect x="1122" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#89A579" stroke-width="2"/>
+    <text x="1202" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="1202" dy="0">Canonical Records</tspan></text>
+    <path d="M1202 95V1734" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="revision" data-members="revision" data-elements="store.revision">
+    <rect x="1326" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#89A579" stroke-width="2"/>
+    <text x="1406" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="1406" dy="0">Update Stamps</tspan></text>
+    <path d="M1406 95V1734" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="check" data-members="check" data-elements="store.check">
+    <rect x="1530" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#89A579" stroke-width="2"/>
+    <text x="1610" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="1610" dy="0">Invariant Checker</tspan></text>
+    <path d="M1610 95V1734" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="atomic" data-members="atomic" data-elements="store.atomic">
+    <rect x="1734" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#89A579" stroke-width="2"/>
+    <text x="1814" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="1814" dy="0">Atomic Replace</tspan></text>
+    <path d="M1814 95V1734" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-row-id="setup" data-message-ids="install,configure" data-participant-ids="dev,dispatch,maintenance,git" data-row-type="phase" data-phase-depth="0" data-collapsed="false">
+        <rect x="58" y="137" width="1880" height="35" rx="10" fill="#eeeeeb" stroke="#d5d5d0"/>
+        <text x="78" y="160" text-anchor="start" font-size="15" fill="#292927"><tspan x="78" dy="0">1. One-time setup</tspan></text>
+        
+        <text x="1896" y="158.5" text-anchor="end" font-size="11" fill="#7d7d77">2 interactions</text>
+      </g><g data-row-id="install" data-message-ids="install" data-participant-ids="dev,dispatch" data-row-type="message" data-kind="call">
+      <rect x="206" y="186" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="386" y="209" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="386" dy="0">tasks install-merge-driver (in the data</tspan><tspan x="386" dy="17">repository)</tspan></text>
+      
+      <path d="M182 240H582" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="configure" data-message-ids="configure" data-participant-ids="maintenance,git" data-row-type="message" data-kind="call">
+      <rect x="410" y="265" width="360" height="68" rx="7" fill="#f8f8f6"/>
+      <text x="590" y="288" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="590" dy="0">Verify .gitattributes selects merge=tasksjsonl;</tspan><tspan x="590" dy="17">git config merge.tasksjsonl.name and .driver =</tspan><tspan x="590" dy="17">&quot;&lt;tasks&gt; merge-driver %O %A %B %P %L %X %Y&quot;</tspan></text>
+      
+      <path d="M794 338H394" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="invoke" data-message-ids="pull,driver,early,run" data-participant-ids="dev,git,dispatch,maintenance,merge" data-row-type="phase" data-phase-depth="0" data-collapsed="false">
+        <rect x="58" y="363" width="1880" height="35" rx="10" fill="#eeeeeb" stroke="#d5d5d0"/>
+        <text x="78" y="386" text-anchor="start" font-size="15" fill="#292927"><tspan x="78" dy="0">2. Git invokes the driver</tspan></text>
+        
+        <text x="1896" y="384.5" text-anchor="end" font-size="11" fill="#7d7d77">4 interactions</text>
+      </g><g data-row-id="pull" data-message-ids="pull" data-participant-ids="dev,git" data-row-type="message" data-kind="call">
+      <rect x="104" y="412" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="284" y="435" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="284" dy="0">git pull (both devices edited tasks.jsonl)</tspan></text>
+      
+      <path d="M182 451H378" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="driver" data-message-ids="driver" data-participant-ids="git,dispatch" data-row-type="message" data-kind="call">
+      <rect x="308" y="476" width="360" height="68" rx="7" fill="#f8f8f6"/>
+      <text x="488" y="499" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="488" dy="0">tasks merge-driver %O %A %B %P %L %X %Y with</tspan><tspan x="488" dy="17">three temp stage files (4 to 7 args; wrong arity</tspan><tspan x="488" dy="17">exits 2)</tspan></text>
+      
+      <path d="M386 549H582" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="early" data-message-ids="early" data-participant-ids="dispatch,maintenance" data-row-type="message" data-kind="call">
+      <rect x="512" y="574" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="692" y="597" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="692" dy="0">Early dispatch with a nil surface context: no</tspan><tspan x="692" dy="17">configured store is resolved</tspan></text>
+      
+      <path d="M590 628H786" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="run" data-message-ids="run" data-participant-ids="maintenance,merge" data-row-type="message" data-kind="call">
+      <rect x="716" y="653" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="896" y="676" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="896" dy="0">RunDriver(args, stdout, stderr,</tspan><tspan x="896" dy="17">TASKS_MERGE_VERBOSE)</tspan></text>
+      
+      <path d="M794 707H990" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="merge-phase" data-message-ids="read,align,stamps,order,emit,validate" data-participant-ids="merge,record,revision,check" data-row-type="phase" data-phase-depth="0" data-collapsed="false">
+        <rect x="58" y="732" width="1880" height="35" rx="10" fill="#eeeeeb" stroke="#d5d5d0"/>
+        <text x="78" y="755" text-anchor="start" font-size="15" fill="#292927"><tspan x="78" dy="0">3. Merge and validate in memory</tspan></text>
+        
+        <text x="1896" y="753.5" text-anchor="end" font-size="11" fill="#7d7d77">6 interactions</text>
+      </g><g data-row-id="read" data-message-ids="read" data-participant-ids="merge,record" data-row-type="message" data-kind="call">
+      <rect x="920" y="781" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="1100" y="804" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1100" dy="0">Read and parse base, ours, theirs (UTF-8, schema</tspan><tspan x="1100" dy="17">v2 on both sides)</tspan></text>
+      
+      <path d="M998 835H1194" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="align" data-message-ids="align" data-participant-ids="merge,merge" data-row-type="message" data-kind="call">
+      <rect x="818" y="860" width="360" height="69" rx="7" fill="#f8f8f6"/>
+      <text x="998" y="883" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="998" dy="0">Align records by stable id; combine independent</tspan><tspan x="998" dy="17">fields; union tags; prefer progressed states</tspan></text>
+      
+      <path d="M 998 914 H 1046 Q 1052 914 1052 920 V 928 Q 1052 934 1046 934 H 1006" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="stamps" data-message-ids="stamps" data-participant-ids="merge,revision" data-row-type="message" data-kind="call">
+      <rect x="1022" y="959" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="1202" y="982" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1202" dy="0">Same-field conflict: compare updated stamps</tspan><tspan x="1202" dy="17">(instant#device), newer wins</tspan></text>
+      
+      <path d="M998 1013H1398" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="order" data-message-ids="order" data-participant-ids="merge,merge" data-row-type="message" data-kind="call">
+      <rect x="818" y="1038" width="360" height="69" rx="7" fill="#f8f8f6"/>
+      <text x="998" y="1061" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="998" dy="0">Ours-first ordering, then a DFS walk guaranteeing</tspan><tspan x="998" dy="17">parent-before-child</tspan></text>
+      
+      <path d="M 998 1092 H 1046 Q 1052 1092 1052 1098 V 1106 Q 1052 1112 1046 1112 H 1006" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="emit" data-message-ids="emit" data-participant-ids="merge,record" data-row-type="message" data-kind="call">
+      <rect x="920" y="1137" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="1100" y="1160" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1100" dy="0">Dump the merged record set to canonical text</tspan></text>
+      
+      <path d="M998 1176H1194" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="validate" data-message-ids="validate" data-participant-ids="merge,check" data-row-type="message" data-kind="call">
+      <rect x="1124" y="1201" width="360" height="68" rx="7" fill="#f8f8f6"/>
+      <text x="1304" y="1224" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1304" dy="0">CheckText over the dumped text (ids, parents,</tspan><tspan x="1304" dy="17">DFS pre-order, vocabularies); only a passing</tspan><tspan x="1304" dy="17">result carries text</tspan></text>
+      
+      <path d="M998 1274H1602" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="outcome" data-message-ids="install-result,refuse,back-to-git,report" data-participant-ids="merge,atomic,maintenance,git,dev" data-row-type="phase" data-phase-depth="0" data-collapsed="false">
+        <rect x="58" y="1299" width="1880" height="35" rx="10" fill="#eeeeeb" stroke="#d5d5d0"/>
+        <text x="78" y="1322" text-anchor="start" font-size="15" fill="#292927"><tspan x="78" dy="0">4. Replace or refuse</tspan></text>
+        
+        <text x="1896" y="1320.5" text-anchor="end" font-size="11" fill="#7d7d77">4 interactions</text>
+      </g><g data-row-id="install-result" data-message-ids="install-result" data-participant-ids="merge,atomic" data-row-type="message" data-kind="call">
+      <rect x="1226" y="1348" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="1406" y="1371" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1406" dy="0">Valid: atomic.Write(ours stage, merged text);</tspan><tspan x="1406" dy="17">append the decision to .tasks-merge.log; exit 0</tspan></text>
+      
+      <path d="M998 1402H1806" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="refuse" data-message-ids="refuse" data-participant-ids="merge,merge" data-row-type="message" data-kind="call">
+      <rect x="818" y="1427" width="360" height="139" rx="7" fill="#f8f8f6"/>
+      <text x="998" y="1450" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="998" dy="0">Invalid: os.WriteFile ours in place with both sides</tspan><tspan x="998" dy="17">inside conflict markers (deliberately not atomic);</tspan><tspan x="998" dy="17">log; exit 1</tspan></text>
+      <text x="998" y="1510" text-anchor="middle" font-size="11" fill="#7d7d77"><tspan x="998" dy="0">Refusal path. The path stays UU, tasks check fails on the</tspan><tspan x="998" dy="15">marker lines, and neither side has been summarized or</tspan><tspan x="998" dy="15">dropped.</tspan></text>
+      <path d="M 998 1551 H 1046 Q 1052 1551 1052 1557 V 1565 Q 1052 1571 1046 1571 H 1006" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="back-to-git" data-message-ids="back-to-git" data-participant-ids="maintenance,git" data-row-type="message" data-kind="return">
+      <rect x="410" y="1596" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="590" y="1619" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="590" dy="0">Exit status; Git copies the ours stage back over</tspan><tspan x="590" dy="17">the working file either way</tspan></text>
+      
+      <path d="M794 1650H394" fill="none" stroke="#85857f" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+    </g><g data-row-id="report" data-message-ids="report" data-participant-ids="git,dev" data-row-type="message" data-kind="return">
+      <rect x="104" y="1675" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="284" y="1698" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="284" dy="0">Merged cleanly, or a conflict to resolve through</tspan><tspan x="284" dy="17">the CLI</tspan></text>
+      
+      <path d="M386 1729H190" fill="none" stroke="#85857f" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+    </g></g>
+  <g font-family="Arial, Helvetica, sans-serif" data-export-layer="footer">
+    <path d="M70 992H1850" stroke="#ddddda"/>
+    <text x="70" y="1027" font-size="12" font-weight="600" letter-spacing="1" fill="#626b6f">CURRENT · 16 INTERACTIONS</text>
+    <text x="620" y="1027" font-size="11" fill="#7d7d77">SOURCE · Authored 2026-09-11 from cmd/tasks/main.go (early dispatch), cmd/tasks/registry.go (earlyCommands), cmd/tasks/mergedriver.go, cmd/tasks/install_merge_driver.go, internal/merge/driver.go (RunDriver, writeConflict…</text>
+  </g>
+  </svg>

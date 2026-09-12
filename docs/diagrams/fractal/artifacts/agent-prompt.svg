@@ -1,0 +1,175 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-labelledby="sequence-title sequence-description" data-theme="graphite" data-theme-appearance="light">
+  <title id="sequence-title">An Agent-Driven Change via tasks -p</title><desc id="sequence-description">tasks -p hands a request to a configured harness with the embedded list-agent contract. The harness acts through the installed tasks CLI, never a private path, and the developer sees the resulting git diff.</desc><metadata>{&quot;journeyId&quot;:&quot;agent-prompt&quot;,&quot;provenance&quot;:&quot;Authored 2026-09-11 from cmd/tasks/prompt.go, internal/agentcontext/agentcontext.go, internal/promptfacts/promptfacts.go, internal/runtimepath/runtimepath.go, internal/llm/agent.go (Build, Available, RunSync), internal/llm/registry.go (DefaultEntry), internal/agentdiff/agentdiff.go (Compute), and internal/agentcontext/TASK_AGENT.md. The harness&apos;s internal tool loop is summarized as one message pair. Authored scenario, not a captured trace.&quot;,&quot;hiddenLanes&quot;:[],&quot;rows&quot;:[{&quot;id&quot;:&quot;assemble&quot;,&quot;type&quot;:&quot;phase&quot;,&quot;messageIds&quot;:[&quot;invoke&quot;,&quot;gates&quot;,&quot;build-context&quot;,&quot;context-parts&quot;,&quot;context-back&quot;,&quot;resolve-entry&quot;,&quot;available&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;dev&quot;,&quot;prompt&quot;,&quot;context&quot;,&quot;llm&quot;]},{&quot;id&quot;:&quot;invoke&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;invoke&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;dev&quot;,&quot;prompt&quot;]},{&quot;id&quot;:&quot;gates&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;gates&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;prompt&quot;,&quot;prompt&quot;]},{&quot;id&quot;:&quot;build-context&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;build-context&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;prompt&quot;,&quot;context&quot;]},{&quot;id&quot;:&quot;context-parts&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;context-parts&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;context&quot;,&quot;context&quot;]},{&quot;id&quot;:&quot;context-back&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;context-back&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;context&quot;,&quot;prompt&quot;]},{&quot;id&quot;:&quot;resolve-entry&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;resolve-entry&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;prompt&quot;,&quot;llm&quot;]},{&quot;id&quot;:&quot;available&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;available&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;llm&quot;,&quot;llm&quot;]},{&quot;id&quot;:&quot;run&quot;,&quot;type&quot;:&quot;phase&quot;,&quot;messageIds&quot;:[&quot;runsync&quot;,&quot;spawn&quot;,&quot;model-call&quot;,&quot;model-back&quot;,&quot;agent-list&quot;,&quot;agent-mutate&quot;,&quot;cli-store&quot;,&quot;cli-back&quot;,&quot;transcript&quot;,&quot;exit&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;prompt&quot;,&quot;llm&quot;,&quot;harness&quot;,&quot;provider&quot;,&quot;cli&quot;,&quot;core&quot;,&quot;dev&quot;]},{&quot;id&quot;:&quot;runsync&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;runsync&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;prompt&quot;,&quot;llm&quot;]},{&quot;id&quot;:&quot;spawn&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;spawn&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;llm&quot;,&quot;harness&quot;]},{&quot;id&quot;:&quot;model-call&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;model-call&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;harness&quot;,&quot;provider&quot;]},{&quot;id&quot;:&quot;model-back&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;model-back&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;provider&quot;,&quot;harness&quot;]},{&quot;id&quot;:&quot;agent-list&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;agent-list&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;harness&quot;,&quot;cli&quot;]},{&quot;id&quot;:&quot;agent-mutate&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;agent-mutate&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;harness&quot;,&quot;cli&quot;]},{&quot;id&quot;:&quot;cli-store&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;cli-store&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;cli&quot;,&quot;core&quot;]},{&quot;id&quot;:&quot;cli-back&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;cli-back&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;cli&quot;,&quot;harness&quot;]},{&quot;id&quot;:&quot;transcript&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;transcript&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;harness&quot;,&quot;dev&quot;]},{&quot;id&quot;:&quot;exit&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;exit&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;harness&quot;,&quot;llm&quot;]},{&quot;id&quot;:&quot;show-diff&quot;,&quot;type&quot;:&quot;phase&quot;,&quot;messageIds&quot;:[&quot;compute-diff&quot;,&quot;git-diff&quot;,&quot;diff-back&quot;,&quot;done&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;prompt&quot;,&quot;git&quot;,&quot;dev&quot;]},{&quot;id&quot;:&quot;compute-diff&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;compute-diff&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;prompt&quot;,&quot;prompt&quot;]},{&quot;id&quot;:&quot;git-diff&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;git-diff&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;prompt&quot;,&quot;git&quot;]},{&quot;id&quot;:&quot;diff-back&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;diff-back&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;git&quot;,&quot;prompt&quot;]},{&quot;id&quot;:&quot;done&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;done&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;prompt&quot;,&quot;dev&quot;]}]}</metadata>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#85857f"/></marker>
+    <marker id="arrow-open" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10" fill="none" stroke="#85857f" stroke-width="1.5"/></marker>
+  </defs>
+  <rect width="1920" height="1080" fill="#f8f8f6"/>
+  <g font-family="Arial, Helvetica, sans-serif" data-export-layer="title">
+    <text x="70" y="43" font-size="11" letter-spacing="2.5" fill="#626b6f">FRACTAL / SEQUENCE JOURNEY</text>
+    <text x="70" y="88" text-anchor="start" font-size="34" fill="#292927"><tspan x="70" dy="0">An Agent-Driven Change via tasks -p</tspan></text>
+    <text x="70" y="126" text-anchor="start" font-size="15" fill="#74746f"><tspan x="70" dy="0">tasks -p hands a request to a configured harness with the embedded list-agent contract. The harness acts through the installed tasks CLI, never a private path, and the developer sees the</tspan><tspan x="70" dy="19">resulting git diff.</tspan></text>
+  </g>
+  <g font-family="Arial, Helvetica, sans-serif" transform="translate(588.9236790606653 190) scale(0.37181996086105673)"><g data-column="dev" data-members="dev" data-elements="developer">
+    <rect x="102" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#759EB5" stroke-width="2"/>
+    <text x="182" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="182" dy="0">Developer</tspan></text>
+    <path d="M182 95V1974" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="prompt" data-members="prompt" data-elements="cli.prompt">
+    <rect x="306" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#82A6B6" stroke-width="2"/>
+    <text x="386" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="386" dy="0">tasks -p</tspan></text>
+    <path d="M386 95V1974" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="context" data-members="context" data-elements="agent.context">
+    <rect x="510" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#9A91C4" stroke-width="2"/>
+    <text x="590" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="590" dy="0">System Context</tspan></text>
+    <path d="M590 95V1974" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="llm" data-members="llm" data-elements="agent.llm">
+    <rect x="714" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#9A91C4" stroke-width="2"/>
+    <text x="794" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="794" dy="0">Harness Contract</tspan></text>
+    <path d="M794 95V1974" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="harness" data-members="harness" data-elements="external.harness">
+    <rect x="918" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#9A91C4" stroke-width="2"/>
+    <text x="998" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="998" dy="0">Harness Process</tspan></text>
+    <path d="M998 95V1974" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="provider" data-members="provider" data-elements="external.provider">
+    <rect x="1122" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#9A91C4" stroke-width="2"/>
+    <text x="1202" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="1202" dy="0">LLM Provider</tspan></text>
+    <path d="M1202 95V1974" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="cli" data-members="cli" data-elements="cli.dispatch">
+    <rect x="1326" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#82A6B6" stroke-width="2"/>
+    <text x="1406" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="1406" dy="0">Installed tasks</tspan><tspan x="1406" dy="19">CLI</tspan></text>
+    <path d="M1406 95V1974" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="core" data-members="core" data-elements="store.core">
+    <rect x="1530" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#89A579" stroke-width="2"/>
+    <text x="1610" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="1610" dy="0">Store</tspan><tspan x="1610" dy="19">Transaction</tspan></text>
+    <path d="M1610 95V1974" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="git" data-members="git" data-elements="external.git">
+    <rect x="1734" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#B59669" stroke-width="2"/>
+    <text x="1814" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="1814" dy="0">Git</tspan></text>
+    <path d="M1814 95V1974" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-row-id="assemble" data-message-ids="invoke,gates,build-context,context-parts,context-back,resolve-entry,available" data-participant-ids="dev,prompt,context,llm" data-row-type="phase" data-phase-depth="0" data-collapsed="false">
+        <rect x="58" y="137" width="1880" height="35" rx="10" fill="#eeeeeb" stroke="#d5d5d0"/>
+        <text x="78" y="160" text-anchor="start" font-size="15" fill="#292927"><tspan x="78" dy="0">1. Assemble the context before spawning</tspan></text>
+        
+        <text x="1896" y="158.5" text-anchor="end" font-size="11" fill="#7d7d77">7 interactions</text>
+      </g><g data-row-id="invoke" data-message-ids="invoke" data-participant-ids="dev,prompt" data-row-type="message" data-kind="call">
+      <rect x="104" y="186" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="284" y="209" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="284" dy="0">tasks -p [--provider NAME] [--model NAME]</tspan><tspan x="284" dy="17">&quot;move the dentist task to next week&quot;</tspan></text>
+      
+      <path d="M182 240H378" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="gates" data-message-ids="gates" data-participant-ids="prompt,prompt" data-row-type="message" data-kind="call">
+      <rect x="206" y="265" width="360" height="69" rx="7" fill="#f8f8f6"/>
+      <text x="386" y="288" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="386" dy="0">Schema gate; leading --json refused (the result</tspan><tspan x="386" dy="17">is a transcript, not a document)</tspan></text>
+      
+      <path d="M 386 319 H 434 Q 440 319 440 325 V 333 Q 440 339 434 339 H 394" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="build-context" data-message-ids="build-context" data-participant-ids="prompt,context" data-row-type="message" data-kind="call">
+      <rect x="308" y="364" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="488" y="387" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="488" dy="0">Build(paths, runtimepath.TasksCLI(), sources)</tspan></text>
+      
+      <path d="M386 403H582" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="context-parts" data-message-ids="context-parts" data-participant-ids="context,context" data-row-type="message" data-kind="call">
+      <rect x="410" y="428" width="360" height="107" rx="7" fill="#f8f8f6"/>
+      <text x="590" y="451" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="590" dy="0">Embedded TASK_AGENT.md + Current environment</tspan><tspan x="590" dy="17">facts + absolute CLI/task/memory paths + memory</tspan><tspan x="590" dy="17">policy pointer + agent-memory.md (fresh, 16 KiB</tspan><tspan x="590" dy="17">budget)</tspan></text>
+      
+      <path d="M 590 520 H 638 Q 644 520 644 526 V 534 Q 644 540 638 540 H 598" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="context-back" data-message-ids="context-back" data-participant-ids="context,prompt" data-row-type="message" data-kind="return">
+      <rect x="308" y="565" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="488" y="588" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="488" dy="0">System context string (or an error naming an</tspan><tspan x="488" dy="17">oversize/unreadable memory file)</tspan></text>
+      
+      <path d="M590 619H394" fill="none" stroke="#85857f" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+    </g><g data-row-id="resolve-entry" data-message-ids="resolve-entry" data-participant-ids="prompt,llm" data-row-type="message" data-kind="call">
+      <rect x="410" y="644" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="590" y="667" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="590" dy="0">LoadConfig, DefaultEntry(provider, model, conf),</tspan><tspan x="590" dy="17">Build(entry, {Root: data dir, System})</tspan></text>
+      
+      <path d="M386 698H786" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="available" data-message-ids="available" data-participant-ids="llm,llm" data-row-type="message" data-kind="call">
+      <rect x="614" y="723" width="360" height="69" rx="7" fill="#f8f8f6"/>
+      <text x="794" y="746" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="794" dy="0">Available(): binary on PATH and harness</tspan><tspan x="794" dy="17">Reachable()</tspan></text>
+      
+      <path d="M 794 777 H 842 Q 848 777 848 783 V 791 Q 848 797 842 797 H 802" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="run" data-message-ids="runsync,spawn,model-call,model-back,agent-list,agent-mutate,cli-store,cli-back,transcript,exit" data-participant-ids="prompt,llm,harness,provider,cli,core,dev" data-row-type="phase" data-phase-depth="0" data-collapsed="false">
+        <rect x="58" y="822" width="1880" height="35" rx="10" fill="#eeeeeb" stroke="#d5d5d0"/>
+        <text x="78" y="845" text-anchor="start" font-size="15" fill="#292927"><tspan x="78" dy="0">2. The harness acts through the CLI</tspan></text>
+        
+        <text x="1896" y="843.5" text-anchor="end" font-size="11" fill="#7d7d77">10 interactions</text>
+      </g><g data-row-id="runsync" data-message-ids="runsync" data-participant-ids="prompt,llm" data-row-type="message" data-kind="call">
+      <rect x="410" y="871" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="590" y="894" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="590" dy="0">RunSync(request, model, stream=false)</tspan></text>
+      
+      <path d="M386 910H786" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="spawn" data-message-ids="spawn" data-participant-ids="llm,harness" data-row-type="message" data-kind="async">
+      <rect x="716" y="935" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="896" y="958" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="896" dy="0">exec harness argv with the system context, cwd =</tspan><tspan x="896" dy="17">data directory, inherited stdio</tspan></text>
+      
+      <path d="M794 989H990" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow-open)"/>
+    </g><g data-row-id="model-call" data-message-ids="model-call" data-participant-ids="harness,provider" data-row-type="message" data-kind="call">
+      <rect x="920" y="1014" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="1100" y="1037" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1100" dy="0">Model requests (the harness&apos;s own loop)</tspan></text>
+      
+      <path d="M998 1053H1194" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="model-back" data-message-ids="model-back" data-participant-ids="provider,harness" data-row-type="message" data-kind="return">
+      <rect x="920" y="1078" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="1100" y="1101" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1100" dy="0">Tool calls and text</tspan></text>
+      
+      <path d="M1202 1117H1006" fill="none" stroke="#85857f" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+    </g><g data-row-id="agent-list" data-message-ids="agent-list" data-participant-ids="harness,cli" data-row-type="message" data-kind="call">
+      <rect x="1022" y="1142" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="1202" y="1165" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1202" dy="0">tasks list --json / tasks show &lt;id&gt; --json (read</tspan><tspan x="1202" dy="17">to find the stable id)</tspan></text>
+      
+      <path d="M998 1196H1398" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="agent-mutate" data-message-ids="agent-mutate" data-participant-ids="harness,cli" data-row-type="message" data-kind="call">
+      <rect x="1022" y="1221" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="1202" y="1244" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1202" dy="0">tasks defer &lt;id&gt; &lt;date&gt; (the contract forbids</tspan><tspan x="1202" dy="17">hand-editing tasks.jsonl)</tspan></text>
+      
+      <path d="M998 1275H1398" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="cli-store" data-message-ids="cli-store" data-participant-ids="cli,core" data-row-type="message" data-kind="call">
+      <rect x="1328" y="1300" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="1508" y="1323" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1508" dy="0">Same checked transaction as a human command:</tspan><tspan x="1508" dy="17">lock, re-read, apply, validate, journal</tspan></text>
+      
+      <path d="M1406 1354H1602" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="cli-back" data-message-ids="cli-back" data-participant-ids="cli,harness" data-row-type="message" data-kind="return">
+      <rect x="1022" y="1379" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="1202" y="1402" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1202" dy="0">Headline or JSON result; exit code 0, 1, or 2</tspan></text>
+      
+      <path d="M1406 1418H1006" fill="none" stroke="#85857f" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+    </g><g data-row-id="transcript" data-message-ids="transcript" data-participant-ids="harness,dev" data-row-type="message" data-kind="async">
+      <rect x="410" y="1443" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="590" y="1466" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="590" dy="0">Transcript streams straight to the terminal</tspan></text>
+      
+      <path d="M998 1482H190" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow-open)"/>
+    </g><g data-row-id="exit" data-message-ids="exit" data-participant-ids="harness,llm" data-row-type="message" data-kind="return">
+      <rect x="716" y="1507" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="896" y="1530" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="896" dy="0">Process exit (non-zero is reported, not fatal)</tspan></text>
+      
+      <path d="M998 1546H802" fill="none" stroke="#85857f" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+    </g><g data-row-id="show-diff" data-message-ids="compute-diff,git-diff,diff-back,done" data-participant-ids="prompt,git,dev" data-row-type="phase" data-phase-depth="0" data-collapsed="false">
+        <rect x="58" y="1571" width="1880" height="35" rx="10" fill="#eeeeeb" stroke="#d5d5d0"/>
+        <text x="78" y="1594" text-anchor="start" font-size="15" fill="#292927"><tspan x="78" dy="0">3. Show what changed</tspan></text>
+        
+        <text x="1896" y="1592.5" text-anchor="end" font-size="11" fill="#7d7d77">4 interactions</text>
+      </g><g data-row-id="compute-diff" data-message-ids="compute-diff" data-participant-ids="prompt,prompt" data-row-type="message" data-kind="call">
+      <rect x="206" y="1620" width="360" height="88" rx="7" fill="#f8f8f6"/>
+      <text x="386" y="1643" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="386" dy="0">agentdiff.Compute{DataDir, Org, Archive,</tspan><tspan x="386" dy="17">Memory}: pick the files to diff; flag a relocated</tspan><tspan x="386" dy="17">memory file</tspan></text>
+      
+      <path d="M 386 1693 H 434 Q 440 1693 440 1699 V 1707 Q 440 1713 434 1713 H 394" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="git-diff" data-message-ids="git-diff" data-participant-ids="prompt,git" data-row-type="message" data-kind="call">
+      <rect x="920" y="1738" width="360" height="68" rx="7" fill="#f8f8f6"/>
+      <text x="1100" y="1761" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1100" dy="0">git -C &lt;data dir&gt; --no-pager diff -- &lt;absolute</tspan><tspan x="1100" dy="17">task files&gt; [memory]; untracked files via diff</tspan><tspan x="1100" dy="17">--no-index /dev/null</tspan></text>
+      
+      <path d="M386 1811H1806" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="diff-back" data-message-ids="diff-back" data-participant-ids="git,prompt" data-row-type="message" data-kind="return">
+      <rect x="920" y="1836" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="1100" y="1859" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1100" dy="0">Diff text (a relocated memory sidecar is flagged</tspan><tspan x="1100" dy="17">with a notice)</tspan></text>
+      
+      <path d="M1814 1890H394" fill="none" stroke="#85857f" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+    </g><g data-row-id="done" data-message-ids="done" data-participant-ids="prompt,dev" data-row-type="message" data-kind="return">
+      <rect x="104" y="1915" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="284" y="1938" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="284" dy="0">Diff printed; exit 0 (tasks -p reports whether it</tspan><tspan x="284" dy="17">could run the harness)</tspan></text>
+      
+      <path d="M386 1969H190" fill="none" stroke="#85857f" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+    </g></g>
+  <g font-family="Arial, Helvetica, sans-serif" data-export-layer="footer">
+    <path d="M70 992H1850" stroke="#ddddda"/>
+    <text x="70" y="1027" font-size="12" font-weight="600" letter-spacing="1" fill="#626b6f">CURRENT · 21 INTERACTIONS</text>
+    <text x="620" y="1027" font-size="11" fill="#7d7d77">SOURCE · Authored 2026-09-11 from cmd/tasks/prompt.go, internal/agentcontext/agentcontext.go, internal/promptfacts/promptfacts.go, internal/runtimepath/runtimepath.go, internal/llm/agent.go (Build, Available, RunSync), i…</text>
+  </g>
+  </svg>

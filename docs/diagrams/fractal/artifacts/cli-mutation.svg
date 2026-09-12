@@ -1,0 +1,203 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-labelledby="sequence-title sequence-description" data-theme="graphite" data-theme-appearance="light">
+  <title id="sequence-title">A CLI Mutation, End to End</title><desc id="sequence-description">tasks done &lt;ref&gt;: from argv through the store transaction to a journaled, validated, atomically installed file. The rollback message shows the failure path the same transaction takes.</desc><metadata>{&quot;journeyId&quot;:&quot;cli-mutation&quot;,&quot;provenance&quot;:&quot;Authored 2026-09-11 from cmd/tasks/main.go, cmd/tasks/priority.go (done, changeState, patchAndReport), cmd/tasks/mutcli.go (patchBaseline), cmd/tasks/done.go (resolveRef), cmd/tasks/list.go (ReadSnapshot), internal/store/patch.go (PatchTask, Patch), internal/store/mutation.go (commit, writeRecords, restore), internal/atomic/atomic.go, internal/check/check.go, and internal/journal/write.go (Record). Authored scenario, not a captured trace.&quot;,&quot;hiddenLanes&quot;:[],&quot;rows&quot;:[{&quot;id&quot;:&quot;parse&quot;,&quot;type&quot;:&quot;phase&quot;,&quot;messageIds&quot;:[&quot;invoke&quot;,&quot;resolve-config&quot;,&quot;read-snapshot&quot;,&quot;snapshot-back&quot;,&quot;resolve-ref&quot;,&quot;baseline&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;dev&quot;,&quot;dispatch&quot;,&quot;mutate&quot;,&quot;snapshot&quot;,&quot;core&quot;]},{&quot;id&quot;:&quot;invoke&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;invoke&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;dev&quot;,&quot;dispatch&quot;]},{&quot;id&quot;:&quot;resolve-config&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;resolve-config&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;dispatch&quot;,&quot;mutate&quot;]},{&quot;id&quot;:&quot;read-snapshot&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;read-snapshot&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;mutate&quot;,&quot;snapshot&quot;]},{&quot;id&quot;:&quot;snapshot-back&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;snapshot-back&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;snapshot&quot;,&quot;mutate&quot;]},{&quot;id&quot;:&quot;resolve-ref&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;resolve-ref&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;mutate&quot;,&quot;mutate&quot;]},{&quot;id&quot;:&quot;baseline&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;baseline&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;mutate&quot;,&quot;core&quot;]},{&quot;id&quot;:&quot;transaction&quot;,&quot;type&quot;:&quot;phase&quot;,&quot;messageIds&quot;:[&quot;patch&quot;,&quot;lock-ex&quot;,&quot;before&quot;,&quot;preflight&quot;,&quot;reread&quot;,&quot;conflict&quot;,&quot;apply&quot;,&quot;emit&quot;,&quot;stamp&quot;,&quot;write&quot;,&quot;install&quot;,&quot;postcheck&quot;,&quot;rollback&quot;,&quot;journal-record&quot;,&quot;journal-persist&quot;,&quot;reload&quot;,&quot;unlock&quot;,&quot;result&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;mutate&quot;,&quot;core&quot;,&quot;lock&quot;,&quot;files&quot;,&quot;check&quot;,&quot;record&quot;,&quot;atomic&quot;,&quot;journal&quot;]},{&quot;id&quot;:&quot;patch&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;patch&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;mutate&quot;,&quot;core&quot;]},{&quot;id&quot;:&quot;lock-ex&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;lock-ex&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;core&quot;,&quot;lock&quot;]},{&quot;id&quot;:&quot;before&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;before&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;core&quot;,&quot;files&quot;]},{&quot;id&quot;:&quot;preflight&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;preflight&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;core&quot;,&quot;check&quot;]},{&quot;id&quot;:&quot;reread&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;reread&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;core&quot;,&quot;record&quot;]},{&quot;id&quot;:&quot;conflict&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;conflict&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;core&quot;,&quot;core&quot;]},{&quot;id&quot;:&quot;apply&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;apply&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;core&quot;,&quot;core&quot;]},{&quot;id&quot;:&quot;emit&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;emit&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;core&quot;,&quot;record&quot;]},{&quot;id&quot;:&quot;stamp&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;stamp&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;core&quot;,&quot;core&quot;]},{&quot;id&quot;:&quot;write&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;write&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;core&quot;,&quot;atomic&quot;]},{&quot;id&quot;:&quot;install&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;install&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;atomic&quot;,&quot;files&quot;]},{&quot;id&quot;:&quot;postcheck&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;postcheck&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;core&quot;,&quot;check&quot;]},{&quot;id&quot;:&quot;rollback&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;rollback&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;core&quot;,&quot;atomic&quot;]},{&quot;id&quot;:&quot;journal-record&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;journal-record&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;core&quot;,&quot;journal&quot;]},{&quot;id&quot;:&quot;journal-persist&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;journal-persist&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;journal&quot;,&quot;journal&quot;]},{&quot;id&quot;:&quot;reload&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;reload&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;core&quot;,&quot;record&quot;]},{&quot;id&quot;:&quot;unlock&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;unlock&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;core&quot;,&quot;lock&quot;]},{&quot;id&quot;:&quot;result&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;result&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;core&quot;,&quot;mutate&quot;]},{&quot;id&quot;:&quot;report&quot;,&quot;type&quot;:&quot;phase&quot;,&quot;messageIds&quot;:[&quot;render&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;mutate&quot;,&quot;dev&quot;]},{&quot;id&quot;:&quot;render&quot;,&quot;type&quot;:&quot;message&quot;,&quot;messageIds&quot;:[&quot;render&quot;],&quot;hiddenMessageIds&quot;:[],&quot;participantIds&quot;:[&quot;mutate&quot;,&quot;dev&quot;]}]}</metadata>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#85857f"/></marker>
+    <marker id="arrow-open" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10" fill="none" stroke="#85857f" stroke-width="1.5"/></marker>
+  </defs>
+  <rect width="1920" height="1080" fill="#f8f8f6"/>
+  <g font-family="Arial, Helvetica, sans-serif" data-export-layer="title">
+    <text x="70" y="43" font-size="11" letter-spacing="2.5" fill="#626b6f">FRACTAL / SEQUENCE JOURNEY</text>
+    <text x="70" y="88" text-anchor="start" font-size="34" fill="#292927"><tspan x="70" dy="0">A CLI Mutation, End to End</tspan></text>
+    <text x="70" y="126" text-anchor="start" font-size="15" fill="#74746f"><tspan x="70" dy="0">tasks done &lt;ref&gt;: from argv through the store transaction to a journaled, validated, atomically installed file. The rollback message shows the failure path the same transaction takes.</tspan></text>
+  </g>
+  <g font-family="Arial, Helvetica, sans-serif" transform="translate(577.614064462118 190) scale(0.3181247383842612)"><g data-column="dev" data-members="dev" data-elements="developer">
+    <rect x="102" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#759EB5" stroke-width="2"/>
+    <text x="182" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="182" dy="0">Developer</tspan></text>
+    <path d="M182 95V2319" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="dispatch" data-members="dispatch" data-elements="cli.dispatch">
+    <rect x="306" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#82A6B6" stroke-width="2"/>
+    <text x="386" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="386" dy="0">Registry &amp;</tspan><tspan x="386" dy="19">Dispatch</tspan></text>
+    <path d="M386 95V2319" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="mutate" data-members="mutate" data-elements="cli.mutate">
+    <rect x="510" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#82A6B6" stroke-width="2"/>
+    <text x="590" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="590" dy="0">Mutation Command</tspan></text>
+    <path d="M590 95V2319" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="snapshot" data-members="snapshot" data-elements="store.snapshot">
+    <rect x="714" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#89A579" stroke-width="2"/>
+    <text x="794" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="794" dy="0">Snapshot</tspan></text>
+    <path d="M794 95V2319" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="core" data-members="core" data-elements="store.core">
+    <rect x="918" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#89A579" stroke-width="2"/>
+    <text x="998" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="998" dy="0">Store</tspan><tspan x="998" dy="19">Transaction</tspan></text>
+    <path d="M998 95V2319" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="lock" data-members="lock" data-elements="store.lock">
+    <rect x="1122" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#89A579" stroke-width="2"/>
+    <text x="1202" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="1202" dy="0">Store Lock</tspan></text>
+    <path d="M1202 95V2319" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="record" data-members="record" data-elements="store.record">
+    <rect x="1326" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#89A579" stroke-width="2"/>
+    <text x="1406" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="1406" dy="0">Canonical Records</tspan></text>
+    <path d="M1406 95V2319" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="atomic" data-members="atomic" data-elements="store.atomic">
+    <rect x="1530" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#89A579" stroke-width="2"/>
+    <text x="1610" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="1610" dy="0">Atomic Replace</tspan></text>
+    <path d="M1610 95V2319" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="check" data-members="check" data-elements="store.check">
+    <rect x="1734" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#89A579" stroke-width="2"/>
+    <text x="1814" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="1814" dy="0">Invariant Checker</tspan></text>
+    <path d="M1814 95V2319" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="journal" data-members="journal" data-elements="store.journal">
+    <rect x="1938" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#89A579" stroke-width="2"/>
+    <text x="2018" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="2018" dy="0">Journal</tspan></text>
+    <path d="M2018 95V2319" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-column="files" data-members="files" data-elements="external.taskfiles">
+    <rect x="2142" y="32" width="160" height="63" rx="12" fill="#ffffff" stroke="#89A579" stroke-width="2"/>
+    <text x="2222" y="59" text-anchor="middle" font-size="15" fill="#292927"><tspan x="2222" dy="0">tasks.jsonl</tspan></text>
+    <path d="M2222 95V2319" stroke="#ddddda" stroke-width="1.2" stroke-dasharray="5 7"/>
+  </g><g data-row-id="parse" data-message-ids="invoke,resolve-config,read-snapshot,snapshot-back,resolve-ref,baseline" data-participant-ids="dev,dispatch,mutate,snapshot,core" data-row-type="phase" data-phase-depth="0" data-collapsed="false">
+        <rect x="58" y="137" width="2288" height="35" rx="10" fill="#eeeeeb" stroke="#d5d5d0"/>
+        <text x="78" y="160" text-anchor="start" font-size="15" fill="#292927"><tspan x="78" dy="0">1. Parse and resolve</tspan></text>
+        <text x="260.46500000000003" y="160" text-anchor="start" font-size="11" fill="#7d7d77"><tspan x="260.46500000000003" dy="0">Configuration is resolved before any store is touched; the ref must resolve to exactly one open task or the command exits 2.</tspan></text>
+        <text x="2304" y="158.5" text-anchor="end" font-size="11" fill="#7d7d77">6 interactions</text>
+      </g><g data-row-id="invoke" data-message-ids="invoke" data-participant-ids="dev,dispatch" data-row-type="message" data-kind="call">
+      <rect x="104" y="186" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="284" y="209" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="284" dy="0">tasks done &quot;&lt;ref&gt;&quot;</tspan></text>
+      
+      <path d="M182 225H378" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="resolve-config" data-message-ids="resolve-config" data-participant-ids="dispatch,mutate" data-row-type="message" data-kind="call">
+      <rect x="308" y="250" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="488" y="273" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="488" dy="0">Resolve config; refuse if unconfigured; dispatch</tspan><tspan x="488" dy="17">done</tspan></text>
+      
+      <path d="M386 304H582" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="read-snapshot" data-message-ids="read-snapshot" data-participant-ids="mutate,snapshot" data-row-type="message" data-kind="call">
+      <rect x="512" y="329" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="692" y="352" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="692" dy="0">ReadSnapshot(true) under the shared lock; build</tspan><tspan x="692" dy="17">queries</tspan></text>
+      
+      <path d="M590 383H786" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="snapshot-back" data-message-ids="snapshot-back" data-participant-ids="snapshot,mutate" data-row-type="message" data-kind="return">
+      <rect x="512" y="408" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="692" y="431" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="692" dy="0">Immutable snapshot</tspan></text>
+      
+      <path d="M794 447H598" fill="none" stroke="#85857f" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+    </g><g data-row-id="resolve-ref" data-message-ids="resolve-ref" data-participant-ids="mutate,mutate" data-row-type="message" data-kind="call">
+      <rect x="410" y="472" width="360" height="69" rx="7" fill="#f8f8f6"/>
+      <text x="590" y="495" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="590" dy="0">resolveRef: L&lt;line&gt;, exact id, then title</tspan><tspan x="590" dy="17">substring; exit 2 on no or many matches</tspan></text>
+      
+      <path d="M 590 526 H 638 Q 644 526 644 532 V 540 Q 644 546 638 546 H 598" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="baseline" data-message-ids="baseline" data-participant-ids="mutate,core" data-row-type="message" data-kind="call">
+      <rect x="614" y="571" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="794" y="594" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="794" dy="0">patchBaseline: ExpectedFor(id, state) under its</tspan><tspan x="794" dy="17">own shared lock, before the write takes its lock</tspan></text>
+      
+      <path d="M590 625H990" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="transaction" data-message-ids="patch,lock-ex,before,preflight,reread,conflict,apply,emit,stamp,write,install,postcheck,rollback,journal-record,journal-persist,reload,unlock,result" data-participant-ids="mutate,core,lock,files,check,record,atomic,journal" data-row-type="phase" data-phase-depth="0" data-collapsed="false">
+        <rect x="58" y="650" width="2288" height="35" rx="10" fill="#eeeeeb" stroke="#d5d5d0"/>
+        <text x="78" y="673" text-anchor="start" font-size="15" fill="#292927"><tspan x="78" dy="0">2. One checked transaction</tspan></text>
+        <text x="316.8950000000001" y="673" text-anchor="start" font-size="11" fill="#7d7d77"><tspan x="316.8950000000001" dy="0">Patch(PatchRequest{state: DONE, expected: baseline}). Everything below runs while the exclusive lock is held.</tspan></text>
+        <text x="2304" y="671.5" text-anchor="end" font-size="11" fill="#7d7d77">18 interactions</text>
+      </g><g data-row-id="patch" data-message-ids="patch" data-participant-ids="mutate,core" data-row-type="message" data-kind="call">
+      <rect x="614" y="699" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="794" y="722" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="794" dy="0">PatchTask(id, state, DONE, expected, label, today)</tspan><tspan x="794" dy="17">wraps Patch(PatchRequest{...})</tspan></text>
+      
+      <path d="M590 753H990" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="lock-ex" data-message-ids="lock-ex" data-participant-ids="core,lock" data-row-type="message" data-kind="call">
+      <rect x="920" y="778" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="1100" y="801" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1100" dy="0">withLock: flock LOCK_EX on .tasks.jsonl.lock (5s</tspan><tspan x="1100" dy="17">wait, then refuse with holder pid)</tspan></text>
+      
+      <path d="M998 832H1194" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="before" data-message-ids="before" data-participant-ids="core,files" data-row-type="message" data-kind="call">
+      <rect x="1430" y="857" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="1610" y="880" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1610" dy="0">fileSnapshot: raw bytes of live and archive (the</tspan><tspan x="1610" dy="17">rollback target)</tspan></text>
+      
+      <path d="M998 911H2214" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="preflight" data-message-ids="preflight" data-participant-ids="core,check" data-row-type="message" data-kind="call">
+      <rect x="1226" y="936" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="1406" y="959" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1406" dy="0">Schema gate and preflight CheckWith(org)</tspan></text>
+      
+      <path d="M998 975H1806" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="reread" data-message-ids="reread" data-participant-ids="core,record" data-row-type="message" data-kind="call">
+      <rect x="1022" y="1000" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="1202" y="1023" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1202" dy="0">freshRecords: re-read and parse under the lock</tspan></text>
+      
+      <path d="M998 1039H1398" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="conflict" data-message-ids="conflict" data-participant-ids="core,core" data-row-type="message" data-kind="call">
+      <rect x="818" y="1064" width="360" height="69" rx="7" fill="#f8f8f6"/>
+      <text x="998" y="1087" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="998" dy="0">Compare field baseline; MutationConflict if it</tspan><tspan x="998" dy="17">moved</tspan></text>
+      
+      <path d="M 998 1118 H 1046 Q 1052 1118 1052 1124 V 1132 Q 1052 1138 1046 1138 H 1006" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="apply" data-message-ids="apply" data-participant-ids="core,core" data-row-type="message" data-kind="call">
+      <rect x="818" y="1163" width="360" height="69" rx="7" fill="#f8f8f6"/>
+      <text x="998" y="1186" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="998" dy="0">Apply DONE on a detached clone: closed date,</tspan><tspan x="998" dy="17">defer tag dropped, recurrence rolled if repeating</tspan></text>
+      
+      <path d="M 998 1217 H 1046 Q 1052 1217 1052 1223 V 1231 Q 1052 1237 1046 1237 H 1006" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="emit" data-message-ids="emit" data-participant-ids="core,record" data-row-type="message" data-kind="call">
+      <rect x="1022" y="1262" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="1202" y="1285" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1202" dy="0">Dump: canonical key order, absent fields omitted</tspan><tspan x="1202" dy="17">(serialize before writing)</tspan></text>
+      
+      <path d="M998 1316H1398" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="stamp" data-message-ids="stamp" data-participant-ids="core,core" data-row-type="message" data-kind="call">
+      <rect x="818" y="1341" width="360" height="69" rx="7" fill="#f8f8f6"/>
+      <text x="998" y="1364" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="998" dy="0">stampChangedTasks: one shared updated stamp</tspan><tspan x="998" dy="17">for semantically changed tasks</tspan></text>
+      
+      <path d="M 998 1395 H 1046 Q 1052 1395 1052 1401 V 1409 Q 1052 1415 1046 1415 H 1006" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="write" data-message-ids="write" data-participant-ids="core,atomic" data-row-type="message" data-kind="call">
+      <rect x="1124" y="1440" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="1304" y="1463" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1304" dy="0">atomic.Write(org, text)</tspan></text>
+      
+      <path d="M998 1479H1602" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="install" data-message-ids="install" data-participant-ids="atomic,files" data-row-type="message" data-kind="call">
+      <rect x="1736" y="1504" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="1916" y="1527" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1916" dy="0">Sibling temp, fsync, copy mode, rename over</tspan><tspan x="1916" dy="17">resolved target, fsync dir</tspan></text>
+      
+      <path d="M1610 1558H2214" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="postcheck" data-message-ids="postcheck" data-participant-ids="core,check" data-row-type="message" data-kind="call">
+      <rect x="1226" y="1583" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="1406" y="1606" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1406" dy="0">postWriteFailure: CheckWith on the installed</tspan><tspan x="1406" dy="17">bytes (live and archive)</tspan></text>
+      
+      <path d="M998 1637H1806" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="rollback" data-message-ids="rollback" data-participant-ids="core,atomic" data-row-type="message" data-kind="call">
+      <rect x="1124" y="1662" width="360" height="119" rx="7" fill="#f8f8f6"/>
+      <text x="1304" y="1685" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1304" dy="0">On any failure: restore(before) reinstalls both</tspan><tspan x="1304" dy="17">files; result RolledBack with stage write or</tspan><tspan x="1304" dy="17">validation</tspan></text>
+      <text x="1304" y="1745" text-anchor="middle" font-size="11" fill="#7d7d77"><tspan x="1304" dy="0">Failure path. Validation runs before the journal entry, so</tspan><tspan x="1304" dy="15">a rolled-back write leaves no history step pointing at</tspan><tspan x="1304" dy="15">bytes that never survived.</tspan></text>
+      <path d="M998 1786H1602" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="journal-record" data-message-ids="journal-record" data-participant-ids="core,journal" data-row-type="message" data-kind="call">
+      <rect x="1328" y="1811" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="1508" y="1834" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1508" dy="0">journal.Record(label, before, after, coalesceKey,</tspan><tspan x="1508" dy="17">repair=false)</tspan></text>
+      
+      <path d="M998 1865H2010" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="journal-persist" data-message-ids="journal-persist" data-participant-ids="journal,journal" data-row-type="message" data-kind="call">
+      <rect x="1838" y="1890" width="360" height="69" rx="7" fill="#f8f8f6"/>
+      <text x="2018" y="1913" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="2018" dy="0">Intern blobs by sha, advance cursor, persist</tspan><tspan x="2018" dy="17">index.json, garbage-collect beyond the undo limit</tspan></text>
+      
+      <path d="M 2018 1944 H 2066 Q 2072 1944 2072 1950 V 1958 Q 2072 1964 2066 1964 H 2026" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="reload" data-message-ids="reload" data-participant-ids="core,record" data-row-type="message" data-kind="call">
+      <rect x="1022" y="1989" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="1202" y="2012" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1202" dy="0">readAfterWrite: snapshot and store revision</tspan><tspan x="1202" dy="17">under the same lock</tspan></text>
+      
+      <path d="M998 2043H1398" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="unlock" data-message-ids="unlock" data-participant-ids="core,lock" data-row-type="message" data-kind="call">
+      <rect x="920" y="2068" width="360" height="34" rx="7" fill="#f8f8f6"/>
+      <text x="1100" y="2091" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="1100" dy="0">Release flock</tspan></text>
+      
+      <path d="M998 2107H1194" fill="none" stroke="#85857f" stroke-width="2" marker-end="url(#arrow)"/>
+    </g><g data-row-id="result" data-message-ids="result" data-participant-ids="core,mutate" data-row-type="message" data-kind="return">
+      <rect x="614" y="2132" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="794" y="2155" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="794" dy="0">MutationResult{OK, ReadSnapshot, StoreRevision,</tspan><tspan x="794" dy="17">TouchedIDs}</tspan></text>
+      
+      <path d="M998 2186H598" fill="none" stroke="#85857f" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+    </g><g data-row-id="report" data-message-ids="render" data-participant-ids="mutate,dev" data-row-type="phase" data-phase-depth="0" data-collapsed="false">
+        <rect x="58" y="2211" width="2288" height="35" rx="10" fill="#eeeeeb" stroke="#d5d5d0"/>
+        <text x="78" y="2234" text-anchor="start" font-size="15" fill="#292927"><tspan x="78" dy="0">3. Report</tspan></text>
+        
+        <text x="2304" y="2232.5" text-anchor="end" font-size="11" fill="#7d7d77">1 interaction</text>
+      </g><g data-row-id="render" data-message-ids="render" data-participant-ids="mutate,dev" data-row-type="message" data-kind="return">
+      <rect x="206" y="2260" width="360" height="49" rx="7" fill="#f8f8f6"/>
+      <text x="386" y="2283" text-anchor="middle" font-size="13" fill="#62625e"><tspan x="386" dy="0">Headline from the post-write snapshot, or --json</tspan><tspan x="386" dy="17">document; exit 0</tspan></text>
+      
+      <path d="M590 2314H190" fill="none" stroke="#85857f" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+    </g></g>
+  <g font-family="Arial, Helvetica, sans-serif" data-export-layer="footer">
+    <path d="M70 992H1850" stroke="#ddddda"/>
+    <text x="70" y="1027" font-size="12" font-weight="600" letter-spacing="1" fill="#626b6f">CURRENT · 25 INTERACTIONS</text>
+    <text x="620" y="1027" font-size="11" fill="#7d7d77">SOURCE · Authored 2026-09-11 from cmd/tasks/main.go, cmd/tasks/priority.go (done, changeState, patchAndReport), cmd/tasks/mutcli.go (patchBaseline), cmd/tasks/done.go (resolveRef), cmd/tasks/list.go (ReadSnapshot), inte…</text>
+  </g>
+  </svg>

@@ -26,6 +26,36 @@ CLI.
   replacement, rollback, and journal semantics unless a separately planned
   migration explicitly changes them.
 
+## Architecture model
+
+`docs/diagrams/fractal/` holds the Fractal model of this system (`model.c4`,
+`fractal.json`, `sequences.json`) with exported scenes and journeys under
+`artifacts/`. Use it to get oriented before changing unfamiliar code: read the
+`overview` scene, then the drilldown for the layer you are touching, and the
+journey for the path you are changing. Non-interactive inspection (pass an
+absolute `--directory`; a relative path silently resolves against the Fractal
+checkout and reports Fractal's own model):
+
+```sh
+~/code/fractal/bin/fractal inspect --directory "$PWD/docs/diagrams/fractal" --json
+~/code/fractal/bin/fractal search --directory "$PWD/docs/diagrams/fractal" --query store --json
+~/code/fractal/bin/fractal journeys --directory "$PWD/docs/diagrams/fractal" --json
+```
+
+The interactive studio, when running, serves it at
+`http://127.0.0.1:5199/?model=tasks&scene=overview` (see
+`~/code/fractal/bin/fractal service status --json`).
+
+When a change alters the design — a new package, surface, command boundary,
+store invariant, seam, boundary, or journey, or a proposal that lands — update
+the affected elements, scenes, and journeys in the same change. Keep stable
+`uid` values, cite the source files you touched as `evidence`, mark planned
+work `#proposed`, and run
+`~/code/fractal/bin/fractal validate --directory "$PWD/docs/diagrams/fractal" --json`
+before committing. Re-export the scenes and journeys you changed into
+`artifacts/`. Model responsibilities, not every file. Authoring guidance:
+`~/code/fractal/skills/fractal/SKILL.md`.
+
 ## Development
 
 - Interface contracts: `docs/cli-spec.md` and `docs/api/openapi.yaml`.
