@@ -23,9 +23,21 @@ func (s *surfaceContext) setDate(args []string, field store.PatchField, key, usa
 	if status != 0 {
 		return status
 	}
-	flags, rest, err := takeFlags(remaining, "--dry-run", "--json", "--include-done")
+	flags, rest, err := takeFlags(remaining, "--dry-run", "--json", "--include-done", "--explain")
 	if err != nil {
 		return abort(err.Error())
+	}
+	// `--explain` names no task and never touches the store: it answers what
+	// the expression means, exactly as GET /dates/parse does.
+	if flags["--explain"] {
+		if flags["--dry-run"] || flags["--include-done"] {
+			return abort("--explain previews a date, not a task — drop --dry-run/--include-done")
+		}
+		expression := strings.Join(rest, " ")
+		if strings.TrimSpace(expression) == "" {
+			return abort("usage: " + usage + "\n       " + explainUsage(action))
+		}
+		return s.dateExplain(expression, options, flags["--json"])
 	}
 	ref := ""
 	if len(rest) > 0 {
@@ -36,7 +48,7 @@ func (s *surfaceContext) setDate(args []string, field store.PatchField, key, usa
 		expression = strings.Join(rest[1:], " ")
 	}
 	if ref == "" || strings.TrimSpace(expression) == "" {
-		return abort("usage: " + usage)
+		return abort("usage: " + usage + "\n       " + explainUsage(action))
 	}
 
 	context, status := s.temporalContext()
@@ -64,6 +76,11 @@ func (s *surfaceContext) setDate(args []string, field store.PatchField, key, usa
 	return s.patchValueAndReport(args, item, field, store.TemporalValue(value),
 		strings.ToLower(key)+" → "+label+": "+item.Title,
 		action, "failed to set "+strings.ToLower(key), flags["--json"])
+}
+
+// explainUsage is the taskless preview form of `due` / `schedule`.
+func explainUsage(action string) string {
+	return "tasks " + action + ` --explain "<date-or-date-time>" [--json]`
 }
 
 func init() {

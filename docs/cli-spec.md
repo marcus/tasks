@@ -513,7 +513,8 @@ year is always respected as-is.
 Bare numeric dates with no 4-digit year (`7/15`, `7/15/26`) are ambiguous
 between month-first and day-first — `date_order = mdy` (the default, US
 month/day/year) or `date_order = dmy` in the config file, or `TASKS_DATE_ORDER`
-env, picks the reading. `tasks config` reports the resolved value.
+env, picks the reading. `tasks config` reports the resolved value, the TUI's
+date fields honor it, and the HTTP API publishes it as `/meta` `date_order`.
 
 Second-, minute-, and hour-relative phrases create a timed value from the
 current instant. Stored times have minute precision, so a result carrying
@@ -528,6 +529,16 @@ Europe/London` makes it fixed; `--floating` explicitly selects floating mode;
 `--fold later` selects the later instant during an ambiguous DST fold. A bare
 time is rejected, as are explicit wall-clock seconds, time-zone abbreviations,
 numeric offsets, unknown IANA zones, and nonexistent local times.
+
+The same three modifiers can also be written as trailing words — an IANA zone
+id, `UTC`, or `floating`, then optionally `fold=earlier` / `fold=later`
+(`fri 4pm Europe/Berlin`, `2026-11-01 01:30 America/New_York fold=later`). That
+is the only spelling a single text field has, so the TUI's date fields and
+`GET /dates/parse` use it, and `due`, `schedule`, `defer`, `capture
+--due/--scheduled`, and `due --explain` accept it too. Naming the zone or the
+fold both as a flag and as a word is refused. A zone word must contain a
+letter, so a numeric date such as `7/15` is never mistaken for one. The shared
+reader is `temporal.ParseText`.
 `TASKS_TIMEZONE` overrides the config's
 `timezone`; `time_format = 12|24` affects human output only.
 If a later configuration-zone change makes a stored floating civil time
@@ -1199,8 +1210,10 @@ three commands: the rest printed prose with empty stdout, so `tasks done
 --json` handed a caller an unparseable empty result on exactly the path it most
 needed to branch on.
 
-`recur --explain` is older and different: an unreadable schedule comes back as
-`{"input": …, "error": "<prose reason>"}`, with no `action`/`message`.
+The taskless previews — `recur --explain`, `due`/`schedule --explain`, and
+`lead --explain` — are different: unreadable input comes back as
+`{"input": …, "error": "<prose reason>"}` with exit 1 and no
+`action`/`message`, the same shape the matching HTTP preview answers with.
 Everything else — an unknown state, an unparseable date, a depth or cycle
 refusal, a blank title, a `lead` with no anchor date, a `delete` needing
 `--cascade` — exits nonzero with prose on stderr and nothing on stdout.
@@ -1243,8 +1256,8 @@ than what would be nicer.
 | `claim` | ✅ | the full canonical task resource; `conflict` error object on a lost race |
 | `release` | ✅ | `{touched: [task]}`; `conflict` error object on a worker mismatch |
 | `done` | ✅ | `{touched: [task]}` |
-| `due` | ✅ | `{touched: [task]}` |
-| `schedule` | ✅ | `{touched: [task]}` |
+| `due` | ✅ | `{touched: [task]}`; `--explain`: the `/dates/parse` payload |
+| `schedule` | ✅ | `{touched: [task]}`; `--explain`: the `/dates/parse` payload |
 | `undate` | ✅ | `{touched: [task]}` |
 | `state` | ✅ | `{touched: [task]}` |
 | `cancel` | ✅ | `{touched: [task]}` |
@@ -1255,7 +1268,7 @@ than what would be nicer.
 | `move` | ✅ | `{touched: [task]}`; the `--before` form adds `placement: {…}` |
 | `delete` | ✅ | `{deleted: [task]}` (pre-delete headlines) |
 | `recur` | ✅ | setting: `{touched: [task], next}`; reading: the preview payload; `--explain`: the engine payload |
-| `lead` | ✅ | setting: `{touched: [task]}`; reading: the window preview payload |
+| `lead` | ✅ | setting: `{touched: [task]}`; reading: the window preview payload; `--explain`: the `/lead/explain` payload |
 | `defer` | ✅ | `{touched: [task]}` |
 | `someday` | ✅ | `{touched: [task]}` |
 | `activate` | ✅ | `{touched: [task]}` |
@@ -1344,7 +1357,7 @@ display text to parse.
 
 | Command | Alias | Status | Description |
 |---|---|---|---|
-| `capture "text"` | `add`, `c` | ✅ | New accepted INBOX item. `--due` and `--scheduled` accept complete date/time expressions. Each has independent `--due-timezone`/`--scheduled-timezone`, `--due-floating`/`--scheduled-floating`, and `--due-fold`/`--scheduled-fold` modifiers; a modifier without its matching value is rejected. Other flags remain `--priority`, repeatable tags/contexts/notes, `--no-host-context`, state, project/under, recurrence, dry-run, and JSON. `--lead <span>` sets a lead-time window on the new task and needs one of the two dates (`off` is rejected here — a new task has no window to clear); a lead beside BOTH dates is refused. `propose` accepts `--lead` on the same terms. `--recur` takes every input form `recur` does (intervals, natural calendar phrases, canonical grammar — see Recurrence) and stores the canonical value; `off` is rejected here since a new task has no schedule to clear, and a recurring capture with no date is scheduled today so it has something to repeat from. A configured host context is additive with explicit contexts unless suppressed. A capture with either temporal value lands as TODO unless state is explicit. `--link URL` is repeatable and may be followed immediately by `--label TEXT` to label that one link; the links are stored in the order given, validated exactly as `link add` validates them (shorthands expand and become the default label; a non-web or duplicate URL refuses the whole capture before anything is written), and installed in the SAME write and the same undo step as the task. A title whose LAST whitespace-separated word is already a valid `http`/`https` URL lifts that URL into a formal link and keeps the remaining words as the title; trailing sentence punctuation is peeled off the URL by the same rule link extraction uses and stays on the title; a title that is only a URL keeps its title and still gains the link, and a URL already named by `--link` is not lifted twice. |
+| `capture "text"` | `add`, `c` | ✅ | New accepted INBOX item. `--due` and `--scheduled` accept complete date/time expressions. Each has independent `--due-timezone`/`--scheduled-timezone`, `--due-floating`/`--scheduled-floating`, and `--due-fold`/`--scheduled-fold` modifiers; a modifier without its matching value is rejected. Other flags remain `--priority`, repeatable tags/contexts/notes, `--no-host-context`, state, project/under, recurrence, dry-run, and JSON. `--lead <span>` sets a lead-time window on the new task and needs one of the two dates (`off` is rejected here — a new task has no window to clear); a lead beside BOTH dates is refused. `propose` accepts `--lead` on the same terms. `--recur` takes every input form `recur` does (intervals, natural calendar phrases, canonical grammar — see Recurrence) and stores the canonical value; `off` is rejected here since a new task has no schedule to clear, and a recurring capture with no date is scheduled today so it has something to repeat from. A configured host context is additive with explicit contexts unless suppressed. A capture with either temporal value lands as TODO unless state is explicit. `--link URL` is repeatable and may be followed immediately by `--label TEXT` to label that one link; the links are stored in the order given, validated exactly as `link add` validates them (shorthands expand and become the default label; a non-web or duplicate URL refuses the whole capture before anything is written), and installed in the SAME write and the same undo step as the task. A title whose LAST whitespace-separated word is already a valid `http`/`https` URL lifts that URL into a formal link and keeps the remaining words as the title; trailing sentence punctuation is peeled off the URL by the same rule link extraction uses and stays on the title; a title that is only a URL keeps its title and still gains the link, and a URL already named by `--link` is not lifted twice. Both conveniences — shorthand expansion and title-URL lifting — live in the application layer, so `POST /api/v1/tasks` (`links`, `title`) and TUI captures apply them identically. |
 | `propose "text"` | | ✅ | New inert PROPOSED task for owner review. Shares capture's dates, priority, repeatable tags/contexts/notes, repeatable `--link`/`--label` (same write, same undo, same title-URL lifting), host-context, project/under, dry-run, and JSON behavior, but rejects explicit state and recurrence. Agent-authored proposals should use `--note` for concise rationale/evidence. |
 
 ## Update (all take `<ref>`, all support `--dry-run` and `--json`)
@@ -1359,11 +1372,12 @@ display text to parse.
 | `state <ref> <STATE>` | `mv` | ✅ | Any state transition (PROPOSED/INBOX/TODO/NEXT/WAITING/DONE/CANCELLED). Enforces: entering DONE/CANCELLED sets `closed`; leaving them clears it. A proposal cannot transition directly to DONE or carry recurrence; use `approve`/`reject` for review intent. Entering DONE cascades to accepted open descendants (see Cascading completion); entering CANCELLED does not. Resolves refs across proposed, open, and closed live tasks so you can repair state explicitly. |
 | `due <ref> <date-or-date-time>` | `deadline`, `reschedule` | ✅ | Atomically replace `deadline`; accepts `--timezone ZONE` or `--floating`, plus `--fold earlier\|later`. Omitting time creates an all-day value and clears old time metadata. INBOX items promote to TODO. |
 | `schedule <ref> <date-or-date-time>` | | ✅ | Atomically replace `scheduled` with the same temporal flags. A future exact boundary hides the task, but this command does not clear an On Hold marker; callers that mean deferral use `defer`. Same INBOX promotion. |
+| `due --explain "<date-or-date-time>"` | `schedule --explain` | ✅ | Taskless parse/preview: no ref, no store access, the CLI twin of `GET /dates/parse`. Reads the expression with the free-text grammar (friendly date, optional wall time, optional trailing zone word and `fold=` word — see Dates) in the configured `date_order`; `--timezone`/`--floating`/`--fold` apply as they do on a write and a trailing word overrides them. Prints `<value> — <human>` (`2026-10-02 16:00 — Fri 2 Oct, 4:00p`) and exits 0; unreadable input prints the reason on stderr and exits 1. `--json` emits `{"input","date","time":{"local","timezone","fold"}\|null,"human"}` or `{"input","error"}` (exit 1) — the HTTP `data` member exactly. Rejects `--dry-run`/`--include-done`. |
 | `undate <ref>` | | ✅ | Remove `scheduled` and/or `deadline` (`--kind deadline\|scheduled` to pick one). |
 | `priority <ref> <A\|B\|C\|none>` | `pri` | ✅ | Set or clear the `priority` field. Resolves accepted open tasks and PROPOSED tasks so a proposal's presentation can be corrected before its lifecycle decision. |
 | `retitle <ref> "new title"` | `rename` | ✅ | Replace the `title`; tags/priority/state untouched. Resolves accepted open tasks and PROPOSED tasks. |
 | `tag <ref> +foo -bar @ctx -@old` | | ✅ | Add/remove tags and contexts in one call. `+t`/`@ctx` add, `-t`/`-@ctx` remove. Resolves accepted open tasks and PROPOSED tasks. |
-| `link add <ref> <url> [--label TEXT]` | | ✅ | Append one formal link to an existing task — the after-the-fact path, unchanged; `capture`/`propose --link` is the same validation applied at create time. A configured shorthand expands before storage and becomes the default label. Duplicate and invalid/non-web URLs refuse. |
+| `link add <ref> <url> [--label TEXT]` | | ✅ | Append one formal link to an existing task — the after-the-fact path, unchanged; `capture`/`propose --link` is the same validation applied at create time. A configured shorthand expands before storage and becomes the default label — the same `links.ExpandFormal` rule `PATCH formal_links` and `POST /tasks` `links` apply, and `/meta` publishes the configured templates as `link_shorthands`. Duplicate and invalid/non-web URLs refuse. |
 | `link rm <ref> <n\|url>` | | ✅ | Remove a formal link by 1-based formal-list position or exact stored URL. Body/title text is never edited; empty omits the stored field. |
 | `link set <ref> <n> --label TEXT` | | ✅ | Replace the non-empty label on a formal link selected by its 1-based formal-list position. URL, ordering, and derived body/title links are unchanged. |
 | `note <ref> "text"` | | ✅ | Append a line to the task's `body`. Resolves accepted open tasks and PROPOSED tasks. |
@@ -1381,6 +1395,7 @@ display text to parse.
 | `recur --explain "<schedule>"` | | ✅ | Taskless parse/preview: no ref, no store access. Prints `<canonical> — <humanized>` and the next `--count N` dates (default 5) from today. Three outcomes: understood and projected (exit 0); understood but never firing from today's anchor (dates empty, reason on stderr, exit 1); unreadable (parser reason plus the example line on stderr, exit 1). `off` reports that it clears the schedule (exit 0). `--json` emits the engine payload verbatim — `{"input","canonical","human","next":[ISO dates]}`, with `"error"` present on either failure and dates as ISO strings — on stdout, with the same exit codes. The agent-facing contract: propose a schedule, explain it, verify the dates, then commit. |
 | `lead <ref> <span>` | `leadtime`, `lead-time` | ✅ | Attach/replace the `lead` window on the task's date: hide it until `<span>` before its anchor (deadline if it has one, else available-from). `<span>` is a count and a unit, canonical (`3w`/`2d`/`1m`/`10y`/`5h`) or phrased (`3 weeks`/`a week`/`10 days`/`a quarter`/`5 hours`); `off`/`none`/`never` clears it. Input stores canonical. Unreadable input exits 1 with the parser's reason plus an example line. The five rules in Lead time are refused at write time, each naming the fix. Success prints the mutation with its window (`lead time 3w on "…" (3w before 2026-11-01)`) followed by the effective availability. `--dry-run`/`--json`/`--include-done`. |
 | `lead <ref>` | | ✅ | Read-only preview — no span argument, no write. Prints the headline, `⏳ <humanized> before (<canonical>)`, and `opens <date> (<Dow>) — <span> before <anchor>`, plus a note when `activate` already released the current occurrence. A task with no lead says so and exits 0. `--json` emits `{"id","line","title","lead","lead_human","anchor","opens","opens_at","lead_skip"}` — `opens` is the gate's local date and `opens_at` the exact instant, which is the only precise answer for a clock span. |
+| `lead --explain "<span>" [--anchor <date>]` | | ✅ | Taskless parse/preview: no ref, no store access, the CLI twin of `GET /lead/explain`. Prints `<canonical> — <humanized> before`, plus `<anchor> — opens <date>` when `--anchor` names the date the window measures from (friendly date input accepted; an hour span has no gate date). `off` reports that it clears the lead. Unreadable input prints the reason plus the example line on stderr, exit 1. `--json` emits `{"input","canonical","human","opens"}` (`canonical` null for `off`, `opens` null without an anchor or for an hour span) or `{"input","error"}` (exit 1). `--anchor` without `--explain` is refused: a task's own date is its anchor. |
 | `defer <ref> [date-or-date-time]` | `snooze` | ✅ | With a value, atomically set `scheduled` and clear the task's own indefinite marker, preserving `deadline`; accepts the same temporal flags as `schedule`. Without a value, put it On Hold indefinitely. Output and `--dry-run` report exact ancestor-aware availability. |
 | `someday <ref>` | | ✅ | Canonical spelling for an indefinite Someday/Maybe / On Hold task. Adds the own `defer` marker without changing either date. Idempotent. |
 | `activate <ref>` | `undefer`, `resume` | ✅ | Make the task available now: clear its own indefinite marker and clear its own `scheduled` only when that date is in the future. On a task with a `lead` — or a **recurring** task, whose future date is its next occurrence rather than a defer — it instead releases exactly that occurrence (stamping the internal `lead_skip`) and keeps every date, so the series still has an anchor to roll from and the window re-arms on the next roll. A blocker inherited from an ancestor remains effective and is reported. Resolves unavailable open tasks. |

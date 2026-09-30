@@ -59,7 +59,7 @@ func (s *Server) createTask(request *http.Request, requestID string) (response, 
 	if err := rejectUnknownFields(body, createFields); err != nil {
 		return response{}, err
 	}
-	if err := validateCreateBody(body); err != nil {
+	if err := validateCreateBody(body, s.expandLink); err != nil {
 		return response{}, err
 	}
 	if err := s.ensureStoreReady(); err != nil {
@@ -192,7 +192,7 @@ func (s *Server) createCommand(body *jsonObject) (application.CreateCommand, err
 	// CLI's `--link` rather than the patch field because a create names what it
 	// is adding; the value shape is identical, which is what parity requires.
 	if body.has("links") && !body.isNull("links") {
-		values, err := formalLinks(body.raw("links"))
+		values, err := formalLinks(body.raw("links"), s.expandLink)
 		if err != nil {
 			return application.CreateCommand{}, validationError(reason("links", err.Error()))
 		}
@@ -277,7 +277,7 @@ func (s *Server) updateTask(request *http.Request, id, requestID string) (respon
 		return response{}, errorWith(404, "not_found", "No live task with that id.").
 			withDetails(pairDetails(detailPair{Key: "field", Value: "id"}, detailPair{Key: "id", Value: id}))
 	}
-	if err := validatePatchBody(body, read.Queries, current); err != nil {
+	if err := validatePatchBody(body, read.Queries, current, s.expandLink); err != nil {
 		return response{}, err
 	}
 

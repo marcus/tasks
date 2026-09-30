@@ -26,7 +26,8 @@ info:
     - Successful responses use the envelope `{ "data": ..., "meta": { ... } }`.
       `meta` reports the store revision the answer was read at, so the few
       operations that read no store omit it: the health probes carry no
-      envelope at all, and `GET /recurrence/explain` carries `data` only.
+      envelope at all, and the taskless previews (`GET /recurrence/explain`,
+      `GET /dates/parse`, `GET /lead/explain`) carry `data` only.
       Errors use `{ "error": { "code", "message", "details", "request_id" } }`.
     - `revision` is an opaque string. Operation descriptions name semantic
       precondition scopes, but component positions and digest recipes are not
@@ -34,8 +35,10 @@ info:
       Clients refetch task resources after reconnecting to a restarted API;
       `store_revision` tracks backing-store bytes, not server-side ETag recipe
       changes, so a pre-upgrade `If-Match` may receive a conservative `412`.
-    - Dates are ISO `YYYY-MM-DD` strings or `null`. Friendly date parsing is a
-      human CLI/TUI feature and is not part of this contract.
+    - Dates are ISO `YYYY-MM-DD` strings or `null`. Writes take ISO only;
+      friendly text (`fri 4pm`, `in 2 weeks`) is read by the taskless
+      `GET /dates/parse` preview, which answers with the ISO date and time
+      object a write accepts.
       Optional companion time objects preserve minute-precision civil time,
       floating/fixed mode, IANA zone, and fold choice. A time does not create a reminder.
     - `scheduled` is the available-from/start/defer-until value; `deadline` is
@@ -63,6 +66,8 @@ tags:
     description: Projects and areas rolled up over their open tasks.
   - name: recurrence
     description: Taskless schedule parsing and projection.
+  - name: parsing
+    description: Taskless previews of friendly date and lead-time input.
   - name: views
     description: Canonical named selections (agenda, next, quadrants, inbox, projects).
   - name: history
@@ -120,6 +125,11 @@ paths:
                       time_format: 12
                       tzdb_version: "zoneinfo"
                       temporal_precision: "minute"
+                      date_order: "mdy"
+                      link_shorthands:
+                        jira: "https://jira.example.com/browse/%s"
+                      link_systems:
+                        forge: "git.example.com"
                       capabilities:
                         projects: true
                         undo: false
@@ -2067,9 +2077,11 @@ paths:
 
         Accepts both input syntaxes (see `CreateTaskRequest.recurrence`) and
         returns the canonical spelling that a write would store. Occurrences are
-        projected from today in the server's configured time zone; the stamp on
-        a task is itself the next occurrence, so this endpoint is the only place
-        that projects further ahead.
+        projected from today in the server's configured time zone, or from
+        `anchor` when one is given; the stamp on a task is itself the next
+        occurrence, so passing a task's `deadline` (else `scheduled`) as
+        `anchor` answers "when does this task fire after that", the HTTP twin
+        of `tasks recur <ref>`.
 
         Three response shapes, all `200`, because "this is not a schedule" is an
         answer rather than a request error:
@@ -2104,6 +2116,17 @@ paths:
             are clamped to that range rather than rejected (the engine clamps
             identically); a value that is not an integer is `422`.
           schema: { type: integer, default: 5 }
+        - name: anchor
+          in: query
+          required: false
+          description: |
+            The stamp to project from instead of today — typically the task's
+            `deadline`, else its `scheduled` date. `next` then lists the
+            occurrences after it (the stamp itself is not repeated). A
+            from-completion interval (`.+1w`) measures from today whatever the
+            stamp, exactly as completing the task would. Anything but a real
+            `YYYY-MM-DD` date is `422`.
+          schema: { type: string, format: date }
       responses:
         "200":
           description: The parsed schedule, or the reason the input was not one.
@@ -2147,6 +2170,140 @@ paths:
                     data:
                       input: "every blursday"
                       error: 'unrecognized schedule: "every blursday"'
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /dates/parse:
+    get:
+      tags: [parsing]
+      operationId: parseDate
+      summary: Read friendly date text without touching a task.
+      description: |
+        The preview a browser date field needs: what `input` means as a date,
+        read by the same parser the TUI's date fields use — a friendly date
+        (`fri`, `next friday`, `in 2 weeks`, `aug 1`, `10/2`, ISO), an optional
+        wall time (`4pm`, `09:30`, `noon`), then an optional zone word (an IANA
+        id, `UTC`, or `floating`) and an optional `fold=earlier` /
+        `fold=later`. Relative input is measured from now in the server's
+        configured time zone, and an ambiguous numeric date follows
+        `Meta.date_order`. The CLI twin is `tasks due --explain "<text>"`.
+
+        A client shows `human` under the field, then writes `date` as
+        `deadline` / `scheduled` and `time` as `deadline_time` /
+        `scheduled_time` unchanged.
+
+        Two response shapes, both `200`, because "this is not a date" is an
+        answer rather than a request error: a parsed value (`date`, `time`,
+        `human`), or `error` with the reason. Like `/recurrence/explain`, no
+        store is read, so the envelope carries `data` only.
+      parameters:
+        - name: input
+          in: query
+          required: true
+          description: The text to read. Required and non-blank; otherwise `422`.
+          schema: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: The parsed value, or the reason the input is not a date.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                additionalProperties: false
+                properties:
+                  data: { $ref: "#/components/schemas/DateParse" }
+              examples:
+                timed:
+                  summary: A floating wall time.
+                  value:
+                    data:
+                      input: "fri 4pm"
+                      date: "2026-10-02"
+                      time: { local: "16:00", timezone: null, fold: 0 }
+                      human: "Fri 2 Oct, 4:00p"
+                all_day:
+                  summary: A calendar day.
+                  value:
+                    data:
+                      input: "in 2 weeks"
+                      date: "2026-10-14"
+                      time: null
+                      human: "Wed 14 Oct"
+                unparsable:
+                  summary: Not a date.
+                  value:
+                    data:
+                      input: "blursday"
+                      error: "unrecognized date: blursday"
+        "400":
+          $ref: "#/components/responses/MalformedRequest"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /lead/explain:
+    get:
+      tags: [parsing]
+      operationId: explainLead
+      summary: Preview a lead-time span without touching a task.
+      description: |
+        What `input` would store as a task's `lead`, how `lead_human` renders
+        it, and — given the task's anchor date — the date its window opens,
+        which a write would report as `lead_opens`. Accepts the same input
+        `tasks lead` does (`3w`, `3 weeks`, `a fortnight`, `5h`, `off`). The
+        CLI twin is `tasks lead --explain "<span>" [--anchor <date>]`.
+
+        Three shapes, all `200`: a span (`canonical`, `human`, `opens`); a
+        clearing word (`canonical: null`, `human: "no lead time"`); or
+        unreadable input (`error` only). No store is read, so the envelope
+        carries `data` only.
+      parameters:
+        - name: input
+          in: query
+          required: true
+          description: The span to read. Required and non-blank; otherwise `422`.
+          schema: { type: string, minLength: 1 }
+        - name: anchor
+          in: query
+          required: false
+          description: |
+            The task's anchor — its `deadline`, else its `scheduled` date. With
+            it, a calendar span reports `opens`; anything but a real
+            `YYYY-MM-DD` date is `422`.
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: The parsed span, or the reason the input is not one.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                additionalProperties: false
+                properties:
+                  data: { $ref: "#/components/schemas/LeadExplanation" }
+              examples:
+                anchored:
+                  value:
+                    data:
+                      input: "3 weeks"
+                      canonical: "3w"
+                      human: "3 weeks"
+                      opens: "2026-10-11"
+                cleared:
+                  value:
+                    data:
+                      input: "off"
+                      canonical: null
+                      human: "no lead time"
+                      opens: null
+                unparsable:
+                  value:
+                    data:
+                      input: "soonish"
+                      error: 'unrecognized lead time: "soonish"'
         "400":
           $ref: "#/components/responses/MalformedRequest"
         "422":
@@ -2971,6 +3128,25 @@ components:
           minLength: 1
           maxLength: 200
 
+    FormalLinkInput:
+      type: object
+      description: |
+        One formal link in a write. `url` is an `http`/`https` URL with a host,
+        or `name:value` where `name` is a configured shorthand (see
+        `Meta.link_shorthands`): `jira:OPS-1234` stores the expanded URL, with
+        the token as its label unless `label` is given. Duplicates are judged
+        on the expanded URL. Any other value is `422`.
+      required: [url]
+      additionalProperties: false
+      properties:
+        url:
+          type: string
+          maxLength: 2000
+        label:
+          type: string
+          minLength: 1
+          maxLength: 200
+
     Link:
       type: object
       description: A derived, read-only member of the task's openable link union.
@@ -3005,7 +3181,8 @@ components:
       required: [api_version, server_mode, states, proposed_states, open_states,
                  closed_states, priorities, delegation_kinds, delegation_modes,
                  delegation_statuses, max_depth, urgent_days,
-                 timezone, time_format, tzdb_version, temporal_precision]
+                 timezone, time_format, tzdb_version, temporal_precision,
+                 date_order, link_shorthands, link_systems]
       additionalProperties: false
       properties:
         api_version: { type: string }
@@ -3054,6 +3231,29 @@ components:
         time_format: { type: integer, enum: [12, 24] }
         tzdb_version: { type: string }
         temporal_precision: { type: string, enum: [minute] }
+        date_order:
+          type: string
+          enum: [mdy, dmy]
+          description: |
+            How an ambiguous numeric date is read (`date_order` config):
+            `mdy` reads `10/2` as October 2, `dmy` as February 10.
+            `GET /dates/parse` honors it.
+        link_shorthands:
+          type: object
+          description: |
+            The configured `link.<name>` URL templates. A formal-link `url` of
+            the form `name:value` expands through the template — `%s` is
+            replaced by the value, and a template without `%s` is a prefix — on
+            `POST /tasks` `links`, `PATCH` `formal_links`, and the CLI alike.
+            Empty object when none are configured.
+          additionalProperties: { type: string }
+        link_systems:
+          type: object
+          description: |
+            The configured `system.<name>` host rows that extend link
+            classification, so a client can name `links[].system` the way the
+            server does. Empty object when none are configured.
+          additionalProperties: { type: string }
         capabilities:
           type: object
           description: |
@@ -3243,6 +3443,70 @@ components:
         - title: Unparsable
           type: object
           description: Not a schedule; `error` is the parser's own reason.
+          required: [input, error]
+          additionalProperties: false
+          properties:
+            input: { type: string }
+            error: { type: string }
+
+    DateParse:
+      description: |
+        The result of reading one date input. A parsed value has `date` and
+        no `error`; unparsable input has `error` and nothing else. `input` is
+        echoed verbatim in both.
+      oneOf:
+        - title: Parsed
+          type: object
+          required: [input, date, time, human]
+          additionalProperties: false
+          properties:
+            input: { type: string }
+            date: { $ref: "#/components/schemas/IsoDateOnly" }
+            time:
+              description: |
+                Null for an all-day value; otherwise exactly the
+                `TaskTimeInput` a write accepts. `timezone: null` is floating.
+              oneOf:
+                - { $ref: "#/components/schemas/TaskTimeInput" }
+                - { type: "null" }
+            human:
+              type: string
+              description: |
+                The value as a person reads it, in the server's `time_format`;
+                the year appears only when it is not the current one.
+        - title: Unparsable
+          type: object
+          required: [input, error]
+          additionalProperties: false
+          properties:
+            input: { type: string }
+            error: { type: string }
+
+    LeadExplanation:
+      description: |
+        The result of reading one lead-time input. A span or clearing word has
+        `canonical`; unreadable input has `error` and nothing else.
+      oneOf:
+        - title: Parsed
+          type: object
+          required: [input, canonical, human, opens]
+          additionalProperties: false
+          properties:
+            input: { type: string }
+            canonical:
+              type: [string, "null"]
+              description: The value a write would store, or null for a clearing word.
+            human: { type: string }
+            opens:
+              description: |
+                The date the window opens before `anchor`. Null without an
+                anchor, for a clearing word, and for an hour span (`5h`), whose
+                window opens at an instant that depends on the anchor's time.
+              oneOf:
+                - { $ref: "#/components/schemas/IsoDateOnly" }
+                - { type: "null" }
+        - title: Unparsable
+          type: object
           required: [input, error]
           additionalProperties: false
           properties:
@@ -3744,6 +4008,13 @@ components:
         title:
           type: string
           minLength: 1
+          description: |
+            A title whose LAST word is an `http`/`https` URL lifts that URL into
+            a formal link and keeps the remaining words as the title, exactly as
+            `tasks capture` does: trailing sentence punctuation stays on the
+            title, a title that is only a URL keeps its title and still gains
+            the link, and a URL already in `links` is not added twice. Shorthand
+            tokens are never lifted. `PATCH` never rewrites a title.
         priority: { $ref: "#/components/schemas/Priority" }
         tags:
           type: array
@@ -3776,9 +4047,10 @@ components:
             spelling of PATCH's `formal_links`, with the same entry shape,
             validation, deduplication, and 50-entry cap, and the CLI parity of
             `tasks capture --link URL [--label TEXT]`. They are written in the
-            same transaction as the task, so one undo removes both.
+            same transaction as the task, so one undo removes both. Configured
+            shorthands expand (see `FormalLinkInput`).
           maxItems: 50
-          items: { $ref: "#/components/schemas/FormalLink" }
+          items: { $ref: "#/components/schemas/FormalLinkInput" }
         scheduled:
           allOf:
             - { $ref: "#/components/schemas/IsoDate" }
@@ -3899,9 +4171,11 @@ components:
             - { type: array, items: { type: string } }
         formal_links:
           type: array
-          description: Full replacement of the task's ordered stored formal-link list.
+          description: |
+            Full replacement of the task's ordered stored formal-link list.
+            Configured shorthands expand (see `FormalLinkInput`).
           maxItems: 50
-          items: { $ref: "#/components/schemas/FormalLink" }
+          items: { $ref: "#/components/schemas/FormalLinkInput" }
         contexts:
           type: array
           items: { type: string }

@@ -341,7 +341,16 @@ the human-readable tour of that contract.
 ## HTTP, still local
 
 - `GET /api/v1/meta`, `/sections`, `/tasks`, `/tasks/{id}`,
-  `/projects`, `/views/{name}`, `/recurrence/explain`.
+  `/projects`, `/views/{name}`, `/recurrence/explain` (optionally
+  from a task's `anchor`).
+- Taskless previews for form fields: `/dates/parse` reads `fri 4pm`
+  the way the TUI does and answers with the ISO date and time object a
+  write takes; `/lead/explain` previews a lead span and when its
+  window opens. CLI twins: `tasks due --explain`, `tasks lead
+  --explain`.
+- `POST /tasks` expands link shorthands (`jira:OPS-1234`) and lifts a
+  trailing title URL into a formal link, exactly as `tasks capture`
+  does; `/meta` publishes `date_order` and the link configuration.
 - Writes: create, patch, delete, approve, reject, delegate,
   undelegate, claim, release, work_ref, delegation_note,
   project complete/archive. The delegation writes honour the same

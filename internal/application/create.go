@@ -10,15 +10,26 @@ import (
 )
 
 // PrepareCreateTask applies the creation defaults that belong to the
-// application RUNTIME rather than to persistence — today, only the host
-// context. The store receives a complete command and stays unaware of
-// hostnames and configuration.
+// application RUNTIME rather than to persistence: the host context, and the two
+// link conveniences — configured shorthands in Links expand to their URLs, and a
+// title that ends in a URL lifts it into a formal link (links.LiftTitleURL). The
+// store receives a complete command and stays unaware of hostnames and
+// configuration.
 //
 // It is exported for the same reason Ruby exports it: the CLI's dry-run path
 // must use the SAME preparation a real create uses, so its preview cannot
-// disagree with what the store would persist.
+// disagree with what the store would persist. Preparing a prepared command is a
+// no-op, so a caller that previews and then creates the same value gets one
+// preparation, not two — which also means a prepared command must be submitted
+// as returned: fields changed afterwards are not prepared again.
 func (a *Application) PrepareCreateTask(command CreateCommand) CreateCommand {
 	prepared := command.clone()
+	if prepared.prepared {
+		return prepared
+	}
+	prepared.prepared = true
+	prepared.Links = a.expandFormalLinks(prepared.Links)
+	prepared.Title, prepared.Links = links.LiftTitleURL(prepared.Title, prepared.Links)
 	if prepared.SkipHostContext || a.hostContext == "" {
 		return prepared
 	}
@@ -33,6 +44,27 @@ func (a *Application) PrepareCreateTask(command CreateCommand) CreateCommand {
 	}
 	prepared.Tags = append(effective, ordinary...)
 	return prepared
+}
+
+// expandFormalLinks expands every shorthand entry in place of its token. An
+// explicit label wins over the token's default one. An entry that is neither a
+// URL nor a configured shorthand is passed through untouched: the store's own
+// validation refuses it with the message every surface already reports.
+func (a *Application) expandFormalLinks(values []links.FormalLink) []links.FormalLink {
+	for index, value := range values {
+		if links.ValidFormalURL(value.URL) {
+			continue
+		}
+		expanded, ok := a.ExpandFormalLink(value.URL)
+		if !ok {
+			continue
+		}
+		if value.Label != "" {
+			expanded.Label = value.Label
+		}
+		values[index] = expanded
+	}
+	return values
 }
 
 // CreateTask creates one live task in one checked store transaction.

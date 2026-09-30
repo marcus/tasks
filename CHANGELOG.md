@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Features
+
+- **Friendly dates parse over HTTP without a write.** (#27) `GET /api/v1/dates/parse?input=fri%204pm` reads date text with the same parser the TUI's date fields use — friendly date, optional wall time, optional trailing zone word (`Europe/Berlin`, `UTC`, `floating`) and `fold=later` — and answers `{"input","date","time":{"local","timezone","fold"}|null,"human"}`, where `time` is exactly the object a `PATCH`/`POST` takes as `deadline_time`/`scheduled_time`. Text that is not a date is a `200` with `{"input","error"}`, like `/recurrence/explain`. `/recurrence/explain` gains `anchor=YYYY-MM-DD` to project from a task's own stamp instead of today, and `GET /api/v1/lead/explain?input=3%20weeks&anchor=2026-11-01` previews a lead span (`canonical`, `human`, and the `opens` date) before any write. `/meta` publishes `date_order`. The CLI twins are `tasks due --explain "<text>"` (also `schedule --explain`) and `tasks lead --explain "<span>" [--anchor <date>]`, whose `--json` is the HTTP `data` member. The zone/fold word grammar moved out of the TUI into `temporal.ParseText`, which the CLI's dated verbs now use as well, so `tasks due <ref> "fri 4pm Europe/Berlin"` works and a zone or fold named both as a flag and as a word is refused. The TUI's date fields now honor the configured `date_order` — they read `10/2` as October 2 regardless of it before, and mistook a numeric date like `7/15` for a zone name.
+- **Link shorthands and title-URL lifting work on every surface.** (#30) Expanding a configured `link.<name>` shorthand (`jira:OPS-1234`) and lifting a trailing URL out of a capture title into a formal link used to be `tasks capture`-only. Both now live in the application layer, so `POST /api/v1/tasks` (`links` and `title`), `PATCH` `formal_links`, TUI captures, and the CLI apply them identically — a shorthand stores its URL with the token as its default label, and duplicates are judged on the expanded URL. `/meta` publishes the resolved `link_shorthands` and `link_systems`. Title lifting is on by default for HTTP creates, matching the CLI; `PATCH` never rewrites a title.
+
 ## [1.17.0] - 2026-09-02
 
 ### Features

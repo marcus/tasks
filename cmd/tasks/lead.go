@@ -12,7 +12,8 @@ import (
 )
 
 const leadUsage = `usage: tasks lead <ref> <span|off> [--dry-run] [--json]
-       tasks lead <ref>                              read-only: the window it opens`
+       tasks lead <ref>                              read-only: the window it opens
+       tasks lead --explain "<span>" [--anchor <date>] [--json]   no task needed`
 
 // leadHint is what to type when the parser cannot read a span: one example per
 // shape. A refusal that only says "unreadable" leaves the user guessing at a
@@ -26,9 +27,27 @@ func (s *surfaceContext) leadCommand(args []string) int {
 	if refusal := s.refuseUnsupportedSchema(args, "lead"); refusal != 0 {
 		return refusal
 	}
-	flags, rest, err := takeFlags(args, "--dry-run", "--json", "--include-done")
+	explainAnchor, remaining, explainAnchored, status := takeFlagValue(args, "--anchor")
+	if status != 0 {
+		return status
+	}
+	flags, rest, err := takeFlags(remaining, "--dry-run", "--json", "--include-done", "--explain")
 	if err != nil {
 		return abort(err.Error())
+	}
+	// `--explain` never touches the store; it is GET /lead/explain.
+	if flags["--explain"] {
+		if flags["--dry-run"] || flags["--include-done"] {
+			return abort("--explain previews a span, not a task — drop --dry-run/--include-done")
+		}
+		input := joinPositional(rest)
+		if strings.TrimSpace(input) == "" {
+			return abort(leadUsage)
+		}
+		return s.leadExplain(input, explainAnchor, explainAnchored, flags["--json"])
+	}
+	if explainAnchored {
+		return abort("--anchor only applies with --explain; a task's own date is its anchor")
 	}
 	ref := ""
 	if len(rest) > 0 {

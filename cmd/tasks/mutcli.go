@@ -112,10 +112,14 @@ func takeTemporalOptions(args []string) (temporalOptions, []string, int) {
 // is not a date" quotes the expression back so the user can see what was
 // actually parsed; every other error — an impossible local time, an unusable
 // zone — carries the engine's own sentence, which names the fix.
+//
+// The expression is read with temporal.ParseText, the grammar the TUI and
+// GET /dates/parse share, so a trailing zone or fold word works here too and
+// `due --explain` previews exactly what `due` would store.
 func parseTemporalArg(expression string, context temporal.Context, options temporalOptions,
 	order temporal.Order) (temporal.Value, int) {
 
-	value, err := temporal.ParseExpression(expression, temporal.ParseOptions{
+	value, err := temporal.ParseText(expression, temporal.ParseOptions{
 		Today: context.LocalDate(), Order: order,
 		Timezone: options.timezone, Floating: options.floating, Fold: options.fold,
 		FoldSpecified: options.foldGiven,

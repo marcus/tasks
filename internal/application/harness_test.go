@@ -77,6 +77,8 @@ type harnessOptions struct {
 	archive     string
 	hostContext string
 	now         time.Time
+	// linkShorthands is the configured `link.<name>` table.
+	linkShorthands map[string]string
 	// wrap turns each freshly built store into the value the application sees,
 	// which is how a capability double is installed.
 	wrap func(*store.Store) Store
@@ -124,6 +126,7 @@ func newHarness(t *testing.T, options harnessOptions) *harness {
 		Factory:             factory,
 		TemporalContext:     func() temporal.Context { return contextOn(options.now) },
 		HostContext:         options.hostContext,
+		LinkShorthands:      options.linkShorthands,
 		DelegationKeySource: func() string { return fmt.Sprintf("key%013x", keys.Add(1)) },
 	})
 	if err != nil {

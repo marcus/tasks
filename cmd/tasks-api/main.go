@@ -167,6 +167,8 @@ func buildServer(paths config.Paths, env determinism.Env, port int) (*api.Server
 		TemporalContext: temporalContext,
 		HostContext:     paths.HostContext,
 		QueryOptions:    queryOptions,
+		LinkShorthands:  paths.Links,
+		LinkSystems:     paths.LinkSystems,
 	})
 	if err != nil {
 		return nil, err
@@ -183,6 +185,7 @@ func buildServer(paths config.Paths, env determinism.Env, port int) (*api.Server
 		UrgentDays:      paths.UrgentDays,
 		Timezone:        paths.Timezone,
 		TimeFormat:      paths.TimeFormat,
+		DateOrder:       paths.DateOrder,
 		Logger:          os.Stderr,
 	})
 }

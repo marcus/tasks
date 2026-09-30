@@ -669,7 +669,7 @@ func (m *Model) OpenDatePopup() {
 		Hint: "fri · two weeks · 2w · in two minutes · date time Zone · esc cancels", MinWidth: 50,
 		ReturnMode: ReturnList, TargetID: id,
 		Submit: func(raw string) string {
-			value, err := ParseTemporal(raw, m.currentDate(), m.temporalContext())
+			value, err := ParseTemporal(raw, m.currentDate(), m.temporalContext(), m.dateOrder())
 			if err != nil {
 				return "can't parse \u201c" + raw + "\u201d"
 			}
@@ -863,7 +863,7 @@ func (m *Model) parseSectionDates(raw string) (start, end, fail string) {
 		if part == "" {
 			continue
 		}
-		value, err := ParseTemporal(part, m.currentDate(), m.temporalContext())
+		value, err := ParseTemporal(part, m.currentDate(), m.temporalContext(), m.dateOrder())
 		if err != nil {
 			return "", "", "can't parse “" + part + "”"
 		}
@@ -932,9 +932,13 @@ func (m *Model) CaptureIntoProject() {
 			if title == "" {
 				return "task title cannot be blank"
 			}
-			result := m.app.CreateTask(application.CreateCommand{
+			// Prepared here so the flash names the title that was stored: a
+			// trailing URL is lifted into a formal link on the way in.
+			command := m.app.PrepareCreateTask(application.CreateCommand{
 				Title: title, State: "TODO", ParentID: id,
-			}, m.operation())
+			})
+			title = command.Title
+			result := m.app.CreateTask(command, m.operation())
 			if !result.OK() {
 				return outcomeMessage(result, "could not capture the task")
 			}
@@ -1270,6 +1274,7 @@ func (m *Model) StartTaskEdit(focus string) {
 		Operation: m.operation,
 		Today:     m.currentDate,
 		Context:   m.temporalContext(),
+		Order:     m.dateOrder(),
 		TargetID:  item.ID,
 		Focus:     focus,
 		ContextOptions: func() []string {
@@ -1477,6 +1482,10 @@ func (m *Model) temporalContext() temporal.Context {
 	}
 	return context
 }
+
+// dateOrder is the configured reading of an ambiguous numeric date (date_order),
+// the same one the CLI passes, so 10/2 means one day on every surface.
+func (m *Model) dateOrder() temporal.Order { return temporal.OrderNamed(m.paths.DateOrder) }
 
 // outcomeMessage is the user-visible sentence for a refused mutation: the
 // store's own words when it gave any, and the caller's fallback otherwise.

@@ -53,6 +53,7 @@ type TaskEditForm struct {
 	expectations map[string]string
 	today        func() temporal.Date
 	context      temporal.Context
+	order        temporal.Order
 	// contextOptions and tagOptions are the @contexts and tags the store
 	// currently holds anywhere, offered as completions.
 	contextOptions func() []string
@@ -61,9 +62,12 @@ type TaskEditForm struct {
 
 // TaskEditFormOptions builds one.
 type TaskEditFormOptions struct {
-	Snapshot       *EditSnapshot
-	Today          func() temporal.Date
-	Context        temporal.Context
+	Snapshot *EditSnapshot
+	Today    func() temporal.Date
+	Context  temporal.Context
+	// Order is the configured date_order, so 10/2 reads the same here as on
+	// the command line.
+	Order          temporal.Order
 	ContextOptions func() []string
 	TagOptions     func() []string
 	Focus          string
@@ -79,6 +83,7 @@ func NewTaskEditForm(options TaskEditFormOptions) (*TaskEditForm, error) {
 		expectations:   map[string]string{},
 		today:          options.Today,
 		context:        options.Context,
+		order:          options.Order,
 		contextOptions: options.ContextOptions,
 		tagOptions:     options.TagOptions,
 	}
@@ -388,7 +393,7 @@ func (t *TaskEditForm) temporalField(key, label string, value any) termform.Fiel
 	base := termform.NewBase(key, label, value)
 	hooks := termform.DateHooks{
 		Parse: func(text string, today temporal.Date) (any, error) {
-			return ParseTemporal(text, today, t.context)
+			return ParseTemporal(text, today, t.context, t.order)
 		},
 		Format: func(value any) string { return FormatTemporal(value) },
 		Parsed: func(value any) bool {
@@ -414,37 +419,16 @@ func (t *TaskEditForm) temporalField(key, label string, value any) termform.Fiel
 }
 
 // ParseTemporal reads the editor's date grammar: a date expression with an
-// optional wall time and an optional trailing zone / floating / fold token.
-func ParseTemporal(text string, today temporal.Date, context temporal.Context) (any, error) {
-	tokens := strings.Fields(strings.TrimSpace(text))
-	fold := 0
-	foldSpecified := false
-	if len(tokens) > 0 {
-		last := tokens[len(tokens)-1]
-		if last == "fold=earlier" || last == "fold=later" {
-			foldSpecified = true
-			if last == "fold=later" {
-				fold = 1
-			}
-			tokens = tokens[:len(tokens)-1]
-		}
-	}
-	mode := ""
-	if len(tokens) > 0 {
-		last := tokens[len(tokens)-1]
-		if last == "floating" || last == "UTC" || strings.Contains(last, "/") {
-			mode = last
-			tokens = tokens[:len(tokens)-1]
-		}
-	}
-	options := temporal.ParseOptions{Today: today, Fold: fold, FoldSpecified: foldSpecified, Floating: mode == "floating"}
-	if mode != "" && mode != "floating" {
-		options.Timezone = mode
-	}
+// optional wall time and an optional trailing zone / floating / fold token. The
+// grammar itself is temporal.ParseText, shared with the HTTP parse preview, so
+// the editor and a browser date field read the same text the same way; order is
+// the configured reading of an ambiguous numeric date such as 10/2.
+func ParseTemporal(text string, today temporal.Date, context temporal.Context, order temporal.Order) (any, error) {
+	options := temporal.ParseOptions{Today: today, Order: order}
 	if context.Timezone != nil {
 		options.Context = &context
 	}
-	value, err := temporal.ParseExpression(strings.Join(tokens, " "), options)
+	value, err := temporal.ParseText(text, options)
 	if err != nil {
 		return nil, err
 	}
